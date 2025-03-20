@@ -1,22 +1,35 @@
 import './pico.css';
-
-import logo from './assets/images/logo-universal.png';
 import {Greet} from '../wailsjs/go/main/App';
 
 document.querySelector('#app').innerHTML = `
-    <img id="logo" class="logo">
       <div class="result" id="result">Please enter your name below 👇</div>
       <div class="input-box" id="input">
         <input class="input" id="name" type="text" autocomplete="off" />
         <button class="btn" onclick="greet()">Greet</button>
-      </div>
+        <input type="file" id="directory-picker" name="fileList" webkitdirectory directory multiple/>
+        <ul id="listing"></ul>
+        </div>
     </div>
 `;
-document.getElementById('logo').src = logo;
+  
 
 let nameElement = document.getElementById("name");
 nameElement.focus();
 let resultElement = document.getElementById("result");
+
+document.getElementById("directory-picker").addEventListener(
+    "change",
+    (event) => {
+      let output = document.getElementById("listing");
+      for (const file of event.target.files) {
+        let item = document.createElement("li");
+        item.textContent = file.webkitRelativePath;
+        output.appendChild(item);
+      }
+    },
+    false,
+  );
+  
 
 // Setup the greet function
 window.greet = function () {

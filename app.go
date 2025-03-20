@@ -33,3 +33,6 @@ func (a *App) startup(ctx context.Context) {
 func (a *App) Greet(name string) string {
 	return fmt.Sprintf("Hello %s, here's your song!", name)
 }
+
+//trying to make a function
+//func (a *App) dirPicker(ctx context.Context, dialogOptions OpenDialogOptions)(string, error){}
