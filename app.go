@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
+	"yellowjacket/backend"
 )
 
 // App struct
 type App struct {
-	ctx context.Context
+	ctx    context.Context
+	config *backend.Config
 }
 
 // NewApp creates a new App application struct
@@ -19,6 +21,12 @@ func NewApp() *App {
 // so we can call the runtime methods
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+
+	conf, err := backend.GetConfig()
+	if err != nil {
+		panic(fmt.Errorf("could not get config: %w", err))
+	}
+	a.config = conf
 }
 
 // Greet returns a greeting for the given name
