@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"yellowjacket/backend"
+
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // App struct
@@ -29,10 +31,20 @@ func (a *App) startup(ctx context.Context) {
 	a.config = conf
 }
 
-// Greet returns a greeting for the given name
-func (a *App) Greet(name string) string {
-	return fmt.Sprintf("Hello %s, here's your song!", name)
-}
+// trying to make a function
+func (a *App) DirectoryPicker() (string, error) {
+	dir, err := runtime.OpenDirectoryDialog(
+		a.ctx,
+		runtime.OpenDialogOptions{
+			ShowHiddenFiles: true,
+		})
 
-//trying to make a function
-//func (a *App) dirPicker(ctx context.Context, dialogOptions OpenDialogOptions)(string, error){}
+	if err != nil {
+		return "", fmt.Errorf("could not open directory dialog\n%w", err)
+	}
+	if dir == "" {
+		return "No Library Directory Selected", nil
+	}
+	return fmt.Sprintf("Library Directory: %s", dir), nil
+
+}
