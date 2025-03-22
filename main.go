@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"yellowjacket/backend/config"
+	"yellowjacket/backend/player"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/logger"
@@ -23,6 +24,7 @@ func main() {
 	}
 
 	app := NewApp(config)
+	player := player.NewPlayer()
 
 	// Create application with options
 	err = wails.Run(&options.App{
@@ -32,13 +34,15 @@ func main() {
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
-		LogLevel: logger.INFO,
+		LogLevel:         logger.TRACE,
 		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
 		OnStartup: func(ctx context.Context) {
 			app.startup(ctx)
+			player.Init(ctx)
 		},
 		Bind: []interface{}{
 			app,
+			player,
 		},
 	})
 	if err != nil {
