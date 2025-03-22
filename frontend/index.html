@@ -1,16 +1,50 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-    <meta charset="UTF-8"/>
-    <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <meta charset="UTF-8" />
+    <meta content="width=device-width, initial-scale=1.0" name="viewport" />
     <title>yellowjacket</title>
 </head>
-<body>
-<div id="app" class="container">
-    <button class="btn" onclick="dirPicker()">Choose Directory...</button>
-    <label id="library-directory">No Library Directory Selected</label>
-</div>
-
 <script src="./src/main.js" type="module"></script>
+
+<body>
+    <header class="container">
+        <nav>
+            <ul>
+                <li>
+                    <hgroup>
+                        <h1>YellowJacket</h1>
+                        <p>Music how it was meant to be.</p>
+                    </hgroup>
+                </li>
+            </ul>
+            <ul>
+                <li>
+                    <details class="dropdown">
+                        <summary role="button" class="outline">
+                            YJ
+                        </summary>
+                        <ul>
+                            <li>
+                                <a href="#">
+                                    <img src="/src/assets/images/icons/ui/settings.svg" />
+                                </a>
+                            </li>
+                        </ul>
+                    </details>
+                </li>
+            </ul>
+        </nav>
+    </header>
+    <hr />
+    <main class="container">
+        <section id="library-selector">
+            <label id="library-directory-label">No Library Directory Selected</label>
+            <button onclick="dirPicker()">Choose Directory...</button>
+        </section>
+    </main>
+    <footer></footer>
 </body>
+
 </html>
