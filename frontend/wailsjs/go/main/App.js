@@ -5,3 +5,7 @@
 export function DirectoryPicker() {
   return window['go']['main']['App']['DirectoryPicker']();
 }
+
+export function GetLibraryDir() {
+  return window['go']['main']['App']['GetLibraryDir']();
+}

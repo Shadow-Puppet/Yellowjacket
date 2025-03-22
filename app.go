@@ -40,7 +40,7 @@ func (a *App) startup(ctx context.Context) {
 	if err != nil {
 		panic(fmt.Errorf("could not initialize library: %w", err))
 	}
-	// config might have been updated, so lets propogate that to the app
+	// config might have been updated, so lets propagate that to the app
 	a.config.Library = musicLib.Conf
 
 	runtime.LogInfo(a.ctx, fmt.Sprintf("using library %s", logging.PrettyJSON(musicLib)))
@@ -65,4 +65,9 @@ func (a *App) DirectoryPicker() (string, error) {
 	a.config.Library.DirectoryPath = dir
 	a.config.WriteConfig()
 	return dir, nil
+}
+
+// trying to make a function
+func (a *App) GetLibraryDir() (string, error) {
+	return a.config.Library.DirectoryPath, nil
 }
