@@ -1,4 +1,4 @@
-package backend
+package config
 
 import (
 	"fmt"
