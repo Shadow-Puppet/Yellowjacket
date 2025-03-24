@@ -1,6 +1,5 @@
-import './pico.css';
-import { DirectoryPicker, GetLibraryDir} from '../wailsjs/go/main/App';
-import { Play } from '../wailsjs/go/player/Player';
+import { DirectoryPicker, GetLibraryDir} from '../../../wailsjs/go/main/App';
+import { Play } from '../../../wailsjs/go/player/Player';
 
 
 let libraryDirectoryLabel = document.getElementById("library-directory-label");
