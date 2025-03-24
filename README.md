@@ -1,19 +1,36 @@
-# README
+# YellowJacket
 
-## About
+A MusicBee inspired music player and library manager.
 
-This is the official Wails Vanilla template.
+## Install
 
-You can configure the project by editing `wails.json`. More information about the project settings can be found
-here: https://wails.io/docs/reference/project-config
+TODO: put release links here
 
-## Live Development
+## Features
 
-To run in live development mode, run `wails dev` in the project directory. This will run a Vite development
-server that will provide very fast hot reload of your frontend changes. If you want to develop in a browser
-and have access to your Go methods, there is also a dev server that runs on http://localhost:34115. Connect
-to this in your browser, and you can call your Go code from devtools.
+TODO: add feature list and screenshots here
 
-## Building
+## Development
 
-To build a redistributable, production mode package, use `wails build`.
+YellowJacket relies on [Wails](https://wails.io/docs/introduction) for development.
+Wails allows us to build a frontend with HTML/CSS/JS and backend with Golang.
+
+### Prerequisites
+
+1. First, you will need Go installed.
+
+2. Then, you will need the `wails` cli tool.
+
+    Install it with
+
+    ```shell
+    go install github.com/wailsapp/wails/v2/cmd/wails@latest
+    ```
+
+3. After installing the Wails CLI you may need some build dependencies.
+    View the missing Wails dependencies by running `wails doctor`.
+    Using your system's package manager, install the missing dependencies.
+
+### Dev Server
+
+To run the Wails hot-reloading dev server, run `make dev` in the root of the project.
