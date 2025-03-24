@@ -9,7 +9,7 @@ type Config struct {
 	DirectoryPath string
 }
 
-func (c *Config) validate() error {
+func (c *Config) Validate() error {
 	return nil
 }
 
@@ -26,7 +26,7 @@ func NewLibrary(conf *Config) (*Library, error) {
 	if conf == nil {
 		return nil, fmt.Errorf("nil config for library")
 	}
-	if err := conf.validate(); err != nil {
+	if err := conf.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid library config %s\n%w", conf, err)
 	}
 	return &Library{

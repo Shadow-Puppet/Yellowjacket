@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -18,7 +19,10 @@ func newConfig(filePath string, data *configData) (*Config, error) {
 	// TODO make sure required fields have SOMETHING in them
 	// TODO Merge existing config with read in config
 	if data == nil {
-		data = defaultConfigData
+		return nil, errors.New("nil config")
+	}
+	if err := data.validate(); err != nil {
+		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 	return &Config{
 		filePath:   filePath,
@@ -32,6 +36,12 @@ type configData struct {
 
 // return errors if there is a *breaking* issue with the config
 func (d *configData) validate() error {
+	if d.Library == nil {
+		return errors.New("nil library config")
+	}
+	if err := d.Library.Validate(); err != nil {
+		return fmt.Errorf("invalid library config: %s\n%w", d.Library, err)
+	}
 	return nil
 }
 
@@ -48,16 +58,24 @@ func GetCurrentConfig() (*Config, error) {
 		return nil, fmt.Errorf("could not get user config directory path: %w", err)
 	}
 	configFilePath := path.Join(configDir, "config.toml")
-	config, err := newConfig(configFilePath, nil)
+
+	// create the config obj with the filepath we got
+	config, err := newConfig(configFilePath, defaultConfigData)
 	if err != nil {
 		return nil, fmt.Errorf("could not create new config: %w", err)
 	}
 	config.filePath = configFilePath
 
+	// does the config file alaeady exist?
+	// if not, create it
 	_, err = os.Stat(configFilePath)
 	if os.IsNotExist(err) {
-		config.WriteConfig()
+		if err := config.WriteConfig(); err != nil {
+			return nil, fmt.Errorf("could not write config: %w", err)
+		}
 	}
+
+	// now that we have our config file, load it in
 	config, err = config.loadConfig()
 	if err != nil {
 		return nil, fmt.Errorf("could not load config file %s: %w", configFilePath, err)
@@ -93,6 +111,9 @@ func (c *Config) loadConfig() (*Config, error) {
 }
 
 func (c *Config) WriteConfig() error {
+	if err := c.validate(); err != nil {
+		return fmt.Errorf("invalid config: %w", err)
+	}
 	confFileData, err := toml.Marshal(c)
 	if err != nil {
 		return fmt.Errorf("could not marshal config struct: %w", err)
