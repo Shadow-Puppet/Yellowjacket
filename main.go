@@ -5,6 +5,8 @@ import (
 	"embed"
 	"fmt"
 	"yellowjacket/backend/config"
+	"yellowjacket/backend/frontendbindings"
+	"yellowjacket/backend/library"
 	"yellowjacket/backend/player"
 
 	"github.com/wailsapp/wails/v2"
@@ -21,13 +23,24 @@ import (
 var assets embed.FS
 
 func main() {
-	config, err := config.GetCurrentConfig()
+	yjConf, err := config.GetCurrentConfig()
 	if err != nil {
 		panic(fmt.Errorf("could not get config: %w", err))
 	}
 
-	app := NewApp(config)
-	player := player.NewPlayer()
+	// Create objects that will be bound on the frontend
+	frontendBindings, err := frontendbindings.NewFrontendBindings()
+	if err != nil {
+		panic(fmt.Errorf("could not create frontendBindings obj: %w", err))
+	}
+	player, err := player.NewPlayer()
+	if err != nil {
+		panic(fmt.Errorf("could not create player obj: %w", err))
+	}
+	library, err := library.NewLibrary(yjConf.Library)
+	if err != nil {
+		panic(fmt.Errorf("could not create library obj: %w", err))
+	}
 
 	// Create application with options
 	err = wails.Run(&options.App{
@@ -42,11 +55,13 @@ func main() {
 		LogLevel:         logger.TRACE,
 		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
 		OnStartup: func(ctx context.Context) {
-			app.startup(ctx)
+			frontendBindings.Init(ctx)
+			library.Init(ctx)
 			player.Init(ctx)
 		},
-		Bind: []interface{}{
-			app,
+		Bind: []any{
+			frontendBindings,
+			library,
 			player,
 		},
 		DisableResize:      false,
@@ -63,15 +78,13 @@ func main() {
 		Logger:             nil,
 		LogLevelProduction: 0,
 		OnDomReady: func(ctx context.Context) {
-			return
 		},
 		OnShutdown: func(ctx context.Context) {
-			return
 		},
 		OnBeforeClose: func(ctx context.Context) bool {
 			return false
 		},
-		EnumBind:                         []interface{}{},
+		EnumBind:                         []any{},
 		WindowStartState:                 0,
 		ErrorFormatter:                   nil,
 		EnableDefaultContextMenu:         false,

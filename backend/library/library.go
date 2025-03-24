@@ -3,13 +3,14 @@ package library
 import (
 	"context"
 	"fmt"
-	"yellowjacket/backend/logging"
-
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 type Config struct {
 	DirectoryPath string
+}
+
+func (c *Config) validate() error {
+	return nil
 }
 
 var DefaultConfig *Config = &Config{
@@ -18,17 +19,26 @@ var DefaultConfig *Config = &Config{
 
 type Library struct {
 	ctx  context.Context
-	Conf *Config
+	conf *Config
 }
 
-func GetNewLibrary(ctx context.Context, conf *Config) (*Library, error) {
+func NewLibrary(conf *Config) (*Library, error) {
 	if conf == nil {
-		runtime.LogInfo(ctx, fmt.Sprintf("library config is nil, using default config: %s", logging.PrettyJSON(DefaultConfig)))
-		conf = DefaultConfig
+		return nil, fmt.Errorf("nil config for library")
 	}
-	runtime.LogInfo(ctx, fmt.Sprintf("creating new library with config: %#v", conf))
+	if err := conf.validate(); err != nil {
+		return nil, fmt.Errorf("invalid library config %s\n%w", conf, err)
+	}
 	return &Library{
-		ctx:  ctx,
-		Conf: conf,
+		conf: conf,
 	}, nil
+}
+
+func (l *Library) Init(ctx context.Context) error {
+	l.ctx = ctx
+	return nil
+}
+
+func (l *Library) GetDir() (string, error) {
+	return l.conf.DirectoryPath, nil
 }

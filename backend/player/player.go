@@ -23,8 +23,8 @@ const (
 	Stopped
 )
 
-func NewPlayer() *Player {
-	return &Player{}
+func NewPlayer() (*Player, error) {
+	return &Player{}, nil
 }
 
 func (p *Player) Init(ctx context.Context) {
