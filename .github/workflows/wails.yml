@@ -17,13 +17,13 @@ jobs:
       fail-fast: false
       matrix:
         build:
-          - name: 'App'
+          - name: 'yellowjacket'
             platform:  'linux/amd64'
             os: 'ubuntu-latest'
-          - name: 'App'
+          - name: 'yellowjacket'
             platform:  'windows/amd64'
             os: 'windows-latest'
-          - name: 'App'
+          - name: 'yellowjacket'
             platform:  'darwin/universal'
             os: 'macos-latest'
 
@@ -41,4 +41,4 @@ jobs:
           build-name: ${{ matrix.build.name }}
           build-platform: ${{ matrix.build.platform }}
           package: false
-          go-version: '1.20'
+          go-version: '1.23'
