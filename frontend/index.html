@@ -7,6 +7,7 @@
     <title>yellowjacket</title>
     <link rel="stylesheet" type="text/css" href="/src/assets/styles/pico.css">
 </head>
+<script type="module" src="/src/components/player.js"></script>
 <script src="/src/assets/scripts/main.js" type="module"></script>
 
 <body>
@@ -28,7 +29,7 @@
                         </summary>
                         <ul>
                             <li>
-                                <a href="#">
+                                <a href="/src/pages/config.html">
                                     <img src="/src/assets/images/icons/ui/settings.svg" />
                                 </a>
                             </li>
@@ -50,7 +51,9 @@
             </button>
         </section>
     </main>
-    <footer></footer>
+    <footer>
+        <player-controls></player-controls>
+    </footer>
 </body>
 
 </html>
