@@ -27,11 +27,11 @@ const (
 	Stopped
 )
 
-func NewPlayer() *Player {
+func NewPlayer() (*Player, error) {
 	return &Player{
 		// TODO: variable speaker sample rates
 		sampleRate: beep.SampleRate(44100),
-	}
+	}, nil
 }
 
 func (p *Player) Init(ctx context.Context) {
@@ -49,10 +49,6 @@ func (p *Player) Play(filePath string) error {
 	f, err := os.Open(filePath)
 	if err != nil {
 		return fmt.Errorf("failed to open file %w", err)
-	}
-
-	if p.streamer == nil || p.format == nil {
-
 	}
 
 	streamer, format, err := mp3.Decode(f)

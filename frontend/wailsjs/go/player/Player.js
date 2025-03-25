@@ -10,6 +10,6 @@ export function Init(arg1) {
   return window['go']['player']['Player']['Init'](arg1);
 }
 
-export function Play() {
-  return window['go']['player']['Player']['Play']();
+export function Play(arg1) {
+  return window['go']['player']['Player']['Play'](arg1);
 }
