@@ -12,10 +12,11 @@ import (
 )
 
 type Player struct {
-	ctx      context.Context
-	state    PlayerState
-	streamer beep.Streamer
-	format   beep.Format
+	ctx        context.Context
+	state      PlayerState
+	streamer   beep.Streamer
+	format     beep.Format
+	sampleRate beep.SampleRate
 }
 
 type PlayerState int
@@ -26,13 +27,18 @@ const (
 	Stopped
 )
 
-func NewPlayer() (*Player, error) {
-	return &Player{}, nil
+func NewPlayer() *Player {
+	return &Player{
+		// TODO: variable speaker sample rates
+		sampleRate: beep.SampleRate(44100),
+	}
 }
 
 func (p *Player) Init(ctx context.Context) {
 	p.ctx = ctx
 	p.state = Stopped
+
+	speaker.Init(p.sampleRate, p.sampleRate.N(time.Second/10))
 }
 
 func (p *Player) ChangeState(desiredState PlayerState) error {
