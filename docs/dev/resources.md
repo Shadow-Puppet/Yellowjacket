@@ -2,4 +2,7 @@
 
 ## Frontend
 
-- <https://learncssgrid.com>
+### Lit
+
+- https://lit.dev/docs/
+- https://github.com/web-padawan/awesome-lit
