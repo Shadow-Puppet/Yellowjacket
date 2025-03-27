@@ -2,9 +2,9 @@
   "$schema": "https://wails.io/schemas/config.v2.json",
   "name": "yellowjacket",
   "outputfilename": "yellowjacket",
-  "frontend:install": "",
+  "frontend:install": "pnpm install",
   "frontend:build": "",
-  "frontend:dev:watcher": "",
+  "frontend:dev:watcher": "inotifywait -m -e modify,create,delete,move -r .",
   "frontend:dev:serverUrl": "",
   "author": {
     "name": "",
