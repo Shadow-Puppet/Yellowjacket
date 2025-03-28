@@ -19,7 +19,6 @@ window.dirPicker = function() {
   try {
     DirectoryPicker()
       .then((result) => { 
-        if (result.length === 0 ) { };
         window.updateLibraryDirLabel(result); })
       .catch((err) => {
         console.error("There is an error with directory picker: " + err);

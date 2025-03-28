@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "isolatedModules": true,
+    "baseUrl": "./frontend",
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "target": "ES2022",
+    "module": "ESNext",
+    "lib": [
+      "es2022",
+      "dom"
+    ],
+    "declaration": true,
+    "declarationMap": true,
+    "experimentalDecorators": true,
+    "useDefineForClassFields": false,
+    "moduleResolution": "node",
+    "plugins": [
+      {
+        "name": "ts-lit-plugin"
+      }
+    ],
+    "paths": {
+      "@go/*": ["wailsjs/go/*"],
+      "@components/*": ["src/components/*"],
+      "@assets/*": ["src/assets/*"],
+    }
+  }
+}

@@ -3,9 +3,9 @@
   "name": "yellowjacket",
   "outputfilename": "yellowjacket",
   "frontend:install": "pnpm install",
-  "frontend:build": "",
-  "frontend:dev:watcher": "inotifywait -m -e modify,create,delete,move -r .",
-  "frontend:dev:serverUrl": "",
+  "frontend:build": "pnpm build",
+  "frontend:dev:watcher": "pnpm dev",
+  "frontend:dev:serverUrl": "auto",
   "author": {
     "name": "",
     "email": ""
