@@ -1,4 +1,4 @@
-build
-node_modules
 frontend/dist
+node_modules
+build
 test_data

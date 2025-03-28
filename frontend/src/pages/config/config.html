@@ -2,12 +2,17 @@
 <html lang="en">
 
 <head>
+    <!-- manually including wails runtime -->
+    <meta name="wails-options" content="noautoinject" />
+    <script src="/wails/ipc.js"></script>
+    <script src="/wails/runtime.js"></script>
+
     <meta charset="UTF-8" />
     <meta content="width=device-width, initial-scale=1.0" name="viewport" />
-    <link rel="stylesheet" type="text/css" href="/node_modules/@picocss/pico/css/pico.min.css">
-    <title>yellowjacket</title>
+    <link rel="stylesheet" type="text/css" href="/node_modules/@picocss/pico/css/pico.css">
+    <title>yellowjacket - config</title>
 </head>
-<script src="/index.ts" type="module"></script>
+<script src="./config.js" type="module"></script>
 
 <body>
     <header class="container">
@@ -15,8 +20,10 @@
             <ul>
                 <li>
                     <hgroup>
-                        <h1>YellowJacket</h1>
-                        <p>Music how it was meant to bee.</p>
+                        <a href="/index.html">
+                            <h1>YellowJacket</h1>
+                        </a>
+                        <p>Config</p>
                     </hgroup>
                 </li>
             </ul>
@@ -40,10 +47,11 @@
     </header>
     <hr />
     <main class="container">
+        <section id="library-selector">
+            <label id="library-directory-label">No Library Directory Selected</label>
+            <button onclick="dirPicker()">Choose Directory...</button>
+        </section>
     </main>
-    <footer>
-        <audio-player></audio-player>
-    </footer>
 </body>
 
 </html>
