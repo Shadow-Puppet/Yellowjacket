@@ -2,20 +2,18 @@ import { LitElement, html } from 'lit';
 import { customElement } from 'lit/decorators.js';
 import { Play } from '@go/player/Player';
 
-const audioPlayer = (text: string, disabled: boolean) => html`
-    <p>Welcome to the Lit tutorial!</p>
-    <h
+const audioPlayer = () => html`
+<h1>Hello World</h1>
 `;
-
 
 @customElement('audio-player')
 export class AudioPlayer extends LitElement {
 
   render() {
-    return audioPlayer;
+    return audioPlayer();
   }
 
-  onPlayPauseButtonClick = function() {
+  onPlayPauseButtonClick()  {
     let playPauseButtonIcon = document.getElementById("playPauseButtonIcon");
     try {
       Play().then((result) => {
