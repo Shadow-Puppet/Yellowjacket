@@ -60,12 +60,16 @@ func (p *Player) Init(ctx context.Context) error {
 }
 
 func (p *Player) updateStreamers(newBaseStreamer beep.Streamer, sr beep.SampleRate) error {
+	// set base streamer
 	p.baseStreamer = newBaseStreamer
+
 	// resample file stream to match speaker
 	// TODO: variable resample quality
 	p.resampled = beep.Resample(4, sr, speakerSampleRate, p.baseStreamer)
+
 	// wrap in ctrl streamer to allow play/pause
 	p.control = &beep.Ctrl{Streamer: p.resampled}
+
 	// wrap in volume streamer
 	p.volume = &effects.Volume{
 		Streamer: p.control,
@@ -73,6 +77,8 @@ func (p *Player) updateStreamers(newBaseStreamer beep.Streamer, sr beep.SampleRa
 		Volume:   0,
 		Silent:   false,
 	}
+
+	// set "final" streamer
 	p.speakerStreamer = p.volume
 
 	return nil
@@ -83,13 +89,15 @@ func (p *Player) changeState(desiredState PlayerState) error {
 	return nil
 }
 
-// reads a file and creates a streamer resampled to match the speaker
+// reads a file and creates a streamer, also wraps necessary streamers
 func (p *Player) LoadFile(filePath string) error {
+	// opening file
 	f, err := os.Open(filePath)
 	if err != nil {
 		return fmt.Errorf("failed to open file %w", err)
 	}
 
+	// attempt to decode mp3 file and create streamer and format data
 	streamer, format, err := mp3.Decode(f)
 	if err != nil {
 		return fmt.Errorf("failed to decode mp3 %w", err)
@@ -136,18 +144,14 @@ Volume = 0 means unchanged volume.
 Positive Volume value means increasing volume
 Negative Volume value means decreasing volume
 */
-// TODO: implement max/ min volume values
 func (p *Player) SetVolume(desiredVolume UserVolume) error {
-	if desiredVolume > MaxUserVol {
-		p.volume.Silent = false
-		p.volume.Volume = float64(MaxUserVol.ToPlayerVolume())
-	} else if desiredVolume < MinUserVol {
-		p.volume.Volume = float64(MinUserVol.ToPlayerVolume())
-		p.volume.Silent = true
-	} else {
-		p.volume.Silent = false
-		p.volume.Volume = float64(desiredVolume.ToPlayerVolume())
-	}
+	// clamp value between 1 and 100
+	volume := clampVolume(desiredVolume)
+
+	// Apply the volume settings
+	p.volume.Volume = float64(volume.ToPlayerVolume())
+	p.volume.Silent = volume < MinUserVol
+
 	return nil
 }
 func (p *Player) ChangeVolume(deltaVolume int) error {

@@ -28,3 +28,13 @@ func (oldVolFloat PlayerVolume) ToUserVolume() UserVolume {
 	}
 	return newVol
 }
+
+func clampVolume(v UserVolume) UserVolume {
+	if v > MaxUserVol {
+		return MaxUserVol
+	}
+	if v < MinUserVol {
+		return MinUserVol
+	}
+	return v
+}
