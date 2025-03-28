@@ -163,5 +163,6 @@ func (p *Player) getUserVolume() UserVolume {
 }
 
 func (p *Player) MuteToggle() error {
+	p.volume.Silent = !p.volume.Silent
 	return nil
 }

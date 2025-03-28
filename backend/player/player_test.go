@@ -6,9 +6,9 @@ import (
 )
 
 var testQueue = []string{
-	"./test_data/music_library_test/other_music/03 PONPONPON.mp3",
-	"./test_data/music_library_test/01 Some Chords.mp3",
-	"./test_data/music_library_test/03 anything.mp3",
+	"../../test_data/music_library_test/other_music/03 PONPONPON.mp3",
+	"../../test_data/music_library_test/01 Some Chords.mp3",
+	"../../test_data/music_library_test/03 anything.mp3",
 }
 
 func TestPlayer(t *testing.T) {
