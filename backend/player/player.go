@@ -150,7 +150,7 @@ func (p *Player) SetVolume(desiredVolume UserVolume) error {
 
 	// Apply the volume settings
 	p.volume.Volume = float64(volume.ToPlayerVolume())
-	p.volume.Silent = volume < MinUserVol
+	p.volume.Silent = volume == MinUserVol
 
 	return nil
 }
