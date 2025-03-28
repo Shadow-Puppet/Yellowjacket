@@ -6,21 +6,21 @@ This directory contains the frontend for YellowJacket.
 
 There are a couple of tools that are required to build and use the frontend.
 
-- `vite` for
+- [`vite`](https://vite.dev/) for
   - transpiling typescript
   - bundling the final "package" that is useb by the webview
   - running a dev server with hot-reloading
-  - configured with the `vite.config.ts` file in this directory
-- `pnpm` for managing frontend dependency packages
+  - configured with the [`vite.config.ts`](./vite.config.ts) file in this directory
+- [`pnpm`](https://pnpm.io/) for managing frontend dependency packages
 
 There are a handful of dependency packages that we use directly in the frontend.
 
-- `picocss` for basic CSS while developing
-- `lit` for a simple but powerful wrapper around Web Components
+- [`picocss`](https://picocss.com) for basic CSS while developing
+- [`lit`](https://lit.dev) for a simple but powerful wrapper around [Web Components](https://developer.mozilla.org/en-US/docs/Web/API/Web_components)
 
 Lastly, there are some dependencies that only benefit development
 
-- `typescript-server` comes bundled with vscode and can be used as an LSP with other editors using `ts_ls`
+- `tsserver` comes bundled with vscode and can be used as an LSP with other editors using [`typescript-language-server`](https://github.com/typescript-language-server/typescript-language-server)
   - Used for autocomplete, syntax highlighting, etc.
   - This can be configured with the `tsconfig.json` file in the root of the project
     - NOTE: your configuration should align with the `vite` config so you get in-editor feedback that aligns with how the build will be done.
