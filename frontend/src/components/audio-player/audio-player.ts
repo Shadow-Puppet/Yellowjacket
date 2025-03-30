@@ -1,9 +1,14 @@
 import { LitElement, html } from 'lit';
 import { customElement } from 'lit/decorators.js';
 import { Play } from '@go/player/Player';
+import './controls/player-controls';
+import './seekbar/seek-bar';
 
 const audioPlayer = () => html`
-<h1>Hello World</h1>
+<div>
+<player-controls></player-controls>
+<seek-bar></seek-bar>
+</div>
 `;
 
 @customElement('audio-player')
@@ -13,19 +18,4 @@ export class AudioPlayer extends LitElement {
     return audioPlayer();
   }
 
-  onPlayPauseButtonClick()  {
-    let playPauseButtonIcon = document.getElementById("playPauseButtonIcon");
-    try {
-      Play().then((result) => {
-        console.log(result)
-        playPauseButtonIcon.setAttribute("src", "/src/assets/images/icons/music/pause-solid.svg")
-      }).catch((err) => {
-        console.log("There is an error with playing")
-        console.error(err);
-      });
-    }
-    catch (err) {
-      console.error(err);
-    }
-  }
 }
