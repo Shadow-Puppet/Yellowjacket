@@ -7,4 +7,4 @@ export function ChangeState(arg1:player.PlayerState):Promise<void>;
 
 export function Init(arg1:context.Context):Promise<void>;
 
-export function Play():Promise<void>;
+export function Play(arg1:string):Promise<void>;

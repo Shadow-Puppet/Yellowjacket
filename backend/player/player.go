@@ -6,13 +6,23 @@ import (
 	"os"
 	"time"
 
+	"github.com/gopxl/beep"
+	"github.com/gopxl/beep/effects"
+	"github.com/gopxl/beep/generators"
 	"github.com/gopxl/beep/mp3"
 	"github.com/gopxl/beep/speaker"
 )
 
 type Player struct {
-	ctx   context.Context
-	state PlayerState
+	ctx             context.Context
+	state           PlayerState
+	currentFile     *os.File
+	format          beep.Format
+	baseStreamer    beep.Streamer
+	resampled       beep.Streamer
+	control         *beep.Ctrl
+	volume          *effects.Volume
+	speakerStreamer beep.Streamer
 }
 
 type PlayerState int
@@ -23,36 +33,136 @@ const (
 	Stopped
 )
 
+var speakerSampleRate = beep.SampleRate(44100)
+
 func NewPlayer() (*Player, error) {
-	return &Player{}, nil
+	return &Player{
+		state:        Stopped,
+		baseStreamer: generators.Silence(-1),
+		format: beep.Format{
+			SampleRate: speakerSampleRate,
+		},
+	}, nil
 }
 
-func (p *Player) Init(ctx context.Context) {
+func (p *Player) Init(ctx context.Context) error {
 	p.ctx = ctx
-	p.state = Stopped
+
+	// Initialize speaker
+	// TODO: allow user to change buffer size and speaker sample rate
+	err := speaker.Init(p.format.SampleRate, p.format.SampleRate.N(time.Second/10))
+	if err != nil {
+		return fmt.Errorf("failed to initialize speaker %w", err)
+	}
+	p.updateStreamers(p.baseStreamer, p.format.SampleRate)
+
+	return nil
 }
 
-func (p *Player) ChangeState(desiredState PlayerState) error {
+func (p *Player) updateStreamers(newBaseStreamer beep.Streamer, sr beep.SampleRate) error {
+	// set base streamer
+	p.baseStreamer = newBaseStreamer
+
+	// resample file stream to match speaker
+	// TODO: variable resample quality
+	p.resampled = beep.Resample(4, sr, speakerSampleRate, p.baseStreamer)
+
+	// wrap in ctrl streamer to allow play/pause
+	p.control = &beep.Ctrl{Streamer: p.resampled}
+
+	// wrap in volume streamer
+	p.volume = &effects.Volume{
+		Streamer: p.control,
+		Base:     2,
+		Volume:   0,
+		Silent:   false,
+	}
+
+	// set "final" streamer
+	p.speakerStreamer = p.volume
+
+	return nil
+}
+
+// TODO: proper state management extracted to function
+func (p *Player) changeState(desiredState PlayerState) error {
+	return nil
+}
+
+// reads a file and creates a streamer, also wraps necessary streamers
+func (p *Player) LoadFile(filePath string) error {
+	// opening file
+	f, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to open file %w", err)
+	}
+
+	// attempt to decode mp3 file and create streamer and format data
+	streamer, format, err := mp3.Decode(f)
+	if err != nil {
+		return fmt.Errorf("failed to decode mp3 %w", err)
+	}
+
+	p.updateStreamers(streamer, format.SampleRate)
+
 	return nil
 }
 
 func (p *Player) Play() error {
-	f, err := os.Open("test_data/music_library_test/03 anything.mp3")
-	if err != nil {
-		return fmt.Errorf("Failed to open file %w", err)
-	}
+	p.state = Playing
+	// hangs until song finishes playing
+	done := make(chan bool)
+	speaker.Play(beep.Seq(p.speakerStreamer, beep.Callback(func() {
+		p.state = Paused //called when streamer finishes
+		done <- true
+	})))
 
-	streamer, format, err := mp3.Decode(f)
-	if err != nil {
-		return fmt.Errorf("Failed to decode mp3 %w", err)
-	}
-	defer streamer.Close()
+	<-done
+	return nil
+}
 
-	err = speaker.Init(format.SampleRate, format.SampleRate.N(time.Second/10))
-	if err != nil {
-		return fmt.Errorf("Failed to initialize speaker %w", err)
-	}
-	speaker.Play(streamer)
-	select {}
+// TODO: reduce dupilcation in pause/resume functions
+func (p *Player) Pause() error {
+	speaker.Lock()
+	p.control.Paused = true
+	speaker.Unlock()
+	return nil
+}
+
+// TODO: reduce dupilcation in pause/resume functions
+func (p *Player) Resume() error {
+	speaker.Lock()
+	p.control.Paused = false
+	speaker.Unlock()
+	return nil
+}
+
+//Paraprasing info from the beep docs here:
+/*
+To INCREASE volume by 1 means to multiply the signal by Base.
+Volume = 0 means unchanged volume.
+Positive Volume value means increasing volume
+Negative Volume value means decreasing volume
+*/
+func (p *Player) SetVolume(desiredVolume UserVolume) error {
+	// clamp value between 1 and 100
+	volume := clampVolume(desiredVolume)
+
+	// Apply the volume settings
+	p.volume.Volume = float64(volume.ToPlayerVolume())
+	p.volume.Silent = volume == MinUserVol
+
+	return nil
+}
+func (p *Player) ChangeVolume(deltaVolume int) error {
+	return p.SetVolume(p.getUserVolume() + UserVolume(deltaVolume))
+}
+
+func (p *Player) getUserVolume() UserVolume {
+	return PlayerVolume(p.volume.Volume).ToUserVolume()
+}
+
+func (p *Player) MuteToggle() error {
+	p.volume.Silent = !p.volume.Silent
 	return nil
 }
