@@ -18,7 +18,7 @@ func GetUserConfigDirPath() (string, error) {
 	}
 	switch currentOS := runtime.GOOS; currentOS {
 	case "darwin":
-		fallthrough
+		path = fmt.Sprintf("/Users/%s/.config/yellowjacket", currentUser.Username)
 	case "linux":
 		path = fmt.Sprintf("/home/%s/.config/yellowjacket", currentUser.Username)
 	case "windows":
@@ -55,7 +55,7 @@ func getUserDataDirPath() (string, error) {
 	}
 	switch currentOS := runtime.GOOS; currentOS {
 	case "darwin":
-		fallthrough
+		path = fmt.Sprintf("/Users/%s/.local/share/yellowjacket", currentUser.Username)
 	case "linux":
 		path = fmt.Sprintf("/home/%s/.local/share/yellowjacket", currentUser.Username)
 	case "windows":
