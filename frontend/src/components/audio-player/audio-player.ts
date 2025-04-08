@@ -5,8 +5,8 @@ import './seekbar/seek-bar';
 
 const audioPlayer = () => html`
 <div>
-<player-controls></player-controls>
-<seek-bar></seek-bar>
+  <player-controls></player-controls>
+  <seek-bar></seek-bar>
 </div>
 `;
 

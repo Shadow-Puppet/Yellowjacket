@@ -31,6 +31,11 @@
       "@node_modules/*": ["./node_modules/*"]
     },
     // needed for Lit Elements
-    "experimentalDecorators": true
+    "experimentalDecorators": true,
+    // plugins
+    "plugins": [
+      {"name": "ts-lit-plugin"},
+      {"name": "typescript-lit-html-plugin"}
+    ]
   }
 }

@@ -5,7 +5,7 @@ import { Play } from '@go/player/Player';
 @customElement('player-controls')
 export class PlayerControls extends LitElement {
 
-  render() {
+  override render() {
     return html`
 <div>
   <button>
