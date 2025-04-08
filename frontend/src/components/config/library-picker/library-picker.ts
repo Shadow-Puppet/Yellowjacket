@@ -24,7 +24,7 @@ export class LibraryPicker extends LitElement {
       then((result) => {
         if (result.length === 0) { return; }
         this.currentLibraryDirectoryText = result;
-      }).catch((err) => { console.error(err) })
+      }).catch((err) => { console.error("error with getting current library directory: " + err) })
   }
 
   onSelectLibraryClick() {
@@ -34,11 +34,11 @@ export class LibraryPicker extends LitElement {
           SetDir(result).then(() => {
             this.currentLibraryDirectoryText = result;
           }).catch((err: string) => {
-            console.error("There is an error with saving selected directory: " + err);
+            console.error("error with saving selected directory: " + err);
           });
         })
         .catch((err) => {
-          console.error("There is an error with directory picker: " + err);
+          console.error("error with directory picker: " + err);
         });
     }
     catch (err) {
