@@ -9,10 +9,9 @@
 
     <meta charset="UTF-8" />
     <meta content="width=device-width, initial-scale=1.0" name="viewport" />
-    <link rel="stylesheet" type="text/css" href="/node_modules/@picocss/pico/css/pico.css">
     <title>yellowjacket - config</title>
 </head>
-<script src="./config.js" type="module"></script>
+<script src="./config.ts" type="module"></script>
 
 <body>
     <header class="container">
@@ -47,10 +46,7 @@
     </header>
     <hr />
     <main class="container">
-        <section id="library-selector">
-            <label id="library-directory-label">No Library Directory Selected</label>
-            <button onclick="dirPicker()">Choose Directory...</button>
-        </section>
+        <library-picker></library-picker>
     </main>
 </body>
 

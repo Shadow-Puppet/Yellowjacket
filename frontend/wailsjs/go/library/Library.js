@@ -9,3 +9,7 @@ export function GetDir() {
 export function Init(arg1) {
   return window['go']['library']['Library']['Init'](arg1);
 }
+
+export function SetDir(arg1) {
+  return window['go']['library']['Library']['SetDir'](arg1);
+}

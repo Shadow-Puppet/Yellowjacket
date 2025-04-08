@@ -16,6 +16,10 @@ type Config struct {
 }
 
 func newConfig(filePath string, data *configData) (*Config, error) {
+	conf := &Config{
+		filePath:   filePath,
+		configData: data,
+	}
 	// TODO make sure required fields have SOMETHING in them
 	// TODO Merge existing config with read in config
 	if data == nil {
@@ -24,10 +28,7 @@ func newConfig(filePath string, data *configData) (*Config, error) {
 	if err := data.validate(); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
-	return &Config{
-		filePath:   filePath,
-		configData: data,
-	}, nil
+	return conf, nil
 }
 
 type configData struct {
@@ -40,7 +41,7 @@ func (d *configData) validate() error {
 		return errors.New("nil library config")
 	}
 	if err := d.Library.Validate(); err != nil {
-		return fmt.Errorf("invalid library config: %s\n%w", d.Library, err)
+		return fmt.Errorf("invalid library config: %#v: %w", d.Library, err)
 	}
 	return nil
 }
@@ -59,7 +60,7 @@ func GetCurrentConfig() (*Config, error) {
 	}
 	configFilePath := path.Join(configDir, "config.toml")
 
-	// create the config obj with the filepath we got
+	// create the config obj with the filepath we got, initializing with default data
 	config, err := newConfig(configFilePath, defaultConfigData)
 	if err != nil {
 		return nil, fmt.Errorf("could not create new config: %w", err)
@@ -79,6 +80,12 @@ func GetCurrentConfig() (*Config, error) {
 	config, err = config.loadConfig()
 	if err != nil {
 		return nil, fmt.Errorf("could not load config file %s: %w", configFilePath, err)
+	}
+
+	// before we return the config, lets make sure sub configs can invoke saving when they need
+	err = config.updateSubConfigSaveFuncReferences()
+	if err != nil {
+		return nil, fmt.Errorf("could not update sub config save func references: %w", err)
 	}
 	return config, nil
 }
@@ -107,6 +114,12 @@ func (c *Config) loadConfig() (*Config, error) {
 		return nil, fmt.Errorf("could not create config from config file data at %s: %w", c.filePath, err)
 	}
 
+	// before we return the config, lets make sure sub configs can invoke saving when they need
+	err = config.updateSubConfigSaveFuncReferences()
+	if err != nil {
+		return nil, fmt.Errorf("could not update sub config save func references: %w", err)
+	}
+
 	return config, nil
 }
 
@@ -123,5 +136,10 @@ func (c *Config) WriteConfig() error {
 	if err != nil {
 		return fmt.Errorf("could not write config file: %w", err)
 	}
+	return nil
+}
+
+func (c *Config) updateSubConfigSaveFuncReferences() error {
+	c.Library.SaveFunc = c.WriteConfig
 	return nil
 }

@@ -5,3 +5,5 @@ import {context} from '../models';
 export function GetDir():Promise<string>;
 
 export function Init(arg1:context.Context):Promise<void>;
+
+export function SetDir(arg1:string):Promise<void>;

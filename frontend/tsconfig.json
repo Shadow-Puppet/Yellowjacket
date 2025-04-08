@@ -28,10 +28,12 @@
       "@go/*": ["./wailsjs/go/*"],
       "@components/*": ["./src/components/*"],
       "@assets/*": ["./src/assets/*"],
+      "@pages/*": ["./src/pages/*"],
       "@node_modules/*": ["./node_modules/*"]
     },
     // needed for Lit Elements
     "experimentalDecorators": true,
+    "useDefineForClassFields": false, // allows us to define properties as class fields
     // plugins
     "plugins": [
       {"name": "ts-lit-plugin"},

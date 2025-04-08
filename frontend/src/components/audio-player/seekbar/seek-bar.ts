@@ -8,7 +8,7 @@ const seekBar = () => html`
 @customElement('seek-bar')
 export class SeekBar extends LitElement {
 
-  render() {
+  override render() {
     return seekBar();
   }
 }

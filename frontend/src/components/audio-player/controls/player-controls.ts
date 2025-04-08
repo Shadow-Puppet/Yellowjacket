@@ -14,7 +14,7 @@ export class PlayerControls extends LitElement {
   <button>
     <img src="/src/assets/images/icons/music/skip-prev-solid.svg"></img>
   </button>
-  <button @click="${this.onPlayPauseButtonClick}">
+  <button @click="${this.onPlayPauseClick}">
     <img src="/src/assets/images/icons/music/play-solid.svg"></img>
   </button>
   <button>
@@ -27,14 +27,13 @@ export class PlayerControls extends LitElement {
 `;
   }
 
-  onPlayPauseButtonClick(event: { target: HTMLButtonElement; }) {
+  onPlayPauseClick(event: { target: HTMLButtonElement; }) {
     try {
       Play().then((result) => {
         console.log(result)
         event.target.setAttribute("src", "/src/assets/images/icons/music/pause-solid.svg")
       }).catch((err) => {
-        console.log("There is an error with playing")
-        console.error(err);
+        console.error("there is an error with playing " + err);
       });
     }
     catch (err) {
