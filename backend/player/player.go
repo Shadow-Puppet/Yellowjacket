@@ -3,6 +3,7 @@ package player
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"time"
 
@@ -19,6 +20,7 @@ type Player struct {
 	currentFile     *os.File
 	format          beep.Format
 	baseStreamer    beep.Streamer
+	seeker          beep.StreamSeeker
 	resampled       beep.Streamer
 	control         *beep.Ctrl
 	volume          *effects.Volume
@@ -54,14 +56,14 @@ func (p *Player) Init(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to initialize speaker %w", err)
 	}
-	p.updateStreamers(p.baseStreamer, p.format.SampleRate)
 
 	return nil
 }
 
-func (p *Player) updateStreamers(newBaseStreamer beep.Streamer, sr beep.SampleRate) error {
+func (p *Player) updateStreamers(newBaseStreamer beep.StreamSeeker, sr beep.SampleRate) error {
 	// set base streamer
 	p.baseStreamer = newBaseStreamer
+	p.seeker = newBaseStreamer
 
 	// resample file stream to match speaker
 	// TODO: variable resample quality
@@ -102,6 +104,8 @@ func (p *Player) LoadFile(filePath string) error {
 	if err != nil {
 		return fmt.Errorf("failed to decode mp3 %w", err)
 	}
+
+	p.currentFile = f
 
 	p.updateStreamers(streamer, format.SampleRate)
 
@@ -145,12 +149,14 @@ Positive Volume value means increasing volume
 Negative Volume value means decreasing volume
 */
 func (p *Player) SetVolume(desiredVolume UserVolume) error {
+	speaker.Lock()
 	// clamp value between 1 and 100
 	volume := clampVolume(desiredVolume)
 
 	// Apply the volume settings
 	p.volume.Volume = float64(volume.ToPlayerVolume())
 	p.volume.Silent = volume == MinUserVol
+	speaker.Unlock()
 
 	return nil
 }
@@ -165,4 +171,24 @@ func (p *Player) getUserVolume() UserVolume {
 func (p *Player) MuteToggle() error {
 	p.volume.Silent = !p.volume.Silent
 	return nil
+}
+
+// return the current position as an int between 0 and 100 to work with progress bar easily.
+func (p *Player) CurrentPosition() (float64, error) {
+	pos := 100.0 * float64(p.seeker.Position()) / float64(p.seeker.Len())
+	return pos, nil
+}
+
+// TODO: double check best type for percentage parameter
+// percentage comes from the progress bar as a value between 0 and 100
+func (p *Player) Seek(percentage int) error {
+	//take percentage value (0-100), make 0-1, multiply by total number of samples in stream
+	samples := int(math.Round((float64(percentage) / 100.0) * float64(p.seeker.Len())))
+	p.seeker.Seek(samples)
+	return nil
+}
+
+func (p *Player) TrackLengthInSeconds() (int, error) {
+	len := p.seeker.Len() / int(p.format.SampleRate)
+	return len, nil
 }
