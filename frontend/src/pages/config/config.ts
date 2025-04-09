@@ -1,1 +1,1 @@
-import '@components/config/library-picker/library-picker.ts';
+import '@components/config/options/library-picker.ts';
