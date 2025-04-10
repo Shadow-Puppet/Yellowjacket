@@ -174,9 +174,9 @@ func (p *Player) MuteToggle() error {
 }
 
 // return the current position as an int between 0 and 100 to work with progress bar easily.
-func (p *Player) CurrentPosition() (float64, error) {
-	pos := 100.0 * float64(p.seeker.Position()) / float64(p.seeker.Len())
-	return pos, nil
+func (p *Player) CurrentPosition() (int, error) {
+	pos := math.Round(100.0 * float64(p.seeker.Position()) / float64(p.seeker.Len()))
+	return int(pos), nil
 }
 
 // TODO: double check best type for percentage parameter

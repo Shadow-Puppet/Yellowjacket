@@ -5,6 +5,8 @@ import {player} from '../models';
 
 export function ChangeVolume(arg1:number):Promise<void>;
 
+export function CurrentPosition():Promise<number>;
+
 export function Init(arg1:context.Context):Promise<void>;
 
 export function LoadFile(arg1:string):Promise<void>;
@@ -17,4 +19,8 @@ export function Play():Promise<void>;
 
 export function Resume():Promise<void>;
 
+export function Seek(arg1:number):Promise<void>;
+
 export function SetVolume(arg1:player.UserVolume):Promise<void>;
+
+export function TrackLengthInSeconds():Promise<number>;
