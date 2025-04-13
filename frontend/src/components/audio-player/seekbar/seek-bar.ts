@@ -12,7 +12,7 @@ export class SeekBar extends SignalWatcher(LitElement) {
   progressIntervalMillis: number = 1000;
 
   @property()
-  isPlaying: boolean = false;
+  isProgressing: boolean = false;
 
   timerID: number = -1;
   private rangeRef = createRef<SlRange>();
@@ -38,13 +38,13 @@ export class SeekBar extends SignalWatcher(LitElement) {
     ${ref(this.rangeRef)}
     @sl-change="${(event: CustomEvent) => {
       this.setProgressValue((event.target as SlRange).value);
-      if(this.isPlaying) this.startProgress();
+      if(this.isProgressing) this.startProgress();
       else this.stopProgress();
       }}"
     @sl-input="${() => {
-      var playing = this.isPlaying;
+      var progressing = this.isProgressing;
       this.stopProgress();
-      this.isPlaying = playing;
+      this.isProgressing = progressing;
     }}"></sl-range>
     `;
   }
@@ -55,12 +55,12 @@ export class SeekBar extends SignalWatcher(LitElement) {
   }
 
   stopProgress(){
-    this.isPlaying = false;
+    this.isProgressing = false;
     clearInterval(this.timerID);
   }
 
   startProgress(){
-    this.isPlaying = true;
+    this.isProgressing = true;
     this.timerID = setInterval(this.incrementProgressValue, this.progressIntervalMillis);
   }
 
