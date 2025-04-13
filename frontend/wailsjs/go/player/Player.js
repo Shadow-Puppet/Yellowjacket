@@ -6,6 +6,10 @@ export function ChangeVolume(arg1) {
   return window['go']['player']['Player']['ChangeVolume'](arg1);
 }
 
+export function CurrentPosition() {
+  return window['go']['player']['Player']['CurrentPosition']();
+}
+
 export function Init(arg1) {
   return window['go']['player']['Player']['Init'](arg1);
 }
@@ -30,6 +34,14 @@ export function Resume() {
   return window['go']['player']['Player']['Resume']();
 }
 
+export function Seek(arg1) {
+  return window['go']['player']['Player']['Seek'](arg1);
+}
+
 export function SetVolume(arg1) {
   return window['go']['player']['Player']['SetVolume'](arg1);
+}
+
+export function TrackLengthInSeconds() {
+  return window['go']['player']['Player']['TrackLengthInSeconds']();
 }
