@@ -12,14 +12,14 @@ export class SeekBar extends SignalWatcher(LitElement) {
   progressIntervalMillis: number = 1000;
 
   @property()
-  isPlaying: boolean = true;
+  isPlaying: boolean = false;
 
   timerID: number = -1;
   private rangeRef = createRef<SlRange>();
 
   constructor(){
     super();
-    this.startProgress();
+    this.stopProgress();
   }
   static override styles = css`
   sl-range::part(base) {
@@ -33,9 +33,19 @@ export class SeekBar extends SignalWatcher(LitElement) {
   `;
   override render() {
     return html`
-    <sl-range value="${progress.get()}" ${ref(this.rangeRef)} @sl-change="${(event: CustomEvent) => {
+    <sl-range
+    value="${progress.get()}"
+    ${ref(this.rangeRef)}
+    @sl-change="${(event: CustomEvent) => {
       this.setProgressValue((event.target as SlRange).value);
-      }}"></sl-range>
+      if(this.isPlaying) this.startProgress();
+      else this.stopProgress();
+      }}"
+    @sl-input="${() => {
+      var playing = this.isPlaying;
+      this.stopProgress();
+      this.isPlaying = playing;
+    }}"></sl-range>
     `;
   }
 
