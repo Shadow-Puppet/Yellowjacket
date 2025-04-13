@@ -9,7 +9,7 @@ const progress = signal(20);
 @customElement('seek-bar')
 export class SeekBar extends SignalWatcher(LitElement) {
   @property()
-  trackLengthSeconds: number = 100;
+  progressIntervalMillis: number = 1000;
 
   @property()
   isPlaying: boolean = true;
@@ -23,52 +23,49 @@ export class SeekBar extends SignalWatcher(LitElement) {
   }
   static override styles = css`
   sl-range::part(base) {
-    --track-color-active: yellow;
+    --track-color-active: red;
     --track-color-inactive: white;
     --track-height: 6px;
-    --track-width: 50%
   }
   `;
   override render() {
     return html`
-    <sl-range value="${progress.get()}" ${ref(this.rangeRef)}></sl-range>
+    <sl-range value="${progress.get()}" ${ref(this.rangeRef)} @sl-change="${(event: CustomEvent) => {
+      this.setProgressValue((event.target as SlRange).value);
+      }}"></sl-range>
     `;
   }
 
-  init(trackLength: number){
-    this.trackLengthSeconds = trackLength;
+  init(interval: number, playing: boolean){
+    this.progressIntervalMillis = interval;
+    if(playing)this.startProgress
   }
-  
-  getSeekBarUpdateIntervalMillis(){
-    return this.trackLengthSeconds * 10;
-  }
-
-  // update progress update interval timer thing
-  // protected override update(changedProperties: PropertyValues): void {
-  //     if (changedProperties.has("trackLengthSeconds")){
-  //       this.stopProgress();
-  //       this.startProgress();
-  //     }
-  //     if(changedProperties.has("isPlaying")){
-  //       if(this.isPlaying){
-  //         this.startProgress();
-  //       }
-  //       else{
-  //         this.stopProgress();
-  //       }
-  //     }
-  // }
 
   stopProgress(){
+    this.isPlaying = false;
     clearInterval(this.timerID);
   }
 
   startProgress(){
-    this.timerID = setInterval(this.incrementProgressValue, this.getSeekBarUpdateIntervalMillis());
+    this.isPlaying = true;
+    this.timerID = setInterval(this.incrementProgressValue, this.progressIntervalMillis);
   }
 
+  setProgressValue(val: number){
+    if(val < 0) val = 0;
+    if(val > 100) val = 100;
+    progress.set(val);
+  }
+
+  setProgressInterval(intervalMillis: number){
+    if(intervalMillis < 10) intervalMillis = 10;
+    
+  }
   async incrementProgressValue(){
-    progress.set(progress.get() + 1);
+    if(progress.get() <100)
+    {
+      progress.set(progress.get() + 1);
+    }
   }
 }
 
