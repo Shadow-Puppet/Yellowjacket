@@ -1,0 +1,10 @@
+version: "2"
+sql:
+  - name: "yellowjacket"
+    engine: "sqlite"
+    queries: "./sql/queries"
+    schema: "./sql/schemas"
+    gen:
+      go:
+        package: "sql"
+        out: "sql"
