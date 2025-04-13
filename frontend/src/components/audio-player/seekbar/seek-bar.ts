@@ -27,6 +27,9 @@ export class SeekBar extends SignalWatcher(LitElement) {
     --track-color-inactive: white;
     --track-height: 6px;
   }
+  sl-range::part(form-control-input) {
+    --sl-color-primary-600: yellow;
+  }
   `;
   override render() {
     return html`
