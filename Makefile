@@ -3,3 +3,6 @@ dev:
 
 build:
 	wails build
+
+generate:
+	go generate ./...

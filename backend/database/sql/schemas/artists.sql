@@ -1,4 +1,4 @@
 CREATE TABLE artists (
-  id   INTEGER PRIMARY KEY,
+  id   int PRIMARY KEY,
   name text    NOT NULL
 );

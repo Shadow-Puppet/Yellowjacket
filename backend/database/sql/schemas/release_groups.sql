@@ -1,4 +1,5 @@
 CREATE TABLE release_groups (
-  id   INTEGER PRIMARY KEY,
-  name text    NOT NULL
+  id   int PRIMARY KEY,
+  name text    NOT NULL,
+  FOREIGN KEY(cover_art_id) REFERENCES cover_art(id)
 );

@@ -1,6 +1,7 @@
 CREATE TABLE audio_files (
-  id uuid PRIMARY KEY,
-  file_path text NOT NULL,
-  file_type text  NOT NULL,
-  length_seconds int NOT NULL
+  id int PRIMARY KEY,
+  file_path text NOT NULL UNIQUE,
+  length_milliseconds int NOT NULL,
+  FOREIGN KEY(file_type_id) REFERENCES file_types(id),
+  FOREIGN KEY(recording_id) REFERENCES recordings(id)
 );

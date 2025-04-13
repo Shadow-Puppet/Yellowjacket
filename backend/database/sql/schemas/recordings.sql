@@ -1,5 +1,6 @@
 CREATE TABLE recordings (
-  id   INTEGER PRIMARY KEY,
-  name text    NOT NULL
+  id   int PRIMARY KEY,
+  name text    NOT NULL,
+  FOREIGN KEY(artist_credit_id) REFERENCES artist_credit(id)
 );
 
