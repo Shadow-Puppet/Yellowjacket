@@ -34,6 +34,13 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Dependencies
+        uses: ConorMacBride/install-package@v1
+        with:
+          brew: pnpm
+          choco: pnpm
+          apt: pnpm alsa
+
       - name: Build wails
         uses: dAppServer/wails-build-action@main
         id: build
