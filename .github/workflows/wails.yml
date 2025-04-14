@@ -20,13 +20,13 @@ jobs:
       fail-fast: false
       matrix:
         build:
-          - name: 'yellowjacket'
+          - name: 'yellowjacket-linux'
             platform:  'linux/amd64'
             os: 'ubuntu-latest'
-          - name: 'yellowjacket'
+          - name: 'yellowjacket-windows'
             platform:  'windows/amd64'
             os: 'windows-latest'
-          - name: 'yellowjacket'
+          - name: 'yellowjacket-macos'
             platform:  'darwin/universal'
             os: 'macos-latest'
 
