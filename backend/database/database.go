@@ -1,9 +1,24 @@
 package database
 
-//go:generate sqlc generate
+import (
+	"database/sql"
+	"fmt"
 
-type DB struct{}
+	_ "modernc.org/sqlite"
+)
 
-func NewDB() (*DB, error) {
-	return &DB{}, nil
+//go:generate sqlc vet && sqlc generate
+
+type DB struct{
+	db *sql.DB
+}
+
+func NewDB(sqliteDBFilePath string) (*DB, error) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		return nil, fmt.Errorf("could not connect to sqlite database: %w", err)
+	}
+	return &DB{
+		db: db,
+	}, nil
 }
