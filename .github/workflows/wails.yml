@@ -1,5 +1,8 @@
 name: Wails build
 
+permissions:
+  contents: write
+
 on:
   push:
     tags:
@@ -39,7 +42,7 @@ jobs:
         with:
           brew: pnpm
           choco: pnpm
-          apt: pnpm alsa
+          apt: alsa
 
       - name: Build wails
         uses: dAppServer/wails-build-action@main
