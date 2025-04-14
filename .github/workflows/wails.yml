@@ -55,6 +55,9 @@ jobs:
           build-platform: ${{ matrix.build.platform }}
           go-version: '1.24'
 
+  release:
+    runs-on: ubuntu-latest
+    steps:
       - name: Release
         uses: softprops/action-gh-release@v2
         if: github.ref_type == 'tag'
