@@ -31,6 +31,7 @@
       "@pages/*": ["./src/pages/*"],
       "@node_modules/*": ["./node_modules/*"]
     },
+    "types": ["vite/client"],
     // needed for Lit Elements
     "experimentalDecorators": true,
     "useDefineForClassFields": false, // allows us to define properties as class fields
