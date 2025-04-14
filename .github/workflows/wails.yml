@@ -40,9 +40,10 @@ jobs:
       - name: Dependencies
         uses: ConorMacBride/install-package@v1
         with:
-          brew: pnpm
-          choco: pnpm
           apt: libasound2-dev
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
 
       - name: Build wails
         uses: dAppServer/wails-build-action@main
