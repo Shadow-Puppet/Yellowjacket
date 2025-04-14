@@ -61,7 +61,7 @@ jobs:
         with:
           prerelease: true
           body: |
-            # YellowJacket Release ${{ GITHUB_REF_NAME }}
+            # YellowJacket Release ${{ github.ref_name }}
 
             This is an early preview of YellowJacket. Please report any bugs to [our issues] page.
 
