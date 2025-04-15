@@ -1,0 +1,44 @@
+{
+  "compilerOptions": {
+    // base options
+    "esModuleInterop": true, // Helps mend a few of the fences between CommonJS and ES Modules.
+    "skipLibCheck": true, // Skips checking the types of .d.ts files. This is important for performance, because otherwise all node_modules will be checked.
+    "target": "esnext", // The version of JavaScript you're targeting.
+    "allowJs": true, // Allows you to import .js files. 
+    "moduleDetection": "force", // This option forces TypeScript to consider all files as modules. This helps to avoid 'cannot redeclare block-scoped variable' errors.
+    "isolatedModules": true, // This option prevents a few TS features which are unsafe when treating modules as isolated files.
+    "verbatimModuleSyntax": true, // This option forces you to use import type and export type, leading to more predictable behavior and fewer unnecessary imports.
+    // strictness
+    "strict": true, // Enables all strict type checking options.
+    "noUncheckedIndexedAccess": true, // Prevents you from accessing an array or object without first checking if it's defined.
+    "noImplicitOverride": true, // Makes the override keyword actually useful in classes.
+    // optional "noisy" options
+    "noImplicitReturns": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    // transpiling to js options
+    "module": "esnext", // Tells TypeScript what module syntax to use. 
+    "outDir": "dist", // Tells TypeScript where to put the compiled JavaScript files.
+    // running in the DOM
+    "lib": ["esnext", "dom", "dom.iterable"], // Tells TypeScript what built-in types to include.
+    // module resolution
+    "moduleResolution": "bundler",
+    "paths": { // path aliases to find modules
+      "@go/*": ["./wailsjs/go/*"],
+      "@components/*": ["./src/components/*"],
+      "@assets/*": ["./src/assets/*"],
+      "@pages/*": ["./src/pages/*"],
+      "@node_modules/*": ["./node_modules/*"]
+    },
+    "types": ["vite/client"],
+    // needed for Lit Elements
+    "experimentalDecorators": true,
+    "useDefineForClassFields": false, // allows us to define properties as class fields
+    // plugins
+    "plugins": [
+      {"name": "ts-lit-plugin"},
+      {"name": "typescript-lit-html-plugin"}
+    ]
+  }
+}

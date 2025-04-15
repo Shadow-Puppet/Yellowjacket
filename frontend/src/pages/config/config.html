@@ -2,12 +2,17 @@
 <html lang="en">
 
 <head>
+    <!-- manually including wails runtime -->
+    <meta name="wails-options" content="noautoinject" />
+    <script src="/wails/ipc.js"></script>
+    <script src="/wails/runtime.js"></script>
+
     <meta charset="UTF-8" />
     <meta content="width=device-width, initial-scale=1.0" name="viewport" />
-    <link href="./index.css" rel="stylesheet" />
-    <title>yellowjacket</title>
+    <link href="./config.css" rel="stylesheet" />
+    <title>yellowjacket - config</title>
 </head>
-<script src="/index.ts" type="module"></script>
+<script src="./config.ts" type="module"></script>
 
 <body>
     <header class="container">
@@ -15,8 +20,10 @@
             <ul>
                 <li>
                     <hgroup>
-                        <h1>YellowJacket</h1>
-                        <p>Music how it was meant to bee.</p>
+                        <a href="/index.html">
+                            <h1>YellowJacket</h1>
+                        </a>
+                        <p>Config</p>
                     </hgroup>
                 </li>
             </ul>
@@ -40,10 +47,8 @@
     </header>
     <hr />
     <main class="container">
+        <library-picker currentLibraryDirectoryText="hello world" ></library-picker>
     </main>
-    <footer>
-        <audio-player></audio-player>
-    </footer>
 </body>
 
 </html>
