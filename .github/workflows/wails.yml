@@ -76,6 +76,7 @@ jobs:
       - name: Download Artifacts
         uses: actions/download-artifact@v4
         with:
+          merge-multiple: true
           path: ${{ github.workspace }}/bin
       - name: Release
         uses: softprops/action-gh-release@v2
@@ -94,4 +95,4 @@ jobs:
             - Linux: `yellowjacket`
             - Windows: `yellowjacket.exe`
             - MacOS: `yellowjacket.app`
-          files: ${{ github.workspace }}/bin/*/*
+          files: ${{ github.workspace }}/bin/*
