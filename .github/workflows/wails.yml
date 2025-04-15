@@ -58,13 +58,13 @@ jobs:
           build-platform: ${{ matrix.build.platform }}
           go-version: '1.24'
           package: false
-          app-working-directory: /yj
+          app-working-directory: ${{ github.workspace }}
 
       - name: Upload Binaries
         uses: actions/upload-artifact@v4
         with:
           name: YellowJacket ${{ matrix.build.platform }}
-          path: /yj/build/bin/${{ matrix.build.bin-name }}
+          path: ${{ github.workspace }}/build/bin/${{ matrix.build.bin-name }}
 
   release:
     runs-on: ubuntu-latest
