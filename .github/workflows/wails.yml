@@ -24,10 +24,10 @@ jobs:
             platform:  'linux/amd64'
             os: 'ubuntu-latest'
             bin-name: 'yellowjacket'
-          - name: 'yellowjacket.exe'
+          - name: 'yellowjacket'
             platform:  'windows/amd64'
             os: 'windows-latest'
-            bin-name: 'yellowjacket'
+            bin-name: 'yellowjacket.exe'
           - name: 'yellowjacket'
             platform:  'darwin/universal'
             os: 'macos-latest'
@@ -74,6 +74,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: ${{ github.workspace }}/bin
+      - run: rm ${{ github.workspace }}/bin/yellowjacket.app.zip
       - name: Release
         uses: softprops/action-gh-release@v2
         if: github.ref_type == 'tag'
@@ -90,5 +91,5 @@ jobs:
 
             - Linux: `yellowjacket`
             - Windows: `yellowjacket.exe`
-            - MacOS: `yellowjacket.app.zip`
+            - MacOS: `yellowjacket.app`
           files: ${{ github.workspace }}/bin/*
