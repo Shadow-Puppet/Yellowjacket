@@ -63,7 +63,7 @@ jobs:
       - name: Upload Binaries
         uses: actions/upload-artifact@v4
         with:
-          name: YellowJacket ${{ matrix.build.platform }}
+          name: YellowJacket ${{ runner.os }}
           path: ${{ github.workspace }}/build/bin/${{ matrix.build.bin-name }}
 
   release:
