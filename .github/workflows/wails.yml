@@ -78,7 +78,7 @@ jobs:
         with:
           path: ${{ github.workspace }}/bin
       - name: Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@main
         if: github.ref_type == 'tag'
         with:
           prerelease: true
@@ -94,6 +94,4 @@ jobs:
             - Linux: `yellowjacket`
             - Windows: `yellowjacket.exe`
             - MacOS: `yellowjacket.app`
-          files: |
-            */bin/*
-            *\bin\*
+          files: ${{ github.workspace }}/bin/*
