@@ -24,14 +24,17 @@ jobs:
             platform:  'linux/amd64'
             os: 'ubuntu-latest'
             bin-name: 'yellowjacket'
+            artifact-name: 'yellowjacket'
           - name: 'yellowjacket'
             platform:  'windows/amd64'
             os: 'windows-latest'
-            bin-name: 'yellowjacket.exe'
+            bin-name: 'yellowjacket'
+            artifact-name: 'yellowjacket.exe'
           - name: 'yellowjacket'
             platform:  'darwin/universal'
             os: 'macos-latest'
             bin-name: 'yellowjacket.app'
+            artifact-name: 'yellowjacket.app'
 
     runs-on: ${{ matrix.build.os }}
     steps:
@@ -63,8 +66,8 @@ jobs:
       - name: Upload Binaries
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.build.bin-name }}
-          path: ${{ github.workspace }}/build/bin/*
+          name: ${{ matrix.build.artifact-name }}
+          path: ${{ github.workspace }}/build/bin/${{ matrix.build.bin-name }}
 
   release:
     runs-on: ubuntu-latest
