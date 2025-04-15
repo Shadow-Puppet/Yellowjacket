@@ -72,6 +72,8 @@ jobs:
     steps:
       - name: Download Artifacts
         uses: actions/download-artifact@v4
+        with:
+          path: ${{ github.workspace }}/bin
       - name: Release
         uses: softprops/action-gh-release@v2
         if: github.ref_type == 'tag'
@@ -89,4 +91,4 @@ jobs:
             - Linux: `yellowjacket`
             - Windows: `yellowjacket.exe`
             - MacOS: `yellowjacket.app.zip`
-          files: ${{ github.workspace }}/yellowjacket*
+          files: ${{ github.workspace }}/bin/*
