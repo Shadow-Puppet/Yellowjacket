@@ -82,7 +82,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: github.ref_type == 'tag'
         with:
-          prerelease: true
           body: |
             # YellowJacket Release ${{ github.ref_name }}
 
