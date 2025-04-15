@@ -64,7 +64,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.build.bin-name }}
-          path: ${{ github.workspace }}/build/bin/${{ matrix.build.name }}
+          path: ${{ github.workspace }}/build/bin/*
 
   release:
     runs-on: ubuntu-latest
