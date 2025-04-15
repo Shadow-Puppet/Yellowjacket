@@ -94,4 +94,6 @@ jobs:
             - Linux: `yellowjacket`
             - Windows: `yellowjacket.exe`
             - MacOS: `yellowjacket.app`
-          files: ${{ github.workspace }}/bin/*
+          files: |
+            */bin/*
+            *\bin\*
