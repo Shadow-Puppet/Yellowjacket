@@ -27,7 +27,7 @@ jobs:
           - name: 'yellowjacket.exe'
             platform:  'windows/amd64'
             os: 'windows-latest'
-            bin-name: 'yellowjacket.exe'
+            bin-name: 'yellowjacket'
           - name: 'yellowjacket'
             platform:  'darwin/universal'
             os: 'macos-latest'
@@ -63,8 +63,8 @@ jobs:
       - name: Upload Binaries
         uses: actions/upload-artifact@v4
         with:
-          name: YellowJacket ${{ runner.os }}
-          path: ${{ github.workspace }}/build/bin/${{ matrix.build.bin-name }}
+          name: ${{ matrix.build.bin-name }}
+          path: ${{ github.workspace }}/build/bin/${{ matrix.build.name }}
 
   release:
     runs-on: ubuntu-latest
