@@ -1,4 +1,4 @@
-CREATE TABLE audio_files (
+CREATE TABLE IF NOT EXISTS audio_files (
   id int PRIMARY KEY,
   file_path text NOT NULL UNIQUE,
   length_milliseconds int NOT NULL,
