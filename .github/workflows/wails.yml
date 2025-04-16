@@ -16,15 +16,6 @@ env:
 
 jobs:
   build-linux:
-    strategy:
-      matrix:
-        build:
-          - name: 'yellowjacket'
-            platform:  'windows/amd64'
-            os: 'windows-latest'
-            bin-name: 'yellowjacket'
-            artifact-name: 'yellowjacket.exe'
-
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -52,7 +43,7 @@ jobs:
           package: false
           app-working-directory: ${{ github.workspace }}
 
-      - run: find ${{ github.workspace }}/build -t f
+      - run: find ${{ github.workspace }}/build -type f
 
       - name: Upload Binaries
         uses: actions/upload-artifact@v4
@@ -83,7 +74,7 @@ jobs:
           package: false
           app-working-directory: ${{ github.workspace }}
 
-      - run: find ${{ github.workspace }}/build -t f
+      - run: find ${{ github.workspace }}/build -type f
 
       - name: Upload Binaries
         uses: actions/upload-artifact@v4
@@ -114,7 +105,7 @@ jobs:
           package: false
           app-working-directory: ${{ github.workspace }}
 
-      - run: dir ${{ github.workspace }}\build /s /b
+      - run: dir ${{ github.workspace }}\build /s/b
 
       - name: Upload Binaries
         uses: actions/upload-artifact@v4
