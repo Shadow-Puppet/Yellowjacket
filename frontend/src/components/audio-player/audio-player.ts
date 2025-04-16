@@ -12,7 +12,6 @@ const audioPlayer = () => html`
   <div style="width: 50%">
     <seek-bar></seek-bar>
   </div>
-  <sl-icon name="alarm"></sl-icon>
 </div>
 `;
 

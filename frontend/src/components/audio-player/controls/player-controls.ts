@@ -2,6 +2,14 @@ import { LitElement, html } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { Play, Pause } from '@go/player/Player';
 
+// assets
+import pauseSVG from "@assets/images/icons/music/pause-solid.svg"
+import playSVG from "@assets/images/icons/music/play-solid.svg"
+import shuffleSVG from "@assets/images/icons/music/shuffle.svg"
+import skipPrevSVG from "@assets/images/icons/music/skip-prev-solid.svg"
+import skipNextSVG from "@assets/images/icons/music/skip-next-solid.svg"
+import repeatSVG from "@assets/images/icons/music/repeat.svg"
+
 @customElement('player-controls')
 export class PlayerControls extends LitElement {
 
@@ -9,24 +17,23 @@ export class PlayerControls extends LitElement {
   isPlaying = false
 
   override render() {
-    var imagePath = this.isPlaying ? 
-      "/src/assets/images/icons/music/pause-solid.svg" : "/src/assets/images/icons/music/play-solid.svg"
+    var imagePath = this.isPlaying ? pauseSVG : playSVG
     return html`
     <div>
       <button>
-        <img src="/src/assets/images/icons/music/shuffle.svg"></img>
+        <img src="${shuffleSVG}"></img>
       </button>
       <button>
-        <img src="/src/assets/images/icons/music/skip-prev-solid.svg"></img>
+        <img src="${skipPrevSVG}"></img>
       </button>
       <button @click="${this.onPlayPauseClick}">
         <img src="${imagePath}"></img>
       </button>
       <button>
-        <img src="/src/assets/images/icons/music/skip-next-solid.svg"></img>
+        <img src="${skipNextSVG}"></img>
       </button>
       <button>
-        <img src="/src/assets/images/icons/music/repeat.svg"></img>
+        <img src="${repeatSVG}"></img>
       </button>
     </div>
     `;
