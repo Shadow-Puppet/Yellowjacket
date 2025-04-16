@@ -65,6 +65,10 @@ jobs:
           app-working-directory: ${{ github.workspace }}
 
       - run: find ${{ github.workspace }}/build -type f
+        if: ${{ matrix.build.platform }} != 'windows/amd64'
+
+      - run: find ${{ github.workspace }}\build -type f
+        if: ${{ matrix.build.platform }} == 'windows/amd64'
 
       - name: Upload Binaries
         uses: actions/upload-artifact@v4
