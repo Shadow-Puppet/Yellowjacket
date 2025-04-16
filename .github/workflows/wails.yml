@@ -105,7 +105,7 @@ jobs:
           package: false
           app-working-directory: ${{ github.workspace }}
 
-      - run: dir ${{ github.workspace }}\build\* /s/b
+      - run: dir "${{ github.workspace }}\build\" /s/b
 
       - name: Upload Binaries
         uses: actions/upload-artifact@v4
