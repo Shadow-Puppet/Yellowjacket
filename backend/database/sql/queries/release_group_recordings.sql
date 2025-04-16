@@ -8,7 +8,7 @@ WHERE id = ? LIMIT 1;
 
 -- name: UpdateReleaseGroupRecording :exec
 UPDATE release_group_recordings 
-SET release_group_id = ?
+SET release_group_id = ?, recording_id = ?
 WHERE id =?;
 
 -- name: DeleteReleaseGroupRecording :exec
