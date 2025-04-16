@@ -81,8 +81,8 @@ jobs:
       - name: Upload Binaries
         uses: actions/upload-artifact@v4
         with:
-          name: yellowjacket.app
-          path: ${{ github.workspace }}/build/bin/yellowjacket.app
+          name: yellowjacket.app.zip
+          path: ${{ github.workspace }}/build/bin/yellowjacket.app.zip
 
   build-windows:
     runs-on:  'windows-latest'
@@ -142,5 +142,5 @@ jobs:
 
             - Linux: `yellowjacket`
             - Windows: `yellowjacket.exe`
-            - MacOS: `yellowjacket.app`
+            - MacOS: `yellowjacket.app.zip`
           files: ${{ github.workspace }}/bin/*
