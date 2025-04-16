@@ -64,6 +64,8 @@ jobs:
           package: false
           app-working-directory: ${{ github.workspace }}
 
+      - run: find ${{ github.workspace }}/build -type f
+
       - name: Upload Binaries
         uses: actions/upload-artifact@v4
         with:
@@ -79,6 +81,7 @@ jobs:
         with:
           merge-multiple: true
           path: ${{ github.workspace }}/bin
+      - run: find ${{ github.workspace }}/bin -type f
       - name: Release
         uses: softprops/action-gh-release@v2
         if: github.ref_type == 'tag'
