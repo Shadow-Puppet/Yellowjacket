@@ -7,7 +7,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-//go:generate sqlc vet && sqlc generate
+//go:generate sqlc vet
+//go:generate sqlc generate
 
 type DB struct{
 	db *sql.DB

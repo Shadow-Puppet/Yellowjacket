@@ -9,14 +9,52 @@ import (
 	"context"
 )
 
-const getAuthor = `-- name: GetAuthor :one
-SELECT id, name FROM recordings
+const createRecording = `-- name: CreateRecording :one
+INSERT INTO recordings (name) VALUES (?)
+RETURNING id, name, artist_credit_id
+`
+
+func (q *Queries) CreateRecording(ctx context.Context, name string) (Recording, error) {
+	row := q.db.QueryRowContext(ctx, createRecording, name)
+	var i Recording
+	err := row.Scan(&i.ID, &i.Name, &i.ArtistCreditID)
+	return i, err
+}
+
+const deleteRecording = `-- name: DeleteRecording :exec
+DELETE FROM recordings 
+WHERE id =?
+`
+
+func (q *Queries) DeleteRecording(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, deleteRecording, id)
+	return err
+}
+
+const getRecording = `-- name: GetRecording :one
+SELECT id, name, artist_credit_id FROM recordings 
 WHERE id = ? LIMIT 1
 `
 
-func (q *Queries) GetAuthor(ctx context.Context, id int64) (Recording, error) {
-	row := q.db.QueryRowContext(ctx, getAuthor, id)
+func (q *Queries) GetRecording(ctx context.Context, id int64) (Recording, error) {
+	row := q.db.QueryRowContext(ctx, getRecording, id)
 	var i Recording
-	err := row.Scan(&i.ID, &i.Name)
+	err := row.Scan(&i.ID, &i.Name, &i.ArtistCreditID)
 	return i, err
+}
+
+const updateRecording = `-- name: UpdateRecording :exec
+UPDATE recordings 
+SET name = ?
+WHERE id =?
+`
+
+type UpdateRecordingParams struct {
+	Name string
+	ID   int64
+}
+
+func (q *Queries) UpdateRecording(ctx context.Context, arg UpdateRecordingParams) error {
+	_, err := q.db.ExecContext(ctx, updateRecording, arg.Name, arg.ID)
+	return err
 }

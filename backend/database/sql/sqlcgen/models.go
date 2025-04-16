@@ -15,19 +15,24 @@ type ArtistCredit struct {
 }
 
 type ArtistCreditArtist struct {
-	ID int64
+	ID       int64
+	ArtistID int64
+	CreditID int64
 }
 
 type AudioFile struct {
 	ID                 int64
 	FilePath           string
 	LengthMilliseconds int64
+	FileTypeID         int64
+	RecordingID        int64
 }
 
 type CoverArt struct {
 	ID         int64
 	IsEmbedded bool
 	FilePath   string
+	FileTypeID int64
 }
 
 type FileType struct {
@@ -36,15 +41,19 @@ type FileType struct {
 }
 
 type Recording struct {
-	ID   int64
-	Name string
+	ID             int64
+	Name           string
+	ArtistCreditID int64
 }
 
 type ReleaseGroup struct {
-	ID   int64
-	Name string
+	ID         int64
+	Name       string
+	CoverArtID int64
 }
 
 type ReleaseGroupRecording struct {
-	ID int64
+	ID             int64
+	ReleaseGroupID int64
+	RecordingID    int64
 }
