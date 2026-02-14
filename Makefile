@@ -2,7 +2,7 @@ VERSION ?= dev
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 LDFLAGS := -X 'main.version=$(VERSION)' -X 'main.commit=$(COMMIT)'
 
-dev: generate clean
+dev: setup generate clean
 	WEBKIT_DISABLE_DMABUF_RENDERER=1 wails dev -tags webkit2_41 -loglevel Debug -v 2
 
 build-dev: generate
