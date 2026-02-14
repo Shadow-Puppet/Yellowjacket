@@ -1,3 +1,9 @@
+## [1.0.3](https://github.com/onion-4-dinner/yellowjacket/compare/v1.0.2...v1.0.3) (2026-02-14)
+
+### Bug Fixes
+
+* use path.Join for embed.FS paths to fix Windows build ([672fe24](https://github.com/onion-4-dinner/yellowjacket/commit/672fe24ee99debf4a394fff7eec55f17b0e44476))
+
 ## [1.0.2](https://github.com/onion-4-dinner/yellowjacket/compare/v1.0.1...v1.0.2) (2026-02-14)
 
 ### Bug Fixes
