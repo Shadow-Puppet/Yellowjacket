@@ -36,9 +36,6 @@ importers:
       vite-plugin-static-copy:
         specifier: ^2.3.1
         version: 2.3.2(vite@6.3.5)
-      vite-tsconfig-paths:
-        specifier: ^5.1.4
-        version: 5.1.4(typescript@5.2.2)(vite@6.3.5)
 
 packages:
 
@@ -619,9 +616,6 @@ packages:
   globjoin@0.1.4:
     resolution: {integrity: sha512-xYfnw62CKG8nLkZBfWbhWwDw02CHty86jfPcc2cr3ZfeuK9ysoVPPEUxf21bAD/rWAgk52SuBrLJlefNy8mvFg==}
 
-  globrex@0.1.2:
-    resolution: {integrity: sha512-uHJgbwAMwNFf5mLst7IWLNg14x1CkeqglJb/K3doi4dw6q2IvAAmM/Y81kevy83wP+Sst+nutFTYOGg3d1lsxg==}
-
   graceful-fs@4.2.11:
     resolution: {integrity: sha512-RbJ5/jmFcNNCcDV5o9eTnBLJ/HszWV0P73bc+Ff4nS/rJj+YaS6IGyiOL0VoBYX+l1Wrl3k63h/KrH+nhJ0XvQ==}
 
@@ -953,16 +947,6 @@ packages:
   ts-simple-type@2.0.0-next.0:
     resolution: {integrity: sha512-A+hLX83gS+yH6DtzNAhzZbPfU+D9D8lHlTSd7GeoMRBjOt3GRylDqLTYbdmjA4biWvq2xSfpqfIDj2l0OA/BVg==}
 
-  tsconfck@3.1.5:
-    resolution: {integrity: sha512-CLDfGgUp7XPswWnezWwsCRxNmgQjhYq3VXHM0/XIRxhVrKw0M1if9agzryh1QS3nxjCROvV+xWxoJO1YctzzWg==}
-    engines: {node: ^18 || >=20}
-    hasBin: true
-    peerDependencies:
-      typescript: ^5.0.0
-    peerDependenciesMeta:
-      typescript:
-        optional: true
-
   typescript-lit-html-plugin@0.9.0:
     resolution: {integrity: sha512-Ux2I1sPpt2akNbRZiBAND9oA8XNE2BuVmDwsb7rZshJ9T8/Na2rICE5Tnuj9dPHdFUATdOGjVEagn1/v8T4gCQ==}
 
@@ -990,14 +974,6 @@ packages:
     engines: {node: ^18.0.0 || >=20.0.0}
     peerDependencies:
       vite: ^5.0.0 || ^6.0.0
-
-  vite-tsconfig-paths@5.1.4:
-    resolution: {integrity: sha512-cYj0LRuLV2c2sMqhqhGpaO3LretdtMn/BVX4cPLanIZuwwrkVl+lK84E/miEXkCHWXuq65rhNN4rXsBcOB3S4w==}
-    peerDependencies:
-      vite: '*'
-    peerDependenciesMeta:
-      vite:
-        optional: true
 
   vite@6.3.5:
     resolution: {integrity: sha512-cZn6NDFE7wdTpINgs++ZJ4N49W2vRp8LCKrn3Ob1kYNtOo21vfDoaV5GzBfLU4MovSAB8uNRm4jgzVQZ+mBzPQ==}
@@ -1582,8 +1558,6 @@ snapshots:
 
   globjoin@0.1.4: {}
 
-  globrex@0.1.2: {}
-
   graceful-fs@4.2.11: {}
 
   has-flag@3.0.0: {}
@@ -1922,10 +1896,6 @@ snapshots:
 
   ts-simple-type@2.0.0-next.0: {}
 
-  tsconfck@3.1.5(typescript@5.2.2):
-    optionalDependencies:
-      typescript: 5.2.2
-
   typescript-lit-html-plugin@0.9.0:
     dependencies:
       typescript-styled-plugin: 0.13.0
@@ -1956,17 +1926,6 @@ snapshots:
       p-map: 7.0.3
       picocolors: 1.1.1
       vite: 6.3.5
-
-  vite-tsconfig-paths@5.1.4(typescript@5.2.2)(vite@6.3.5):
-    dependencies:
-      debug: 4.4.0
-      globrex: 0.1.2
-      tsconfck: 3.1.5(typescript@5.2.2)
-    optionalDependencies:
-      vite: 6.3.5
-    transitivePeerDependencies:
-      - supports-color
-      - typescript
 
   vite@6.3.5:
     dependencies:

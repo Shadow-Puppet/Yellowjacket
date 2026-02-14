@@ -1,7 +1,18 @@
+import path from "path";
 import { defineConfig } from "vite";
-import tsConfigPaths from "vite-tsconfig-paths";
 
 export default defineConfig({
+    resolve: {
+        alias: {
+            "@go": path.resolve(__dirname, "wailsjs/go"),
+            "@components": path.resolve(__dirname, "src/components"),
+            "@assets": path.resolve(__dirname, "src/assets"),
+            "@pages": path.resolve(__dirname, "src/pages"),
+            "@runtime": path.resolve(__dirname, "wailsjs/runtime"),
+            "@utils": path.resolve(__dirname, "src/utils"),
+            "@store": path.resolve(__dirname, "src/store"),
+        },
+    },
     build: {
         rollupOptions: {
             input: {
@@ -10,9 +21,6 @@ export default defineConfig({
             },
         },
     },
-    plugins: [
-        tsConfigPaths(),
-    ],
     server: {
         hmr: {
             host: 'localhost',
