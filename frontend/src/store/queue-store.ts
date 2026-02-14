@@ -7,6 +7,8 @@ export interface QueueTrack {
   audioFileId: number;
   filePath: string;
   position: number;
+  title: string;
+  artist: string;
 }
 
 export type RepeatMode = 'off' | 'all' | 'one';

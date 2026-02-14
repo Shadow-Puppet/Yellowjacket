@@ -42,5 +42,9 @@
       {"name": "ts-lit-plugin"},
       {"name": "typescript-lit-html-plugin"}
     ]
-  }
+  },
+  "include": ["src", "wailsjs"],
+  // Wails-generated JS stubs use @ts-check with untyped patterns that
+  // violate strict mode. The companion .d.ts files provide the types.
+  "exclude": ["wailsjs/go/**/*.js"]
 }

@@ -61,6 +61,11 @@ jobs:
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev libgtk-3-dev libwebkit2gtk-4.1-dev
 
+      # The go:embed directive in main.go requires frontend/dist to exist.
+      # A stub suffices for vet/lint; the real build is verified separately.
+      - name: Create frontend dist stub
+        run: mkdir -p frontend/dist && touch frontend/dist/index.html
+
       - name: Go mod verify
         run: go mod verify
 
@@ -94,6 +99,10 @@ jobs:
 
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      # The go:embed directive in main.go requires frontend/dist to exist.
+      - name: Create frontend dist stub
+        run: mkdir -p frontend/dist && touch frontend/dist/index.html
 
       - name: Run tests
         run: go test -tags webkit2_41 -race -count=1 -timeout 120s ./...
