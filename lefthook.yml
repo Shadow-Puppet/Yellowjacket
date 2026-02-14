@@ -11,7 +11,7 @@ pre-commit:
 
     golangci-lint:
       glob: "*.go"
-      run: golangci-lint run --timeout 5m -tags webkit2_41 {staged_files}
+      run: golangci-lint run --timeout 5m --build-tags webkit2_41 ./...
 
     codegen-check:
       glob: "*.{go,sql,templ}"

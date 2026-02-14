@@ -32,6 +32,8 @@ type Library struct {
 }
 
 // NewLibrary creates a new library with the given configuration.
+// A nil config is permitted; the library will be inert until a valid
+// configuration is supplied via the LibraryConfigChanged event.
 func NewLibrary(
 	ctx context.Context,
 	logger *slog.Logger,
@@ -39,7 +41,7 @@ func NewLibrary(
 	db *database.DB,
 ) (*Library, error) {
 	if conf == nil {
-		return nil, errors.New("nil config for library")
+		conf = &Config{}
 	}
 
 	if err := conf.Validate(); err != nil {
