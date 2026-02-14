@@ -9,7 +9,6 @@ import (
 	"io/fs"
 	"log/slog"
 	"path"
-	"path/filepath"
 
 	_ "modernc.org/sqlite" // Register sqlite driver.
 	"yellowjacket/backend/database/sql/sqlcgen"
@@ -61,7 +60,7 @@ func NewDB(logger *slog.Logger) (*DB, error) {
 
 	for _, dirEntry := range dirEntries {
 		if !dirEntry.IsDir() {
-			filePath := filepath.Join("sql/schemas", dirEntry.Name())
+			filePath := path.Join("sql/schemas", dirEntry.Name())
 			sqlContent, err := fs.ReadFile(schemas, filePath)
 			if err != nil {
 				return nil, fmt.Errorf("could not read file %s: %w", filePath, err)
