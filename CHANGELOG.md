@@ -1,3 +1,9 @@
+## [1.0.2](https://github.com/onion-4-dinner/yellowjacket/compare/v1.0.1...v1.0.2) (2026-02-14)
+
+### Bug Fixes
+
+* resolve frontend build failures in CI ([330a53c](https://github.com/onion-4-dinner/yellowjacket/commit/330a53c9f4b1292840ad0f75479b76b3d429c954))
+
 ## [1.0.1](https://github.com/onion-4-dinner/yellowjacket/compare/v1.0.0...v1.0.1) (2026-02-14)
 
 ### Bug Fixes
