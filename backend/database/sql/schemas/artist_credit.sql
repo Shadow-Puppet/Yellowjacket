@@ -1,4 +1,4 @@
 CREATE TABLE IF NOT EXISTS artist_credit (
-  id   int PRIMARY KEY,
-  text string NOT NULL
+  id   INTEGER PRIMARY KEY,
+  text TEXT NOT NULL UNIQUE
 );

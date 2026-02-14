@@ -17,7 +17,8 @@
       "mode": "exec",
       "program": "${workspaceFolder}/build/bin/yellowjacket",
       "preLaunchTask": "build debug",
-      "cwd": "${workspaceFolder}"
+      "cwd": "${workspaceFolder}",
+      "outputMode": "remote",
     },
     {
       "name": "Wails: Dev yellowjacket",

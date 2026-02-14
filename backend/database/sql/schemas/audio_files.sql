@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS audio_files (
-  id int PRIMARY KEY,
+  id integer PRIMARY KEY,
   file_path text NOT NULL UNIQUE,
   length_milliseconds int NOT NULL,
   file_type_id int NOT NULL,

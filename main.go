@@ -1,45 +1,52 @@
+// Package main is the entry point for the Yellowjacket application.
 package main
 
 import (
-	"context"
 	"embed"
-	"fmt"
-	"yellowjacket/backend/config"
-	"yellowjacket/backend/frontendbindings"
-	"yellowjacket/backend/library"
-	"yellowjacket/backend/player"
+	"log/slog"
+	"os"
 
+	"github.com/golang-cz/devslog"
 	"github.com/wailsapp/wails/v2"
-	"github.com/wailsapp/wails/v2/pkg/logger"
-	"github.com/wailsapp/wails/v2/pkg/menu"
 	"github.com/wailsapp/wails/v2/pkg/options"
-	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
-	"github.com/wailsapp/wails/v2/pkg/options/linux"
-	"github.com/wailsapp/wails/v2/pkg/options/mac"
-	"github.com/wailsapp/wails/v2/pkg/options/windows"
+	"yellowjacket/backend"
+	"yellowjacket/backend/assets"
+	"yellowjacket/backend/logging"
+	"yellowjacket/internal/dev"
 )
 
 //go:embed all:frontend/dist
-var assets embed.FS
+var frontendDistAssets embed.FS
 
 func main() {
-	yjConf, err := config.GetCurrentConfig()
-	if err != nil {
-		panic(fmt.Errorf("could not get config: %w", err))
+	isDev := dev.IsDev
+	// create sLogger
+	var loglevel slog.Level
+	if isDev {
+		loglevel = slog.LevelDebug
+	} else {
+		loglevel = slog.LevelInfo
 	}
 
-	// Create objects that will be bound on the frontend
-	frontendBindings, err := frontendbindings.NewFrontendBindings()
+	sLogger := slog.New(devslog.NewHandler(os.Stdout, &devslog.Options{
+		HandlerOptions: &slog.HandlerOptions{
+			Level: loglevel,
+		},
+	}))
+	slog.SetDefault(sLogger)
+	sLogger.Info("starting yellowjacket")
+
+	// create asset handler
+	assetHandler, err := assets.NewAssetHandler(sLogger, frontendDistAssets)
 	if err != nil {
-		panic(fmt.Errorf("could not create frontendBindings obj: %w", err))
+		sLogger.Error("could not create asset handler", "err", err.Error())
+		os.Exit(1)
 	}
-	player, err := player.NewPlayer()
+
+	yjApp, err := backend.NewYellowJacketApp(sLogger, assetHandler)
 	if err != nil {
-		panic(fmt.Errorf("could not create player obj: %w", err))
-	}
-	library, err := library.NewLibrary(yjConf.Library)
-	if err != nil {
-		panic(fmt.Errorf("could not create library obj: %w", err))
+		sLogger.Error("problem initializing yellowjacket", "err", err.Error())
+		os.Exit(1)
 	}
 
 	// Create application with options
@@ -47,57 +54,23 @@ func main() {
 		Title:  "yellowjacket",
 		Width:  512,
 		Height: 384,
-		AssetServer: &assetserver.Options{
-			Assets:     assets,
-			Handler:    nil,
-			Middleware: nil,
-		},
-		LogLevel:         logger.TRACE,
+		Logger: logging.NewLogger(
+			sLogger,
+			[]string{},
+		),
+		AssetServer:      assetHandler.Options,
 		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
-		OnStartup: func(ctx context.Context) {
-			frontendBindings.Init(ctx)
-			library.Init(ctx)
-			player.Init(ctx)
-		},
-		Bind: []any{
-			frontendBindings,
-			library,
-			player,
-		},
-		DisableResize:      false,
-		Fullscreen:         false,
-		Frameless:          false, // TODO look into this
-		MinWidth:           512,
-		MinHeight:          384,
-		MaxWidth:           0,
-		MaxHeight:          0,
-		StartHidden:        false,
-		HideWindowOnClose:  false,
-		AlwaysOnTop:        false,
-		Menu:               &menu.Menu{},
-		Logger:             nil,
-		LogLevelProduction: 0,
-		OnDomReady: func(ctx context.Context) {
-		},
-		OnShutdown: func(ctx context.Context) {
-		},
-		OnBeforeClose: func(ctx context.Context) bool {
-			return false
-		},
-		EnumBind:                         []any{},
-		WindowStartState:                 0,
-		ErrorFormatter:                   nil,
-		EnableDefaultContextMenu:         false,
-		EnableFraudulentWebsiteDetection: false,
-		SingleInstanceLock:               &options.SingleInstanceLock{},
-		Windows:                          &windows.Options{},
-		Mac:                              &mac.Options{},
-		Linux:                            &linux.Options{},
-		Experimental:                     &options.Experimental{},
-		Debug:                            options.Debug{},
-		DragAndDrop:                      &options.DragAndDrop{},
+		OnStartup:        yjApp.OnStartup,
+		OnDomReady:       yjApp.OnDomReady,
+		OnShutdown:       yjApp.OnShutdown,
+		Bind:             yjApp.FEBindings,
+		MinWidth:         512,
+		MinHeight:        384,
+		MaxWidth:         0,
+		MaxHeight:        0,
 	})
 	if err != nil {
-		println("Error:", err.Error())
+		sLogger.Error("application error", "err", err.Error())
+		os.Exit(1)
 	}
 }

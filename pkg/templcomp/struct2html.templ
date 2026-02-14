@@ -1,0 +1,79 @@
+package templcomp
+
+import "reflect"
+import "log/slog"
+
+// Formable allows structs to implement custom form element generation code
+type Formable interface {
+	ToFormElement() templ.Component
+}
+
+// GetForm tries to take any type and return form HTML
+templ ToForm(i any, postURL templ.SafeURL, name string) {
+	<form hx-post={ postURL }>
+		@ToFormField(i, name)
+		<input type="submit"/>
+	</form>
+}
+
+// GetFormElement tries to take any type and return form field HTML
+templ ToFormField(x any, name string) {
+	{{
+		xValue := reflect.ValueOf(x)
+		xType := reflect.TypeOf(x)
+		xIsFormable := xType.Implements(reflect.TypeOf((*Formable)(nil)).Elem())
+	}}
+	if xIsFormable {
+		{{ toFormElementMethod := xValue.MethodByName("ToFormElement") }}
+		if toFormElementMethod.IsValid() {
+			@toFormElementMethod.Call([]reflect.Value{})[0].Interface().(templ.Component)
+			{{ return }}
+		} else {
+			{{ slog.Debug("invalid ToFormElement method on Formable", "xType", xType.Name()) }}
+		}
+	}
+	switch xType.Kind() {
+		case reflect.Func:
+			{{ return }}
+		case reflect.Pointer:
+			if xValue.IsNil() {
+				@ToFormField(reflect.New(xType.Elem()), name)
+			} else {
+				@ToFormField(xValue.Elem().Interface(), name)
+			}
+		case reflect.Struct:
+			<section>
+				<h3>{ name }</h3>
+				for i := 0; i < xType.NumField(); i++ {
+					{{
+					fieldType := xType.Field(i)
+					fieldValue := xValue.Field(i)
+					if !fieldType.IsExported() {
+						continue
+					}
+					fieldName := fieldType.Name
+					if tag := fieldType.Tag.Get("form"); len(tag) != 0 {
+						fieldName = tag
+					}
+					}}
+					if fieldType.Type.Kind() == reflect.Pointer {
+						@ToFormField(fieldValue.Interface(), fieldName)
+						{{ continue }}
+					} else if fieldType.Type.Kind() == reflect.Func {
+						{{ continue }}
+					}
+					<p>
+						<label for={ fieldName }>
+							{ fieldName }
+						</label>
+						@ToFormField(fieldValue.Interface(), fieldName)
+					</p>
+				}
+			</section>
+		case reflect.String:
+			<input name={ name } type="text"/>
+		default:
+			<p>unsupported: { xType.Name() }</p>
+			<!-- TODO: MORE TYPES -->
+	}
+}

@@ -4,4 +4,4 @@ import {context} from '../models';
 
 export function DirectoryPicker():Promise<string>;
 
-export function Init(arg1:context.Context):Promise<void>;
+export function SetContext(arg1:context.Context):Promise<void>;

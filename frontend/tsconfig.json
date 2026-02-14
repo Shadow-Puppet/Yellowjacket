@@ -29,7 +29,9 @@
       "@components/*": ["./src/components/*"],
       "@assets/*": ["./src/assets/*"],
       "@pages/*": ["./src/pages/*"],
-      "@node_modules/*": ["./node_modules/*"]
+      "@runtime/*": ["./wailsjs/runtime/*"],
+      "@utils/*": ["./src/utils/*"],
+      "@store/*": ["./src/store/*"]
     },
     "types": ["vite/client"],
     // needed for Lit Elements

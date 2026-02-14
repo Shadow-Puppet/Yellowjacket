@@ -1,10 +1,10 @@
 # YellowJacket
 
-A MusicBee inspired music player and library manager.
+How music was meant to bee.
 
 ## Install
 
-TODO: put release links here
+You can grab the latest release [here](https://github.com/LJ-Software/yellowjacket/releases/latest)
 
 ## Features
 
@@ -12,8 +12,7 @@ TODO: add feature list and screenshots here
 
 ## Development
 
-YellowJacket relies on [Wails](https://wails.io/docs/introduction) for development.
-Wails allows us to build a frontend with HTML/CSS/JS and backend with Golang.
+Development documentation can be found [here](./docs/dev/overview.md).
 
 ### Prerequisites
 

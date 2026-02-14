@@ -10,40 +10,29 @@
 <script src="/index.ts" type="module"></script>
 
 <body>
-    <header class="container">
-        <nav>
-            <ul>
-                <li>
-                    <hgroup>
-                        <h1>YellowJacket</h1>
-                        <p>Music how it was meant to bee.</p>
-                    </hgroup>
-                </li>
-            </ul>
-            <ul>
-                <li>
-                    <details class="dropdown">
-                        <summary role="button" class="outline">
-                            YJ
-                        </summary>
-                        <ul>
-                            <li>
-                                <a href="/src/pages/config/config.html">
-                                    <img src="/src/assets/images/icons/ui/settings.svg" />
-                                </a>
-                            </li>
-                        </ul>
-                    </details>
-                </li>
-            </ul>
-        </nav>
+    <header class="top-bar">
+        <hgroup>
+            <h1 class="title">YellowJacket</h1>
+            <h3 class="subtitle">Music how it was meant to bee.</h3>
+        </hgroup>
+        <a href="/src/pages/config/config.html">
+            <img src="/src/assets/images/icons/ui/settings.svg" />
+        </a>
     </header>
-    <hr />
-    <main class="container">
+    <div class="sidebar">
+        <app-sidebar></app-sidebar>
+    </div>
+    <main class="main-panel" id="main-content">
+        <track-list></track-list>
     </main>
-    <footer>
+    <footer class="bottom-bar">
+        <now-playing></now-playing>
         <audio-player></audio-player>
+        <button id="queue-button">
+            <wa-icon name="list"></wa-icon>
+        </button>
     </footer>
+    <queue-panel id="queue-panel"></queue-panel>
 </body>
 
 </html>

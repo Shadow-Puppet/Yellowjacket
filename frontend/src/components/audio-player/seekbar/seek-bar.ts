@@ -1,84 +1,169 @@
-import { LitElement, html, css, type PropertyValues } from 'lit';
-import { customElement, property} from 'lit/decorators.js';
-import {SignalWatcher, watch, signal} from '@lit-labs/signals';
+import { LitElement, html, css } from 'lit';
+import { customElement, state } from 'lit/decorators.js';
 import { ref, createRef } from 'lit/directives/ref.js';
-import { SlRange } from '@node_modules/@shoelace-style/shoelace/dist/shoelace';
+import WaSlider from '@awesome.me/webawesome/dist/components/slider/slider.js';
+import { formatSeconds } from '@utils/time';
+import { PlayerController } from '@store/controllers/player-controller';
 
-const progress = signal(20);
+const ProgressIntervalMillis = 1000;
 
 @customElement('seek-bar')
-export class SeekBar extends SignalWatcher(LitElement) {
-  @property()
-  progressIntervalMillis: number = 1000;
+export class SeekBar extends LitElement {
+  private player = new PlayerController(this);
+  private rangeRef = createRef<WaSlider>();
+  private timerID: number = -1;
+  private previousTrackPath: string | null = null;
 
-  @property()
-  isProgressing: boolean = false;
+  @state()
+  private seekValue: number = 0;
 
-  timerID: number = -1;
-  private rangeRef = createRef<SlRange>();
+  static override styles = css`
+    wa-slider {
+      --track-size: 6px;
+      flex: 1;
+      margin: 0 1em;
+      --wa-tooltip-background-color: #343a40;
+      --wa-tooltip-content-color: white;
+      --wa-tooltip-border-color: #343a40;
+      --wa-tooltip-border-radius: 4px;
+      --wa-tooltip-font-size: 0.875em;
+    }
 
-  constructor(){
-    super();
+    wa-slider::part(track) {
+      background: white;
+    }
+
+    wa-slider::part(indicator) {
+      background: yellow;
+    }
+
+    wa-slider::part(thumb) {
+      background: black;
+    }
+
+    #seek-bar-container {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+  `;
+
+  // ===================================================================
+  // DERIVED STATE
+  // ===================================================================
+
+  private get hasTrack(): boolean {
+    return this.player.currentTrack !== null;
+  }
+
+  private get trackLength(): number {
+    return this.player.currentTrack?.trackLength ?? 0;
+  }
+
+  private get isPlaying(): boolean {
+    return this.player.isPlaying;
+  }
+
+  // ===================================================================
+  // LIFECYCLE
+  // ===================================================================
+
+  override disconnectedCallback() {
+    super.disconnectedCallback();
     this.stopProgress();
   }
-  static override styles = css`
-  sl-range::part(base) {
-    --track-color-active: red;
-    --track-color-inactive: white;
-    --track-height: 6px;
-  }
-  sl-range::part(form-control-input) {
-    --sl-color-primary-600: yellow;
-  }
-  `;
-  override render() {
-    return html`
-    <sl-range
-    value="${progress.get()}"
-    ${ref(this.rangeRef)}
-    @sl-change="${(event: CustomEvent) => {
-      this.setProgressValue((event.target as SlRange).value);
-      if(this.isProgressing) this.startProgress();
-      else this.stopProgress();
-      }}"
-    @sl-input="${() => {
-      var progressing = this.isProgressing;
+
+  override updated() {
+    // Detect track change and reset seek position
+    const currentPath = this.player.currentTrack?.filePath ?? null;
+
+    if (currentPath !== this.previousTrackPath) {
+      this.previousTrackPath = currentPath;
+      this.seekValue = this.player.currentTrack?.seekPosition ?? 0;
       this.stopProgress();
-      this.isProgressing = progressing;
-    }}"></sl-range>
-    `;
-  }
+    }
 
-  init(interval: number, playing: boolean){
-    this.progressIntervalMillis = interval;
-    if(playing)this.startProgress
-  }
-
-  stopProgress(){
-    this.isProgressing = false;
-    clearInterval(this.timerID);
-  }
-
-  startProgress(){
-    this.isProgressing = true;
-    this.timerID = setInterval(this.incrementProgressValue, this.progressIntervalMillis);
-  }
-
-  setProgressValue(val: number){
-    if(val < 0) val = 0;
-    if(val > 100) val = 100;
-    progress.set(val);
-  }
-
-  setProgressInterval(intervalMillis: number){
-    if(intervalMillis < 10) intervalMillis = 10;
-    
-  }
-  async incrementProgressValue(){
-    if(progress.get() <100)
-    {
-      progress.set(progress.get() + 1);
+    // Start/stop progress interval based on playback state
+    if (this.isPlaying && this.hasTrack) {
+      this.startProgress();
+    } else {
+      this.stopProgress();
     }
   }
-}
 
+  // ===================================================================
+  // PROGRESS INTERVAL
+  // ===================================================================
+
+  private stopProgress() {
+    if (this.timerID !== -1) {
+      clearInterval(this.timerID);
+      this.timerID = -1;
+    }
+  }
+
+  private startProgress() {
+    // Don't start multiple intervals
+    if (this.timerID !== -1) {
+      return;
+    }
+
+    this.timerID = window.setInterval(() => {
+      if (this.seekValue < this.trackLength) {
+        this.seekValue += 1;
+      }
+    }, ProgressIntervalMillis);
+  }
+
+  // ===================================================================
+  // EVENT HANDLERS
+  // ===================================================================
+
+  private handleChange(e: Event) {
+    const newSeekVal = (e.target as WaSlider).value;
+    this.setSeekValue(newSeekVal);
+    this.player.seek(newSeekVal);
+
+    if (this.isPlaying) {
+      this.startProgress();
+    }
+  }
+
+  // Stops progress while user is dragging the thumb
+  private handleInput() {
+    this.stopProgress();
+  }
+
+  private setSeekValue(val: number) {
+    if (val < 0) val = 0;
+    if (val > this.trackLength) val = this.trackLength;
+    this.seekValue = val;
+  }
+
+  // ===================================================================
+  // RENDER
+  // ===================================================================
+
+  override render() {
+    const elapsedTime = this.hasTrack ? formatSeconds(this.seekValue) : '--:--';
+    const remainingTime = this.hasTrack
+      ? formatSeconds(this.trackLength - this.seekValue)
+      : '--:--';
+
+    return html`
+      <div id="seek-bar-container">
+        <small>${elapsedTime}</small>
+        <wa-slider
+          .value="${this.seekValue}"
+          max="${this.trackLength}"
+          ?with-tooltip="${this.hasTrack}"
+          .valueFormatter="${this.hasTrack ? formatSeconds : null}"
+          ${ref(this.rangeRef)}
+          @change="${this.handleChange}"
+          @input="${this.handleInput}"
+        ></wa-slider>
+        <small>${remainingTime}</small>
+      </div>
+    `;
+  }
+}

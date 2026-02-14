@@ -1,0 +1,37 @@
+// Centralized event name constants for Wails frontend/backend communication.
+// These names must match the corresponding event names in the Go backend.
+
+export const Events = {
+    // Playback control events
+    PlaybackStateChanged: "PlaybackStateChanged",
+    PlaybackFinished: "PlaybackFinished",
+    RequestPlay: "RequestPlay",
+    RequestPause: "RequestPause",
+    RequestLoadFile: "RequestLoadFile",
+
+    // Track events
+    TrackChanged: "TrackChanged",
+
+    // Seek events
+    Seek: "Seek",
+    SeekFailed: "SeekFailed",
+
+    // Volume events
+    RequestSetVolume: "RequestSetVolume",
+    VolumeChanged: "VolumeChanged",
+
+    // Queue events
+    QueueChanged: "QueueChanged",
+    RequestNext: "RequestNext",
+    RequestPrevious: "RequestPrevious",
+    RequestSetQueue: "RequestSetQueue",
+    RequestAddToQueue: "RequestAddToQueue",
+    RequestPlayNext: "RequestPlayNext",
+    RequestRemoveFromQueue: "RequestRemoveFromQueue",
+    RequestToggleShuffle: "RequestToggleShuffle",
+    RequestCycleRepeat: "RequestCycleRepeat",
+    RequestAddTracksToQueue: "RequestAddTracksToQueue",
+    RequestPlayTracksNext: "RequestPlayTracksNext",
+} as const;
+
+export type EventName = (typeof Events)[keyof typeof Events];

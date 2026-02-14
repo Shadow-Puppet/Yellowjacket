@@ -1,0 +1,23 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      htmx:
+        specifier: ^0.0.2
+        version: 0.0.2
+
+packages:
+
+  htmx@0.0.2:
+    resolution: {integrity: sha512-FfUo3ynRYr6Ra4vqmS4Nq9g47607FSmvHYCOuU8bvbW8s4kPMhAmCbMBjuW2cEZI6DauaFNZKinfgV91cc9Feg==}
+    hasBin: true
+
+snapshots:
+
+  htmx@0.0.2: {}

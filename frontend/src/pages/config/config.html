@@ -16,38 +16,15 @@
 
 <body>
     <header class="container">
-        <nav>
-            <ul>
-                <li>
-                    <hgroup>
-                        <a href="/index.html">
-                            <h1>YellowJacket</h1>
-                        </a>
-                        <p>Config</p>
-                    </hgroup>
-                </li>
-            </ul>
-            <ul>
-                <li>
-                    <details class="dropdown">
-                        <summary role="button" class="outline">
-                            YJ
-                        </summary>
-                        <ul>
-                            <li>
-                                <a href="/src/pages/config/config.html">
-                                    <img src="/src/assets/images/icons/ui/settings.svg" />
-                                </a>
-                            </li>
-                        </ul>
-                    </details>
-                </li>
-            </ul>
-        </nav>
+        <hgroup>
+            <a href="/index.html">
+                <h1>YellowJacket</h1>
+            </a>
+        </hgroup>
     </header>
     <hr />
     <main class="container">
-        <library-picker currentLibraryDirectoryText="hello world" ></library-picker>
+        <div hx-get="/config" hx-trigger="load"></div>
     </main>
 </body>
 

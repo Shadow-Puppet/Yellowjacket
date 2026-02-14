@@ -1,145 +1,135 @@
+// Package config manages application configuration persistence.
 package config
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"net/http"
 	"os"
 	"path"
-	"yellowjacket/backend/library"
 
 	"github.com/BurntSushi/toml"
+	"yellowjacket/backend/library"
+	"yellowjacket/backend/system"
 )
 
+// Config represents the application configuration.
 type Config struct {
-	filePath string // required
-	*configData
+	ctx      context.Context
+	logger   *slog.Logger
+	serveMux *http.ServeMux
+	filePath string          // required
+	Library  *library.Config `form:"Library" schema:"library,required"`
 }
 
-func newConfig(filePath string, data *configData) (*Config, error) {
+// NewConfig creates a new config by loading it from disk.
+func NewConfig(logger *slog.Logger) (*Config, error) {
+	confDir, err := system.GetUserConfigDirPath()
+	if err != nil {
+		return nil, fmt.Errorf("could not get user config directory: %w", err)
+	}
+
 	conf := &Config{
-		filePath:   filePath,
-		configData: data,
+		filePath: path.Join(confDir, "config.toml"),
+		serveMux: http.NewServeMux(),
 	}
-	// TODO make sure required fields have SOMETHING in them
-	// TODO Merge existing config with read in config
-	if data == nil {
-		return nil, errors.New("nil config")
+	conf.logger = logger.WithGroup("config").With("config", conf)
+	conf.serveMux.HandleFunc("/", conf.handle)
+
+	if err := conf.Load(); err != nil {
+		return nil, fmt.Errorf("could not load config: %w", err)
 	}
-	if err := data.validate(); err != nil {
+
+	if err := conf.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
+
 	return conf, nil
 }
 
-type configData struct {
-	Library *library.Config
-}
+// Validate returns errors if there is a breaking issue with the config.
+func (c *Config) Validate() error {
+	var configErrs error
 
-// return errors if there is a *breaking* issue with the config
-func (d *configData) validate() error {
-	if d.Library == nil {
-		return errors.New("nil library config")
-	}
-	if err := d.Library.Validate(); err != nil {
-		return fmt.Errorf("invalid library config: %#v: %w", d.Library, err)
-	}
-	return nil
-}
-
-var defaultConfigData *configData = &configData{
-	Library: library.DefaultConfig,
-}
-
-// GetCurrentConfig will load and return the config
-// reading the config file in the user's config directory
-func GetCurrentConfig() (*Config, error) {
-	// get the config file location
-	configDir, err := GetUserConfigDirPath()
-	if err != nil {
-		return nil, fmt.Errorf("could not get user config directory path: %w", err)
-	}
-	configFilePath := path.Join(configDir, "config.toml")
-
-	// create the config obj with the filepath we got, initializing with default data
-	config, err := newConfig(configFilePath, defaultConfigData)
-	if err != nil {
-		return nil, fmt.Errorf("could not create new config: %w", err)
-	}
-	config.filePath = configFilePath
-
-	// does the config file alaeady exist?
-	// if not, create it
-	_, err = os.Stat(configFilePath)
-	if os.IsNotExist(err) {
-		if err := config.WriteConfig(); err != nil {
-			return nil, fmt.Errorf("could not write config: %w", err)
+	if c.Library != nil {
+		if len(c.Library.DirectoryPath) != 0 {
+			if err := c.Library.Validate(); err != nil {
+				configErrs = errors.Join(configErrs, err)
+			}
 		}
 	}
 
-	// now that we have our config file, load it in
-	config, err = config.loadConfig()
-	if err != nil {
-		return nil, fmt.Errorf("could not load config file %s: %w", configFilePath, err)
+	if configErrs != nil {
+		return fmt.Errorf("one or more config parts are invalid: %w", configErrs)
 	}
 
-	// before we return the config, lets make sure sub configs can invoke saving when they need
-	err = config.updateSubConfigSaveFuncReferences()
-	if err != nil {
-		return nil, fmt.Errorf("could not update sub config save func references: %w", err)
-	}
-	return config, nil
+	return nil
 }
 
-func (c *Config) loadConfig() (*Config, error) {
+// Load reads and parses the config file from disk.
+func (c *Config) Load() error {
+	if _, err := os.Stat(c.filePath); err != nil {
+		if os.IsNotExist(err) {
+			c.logger.Debug("no config file exists, creating empty config")
+
+			if err := c.Save(); err != nil {
+				return fmt.Errorf(
+					"could not save empty config to file (%s): %w",
+					c.filePath,
+					err,
+				)
+			}
+		} else {
+			return fmt.Errorf("could not get file info (%s): %w", c.filePath, err)
+		}
+	}
+
 	// read in the file
 	confFileData, err := os.ReadFile(c.filePath)
 	if err != nil {
-		return nil, fmt.Errorf("problem reading config file %s: %w", c.filePath, err)
+		return fmt.Errorf("problem reading config file %s: %w", c.filePath, err)
 	}
 
 	// parse it into the config struct
-	var confData configData
-	_, err = toml.Decode(string(confFileData), &confData)
+	_, err = toml.Decode(string(confFileData), c)
 	if err != nil {
-		return nil, fmt.Errorf("problem parsing config file %s: %w", c.filePath, err)
+		return fmt.Errorf("problem parsing config file %s: %w", c.filePath, err)
 	}
 
 	// validate the config
-	if err = confData.validate(); err != nil {
-		return nil, fmt.Errorf("invalid config file at %s: %w", c.filePath, err)
+	if err = c.Validate(); err != nil {
+		return fmt.Errorf("invalid config file at %s: %w", c.filePath, err)
 	}
 
-	config, err := newConfig(c.filePath, &confData)
-	if err != nil {
-		return nil, fmt.Errorf("could not create config from config file data at %s: %w", c.filePath, err)
-	}
+	c.logger.Debug("loaded config file", "file", c.filePath)
 
-	// before we return the config, lets make sure sub configs can invoke saving when they need
-	err = config.updateSubConfigSaveFuncReferences()
-	if err != nil {
-		return nil, fmt.Errorf("could not update sub config save func references: %w", err)
-	}
-
-	return config, nil
+	return nil
 }
 
-func (c *Config) WriteConfig() error {
-	if err := c.validate(); err != nil {
+// Save writes the config to disk.
+func (c *Config) Save() error {
+	if err := c.Validate(); err != nil {
 		return fmt.Errorf("invalid config: %w", err)
 	}
+
 	confFileData, err := toml.Marshal(c)
 	if err != nil {
 		return fmt.Errorf("could not marshal config struct: %w", err)
 	}
 
-	err = os.WriteFile(c.filePath, confFileData, os.FileMode(int(0666)))
+	err = os.WriteFile(c.filePath, confFileData, os.FileMode(int(0o666)))
 	if err != nil {
-		return fmt.Errorf("could not write config file: %w", err)
+		return fmt.Errorf("could not write config file (%s): %w", c.filePath, err)
 	}
+
+	c.logger.Debug("saved config to file", "file", c.filePath)
+
 	return nil
 }
 
-func (c *Config) updateSubConfigSaveFuncReferences() error {
-	c.Library.SaveFunc = c.WriteConfig
-	return nil
+// SetContext sets the Wails runtime context for event emission.
+func (c *Config) SetContext(ctx context.Context) {
+	c.ctx = ctx
 }

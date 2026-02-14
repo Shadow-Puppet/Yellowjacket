@@ -1,0 +1,38 @@
+version: "2"
+linters:
+  default: standard
+  enable:
+    - canonicalheader
+    - copyloopvar
+    - dupword
+    - err113
+    - errorlint
+    - exptostd
+    - gocritic
+    - godot
+    - goheader
+    - iface
+    - importas
+    - intrange
+    - mirror
+    - misspell
+    - nakedret
+    - nlreturn
+    - nolintlint
+    - perfsprint
+    - protogetter
+    - revive
+    - sloglint
+    - tagalign
+    - testifylint
+    - usestdlibvars
+    - usetesting
+    - whitespace
+    - wsl
+formatters:
+  enable:
+    - gci
+    - gofmt
+    - gofumpt
+    - goimports
+    - golines

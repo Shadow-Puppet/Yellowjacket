@@ -1,0 +1,39 @@
+package library
+
+templ (d Directory) ToFormElement() {
+	<script>
+  function selectLibraryDirectory(pElement) {
+    try {
+      window.DirectoryPicker()
+        .then((result) => {
+          if (result.length != 0) {
+            pElement.value = result;
+          }
+        })
+        .catch((err) => {
+          console.error("error with directory picker: " + err);
+        });
+    }
+    catch (err) {
+      console.error(err);
+    }
+  }
+  function scanLibrary(button) {
+    button.disabled = true;
+    button.textContent = "Scanning...";
+    window.Scan()
+      .then(() => {
+        button.textContent = "Scan Library";
+        button.disabled = false;
+      })
+      .catch((err) => {
+        console.error("error scanning library: " + err);
+        button.textContent = "Scan Library";
+        button.disabled = false;
+      });
+  }
+  </script>
+	<button type="button" onclick="selectLibraryDirectory(this.nextElementSibling)">Select</button>
+	<input type="text" name="library.directory" value={ d } readonly/>
+	<button type="button" onclick="scanLibrary(this)">Scan Library</button>
+}

@@ -1,6 +1,5 @@
 import { LitElement, html } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
-import { GetDir, SetDir } from '@go/library/Library.js';
 import { DirectoryPicker } from '@go/frontendbindings/FrontendBindings.js';
 
 @customElement('library-picker')

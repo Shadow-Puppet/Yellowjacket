@@ -1,25 +1,34 @@
-import { LitElement, html } from 'lit';
+import { LitElement, html, css } from 'lit';
 import { customElement } from 'lit/decorators.js';
 import './controls/player-controls';
 import './seekbar/seek-bar';
-import '@go/player/Player';
-import '@shoelace-style/shoelace/dist/components/icon/icon.js';
-
-
-const audioPlayer = () => html`
-<div>
-  <player-controls></player-controls>
-  <div style="width: 50%">
-    <seek-bar></seek-bar>
-  </div>
-</div>
-`;
+import './volume-control/volume-control';
 
 @customElement('audio-player')
 export class AudioPlayer extends LitElement {
+  static override styles = css`
+    .audio-player-container {
+      display: flex;
+      align-items: center;
+      gap: 0.5em;
+    }
+
+    .player-main {
+      flex: 1;
+    }
+  `;
 
   override render() {
-    return audioPlayer();
+    return html`
+      <div class="audio-player-container">
+        <div class="player-main">
+          <player-controls></player-controls>
+          <div>
+            <seek-bar></seek-bar>
+          </div>
+        </div>
+        <volume-control></volume-control>
+      </div>
+    `;
   }
-
 }
