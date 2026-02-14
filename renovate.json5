@@ -1,0 +1,123 @@
+// Renovate configuration for YellowJacket.
+// Self-hosted via .github/workflows/renovate.yml — no external app required.
+//
+// Design decisions:
+//   - PR titles use "chore(deps):" prefix to satisfy commitlint and avoid
+//     triggering a semantic-release version bump on merge.
+//   - Go and frontend (pnpm) dependency updates are grouped separately to keep
+//     PRs reviewable and CI matrix manageable.
+//   - GitHub Actions are tracked and grouped into a single PR.
+//   - The custom beep fork (TheCodeOfCaleb/beep) is excluded from updates.
+//   - Go tool directives (templ, sqlc, lefthook) are tracked automatically.
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+
+  // Inherit sensible defaults (schedule, automerge policies, etc.).
+  "extends": [
+    "config:recommended",
+    "docker:pinDigests",
+    ":semanticCommits",
+    ":semanticCommitTypeAll(chore)",
+    ":semanticCommitScopeDisabled",
+    "schedule:weekends",
+  ],
+
+  // Use conventional-commit PR titles that satisfy the commitlint job.
+  "commitMessagePrefix": "chore(deps):",
+  "commitMessageAction": "update",
+
+  // Let CI pass before flagging PRs as ready.
+  "prCreation": "not-pending",
+  "prHourlyLimit": 3,
+  "prConcurrentLimit": 5,
+
+  // Keep the lockfile in sync.
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 6am on monday"],
+  },
+
+  // ── Manager-specific settings ──────────────────────────────
+  "gomod": {
+    "enabled": true,
+    // Let Renovate run `go mod tidy` after bumping versions.
+    "postUpdateOptions": ["gomodTidy"],
+  },
+
+  "npm": {
+    "enabled": true,
+    // Lockfile lives in frontend/, Renovate auto-detects this.
+  },
+
+  // ── Package rules ──────────────────────────────────────────
+  "packageRules": [
+    // 1. Group all non-major Go dependency updates.
+    {
+      "description": "Group minor/patch Go dependency updates",
+      "matchManagers": ["gomod"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "groupName": "go dependencies (non-major)",
+    },
+
+    // 2. Group all non-major frontend dependency updates.
+    {
+      "description": "Group minor/patch frontend dependency updates",
+      "matchManagers": ["npm"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "frontend dependencies (non-major)",
+    },
+
+    // 3. Group GitHub Actions updates.
+    {
+      "description": "Group GitHub Actions updates",
+      "matchManagers": ["github-actions"],
+      "groupName": "github actions",
+    },
+
+    // 4. Ignore the custom beep fork — it's manually managed.
+    {
+      "description": "Ignore custom beep fork (manually managed)",
+      "matchPackageNames": ["github.com/TheCodeOfCaleb/beep/v2"],
+      "enabled": false,
+    },
+
+    // 5. Major updates get individual PRs for careful review.
+    {
+      "description": "Separate PRs for major updates",
+      "matchUpdateTypes": ["major"],
+      "groupName": null,
+      "commitMessagePrefix": "chore(deps)!:",
+    },
+
+    // 6. Auto-merge patch-level updates for dev dependencies.
+    {
+      "description": "Auto-merge patch updates for frontend devDependencies",
+      "matchManagers": ["npm"],
+      "matchDepTypes": ["devDependencies"],
+      "matchUpdateTypes": ["patch"],
+      "automerge": true,
+      "automergeType": "pr",
+    },
+
+    // 7. Pin htmx.org — it uses exact versioning intentionally.
+    {
+      "description": "Keep htmx.org pinned to exact versions",
+      "matchPackageNames": ["htmx.org"],
+      "rangeStrategy": "pin",
+    },
+
+    // 8. Wails is critical infrastructure — separate PR, never auto-merge.
+    {
+      "description": "Wails updates get their own PR (critical dep)",
+      "matchPackageNames": ["github.com/wailsapp/wails/v2"],
+      "groupName": null,
+      "automerge": false,
+    },
+  ],
+
+  // ── Vulnerability alerts ───────────────────────────────────
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "labels": ["security"],
+  },
+}
