@@ -1,3 +1,9 @@
+## [1.0.1](https://github.com/onion-4-dinner/yellowjacket/compare/v1.0.0...v1.0.1) (2026-02-14)
+
+### Bug Fixes
+
+* allow library to initialize without config and fix lefthook lint flag ([5a958db](https://github.com/onion-4-dinner/yellowjacket/commit/5a958db16284a74e19c43259757b163b347cda7d))
+
 ## 1.0.0 (2026-02-14)
 
 ### Features
