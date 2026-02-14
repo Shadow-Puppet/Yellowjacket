@@ -4,3 +4,4 @@ build
 test_data
 test.db
 .aider*
+lefthook-local.yml

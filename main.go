@@ -9,10 +9,17 @@ import (
 	"github.com/golang-cz/devslog"
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
+
 	"yellowjacket/backend"
 	"yellowjacket/backend/assets"
 	"yellowjacket/backend/logging"
 	"yellowjacket/internal/dev"
+)
+
+// version and commit are set at build time via ldflags.
+var (
+	version = "dev"
+	commit  = "unknown"
 )
 
 //go:embed all:frontend/dist
@@ -34,7 +41,7 @@ func main() {
 		},
 	}))
 	slog.SetDefault(sLogger)
-	sLogger.Info("starting yellowjacket")
+	sLogger.Info("starting yellowjacket", "version", version, "commit", commit)
 
 	// create asset handler
 	assetHandler, err := assets.NewAssetHandler(sLogger, frontendDistAssets)

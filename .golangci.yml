@@ -36,3 +36,9 @@ formatters:
     - gofumpt
     - goimports
     - golines
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(yellowjacket)

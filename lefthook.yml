@@ -1,0 +1,39 @@
+# lefthook.yml — local git hooks for yellowjacket
+# Install with: lefthook install
+# Docs: https://github.com/evilmartians/lefthook
+
+pre-commit:
+  parallel: true
+  commands:
+    go-vet:
+      glob: "*.go"
+      run: go vet -tags webkit2_41 ./...
+
+    golangci-lint:
+      glob: "*.go"
+      run: golangci-lint run --timeout 5m -tags webkit2_41 {staged_files}
+
+    codegen-check:
+      glob: "*.{go,sql,templ}"
+      run: |
+        go generate ./...
+        if [ -n "$(git diff --name-only)" ]; then
+          echo "Generated code is out of date. Run 'make generate' and stage the changes."
+          git diff --stat
+          exit 1
+        fi
+
+    frontend-typecheck:
+      glob: "frontend/**/*.{ts,tsx}"
+      root: "frontend/"
+      run: pnpm exec tsc --noEmit
+
+pre-push:
+  parallel: true
+  commands:
+    go-test:
+      glob: "*.go"
+      run: go test -tags webkit2_41 -race -count=1 -timeout 120s ./...
+
+    go-mod-verify:
+      run: go mod verify
