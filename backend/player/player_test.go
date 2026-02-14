@@ -14,20 +14,25 @@ var testQueue = []string{
 }
 
 func TestPlayer(t *testing.T) {
-	// This test requires a Wails runtime context for event registration and
-	// an audio device for playback. Skip in CI where neither is available.
-	if os.Getenv("CI") != "" {
-		t.Skip("skipping: requires Wails runtime context and audio device")
+	// This is an integration test that requires:
+	//   1. A Wails runtime context (SetContext calls runtime.EventsOn)
+	//   2. An audio output device (speaker.Init)
+	//
+	// Skip unless the caller explicitly opts in via YELLOWJACKET_INTEGRATION=1.
+	if os.Getenv("YELLOWJACKET_INTEGRATION") == "" {
+		t.Skip(
+			"skipping: integration test requires Wails runtime and audio device (set YELLOWJACKET_INTEGRATION=1 to run)",
+		)
 	}
 
 	t.Logf("Starting test")
 
 	p, err := NewPlayer(context.Background(), slog.Default(), nil)
 	if err != nil {
-		t.Errorf("could not create player\n%s", err.Error())
-		t.Failed()
+		t.Fatalf("could not create player: %s", err.Error())
 	}
 
+	// SetContext registers Wails event handlers; only works with a real Wails context.
 	p.SetContext(t.Context())
 	t.Logf("initializing player")
 
@@ -36,14 +41,12 @@ func TestPlayer(t *testing.T) {
 
 		err = p.LoadFile(track)
 		if err != nil {
-			t.Errorf("could not load file\n%s\n%s", track, err.Error())
-			t.Failed()
+			t.Fatalf("could not load file %s: %s", track, err.Error())
 		}
 
 		err = p.Play()
 		if err != nil {
-			t.Errorf("could not play file\n%s\n%s", track, err.Error())
-			t.Failed()
+			t.Fatalf("could not play file %s: %s", track, err.Error())
 		}
 	}
 }

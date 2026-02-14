@@ -39,14 +39,14 @@ func GetTrackLengthMillis(path string) (int64, error) {
 
 	streamer, format, err := DecodeFile(f)
 	if err != nil {
-		f.Close()
+		_ = f.Close()
 
 		return 0, fmt.Errorf("error decoding file: %w", err)
 	}
 
 	lengthMillis := int64(float64(streamer.Len()*1000) / float64(format.SampleRate))
-	streamer.Close()
-	f.Close()
+	_ = streamer.Close()
+	_ = f.Close()
 
 	return lengthMillis, nil
 }

@@ -28,7 +28,7 @@ type Player struct {
 	ctx                     context.Context
 	logger                  *slog.Logger
 	db                      *database.DB
-	state                   PlayerState
+	state                   State
 	currentFile             *os.File
 	format                  beep.Format
 	baseStreamer            beep.Streamer
@@ -40,14 +40,22 @@ type Player struct {
 	playbackFinishedHandler func()
 }
 
-// PlayerState represents the current playback state.
-type PlayerState string
+// State represents the current playback state.
+type State string
 
 // Playback state values.
 const (
-	Playing PlayerState = "playing"
-	Paused  PlayerState = "paused"
-	Stopped PlayerState = "stopped"
+	Playing State = "playing"
+	Paused  State = "paused"
+	Stopped State = "stopped"
+)
+
+// Sentinel errors for player operations.
+var (
+	errNoControlStreamer = errors.New("no control streamer")
+	errNoAudioFileLoaded = errors.New("no audio file loaded")
+	errNoStreamerToPlay  = errors.New("no streamer to play")
+	errNoAudioStream     = errors.New("no audio stream to pause")
 )
 
 var speakerSampleRate = beep.SampleRate(44100)
@@ -96,11 +104,17 @@ func (p *Player) registerEventHandlers() {
 
 	runtime.EventsOn(p.ctx, events.RequestPlay, func(_ ...any) {
 		p.logger.Info("Received RequestPlayEvent")
-		p.Play()
+
+		if err := p.Play(); err != nil {
+			p.logger.Error("failed to play", "err", err)
+		}
 	})
 	runtime.EventsOn(p.ctx, events.RequestPause, func(_ ...any) {
 		p.logger.Info("Received RequestPauseEvent")
-		p.Pause()
+
+		if err := p.Pause(); err != nil {
+			p.logger.Error("failed to pause", "err", err)
+		}
 	})
 	runtime.EventsOn(p.ctx, events.RequestLoadFile, func(data ...any) {
 		p.logger.Info("Received RequestLoadFileEvent")
@@ -140,7 +154,7 @@ func (p *Player) registerEventHandlers() {
 }
 
 // emitPlaybackStateChanged emits a playback state change event.
-func (p *Player) emitPlaybackStateChanged(state PlayerState) {
+func (p *Player) emitPlaybackStateChanged(state State) {
 	if p.ctx == nil {
 		p.logger.Error("Context is nil, cannot emit event")
 
@@ -202,6 +216,7 @@ func (p *Player) emitTrackChanged() {
 
 	// Compute current seek position in seconds.
 	seekPosition := 0
+
 	if p.seeker != nil {
 		speaker.Lock()
 		seekPosition = p.seeker.Position() / int(p.format.SampleRate)
@@ -312,12 +327,17 @@ func (p *Player) LoadFile(filePath string) error {
 	speaker.Unlock()
 
 	if p.currentFile != nil {
-		p.currentFile.Close()
+		if closeErr := p.currentFile.Close(); closeErr != nil {
+			p.logger.Warn("failed to close previous audio file", "err", closeErr)
+		}
 	}
 
 	p.currentFile = f
 
-	p.updateStreamers(streamer, format.SampleRate)
+	if err := p.updateStreamers(streamer, format.SampleRate); err != nil {
+		return fmt.Errorf("failed to update streamers: %w", err)
+	}
+
 	p.startPaused()
 	p.emitPlaybackStateChanged(p.state)
 	p.emitTrackChanged()
@@ -328,15 +348,15 @@ func (p *Player) LoadFile(filePath string) error {
 
 func (p *Player) validateReadyToPlay() error {
 	if p.control == nil {
-		return errors.New("no control streamer")
+		return errNoControlStreamer
 	}
 
 	if p.currentFile == nil {
-		return errors.New("no audio file loaded")
+		return errNoAudioFileLoaded
 	}
 
 	if p.speakerStreamer == nil {
-		return errors.New("no streamer to play")
+		return errNoStreamerToPlay
 	}
 
 	return nil
@@ -365,7 +385,10 @@ func (p *Player) Play() error {
 			return fmt.Errorf("failed to seek to beginning: %w", err)
 		}
 
-		p.updateStreamers(p.seeker, p.format.SampleRate)
+		if err := p.updateStreamers(p.seeker, p.format.SampleRate); err != nil {
+			return fmt.Errorf("failed to update streamers for replay: %w", err)
+		}
+
 		p.startPaused()
 		p.logger.Info("Rebuilt streamers for replay")
 	}
@@ -385,7 +408,7 @@ func (p *Player) Play() error {
 // Pause pauses the current playback.
 func (p *Player) Pause() error {
 	if p.control == nil {
-		return errors.New("no audio stream to pause")
+		return errNoAudioStream
 	}
 
 	if p.state == Paused {
@@ -416,7 +439,7 @@ func (p *Player) SetVolume(desiredVolume UserVolume) error {
 	volume := clampVolume(desiredVolume)
 
 	// Apply the volume settings
-	p.volume.Volume = float64(volume.ToPlayerVolume())
+	p.volume.Volume = float64(volume.ToVolume())
 	p.volume.Silent = volume == MinUserVol
 	speaker.Unlock()
 
@@ -429,7 +452,7 @@ func (p *Player) ChangeVolume(deltaVolume int) error {
 }
 
 func (p *Player) getUserVolume() UserVolume {
-	return PlayerVolume(p.volume.Volume).ToUserVolume()
+	return Volume(p.volume.Volume).ToUserVolume()
 }
 
 // MuteToggle toggles the mute state.
@@ -442,7 +465,7 @@ func (p *Player) MuteToggle() error {
 // CurrentPositionSeconds returns the current playback position in seconds.
 func (p *Player) CurrentPositionSeconds() (int, error) {
 	if p.seeker == nil {
-		return 0, errors.New("no audio file loaded")
+		return 0, errNoAudioFileLoaded
 	}
 
 	speaker.Lock()
@@ -455,7 +478,7 @@ func (p *Player) CurrentPositionSeconds() (int, error) {
 // CurrentPosition returns the playback position as a percentage (0-100).
 func (p *Player) CurrentPosition() (int, error) {
 	if p.seeker == nil {
-		return 0, errors.New("no audio file loaded")
+		return 0, errNoAudioFileLoaded
 	}
 
 	speaker.Lock()
@@ -470,7 +493,7 @@ func (p *Player) Seek(targetSeconds int) error {
 	if p.seeker == nil {
 		runtime.EventsEmit(p.ctx, events.SeekFailed)
 
-		return errors.New("no audio file loaded")
+		return errNoAudioFileLoaded
 	}
 
 	lengthSecs, err := p.TrackLengthInSeconds()
@@ -491,7 +514,13 @@ func (p *Player) Seek(targetSeconds int) error {
 		"samples",
 		samples,
 	)
-	p.seeker.Seek(samples)
+
+	if seekErr := p.seeker.Seek(samples); seekErr != nil {
+		speaker.Unlock()
+
+		return fmt.Errorf("failed to seek: %w", seekErr)
+	}
+
 	speaker.Unlock()
 
 	return nil
@@ -553,7 +582,7 @@ func (p *Player) GetCurrentTrackInfo() (map[string]interface{}, error) {
 // TrackLengthInSeconds returns the duration of the current track.
 func (p *Player) TrackLengthInSeconds() (int, error) {
 	if p.seeker == nil {
-		return 0, errors.New("no audio file loaded")
+		return 0, errNoAudioFileLoaded
 	}
 
 	speaker.Lock()
@@ -677,7 +706,6 @@ func (p *Player) RestoreState() {
 				)
 			}
 		}
-
 	}
 
 	p.logger.Info("Player state restored",

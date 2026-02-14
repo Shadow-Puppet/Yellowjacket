@@ -39,7 +39,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.logger.Debug(
 			"custom handler for request not found, using wails asset handler",
 			"path",
-			*&r.URL.Path,
+			r.URL.Path,
 		)
 		h.wailsAssetHandler.ServeHTTP(w, r)
 
@@ -49,7 +49,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.logger.Debug(
 		"using custom handler for request",
 		"path",
-		*&r.URL.Path,
+		r.URL.Path,
 	)
 	h.serveMux.ServeHTTP(w, r)
 }

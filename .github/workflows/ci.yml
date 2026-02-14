@@ -75,7 +75,6 @@ jobs:
         run: go vet -tags webkit2_41 ./...
 
       - name: golangci-lint
-        continue-on-error: true
         uses: golangci/golangci-lint-action@v9
         with:
           version: v2.5.0

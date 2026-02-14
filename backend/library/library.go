@@ -17,11 +17,14 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"golang.org/x/sync/errgroup"
+
 	"yellowjacket/backend/database"
 	"yellowjacket/backend/database/sql/sqlcgen"
 	"yellowjacket/backend/events"
 	"yellowjacket/backend/metadata"
 )
+
+var errLibraryDirNotConfigured = errors.New("library directory not configured")
 
 // Library manages scanning and querying the music collection.
 type Library struct {
@@ -107,7 +110,7 @@ func (l *Library) Scan() error {
 	l.logger.Info("beginning library scan", "workers", scanWorkerCount)
 
 	if len(l.conf.DirectoryPath) == 0 {
-		return errors.New("library directory not configured")
+		return errLibraryDirNotConfigured
 	}
 
 	// Load existing file paths from the database into a sync.Map for concurrent access.

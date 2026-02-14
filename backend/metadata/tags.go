@@ -51,7 +51,8 @@ func ExtractTags(path string) (*TrackMetadata, error) {
 	if err != nil {
 		return nil, fmt.Errorf("could not open file for tag extraction: %w", err)
 	}
-	defer f.Close()
+
+	defer func() { _ = f.Close() }()
 
 	return ExtractTagsFromReader(f)
 }

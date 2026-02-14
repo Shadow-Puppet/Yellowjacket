@@ -42,3 +42,5 @@ formatters:
         - standard
         - default
         - prefix(yellowjacket)
+    gofumpt:
+      module-path: yellowjacket

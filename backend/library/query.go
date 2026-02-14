@@ -7,6 +7,12 @@ import (
 	"strconv"
 )
 
+// Sentinel errors for library queries.
+var (
+	errNoTracksInLibrary = errors.New("no tracks in library")
+	errNoTracksForAlbum  = errors.New("no tracks found for album")
+)
+
 // Track represents a playable audio file in the library.
 type Track struct {
 	TrackName   string
@@ -38,7 +44,7 @@ func (l *Library) GetAllTracks() ([]Track, error) {
 	if len(audioFiles) == 0 {
 		l.logger.Error("no tracks in library")
 
-		return nil, errors.New("no tracks in library")
+		return nil, errNoTracksInLibrary
 	}
 
 	var formattedTracks []Track
@@ -68,7 +74,7 @@ func (l *Library) GetAlbumTracks(albumID int64) ([]Track, error) {
 	}
 
 	if len(rows) == 0 {
-		return nil, fmt.Errorf("no tracks found for album %d", albumID)
+		return nil, fmt.Errorf("%w %d", errNoTracksForAlbum, albumID)
 	}
 
 	tracks := make([]Track, 0, len(rows))

@@ -3,8 +3,8 @@ package player
 // UserVolume represents volume on a user-facing scale (0-100).
 type UserVolume int
 
-// PlayerVolume represents volume on an internal scale (-10 to 10).
-type PlayerVolume float64
+// Volume represents volume on an internal scale (-4 to 0).
+type Volume float64
 
 // User volume range bounds.
 const (
@@ -12,31 +12,31 @@ const (
 	MaxUserVol UserVolume = 100
 )
 
-// Player volume range bounds.
+// Internal volume range bounds.
 const (
-	MinPlayerVol PlayerVolume = -4
-	MaxPlayerVol PlayerVolume = 0
+	MinVol Volume = -4
+	MaxVol Volume = 0
 )
 
-// ToPlayerVolume converts user volume to internal player volume.
-func (oldVol UserVolume) ToPlayerVolume() PlayerVolume {
-	var newVol PlayerVolume
+// ToVolume converts user volume to internal player volume.
+func (oldVol UserVolume) ToVolume() Volume {
+	var newVol Volume
 
 	if oldVol >= MinUserVol && oldVol <= MaxUserVol {
-		ratio := PlayerVolume(oldVol-MinUserVol) / PlayerVolume(MaxUserVol-MinUserVol)
-		newVol = ratio*(MaxPlayerVol-MinPlayerVol) + MinPlayerVol
+		ratio := Volume(oldVol-MinUserVol) / Volume(MaxUserVol-MinUserVol)
+		newVol = ratio*(MaxVol-MinVol) + MinVol
 	}
 
 	return newVol
 }
 
 // ToUserVolume converts internal player volume to user volume.
-func (oldVolFloat PlayerVolume) ToUserVolume() UserVolume {
+func (oldVolFloat Volume) ToUserVolume() UserVolume {
 	var newVol UserVolume
 
-	if oldVolFloat >= MinPlayerVol && oldVolFloat <= MaxPlayerVol {
-		ratio := (oldVolFloat - MinPlayerVol) / (MaxPlayerVol - MinPlayerVol)
-		newVol = UserVolume(ratio*PlayerVolume(MaxUserVol-MinUserVol)) + MinUserVol
+	if oldVolFloat >= MinVol && oldVolFloat <= MaxVol {
+		ratio := (oldVolFloat - MinVol) / (MaxVol - MinVol)
+		newVol = UserVolume(ratio*Volume(MaxUserVol-MinUserVol)) + MinUserVol
 	}
 
 	return newVol

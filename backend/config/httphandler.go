@@ -6,6 +6,7 @@ import (
 
 	"github.com/gorilla/schema"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+
 	"yellowjacket/backend/events"
 )
 
@@ -27,13 +28,20 @@ func (c *Config) handle(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		if err := c.handleConfigPost(r); err != nil {
 			c.logger.Error("problem handling config post request", "err", err.Error())
-			c.formSubmitError(err.Error()).Render(r.Context(), w)
+
+			if renderErr := c.formSubmitError(err.Error()).Render(r.Context(), w); renderErr != nil {
+				c.logger.Error("problem rendering error response", "err", renderErr.Error())
+			}
+
 			w.WriteHeader(http.StatusInternalServerError)
 
 			return
 		}
 
-		c.formSubmitSuccess().Render(r.Context(), w)
+		if err := c.formSubmitSuccess().Render(r.Context(), w); err != nil {
+			c.logger.Error("problem rendering success response", "err", err.Error())
+		}
+
 		w.WriteHeader(http.StatusOK)
 	}
 }

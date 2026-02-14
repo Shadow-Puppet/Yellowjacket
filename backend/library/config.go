@@ -2,9 +2,12 @@
 package library
 
 import (
+	"errors"
 	"fmt"
 	"os"
 )
+
+var errNotDirectory = errors.New("path is not a directory")
 
 // Config holds Library config data.
 type Config struct {
@@ -35,7 +38,7 @@ func (c *Config) Validate() error {
 		}
 
 		if !dirInfo.IsDir() {
-			return fmt.Errorf("%s is not a directory", c.DirectoryPath)
+			return fmt.Errorf("%s: %w", c.DirectoryPath, errNotDirectory)
 		}
 	}
 
