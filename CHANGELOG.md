@@ -1,3 +1,33 @@
+## [1.0.2](https://github.com/onion-4-dinner/yellowjacket/compare/v1.0.1...v1.0.2) (2026-02-14)
+
+### ⚠ BREAKING CHANGES
+
+* **deps:** update actions/setup-node action to v6 (#48)
+* **deps:** update dependency stylelint-config-standard to v40 (#52)
+* **deps:** update dependency node to v24 (#51)
+* **deps:** update dependency vite-plugin-static-copy to v3 (#54)
+* **deps:** update golangci/golangci-lint-action action to v9 (#55)
+* **deps:** update amannn/action-semantic-pull-request action to v6 (#50)
+* **deps:** update actions/upload-artifact action to v6 (#49)
+* **deps:** update actions/setup-go action to v6 (#47)
+* **deps:** update actions/download-artifact action to v7 (#46)
+
+### Bug Fixes
+
+* **ci:** use allowedPostUpgradeCommands for Renovate post-upgrade tasks ([#60](https://github.com/onion-4-dinner/yellowjacket/issues/60)) ([0aef483](https://github.com/onion-4-dinner/yellowjacket/commit/0aef483b3cccd0616fd5be2d06d0856b46851d09))
+
+### Miscellaneous
+
+* **deps:** update actions/download-artifact action to v7 ([#46](https://github.com/onion-4-dinner/yellowjacket/issues/46)) ([1910f99](https://github.com/onion-4-dinner/yellowjacket/commit/1910f99cf64e9bdc5ce91e89cab254ecca15d030))
+* **deps:** update actions/setup-go action to v6 ([#47](https://github.com/onion-4-dinner/yellowjacket/issues/47)) ([8911fb2](https://github.com/onion-4-dinner/yellowjacket/commit/8911fb2400047cf2f3dfa719edc1d1bf474cdaa5))
+* **deps:** update actions/setup-node action to v6 ([#48](https://github.com/onion-4-dinner/yellowjacket/issues/48)) ([d7382fd](https://github.com/onion-4-dinner/yellowjacket/commit/d7382fd8444b6618dbfe991f5f97231528a07f13))
+* **deps:** update actions/upload-artifact action to v6 ([#49](https://github.com/onion-4-dinner/yellowjacket/issues/49)) ([a2c644b](https://github.com/onion-4-dinner/yellowjacket/commit/a2c644b00eed83acc0ed38a2eb8c73868b7b79af))
+* **deps:** update amannn/action-semantic-pull-request action to v6 ([#50](https://github.com/onion-4-dinner/yellowjacket/issues/50)) ([643ba27](https://github.com/onion-4-dinner/yellowjacket/commit/643ba27f066164aeb47e8d9aaf20fe98b9b69d30))
+* **deps:** update dependency node to v24 ([#51](https://github.com/onion-4-dinner/yellowjacket/issues/51)) ([e7d3971](https://github.com/onion-4-dinner/yellowjacket/commit/e7d39711078ce86b0c029f0d03ff81162c5dc28a))
+* **deps:** update dependency stylelint-config-standard to v40 ([#52](https://github.com/onion-4-dinner/yellowjacket/issues/52)) ([422aabc](https://github.com/onion-4-dinner/yellowjacket/commit/422aabcc07e9700ff189302b363e13d87c69163a))
+* **deps:** update dependency vite-plugin-static-copy to v3 ([#54](https://github.com/onion-4-dinner/yellowjacket/issues/54)) ([77fa643](https://github.com/onion-4-dinner/yellowjacket/commit/77fa6435a5298f58ef83607d99c59b876132c66c))
+* **deps:** update golangci/golangci-lint-action action to v9 ([#55](https://github.com/onion-4-dinner/yellowjacket/issues/55)) ([aedb7d1](https://github.com/onion-4-dinner/yellowjacket/commit/aedb7d1e6d204c56c468dd26b340752fd6bfeaeb))
+
 ## [1.0.1](https://github.com/onion-4-dinner/yellowjacket/compare/v1.0.0...v1.0.1) (2026-02-14)
 
 ### Bug Fixes
