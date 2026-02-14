@@ -150,11 +150,17 @@ jobs:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          merge-multiple: true
           path: ${{ github.workspace }}/artifacts
 
-      - name: List artifacts
-        run: find ${{ github.workspace }}/artifacts -type f
+      - name: Prepare release assets
+        working-directory: ${{ github.workspace }}/artifacts
+        run: |
+          mkdir -p release
+          cp yellowjacket-linux-amd64/yellowjacket          release/yellowjacket-linux-amd64
+          cp yellowjacket-darwin-universal/yellowjacket-darwin-universal.app.zip release/yellowjacket-darwin-universal.app.zip
+          cp yellowjacket-windows-amd64.exe/yellowjacket.exe release/yellowjacket-windows-amd64.exe
+          echo "Release assets:"
+          ls -lh release/
 
       - name: Upload assets to GitHub Release
         uses: softprops/action-gh-release@v2
@@ -165,6 +171,6 @@ jobs:
           tag_name: ${{ github.event.release.tag_name }}
           fail_on_unmatched_files: true
           files: |
-            artifacts/yellowjacket-linux-amd64
-            artifacts/yellowjacket-darwin-universal.app.zip
-            artifacts/yellowjacket-windows-amd64.exe
+            artifacts/release/yellowjacket-linux-amd64
+            artifacts/release/yellowjacket-darwin-universal.app.zip
+            artifacts/release/yellowjacket-windows-amd64.exe
