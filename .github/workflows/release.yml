@@ -23,7 +23,7 @@ jobs:
       # persist-credentials: false prevents actions/checkout from setting up
       # the credential helper with GITHUB_TOKEN. We configure git auth manually
       # with the PAT so that tag pushes trigger downstream workflows.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           persist-credentials: false
