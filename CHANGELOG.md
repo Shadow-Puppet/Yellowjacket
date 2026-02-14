@@ -1,3 +1,9 @@
+## [1.0.1](https://github.com/onion-4-dinner/yellowjacket/compare/v1.0.0...v1.0.1) (2026-02-14)
+
+### Bug Fixes
+
+* resolve Renovate repo detection and pre-push hook hang ([#36](https://github.com/onion-4-dinner/yellowjacket/issues/36)) ([b205889](https://github.com/onion-4-dinner/yellowjacket/commit/b205889128f01e9eb75b607cf7c4034887cda3f4))
+
 ## 1.0.0 (2026-02-14)
 
 ### Features
