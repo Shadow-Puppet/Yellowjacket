@@ -548,6 +548,7 @@ func (p *Player) GetCurrentTrackInfo() (map[string]interface{}, error) {
 	artist := ""
 	album := ""
 	coverArt := ""
+	coverArtThumbnail := ""
 
 	// Try to get metadata from database
 	if p.db != nil {
@@ -561,7 +562,13 @@ func (p *Player) GetCurrentTrackInfo() (map[string]interface{}, error) {
 			album = meta.Album
 
 			if meta.CoverArtPath != "" {
-				coverArt = "/covers/" + filepath.Base(meta.CoverArtPath)
+				base := filepath.Base(meta.CoverArtPath)
+				coverArt = "/covers/" + base
+
+				// Derive thumbnail filename from original: hash.ext -> hash_thumb.jpg
+				ext := filepath.Ext(base)
+				name := base[:len(base)-len(ext)]
+				coverArtThumbnail = "/covers/" + name + "_thumb.jpg"
 			}
 		} else {
 			p.logger.Debug("Could not get track metadata from database", "path", filePath, "err", err)
@@ -569,13 +576,14 @@ func (p *Player) GetCurrentTrackInfo() (map[string]interface{}, error) {
 	}
 
 	return map[string]interface{}{
-		"fileName": fileName,
-		"filePath": filePath,
-		"state":    string(p.state),
-		"title":    title,
-		"artist":   artist,
-		"album":    album,
-		"coverArt": coverArt,
+		"fileName":          fileName,
+		"filePath":          filePath,
+		"state":             string(p.state),
+		"title":             title,
+		"artist":            artist,
+		"album":             album,
+		"coverArt":          coverArt,
+		"coverArtThumbnail": coverArtThumbnail,
 	}, nil
 }
 

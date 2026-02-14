@@ -5,6 +5,7 @@ export namespace library {
 	    Name: string;
 	    ArtistName: string;
 	    CoverArtPath: string;
+	    CoverArtThumbnailPath: string;
 	    Year: number;
 	
 	    static createFrom(source: any = {}) {
@@ -17,6 +18,7 @@ export namespace library {
 	        this.Name = source["Name"];
 	        this.ArtistName = source["ArtistName"];
 	        this.CoverArtPath = source["CoverArtPath"];
+	        this.CoverArtThumbnailPath = source["CoverArtThumbnailPath"];
 	        this.Year = source["Year"];
 	    }
 	}

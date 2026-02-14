@@ -321,6 +321,11 @@ func (l *Library) Scan() error {
 		return true
 	})
 
+	// Generate thumbnails for any cover art that doesn't have one yet.
+	if err := l.generateMissingThumbnails(); err != nil {
+		l.logger.Warn("could not generate missing thumbnails", "err", err)
+	}
+
 	l.logger.Info(
 		"library scan complete",
 		"added", added.Load(),

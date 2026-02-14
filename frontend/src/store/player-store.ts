@@ -12,6 +12,7 @@ export interface TrackInfo {
   artist: string; // artist name
   album: string; // album name
   coverArt: string; // URL path to cover art (e.g., "/covers/abc.jpg") or empty string
+  coverArtThumbnail: string; // URL path to thumbnail (e.g., "/covers/abc_thumb.jpg") or empty string
 }
 
 export interface PlayerState {

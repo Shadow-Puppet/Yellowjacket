@@ -85,7 +85,16 @@ export class NowPlaying extends LitElement {
       <div class="now-playing">
         <div class="cover-art">
           ${track.coverArt
-            ? html`<img src="${track.coverArt}" alt="Album cover" />`
+            ? html`<img
+                src="${track.coverArtThumbnail || track.coverArt}"
+                alt="Album cover"
+                @error=${(e: Event) => {
+                    const img = e.target as HTMLImageElement;
+                    if (track.coverArt && img.src !== track.coverArt) {
+                        img.src = track.coverArt;
+                    }
+                }}
+              />`
             : html`<div class="cover-placeholder"><wa-icon name="music"></wa-icon></div>`}
         </div>
         <div class="track-info">

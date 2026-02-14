@@ -278,9 +278,15 @@ export class CoverGrid extends LitElement {
                     ${album.CoverArtPath
                         ? html`<img
                               class="cover-image"
-                              src="${album.CoverArtPath}"
+                              src="${album.CoverArtThumbnailPath || album.CoverArtPath}"
                               alt="${album.Name} cover"
                               loading="lazy"
+                              @error=${(e: Event) => {
+                                  const img = e.target as HTMLImageElement;
+                                  if (img.src !== album.CoverArtPath) {
+                                      img.src = album.CoverArtPath;
+                                  }
+                              }}
                           />`
                         : html`<div class="placeholder-cover">
                               ${this.getAlbumInitial(album.Name)}

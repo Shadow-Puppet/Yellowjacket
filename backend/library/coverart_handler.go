@@ -37,6 +37,10 @@ func (h *CoverArtHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Filenames are content-hashed (SHA-256), so they are immutable.
+	// Set aggressive cache headers to avoid redundant re-fetches.
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+
 	filePath := filepath.Join(h.coversDir, filename)
 	http.ServeFile(w, r, filePath)
 }
