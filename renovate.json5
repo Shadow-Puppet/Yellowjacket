@@ -42,6 +42,13 @@
     "enabled": true,
     // Let Renovate run `go mod tidy` after bumping versions.
     "postUpdateOptions": ["gomodTidy"],
+    // Re-run code generation after dependency updates so that generated files
+    // (templ *_templ.go, sqlc sqlcgen/) stay in sync with their tool versions.
+    "postUpgradeTasks": {
+      "commands": ["go generate ./..."],
+      "fileFilters": ["**/*.go", "go.sum"],
+      "executionMode": "update",
+    },
   },
 
   "npm": {
