@@ -26,8 +26,8 @@
   "commitMessagePrefix": "chore(deps):",
   "commitMessageAction": "update",
 
-  // Let CI pass before flagging PRs as ready.
-  "prCreation": "not-pending",
+  // Create PRs immediately so CI runs on them.
+  "prCreation": "immediate",
   "prHourlyLimit": 3,
   "prConcurrentLimit": 5,
 
