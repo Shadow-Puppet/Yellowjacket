@@ -1,3 +1,9 @@
+## [1.0.2](https://github.com/onion-4-dinner/yellowjacket/compare/v1.0.1...v1.0.2) (2026-02-14)
+
+### Bug Fixes
+
+* **ci:** fix golangci-lint version, skip player test in CI, remove standalone frontend build ([7317e09](https://github.com/onion-4-dinner/yellowjacket/commit/7317e093a7f92651ab65b2f83381d02105bdc0df))
+
 ## [1.0.1](https://github.com/onion-4-dinner/yellowjacket/compare/v1.0.0...v1.0.1) (2026-02-14)
 
 ### Bug Fixes
