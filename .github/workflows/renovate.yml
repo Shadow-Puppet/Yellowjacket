@@ -23,7 +23,7 @@ jobs:
       # Go is required for postUpgradeTasks (go generate runs templ + sqlc).
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.25"
+          go-version: "1.26"
 
       - name: Run Renovate
         uses: renovatebot/github-action@v46.1.0
