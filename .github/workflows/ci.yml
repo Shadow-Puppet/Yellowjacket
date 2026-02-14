@@ -75,8 +75,8 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v7
         with:
-          version: v2
-          args: --timeout 5m -tags webkit2_41
+          version: v2.5.0
+          args: --timeout 5m --build-tags webkit2_41
 
       - name: govulncheck
         uses: golang/govulncheck-action@v1
@@ -137,10 +137,12 @@ jobs:
           echo "Generated code is up to date."
 
   # ──────────────────────────────────────────────
-  # Frontend: type-check and build
+  # Frontend: type-check
+  # (full build is verified by the build-check job
+  #  via Wails which handles path resolution)
   # ──────────────────────────────────────────────
   frontend:
-    name: Frontend Build
+    name: Frontend Type Check
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -163,9 +165,6 @@ jobs:
 
       - name: Type check
         run: pnpm exec tsc --noEmit
-
-      - name: Build
-        run: pnpm build
 
   # ──────────────────────────────────────────────
   # Build verification: ensure it compiles on all

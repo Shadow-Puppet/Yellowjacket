@@ -3,6 +3,7 @@ package player
 import (
 	"context"
 	"log/slog"
+	"os"
 	"testing"
 )
 
@@ -13,6 +14,12 @@ var testQueue = []string{
 }
 
 func TestPlayer(t *testing.T) {
+	// This test requires a Wails runtime context for event registration and
+	// an audio device for playback. Skip in CI where neither is available.
+	if os.Getenv("CI") != "" {
+		t.Skip("skipping: requires Wails runtime context and audio device")
+	}
+
 	t.Logf("Starting test")
 
 	p, err := NewPlayer(context.Background(), slog.Default(), nil)
