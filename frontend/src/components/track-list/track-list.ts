@@ -6,6 +6,8 @@ import { customElement, state, query } from 'lit/decorators.js';
 import { formatMilliseconds } from '@utils/time';
 import { PlayerController } from '@store/controllers/player-controller';
 import { QueueController } from '@store/controllers/queue-controller';
+import '@lit-labs/virtualizer';
+import { flow } from '@lit-labs/virtualizer/layouts/flow.js';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
@@ -30,40 +32,46 @@ export class TrackList extends LitElement {
   private closeHandler = () => this.closeContextMenu();
 
   static override styles = css`
-    table {
-      width: 100%;
-      border-collapse: collapse;
+    :host {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
     }
 
-    th {
+    .header-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr 80px;
       padding: 8px;
-      text-align: left;
       font-weight: bold;
       color: #fff;
-    }
-
-    thead tr {
       border-bottom: 1px solid #666;
+      flex-shrink: 0;
     }
 
-    tbody tr {
+    lit-virtualizer {
+      flex: 1;
+      overflow-y: auto;
+    }
+
+    .track-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr 80px;
+      padding: 8px;
       border-bottom: 1px solid #333;
+      align-items: center;
+      width: 100%;
     }
 
-    tbody tr:hover {
+    .track-row:hover {
       background-color: rgba(255, 255, 255, 0.05);
     }
 
-    tbody tr.active {
+    .track-row.active {
       background-color: rgba(255, 212, 59, 0.1);
     }
 
-    tbody tr.active .track-name-button {
+    .track-row.active .track-name-button {
       color: #ffd43b;
-    }
-
-    td {
-      padding: 8px;
     }
 
     .track-name-button {
@@ -74,10 +82,21 @@ export class TrackList extends LitElement {
       padding: 0;
       cursor: pointer;
       width: 100%;
+      font: inherit;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .track-name-button:hover {
       text-decoration: underline;
+    }
+
+    .artist-name,
+    .track-length {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     #context-menu {
@@ -209,45 +228,45 @@ export class TrackList extends LitElement {
     return currentTrack.filePath === track.FilePath;
   }
 
+  private renderTrackRow = (track: library.Track): unknown => {
+    const active = this.isActiveTrack(track);
+
+    return html`
+      <div
+        class="track-row ${active ? 'active' : ''}"
+        @contextmenu=${(e: MouseEvent) => this.onTrackContextMenu(e, track)}
+      >
+        <div>
+          <button
+            class="track-name-button"
+            @click=${() => this.onTrackClick(track)}
+          >
+            ${track.TrackName}
+          </button>
+        </div>
+        <div class="artist-name">${track.ArtistName}</div>
+        <div class="track-length">${formatMilliseconds(track.TrackLength)}</div>
+      </div>
+    `;
+  };
+
   override render() {
     return html`
-      <div>
-        ${this.tracks.length === 0
-          ? html`<p>Loading tracks...</p>`
-          : html`
-              <table>
-                <thead>
-                  <tr>
-                    <th>Track Name</th>
-                    <th>Artist</th>
-                    <th>Track Length</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${this.tracks.map(
-                    (track) => html`
-                      <tr
-                        class=${this.isActiveTrack(track) ? 'active' : ''}
-                        @contextmenu=${(e: MouseEvent) =>
-                          this.onTrackContextMenu(e, track)}
-                      >
-                        <td>
-                          <button
-                            class="track-name-button"
-                            @click=${() => this.onTrackClick(track)}
-                          >
-                            ${track.TrackName}
-                          </button>
-                        </td>
-                        <td>${track.ArtistName}</td>
-                        <td>${formatMilliseconds(track.TrackLength)}</td>
-                      </tr>
-                    `
-                  )}
-                </tbody>
-              </table>
-            `}
-      </div>
+      ${this.tracks.length === 0
+        ? html`<p>Loading tracks...</p>`
+        : html`
+            <div class="header-row">
+              <span>Track Name</span>
+              <span>Artist</span>
+              <span>Track Length</span>
+            </div>
+            <lit-virtualizer
+              scroller
+              .items=${this.tracks}
+              .renderItem=${this.renderTrackRow}
+              .layout=${flow()}
+            ></lit-virtualizer>
+          `}
 
       <wa-popup
         id="context-menu"

@@ -10,19 +10,12 @@ import { setBasePath } from '@awesome.me/webawesome/dist/webawesome.js';
 
 setBasePath('/dist/webawesome');
 
-// Scroll state management per view
-const scrollPositions = new Map<string, number>();
-let currentView = 'tracks';
-
 // Navigation event listener for view switching
 document.addEventListener('navigate', (e: Event) => {
     const { view } = (e as CustomEvent).detail;
     const mainContent = document.getElementById('main-content');
 
     if (!mainContent) return;
-
-    // Save scroll position for current view before switching
-    scrollPositions.set(currentView, mainContent.scrollTop);
 
     switch (view) {
         case 'albums':
@@ -36,12 +29,6 @@ document.addEventListener('navigate', (e: Event) => {
                 <p>Coming soon: ${view}</p>
             </div>`;
     }
-
-    // Restore scroll position for new view
-    mainContent.scrollTop = scrollPositions.get(view) ?? 0;
-
-    // Update current view tracker
-    currentView = view;
 });
 
 // Queue panel toggle

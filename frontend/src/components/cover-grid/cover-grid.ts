@@ -4,6 +4,8 @@ import { EventsEmit } from '@runtime/runtime';
 import { GetAllAlbums, GetAlbumTracks } from '@go/library/Library';
 import { library } from '@go/models';
 import { QueueController } from '@store/controllers/queue-controller';
+import '@lit-labs/virtualizer';
+import { grid } from '@lit-labs/virtualizer/layouts/grid.js';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
@@ -16,14 +18,14 @@ export class CoverGrid extends LitElement {
 
     static override styles = css`
         :host {
-            display: block;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
         }
 
-        .grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-            gap: 16px;
-            padding: 16px;
+        lit-virtualizer {
+            flex: 1;
+            overflow-y: auto;
         }
 
         .album-card {
@@ -33,6 +35,7 @@ export class CoverGrid extends LitElement {
             border-radius: 8px;
             padding: 8px;
             transition: background-color 0.2s ease;
+            box-sizing: border-box;
         }
 
         .album-card:hover {
@@ -260,6 +263,61 @@ export class CoverGrid extends LitElement {
         }
     }
 
+    private renderAlbumCard = (album: library.Album): unknown => {
+        return html`
+            <div
+                class="album-card"
+                tabindex="0"
+                role="button"
+                aria-label="${album.Name} by ${album.ArtistName}"
+                @click=${() => this.onAlbumClick(album)}
+                @keydown=${(e: KeyboardEvent) => this.onAlbumKeydown(e, album)}
+                @contextmenu=${(e: MouseEvent) => this.onAlbumContextMenu(e, album)}
+            >
+                <div class="cover-container">
+                    ${album.CoverArtPath
+                        ? html`<img
+                              class="cover-image"
+                              src="${album.CoverArtPath}"
+                              alt="${album.Name} cover"
+                              loading="lazy"
+                          />`
+                        : html`<div class="placeholder-cover">
+                              ${this.getAlbumInitial(album.Name)}
+                          </div>`}
+                </div>
+                <div class="album-info">
+                    <div class="album-name" title="${album.Name}">${album.Name}</div>
+                    <div class="artist-name" title="${album.ArtistName}">
+                        ${album.ArtistName}${album.Year ? ` - ${album.Year}` : ''}
+                    </div>
+                </div>
+            </div>
+        `;
+    };
+
+    private getAlbumInitial(name: string): string {
+        return name.charAt(0).toUpperCase();
+    }
+
+    private onAlbumClick(album: library.Album) {
+        EventsEmit('AlbumSelected', album);
+        this.dispatchEvent(
+            new CustomEvent('album-selected', {
+                detail: album,
+                bubbles: true,
+                composed: true,
+            })
+        );
+    }
+
+    private onAlbumKeydown(e: KeyboardEvent, album: library.Album) {
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            this.onAlbumClick(album);
+        }
+    }
+
     override render() {
         if (this.loading) {
             return html`<div class="loading">Loading albums...</div>`;
@@ -275,9 +333,16 @@ export class CoverGrid extends LitElement {
         }
 
         return html`
-            <div class="grid">
-                ${this.albums.map(album => this.renderAlbumCard(album))}
-            </div>
+            <lit-virtualizer
+                scroller
+                .items=${this.albums}
+                .renderItem=${this.renderAlbumCard}
+                .layout=${grid({
+                    itemSize: { width: '176px', height: '230px' },
+                    gap: '16px',
+                    padding: '16px',
+                })}
+            ></lit-virtualizer>
 
             <wa-popup
                 id="context-menu"
@@ -310,61 +375,6 @@ export class CoverGrid extends LitElement {
                     : nothing}
             </wa-popup>
         `;
-    }
-
-    private renderAlbumCard(album: library.Album) {
-        return html`
-            <div
-                class="album-card"
-                tabindex="0"
-                role="button"
-                aria-label="${album.Name} by ${album.ArtistName}"
-                @click=${() => this.onAlbumClick(album)}
-                @keydown=${(e: KeyboardEvent) => this.onAlbumKeydown(e, album)}
-                @contextmenu=${(e: MouseEvent) => this.onAlbumContextMenu(e, album)}
-            >
-                <div class="cover-container">
-                    ${album.CoverArtPath
-                        ? html`<img
-                              class="cover-image"
-                              src="${album.CoverArtPath}"
-                              alt="${album.Name} cover"
-                              loading="lazy"
-                          />`
-                        : html`<div class="placeholder-cover">
-                              ${this.getAlbumInitial(album.Name)}
-                          </div>`}
-                </div>
-                <div class="album-info">
-                    <div class="album-name" title="${album.Name}">${album.Name}</div>
-                    <div class="artist-name" title="${album.ArtistName}">
-                        ${album.ArtistName}${album.Year ? ` - ${album.Year}` : ''}
-                    </div>
-                </div>
-            </div>
-        `;
-    }
-
-    private getAlbumInitial(name: string): string {
-        return name.charAt(0).toUpperCase();
-    }
-
-    private onAlbumClick(album: library.Album) {
-        EventsEmit('AlbumSelected', album);
-        this.dispatchEvent(
-            new CustomEvent('album-selected', {
-                detail: album,
-                bubbles: true,
-                composed: true,
-            })
-        );
-    }
-
-    private onAlbumKeydown(e: KeyboardEvent, album: library.Album) {
-        if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            this.onAlbumClick(album);
-        }
     }
 }
 

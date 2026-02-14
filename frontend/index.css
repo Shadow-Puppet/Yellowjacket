@@ -112,5 +112,9 @@ body div.sidebar {
     grid-area: main-panel;
     padding: 0.25em;
     background-color: #212529;
-    overflow: auto;
+    overflow: hidden;
+}
+
+.main-panel > * {
+    height: 100%;
 }
