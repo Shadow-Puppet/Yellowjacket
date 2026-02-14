@@ -1,3 +1,9 @@
+## [1.0.1](https://github.com/onion-4-dinner/yellowjacket/compare/v1.0.0...v1.0.1) (2026-02-14)
+
+### Bug Fixes
+
+* **ci:** resolve CI failures for Go checks, codegen, and frontend type-checking ([d4f9361](https://github.com/onion-4-dinner/yellowjacket/commit/d4f936143ac75fbf3247cdbe2113bd89b0795d83))
+
 ## 1.0.0 (2026-02-14)
 
 ### Features
