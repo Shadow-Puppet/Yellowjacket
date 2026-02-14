@@ -20,9 +20,12 @@ jobs:
     name: Semantic Release
     runs-on: ubuntu-latest
     steps:
+      # Use a PAT so that the tag push triggers the build workflow.
+      # GITHUB_TOKEN events don't trigger other workflows (by design).
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ secrets.RELEASE_TOKEN }}
 
       - uses: actions/setup-node@v4
         with:
@@ -41,5 +44,5 @@ jobs:
 
       - name: Run semantic-release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: npx semantic-release
