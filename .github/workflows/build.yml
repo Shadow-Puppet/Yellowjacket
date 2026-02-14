@@ -130,14 +130,14 @@ jobs:
       # ── Upload artifacts ─────────────────────────
       - name: Upload artifact (Linux/Windows)
         if: runner.os != 'macOS'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.artifact }}
           path: build/bin/${{ matrix.binary }}
 
       - name: Upload artifact (macOS)
         if: runner.os == 'macOS'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.artifact }}
           path: build/bin/${{ matrix.artifact }}.app.zip
