@@ -1,3 +1,9 @@
+## [1.1.0](https://github.com/onion-4-dinner/yellowjacket/compare/v1.0.3...v1.1.0) (2026-02-15)
+
+### Features
+
+* **ci:** upload release artifacts to Cloudflare R2 ([#65](https://github.com/onion-4-dinner/yellowjacket/issues/65)) ([8985084](https://github.com/onion-4-dinner/yellowjacket/commit/89850848cbf7783e5c85348ff18f7cd11d60231a))
+
 ## [1.0.3](https://github.com/onion-4-dinner/yellowjacket/compare/v1.0.2...v1.0.3) (2026-02-15)
 
 ### ⚠ BREAKING CHANGES
