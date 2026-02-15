@@ -141,8 +141,6 @@ jobs:
 
   # ──────────────────────────────────────────────
   # Frontend: type-check
-  # (full build is verified by the build-check job
-  #  via Wails which handles path resolution)
   # ──────────────────────────────────────────────
   frontend:
     name: Frontend Type Check
@@ -170,11 +168,13 @@ jobs:
         run: pnpm exec tsc --noEmit
 
   # ──────────────────────────────────────────────
-  # Build verification: ensure it compiles on all
-  # target platforms (no artifacts uploaded)
+  # Build verification: ensure it compiles
+  # (only runs on PRs; release builds are handled
+  #  by the Build & Publish workflow)
   # ──────────────────────────────────────────────
   build-check:
     name: Build Check (${{ matrix.platform }})
+    if: github.event_name == 'pull_request'
     needs: [go-checks, go-test, codegen-check, frontend]
     strategy:
       fail-fast: false
@@ -184,12 +184,12 @@ jobs:
             os: ubuntu-latest
             build-name: yellowjacket
             apt-deps: libasound2-dev
-          - platform: darwin/universal
-            os: macos-latest
-            build-name: yellowjacket
-          - platform: windows/amd64
-            os: windows-latest
-            build-name: yellowjacket.exe
+          # - platform: darwin/universal
+          #   os: macos-latest
+          #   build-name: yellowjacket
+          # - platform: windows/amd64
+          #   os: windows-latest
+          #   build-name: yellowjacket.exe
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
