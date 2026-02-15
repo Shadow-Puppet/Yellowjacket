@@ -1,3 +1,9 @@
+## [1.1.1](https://github.com/onion-4-dinner/yellowjacket/compare/v1.1.0...v1.1.1) (2026-02-15)
+
+### Bug Fixes
+
+* **ci:** remove build-check job from CI workflow ([#66](https://github.com/onion-4-dinner/yellowjacket/issues/66)) ([42d3f45](https://github.com/onion-4-dinner/yellowjacket/commit/42d3f45d85afa694e9545997af3ff4ac814ad021))
+
 ## [1.1.0](https://github.com/onion-4-dinner/yellowjacket/compare/v1.0.3...v1.1.0) (2026-02-15)
 
 ### Features
