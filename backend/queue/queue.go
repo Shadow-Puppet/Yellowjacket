@@ -38,8 +38,8 @@ type TrackLoader interface {
 	CurrentPositionSeconds() (int, error)
 }
 
-// QueueTrack represents a track in the queue with its metadata.
-type QueueTrack struct {
+// Track represents a track in the queue with its metadata.
+type Track struct {
 	ID          int64  `json:"id"`
 	AudioFileID int64  `json:"audioFileId"`
 	FilePath    string `json:"filePath"`
@@ -48,13 +48,13 @@ type QueueTrack struct {
 	Artist      string `json:"artist"`
 }
 
-// QueueState is the full state emitted to the frontend.
-type QueueState struct {
-	Tracks           []QueueTrack `json:"tracks"`
-	CurrentIndex     int          `json:"currentIndex"`
-	ShuffleMode      bool         `json:"shuffleMode"`
-	RepeatMode       RepeatMode   `json:"repeatMode"`
-	SourcePlaylistID int64        `json:"sourcePlaylistId"`
+// State is the full state emitted to the frontend.
+type State struct {
+	Tracks           []Track    `json:"tracks"`
+	CurrentIndex     int        `json:"currentIndex"`
+	ShuffleMode      bool       `json:"shuffleMode"`
+	RepeatMode       RepeatMode `json:"repeatMode"`
+	SourcePlaylistID int64      `json:"sourcePlaylistId"`
 }
 
 // Queue manages an ordered list of tracks for playback.
@@ -65,7 +65,7 @@ type Queue struct {
 	player TrackLoader
 
 	mu               sync.Mutex
-	tracks           []QueueTrack
+	tracks           []Track
 	currentIndex     int
 	shuffleMode      bool
 	repeatMode       RepeatMode
@@ -331,7 +331,7 @@ func (q *Queue) SetQueue(filePaths []string, startIndex int) {
 	defer q.mu.Unlock()
 
 	// Look up audio file IDs and metadata for all paths.
-	tracks := make([]QueueTrack, 0, len(filePaths))
+	tracks := make([]Track, 0, len(filePaths))
 
 	for i, fp := range filePaths {
 		af, err := q.db.Queries.GetAudioFileByPath(q.db.Ctx, fp)
@@ -341,7 +341,7 @@ func (q *Queue) SetQueue(filePaths []string, startIndex int) {
 			continue
 		}
 
-		track := QueueTrack{
+		track := Track{
 			AudioFileID: af.ID,
 			FilePath:    fp,
 			Position:    int64(i),
@@ -395,7 +395,7 @@ func (q *Queue) AddTrack(filePath string) {
 
 	wasEmpty := len(q.tracks) == 0
 
-	track := QueueTrack{
+	track := Track{
 		AudioFileID: af.ID,
 		FilePath:    filePath,
 		Position:    int64(len(q.tracks)),
@@ -449,7 +449,7 @@ func (q *Queue) AddTracks(filePaths []string) {
 			continue
 		}
 
-		track := QueueTrack{
+		track := Track{
 			AudioFileID: af.ID,
 			FilePath:    fp,
 			Position:    int64(len(q.tracks)),
@@ -490,7 +490,8 @@ func (q *Queue) InsertNextTracks(filePaths []string) {
 	}
 
 	wasEmpty := len(q.tracks) == 0
-	var newTracks []QueueTrack
+
+	var newTracks []Track
 
 	for _, fp := range filePaths {
 		af, err := q.db.Queries.GetAudioFileByPath(q.db.Ctx, fp)
@@ -500,7 +501,7 @@ func (q *Queue) InsertNextTracks(filePaths []string) {
 			continue
 		}
 
-		track := QueueTrack{
+		track := Track{
 			AudioFileID: af.ID,
 			FilePath:    fp,
 		}
@@ -519,7 +520,7 @@ func (q *Queue) InsertNextTracks(filePaths []string) {
 	}
 
 	// Insert the block into the slice at insertPos.
-	tail := make([]QueueTrack, len(q.tracks[insertPos:]))
+	tail := make([]Track, len(q.tracks[insertPos:]))
 	copy(tail, q.tracks[insertPos:])
 	q.tracks = append(q.tracks[:insertPos], newTracks...)
 	q.tracks = append(q.tracks, tail...)
@@ -558,7 +559,7 @@ func (q *Queue) InsertNext(filePath string) {
 		insertPos = len(q.tracks)
 	}
 
-	track := QueueTrack{
+	track := Track{
 		AudioFileID: af.ID,
 		FilePath:    filePath,
 		Position:    int64(insertPos),
@@ -572,7 +573,7 @@ func (q *Queue) InsertNext(filePath string) {
 	}
 
 	// Insert into slice.
-	q.tracks = append(q.tracks, QueueTrack{})
+	q.tracks = append(q.tracks, Track{})
 	copy(q.tracks[insertPos+1:], q.tracks[insertPos:])
 	q.tracks[insertPos] = track
 
@@ -710,14 +711,14 @@ func (q *Queue) CycleRepeat() {
 }
 
 // GetState returns the current queue state for the frontend.
-func (q *Queue) GetState() QueueState {
+func (q *Queue) GetState() State {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	tracks := make([]QueueTrack, len(q.tracks))
+	tracks := make([]Track, len(q.tracks))
 	copy(tracks, q.tracks)
 
-	return QueueState{
+	return State{
 		Tracks:           tracks,
 		CurrentIndex:     q.currentIndex,
 		ShuffleMode:      q.shuffleMode,
@@ -790,10 +791,10 @@ func (q *Queue) RestoreState() {
 		return
 	}
 
-	q.tracks = make([]QueueTrack, 0, len(rows))
+	q.tracks = make([]Track, 0, len(rows))
 
 	for _, row := range rows {
-		q.tracks = append(q.tracks, QueueTrack{
+		q.tracks = append(q.tracks, Track{
 			ID:          row.ID,
 			AudioFileID: row.AudioFileID,
 			FilePath:    row.FilePath,
@@ -954,13 +955,21 @@ func (q *Queue) playCurrentTrack() {
 	}
 
 	if q.currentIndex < 0 || q.currentIndex >= len(q.tracks) {
-		q.logger.Warn("Current index out of range", "index", q.currentIndex, "trackCount", len(q.tracks))
+		q.logger.Warn(
+			"Current index out of range",
+			"index", q.currentIndex,
+			"trackCount", len(q.tracks),
+		)
 
 		return
 	}
 
 	track := q.tracks[q.currentIndex]
-	q.logger.Info("Playing track from queue", "filePath", track.FilePath, "position", q.currentIndex)
+	q.logger.Info(
+		"Playing track from queue",
+		"filePath", track.FilePath,
+		"position", q.currentIndex,
+	)
 
 	err := q.player.LoadFile(track.FilePath)
 	if err != nil {
@@ -980,8 +989,8 @@ func (q *Queue) playCurrentTrack() {
 // onQueueExhausted is called when there are no more tracks to play.
 // This is the extension point for a future fallback playlist feature.
 func (q *Queue) onQueueExhausted() {
-	q.logger.Info("Queue exhausted, stopping playback")
 	// Future: load fallback playlist here.
+	q.logger.Info("Queue exhausted, stopping playback")
 }
 
 // reindexPositions updates the Position field of all tracks to match slice index.
@@ -1047,7 +1056,7 @@ func (q *Queue) emitQueueChanged() {
 		return
 	}
 
-	state := QueueState{
+	state := State{
 		Tracks:           q.tracks,
 		CurrentIndex:     q.currentIndex,
 		ShuffleMode:      q.shuffleMode,
@@ -1057,7 +1066,7 @@ func (q *Queue) emitQueueChanged() {
 
 	// Ensure tracks is never nil in JSON.
 	if state.Tracks == nil {
-		state.Tracks = []QueueTrack{}
+		state.Tracks = []Track{}
 	}
 
 	runtime.EventsEmit(q.ctx, events.QueueChanged, state)
