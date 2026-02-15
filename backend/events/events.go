@@ -42,6 +42,7 @@ const (
 	RequestCycleRepeat      = "RequestCycleRepeat"
 	RequestAddTracksToQueue = "RequestAddTracksToQueue"
 	RequestPlayTracksNext   = "RequestPlayTracksNext"
+	RequestPlayQueueIndex   = "RequestPlayQueueIndex"
 )
 
 // Config events.

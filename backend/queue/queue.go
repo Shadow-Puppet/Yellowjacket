@@ -36,10 +36,11 @@ type TrackLoader interface {
 	LoadFile(filePath string) error
 	Play() error
 	CurrentPositionSeconds() (int, error)
+	UnloadTrack()
 }
 
-// QueueTrack represents a track in the queue with its metadata.
-type QueueTrack struct {
+// Track represents a track in the queue with its metadata.
+type Track struct {
 	ID          int64  `json:"id"`
 	AudioFileID int64  `json:"audioFileId"`
 	FilePath    string `json:"filePath"`
@@ -48,13 +49,13 @@ type QueueTrack struct {
 	Artist      string `json:"artist"`
 }
 
-// QueueState is the full state emitted to the frontend.
-type QueueState struct {
-	Tracks           []QueueTrack `json:"tracks"`
-	CurrentIndex     int          `json:"currentIndex"`
-	ShuffleMode      bool         `json:"shuffleMode"`
-	RepeatMode       RepeatMode   `json:"repeatMode"`
-	SourcePlaylistID int64        `json:"sourcePlaylistId"`
+// State is the full state emitted to the frontend.
+type State struct {
+	Tracks           []Track    `json:"tracks"`
+	CurrentIndex     int        `json:"currentIndex"`
+	ShuffleMode      bool       `json:"shuffleMode"`
+	RepeatMode       RepeatMode `json:"repeatMode"`
+	SourcePlaylistID int64      `json:"sourcePlaylistId"`
 }
 
 // Queue manages an ordered list of tracks for playback.
@@ -65,7 +66,7 @@ type Queue struct {
 	player TrackLoader
 
 	mu               sync.Mutex
-	tracks           []QueueTrack
+	tracks           []Track
 	currentIndex     int
 	shuffleMode      bool
 	repeatMode       RepeatMode
@@ -106,6 +107,7 @@ func (q *Queue) OnPlaybackFinished() {
 	// Repeat One: replay the current track.
 	if q.repeatMode == RepeatOne {
 		q.playCurrentTrack()
+		q.emitQueueChanged()
 
 		return
 	}
@@ -120,6 +122,7 @@ func (q *Queue) OnPlaybackFinished() {
 
 	q.currentIndex = nextIdx
 	q.playCurrentTrack()
+	q.emitQueueChanged()
 }
 
 // registerEventHandlers sets up Wails event listeners for queue commands.
@@ -178,6 +181,11 @@ func (q *Queue) registerEventHandlers() {
 	runtime.EventsOn(q.ctx, events.RequestPlayTracksNext, func(data ...any) {
 		q.logger.Info("Received RequestPlayTracksNext")
 		q.handlePlayTracksNext(data...)
+	})
+
+	runtime.EventsOn(q.ctx, events.RequestPlayQueueIndex, func(data ...any) {
+		q.logger.Info("Received RequestPlayQueueIndex")
+		q.handlePlayQueueIndex(data...)
 	})
 }
 
@@ -298,6 +306,25 @@ func (q *Queue) handleAddTracksToQueue(data ...any) {
 	q.AddTracks(filePaths)
 }
 
+// handlePlayQueueIndex processes the RequestPlayQueueIndex event payload.
+// Expects data[0] = float64 index.
+func (q *Queue) handlePlayQueueIndex(data ...any) {
+	if len(data) < 1 {
+		q.logger.Error("RequestPlayQueueIndex: missing data")
+
+		return
+	}
+
+	index, ok := data[0].(float64)
+	if !ok {
+		q.logger.Error("RequestPlayQueueIndex: invalid index type", "got", data[0])
+
+		return
+	}
+
+	q.PlayIndex(int(index))
+}
+
 // handlePlayTracksNext processes the RequestPlayTracksNext event payload.
 // Expects data[0] = []interface{} of file path strings.
 func (q *Queue) handlePlayTracksNext(data ...any) {
@@ -331,7 +358,7 @@ func (q *Queue) SetQueue(filePaths []string, startIndex int) {
 	defer q.mu.Unlock()
 
 	// Look up audio file IDs and metadata for all paths.
-	tracks := make([]QueueTrack, 0, len(filePaths))
+	tracks := make([]Track, 0, len(filePaths))
 
 	for i, fp := range filePaths {
 		af, err := q.db.Queries.GetAudioFileByPath(q.db.Ctx, fp)
@@ -341,7 +368,7 @@ func (q *Queue) SetQueue(filePaths []string, startIndex int) {
 			continue
 		}
 
-		track := QueueTrack{
+		track := Track{
 			AudioFileID: af.ID,
 			FilePath:    fp,
 			Position:    int64(i),
@@ -395,7 +422,7 @@ func (q *Queue) AddTrack(filePath string) {
 
 	wasEmpty := len(q.tracks) == 0
 
-	track := QueueTrack{
+	track := Track{
 		AudioFileID: af.ID,
 		FilePath:    filePath,
 		Position:    int64(len(q.tracks)),
@@ -449,7 +476,7 @@ func (q *Queue) AddTracks(filePaths []string) {
 			continue
 		}
 
-		track := QueueTrack{
+		track := Track{
 			AudioFileID: af.ID,
 			FilePath:    fp,
 			Position:    int64(len(q.tracks)),
@@ -490,7 +517,8 @@ func (q *Queue) InsertNextTracks(filePaths []string) {
 	}
 
 	wasEmpty := len(q.tracks) == 0
-	var newTracks []QueueTrack
+
+	var newTracks []Track
 
 	for _, fp := range filePaths {
 		af, err := q.db.Queries.GetAudioFileByPath(q.db.Ctx, fp)
@@ -500,7 +528,7 @@ func (q *Queue) InsertNextTracks(filePaths []string) {
 			continue
 		}
 
-		track := QueueTrack{
+		track := Track{
 			AudioFileID: af.ID,
 			FilePath:    fp,
 		}
@@ -519,7 +547,7 @@ func (q *Queue) InsertNextTracks(filePaths []string) {
 	}
 
 	// Insert the block into the slice at insertPos.
-	tail := make([]QueueTrack, len(q.tracks[insertPos:]))
+	tail := make([]Track, len(q.tracks[insertPos:]))
 	copy(tail, q.tracks[insertPos:])
 	q.tracks = append(q.tracks[:insertPos], newTracks...)
 	q.tracks = append(q.tracks, tail...)
@@ -558,7 +586,7 @@ func (q *Queue) InsertNext(filePath string) {
 		insertPos = len(q.tracks)
 	}
 
-	track := QueueTrack{
+	track := Track{
 		AudioFileID: af.ID,
 		FilePath:    filePath,
 		Position:    int64(insertPos),
@@ -572,7 +600,7 @@ func (q *Queue) InsertNext(filePath string) {
 	}
 
 	// Insert into slice.
-	q.tracks = append(q.tracks, QueueTrack{})
+	q.tracks = append(q.tracks, Track{})
 	copy(q.tracks[insertPos+1:], q.tracks[insertPos:])
 	q.tracks[insertPos] = track
 
@@ -601,8 +629,9 @@ func (q *Queue) RemoveTrack(position int) {
 
 	q.tracks = append(q.tracks[:position], q.tracks[position+1:]...)
 
-	// Adjust current index if needed.
-	if position < q.currentIndex {
+	// Adjust current index if needed. A currentIndex of -1 means no track
+	// is loaded, so only shift when a valid track is selected.
+	if q.currentIndex >= 0 && position < q.currentIndex {
 		q.currentIndex--
 	} else if position == q.currentIndex && q.currentIndex >= len(q.tracks) && len(q.tracks) > 0 {
 		q.currentIndex = len(q.tracks) - 1
@@ -645,7 +674,7 @@ func (q *Queue) Previous() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	if len(q.tracks) == 0 {
+	if len(q.tracks) == 0 || q.currentIndex < 0 {
 		return
 	}
 
@@ -670,6 +699,26 @@ func (q *Queue) Previous() {
 	}
 
 	q.currentIndex = prevIdx
+	q.playCurrentTrack()
+	q.emitQueueChanged()
+}
+
+// PlayIndex jumps to and plays the track at the given index.
+func (q *Queue) PlayIndex(index int) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	if len(q.tracks) == 0 {
+		return
+	}
+
+	if index < 0 || index >= len(q.tracks) {
+		q.logger.Warn("PlayIndex: index out of range", "index", index, "trackCount", len(q.tracks))
+
+		return
+	}
+
+	q.currentIndex = index
 	q.playCurrentTrack()
 	q.emitQueueChanged()
 }
@@ -710,14 +759,14 @@ func (q *Queue) CycleRepeat() {
 }
 
 // GetState returns the current queue state for the frontend.
-func (q *Queue) GetState() QueueState {
+func (q *Queue) GetState() State {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	tracks := make([]QueueTrack, len(q.tracks))
+	tracks := make([]Track, len(q.tracks))
 	copy(tracks, q.tracks)
 
-	return QueueState{
+	return State{
 		Tracks:           tracks,
 		CurrentIndex:     q.currentIndex,
 		ShuffleMode:      q.shuffleMode,
@@ -790,10 +839,10 @@ func (q *Queue) RestoreState() {
 		return
 	}
 
-	q.tracks = make([]QueueTrack, 0, len(rows))
+	q.tracks = make([]Track, 0, len(rows))
 
 	for _, row := range rows {
-		q.tracks = append(q.tracks, QueueTrack{
+		q.tracks = append(q.tracks, Track{
 			ID:          row.ID,
 			AudioFileID: row.AudioFileID,
 			FilePath:    row.FilePath,
@@ -803,7 +852,9 @@ func (q *Queue) RestoreState() {
 		})
 	}
 
-	// Clamp current index.
+	// Clamp current index. A value of -1 is valid and means "no current
+	// track" (e.g. the queue was exhausted before shutdown). Only clamp
+	// when the index exceeds the restored track count.
 	if q.currentIndex >= len(q.tracks) && len(q.tracks) > 0 {
 		q.currentIndex = len(q.tracks) - 1
 	}
@@ -954,13 +1005,19 @@ func (q *Queue) playCurrentTrack() {
 	}
 
 	if q.currentIndex < 0 || q.currentIndex >= len(q.tracks) {
-		q.logger.Warn("Current index out of range", "index", q.currentIndex, "trackCount", len(q.tracks))
+		q.logger.Warn(
+			"Current index out of range",
+			"index", q.currentIndex, "trackCount", len(q.tracks),
+		)
 
 		return
 	}
 
 	track := q.tracks[q.currentIndex]
-	q.logger.Info("Playing track from queue", "filePath", track.FilePath, "position", q.currentIndex)
+	q.logger.Info(
+		"Playing track from queue",
+		"filePath", track.FilePath, "position", q.currentIndex,
+	)
 
 	err := q.player.LoadFile(track.FilePath)
 	if err != nil {
@@ -978,10 +1035,19 @@ func (q *Queue) playCurrentTrack() {
 }
 
 // onQueueExhausted is called when there are no more tracks to play.
-// This is the extension point for a future fallback playlist feature.
+// It unloads the current track, resets the index to -1 (no current track),
+// and notifies the frontend.
 func (q *Queue) onQueueExhausted() {
-	q.logger.Info("Queue exhausted, stopping playback")
-	// Future: load fallback playlist here.
+	q.logger.Info("Queue exhausted, unloading track")
+
+	q.currentIndex = -1
+
+	if q.player != nil {
+		q.player.UnloadTrack()
+	}
+
+	q.emitQueueChanged()
+	q.persistState()
 }
 
 // reindexPositions updates the Position field of all tracks to match slice index.
@@ -1047,7 +1113,7 @@ func (q *Queue) emitQueueChanged() {
 		return
 	}
 
-	state := QueueState{
+	state := State{
 		Tracks:           q.tracks,
 		CurrentIndex:     q.currentIndex,
 		ShuffleMode:      q.shuffleMode,
@@ -1057,7 +1123,7 @@ func (q *Queue) emitQueueChanged() {
 
 	// Ensure tracks is never nil in JSON.
 	if state.Tracks == nil {
-		state.Tracks = []QueueTrack{}
+		state.Tracks = []Track{}
 	}
 
 	runtime.EventsEmit(q.ctx, events.QueueChanged, state)

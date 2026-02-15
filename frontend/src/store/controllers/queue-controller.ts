@@ -110,4 +110,8 @@ export class QueueController implements ReactiveController {
   cycleRepeat(): void {
     queueStore.cycleRepeat();
   }
+
+  playAtIndex(index: number): void {
+    queueStore.playAtIndex(index);
+  }
 }

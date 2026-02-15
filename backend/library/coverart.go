@@ -191,7 +191,10 @@ func (l *Library) generateMissingThumbnails() error {
 
 		imgData, err := os.ReadFile(filepath.Join(coverDir, name))
 		if err != nil {
-			l.logger.Warn("could not read cover art for thumbnail generation", "file", name, "err", err)
+			l.logger.Warn(
+				"could not read cover art for thumbnail generation",
+				"file", name, "err", err,
+			)
 
 			continue
 		}

@@ -292,9 +292,11 @@ func (p *Player) startPaused() {
 		p.emitPlaybackFinished()
 		p.logger.Info("Playback finished naturally")
 
-		// Notify queue for auto-advance.
+		// Notify queue for auto-advance. This must be dispatched to a new
+		// goroutine because beep.Callback runs with the speaker mutex held
+		// and the handler will call LoadFile/Play which acquire that same lock.
 		if p.playbackFinishedHandler != nil {
-			p.playbackFinishedHandler()
+			go p.playbackFinishedHandler()
 		}
 	})))
 
@@ -430,6 +432,43 @@ func (p *Player) Pause() error {
 	}
 
 	return nil
+}
+
+// UnloadTrack tears down the current track, releasing the file and streamer
+// chain. The player returns to the initial "no track loaded" state and emits
+// events so the frontend clears its current-track display.
+func (p *Player) UnloadTrack() {
+	// Stop audio output.
+	if p.control != nil {
+		speaker.Lock()
+		p.control.Paused = true
+		speaker.Unlock()
+	}
+
+	// Close the open audio file.
+	if p.currentFile != nil {
+		if err := p.currentFile.Close(); err != nil {
+			p.logger.Warn("Failed to close audio file during unload", "err", err)
+		}
+
+		p.currentFile = nil
+	}
+
+	// Release streamer chain. Volume is intentionally kept so the user's
+	// volume setting persists across tracks.
+	p.baseStreamer = nil
+	p.seeker = nil
+	p.resampled = nil
+	p.control = nil
+	p.speakerStreamer = nil
+
+	p.state = Stopped
+
+	// Notify frontend that there is no longer a current track.
+	p.emitPlaybackStateChanged(p.state)
+	runtime.EventsEmit(p.ctx, events.TrackChanged, nil)
+
+	p.logger.Info("Track unloaded")
 }
 
 // SetVolume sets the playback volume (0-100).
@@ -571,7 +610,10 @@ func (p *Player) GetCurrentTrackInfo() (map[string]interface{}, error) {
 				coverArtThumbnail = "/covers/" + name + "_thumb.jpg"
 			}
 		} else {
-			p.logger.Debug("Could not get track metadata from database", "path", filePath, "err", err)
+			p.logger.Debug(
+				"Could not get track metadata from database",
+				"path", filePath, "err", err,
+			)
 		}
 	}
 

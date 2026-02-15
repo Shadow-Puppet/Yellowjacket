@@ -75,7 +75,7 @@ export class QueuePanel extends LitElement {
       padding: 8px 16px;
       gap: 12px;
       border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-      cursor: default;
+      cursor: pointer;
     }
 
     .track-item:hover {
@@ -165,8 +165,13 @@ export class QueuePanel extends LitElement {
     this.dispatchEvent(new CustomEvent('queue-panel-close', { bubbles: true, composed: true }));
   }
 
-  private handleRemoveTrack(position: number) {
+  private handleRemoveTrack(e: Event, position: number) {
+    e.stopPropagation();
     this.queue.removeFromQueue(position);
+  }
+
+  private handleTrackClick(index: number) {
+    this.queue.playAtIndex(index);
   }
 
   private getDisplayTitle(track: { title: string; filePath: string }): string {
@@ -203,7 +208,8 @@ export class QueuePanel extends LitElement {
             <ul class="track-list">
               ${tracks.map(
                 (track, index) => html`
-                  <li class="track-item ${index === currentIndex ? 'active' : ''}">
+                  <li class="track-item ${index === currentIndex ? 'active' : ''}"
+                      @click=${() => this.handleTrackClick(index)}>
                     <span class="track-position">${index + 1}</span>
                     <div class="track-details">
                       <span class="track-title">${this.getDisplayTitle(track)}</span>
@@ -211,7 +217,7 @@ export class QueuePanel extends LitElement {
                     </div>
                     <button
                       class="remove-button"
-                      @click=${() => this.handleRemoveTrack(index)}
+                      @click=${(e: Event) => this.handleRemoveTrack(e, index)}
                       title="Remove from queue"
                     >
                       <wa-icon name="xmark"></wa-icon>

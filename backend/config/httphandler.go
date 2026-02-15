@@ -29,7 +29,8 @@ func (c *Config) handle(w http.ResponseWriter, r *http.Request) {
 		if err := c.handleConfigPost(r); err != nil {
 			c.logger.Error("problem handling config post request", "err", err.Error())
 
-			if renderErr := c.formSubmitError(err.Error()).Render(r.Context(), w); renderErr != nil {
+			renderErr := c.formSubmitError(err.Error()).Render(r.Context(), w)
+			if renderErr != nil {
 				c.logger.Error("problem rendering error response", "err", renderErr.Error())
 			}
 

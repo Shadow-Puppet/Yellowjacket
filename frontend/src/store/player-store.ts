@@ -51,8 +51,8 @@ class PlayerStore {
       this.update({ isPlaying: data.state === 'playing' });
     });
 
-    EventsOn(Events.TrackChanged, (trackInfo: TrackInfo) => {
-      this.update({ currentTrack: trackInfo });
+    EventsOn(Events.TrackChanged, (trackInfo: TrackInfo | null) => {
+      this.update({ currentTrack: trackInfo ?? null });
     });
 
     EventsOn(Events.PlaybackFinished, () => {

@@ -56,6 +56,65 @@ golangci-lint run --build-tags webkit2_41 ./...           # With build tags expl
 
 Frontend type checking: `cd frontend && pnpm exec tsc --noEmit`
 
+### Avoiding Common Linting Errors
+
+Always run `make lint` before considering a task complete. Below are the most common linting violations and how to avoid them.
+
+**Line length (`golines`)**: Keep lines under 100 characters. Break long function calls, especially `slog` calls, across multiple lines:
+```go
+// Bad — over 100 characters:
+q.logger.Warn("Current index out of range", "index", q.currentIndex, "trackCount", len(q.tracks))
+
+// Good — broken across lines:
+q.logger.Warn(
+    "Current index out of range",
+    "index", q.currentIndex, "trackCount", len(q.tracks),
+)
+```
+
+**Stuttering type names (`revive`)**: Exported types must not repeat the package name. Consumers would write `queue.Track`, not `queue.QueueTrack`:
+```go
+// Bad — stutters as queue.QueueTrack:
+type QueueTrack struct { ... }
+
+// Good:
+type Track struct { ... }
+```
+
+**Cuddled declarations (`wsl`)**: `var` and `const` declarations must be separated from the preceding statement by a blank line:
+```go
+// Bad:
+wasEmpty := len(q.tracks) == 0
+var newTracks []Track
+
+// Good:
+wasEmpty := len(q.tracks) == 0
+
+var newTracks []Track
+```
+
+**Blank line after early returns (`nlreturn`)**: An `if` block that ends with `return`, `continue`, or `break` must be followed by a blank line:
+```go
+if err != nil {
+    return err
+}
+
+doNextThing()
+```
+
+**Error sentinels (`err113`)**: Never use `errors.New(...)` or `fmt.Errorf("...")` inline in return statements. Define package-level sentinel errors instead:
+```go
+var errNotFound = errors.New("not found")
+```
+
+**Doc comments (`godot`)**: All doc comments on exported types and functions must end with a period:
+```go
+// Track represents a track in the queue with its metadata.
+type Track struct { ... }
+```
+
+**Import order (`gci`)**: Three groups separated by blank lines — stdlib, third-party, internal (`yellowjacket/...`). Let the formatter handle this, but be aware of the expected grouping.
+
 ## Code Generation
 
 `go:generate` directives live in `backend/app.go` (templ) and `backend/database/database.go` (sqlc). After modifying `.templ` files or SQL in `backend/database/sql/`, run `make generate`. **Never edit files in `backend/database/sql/sqlcgen/` or `*_templ.go` — they are generated.**

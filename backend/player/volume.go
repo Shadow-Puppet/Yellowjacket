@@ -14,7 +14,7 @@ const (
 
 // Internal volume range bounds.
 const (
-	MinVol Volume = -4
+	MinVol Volume = -6
 	MaxVol Volume = 0
 )
 

@@ -7,6 +7,8 @@ export interface QueueTrack {
   audioFileId: number;
   filePath: string;
   position: number;
+  title: string;
+  artist: string;
 }
 
 export type RepeatMode = 'off' | 'all' | 'one';
@@ -24,7 +26,7 @@ type Subscriber = () => void;
 class QueueStore {
   private state: QueueState = {
     tracks: [],
-    currentIndex: 0,
+    currentIndex: -1,
     shuffleMode: false,
     repeatMode: 'off',
     sourcePlaylistId: 0,
@@ -105,6 +107,10 @@ class QueueStore {
 
   cycleRepeat(): void {
     EventsEmit(Events.RequestCycleRepeat);
+  }
+
+  playAtIndex(index: number): void {
+    EventsEmit(Events.RequestPlayQueueIndex, index);
   }
 
   // ===================================================================
