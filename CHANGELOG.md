@@ -1,3 +1,9 @@
+## [1.1.2](https://github.com/onion-4-dinner/yellowjacket/compare/v1.1.1...v1.1.2) (2026-02-15)
+
+### Bug Fixes
+
+* r2 upload ([#69](https://github.com/onion-4-dinner/yellowjacket/issues/69)) ([0252466](https://github.com/onion-4-dinner/yellowjacket/commit/0252466f615b4e2fd9694790c6d311a9eac1ccf2))
+
 ## [1.1.1](https://github.com/onion-4-dinner/yellowjacket/compare/v1.1.0...v1.1.1) (2026-02-15)
 
 ### Bug Fixes
