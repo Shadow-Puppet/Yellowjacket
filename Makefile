@@ -30,5 +30,6 @@ test:
 vulncheck:
 	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
-setup: ## Install git hooks (lefthook is managed via go.mod tool directive)
+setup: ## Install dependencies and git hooks
+	cd frontend && pnpm install
 	go tool lefthook install
