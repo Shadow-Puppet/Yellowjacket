@@ -106,7 +106,7 @@ func (p *Player) registerEventHandlers() {
 		p.logger.Info("Received RequestPlayEvent")
 
 		if err := p.Play(); err != nil {
-			p.logger.Error("failed to play", "err", err)
+			p.logger.Warn("Play requested but not ready", "err", err)
 		}
 	})
 	runtime.EventsOn(p.ctx, events.RequestPause, func(_ ...any) {

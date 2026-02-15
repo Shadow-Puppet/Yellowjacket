@@ -133,6 +133,11 @@ func (q *Queue) registerEventHandlers() {
 		return
 	}
 
+	runtime.EventsOn(q.ctx, events.RequestPlay, func(_ ...any) {
+		q.logger.Info("Received RequestPlay")
+		q.PlayFromStart()
+	})
+
 	runtime.EventsOn(q.ctx, events.RequestNext, func(_ ...any) {
 		q.logger.Info("Received RequestNext")
 		q.Next()
@@ -699,6 +704,33 @@ func (q *Queue) Previous() {
 	}
 
 	q.currentIndex = prevIdx
+	q.playCurrentTrack()
+	q.emitQueueChanged()
+}
+
+// PlayFromStart restarts playback from the beginning of the queue.
+// If shuffle is enabled, a new shuffle order is generated and playback
+// starts from a random track. This is a no-op when a track is already
+// active (currentIndex != -1) or the queue is empty.
+func (q *Queue) PlayFromStart() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	if q.currentIndex != -1 {
+		return
+	}
+
+	if len(q.tracks) == 0 {
+		return
+	}
+
+	if q.shuffleMode {
+		q.generateShuffleOrder()
+		q.currentIndex = q.shuffleOrder[0]
+	} else {
+		q.currentIndex = 0
+	}
+
 	q.playCurrentTrack()
 	q.emitQueueChanged()
 }
