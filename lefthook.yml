@@ -11,7 +11,7 @@ pre-commit:
 
     golangci-lint:
       glob: "*.go"
-      run: golangci-lint run --timeout 5m --build-tags webkit2_41 ./...
+      run: go tool golangci-lint run --timeout 5m --build-tags webkit2_41 ./...
 
     codegen-check:
       glob: "*.{go,sql,templ}"
@@ -26,7 +26,7 @@ pre-commit:
     frontend-typecheck:
       glob: "frontend/**/*.{ts,tsx}"
       root: "frontend/"
-      run: pnpm exec tsc --noEmit
+      run: ./node_modules/.bin/tsc --noEmit
 
 pre-push:
   parallel: true

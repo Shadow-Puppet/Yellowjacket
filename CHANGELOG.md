@@ -1,3 +1,40 @@
+## [1.1.2](https://github.com/onion-4-dinner/yellowjacket/compare/v1.1.1...v1.1.2) (2026-02-15)
+
+### Bug Fixes
+
+* r2 upload ([#69](https://github.com/onion-4-dinner/yellowjacket/issues/69)) ([0252466](https://github.com/onion-4-dinner/yellowjacket/commit/0252466f615b4e2fd9694790c6d311a9eac1ccf2))
+
+## [1.1.1](https://github.com/onion-4-dinner/yellowjacket/compare/v1.1.0...v1.1.1) (2026-02-15)
+
+### Bug Fixes
+
+* **ci:** remove build-check job from CI workflow ([#66](https://github.com/onion-4-dinner/yellowjacket/issues/66)) ([42d3f45](https://github.com/onion-4-dinner/yellowjacket/commit/42d3f45d85afa694e9545997af3ff4ac814ad021))
+
+## [1.1.0](https://github.com/onion-4-dinner/yellowjacket/compare/v1.0.3...v1.1.0) (2026-02-15)
+
+### Features
+
+* **ci:** upload release artifacts to Cloudflare R2 ([#65](https://github.com/onion-4-dinner/yellowjacket/issues/65)) ([8985084](https://github.com/onion-4-dinner/yellowjacket/commit/89850848cbf7783e5c85348ff18f7cd11d60231a))
+
+## [1.0.3](https://github.com/onion-4-dinner/yellowjacket/compare/v1.0.2...v1.0.3) (2026-02-15)
+
+### ⚠ BREAKING CHANGES
+
+* **deps:** update module github.com/evilmartians/lefthook to v2 (#61)
+* **deps:** update actions/checkout action to v6 (#45)
+* **deps:** update dependency vite to v7 (#53)
+
+### Bug Fixes
+
+* resolve all lint errors and make linting a required CI check ([#62](https://github.com/onion-4-dinner/yellowjacket/issues/62)) ([30b2480](https://github.com/onion-4-dinner/yellowjacket/commit/30b2480df49f57878b0e8c923da6ad8d6fe99416))
+* virtual list and cover grid ([#63](https://github.com/onion-4-dinner/yellowjacket/issues/63)) ([7579a76](https://github.com/onion-4-dinner/yellowjacket/commit/7579a768be84225ed46db4e7a90781f3e30e2953))
+
+### Miscellaneous
+
+* **deps:** update actions/checkout action to v6 ([#45](https://github.com/onion-4-dinner/yellowjacket/issues/45)) ([2d6e221](https://github.com/onion-4-dinner/yellowjacket/commit/2d6e22105d2daed1dc5b586c0442e2941949a165))
+* **deps:** update dependency vite to v7 ([#53](https://github.com/onion-4-dinner/yellowjacket/issues/53)) ([f0006c4](https://github.com/onion-4-dinner/yellowjacket/commit/f0006c4c4335b60b58cccdd29de4792965e39694))
+* **deps:** update module github.com/evilmartians/lefthook to v2 ([#61](https://github.com/onion-4-dinner/yellowjacket/issues/61)) ([e32b217](https://github.com/onion-4-dinner/yellowjacket/commit/e32b2179129ae7f26037697a125710ff7587566d))
+
 ## [1.0.2](https://github.com/onion-4-dinner/yellowjacket/compare/v1.0.1...v1.0.2) (2026-02-14)
 
 ### ⚠ BREAKING CHANGES
