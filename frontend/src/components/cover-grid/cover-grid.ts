@@ -264,6 +264,15 @@ export class CoverGrid extends LitElement {
         }
     }
 
+    private async onAlbumDblClick(album: library.Album) {
+        const filePaths = await this.getAlbumFilePaths(album);
+
+        if (filePaths.length === 0) return;
+
+        this.selectedAlbums = new Set();
+        this.queue.setQueue(filePaths, 0);
+    }
+
     private onAlbumContextMenu(e: MouseEvent, album: library.Album) {
         e.preventDefault();
         e.stopPropagation();
@@ -403,6 +412,7 @@ export class CoverGrid extends LitElement {
                 aria-label="${album.Name} by ${album.ArtistName}"
                 @click=${(e: MouseEvent) =>
                     this.onAlbumClick(e, album, index)}
+                @dblclick=${() => this.onAlbumDblClick(album)}
                 @keydown=${(e: KeyboardEvent) =>
                     this.onAlbumKeydown(e, album, index)}
                 @contextmenu=${(e: MouseEvent) =>
