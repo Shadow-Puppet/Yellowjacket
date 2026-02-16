@@ -35,6 +35,7 @@ const PreviousRestartThreshold = 3
 type TrackLoader interface {
 	LoadFile(filePath string) error
 	Play() error
+	IsPlaying() bool
 	CurrentPositionSeconds() (int, error)
 	UnloadTrack()
 }
@@ -462,6 +463,7 @@ func (q *Queue) AddTrack(filePath string) {
 		q.playCurrentTrack()
 	}
 
+	q.persistState()
 	q.emitQueueChanged()
 }
 
@@ -618,6 +620,7 @@ func (q *Queue) InsertNext(filePath string) {
 	}
 
 	q.persistTracks()
+	q.persistState()
 	q.emitQueueChanged()
 }
 
@@ -653,8 +656,9 @@ func (q *Queue) RemoveTrack(position int) {
 	q.emitQueueChanged()
 }
 
-// Next advances to the next track. In RepeatOne mode, the current
-// track is replayed instead of advancing.
+// Next advances to the next track. If the player was paused, the next
+// track is loaded but not played. In RepeatOne mode, the current track
+// is replayed instead of advancing.
 func (q *Queue) Next() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -663,9 +667,11 @@ func (q *Queue) Next() {
 		return
 	}
 
+	wasPlaying := q.player != nil && q.player.IsPlaying()
+
 	// Repeat One: replay the current track.
 	if q.repeatMode == RepeatOne {
-		q.playCurrentTrack()
+		q.playOrLoadCurrentTrack(wasPlaying)
 		q.emitQueueChanged()
 
 		return
@@ -679,11 +685,12 @@ func (q *Queue) Next() {
 	}
 
 	q.currentIndex = nextIdx
-	q.playCurrentTrack()
+	q.playOrLoadCurrentTrack(wasPlaying)
 	q.emitQueueChanged()
 }
 
 // Previous goes to the previous track (or restarts current if >3s in).
+// If the player was paused, the track is loaded but not played.
 // In RepeatOne mode, the current track is replayed instead of navigating.
 func (q *Queue) Previous() {
 	q.mu.Lock()
@@ -693,9 +700,11 @@ func (q *Queue) Previous() {
 		return
 	}
 
+	wasPlaying := q.player != nil && q.player.IsPlaying()
+
 	// Repeat One: replay the current track.
 	if q.repeatMode == RepeatOne {
-		q.playCurrentTrack()
+		q.playOrLoadCurrentTrack(wasPlaying)
 		q.emitQueueChanged()
 
 		return
@@ -705,7 +714,7 @@ func (q *Queue) Previous() {
 	if q.player != nil {
 		posSecs, err := q.player.CurrentPositionSeconds()
 		if err == nil && posSecs > PreviousRestartThreshold {
-			q.playCurrentTrack()
+			q.playOrLoadCurrentTrack(wasPlaying)
 			q.emitQueueChanged()
 
 			return
@@ -715,14 +724,14 @@ func (q *Queue) Previous() {
 	prevIdx := q.previousIndex()
 	if prevIdx == -1 {
 		// At the beginning — just restart the current track.
-		q.playCurrentTrack()
+		q.playOrLoadCurrentTrack(wasPlaying)
 		q.emitQueueChanged()
 
 		return
 	}
 
 	q.currentIndex = prevIdx
-	q.playCurrentTrack()
+	q.playOrLoadCurrentTrack(wasPlaying)
 	q.emitQueueChanged()
 }
 
@@ -1046,12 +1055,25 @@ func (q *Queue) generateShuffleOrder() {
 	q.shuffleOrder = order
 }
 
-// playCurrentTrack tells the player to load and play the current track.
-func (q *Queue) playCurrentTrack() {
-	if q.player == nil {
-		q.logger.Error("No player set, cannot play track")
+// playOrLoadCurrentTrack loads the current track and optionally starts
+// playback. When autoPlay is true it behaves like playCurrentTrack;
+// when false it only loads the file (leaving the player paused).
+func (q *Queue) playOrLoadCurrentTrack(autoPlay bool) {
+	if autoPlay {
+		q.playCurrentTrack()
+	} else {
+		q.loadCurrentTrack()
+	}
+}
 
-		return
+// loadCurrentTrack tells the player to load the current track without
+// starting playback. It persists the updated queue state. Returns true
+// if the file was loaded successfully.
+func (q *Queue) loadCurrentTrack() bool {
+	if q.player == nil {
+		q.logger.Error("No player set, cannot load track")
+
+		return false
 	}
 
 	if q.currentIndex < 0 || q.currentIndex >= len(q.tracks) {
@@ -1060,28 +1082,44 @@ func (q *Queue) playCurrentTrack() {
 			"index", q.currentIndex, "trackCount", len(q.tracks),
 		)
 
-		return
+		return false
 	}
 
 	track := q.tracks[q.currentIndex]
 	q.logger.Info(
-		"Playing track from queue",
+		"Loading track from queue",
 		"filePath", track.FilePath, "position", q.currentIndex,
 	)
 
 	err := q.player.LoadFile(track.FilePath)
 	if err != nil {
-		q.logger.Error("Failed to load file from queue", "filePath", track.FilePath, "err", err)
+		q.logger.Error(
+			"Failed to load file from queue",
+			"filePath", track.FilePath, "err", err,
+		)
 
-		return
-	}
-
-	err = q.player.Play()
-	if err != nil {
-		q.logger.Error("Failed to play file from queue", "filePath", track.FilePath, "err", err)
+		return false
 	}
 
 	q.persistState()
+
+	return true
+}
+
+// playCurrentTrack tells the player to load and play the current track.
+func (q *Queue) playCurrentTrack() {
+	if !q.loadCurrentTrack() {
+		return
+	}
+
+	err := q.player.Play()
+	if err != nil {
+		track := q.tracks[q.currentIndex]
+		q.logger.Error(
+			"Failed to play file from queue",
+			"filePath", track.FilePath, "err", err,
+		)
+	}
 }
 
 // onQueueExhausted is called when there are no more tracks to play.
@@ -1108,6 +1146,9 @@ func (q *Queue) reindexPositions() {
 }
 
 // persistTracks writes the current queue tracks to the database.
+// TODO: wrap in a transaction so the DELETE-all + INSERT-all is atomic.
+// Without a transaction a crash mid-write could leave queue_tracks empty or
+// partially populated. Low practical risk but worth addressing for robustness.
 func (q *Queue) persistTracks() {
 	err := q.db.Queries.ClearQueueTracks(q.db.Ctx)
 	if err != nil {

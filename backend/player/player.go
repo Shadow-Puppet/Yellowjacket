@@ -151,6 +151,7 @@ func (p *Player) registerEventHandlers() {
 		}
 
 		p.emitVolumeChanged()
+		p.saveState()
 	})
 }
 
@@ -349,6 +350,7 @@ func (p *Player) LoadFile(filePath string) error {
 	p.startPaused()
 	p.emitPlaybackStateChanged(p.state)
 	p.emitTrackChanged()
+	p.saveState()
 	p.logger.Info("File loaded, state set to paused", "file", filePath)
 
 	return nil
@@ -433,11 +435,17 @@ func (p *Player) Pause() error {
 		p.state = Paused
 		p.logger.Info("Paused playback")
 		p.emitPlaybackStateChanged(p.state)
+		p.saveState()
 	} else {
 		p.logger.Info("Already paused or not playing")
 	}
 
 	return nil
+}
+
+// IsPlaying reports whether the player is currently playing audio.
+func (p *Player) IsPlaying() bool {
+	return p.state == Playing
 }
 
 // UnloadTrack tears down the current track, releasing the file and streamer
@@ -473,6 +481,7 @@ func (p *Player) UnloadTrack() {
 	// Notify frontend that there is no longer a current track.
 	p.emitPlaybackStateChanged(p.state)
 	runtime.EventsEmit(p.ctx, events.TrackChanged, nil)
+	p.saveState()
 
 	p.logger.Info("Track unloaded")
 }
@@ -503,6 +512,7 @@ func (p *Player) getUserVolume() UserVolume {
 // MuteToggle toggles the mute state.
 func (p *Player) MuteToggle() error {
 	p.volume.Silent = !p.volume.Silent
+	p.saveState()
 
 	return nil
 }
@@ -649,7 +659,16 @@ func (p *Player) TrackLengthInSeconds() (int, error) {
 }
 
 // SaveState persists the current player state to the database.
+// This is called during shutdown to capture the final state.
 func (p *Player) SaveState() {
+	p.saveState()
+}
+
+// saveState is the internal helper that writes the current player state to the
+// database. It is called both from the public SaveState (shutdown) and from
+// individual operations that change state (volume, mute, track load/unload)
+// so that the persisted state stays up-to-date between clean shutdowns.
+func (p *Player) saveState() {
 	if p.db == nil {
 		p.logger.Warn("No database available, cannot save player state")
 
