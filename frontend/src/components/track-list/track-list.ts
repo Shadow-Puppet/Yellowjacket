@@ -16,30 +16,30 @@ import type { PlaylistPicker } from '@components/playlist-picker/playlist-picker
 
 @customElement('track-list')
 export class TrackList extends LitElement {
-  private player = new PlayerController(this);
-  private queue = new QueueController(this);
+    private player = new PlayerController(this);
+    private queue = new QueueController(this);
 
-  @state()
-  private tracks: library.Track[] = [];
+    @state()
+    private tracks: library.Track[] = [];
 
-  @state()
-  private selectedTracks: Set<string> = new Set();
+    @state()
+    private selectedTracks: Set<string> = new Set();
 
-  @state()
-  private contextMenuOpen = false;
+    @state()
+    private contextMenuOpen = false;
 
-  @state()
-  private playlistSubmenuOpen = false;
+    @state()
+    private playlistSubmenuOpen = false;
 
-  @query('#context-menu')
-  private contextMenuPopup!: HTMLElement;
+    @query('#context-menu')
+    private contextMenuPopup!: HTMLElement;
 
-  @query('#playlist-submenu')
-  private playlistSubmenuPopup!: HTMLElement;
+    @query('#playlist-submenu')
+    private playlistSubmenuPopup!: HTMLElement;
 
-  private closeHandler = () => this.closeContextMenu();
+    private closeHandler = () => this.closeContextMenu();
 
-  static override styles = css`
+    static override styles = css`
     :host {
       display: flex;
       flex-direction: column;
@@ -64,6 +64,7 @@ export class TrackList extends LitElement {
     .track-row {
       display: grid;
       grid-template-columns: 1fr 1fr 80px;
+      font-size: 12px;
       padding: 8px;
       border-bottom: 1px solid #333;
       align-items: center;
@@ -152,198 +153,198 @@ export class TrackList extends LitElement {
     }
   `;
 
-  override connectedCallback() {
-    super.connectedCallback();
-    this.loadTracks();
-    document.addEventListener('click', this.closeHandler);
-    document.addEventListener('contextmenu', this.closeHandler);
-  }
-
-  override disconnectedCallback() {
-    super.disconnectedCallback();
-    document.removeEventListener('click', this.closeHandler);
-    document.removeEventListener('contextmenu', this.closeHandler);
-  }
-
-  async loadTracks() {
-    try {
-      const tracks = await GetAllTracks();
-      this.tracks = tracks;
-      this.selectedTracks = new Set();
-
-      if (tracks[0]) {
-        LogPrint(tracks[0].TrackName);
-      }
-    } catch (error) {
-      console.error('Error loading tracks:', error);
-    }
-  }
-
-  private getSelectedFilePaths(): string[] {
-    return this.tracks
-      .filter((t) => this.selectedTracks.has(t.FilePath))
-      .map((t) => t.FilePath);
-  }
-
-  private onTrackRowClick(e: MouseEvent, track: library.Track) {
-    const isCtrl = e.ctrlKey || e.metaKey;
-
-    if (isCtrl) {
-      const next = new Set(this.selectedTracks);
-
-      if (next.has(track.FilePath)) {
-        next.delete(track.FilePath);
-      } else {
-        next.add(track.FilePath);
-      }
-
-      this.selectedTracks = next;
-    } else {
-      this.selectedTracks = new Set([track.FilePath]);
-    }
-  }
-
-  private onTrackRowDblClick(track: library.Track) {
-    this.selectedTracks = new Set();
-    this.queue.setQueue([track.FilePath], 0);
-  }
-
-  private onTrackContextMenu(e: MouseEvent, track: library.Track) {
-    e.preventDefault();
-    e.stopPropagation();
-
-    if (!this.selectedTracks.has(track.FilePath)) {
-      this.selectedTracks = new Set([track.FilePath]);
+    override connectedCallback() {
+        super.connectedCallback();
+        this.loadTracks();
+        document.addEventListener('click', this.closeHandler);
+        document.addEventListener('contextmenu', this.closeHandler);
     }
 
-    this.contextMenuOpen = true;
-
-    // Position the popup at the mouse cursor using a virtual anchor.
-    this.updateComplete.then(() => {
-      const popup = this.contextMenuPopup;
-
-      if (popup) {
-        (popup as any).anchor = {
-          getBoundingClientRect() {
-            return {
-              width: 0,
-              height: 0,
-              x: e.clientX,
-              y: e.clientY,
-              top: e.clientY,
-              left: e.clientX,
-              right: e.clientX,
-              bottom: e.clientY,
-            };
-          },
-        };
-        (popup as any).active = true;
-      }
-    });
-  }
-
-  private onContextMenuAction(action: string) {
-    const filePaths = this.getSelectedFilePaths();
-
-    if (filePaths.length === 0) return;
-
-    switch (action) {
-      case 'play':
-        this.queue.setQueue(filePaths, 0);
-        break;
-      case 'add-to-queue':
-        this.queue.addTracksToQueue(filePaths);
-        break;
-      case 'play-next':
-        this.queue.playTracksNext(filePaths);
-        break;
+    override disconnectedCallback() {
+        super.disconnectedCallback();
+        document.removeEventListener('click', this.closeHandler);
+        document.removeEventListener('contextmenu', this.closeHandler);
     }
 
-    this.closeContextMenu(true);
-  }
+    async loadTracks() {
+        try {
+            const tracks = await GetAllTracks();
+            this.tracks = tracks;
+            this.selectedTracks = new Set();
 
-  private closeContextMenu(clearSelection = false) {
-    if (!this.contextMenuOpen) return;
-
-    this.closePlaylistSubmenu();
-    this.contextMenuOpen = false;
-
-    if (clearSelection) {
-      this.selectedTracks = new Set();
+            if (tracks[0]) {
+                LogPrint(tracks[0].TrackName);
+            }
+        } catch (error) {
+            console.error('Error loading tracks:', error);
+        }
     }
 
-    const popup = this.contextMenuPopup;
-
-    if (popup) {
-      (popup as any).active = false;
-    }
-  }
-
-  private async showPlaylistSubmenu() {
-    if (this.playlistSubmenuOpen) return;
-
-    this.playlistSubmenuOpen = true;
-
-    await this.updateComplete;
-
-    const submenu = this.playlistSubmenuPopup;
-    const trigger = this.shadowRoot?.querySelector('.submenu-item');
-
-    if (submenu && trigger) {
-      (submenu as any).anchor = trigger;
-      (submenu as any).active = true;
+    private getSelectedFilePaths(): string[] {
+        return this.tracks
+            .filter((t) => this.selectedTracks.has(t.FilePath))
+            .map((t) => t.FilePath);
     }
 
-    const picker = this.shadowRoot?.querySelector(
-      'playlist-picker',
-    ) as PlaylistPicker | null;
+    private onTrackRowClick(e: MouseEvent, track: library.Track) {
+        const isCtrl = e.ctrlKey || e.metaKey;
 
-    picker?.reset();
-  }
+        if (isCtrl) {
+            const next = new Set(this.selectedTracks);
 
-  private closePlaylistSubmenu() {
-    if (!this.playlistSubmenuOpen) return;
+            if (next.has(track.FilePath)) {
+                next.delete(track.FilePath);
+            } else {
+                next.add(track.FilePath);
+            }
 
-    this.playlistSubmenuOpen = false;
-
-    const submenu = this.playlistSubmenuPopup;
-
-    if (submenu) {
-      (submenu as any).active = false;
+            this.selectedTracks = next;
+        } else {
+            this.selectedTracks = new Set([track.FilePath]);
+        }
     }
-  }
 
-  private onPlaylistActionComplete = () => {
-    this.closeContextMenu(true);
-  };
+    private onTrackRowDblClick(track: library.Track) {
+        this.selectedTracks = new Set();
+        this.queue.setQueue([track.FilePath], 0);
+    }
 
-  private isActiveTrack(track: library.Track): boolean {
-    const currentTrack = this.player.currentTrack;
+    private onTrackContextMenu(e: MouseEvent, track: library.Track) {
+        e.preventDefault();
+        e.stopPropagation();
 
-    if (!currentTrack) return false;
+        if (!this.selectedTracks.has(track.FilePath)) {
+            this.selectedTracks = new Set([track.FilePath]);
+        }
 
-    return currentTrack.filePath === track.FilePath;
-  }
+        this.contextMenuOpen = true;
 
-  private renderTrackRow = (track: library.Track): unknown => {
-    const active = this.isActiveTrack(track);
-    const selected = this.selectedTracks.has(track.FilePath);
+        // Position the popup at the mouse cursor using a virtual anchor.
+        this.updateComplete.then(() => {
+            const popup = this.contextMenuPopup;
 
-    const classes = [
-      'track-row',
-      active ? 'active' : '',
-      selected ? 'selected' : '',
-    ]
-      .filter(Boolean)
-      .join(' ');
+            if (popup) {
+                (popup as any).anchor = {
+                    getBoundingClientRect() {
+                        return {
+                            width: 0,
+                            height: 0,
+                            x: e.clientX,
+                            y: e.clientY,
+                            top: e.clientY,
+                            left: e.clientX,
+                            right: e.clientX,
+                            bottom: e.clientY,
+                        };
+                    },
+                };
+                (popup as any).active = true;
+            }
+        });
+    }
 
-    return html`
+    private onContextMenuAction(action: string) {
+        const filePaths = this.getSelectedFilePaths();
+
+        if (filePaths.length === 0) return;
+
+        switch (action) {
+            case 'play':
+                this.queue.setQueue(filePaths, 0);
+                break;
+            case 'add-to-queue':
+                this.queue.addTracksToQueue(filePaths);
+                break;
+            case 'play-next':
+                this.queue.playTracksNext(filePaths);
+                break;
+        }
+
+        this.closeContextMenu(true);
+    }
+
+    private closeContextMenu(clearSelection = false) {
+        if (!this.contextMenuOpen) return;
+
+        this.closePlaylistSubmenu();
+        this.contextMenuOpen = false;
+
+        if (clearSelection) {
+            this.selectedTracks = new Set();
+        }
+
+        const popup = this.contextMenuPopup;
+
+        if (popup) {
+            (popup as any).active = false;
+        }
+    }
+
+    private async showPlaylistSubmenu() {
+        if (this.playlistSubmenuOpen) return;
+
+        this.playlistSubmenuOpen = true;
+
+        await this.updateComplete;
+
+        const submenu = this.playlistSubmenuPopup;
+        const trigger = this.shadowRoot?.querySelector('.submenu-item');
+
+        if (submenu && trigger) {
+            (submenu as any).anchor = trigger;
+            (submenu as any).active = true;
+        }
+
+        const picker = this.shadowRoot?.querySelector(
+            'playlist-picker',
+        ) as PlaylistPicker | null;
+
+        picker?.reset();
+    }
+
+    private closePlaylistSubmenu() {
+        if (!this.playlistSubmenuOpen) return;
+
+        this.playlistSubmenuOpen = false;
+
+        const submenu = this.playlistSubmenuPopup;
+
+        if (submenu) {
+            (submenu as any).active = false;
+        }
+    }
+
+    private onPlaylistActionComplete = () => {
+        this.closeContextMenu(true);
+    };
+
+    private isActiveTrack(track: library.Track): boolean {
+        const currentTrack = this.player.currentTrack;
+
+        if (!currentTrack) return false;
+
+        return currentTrack.filePath === track.FilePath;
+    }
+
+    private renderTrackRow = (track: library.Track): unknown => {
+        const active = this.isActiveTrack(track);
+        const selected = this.selectedTracks.has(track.FilePath);
+
+        const classes = [
+            'track-row',
+            active ? 'active' : '',
+            selected ? 'selected' : '',
+        ]
+            .filter(Boolean)
+            .join(' ');
+
+        return html`
       <div
         class=${classes}
         @click=${(e: MouseEvent) => this.onTrackRowClick(e, track)}
         @dblclick=${() => this.onTrackRowDblClick(track)}
         @contextmenu=${(e: MouseEvent) =>
-          this.onTrackContextMenu(e, track)}
+                this.onTrackContextMenu(e, track)}
       >
         <div class="track-name">${track.TrackName}</div>
         <div class="artist-name">${track.ArtistName}</div>
@@ -352,13 +353,13 @@ export class TrackList extends LitElement {
         </div>
       </div>
     `;
-  };
+    };
 
-  override render() {
-    return html`
+    override render() {
+        return html`
       ${this.tracks.length === 0
-        ? html`<p>Loading tracks...</p>`
-        : html`
+                ? html`<p>Loading tracks...</p>`
+                : html`
             <div class="header-row">
               <span>Track Name</span>
               <span>Artist</span>
@@ -378,7 +379,7 @@ export class TrackList extends LitElement {
         .active=${this.contextMenuOpen}
       >
         ${this.contextMenuOpen
-          ? html`
+                ? html`
               <div class="context-menu-panel">
                 <wa-dropdown-item
                   @click=${() => this.onContextMenuAction('play')}
@@ -402,9 +403,9 @@ export class TrackList extends LitElement {
                   class="submenu-item"
                   @mouseenter=${() => this.showPlaylistSubmenu()}
                   @click=${(e: Event) => {
-                    e.stopPropagation();
-                    void this.showPlaylistSubmenu();
-                  }}
+                        e.stopPropagation();
+                        void this.showPlaylistSubmenu();
+                    }}
                 >
                   <wa-icon slot="icon" name="plus"></wa-icon>
                   Add to Playlist
@@ -412,7 +413,7 @@ export class TrackList extends LitElement {
                 </wa-dropdown-item>
               </div>
             `
-          : nothing}
+                : nothing}
       </wa-popup>
 
       <wa-popup
@@ -421,15 +422,15 @@ export class TrackList extends LitElement {
         .active=${this.playlistSubmenuOpen}
       >
         ${this.playlistSubmenuOpen && this.selectedTracks.size > 0
-          ? html`
+                ? html`
               <playlist-picker
                 .filePaths=${this.getSelectedFilePaths()}
                 @playlist-action-complete=${this.onPlaylistActionComplete}
                 @click=${(e: Event) => e.stopPropagation()}
               ></playlist-picker>
             `
-          : nothing}
+                : nothing}
       </wa-popup>
     `;
-  }
+    }
 }

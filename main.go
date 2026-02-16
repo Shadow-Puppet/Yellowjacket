@@ -57,10 +57,12 @@ func main() {
 	}
 
 	// Create application with options
+	winCfg := yjApp.WindowConfig()
+
 	err = wails.Run(&options.App{
 		Title:  "yellowjacket",
-		Width:  512,
-		Height: 384,
+		Width:  winCfg.Width,
+		Height: winCfg.Height,
 		Logger: logging.NewLogger(
 			sLogger,
 			[]string{},
@@ -69,6 +71,7 @@ func main() {
 		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
 		OnStartup:        yjApp.OnStartup,
 		OnDomReady:       yjApp.OnDomReady,
+		OnBeforeClose:    yjApp.OnBeforeClose,
 		OnShutdown:       yjApp.OnShutdown,
 		Bind:             yjApp.FEBindings,
 		MinWidth:         512,

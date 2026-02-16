@@ -107,6 +107,11 @@ func NewYellowJacketApp(
 	return yjApp, nil
 }
 
+// WindowConfig returns the window configuration for use by the host.
+func (yj *YellowJacketApp) WindowConfig() *config.WindowConfig {
+	return yj.appConfig.Window
+}
+
 var startupErr error
 
 // OnStartup initializes components that require the Wails runtime context.
@@ -141,6 +146,23 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 
 	// Add player to frontend bindings
 	yj.FEBindings = append(yj.FEBindings, yj.player)
+}
+
+// OnBeforeClose captures window state while the window is still alive.
+func (yj *YellowJacketApp) OnBeforeClose(ctx context.Context) bool {
+	w, h := wailsruntime.WindowGetSize(ctx)
+
+	yj.appConfig.Window.Width = w
+	yj.appConfig.Window.Height = h
+
+	if err := yj.appConfig.Save(); err != nil {
+		yj.logger.Error(
+			"Failed to save window state",
+			"err", err,
+		)
+	}
+
+	return false
 }
 
 // OnShutdown saves player state and cleans up resources before the application exits.

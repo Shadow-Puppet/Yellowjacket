@@ -23,6 +23,8 @@ type Config struct {
 	serveMux *http.ServeMux
 	filePath string          // required
 	Library  *library.Config `form:"Library" schema:"library,required"`
+
+	Window *WindowConfig `toml:"Window"`
 }
 
 // NewConfig creates a new config by loading it from disk.
@@ -36,6 +38,7 @@ func NewConfig(logger *slog.Logger) (*Config, error) {
 		filePath: path.Join(confDir, "config.toml"),
 		serveMux: http.NewServeMux(),
 	}
+	conf.applyDefaults()
 	conf.logger = logger.WithGroup("config").With("config", conf)
 	conf.serveMux.HandleFunc("/", conf.handle)
 
@@ -99,6 +102,8 @@ func (c *Config) Load() error {
 		return fmt.Errorf("problem parsing config file %s: %w", c.filePath, err)
 	}
 
+	c.applyDefaults()
+
 	// validate the config
 	if err = c.Validate(); err != nil {
 		return fmt.Errorf("invalid config file at %s: %w", c.filePath, err)
@@ -128,6 +133,15 @@ func (c *Config) Save() error {
 	c.logger.Debug("saved config to file", "file", c.filePath)
 
 	return nil
+}
+
+// applyDefaults ensures all config sections have valid defaults.
+func (c *Config) applyDefaults() {
+	if c.Window == nil {
+		c.Window = NewDefaultWindowConfig()
+	} else {
+		c.Window.applyDefaults()
+	}
 }
 
 // SetContext sets the Wails runtime context for event emission.
