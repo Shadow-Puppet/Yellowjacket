@@ -112,8 +112,15 @@ body div.sidebar {
     }
 }
 
-.main-panel {
+.content-area {
     grid-area: main-panel;
+    display: flex;
+    overflow: hidden;
+}
+
+.main-panel {
+    flex: 1;
+    min-width: 0;
     padding: 0.25em;
     background-color: #212529;
     overflow: hidden;

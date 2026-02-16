@@ -22,9 +22,12 @@
     <div class="sidebar">
         <app-sidebar></app-sidebar>
     </div>
-    <main class="main-panel" id="main-content">
-        <track-list></track-list>
-    </main>
+    <div class="content-area">
+        <main class="main-panel" id="main-content">
+            <track-list></track-list>
+        </main>
+        <queue-panel id="queue-panel"></queue-panel>
+    </div>
     <footer class="bottom-bar">
         <now-playing></now-playing>
         <audio-player></audio-player>
@@ -32,7 +35,6 @@
             <wa-icon name="list"></wa-icon>
         </button>
     </footer>
-    <queue-panel id="queue-panel"></queue-panel>
 </body>
 
 </html>

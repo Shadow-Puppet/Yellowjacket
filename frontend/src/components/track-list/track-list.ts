@@ -62,6 +62,10 @@ export class TrackList extends LitElement {
       width: 100%;
     }
 
+    .track-row > * {
+      min-width: 0;
+    }
+
     .track-row:hover {
       background-color: rgba(255, 255, 255, 0.05);
     }
