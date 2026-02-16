@@ -653,12 +653,21 @@ func (q *Queue) RemoveTrack(position int) {
 	q.emitQueueChanged()
 }
 
-// Next advances to the next track.
+// Next advances to the next track. In RepeatOne mode, the current
+// track is replayed instead of advancing.
 func (q *Queue) Next() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
 	if len(q.tracks) == 0 {
+		return
+	}
+
+	// Repeat One: replay the current track.
+	if q.repeatMode == RepeatOne {
+		q.playCurrentTrack()
+		q.emitQueueChanged()
+
 		return
 	}
 
@@ -675,11 +684,20 @@ func (q *Queue) Next() {
 }
 
 // Previous goes to the previous track (or restarts current if >3s in).
+// In RepeatOne mode, the current track is replayed instead of navigating.
 func (q *Queue) Previous() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
 	if len(q.tracks) == 0 || q.currentIndex < 0 {
+		return
+	}
+
+	// Repeat One: replay the current track.
+	if q.repeatMode == RepeatOne {
+		q.playCurrentTrack()
+		q.emitQueueChanged()
+
 		return
 	}
 

@@ -38,6 +38,7 @@ type Player struct {
 	volume                  *effects.Volume
 	speakerStreamer         beep.Streamer
 	playbackFinishedHandler func()
+	trackChangeID           uint64
 }
 
 // State represents the current playback state.
@@ -223,9 +224,14 @@ func (p *Player) emitTrackChanged() {
 		speaker.Unlock()
 	}
 
+	// Increment track change ID so the frontend can detect changes
+	// even when the same file plays consecutively.
+	p.trackChangeID++
+
 	// Emit comprehensive track info
 	trackInfo["trackLength"] = trackLengthSecs
 	trackInfo["seekPosition"] = seekPosition
+	trackInfo["trackChangeId"] = p.trackChangeID
 	runtime.EventsEmit(p.ctx, events.TrackChanged, trackInfo)
 
 	p.logger.Info("Emitting TrackChangedEvent with track info", "trackInfo", trackInfo)

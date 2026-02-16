@@ -13,6 +13,7 @@ export interface TrackInfo {
   album: string; // album name
   coverArt: string; // URL path to cover art (e.g., "/covers/abc.jpg") or empty string
   coverArtThumbnail: string; // URL path to thumbnail (e.g., "/covers/abc_thumb.jpg") or empty string
+  trackChangeId: number; // monotonic counter to detect track changes even when the same file plays consecutively
 }
 
 export interface PlayerState {

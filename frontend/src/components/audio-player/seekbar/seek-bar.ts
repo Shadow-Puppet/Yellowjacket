@@ -12,7 +12,7 @@ export class SeekBar extends LitElement {
   private player = new PlayerController(this);
   private rangeRef = createRef<WaSlider>();
   private timerID: number = -1;
-  private previousTrackPath: string | null = null;
+  private previousTrackChangeId: number = -1;
 
   @state()
   private seekValue: number = 0;
@@ -74,11 +74,13 @@ export class SeekBar extends LitElement {
   }
 
   override updated() {
-    // Detect track change and reset seek position
-    const currentPath = this.player.currentTrack?.filePath ?? null;
+    // Detect track change and reset seek position.
+    // Uses trackChangeId instead of filePath so the seek bar resets
+    // even when the same file plays consecutively in the queue.
+    const currentChangeId = this.player.currentTrack?.trackChangeId ?? -1;
 
-    if (currentPath !== this.previousTrackPath) {
-      this.previousTrackPath = currentPath;
+    if (currentChangeId !== this.previousTrackChangeId) {
+      this.previousTrackChangeId = currentChangeId;
       this.seekValue = this.player.currentTrack?.seekPosition ?? 0;
       this.stopProgress();
     }
