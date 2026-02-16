@@ -49,3 +49,8 @@ const (
 const (
 	LibraryConfigChanged = "LibraryConfigChanged"
 )
+
+// Library events.
+const (
+	LibraryScanComplete = "LibraryScanComplete"
+)

@@ -1,9 +1,14 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state, query } from 'lit/decorators.js';
-import { GetAllAlbums, GetAlbumTracks } from '@go/library/Library';
+import { GetAlbumTracks } from '@go/library/Library';
 import { library } from '@go/models';
 import { QueueController } from '@store/controllers/queue-controller';
+import { LibraryController } from '@store/controllers/library-controller';
 import '@lit-labs/virtualizer';
+import type {
+    LitVirtualizer,
+    VisibilityChangedEvent,
+} from '@lit-labs/virtualizer';
 import { grid } from '@lit-labs/virtualizer/layouts/grid.js';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
@@ -14,8 +19,16 @@ import type { PlaylistPicker } from '@components/playlist-picker/playlist-picker
 @customElement('cover-grid')
 export class CoverGrid extends LitElement {
     private queue = new QueueController(this);
+    private libraryCtrl = new LibraryController(this);
+
+    // Grid layout constants — must match the grid() config in render().
+    private static readonly GRID_ITEM_WIDTH = 176;
+    private static readonly GRID_ITEM_HEIGHT = 230;
+    private static readonly GRID_GAP = 16;
+    private static readonly GRID_PADDING = 16;
 
     private lastSelectedIndex: number | null = null;
+    private hasRestoredScroll = false;
 
     private closeHandler = () => this.closeContextMenu();
 
@@ -29,6 +42,10 @@ export class CoverGrid extends LitElement {
         lit-virtualizer {
             flex: 1;
             overflow-y: auto;
+        }
+
+        lit-virtualizer.restoring {
+            visibility: hidden;
         }
 
         .album-card {
@@ -185,11 +202,17 @@ export class CoverGrid extends LitElement {
     @state()
     private playlistFilePaths: string[] = [];
 
+    @state()
+    private hiddenForRestore = false;
+
     @query('#context-menu')
     private contextMenuPopup!: HTMLElement;
 
     @query('#playlist-submenu')
     private playlistSubmenuPopup!: HTMLElement;
+
+    @query('lit-virtualizer')
+    private virtualizer!: LitVirtualizer;
 
     override connectedCallback() {
         super.connectedCallback();
@@ -199,6 +222,12 @@ export class CoverGrid extends LitElement {
     }
 
     override disconnectedCallback() {
+        this.virtualizer?.removeEventListener(
+            'visibilityChanged',
+            this.onVisibilityChanged,
+        );
+        this.hasRestoredScroll = false;
+        this.hiddenForRestore = false;
         super.disconnectedCallback();
         document.removeEventListener('click', this.closeHandler);
         document.removeEventListener('contextmenu', this.closeHandler);
@@ -207,7 +236,7 @@ export class CoverGrid extends LitElement {
     private async loadAlbums() {
         try {
             this.loading = true;
-            const albums = await GetAllAlbums();
+            const albums = await this.libraryCtrl.getAlbums();
             this.albums = albums ?? [];
             this.selectedAlbums = new Set();
             this.lastSelectedIndex = null;
@@ -217,6 +246,89 @@ export class CoverGrid extends LitElement {
         } finally {
             this.loading = false;
         }
+
+        const savedIndex =
+            this.libraryCtrl.getScrollPosition('albums');
+
+        if (savedIndex > 0) {
+            this.hiddenForRestore = true;
+        }
+
+        await this.updateComplete;
+
+        if (this.isConnected && this.virtualizer) {
+            this.virtualizer.addEventListener(
+                'visibilityChanged',
+                this.onVisibilityChanged,
+            );
+        }
+    }
+
+    private onVisibilityChanged = (e: Event) => {
+        const { first, last } = e as VisibilityChangedEvent;
+
+        if (!this.hasRestoredScroll) {
+            // The grid layout fires a premature visibilityChanged
+            // before the viewport width is measured. Skip until
+            // real items are visible.
+            if (last <= 0) {
+                return;
+            }
+
+            this.hasRestoredScroll = true;
+
+            const savedIndex =
+                this.libraryCtrl.getScrollPosition('albums');
+
+            if (savedIndex > 0) {
+                void this.restoreScrollPosition(savedIndex);
+
+                return;
+            }
+
+            this.hiddenForRestore = false;
+        }
+
+        this.libraryCtrl.setScrollPosition('albums', first);
+    };
+
+    private async restoreScrollPosition(
+        savedIndex: number,
+    ) {
+        // Wait for the virtualizer layout to settle. layoutComplete
+        // resolves after ResizeObserver + double-rAF, so the sizer
+        // transform has been painted and scrollHeight is correct.
+        await this.virtualizer?.layoutComplete;
+
+        // Compute pixel offset matching the grid layout internals:
+        // offset = padding + row * (itemHeight + gap).
+        const vw = this.virtualizer?.clientWidth ?? 0;
+        const {
+            GRID_ITEM_WIDTH,
+            GRID_ITEM_HEIGHT,
+            GRID_GAP,
+            GRID_PADDING,
+        } = CoverGrid;
+
+        const availableWidth = vw - GRID_PADDING * 2;
+        const columns = Math.max(
+            1,
+            Math.floor(
+                (availableWidth + GRID_GAP) /
+                    (GRID_ITEM_WIDTH + GRID_GAP),
+            ),
+        );
+        const row = Math.floor(savedIndex / columns);
+        const pixelOffset =
+            GRID_PADDING +
+            row * (GRID_ITEM_HEIGHT + GRID_GAP);
+
+        if (this.virtualizer) {
+            this.virtualizer.scrollTop = pixelOffset;
+        }
+
+        // Reveal now that the virtualizer is at the correct position.
+        this.hiddenForRestore = false;
     }
 
     private selectRange(
@@ -528,6 +640,7 @@ export class CoverGrid extends LitElement {
 
         return html`
             <lit-virtualizer
+                class=${this.hiddenForRestore ? 'restoring' : ''}
                 scroller
                 .items=${this.albums}
                 .renderItem=${this.renderAlbumCard}

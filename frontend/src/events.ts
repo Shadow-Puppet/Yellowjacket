@@ -33,6 +33,9 @@ export const Events = {
     RequestAddTracksToQueue: "RequestAddTracksToQueue",
     RequestPlayTracksNext: "RequestPlayTracksNext",
     RequestPlayQueueIndex: "RequestPlayQueueIndex",
+
+    // Library events
+    LibraryScanComplete: "LibraryScanComplete",
 } as const;
 
 export type EventName = (typeof Events)[keyof typeof Events];

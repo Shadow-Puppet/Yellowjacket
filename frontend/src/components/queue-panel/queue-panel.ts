@@ -23,13 +23,13 @@ export class QueuePanel extends LitElement {
   @state()
   private playlistPickerOpen = false;
 
-  @query('#save-playlist-popup')
-  private savePlaylistPopup!: HTMLElement;
+  @query('#add-to-playlist-popup')
+  private addToPlaylistPopup!: HTMLElement;
 
   private closePickerHandler = (e: MouseEvent) => {
     const path = e.composedPath();
-    const popup = this.savePlaylistPopup;
-    const btn = this.shadowRoot?.querySelector('.save-playlist-button');
+    const popup = this.addToPlaylistPopup;
+    const btn = this.shadowRoot?.querySelector('.add-to-playlist-button');
 
     if (popup && !path.includes(popup) && (!btn || !path.includes(btn))) {
       this.closePlaylistPicker();
@@ -94,7 +94,7 @@ export class QueuePanel extends LitElement {
       font-weight: 600;
     }
 
-    .save-playlist-button {
+    .add-to-playlist-button {
       background: none;
       border: none;
       color: inherit;
@@ -104,16 +104,16 @@ export class QueuePanel extends LitElement {
       align-items: center;
     }
 
-    .save-playlist-button:hover {
+    .add-to-playlist-button:hover {
       color: #ffd43b;
     }
 
-    .save-playlist-button:disabled {
+    .add-to-playlist-button:disabled {
       color: #555;
       cursor: not-allowed;
     }
 
-    #save-playlist-popup {
+    #add-to-playlist-popup {
       z-index: 210;
     }
 
@@ -231,15 +231,15 @@ export class QueuePanel extends LitElement {
     document.removeEventListener('click', this.closePickerHandler);
   }
 
-  private async handleSaveAsPlaylist() {
+  private async handleAddToPlaylist() {
     if (this.queue.tracks.length === 0) return;
 
     this.playlistPickerOpen = !this.playlistPickerOpen;
 
     await this.updateComplete;
 
-    const popup = this.savePlaylistPopup;
-    const btn = this.shadowRoot?.querySelector('.save-playlist-button');
+    const popup = this.addToPlaylistPopup;
+    const btn = this.shadowRoot?.querySelector('.add-to-playlist-button');
 
     if (popup && btn) {
       (popup as any).anchor = btn;
@@ -260,7 +260,7 @@ export class QueuePanel extends LitElement {
 
     this.playlistPickerOpen = false;
 
-    const popup = this.savePlaylistPopup;
+    const popup = this.addToPlaylistPopup;
 
     if (popup) {
       (popup as any).active = false;
@@ -336,17 +336,17 @@ export class QueuePanel extends LitElement {
         <div class="header">
           <h3>Queue</h3>
           <button
-            class="save-playlist-button"
-            @click=${this.handleSaveAsPlaylist}
+            class="add-to-playlist-button"
+            @click=${this.handleAddToPlaylist}
             ?disabled=${tracks.length === 0}
-            title="Save queue as playlist"
+            title="Add queue to playlist"
           >
             <wa-icon name="plus"></wa-icon>
           </button>
         </div>
 
         <wa-popup
-          id="save-playlist-popup"
+          id="add-to-playlist-popup"
           placement="bottom-end"
           .active=${this.playlistPickerOpen}
         >

@@ -1,12 +1,15 @@
-import { GetAllTracks } from '@go/library/Library';
 import { library } from '@go/models';
-import { LogPrint } from '@runtime/runtime';
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state, query } from 'lit/decorators.js';
 import { formatMilliseconds } from '@utils/time';
 import { PlayerController } from '@store/controllers/player-controller';
 import { QueueController } from '@store/controllers/queue-controller';
+import { LibraryController } from '@store/controllers/library-controller';
 import '@lit-labs/virtualizer';
+import type {
+    LitVirtualizer,
+    VisibilityChangedEvent,
+} from '@lit-labs/virtualizer';
 import { flow } from '@lit-labs/virtualizer/layouts/flow.js';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
@@ -14,10 +17,16 @@ import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@components/playlist-picker/playlist-picker.js';
 import type { PlaylistPicker } from '@components/playlist-picker/playlist-picker.js';
 
+const COLUMN_STORAGE_KEY = 'track-list-column-widths';
+const MIN_COLUMN_WIDTH = 50;
+const DEFAULT_DURATION_WIDTH = 80;
+const COLUMN_COUNT = 3;
+
 @customElement('track-list')
 export class TrackList extends LitElement {
     private player = new PlayerController(this);
     private queue = new QueueController(this);
+    private libraryCtrl = new LibraryController(this);
 
     @state()
     private tracks: library.Track[] = [];
@@ -37,12 +46,160 @@ export class TrackList extends LitElement {
     @query('#playlist-submenu')
     private playlistSubmenuPopup!: HTMLElement;
 
+    @query('lit-virtualizer')
+    private virtualizer!: LitVirtualizer;
+
     private lastSelectedIndex: number | null = null;
 
     private closeHandler = () => this.closeContextMenu();
 
+    @state()
+    private columnWidths: number[] = [];
+
+    private resizingColumn: number | null = null;
+    private resizeStartX = 0;
+    private resizeStartWidths: number[] = [];
+    private resizeObserver: ResizeObserver | null = null;
+    private flowLayout = flow();
+    private hasRestoredScroll = false;
+
+    private get gridTemplateColumns(): string {
+        if (this.columnWidths.length === 0) {
+            return '1fr 1fr 80px';
+        }
+
+        return this.columnWidths
+            .map((w) => `${w}px`)
+            .join(' ');
+    }
+
+    private get colBoundaryPositions(): number[] {
+        if (this.columnWidths.length === 0) return [];
+
+        const padding = 8;
+        const positions: number[] = [];
+        let cumulative = padding;
+
+        for (let i = 0; i < this.columnWidths.length - 1; i++) {
+            cumulative += this.columnWidths[i] ?? 0;
+            positions.push(cumulative);
+        }
+
+        return positions;
+    }
+
+    private initColumnWidths() {
+        const saved = this.loadColumnWidths();
+
+        if (saved) {
+            this.columnWidths = saved;
+
+            return;
+        }
+
+        this.computeDefaultWidths();
+    }
+
+    private computeDefaultWidths() {
+        const totalWidth = this.clientWidth;
+
+        if (totalWidth <= 0) return;
+
+        const remaining = totalWidth - DEFAULT_DURATION_WIDTH;
+        const half = Math.floor(remaining / 2);
+
+        this.columnWidths = [
+            half,
+            remaining - half,
+            DEFAULT_DURATION_WIDTH,
+        ];
+    }
+
+    private loadColumnWidths(): number[] | null {
+        try {
+            const raw = localStorage.getItem(COLUMN_STORAGE_KEY);
+
+            if (!raw) return null;
+
+            const parsed: unknown = JSON.parse(raw);
+
+            if (
+                !Array.isArray(parsed) ||
+                parsed.length !== COLUMN_COUNT ||
+                !parsed.every(
+                    (v: unknown) =>
+                        typeof v === 'number' && v >= MIN_COLUMN_WIDTH,
+                )
+            ) {
+                return null;
+            }
+
+            return parsed as number[];
+        } catch {
+            return null;
+        }
+    }
+
+    private saveColumnWidths() {
+        try {
+            localStorage.setItem(
+                COLUMN_STORAGE_KEY,
+                JSON.stringify(this.columnWidths),
+            );
+        } catch {
+            // Ignore storage errors.
+        }
+    }
+
+    private onColResizeStart = (e: MouseEvent, columnIndex: number) => {
+        e.preventDefault();
+        this.resizingColumn = columnIndex;
+        this.resizeStartX = e.clientX;
+        this.resizeStartWidths = [...this.columnWidths];
+        this.requestUpdate();
+    };
+
+    private onColResizeMove = (e: MouseEvent) => {
+        if (this.resizingColumn === null) return;
+
+        const delta = e.clientX - this.resizeStartX;
+        const col = this.resizingColumn;
+        const nextCol = col + 1;
+        const startLeft = this.resizeStartWidths[col] ?? 0;
+        const startRight = this.resizeStartWidths[nextCol] ?? 0;
+        const total = startLeft + startRight;
+
+        let newLeft = startLeft + delta;
+        let newRight = startRight - delta;
+
+        if (newLeft < MIN_COLUMN_WIDTH) {
+            newLeft = MIN_COLUMN_WIDTH;
+            newRight = total - MIN_COLUMN_WIDTH;
+        }
+
+        if (newRight < MIN_COLUMN_WIDTH) {
+            newRight = MIN_COLUMN_WIDTH;
+            newLeft = total - MIN_COLUMN_WIDTH;
+        }
+
+        const updated = [...this.resizeStartWidths];
+
+        updated[col] = newLeft;
+        updated[nextCol] = newRight;
+        this.columnWidths = updated;
+    };
+
+    private onColResizeEnd = () => {
+        if (this.resizingColumn === null) return;
+
+        this.resizingColumn = null;
+        this.saveColumnWidths();
+        this.requestUpdate();
+    };
+
     static override styles = css`
     :host {
+      position: relative;
       display: flex;
       flex-direction: column;
       overflow: hidden;
@@ -50,12 +207,49 @@ export class TrackList extends LitElement {
 
     .header-row {
       display: grid;
-      grid-template-columns: 1fr 1fr 80px;
       padding: 8px;
       font-weight: bold;
       color: #fff;
       border-bottom: 1px solid #666;
       flex-shrink: 0;
+    }
+
+    .header-cell {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .resize-overlay {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 2;
+    }
+
+    .col-resize-handle {
+      position: absolute;
+      top: 0;
+      height: 100%;
+      width: 1px;
+      cursor: col-resize;
+      pointer-events: auto;
+      background-color: #444;
+      transition: background-color 0.15s ease;
+    }
+
+    .col-resize-handle::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: -3px;
+      width: 7px;
+      height: 100%;
+    }
+
+    .col-resize-handle:hover,
+    .col-resize-handle.active {
+      background-color: #6c757d;
     }
 
     lit-virtualizer {
@@ -65,7 +259,6 @@ export class TrackList extends LitElement {
 
     .track-row {
       display: grid;
-      grid-template-columns: 1fr 1fr 80px;
       font-size: 12px;
       padding: 8px;
       border-bottom: 1px solid #333;
@@ -77,6 +270,11 @@ export class TrackList extends LitElement {
 
     .track-row > * {
       min-width: 0;
+    }
+
+    .header-cell + .header-cell,
+    .track-row > :not(:first-child) {
+      padding-left: 6px;
     }
 
     .track-row:hover {
@@ -160,28 +358,123 @@ export class TrackList extends LitElement {
         this.loadTracks();
         document.addEventListener('click', this.closeHandler);
         document.addEventListener('contextmenu', this.closeHandler);
+        document.addEventListener('mousemove', this.onColResizeMove);
+        document.addEventListener('mouseup', this.onColResizeEnd);
+
+        this.resizeObserver = new ResizeObserver(() => {
+            this.onHostResize();
+        });
+
+        this.resizeObserver.observe(this);
     }
 
     override disconnectedCallback() {
+        this.virtualizer?.removeEventListener(
+            'visibilityChanged',
+            this.onVisibilityChanged,
+        );
+        this.hasRestoredScroll = false;
         super.disconnectedCallback();
         document.removeEventListener('click', this.closeHandler);
         document.removeEventListener('contextmenu', this.closeHandler);
+        document.removeEventListener('mousemove', this.onColResizeMove);
+        document.removeEventListener('mouseup', this.onColResizeEnd);
+
+        this.resizeObserver?.disconnect();
+        this.resizeObserver = null;
+    }
+
+    override firstUpdated() {
+        this.initColumnWidths();
+    }
+
+    override updated(changed: Map<string, unknown>) {
+        if (changed.has('columnWidths')) {
+            this.virtualizer?.requestUpdate();
+        }
+    }
+
+    private previousHostWidth = 0;
+
+    private onHostResize() {
+        const newWidth = this.clientWidth;
+
+        if (
+            newWidth <= 0 ||
+            this.columnWidths.length === 0 ||
+            this.resizingColumn !== null
+        ) {
+            return;
+        }
+
+        if (this.previousHostWidth === 0) {
+            this.previousHostWidth = newWidth;
+
+            return;
+        }
+
+        const oldTotal = this.columnWidths.reduce(
+            (sum, w) => sum + w,
+            0,
+        );
+
+        if (oldTotal <= 0) return;
+
+        const scale = newWidth / oldTotal;
+
+        this.columnWidths = this.columnWidths.map((w) =>
+            Math.max(
+                MIN_COLUMN_WIDTH,
+                Math.round(w * scale),
+            ),
+        );
+
+        this.previousHostWidth = newWidth;
+        this.saveColumnWidths();
     }
 
     async loadTracks() {
         try {
-            const tracks = await GetAllTracks();
+            const tracks = await this.libraryCtrl.getTracks();
             this.tracks = tracks;
             this.selectedTracks = new Set();
             this.lastSelectedIndex = null;
+            await this.updateComplete;
 
-            if (tracks[0]) {
-                LogPrint(tracks[0].TrackName);
+            if (this.isConnected && this.virtualizer) {
+                this.virtualizer.addEventListener(
+                    'visibilityChanged',
+                    this.onVisibilityChanged,
+                );
             }
         } catch (error) {
             console.error('Error loading tracks:', error);
         }
     }
+
+    private onVisibilityChanged = (e: Event) => {
+        const { first } = e as VisibilityChangedEvent;
+
+        if (!this.hasRestoredScroll) {
+            this.hasRestoredScroll = true;
+
+            const savedIndex =
+                this.libraryCtrl.getScrollPosition('tracks');
+
+            if (savedIndex > 0) {
+                requestAnimationFrame(() => {
+                    this.virtualizer?.scrollToIndex(
+                        savedIndex,
+                        'start',
+                    );
+                });
+
+                return;
+            }
+        }
+
+        this.libraryCtrl.setScrollPosition('tracks', first);
+    };
 
     private getSelectedFilePaths(): string[] {
         return this.tracks
@@ -395,10 +688,15 @@ export class TrackList extends LitElement {
             .filter(Boolean)
             .join(' ');
 
+        const colStyle =
+            `grid-template-columns: ${this.gridTemplateColumns}`;
+
         return html`
       <div
         class=${classes}
-        @click=${(e: MouseEvent) => this.onTrackRowClick(e, track, index)}
+        style=${colStyle}
+        @click=${(e: MouseEvent) =>
+                this.onTrackRowClick(e, track, index)}
         @dblclick=${() => this.onTrackRowDblClick(track)}
         @contextmenu=${(e: MouseEvent) =>
                 this.onTrackContextMenu(e, track)}
@@ -417,18 +715,34 @@ export class TrackList extends LitElement {
       ${this.tracks.length === 0
                 ? html`<p>Loading tracks...</p>`
                 : html`
-            <div class="header-row">
-              <span>Track Name</span>
-              <span>Artist</span>
-              <span>Track Length</span>
+            <div
+              class="header-row"
+              style="grid-template-columns: ${this.gridTemplateColumns}"
+            >
+              <div class="header-cell">Track Name</div>
+              <div class="header-cell">Artist</div>
+              <div class="header-cell">Track Length</div>
             </div>
             <lit-virtualizer
               scroller
               .items=${this.tracks}
               .renderItem=${this.renderTrackRow}
-              .layout=${flow()}
+              .layout=${this.flowLayout}
             ></lit-virtualizer>
           `}
+
+      <div class="resize-overlay">
+        ${this.colBoundaryPositions.map(
+                (pos, i) => html`
+            <div
+              class="col-resize-handle ${this.resizingColumn === i ? 'active' : ''}"
+              style="left: ${pos}px"
+              @mousedown=${(e: MouseEvent) =>
+                        this.onColResizeStart(e, i)}
+            ></div>
+          `,
+            )}
+      </div>
 
       <wa-popup
         id="context-menu"

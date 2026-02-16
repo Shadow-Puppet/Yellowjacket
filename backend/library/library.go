@@ -335,6 +335,8 @@ func (l *Library) Scan() error {
 		"library", l.conf.DirectoryPath,
 	)
 
+	runtime.EventsEmit(l.ctx, events.LibraryScanComplete)
+
 	return scanErr
 }
 
@@ -510,18 +512,27 @@ func (l *Library) processMetadata(result importResult) (int64, error) {
 		})
 	}
 
-	// 3. Get or create artist credit for album artist (if different)
+	// 3. Get or create artist credit for album artist.
+	// Always assign an album artist credit so the cover grid displays an
+	// artist name.  When the AlbumArtist tag is absent or identical to the
+	// track Artist, reuse the track artist credit instead of leaving it NULL.
 	var albumArtistCreditID sql.NullInt64
 
 	if tags.AlbumArtist != "" && tags.AlbumArtist != tags.Artist {
-		albumArtistCredit, err := l.db.Queries.UpsertArtistCredit(l.ctx, tags.AlbumArtist)
+		albumArtistCredit, err := l.db.Queries.UpsertArtistCredit(
+			l.ctx, tags.AlbumArtist,
+		)
 		if err != nil {
 			l.logger.Warn("could not upsert album artist credit", "err", err)
 		} else {
-			albumArtistCreditID = sql.NullInt64{Int64: albumArtistCredit.ID, Valid: true}
+			albumArtistCreditID = sql.NullInt64{
+				Int64: albumArtistCredit.ID, Valid: true,
+			}
 
-			// Also create the artist record and link
-			albumArtist, err := l.db.Queries.UpsertArtist(l.ctx, tags.AlbumArtist)
+			// Also create the artist record and link.
+			albumArtist, err := l.db.Queries.UpsertArtist(
+				l.ctx, tags.AlbumArtist,
+			)
 			if err != nil {
 				l.logger.Warn("could not upsert album artist", "err", err)
 			} else {
@@ -533,6 +544,12 @@ func (l *Library) processMetadata(result importResult) (int64, error) {
 					},
 				)
 			}
+		}
+	} else {
+		// AlbumArtist is empty or matches the track artist — reuse the
+		// track artist credit so the release group always has an artist.
+		albumArtistCreditID = sql.NullInt64{
+			Int64: artistCredit.ID, Valid: true,
 		}
 	}
 
