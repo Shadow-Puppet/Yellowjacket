@@ -99,6 +99,18 @@ func (q *Queries) GetAllPlaylists(ctx context.Context) ([]Playlist, error) {
 	return items, nil
 }
 
+const getNextPlaylistTrackPosition = `-- name: GetNextPlaylistTrackPosition :one
+SELECT COALESCE(MAX(position), -1) + 1 AS next_position
+FROM playlist_tracks WHERE playlist_id = ?
+`
+
+func (q *Queries) GetNextPlaylistTrackPosition(ctx context.Context, playlistID int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getNextPlaylistTrackPosition, playlistID)
+	var next_position int64
+	err := row.Scan(&next_position)
+	return next_position, err
+}
+
 const getPlaylist = `-- name: GetPlaylist :one
 SELECT id, name, created_at, updated_at FROM playlists WHERE id = ? LIMIT 1
 `

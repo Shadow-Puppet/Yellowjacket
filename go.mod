@@ -85,6 +85,8 @@ require (
 	github.com/ckaznocha/intrange v0.3.1 // indirect
 	github.com/cli/browser v1.3.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.2.0 // indirect
+	github.com/cloudflare/circl v1.3.7 // indirect
+	github.com/containerd/console v1.0.3 // indirect
 	github.com/creack/pty v1.1.24 // indirect
 	github.com/cubicdaiya/gonp v1.0.4 // indirect
 	github.com/curioswitch/go-reassign v0.3.0 // indirect
@@ -96,7 +98,9 @@ require (
 	github.com/dlclark/regexp2 v1.11.5 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/ebitengine/oto/v3 v3.3.3 // indirect
-	github.com/ebitengine/purego v0.8.4 // indirect
+	github.com/ebitengine/purego v0.9.1 // indirect
+	github.com/emirpasic/gods v1.18.1 // indirect
+	github.com/ettle/strcase v0.2.0 // indirect
 	github.com/evilmartians/lefthook v1.13.6 // indirect
 	github.com/fatih/color v1.18.0 // indirect
 	github.com/fatih/structtag v1.2.0 // indirect
@@ -341,7 +345,6 @@ require (
 	golang.org/x/crypto v0.48.0 // indirect
 	golang.org/x/exp v0.0.0-20251023183803-a4bb9ffd2546 // indirect
 	golang.org/x/exp/typeparams v0.0.0-20251125195548-87e1e737ad39 // indirect
-	golang.org/x/image v0.12.0 // indirect
 	golang.org/x/mod v0.33.0 // indirect
 	golang.org/x/net v0.50.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
@@ -377,6 +380,7 @@ tool (
 	github.com/sqlc-dev/sqlc/cmd/sqlc
 	github.com/wailsapp/wails/v2/cmd/wails
 	golang.org/x/vuln/cmd/govulncheck
+	yellowjacket
 )
 
 // replace github.com/TheCodeOfCaleb/beep/v2 => /mnt/vault/dev/golang/beep/

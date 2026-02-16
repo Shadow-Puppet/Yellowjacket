@@ -4,6 +4,7 @@ import '@components/cover-grid/cover-grid.ts';
 import '@components/now-playing/now-playing.ts';
 import '@components/sidebar/app-sidebar.ts';
 import '@components/queue-panel/queue-panel.ts';
+import '@components/playlist-view/playlist-view.ts';
 import '@awesome.me/webawesome/dist/styles/themes/default.css';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import { setBasePath } from '@awesome.me/webawesome/dist/webawesome.js';
@@ -23,6 +24,9 @@ document.addEventListener('navigate', (e: Event) => {
             break;
         case 'tracks':
             mainContent.innerHTML = '<track-list></track-list>';
+            break;
+        case 'playlists':
+            mainContent.innerHTML = '<playlist-view></playlist-view>';
             break;
         default:
             mainContent.innerHTML = `<div style="padding: 1em; color: #b3b3b3;">
@@ -46,8 +50,4 @@ if (queueButton && queuePanel) {
         }
     });
 
-    // Close panel when the component dispatches a close event
-    queuePanel.addEventListener('queue-panel-close', () => {
-        queuePanel.removeAttribute('open');
-    });
 }

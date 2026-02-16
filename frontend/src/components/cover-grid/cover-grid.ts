@@ -9,6 +9,8 @@ import { grid } from '@lit-labs/virtualizer/layouts/grid.js';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
+import '@components/playlist-picker/playlist-picker.js';
+import type { PlaylistPicker } from '@components/playlist-picker/playlist-picker.js';
 
 @customElement('cover-grid')
 export class CoverGrid extends LitElement {
@@ -143,6 +145,20 @@ export class CoverGrid extends LitElement {
         .context-menu-panel wa-dropdown-item:hover {
             background-color: rgba(255, 255, 255, 0.1);
         }
+
+        .submenu-item {
+            position: relative;
+        }
+
+        .submenu-arrow {
+            font-size: 10px;
+            margin-left: auto;
+            padding-left: 12px;
+        }
+
+        #playlist-submenu {
+            z-index: 210;
+        }
     `;
 
     @state()
@@ -157,8 +173,17 @@ export class CoverGrid extends LitElement {
     @state()
     private contextMenuAlbum: library.Album | null = null;
 
+    @state()
+    private playlistSubmenuOpen = false;
+
+    @state()
+    private playlistFilePaths: string[] = [];
+
     @query('#context-menu')
     private contextMenuPopup!: HTMLElement;
+
+    @query('#playlist-submenu')
+    private playlistSubmenuPopup!: HTMLElement;
 
     override connectedCallback() {
         super.connectedCallback();
@@ -253,8 +278,10 @@ export class CoverGrid extends LitElement {
     private closeContextMenu() {
         if (!this.contextMenuOpen) return;
 
+        this.closePlaylistSubmenu();
         this.contextMenuOpen = false;
         this.contextMenuAlbum = null;
+        this.playlistFilePaths = [];
 
         const popup = this.contextMenuPopup;
 
@@ -262,6 +289,52 @@ export class CoverGrid extends LitElement {
             (popup as any).active = false;
         }
     }
+
+    private async showPlaylistSubmenu() {
+        if (this.playlistSubmenuOpen) return;
+
+        if (this.contextMenuAlbum) {
+            this.playlistFilePaths = await this.getAlbumFilePaths(
+                this.contextMenuAlbum,
+            );
+        }
+
+        this.playlistSubmenuOpen = true;
+
+        await this.updateComplete;
+
+        const submenu = this.playlistSubmenuPopup;
+        const trigger = this.shadowRoot?.querySelector(
+            '.submenu-item',
+        );
+
+        if (submenu && trigger) {
+            (submenu as any).anchor = trigger;
+            (submenu as any).active = true;
+        }
+
+        const picker = this.shadowRoot?.querySelector(
+            'playlist-picker',
+        ) as PlaylistPicker | null;
+
+        picker?.reset();
+    }
+
+    private closePlaylistSubmenu() {
+        if (!this.playlistSubmenuOpen) return;
+
+        this.playlistSubmenuOpen = false;
+
+        const submenu = this.playlistSubmenuPopup;
+
+        if (submenu) {
+            (submenu as any).active = false;
+        }
+    }
+
+    private onPlaylistActionComplete = () => {
+        this.closeContextMenu();
+    };
 
     private renderAlbumCard = (album: library.Album): unknown => {
         return html`
@@ -376,7 +449,35 @@ export class CoverGrid extends LitElement {
                                 <wa-icon slot="icon" name="forward-step"></wa-icon>
                                 Play Next
                             </wa-dropdown-item>
+                            <wa-dropdown-item
+                                class="submenu-item"
+                                @mouseenter=${() => this.showPlaylistSubmenu()}
+                                @click=${(e: Event) => {
+                                    e.stopPropagation();
+                                    void this.showPlaylistSubmenu();
+                                }}
+                            >
+                                <wa-icon slot="icon" name="plus"></wa-icon>
+                                Add to Playlist
+                                <span class="submenu-arrow">&#9654;</span>
+                            </wa-dropdown-item>
                         </div>
+                    `
+                    : nothing}
+            </wa-popup>
+
+            <wa-popup
+                id="playlist-submenu"
+                placement="right-start"
+                .active=${this.playlistSubmenuOpen}
+            >
+                ${this.playlistSubmenuOpen
+                    ? html`
+                        <playlist-picker
+                            .filePaths=${this.playlistFilePaths}
+                            @playlist-action-complete=${this.onPlaylistActionComplete}
+                            @click=${(e: Event) => e.stopPropagation()}
+                        ></playlist-picker>
                     `
                     : nothing}
             </wa-popup>

@@ -1,7 +1,10 @@
-import { LitElement, html, css, unsafeCSS } from 'lit';
-import { customElement, property, state } from 'lit/decorators.js';
+import { LitElement, html, css, nothing, unsafeCSS } from 'lit';
+import { customElement, property, state, query } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
+import '@awesome.me/webawesome/dist/components/popup/popup.js';
 import { QueueController } from '@store/controllers/queue-controller';
+import '@components/playlist-picker/playlist-picker.js';
+import type { PlaylistPicker } from '@components/playlist-picker/playlist-picker.js';
 
 const MIN_WIDTH = 200;
 const MAX_WIDTH = 500;
@@ -16,6 +19,22 @@ export class QueuePanel extends LitElement {
 
   @state()
   private isDragging = false;
+
+  @state()
+  private playlistPickerOpen = false;
+
+  @query('#save-playlist-popup')
+  private savePlaylistPopup!: HTMLElement;
+
+  private closePickerHandler = (e: MouseEvent) => {
+    const path = e.composedPath();
+    const popup = this.savePlaylistPopup;
+    const btn = this.shadowRoot?.querySelector('.save-playlist-button');
+
+    if (popup && !path.includes(popup) && (!btn || !path.includes(btn))) {
+      this.closePlaylistPicker();
+    }
+  };
 
   private panelWidth = DEFAULT_WIDTH;
 
@@ -75,7 +94,7 @@ export class QueuePanel extends LitElement {
       font-weight: 600;
     }
 
-    .close-button {
+    .save-playlist-button {
       background: none;
       border: none;
       color: inherit;
@@ -85,8 +104,17 @@ export class QueuePanel extends LitElement {
       align-items: center;
     }
 
-    .close-button:hover {
+    .save-playlist-button:hover {
       color: #ffd43b;
+    }
+
+    .save-playlist-button:disabled {
+      color: #555;
+      cursor: not-allowed;
+    }
+
+    #save-playlist-popup {
+      z-index: 210;
     }
 
     .track-list {
@@ -193,23 +221,55 @@ export class QueuePanel extends LitElement {
     this.style.setProperty('--queue-width', `${this.panelWidth}px`);
     document.addEventListener('mousemove', this.handleMouseMove);
     document.addEventListener('mouseup', this.handleMouseUp);
+    document.addEventListener('click', this.closePickerHandler);
   }
 
   override disconnectedCallback() {
     super.disconnectedCallback();
     document.removeEventListener('mousemove', this.handleMouseMove);
     document.removeEventListener('mouseup', this.handleMouseUp);
+    document.removeEventListener('click', this.closePickerHandler);
   }
 
-  private handleClose() {
-    this.open = false;
-    this.dispatchEvent(
-      new CustomEvent('queue-panel-close', {
-        bubbles: true,
-        composed: true,
-      }),
-    );
+  private async handleSaveAsPlaylist() {
+    if (this.queue.tracks.length === 0) return;
+
+    this.playlistPickerOpen = !this.playlistPickerOpen;
+
+    await this.updateComplete;
+
+    const popup = this.savePlaylistPopup;
+    const btn = this.shadowRoot?.querySelector('.save-playlist-button');
+
+    if (popup && btn) {
+      (popup as any).anchor = btn;
+      (popup as any).active = this.playlistPickerOpen;
+    }
+
+    if (this.playlistPickerOpen) {
+      const picker = this.shadowRoot?.querySelector(
+        'playlist-picker',
+      ) as PlaylistPicker | null;
+
+      picker?.reset();
+    }
   }
+
+  private closePlaylistPicker() {
+    if (!this.playlistPickerOpen) return;
+
+    this.playlistPickerOpen = false;
+
+    const popup = this.savePlaylistPopup;
+
+    if (popup) {
+      (popup as any).active = false;
+    }
+  }
+
+  private onPlaylistActionComplete = () => {
+    this.closePlaylistPicker();
+  };
 
   private handleRemoveTrack(e: Event, position: number) {
     e.stopPropagation();
@@ -275,10 +335,31 @@ export class QueuePanel extends LitElement {
         ></div>
         <div class="header">
           <h3>Queue</h3>
-          <button class="close-button" @click=${this.handleClose}>
-            <wa-icon name="xmark"></wa-icon>
+          <button
+            class="save-playlist-button"
+            @click=${this.handleSaveAsPlaylist}
+            ?disabled=${tracks.length === 0}
+            title="Save queue as playlist"
+          >
+            <wa-icon name="plus"></wa-icon>
           </button>
         </div>
+
+        <wa-popup
+          id="save-playlist-popup"
+          placement="bottom-end"
+          .active=${this.playlistPickerOpen}
+        >
+          ${this.playlistPickerOpen
+            ? html`
+                <playlist-picker
+                  .filePaths=${tracks.map((t) => t.filePath)}
+                  @playlist-action-complete=${this.onPlaylistActionComplete}
+                  @click=${(e: Event) => e.stopPropagation()}
+                ></playlist-picker>
+              `
+            : nothing}
+        </wa-popup>
 
         ${tracks.length === 0
           ? html`

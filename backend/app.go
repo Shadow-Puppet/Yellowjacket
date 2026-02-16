@@ -18,6 +18,7 @@ import (
 	"yellowjacket/backend/frontendutil"
 	"yellowjacket/backend/library"
 	"yellowjacket/backend/player"
+	"yellowjacket/backend/playlist"
 	"yellowjacket/backend/queue"
 )
 
@@ -31,6 +32,7 @@ type YellowJacketApp struct {
 	database     *database.DB
 	library      *library.Library
 	player       *player.Player
+	playlist     *playlist.Service
 	queue        *queue.Queue
 	appContext   context.Context
 	appConfig    *config.Config
@@ -93,9 +95,13 @@ func NewYellowJacketApp(
 
 	yjApp.assetHandler.RegisterHandler("/covers/", coverHandler)
 
+	// create playlist service
+	yjApp.playlist = playlist.NewService(yjApp.logger, yjApp.database)
+
 	yjApp.FEBindings = []any{
 		yjApp.FrontendUtil,
 		yjApp.library,
+		yjApp.playlist,
 	}
 
 	return yjApp, nil
@@ -113,6 +119,7 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 	yj.appConfig.SetContext(ctx)
 	yj.FrontendUtil.SetContext(ctx)
 	yj.library.SetContext(ctx)
+	yj.playlist.SetContext(ctx)
 
 	var err error
 	// create player

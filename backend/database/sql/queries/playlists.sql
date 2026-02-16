@@ -30,3 +30,7 @@ DELETE FROM playlist_tracks WHERE id = ?;
 
 -- name: ClearPlaylistTracks :exec
 DELETE FROM playlist_tracks WHERE playlist_id = ?;
+
+-- name: GetNextPlaylistTrackPosition :one
+SELECT COALESCE(MAX(position), -1) + 1 AS next_position
+FROM playlist_tracks WHERE playlist_id = ?;
