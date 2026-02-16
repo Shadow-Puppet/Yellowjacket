@@ -1,18 +1,34 @@
 import { LitElement, html, css } from 'lit';
-import { customElement } from 'lit/decorators.js';
+import { customElement, state } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import { PlayerController } from '@store/controllers/player-controller';
+
+const MIN_WIDTH = 120;
+const MAX_WIDTH = 350;
+const DEFAULT_WIDTH = 200;
 
 @customElement('now-playing')
 export class NowPlaying extends LitElement {
     private player = new PlayerController(this);
 
+    @state()
+    private isDragging = false;
+
     static override styles = css`
+    :host {
+      display: block;
+      position: relative;
+      height: 100%;
+      overflow: hidden;
+    }
+
     .now-playing {
       display: flex;
       align-items: center;
       gap: 12px;
       padding: 8px;
+      height: 100%;
+      box-sizing: border-box;
     }
 
     .cover-art {
@@ -66,19 +82,52 @@ export class NowPlaying extends LitElement {
       text-overflow: ellipsis;
     }
 
+    .resize-handle {
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 4px;
+      height: 100%;
+      cursor: col-resize;
+      background-color: transparent;
+      transition: background-color 0.15s ease;
+      z-index: 10;
+    }
+
+    .resize-handle:hover,
+    .resize-handle.dragging {
+      background-color: #6c757d;
+    }
   `;
+
+    override connectedCallback() {
+        super.connectedCallback();
+        this.updateWidth(DEFAULT_WIDTH);
+        document.addEventListener('mousemove', this.handleMouseMove);
+        document.addEventListener('mouseup', this.handleMouseUp);
+    }
+
+    override disconnectedCallback() {
+        super.disconnectedCallback();
+        document.removeEventListener('mousemove', this.handleMouseMove);
+        document.removeEventListener('mouseup', this.handleMouseUp);
+    }
 
     override render() {
         const track = this.player.currentTrack;
 
         if (!track) {
             return html`
-      <div class="now-playing">
-        <div class="cover-art">
-          <div class="cover-placeholder"><wa-icon name="music"></wa-icon></div>
+        <div class="now-playing">
+          <div class="cover-art">
+            <div class="cover-placeholder"><wa-icon name="music"></wa-icon></div>
+          </div>
         </div>
-      </div>
-    `;
+        <div
+          class="resize-handle ${this.isDragging ? 'dragging' : ''}"
+          @mousedown=${this.handleMouseDown}
+        ></div>
+      `;
         }
 
         return html`
@@ -102,6 +151,46 @@ export class NowPlaying extends LitElement {
           <span class="track-artist">${track.artist || 'Unknown Artist'}</span>
         </div>
       </div>
+      <div
+        class="resize-handle ${this.isDragging ? 'dragging' : ''}"
+        @mousedown=${this.handleMouseDown}
+      ></div>
     `;
+    }
+
+    private handleMouseDown = (e: MouseEvent) => {
+        e.preventDefault();
+        this.isDragging = true;
+    };
+
+    private handleMouseMove = (e: MouseEvent) => {
+        if (!this.isDragging) return;
+
+        const rect = this.getBoundingClientRect();
+        const newWidth = e.clientX - rect.left;
+        const clampedWidth = Math.min(Math.max(newWidth, MIN_WIDTH), MAX_WIDTH);
+
+        this.updateWidth(clampedWidth);
+    };
+
+    private handleMouseUp = () => {
+        this.isDragging = false;
+    };
+
+    private updateWidth(width: number) {
+        const bottomBar = this.closest('.bottom-bar');
+
+        if (bottomBar) {
+            (bottomBar as HTMLElement).style.setProperty(
+                '--now-playing-width',
+                `${width}px`,
+            );
+        }
+    }
+}
+
+declare global {
+    interface HTMLElementTagNameMap {
+        'now-playing': NowPlaying;
     }
 }

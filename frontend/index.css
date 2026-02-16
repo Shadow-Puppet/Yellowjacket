@@ -1,3 +1,10 @@
+*,
+*::before,
+*::after {
+    -webkit-user-select: none;
+    user-select: none;
+}
+
 html {
     height: 100%;
 }
@@ -53,7 +60,7 @@ body div.sidebar {
     padding: 0.25em;
     background-color: #343a40;
     display: grid;
-    grid-template-columns: auto 1fr auto;
+    grid-template-columns: var(--now-playing-width, 200px) 1fr auto;
     align-items: center;
 
     #now-playing-info {
@@ -88,7 +95,6 @@ body div.sidebar {
     }
 
     now-playing {
-        max-width: 250px;
         overflow: hidden;
     }
 
