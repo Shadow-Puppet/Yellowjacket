@@ -1,4 +1,4 @@
-import { LitElement, html, css } from 'lit';
+import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
@@ -6,12 +6,24 @@ import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import {
     GetAllPlaylists,
     CreatePlaylist,
+    GetPlaylistTracks,
 } from '@go/playlist/Service';
 import type { playlist } from '@go/models';
+import { QueueController } from '@store/controllers/queue-controller';
+import '@components/track-info/track-info';
+
+interface PlaylistEntry {
+    summary: playlist.Summary;
+    expanded: boolean;
+    loading: boolean;
+    tracks: playlist.Track[] | null;
+}
 
 @customElement('playlist-view')
 export class PlaylistView extends LitElement {
-    @state() private playlists: playlist.Summary[] = [];
+    private queue = new QueueController(this);
+
+    @state() private entries: PlaylistEntry[] = [];
     @state() private loading = true;
     @state() private creating = false;
     @state() private newPlaylistName = '';
@@ -126,15 +138,31 @@ export class PlaylistView extends LitElement {
         }
 
         .playlist-item {
-            display: flex;
-            align-items: center;
-            padding: 12px 16px;
-            gap: 12px;
             border-bottom: 1px solid rgba(255, 255, 255, 0.05);
         }
 
-        .playlist-item:hover {
+        .playlist-header {
+            display: flex;
+            align-items: center;
+            padding: 12px 16px;
+            gap: 10px;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .playlist-header:hover {
             background-color: rgba(255, 255, 255, 0.05);
+        }
+
+        .chevron {
+            font-size: 14px;
+            color: #888;
+            flex-shrink: 0;
+            transition: transform 0.15s ease;
+        }
+
+        .chevron.expanded {
+            transform: rotate(90deg);
         }
 
         .playlist-icon {
@@ -149,6 +177,64 @@ export class PlaylistView extends LitElement {
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
+            flex: 1;
+        }
+
+        .track-count {
+            font-size: 11px;
+            color: #666;
+            flex-shrink: 0;
+        }
+
+        .playlist-body {
+            padding: 0 16px 12px 42px;
+        }
+
+        .playlist-actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding-bottom: 8px;
+        }
+
+        .play-all-button {
+            background: none;
+            border: 1px solid #555;
+            border-radius: 4px;
+            color: #fff;
+            padding: 4px 10px;
+            font-size: 12px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-family: inherit;
+        }
+
+        .play-all-button:hover {
+            border-color: #ffd43b;
+            color: #ffd43b;
+        }
+
+        .track-item {
+            padding: 6px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+        }
+
+        .track-item:last-child {
+            border-bottom: none;
+        }
+
+        .tracks-loading {
+            padding: 12px 0;
+            color: #888;
+            font-size: 12px;
+        }
+
+        .tracks-empty {
+            padding: 12px 0;
+            color: #666;
+            font-size: 12px;
         }
 
         .loading {
@@ -187,15 +273,84 @@ export class PlaylistView extends LitElement {
     private async loadPlaylists() {
         try {
             this.loading = true;
+
             const result = await GetAllPlaylists();
-            this.playlists = result ?? [];
+            const summaries = result ?? [];
+
+            this.entries = summaries.map((s) => ({
+                summary: s,
+                expanded: false,
+                loading: false,
+                tracks: null,
+            }));
         } catch (err) {
             console.error('Failed to load playlists:', err);
-            this.playlists = [];
+            this.entries = [];
         } finally {
             this.loading = false;
         }
     }
+
+    private handleToggle = async (index: number) => {
+        const entry = this.entries[index];
+
+        if (!entry) return;
+
+        // Collapse if already expanded.
+        if (entry.expanded) {
+            this.entries = this.entries.map((e, i) =>
+                i === index ? { ...e, expanded: false } : e,
+            );
+
+            return;
+        }
+
+        // Expand and lazy-load tracks if not yet fetched.
+        if (entry.tracks === null) {
+            this.entries = this.entries.map((e, i) =>
+                i === index
+                    ? { ...e, expanded: true, loading: true }
+                    : e,
+            );
+
+            try {
+                const tracks = await GetPlaylistTracks(
+                    entry.summary.ID,
+                );
+
+                this.entries = this.entries.map((e, i) =>
+                    i === index
+                        ? {
+                              ...e,
+                              loading: false,
+                              tracks: tracks ?? [],
+                          }
+                        : e,
+                );
+            } catch (err) {
+                console.error('Failed to load playlist tracks:', err);
+
+                this.entries = this.entries.map((e, i) =>
+                    i === index
+                        ? { ...e, loading: false, tracks: [] }
+                        : e,
+                );
+            }
+        } else {
+            this.entries = this.entries.map((e, i) =>
+                i === index ? { ...e, expanded: true } : e,
+            );
+        }
+    };
+
+    private handlePlayAll = (index: number) => {
+        const entry = this.entries[index];
+
+        if (!entry?.tracks || entry.tracks.length === 0) return;
+
+        const filePaths = entry.tracks.map((t) => t.FilePath);
+        this.queue.setQueue(filePaths, 0);
+    };
 
     private handleNewPlaylistClick = () => {
         this.creating = true;
@@ -256,9 +411,11 @@ export class PlaylistView extends LitElement {
                 </button>
             </div>
 
-            ${this.creating ? this.renderCreateForm() : ''}
+            ${this.creating ? this.renderCreateForm() : nothing}
             ${this.loading
-                ? html`<div class="loading">Loading playlists...</div>`
+                ? html`<div class="loading">
+                      Loading playlists...
+                  </div>`
                 : this.renderPlaylistList()}
         `;
     }
@@ -275,7 +432,9 @@ export class PlaylistView extends LitElement {
                     @input=${this.handleInputChange}
                     @keydown=${this.handleInputKeydown}
                 />
-                <button @click=${this.handleCancelCreate}>Cancel</button>
+                <button @click=${this.handleCancelCreate}>
+                    Cancel
+                </button>
                 <button
                     class="primary"
                     ?disabled=${!canCreate}
@@ -288,7 +447,7 @@ export class PlaylistView extends LitElement {
     }
 
     private renderPlaylistList() {
-        if (this.playlists.length === 0) {
+        if (this.entries.length === 0) {
             return html`
                 <div class="empty-state">
                     <wa-icon name="list"></wa-icon>
@@ -302,18 +461,103 @@ export class PlaylistView extends LitElement {
 
         return html`
             <ul class="playlist-list">
-                ${this.playlists.map(
-                    (p) => html`
-                        <li class="playlist-item">
-                            <wa-icon
-                                class="playlist-icon"
-                                name="list"
-                            ></wa-icon>
-                            <span class="playlist-name">${p.Name}</span>
-                        </li>
-                    `,
+                ${this.entries.map((entry, i) =>
+                    this.renderPlaylistItem(entry, i),
                 )}
             </ul>
+        `;
+    }
+
+    private renderPlaylistItem(entry: PlaylistEntry, index: number) {
+        const trackCount = entry.tracks?.length;
+        const countLabel =
+            trackCount !== undefined && trackCount !== null
+                ? `${trackCount} track${trackCount !== 1 ? 's' : ''}`
+                : '';
+
+        return html`
+            <li class="playlist-item">
+                <div
+                    class="playlist-header"
+                    @click=${() => this.handleToggle(index)}
+                >
+                    <wa-icon
+                        class="chevron ${entry.expanded
+                            ? 'expanded'
+                            : ''}"
+                        name="chevron-right"
+                    ></wa-icon>
+                    <wa-icon
+                        class="playlist-icon"
+                        name="list"
+                    ></wa-icon>
+                    <span class="playlist-name">
+                        ${entry.summary.Name}
+                    </span>
+                    ${countLabel
+                        ? html`<span class="track-count">
+                              ${countLabel}
+                          </span>`
+                        : nothing}
+                </div>
+                ${entry.expanded
+                    ? this.renderPlaylistBody(entry, index)
+                    : nothing}
+            </li>
+        `;
+    }
+
+    private renderPlaylistBody(
+        entry: PlaylistEntry,
+        index: number,
+    ) {
+        if (entry.loading) {
+            return html`
+                <div class="playlist-body">
+                    <div class="tracks-loading">
+                        Loading tracks...
+                    </div>
+                </div>
+            `;
+        }
+
+        if (!entry.tracks || entry.tracks.length === 0) {
+            return html`
+                <div class="playlist-body">
+                    <div class="tracks-empty">
+                        This playlist is empty.
+                    </div>
+                </div>
+            `;
+        }
+
+        return html`
+            <div class="playlist-body">
+                <div class="playlist-actions">
+                    <button
+                        class="play-all-button"
+                        @click=${(e: Event) => {
+                            e.stopPropagation();
+                            this.handlePlayAll(index);
+                        }}
+                    >
+                        <wa-icon name="play"></wa-icon>
+                        Play All
+                    </button>
+                </div>
+                ${entry.tracks.map(
+                    (track) => html`
+                        <div class="track-item">
+                            <track-info
+                                .trackTitle=${track.Title}
+                                .artist=${track.Artist}
+                                .duration=${track.Duration}
+                                .filePath=${track.FilePath}
+                            ></track-info>
+                        </div>
+                    `,
+                )}
+            </div>
         `;
     }
 }

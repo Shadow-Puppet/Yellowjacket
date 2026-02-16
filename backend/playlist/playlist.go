@@ -6,10 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
+	"strconv"
 	"strings"
 
 	"yellowjacket/backend/database"
 	"yellowjacket/backend/database/sql/sqlcgen"
+	"yellowjacket/backend/library"
 )
 
 var (
@@ -22,6 +25,19 @@ var (
 type Summary struct {
 	ID   int64  `json:"ID"`
 	Name string `json:"Name"`
+}
+
+// Track represents a track within a playlist, including its metadata.
+type Track struct {
+	ID                    int64  `json:"ID"`
+	Position              int64  `json:"Position"`
+	FilePath              string `json:"FilePath"`
+	Title                 string `json:"Title"`
+	Artist                string `json:"Artist"`
+	Album                 string `json:"Album"`
+	CoverArtPath          string `json:"CoverArtPath"`
+	CoverArtThumbnailPath string `json:"CoverArtThumbnailPath"`
+	Duration              string `json:"Duration"`
 }
 
 // Service manages playlist operations.
@@ -65,6 +81,56 @@ func (s *Service) GetAllPlaylists() ([]Summary, error) {
 	}
 
 	return summaries, nil
+}
+
+// GetPlaylistTracks returns all tracks in a playlist with full metadata.
+func (s *Service) GetPlaylistTracks(
+	playlistID int64,
+) ([]Track, error) {
+	rows, err := s.db.Queries.GetPlaylistTracksWithMetadata(
+		s.db.Ctx,
+		playlistID,
+	)
+	if err != nil {
+		s.logger.Error(
+			"Failed to get playlist tracks",
+			"playlistId", playlistID,
+			"err", err,
+		)
+
+		return nil, fmt.Errorf(
+			"failed to get playlist tracks: %w",
+			err,
+		)
+	}
+
+	tracks := make([]Track, 0, len(rows))
+
+	for _, row := range rows {
+		track := Track{
+			ID:       row.ID,
+			Position: row.Position,
+			FilePath: row.FilePath,
+			Title:    row.Title,
+			Artist:   row.Artist,
+			Album:    row.Album,
+			Duration: strconv.FormatInt(
+				row.LengthMilliseconds,
+				10,
+			),
+		}
+
+		if row.CoverArtPath != "" {
+			base := filepath.Base(row.CoverArtPath)
+			track.CoverArtPath = "/covers/" + base
+			track.CoverArtThumbnailPath = "/covers/" +
+				library.ThumbnailFilename(base)
+		}
+
+		tracks = append(tracks, track)
+	}
+
+	return tracks, nil
 }
 
 // CreatePlaylist creates a new empty playlist with the given name.

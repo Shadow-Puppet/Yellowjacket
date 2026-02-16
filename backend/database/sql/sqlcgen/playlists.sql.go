@@ -172,6 +172,76 @@ func (q *Queries) GetPlaylistTracks(ctx context.Context, playlistID int64) ([]Ge
 	return items, nil
 }
 
+const getPlaylistTracksWithMetadata = `-- name: GetPlaylistTracksWithMetadata :many
+SELECT
+    pt.id,
+    pt.playlist_id,
+    pt.audio_file_id,
+    pt.position,
+    af.file_path,
+    af.length_milliseconds,
+    COALESCE(r.name, '') AS title,
+    COALESCE(ac.text, '') AS artist,
+    COALESCE(rg.name, '') AS album,
+    COALESCE(ca.file_path, '') AS cover_art_path
+FROM playlist_tracks pt
+JOIN audio_files af ON pt.audio_file_id = af.id
+LEFT JOIN recordings r ON af.recording_id = r.id
+LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
+LEFT JOIN release_group_recordings rgr ON r.id = rgr.recording_id
+LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
+LEFT JOIN cover_art ca ON rg.cover_art_id = ca.id
+WHERE pt.playlist_id = ?
+ORDER BY pt.position
+`
+
+type GetPlaylistTracksWithMetadataRow struct {
+	ID                 int64
+	PlaylistID         int64
+	AudioFileID        int64
+	Position           int64
+	FilePath           string
+	LengthMilliseconds int64
+	Title              string
+	Artist             string
+	Album              string
+	CoverArtPath       string
+}
+
+func (q *Queries) GetPlaylistTracksWithMetadata(ctx context.Context, playlistID int64) ([]GetPlaylistTracksWithMetadataRow, error) {
+	rows, err := q.db.QueryContext(ctx, getPlaylistTracksWithMetadata, playlistID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetPlaylistTracksWithMetadataRow
+	for rows.Next() {
+		var i GetPlaylistTracksWithMetadataRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.PlaylistID,
+			&i.AudioFileID,
+			&i.Position,
+			&i.FilePath,
+			&i.LengthMilliseconds,
+			&i.Title,
+			&i.Artist,
+			&i.Album,
+			&i.CoverArtPath,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const removePlaylistTrack = `-- name: RemovePlaylistTrack :exec
 DELETE FROM playlist_tracks WHERE id = ?
 `

@@ -31,6 +31,28 @@ DELETE FROM playlist_tracks WHERE id = ?;
 -- name: ClearPlaylistTracks :exec
 DELETE FROM playlist_tracks WHERE playlist_id = ?;
 
+-- name: GetPlaylistTracksWithMetadata :many
+SELECT
+    pt.id,
+    pt.playlist_id,
+    pt.audio_file_id,
+    pt.position,
+    af.file_path,
+    af.length_milliseconds,
+    COALESCE(r.name, '') AS title,
+    COALESCE(ac.text, '') AS artist,
+    COALESCE(rg.name, '') AS album,
+    COALESCE(ca.file_path, '') AS cover_art_path
+FROM playlist_tracks pt
+JOIN audio_files af ON pt.audio_file_id = af.id
+LEFT JOIN recordings r ON af.recording_id = r.id
+LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
+LEFT JOIN release_group_recordings rgr ON r.id = rgr.recording_id
+LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
+LEFT JOIN cover_art ca ON rg.cover_art_id = ca.id
+WHERE pt.playlist_id = ?
+ORDER BY pt.position;
+
 -- name: GetNextPlaylistTrackPosition :one
 SELECT COALESCE(MAX(position), -1) + 1 AS next_position
 FROM playlist_tracks WHERE playlist_id = ?;

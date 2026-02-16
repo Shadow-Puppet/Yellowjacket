@@ -18,6 +18,10 @@ export function GetAllPlaylists() {
   return window['go']['playlist']['Service']['GetAllPlaylists']();
 }
 
+export function GetPlaylistTracks(arg1) {
+  return window['go']['playlist']['Service']['GetPlaylistTracks'](arg1);
+}
+
 export function SetContext(arg1) {
   return window['go']['playlist']['Service']['SetContext'](arg1);
 }

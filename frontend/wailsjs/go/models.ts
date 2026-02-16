@@ -59,6 +59,34 @@ export namespace playlist {
 	        this.Name = source["Name"];
 	    }
 	}
+	export class Track {
+	    ID: number;
+	    Position: number;
+	    FilePath: string;
+	    Title: string;
+	    Artist: string;
+	    Album: string;
+	    CoverArtPath: string;
+	    CoverArtThumbnailPath: string;
+	    Duration: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Track(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ID = source["ID"];
+	        this.Position = source["Position"];
+	        this.FilePath = source["FilePath"];
+	        this.Title = source["Title"];
+	        this.Artist = source["Artist"];
+	        this.Album = source["Album"];
+	        this.CoverArtPath = source["CoverArtPath"];
+	        this.CoverArtThumbnailPath = source["CoverArtThumbnailPath"];
+	        this.Duration = source["Duration"];
+	    }
+	}
 
 }
 
