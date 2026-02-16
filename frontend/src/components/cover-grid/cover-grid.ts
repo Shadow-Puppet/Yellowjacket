@@ -1,6 +1,5 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state, query } from 'lit/decorators.js';
-import { EventsEmit } from '@runtime/runtime';
 import { GetAllAlbums, GetAlbumTracks } from '@go/library/Library';
 import { library } from '@go/models';
 import { QueueController } from '@store/controllers/queue-controller';
@@ -15,6 +14,8 @@ import type { PlaylistPicker } from '@components/playlist-picker/playlist-picker
 @customElement('cover-grid')
 export class CoverGrid extends LitElement {
     private queue = new QueueController(this);
+
+    private lastSelectedIndex: number | null = null;
 
     private closeHandler = () => this.closeContextMenu();
 
@@ -44,8 +45,13 @@ export class CoverGrid extends LitElement {
             background-color: rgba(255, 255, 255, 0.1);
         }
 
-        .album-card:focus {
-            outline: 2px solid #1db954;
+        .album-card.selected {
+            outline: 2px solid #ffd43b;
+            outline-offset: 2px;
+        }
+
+        .album-card:focus-visible {
+            outline: 2px solid #ffd43b;
             outline-offset: 2px;
         }
 
@@ -171,7 +177,7 @@ export class CoverGrid extends LitElement {
     private contextMenuOpen = false;
 
     @state()
-    private contextMenuAlbum: library.Album | null = null;
+    private selectedAlbums: Set<number> = new Set();
 
     @state()
     private playlistSubmenuOpen = false;
@@ -203,12 +209,47 @@ export class CoverGrid extends LitElement {
             this.loading = true;
             const albums = await GetAllAlbums();
             this.albums = albums ?? [];
+            this.selectedAlbums = new Set();
+            this.lastSelectedIndex = null;
         } catch (error) {
             console.error("Error loading albums:", error);
             this.albums = [];
         } finally {
             this.loading = false;
         }
+    }
+
+    private selectRange(
+        from: number,
+        to: number,
+    ): Set<number> {
+        const start = Math.min(from, to);
+        const end = Math.max(from, to);
+        const ids = new Set<number>();
+
+        for (let i = start; i <= end; i++) {
+            const album = this.albums[i];
+
+            if (album) {
+                ids.add(album.ID);
+            }
+        }
+
+        return ids;
+    }
+
+    private async getSelectedFilePaths(): Promise<string[]> {
+        const selected = this.albums.filter(
+            (a) => this.selectedAlbums.has(a.ID),
+        );
+        const allPaths: string[] = [];
+
+        for (const album of selected) {
+            const paths = await this.getAlbumFilePaths(album);
+            allPaths.push(...paths);
+        }
+
+        return allPaths;
     }
 
     private async getAlbumFilePaths(album: library.Album): Promise<string[]> {
@@ -227,7 +268,10 @@ export class CoverGrid extends LitElement {
         e.preventDefault();
         e.stopPropagation();
 
-        this.contextMenuAlbum = album;
+        if (!this.selectedAlbums.has(album.ID)) {
+            this.selectedAlbums = new Set([album.ID]);
+        }
+
         this.contextMenuOpen = true;
 
         this.updateComplete.then(() => {
@@ -254,9 +298,9 @@ export class CoverGrid extends LitElement {
     }
 
     private async onContextMenuAction(action: string) {
-        if (!this.contextMenuAlbum) return;
+        if (this.selectedAlbums.size === 0) return;
 
-        const filePaths = await this.getAlbumFilePaths(this.contextMenuAlbum);
+        const filePaths = await this.getSelectedFilePaths();
 
         if (filePaths.length === 0) return;
 
@@ -272,16 +316,19 @@ export class CoverGrid extends LitElement {
                 break;
         }
 
-        this.closeContextMenu();
+        this.closeContextMenu(true);
     }
 
-    private closeContextMenu() {
+    private closeContextMenu(clearSelection = false) {
         if (!this.contextMenuOpen) return;
 
         this.closePlaylistSubmenu();
         this.contextMenuOpen = false;
-        this.contextMenuAlbum = null;
         this.playlistFilePaths = [];
+
+        if (clearSelection) {
+            this.selectedAlbums = new Set();
+        }
 
         const popup = this.contextMenuPopup;
 
@@ -293,10 +340,9 @@ export class CoverGrid extends LitElement {
     private async showPlaylistSubmenu() {
         if (this.playlistSubmenuOpen) return;
 
-        if (this.contextMenuAlbum) {
-            this.playlistFilePaths = await this.getAlbumFilePaths(
-                this.contextMenuAlbum,
-            );
+        if (this.selectedAlbums.size > 0) {
+            this.playlistFilePaths =
+                await this.getSelectedFilePaths();
         }
 
         this.playlistSubmenuOpen = true;
@@ -336,16 +382,31 @@ export class CoverGrid extends LitElement {
         this.closeContextMenu();
     };
 
-    private renderAlbumCard = (album: library.Album): unknown => {
+    private renderAlbumCard = (
+        album: library.Album,
+        index: number,
+    ): unknown => {
+        const selected = this.selectedAlbums.has(album.ID);
+
+        const classes = [
+            'album-card',
+            selected ? 'selected' : '',
+        ]
+            .filter(Boolean)
+            .join(' ');
+
         return html`
             <div
-                class="album-card"
+                class=${classes}
                 tabindex="0"
                 role="button"
                 aria-label="${album.Name} by ${album.ArtistName}"
-                @click=${() => this.onAlbumClick(album)}
-                @keydown=${(e: KeyboardEvent) => this.onAlbumKeydown(e, album)}
-                @contextmenu=${(e: MouseEvent) => this.onAlbumContextMenu(e, album)}
+                @click=${(e: MouseEvent) =>
+                    this.onAlbumClick(e, album, index)}
+                @keydown=${(e: KeyboardEvent) =>
+                    this.onAlbumKeydown(e, album, index)}
+                @contextmenu=${(e: MouseEvent) =>
+                    this.onAlbumContextMenu(e, album)}
             >
                 <div class="cover-container">
                     ${album.CoverArtPath
@@ -379,21 +440,65 @@ export class CoverGrid extends LitElement {
         return name.charAt(0).toUpperCase();
     }
 
-    private onAlbumClick(album: library.Album) {
-        EventsEmit('AlbumSelected', album);
-        this.dispatchEvent(
-            new CustomEvent('album-selected', {
-                detail: album,
-                bubbles: true,
-                composed: true,
-            })
+    private onGridClick(e: MouseEvent) {
+        const clickedCard = e.composedPath().some(
+            (el) =>
+                el instanceof HTMLElement &&
+                el.classList.contains('album-card'),
         );
+
+        if (!clickedCard) {
+            this.selectedAlbums = new Set();
+            this.lastSelectedIndex = null;
+        }
     }
 
-    private onAlbumKeydown(e: KeyboardEvent, album: library.Album) {
+    private onAlbumClick(
+        e: MouseEvent,
+        album: library.Album,
+        index: number,
+    ) {
+        const isCtrl = e.ctrlKey || e.metaKey;
+        const isShift = e.shiftKey;
+
+        if (isShift && this.lastSelectedIndex !== null) {
+            const range = this.selectRange(
+                this.lastSelectedIndex,
+                index,
+            );
+            const next = new Set(this.selectedAlbums);
+
+            for (const id of range) {
+                next.add(id);
+            }
+
+            this.selectedAlbums = next;
+        } else if (isCtrl) {
+            const next = new Set(this.selectedAlbums);
+
+            if (next.has(album.ID)) {
+                next.delete(album.ID);
+            } else {
+                next.add(album.ID);
+            }
+
+            this.selectedAlbums = next;
+            this.lastSelectedIndex = index;
+        } else {
+            this.selectedAlbums = new Set([album.ID]);
+            this.lastSelectedIndex = index;
+        }
+    }
+
+    private onAlbumKeydown(
+        e: KeyboardEvent,
+        album: library.Album,
+        index: number,
+    ) {
         if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
-            this.onAlbumClick(album);
+            this.selectedAlbums = new Set([album.ID]);
+            this.lastSelectedIndex = index;
         }
     }
 
@@ -416,6 +521,7 @@ export class CoverGrid extends LitElement {
                 scroller
                 .items=${this.albums}
                 .renderItem=${this.renderAlbumCard}
+                @click=${(e: MouseEvent) => this.onGridClick(e)}
                 .layout=${grid({
                     itemSize: { width: '176px', height: '230px' },
                     gap: '16px',

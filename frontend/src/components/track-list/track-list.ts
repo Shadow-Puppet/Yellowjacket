@@ -37,6 +37,8 @@ export class TrackList extends LitElement {
     @query('#playlist-submenu')
     private playlistSubmenuPopup!: HTMLElement;
 
+    private lastSelectedIndex: number | null = null;
+
     private closeHandler = () => this.closeContextMenu();
 
     static override styles = css`
@@ -171,6 +173,7 @@ export class TrackList extends LitElement {
             const tracks = await GetAllTracks();
             this.tracks = tracks;
             this.selectedTracks = new Set();
+            this.lastSelectedIndex = null;
 
             if (tracks[0]) {
                 LogPrint(tracks[0].TrackName);
@@ -186,10 +189,59 @@ export class TrackList extends LitElement {
             .map((t) => t.FilePath);
     }
 
-    private onTrackRowClick(e: MouseEvent, track: library.Track) {
-        const isCtrl = e.ctrlKey || e.metaKey;
+    private selectRange(from: number, to: number): Set<string> {
+        const start = Math.min(from, to);
+        const end = Math.max(from, to);
+        const paths = new Set<string>();
 
-        if (isCtrl) {
+        for (let i = start; i <= end; i++) {
+            const track = this.tracks[i];
+
+            if (track) {
+                paths.add(track.FilePath);
+            }
+        }
+
+        return paths;
+    }
+
+    private onTrackRowClick(
+        e: MouseEvent,
+        track: library.Track,
+        index: number,
+    ) {
+        const isCtrl = e.ctrlKey || e.metaKey;
+        const isShift = e.shiftKey;
+
+        if (isShift && this.lastSelectedIndex !== null) {
+            const range = this.selectRange(
+                this.lastSelectedIndex,
+                index,
+            );
+
+            if (isCtrl) {
+                // Ctrl+Shift: add range to existing selection.
+                const next = new Set(this.selectedTracks);
+
+                for (const path of range) {
+                    next.add(path);
+                }
+
+                this.selectedTracks = next;
+            } else {
+                // Shift only: add range to existing selection.
+                const next = new Set(this.selectedTracks);
+
+                for (const path of range) {
+                    next.add(path);
+                }
+
+                this.selectedTracks = next;
+            }
+
+            // Don't update anchor on shift-click so user can
+            // adjust the range endpoint with another shift-click.
+        } else if (isCtrl) {
             const next = new Set(this.selectedTracks);
 
             if (next.has(track.FilePath)) {
@@ -199,8 +251,10 @@ export class TrackList extends LitElement {
             }
 
             this.selectedTracks = next;
+            this.lastSelectedIndex = index;
         } else {
             this.selectedTracks = new Set([track.FilePath]);
+            this.lastSelectedIndex = index;
         }
     }
 
@@ -326,7 +380,10 @@ export class TrackList extends LitElement {
         return currentTrack.filePath === track.FilePath;
     }
 
-    private renderTrackRow = (track: library.Track): unknown => {
+    private renderTrackRow = (
+        track: library.Track,
+        index: number,
+    ): unknown => {
         const active = this.isActiveTrack(track);
         const selected = this.selectedTracks.has(track.FilePath);
 
@@ -341,7 +398,7 @@ export class TrackList extends LitElement {
         return html`
       <div
         class=${classes}
-        @click=${(e: MouseEvent) => this.onTrackRowClick(e, track)}
+        @click=${(e: MouseEvent) => this.onTrackRowClick(e, track, index)}
         @dblclick=${() => this.onTrackRowDblClick(track)}
         @contextmenu=${(e: MouseEvent) =>
                 this.onTrackContextMenu(e, track)}
