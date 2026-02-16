@@ -108,7 +108,7 @@ export class TrackList extends LitElement {
     }
 
     .context-menu-panel {
-      background-color: #2a2a3e;
+      background-color: #343a40;
       border: 1px solid #444;
       border-radius: 6px;
       padding: 4px 0;
@@ -120,12 +120,12 @@ export class TrackList extends LitElement {
       cursor: pointer;
     }
 
-    .context-menu-panel wa-dropdown-item::part(base) {
-      color: #e0e0e0;
+    .context-menu-panel wa-dropdown-item {
+      --wa-color-text-normal: #fff;
       font-size: 13px;
     }
 
-    .context-menu-panel wa-dropdown-item::part(base):hover {
+    .context-menu-panel wa-dropdown-item:hover {
       background-color: rgba(255, 255, 255, 0.1);
     }
   `;

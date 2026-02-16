@@ -24,7 +24,7 @@ export class QueuePanel extends LitElement {
       flex-shrink: 0;
       width: 0;
       overflow: hidden;
-      background-color: #1a1a2e;
+      background-color: #212529;
       transition: width 0.25s ease-in-out;
       display: flex;
       flex-direction: row;
@@ -116,7 +116,7 @@ export class QueuePanel extends LitElement {
 
     .track-position {
       font-size: 12px;
-      color: #666;
+      color: #888;
       min-width: 20px;
       text-align: right;
     }
@@ -146,7 +146,7 @@ export class QueuePanel extends LitElement {
 
     .track-artist {
       font-size: 11px;
-      color: #888;
+      color: #b3b3b3;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -155,7 +155,7 @@ export class QueuePanel extends LitElement {
     .remove-button {
       background: none;
       border: none;
-      color: #666;
+      color: #888;
       cursor: pointer;
       padding: 4px;
       display: flex;
@@ -178,7 +178,7 @@ export class QueuePanel extends LitElement {
       align-items: center;
       justify-content: center;
       padding: 40px 20px;
-      color: #666;
+      color: #b3b3b3;
       text-align: center;
       gap: 8px;
     }
