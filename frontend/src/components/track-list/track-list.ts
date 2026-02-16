@@ -23,10 +23,10 @@ export class TrackList extends LitElement {
   private tracks: library.Track[] = [];
 
   @state()
-  private contextMenuOpen = false;
+  private selectedTracks: Set<string> = new Set();
 
   @state()
-  private contextMenuTrack: library.Track | null = null;
+  private contextMenuOpen = false;
 
   @state()
   private playlistSubmenuOpen = false;
@@ -68,6 +68,8 @@ export class TrackList extends LitElement {
       border-bottom: 1px solid #333;
       align-items: center;
       width: 100%;
+      cursor: default;
+      user-select: none;
     }
 
     .track-row > * {
@@ -78,30 +80,28 @@ export class TrackList extends LitElement {
       background-color: rgba(255, 255, 255, 0.05);
     }
 
+    .track-row.selected {
+      background-color: rgba(100, 160, 255, 0.15);
+    }
+
     .track-row.active {
       background-color: rgba(255, 212, 59, 0.1);
     }
 
-    .track-row.active .track-name-button {
+    .track-row.active .track-name {
       color: #ffd43b;
     }
 
-    .track-name-button {
-      background: none;
-      border: none;
-      color: inherit;
-      text-align: left;
-      padding: 0;
-      cursor: pointer;
-      width: 100%;
-      font: inherit;
+    .track-row.selected.active {
+      background-color: rgba(100, 160, 255, 0.15);
+    }
+
+    .track-name {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-    }
-
-    .track-name-button:hover {
-      text-decoration: underline;
+      cursor: default;
+      user-select: none;
     }
 
     .artist-name,
@@ -169,6 +169,7 @@ export class TrackList extends LitElement {
     try {
       const tracks = await GetAllTracks();
       this.tracks = tracks;
+      this.selectedTracks = new Set();
 
       if (tracks[0]) {
         LogPrint(tracks[0].TrackName);
@@ -178,7 +179,32 @@ export class TrackList extends LitElement {
     }
   }
 
-  private onTrackClick(track: library.Track) {
+  private getSelectedFilePaths(): string[] {
+    return this.tracks
+      .filter((t) => this.selectedTracks.has(t.FilePath))
+      .map((t) => t.FilePath);
+  }
+
+  private onTrackRowClick(e: MouseEvent, track: library.Track) {
+    const isCtrl = e.ctrlKey || e.metaKey;
+
+    if (isCtrl) {
+      const next = new Set(this.selectedTracks);
+
+      if (next.has(track.FilePath)) {
+        next.delete(track.FilePath);
+      } else {
+        next.add(track.FilePath);
+      }
+
+      this.selectedTracks = next;
+    } else {
+      this.selectedTracks = new Set([track.FilePath]);
+    }
+  }
+
+  private onTrackRowDblClick(track: library.Track) {
+    this.selectedTracks = new Set();
     this.queue.setQueue([track.FilePath], 0);
   }
 
@@ -186,7 +212,10 @@ export class TrackList extends LitElement {
     e.preventDefault();
     e.stopPropagation();
 
-    this.contextMenuTrack = track;
+    if (!this.selectedTracks.has(track.FilePath)) {
+      this.selectedTracks = new Set([track.FilePath]);
+    }
+
     this.contextMenuOpen = true;
 
     // Position the popup at the mouse cursor using a virtual anchor.
@@ -214,31 +243,34 @@ export class TrackList extends LitElement {
   }
 
   private onContextMenuAction(action: string) {
-    if (!this.contextMenuTrack) return;
+    const filePaths = this.getSelectedFilePaths();
 
-    const filePath = this.contextMenuTrack.FilePath;
+    if (filePaths.length === 0) return;
 
     switch (action) {
       case 'play':
-        this.queue.setQueue([filePath], 0);
+        this.queue.setQueue(filePaths, 0);
         break;
       case 'add-to-queue':
-        this.queue.addToQueue(filePath);
+        this.queue.addTracksToQueue(filePaths);
         break;
       case 'play-next':
-        this.queue.playNext(filePath);
+        this.queue.playTracksNext(filePaths);
         break;
     }
 
-    this.closeContextMenu();
+    this.closeContextMenu(true);
   }
 
-  private closeContextMenu() {
+  private closeContextMenu(clearSelection = false) {
     if (!this.contextMenuOpen) return;
 
     this.closePlaylistSubmenu();
     this.contextMenuOpen = false;
-    this.contextMenuTrack = null;
+
+    if (clearSelection) {
+      this.selectedTracks = new Set();
+    }
 
     const popup = this.contextMenuPopup;
 
@@ -282,7 +314,7 @@ export class TrackList extends LitElement {
   }
 
   private onPlaylistActionComplete = () => {
-    this.closeContextMenu();
+    this.closeContextMenu(true);
   };
 
   private isActiveTrack(track: library.Track): boolean {
@@ -295,22 +327,29 @@ export class TrackList extends LitElement {
 
   private renderTrackRow = (track: library.Track): unknown => {
     const active = this.isActiveTrack(track);
+    const selected = this.selectedTracks.has(track.FilePath);
+
+    const classes = [
+      'track-row',
+      active ? 'active' : '',
+      selected ? 'selected' : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
 
     return html`
       <div
-        class="track-row ${active ? 'active' : ''}"
-        @contextmenu=${(e: MouseEvent) => this.onTrackContextMenu(e, track)}
+        class=${classes}
+        @click=${(e: MouseEvent) => this.onTrackRowClick(e, track)}
+        @dblclick=${() => this.onTrackRowDblClick(track)}
+        @contextmenu=${(e: MouseEvent) =>
+          this.onTrackContextMenu(e, track)}
       >
-        <div>
-          <button
-            class="track-name-button"
-            @click=${() => this.onTrackClick(track)}
-          >
-            ${track.TrackName}
-          </button>
-        </div>
+        <div class="track-name">${track.TrackName}</div>
         <div class="artist-name">${track.ArtistName}</div>
-        <div class="track-length">${formatMilliseconds(track.TrackLength)}</div>
+        <div class="track-length">
+          ${formatMilliseconds(track.TrackLength)}
+        </div>
       </div>
     `;
   };
@@ -381,10 +420,10 @@ export class TrackList extends LitElement {
         placement="right-start"
         .active=${this.playlistSubmenuOpen}
       >
-        ${this.playlistSubmenuOpen && this.contextMenuTrack
+        ${this.playlistSubmenuOpen && this.selectedTracks.size > 0
           ? html`
               <playlist-picker
-                .filePaths=${[this.contextMenuTrack.FilePath]}
+                .filePaths=${this.getSelectedFilePaths()}
                 @playlist-action-complete=${this.onPlaylistActionComplete}
                 @click=${(e: Event) => e.stopPropagation()}
               ></playlist-picker>
