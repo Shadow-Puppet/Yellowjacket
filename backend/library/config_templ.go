@@ -29,14 +29,14 @@ func (d Directory) ToFormElement() templ.Component {
 			templ_7745c5c3_Var1 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<script>\n  function selectLibraryDirectory(pElement) {\n    try {\n      window.DirectoryPicker()\n        .then((result) => {\n          if (result.length != 0) {\n            pElement.value = result;\n          }\n        })\n        .catch((err) => {\n          console.error(\"error with directory picker: \" + err);\n        });\n    }\n    catch (err) {\n      console.error(err);\n    }\n  }\n  function scanLibrary(button) {\n    button.disabled = true;\n    button.textContent = \"Scanning...\";\n    window.Scan()\n      .then(() => {\n        button.textContent = \"Scan Library\";\n        button.disabled = false;\n      })\n      .catch((err) => {\n        console.error(\"error scanning library: \" + err);\n        button.textContent = \"Scan Library\";\n        button.disabled = false;\n      });\n  }\n  </script><button type=\"button\" onclick=\"selectLibraryDirectory(this.nextElementSibling)\">Select</button> <input type=\"text\" name=\"library.directory\" value=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<button type=\"button\" onclick=\"selectLibraryDirectory(this.nextElementSibling)\">Select</button> <input type=\"text\" name=\"library.directory\" value=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var2 string
 		templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.JoinStringErrs(d)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `library/config.templ`, Line: 37, Col: 54}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `library/config.templ`, Line: 5, Col: 54}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var2))
 		if templ_7745c5c3_Err != nil {

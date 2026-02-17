@@ -19,6 +19,8 @@ type Track struct {
 	ArtistName  string
 	TrackLength string
 	FilePath    string
+	TrackNumber int64
+	DiscNumber  int64
 }
 
 // Album represents an album for the cover grid display.
@@ -82,10 +84,15 @@ func (l *Library) GetAlbumTracks(albumID int64) ([]Track, error) {
 
 	for _, row := range rows {
 		tracks = append(tracks, Track{
-			TrackName:   row.Title,
-			ArtistName:  row.ArtistName,
-			TrackLength: strconv.FormatInt(row.LengthMilliseconds, 10),
+			TrackName:  row.Title,
+			ArtistName: row.ArtistName,
+			TrackLength: strconv.FormatInt(
+				row.LengthMilliseconds,
+				10,
+			),
 			FilePath:    row.FilePath,
+			TrackNumber: row.TrackNumber.Int64,
+			DiscNumber:  row.DiscNumber.Int64,
 		})
 	}
 

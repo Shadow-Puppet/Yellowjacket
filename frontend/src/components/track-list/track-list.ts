@@ -50,6 +50,7 @@ export class TrackList extends LitElement {
     private virtualizer!: LitVirtualizer;
 
     private lastSelectedIndex: number | null = null;
+    private lastActiveTrackPath: string | null = null;
 
     private closeHandler = () => this.closeContextMenu();
 
@@ -289,7 +290,7 @@ export class TrackList extends LitElement {
       background-color: rgba(255, 212, 59, 0.1);
     }
 
-    .track-row.active .track-name {
+    .track-row.active {
       color: #ffd43b;
     }
 
@@ -390,6 +391,14 @@ export class TrackList extends LitElement {
 
     override updated(changed: Map<string, unknown>) {
         if (changed.has('columnWidths')) {
+            this.virtualizer?.requestUpdate();
+        }
+
+        const currentPath =
+            this.player.currentTrack?.filePath ?? null;
+
+        if (currentPath !== this.lastActiveTrackPath) {
+            this.lastActiveTrackPath = currentPath;
             this.virtualizer?.requestUpdate();
         }
     }

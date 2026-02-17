@@ -20,7 +20,7 @@ import (
 
 const (
 	// thumbnailMaxSize is the maximum width/height for generated thumbnails.
-	thumbnailMaxSize = 256
+	thumbnailMaxSize = 200
 	// thumbnailQuality is the JPEG encoding quality for thumbnails.
 	thumbnailQuality = 80
 	// thumbnailSuffix is appended to the content hash for thumbnail filenames.

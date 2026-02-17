@@ -27,6 +27,8 @@ export namespace library {
 	    ArtistName: string;
 	    TrackLength: string;
 	    FilePath: string;
+	    TrackNumber: number;
+	    DiscNumber: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new Track(source);
@@ -38,6 +40,8 @@ export namespace library {
 	        this.ArtistName = source["ArtistName"];
 	        this.TrackLength = source["TrackLength"];
 	        this.FilePath = source["FilePath"];
+	        this.TrackNumber = source["TrackNumber"];
+	        this.DiscNumber = source["DiscNumber"];
 	    }
 	}
 

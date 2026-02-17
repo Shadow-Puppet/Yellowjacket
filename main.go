@@ -9,6 +9,7 @@ import (
 	"github.com/golang-cz/devslog"
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
+	"github.com/wailsapp/wails/v2/pkg/options/linux"
 
 	"yellowjacket/backend"
 	"yellowjacket/backend/assets"
@@ -78,6 +79,9 @@ func main() {
 		MinHeight:        384,
 		MaxWidth:         0,
 		MaxHeight:        0,
+		Linux: &linux.Options{
+			WebviewGpuPolicy: linux.WebviewGpuPolicyAlways,
+		},
 	})
 	if err != nil {
 		sLogger.Error("application error", "err", err.Error())
