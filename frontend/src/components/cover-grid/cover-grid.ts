@@ -1,6 +1,11 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state, query } from 'lit/decorators.js';
-import { repeat } from 'lit/directives/repeat.js';
+import '@lit-labs/virtualizer';
+import type {
+    LitVirtualizer,
+    VisibilityChangedEvent,
+} from '@lit-labs/virtualizer';
+import { grid } from '@lit-labs/virtualizer/layouts/grid.js';
 import { GetAlbumTracks } from '@go/library/Library';
 import { library } from '@go/models';
 import { LibraryController } from '@store/controllers/library-controller';
@@ -26,28 +31,29 @@ type ContextMenuTarget =
     | { kind: 'album' }
     | { kind: 'track' };
 
-/** Union item for the keyed grid rendered via repeat(). */
-type GridItem =
-    | { kind: 'album'; key: string; album: library.Album; index: number }
-    | { kind: 'dropdown'; key: string };
-
-/** Milliseconds to debounce scroll-position saves. */
-const SCROLL_DEBOUNCE_MS = 100;
-
 /**
- * Number of album cards to render in the first batch.
- * Sized to fill ~3-4 rows on a wide screen with overscan.
+ * Union item for the virtualized grid.
+ * Album entries carry the original album and its index
+ * in this.albums.  Phantom entries are invisible
+ * placeholders that reserve space for the dropdown overlay.
  */
-const INITIAL_BATCH_SIZE = 40;
+type GridEntry =
+    | {
+          kind: 'album';
+          album: library.Album;
+          albumIndex: number;
+      }
+    | { kind: 'phantom'; phantomIndex: number };
 
-/** Number of album cards to append in each subsequent idle batch. */
-const BATCH_SIZE = 200;
+/** Milliseconds to debounce visibility-changed saves. */
+const SCROLL_DEBOUNCE_MS = 100;
 
 @customElement('cover-grid')
 export class CoverGrid extends LitElement {
     private libraryCtrl = new LibraryController(this);
 
-    // Grid layout constants — must match the CSS grid config.
+    // Grid layout constants — must match the virtualizer
+    // grid config and the CSS card dimensions.
     private static readonly GRID_ITEM_WIDTH = 176;
     private static readonly GRID_ITEM_HEIGHT = 230;
     private static readonly GRID_GAP = 16;
@@ -61,28 +67,30 @@ export class CoverGrid extends LitElement {
 
     private closeHandler = () => this.closeContextMenu();
 
-    // Resize-aware scroll preservation
-    private resizeObserver: ResizeObserver | null = null;
-    private resizeDebounceTimer: ReturnType<
-        typeof setTimeout
-    > | null = null;
-    private pendingCenterIndex: {
-        index: number;
-        viewportHeight: number;
-    } | null = null;
-    private currentColumnCount = 0;
+    /**
+     * Tracks per phantom row.  Each track row is ~28px,
+     * the base content height is 202px, each column fits
+     * ~7 tracks, and 3 columns = 21 tracks per row.
+     */
+    private static readonly TRACKS_PER_PHANTOM_ROW = 21;
 
-    // Incremental rendering — render albums in batches
-    // to avoid blocking the main thread on first paint.
-    private batchRAF: number | null = null;
+    // Virtualizer grid layout instance.
+    private gridLayout = grid({
+        itemSize: {
+            width: `${CoverGrid.GRID_ITEM_WIDTH}px`,
+            height: `${CoverGrid.GRID_ITEM_HEIGHT}px`,
+        },
+        gap: `${CoverGrid.GRID_GAP}px`,
+        padding: `${CoverGrid.GRID_PADDING}px`,
+        justify: 'center',
+    });
 
-    // buildGridItems() memoization cache
-    private gridItemsCache: GridItem[] = [];
-    private gridItemsCacheAlbums: library.Album[] = [];
-    private gridItemsCacheExpandedId: number | null =
-        null;
-    private gridItemsCacheColumns = 0;
-    private gridItemsCacheRendered = 0;
+    // buildVirtualizerItems() memoization cache.
+    private itemsCacheAlbums: library.Album[] = [];
+    private itemsCacheExpandedId: number | null = null;
+    private itemsCacheColumns = 0;
+    private itemsCachePhantomRows = 0;
+    private itemsCache: GridEntry[] = [];
 
     static override styles = css`
         :host {
@@ -93,18 +101,8 @@ export class CoverGrid extends LitElement {
 
         .grid-scroll-container {
             flex: 1;
+            position: relative;
             overflow-y: auto;
-        }
-
-        .album-grid {
-            display: grid;
-            grid-template-columns: repeat(
-                auto-fill,
-                176px
-            );
-            gap: 16px;
-            padding: 16px;
-            justify-content: center;
         }
 
         /* ========================================
@@ -120,9 +118,6 @@ export class CoverGrid extends LitElement {
             transition: background-color 0.2s ease;
             box-sizing: border-box;
             width: 176px;
-            contain: content;
-            content-visibility: auto;
-            contain-intrinsic-size: 176px 230px;
         }
 
         .album-card:hover {
@@ -195,6 +190,27 @@ export class CoverGrid extends LitElement {
             overflow: hidden;
             text-overflow: ellipsis;
             margin-top: 4px;
+        }
+
+        /* ========================================
+         * Phantom cards (dropdown spacer)
+         * ======================================== */
+
+        .phantom-card {
+            visibility: hidden;
+            pointer-events: none;
+        }
+
+        /* ========================================
+         * Dropdown overlay
+         * ======================================== */
+
+        .dropdown-overlay {
+            position: absolute;
+            left: 0;
+            right: 0;
+            z-index: 10;
+            pointer-events: auto;
         }
 
         /* ========================================
@@ -316,9 +332,13 @@ export class CoverGrid extends LitElement {
     @state()
     private selectedTracks: Set<string> = new Set();
 
-    /** Number of albums rendered so far (incremental batching). */
+    /** Number of phantom rows reserved for the dropdown overlay. */
     @state()
-    private renderedCount = 0;
+    private phantomRowCount = 1;
+
+    /** Pixel offset of the dropdown overlay from the top of the scroll content. */
+    @state()
+    private dropdownTopPx = 0;
 
     @query('#context-menu')
     private contextMenuPopup!: HTMLElement;
@@ -326,8 +346,22 @@ export class CoverGrid extends LitElement {
     @query('#playlist-submenu')
     private playlistSubmenuPopup!: HTMLElement;
 
+    @query('lit-virtualizer')
+    private virtualizer!: LitVirtualizer;
+
     @query('.grid-scroll-container')
     private scrollContainer!: HTMLElement;
+
+    // Resize-aware scroll preservation.
+    private resizeObserver: ResizeObserver | null = null;
+    private resizeDebounceTimer: ReturnType<
+        typeof setTimeout
+    > | null = null;
+    private pendingFocus: {
+        row: number;
+        viewportOffset: number;
+    } | null = null;
+    private currentColumnCount = 0;
 
     /* ====================================================================
      * Lifecycle
@@ -380,8 +414,45 @@ export class CoverGrid extends LitElement {
 
         this.resizeObserver?.disconnect();
         this.resizeObserver = null;
+    }
 
-        this.cancelPendingBatch();
+    override updated(
+        changed: Map<PropertyKey, unknown>,
+    ) {
+        super.updated(changed);
+
+        // When the dropdown opens or tracks change,
+        // recompute the phantom row count and overlay
+        // position.
+        if (
+            changed.has('expandedAlbumId') ||
+            changed.has('expandedTracks')
+        ) {
+            this.phantomRowCount =
+                this.expandedAlbumId !== null
+                    ? Math.max(
+                          1,
+                          Math.ceil(
+                              this.expandedTracks
+                                  .length /
+                                  CoverGrid.TRACKS_PER_PHANTOM_ROW,
+                          ),
+                      )
+                    : 1;
+            this.updateDropdownPosition();
+        }
+
+        // When a new album is expanded, scroll its
+        // row to the top of the viewport after the
+        // DOM reflects the new phantom rows.
+        if (
+            changed.has('expandedAlbumId') &&
+            this.expandedAlbumId !== null
+        ) {
+            void this.updateComplete.then(() => {
+                this.scrollToExpandedAlbum();
+            });
+        }
     }
 
     /* ====================================================================
@@ -389,8 +460,6 @@ export class CoverGrid extends LitElement {
      * ==================================================================== */
 
     private async loadAlbums() {
-        this.cancelPendingBatch();
-
         try {
             this.loading = true;
 
@@ -400,22 +469,12 @@ export class CoverGrid extends LitElement {
             this.albums = albums ?? [];
             this.selectedAlbums = new Set();
             this.lastSelectedAlbumIndex = null;
-
-            // Render only the first batch immediately.
-            this.renderedCount = Math.min(
-                INITIAL_BATCH_SIZE,
-                this.albums.length,
-            );
-
-            // Start image fetches while Lit builds DOM.
-            this.preloadVisibleThumbnails(
-                this.albums,
-                INITIAL_BATCH_SIZE,
-            );
         } catch (error) {
-            console.error('Error loading albums:', error);
+            console.error(
+                'Error loading albums:',
+                error,
+            );
             this.albums = [];
-            this.renderedCount = 0;
         } finally {
             this.loading = false;
         }
@@ -423,201 +482,68 @@ export class CoverGrid extends LitElement {
         await this.updateComplete;
         this.restoreScrollPosition();
         this.setupResizeObserver();
-        this.scheduleNextBatch();
     }
+
+    /* ====================================================================
+     * Scroll position (index-based)
+     * ==================================================================== */
 
     private restoreScrollPosition() {
         const saved =
             this.libraryCtrl.getScrollPosition('albums');
 
-        if (saved <= 0 || !this.scrollContainer) return;
+        if (saved <= 0 || !this.virtualizer) return;
 
-        // Fast-forward renderedCount so the DOM
-        // covers the saved scroll position before
-        // we restore it.
-        const {
-            GRID_ITEM_HEIGHT,
-            GRID_GAP,
-            GRID_PADDING,
-        } = CoverGrid;
-        const columns = this.getColumnCount();
-        const rowStep = GRID_ITEM_HEIGHT + GRID_GAP;
-        const rowsNeeded = Math.ceil(
-            (saved +
-                this.scrollContainer.clientHeight -
-                GRID_PADDING) /
-            rowStep,
+        const safeIndex = Math.min(
+            saved,
+            this.albums.length - 1,
         );
-        const albumsNeeded = rowsNeeded * columns;
 
-        if (albumsNeeded > this.renderedCount) {
-            this.renderedCount = Math.min(
-                albumsNeeded,
-                this.albums.length,
-            );
-        }
+        if (safeIndex <= 0) return;
 
-        // Wait for the expanded renderedCount to
-        // produce DOM before setting scrollTop.
-        void this.updateComplete.then(() => {
-            this.scrollContainer.scrollTop = saved;
-        });
+        this.virtualizer.scrollToIndex(
+            safeIndex,
+            'start',
+        );
     }
 
-    private onScroll = () => {
+    private onVisibilityChanged = (
+        e: VisibilityChangedEvent,
+    ) => {
         if (this.scrollDebounceTimer !== null) {
             clearTimeout(this.scrollDebounceTimer);
         }
 
         this.scrollDebounceTimer = setTimeout(() => {
-            if (this.scrollContainer) {
+            const items = this.buildVirtualizerItems();
+            const first = items[e.first];
+
+            if (first?.kind === 'album') {
                 this.libraryCtrl.setScrollPosition(
                     'albums',
-                    this.scrollContainer.scrollTop,
+                    first.albumIndex,
                 );
             }
         }, SCROLL_DEBOUNCE_MS);
     };
 
     /* ====================================================================
-     * Incremental rendering
-     *
-     * Albums are rendered in batches to keep the first
-     * paint fast.  After the initial batch, subsequent
-     * chunks are appended during idle frames so the main
-     * thread stays responsive.
-     * ==================================================================== */
-
-    /**
-     * Schedule the next batch of album cards to render.
-     * Uses requestIdleCallback when available, falling
-     * back to setTimeout(…, 16) for one-frame yield.
-     */
-    private scheduleNextBatch() {
-        if (this.renderedCount >= this.albums.length) {
-            return;
-        }
-
-        const callback = () => {
-            this.batchRAF = null;
-
-            this.renderedCount = Math.min(
-                this.renderedCount + BATCH_SIZE,
-                this.albums.length,
-            );
-
-            this.scheduleNextBatch();
-        };
-
-        const ric = window.requestIdleCallback;
-
-        if (ric) {
-            this.batchRAF = ric(callback, {
-                timeout: 100,
-            });
-        } else {
-            this.batchRAF = setTimeout(
-                callback,
-                16,
-            ) as unknown as number;
-        }
-    }
-
-    /** Cancel any in-flight idle batch callback. */
-    private cancelPendingBatch() {
-        if (this.batchRAF === null) return;
-
-        const cic = window.cancelIdleCallback;
-
-        if (cic) {
-            cic(this.batchRAF);
-        } else {
-            clearTimeout(this.batchRAF);
-        }
-
-        this.batchRAF = null;
-    }
-
-    /**
-     * Height (in px) of a spacer that accounts for
-     * album rows not yet rendered.  Keeps the scrollbar
-     * accurate from first paint.
-     */
-    private getSpacerHeight(): number {
-        const columns = this.getColumnCount();
-        const remaining =
-            this.albums.length - this.renderedCount;
-
-        if (remaining <= 0 || columns === 0) return 0;
-
-        const rows = Math.ceil(remaining / columns);
-        const { GRID_ITEM_HEIGHT, GRID_GAP } = CoverGrid;
-
-        return rows * (GRID_ITEM_HEIGHT + GRID_GAP);
-    }
-
-    /**
-     * Kick off browser-level image fetches for the first
-     * `count` album thumbnails.  Runs before Lit creates
-     * the actual `<img>` elements so the HTTP requests
-     * overlap with DOM construction.
-     */
-    private preloadVisibleThumbnails(
-        albums: library.Album[],
-        count: number,
-    ) {
-        const limit = Math.min(count, albums.length);
-
-        for (let i = 0; i < limit; i++) {
-            const album = albums[i]!;
-
-            const url =
-                album.CoverArtThumbnailPath ||
-                album.CoverArtPath;
-
-            if (url) {
-                new Image().src = url;
-            }
-        }
-    }
-
-    /* ====================================================================
      * Resize-aware scroll preservation
      *
-     * When the container width changes (e.g. queue panel
-     * open/close, drag-resize, or window resize), the CSS
-     * grid reflows and the absolute scroll position
-     * becomes stale.
+     * When the container width changes (queue panel
+     * open/close, window resize) the grid reflows and
+     * the pixel scroll position becomes stale.
      *
-     * We compute the fractional album index at the
-     * viewport center before the resize, then after the
-     * reflow we place that same index back at the center.
-     * This is exact because the album list is stable —
-     * only the column count (and therefore row mapping)
-     * changes.
+     * We compute a fractional album index at a focus
+     * point before the resize, then after the reflow we
+     * place that same index back at the same viewport
+     * offset.
      *
-     * Capture:
-     *   centerY   = scrollTop + clientHeight / 2
-     *   row       = (centerY - padding) / rowStep
-     *   index     = row * columns
-     *
-     * Restore:
-     *   newRow    = index / newColumns
-     *   scrollTop = padding + newRow * rowStep
-     *               - clientHeight / 2
+     * If a dropdown is open the expanded album is the
+     * focus; otherwise the album at the viewport center
+     * is used.
      * ==================================================================== */
 
-    /**
-     * Wire up a ResizeObserver on the scroll container.
-     *
-     * When the column count changes (e.g. queue panel
-     * open/close), scroll position is corrected
-     * synchronously in the same frame to avoid flicker.
-     * For continuous resizes that stay within the same
-     * column breakpoint (e.g. dragging the queue panel
-     * handle), a debounce ensures a final correction
-     * once resizing settles.
-     */
     private setupResizeObserver() {
         const container = this.scrollContainer;
 
@@ -637,80 +563,339 @@ export class CoverGrid extends LitElement {
         this.currentColumnCount =
             this.getColumnCount();
 
-        /** Restore scroll so the same album stays
-         *  at the viewport center after a reflow. */
+        /** Restore scroll so the focus album stays
+         *  at the same viewport offset after reflow. */
         const restoreScroll = () => {
-            const pending =
-                this.pendingCenterIndex;
+            const pending = this.pendingFocus;
 
-            this.pendingCenterIndex = null;
+            this.pendingFocus = null;
 
             if (!pending) return;
 
-            const newColumns =
-                this.getColumnCount();
-            const newRow =
-                pending.index / newColumns;
-            const newCenterY =
-                GRID_PADDING +
-                newRow * rowStep;
-
-            container.scrollTop =
-                newCenterY -
-                pending.viewportHeight / 2;
-
-            this.currentColumnCount = newColumns;
-        };
-
-        this.resizeObserver = new ResizeObserver(() => {
-            // Capture on the first event using the
-            // pre-resize column count.
-            if (this.pendingCenterIndex === null) {
-                const centerY =
-                    container.scrollTop +
-                    container.clientHeight / 2;
-                const row =
-                    (centerY - GRID_PADDING) / rowStep;
-
-                this.pendingCenterIndex = {
-                    index:
-                        row *
-                        this.currentColumnCount,
-                    viewportHeight:
-                        container.clientHeight,
-                };
-            }
-
             const newColumns = this.getColumnCount();
 
-            if (newColumns !== this.currentColumnCount) {
-                // Column count changed — correct
-                // scroll immediately to avoid flicker.
-                if (this.resizeDebounceTimer !== null) {
-                    clearTimeout(
-                        this.resizeDebounceTimer,
-                    );
-                    this.resizeDebounceTimer = null;
-                }
+            this.currentColumnCount = newColumns;
 
-                restoreScroll();
+            // If a dropdown is open, snap the
+            // expanded album's row to the top.
+            if (this.expandedAlbumId !== null) {
+                this.updateDropdownPosition();
+                this.scrollToExpandedAlbum();
 
                 return;
             }
 
-            // Same column count — debounce for a
-            // final adjustment once resizing settles.
-            if (this.resizeDebounceTimer !== null) {
-                clearTimeout(this.resizeDebounceTimer);
-            }
+            // No dropdown — restore the
+            // center-of-viewport position.
+            const newY =
+                GRID_PADDING + pending.row * rowStep;
 
-            this.resizeDebounceTimer = setTimeout(
-                restoreScroll,
-                100,
-            );
-        });
+            container.scrollTop =
+                newY - pending.viewportOffset;
+        };
+
+        this.resizeObserver = new ResizeObserver(
+            () => {
+                // Capture on the first event using
+                // the pre-resize column count.
+                if (this.pendingFocus === null) {
+                    this.captureFocusPoint(
+                        container,
+                        rowStep,
+                    );
+                }
+
+                const newColumns =
+                    this.getColumnCount();
+
+                if (
+                    newColumns !==
+                    this.currentColumnCount
+                ) {
+                    // Column count changed — correct
+                    // scroll immediately.
+                    if (
+                        this.resizeDebounceTimer !==
+                        null
+                    ) {
+                        clearTimeout(
+                            this.resizeDebounceTimer,
+                        );
+                        this.resizeDebounceTimer =
+                            null;
+                    }
+
+                    restoreScroll();
+
+                    return;
+                }
+
+                // Same column count — debounce for a
+                // final adjustment once resizing settles.
+                if (
+                    this.resizeDebounceTimer !== null
+                ) {
+                    clearTimeout(
+                        this.resizeDebounceTimer,
+                    );
+                }
+
+                this.resizeDebounceTimer = setTimeout(
+                    restoreScroll,
+                    100,
+                );
+            },
+        );
 
         this.resizeObserver.observe(container);
+    }
+
+    /**
+     * Determine the focus point for scroll restoration.
+     * If a dropdown is open, the expanded album is the
+     * focus and its current viewport offset is preserved.
+     * Otherwise the album at the viewport center is used.
+     */
+    private captureFocusPoint(
+        container: HTMLElement,
+        rowStep: number,
+    ) {
+        const { GRID_PADDING } = CoverGrid;
+
+        // Prefer the expanded album as focus.
+        if (this.expandedAlbumId !== null) {
+            const idx = this.albums.findIndex(
+                (a) => a.ID === this.expandedAlbumId,
+            );
+
+            if (idx >= 0) {
+                const albumRow = Math.floor(
+                    idx / this.currentColumnCount,
+                );
+                const albumY =
+                    GRID_PADDING + albumRow * rowStep;
+
+                this.pendingFocus = {
+                    row: albumRow,
+                    viewportOffset:
+                        albumY - container.scrollTop,
+                };
+
+                return;
+            }
+        }
+
+        // Fall back to the viewport center.
+        const halfViewport =
+            container.clientHeight / 2;
+        const centerY =
+            container.scrollTop + halfViewport;
+        const row =
+            (centerY - GRID_PADDING) / rowStep;
+
+        this.pendingFocus = {
+            row,
+            viewportOffset: halfViewport,
+        };
+    }
+
+    /* ====================================================================
+     * Column count helper
+     * ==================================================================== */
+
+    private getColumnCount(): number {
+        const el =
+            this.scrollContainer ?? this.virtualizer;
+
+        if (!el) return 1;
+
+        const { GRID_ITEM_WIDTH, GRID_GAP, GRID_PADDING } =
+            CoverGrid;
+        const availableWidth =
+            el.clientWidth - GRID_PADDING * 2;
+
+        return Math.max(
+            1,
+            Math.floor(
+                (availableWidth + GRID_GAP) /
+                    (GRID_ITEM_WIDTH + GRID_GAP),
+            ),
+        );
+    }
+
+    /* ====================================================================
+     * Virtualizer items (albums + phantom rows)
+     *
+     * When a dropdown is open we inject phantom entries
+     * after the expanded album's row.  The dropdown is
+     * rendered as an absolutely-positioned overlay on top
+     * of the phantom cards.
+     * ==================================================================== */
+
+    private buildVirtualizerItems(): GridEntry[] {
+        const columns = this.getColumnCount();
+        const phantomRows =
+            this.expandedAlbumId !== null
+                ? this.phantomRowCount
+                : 0;
+
+        // Return cached result when inputs unchanged.
+        if (
+            this.itemsCacheAlbums === this.albums &&
+            this.itemsCacheExpandedId ===
+                this.expandedAlbumId &&
+            this.itemsCacheColumns === columns &&
+            this.itemsCachePhantomRows === phantomRows
+        ) {
+            return this.itemsCache;
+        }
+
+        const items: GridEntry[] = [];
+
+        if (this.expandedAlbumId === null) {
+            for (let i = 0; i < this.albums.length; i++) {
+                items.push({
+                    kind: 'album',
+                    album: this.albums[i]!,
+                    albumIndex: i,
+                });
+            }
+        } else {
+            const expandedIndex = this.albums.findIndex(
+                (a) => a.ID === this.expandedAlbumId,
+            );
+
+            // Position after the expanded album's row.
+            const insertAfter =
+                expandedIndex >= 0
+                    ? Math.min(
+                          (Math.floor(
+                              expandedIndex / columns,
+                          ) +
+                              1) *
+                              columns,
+                          this.albums.length,
+                      )
+                    : this.albums.length;
+
+            const phantomCount = columns * phantomRows;
+
+            for (let i = 0; i < insertAfter; i++) {
+                items.push({
+                    kind: 'album',
+                    album: this.albums[i]!,
+                    albumIndex: i,
+                });
+            }
+
+            for (let i = 0; i < phantomCount; i++) {
+                items.push({
+                    kind: 'phantom',
+                    phantomIndex: i,
+                });
+            }
+
+            for (
+                let i = insertAfter;
+                i < this.albums.length;
+                i++
+            ) {
+                items.push({
+                    kind: 'album',
+                    album: this.albums[i]!,
+                    albumIndex: i,
+                });
+            }
+        }
+
+        // Update cache.
+        this.itemsCache = items;
+        this.itemsCacheAlbums = this.albums;
+        this.itemsCacheExpandedId = this.expandedAlbumId;
+        this.itemsCacheColumns = columns;
+        this.itemsCachePhantomRows = phantomRows;
+
+        return items;
+    }
+
+    private gridKeyFunction = (entry: GridEntry) => {
+        if (entry.kind === 'phantom') {
+            return `phantom-${entry.phantomIndex}`;
+        }
+
+        return `a-${entry.album.ID}`;
+    };
+
+    /* ====================================================================
+     * Dropdown overlay positioning
+     *
+     * The dropdown is absolutely positioned inside the
+     * scroll container, overlaying the phantom cards.
+     * We compute its top offset from the expanded album's
+     * row position in the grid.
+     * ==================================================================== */
+
+    /**
+     * Smooth-scroll the container so the expanded
+     * album's row is positioned at the top of the view.
+     */
+    private scrollToExpandedAlbum() {
+        const container = this.scrollContainer;
+
+        if (
+            !container ||
+            this.expandedAlbumId === null
+        ) {
+            return;
+        }
+
+        const expandedIndex = this.albums.findIndex(
+            (a) => a.ID === this.expandedAlbumId,
+        );
+
+        if (expandedIndex < 0) return;
+
+        const {
+            GRID_ITEM_HEIGHT,
+            GRID_GAP,
+            GRID_PADDING,
+        } = CoverGrid;
+        const columns = this.getColumnCount();
+        const rowStep = GRID_ITEM_HEIGHT + GRID_GAP;
+        const albumRow = Math.floor(
+            expandedIndex / columns,
+        );
+
+        container.scrollTo({
+            top:
+                GRID_PADDING +
+                albumRow * rowStep -
+                GRID_GAP / 2,
+            behavior: 'instant',
+        });
+    }
+
+    private updateDropdownPosition() {
+        if (this.expandedAlbumId === null) return;
+
+        const columns = this.getColumnCount();
+        const expandedIndex = this.albums.findIndex(
+            (a) => a.ID === this.expandedAlbumId,
+        );
+
+        if (expandedIndex < 0) return;
+
+        const {
+            GRID_ITEM_HEIGHT,
+            GRID_GAP,
+            GRID_PADDING,
+        } = CoverGrid;
+        const rowStep = GRID_ITEM_HEIGHT + GRID_GAP;
+        const phantomStartRow =
+            Math.floor(expandedIndex / columns) + 1;
+
+        this.dropdownTopPx =
+            GRID_PADDING + phantomStartRow * rowStep;
     }
 
     /* ====================================================================
@@ -815,6 +1000,7 @@ export class CoverGrid extends LitElement {
             this.expandedTracks = [];
             this.selectedTracks = new Set();
             this.lastSelectedTrackIndex = null;
+            this.phantomRowCount = 1;
 
             return;
         }
@@ -824,10 +1010,12 @@ export class CoverGrid extends LitElement {
         this.expandedTracks = [];
         this.selectedTracks = new Set();
         this.lastSelectedTrackIndex = null;
+        this.phantomRowCount = 1;
         this.loadingTracks = true;
 
         try {
             const tracks = await GetAlbumTracks(album.ID);
+
             // Only apply if still the same album
             if (this.expandedAlbumId === album.ID) {
                 this.expandedTracks = tracks;
@@ -840,29 +1028,6 @@ export class CoverGrid extends LitElement {
         } finally {
             this.loadingTracks = false;
         }
-    }
-
-    /* ====================================================================
-     * Grid column count (for dropdown insertion position)
-     * ==================================================================== */
-
-    private getColumnCount(): number {
-        const container = this.scrollContainer;
-
-        if (!container) return 1;
-
-        const { GRID_ITEM_WIDTH, GRID_GAP, GRID_PADDING } =
-            CoverGrid;
-        const availableWidth =
-            container.clientWidth - GRID_PADDING * 2;
-
-        return Math.max(
-            1,
-            Math.floor(
-                (availableWidth + GRID_GAP) /
-                (GRID_ITEM_WIDTH + GRID_GAP),
-            ),
-        );
     }
 
     /* ====================================================================
@@ -901,7 +1066,7 @@ export class CoverGrid extends LitElement {
     }
 
     /* ====================================================================
-     * Delegated album event handlers (on .album-grid)
+     * Delegated album event handlers
      * ==================================================================== */
 
     private onGridAlbumClick = (e: MouseEvent) => {
@@ -1202,7 +1367,9 @@ export class CoverGrid extends LitElement {
         this.playlistFilePaths = [];
 
         if (clearSelection) {
-            if (this.contextMenuTarget.kind === 'track') {
+            if (
+                this.contextMenuTarget.kind === 'track'
+            ) {
                 this.selectedTracks = new Set();
             } else {
                 this.selectedAlbums = new Set();
@@ -1275,10 +1442,29 @@ export class CoverGrid extends LitElement {
     }
 
     /* ====================================================================
+     * Render: grid entry (virtualizer renderItem)
+     * ==================================================================== */
+
+    private renderGridEntry = (
+        entry: GridEntry,
+    ) => {
+        if (entry.kind === 'phantom') {
+            return html`<div
+                class="phantom-card"
+            ></div>`;
+        }
+
+        return this.renderAlbumCard(
+            entry.album,
+            entry.albumIndex,
+        );
+    };
+
+    /* ====================================================================
      * Render: album card
      *
      * No per-card event listeners — events are delegated
-     * to .album-grid via data-index.
+     * via data-index on the virtualizer.
      * ==================================================================== */
 
     private renderAlbumCard(
@@ -1313,7 +1499,10 @@ export class CoverGrid extends LitElement {
                               class="cover-image"
                               src="${album.CoverArtThumbnailPath || album.CoverArtPath}"
                               alt="${album.Name} cover"
+                              width="160"
+                              height="160"
                               loading="lazy"
+                              decoding="async"
                           />`
                 : html`<div
                               class="placeholder-cover"
@@ -1342,101 +1531,6 @@ export class CoverGrid extends LitElement {
     }
 
     /* ====================================================================
-     * Render: main grid with interleaved dropdown
-     *
-     * Builds a union array of GridItem entries and
-     * renders them via repeat() so Lit can diff by
-     * stable key rather than positional index.
-     * ==================================================================== */
-
-    private buildGridItems(): GridItem[] {
-        const columns = this.getColumnCount();
-        const rendered = this.renderedCount;
-
-        // Return cached result when inputs are unchanged.
-        if (
-            this.gridItemsCacheAlbums ===
-            this.albums &&
-            this.gridItemsCacheExpandedId ===
-            this.expandedAlbumId &&
-            this.gridItemsCacheColumns === columns &&
-            this.gridItemsCacheRendered === rendered
-        ) {
-            return this.gridItemsCache;
-        }
-
-        const expandedIndex =
-            this.expandedAlbumId !== null
-                ? this.albums.findIndex(
-                    (a) =>
-                        a.ID ===
-                        this.expandedAlbumId,
-                )
-                : -1;
-
-        let dropdownAfterIndex = -1;
-
-        if (
-            expandedIndex >= 0 &&
-            expandedIndex < rendered
-        ) {
-            const row = Math.floor(
-                expandedIndex / columns,
-            );
-            dropdownAfterIndex = Math.min(
-                (row + 1) * columns - 1,
-                rendered - 1,
-            );
-        }
-
-        const items: GridItem[] = [];
-
-        for (let i = 0; i < rendered; i++) {
-            const album = this.albums[i]!;
-            items.push({
-                kind: 'album',
-                key: `a-${album.ID}`,
-                album,
-                index: i,
-            });
-
-            if (i === dropdownAfterIndex) {
-                items.push({
-                    kind: 'dropdown',
-                    key: 'dropdown',
-                });
-            }
-        }
-
-        // Cache the result and inputs.
-        this.gridItemsCache = items;
-        this.gridItemsCacheAlbums = this.albums;
-        this.gridItemsCacheExpandedId =
-            this.expandedAlbumId;
-        this.gridItemsCacheColumns = columns;
-        this.gridItemsCacheRendered = rendered;
-
-        return items;
-    }
-
-    private renderGridItem = (item: GridItem) => {
-        if (item.kind === 'dropdown') {
-            return html`
-                <album-dropdown
-                    .tracks=${this.expandedTracks}
-                    ?loading-tracks=${this.loadingTracks}
-                    .selectedTracks=${this.selectedTracks}
-                ></album-dropdown>
-            `;
-        }
-
-        return this.renderAlbumCard(
-            item.album,
-            item.index,
-        );
-    };
-
-    /* ====================================================================
      * Render: main
      * ==================================================================== */
 
@@ -1463,30 +1557,34 @@ export class CoverGrid extends LitElement {
             <div
                 class="grid-scroll-container"
                 @click=${this.onGridClick}
-                @scroll=${this.onScroll}
             >
-                <div
-                    class="album-grid"
+                <lit-virtualizer
+                    .items=${this.buildVirtualizerItems()}
+                    .renderItem=${this.renderGridEntry}
+                    .keyFunction=${this.gridKeyFunction}
+                    .layout=${this.gridLayout}
                     @click=${this.onGridAlbumClick}
                     @dblclick=${this.onGridAlbumDblClick}
                     @keydown=${this.onGridAlbumKeydown}
                     @contextmenu=${this.onGridAlbumContextMenu}
-                    @track-click=${this.onTrackClick}
-                    @track-dblclick=${this.onTrackDblClick}
-                    @track-contextmenu=${this.onTrackContextMenu}
-                >
-                    ${repeat(
-            this.buildGridItems(),
-            (item) => item.key,
-            this.renderGridItem,
-        )}
-                    ${this.renderedCount <
-                this.albums.length
-                ? html`<div
-                              style="grid-column:1/-1;height:${this.getSpacerHeight()}px"
-                          ></div>`
+                    @visibilityChanged=${this.onVisibilityChanged}
+                ></lit-virtualizer>
+
+                ${this.expandedAlbumId !== null
+                ? html`
+                          <album-dropdown
+                              class="dropdown-overlay"
+                              style="top:${this.dropdownTopPx}px"
+                              .tracks=${this.expandedTracks}
+                              ?loading-tracks=${this.loadingTracks}
+                              .selectedTracks=${this.selectedTracks}
+                              .phantomRows=${this.phantomRowCount}
+                              @track-click=${this.onTrackClick}
+                              @track-dblclick=${this.onTrackDblClick}
+                              @track-contextmenu=${this.onTrackContextMenu}
+                          ></album-dropdown>
+                      `
                 : nothing}
-                </div>
             </div>
 
             <wa-popup

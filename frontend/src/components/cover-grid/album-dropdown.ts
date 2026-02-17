@@ -45,10 +45,13 @@ export class AlbumDropdown extends LitElement {
     @property({ attribute: false })
     selectedTracks: Set<string> = new Set();
 
+    /** Number of phantom grid rows allocated by the parent. */
+    @property({ type: Number, attribute: 'phantom-rows' })
+    phantomRows = 1;
+
     static override styles = css`
         :host {
             display: block;
-            grid-column: 1 / -1;
         }
 
         .album-dropdown {
@@ -73,12 +76,6 @@ export class AlbumDropdown extends LitElement {
             column-count: 3;
             column-fill: auto;
             column-gap: 24px;
-            height: 206px;
-        }
-
-        .dropdown-tracks.overflow {
-            height: auto;
-            min-height: 206px;
         }
 
         .track-row {
@@ -168,22 +165,21 @@ export class AlbumDropdown extends LitElement {
     }
 
     /**
-     * Determine whether the multi-column track layout
-     * overflows 3 columns at the base height.
+     * Compute the track container height from the number
+     * of phantom grid rows allocated by the parent.
      *
-     * Heuristic: each track row is ~28px tall, the base
-     * dropdown content height is 206px, each column fits
-     * ~7 tracks, and with 3 columns that is ~21 tracks.
+     * Grid constants: itemHeight=230, gap=16.
+     * Dropdown chrome: 12+12 padding + 2+2 border = 28px.
      */
-    private tracksOverflow(): boolean {
-        const rowHeight = 28;
-        const containerHeight = 206;
-        const perColumn = Math.floor(
-            containerHeight / rowHeight,
-        );
-        const maxTracks = perColumn * 3;
+    private get tracksHeight(): number {
+        const gridItemHeight = 230;
+        const gridGap = 16;
+        const chrome = 28;
+        const total =
+            this.phantomRows * gridItemHeight +
+            (this.phantomRows - 1) * gridGap;
 
-        return this.tracks.length > maxTracks;
+        return total - chrome;
     }
 
     /* ================================================================
@@ -326,15 +322,12 @@ export class AlbumDropdown extends LitElement {
             `;
         }
 
-        const overflow = this.tracksOverflow();
-
-        const tracksClass = overflow
-            ? 'dropdown-tracks overflow'
-            : 'dropdown-tracks';
-
         return html`
             <div class="album-dropdown">
-                <div class=${tracksClass}>
+                <div
+                    class="dropdown-tracks"
+                    style="height:${this.tracksHeight}px"
+                >
                     ${this.tracks.map(
                         (track, i) =>
                             this.renderTrackRow(track, i),
