@@ -67,6 +67,79 @@ func (q *Queries) DeletePlaylist(ctx context.Context, id int64) error {
 	return err
 }
 
+const getAllPlaylistTracksWithMetadata = `-- name: GetAllPlaylistTracksWithMetadata :many
+SELECT
+    pt.id,
+    pt.playlist_id,
+    pt.audio_file_id,
+    pt.position,
+    af.file_path,
+    af.length_milliseconds,
+    COALESCE(r.name, '') AS title,
+    COALESCE(ac.text, '') AS artist,
+    COALESCE(rg.name, '') AS album,
+    COALESCE(ca.file_path, '') AS cover_art_path
+FROM playlist_tracks pt
+JOIN audio_files af ON pt.audio_file_id = af.id
+LEFT JOIN recordings r ON af.recording_id = r.id
+LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
+LEFT JOIN (
+    SELECT recording_id, MIN(release_group_id) AS release_group_id
+    FROM release_group_recordings
+    GROUP BY recording_id
+) rgr ON r.id = rgr.recording_id
+LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
+LEFT JOIN cover_art ca ON rg.cover_art_id = ca.id
+ORDER BY pt.playlist_id, pt.position
+`
+
+type GetAllPlaylistTracksWithMetadataRow struct {
+	ID                 int64
+	PlaylistID         int64
+	AudioFileID        int64
+	Position           int64
+	FilePath           string
+	LengthMilliseconds int64
+	Title              string
+	Artist             string
+	Album              string
+	CoverArtPath       string
+}
+
+func (q *Queries) GetAllPlaylistTracksWithMetadata(ctx context.Context) ([]GetAllPlaylistTracksWithMetadataRow, error) {
+	rows, err := q.db.QueryContext(ctx, getAllPlaylistTracksWithMetadata)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetAllPlaylistTracksWithMetadataRow
+	for rows.Next() {
+		var i GetAllPlaylistTracksWithMetadataRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.PlaylistID,
+			&i.AudioFileID,
+			&i.Position,
+			&i.FilePath,
+			&i.LengthMilliseconds,
+			&i.Title,
+			&i.Artist,
+			&i.Album,
+			&i.CoverArtPath,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getAllPlaylists = `-- name: GetAllPlaylists :many
 SELECT id, name, created_at, updated_at FROM playlists ORDER BY updated_at DESC
 `
@@ -188,7 +261,11 @@ FROM playlist_tracks pt
 JOIN audio_files af ON pt.audio_file_id = af.id
 LEFT JOIN recordings r ON af.recording_id = r.id
 LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
-LEFT JOIN release_group_recordings rgr ON r.id = rgr.recording_id
+LEFT JOIN (
+    SELECT recording_id, MIN(release_group_id) AS release_group_id
+    FROM release_group_recordings
+    GROUP BY recording_id
+) rgr ON r.id = rgr.recording_id
 LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
 LEFT JOIN cover_art ca ON rg.cover_art_id = ca.id
 WHERE pt.playlist_id = ?

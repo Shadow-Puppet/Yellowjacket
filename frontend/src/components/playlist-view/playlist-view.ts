@@ -3,25 +3,26 @@ import { customElement, state } from 'lit/decorators.js';
 
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 
-import {
-    GetAllPlaylists,
-    CreatePlaylist,
-    GetPlaylistTracks,
-} from '@go/playlist/Service';
+import { CreatePlaylist } from '@go/playlist/Service';
 import type { playlist } from '@go/models';
 import { QueueController } from '@store/controllers/queue-controller';
+import { PlaylistController } from '@store/controllers/playlist-controller';
 import '@components/track-info/track-info';
+
+const SCROLL_DEBOUNCE_MS = 100;
 
 interface PlaylistEntry {
     summary: playlist.Summary;
     expanded: boolean;
-    loading: boolean;
-    tracks: playlist.Track[] | null;
+    tracks: playlist.Track[];
 }
 
 @customElement('playlist-view')
 export class PlaylistView extends LitElement {
     private queue = new QueueController(this);
+    private playlistCtrl = new PlaylistController(this);
+    private scrollDebounceTimer: ReturnType<typeof setTimeout> | null =
+        null;
 
     @state() private entries: PlaylistEntry[] = [];
     @state() private loading = true;
@@ -225,12 +226,6 @@ export class PlaylistView extends LitElement {
             border-bottom: none;
         }
 
-        .tracks-loading {
-            padding: 12px 0;
-            color: #888;
-            font-size: 12px;
-        }
-
         .tracks-empty {
             padding: 12px 0;
             color: #666;
@@ -270,18 +265,57 @@ export class PlaylistView extends LitElement {
         this.loadPlaylists();
     }
 
+    override disconnectedCallback() {
+        super.disconnectedCallback();
+
+        if (this.scrollDebounceTimer !== null) {
+            clearTimeout(this.scrollDebounceTimer);
+            this.scrollDebounceTimer = null;
+        }
+    }
+
+    private get scrollContainer(): HTMLElement | null {
+        return (
+            this.shadowRoot?.querySelector(
+                '.playlist-list',
+            ) ?? null
+        );
+    }
+
+    private restoreScrollPosition() {
+        const saved =
+            this.playlistCtrl.getScrollPosition();
+
+        if (saved > 0 && this.scrollContainer) {
+            this.scrollContainer.scrollTop = saved;
+        }
+    }
+
+    private onScroll = () => {
+        if (this.scrollDebounceTimer !== null) {
+            clearTimeout(this.scrollDebounceTimer);
+        }
+
+        this.scrollDebounceTimer = setTimeout(() => {
+            if (this.scrollContainer) {
+                this.playlistCtrl.setScrollPosition(
+                    this.scrollContainer.scrollTop,
+                );
+            }
+        }, SCROLL_DEBOUNCE_MS);
+    };
+
     private async loadPlaylists() {
         try {
             this.loading = true;
 
-            const result = await GetAllPlaylists();
-            const summaries = result ?? [];
+            const playlists =
+                await this.playlistCtrl.getPlaylists();
 
-            this.entries = summaries.map((s) => ({
-                summary: s,
+            this.entries = playlists.map((p) => ({
+                summary: p.Summary,
                 expanded: false,
-                loading: false,
-                tracks: null,
+                tracks: p.Tracks ?? [],
             }));
         } catch (err) {
             console.error('Failed to load playlists:', err);
@@ -289,64 +323,27 @@ export class PlaylistView extends LitElement {
         } finally {
             this.loading = false;
         }
+
+        await this.updateComplete;
+        this.restoreScrollPosition();
     }
 
-    private handleToggle = async (index: number) => {
+    private handleToggle = (index: number) => {
         const entry = this.entries[index];
 
         if (!entry) return;
 
-        // Collapse if already expanded.
-        if (entry.expanded) {
-            this.entries = this.entries.map((e, i) =>
-                i === index ? { ...e, expanded: false } : e,
-            );
-
-            return;
-        }
-
-        // Expand and lazy-load tracks if not yet fetched.
-        if (entry.tracks === null) {
-            this.entries = this.entries.map((e, i) =>
-                i === index
-                    ? { ...e, expanded: true, loading: true }
-                    : e,
-            );
-
-            try {
-                const tracks = await GetPlaylistTracks(
-                    entry.summary.ID,
-                );
-
-                this.entries = this.entries.map((e, i) =>
-                    i === index
-                        ? {
-                              ...e,
-                              loading: false,
-                              tracks: tracks ?? [],
-                          }
-                        : e,
-                );
-            } catch (err) {
-                console.error('Failed to load playlist tracks:', err);
-
-                this.entries = this.entries.map((e, i) =>
-                    i === index
-                        ? { ...e, loading: false, tracks: [] }
-                        : e,
-                );
-            }
-        } else {
-            this.entries = this.entries.map((e, i) =>
-                i === index ? { ...e, expanded: true } : e,
-            );
-        }
+        this.entries = this.entries.map((e, i) =>
+            i === index
+                ? { ...e, expanded: !e.expanded }
+                : e,
+        );
     };
 
     private handlePlayAll = (index: number) => {
         const entry = this.entries[index];
 
-        if (!entry?.tracks || entry.tracks.length === 0) return;
+        if (!entry || entry.tracks.length === 0) return;
 
         const filePaths = entry.tracks.map((t) => t.FilePath);
         this.queue.setQueue(filePaths, 0);
@@ -379,6 +376,7 @@ export class PlaylistView extends LitElement {
             await CreatePlaylist(name);
             this.creating = false;
             this.newPlaylistName = '';
+            this.playlistCtrl.invalidate();
             await this.loadPlaylists();
         } catch (err) {
             console.error('Failed to create playlist:', err);
@@ -460,7 +458,7 @@ export class PlaylistView extends LitElement {
         }
 
         return html`
-            <ul class="playlist-list">
+            <ul class="playlist-list" @scroll=${this.onScroll}>
                 ${this.entries.map((entry, i) =>
                     this.renderPlaylistItem(entry, i),
                 )}
@@ -469,11 +467,9 @@ export class PlaylistView extends LitElement {
     }
 
     private renderPlaylistItem(entry: PlaylistEntry, index: number) {
-        const trackCount = entry.tracks?.length;
+        const trackCount = entry.tracks.length;
         const countLabel =
-            trackCount !== undefined && trackCount !== null
-                ? `${trackCount} track${trackCount !== 1 ? 's' : ''}`
-                : '';
+            `${trackCount} track${trackCount !== 1 ? 's' : ''}`;
 
         return html`
             <li class="playlist-item">
@@ -494,11 +490,9 @@ export class PlaylistView extends LitElement {
                     <span class="playlist-name">
                         ${entry.summary.Name}
                     </span>
-                    ${countLabel
-                        ? html`<span class="track-count">
-                              ${countLabel}
-                          </span>`
-                        : nothing}
+                    <span class="track-count">
+                        ${countLabel}
+                    </span>
                 </div>
                 ${entry.expanded
                     ? this.renderPlaylistBody(entry, index)
@@ -511,17 +505,7 @@ export class PlaylistView extends LitElement {
         entry: PlaylistEntry,
         index: number,
     ) {
-        if (entry.loading) {
-            return html`
-                <div class="playlist-body">
-                    <div class="tracks-loading">
-                        Loading tracks...
-                    </div>
-                </div>
-            `;
-        }
-
-        if (!entry.tracks || entry.tracks.length === 0) {
+        if (entry.tracks.length === 0) {
             return html`
                 <div class="playlist-body">
                     <div class="tracks-empty">

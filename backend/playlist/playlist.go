@@ -40,6 +40,12 @@ type Track struct {
 	Duration              string `json:"Duration"`
 }
 
+// WithTracks contains a playlist summary and all its tracks.
+type WithTracks struct {
+	Summary Summary `json:"Summary"`
+	Tracks  []Track `json:"Tracks"`
+}
+
 // Service manages playlist operations.
 type Service struct {
 	ctx    context.Context
@@ -83,6 +89,71 @@ func (s *Service) GetAllPlaylists() ([]Summary, error) {
 	return summaries, nil
 }
 
+// GetAllPlaylistsWithTracks returns all playlists with their tracks in a single call.
+func (s *Service) GetAllPlaylistsWithTracks() (
+	[]WithTracks,
+	error,
+) {
+	playlists, err := s.db.Queries.GetAllPlaylists(s.db.Ctx)
+	if err != nil {
+		s.logger.Error("Failed to get playlists", "err", err)
+
+		return nil, fmt.Errorf("failed to get playlists: %w", err)
+	}
+
+	rows, err := s.db.Queries.GetAllPlaylistTracksWithMetadata(
+		s.db.Ctx,
+	)
+	if err != nil {
+		s.logger.Error(
+			"Failed to get all playlist tracks",
+			"err", err,
+		)
+
+		return nil, fmt.Errorf(
+			"failed to get all playlist tracks: %w",
+			err,
+		)
+	}
+
+	// Group tracks by playlist ID.
+	tracksByPlaylist := make(map[int64][]Track)
+
+	for _, row := range rows {
+		track := trackFromRow(
+			row.ID,
+			row.Position,
+			row.FilePath,
+			row.Title,
+			row.Artist,
+			row.Album,
+			row.LengthMilliseconds,
+			row.CoverArtPath,
+		)
+
+		tracksByPlaylist[row.PlaylistID] = append(
+			tracksByPlaylist[row.PlaylistID],
+			track,
+		)
+	}
+
+	result := make([]WithTracks, 0, len(playlists))
+
+	for _, p := range playlists {
+		tracks := tracksByPlaylist[p.ID]
+		if tracks == nil {
+			tracks = []Track{}
+		}
+
+		result = append(result, WithTracks{
+			Summary: Summary{ID: p.ID, Name: p.Name},
+			Tracks:  tracks,
+		})
+	}
+
+	return result, nil
+}
+
 // GetPlaylistTracks returns all tracks in a playlist with full metadata.
 func (s *Service) GetPlaylistTracks(
 	playlistID int64,
@@ -107,30 +178,46 @@ func (s *Service) GetPlaylistTracks(
 	tracks := make([]Track, 0, len(rows))
 
 	for _, row := range rows {
-		track := Track{
-			ID:       row.ID,
-			Position: row.Position,
-			FilePath: row.FilePath,
-			Title:    row.Title,
-			Artist:   row.Artist,
-			Album:    row.Album,
-			Duration: strconv.FormatInt(
-				row.LengthMilliseconds,
-				10,
-			),
-		}
-
-		if row.CoverArtPath != "" {
-			base := filepath.Base(row.CoverArtPath)
-			track.CoverArtPath = "/covers/" + base
-			track.CoverArtThumbnailPath = "/covers/" +
-				library.ThumbnailFilename(base)
-		}
-
-		tracks = append(tracks, track)
+		tracks = append(tracks, trackFromRow(
+			row.ID,
+			row.Position,
+			row.FilePath,
+			row.Title,
+			row.Artist,
+			row.Album,
+			row.LengthMilliseconds,
+			row.CoverArtPath,
+		))
 	}
 
 	return tracks, nil
+}
+
+// trackFromRow converts raw query row fields into a Track.
+func trackFromRow(
+	id, position int64,
+	filePath, title, artist, album string,
+	lengthMilliseconds int64,
+	coverArtPath string,
+) Track {
+	track := Track{
+		ID:       id,
+		Position: position,
+		FilePath: filePath,
+		Title:    title,
+		Artist:   artist,
+		Album:    album,
+		Duration: strconv.FormatInt(lengthMilliseconds, 10),
+	}
+
+	if coverArtPath != "" {
+		base := filepath.Base(coverArtPath)
+		track.CoverArtPath = "/covers/" + base
+		track.CoverArtThumbnailPath = "/covers/" +
+			library.ThumbnailFilename(base)
+	}
+
+	return track
 }
 
 // CreatePlaylist creates a new empty playlist with the given name.
