@@ -390,7 +390,10 @@ export class TrackList extends LitElement {
     }
 
     override updated(changed: Map<string, unknown>) {
-        if (changed.has('columnWidths')) {
+        if (
+            changed.has('columnWidths') ||
+            changed.has('selectedTracks')
+        ) {
             this.virtualizer?.requestUpdate();
         }
 
