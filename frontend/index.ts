@@ -8,8 +8,16 @@ import '@components/playlist-view/playlist-view.ts';
 import '@awesome.me/webawesome/dist/styles/themes/default.css';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import { setBasePath } from '@awesome.me/webawesome/dist/webawesome.js';
+import { libraryStore } from '@store/library-store';
+import { playlistStore } from '@store/playlist-store';
 
 setBasePath('/dist/webawesome');
+
+// Pre-fetch data for views not yet mounted so they're cached when navigated to.
+// These are fire-and-forget — the singleton stores deduplicate concurrent fetches,
+// so if a component mounts before this completes, it joins the in-flight request.
+libraryStore.getAlbums();
+playlistStore.getPlaylists();
 
 // Navigation event listener for view switching
 document.addEventListener('navigate', (e: Event) => {

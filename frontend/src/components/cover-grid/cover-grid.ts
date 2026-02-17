@@ -34,6 +34,15 @@ type GridItem =
 /** Milliseconds to debounce scroll-position saves. */
 const SCROLL_DEBOUNCE_MS = 100;
 
+/**
+ * Number of album cards to render in the first batch.
+ * Sized to fill ~3-4 rows on a wide screen with overscan.
+ */
+const INITIAL_BATCH_SIZE = 40;
+
+/** Number of album cards to append in each subsequent idle batch. */
+const BATCH_SIZE = 200;
+
 @customElement('cover-grid')
 export class CoverGrid extends LitElement {
     private libraryCtrl = new LibraryController(this);
@@ -63,12 +72,17 @@ export class CoverGrid extends LitElement {
     } | null = null;
     private currentColumnCount = 0;
 
+    // Incremental rendering — render albums in batches
+    // to avoid blocking the main thread on first paint.
+    private batchRAF: number | null = null;
+
     // buildGridItems() memoization cache
     private gridItemsCache: GridItem[] = [];
     private gridItemsCacheAlbums: library.Album[] = [];
     private gridItemsCacheExpandedId: number | null =
         null;
     private gridItemsCacheColumns = 0;
+    private gridItemsCacheRendered = 0;
 
     static override styles = css`
         :host {
@@ -302,6 +316,10 @@ export class CoverGrid extends LitElement {
     @state()
     private selectedTracks: Set<string> = new Set();
 
+    /** Number of albums rendered so far (incremental batching). */
+    @state()
+    private renderedCount = 0;
+
     @query('#context-menu')
     private contextMenuPopup!: HTMLElement;
 
@@ -362,6 +380,8 @@ export class CoverGrid extends LitElement {
 
         this.resizeObserver?.disconnect();
         this.resizeObserver = null;
+
+        this.cancelPendingBatch();
     }
 
     /* ====================================================================
@@ -369,16 +389,33 @@ export class CoverGrid extends LitElement {
      * ==================================================================== */
 
     private async loadAlbums() {
+        this.cancelPendingBatch();
+
         try {
             this.loading = true;
+
             const albums =
                 await this.libraryCtrl.getAlbums();
+
             this.albums = albums ?? [];
             this.selectedAlbums = new Set();
             this.lastSelectedAlbumIndex = null;
+
+            // Render only the first batch immediately.
+            this.renderedCount = Math.min(
+                INITIAL_BATCH_SIZE,
+                this.albums.length,
+            );
+
+            // Start image fetches while Lit builds DOM.
+            this.preloadVisibleThumbnails(
+                this.albums,
+                INITIAL_BATCH_SIZE,
+            );
         } catch (error) {
             console.error('Error loading albums:', error);
             this.albums = [];
+            this.renderedCount = 0;
         } finally {
             this.loading = false;
         }
@@ -386,15 +423,45 @@ export class CoverGrid extends LitElement {
         await this.updateComplete;
         this.restoreScrollPosition();
         this.setupResizeObserver();
+        this.scheduleNextBatch();
     }
 
     private restoreScrollPosition() {
         const saved =
             this.libraryCtrl.getScrollPosition('albums');
 
-        if (saved > 0 && this.scrollContainer) {
-            this.scrollContainer.scrollTop = saved;
+        if (saved <= 0 || !this.scrollContainer) return;
+
+        // Fast-forward renderedCount so the DOM
+        // covers the saved scroll position before
+        // we restore it.
+        const {
+            GRID_ITEM_HEIGHT,
+            GRID_GAP,
+            GRID_PADDING,
+        } = CoverGrid;
+        const columns = this.getColumnCount();
+        const rowStep = GRID_ITEM_HEIGHT + GRID_GAP;
+        const rowsNeeded = Math.ceil(
+            (saved +
+                this.scrollContainer.clientHeight -
+                GRID_PADDING) /
+            rowStep,
+        );
+        const albumsNeeded = rowsNeeded * columns;
+
+        if (albumsNeeded > this.renderedCount) {
+            this.renderedCount = Math.min(
+                albumsNeeded,
+                this.albums.length,
+            );
         }
+
+        // Wait for the expanded renderedCount to
+        // produce DOM before setting scrollTop.
+        void this.updateComplete.then(() => {
+            this.scrollContainer.scrollTop = saved;
+        });
     }
 
     private onScroll = () => {
@@ -411,6 +478,108 @@ export class CoverGrid extends LitElement {
             }
         }, SCROLL_DEBOUNCE_MS);
     };
+
+    /* ====================================================================
+     * Incremental rendering
+     *
+     * Albums are rendered in batches to keep the first
+     * paint fast.  After the initial batch, subsequent
+     * chunks are appended during idle frames so the main
+     * thread stays responsive.
+     * ==================================================================== */
+
+    /**
+     * Schedule the next batch of album cards to render.
+     * Uses requestIdleCallback when available, falling
+     * back to setTimeout(…, 16) for one-frame yield.
+     */
+    private scheduleNextBatch() {
+        if (this.renderedCount >= this.albums.length) {
+            return;
+        }
+
+        const callback = () => {
+            this.batchRAF = null;
+
+            this.renderedCount = Math.min(
+                this.renderedCount + BATCH_SIZE,
+                this.albums.length,
+            );
+
+            this.scheduleNextBatch();
+        };
+
+        const ric = window.requestIdleCallback;
+
+        if (ric) {
+            this.batchRAF = ric(callback, {
+                timeout: 100,
+            });
+        } else {
+            this.batchRAF = setTimeout(
+                callback,
+                16,
+            ) as unknown as number;
+        }
+    }
+
+    /** Cancel any in-flight idle batch callback. */
+    private cancelPendingBatch() {
+        if (this.batchRAF === null) return;
+
+        const cic = window.cancelIdleCallback;
+
+        if (cic) {
+            cic(this.batchRAF);
+        } else {
+            clearTimeout(this.batchRAF);
+        }
+
+        this.batchRAF = null;
+    }
+
+    /**
+     * Height (in px) of a spacer that accounts for
+     * album rows not yet rendered.  Keeps the scrollbar
+     * accurate from first paint.
+     */
+    private getSpacerHeight(): number {
+        const columns = this.getColumnCount();
+        const remaining =
+            this.albums.length - this.renderedCount;
+
+        if (remaining <= 0 || columns === 0) return 0;
+
+        const rows = Math.ceil(remaining / columns);
+        const { GRID_ITEM_HEIGHT, GRID_GAP } = CoverGrid;
+
+        return rows * (GRID_ITEM_HEIGHT + GRID_GAP);
+    }
+
+    /**
+     * Kick off browser-level image fetches for the first
+     * `count` album thumbnails.  Runs before Lit creates
+     * the actual `<img>` elements so the HTTP requests
+     * overlap with DOM construction.
+     */
+    private preloadVisibleThumbnails(
+        albums: library.Album[],
+        count: number,
+    ) {
+        const limit = Math.min(count, albums.length);
+
+        for (let i = 0; i < limit; i++) {
+            const album = albums[i]!;
+
+            const url =
+                album.CoverArtThumbnailPath ||
+                album.CoverArtPath;
+
+            if (url) {
+                new Image().src = url;
+            }
+        }
+    }
 
     /* ====================================================================
      * Resize-aware scroll preservation
@@ -691,7 +860,7 @@ export class CoverGrid extends LitElement {
             1,
             Math.floor(
                 (availableWidth + GRID_GAP) /
-                    (GRID_ITEM_WIDTH + GRID_GAP),
+                (GRID_ITEM_WIDTH + GRID_GAP),
             ),
         );
     }
@@ -1140,13 +1309,13 @@ export class CoverGrid extends LitElement {
             >
                 <div class="cover-container">
                     ${album.CoverArtPath
-                        ? html`<img
+                ? html`<img
                               class="cover-image"
                               src="${album.CoverArtThumbnailPath || album.CoverArtPath}"
                               alt="${album.Name} cover"
                               loading="lazy"
                           />`
-                        : html`<div
+                : html`<div
                               class="placeholder-cover"
                           >
                               ${this.getAlbumInitial(album.Name)}
@@ -1164,8 +1333,8 @@ export class CoverGrid extends LitElement {
                         title="${album.ArtistName}"
                     >
                         ${album.ArtistName}${album.Year
-                            ? ` - ${album.Year}`
-                            : ''}
+                ? ` - ${album.Year}`
+                : ''}
                     </div>
                 </div>
             </div>
@@ -1182,14 +1351,16 @@ export class CoverGrid extends LitElement {
 
     private buildGridItems(): GridItem[] {
         const columns = this.getColumnCount();
+        const rendered = this.renderedCount;
 
         // Return cached result when inputs are unchanged.
         if (
             this.gridItemsCacheAlbums ===
-                this.albums &&
+            this.albums &&
             this.gridItemsCacheExpandedId ===
-                this.expandedAlbumId &&
-            this.gridItemsCacheColumns === columns
+            this.expandedAlbumId &&
+            this.gridItemsCacheColumns === columns &&
+            this.gridItemsCacheRendered === rendered
         ) {
             return this.gridItemsCache;
         }
@@ -1197,27 +1368,30 @@ export class CoverGrid extends LitElement {
         const expandedIndex =
             this.expandedAlbumId !== null
                 ? this.albums.findIndex(
-                      (a) =>
-                          a.ID ===
-                          this.expandedAlbumId,
-                  )
+                    (a) =>
+                        a.ID ===
+                        this.expandedAlbumId,
+                )
                 : -1;
 
         let dropdownAfterIndex = -1;
 
-        if (expandedIndex >= 0) {
+        if (
+            expandedIndex >= 0 &&
+            expandedIndex < rendered
+        ) {
             const row = Math.floor(
                 expandedIndex / columns,
             );
             dropdownAfterIndex = Math.min(
                 (row + 1) * columns - 1,
-                this.albums.length - 1,
+                rendered - 1,
             );
         }
 
         const items: GridItem[] = [];
 
-        for (let i = 0; i < this.albums.length; i++) {
+        for (let i = 0; i < rendered; i++) {
             const album = this.albums[i]!;
             items.push({
                 kind: 'album',
@@ -1240,6 +1414,7 @@ export class CoverGrid extends LitElement {
         this.gridItemsCacheExpandedId =
             this.expandedAlbumId;
         this.gridItemsCacheColumns = columns;
+        this.gridItemsCacheRendered = rendered;
 
         return items;
     }
@@ -1301,10 +1476,16 @@ export class CoverGrid extends LitElement {
                     @track-contextmenu=${this.onTrackContextMenu}
                 >
                     ${repeat(
-                        this.buildGridItems(),
-                        (item) => item.key,
-                        this.renderGridItem,
-                    )}
+            this.buildGridItems(),
+            (item) => item.key,
+            this.renderGridItem,
+        )}
+                    ${this.renderedCount <
+                this.albums.length
+                ? html`<div
+                              style="grid-column:1/-1;height:${this.getSpacerHeight()}px"
+                          ></div>`
+                : nothing}
                 </div>
             </div>
 
@@ -1314,13 +1495,13 @@ export class CoverGrid extends LitElement {
                 .active=${this.contextMenuOpen}
             >
                 ${this.contextMenuOpen
-                    ? html`
+                ? html`
                           <div class="context-menu-panel">
                               <wa-dropdown-item
                                   @click=${() =>
-                                      this.onContextMenuAction(
-                                          'play',
-                                      )}
+                        this.onContextMenuAction(
+                            'play',
+                        )}
                               >
                                   <wa-icon
                                       slot="icon"
@@ -1330,9 +1511,9 @@ export class CoverGrid extends LitElement {
                               </wa-dropdown-item>
                               <wa-dropdown-item
                                   @click=${() =>
-                                      this.onContextMenuAction(
-                                          'add-to-queue',
-                                      )}
+                        this.onContextMenuAction(
+                            'add-to-queue',
+                        )}
                               >
                                   <wa-icon
                                       slot="icon"
@@ -1342,9 +1523,9 @@ export class CoverGrid extends LitElement {
                               </wa-dropdown-item>
                               <wa-dropdown-item
                                   @click=${() =>
-                                      this.onContextMenuAction(
-                                          'play-next',
-                                      )}
+                        this.onContextMenuAction(
+                            'play-next',
+                        )}
                               >
                                   <wa-icon
                                       slot="icon"
@@ -1355,11 +1536,11 @@ export class CoverGrid extends LitElement {
                               <wa-dropdown-item
                                   class="submenu-item"
                                   @mouseenter=${() =>
-                                      this.showPlaylistSubmenu()}
+                        this.showPlaylistSubmenu()}
                                   @click=${(e: Event) => {
-                                      e.stopPropagation();
-                                      void this.showPlaylistSubmenu();
-                                  }}
+                        e.stopPropagation();
+                        void this.showPlaylistSubmenu();
+                    }}
                               >
                                   <wa-icon
                                       slot="icon"
@@ -1373,7 +1554,7 @@ export class CoverGrid extends LitElement {
                               </wa-dropdown-item>
                           </div>
                       `
-                    : nothing}
+                : nothing}
             </wa-popup>
 
             <wa-popup
@@ -1382,15 +1563,15 @@ export class CoverGrid extends LitElement {
                 .active=${this.playlistSubmenuOpen}
             >
                 ${this.playlistSubmenuOpen
-                    ? html`
+                ? html`
                           <playlist-picker
                               .filePaths=${this.playlistFilePaths}
                               @playlist-action-complete=${this.onPlaylistActionComplete}
                               @click=${(e: Event) =>
-                                  e.stopPropagation()}
+                        e.stopPropagation()}
                           ></playlist-picker>
                       `
-                    : nothing}
+                : nothing}
             </wa-popup>
         `;
     }
