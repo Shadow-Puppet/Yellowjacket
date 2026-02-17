@@ -52,9 +52,8 @@ export class AlbumDropdown extends LitElement {
         }
 
         .album-dropdown {
-            background-color: #1a1a2e;
-            border-top: 2px solid #ffd43b;
-            border-bottom: 2px solid #ffd43b;
+            background-color: #212529;
+            border: 2px solid #ffd43b;
             border-radius: 4px;
             padding: 12px 16px;
             box-sizing: border-box;

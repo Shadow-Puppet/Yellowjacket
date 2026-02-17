@@ -208,6 +208,7 @@ export class TrackList extends LitElement {
 
     .header-row {
       display: grid;
+      grid-template-columns: var(--grid-cols, 1fr 1fr 80px);
       padding: 8px;
       font-weight: bold;
       color: #fff;
@@ -260,6 +261,7 @@ export class TrackList extends LitElement {
 
     .track-row {
       display: grid;
+      grid-template-columns: var(--grid-cols, 1fr 1fr 80px);
       font-size: 12px;
       padding: 8px;
       border-bottom: 1px solid #333;
@@ -390,10 +392,14 @@ export class TrackList extends LitElement {
     }
 
     override updated(changed: Map<string, unknown>) {
-        if (
-            changed.has('columnWidths') ||
-            changed.has('selectedTracks')
-        ) {
+        if (changed.has('columnWidths')) {
+            this.style.setProperty(
+                '--grid-cols',
+                this.gridTemplateColumns,
+            );
+        }
+
+        if (changed.has('selectedTracks')) {
             this.virtualizer?.requestUpdate();
         }
 
@@ -700,13 +706,9 @@ export class TrackList extends LitElement {
             .filter(Boolean)
             .join(' ');
 
-        const colStyle =
-            `grid-template-columns: ${this.gridTemplateColumns}`;
-
         return html`
       <div
         class=${classes}
-        style=${colStyle}
         @click=${(e: MouseEvent) =>
                 this.onTrackRowClick(e, track, index)}
         @dblclick=${() => this.onTrackRowDblClick(track)}
@@ -727,10 +729,7 @@ export class TrackList extends LitElement {
       ${this.tracks.length === 0
                 ? html`<p>Loading tracks...</p>`
                 : html`
-            <div
-              class="header-row"
-              style="grid-template-columns: ${this.gridTemplateColumns}"
-            >
+            <div class="header-row">
               <div class="header-cell">Track Name</div>
               <div class="header-cell">Artist</div>
               <div class="header-cell">Track Length</div>
