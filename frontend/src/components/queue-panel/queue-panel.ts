@@ -44,7 +44,6 @@ export class QueuePanel extends LitElement {
       width: 0;
       overflow: hidden;
       background-color: #212529;
-      transition: width 0.25s ease-in-out;
       display: flex;
       flex-direction: row;
     }
@@ -295,9 +294,6 @@ export class QueuePanel extends LitElement {
   private handleMouseDown = (e: MouseEvent) => {
     e.preventDefault();
     this.isDragging = true;
-
-    // Disable transition during drag for instant feedback.
-    this.style.transition = 'none';
   };
 
   private handleMouseMove = (e: MouseEvent) => {
@@ -318,9 +314,6 @@ export class QueuePanel extends LitElement {
     if (!this.isDragging) return;
 
     this.isDragging = false;
-
-    // Re-enable transition after drag ends.
-    this.style.removeProperty('transition');
   };
 
   override render() {

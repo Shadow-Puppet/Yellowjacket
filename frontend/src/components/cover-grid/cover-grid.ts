@@ -416,8 +416,9 @@ export class CoverGrid extends LitElement {
      * Resize-aware scroll preservation
      *
      * When the container width changes (e.g. queue panel
-     * open/close/resize), the CSS grid reflows and the
-     * absolute scroll position becomes stale.
+     * open/close, drag-resize, or window resize), the CSS
+     * grid reflows and the absolute scroll position
+     * becomes stale.
      *
      * We compute the fractional album index at the
      * viewport center before the resize, then after the
@@ -440,11 +441,13 @@ export class CoverGrid extends LitElement {
     /**
      * Wire up a ResizeObserver on the scroll container.
      *
-     * Uses a debounce pattern to handle animated
-     * transitions (e.g. the queue panel's 250ms width
-     * animation). The center album index is captured on
-     * the first resize event, then restored once resizing
-     * settles.
+     * When the column count changes (e.g. queue panel
+     * open/close), scroll position is corrected
+     * synchronously in the same frame to avoid flicker.
+     * For continuous resizes that stay within the same
+     * column breakpoint (e.g. dragging the queue panel
+     * handle), a debounce ensures a final correction
+     * once resizing settles.
      */
     private setupResizeObserver() {
         const container = this.scrollContainer;
@@ -465,10 +468,34 @@ export class CoverGrid extends LitElement {
         this.currentColumnCount =
             this.getColumnCount();
 
+        /** Restore scroll so the same album stays
+         *  at the viewport center after a reflow. */
+        const restoreScroll = () => {
+            const pending =
+                this.pendingCenterIndex;
+
+            this.pendingCenterIndex = null;
+
+            if (!pending) return;
+
+            const newColumns =
+                this.getColumnCount();
+            const newRow =
+                pending.index / newColumns;
+            const newCenterY =
+                GRID_PADDING +
+                newRow * rowStep;
+
+            container.scrollTop =
+                newCenterY -
+                pending.viewportHeight / 2;
+
+            this.currentColumnCount = newColumns;
+        };
+
         this.resizeObserver = new ResizeObserver(() => {
             // Capture on the first event using the
-            // pre-resize column count stored before
-            // the animation started.
+            // pre-resize column count.
             if (this.pendingCenterIndex === null) {
                 const centerY =
                     container.scrollTop +
@@ -485,38 +512,31 @@ export class CoverGrid extends LitElement {
                 };
             }
 
-            // Reset the debounce timer on every event
-            // so we wait for the animation to finish.
+            const newColumns = this.getColumnCount();
+
+            if (newColumns !== this.currentColumnCount) {
+                // Column count changed — correct
+                // scroll immediately to avoid flicker.
+                if (this.resizeDebounceTimer !== null) {
+                    clearTimeout(
+                        this.resizeDebounceTimer,
+                    );
+                    this.resizeDebounceTimer = null;
+                }
+
+                restoreScroll();
+
+                return;
+            }
+
+            // Same column count — debounce for a
+            // final adjustment once resizing settles.
             if (this.resizeDebounceTimer !== null) {
                 clearTimeout(this.resizeDebounceTimer);
             }
 
             this.resizeDebounceTimer = setTimeout(
-                () => {
-                    const pending =
-                        this.pendingCenterIndex;
-
-                    this.pendingCenterIndex = null;
-
-                    if (!pending) return;
-
-                    const newColumns =
-                        this.getColumnCount();
-                    const newRow =
-                        pending.index / newColumns;
-                    const newCenterY =
-                        GRID_PADDING +
-                        newRow * rowStep;
-
-                    container.scrollTop =
-                        newCenterY -
-                        pending.viewportHeight / 2;
-
-                    // Update for the next resize
-                    // cycle.
-                    this.currentColumnCount =
-                        newColumns;
-                },
+                restoreScroll,
                 100,
             );
         });
