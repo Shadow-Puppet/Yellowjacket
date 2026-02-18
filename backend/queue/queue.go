@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -37,6 +38,10 @@ const PreviousRestartThreshold = 3
 // maxSQLiteVars is the maximum number of bind variables SQLite supports
 // per statement. We use a conservative limit for batching.
 const maxSQLiteVars = 900
+
+// initialBatchSize is the number of tracks resolved eagerly in the first
+// phase of SetQueue so the queue panel is populated immediately.
+const initialBatchSize = 50
 
 // trackMeta holds the result of a batch metadata lookup.
 type trackMeta struct {
@@ -72,6 +77,26 @@ type State struct {
 	ShuffleMode      bool       `json:"shuffleMode"`
 	RepeatMode       RepeatMode `json:"repeatMode"`
 	SourcePlaylistID int64      `json:"sourcePlaylistId"`
+}
+
+// IndexChanged is the payload for the QueueIndexChanged event.
+type IndexChanged struct {
+	CurrentIndex int `json:"currentIndex"`
+}
+
+// ModeChanged is the payload for the QueueModeChanged event.
+type ModeChanged struct {
+	ShuffleMode bool       `json:"shuffleMode"`
+	RepeatMode  RepeatMode `json:"repeatMode"`
+}
+
+// TracksModified is the payload for the QueueTracksModified event.
+type TracksModified struct {
+	Action       string  `json:"action"`
+	Tracks       []Track `json:"tracks,omitempty"`
+	Index        int     `json:"index"`
+	Positions    []int   `json:"positions,omitempty"`
+	CurrentIndex int     `json:"currentIndex"`
 }
 
 // Queue manages an ordered list of tracks for playback.
@@ -127,7 +152,7 @@ func (q *Queue) OnPlaybackFinished() {
 	// Repeat One: replay the current track.
 	if q.repeatMode == RepeatOne {
 		q.playCurrentTrack()
-		q.emitQueueChanged()
+		q.emitIndexChanged()
 
 		return
 	}
@@ -142,7 +167,7 @@ func (q *Queue) OnPlaybackFinished() {
 
 	q.currentIndex = nextIdx
 	q.playCurrentTrack()
-	q.emitQueueChanged()
+	q.emitIndexChanged()
 }
 
 // registerEventHandlers sets up Wails event listeners for queue commands.
@@ -234,6 +259,17 @@ func (q *Queue) registerEventHandlers() {
 		func(data ...any) {
 			q.logger.Info("Received RequestPlayQueueIndex")
 			q.handlePlayQueueIndex(data...)
+		},
+	)
+
+	runtime.EventsOn(
+		q.ctx,
+		events.RequestRemoveTracksFromQueue,
+		func(data ...any) {
+			q.logger.Info(
+				"Received RequestRemoveTracksFromQueue",
+			)
+			q.handleRemoveTracksFromQueue(data...)
 		},
 	)
 }
@@ -337,6 +373,38 @@ func (q *Queue) handleRemoveFromQueue(data ...any) {
 	q.RemoveTrack(int(position))
 }
 
+// handleRemoveTracksFromQueue processes the RequestRemoveTracksFromQueue
+// event payload. Expects data[0] = []interface{} of float64 positions.
+func (q *Queue) handleRemoveTracksFromQueue(data ...any) {
+	if len(data) < 1 {
+		q.logger.Error(
+			"RequestRemoveTracksFromQueue: missing data",
+		)
+
+		return
+	}
+
+	positionsRaw, ok := data[0].([]interface{})
+	if !ok {
+		q.logger.Error(
+			"RequestRemoveTracksFromQueue: invalid positions type",
+			"got", data[0],
+		)
+
+		return
+	}
+
+	positions := make([]int, 0, len(positionsRaw))
+
+	for _, p := range positionsRaw {
+		if f, ok := p.(float64); ok {
+			positions = append(positions, int(f))
+		}
+	}
+
+	q.RemoveTracks(positions)
+}
+
 // handleAddTracksToQueue processes the RequestAddTracksToQueue event payload.
 // Expects data[0] = []interface{} of file path strings.
 func (q *Queue) handleAddTracksToQueue(data ...any) {
@@ -420,10 +488,11 @@ func (q *Queue) handlePlayTracksNext(data ...any) {
 }
 
 // SetQueue replaces the entire queue with new tracks and starts playing.
-// It uses a two-phase approach: the start track is resolved immediately so
-// playback begins without delay, then the remaining tracks are resolved in
-// the background. A generation counter ensures stale background work is
-// discarded if SetQueue is called again before it finishes.
+// It uses a two-phase approach: the first batch of tracks (up to
+// initialBatchSize) is resolved immediately so playback begins and the
+// queue panel is populated without delay. The remaining tracks are then
+// resolved in the background. A generation counter ensures stale
+// background work is discarded if SetQueue is called again.
 func (q *Queue) SetQueue(filePaths []string, startIndex int) {
 	gen := q.setQueueGen.Add(1)
 
@@ -431,43 +500,76 @@ func (q *Queue) SetQueue(filePaths []string, startIndex int) {
 		startIndex = 0
 	}
 
-	// Phase 1: resolve only the start track so playback begins immediately.
-	startMeta := q.lookupTrackMetaBatch([]string{filePaths[startIndex]})
+	// Phase 1: resolve an initial window of tracks centered on startIndex
+	// so the queue panel is populated around the playing track immediately.
+	windowStart := max(0, startIndex-initialBatchSize/2)
+	windowEnd := min(len(filePaths), windowStart+initialBatchSize)
+	windowStart = max(0, windowEnd-initialBatchSize)
+
+	initialPaths := filePaths[windowStart:windowEnd]
+
+	batchMeta := q.lookupTrackMetaBatch(initialPaths)
 
 	q.mu.Lock()
 
-	startTrackMeta, ok := startMeta[filePaths[startIndex]]
-	if !ok {
-		q.logger.Warn(
-			"Could not find start track in database",
-			"path", filePaths[startIndex],
-		)
+	// Build the initial tracks slice preserving original order.
+	tracks := make([]Track, 0, len(initialPaths))
+
+	for i, fp := range initialPaths {
+		m, ok := batchMeta[fp]
+		if !ok {
+			continue
+		}
+
+		tracks = append(tracks, Track{
+			AudioFileID: m.AudioFileID,
+			FilePath:    m.FilePath,
+			Position:    int64(i),
+			Title:       m.Title,
+			Artist:      m.Artist,
+		})
+	}
+
+	if len(tracks) == 0 {
+		q.logger.Warn("No tracks found in initial batch")
 		q.mu.Unlock()
 
 		return
 	}
 
-	// Build a placeholder slice with only the start track populated.
-	// Other slots will be filled by the background phase.
-	q.tracks = []Track{
-		{
-			AudioFileID: startTrackMeta.AudioFileID,
-			FilePath:    startTrackMeta.FilePath,
-			Position:    0,
-			Title:       startTrackMeta.Title,
-			Artist:      startTrackMeta.Artist,
-		},
-	}
-	q.currentIndex = 0
+	q.tracks = tracks
 	q.sourcePlaylistID = 0
 	q.shuffleOrder = nil
+
+	// Find the start track within the initial batch.
+	q.currentIndex = 0
+	startPath := filePaths[startIndex]
+
+	for i, t := range q.tracks {
+		if t.FilePath == startPath {
+			q.currentIndex = i
+
+			break
+		}
+	}
 
 	// Start playing immediately.
 	q.playCurrentTrack()
 	q.emitQueueChanged()
 	q.mu.Unlock()
 
-	// Phase 2: resolve remaining tracks in a background goroutine.
+	// Phase 2: if there are more tracks beyond the initial batch,
+	// resolve them in the background. If everything fits in the initial
+	// batch we can persist and finish synchronously.
+	if len(filePaths) <= initialBatchSize {
+		q.mu.Lock()
+		q.persistTracks()
+		q.persistState()
+		q.mu.Unlock()
+
+		return
+	}
+
 	go q.resolveRemainingTracks(gen, filePaths, startIndex)
 }
 
@@ -595,7 +697,12 @@ func (q *Queue) AddTrack(filePath string) {
 	}
 
 	q.persistState()
-	q.emitQueueChanged()
+	q.emitTracksModified(
+		"add",
+		[]Track{track},
+		len(q.tracks)-1,
+		nil,
+	)
 }
 
 // AddTracks appends multiple tracks to the end of the queue.
@@ -607,6 +714,9 @@ func (q *Queue) AddTracks(filePaths []string) {
 	defer q.mu.Unlock()
 
 	wasEmpty := len(q.tracks) == 0
+	insertIndex := len(q.tracks)
+
+	var newTracks []Track
 
 	for _, fp := range filePaths {
 		m, ok := allMeta[fp]
@@ -628,6 +738,8 @@ func (q *Queue) AddTracks(filePaths []string) {
 		}
 
 		q.tracks = append(q.tracks, track)
+
+		newTracks = append(newTracks, track)
 	}
 
 	if q.shuffleMode {
@@ -642,7 +754,12 @@ func (q *Queue) AddTracks(filePaths []string) {
 		q.playCurrentTrack()
 	}
 
-	q.emitQueueChanged()
+	q.emitTracksModified(
+		"add",
+		newTracks,
+		insertIndex,
+		nil,
+	)
 }
 
 // InsertNextTracks inserts multiple tracks as a contiguous block after the current track.
@@ -704,7 +821,12 @@ func (q *Queue) InsertNextTracks(filePaths []string) {
 		q.playCurrentTrack()
 	}
 
-	q.emitQueueChanged()
+	q.emitTracksModified(
+		"insert",
+		newTracks,
+		insertPos,
+		nil,
+	)
 }
 
 // InsertNext inserts a track right after the currently playing track.
@@ -752,7 +874,12 @@ func (q *Queue) InsertNext(filePath string) {
 
 	q.persistTracks()
 	q.persistState()
-	q.emitQueueChanged()
+	q.emitTracksModified(
+		"insert",
+		[]Track{track},
+		insertPos,
+		nil,
+	)
 }
 
 // RemoveTrack removes a track at the given position from the queue.
@@ -768,6 +895,9 @@ func (q *Queue) RemoveTrack(position int) {
 
 		return
 	}
+
+	removingCurrent := q.currentIndex >= 0 &&
+		position == q.currentIndex
 
 	q.tracks = append(q.tracks[:position], q.tracks[position+1:]...)
 
@@ -788,7 +918,90 @@ func (q *Queue) RemoveTrack(position int) {
 
 	q.persistTracks()
 	q.persistState()
-	q.emitQueueChanged()
+	q.emitTracksModified(
+		"remove",
+		nil,
+		0,
+		[]int{position},
+	)
+
+	if removingCurrent {
+		q.handleCurrentTrackRemoved()
+	}
+}
+
+// RemoveTracks removes multiple tracks at the given positions from the queue.
+// Positions are deduplicated, validated, and removed in descending order so
+// that indices remain stable during removal.
+func (q *Queue) RemoveTracks(positions []int) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	if len(positions) == 0 {
+		return
+	}
+
+	// Deduplicate and filter out-of-range positions.
+	seen := make(map[int]bool, len(positions))
+
+	valid := make([]int, 0, len(positions))
+
+	for _, p := range positions {
+		if p < 0 || p >= len(q.tracks) || seen[p] {
+			continue
+		}
+
+		seen[p] = true
+
+		valid = append(valid, p)
+	}
+
+	if len(valid) == 0 {
+		return
+	}
+
+	removedCurrent := q.currentIndex >= 0 && seen[q.currentIndex]
+
+	// Sort ascending so we can iterate in reverse for descending removal.
+	slices.Sort(valid)
+
+	// Remove in descending order to keep earlier indices stable.
+	for i := len(valid) - 1; i >= 0; i-- {
+		pos := valid[i]
+		q.tracks = append(q.tracks[:pos], q.tracks[pos+1:]...)
+
+		if q.currentIndex >= 0 && pos < q.currentIndex {
+			q.currentIndex--
+		} else if pos == q.currentIndex &&
+			q.currentIndex >= len(q.tracks) &&
+			len(q.tracks) > 0 {
+			q.currentIndex = len(q.tracks) - 1
+		}
+	}
+
+	q.reindexPositions()
+
+	if q.shuffleMode {
+		q.generateShuffleOrder()
+	}
+
+	q.persistTracks()
+	q.persistState()
+	q.emitTracksModified(
+		"remove",
+		nil,
+		0,
+		valid,
+	)
+
+	q.logger.Info(
+		"Removed tracks from queue",
+		"count", len(valid),
+	)
+
+	if removedCurrent {
+		q.handleCurrentTrackRemoved()
+	}
 }
 
 // Next advances to the next track. If the player was paused, the next
@@ -807,7 +1020,7 @@ func (q *Queue) Next() {
 	// Repeat One: replay the current track.
 	if q.repeatMode == RepeatOne {
 		q.playOrLoadCurrentTrack(wasPlaying)
-		q.emitQueueChanged()
+		q.emitIndexChanged()
 
 		return
 	}
@@ -821,7 +1034,7 @@ func (q *Queue) Next() {
 
 	q.currentIndex = nextIdx
 	q.playOrLoadCurrentTrack(wasPlaying)
-	q.emitQueueChanged()
+	q.emitIndexChanged()
 }
 
 // Previous goes to the previous track (or restarts current if >3s in).
@@ -840,7 +1053,7 @@ func (q *Queue) Previous() {
 	// Repeat One: replay the current track.
 	if q.repeatMode == RepeatOne {
 		q.playOrLoadCurrentTrack(wasPlaying)
-		q.emitQueueChanged()
+		q.emitIndexChanged()
 
 		return
 	}
@@ -850,7 +1063,7 @@ func (q *Queue) Previous() {
 		posSecs, err := q.player.CurrentPositionSeconds()
 		if err == nil && posSecs > PreviousRestartThreshold {
 			q.playOrLoadCurrentTrack(wasPlaying)
-			q.emitQueueChanged()
+			q.emitIndexChanged()
 
 			return
 		}
@@ -860,14 +1073,14 @@ func (q *Queue) Previous() {
 	if prevIdx == -1 {
 		// At the beginning — just restart the current track.
 		q.playOrLoadCurrentTrack(wasPlaying)
-		q.emitQueueChanged()
+		q.emitIndexChanged()
 
 		return
 	}
 
 	q.currentIndex = prevIdx
 	q.playOrLoadCurrentTrack(wasPlaying)
-	q.emitQueueChanged()
+	q.emitIndexChanged()
 }
 
 // PlayFromStart restarts playback from the beginning of the queue.
@@ -894,7 +1107,7 @@ func (q *Queue) PlayFromStart() {
 	}
 
 	q.playCurrentTrack()
-	q.emitQueueChanged()
+	q.emitIndexChanged()
 }
 
 // PlayIndex jumps to and plays the track at the given index.
@@ -917,7 +1130,7 @@ func (q *Queue) PlayIndex(index int) {
 
 	q.currentIndex = index
 	q.playCurrentTrack()
-	q.emitQueueChanged()
+	q.emitIndexChanged()
 }
 
 // ToggleShuffle toggles shuffle mode on/off.
@@ -934,7 +1147,7 @@ func (q *Queue) ToggleShuffle() {
 	}
 
 	q.persistState()
-	q.emitQueueChanged()
+	q.emitModeChanged()
 }
 
 // CycleRepeat cycles through repeat modes: off -> all -> one -> off.
@@ -952,7 +1165,7 @@ func (q *Queue) CycleRepeat() {
 	}
 
 	q.persistState()
-	q.emitQueueChanged()
+	q.emitModeChanged()
 }
 
 // GetState returns the current queue state for the frontend.
@@ -1264,6 +1477,19 @@ func (q *Queue) playCurrentTrack() {
 	}
 }
 
+// handleCurrentTrackRemoved handles the case where the currently loaded
+// track was removed from the queue. If tracks remain it loads the track
+// now at currentIndex (paused); otherwise it exhausts the queue.
+func (q *Queue) handleCurrentTrackRemoved() {
+	if len(q.tracks) == 0 {
+		q.onQueueExhausted()
+
+		return
+	}
+
+	q.loadCurrentTrack()
+}
+
 // onQueueExhausted is called when there are no more tracks to play.
 // It unloads the current track, resets the index to -1 (no current track),
 // and notifies the frontend.
@@ -1276,7 +1502,7 @@ func (q *Queue) onQueueExhausted() {
 		q.player.UnloadTrack()
 	}
 
-	q.emitQueueChanged()
+	q.emitIndexChanged()
 	q.persistState()
 }
 
@@ -1542,6 +1768,59 @@ func (q *Queue) emitQueueChanged() {
 	}
 
 	runtime.EventsEmit(q.ctx, events.QueueChanged, state)
+}
+
+// emitIndexChanged emits only the current index to the frontend.
+func (q *Queue) emitIndexChanged() {
+	if q.ctx == nil {
+		return
+	}
+
+	runtime.EventsEmit(
+		q.ctx,
+		events.QueueIndexChanged,
+		IndexChanged{CurrentIndex: q.currentIndex},
+	)
+}
+
+// emitModeChanged emits only the shuffle/repeat mode to the frontend.
+func (q *Queue) emitModeChanged() {
+	if q.ctx == nil {
+		return
+	}
+
+	runtime.EventsEmit(
+		q.ctx,
+		events.QueueModeChanged,
+		ModeChanged{
+			ShuffleMode: q.shuffleMode,
+			RepeatMode:  q.repeatMode,
+		},
+	)
+}
+
+// emitTracksModified emits a delta update for track list changes.
+func (q *Queue) emitTracksModified(
+	action string,
+	tracks []Track,
+	index int,
+	positions []int,
+) {
+	if q.ctx == nil {
+		return
+	}
+
+	runtime.EventsEmit(
+		q.ctx,
+		events.QueueTracksModified,
+		TracksModified{
+			Action:       action,
+			Tracks:       tracks,
+			Index:        index,
+			Positions:    positions,
+			CurrentIndex: q.currentIndex,
+		},
+	)
 }
 
 // Sentinel errors.

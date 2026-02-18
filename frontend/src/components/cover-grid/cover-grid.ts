@@ -358,10 +358,11 @@ export class CoverGrid extends LitElement {
         typeof setTimeout
     > | null = null;
     private pendingFocus: {
-        row: number;
+        albumIndex: number;
         viewportOffset: number;
     } | null = null;
     private currentColumnCount = 0;
+    private isResizing = false;
 
     /* ====================================================================
      * Lifecycle
@@ -510,6 +511,12 @@ export class CoverGrid extends LitElement {
     private onVisibilityChanged = (
         e: VisibilityChangedEvent,
     ) => {
+        // Skip saves while a resize reflow is in
+        // progress — the virtualizer reports
+        // intermediate positions that would overwrite
+        // the real scroll position in the store.
+        if (this.isResizing) return;
+
         if (this.scrollDebounceTimer !== null) {
             clearTimeout(this.scrollDebounceTimer);
         }
@@ -534,10 +541,11 @@ export class CoverGrid extends LitElement {
      * open/close, window resize) the grid reflows and
      * the pixel scroll position becomes stale.
      *
-     * We compute a fractional album index at a focus
-     * point before the resize, then after the reflow we
-     * place that same index back at the same viewport
-     * offset.
+     * We identify the album at the viewport center
+     * before the resize, then after the reflow we
+     * place that same album back at the same viewport
+     * offset.  Integer album indices ensure zero
+     * scroll creep across repeated open/close cycles.
      *
      * If a dropdown is open the expanded album is the
      * focus; otherwise the album at the viewport center
@@ -569,6 +577,7 @@ export class CoverGrid extends LitElement {
             const pending = this.pendingFocus;
 
             this.pendingFocus = null;
+            this.isResizing = false;
 
             if (!pending) return;
 
@@ -585,10 +594,15 @@ export class CoverGrid extends LitElement {
                 return;
             }
 
-            // No dropdown — restore the
-            // center-of-viewport position.
+            // Derive the album's row under the new
+            // column count.  Both albumIndex and
+            // newColumns are integers, so newRow is
+            // also an integer — no fractional drift.
+            const newRow = Math.floor(
+                pending.albumIndex / newColumns,
+            );
             const newY =
-                GRID_PADDING + pending.row * rowStep;
+                GRID_PADDING + newRow * rowStep;
 
             container.scrollTop =
                 newY - pending.viewportOffset;
@@ -599,6 +613,8 @@ export class CoverGrid extends LitElement {
                 // Capture on the first event using
                 // the pre-resize column count.
                 if (this.pendingFocus === null) {
+                    this.isResizing = true;
+
                     this.captureFocusPoint(
                         container,
                         rowStep,
@@ -655,12 +671,18 @@ export class CoverGrid extends LitElement {
      * If a dropdown is open, the expanded album is the
      * focus and its current viewport offset is preserved.
      * Otherwise the album at the viewport center is used.
+     *
+     * Stores an integer album index and the pixel offset
+     * from that album's top edge to the viewport top.
+     * Integer indices ensure zero drift across repeated
+     * open/close cycles (no fractional accumulation).
      */
     private captureFocusPoint(
         container: HTMLElement,
         rowStep: number,
     ) {
         const { GRID_PADDING } = CoverGrid;
+        const cols = this.currentColumnCount;
 
         // Prefer the expanded album as focus.
         if (this.expandedAlbumId !== null) {
@@ -670,13 +692,13 @@ export class CoverGrid extends LitElement {
 
             if (idx >= 0) {
                 const albumRow = Math.floor(
-                    idx / this.currentColumnCount,
+                    idx / cols,
                 );
                 const albumY =
                     GRID_PADDING + albumRow * rowStep;
 
                 this.pendingFocus = {
-                    row: albumRow,
+                    albumIndex: idx,
                     viewportOffset:
                         albumY - container.scrollTop,
                 };
@@ -685,17 +707,30 @@ export class CoverGrid extends LitElement {
             }
         }
 
-        // Fall back to the viewport center.
-        const halfViewport =
-            container.clientHeight / 2;
+        // Fall back to the album whose row contains
+        // the viewport center.
         const centerY =
-            container.scrollTop + halfViewport;
-        const row =
-            (centerY - GRID_PADDING) / rowStep;
+            container.scrollTop +
+            container.clientHeight / 2;
+        const centerRow = Math.floor(
+            Math.max(0, centerY - GRID_PADDING) /
+                rowStep,
+        );
+        const albumIndex = Math.min(
+            centerRow * cols,
+            Math.max(0, this.albums.length - 1),
+        );
+
+        // Pixel offset from that album's top edge
+        // to the viewport top — used exactly once in
+        // restoreScroll, never fed back.
+        const albumY =
+            GRID_PADDING + centerRow * rowStep;
 
         this.pendingFocus = {
-            row,
-            viewportOffset: halfViewport,
+            albumIndex,
+            viewportOffset:
+                albumY - container.scrollTop,
         };
     }
 

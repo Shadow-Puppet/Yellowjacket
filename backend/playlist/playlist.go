@@ -299,6 +299,46 @@ func (s *Service) CreatePlaylistWithTracks(
 	return summary, nil
 }
 
+// RemoveTracksFromPlaylist removes multiple tracks from a playlist by their
+// playlist_track IDs. Each track is removed individually using the existing
+// RemovePlaylistTrack query.
+func (s *Service) RemoveTracksFromPlaylist(
+	playlistID int64,
+	trackIDs []int64,
+) error {
+	if len(trackIDs) == 0 {
+		return nil
+	}
+
+	for _, id := range trackIDs {
+		if err := s.db.Queries.RemovePlaylistTrack(
+			s.db.Ctx,
+			id,
+		); err != nil {
+			s.logger.Error(
+				"Failed to remove playlist track",
+				"playlistId", playlistID,
+				"trackId", id,
+				"err", err,
+			)
+
+			return fmt.Errorf(
+				"failed to remove track %d from playlist: %w",
+				id,
+				err,
+			)
+		}
+	}
+
+	s.logger.Info(
+		"Tracks removed from playlist",
+		"playlistId", playlistID,
+		"count", len(trackIDs),
+	)
+
+	return nil
+}
+
 // addSingleTrack looks up the audio file by path and inserts it into the playlist.
 func (s *Service) addSingleTrack(
 	playlistID int64,

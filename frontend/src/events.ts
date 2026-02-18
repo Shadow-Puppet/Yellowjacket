@@ -22,6 +22,9 @@ export const Events = {
 
     // Queue events
     QueueChanged: "QueueChanged",
+    QueueIndexChanged: "QueueIndexChanged",
+    QueueModeChanged: "QueueModeChanged",
+    QueueTracksModified: "QueueTracksModified",
     RequestNext: "RequestNext",
     RequestPrevious: "RequestPrevious",
     RequestSetQueue: "RequestSetQueue",
@@ -33,6 +36,7 @@ export const Events = {
     RequestAddTracksToQueue: "RequestAddTracksToQueue",
     RequestPlayTracksNext: "RequestPlayTracksNext",
     RequestPlayQueueIndex: "RequestPlayQueueIndex",
+    RequestRemoveTracksFromQueue: "RequestRemoveTracksFromQueue",
 
     // Library events
     LibraryScanComplete: "LibraryScanComplete",

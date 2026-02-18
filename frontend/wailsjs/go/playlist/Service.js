@@ -26,6 +26,10 @@ export function GetPlaylistTracks(arg1) {
   return window['go']['playlist']['Service']['GetPlaylistTracks'](arg1);
 }
 
+export function RemoveTracksFromPlaylist(arg1, arg2) {
+  return window['go']['playlist']['Service']['RemoveTracksFromPlaylist'](arg1, arg2);
+}
+
 export function SetContext(arg1) {
   return window['go']['playlist']['Service']['SetContext'](arg1);
 }

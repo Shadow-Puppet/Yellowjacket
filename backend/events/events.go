@@ -31,18 +31,22 @@ const (
 
 // Queue events.
 const (
-	QueueChanged            = "QueueChanged"
-	RequestNext             = "RequestNext"
-	RequestPrevious         = "RequestPrevious"
-	RequestSetQueue         = "RequestSetQueue"
-	RequestAddToQueue       = "RequestAddToQueue"
-	RequestPlayNext         = "RequestPlayNext"
-	RequestRemoveFromQueue  = "RequestRemoveFromQueue"
-	RequestToggleShuffle    = "RequestToggleShuffle"
-	RequestCycleRepeat      = "RequestCycleRepeat"
-	RequestAddTracksToQueue = "RequestAddTracksToQueue"
-	RequestPlayTracksNext   = "RequestPlayTracksNext"
-	RequestPlayQueueIndex   = "RequestPlayQueueIndex"
+	QueueChanged                 = "QueueChanged"
+	QueueIndexChanged            = "QueueIndexChanged"
+	QueueModeChanged             = "QueueModeChanged"
+	QueueTracksModified          = "QueueTracksModified"
+	RequestNext                  = "RequestNext"
+	RequestPrevious              = "RequestPrevious"
+	RequestSetQueue              = "RequestSetQueue"
+	RequestAddToQueue            = "RequestAddToQueue"
+	RequestPlayNext              = "RequestPlayNext"
+	RequestRemoveFromQueue       = "RequestRemoveFromQueue"
+	RequestToggleShuffle         = "RequestToggleShuffle"
+	RequestCycleRepeat           = "RequestCycleRepeat"
+	RequestAddTracksToQueue      = "RequestAddTracksToQueue"
+	RequestPlayTracksNext        = "RequestPlayTracksNext"
+	RequestPlayQueueIndex        = "RequestPlayQueueIndex"
+	RequestRemoveTracksFromQueue = "RequestRemoveTracksFromQueue"
 )
 
 // Config events.

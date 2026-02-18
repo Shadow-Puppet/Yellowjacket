@@ -95,6 +95,10 @@ export class QueueController implements ReactiveController {
     queueStore.removeFromQueue(position);
   }
 
+  removeTracksFromQueue(positions: number[]): void {
+    queueStore.removeTracksFromQueue(positions);
+  }
+
   addTracksToQueue(filePaths: string[]): void {
     queueStore.addTracksToQueue(filePaths);
   }

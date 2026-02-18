@@ -21,6 +21,24 @@ export interface QueueState {
   sourcePlaylistId: number;
 }
 
+// Delta event payloads (mirror Go structs in backend/queue/queue.go).
+interface IndexChanged {
+  currentIndex: number;
+}
+
+interface ModeChanged {
+  shuffleMode: boolean;
+  repeatMode: RepeatMode;
+}
+
+interface TracksModified {
+  action: string;
+  tracks?: QueueTrack[];
+  index: number;
+  positions?: number[];
+  currentIndex: number;
+}
+
 type Subscriber = () => void;
 
 class QueueStore {
@@ -44,6 +62,7 @@ class QueueStore {
   // ===================================================================
 
   private initializeEventListeners(): void {
+    // Full-state sync (startup, SetQueue).
     EventsOn(Events.QueueChanged, (queueState: QueueState) => {
       this.state = {
         tracks: queueState.tracks ?? [],
@@ -54,6 +73,68 @@ class QueueStore {
       };
       this.notify();
     });
+
+    // Delta: index-only change (Next, Previous, PlayIndex, etc.).
+    EventsOn(
+      Events.QueueIndexChanged,
+      (payload: IndexChanged) => {
+        this.state.currentIndex = payload.currentIndex;
+        this.notify();
+      },
+    );
+
+    // Delta: mode-only change (ToggleShuffle, CycleRepeat).
+    EventsOn(
+      Events.QueueModeChanged,
+      (payload: ModeChanged) => {
+        this.state.shuffleMode = payload.shuffleMode;
+        this.state.repeatMode = payload.repeatMode;
+        this.notify();
+      },
+    );
+
+    // Delta: track list mutation (Add, Insert, Remove).
+    EventsOn(
+      Events.QueueTracksModified,
+      (payload: TracksModified) => {
+        this.applyTracksDelta(payload);
+        this.notify();
+      },
+    );
+  }
+
+  private applyTracksDelta(delta: TracksModified): void {
+    const tracks = this.state.tracks;
+
+    switch (delta.action) {
+      case 'add':
+        if (delta.tracks) {
+          this.state.tracks = [...tracks, ...delta.tracks];
+        }
+
+        break;
+
+      case 'insert':
+        if (delta.tracks) {
+          const before = tracks.slice(0, delta.index);
+          const after = tracks.slice(delta.index);
+          this.state.tracks = [...before, ...delta.tracks, ...after];
+        }
+
+        break;
+
+      case 'remove':
+        if (delta.positions) {
+          const removeSet = new Set(delta.positions);
+          this.state.tracks = tracks.filter(
+            (_, i) => !removeSet.has(i),
+          );
+        }
+
+        break;
+    }
+
+    this.state.currentIndex = delta.currentIndex;
   }
 
   // ===================================================================
@@ -91,6 +172,10 @@ class QueueStore {
 
   removeFromQueue(position: number): void {
     EventsEmit(Events.RequestRemoveFromQueue, position);
+  }
+
+  removeTracksFromQueue(positions: number[]): void {
+    EventsEmit(Events.RequestRemoveTracksFromQueue, positions);
   }
 
   addTracksToQueue(filePaths: string[]): void {

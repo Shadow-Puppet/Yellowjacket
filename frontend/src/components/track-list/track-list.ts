@@ -2,8 +2,10 @@ import { library } from '@go/models';
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state, query } from 'lit/decorators.js';
 import { formatMilliseconds } from '@utils/time';
+import { SelectionController } from '@utils/selection-controller';
+import type { SelectionHost } from '@utils/selection-controller';
 import { PlayerController } from '@store/controllers/player-controller';
-import { QueueController } from '@store/controllers/queue-controller';
+import { queueStore } from '@store/queue-store';
 import { LibraryController } from '@store/controllers/library-controller';
 import '@lit-labs/virtualizer';
 import type {
@@ -23,16 +25,13 @@ const DEFAULT_DURATION_WIDTH = 80;
 const COLUMN_COUNT = 3;
 
 @customElement('track-list')
-export class TrackList extends LitElement {
+export class TrackList extends LitElement implements SelectionHost {
     private player = new PlayerController(this);
-    private queue = new QueueController(this);
     private libraryCtrl = new LibraryController(this);
+    private selection = new SelectionController(this);
 
     @state()
     private tracks: library.Track[] = [];
-
-    @state()
-    private selectedTracks: Set<string> = new Set();
 
     @state()
     private contextMenuOpen = false;
@@ -49,10 +48,23 @@ export class TrackList extends LitElement {
     @query('lit-virtualizer')
     private virtualizer!: LitVirtualizer;
 
-    private lastSelectedIndex: number | null = null;
     private lastActiveTrackPath: string | null = null;
 
     private closeHandler = () => this.closeContextMenu();
+
+    private clearSelectionHandler = (e: MouseEvent) => {
+        const path = e.composedPath();
+        const isTrackClick = path.some(
+            (el) =>
+                el instanceof HTMLElement &&
+                el.classList.contains('track-row') &&
+                this.shadowRoot?.contains(el),
+        );
+
+        if (!isTrackClick) {
+            this.selection.clear();
+        }
+    };
 
     @state()
     private columnWidths: number[] = [];
@@ -63,6 +75,22 @@ export class TrackList extends LitElement {
     private resizeObserver: ResizeObserver | null = null;
     private flowLayout = flow();
     private hasRestoredScroll = false;
+
+    // =================================================================
+    // SelectionHost interface
+    // =================================================================
+
+    getItemKey(index: number): string | undefined {
+        return this.tracks[index]?.FilePath;
+    }
+
+    getItemCount(): number {
+        return this.tracks.length;
+    }
+
+    onSelectionChanged(): void {
+        this.virtualizer?.requestUpdate();
+    }
 
     private get gridTemplateColumns(): string {
         if (this.columnWidths.length === 0) {
@@ -361,6 +389,7 @@ export class TrackList extends LitElement {
         this.loadTracks();
         document.addEventListener('click', this.closeHandler);
         document.addEventListener('contextmenu', this.closeHandler);
+        document.addEventListener('click', this.clearSelectionHandler);
         document.addEventListener('mousemove', this.onColResizeMove);
         document.addEventListener('mouseup', this.onColResizeEnd);
 
@@ -380,6 +409,7 @@ export class TrackList extends LitElement {
         super.disconnectedCallback();
         document.removeEventListener('click', this.closeHandler);
         document.removeEventListener('contextmenu', this.closeHandler);
+        document.removeEventListener('click', this.clearSelectionHandler);
         document.removeEventListener('mousemove', this.onColResizeMove);
         document.removeEventListener('mouseup', this.onColResizeEnd);
 
@@ -397,10 +427,6 @@ export class TrackList extends LitElement {
                 '--grid-cols',
                 this.gridTemplateColumns,
             );
-        }
-
-        if (changed.has('selectedTracks')) {
-            this.virtualizer?.requestUpdate();
         }
 
         const currentPath =
@@ -455,8 +481,7 @@ export class TrackList extends LitElement {
         try {
             const tracks = await this.libraryCtrl.getTracks();
             this.tracks = tracks;
-            this.selectedTracks = new Set();
-            this.lastSelectedIndex = null;
+            this.selection.clear();
             await this.updateComplete;
 
             if (this.isConnected && this.virtualizer) {
@@ -494,94 +519,24 @@ export class TrackList extends LitElement {
         this.libraryCtrl.setScrollPosition('tracks', first);
     };
 
-    private getSelectedFilePaths(): string[] {
-        return this.tracks
-            .filter((t) => this.selectedTracks.has(t.FilePath))
-            .map((t) => t.FilePath);
-    }
-
-    private selectRange(from: number, to: number): Set<string> {
-        const start = Math.min(from, to);
-        const end = Math.max(from, to);
-        const paths = new Set<string>();
-
-        for (let i = start; i <= end; i++) {
-            const track = this.tracks[i];
-
-            if (track) {
-                paths.add(track.FilePath);
-            }
-        }
-
-        return paths;
-    }
-
     private onTrackRowClick(
         e: MouseEvent,
         track: library.Track,
         index: number,
     ) {
-        const isCtrl = e.ctrlKey || e.metaKey;
-        const isShift = e.shiftKey;
-
-        if (isShift && this.lastSelectedIndex !== null) {
-            const range = this.selectRange(
-                this.lastSelectedIndex,
-                index,
-            );
-
-            if (isCtrl) {
-                // Ctrl+Shift: add range to existing selection.
-                const next = new Set(this.selectedTracks);
-
-                for (const path of range) {
-                    next.add(path);
-                }
-
-                this.selectedTracks = next;
-            } else {
-                // Shift only: add range to existing selection.
-                const next = new Set(this.selectedTracks);
-
-                for (const path of range) {
-                    next.add(path);
-                }
-
-                this.selectedTracks = next;
-            }
-
-            // Don't update anchor on shift-click so user can
-            // adjust the range endpoint with another shift-click.
-        } else if (isCtrl) {
-            const next = new Set(this.selectedTracks);
-
-            if (next.has(track.FilePath)) {
-                next.delete(track.FilePath);
-            } else {
-                next.add(track.FilePath);
-            }
-
-            this.selectedTracks = next;
-            this.lastSelectedIndex = index;
-        } else {
-            this.selectedTracks = new Set([track.FilePath]);
-            this.lastSelectedIndex = index;
-        }
+        this.selection.handleItemClick(e, track.FilePath, index);
     }
 
     private onTrackRowDblClick(track: library.Track) {
-        this.selectedTracks = new Set();
-        this.queue.setQueue([track.FilePath], 0);
+        this.selection.clear();
+        queueStore.setQueue([track.FilePath], 0);
     }
 
     private onTrackContextMenu(e: MouseEvent, track: library.Track) {
         e.preventDefault();
         e.stopPropagation();
 
-        if (!this.selectedTracks.has(track.FilePath)) {
-            this.selectedTracks = new Set([track.FilePath]);
-        }
-
+        this.selection.handleContextMenu(track.FilePath);
         this.contextMenuOpen = true;
 
         // Position the popup at the mouse cursor using a virtual anchor.
@@ -609,19 +564,19 @@ export class TrackList extends LitElement {
     }
 
     private onContextMenuAction(action: string) {
-        const filePaths = this.getSelectedFilePaths();
+        const filePaths = this.selection.getSelectedKeysOrdered();
 
         if (filePaths.length === 0) return;
 
         switch (action) {
             case 'play':
-                this.queue.setQueue(filePaths, 0);
+                queueStore.setQueue(filePaths, 0);
                 break;
             case 'add-to-queue':
-                this.queue.addTracksToQueue(filePaths);
+                queueStore.addTracksToQueue(filePaths);
                 break;
             case 'play-next':
-                this.queue.playTracksNext(filePaths);
+                queueStore.playTracksNext(filePaths);
                 break;
         }
 
@@ -635,7 +590,7 @@ export class TrackList extends LitElement {
         this.contextMenuOpen = false;
 
         if (clearSelection) {
-            this.selectedTracks = new Set();
+            this.selection.clear();
         }
 
         const popup = this.contextMenuPopup;
@@ -696,7 +651,7 @@ export class TrackList extends LitElement {
         index: number,
     ): unknown => {
         const active = this.isActiveTrack(track);
-        const selected = this.selectedTracks.has(track.FilePath);
+        const selected = this.selection.isSelected(track.FilePath);
 
         const classes = [
             'track-row',
@@ -803,10 +758,10 @@ export class TrackList extends LitElement {
         placement="right-start"
         .active=${this.playlistSubmenuOpen}
       >
-        ${this.playlistSubmenuOpen && this.selectedTracks.size > 0
+        ${this.playlistSubmenuOpen && this.selection.hasSelection
                 ? html`
               <playlist-picker
-                .filePaths=${this.getSelectedFilePaths()}
+                .filePaths=${this.selection.getSelectedKeysOrdered()}
                 @playlist-action-complete=${this.onPlaylistActionComplete}
                 @click=${(e: Event) => e.stopPropagation()}
               ></playlist-picker>

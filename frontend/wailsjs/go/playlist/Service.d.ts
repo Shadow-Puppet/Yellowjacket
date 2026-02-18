@@ -15,4 +15,6 @@ export function GetAllPlaylistsWithTracks():Promise<Array<playlist.WithTracks>>;
 
 export function GetPlaylistTracks(arg1:number):Promise<Array<playlist.Track>>;
 
+export function RemoveTracksFromPlaylist(arg1:number,arg2:Array<number>):Promise<void>;
+
 export function SetContext(arg1:context.Context):Promise<void>;
