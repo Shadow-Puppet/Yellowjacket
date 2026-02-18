@@ -93,3 +93,18 @@ func NewDB(logger *slog.Logger) (*DB, error) {
 		logger:  logger,
 	}, err
 }
+
+// BeginTx starts a new database transaction.
+func (d *DB) BeginTx() (*sql.Tx, error) {
+	return d.db.BeginTx(d.Ctx, nil)
+}
+
+// ExecContext executes a query without returning any rows.
+func (d *DB) ExecContext(query string, args ...any) (sql.Result, error) {
+	return d.db.ExecContext(d.Ctx, query, args...)
+}
+
+// QueryContext executes a query that returns rows.
+func (d *DB) QueryContext(query string, args ...any) (*sql.Rows, error) {
+	return d.db.QueryContext(d.Ctx, query, args...)
+}

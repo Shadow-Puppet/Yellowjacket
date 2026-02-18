@@ -5,6 +5,10 @@ import '@awesome.me/webawesome/dist/components/popup/popup.js';
 import { QueueController } from '@store/controllers/queue-controller';
 import '@components/playlist-picker/playlist-picker.js';
 import type { PlaylistPicker } from '@components/playlist-picker/playlist-picker.js';
+import '@lit-labs/virtualizer';
+import type { LitVirtualizer } from '@lit-labs/virtualizer';
+import { flow } from '@lit-labs/virtualizer/layouts/flow.js';
+import type { QueueTrack } from '@store/queue-store';
 
 const MIN_WIDTH = 200;
 const MAX_WIDTH = 500;
@@ -26,6 +30,9 @@ export class QueuePanel extends LitElement {
   @query('#add-to-playlist-popup')
   private addToPlaylistPopup!: HTMLElement;
 
+  @query('lit-virtualizer')
+  private virtualizer!: LitVirtualizer;
+
   private closePickerHandler = (e: MouseEvent) => {
     const path = e.composedPath();
     const popup = this.addToPlaylistPopup;
@@ -37,6 +44,10 @@ export class QueuePanel extends LitElement {
   };
 
   private panelWidth = DEFAULT_WIDTH;
+  private flowLayout = flow();
+
+  /** Track the last currentIndex so we only auto-scroll on actual track changes. */
+  private lastScrolledIndex = -1;
 
   static override styles = css`
     :host {
@@ -116,12 +127,9 @@ export class QueuePanel extends LitElement {
       z-index: 210;
     }
 
-    .track-list {
+    lit-virtualizer {
       flex: 1;
       overflow-y: auto;
-      padding: 0;
-      margin: 0;
-      list-style: none;
     }
 
     .track-item {
@@ -131,6 +139,8 @@ export class QueuePanel extends LitElement {
       gap: 12px;
       border-bottom: 1px solid rgba(255, 255, 255, 0.05);
       cursor: pointer;
+      width: 100%;
+      box-sizing: border-box;
     }
 
     .track-item:hover {
@@ -230,6 +240,22 @@ export class QueuePanel extends LitElement {
     document.removeEventListener('click', this.closePickerHandler);
   }
 
+  override updated() {
+    const currentIndex = this.queue.currentIndex;
+
+    // Auto-scroll to the active track when it changes.
+    if (
+      currentIndex >= 0 &&
+      currentIndex !== this.lastScrolledIndex &&
+      this.virtualizer
+    ) {
+      this.lastScrolledIndex = currentIndex;
+      requestAnimationFrame(() => {
+        this.virtualizer?.scrollToIndex(currentIndex, 'center');
+      });
+    }
+  }
+
   private async handleAddToPlaylist() {
     if (this.queue.tracks.length === 0) return;
 
@@ -316,9 +342,40 @@ export class QueuePanel extends LitElement {
     this.isDragging = false;
   };
 
+  private renderTrackItem = (
+    track: QueueTrack,
+    index: number,
+  ) => {
+    const currentIndex = this.queue.currentIndex;
+
+    return html`
+      <div
+        class="track-item ${index === currentIndex ? 'active' : ''}"
+        @click=${() => this.handleTrackClick(index)}
+      >
+        <span class="track-position">${index + 1}</span>
+        <div class="track-details">
+          <span class="track-title">
+            ${this.getDisplayTitle(track)}
+          </span>
+          <span class="track-artist">
+            ${track.artist || 'Unknown Artist'}
+          </span>
+        </div>
+        <button
+          class="remove-button"
+          @click=${(e: Event) =>
+            this.handleRemoveTrack(e, index)}
+          title="Remove from queue"
+        >
+          <wa-icon name="xmark"></wa-icon>
+        </button>
+      </div>
+    `;
+  };
+
   override render() {
     const tracks = this.queue.tracks;
-    const currentIndex = this.queue.currentIndex;
 
     return html`
       <div class="panel-content">
@@ -365,36 +422,12 @@ export class QueuePanel extends LitElement {
               </div>
             `
           : html`
-              <ul class="track-list">
-                ${tracks.map(
-                  (track, index) => html`
-                    <li
-                      class="track-item ${index === currentIndex
-                        ? 'active'
-                        : ''}"
-                      @click=${() => this.handleTrackClick(index)}
-                    >
-                      <span class="track-position">${index + 1}</span>
-                      <div class="track-details">
-                        <span class="track-title">
-                          ${this.getDisplayTitle(track)}
-                        </span>
-                        <span class="track-artist">
-                          ${track.artist || 'Unknown Artist'}
-                        </span>
-                      </div>
-                      <button
-                        class="remove-button"
-                        @click=${(e: Event) =>
-                          this.handleRemoveTrack(e, index)}
-                        title="Remove from queue"
-                      >
-                        <wa-icon name="xmark"></wa-icon>
-                      </button>
-                    </li>
-                  `,
-                )}
-              </ul>
+              <lit-virtualizer
+                scroller
+                .items=${tracks}
+                .renderItem=${this.renderTrackItem}
+                .layout=${this.flowLayout}
+              ></lit-virtualizer>
             `}
       </div>
     `;

@@ -6,9 +6,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
@@ -30,6 +33,18 @@ const (
 // PreviousRestartThreshold is the number of seconds into a track before
 // "Previous" restarts the current track instead of going to the prior one.
 const PreviousRestartThreshold = 3
+
+// maxSQLiteVars is the maximum number of bind variables SQLite supports
+// per statement. We use a conservative limit for batching.
+const maxSQLiteVars = 900
+
+// trackMeta holds the result of a batch metadata lookup.
+type trackMeta struct {
+	AudioFileID int64
+	FilePath    string
+	Title       string
+	Artist      string
+}
 
 // TrackLoader is the interface the queue uses to tell the player to load a file.
 type TrackLoader interface {
@@ -73,6 +88,10 @@ type Queue struct {
 	repeatMode       RepeatMode
 	shuffleOrder     []int
 	sourcePlaylistID int64
+
+	// setQueueGen is incremented each time SetQueue is called. Background
+	// goroutines check this to detect if they have been superseded.
+	setQueueGen atomic.Int64
 }
 
 // NewQueue creates a new queue manager.
@@ -164,35 +183,59 @@ func (q *Queue) registerEventHandlers() {
 		q.handlePlayNext(data...)
 	})
 
-	runtime.EventsOn(q.ctx, events.RequestRemoveFromQueue, func(data ...any) {
-		q.logger.Info("Received RequestRemoveFromQueue")
-		q.handleRemoveFromQueue(data...)
-	})
+	runtime.EventsOn(
+		q.ctx,
+		events.RequestRemoveFromQueue,
+		func(data ...any) {
+			q.logger.Info("Received RequestRemoveFromQueue")
+			q.handleRemoveFromQueue(data...)
+		},
+	)
 
-	runtime.EventsOn(q.ctx, events.RequestToggleShuffle, func(_ ...any) {
-		q.logger.Info("Received RequestToggleShuffle")
-		q.ToggleShuffle()
-	})
+	runtime.EventsOn(
+		q.ctx,
+		events.RequestToggleShuffle,
+		func(_ ...any) {
+			q.logger.Info("Received RequestToggleShuffle")
+			q.ToggleShuffle()
+		},
+	)
 
-	runtime.EventsOn(q.ctx, events.RequestCycleRepeat, func(_ ...any) {
-		q.logger.Info("Received RequestCycleRepeat")
-		q.CycleRepeat()
-	})
+	runtime.EventsOn(
+		q.ctx,
+		events.RequestCycleRepeat,
+		func(_ ...any) {
+			q.logger.Info("Received RequestCycleRepeat")
+			q.CycleRepeat()
+		},
+	)
 
-	runtime.EventsOn(q.ctx, events.RequestAddTracksToQueue, func(data ...any) {
-		q.logger.Info("Received RequestAddTracksToQueue")
-		q.handleAddTracksToQueue(data...)
-	})
+	runtime.EventsOn(
+		q.ctx,
+		events.RequestAddTracksToQueue,
+		func(data ...any) {
+			q.logger.Info("Received RequestAddTracksToQueue")
+			q.handleAddTracksToQueue(data...)
+		},
+	)
 
-	runtime.EventsOn(q.ctx, events.RequestPlayTracksNext, func(data ...any) {
-		q.logger.Info("Received RequestPlayTracksNext")
-		q.handlePlayTracksNext(data...)
-	})
+	runtime.EventsOn(
+		q.ctx,
+		events.RequestPlayTracksNext,
+		func(data ...any) {
+			q.logger.Info("Received RequestPlayTracksNext")
+			q.handlePlayTracksNext(data...)
+		},
+	)
 
-	runtime.EventsOn(q.ctx, events.RequestPlayQueueIndex, func(data ...any) {
-		q.logger.Info("Received RequestPlayQueueIndex")
-		q.handlePlayQueueIndex(data...)
-	})
+	runtime.EventsOn(
+		q.ctx,
+		events.RequestPlayQueueIndex,
+		func(data ...any) {
+			q.logger.Info("Received RequestPlayQueueIndex")
+			q.handlePlayQueueIndex(data...)
+		},
+	)
 }
 
 // handleSetQueue processes the RequestSetQueue event payload.
@@ -239,7 +282,10 @@ func (q *Queue) handleAddToQueue(data ...any) {
 
 	filePath, ok := data[0].(string)
 	if !ok {
-		q.logger.Error("RequestAddToQueue: invalid filePath type", "got", data[0])
+		q.logger.Error(
+			"RequestAddToQueue: invalid filePath type",
+			"got", data[0],
+		)
 
 		return
 	}
@@ -258,7 +304,10 @@ func (q *Queue) handlePlayNext(data ...any) {
 
 	filePath, ok := data[0].(string)
 	if !ok {
-		q.logger.Error("RequestPlayNext: invalid filePath type", "got", data[0])
+		q.logger.Error(
+			"RequestPlayNext: invalid filePath type",
+			"got", data[0],
+		)
 
 		return
 	}
@@ -277,7 +326,10 @@ func (q *Queue) handleRemoveFromQueue(data ...any) {
 
 	position, ok := data[0].(float64)
 	if !ok {
-		q.logger.Error("RequestRemoveFromQueue: invalid position type", "got", data[0])
+		q.logger.Error(
+			"RequestRemoveFromQueue: invalid position type",
+			"got", data[0],
+		)
 
 		return
 	}
@@ -296,7 +348,10 @@ func (q *Queue) handleAddTracksToQueue(data ...any) {
 
 	filePathsRaw, ok := data[0].([]interface{})
 	if !ok {
-		q.logger.Error("RequestAddTracksToQueue: invalid filePaths type", "got", data[0])
+		q.logger.Error(
+			"RequestAddTracksToQueue: invalid filePaths type",
+			"got", data[0],
+		)
 
 		return
 	}
@@ -323,7 +378,10 @@ func (q *Queue) handlePlayQueueIndex(data ...any) {
 
 	index, ok := data[0].(float64)
 	if !ok {
-		q.logger.Error("RequestPlayQueueIndex: invalid index type", "got", data[0])
+		q.logger.Error(
+			"RequestPlayQueueIndex: invalid index type",
+			"got", data[0],
+		)
 
 		return
 	}
@@ -342,7 +400,10 @@ func (q *Queue) handlePlayTracksNext(data ...any) {
 
 	filePathsRaw, ok := data[0].([]interface{})
 	if !ok {
-		q.logger.Error("RequestPlayTracksNext: invalid filePaths type", "got", data[0])
+		q.logger.Error(
+			"RequestPlayTracksNext: invalid filePaths type",
+			"got", data[0],
+		)
 
 		return
 	}
@@ -359,69 +420,141 @@ func (q *Queue) handlePlayTracksNext(data ...any) {
 }
 
 // SetQueue replaces the entire queue with new tracks and starts playing.
+// It uses a two-phase approach: the start track is resolved immediately so
+// playback begins without delay, then the remaining tracks are resolved in
+// the background. A generation counter ensures stale background work is
+// discarded if SetQueue is called again before it finishes.
 func (q *Queue) SetQueue(filePaths []string, startIndex int) {
+	gen := q.setQueueGen.Add(1)
+
+	if startIndex < 0 || startIndex >= len(filePaths) {
+		startIndex = 0
+	}
+
+	// Phase 1: resolve only the start track so playback begins immediately.
+	startMeta := q.lookupTrackMetaBatch([]string{filePaths[startIndex]})
+
+	q.mu.Lock()
+
+	startTrackMeta, ok := startMeta[filePaths[startIndex]]
+	if !ok {
+		q.logger.Warn(
+			"Could not find start track in database",
+			"path", filePaths[startIndex],
+		)
+		q.mu.Unlock()
+
+		return
+	}
+
+	// Build a placeholder slice with only the start track populated.
+	// Other slots will be filled by the background phase.
+	q.tracks = []Track{
+		{
+			AudioFileID: startTrackMeta.AudioFileID,
+			FilePath:    startTrackMeta.FilePath,
+			Position:    0,
+			Title:       startTrackMeta.Title,
+			Artist:      startTrackMeta.Artist,
+		},
+	}
+	q.currentIndex = 0
+	q.sourcePlaylistID = 0
+	q.shuffleOrder = nil
+
+	// Start playing immediately.
+	q.playCurrentTrack()
+	q.emitQueueChanged()
+	q.mu.Unlock()
+
+	// Phase 2: resolve remaining tracks in a background goroutine.
+	go q.resolveRemainingTracks(gen, filePaths, startIndex)
+}
+
+// resolveRemainingTracks runs in a goroutine to batch-resolve all tracks
+// for a SetQueue call. It checks the generation counter before applying
+// results to avoid overwriting a newer SetQueue call.
+func (q *Queue) resolveRemainingTracks(
+	gen int64,
+	filePaths []string,
+	startIndex int,
+) {
+	allMeta := q.lookupTrackMetaBatch(filePaths)
+
+	// Check if we have been superseded before acquiring the mutex.
+	if q.setQueueGen.Load() != gen {
+		return
+	}
+
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	// Look up audio file IDs and metadata for all paths.
+	// Double-check under the lock.
+	if q.setQueueGen.Load() != gen {
+		return
+	}
+
 	tracks := make([]Track, 0, len(filePaths))
 
 	for i, fp := range filePaths {
-		af, err := q.db.Queries.GetAudioFileByPath(q.db.Ctx, fp)
-		if err != nil {
-			q.logger.Warn("Could not find audio file in database", "path", fp, "err", err)
+		meta, found := allMeta[fp]
+		if !found {
+			q.logger.Warn(
+				"Could not find audio file in database",
+				"path", fp,
+			)
 
 			continue
 		}
 
-		track := Track{
-			AudioFileID: af.ID,
-			FilePath:    fp,
+		tracks = append(tracks, Track{
+			AudioFileID: meta.AudioFileID,
+			FilePath:    meta.FilePath,
 			Position:    int64(i),
-		}
-
-		// Try to get metadata.
-		meta, metaErr := q.db.Queries.GetTrackMetadataByPath(q.db.Ctx, fp)
-		if metaErr == nil {
-			track.Title = meta.Title
-			track.Artist = meta.Artist
-		}
-
-		tracks = append(tracks, track)
+			Title:       meta.Title,
+			Artist:      meta.Artist,
+		})
 	}
 
 	q.tracks = tracks
-	q.sourcePlaylistID = 0
 
-	if startIndex >= 0 && startIndex < len(q.tracks) {
-		q.currentIndex = startIndex
-	} else {
-		q.currentIndex = 0
+	// Recalculate startIndex: the original index might be shifted if
+	// earlier tracks were missing from the database. Find the track that
+	// matches the originally requested start path.
+	startPath := filePaths[startIndex]
+	q.currentIndex = 0
+
+	for i, t := range q.tracks {
+		if t.FilePath == startPath {
+			q.currentIndex = i
+
+			break
+		}
 	}
 
-	// Regenerate shuffle order if shuffle is on.
 	if q.shuffleMode {
 		q.generateShuffleOrder()
 	}
 
-	// Persist to DB.
 	q.persistTracks()
 	q.persistState()
-
-	// Start playing the selected track.
-	q.playCurrentTrack()
 	q.emitQueueChanged()
 }
 
 // AddTrack appends a track to the end of the queue.
 // If the queue was empty, it starts playing the added track immediately.
 func (q *Queue) AddTrack(filePath string) {
+	meta := q.lookupTrackMetaBatch([]string{filePath})
+
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	af, err := q.db.Queries.GetAudioFileByPath(q.db.Ctx, filePath)
-	if err != nil {
-		q.logger.Error("Could not find audio file", "path", filePath, "err", err)
+	m, ok := meta[filePath]
+	if !ok {
+		q.logger.Error(
+			"Could not find audio file",
+			"path", filePath,
+		)
 
 		return
 	}
@@ -429,25 +562,23 @@ func (q *Queue) AddTrack(filePath string) {
 	wasEmpty := len(q.tracks) == 0
 
 	track := Track{
-		AudioFileID: af.ID,
-		FilePath:    filePath,
+		AudioFileID: m.AudioFileID,
+		FilePath:    m.FilePath,
 		Position:    int64(len(q.tracks)),
-	}
-
-	// Try to get metadata.
-	meta, metaErr := q.db.Queries.GetTrackMetadataByPath(q.db.Ctx, filePath)
-	if metaErr == nil {
-		track.Title = meta.Title
-		track.Artist = meta.Artist
+		Title:       m.Title,
+		Artist:      m.Artist,
 	}
 
 	q.tracks = append(q.tracks, track)
 
 	// Persist.
-	_, insertErr := q.db.Queries.InsertQueueTrack(q.db.Ctx, sqlcgen.InsertQueueTrackParams{
-		AudioFileID: af.ID,
-		Position:    track.Position,
-	})
+	_, insertErr := q.db.Queries.InsertQueueTrack(
+		q.db.Ctx,
+		sqlcgen.InsertQueueTrackParams{
+			AudioFileID: m.AudioFileID,
+			Position:    track.Position,
+		},
+	)
 	if insertErr != nil {
 		q.logger.Error("Failed to persist queue track", "err", insertErr)
 	}
@@ -470,29 +601,30 @@ func (q *Queue) AddTrack(filePath string) {
 // AddTracks appends multiple tracks to the end of the queue.
 // If the queue was empty, it starts playing the first added track immediately.
 func (q *Queue) AddTracks(filePaths []string) {
+	allMeta := q.lookupTrackMetaBatch(filePaths)
+
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
 	wasEmpty := len(q.tracks) == 0
 
 	for _, fp := range filePaths {
-		af, err := q.db.Queries.GetAudioFileByPath(q.db.Ctx, fp)
-		if err != nil {
-			q.logger.Warn("Could not find audio file", "path", fp, "err", err)
+		m, ok := allMeta[fp]
+		if !ok {
+			q.logger.Warn(
+				"Could not find audio file",
+				"path", fp,
+			)
 
 			continue
 		}
 
 		track := Track{
-			AudioFileID: af.ID,
-			FilePath:    fp,
+			AudioFileID: m.AudioFileID,
+			FilePath:    m.FilePath,
 			Position:    int64(len(q.tracks)),
-		}
-
-		meta, metaErr := q.db.Queries.GetTrackMetadataByPath(q.db.Ctx, fp)
-		if metaErr == nil {
-			track.Title = meta.Title
-			track.Artist = meta.Artist
+			Title:       m.Title,
+			Artist:      m.Artist,
 		}
 
 		q.tracks = append(q.tracks, track)
@@ -515,6 +647,8 @@ func (q *Queue) AddTracks(filePaths []string) {
 
 // InsertNextTracks inserts multiple tracks as a contiguous block after the current track.
 func (q *Queue) InsertNextTracks(filePaths []string) {
+	allMeta := q.lookupTrackMetaBatch(filePaths)
+
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -528,25 +662,22 @@ func (q *Queue) InsertNextTracks(filePaths []string) {
 	var newTracks []Track
 
 	for _, fp := range filePaths {
-		af, err := q.db.Queries.GetAudioFileByPath(q.db.Ctx, fp)
-		if err != nil {
-			q.logger.Warn("Could not find audio file", "path", fp, "err", err)
+		m, ok := allMeta[fp]
+		if !ok {
+			q.logger.Warn(
+				"Could not find audio file",
+				"path", fp,
+			)
 
 			continue
 		}
 
-		track := Track{
-			AudioFileID: af.ID,
-			FilePath:    fp,
-		}
-
-		meta, metaErr := q.db.Queries.GetTrackMetadataByPath(q.db.Ctx, fp)
-		if metaErr == nil {
-			track.Title = meta.Title
-			track.Artist = meta.Artist
-		}
-
-		newTracks = append(newTracks, track)
+		newTracks = append(newTracks, Track{
+			AudioFileID: m.AudioFileID,
+			FilePath:    m.FilePath,
+			Title:       m.Title,
+			Artist:      m.Artist,
+		})
 	}
 
 	if len(newTracks) == 0 {
@@ -578,12 +709,17 @@ func (q *Queue) InsertNextTracks(filePaths []string) {
 
 // InsertNext inserts a track right after the currently playing track.
 func (q *Queue) InsertNext(filePath string) {
+	meta := q.lookupTrackMetaBatch([]string{filePath})
+
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	af, err := q.db.Queries.GetAudioFileByPath(q.db.Ctx, filePath)
-	if err != nil {
-		q.logger.Error("Could not find audio file", "path", filePath, "err", err)
+	m, ok := meta[filePath]
+	if !ok {
+		q.logger.Error(
+			"Could not find audio file",
+			"path", filePath,
+		)
 
 		return
 	}
@@ -594,16 +730,11 @@ func (q *Queue) InsertNext(filePath string) {
 	}
 
 	track := Track{
-		AudioFileID: af.ID,
-		FilePath:    filePath,
+		AudioFileID: m.AudioFileID,
+		FilePath:    m.FilePath,
 		Position:    int64(insertPos),
-	}
-
-	// Try to get metadata.
-	meta, metaErr := q.db.Queries.GetTrackMetadataByPath(q.db.Ctx, filePath)
-	if metaErr == nil {
-		track.Title = meta.Title
-		track.Artist = meta.Artist
+		Title:       m.Title,
+		Artist:      m.Artist,
 	}
 
 	// Insert into slice.
@@ -630,7 +761,10 @@ func (q *Queue) RemoveTrack(position int) {
 	defer q.mu.Unlock()
 
 	if position < 0 || position >= len(q.tracks) {
-		q.logger.Warn("RemoveTrack: position out of range", "position", position)
+		q.logger.Warn(
+			"RemoveTrack: position out of range",
+			"position", position,
+		)
 
 		return
 	}
@@ -641,7 +775,8 @@ func (q *Queue) RemoveTrack(position int) {
 	// is loaded, so only shift when a valid track is selected.
 	if q.currentIndex >= 0 && position < q.currentIndex {
 		q.currentIndex--
-	} else if position == q.currentIndex && q.currentIndex >= len(q.tracks) && len(q.tracks) > 0 {
+	} else if position == q.currentIndex &&
+		q.currentIndex >= len(q.tracks) && len(q.tracks) > 0 {
 		q.currentIndex = len(q.tracks) - 1
 	}
 
@@ -772,7 +907,10 @@ func (q *Queue) PlayIndex(index int) {
 	}
 
 	if index < 0 || index >= len(q.tracks) {
-		q.logger.Warn("PlayIndex: index out of range", "index", index, "trackCount", len(q.tracks))
+		q.logger.Warn(
+			"PlayIndex: index out of range",
+			"index", index, "trackCount", len(q.tracks),
+		)
 
 		return
 	}
@@ -799,7 +937,7 @@ func (q *Queue) ToggleShuffle() {
 	q.emitQueueChanged()
 }
 
-// CycleRepeat cycles through repeat modes: off → all → one → off.
+// CycleRepeat cycles through repeat modes: off -> all -> one -> off.
 func (q *Queue) CycleRepeat() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -883,7 +1021,9 @@ func (q *Queue) RestoreState() {
 	if state.ShuffleOrder.Valid && state.ShuffleOrder.String != "" {
 		var order []int
 
-		if err := json.Unmarshal([]byte(state.ShuffleOrder.String), &order); err != nil {
+		if err := json.Unmarshal(
+			[]byte(state.ShuffleOrder.String), &order,
+		); err != nil {
 			q.logger.Warn("Failed to parse shuffle order", "err", err)
 		} else {
 			q.shuffleOrder = order
@@ -1079,7 +1219,8 @@ func (q *Queue) loadCurrentTrack() bool {
 	if q.currentIndex < 0 || q.currentIndex >= len(q.tracks) {
 		q.logger.Warn(
 			"Current index out of range",
-			"index", q.currentIndex, "trackCount", len(q.tracks),
+			"index", q.currentIndex,
+			"trackCount", len(q.tracks),
 		)
 
 		return false
@@ -1088,7 +1229,8 @@ func (q *Queue) loadCurrentTrack() bool {
 	track := q.tracks[q.currentIndex]
 	q.logger.Info(
 		"Loading track from queue",
-		"filePath", track.FilePath, "position", q.currentIndex,
+		"filePath", track.FilePath,
+		"position", q.currentIndex,
 	)
 
 	err := q.player.LoadFile(track.FilePath)
@@ -1145,27 +1287,197 @@ func (q *Queue) reindexPositions() {
 	}
 }
 
-// persistTracks writes the current queue tracks to the database.
-// TODO: wrap in a transaction so the DELETE-all + INSERT-all is atomic.
-// Without a transaction a crash mid-write could leave queue_tracks empty or
-// partially populated. Low practical risk but worth addressing for robustness.
-func (q *Queue) persistTracks() {
-	err := q.db.Queries.ClearQueueTracks(q.db.Ctx)
+// lookupTrackMetaBatch fetches audio file IDs and metadata for a batch of
+// file paths using a single query per chunk (instead of 2 queries per track).
+// Returns a map keyed by file path. This is safe to call without holding q.mu.
+func (q *Queue) lookupTrackMetaBatch(
+	filePaths []string,
+) map[string]trackMeta {
+	result := make(map[string]trackMeta, len(filePaths))
+
+	// Deduplicate paths to avoid redundant work.
+	unique := make([]string, 0, len(filePaths))
+	seen := make(map[string]bool, len(filePaths))
+
+	for _, fp := range filePaths {
+		if !seen[fp] {
+			seen[fp] = true
+
+			unique = append(unique, fp)
+		}
+	}
+
+	// Process in chunks to stay under the SQLite bind variable limit.
+	for i := 0; i < len(unique); i += maxSQLiteVars {
+		end := i + maxSQLiteVars
+		if end > len(unique) {
+			end = len(unique)
+		}
+
+		chunk := unique[i:end]
+		q.lookupChunk(chunk, result)
+	}
+
+	return result
+}
+
+// lookupChunk executes a single batch query for a chunk of file paths.
+func (q *Queue) lookupChunk(
+	paths []string,
+	result map[string]trackMeta,
+) {
+	if len(paths) == 0 {
+		return
+	}
+
+	placeholders := make([]string, len(paths))
+	args := make([]any, len(paths))
+
+	for i, fp := range paths {
+		placeholders[i] = "?"
+		args[i] = fp
+	}
+
+	query := fmt.Sprintf(
+		`SELECT af.id, af.file_path,
+			COALESCE(r.name, '') AS title,
+			COALESCE(ac.text, '') AS artist
+		FROM audio_files af
+		LEFT JOIN recordings r ON af.recording_id = r.id
+		LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
+		WHERE af.file_path IN (%s)`,
+		strings.Join(placeholders, ","),
+	)
+
+	rows, err := q.db.QueryContext(query, args...)
 	if err != nil {
-		q.logger.Error("Failed to clear queue tracks", "err", err)
+		q.logger.Error("Batch metadata lookup failed", "err", err)
 
 		return
 	}
 
-	for _, track := range q.tracks {
-		_, err := q.db.Queries.InsertQueueTrack(q.db.Ctx, sqlcgen.InsertQueueTrackParams{
-			AudioFileID: track.AudioFileID,
-			Position:    track.Position,
-		})
-		if err != nil {
-			q.logger.Error("Failed to insert queue track", "err", err)
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			q.logger.Error(
+				"Failed to close rows",
+				"err", closeErr,
+			)
+		}
+	}()
+
+	for rows.Next() {
+		var m trackMeta
+
+		if scanErr := rows.Scan(
+			&m.AudioFileID, &m.FilePath, &m.Title, &m.Artist,
+		); scanErr != nil {
+			q.logger.Error(
+				"Failed to scan batch metadata row",
+				"err", scanErr,
+			)
+
+			continue
+		}
+
+		result[m.FilePath] = m
+	}
+
+	if rowsErr := rows.Err(); rowsErr != nil {
+		q.logger.Error(
+			"Error iterating batch metadata rows",
+			"err", rowsErr,
+		)
+	}
+}
+
+// persistTracks writes the current queue tracks to the database atomically
+// using a transaction with batched multi-row inserts.
+func (q *Queue) persistTracks() {
+	tx, err := q.db.BeginTx()
+	if err != nil {
+		q.logger.Error("Failed to begin transaction", "err", err)
+
+		return
+	}
+
+	committed := false
+
+	defer func() {
+		if !committed {
+			if rbErr := tx.Rollback(); rbErr != nil {
+				q.logger.Error(
+					"Failed to rollback transaction",
+					"err", rbErr,
+				)
+			}
+		}
+	}()
+
+	// Clear existing tracks.
+	txQueries := q.db.Queries.WithTx(tx)
+
+	if clearErr := txQueries.ClearQueueTracks(q.db.Ctx); clearErr != nil {
+		q.logger.Error("Failed to clear queue tracks", "err", clearErr)
+
+		return
+	}
+
+	// Batch insert tracks. Each row needs 2 bind vars (audio_file_id, position).
+	const varsPerRow = 2
+
+	batchSize := maxSQLiteVars / varsPerRow
+
+	for i := 0; i < len(q.tracks); i += batchSize {
+		end := i + batchSize
+		if end > len(q.tracks) {
+			end = len(q.tracks)
+		}
+
+		batch := q.tracks[i:end]
+
+		if insertErr := q.insertTrackBatch(tx, batch); insertErr != nil {
+			q.logger.Error(
+				"Failed to batch insert queue tracks",
+				"err", insertErr,
+			)
+
+			return
 		}
 	}
+
+	if commitErr := tx.Commit(); commitErr != nil {
+		q.logger.Error("Failed to commit transaction", "err", commitErr)
+
+		return
+	}
+
+	committed = true
+}
+
+// insertTrackBatch inserts a batch of tracks in a single multi-row INSERT.
+func (q *Queue) insertTrackBatch(tx *sql.Tx, batch []Track) error {
+	if len(batch) == 0 {
+		return nil
+	}
+
+	valuePlaceholders := make([]string, len(batch))
+	args := make([]any, 0, len(batch)*2)
+
+	for i, track := range batch {
+		valuePlaceholders[i] = "(?, ?)"
+
+		args = append(args, track.AudioFileID, track.Position)
+	}
+
+	query := "INSERT INTO queue_tracks (audio_file_id, position) VALUES " +
+		strings.Join(valuePlaceholders, ",")
+
+	_, err := tx.ExecContext(q.db.Ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("batch insert failed: %w", err)
+	}
+
+	return nil
 }
 
 // persistState writes the queue metadata to the database.
@@ -1175,24 +1487,36 @@ func (q *Queue) persistState() {
 	if len(q.shuffleOrder) > 0 {
 		data, err := json.Marshal(q.shuffleOrder)
 		if err != nil {
-			q.logger.Error("Failed to marshal shuffle order", "err", err)
+			q.logger.Error(
+				"Failed to marshal shuffle order",
+				"err", err,
+			)
 		} else {
-			shuffleOrderJSON = sql.NullString{String: string(data), Valid: true}
+			shuffleOrderJSON = sql.NullString{
+				String: string(data),
+				Valid:  true,
+			}
 		}
 	}
 
 	sourcePlaylistID := sql.NullInt64{}
 	if q.sourcePlaylistID > 0 {
-		sourcePlaylistID = sql.NullInt64{Int64: q.sourcePlaylistID, Valid: true}
+		sourcePlaylistID = sql.NullInt64{
+			Int64: q.sourcePlaylistID,
+			Valid: true,
+		}
 	}
 
-	err := q.db.Queries.UpdateQueueState(q.db.Ctx, sqlcgen.UpdateQueueStateParams{
-		SourcePlaylistID: sourcePlaylistID,
-		CurrentPosition:  int64(q.currentIndex),
-		ShuffleMode:      q.shuffleMode,
-		RepeatMode:       string(q.repeatMode),
-		ShuffleOrder:     shuffleOrderJSON,
-	})
+	err := q.db.Queries.UpdateQueueState(
+		q.db.Ctx,
+		sqlcgen.UpdateQueueStateParams{
+			SourcePlaylistID: sourcePlaylistID,
+			CurrentPosition:  int64(q.currentIndex),
+			ShuffleMode:      q.shuffleMode,
+			RepeatMode:       string(q.repeatMode),
+			ShuffleOrder:     shuffleOrderJSON,
+		},
+	)
 	if err != nil {
 		q.logger.Error("Failed to persist queue state", "err", err)
 	}
