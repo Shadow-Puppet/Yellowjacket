@@ -135,7 +135,7 @@ export class NowPlaying extends LitElement {
         <div class="cover-art">
           ${track.coverArt
             ? html`<img
-                src="${track.coverArtThumbnail || track.coverArt}"
+                src="${track.coverArtSmall || track.coverArt}"
                 alt="Album cover"
                 @error=${(e: Event) => {
                     const img = e.target as HTMLImageElement;

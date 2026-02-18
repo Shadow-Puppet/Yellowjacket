@@ -78,4 +78,16 @@ export class LibraryController implements ReactiveController {
     setScrollPosition(view: ViewName, offset: number): void {
         libraryStore.setScrollPosition(view, offset);
     }
+
+    // ===================================================================
+    // COVER SIZE
+    // ===================================================================
+
+    get coverSize(): number {
+        return libraryStore.getCoverSize();
+    }
+
+    set coverSize(size: number) {
+        libraryStore.setCoverSize(size);
+    }
 }

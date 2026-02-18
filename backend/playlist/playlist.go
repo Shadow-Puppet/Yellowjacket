@@ -29,15 +29,17 @@ type Summary struct {
 
 // Track represents a track within a playlist, including its metadata.
 type Track struct {
-	ID                    int64  `json:"ID"`
-	Position              int64  `json:"Position"`
-	FilePath              string `json:"FilePath"`
-	Title                 string `json:"Title"`
-	Artist                string `json:"Artist"`
-	Album                 string `json:"Album"`
-	CoverArtPath          string `json:"CoverArtPath"`
-	CoverArtThumbnailPath string `json:"CoverArtThumbnailPath"`
-	Duration              string `json:"Duration"`
+	ID             int64  `json:"ID"`
+	Position       int64  `json:"Position"`
+	FilePath       string `json:"FilePath"`
+	Title          string `json:"Title"`
+	Artist         string `json:"Artist"`
+	Album          string `json:"Album"`
+	CoverArtPath   string `json:"CoverArtPath"`
+	CoverArtSmall  string `json:"CoverArtSmall"`
+	CoverArtMedium string `json:"CoverArtMedium"`
+	CoverArtLarge  string `json:"CoverArtLarge"`
+	Duration       string `json:"Duration"`
 }
 
 // WithTracks contains a playlist summary and all its tracks.
@@ -213,8 +215,12 @@ func trackFromRow(
 	if coverArtPath != "" {
 		base := filepath.Base(coverArtPath)
 		track.CoverArtPath = "/covers/" + base
-		track.CoverArtThumbnailPath = "/covers/" +
-			library.ThumbnailFilename(base)
+		track.CoverArtSmall = "/covers/" +
+			library.SizedFilename(base, "_sm")
+		track.CoverArtMedium = "/covers/" +
+			library.SizedFilename(base, "_md")
+		track.CoverArtLarge = "/covers/" +
+			library.SizedFilename(base, "_lg")
 	}
 
 	return track

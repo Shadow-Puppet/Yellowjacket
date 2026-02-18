@@ -11,8 +11,10 @@ export interface TrackInfo {
   title: string; // track title (falls back to fileName)
   artist: string; // artist name
   album: string; // album name
-  coverArt: string; // URL path to cover art (e.g., "/covers/abc.jpg") or empty string
-  coverArtThumbnail: string; // URL path to thumbnail (e.g., "/covers/abc_thumb.jpg") or empty string
+  coverArt: string; // URL path to full-size cover art or empty string
+  coverArtSmall: string; // URL path to small variant (100px max) or empty string
+  coverArtMedium: string; // URL path to medium variant (200px max) or empty string
+  coverArtLarge: string; // URL path to large variant (400px max) or empty string
   trackChangeId: number; // monotonic counter to detect track changes even when the same file plays consecutively
 }
 

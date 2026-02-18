@@ -321,9 +321,13 @@ func (l *Library) Scan() error {
 		return true
 	})
 
-	// Generate thumbnails for any cover art that doesn't have one yet.
-	if err := l.generateMissingThumbnails(); err != nil {
-		l.logger.Warn("could not generate missing thumbnails", "err", err)
+	// Generate sized variants for any cover art missing them,
+	// and migrate legacy _thumb files.
+	if err := l.generateMissingSizedVariants(); err != nil {
+		l.logger.Warn(
+			"could not generate missing sized variants",
+			"err", err,
+		)
 	}
 
 	l.logger.Info(

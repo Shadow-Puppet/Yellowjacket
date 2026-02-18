@@ -25,12 +25,14 @@ type Track struct {
 
 // Album represents an album for the cover grid display.
 type Album struct {
-	ID                    int64
-	Name                  string
-	ArtistName            string
-	CoverArtPath          string
-	CoverArtThumbnailPath string
-	Year                  int64
+	ID             int64
+	Name           string
+	ArtistName     string
+	CoverArtPath   string
+	CoverArtSmall  string
+	CoverArtMedium string
+	CoverArtLarge  string
+	Year           int64
 }
 
 // GetAllTracks returns an array of track structs of every file in the library.
@@ -123,11 +125,16 @@ func (l *Library) GetAllAlbums() ([]Album, error) {
 			album.Year = row.Year.Int64
 		}
 
-		// Convert filesystem path to URL path for the asset handler
+		// Convert filesystem path to URL path for the asset handler.
 		if row.CoverArtPath != "" {
 			base := filepath.Base(row.CoverArtPath)
 			album.CoverArtPath = "/covers/" + base
-			album.CoverArtThumbnailPath = "/covers/" + ThumbnailFilename(base)
+			album.CoverArtSmall = "/covers/" +
+				SizedFilename(base, "_sm")
+			album.CoverArtMedium = "/covers/" +
+				SizedFilename(base, "_md")
+			album.CoverArtLarge = "/covers/" +
+				SizedFilename(base, "_lg")
 		}
 
 		albums = append(albums, album)

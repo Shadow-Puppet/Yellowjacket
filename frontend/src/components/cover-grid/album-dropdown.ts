@@ -49,6 +49,18 @@ export class AlbumDropdown extends LitElement {
     @property({ type: Number, attribute: 'phantom-rows' })
     phantomRows = 1;
 
+    /** Grid item height in pixels (passed from parent). */
+    @property({ type: Number })
+    gridItemHeight = 230;
+
+    /** Grid gap in pixels (passed from parent). */
+    @property({ type: Number })
+    gridGap = 16;
+
+    /** Width of the grid container in pixels (passed from parent). */
+    @property({ type: Number })
+    containerWidth = 800;
+
     static override styles = css`
         :host {
             display: block;
@@ -60,7 +72,6 @@ export class AlbumDropdown extends LitElement {
             border-radius: 4px;
             padding: 12px 16px;
             box-sizing: border-box;
-            min-height: 230px;
         }
 
         .dropdown-loading {
@@ -73,7 +84,6 @@ export class AlbumDropdown extends LitElement {
         }
 
         .dropdown-tracks {
-            column-count: 3;
             column-fill: auto;
             column-gap: 24px;
         }
@@ -87,6 +97,7 @@ export class AlbumDropdown extends LitElement {
             cursor: default;
             user-select: none;
             font-size: 12px;
+            line-height: 16px;
             break-inside: avoid;
         }
 
@@ -151,6 +162,24 @@ export class AlbumDropdown extends LitElement {
     `;
 
     /* ================================================================
+     * Layout helpers
+     * ================================================================ */
+
+    /**
+     * Derive the number of track-list columns from the
+     * grid container width.
+     */
+    get columnCount(): number {
+        const w = this.containerWidth;
+
+        if (w < 500) return 1;
+        if (w < 800) return 2;
+        if (w < 1200) return 3;
+
+        return 4;
+    }
+
+    /* ================================================================
      * Rendering helpers
      * ================================================================ */
 
@@ -165,21 +194,28 @@ export class AlbumDropdown extends LitElement {
     }
 
     /**
-     * Compute the track container height from the number
-     * of phantom grid rows allocated by the parent.
+     * Total height of the outer .album-dropdown box,
+     * matching the phantom grid space exactly.
+     */
+    private get dropdownHeight(): number {
+        return (
+            this.phantomRows * this.gridItemHeight +
+            (this.phantomRows - 1) * this.gridGap
+        );
+    }
+
+    /**
+     * Height of the inner .dropdown-tracks container.
+     * Uses the full inner space so that column-fill:auto
+     * fills each column completely before moving to the
+     * next.
      *
-     * Grid constants: itemHeight=230, gap=16.
      * Dropdown chrome: 12+12 padding + 2+2 border = 28px.
      */
     private get tracksHeight(): number {
-        const gridItemHeight = 230;
-        const gridGap = 16;
         const chrome = 28;
-        const total =
-            this.phantomRows * gridItemHeight +
-            (this.phantomRows - 1) * gridGap;
 
-        return total - chrome;
+        return this.dropdownHeight - chrome;
     }
 
     /* ================================================================
@@ -323,10 +359,13 @@ export class AlbumDropdown extends LitElement {
         }
 
         return html`
-            <div class="album-dropdown">
+            <div
+                class="album-dropdown"
+                style="height:${this.dropdownHeight}px"
+            >
                 <div
                     class="dropdown-tracks"
-                    style="height:${this.tracksHeight}px"
+                    style="height:${this.tracksHeight}px;column-count:${this.columnCount}"
                 >
                     ${this.tracks.map(
                         (track, i) =>

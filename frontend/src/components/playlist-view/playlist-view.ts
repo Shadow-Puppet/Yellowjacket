@@ -849,6 +849,8 @@ export class PlaylistView
             <wa-popup
                 id="context-menu"
                 placement="bottom-start"
+                flip
+                shift
                 .active=${this.contextMenuOpen}
             >
                 ${this.contextMenuOpen
@@ -930,6 +932,8 @@ export class PlaylistView
             <wa-popup
                 id="playlist-submenu"
                 placement="right-start"
+                flip
+                shift
                 .active=${this.playlistSubmenuOpen}
             >
                 ${this.playlistSubmenuOpen &&

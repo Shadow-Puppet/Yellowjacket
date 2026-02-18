@@ -39,25 +39,26 @@ type ContextMenuTarget =
  */
 type GridEntry =
     | {
-          kind: 'album';
-          album: library.Album;
-          albumIndex: number;
-      }
+        kind: 'album';
+        album: library.Album;
+        albumIndex: number;
+    }
     | { kind: 'phantom'; phantomIndex: number };
 
 /** Milliseconds to debounce visibility-changed saves. */
 const SCROLL_DEBOUNCE_MS = 100;
 
+/** Pixels to change card width per scroll tick. */
+const ZOOM_STEP = 16;
+
 @customElement('cover-grid')
 export class CoverGrid extends LitElement {
     private libraryCtrl = new LibraryController(this);
 
-    // Grid layout constants — must match the virtualizer
-    // grid config and the CSS card dimensions.
-    private static readonly GRID_ITEM_WIDTH = 176;
-    private static readonly GRID_ITEM_HEIGHT = 230;
-    private static readonly GRID_GAP = 16;
-    private static readonly GRID_PADDING = 16;
+    // Fixed grid spacing constants.
+    private static readonly GRID_GAP = 8;
+    private static readonly GRID_PADDING = 8;
+    private static readonly CARD_PADDING = 5;
 
     private lastSelectedAlbumIndex: number | null = null;
     private lastSelectedTrackIndex: number | null = null;
@@ -68,22 +69,72 @@ export class CoverGrid extends LitElement {
     private closeHandler = () => this.closeContextMenu();
 
     /**
-     * Tracks per phantom row.  Each track row is ~28px,
-     * the base content height is 202px, each column fits
-     * ~7 tracks, and 3 columns = 21 tracks per row.
+     * Exact height of a single track row in pixels.
+     * line-height 16 + padding 4+4 = 24.
      */
-    private static readonly TRACKS_PER_PHANTOM_ROW = 21;
+    private static readonly TRACK_ROW_HEIGHT = 24;
 
-    // Virtualizer grid layout instance.
-    private gridLayout = grid({
-        itemSize: {
-            width: `${CoverGrid.GRID_ITEM_WIDTH}px`,
-            height: `${CoverGrid.GRID_ITEM_HEIGHT}px`,
-        },
-        gap: `${CoverGrid.GRID_GAP}px`,
-        padding: `${CoverGrid.GRID_PADDING}px`,
-        justify: 'center',
-    });
+    /** Dropdown chrome: 12+12 padding + 2+2 border. */
+    private static readonly DROPDOWN_CHROME = 28;
+
+    /** Current card width — driven by the store. */
+    private get cardWidth(): number {
+        return this.libraryCtrl.coverSize;
+    }
+
+    /**
+     * Height of the text area below the cover image.
+     * Two lines: album name (+ year) and artist.
+     */
+    private get cardTextHeight(): number {
+        const w = this.cardWidth;
+
+        if (w < 160) return 36;
+
+        return w > 250 ? 46 : 40;
+    }
+
+    /** Derived card height from card width. */
+    private get cardHeight(): number {
+        return this.cardWidth + this.cardTextHeight;
+    }
+
+    /** Image size inside the card (card minus padding). */
+    private get imageSize(): number {
+        return this.cardWidth - CoverGrid.CARD_PADDING * 2;
+    }
+
+    // Virtualizer grid layout instance — recreated when
+    // the card size changes.
+    private gridLayout = this.createGridLayout();
+    private gridLayoutWidth = 0;
+
+    private createGridLayout() {
+        const w = this.libraryCtrl?.coverSize ?? 176;
+
+        this.gridLayoutWidth = w;
+
+        const h = w + this.cardTextHeight;
+        const gap = CoverGrid.GRID_GAP;
+        const pad = CoverGrid.GRID_PADDING;
+
+        return grid({
+            itemSize: {
+                width: `${w}px`,
+                height: `${h}px`,
+            },
+            gap: `${gap}px`,
+            padding: `${pad}px`,
+            justify: 'center',
+        });
+    }
+
+    /** Wheel event handler ref for manual add/remove. */
+    private wheelHandler = (e: WheelEvent) => {
+        this.onWheel(e);
+    };
+
+    private wheelListenerAttached = false;
 
     // buildVirtualizerItems() memoization cache.
     private itemsCacheAlbums: library.Album[] = [];
@@ -114,10 +165,10 @@ export class CoverGrid extends LitElement {
             flex-direction: column;
             cursor: pointer;
             border-radius: 8px;
-            padding: 8px;
+            padding: 5px;
             transition: background-color 0.2s ease;
             box-sizing: border-box;
-            width: 176px;
+            width: var(--card-width, 176px);
         }
 
         .album-card:hover {
@@ -166,17 +217,18 @@ export class CoverGrid extends LitElement {
                 #282828 100%
             );
             color: #b3b3b3;
-            font-size: 48px;
+            font-size: var(--placeholder-font, 48px);
         }
 
         .album-info {
-            margin-top: 8px;
+            margin-top: 4px;
             min-width: 0;
+            text-align: center;
         }
 
         .album-name {
-            font-size: 14px;
-            font-weight: 600;
+            font-size: var(--album-name-font, 14px);
+            font-weight: 400;
             color: #fff;
             white-space: nowrap;
             overflow: hidden;
@@ -184,12 +236,16 @@ export class CoverGrid extends LitElement {
         }
 
         .artist-name {
-            font-size: 12px;
+            font-size: var(--artist-name-font, 12px);
             color: #b3b3b3;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
-            margin-top: 4px;
+            margin-top: 2px;
+        }
+
+        .album-year {
+            color: #888;
         }
 
         /* ========================================
@@ -334,7 +390,7 @@ export class CoverGrid extends LitElement {
 
     /** Number of phantom rows reserved for the dropdown overlay. */
     @state()
-    private phantomRowCount = 1;
+    private phantomRowCount = 0;
 
     /** Pixel offset of the dropdown overlay from the top of the scroll content. */
     @state()
@@ -387,6 +443,7 @@ export class CoverGrid extends LitElement {
             this.onGridImageError,
             true,
         );
+
     }
 
     override disconnectedCallback() {
@@ -404,6 +461,11 @@ export class CoverGrid extends LitElement {
             this.onGridImageError,
             true,
         );
+        this.scrollContainer?.removeEventListener(
+            'wheel',
+            this.wheelHandler,
+        );
+        this.wheelListenerAttached = false;
 
         if (this.scrollDebounceTimer !== null) {
             clearTimeout(this.scrollDebounceTimer);
@@ -422,38 +484,143 @@ export class CoverGrid extends LitElement {
     ) {
         super.updated(changed);
 
-        // When the dropdown opens or tracks change,
-        // recompute the phantom row count and overlay
-        // position.
+        // Ctrl+Scroll zoom — lazily attach to the
+        // scroll container once it exists in the DOM.
         if (
-            changed.has('expandedAlbumId') ||
-            changed.has('expandedTracks')
+            !this.wheelListenerAttached &&
+            this.scrollContainer
         ) {
+            this.scrollContainer.addEventListener(
+                'wheel',
+                this.wheelHandler,
+                { passive: false },
+            );
+            this.wheelListenerAttached = true;
+        }
+
+        // Recreate the virtualizer grid layout when
+        // the card size changes.
+        const cardSizeChanged =
+            this.gridLayoutWidth !== this.cardWidth;
+
+        if (cardSizeChanged) {
+            this.gridLayout = this.createGridLayout();
+            // Invalidate the items cache so the
+            // virtualizer picks up the new layout.
+            this.itemsCacheColumns = 0;
+        }
+
+        // Apply CSS custom properties for dynamic sizing.
+        this.updateSizeProperties();
+
+        // When the dropdown opens, tracks change, or
+        // card size changes (zoom), recompute the
+        // phantom row count and overlay position.
+        // Phantom rows are only injected once tracks
+        // have loaded so the dropdown renders at the
+        // correct size immediately.
+        const dropdownNeedsUpdate =
+            changed.has('expandedAlbumId') ||
+            changed.has('expandedTracks') ||
+            (cardSizeChanged &&
+                this.expandedAlbumId !== null &&
+                this.expandedTracks.length > 0);
+
+        if (dropdownNeedsUpdate) {
             this.phantomRowCount =
                 this.expandedAlbumId !== null
-                    ? Math.max(
-                          1,
-                          Math.ceil(
-                              this.expandedTracks
-                                  .length /
-                                  CoverGrid.TRACKS_PER_PHANTOM_ROW,
-                          ),
-                      )
-                    : 1;
+                    ? this.computePhantomRowCount(
+                        this.expandedTracks.length,
+                    )
+                    : 0;
             this.updateDropdownPosition();
         }
 
-        // When a new album is expanded, scroll its
-        // row to the top of the viewport after the
-        // DOM reflects the new phantom rows.
-        if (
-            changed.has('expandedAlbumId') &&
-            this.expandedAlbumId !== null
-        ) {
+        // Scroll to show the dropdown once tracks
+        // have loaded, or re-focus the expanded album
+        // after a zoom.
+        const shouldScroll =
+            (changed.has('expandedTracks') &&
+                this.expandedAlbumId !== null &&
+                this.expandedTracks.length > 0) ||
+            (cardSizeChanged &&
+                this.expandedAlbumId !== null &&
+                this.expandedTracks.length > 0);
+
+        if (shouldScroll) {
             void this.updateComplete.then(() => {
-                this.scrollToExpandedAlbum();
+                this.scrollToShowDropdown();
             });
         }
+    }
+
+    /* ====================================================================
+     * Dynamic size properties
+     * ==================================================================== */
+
+    private updateSizeProperties() {
+        const w = this.cardWidth;
+
+        this.style.setProperty(
+            '--card-width',
+            `${w}px`,
+        );
+
+        // Scale placeholder initial font.
+        const placeholderFont =
+            Math.max(16, Math.round(w * 0.3));
+        this.style.setProperty(
+            '--placeholder-font',
+            `${placeholderFont}px`,
+        );
+
+        // Text sizing tiers.
+        if (w < 160) {
+            this.classList.add('size-small');
+            this.style.setProperty(
+                '--album-name-font',
+                '11px',
+            );
+            this.style.setProperty(
+                '--artist-name-font',
+                '10px',
+            );
+        } else if (w > 250) {
+            this.classList.remove('size-small');
+            this.style.setProperty(
+                '--album-name-font',
+                '16px',
+            );
+            this.style.setProperty(
+                '--artist-name-font',
+                '13px',
+            );
+        } else {
+            this.classList.remove('size-small');
+            this.style.setProperty(
+                '--album-name-font',
+                '14px',
+            );
+            this.style.setProperty(
+                '--artist-name-font',
+                '12px',
+            );
+        }
+    }
+
+    /* ====================================================================
+     * Ctrl+Scroll zoom
+     * ==================================================================== */
+
+    private onWheel(e: WheelEvent) {
+        if (!e.ctrlKey) return;
+
+        e.preventDefault();
+
+        const delta = e.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP;
+
+        this.libraryCtrl.coverSize =
+            this.cardWidth + delta;
     }
 
     /* ====================================================================
@@ -561,13 +728,6 @@ export class CoverGrid extends LitElement {
         // repeated calls (e.g. library re-scan).
         this.resizeObserver?.disconnect();
 
-        const {
-            GRID_ITEM_HEIGHT,
-            GRID_GAP,
-            GRID_PADDING,
-        } = CoverGrid;
-        const rowStep = GRID_ITEM_HEIGHT + GRID_GAP;
-
         this.currentColumnCount =
             this.getColumnCount();
 
@@ -585,14 +745,23 @@ export class CoverGrid extends LitElement {
 
             this.currentColumnCount = newColumns;
 
-            // If a dropdown is open, snap the
-            // expanded album's row to the top.
+            // If a dropdown is open, reposition and
+            // re-evaluate scroll with smart logic.
             if (this.expandedAlbumId !== null) {
+                this.phantomRowCount =
+                    this.computePhantomRowCount(
+                        this.expandedTracks.length,
+                    );
                 this.updateDropdownPosition();
-                this.scrollToExpandedAlbum();
+                this.scrollToShowDropdown();
 
                 return;
             }
+
+            const gap = CoverGrid.GRID_GAP;
+            const pad = CoverGrid.GRID_PADDING;
+            const rowStep =
+                this.cardHeight + gap;
 
             // Derive the album's row under the new
             // column count.  Both albumIndex and
@@ -602,7 +771,7 @@ export class CoverGrid extends LitElement {
                 pending.albumIndex / newColumns,
             );
             const newY =
-                GRID_PADDING + newRow * rowStep;
+                pad + newRow * rowStep;
 
             container.scrollTop =
                 newY - pending.viewportOffset;
@@ -610,6 +779,9 @@ export class CoverGrid extends LitElement {
 
         this.resizeObserver = new ResizeObserver(
             () => {
+                const rowStep =
+                    this.cardHeight + CoverGrid.GRID_GAP;
+
                 // Capture on the first event using
                 // the pre-resize column count.
                 if (this.pendingFocus === null) {
@@ -681,7 +853,7 @@ export class CoverGrid extends LitElement {
         container: HTMLElement,
         rowStep: number,
     ) {
-        const { GRID_PADDING } = CoverGrid;
+        const pad = CoverGrid.GRID_PADDING;
         const cols = this.currentColumnCount;
 
         // Prefer the expanded album as focus.
@@ -695,7 +867,7 @@ export class CoverGrid extends LitElement {
                     idx / cols,
                 );
                 const albumY =
-                    GRID_PADDING + albumRow * rowStep;
+                    pad + albumRow * rowStep;
 
                 this.pendingFocus = {
                     albumIndex: idx,
@@ -713,8 +885,8 @@ export class CoverGrid extends LitElement {
             container.scrollTop +
             container.clientHeight / 2;
         const centerRow = Math.floor(
-            Math.max(0, centerY - GRID_PADDING) /
-                rowStep,
+            Math.max(0, centerY - pad) /
+            rowStep,
         );
         const albumIndex = Math.min(
             centerRow * cols,
@@ -725,7 +897,7 @@ export class CoverGrid extends LitElement {
         // to the viewport top — used exactly once in
         // restoreScroll, never fed back.
         const albumY =
-            GRID_PADDING + centerRow * rowStep;
+            pad + centerRow * rowStep;
 
         this.pendingFocus = {
             albumIndex,
@@ -744,16 +916,72 @@ export class CoverGrid extends LitElement {
 
         if (!el) return 1;
 
-        const { GRID_ITEM_WIDTH, GRID_GAP, GRID_PADDING } =
-            CoverGrid;
+        const gap = CoverGrid.GRID_GAP;
+        const pad = CoverGrid.GRID_PADDING;
         const availableWidth =
-            el.clientWidth - GRID_PADDING * 2;
+            el.clientWidth - pad * 2;
 
         return Math.max(
             1,
             Math.floor(
-                (availableWidth + GRID_GAP) /
-                    (GRID_ITEM_WIDTH + GRID_GAP),
+                (availableWidth + gap) /
+                (this.cardWidth + gap),
+            ),
+        );
+    }
+
+    /** Container width in pixels for the dropdown. */
+    private getContainerWidth(): number {
+        const el =
+            this.scrollContainer ?? this.virtualizer;
+
+        return el?.clientWidth ?? 800;
+    }
+
+    /**
+     * Derive the number of track-list columns from
+     * the grid container width.  Mirrors the logic
+     * in AlbumDropdown.columnCount.
+     */
+    private getDropdownColumnCount(): number {
+        const w = this.getContainerWidth();
+
+        if (w < 500) return 1;
+        if (w < 800) return 2;
+        if (w < 1200) return 3;
+
+        return 4;
+    }
+
+    /**
+     * Compute how many phantom grid rows are needed
+     * to fit all tracks given the current dropdown
+     * column count and card height.
+     *
+     * Derives the required height from the actual
+     * track content rather than per-column capacity,
+     * keeping the phantom space tight regardless of
+     * the number of columns.
+     */
+    private computePhantomRowCount(
+        trackCount: number,
+    ): number {
+        if (trackCount === 0) return 0;
+
+        const cols = this.getDropdownColumnCount();
+        const rowsPerCol = Math.ceil(
+            trackCount / cols,
+        );
+        const contentHeight =
+            rowsPerCol * CoverGrid.TRACK_ROW_HEIGHT +
+            CoverGrid.DROPDOWN_CHROME;
+        const gap = CoverGrid.GRID_GAP;
+        const rowStep = this.cardHeight + gap;
+
+        return Math.max(
+            1,
+            Math.ceil(
+                (contentHeight + gap) / rowStep,
             ),
         );
     }
@@ -778,7 +1006,7 @@ export class CoverGrid extends LitElement {
         if (
             this.itemsCacheAlbums === this.albums &&
             this.itemsCacheExpandedId ===
-                this.expandedAlbumId &&
+            this.expandedAlbumId &&
             this.itemsCacheColumns === columns &&
             this.itemsCachePhantomRows === phantomRows
         ) {
@@ -804,13 +1032,13 @@ export class CoverGrid extends LitElement {
             const insertAfter =
                 expandedIndex >= 0
                     ? Math.min(
-                          (Math.floor(
-                              expandedIndex / columns,
-                          ) +
-                              1) *
-                              columns,
-                          this.albums.length,
-                      )
+                        (Math.floor(
+                            expandedIndex / columns,
+                        ) +
+                            1) *
+                        columns,
+                        this.albums.length,
+                    )
                     : this.albums.length;
 
             const phantomCount = columns * phantomRows;
@@ -871,10 +1099,22 @@ export class CoverGrid extends LitElement {
      * ==================================================================== */
 
     /**
-     * Smooth-scroll the container so the expanded
-     * album's row is positioned at the top of the view.
+     * Scroll the container so the expanded album card
+     * and its dropdown are visible, using minimal
+     * movement:
+     *
+     * 1. If both fit in the viewport already, don't
+     *    scroll.
+     * 2. If the album card top is slightly above the
+     *    viewport, scroll up to reveal it.
+     * 3. If the dropdown bottom overflows below the
+     *    viewport, scroll down to align it with the
+     *    viewport bottom.
+     * 4. If showing the dropdown bottom would push
+     *    the album card above the viewport, pin the
+     *    album card top to the viewport top instead.
      */
-    private scrollToExpandedAlbum() {
+    private scrollToShowDropdown() {
         const container = this.scrollContainer;
 
         if (
@@ -890,24 +1130,60 @@ export class CoverGrid extends LitElement {
 
         if (expandedIndex < 0) return;
 
-        const {
-            GRID_ITEM_HEIGHT,
-            GRID_GAP,
-            GRID_PADDING,
-        } = CoverGrid;
+        const gap = CoverGrid.GRID_GAP;
+        const pad = CoverGrid.GRID_PADDING;
         const columns = this.getColumnCount();
-        const rowStep = GRID_ITEM_HEIGHT + GRID_GAP;
+        const rowStep = this.cardHeight + gap;
         const albumRow = Math.floor(
             expandedIndex / columns,
         );
 
-        container.scrollTo({
-            top:
-                GRID_PADDING +
-                albumRow * rowStep -
-                GRID_GAP / 2,
-            behavior: 'instant',
-        });
+        // Top of the album card (at the midpoint of
+        // the gap above the row) in scroll-content
+        // coordinates.
+        const albumTop =
+            pad + albumRow * rowStep - gap / 2;
+
+        // Bottom of the dropdown overlay.
+        const dropdownHeight =
+            this.phantomRowCount * this.cardHeight +
+            (this.phantomRowCount - 1) * gap;
+        const dropdownBottom =
+            this.dropdownTopPx + dropdownHeight;
+
+        const viewTop = container.scrollTop;
+        const viewHeight = container.clientHeight;
+
+        // The valid scroll range where both the album
+        // top and dropdown bottom are in view:
+        //   scrollTop <= albumTop  (card visible)
+        //   scrollTop >= dropdownBottom - viewHeight
+        const minScroll =
+            dropdownBottom - viewHeight;
+        const maxScroll = albumTop;
+
+        let newScrollTop: number;
+
+        if (minScroll <= maxScroll) {
+            // Both can fit — clamp to the valid
+            // range, only scrolling if needed.
+            newScrollTop = Math.max(
+                minScroll,
+                Math.min(viewTop, maxScroll),
+            );
+        } else {
+            // Combined height exceeds the viewport.
+            // Pin the album card top to the viewport
+            // top so it stays visible.
+            newScrollTop = albumTop;
+        }
+
+        if (newScrollTop !== viewTop) {
+            container.scrollTo({
+                top: newScrollTop,
+                behavior: 'instant',
+            });
+        }
     }
 
     private updateDropdownPosition() {
@@ -920,17 +1196,14 @@ export class CoverGrid extends LitElement {
 
         if (expandedIndex < 0) return;
 
-        const {
-            GRID_ITEM_HEIGHT,
-            GRID_GAP,
-            GRID_PADDING,
-        } = CoverGrid;
-        const rowStep = GRID_ITEM_HEIGHT + GRID_GAP;
+        const gap = CoverGrid.GRID_GAP;
+        const pad = CoverGrid.GRID_PADDING;
+        const rowStep = this.cardHeight + gap;
         const phantomStartRow =
             Math.floor(expandedIndex / columns) + 1;
 
         this.dropdownTopPx =
-            GRID_PADDING + phantomStartRow * rowStep;
+            pad + phantomStartRow * rowStep;
     }
 
     /* ====================================================================
@@ -1035,7 +1308,7 @@ export class CoverGrid extends LitElement {
             this.expandedTracks = [];
             this.selectedTracks = new Set();
             this.lastSelectedTrackIndex = null;
-            this.phantomRowCount = 1;
+            this.phantomRowCount = 0;
 
             return;
         }
@@ -1045,7 +1318,7 @@ export class CoverGrid extends LitElement {
         this.expandedTracks = [];
         this.selectedTracks = new Set();
         this.lastSelectedTrackIndex = null;
-        this.phantomRowCount = 1;
+        this.phantomRowCount = 0;
         this.loadingTracks = true;
 
         try {
@@ -1476,6 +1749,40 @@ export class CoverGrid extends LitElement {
         return name.charAt(0).toUpperCase();
     }
 
+    /**
+     * Pick the appropriate cover art URL based on the
+     * current card size and device pixel ratio.
+     */
+    private getCoverUrl(album: library.Album): string {
+        const needed =
+            this.imageSize * window.devicePixelRatio;
+
+        if (needed <= 100) {
+            return (
+                album.CoverArtSmall ||
+                album.CoverArtMedium ||
+                album.CoverArtPath
+            );
+        }
+
+        if (needed <= 200) {
+            return (
+                album.CoverArtMedium ||
+                album.CoverArtLarge ||
+                album.CoverArtPath
+            );
+        }
+
+        if (needed <= 400) {
+            return (
+                album.CoverArtLarge ||
+                album.CoverArtPath
+            );
+        }
+
+        return album.CoverArtPath;
+    }
+
     /* ====================================================================
      * Render: grid entry (virtualizer renderItem)
      * ==================================================================== */
@@ -1520,6 +1827,8 @@ export class CoverGrid extends LitElement {
             .filter(Boolean)
             .join(' ');
 
+        const imgSize = this.imageSize;
+
         return html`
             <div
                 class=${classes}
@@ -1532,10 +1841,10 @@ export class CoverGrid extends LitElement {
                     ${album.CoverArtPath
                 ? html`<img
                               class="cover-image"
-                              src="${album.CoverArtThumbnailPath || album.CoverArtPath}"
+                              src="${this.getCoverUrl(album)}"
                               alt="${album.Name} cover"
-                              width="160"
-                              height="160"
+                              width="${imgSize}"
+                              height="${imgSize}"
                               loading="lazy"
                               decoding="async"
                           />`
@@ -1550,15 +1859,18 @@ export class CoverGrid extends LitElement {
                         class="album-name"
                         title="${album.Name}"
                     >
-                        ${album.Name}
+                        ${album.Name}${album.Year
+                ? html`
+                              <span class="album-year">
+                                  (${album.Year})</span
+                              >`
+                : nothing}
                     </div>
                     <div
                         class="artist-name"
                         title="${album.ArtistName}"
                     >
-                        ${album.ArtistName}${album.Year
-                ? ` - ${album.Year}`
-                : ''}
+                        ${album.ArtistName}
                     </div>
                 </div>
             </div>
@@ -1605,7 +1917,8 @@ export class CoverGrid extends LitElement {
                     @visibilityChanged=${this.onVisibilityChanged}
                 ></lit-virtualizer>
 
-                ${this.expandedAlbumId !== null
+                ${this.expandedAlbumId !== null &&
+                this.expandedTracks.length > 0
                 ? html`
                           <album-dropdown
                               class="dropdown-overlay"
@@ -1614,6 +1927,9 @@ export class CoverGrid extends LitElement {
                               ?loading-tracks=${this.loadingTracks}
                               .selectedTracks=${this.selectedTracks}
                               .phantomRows=${this.phantomRowCount}
+                              .gridItemHeight=${this.cardHeight}
+                              .gridGap=${CoverGrid.GRID_GAP}
+                              .containerWidth=${this.getContainerWidth()}
                               @track-click=${this.onTrackClick}
                               @track-dblclick=${this.onTrackDblClick}
                               @track-contextmenu=${this.onTrackContextMenu}
@@ -1625,6 +1941,8 @@ export class CoverGrid extends LitElement {
             <wa-popup
                 id="context-menu"
                 placement="bottom-start"
+                flip
+                shift
                 .active=${this.contextMenuOpen}
             >
                 ${this.contextMenuOpen
@@ -1693,6 +2011,8 @@ export class CoverGrid extends LitElement {
             <wa-popup
                 id="playlist-submenu"
                 placement="right-start"
+                flip
+                shift
                 .active=${this.playlistSubmenuOpen}
             >
                 ${this.playlistSubmenuOpen

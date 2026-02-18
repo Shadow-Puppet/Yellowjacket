@@ -5,7 +5,9 @@ export namespace library {
 	    Name: string;
 	    ArtistName: string;
 	    CoverArtPath: string;
-	    CoverArtThumbnailPath: string;
+	    CoverArtSmall: string;
+	    CoverArtMedium: string;
+	    CoverArtLarge: string;
 	    Year: number;
 	
 	    static createFrom(source: any = {}) {
@@ -18,7 +20,9 @@ export namespace library {
 	        this.Name = source["Name"];
 	        this.ArtistName = source["ArtistName"];
 	        this.CoverArtPath = source["CoverArtPath"];
-	        this.CoverArtThumbnailPath = source["CoverArtThumbnailPath"];
+	        this.CoverArtSmall = source["CoverArtSmall"];
+	        this.CoverArtMedium = source["CoverArtMedium"];
+	        this.CoverArtLarge = source["CoverArtLarge"];
 	        this.Year = source["Year"];
 	    }
 	}
@@ -71,7 +75,9 @@ export namespace playlist {
 	    Artist: string;
 	    Album: string;
 	    CoverArtPath: string;
-	    CoverArtThumbnailPath: string;
+	    CoverArtSmall: string;
+	    CoverArtMedium: string;
+	    CoverArtLarge: string;
 	    Duration: string;
 	
 	    static createFrom(source: any = {}) {
@@ -87,7 +93,9 @@ export namespace playlist {
 	        this.Artist = source["Artist"];
 	        this.Album = source["Album"];
 	        this.CoverArtPath = source["CoverArtPath"];
-	        this.CoverArtThumbnailPath = source["CoverArtThumbnailPath"];
+	        this.CoverArtSmall = source["CoverArtSmall"];
+	        this.CoverArtMedium = source["CoverArtMedium"];
+	        this.CoverArtLarge = source["CoverArtLarge"];
 	        this.Duration = source["Duration"];
 	    }
 	}

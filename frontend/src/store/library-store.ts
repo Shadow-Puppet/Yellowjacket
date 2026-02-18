@@ -7,12 +7,26 @@ type ViewName = 'tracks' | 'albums';
 
 type Subscriber = () => void;
 
+/** Minimum album card width in CSS pixels. */
+const COVER_SIZE_MIN = 100;
+
+/** Maximum album card width in CSS pixels. */
+const COVER_SIZE_MAX = 350;
+
+/** Default album card width in CSS pixels. */
+const COVER_SIZE_DEFAULT = 176;
+
+/** localStorage key for persisted cover size. */
+const COVER_SIZE_KEY = 'cover-grid-size';
+
 class LibraryStore {
     private tracks: library.Track[] | null = null;
     private albums: library.Album[] | null = null;
 
     private tracksLoading = false;
     private albumsLoading = false;
+
+    private coverSizeValue: number = COVER_SIZE_DEFAULT;
 
     private scrollPositions: Record<ViewName, number> = {
         tracks: 0,
@@ -25,6 +39,8 @@ class LibraryStore {
         EventsOn(Events.LibraryScanComplete, () => {
             this.invalidate();
         });
+
+        this.loadCoverSize();
     }
 
     // ===================================================================
@@ -109,6 +125,56 @@ class LibraryStore {
 
     setScrollPosition(view: ViewName, offset: number): void {
         this.scrollPositions[view] = offset;
+    }
+
+    // ===================================================================
+    // COVER SIZE
+    // ===================================================================
+
+    getCoverSize(): number {
+        return this.coverSizeValue;
+    }
+
+    setCoverSize(size: number): void {
+        const clamped = Math.round(
+            Math.max(COVER_SIZE_MIN, Math.min(COVER_SIZE_MAX, size)),
+        );
+
+        if (clamped === this.coverSizeValue) return;
+
+        this.coverSizeValue = clamped;
+        this.saveCoverSize();
+        this.notify();
+    }
+
+    private loadCoverSize(): void {
+        try {
+            const stored = localStorage.getItem(COVER_SIZE_KEY);
+
+            if (stored !== null) {
+                const parsed = parseInt(stored, 10);
+
+                if (!Number.isNaN(parsed)) {
+                    this.coverSizeValue = Math.max(
+                        COVER_SIZE_MIN,
+                        Math.min(COVER_SIZE_MAX, parsed),
+                    );
+                }
+            }
+        } catch {
+            // localStorage may be unavailable.
+        }
+    }
+
+    private saveCoverSize(): void {
+        try {
+            localStorage.setItem(
+                COVER_SIZE_KEY,
+                String(this.coverSizeValue),
+            );
+        } catch {
+            // localStorage may be unavailable.
+        }
     }
 
     // ===================================================================

@@ -20,6 +20,7 @@ import (
 	"yellowjacket/backend/database"
 	"yellowjacket/backend/database/sql/sqlcgen"
 	"yellowjacket/backend/events"
+	"yellowjacket/backend/library"
 	"yellowjacket/backend/metadata"
 )
 
@@ -598,12 +599,14 @@ func (p *Player) GetCurrentTrackInfo() (map[string]interface{}, error) {
 	fileName := filepath.Base(p.currentFile.Name())
 	filePath := p.currentFile.Name()
 
-	// Default values
+	// Default values.
 	title := fileName
 	artist := ""
 	album := ""
 	coverArt := ""
-	coverArtThumbnail := ""
+	coverArtSmall := ""
+	coverArtMedium := ""
+	coverArtLarge := ""
 
 	// Try to get metadata from database
 	if p.db != nil {
@@ -619,11 +622,12 @@ func (p *Player) GetCurrentTrackInfo() (map[string]interface{}, error) {
 			if meta.CoverArtPath != "" {
 				base := filepath.Base(meta.CoverArtPath)
 				coverArt = "/covers/" + base
-
-				// Derive thumbnail filename from original: hash.ext -> hash_thumb.jpg
-				ext := filepath.Ext(base)
-				name := base[:len(base)-len(ext)]
-				coverArtThumbnail = "/covers/" + name + "_thumb.jpg"
+				coverArtSmall = "/covers/" +
+					library.SizedFilename(base, "_sm")
+				coverArtMedium = "/covers/" +
+					library.SizedFilename(base, "_md")
+				coverArtLarge = "/covers/" +
+					library.SizedFilename(base, "_lg")
 			}
 		} else {
 			p.logger.Debug(
@@ -634,14 +638,16 @@ func (p *Player) GetCurrentTrackInfo() (map[string]interface{}, error) {
 	}
 
 	return map[string]interface{}{
-		"fileName":          fileName,
-		"filePath":          filePath,
-		"state":             string(p.state),
-		"title":             title,
-		"artist":            artist,
-		"album":             album,
-		"coverArt":          coverArt,
-		"coverArtThumbnail": coverArtThumbnail,
+		"fileName":       fileName,
+		"filePath":       filePath,
+		"state":          string(p.state),
+		"title":          title,
+		"artist":         artist,
+		"album":          album,
+		"coverArt":       coverArt,
+		"coverArtSmall":  coverArtSmall,
+		"coverArtMedium": coverArtMedium,
+		"coverArtLarge":  coverArtLarge,
 	}, nil
 }
 

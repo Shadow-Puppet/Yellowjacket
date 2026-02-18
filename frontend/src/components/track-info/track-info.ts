@@ -24,7 +24,7 @@ import { formatMilliseconds } from '@utils/time';
  *   trackTitle="Song Name"
  *   artist="Artist Name"
  *   coverArt="/covers/abc.jpg"
- *   coverArtThumbnail="/covers/abc_thumb.jpg"
+ *   coverArtSmall="/covers/abc_sm.jpg"
  * ></track-info>
  * ```
  */
@@ -34,7 +34,7 @@ export class TrackInfo extends LitElement {
     @property() artist?: string;
     @property() album?: string;
     @property() coverArt?: string;
-    @property() coverArtThumbnail?: string;
+    @property() coverArtSmall?: string;
     @property() duration?: string;
     @property() filePath?: string;
 
@@ -109,7 +109,7 @@ export class TrackInfo extends LitElement {
 
     override render() {
         const showCover =
-            this.coverArt !== undefined || this.coverArtThumbnail !== undefined;
+            this.coverArt !== undefined || this.coverArtSmall !== undefined;
         const displayTitle = this.getDisplayTitle();
         const secondaryParts = this.getSecondaryText();
 
@@ -134,7 +134,7 @@ export class TrackInfo extends LitElement {
     }
 
     private renderCoverArt() {
-        const src = this.coverArtThumbnail ?? this.coverArt;
+        const src = this.coverArtSmall ?? this.coverArt;
 
         if (!src) {
             return html`
