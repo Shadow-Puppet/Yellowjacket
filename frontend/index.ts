@@ -11,6 +11,12 @@ import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import { setBasePath } from '@awesome.me/webawesome/dist/webawesome.js';
 import { libraryStore } from '@store/library-store';
 import { playlistStore } from '@store/playlist-store';
+import { queueStore } from '@store/queue-store';
+import {
+    hasTrackPayload,
+    getDragPayload,
+} from '@utils/drag-controller';
+import type { DragActiveDetail } from '@utils/drag-controller';
 
 setBasePath('/dist/webawesome');
 
@@ -62,4 +68,46 @@ if (queueButton && queuePanel) {
         }
     });
 
+    // ---------------------------------------------------------------
+    // Queue button as drop target (when queue panel is closed)
+    // ---------------------------------------------------------------
+
+    queueButton.addEventListener('dragover', (e: DragEvent) => {
+        if (!hasTrackPayload(e)) return;
+
+        e.preventDefault();
+
+        if (e.dataTransfer) {
+            e.dataTransfer.dropEffect = 'copy';
+        }
+
+        queueButton.classList.add('drag-over');
+    });
+
+    queueButton.addEventListener('dragleave', () => {
+        queueButton.classList.remove('drag-over');
+    });
+
+    queueButton.addEventListener('drop', (e: DragEvent) => {
+        e.preventDefault();
+        queueButton.classList.remove('drag-over');
+
+        const payload = getDragPayload(e);
+
+        if (!payload || payload.filePaths.length === 0) return;
+
+        if (payload.source === 'queue') return;
+
+        queueStore.addTracksToQueue(payload.filePaths);
+    });
+
+    // Show/hide drag-over styling globally.
+    document.addEventListener(
+        'yj-drag-active',
+        ((e: CustomEvent<DragActiveDetail>) => {
+            if (!e.detail.active) {
+                queueButton.classList.remove('drag-over');
+            }
+        }) as EventListener,
+    );
 }

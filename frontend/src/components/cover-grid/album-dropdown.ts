@@ -26,6 +26,13 @@ export interface TrackContextMenuDetail {
     clientY: number;
 }
 
+/** Detail payload for the track-dragstart custom event. */
+export interface TrackDragStartDetail {
+    track: library.Track;
+    index: number;
+    dataTransfer: DataTransfer | null;
+}
+
 /**
  * Self-contained dropdown that renders an album's track list.
  *
@@ -236,6 +243,38 @@ export class AlbumDropdown extends LitElement {
         );
     }
 
+    private onTrackDragStart(
+        e: DragEvent,
+        track: library.Track,
+        index: number,
+    ) {
+        // Delegate to the parent cover-grid which
+        // owns the selection state and drag-image.
+        this.dispatchEvent(
+            new CustomEvent<TrackDragStartDetail>(
+                'track-dragstart',
+                {
+                    bubbles: true,
+                    composed: true,
+                    detail: {
+                        track,
+                        index,
+                        dataTransfer: e.dataTransfer,
+                    },
+                },
+            ),
+        );
+    }
+
+    private onTrackDragEnd() {
+        this.dispatchEvent(
+            new CustomEvent('track-dragend', {
+                bubbles: true,
+                composed: true,
+            }),
+        );
+    }
+
     private onTrackContextMenu(
         e: MouseEvent,
         track: library.Track,
@@ -288,6 +327,7 @@ export class AlbumDropdown extends LitElement {
         return html`
             <div
                 class=${classes}
+                draggable=${selected ? 'true' : 'false'}
                 @click=${(e: MouseEvent) =>
                     this.onTrackClick(e, track, index)}
                 @dblclick=${(e: MouseEvent) =>
@@ -298,6 +338,13 @@ export class AlbumDropdown extends LitElement {
                     )}
                 @contextmenu=${(e: MouseEvent) =>
                     this.onTrackContextMenu(e, track)}
+                @dragstart=${(e: DragEvent) =>
+                    this.onTrackDragStart(
+                        e,
+                        track,
+                        index,
+                    )}
+                @dragend=${() => this.onTrackDragEnd()}
             >
                 <span class="track-number">
                     ${displayNumber}

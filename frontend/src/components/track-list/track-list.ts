@@ -1,7 +1,7 @@
 import { library } from '@go/models';
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state, query } from 'lit/decorators.js';
-import { EventsOn, EventsOff } from '@runtime/runtime';
+import { EventsOn } from '@runtime/runtime';
 import { formatMilliseconds } from '@utils/time';
 import { SelectionController } from '@utils/selection-controller';
 import type { SelectionHost } from '@utils/selection-controller';
@@ -9,6 +9,14 @@ import { PlayerController } from '@store/controllers/player-controller';
 import { queueStore } from '@store/queue-store';
 import { LibraryController } from '@store/controllers/library-controller';
 import { Events } from '../../events';
+import {
+    setDragPayload,
+    emitDragActive,
+} from '@utils/drag-controller';
+import {
+    createDragImage,
+    removeDragImage,
+} from '@utils/drag-image';
 import '@lit-labs/virtualizer';
 import type {
     LitVirtualizer,
@@ -31,6 +39,7 @@ export class TrackList extends LitElement implements SelectionHost {
     private player = new PlayerController(this);
     private libraryCtrl = new LibraryController(this);
     private selection = new SelectionController(this);
+    private cancelScanComplete?: () => void;
 
     @state()
     private tracks: library.Track[] = [];
@@ -67,6 +76,8 @@ export class TrackList extends LitElement implements SelectionHost {
             this.selection.clear();
         }
     };
+
+    private dragImageEl: HTMLElement | null = null;
 
     @state()
     private columnWidths: number[] = [];
@@ -389,7 +400,7 @@ export class TrackList extends LitElement implements SelectionHost {
     override connectedCallback() {
         super.connectedCallback();
         this.loadTracks();
-        EventsOn(
+        this.cancelScanComplete = EventsOn(
             Events.LibraryScanComplete,
             () => this.loadTracks(),
         );
@@ -413,7 +424,7 @@ export class TrackList extends LitElement implements SelectionHost {
         );
         this.hasRestoredScroll = false;
         super.disconnectedCallback();
-        EventsOff(Events.LibraryScanComplete);
+        this.cancelScanComplete?.();
         document.removeEventListener('click', this.closeHandler);
         document.removeEventListener('contextmenu', this.closeHandler);
         document.removeEventListener('click', this.clearSelectionHandler);
@@ -570,6 +581,54 @@ export class TrackList extends LitElement implements SelectionHost {
         });
     }
 
+    // =================================================================
+    // Drag source
+    // =================================================================
+
+    private onTrackDragStart = (
+        e: DragEvent,
+        track: library.Track,
+    ) => {
+        // Gather file paths: all selected if this track is selected,
+        // otherwise just the dragged track.
+        let filePaths: string[];
+
+        if (this.selection.isSelected(track.FilePath)) {
+            filePaths =
+                this.selection.getSelectedKeysOrdered();
+        } else {
+            filePaths = [track.FilePath];
+        }
+
+        if (filePaths.length === 0) return;
+
+        setDragPayload(e, {
+            filePaths,
+            source: 'track-list',
+        });
+
+        // Custom drag image.
+        this.dragImageEl = createDragImage(
+            filePaths.length,
+        );
+        e.dataTransfer?.setDragImage(
+            this.dragImageEl,
+            0,
+            0,
+        );
+
+        emitDragActive(true);
+    };
+
+    private onTrackDragEnd = () => {
+        if (this.dragImageEl) {
+            removeDragImage(this.dragImageEl);
+            this.dragImageEl = null;
+        }
+
+        emitDragActive(false);
+    };
+
     private onContextMenuAction(action: string) {
         const filePaths = this.selection.getSelectedKeysOrdered();
 
@@ -671,11 +730,15 @@ export class TrackList extends LitElement implements SelectionHost {
         return html`
       <div
         class=${classes}
+        draggable=${selected ? 'true' : 'false'}
         @click=${(e: MouseEvent) =>
                 this.onTrackRowClick(e, track, index)}
         @dblclick=${() => this.onTrackRowDblClick(track)}
         @contextmenu=${(e: MouseEvent) =>
                 this.onTrackContextMenu(e, track)}
+        @dragstart=${(e: DragEvent) =>
+                this.onTrackDragStart(e, track)}
+        @dragend=${this.onTrackDragEnd}
       >
         <div class="track-name">${track.TrackName}</div>
         <div class="artist-name">${track.ArtistName}</div>

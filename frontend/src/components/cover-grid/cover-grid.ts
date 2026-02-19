@@ -1,6 +1,6 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state, query } from 'lit/decorators.js';
-import { EventsOn, EventsOff } from '@runtime/runtime';
+import { EventsOn } from '@runtime/runtime';
 import '@lit-labs/virtualizer';
 import type {
     LitVirtualizer,
@@ -22,7 +22,18 @@ import type {
     TrackClickDetail,
     TrackDblClickDetail,
     TrackContextMenuDetail,
+    TrackDragStartDetail,
 } from './album-dropdown.js';
+import {
+    DRAG_MIME,
+    setDragPayload,
+    emitDragActive,
+} from '@utils/drag-controller';
+import type { DragPayload } from '@utils/drag-controller';
+import {
+    createDragImage,
+    removeDragImage,
+} from '@utils/drag-image';
 
 /**
  * Discriminated context menu target so we know whether the
@@ -51,6 +62,7 @@ const ZOOM_STEP = 16;
 @customElement('cover-grid')
 export class CoverGrid extends LitElement {
     private libraryCtrl = new LibraryController(this);
+    private cancelScanComplete?: () => void;
 
     // Fixed grid spacing constants.
     private static readonly GRID_GAP = 8;
@@ -129,6 +141,18 @@ export class CoverGrid extends LitElement {
             justify: 'center',
         });
     }
+
+    private dragImageEl: HTMLElement | null = null;
+
+    /**
+     * Pre-resolved file paths for selected albums, keyed by album ID.
+     * Populated asynchronously when albums are selected so that
+     * dragstart can read them synchronously.
+     */
+    private albumFilePathCache = new Map<
+        number,
+        string[]
+    >();
 
     /** Wheel event handler ref for manual add/remove. */
     private wheelHandler = (e: WheelEvent) => {
@@ -450,7 +474,7 @@ export class CoverGrid extends LitElement {
     override connectedCallback() {
         super.connectedCallback();
         this.loadAlbums();
-        EventsOn(
+        this.cancelScanComplete = EventsOn(
             Events.LibraryScanComplete,
             () => this.loadAlbums(),
         );
@@ -474,7 +498,7 @@ export class CoverGrid extends LitElement {
 
     override disconnectedCallback() {
         super.disconnectedCallback();
-        EventsOff(Events.LibraryScanComplete);
+        this.cancelScanComplete?.();
         document.removeEventListener(
             'click',
             this.closeHandler,
@@ -1834,6 +1858,71 @@ export class CoverGrid extends LitElement {
         }
     }
 
+    /**
+     * Pre-resolve file paths for all selected albums so
+     * that dragstart can read them synchronously.  Called
+     * fire-and-forget whenever the album selection changes.
+     */
+    private async warmAlbumFilePathCache(): Promise<void> {
+        const selected = this.albums.filter((a) =>
+            this.selectedAlbums.has(a.ID),
+        );
+
+        // Prune stale entries.
+        for (const id of this.albumFilePathCache.keys()) {
+            if (!this.selectedAlbums.has(id)) {
+                this.albumFilePathCache.delete(id);
+            }
+        }
+
+        // Fetch missing entries.
+        for (const album of selected) {
+            if (this.albumFilePathCache.has(album.ID)) {
+                continue;
+            }
+
+            try {
+                const tracks = await GetAlbumTracks(
+                    album.ID,
+                );
+                // Only store if still selected.
+                if (this.selectedAlbums.has(album.ID)) {
+                    this.albumFilePathCache.set(
+                        album.ID,
+                        tracks.map((t) => t.FilePath),
+                    );
+                }
+            } catch {
+                // Silently skip — drag will just not
+                // include this album's paths.
+            }
+        }
+    }
+
+    /**
+     * Read cached file paths for the current album
+     * selection.  Returns an empty array if any albums
+     * haven't been cached yet.
+     */
+    private getCachedSelectedAlbumFilePaths(): string[] {
+        const result: string[] = [];
+
+        for (const album of this.albums) {
+            if (!this.selectedAlbums.has(album.ID)) {
+                continue;
+            }
+
+            const paths =
+                this.albumFilePathCache.get(album.ID);
+
+            if (paths) {
+                result.push(...paths);
+            }
+        }
+
+        return result;
+    }
+
     /* ====================================================================
      * Track selection helpers
      * ==================================================================== */
@@ -1966,6 +2055,7 @@ export class CoverGrid extends LitElement {
             }
 
             this.selectedAlbums = next;
+            void this.warmAlbumFilePathCache();
         } else if (isCtrl) {
             const next = new Set(this.selectedAlbums);
 
@@ -1977,6 +2067,7 @@ export class CoverGrid extends LitElement {
 
             this.selectedAlbums = next;
             this.lastSelectedAlbumIndex = index;
+            void this.warmAlbumFilePathCache();
         } else {
             void this.toggleDropdown(album);
             this.lastSelectedAlbumIndex = index;
@@ -2028,6 +2119,7 @@ export class CoverGrid extends LitElement {
             this.selectedAlbums = new Set([
                 hit.album.ID,
             ]);
+            void this.warmAlbumFilePathCache();
         }
 
         this.contextMenuTarget = { kind: 'album' };
@@ -2145,6 +2237,120 @@ export class CoverGrid extends LitElement {
 
         this.contextMenuTarget = { kind: 'track' };
         this.openContextMenuAt(clientX, clientY);
+    };
+
+    /* ====================================================================
+     * Drag source (dropdown tracks)
+     * ==================================================================== */
+
+    private onTrackDragStart = (
+        e: CustomEvent<TrackDragStartDetail>,
+    ) => {
+        const { track, dataTransfer } = e.detail;
+
+        let filePaths: string[];
+
+        if (this.selectedTracks.has(track.FilePath)) {
+            filePaths =
+                this.getSelectedTrackFilePaths();
+        } else {
+            filePaths = [track.FilePath];
+        }
+
+        if (filePaths.length === 0) return;
+
+        if (dataTransfer) {
+            const payload: DragPayload = {
+                filePaths,
+                source: 'cover-grid',
+            };
+
+            dataTransfer.effectAllowed = 'copy';
+            dataTransfer.setData(
+                DRAG_MIME,
+                JSON.stringify(payload),
+            );
+
+            this.dragImageEl = createDragImage(
+                filePaths.length,
+            );
+            dataTransfer.setDragImage(
+                this.dragImageEl,
+                0,
+                0,
+            );
+        }
+
+        emitDragActive(true);
+    };
+
+    private onTrackDragEnd = () => {
+        if (this.dragImageEl) {
+            removeDragImage(this.dragImageEl);
+            this.dragImageEl = null;
+        }
+
+        emitDragActive(false);
+    };
+
+    /* ====================================================================
+     * Drag source (album cards)
+     * ==================================================================== */
+
+    private onAlbumDragStart = (e: DragEvent) => {
+        const hit = this.resolveAlbumFromEvent(e);
+
+        if (!hit) return;
+
+        // Read file paths synchronously from the
+        // pre-warmed cache.  The cache is populated
+        // asynchronously whenever the album selection
+        // changes, so by the time the user drags, the
+        // data is already available.
+        let filePaths: string[];
+
+        if (this.selectedAlbums.has(hit.album.ID)) {
+            filePaths =
+                this.getCachedSelectedAlbumFilePaths();
+        } else {
+            // Single unselected album — check cache.
+            filePaths =
+                this.albumFilePathCache.get(
+                    hit.album.ID,
+                ) ?? [];
+        }
+
+        if (filePaths.length === 0) {
+            // Cache miss — cancel the drag.
+            e.preventDefault();
+
+            return;
+        }
+
+        setDragPayload(e, {
+            filePaths,
+            source: 'cover-grid',
+        });
+
+        this.dragImageEl = createDragImage(
+            filePaths.length,
+        );
+        e.dataTransfer?.setDragImage(
+            this.dragImageEl,
+            0,
+            0,
+        );
+
+        emitDragActive(true);
+    };
+
+    private onAlbumDragEnd = () => {
+        if (this.dragImageEl) {
+            removeDragImage(this.dragImageEl);
+            this.dragImageEl = null;
+        }
+
+        emitDragActive(false);
     };
 
     /* ====================================================================
@@ -2395,6 +2601,9 @@ export class CoverGrid extends LitElement {
                 role="button"
                 data-index=${index}
                 aria-label="${album.Name} by ${album.ArtistName}"
+                draggable=${selected ? 'true' : 'false'}
+                @dragstart=${this.onAlbumDragStart}
+                @dragend=${this.onAlbumDragEnd}
             >
                 <div class="cover-container">
                     ${album.CoverArtPath
@@ -2519,6 +2728,8 @@ export class CoverGrid extends LitElement {
                 @track-click=${this.onTrackClick}
                 @track-dblclick=${this.onTrackDblClick}
                 @track-contextmenu=${this.onTrackContextMenu}
+                @track-dragstart=${this.onTrackDragStart}
+                @track-dragend=${this.onTrackDragEnd}
             ></album-dropdown>
 
             ${this.getAfterEntries().length > 0

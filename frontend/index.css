@@ -116,6 +116,13 @@ body div.sidebar {
     #queue-button:hover {
         color: #ffd43b;
     }
+
+    #queue-button.drag-over {
+        color: #ffd43b;
+        outline: 2px dashed #ffd43b;
+        outline-offset: -2px;
+        border-radius: 4px;
+    }
 }
 
 .content-area {

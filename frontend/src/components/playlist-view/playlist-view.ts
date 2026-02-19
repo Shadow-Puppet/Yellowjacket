@@ -1,6 +1,6 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state, query } from 'lit/decorators.js';
-import { EventsOn, EventsOff } from '@runtime/runtime';
+import { EventsOn } from '@runtime/runtime';
 
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
@@ -8,6 +8,7 @@ import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 
 import {
     CreatePlaylist,
+    AddTracksToPlaylist,
     RemoveTracksFromPlaylist,
 } from '@go/playlist/Service';
 import { Events } from '../../events';
@@ -20,6 +21,16 @@ import '@components/playlist-picker/playlist-picker.js';
 import type { PlaylistPicker } from '@components/playlist-picker/playlist-picker.js';
 import { SelectionController } from '@utils/selection-controller';
 import type { SelectionHost } from '@utils/selection-controller';
+import {
+    hasTrackPayload,
+    getDragPayload,
+    setDragPayload,
+    emitDragActive,
+} from '@utils/drag-controller';
+import {
+    createDragImage,
+    removeDragImage,
+} from '@utils/drag-image';
 
 const SCROLL_DEBOUNCE_MS = 100;
 
@@ -37,6 +48,7 @@ export class PlaylistView
     private player = new PlayerController(this);
     private playlistCtrl = new PlaylistController(this);
     private selection = new SelectionController(this);
+    private cancelScanComplete?: () => void;
     private scrollDebounceTimer: ReturnType<
         typeof setTimeout
     > | null = null;
@@ -53,6 +65,11 @@ export class PlaylistView
     @state() private newPlaylistName = '';
     @state() private contextMenuOpen = false;
     @state() private playlistSubmenuOpen = false;
+
+    /** Index of the playlist currently hovered during a drag. */
+    @state() private dragOverPlaylistIndex = -1;
+
+    private dragImageEl: HTMLElement | null = null;
 
     @query('#context-menu')
     private contextMenuPopup!: HTMLElement;
@@ -105,6 +122,10 @@ export class PlaylistView
             this.entries[this.activePlaylistIndex];
 
         return entry?.tracks.length ?? 0;
+    }
+
+    onSelectionChanged(): void {
+        this.requestUpdate();
     }
 
     /**
@@ -283,6 +304,12 @@ export class PlaylistView
             background-color: rgba(255, 255, 255, 0.05);
         }
 
+        .playlist-item.drag-over > .playlist-header {
+            background-color: rgba(255, 212, 59, 0.15);
+            outline: 1px dashed #ffd43b;
+            outline-offset: -1px;
+        }
+
         .chevron {
             font-size: 14px;
             color: #888;
@@ -448,7 +475,7 @@ export class PlaylistView
     override connectedCallback() {
         super.connectedCallback();
         this.loadPlaylists();
-        EventsOn(
+        this.cancelScanComplete = EventsOn(
             Events.LibraryScanComplete,
             () => this.loadPlaylists(),
         );
@@ -468,7 +495,7 @@ export class PlaylistView
 
     override disconnectedCallback() {
         super.disconnectedCallback();
-        EventsOff(Events.LibraryScanComplete);
+        this.cancelScanComplete?.();
 
         if (this.scrollDebounceTimer !== null) {
             clearTimeout(this.scrollDebounceTimer);
@@ -704,6 +731,141 @@ export class PlaylistView
             );
         }
     }
+
+    // =================================================================
+    // Drag source (playlist tracks → queue or other playlist)
+    // =================================================================
+
+    private onTrackDragStart = (
+        e: DragEvent,
+        track: playlist.Track,
+        trackIndex: number,
+        playlistIndex: number,
+    ) => {
+        this.ensureSelectionScope(playlistIndex);
+
+        const entry = this.entries[playlistIndex];
+
+        if (!entry) return;
+
+        let filePaths: string[];
+
+        if (
+            this.activePlaylistIndex ===
+                playlistIndex &&
+            this.selection.isSelected(
+                String(trackIndex),
+            )
+        ) {
+            filePaths = this.getSelectedFilePaths();
+        } else {
+            filePaths = [track.FilePath];
+        }
+
+        if (filePaths.length === 0) return;
+
+        setDragPayload(e, {
+            filePaths,
+            source: 'playlist',
+            sourcePlaylistId: entry.summary.ID,
+        });
+
+        this.dragImageEl = createDragImage(
+            filePaths.length,
+        );
+        e.dataTransfer?.setDragImage(
+            this.dragImageEl,
+            0,
+            0,
+        );
+
+        emitDragActive(true);
+    };
+
+    private onTrackDragEnd = () => {
+        if (this.dragImageEl) {
+            removeDragImage(this.dragImageEl);
+            this.dragImageEl = null;
+        }
+
+        emitDragActive(false);
+    };
+
+    // =================================================================
+    // Drop target (tracks dropped onto a specific playlist)
+    // =================================================================
+
+    private onPlaylistDragOver = (
+        e: DragEvent,
+        index: number,
+    ) => {
+        if (!hasTrackPayload(e)) return;
+
+        e.preventDefault();
+
+        if (e.dataTransfer) {
+            e.dataTransfer.dropEffect = 'copy';
+        }
+
+        if (this.dragOverPlaylistIndex !== index) {
+            this.dragOverPlaylistIndex = index;
+        }
+    };
+
+    private onPlaylistDragLeave = (
+        e: DragEvent,
+        index: number,
+    ) => {
+        // Only clear if we're actually leaving this
+        // playlist item (not entering a child).
+        const related = e.relatedTarget as Node | null;
+        const items =
+            this.shadowRoot?.querySelectorAll(
+                '.playlist-item',
+            );
+        const item = items?.[index];
+
+        if (item && !item.contains(related)) {
+            if (this.dragOverPlaylistIndex === index) {
+                this.dragOverPlaylistIndex = -1;
+            }
+        }
+    };
+
+    private onPlaylistDrop = async (
+        e: DragEvent,
+        index: number,
+    ) => {
+        e.preventDefault();
+        this.dragOverPlaylistIndex = -1;
+
+        const payload = getDragPayload(e);
+
+        if (
+            !payload ||
+            payload.filePaths.length === 0
+        ) {
+            return;
+        }
+
+        const entry = this.entries[index];
+
+        if (!entry) return;
+
+        try {
+            await AddTracksToPlaylist(
+                entry.summary.ID,
+                payload.filePaths,
+            );
+            this.playlistCtrl.invalidate();
+            await this.loadPlaylists();
+        } catch (err) {
+            console.error(
+                'Failed to add tracks to playlist:',
+                err,
+            );
+        }
+    };
 
     private closeContextMenu(clearSelection = false) {
         if (!this.contextMenuOpen) return;
@@ -1019,9 +1181,21 @@ export class PlaylistView
     ) {
         const trackCount = entry.tracks.length;
         const countLabel = `${trackCount} track${trackCount !== 1 ? 's' : ''}`;
+        const isDragOver =
+            this.dragOverPlaylistIndex === index;
 
         return html`
-            <li class="playlist-item">
+            <li
+                class="playlist-item ${isDragOver
+                    ? 'drag-over'
+                    : ''}"
+                @dragover=${(e: DragEvent) =>
+                    this.onPlaylistDragOver(e, index)}
+                @dragleave=${(e: DragEvent) =>
+                    this.onPlaylistDragLeave(e, index)}
+                @drop=${(e: DragEvent) =>
+                    this.onPlaylistDrop(e, index)}
+            >
                 <div
                     class="playlist-header"
                     @click=${() =>
@@ -1106,6 +1280,9 @@ export class PlaylistView
                         return html`
                             <div
                                 class=${classes}
+                                draggable=${selected
+                                    ? 'true'
+                                    : 'false'}
                                 @click=${(
                                     e: MouseEvent,
                                 ) =>
@@ -1129,6 +1306,17 @@ export class PlaylistView
                                         trackIndex,
                                         playlistIndex,
                                     )}
+                                @dragstart=${(
+                                    e: DragEvent,
+                                ) =>
+                                    this.onTrackDragStart(
+                                        e,
+                                        track,
+                                        trackIndex,
+                                        playlistIndex,
+                                    )}
+                                @dragend=${this
+                                    .onTrackDragEnd}
                             >
                                 <track-info
                                     .trackTitle=${track.Title}

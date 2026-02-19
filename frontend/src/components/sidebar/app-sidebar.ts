@@ -1,6 +1,8 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 
+import type { DragActiveDetail } from '@utils/drag-controller';
+
 type View = 'home' | 'libraries' | 'playlists' | 'artists' | 'albums' | 'tracks';
 
 interface NavItem {
@@ -69,13 +71,34 @@ export class AppSidebar extends LitElement {
             overflow: hidden;
             text-overflow: ellipsis;
         }
+
+        li.drag-hover {
+            background-color: rgba(255, 212, 59, 0.15);
+            outline: 1px dashed #ffd43b;
+            outline-offset: -1px;
+        }
     `;
+
+    /** Delay in ms before a drag-hover triggers navigation. */
+    private static readonly HOVER_NAV_DELAY = 600;
 
     @state()
     private activeView: View = 'tracks';
 
     @state()
     private isDragging = false;
+
+    /** Whether a track drag is in progress somewhere in the app. */
+    @state()
+    private trackDragActive = false;
+
+    /** The nav item ID being hovered during a drag. */
+    @state()
+    private dragHoverView: View | null = null;
+
+    private dragHoverTimer: ReturnType<
+        typeof setTimeout
+    > | null = null;
 
     private navItems: NavItem[] = [
         { id: 'home', label: 'Home' },
@@ -89,14 +112,35 @@ export class AppSidebar extends LitElement {
     override connectedCallback() {
         super.connectedCallback();
         this.style.width = `${DEFAULT_WIDTH}px`;
-        document.addEventListener('mousemove', this.handleMouseMove);
-        document.addEventListener('mouseup', this.handleMouseUp);
+        document.addEventListener(
+            'mousemove',
+            this.handleMouseMove,
+        );
+        document.addEventListener(
+            'mouseup',
+            this.handleMouseUp,
+        );
+        document.addEventListener(
+            'yj-drag-active',
+            this.onDragActive as EventListener,
+        );
     }
 
     override disconnectedCallback() {
         super.disconnectedCallback();
-        document.removeEventListener('mousemove', this.handleMouseMove);
-        document.removeEventListener('mouseup', this.handleMouseUp);
+        document.removeEventListener(
+            'mousemove',
+            this.handleMouseMove,
+        );
+        document.removeEventListener(
+            'mouseup',
+            this.handleMouseUp,
+        );
+        document.removeEventListener(
+            'yj-drag-active',
+            this.onDragActive as EventListener,
+        );
+        this.clearDragHoverTimer();
     }
 
     override render() {
@@ -106,14 +150,39 @@ export class AppSidebar extends LitElement {
                 @mousedown=${this.handleMouseDown}
             ></div>
             <ul>
-                ${this.navItems.map(item => html`
-                    <li
-                        class="${this.activeView === item.id ? 'active' : ''}"
-                        @click=${() => this.navigate(item.id)}
-                    >
-                        <p>${item.label}</p>
-                    </li>
-                `)}
+                ${this.navItems.map((item) => {
+                    const classes = [
+                        this.activeView === item.id
+                            ? 'active'
+                            : '',
+                        this.dragHoverView === item.id
+                            ? 'drag-hover'
+                            : '',
+                    ]
+                        .filter(Boolean)
+                        .join(' ');
+
+                    return html`
+                        <li
+                            class=${classes}
+                            @click=${() =>
+                                this.navigate(item.id)}
+                            @dragover=${(e: DragEvent) =>
+                                this.onNavDragOver(
+                                    e,
+                                    item.id,
+                                )}
+                            @dragleave=${() =>
+                                this.onNavDragLeave(
+                                    item.id,
+                                )}
+                            @drop=${(e: DragEvent) =>
+                                this.onNavDrop(e)}
+                        >
+                            <p>${item.label}</p>
+                        </li>
+                    `;
+                })}
             </ul>
         `;
     }
@@ -136,6 +205,78 @@ export class AppSidebar extends LitElement {
     private handleMouseUp = () => {
         this.isDragging = false;
     };
+
+    // =================================================================
+    // Drag-hover navigation
+    // =================================================================
+
+    /** Views that accept track drops. */
+    private static readonly DROP_VIEWS: Set<View> =
+        new Set(['playlists']);
+
+    private onDragActive = (
+        e: CustomEvent<DragActiveDetail>,
+    ) => {
+        this.trackDragActive = e.detail.active;
+
+        if (!e.detail.active) {
+            this.clearDragHoverTimer();
+            this.dragHoverView = null;
+        }
+    };
+
+    private onNavDragOver = (
+        e: DragEvent,
+        view: View,
+    ) => {
+        if (!this.trackDragActive) return;
+
+        if (!AppSidebar.DROP_VIEWS.has(view)) return;
+
+        // Prevent default so that `drop` can fire.
+        e.preventDefault();
+
+        if (e.dataTransfer) {
+            e.dataTransfer.dropEffect = 'copy';
+        }
+
+        // Already hovering this item — no-op.
+        if (this.dragHoverView === view) return;
+
+        this.clearDragHoverTimer();
+        this.dragHoverView = view;
+
+        this.dragHoverTimer = setTimeout(() => {
+            this.dragHoverTimer = null;
+
+            if (this.dragHoverView === view) {
+                this.navigate(view);
+            }
+        }, AppSidebar.HOVER_NAV_DELAY);
+    };
+
+    private onNavDragLeave = (view: View) => {
+        if (this.dragHoverView !== view) return;
+
+        this.clearDragHoverTimer();
+        this.dragHoverView = null;
+    };
+
+    private onNavDrop = (e: DragEvent) => {
+        // The drop target is the playlist-view, not
+        // the sidebar itself — just prevent the
+        // default browser action.
+        e.preventDefault();
+        this.clearDragHoverTimer();
+        this.dragHoverView = null;
+    };
+
+    private clearDragHoverTimer() {
+        if (this.dragHoverTimer !== null) {
+            clearTimeout(this.dragHoverTimer);
+            this.dragHoverTimer = null;
+        }
+    }
 
     private navigate(view: View) {
         this.activeView = view;

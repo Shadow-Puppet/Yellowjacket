@@ -1,6 +1,6 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
-import { EventsOn, EventsOff } from '@runtime/runtime';
+import { EventsOn } from '@runtime/runtime';
 
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
@@ -24,6 +24,7 @@ import type { playlist } from '@go/models';
 export class PlaylistPicker extends LitElement {
     /** File paths to add when a playlist is selected or created. */
     @property({ type: Array }) filePaths: string[] = [];
+    private cancelScanComplete?: () => void;
 
     @state() private mode: 'list' | 'create' = 'list';
     @state() private playlists: playlist.Summary[] = [];
@@ -134,7 +135,7 @@ export class PlaylistPicker extends LitElement {
     override connectedCallback() {
         super.connectedCallback();
         this.loadPlaylists();
-        EventsOn(
+        this.cancelScanComplete = EventsOn(
             Events.LibraryScanComplete,
             () => this.loadPlaylists(),
         );
@@ -142,7 +143,7 @@ export class PlaylistPicker extends LitElement {
 
     override disconnectedCallback() {
         super.disconnectedCallback();
-        EventsOff(Events.LibraryScanComplete);
+        this.cancelScanComplete?.();
     }
 
     private async loadPlaylists() {

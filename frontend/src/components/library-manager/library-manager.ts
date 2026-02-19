@@ -1,6 +1,6 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
-import { EventsOn, EventsOff } from '@runtime/runtime';
+import { EventsOn } from '@runtime/runtime';
 import { Scan, FullRescan } from '@go/library/Library';
 import {
     GetLibraryDirectory,
@@ -235,6 +235,8 @@ export class LibraryManager extends LitElement {
     @state() private metrics: ScanMetrics | null = null;
     @state() private copied = false;
     @state() private concurrencyMode = 'auto';
+    private cancelScanStarted?: () => void;
+    private cancelScanComplete?: () => void;
 
     static override styles = css`
         :host {
@@ -525,11 +527,11 @@ export class LibraryManager extends LitElement {
         this.loadCurrentDirectory();
         this.loadConcurrencyMode();
 
-        EventsOn(
+        this.cancelScanStarted = EventsOn(
             Events.LibraryScanStarted,
             this.handleScanStarted,
         );
-        EventsOn(
+        this.cancelScanComplete = EventsOn(
             Events.LibraryScanComplete,
             this.handleScanComplete,
         );
@@ -537,8 +539,8 @@ export class LibraryManager extends LitElement {
 
     override disconnectedCallback(): void {
         super.disconnectedCallback();
-        EventsOff(Events.LibraryScanStarted);
-        EventsOff(Events.LibraryScanComplete);
+        this.cancelScanStarted?.();
+        this.cancelScanComplete?.();
     }
 
     private async loadCurrentDirectory(): Promise<void> {

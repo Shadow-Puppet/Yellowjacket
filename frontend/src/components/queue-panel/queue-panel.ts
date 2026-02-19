@@ -17,6 +17,16 @@ import { flow } from '@lit-labs/virtualizer/layouts/flow.js';
 import type { QueueTrack } from '@store/queue-store';
 import { SelectionController } from '@utils/selection-controller';
 import type { SelectionHost } from '@utils/selection-controller';
+import {
+    hasTrackPayload,
+    getDragPayload,
+    setDragPayload,
+    emitDragActive,
+} from '@utils/drag-controller';
+import {
+    createDragImage,
+    removeDragImage,
+} from '@utils/drag-image';
 
 const MIN_WIDTH = 200;
 const MAX_WIDTH = 500;
@@ -44,6 +54,11 @@ export class QueuePanel
 
     @state()
     private playlistSubmenuOpen = false;
+
+    @state()
+    private dragOver = false;
+
+    private dragImageEl: HTMLElement | null = null;
 
     @query('#add-to-playlist-popup')
     private addToPlaylistPopup!: HTMLElement;
@@ -290,6 +305,25 @@ export class QueuePanel
 
         .remove-button:hover {
             color: #ff6b6b;
+        }
+
+        .panel-content.drag-over {
+            outline: 2px dashed #ffd43b;
+            outline-offset: -2px;
+        }
+
+        .drop-indicator {
+            display: none;
+            padding: 12px 16px;
+            text-align: center;
+            font-size: 12px;
+            color: #ffd43b;
+            border-bottom: 1px solid
+                rgba(255, 212, 59, 0.2);
+        }
+
+        .panel-content.drag-over .drop-indicator {
+            display: block;
         }
 
         .empty-state {
@@ -608,6 +642,110 @@ export class QueuePanel
     };
 
     // =================================================================
+    // Drop target (tracks dropped into queue)
+    // =================================================================
+
+    private onPanelDragOver = (e: DragEvent) => {
+        if (!hasTrackPayload(e)) return;
+
+        e.preventDefault();
+
+        if (e.dataTransfer) {
+            e.dataTransfer.dropEffect = 'copy';
+        }
+
+        if (!this.dragOver) {
+            this.dragOver = true;
+        }
+    };
+
+    private onPanelDragLeave = (e: DragEvent) => {
+        // Only reset when leaving the panel-content
+        // element itself (not a child).
+        const related = e.relatedTarget as Node | null;
+        const panel =
+            this.shadowRoot?.querySelector(
+                '.panel-content',
+            );
+
+        if (panel && !panel.contains(related)) {
+            this.dragOver = false;
+        }
+    };
+
+    private onPanelDrop = (e: DragEvent) => {
+        e.preventDefault();
+        this.dragOver = false;
+
+        const payload = getDragPayload(e);
+
+        if (
+            !payload ||
+            payload.filePaths.length === 0
+        ) {
+            return;
+        }
+
+        // Don't allow dropping queue items back
+        // onto the queue.
+        if (payload.source === 'queue') return;
+
+        this.queue.addTracksToQueue(payload.filePaths);
+    };
+
+    // =================================================================
+    // Drag source (queue tracks to playlist)
+    // =================================================================
+
+    private onTrackDragStart = (
+        e: DragEvent,
+        index: number,
+    ) => {
+        const tracks = this.queue.tracks;
+
+        let filePaths: string[];
+
+        if (this.selection.isSelected(String(index))) {
+            filePaths = this.selection
+                .getSelectedIndices()
+                .map((i) => tracks[i]!.filePath);
+        } else {
+            const track = tracks[index];
+
+            if (!track) return;
+
+            filePaths = [track.filePath];
+        }
+
+        if (filePaths.length === 0) return;
+
+        setDragPayload(e, {
+            filePaths,
+            source: 'queue',
+        });
+
+        this.dragImageEl = createDragImage(
+            filePaths.length,
+        );
+        e.dataTransfer?.setDragImage(
+            this.dragImageEl,
+            0,
+            0,
+        );
+
+        emitDragActive(true);
+    };
+
+    private onTrackDragEnd = () => {
+        if (this.dragImageEl) {
+            removeDragImage(this.dragImageEl);
+            this.dragImageEl = null;
+        }
+
+        emitDragActive(false);
+    };
+
+    // =================================================================
     // Other handlers
     // =================================================================
 
@@ -679,12 +817,16 @@ export class QueuePanel
         return html`
             <div
                 class=${classes}
+                draggable=${selected ? 'true' : 'false'}
                 @click=${(e: MouseEvent) =>
                     this.handleTrackClick(e, track, index)}
                 @dblclick=${() =>
                     this.handleTrackDblClick(index)}
                 @contextmenu=${(e: MouseEvent) =>
                     this.handleTrackContextMenu(e, index)}
+                @dragstart=${(e: DragEvent) =>
+                    this.onTrackDragStart(e, index)}
+                @dragend=${this.onTrackDragEnd}
             >
                 <span class="track-position">
                     ${index + 1}
@@ -713,7 +855,14 @@ export class QueuePanel
         const tracks = this.queue.tracks;
 
         return html`
-            <div class="panel-content">
+            <div
+                class="panel-content ${this.dragOver
+                    ? 'drag-over'
+                    : ''}"
+                @dragover=${this.onPanelDragOver}
+                @dragleave=${this.onPanelDragLeave}
+                @drop=${this.onPanelDrop}
+            >
                 <div
                     class="resize-handle ${this.isDragging
                         ? 'dragging'
@@ -751,6 +900,10 @@ export class QueuePanel
                           `
                         : nothing}
                 </wa-popup>
+
+                <div class="drop-indicator">
+                    Drop tracks here to add to queue
+                </div>
 
                 ${tracks.length === 0
                     ? html`
