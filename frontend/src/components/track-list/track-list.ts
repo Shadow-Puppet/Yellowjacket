@@ -1,12 +1,14 @@
 import { library } from '@go/models';
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state, query } from 'lit/decorators.js';
+import { EventsOn, EventsOff } from '@runtime/runtime';
 import { formatMilliseconds } from '@utils/time';
 import { SelectionController } from '@utils/selection-controller';
 import type { SelectionHost } from '@utils/selection-controller';
 import { PlayerController } from '@store/controllers/player-controller';
 import { queueStore } from '@store/queue-store';
 import { LibraryController } from '@store/controllers/library-controller';
+import { Events } from '../../events';
 import '@lit-labs/virtualizer';
 import type {
     LitVirtualizer,
@@ -387,6 +389,10 @@ export class TrackList extends LitElement implements SelectionHost {
     override connectedCallback() {
         super.connectedCallback();
         this.loadTracks();
+        EventsOn(
+            Events.LibraryScanComplete,
+            () => this.loadTracks(),
+        );
         document.addEventListener('click', this.closeHandler);
         document.addEventListener('contextmenu', this.closeHandler);
         document.addEventListener('click', this.clearSelectionHandler);
@@ -407,6 +413,7 @@ export class TrackList extends LitElement implements SelectionHost {
         );
         this.hasRestoredScroll = false;
         super.disconnectedCallback();
+        EventsOff(Events.LibraryScanComplete);
         document.removeEventListener('click', this.closeHandler);
         document.removeEventListener('contextmenu', this.closeHandler);
         document.removeEventListener('click', this.clearSelectionHandler);

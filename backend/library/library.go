@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"golang.org/x/sync/errgroup"
@@ -22,6 +23,7 @@ import (
 	"yellowjacket/backend/database/sql/sqlcgen"
 	"yellowjacket/backend/events"
 	"yellowjacket/backend/metadata"
+	"yellowjacket/backend/system"
 )
 
 var errLibraryDirNotConfigured = errors.New("library directory not configured")
@@ -148,30 +150,46 @@ func (l *Library) registerEventHandlers() {
 }
 
 // Scan syncs the library by adding new files and removing deleted ones.
-// Files that exist but have incomplete metadata (recording_id = 0) will be updated.
-func (l *Library) Scan() error {
+// Files that exist but have incomplete metadata (recording_id = 0)
+// will be updated.  The returned ScanMetrics contains timing and
+// count data for every phase of the scan.
+func (l *Library) Scan() (*ScanMetrics, error) {
+	metrics := newScanMetrics()
+	scanStart := time.Now()
+
+	if len(l.conf.DirectoryPath) == 0 {
+		return metrics, errLibraryDirNotConfigured
+	}
+
+	workerCount := resolveScanWorkerCount(
+		l.conf.ScanConcurrency,
+		string(l.conf.DirectoryPath),
+	)
+
 	l.logger.Info(
-		"beginning library scan", "workers", scanWorkerCount,
+		"beginning library scan",
+		"workers", workerCount,
+		"concurrencyMode", l.conf.ScanConcurrency,
 	)
 
 	runtime.EventsEmit(l.ctx, events.LibraryScanStarted)
 
-	if len(l.conf.DirectoryPath) == 0 {
-		return errLibraryDirNotConfigured
-	}
+	// --- Phase 1: load existing files from DB ---
+	loadStart := time.Now()
 
-	// Load existing file paths from the database into a sync.Map for concurrent access.
-	// The map tracks path → audioFile; entries are removed as files are "seen" during the walk.
-	// Any entries remaining after the walk are orphans (files deleted from disk).
 	existingFiles, err := l.db.Queries.GetAllAudioFiles(l.ctx)
 	if err != nil {
-		return fmt.Errorf("could not load existing audio files: %w", err)
+		return metrics, fmt.Errorf(
+			"could not load existing audio files: %w", err,
+		)
 	}
 
 	existingPaths := &sync.Map{}
 	for _, f := range existingFiles {
 		existingPaths.Store(f.FilePath, f)
 	}
+
+	metrics.LoadExisting = time.Since(loadStart)
 
 	l.logger.Debug(
 		"loaded existing files from database",
@@ -189,16 +207,25 @@ func (l *Library) Scan() error {
 
 	var errMu sync.Mutex
 
-	// Walker goroutine: traverse directory and send work items to workers
+	// --- Phase 2: directory walk ---
+	walkStart := time.Now()
+
 	go func() {
-		defer close(workChan)
+		defer func() {
+			metrics.WalkDuration = time.Since(walkStart)
+
+			close(workChan)
+		}()
 
 		walkErr := fs.WalkDir(
 			os.DirFS(basePath),
 			".",
 			func(path string, d fs.DirEntry, err error) error {
 				if err != nil {
-					l.logger.Error("problem walking directory", "path", path, "err", err)
+					l.logger.Error(
+						"problem walking directory",
+						"path", path, "err", err,
+					)
 
 					return nil // continue walking
 				}
@@ -207,7 +234,9 @@ func (l *Library) Scan() error {
 					return nil
 				}
 
-				absoluteFilePath := filepath.Join(basePath, path)
+				absoluteFilePath := filepath.Join(
+					basePath, path,
+				)
 				fileExt := filepath.Ext(d.Name())
 
 				fileType, isSupportedAudioFile := metadata.GetSupportedFileType(fileExt)
@@ -215,13 +244,15 @@ func (l *Library) Scan() error {
 					return nil
 				}
 
-				// Check if file already exists in database
+				// Check if file already exists in database.
 				if existing, exists := existingPaths.LoadAndDelete(absoluteFilePath); exists {
 					audioFile := existing.(sqlcgen.AudioFile)
 
-					// Check if this file needs metadata update (recording_id = 0)
 					if audioFile.RecordingID == 0 {
-						l.logger.Debug("file needs metadata update", "path", absoluteFilePath)
+						l.logger.Debug(
+							"file needs metadata update",
+							"path", absoluteFilePath,
+						)
 
 						select {
 						case workChan <- scanWork{
@@ -248,11 +279,16 @@ func (l *Library) Scan() error {
 					return nil
 				}
 
-				l.logger.Debug("queueing file for import", "path", absoluteFilePath)
+				l.logger.Debug(
+					"queueing file for import",
+					"path", absoluteFilePath,
+				)
 
-				// Send to workers for processing
 				select {
-				case workChan <- scanWork{absolutePath: absoluteFilePath, fileType: fileType}:
+				case workChan <- scanWork{
+					absolutePath: absoluteFilePath,
+					fileType:     fileType,
+				}:
 				case <-l.ctx.Done():
 					return l.ctx.Err()
 				}
@@ -265,15 +301,44 @@ func (l *Library) Scan() error {
 			errMu.Lock()
 			scanErr = errors.Join(
 				scanErr,
-				fmt.Errorf("problem walking library directory: %w", walkErr),
+				fmt.Errorf(
+					"problem walking library directory: %w",
+					walkErr,
+				),
 			)
 			errMu.Unlock()
 		}
 	}()
 
-	// DB writer goroutine: serialize all database writes to avoid SQLite
-	// contention.  Results are committed in batches to amortize the cost
-	// of SQLite's fsync-per-commit.
+	// --- Thumbnail worker pool (async, decoupled from DB writer) ---
+	thumbChan := make(chan thumbnailWork, 100)
+
+	var thumbWg sync.WaitGroup
+
+	for range workerCount {
+		thumbWg.Add(1)
+
+		go func() {
+			defer thumbWg.Done()
+
+			for work := range thumbChan {
+				if err := l.generateSizedVariantsWithMetrics(
+					work.imgData,
+					work.dir,
+					work.hashStr,
+					work.metrics,
+				); err != nil {
+					l.logger.Warn(
+						"could not generate thumbnails",
+						"hash", work.hashStr,
+						"err", err,
+					)
+				}
+			}
+		}()
+	}
+
+	// --- Phase 4: DB writer goroutine ---
 	var dbWg sync.WaitGroup
 
 	dbWg.Add(1)
@@ -283,53 +348,79 @@ func (l *Library) Scan() error {
 
 		cache := newEntityCache()
 
-		var batch []importResult
+		var (
+			batch      []importResult
+			dbStarted  bool
+			dbStartVal time.Time
+		)
 
 		flushBatch := func() {
 			if len(batch) == 0 {
 				return
 			}
 
+			batchStart := time.Now()
+
 			if batchErr := l.commitBatch(
-				batch, cache, &added, &updated,
+				batch, cache, metrics,
+				&added, &updated,
+				thumbChan,
 			); batchErr != nil {
 				errMu.Lock()
 				scanErr = errors.Join(scanErr, batchErr)
 				errMu.Unlock()
 			}
 
+			metrics.BatchCommits += time.Since(batchStart)
 			batch = batch[:0]
 		}
 
 		for result := range resultChan {
+			if !dbStarted {
+				dbStartVal = time.Now()
+				dbStarted = true
+			}
+
 			batch = append(batch, result)
 			if len(batch) >= scanBatchSize {
 				flushBatch()
 			}
 		}
 
-		// Flush any remaining results.
 		flushBatch()
+
+		if dbStarted {
+			metrics.DBWritesWallClock = time.Since(
+				dbStartVal,
+			)
+		}
 	}()
 
-	// Worker pool: extract metadata concurrently, send results to DB writer
+	// --- Phase 3: worker pool ---
+	extractStart := time.Now()
+
 	g := new(errgroup.Group)
-	g.SetLimit(scanWorkerCount)
+	g.SetLimit(workerCount)
 
 	for work := range workChan {
 		g.Go(func() error {
-			result, err := l.extractAudioMetadata(work)
+			result, err := l.extractAudioMetadata(
+				work, metrics,
+			)
 			if err != nil {
-				l.logger.Warn("failed to extract metadata", "path", work.absolutePath, "err", err)
+				l.logger.Warn(
+					"failed to extract metadata",
+					"path", work.absolutePath,
+					"err", err,
+				)
 
 				errMu.Lock()
 				scanErr = errors.Join(scanErr, err)
 				errMu.Unlock()
 
-				return nil // continue processing other files
+				return nil
 			}
 
-			// Send to DB writer
 			select {
 			case resultChan <- result:
 			case <-l.ctx.Done():
@@ -340,21 +431,40 @@ func (l *Library) Scan() error {
 		})
 	}
 
-	_ = g.Wait() // Wait for all metadata extraction to complete
+	_ = g.Wait()
 
-	close(resultChan) // Signal DB writer to finish
-	dbWg.Wait()       // Wait for all DB writes to complete
+	metrics.ExtractionWallClock = time.Since(extractStart)
 
-	// Orphan cleanup: any entries remaining in existingPaths are files deleted from disk
+	close(resultChan)
+	dbWg.Wait()
+
+	// Close thumbnail channel and wait for all thumbnail workers
+	// to finish.  The DB writer has stopped sending work at this
+	// point so it is safe to close.
+	thumbStart := time.Now()
+
+	close(thumbChan)
+	thumbWg.Wait()
+
+	metrics.ThumbnailWallClock = time.Since(thumbStart)
+
+	// --- Phase 5: orphan cleanup ---
+	orphanStart := time.Now()
+
 	var removed atomic.Int64
 
 	existingPaths.Range(func(key, value any) bool {
 		path := key.(string)
 		audioFile := value.(sqlcgen.AudioFile)
 
-		l.logger.Debug("removing orphaned database entry", "path", path, "id", audioFile.ID)
+		l.logger.Debug(
+			"removing orphaned database entry",
+			"path", path, "id", audioFile.ID,
+		)
 
-		if err := l.db.Queries.DeleteAudioFile(l.ctx, audioFile.ID); err != nil {
+		if err := l.db.Queries.DeleteAudioFile(
+			l.ctx, audioFile.ID,
+		); err != nil {
 			l.logger.Warn(
 				"failed to delete orphaned audio file",
 				"path", path,
@@ -370,8 +480,11 @@ func (l *Library) Scan() error {
 		return true
 	})
 
-	// Generate sized variants for any cover art missing them,
-	// and migrate legacy _thumb files.
+	metrics.OrphanCleanup = time.Since(orphanStart)
+
+	// --- Phase 6: post-scan variant generation ---
+	variantStart := time.Now()
+
 	if err := l.generateMissingSizedVariants(); err != nil {
 		l.logger.Warn(
 			"could not generate missing sized variants",
@@ -379,23 +492,58 @@ func (l *Library) Scan() error {
 		)
 	}
 
+	metrics.PostScanVariants = time.Since(variantStart)
+
+	// --- Finalize ---
+	metrics.Added = added.Load()
+	metrics.Updated = updated.Load()
+	metrics.Skipped = skipped.Load()
+	metrics.Removed = removed.Load()
+	metrics.Total = time.Since(scanStart)
+
 	l.logger.Info(
 		"library scan complete",
-		"added", added.Load(),
-		"updated", updated.Load(),
-		"removed", removed.Load(),
-		"skipped", skipped.Load(),
+		"added", metrics.Added,
+		"updated", metrics.Updated,
+		"removed", metrics.Removed,
+		"skipped", metrics.Skipped,
+		"total", metrics.Total,
 		"library", l.conf.DirectoryPath,
 	)
 
-	runtime.EventsEmit(l.ctx, events.LibraryScanComplete)
+	runtime.EventsEmit(
+		l.ctx, events.LibraryScanComplete, metrics,
+	)
 
-	return scanErr
+	return metrics, scanErr
 }
 
-// scanWorkerCount controls the number of concurrent file processors.
-// TODO: make configurable via Config.
-var scanWorkerCount = goruntime.NumCPU()
+// hddWorkerCount is the maximum number of concurrent extraction
+// workers when the library resides on a spinning disk.
+const hddWorkerCount = 2
+
+// resolveScanWorkerCount returns the number of concurrent
+// extraction workers based on the configured concurrency mode
+// and the storage type of the library directory.
+func resolveScanWorkerCount(
+	mode ScanConcurrency,
+	libraryPath string,
+) int {
+	switch mode {
+	case ScanConcurrencySSD:
+		return goruntime.NumCPU()
+	case ScanConcurrencyHDD:
+		return min(hddWorkerCount, goruntime.NumCPU())
+	default: // auto
+		if system.IsRotationalDisk(libraryPath) {
+			return min(
+				hddWorkerCount, goruntime.NumCPU(),
+			)
+		}
+
+		return goruntime.NumCPU()
+	}
+}
 
 // scanWork represents a file to be processed by a worker.
 type scanWork struct {
@@ -417,8 +565,12 @@ type importResult struct {
 }
 
 // extractAudioMetadata reads and extracts metadata from an audio file.
-// It opens the file once, extracting both tags and duration in a single pass.
-func (l *Library) extractAudioMetadata(work scanWork) (importResult, error) {
+// It opens the file once, extracting both tags and duration in a
+// single pass, and records per-file timing in the shared metrics.
+func (l *Library) extractAudioMetadata(
+	work scanWork,
+	metrics *ScanMetrics,
+) (importResult, error) {
 	result := importResult{
 		absolutePath:   work.absolutePath,
 		fileType:       work.fileType,
@@ -429,9 +581,18 @@ func (l *Library) extractAudioMetadata(work scanWork) (importResult, error) {
 	// Skip duration decode if we already have it from a previous import.
 	skipDuration := work.needsUpdate && work.existingLength > 0
 
-	tags, lengthMillis, err := metadata.ExtractAllMetadata(
+	tags, lengthMillis, timing, err := metadata.ExtractAllMetadata(
 		work.absolutePath, skipDuration,
 	)
+
+	if timing != nil {
+		metrics.addExtraction(
+			string(work.fileType),
+			timing.TagExtraction,
+			timing.DurationExtraction,
+		)
+	}
+
 	if err != nil {
 		return result, fmt.Errorf(
 			"could not extract metadata for %s: %w",
@@ -454,11 +615,14 @@ func (l *Library) extractAudioMetadata(work scanWork) (importResult, error) {
 // commitBatch wraps a slice of import results in a single database
 // transaction, creating all related records and audio file entries.
 // Individual file failures are logged and accumulated but do not
-// abort the entire batch.
+// abort the entire batch.  thumbChan dispatches thumbnail generation
+// to the async worker pool.
 func (l *Library) commitBatch(
 	batch []importResult,
 	cache *entityCache,
+	metrics *ScanMetrics,
 	added, updated *atomic.Int64,
+	thumbChan chan<- thumbnailWork,
 ) error {
 	tx, err := l.db.BeginTx()
 	if err != nil {
@@ -475,12 +639,18 @@ func (l *Library) commitBatch(
 		var saveErr error
 
 		if result.needsUpdate {
-			saveErr = l.updateAudioFileMetadata(txq, cache, *result)
+			saveErr = l.updateAudioFileMetadata(
+				txq, cache, metrics, *result,
+				thumbChan,
+			)
 			if saveErr == nil {
 				updated.Add(1)
 			}
 		} else {
-			saveErr = l.saveAudioFile(txq, cache, *result)
+			saveErr = l.saveAudioFile(
+				txq, cache, metrics, *result,
+				thumbChan,
+			)
 			if saveErr == nil {
 				added.Add(1)
 			}
@@ -511,7 +681,9 @@ func (l *Library) commitBatch(
 func (l *Library) saveAudioFile(
 	q *sqlcgen.Queries,
 	cache *entityCache,
+	metrics *ScanMetrics,
 	result importResult,
+	thumbChan chan<- thumbnailWork,
 ) error {
 	l.logger.Debug(
 		"saving audio file to db",
@@ -526,7 +698,9 @@ func (l *Library) saveAudioFile(
 	)
 
 	// Process metadata and create related records.
-	recordingID, err := l.processMetadata(q, cache, result)
+	recordingID, err := l.processMetadata(
+		q, cache, metrics, result, thumbChan,
+	)
 	if err != nil {
 		return fmt.Errorf("could not process metadata: %w", err)
 	}
@@ -560,7 +734,9 @@ func (l *Library) saveAudioFile(
 func (l *Library) updateAudioFileMetadata(
 	q *sqlcgen.Queries,
 	cache *entityCache,
+	metrics *ScanMetrics,
 	result importResult,
+	thumbChan chan<- thumbnailWork,
 ) error {
 	l.logger.Debug(
 		"updating audio file metadata",
@@ -569,7 +745,9 @@ func (l *Library) updateAudioFileMetadata(
 	)
 
 	// Process metadata and create related records.
-	recordingID, err := l.processMetadata(q, cache, result)
+	recordingID, err := l.processMetadata(
+		q, cache, metrics, result, thumbChan,
+	)
 	if err != nil {
 		return fmt.Errorf("could not process metadata: %w", err)
 	}
@@ -596,10 +774,14 @@ func (l *Library) updateAudioFileMetadata(
 // and returns the recording ID.  It uses the provided queries object
 // (which may be transaction-scoped) and the entity cache to avoid
 // redundant upserts for repeated artist/album/cover-art values.
+// When thumbChan is non-nil, thumbnail generation is dispatched
+// asynchronously.
 func (l *Library) processMetadata(
 	q *sqlcgen.Queries,
 	cache *entityCache,
+	metrics *ScanMetrics,
 	result importResult,
+	thumbChan chan<- thumbnailWork,
 ) (int64, error) {
 	tags := result.tags
 	if tags == nil {
@@ -607,7 +789,9 @@ func (l *Library) processMetadata(
 	}
 
 	// 1. Handle cover art (if present).
-	coverArtID := l.processCoverArt(q, cache, tags)
+	coverArtID := l.processCoverArt(
+		q, cache, metrics, tags, thumbChan,
+	)
 
 	// 2. Get or create artist credit for track artist.
 	artistName := tags.Artist
@@ -681,17 +865,23 @@ func (l *Library) processMetadata(
 }
 
 // processCoverArt saves cover art to disk and upserts the DB record,
-// using the cache to skip work for previously seen images.
+// using the cache to skip work for previously seen images.  When
+// thumbChan is non-nil, thumbnail generation is dispatched to the
+// async worker pool.
 func (l *Library) processCoverArt(
 	q *sqlcgen.Queries,
 	cache *entityCache,
+	metrics *ScanMetrics,
 	tags *metadata.TrackMetadata,
+	thumbChan chan<- thumbnailWork,
 ) sql.NullInt64 {
 	if tags.Picture == nil {
 		return sql.NullInt64{}
 	}
 
-	coverPath, err := l.saveCoverArt(tags.Picture)
+	coverPath, err := l.saveCoverArt(
+		tags.Picture, metrics, thumbChan,
+	)
 	if err != nil {
 		l.logger.Warn("could not save cover art", "err", err)
 
@@ -937,10 +1127,14 @@ func (l *Library) handleConfigUpdate(updatedConfigValues Config) error {
 		l.logger.Info("new library, scanning")
 
 		l.conf.DirectoryPath = updatedConfigValues.DirectoryPath
-		if err := l.Scan(); err != nil {
+
+		if _, err := l.Scan(); err != nil {
 			updateErr = errors.Join(
 				updateErr,
-				fmt.Errorf("problem scanning library on config update: %w", err),
+				fmt.Errorf(
+					"problem scanning library on config update: %w",
+					err,
+				),
 			)
 		}
 	}

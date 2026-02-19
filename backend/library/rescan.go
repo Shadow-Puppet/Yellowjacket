@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
@@ -13,42 +14,61 @@ import (
 
 // FullRescan clears the queue and player, wipes all library data
 // (database records and cover art files), and performs a fresh
-// scan from scratch.
-func (l *Library) FullRescan() error {
+// scan from scratch.  The returned ScanMetrics includes timing
+// for the clear phases in addition to the normal scan metrics.
+func (l *Library) FullRescan() (*ScanMetrics, error) {
 	l.logger.Info("beginning full library rescan")
 
 	runtime.EventsEmit(l.ctx, events.LibraryScanStarted)
 
 	// Stop playback and clear the queue before wiping data so
 	// the player is not referencing now-deleted tracks.
+	clearQueueStart := time.Now()
+
 	if l.queue != nil {
 		l.queue.Clear()
 	}
 
-	if err := l.clearLibraryData(); err != nil {
-		return fmt.Errorf("could not clear library data: %w", err)
-	}
+	clearQueueDur := time.Since(clearQueueStart)
 
-	return l.Scan()
-}
-
-// clearLibraryData removes all library-related records from the
-// database and deletes all cover art files from disk.  The deletes
-// are executed in FK-safe order within a single transaction.
-func (l *Library) clearLibraryData() error {
-	l.logger.Info("clearing all library data")
+	// Clear all library data (DB + cover art files).
+	clearDBStart := time.Now()
 
 	if err := l.clearLibraryTables(); err != nil {
-		return err
+		return nil, fmt.Errorf(
+			"could not clear library tables: %w", err,
+		)
 	}
 
+	clearDBDur := time.Since(clearDBStart)
+
+	clearFilesStart := time.Now()
+
 	if err := l.clearCoverArtFiles(); err != nil {
-		return err
+		return nil, fmt.Errorf(
+			"could not clear cover art files: %w", err,
+		)
 	}
+
+	clearFilesDur := time.Since(clearFilesStart)
 
 	l.logger.Info("library data cleared successfully")
 
-	return nil
+	// Run the full scan and merge clear-phase times into
+	// the metrics it returns.
+	metrics, err := l.Scan()
+	if metrics != nil {
+		metrics.ClearQueue = clearQueueDur
+		metrics.ClearDatabase = clearDBDur
+		metrics.ClearCoverFiles = clearFilesDur
+
+		// Include clear-phase durations in the total so the
+		// displayed value reflects true wall-clock time.
+		metrics.Total += clearQueueDur +
+			clearDBDur + clearFilesDur
+	}
+
+	return metrics, err
 }
 
 // clearLibraryTables deletes all library-related rows in FK-safe

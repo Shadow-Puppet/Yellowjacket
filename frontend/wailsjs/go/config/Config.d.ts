@@ -5,6 +5,8 @@ import {context} from '../models';
 
 export function GetLibraryDirectory():Promise<string>;
 
+export function GetScanConcurrency():Promise<string>;
+
 export function Load():Promise<void>;
 
 export function Save():Promise<void>;
@@ -14,5 +16,7 @@ export function ServeHTTP(arg1:http.ResponseWriter,arg2:http.Request):Promise<vo
 export function SetContext(arg1:context.Context):Promise<void>;
 
 export function SetLibraryDirectory(arg1:string):Promise<void>;
+
+export function SetScanConcurrency(arg1:string):Promise<void>;
 
 export function Validate():Promise<void>;

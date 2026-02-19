@@ -144,6 +144,10 @@ func (c *Config) applyDefaults() {
 	} else {
 		c.Window.applyDefaults()
 	}
+
+	if c.Library != nil {
+		c.Library.ApplyDefaults()
+	}
 }
 
 // SetContext sets the Wails runtime context for event emission.
@@ -171,6 +175,11 @@ func (c *Config) SetLibraryDirectory(dir string) error {
 		)
 	}
 
+	// Preserve existing scan concurrency setting.
+	if c.Library != nil {
+		newLibConf.ScanConcurrency = c.Library.ScanConcurrency
+	}
+
 	c.Library = newLibConf
 
 	if err := c.Save(); err != nil {
@@ -192,6 +201,46 @@ func (c *Config) SetLibraryDirectory(dir string) error {
 	c.logger.Info(
 		"library directory updated",
 		"directory", dir,
+	)
+
+	return nil
+}
+
+// GetScanConcurrency returns the configured scan concurrency mode.
+func (c *Config) GetScanConcurrency() string {
+	if c.Library == nil {
+		return string(library.DefaultScanConcurrency)
+	}
+
+	return string(c.Library.ScanConcurrency)
+}
+
+// SetScanConcurrency validates and saves a new scan concurrency
+// mode.  The change takes effect on the next scan.
+func (c *Config) SetScanConcurrency(mode string) error {
+	if c.Library == nil {
+		c.Library = &library.Config{}
+		c.Library.ApplyDefaults()
+	}
+
+	c.Library.ScanConcurrency = library.ScanConcurrency(
+		mode,
+	)
+
+	if err := c.Library.Validate(); err != nil {
+		return fmt.Errorf(
+			"invalid scan concurrency mode: %w", err,
+		)
+	}
+
+	if err := c.Save(); err != nil {
+		return fmt.Errorf(
+			"could not save config: %w", err,
+		)
+	}
+
+	c.logger.Info(
+		"scan concurrency updated", "mode", mode,
 	)
 
 	return nil

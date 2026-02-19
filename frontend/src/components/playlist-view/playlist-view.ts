@@ -1,5 +1,6 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state, query } from 'lit/decorators.js';
+import { EventsOn, EventsOff } from '@runtime/runtime';
 
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
@@ -9,6 +10,7 @@ import {
     CreatePlaylist,
     RemoveTracksFromPlaylist,
 } from '@go/playlist/Service';
+import { Events } from '../../events';
 import type { playlist } from '@go/models';
 import { queueStore } from '@store/queue-store';
 import { PlayerController } from '@store/controllers/player-controller';
@@ -446,6 +448,10 @@ export class PlaylistView
     override connectedCallback() {
         super.connectedCallback();
         this.loadPlaylists();
+        EventsOn(
+            Events.LibraryScanComplete,
+            () => this.loadPlaylists(),
+        );
         document.addEventListener(
             'click',
             this.closeContextMenuHandler,
@@ -462,6 +468,7 @@ export class PlaylistView
 
     override disconnectedCallback() {
         super.disconnectedCallback();
+        EventsOff(Events.LibraryScanComplete);
 
         if (this.scrollDebounceTimer !== null) {
             clearTimeout(this.scrollDebounceTimer);

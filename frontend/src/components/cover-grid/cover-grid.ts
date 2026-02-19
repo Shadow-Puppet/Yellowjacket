@@ -1,5 +1,6 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state, query } from 'lit/decorators.js';
+import { EventsOn, EventsOff } from '@runtime/runtime';
 import '@lit-labs/virtualizer';
 import type {
     LitVirtualizer,
@@ -10,6 +11,7 @@ import { GetAlbumTracks } from '@go/library/Library';
 import { library } from '@go/models';
 import { LibraryController } from '@store/controllers/library-controller';
 import { queueStore } from '@store/queue-store';
+import { Events } from '../../events';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
@@ -448,6 +450,10 @@ export class CoverGrid extends LitElement {
     override connectedCallback() {
         super.connectedCallback();
         this.loadAlbums();
+        EventsOn(
+            Events.LibraryScanComplete,
+            () => this.loadAlbums(),
+        );
         document.addEventListener(
             'click',
             this.closeHandler,
@@ -468,6 +474,7 @@ export class CoverGrid extends LitElement {
 
     override disconnectedCallback() {
         super.disconnectedCallback();
+        EventsOff(Events.LibraryScanComplete);
         document.removeEventListener(
             'click',
             this.closeHandler,

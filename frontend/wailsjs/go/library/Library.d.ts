@@ -3,7 +3,7 @@
 import {library} from '../models';
 import {context} from '../models';
 
-export function FullRescan():Promise<void>;
+export function FullRescan():Promise<library.ScanMetrics>;
 
 export function GetAlbumTracks(arg1:number):Promise<Array<library.Track>>;
 
@@ -11,7 +11,7 @@ export function GetAllAlbums():Promise<Array<library.Album>>;
 
 export function GetAllTracks():Promise<Array<library.Track>>;
 
-export function Scan():Promise<void>;
+export function Scan():Promise<library.ScanMetrics>;
 
 export function SetContext(arg1:context.Context):Promise<void>;
 

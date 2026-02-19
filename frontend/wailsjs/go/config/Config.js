@@ -6,6 +6,10 @@ export function GetLibraryDirectory() {
   return window['go']['config']['Config']['GetLibraryDirectory']();
 }
 
+export function GetScanConcurrency() {
+  return window['go']['config']['Config']['GetScanConcurrency']();
+}
+
 export function Load() {
   return window['go']['config']['Config']['Load']();
 }
@@ -24,6 +28,10 @@ export function SetContext(arg1) {
 
 export function SetLibraryDirectory(arg1) {
   return window['go']['config']['Config']['SetLibraryDirectory'](arg1);
+}
+
+export function SetScanConcurrency(arg1) {
+  return window['go']['config']['Config']['SetScanConcurrency'](arg1);
 }
 
 export function Validate() {

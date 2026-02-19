@@ -1,5 +1,6 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import { EventsOn, EventsOff } from '@runtime/runtime';
 
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
@@ -9,6 +10,7 @@ import {
     AddTracksToPlaylist,
     CreatePlaylistWithTracks,
 } from '@go/playlist/Service';
+import { Events } from '../../events';
 import type { playlist } from '@go/models';
 
 /**
@@ -132,6 +134,15 @@ export class PlaylistPicker extends LitElement {
     override connectedCallback() {
         super.connectedCallback();
         this.loadPlaylists();
+        EventsOn(
+            Events.LibraryScanComplete,
+            () => this.loadPlaylists(),
+        );
+    }
+
+    override disconnectedCallback() {
+        super.disconnectedCallback();
+        EventsOff(Events.LibraryScanComplete);
     }
 
     private async loadPlaylists() {

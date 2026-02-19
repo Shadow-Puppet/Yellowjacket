@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"golang.org/x/image/draw"
 
@@ -26,6 +27,14 @@ type thumbnailTier struct {
 	MaxSize int
 	// Quality is the JPEG encoding quality (1-100).
 	Quality int
+}
+
+// thumbnailWork is a unit of work for the async thumbnail worker pool.
+type thumbnailWork struct {
+	imgData []byte
+	dir     string
+	hashStr string
+	metrics *ScanMetrics
 }
 
 // thumbnailTiers lists all generated size variants, ordered smallest to largest.
@@ -56,13 +65,20 @@ func isSizedVariant(name string) bool {
 }
 
 // saveCoverArt saves embedded cover art to the cache directory.
-// Returns the file path where the art was saved, or empty string if no picture data.
+// Returns the file path where the art was saved, or empty string
+// if no picture data.  Timing is recorded in the provided metrics.
+// When thumbChan is non-nil, thumbnail generation is dispatched
+// asynchronously to a worker pool instead of running inline.
 func (l *Library) saveCoverArt(
 	pic *metadata.PictureData,
+	metrics *ScanMetrics,
+	thumbChan chan<- thumbnailWork,
 ) (string, error) {
 	if pic == nil || len(pic.Data) == 0 {
 		return "", nil
 	}
+
+	saveStart := time.Now()
 
 	// Get the data directory for storing cover art.
 	dataDir, err := system.GetUserDataDirPath()
@@ -113,19 +129,31 @@ func (l *Library) saveCoverArt(
 		)
 	}
 
+	metrics.addCoverArtSave(time.Since(saveStart))
+
 	l.logger.Debug(
 		"saved cover art",
 		"path", filePath, "size", len(pic.Data),
 	)
 
-	// Generate all sized variants alongside the original.
-	if err := l.generateSizedVariants(
-		pic.Data, coverDir, hashStr,
-	); err != nil {
-		l.logger.Warn(
-			"could not generate sized variants",
-			"path", filePath, "err", err,
-		)
+	// Dispatch thumbnail generation to the async worker pool
+	// if available, otherwise generate inline.
+	if thumbChan != nil {
+		thumbChan <- thumbnailWork{
+			imgData: pic.Data,
+			dir:     coverDir,
+			hashStr: hashStr,
+			metrics: metrics,
+		}
+	} else {
+		if err := l.generateSizedVariantsWithMetrics(
+			pic.Data, coverDir, hashStr, metrics,
+		); err != nil {
+			l.logger.Warn(
+				"could not generate sized variants",
+				"path", filePath, "err", err,
+			)
+		}
 	}
 
 	return filePath, nil
@@ -144,6 +172,73 @@ func (l *Library) generateSizedVariants(
 		)
 	}
 
+	l.generateTiersFromImage(src, dir, hashStr)
+
+	return nil
+}
+
+// generateSizedVariantsWithMetrics is like generateSizedVariants
+// but records per-tier timing in the provided metrics.
+func (l *Library) generateSizedVariantsWithMetrics(
+	imgData []byte,
+	dir, hashStr string,
+	metrics *ScanMetrics,
+) error {
+	src, _, err := image.Decode(bytes.NewReader(imgData))
+	if err != nil {
+		return fmt.Errorf(
+			"could not decode image for thumbnails: %w", err,
+		)
+	}
+
+	bounds := src.Bounds()
+	srcW := bounds.Dx()
+	srcH := bounds.Dy()
+
+	for _, tier := range thumbnailTiers {
+		tierStart := time.Now()
+
+		tierPath := filepath.Join(
+			dir,
+			fmt.Sprintf("%s%s.jpg", hashStr, tier.Suffix),
+		)
+
+		w, h := fitDimensions(srcW, srcH, tier.MaxSize)
+
+		if err := encodeAndSaveImage(
+			src, tierPath, w, h, tier.Quality,
+		); err != nil {
+			l.logger.Warn(
+				"could not generate sized variant",
+				"tier", tier.Suffix,
+				"path", tierPath,
+				"err", err,
+			)
+
+			continue
+		}
+
+		metrics.addThumbnailTier(
+			tier.Suffix, time.Since(tierStart),
+		)
+
+		l.logger.Debug(
+			"saved sized variant",
+			"tier", tier.Suffix,
+			"path", tierPath,
+			"dimensions", fmt.Sprintf("%dx%d", w, h),
+		)
+	}
+
+	return nil
+}
+
+// generateTiersFromImage creates all thumbnail tiers from an
+// already-decoded image.
+func (l *Library) generateTiersFromImage(
+	src image.Image,
+	dir, hashStr string,
+) {
 	bounds := src.Bounds()
 	srcW := bounds.Dx()
 	srcH := bounds.Dy()
@@ -176,8 +271,6 @@ func (l *Library) generateSizedVariants(
 			"dimensions", fmt.Sprintf("%dx%d", w, h),
 		)
 	}
-
-	return nil
 }
 
 // fitDimensions calculates the output dimensions that fit within maxSize
@@ -206,7 +299,7 @@ func encodeAndSaveImage(
 	w, h, quality int,
 ) error {
 	dst := image.NewRGBA(image.Rect(0, 0, w, h))
-	draw.CatmullRom.Scale(
+	draw.ApproxBiLinear.Scale(
 		dst, dst.Bounds(), src, src.Bounds(), draw.Over, nil,
 	)
 

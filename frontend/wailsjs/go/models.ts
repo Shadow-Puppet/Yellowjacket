@@ -155,6 +155,66 @@ export namespace library {
 	        this.Year = source["Year"];
 	    }
 	}
+	export class ScanMetrics {
+	    total: number;
+	    loadExisting: number;
+	    walkDuration: number;
+	    extractionWallClock: number;
+	    dbWritesWallClock: number;
+	    orphanCleanup: number;
+	    postScanVariants: number;
+	    formatExtraction: Record<string, number>;
+	    formatCount: Record<string, number>;
+	    tagExtraction: number;
+	    durationExtraction: number;
+	    batchCommits: number;
+	    coverArtSave: number;
+	    thumbnailWallClock: number;
+	    thumbnailGeneration: number;
+	    thumbnailSmall: number;
+	    thumbnailMedium: number;
+	    thumbnailLarge: number;
+	    clearQueue: number;
+	    clearDatabase: number;
+	    clearCoverFiles: number;
+	    added: number;
+	    updated: number;
+	    skipped: number;
+	    removed: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ScanMetrics(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.total = source["total"];
+	        this.loadExisting = source["loadExisting"];
+	        this.walkDuration = source["walkDuration"];
+	        this.extractionWallClock = source["extractionWallClock"];
+	        this.dbWritesWallClock = source["dbWritesWallClock"];
+	        this.orphanCleanup = source["orphanCleanup"];
+	        this.postScanVariants = source["postScanVariants"];
+	        this.formatExtraction = source["formatExtraction"];
+	        this.formatCount = source["formatCount"];
+	        this.tagExtraction = source["tagExtraction"];
+	        this.durationExtraction = source["durationExtraction"];
+	        this.batchCommits = source["batchCommits"];
+	        this.coverArtSave = source["coverArtSave"];
+	        this.thumbnailWallClock = source["thumbnailWallClock"];
+	        this.thumbnailGeneration = source["thumbnailGeneration"];
+	        this.thumbnailSmall = source["thumbnailSmall"];
+	        this.thumbnailMedium = source["thumbnailMedium"];
+	        this.thumbnailLarge = source["thumbnailLarge"];
+	        this.clearQueue = source["clearQueue"];
+	        this.clearDatabase = source["clearDatabase"];
+	        this.clearCoverFiles = source["clearCoverFiles"];
+	        this.added = source["added"];
+	        this.updated = source["updated"];
+	        this.skipped = source["skipped"];
+	        this.removed = source["removed"];
+	    }
+	}
 	export class Track {
 	    TrackName: string;
 	    ArtistName: string;

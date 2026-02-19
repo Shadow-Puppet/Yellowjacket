@@ -1,5 +1,7 @@
+import { EventsOn } from '@runtime/runtime';
 import { GetAllPlaylistsWithTracks } from '@go/playlist/Service';
 import type { playlist } from '@go/models';
+import { Events } from '../events';
 
 type Subscriber = () => void;
 
@@ -8,6 +10,12 @@ class PlaylistStore {
     private playlistsLoading = false;
     private scrollPosition = 0;
     private subscribers = new Set<Subscriber>();
+
+    constructor() {
+        EventsOn(Events.LibraryScanComplete, () => {
+            this.invalidate();
+        });
+    }
 
     // ===================================================================
     // DATA ACCESS
