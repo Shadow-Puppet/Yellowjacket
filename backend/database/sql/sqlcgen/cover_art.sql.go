@@ -32,6 +32,15 @@ func (q *Queries) CreateCoverArt(ctx context.Context, arg CreateCoverArtParams) 
 	return i, err
 }
 
+const deleteAllCoverArt = `-- name: DeleteAllCoverArt :exec
+DELETE FROM cover_art
+`
+
+func (q *Queries) DeleteAllCoverArt(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, deleteAllCoverArt)
+	return err
+}
+
 const deleteCoverArt = `-- name: DeleteCoverArt :exec
 DELETE FROM cover_art 
 WHERE id = ?

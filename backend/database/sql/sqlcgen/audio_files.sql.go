@@ -51,6 +51,15 @@ func (q *Queries) CreateAudioFile(ctx context.Context, arg CreateAudioFileParams
 	return i, err
 }
 
+const deleteAllAudioFiles = `-- name: DeleteAllAudioFiles :exec
+DELETE FROM audio_files
+`
+
+func (q *Queries) DeleteAllAudioFiles(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, deleteAllAudioFiles)
+	return err
+}
+
 const deleteAudioFile = `-- name: DeleteAudioFile :exec
 DELETE FROM audio_files 
 WHERE id = ?

@@ -82,6 +82,9 @@ LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
 LEFT JOIN cover_art ca ON rg.cover_art_id = ca.id
 ORDER BY pt.playlist_id, pt.position;
 
+-- name: DeleteAllPlaylistTracks :exec
+DELETE FROM playlist_tracks;
+
 -- name: GetNextPlaylistTrackPosition :one
 SELECT COALESCE(MAX(position), -1) + 1 AS next_position
 FROM playlist_tracks WHERE playlist_id = ?;

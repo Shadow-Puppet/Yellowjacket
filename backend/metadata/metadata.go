@@ -2,6 +2,7 @@ package metadata
 
 import (
 	"fmt"
+	"io"
 	"os"
 )
 
@@ -49,4 +50,49 @@ func GetTrackLengthMillis(path string) (int64, error) {
 	_ = f.Close()
 
 	return lengthMillis, nil
+}
+
+// ExtractAllMetadata opens the file once and extracts both tags and duration.
+// This avoids the overhead of opening the file twice when both are needed.
+// If skipDuration is true, only tags are extracted and lengthMillis is 0.
+func ExtractAllMetadata(
+	path string,
+	skipDuration bool,
+) (*TrackMetadata, int64, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, 0, fmt.Errorf(
+			"could not open file: %w", err,
+		)
+	}
+
+	defer func() { _ = f.Close() }()
+
+	// Extract tags first (reads only headers, fast).
+	tags, err := ExtractTagsFromReader(f)
+	if err != nil {
+		return nil, 0, fmt.Errorf(
+			"could not extract tags from %s: %w", path, err,
+		)
+	}
+
+	if skipDuration {
+		return tags, 0, nil
+	}
+
+	// Seek back to the beginning for duration extraction.
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return tags, 0, fmt.Errorf(
+			"could not seek file for duration: %w", err,
+		)
+	}
+
+	lengthMillis, err := getTrackDuration(f)
+	if err != nil {
+		return tags, 0, fmt.Errorf(
+			"error getting duration for %s: %w", path, err,
+		)
+	}
+
+	return tags, lengthMillis, nil
 }

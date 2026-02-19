@@ -86,6 +86,15 @@ func (q *Queries) CreateRecordingFull(ctx context.Context, arg CreateRecordingFu
 	return i, err
 }
 
+const deleteAllRecordings = `-- name: DeleteAllRecordings :exec
+DELETE FROM recordings
+`
+
+func (q *Queries) DeleteAllRecordings(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, deleteAllRecordings)
+	return err
+}
+
 const deleteRecording = `-- name: DeleteRecording :exec
 DELETE FROM recordings 
 WHERE id = ?

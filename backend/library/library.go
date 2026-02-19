@@ -26,12 +26,55 @@ import (
 
 var errLibraryDirNotConfigured = errors.New("library directory not configured")
 
+// scanBatchSize controls how many files are committed in a single
+// database transaction during a scan.  Larger batches amortize
+// SQLite's fsync cost but increase the blast radius of a failed commit.
+const scanBatchSize = 50
+
+// entityCache holds recently resolved database entities so that
+// repeated upserts for the same artist/album/cover art within a scan
+// can be served from memory instead of hitting the database.
+// It is only accessed from the single DB-writer goroutine and
+// therefore needs no synchronisation.
+type entityCache struct {
+	artistCredits map[string]sqlcgen.ArtistCredit
+	artists       map[string]sqlcgen.Artist
+	releaseGroups map[string]sqlcgen.ReleaseGroup
+	coverArt      map[string]sqlcgen.CoverArt
+	// linkedCredits tracks artist-credit-artist links already created
+	// so we skip the duplicate INSERT.  Key is "artistID:creditID".
+	linkedCredits map[string]struct{}
+}
+
+func newEntityCache() *entityCache {
+	return &entityCache{
+		artistCredits: make(map[string]sqlcgen.ArtistCredit),
+		artists:       make(map[string]sqlcgen.Artist),
+		releaseGroups: make(map[string]sqlcgen.ReleaseGroup),
+		coverArt:      make(map[string]sqlcgen.CoverArt),
+		linkedCredits: make(map[string]struct{}),
+	}
+}
+
+// queueClearer is a narrow interface for clearing the playback queue.
+type queueClearer interface {
+	Clear()
+}
+
 // Library manages scanning and querying the music collection.
 type Library struct {
 	ctx    context.Context
 	logger *slog.Logger
 	conf   *Config
 	db     *database.DB
+	queue  queueClearer
+}
+
+// SetQueue provides the library with a reference to the queue so
+// that destructive operations like FullRescan can clear the queue
+// and stop playback before wiping data.
+func (l *Library) SetQueue(q queueClearer) {
+	l.queue = q
 }
 
 // NewLibrary creates a new library with the given configuration.
@@ -107,7 +150,11 @@ func (l *Library) registerEventHandlers() {
 // Scan syncs the library by adding new files and removing deleted ones.
 // Files that exist but have incomplete metadata (recording_id = 0) will be updated.
 func (l *Library) Scan() error {
-	l.logger.Info("beginning library scan", "workers", scanWorkerCount)
+	l.logger.Info(
+		"beginning library scan", "workers", scanWorkerCount,
+	)
+
+	runtime.EventsEmit(l.ctx, events.LibraryScanStarted)
 
 	if len(l.conf.DirectoryPath) == 0 {
 		return errLibraryDirNotConfigured
@@ -224,7 +271,9 @@ func (l *Library) Scan() error {
 		}
 	}()
 
-	// DB writer goroutine: serialize all database writes to avoid SQLite contention
+	// DB writer goroutine: serialize all database writes to avoid SQLite
+	// contention.  Results are committed in batches to amortize the cost
+	// of SQLite's fsync-per-commit.
 	var dbWg sync.WaitGroup
 
 	dbWg.Add(1)
@@ -232,35 +281,35 @@ func (l *Library) Scan() error {
 	go func() {
 		defer dbWg.Done()
 
-		for result := range resultChan {
-			var saveErr error
+		cache := newEntityCache()
 
-			if result.needsUpdate {
-				saveErr = l.updateAudioFileMetadata(result)
-				if saveErr == nil {
-					updated.Add(1)
-				}
-			} else {
-				saveErr = l.saveAudioFile(result)
-				if saveErr == nil {
-					added.Add(1)
-				}
+		var batch []importResult
+
+		flushBatch := func() {
+			if len(batch) == 0 {
+				return
 			}
 
-			if saveErr != nil {
-				l.logger.Warn(
-					"failed to save audio file",
-					"path",
-					result.absolutePath,
-					"err",
-					saveErr,
-				)
-
+			if batchErr := l.commitBatch(
+				batch, cache, &added, &updated,
+			); batchErr != nil {
 				errMu.Lock()
-				scanErr = errors.Join(scanErr, saveErr)
+				scanErr = errors.Join(scanErr, batchErr)
 				errMu.Unlock()
 			}
+
+			batch = batch[:0]
 		}
+
+		for result := range resultChan {
+			batch = append(batch, result)
+			if len(batch) >= scanBatchSize {
+				flushBatch()
+			}
+		}
+
+		// Flush any remaining results.
+		flushBatch()
 	}()
 
 	// Worker pool: extract metadata concurrently, send results to DB writer
@@ -368,6 +417,7 @@ type importResult struct {
 }
 
 // extractAudioMetadata reads and extracts metadata from an audio file.
+// It opens the file once, extracting both tags and duration in a single pass.
 func (l *Library) extractAudioMetadata(work scanWork) (importResult, error) {
 	result := importResult{
 		absolutePath:   work.absolutePath,
@@ -376,236 +426,241 @@ func (l *Library) extractAudioMetadata(work scanWork) (importResult, error) {
 		needsUpdate:    work.needsUpdate,
 	}
 
-	// Get duration (skip if updating and we already have it)
-	if work.needsUpdate && work.existingLength > 0 {
-		result.lengthMillis = work.existingLength
-	} else {
-		trackLengthMillis, err := metadata.GetTrackLengthMillis(work.absolutePath)
-		if err != nil {
-			return result, fmt.Errorf(
-				"could not get track length for %s: %w",
-				work.absolutePath,
-				err,
-			)
-		}
+	// Skip duration decode if we already have it from a previous import.
+	skipDuration := work.needsUpdate && work.existingLength > 0
 
-		result.lengthMillis = trackLengthMillis
-	}
-
-	// Extract tags
-	tags, err := metadata.ExtractTags(work.absolutePath)
+	tags, lengthMillis, err := metadata.ExtractAllMetadata(
+		work.absolutePath, skipDuration,
+	)
 	if err != nil {
-		l.logger.Warn("could not extract tags", "path", work.absolutePath, "err", err)
-		// Continue with empty tags - not a fatal error
-		tags = &metadata.TrackMetadata{}
+		return result, fmt.Errorf(
+			"could not extract metadata for %s: %w",
+			work.absolutePath,
+			err,
+		)
 	}
 
 	result.tags = tags
 
+	if skipDuration {
+		result.lengthMillis = work.existingLength
+	} else {
+		result.lengthMillis = lengthMillis
+	}
+
 	return result, nil
 }
 
+// commitBatch wraps a slice of import results in a single database
+// transaction, creating all related records and audio file entries.
+// Individual file failures are logged and accumulated but do not
+// abort the entire batch.
+func (l *Library) commitBatch(
+	batch []importResult,
+	cache *entityCache,
+	added, updated *atomic.Int64,
+) error {
+	tx, err := l.db.BeginTx()
+	if err != nil {
+		return fmt.Errorf("could not begin transaction: %w", err)
+	}
+
+	txq := l.db.Queries.WithTx(tx)
+
+	var batchErr error
+
+	for i := range batch {
+		result := &batch[i]
+
+		var saveErr error
+
+		if result.needsUpdate {
+			saveErr = l.updateAudioFileMetadata(txq, cache, *result)
+			if saveErr == nil {
+				updated.Add(1)
+			}
+		} else {
+			saveErr = l.saveAudioFile(txq, cache, *result)
+			if saveErr == nil {
+				added.Add(1)
+			}
+		}
+
+		if saveErr != nil {
+			l.logger.Warn(
+				"failed to save audio file",
+				"path", result.absolutePath,
+				"err", saveErr,
+			)
+
+			batchErr = errors.Join(batchErr, saveErr)
+		}
+	}
+
+	if commitErr := tx.Commit(); commitErr != nil {
+		return fmt.Errorf(
+			"could not commit batch of %d files: %w",
+			len(batch), commitErr,
+		)
+	}
+
+	return batchErr
+}
+
 // saveAudioFile writes audio file metadata to the database (new files).
-func (l *Library) saveAudioFile(result importResult) error {
+func (l *Library) saveAudioFile(
+	q *sqlcgen.Queries,
+	cache *entityCache,
+	result importResult,
+) error {
 	l.logger.Debug(
 		"saving audio file to db",
 		"absolute-path", result.absolutePath,
 		"track-length-millis", result.lengthMillis,
-		"file-type", int64(slices.Index(metadata.SupportedFileExtensions, result.fileType)),
+		"file-type", int64(
+			slices.Index(
+				metadata.SupportedFileExtensions,
+				result.fileType,
+			),
+		),
 	)
 
-	// Process metadata and create related records
-	recordingID, err := l.processMetadata(result)
+	// Process metadata and create related records.
+	recordingID, err := l.processMetadata(q, cache, result)
 	if err != nil {
 		return fmt.Errorf("could not process metadata: %w", err)
 	}
 
-	if _, err := l.db.Queries.CreateAudioFile(
+	if _, err := q.CreateAudioFile(
 		l.ctx, sqlcgen.CreateAudioFileParams{
 			FilePath:           result.absolutePath,
 			LengthMilliseconds: result.lengthMillis,
 			FileTypeID: int64(
-				slices.Index(metadata.SupportedFileExtensions, result.fileType),
+				slices.Index(
+					metadata.SupportedFileExtensions,
+					result.fileType,
+				),
 			),
 			RecordingID: recordingID,
 		}); err != nil {
-		return fmt.Errorf("could not save audio file to db: %w", err)
+		return fmt.Errorf(
+			"could not save audio file to db: %w", err,
+		)
 	}
 
-	l.logger.Debug("added audio file to library", "path", result.absolutePath)
+	l.logger.Debug(
+		"added audio file to library",
+		"path", result.absolutePath,
+	)
 
 	return nil
 }
 
 // updateAudioFileMetadata updates an existing audio file with extracted metadata.
-func (l *Library) updateAudioFileMetadata(result importResult) error {
+func (l *Library) updateAudioFileMetadata(
+	q *sqlcgen.Queries,
+	cache *entityCache,
+	result importResult,
+) error {
 	l.logger.Debug(
 		"updating audio file metadata",
 		"absolute-path", result.absolutePath,
 		"file-id", result.existingFileID,
 	)
 
-	// Process metadata and create related records
-	recordingID, err := l.processMetadata(result)
+	// Process metadata and create related records.
+	recordingID, err := l.processMetadata(q, cache, result)
 	if err != nil {
 		return fmt.Errorf("could not process metadata: %w", err)
 	}
 
-	if err := l.db.Queries.UpdateAudioFileRecording(
+	if err := q.UpdateAudioFileRecording(
 		l.ctx, sqlcgen.UpdateAudioFileRecordingParams{
 			RecordingID: recordingID,
 			ID:          result.existingFileID,
 		}); err != nil {
-		return fmt.Errorf("could not update audio file recording: %w", err)
+		return fmt.Errorf(
+			"could not update audio file recording: %w", err,
+		)
 	}
 
-	l.logger.Debug("updated audio file metadata", "path", result.absolutePath)
+	l.logger.Debug(
+		"updated audio file metadata",
+		"path", result.absolutePath,
+	)
 
 	return nil
 }
 
-// processMetadata creates all related database records for metadata and returns the recording ID.
-func (l *Library) processMetadata(result importResult) (int64, error) {
+// processMetadata creates all related database records for metadata
+// and returns the recording ID.  It uses the provided queries object
+// (which may be transaction-scoped) and the entity cache to avoid
+// redundant upserts for repeated artist/album/cover-art values.
+func (l *Library) processMetadata(
+	q *sqlcgen.Queries,
+	cache *entityCache,
+	result importResult,
+) (int64, error) {
 	tags := result.tags
 	if tags == nil {
 		tags = &metadata.TrackMetadata{}
 	}
 
-	// 1. Handle cover art (if present)
-	var coverArtID sql.NullInt64
+	// 1. Handle cover art (if present).
+	coverArtID := l.processCoverArt(q, cache, tags)
 
-	if tags.Picture != nil {
-		coverPath, err := l.saveCoverArt(tags.Picture)
-		if err != nil {
-			l.logger.Warn("could not save cover art", "err", err)
-		} else if coverPath != "" {
-			// Use upsert to avoid duplicates
-			ca, err := l.db.Queries.UpsertCoverArt(l.ctx, sqlcgen.UpsertCoverArtParams{
-				IsEmbedded: true,
-				FilePath:   coverPath,
-				MimeType:   tags.Picture.MIMEType,
-			})
-			if err != nil {
-				l.logger.Warn("could not create cover art record", "err", err)
-			} else {
-				coverArtID = sql.NullInt64{Int64: ca.ID, Valid: true}
-			}
-		}
-	}
-
-	// 2. Get or create artist credit for track artist
+	// 2. Get or create artist credit for track artist.
 	artistName := tags.Artist
 	if artistName == "" {
 		artistName = "Unknown Artist"
 	}
 
-	artistCredit, err := l.db.Queries.UpsertArtistCredit(l.ctx, artistName)
+	artistCredit, err := l.cachedUpsertArtistCredit(
+		q, cache, artistName,
+	)
 	if err != nil {
-		return 0, fmt.Errorf("could not upsert artist credit: %w", err)
+		return 0, fmt.Errorf(
+			"could not upsert artist credit: %w", err,
+		)
 	}
 
-	// Also create the artist record and link (best effort)
-	artist, err := l.db.Queries.UpsertArtist(l.ctx, artistName)
-	if err != nil {
-		l.logger.Warn("could not upsert artist", "err", err)
-	} else {
-		// Link artist to credit (ignore error if already linked)
-		_, _ = l.db.Queries.CreateArtistCreditArtist(l.ctx, sqlcgen.CreateArtistCreditArtistParams{
-			ArtistID: artist.ID,
-			CreditID: artistCredit.ID,
-		})
-	}
+	l.cachedLinkArtist(q, cache, artistName, artistCredit.ID)
 
 	// 3. Get or create artist credit for album artist.
-	// Always assign an album artist credit so the cover grid displays an
-	// artist name.  When the AlbumArtist tag is absent or identical to the
-	// track Artist, reuse the track artist credit instead of leaving it NULL.
-	var albumArtistCreditID sql.NullInt64
+	albumArtistCreditID := l.resolveAlbumArtistCredit(
+		q, cache, tags, artistCredit.ID,
+	)
 
-	if tags.AlbumArtist != "" && tags.AlbumArtist != tags.Artist {
-		albumArtistCredit, err := l.db.Queries.UpsertArtistCredit(
-			l.ctx, tags.AlbumArtist,
-		)
-		if err != nil {
-			l.logger.Warn("could not upsert album artist credit", "err", err)
-		} else {
-			albumArtistCreditID = sql.NullInt64{
-				Int64: albumArtistCredit.ID, Valid: true,
-			}
+	// 4. Get or create release group (album).
+	releaseGroupID := l.resolveReleaseGroup(
+		q, cache, tags, albumArtistCreditID, coverArtID,
+	)
 
-			// Also create the artist record and link.
-			albumArtist, err := l.db.Queries.UpsertArtist(
-				l.ctx, tags.AlbumArtist,
-			)
-			if err != nil {
-				l.logger.Warn("could not upsert album artist", "err", err)
-			} else {
-				_, _ = l.db.Queries.CreateArtistCreditArtist(
-					l.ctx,
-					sqlcgen.CreateArtistCreditArtistParams{
-						ArtistID: albumArtist.ID,
-						CreditID: albumArtistCredit.ID,
-					},
-				)
-			}
-		}
-	} else {
-		// AlbumArtist is empty or matches the track artist — reuse the
-		// track artist credit so the release group always has an artist.
-		albumArtistCreditID = sql.NullInt64{
-			Int64: artistCredit.ID, Valid: true,
-		}
-	}
-
-	// 4. Get or create release group (album)
-	var releaseGroupID sql.NullInt64
-
-	if tags.Album != "" {
-		rg, err := l.db.Queries.UpsertReleaseGroup(l.ctx, sqlcgen.UpsertReleaseGroupParams{
-			Name:                tags.Album,
-			AlbumArtistCreditID: albumArtistCreditID,
-			Year:                toNullInt64(tags.Year),
-		})
-		if err != nil {
-			l.logger.Warn("could not upsert release group", "err", err)
-		} else {
-			releaseGroupID = sql.NullInt64{Int64: rg.ID, Valid: true}
-
-			// Update cover art if this album doesn't have one yet
-			if coverArtID.Valid && !rg.CoverArtID.Valid {
-				err := l.db.Queries.UpdateReleaseGroupCoverArt(
-					l.ctx,
-					sqlcgen.UpdateReleaseGroupCoverArtParams{
-						CoverArtID: coverArtID,
-						ID:         rg.ID,
-					},
-				)
-				if err != nil {
-					l.logger.Warn("could not update release group cover art", "err", err)
-				}
-			}
-		}
-	}
-
-	// 5. Create recording
-	recording, err := l.db.Queries.CreateRecordingFull(l.ctx, sqlcgen.CreateRecordingFullParams{
-		Name:           l.getRecordingName(tags, result.absolutePath),
-		ArtistCreditID: artistCredit.ID,
-		TrackNumber:    toNullInt64(tags.TrackNumber),
-		DiscNumber:     toNullInt64(tags.DiscNumber),
-		Year:           toNullInt64(tags.Year),
-		Genre:          toNullString(tags.Genre),
-		Composer:       toNullString(tags.Composer),
-		Lyrics:         toNullString(tags.Lyrics),
-		Comment:        toNullString(tags.Comment),
-	})
+	// 5. Create recording.
+	recording, err := q.CreateRecordingFull(
+		l.ctx, sqlcgen.CreateRecordingFullParams{
+			Name: l.getRecordingName(
+				tags, result.absolutePath,
+			),
+			ArtistCreditID: artistCredit.ID,
+			TrackNumber:    toNullInt64(tags.TrackNumber),
+			DiscNumber:     toNullInt64(tags.DiscNumber),
+			Year:           toNullInt64(tags.Year),
+			Genre:          toNullString(tags.Genre),
+			Composer:       toNullString(tags.Composer),
+			Lyrics:         toNullString(tags.Lyrics),
+			Comment:        toNullString(tags.Comment),
+		},
+	)
 	if err != nil {
-		return 0, fmt.Errorf("could not create recording: %w", err)
+		return 0, fmt.Errorf(
+			"could not create recording: %w", err,
+		)
 	}
 
-	// 6. Link recording to release group
+	// 6. Link recording to release group.
 	if releaseGroupID.Valid {
-		_, err = l.db.Queries.CreateReleaseGroupRecording(
+		_, err = q.CreateReleaseGroupRecording(
 			l.ctx,
 			sqlcgen.CreateReleaseGroupRecordingParams{
 				ReleaseGroupID: releaseGroupID.Int64,
@@ -615,11 +670,233 @@ func (l *Library) processMetadata(result importResult) (int64, error) {
 			},
 		)
 		if err != nil {
-			l.logger.Warn("could not link recording to release group", "err", err)
+			l.logger.Warn(
+				"could not link recording to release group",
+				"err", err,
+			)
 		}
 	}
 
 	return recording.ID, nil
+}
+
+// processCoverArt saves cover art to disk and upserts the DB record,
+// using the cache to skip work for previously seen images.
+func (l *Library) processCoverArt(
+	q *sqlcgen.Queries,
+	cache *entityCache,
+	tags *metadata.TrackMetadata,
+) sql.NullInt64 {
+	if tags.Picture == nil {
+		return sql.NullInt64{}
+	}
+
+	coverPath, err := l.saveCoverArt(tags.Picture)
+	if err != nil {
+		l.logger.Warn("could not save cover art", "err", err)
+
+		return sql.NullInt64{}
+	}
+
+	if coverPath == "" {
+		return sql.NullInt64{}
+	}
+
+	// Check cache first.
+	if cached, ok := cache.coverArt[coverPath]; ok {
+		return sql.NullInt64{Int64: cached.ID, Valid: true}
+	}
+
+	ca, err := q.UpsertCoverArt(l.ctx, sqlcgen.UpsertCoverArtParams{
+		IsEmbedded: true,
+		FilePath:   coverPath,
+		MimeType:   tags.Picture.MIMEType,
+	})
+	if err != nil {
+		l.logger.Warn(
+			"could not create cover art record", "err", err,
+		)
+
+		return sql.NullInt64{}
+	}
+
+	cache.coverArt[coverPath] = ca
+
+	return sql.NullInt64{Int64: ca.ID, Valid: true}
+}
+
+// cachedUpsertArtistCredit returns the artist credit for the given
+// name, using the cache when possible.
+func (l *Library) cachedUpsertArtistCredit(
+	q *sqlcgen.Queries,
+	cache *entityCache,
+	name string,
+) (sqlcgen.ArtistCredit, error) {
+	if cached, ok := cache.artistCredits[name]; ok {
+		return cached, nil
+	}
+
+	ac, err := q.UpsertArtistCredit(l.ctx, name)
+	if err != nil {
+		return sqlcgen.ArtistCredit{}, err
+	}
+
+	cache.artistCredits[name] = ac
+
+	return ac, nil
+}
+
+// cachedLinkArtist upserts the artist record and creates the
+// artist-credit-artist link, skipping work already done.
+func (l *Library) cachedLinkArtist(
+	q *sqlcgen.Queries,
+	cache *entityCache,
+	name string,
+	creditID int64,
+) {
+	artist, ok := cache.artists[name]
+	if !ok {
+		var err error
+
+		artist, err = q.UpsertArtist(l.ctx, name)
+		if err != nil {
+			l.logger.Warn(
+				"could not upsert artist", "err", err,
+			)
+
+			return
+		}
+
+		cache.artists[name] = artist
+	}
+
+	linkKey := fmt.Sprintf("%d:%d", artist.ID, creditID)
+	if _, done := cache.linkedCredits[linkKey]; done {
+		return
+	}
+
+	_, _ = q.CreateArtistCreditArtist(
+		l.ctx,
+		sqlcgen.CreateArtistCreditArtistParams{
+			ArtistID: artist.ID,
+			CreditID: creditID,
+		},
+	)
+
+	cache.linkedCredits[linkKey] = struct{}{}
+}
+
+// resolveAlbumArtistCredit returns the album artist credit ID.
+// When the AlbumArtist tag is absent or matches the track artist,
+// the track artist credit is reused.
+func (l *Library) resolveAlbumArtistCredit(
+	q *sqlcgen.Queries,
+	cache *entityCache,
+	tags *metadata.TrackMetadata,
+	trackArtistCreditID int64,
+) sql.NullInt64 {
+	if tags.AlbumArtist == "" || tags.AlbumArtist == tags.Artist {
+		return sql.NullInt64{
+			Int64: trackArtistCreditID, Valid: true,
+		}
+	}
+
+	albumArtistCredit, err := l.cachedUpsertArtistCredit(
+		q, cache, tags.AlbumArtist,
+	)
+	if err != nil {
+		l.logger.Warn(
+			"could not upsert album artist credit", "err", err,
+		)
+
+		return sql.NullInt64{}
+	}
+
+	l.cachedLinkArtist(
+		q, cache, tags.AlbumArtist, albumArtistCredit.ID,
+	)
+
+	return sql.NullInt64{
+		Int64: albumArtistCredit.ID, Valid: true,
+	}
+}
+
+// resolveReleaseGroup returns the release group ID for the album,
+// using the cache when possible.
+func (l *Library) resolveReleaseGroup(
+	q *sqlcgen.Queries,
+	cache *entityCache,
+	tags *metadata.TrackMetadata,
+	albumArtistCreditID sql.NullInt64,
+	coverArtID sql.NullInt64,
+) sql.NullInt64 {
+	if tags.Album == "" {
+		return sql.NullInt64{}
+	}
+
+	// Check cache first.
+	if cached, ok := cache.releaseGroups[tags.Album]; ok {
+		// If the cached release group lacks cover art and we now
+		// have it, update it.
+		if coverArtID.Valid && !cached.CoverArtID.Valid {
+			err := q.UpdateReleaseGroupCoverArt(
+				l.ctx,
+				sqlcgen.UpdateReleaseGroupCoverArtParams{
+					CoverArtID: coverArtID,
+					ID:         cached.ID,
+				},
+			)
+			if err != nil {
+				l.logger.Warn(
+					"could not update release group cover art",
+					"err", err,
+				)
+			} else {
+				cached.CoverArtID = coverArtID
+				cache.releaseGroups[tags.Album] = cached
+			}
+		}
+
+		return sql.NullInt64{Int64: cached.ID, Valid: true}
+	}
+
+	rg, err := q.UpsertReleaseGroup(
+		l.ctx, sqlcgen.UpsertReleaseGroupParams{
+			Name:                tags.Album,
+			AlbumArtistCreditID: albumArtistCreditID,
+			Year:                toNullInt64(tags.Year),
+		},
+	)
+	if err != nil {
+		l.logger.Warn(
+			"could not upsert release group", "err", err,
+		)
+
+		return sql.NullInt64{}
+	}
+
+	// Update cover art if this album doesn't have one yet.
+	if coverArtID.Valid && !rg.CoverArtID.Valid {
+		err := q.UpdateReleaseGroupCoverArt(
+			l.ctx,
+			sqlcgen.UpdateReleaseGroupCoverArtParams{
+				CoverArtID: coverArtID,
+				ID:         rg.ID,
+			},
+		)
+		if err != nil {
+			l.logger.Warn(
+				"could not update release group cover art",
+				"err", err,
+			)
+		} else {
+			rg.CoverArtID = coverArtID
+		}
+	}
+
+	cache.releaseGroups[tags.Album] = rg
+
+	return sql.NullInt64{Int64: rg.ID, Valid: true}
 }
 
 // getRecordingName returns the track title, or falls back to the filename.

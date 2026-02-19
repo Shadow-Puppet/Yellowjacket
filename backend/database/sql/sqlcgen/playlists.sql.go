@@ -58,6 +58,15 @@ func (q *Queries) CreatePlaylist(ctx context.Context, name string) (Playlist, er
 	return i, err
 }
 
+const deleteAllPlaylistTracks = `-- name: DeleteAllPlaylistTracks :exec
+DELETE FROM playlist_tracks
+`
+
+func (q *Queries) DeleteAllPlaylistTracks(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, deleteAllPlaylistTracks)
+	return err
+}
+
 const deletePlaylist = `-- name: DeletePlaylist :exec
 DELETE FROM playlists WHERE id = ?
 `

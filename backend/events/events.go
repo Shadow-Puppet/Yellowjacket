@@ -56,5 +56,6 @@ const (
 
 // Library events.
 const (
+	LibraryScanStarted  = "LibraryScanStarted"
 	LibraryScanComplete = "LibraryScanComplete"
 )

@@ -5,6 +5,7 @@ import '@components/now-playing/now-playing.ts';
 import '@components/sidebar/app-sidebar.ts';
 import '@components/queue-panel/queue-panel.ts';
 import '@components/playlist-view/playlist-view.ts';
+import '@components/library-manager/library-manager.ts';
 import '@awesome.me/webawesome/dist/styles/themes/default.css';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import { setBasePath } from '@awesome.me/webawesome/dist/webawesome.js';
@@ -35,6 +36,9 @@ document.addEventListener('navigate', (e: Event) => {
             break;
         case 'playlists':
             mainContent.innerHTML = '<playlist-view></playlist-view>';
+            break;
+        case 'libraries':
+            mainContent.innerHTML = '<library-manager></library-manager>';
             break;
         default:
             mainContent.innerHTML = `<div style="padding: 1em; color: #b3b3b3;">

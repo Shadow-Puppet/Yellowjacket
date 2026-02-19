@@ -38,6 +38,9 @@ WHERE id = ?;
 DELETE FROM release_groups 
 WHERE id = ?;
 
+-- name: DeleteAllReleaseGroups :exec
+DELETE FROM release_groups;
+
 -- name: GetAllReleaseGroups :many
 SELECT * FROM release_groups
 ORDER BY name;

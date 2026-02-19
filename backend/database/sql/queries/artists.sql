@@ -24,6 +24,9 @@ WHERE id = ?;
 DELETE FROM artists 
 WHERE id = ?;
 
+-- name: DeleteAllArtists :exec
+DELETE FROM artists;
+
 -- name: GetAllArtists :many
 SELECT * FROM artists
 ORDER BY name;

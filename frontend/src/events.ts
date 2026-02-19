@@ -39,6 +39,7 @@ export const Events = {
     RequestRemoveTracksFromQueue: "RequestRemoveTracksFromQueue",
 
     // Library events
+    LibraryScanStarted: "LibraryScanStarted",
     LibraryScanComplete: "LibraryScanComplete",
 } as const;
 

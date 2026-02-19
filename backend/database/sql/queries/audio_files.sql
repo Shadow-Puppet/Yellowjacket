@@ -71,6 +71,9 @@ LEFT JOIN cover_art ca ON rg.cover_art_id = ca.id
 WHERE af.file_path = ?
 LIMIT 1;
 
+-- name: DeleteAllAudioFiles :exec
+DELETE FROM audio_files;
+
 -- name: GetAudioFilesByReleaseGroup :many
 SELECT
     af.file_path,

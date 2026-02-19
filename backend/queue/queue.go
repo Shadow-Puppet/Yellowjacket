@@ -1185,6 +1185,29 @@ func (q *Queue) GetState() State {
 	}
 }
 
+// Clear removes all tracks from the queue, stops playback, and
+// resets the queue state.  It persists the cleared state and
+// notifies the frontend.
+func (q *Queue) Clear() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	q.logger.Info("Clearing queue")
+
+	q.tracks = nil
+	q.currentIndex = -1
+	q.shuffleOrder = nil
+	q.sourcePlaylistID = 0
+
+	if q.player != nil {
+		q.player.UnloadTrack()
+	}
+
+	q.persistTracks()
+	q.persistState()
+	q.emitQueueChanged()
+}
+
 // EmitCurrentState emits the current queue state to the frontend.
 // This is called after the frontend DOM is ready.
 func (q *Queue) EmitCurrentState() {

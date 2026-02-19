@@ -3,6 +3,8 @@
 import {library} from '../models';
 import {context} from '../models';
 
+export function FullRescan():Promise<void>;
+
 export function GetAlbumTracks(arg1:number):Promise<Array<library.Track>>;
 
 export function GetAllAlbums():Promise<Array<library.Album>>;
@@ -12,3 +14,5 @@ export function GetAllTracks():Promise<Array<library.Track>>;
 export function Scan():Promise<void>;
 
 export function SetContext(arg1:context.Context):Promise<void>;
+
+export function SetQueue(arg1:library.queueClearer):Promise<void>;

@@ -100,6 +100,7 @@ func NewYellowJacketApp(
 
 	yjApp.FEBindings = []any{
 		yjApp.FrontendUtil,
+		yjApp.appConfig,
 		yjApp.library,
 		yjApp.playlist,
 	}
@@ -140,6 +141,10 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 	yj.queue.SetContext(ctx)
 	yj.queue.SetPlayer(yj.player)
 	yj.queue.RestoreState()
+
+	// Give the library a reference to the queue so FullRescan can
+	// clear the queue and stop playback before wiping data.
+	yj.library.SetQueue(yj.queue)
 
 	// Register playback finished handler to drive queue auto-advance.
 	yj.player.SetPlaybackFinishedHandler(yj.queue.OnPlaybackFinished)

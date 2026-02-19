@@ -11,7 +11,9 @@ import (
 	"path"
 
 	"github.com/BurntSushi/toml"
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"yellowjacket/backend/events"
 	"yellowjacket/backend/library"
 	"yellowjacket/backend/system"
 )
@@ -147,4 +149,50 @@ func (c *Config) applyDefaults() {
 // SetContext sets the Wails runtime context for event emission.
 func (c *Config) SetContext(ctx context.Context) {
 	c.ctx = ctx
+}
+
+// GetLibraryDirectory returns the currently configured library directory path.
+func (c *Config) GetLibraryDirectory() string {
+	if c.Library == nil {
+		return ""
+	}
+
+	return string(c.Library.DirectoryPath)
+}
+
+// SetLibraryDirectory validates and saves a new library directory,
+// then emits the LibraryConfigChanged event so listeners (e.g. the
+// Library scanner) can react.
+func (c *Config) SetLibraryDirectory(dir string) error {
+	newLibConf, err := library.NewConfig(dir)
+	if err != nil {
+		return fmt.Errorf(
+			"invalid library directory: %w", err,
+		)
+	}
+
+	c.Library = newLibConf
+
+	if err := c.Save(); err != nil {
+		return fmt.Errorf(
+			"could not save config after directory change: %w", err,
+		)
+	}
+
+	if c.ctx != nil {
+		runtime.EventsEmit(
+			c.ctx,
+			events.LibraryConfigChanged,
+			map[string]any{
+				"DirectoryPath": dir,
+			},
+		)
+	}
+
+	c.logger.Info(
+		"library directory updated",
+		"directory", dir,
+	)
+
+	return nil
 }
