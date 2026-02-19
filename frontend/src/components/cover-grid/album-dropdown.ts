@@ -39,23 +39,8 @@ export class AlbumDropdown extends LitElement {
     @property({ attribute: false })
     tracks: library.Track[] = [];
 
-    @property({ type: Boolean, attribute: 'loading-tracks' })
-    loadingTracks = false;
-
     @property({ attribute: false })
     selectedTracks: Set<string> = new Set();
-
-    /** Number of phantom grid rows allocated by the parent. */
-    @property({ type: Number, attribute: 'phantom-rows' })
-    phantomRows = 1;
-
-    /** Grid item height in pixels (passed from parent). */
-    @property({ type: Number })
-    gridItemHeight = 230;
-
-    /** Grid gap in pixels (passed from parent). */
-    @property({ type: Number })
-    gridGap = 16;
 
     /** Width of the grid container in pixels (passed from parent). */
     @property({ type: Number })
@@ -72,15 +57,6 @@ export class AlbumDropdown extends LitElement {
             border-radius: 4px;
             padding: 12px 16px;
             box-sizing: border-box;
-        }
-
-        .dropdown-loading {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            height: 206px;
-            color: #b3b3b3;
-            font-size: 13px;
         }
 
         .dropdown-tracks {
@@ -193,29 +169,23 @@ export class AlbumDropdown extends LitElement {
         return currentTrack.filePath === track.FilePath;
     }
 
-    /**
-     * Total height of the outer .album-dropdown box,
-     * matching the phantom grid space exactly.
-     */
-    private get dropdownHeight(): number {
-        return (
-            this.phantomRows * this.gridItemHeight +
-            (this.phantomRows - 1) * this.gridGap
-        );
-    }
+    /** Height of each track row: 16px line-height + 4+4px padding. */
+    private static readonly TRACK_ROW_HEIGHT = 24;
 
     /**
      * Height of the inner .dropdown-tracks container.
-     * Uses the full inner space so that column-fill:auto
-     * fills each column completely before moving to the
-     * next.
-     *
-     * Dropdown chrome: 12+12 padding + 2+2 border = 28px.
+     * Sized so that column-fill:auto fills each column
+     * completely before moving to the next.
      */
     private get tracksHeight(): number {
-        const chrome = 28;
+        const cols = this.columnCount;
+        const rowsPerCol = Math.ceil(
+            this.tracks.length / cols,
+        );
 
-        return this.dropdownHeight - chrome;
+        return (
+            rowsPerCol * AlbumDropdown.TRACK_ROW_HEIGHT
+        );
     }
 
     /* ================================================================
@@ -348,21 +318,8 @@ export class AlbumDropdown extends LitElement {
     }
 
     override render() {
-        if (this.loadingTracks) {
-            return html`
-                <div class="album-dropdown">
-                    <div class="dropdown-loading">
-                        Loading tracks...
-                    </div>
-                </div>
-            `;
-        }
-
         return html`
-            <div
-                class="album-dropdown"
-                style="height:${this.dropdownHeight}px"
-            >
+            <div class="album-dropdown">
                 <div
                     class="dropdown-tracks"
                     style="height:${this.tracksHeight}px;column-count:${this.columnCount}"

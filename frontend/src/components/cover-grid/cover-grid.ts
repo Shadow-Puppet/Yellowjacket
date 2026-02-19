@@ -32,18 +32,13 @@ type ContextMenuTarget =
     | { kind: 'track' };
 
 /**
- * Union item for the virtualized grid.
- * Album entries carry the original album and its index
- * in this.albums.  Phantom entries are invisible
- * placeholders that reserve space for the dropdown overlay.
+ * Item for the virtualized grid.
+ * Carries the original album and its index in this.albums.
  */
-type GridEntry =
-    | {
-        kind: 'album';
-        album: library.Album;
-        albumIndex: number;
-    }
-    | { kind: 'phantom'; phantomIndex: number };
+interface GridEntry {
+    album: library.Album;
+    albumIndex: number;
+}
 
 /** Milliseconds to debounce visibility-changed saves. */
 const SCROLL_DEBOUNCE_MS = 100;
@@ -67,15 +62,6 @@ export class CoverGrid extends LitElement {
     > | null = null;
 
     private closeHandler = () => this.closeContextMenu();
-
-    /**
-     * Exact height of a single track row in pixels.
-     * line-height 16 + padding 4+4 = 24.
-     */
-    private static readonly TRACK_ROW_HEIGHT = 24;
-
-    /** Dropdown chrome: 12+12 padding + 2+2 border. */
-    private static readonly DROPDOWN_CHROME = 28;
 
     /** Current card width — driven by the store. */
     private get cardWidth(): number {
@@ -109,10 +95,21 @@ export class CoverGrid extends LitElement {
     private gridLayout = this.createGridLayout();
     private gridLayoutWidth = 0;
 
-    private createGridLayout() {
+    /**
+     * Secondary layout for the "after" virtualizer in
+     * split mode.  Uses zero top padding so there is no
+     * extra gap between the dropdown and the first row.
+     */
+    private gridLayoutAfter = this.createGridLayout(
+        true,
+    );
+
+    private createGridLayout(noTopPad = false) {
         const w = this.libraryCtrl?.coverSize ?? 176;
 
-        this.gridLayoutWidth = w;
+        if (!noTopPad) {
+            this.gridLayoutWidth = w;
+        }
 
         const h = w + this.cardTextHeight;
         const gap = CoverGrid.GRID_GAP;
@@ -124,7 +121,9 @@ export class CoverGrid extends LitElement {
                 height: `${h}px`,
             },
             gap: `${gap}px`,
-            padding: `${pad}px`,
+            padding: noTopPad
+                ? `0 ${pad}px ${pad}px`
+                : `${pad}px`,
             justify: 'center',
         });
     }
@@ -136,18 +135,16 @@ export class CoverGrid extends LitElement {
 
     private wheelListenerAttached = false;
 
-    // buildVirtualizerItems() memoization cache.
-    private itemsCacheAlbums: library.Album[] = [];
-    private itemsCacheExpandedId: number | null = null;
-    private itemsCacheColumns = 0;
-    private itemsCachePhantomRows = 0;
-    private itemsCache: GridEntry[] = [];
+    // buildGridEntries() memoization cache.
+    private entriesCacheAlbums: library.Album[] = [];
+    private entriesCache: GridEntry[] = [];
 
     static override styles = css`
         :host {
             display: flex;
             flex-direction: column;
             overflow: hidden;
+            position: relative;
         }
 
         .grid-scroll-container {
@@ -246,27 +243,6 @@ export class CoverGrid extends LitElement {
 
         .album-year {
             color: #888;
-        }
-
-        /* ========================================
-         * Phantom cards (dropdown spacer)
-         * ======================================== */
-
-        .phantom-card {
-            visibility: hidden;
-            pointer-events: none;
-        }
-
-        /* ========================================
-         * Dropdown overlay
-         * ======================================== */
-
-        .dropdown-overlay {
-            position: absolute;
-            left: 0;
-            right: 0;
-            z-index: 10;
-            pointer-events: auto;
         }
 
         /* ========================================
@@ -380,21 +356,24 @@ export class CoverGrid extends LitElement {
     @state()
     private expandedTracks: library.Track[] = [];
 
-    /** Whether we're currently loading tracks for the dropdown. */
-    @state()
-    private loadingTracks = false;
-
     /** Set of file paths of selected tracks inside the dropdown. */
     @state()
     private selectedTracks: Set<string> = new Set();
 
-    /** Number of phantom rows reserved for the dropdown overlay. */
+    /**
+     * True when using the dual-virtualizer layout
+     * (dropdown sandwiched between two grids).
+     */
     @state()
-    private phantomRowCount = 0;
+    private splitMode = false;
 
-    /** Pixel offset of the dropdown overlay from the top of the scroll content. */
+    /**
+     * Index into this.albums where the split occurs.
+     * Albums [0, splitIndex) go into the "before"
+     * virtualizer; [splitIndex, length) go into "after".
+     */
     @state()
-    private dropdownTopPx = 0;
+    private splitIndex = 0;
 
     @query('#context-menu')
     private contextMenuPopup!: HTMLElement;
@@ -402,8 +381,8 @@ export class CoverGrid extends LitElement {
     @query('#playlist-submenu')
     private playlistSubmenuPopup!: HTMLElement;
 
-    @query('lit-virtualizer')
-    private virtualizer!: LitVirtualizer;
+    @query('#grid-single')
+    private virtualizerSingle!: LitVirtualizer;
 
     @query('.grid-scroll-container')
     private scrollContainer!: HTMLElement;
@@ -419,6 +398,48 @@ export class CoverGrid extends LitElement {
     } | null = null;
     private currentColumnCount = 0;
     private isResizing = false;
+
+    // Scroll restoration across single/split mode
+    // transitions.
+    private savedScrollTop = 0;
+    private needsScrollRestore = false;
+    private showDropdownAfterRestore = false;
+
+    /**
+     * Monotonically increasing counter used to
+     * cancel stale scroll-restore async blocks.
+     * Each new restore bumps the generation; the
+     * async block bails out when it detects it is
+     * no longer current.
+     */
+    private scrollRestoreGeneration = 0;
+
+    /**
+     * Set to the generation value when an async
+     * scroll-restore block finishes or is cancelled.
+     * When scrollRestoreGeneration >
+     * scrollRestoreResolved, an async restore is
+     * still in flight and the DOM scrollTop may be
+     * unreliable.
+     */
+    private scrollRestoreResolved = 0;
+
+    /**
+     * When switching albums, the pixel distance from
+     * the newly-expanded album's top edge to the
+     * viewport top — computed in single-mode
+     * coordinates during exit-split.  Used by the
+     * enter-split restore to place the album at the
+     * same visual position before scrollToShowDropdown
+     * makes any further adjustments.
+     */
+    private savedAlbumViewportOffset: number | null =
+        null;
+
+    /** Overlay element showing the old grid state
+     *  while a mode transition is in flight. */
+    private transitionOverlay: HTMLDivElement | null =
+        null;
 
     /* ====================================================================
      * Lifecycle
@@ -443,7 +464,6 @@ export class CoverGrid extends LitElement {
             this.onGridImageError,
             true,
         );
-
     }
 
     override disconnectedCallback() {
@@ -477,6 +497,197 @@ export class CoverGrid extends LitElement {
 
         this.resizeObserver?.disconnect();
         this.resizeObserver = null;
+        this.removeOverlay();
+    }
+
+    override willUpdate(
+        changed: Map<PropertyKey, unknown>,
+    ) {
+        super.willUpdate(changed);
+
+        // When switching albums, expandedTracks
+        // briefly goes to [].  Exit split mode so
+        // the single virtualizer takes over while
+        // loading.
+        if (
+            changed.has('expandedTracks') &&
+            this.expandedTracks.length === 0 &&
+            this.splitMode
+        ) {
+            // Capture the raw split-mode scrollTop
+            // before converting to single-mode coords.
+            const rawScrollTop =
+                this.scrollContainer?.scrollTop ?? 0;
+
+            // Convert to dropdown-free coordinates
+            // before exiting split mode.
+            this.savedScrollTop =
+                this.computeAdjustedScrollTop();
+
+            // If switching to a new album (not
+            // closing), record the viewport offset
+            // of the newly-expanded album in the
+            // OLD split layout so the enter-split
+            // restore can place it at the same
+            // visual position.
+            if (this.expandedAlbumId !== null) {
+                const idx = this.albums.findIndex(
+                    (a) =>
+                        a.ID ===
+                        this.expandedAlbumId,
+                );
+
+                if (idx >= 0) {
+                    const gap = CoverGrid.GRID_GAP;
+                    const pad =
+                        CoverGrid.GRID_PADDING;
+                    const cols =
+                        this.getColumnCount();
+                    const rowStep =
+                        this.cardHeight + gap;
+                    const row = Math.floor(
+                        idx / cols,
+                    );
+
+                    // Album's Y in single-mode
+                    // (no dropdown) coordinates.
+                    const albumY =
+                        pad + row * rowStep;
+
+                    // In the old split layout the
+                    // dropdown shifts everything
+                    // below it.  Determine if
+                    // album B sits below the old
+                    // dropdown.
+                    const oldBeforeRows = Math.ceil(
+                        this.splitIndex / cols,
+                    );
+                    const oldDropdownTop =
+                        pad + oldBeforeRows * rowStep;
+                    const dropdown =
+                        this.shadowRoot?.querySelector(
+                            'album-dropdown',
+                        );
+                    const oldDropdownHeight =
+                        (dropdown as HTMLElement)
+                            ?.offsetHeight ?? 0;
+
+                    const albumYOldSplit =
+                        albumY >= oldDropdownTop
+                            ? albumY +
+                              oldDropdownHeight
+                            : albumY;
+
+                    // Viewport offset in old-split
+                    // coordinates: use the raw
+                    // (un-adjusted) scrollTop.
+                    this.savedAlbumViewportOffset =
+                        albumYOldSplit - rawScrollTop;
+
+                    console.log(
+                        '[willUpdate] anchor capture',
+                        {
+                            albumY,
+                            oldDropdownTop,
+                            oldDropdownHeight,
+                            albumYOldSplit,
+                            rawScrollTop,
+                            offset: this
+                                .savedAlbumViewportOffset,
+                        },
+                    );
+                }
+            } else {
+                this.savedAlbumViewportOffset =
+                    null;
+            }
+
+            console.log(
+                '[willUpdate] exit split (tracks empty)',
+                {
+                    savedScrollTop:
+                        this.savedScrollTop,
+                    savedAlbumViewportOffset:
+                        this.savedAlbumViewportOffset,
+                    expandedAlbumId:
+                        this.expandedAlbumId,
+                },
+            );
+
+            this.captureOverlay();
+            this.splitMode = false;
+            this.needsScrollRestore = true;
+            this.showDropdownAfterRestore = false;
+        }
+
+        // Enter split mode when tracks have loaded.
+        if (
+            changed.has('expandedTracks') &&
+            this.expandedAlbumId !== null &&
+            this.expandedTracks.length > 0
+        ) {
+            // If a restore is already in flight
+            // (switching albums), keep the saved
+            // value — the DOM scrollTop may still
+            // be clamped to 0 because the previous
+            // restore hasn't finished.
+            const restoreInFlight =
+                this.scrollRestoreGeneration >
+                this.scrollRestoreResolved;
+
+            if (!restoreInFlight) {
+                this.savedScrollTop =
+                    this.scrollContainer
+                        ?.scrollTop ?? 0;
+            }
+
+            console.log(
+                '[willUpdate] enter split',
+                {
+                    savedScrollTop:
+                        this.savedScrollTop,
+                    restoreInFlight,
+                    expandedAlbumId:
+                        this.expandedAlbumId,
+                    splitIndex: this.splitIndex,
+                    scrollHeight:
+                        this.scrollContainer
+                            ?.scrollHeight,
+                },
+            );
+
+            this.captureOverlay();
+            this.computeSplitIndex();
+            this.splitMode = true;
+            this.needsScrollRestore = true;
+            this.showDropdownAfterRestore = true;
+        }
+
+        // Exit split mode when the dropdown closes.
+        if (
+            changed.has('expandedAlbumId') &&
+            this.expandedAlbumId === null &&
+            this.splitMode
+        ) {
+            // Convert to dropdown-free coordinates
+            // before exiting split mode.
+            this.savedScrollTop =
+                this.computeAdjustedScrollTop();
+            this.savedAlbumViewportOffset = null;
+
+            console.log(
+                '[willUpdate] exit split (close)',
+                {
+                    savedScrollTop:
+                        this.savedScrollTop,
+                },
+            );
+
+            this.captureOverlay();
+            this.splitMode = false;
+            this.needsScrollRestore = true;
+            this.showDropdownAfterRestore = false;
+        }
     }
 
     override updated(
@@ -505,52 +716,200 @@ export class CoverGrid extends LitElement {
 
         if (cardSizeChanged) {
             this.gridLayout = this.createGridLayout();
-            // Invalidate the items cache so the
-            // virtualizer picks up the new layout.
-            this.itemsCacheColumns = 0;
+            this.gridLayoutAfter =
+                this.createGridLayout(true);
         }
 
         // Apply CSS custom properties for dynamic sizing.
         this.updateSizeProperties();
 
-        // When the dropdown opens, tracks change, or
-        // card size changes (zoom), recompute the
-        // phantom row count and overlay position.
-        // Phantom rows are only injected once tracks
-        // have loaded so the dropdown renders at the
-        // correct size immediately.
-        const dropdownNeedsUpdate =
-            changed.has('expandedAlbumId') ||
-            changed.has('expandedTracks') ||
-            (cardSizeChanged &&
-                this.expandedAlbumId !== null &&
-                this.expandedTracks.length > 0);
+        // Restore scroll after a single/split mode
+        // transition (set in willUpdate).  Uses a
+        // retry loop (restoreScrollTop) so the scroll
+        // position is applied reliably even if the
+        // virtualizer hasn't expanded its host height
+        // yet.
+        if (this.needsScrollRestore) {
+            this.needsScrollRestore = false;
 
-        if (dropdownNeedsUpdate) {
-            this.phantomRowCount =
-                this.expandedAlbumId !== null
-                    ? this.computePhantomRowCount(
-                        this.expandedTracks.length,
-                    )
-                    : 0;
-            this.updateDropdownPosition();
+            const saved = this.savedScrollTop;
+            const showDropdown =
+                this.showDropdownAfterRestore;
+
+            // Capture whether an album is still
+            // selected — if so and !showDropdown, we
+            // are in the brief split→single gap while
+            // new tracks load (album switch).  Keep
+            // the overlay visible until the new split
+            // view is ready.
+            const switching =
+                !showDropdown &&
+                this.expandedAlbumId !== null;
+
+            // Bump the generation so any in-flight
+            // async restore from a previous cycle
+            // will bail out.
+            const gen =
+                ++this.scrollRestoreGeneration;
+
+            console.log(
+                '[updated] scroll restore start',
+                {
+                    saved,
+                    showDropdown,
+                    switching,
+                    gen,
+                },
+            );
+
+            void (async () => {
+                await this.updateComplete;
+
+                if (
+                    gen !==
+                    this.scrollRestoreGeneration
+                ) {
+                    console.log(
+                        `[updated] gen ${gen} stale, aborting`,
+                    );
+                    this.scrollRestoreResolved = gen;
+
+                    return;
+                }
+
+                console.log(
+                    '[updated] after updateComplete',
+                    {
+                        scrollTop:
+                            this.scrollContainer
+                                ?.scrollTop,
+                        scrollHeight:
+                            this.scrollContainer
+                                ?.scrollHeight,
+                        gen,
+                    },
+                );
+
+                await this.restoreScrollTop(saved);
+
+                if (
+                    gen !==
+                    this.scrollRestoreGeneration
+                ) {
+                    this.scrollRestoreResolved = gen;
+
+                    return;
+                }
+
+                if (showDropdown) {
+                    // When switching albums, anchor
+                    // the scroll so the newly-expanded
+                    // album stays at the same viewport
+                    // position it occupied before the
+                    // old dropdown was removed.
+                    if (
+                        this.savedAlbumViewportOffset !==
+                            null &&
+                        this.expandedAlbumId !== null
+                    ) {
+                        const idx =
+                            this.albums.findIndex(
+                                (a) =>
+                                    a.ID ===
+                                    this
+                                        .expandedAlbumId,
+                            );
+
+                        if (idx >= 0) {
+                            const gap =
+                                CoverGrid.GRID_GAP;
+                            const pad =
+                                CoverGrid.GRID_PADDING;
+                            const cols =
+                                this.getColumnCount();
+                            const rowStep =
+                                this.cardHeight + gap;
+                            const row = Math.floor(
+                                idx / cols,
+                            );
+                            const albumY =
+                                pad + row * rowStep;
+                            const anchor =
+                                albumY -
+                                this
+                                    .savedAlbumViewportOffset;
+
+                            console.log(
+                                '[updated] anchor restore',
+                                {
+                                    albumY,
+                                    offset: this
+                                        .savedAlbumViewportOffset,
+                                    anchor,
+                                },
+                            );
+
+                            await this.restoreScrollTop(
+                                anchor,
+                            );
+                        }
+
+                        this.savedAlbumViewportOffset =
+                            null;
+                    }
+
+                    if (
+                        gen !==
+                        this.scrollRestoreGeneration
+                    ) {
+                        this.scrollRestoreResolved =
+                            gen;
+
+                        return;
+                    }
+
+                    await this.scrollToShowDropdown();
+                }
+
+                if (
+                    gen !==
+                    this.scrollRestoreGeneration
+                ) {
+                    this.scrollRestoreResolved = gen;
+
+                    return;
+                }
+
+                if (!switching) {
+                    console.log(
+                        '[updated] removing overlay',
+                    );
+                    this.removeOverlay();
+                } else {
+                    console.log(
+                        '[updated] keeping overlay (switching)',
+                    );
+                }
+
+                this.scrollRestoreResolved = gen;
+            })();
         }
 
-        // Scroll to show the dropdown once tracks
-        // have loaded, or re-focus the expanded album
-        // after a zoom.
-        const shouldScroll =
-            (changed.has('expandedTracks') &&
-                this.expandedAlbumId !== null &&
-                this.expandedTracks.length > 0) ||
-            (cardSizeChanged &&
-                this.expandedAlbumId !== null &&
-                this.expandedTracks.length > 0);
+        // On zoom while dropdown is open, recompute
+        // the split (column count may change) and
+        // re-scroll after layout settles.
+        if (
+            cardSizeChanged &&
+            this.splitMode &&
+            this.expandedTracks.length > 0
+        ) {
+            this.computeSplitIndex();
 
-        if (shouldScroll) {
-            void this.updateComplete.then(() => {
-                this.scrollToShowDropdown();
-            });
+            void (async () => {
+                await this.updateComplete;
+                await this.awaitBeforeLayout();
+                await this.scrollToShowDropdown();
+            })();
         }
     }
 
@@ -660,7 +1019,9 @@ export class CoverGrid extends LitElement {
         const saved =
             this.libraryCtrl.getScrollPosition('albums');
 
-        if (saved <= 0 || !this.virtualizer) return;
+        if (saved <= 0 || !this.virtualizerSingle) {
+            return;
+        }
 
         const safeIndex = Math.min(
             saved,
@@ -669,12 +1030,18 @@ export class CoverGrid extends LitElement {
 
         if (safeIndex <= 0) return;
 
-        this.virtualizer.scrollToIndex(
+        this.virtualizerSingle.scrollToIndex(
             safeIndex,
             'start',
         );
     }
 
+    /**
+     * Save scroll position from the first visible
+     * album.  In split mode we compute the index from
+     * scrollTop; in single mode we use the virtualizer
+     * visibilityChanged event data.
+     */
     private onVisibilityChanged = (
         e: VisibilityChangedEvent,
     ) => {
@@ -689,14 +1056,31 @@ export class CoverGrid extends LitElement {
         }
 
         this.scrollDebounceTimer = setTimeout(() => {
-            const items = this.buildVirtualizerItems();
-            const first = items[e.first];
+            if (this.splitMode) {
+                // In split mode the event indices are
+                // relative to the before-virtualizer.
+                // Save the album index directly.
+                const entries =
+                    this.getBeforeEntries();
+                const first = entries[e.first];
 
-            if (first?.kind === 'album') {
-                this.libraryCtrl.setScrollPosition(
-                    'albums',
-                    first.albumIndex,
-                );
+                if (first) {
+                    this.libraryCtrl.setScrollPosition(
+                        'albums',
+                        first.albumIndex,
+                    );
+                }
+            } else {
+                const entries =
+                    this.buildGridEntries();
+                const first = entries[e.first];
+
+                if (first) {
+                    this.libraryCtrl.setScrollPosition(
+                        'albums',
+                        first.albumIndex,
+                    );
+                }
             }
         }, SCROLL_DEBOUNCE_MS);
     };
@@ -745,15 +1129,20 @@ export class CoverGrid extends LitElement {
 
             this.currentColumnCount = newColumns;
 
-            // If a dropdown is open, reposition and
-            // re-evaluate scroll with smart logic.
-            if (this.expandedAlbumId !== null) {
-                this.phantomRowCount =
-                    this.computePhantomRowCount(
-                        this.expandedTracks.length,
-                    );
-                this.updateDropdownPosition();
-                this.scrollToShowDropdown();
+            // If a dropdown is open, recompute the
+            // split and re-evaluate scroll.
+            if (
+                this.splitMode &&
+                this.expandedAlbumId !== null
+            ) {
+                this.computeSplitIndex();
+                this.requestUpdate();
+
+                void (async () => {
+                    await this.updateComplete;
+                    await this.awaitBeforeLayout();
+                    await this.scrollToShowDropdown();
+                })();
 
                 return;
             }
@@ -912,7 +1301,8 @@ export class CoverGrid extends LitElement {
 
     private getColumnCount(): number {
         const el =
-            this.scrollContainer ?? this.virtualizer;
+            this.scrollContainer ??
+            this.virtualizerSingle;
 
         if (!el) return 1;
 
@@ -933,170 +1323,326 @@ export class CoverGrid extends LitElement {
     /** Container width in pixels for the dropdown. */
     private getContainerWidth(): number {
         const el =
-            this.scrollContainer ?? this.virtualizer;
+            this.scrollContainer ??
+            this.virtualizerSingle;
 
         return el?.clientWidth ?? 800;
     }
 
-    /**
-     * Derive the number of track-list columns from
-     * the grid container width.  Mirrors the logic
-     * in AlbumDropdown.columnCount.
-     */
-    private getDropdownColumnCount(): number {
-        const w = this.getContainerWidth();
-
-        if (w < 500) return 1;
-        if (w < 800) return 2;
-        if (w < 1200) return 3;
-
-        return 4;
-    }
-
-    /**
-     * Compute how many phantom grid rows are needed
-     * to fit all tracks given the current dropdown
-     * column count and card height.
+    /* ====================================================================
+     * Split-mode helpers
      *
-     * Derives the required height from the actual
-     * track content rather than per-column capacity,
-     * keeping the phantom space tight regardless of
-     * the number of columns.
+     * When the dropdown is open the album grid is split
+     * into two virtualizers with the dropdown in between.
+     * This avoids phantom rows and lets the dropdown size
+     * itself to its content exactly.
+     * ==================================================================== */
+
+    /**
+     * Compute the split point: all albums up to and
+     * including the expanded album's row go into the
+     * "before" virtualizer; the rest go into "after".
      */
-    private computePhantomRowCount(
-        trackCount: number,
-    ): number {
-        if (trackCount === 0) return 0;
+    private computeSplitIndex() {
+        if (this.expandedAlbumId === null) {
+            this.splitIndex = this.albums.length;
 
-        const cols = this.getDropdownColumnCount();
-        const rowsPerCol = Math.ceil(
-            trackCount / cols,
+            return;
+        }
+
+        const columns = this.getColumnCount();
+        const expandedIndex = this.albums.findIndex(
+            (a) => a.ID === this.expandedAlbumId,
         );
-        const contentHeight =
-            rowsPerCol * CoverGrid.TRACK_ROW_HEIGHT +
-            CoverGrid.DROPDOWN_CHROME;
-        const gap = CoverGrid.GRID_GAP;
-        const rowStep = this.cardHeight + gap;
 
-        return Math.max(
-            1,
-            Math.ceil(
-                (contentHeight + gap) / rowStep,
-            ),
+        if (expandedIndex < 0) {
+            this.splitIndex = this.albums.length;
+
+            return;
+        }
+
+        this.splitIndex = Math.min(
+            (Math.floor(expandedIndex / columns) +
+                1) *
+                columns,
+            this.albums.length,
         );
     }
 
     /* ====================================================================
-     * Virtualizer items (albums + phantom rows)
-     *
-     * When a dropdown is open we inject phantom entries
-     * after the expanded album's row.  The dropdown is
-     * rendered as an absolutely-positioned overlay on top
-     * of the phantom cards.
+     * Virtualizer items
      * ==================================================================== */
 
-    private buildVirtualizerItems(): GridEntry[] {
-        const columns = this.getColumnCount();
-        const phantomRows =
-            this.expandedAlbumId !== null
-                ? this.phantomRowCount
-                : 0;
-
-        // Return cached result when inputs unchanged.
-        if (
-            this.itemsCacheAlbums === this.albums &&
-            this.itemsCacheExpandedId ===
-            this.expandedAlbumId &&
-            this.itemsCacheColumns === columns &&
-            this.itemsCachePhantomRows === phantomRows
-        ) {
-            return this.itemsCache;
+    /**
+     * Build a flat GridEntry array for a given album
+     * slice.  Used by both single and split modes.
+     */
+    private buildGridEntries(): GridEntry[] {
+        // Return cached result when input unchanged.
+        if (this.entriesCacheAlbums === this.albums) {
+            return this.entriesCache;
         }
 
-        const items: GridEntry[] = [];
+        const entries: GridEntry[] = [];
 
-        if (this.expandedAlbumId === null) {
-            for (let i = 0; i < this.albums.length; i++) {
-                items.push({
-                    kind: 'album',
-                    album: this.albums[i]!,
-                    albumIndex: i,
-                });
-            }
-        } else {
-            const expandedIndex = this.albums.findIndex(
-                (a) => a.ID === this.expandedAlbumId,
-            );
-
-            // Position after the expanded album's row.
-            const insertAfter =
-                expandedIndex >= 0
-                    ? Math.min(
-                        (Math.floor(
-                            expandedIndex / columns,
-                        ) +
-                            1) *
-                        columns,
-                        this.albums.length,
-                    )
-                    : this.albums.length;
-
-            const phantomCount = columns * phantomRows;
-
-            for (let i = 0; i < insertAfter; i++) {
-                items.push({
-                    kind: 'album',
-                    album: this.albums[i]!,
-                    albumIndex: i,
-                });
-            }
-
-            for (let i = 0; i < phantomCount; i++) {
-                items.push({
-                    kind: 'phantom',
-                    phantomIndex: i,
-                });
-            }
-
-            for (
-                let i = insertAfter;
-                i < this.albums.length;
-                i++
-            ) {
-                items.push({
-                    kind: 'album',
-                    album: this.albums[i]!,
-                    albumIndex: i,
-                });
-            }
+        for (let i = 0; i < this.albums.length; i++) {
+            entries.push({
+                album: this.albums[i]!,
+                albumIndex: i,
+            });
         }
 
-        // Update cache.
-        this.itemsCache = items;
-        this.itemsCacheAlbums = this.albums;
-        this.itemsCacheExpandedId = this.expandedAlbumId;
-        this.itemsCacheColumns = columns;
-        this.itemsCachePhantomRows = phantomRows;
+        this.entriesCacheAlbums = this.albums;
+        this.entriesCache = entries;
 
-        return items;
+        return entries;
     }
 
-    private gridKeyFunction = (entry: GridEntry) => {
-        if (entry.kind === 'phantom') {
-            return `phantom-${entry.phantomIndex}`;
-        }
+    /** Entries for the "before" virtualizer. */
+    private getBeforeEntries(): GridEntry[] {
+        return this.buildGridEntries().slice(
+            0,
+            this.splitIndex,
+        );
+    }
 
+    /** Entries for the "after" virtualizer. */
+    private getAfterEntries(): GridEntry[] {
+        return this.buildGridEntries().slice(
+            this.splitIndex,
+        );
+    }
+
+    private gridKeyFunction = (
+        entry: GridEntry,
+    ) => {
         return `a-${entry.album.ID}`;
     };
 
     /* ====================================================================
-     * Dropdown overlay positioning
+     * Transition overlay
      *
-     * The dropdown is absolutely positioned inside the
-     * scroll container, overlaying the phantom cards.
-     * We compute its top offset from the expanded album's
-     * row position in the grid.
+     * Before a single/split mode switch we clone the
+     * scroll container into an absolutely-positioned
+     * overlay so the old visual state stays on-screen
+     * while the new layout computes underneath
+     * (hidden).  Once the new layout is ready and
+     * scroll is restored we remove the overlay and
+     * reveal the real container in one paint frame.
      * ==================================================================== */
+
+    /**
+     * Capture the current scroll container as a
+     * static overlay so the user keeps seeing the old
+     * state while the DOM switches underneath.
+     */
+    private captureOverlay() {
+        const container = this.scrollContainer;
+
+        if (!container || this.transitionOverlay) {
+            return;
+        }
+
+        const scrollY = container.scrollTop;
+        const overlay = document.createElement('div');
+
+        overlay.style.cssText =
+            'position:absolute;inset:0;z-index:10;' +
+            'overflow:hidden;pointer-events:none;';
+
+        // Clone each child into a wrapper that
+        // reproduces the scroll viewport.
+        const inner = document.createElement('div');
+
+        inner.style.cssText =
+            'position:relative;height:100%;' +
+            'pointer-events:none;';
+
+        for (const child of Array.from(
+            container.childNodes,
+        )) {
+            inner.appendChild(child.cloneNode(true));
+        }
+
+        // Shift content up to match the current
+        // scroll offset.
+        inner.style.transform =
+            `translateY(-${scrollY}px)`;
+
+        overlay.appendChild(inner);
+
+        // Append to :host (shadow root), not inside
+        // the scroll container, so Lit's diffing does
+        // not touch it.
+        this.shadowRoot?.appendChild(overlay);
+        this.transitionOverlay = overlay;
+
+        // Hide the real container while the new
+        // layout settles.
+        container.style.visibility = 'hidden';
+    }
+
+    /**
+     * Remove the snapshot overlay and reveal the real
+     * scroll container.  Both happen synchronously so
+     * they land in the same paint frame.
+     */
+    private removeOverlay() {
+        if (this.transitionOverlay) {
+            this.transitionOverlay.remove();
+            this.transitionOverlay = null;
+        }
+
+        if (this.scrollContainer) {
+            this.scrollContainer.style.visibility = '';
+        }
+    }
+
+    /* ====================================================================
+     * Dropdown scroll positioning
+     *
+     * In split mode the dropdown is a normal-flow DOM
+     * element between two virtualizers.  We query its
+     * position from the DOM.
+     * ==================================================================== */
+
+    /**
+     * Wait for the "before" virtualizer to finish its
+     * layout pass so that its host element height
+     * reflects the total content size.  Without this,
+     * setting scrollTop can be silently clamped to 0
+     * because the scroll container hasn't grown yet.
+     */
+    private async awaitBeforeLayout(): Promise<void> {
+        const virt =
+            this.shadowRoot?.querySelector(
+                '#grid-before',
+            ) as LitVirtualizer | null;
+
+        await virt?.layoutComplete;
+    }
+
+    /**
+     * Return the current scrollTop converted to
+     * single-mode (dropdown-free) coordinates.
+     *
+     * In split mode the open dropdown shifts all
+     * content below it downward.  When we save a
+     * scroll position for later restoration in a
+     * different layout we need to remove that shift
+     * so the saved value is layout-agnostic.
+     */
+    private computeAdjustedScrollTop(): number {
+        const container = this.scrollContainer;
+
+        if (!container) return 0;
+
+        const raw = container.scrollTop;
+
+        if (!this.splitMode) return raw;
+
+        const gap = CoverGrid.GRID_GAP;
+        const pad = CoverGrid.GRID_PADDING;
+        const columns = this.getColumnCount();
+        const rowStep = this.cardHeight + gap;
+        const beforeRows = Math.ceil(
+            this.splitIndex / columns,
+        );
+
+        // Position where the dropdown starts in
+        // the split layout (scroll-content coords).
+        const dropdownTop =
+            pad + beforeRows * rowStep;
+
+        if (raw <= dropdownTop) {
+            console.log(
+                '[adjustScroll] raw <= dropdownTop, no adjust',
+                { raw, dropdownTop },
+            );
+
+            return raw;
+        }
+
+        const dropdown =
+            this.shadowRoot?.querySelector(
+                'album-dropdown',
+            );
+        const dropdownHeight =
+            (dropdown as HTMLElement)?.offsetHeight ??
+            0;
+
+        const adjusted = raw - dropdownHeight;
+
+        console.log(
+            '[adjustScroll]',
+            {
+                raw,
+                dropdownTop,
+                dropdownHeight,
+                adjusted,
+            },
+        );
+
+        return adjusted;
+    }
+
+    /**
+     * Set scrollTop on the scroll container and verify
+     * the browser didn't silently clamp it.  If the
+     * virtualizer hasn't expanded its host height yet,
+     * scrollTop will be clamped to a smaller value.
+     * In that case, wait one animation frame (giving
+     * the virtualizer time to size itself) and retry.
+     */
+    private async restoreScrollTop(
+        target: number,
+    ): Promise<void> {
+        const container = this.scrollContainer;
+
+        if (!container) return;
+
+        const maxAttempts = 10;
+
+        for (let i = 0; i < maxAttempts; i++) {
+            container.scrollTop = target;
+
+            console.log(
+                `[restoreScrollTop] attempt ${i}`,
+                {
+                    target,
+                    actual: container.scrollTop,
+                    scrollHeight:
+                        container.scrollHeight,
+                    clientHeight:
+                        container.clientHeight,
+                },
+            );
+
+            // Success if the browser accepted the
+            // value, or the target is at/below zero.
+            if (
+                container.scrollTop >= target ||
+                target <= 0
+            ) {
+                return;
+            }
+
+            // Content hasn't expanded enough yet —
+            // wait one frame and retry.
+            await new Promise<void>((r) =>
+                requestAnimationFrame(() => r()),
+            );
+        }
+
+        console.warn(
+            '[restoreScrollTop] gave up after max attempts',
+            {
+                target,
+                actual: container.scrollTop,
+                scrollHeight: container.scrollHeight,
+            },
+        );
+    }
 
     /**
      * Scroll the container so the expanded album card
@@ -1105,16 +1651,18 @@ export class CoverGrid extends LitElement {
      *
      * 1. If both fit in the viewport already, don't
      *    scroll.
-     * 2. If the album card top is slightly above the
-     *    viewport, scroll up to reveal it.
-     * 3. If the dropdown bottom overflows below the
-     *    viewport, scroll down to align it with the
-     *    viewport bottom.
-     * 4. If showing the dropdown bottom would push
-     *    the album card above the viewport, pin the
-     *    album card top to the viewport top instead.
+     * 2. If the dropdown bottom overflows below the
+     *    viewport, align it with the viewport bottom.
+     * 3. If that would push the album card above the
+     *    viewport, pin the album card top to the
+     *    viewport top instead.
+     *
+     * Positions are computed from grid math rather
+     * than DOM queries so that the method works
+     * immediately after a single/split mode switch
+     * (before the virtualizer has laid out).
      */
-    private scrollToShowDropdown() {
+    private async scrollToShowDropdown() {
         const container = this.scrollContainer;
 
         if (
@@ -1144,12 +1692,27 @@ export class CoverGrid extends LitElement {
         const albumTop =
             pad + albumRow * rowStep - gap / 2;
 
-        // Bottom of the dropdown overlay.
-        const dropdownHeight =
-            this.phantomRowCount * this.cardHeight +
-            (this.phantomRowCount - 1) * gap;
+        // Compute the dropdown bottom from grid math.
+        // The dropdown sits right after the "before"
+        // rows: ceil(splitIndex / columns) full rows.
+        const dropdown =
+            this.shadowRoot?.querySelector(
+                'album-dropdown',
+            );
+
+        if (!dropdown) return;
+
+        // Wait for the dropdown to finish rendering
+        // its tracks so that offsetHeight is accurate.
+        await (dropdown as LitElement).updateComplete;
+
+        const beforeRows = Math.ceil(
+            this.splitIndex / columns,
+        );
+        const dropdownTop = pad + beforeRows * rowStep;
         const dropdownBottom =
-            this.dropdownTopPx + dropdownHeight;
+            dropdownTop +
+            (dropdown as HTMLElement).offsetHeight;
 
         const viewTop = container.scrollTop;
         const viewHeight = container.clientHeight;
@@ -1178,32 +1741,33 @@ export class CoverGrid extends LitElement {
             newScrollTop = albumTop;
         }
 
-        if (newScrollTop !== viewTop) {
-            container.scrollTo({
-                top: newScrollTop,
-                behavior: 'instant',
-            });
-        }
-    }
-
-    private updateDropdownPosition() {
-        if (this.expandedAlbumId === null) return;
-
-        const columns = this.getColumnCount();
-        const expandedIndex = this.albums.findIndex(
-            (a) => a.ID === this.expandedAlbumId,
+        console.log(
+            '[scrollToShowDropdown]',
+            {
+                expandedIndex,
+                albumRow,
+                albumTop,
+                beforeRows,
+                dropdownTop,
+                dropdownOffsetHeight:
+                    (dropdown as HTMLElement)
+                        .offsetHeight,
+                dropdownBottom,
+                viewTop,
+                viewHeight,
+                minScroll,
+                maxScroll,
+                newScrollTop,
+                scrollHeight:
+                    container.scrollHeight,
+                willScroll:
+                    newScrollTop !== viewTop,
+            },
         );
 
-        if (expandedIndex < 0) return;
-
-        const gap = CoverGrid.GRID_GAP;
-        const pad = CoverGrid.GRID_PADDING;
-        const rowStep = this.cardHeight + gap;
-        const phantomStartRow =
-            Math.floor(expandedIndex / columns) + 1;
-
-        this.dropdownTopPx =
-            pad + phantomStartRow * rowStep;
+        if (newScrollTop !== viewTop) {
+            await this.restoreScrollTop(newScrollTop);
+        }
     }
 
     /* ====================================================================
@@ -1308,7 +1872,6 @@ export class CoverGrid extends LitElement {
             this.expandedTracks = [];
             this.selectedTracks = new Set();
             this.lastSelectedTrackIndex = null;
-            this.phantomRowCount = 0;
 
             return;
         }
@@ -1318,9 +1881,6 @@ export class CoverGrid extends LitElement {
         this.expandedTracks = [];
         this.selectedTracks = new Set();
         this.lastSelectedTrackIndex = null;
-        this.phantomRowCount = 0;
-        this.loadingTracks = true;
-
         try {
             const tracks = await GetAlbumTracks(album.ID);
 
@@ -1333,8 +1893,6 @@ export class CoverGrid extends LitElement {
                 'Error loading album tracks:',
                 error,
             );
-        } finally {
-            this.loadingTracks = false;
         }
     }
 
@@ -1790,12 +2348,6 @@ export class CoverGrid extends LitElement {
     private renderGridEntry = (
         entry: GridEntry,
     ) => {
-        if (entry.kind === 'phantom') {
-            return html`<div
-                class="phantom-card"
-            ></div>`;
-        }
-
         return this.renderAlbumCard(
             entry.album,
             entry.albumIndex,
@@ -1900,44 +2452,89 @@ export class CoverGrid extends LitElement {
             `;
         }
 
+        const gridContent = this.splitMode
+            ? this.renderSplitGrid()
+            : this.renderSingleGrid();
+
         return html`
             <div
                 class="grid-scroll-container"
                 @click=${this.onGridClick}
             >
-                <lit-virtualizer
-                    .items=${this.buildVirtualizerItems()}
-                    .renderItem=${this.renderGridEntry}
-                    .keyFunction=${this.gridKeyFunction}
-                    .layout=${this.gridLayout}
-                    @click=${this.onGridAlbumClick}
-                    @dblclick=${this.onGridAlbumDblClick}
-                    @keydown=${this.onGridAlbumKeydown}
-                    @contextmenu=${this.onGridAlbumContextMenu}
-                    @visibilityChanged=${this.onVisibilityChanged}
-                ></lit-virtualizer>
-
-                ${this.expandedAlbumId !== null &&
-                this.expandedTracks.length > 0
-                ? html`
-                          <album-dropdown
-                              class="dropdown-overlay"
-                              style="top:${this.dropdownTopPx}px"
-                              .tracks=${this.expandedTracks}
-                              ?loading-tracks=${this.loadingTracks}
-                              .selectedTracks=${this.selectedTracks}
-                              .phantomRows=${this.phantomRowCount}
-                              .gridItemHeight=${this.cardHeight}
-                              .gridGap=${CoverGrid.GRID_GAP}
-                              .containerWidth=${this.getContainerWidth()}
-                              @track-click=${this.onTrackClick}
-                              @track-dblclick=${this.onTrackDblClick}
-                              @track-contextmenu=${this.onTrackContextMenu}
-                          ></album-dropdown>
-                      `
-                : nothing}
+                ${gridContent}
             </div>
 
+            ${this.renderContextMenu()}
+        `;
+    }
+
+    /** Single virtualizer — no dropdown open. */
+    private renderSingleGrid() {
+        return html`
+            <lit-virtualizer
+                id="grid-single"
+                .items=${this.buildGridEntries()}
+                .renderItem=${this.renderGridEntry}
+                .keyFunction=${this.gridKeyFunction}
+                .layout=${this.gridLayout}
+                @click=${this.onGridAlbumClick}
+                @dblclick=${this.onGridAlbumDblClick}
+                @keydown=${this.onGridAlbumKeydown}
+                @contextmenu=${this.onGridAlbumContextMenu}
+                @visibilityChanged=${this.onVisibilityChanged}
+            ></lit-virtualizer>
+        `;
+    }
+
+    /**
+     * Dual virtualizer — dropdown sandwiched between
+     * "before" and "after" grids.
+     */
+    private renderSplitGrid() {
+        return html`
+            <lit-virtualizer
+                id="grid-before"
+                .items=${this.getBeforeEntries()}
+                .renderItem=${this.renderGridEntry}
+                .keyFunction=${this.gridKeyFunction}
+                .layout=${this.gridLayout}
+                @click=${this.onGridAlbumClick}
+                @dblclick=${this.onGridAlbumDblClick}
+                @keydown=${this.onGridAlbumKeydown}
+                @contextmenu=${this.onGridAlbumContextMenu}
+                @visibilityChanged=${this.onVisibilityChanged}
+            ></lit-virtualizer>
+
+            <album-dropdown
+                .tracks=${this.expandedTracks}
+                .selectedTracks=${this.selectedTracks}
+                .containerWidth=${this.getContainerWidth()}
+                @track-click=${this.onTrackClick}
+                @track-dblclick=${this.onTrackDblClick}
+                @track-contextmenu=${this.onTrackContextMenu}
+            ></album-dropdown>
+
+            ${this.getAfterEntries().length > 0
+                ? html`
+                      <lit-virtualizer
+                          id="grid-after"
+                          .items=${this.getAfterEntries()}
+                          .renderItem=${this.renderGridEntry}
+                          .keyFunction=${this.gridKeyFunction}
+                          .layout=${this.gridLayoutAfter}
+                          @click=${this.onGridAlbumClick}
+                          @dblclick=${this.onGridAlbumDblClick}
+                          @keydown=${this.onGridAlbumKeydown}
+                          @contextmenu=${this.onGridAlbumContextMenu}
+                      ></lit-virtualizer>
+                  `
+                : nothing}
+        `;
+    }
+
+    /** Context menu + playlist submenu popups. */
+    private renderContextMenu() {
+        return html`
             <wa-popup
                 id="context-menu"
                 placement="bottom-start"
