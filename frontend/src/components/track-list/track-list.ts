@@ -297,7 +297,9 @@ export class TrackList extends LitElement implements SelectionHost {
 
     lit-virtualizer {
       flex: 1;
+      overflow-x: hidden;
       overflow-y: auto;
+      user-select: none;
     }
 
     .track-row {
@@ -730,7 +732,7 @@ export class TrackList extends LitElement implements SelectionHost {
         return html`
       <div
         class=${classes}
-        draggable=${selected ? 'true' : 'false'}
+        draggable="true"
         @click=${(e: MouseEvent) =>
                 this.onTrackRowClick(e, track, index)}
         @dblclick=${() => this.onTrackRowDblClick(track)}

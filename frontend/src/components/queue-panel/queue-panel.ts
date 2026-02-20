@@ -22,6 +22,7 @@ import {
     getDragPayload,
     setDragPayload,
     emitDragActive,
+    getActiveDragSource,
 } from '@utils/drag-controller';
 import {
     createDragImage,
@@ -55,8 +56,13 @@ export class QueuePanel
     @state()
     private playlistSubmenuOpen = false;
 
-    @state()
     private dragOver = false;
+
+    private dropTargetIndex = -1;
+    private dropTargetRafId = 0;
+
+    private autoScrollRafId = 0;
+    private autoScrollDelta = 0;
 
     private dragImageEl: HTMLElement | null = null;
 
@@ -113,6 +119,14 @@ export class QueuePanel
      * on actual track changes.
      */
     private lastScrolledIndex = -1;
+
+    /**
+     * Tracks the last currentIndex for which the virtualizer was
+     * told to re-render, so the active-track highlight stays in sync.
+     */
+    private lastRenderedIndex = -1;
+
+
 
     // =================================================================
     // SelectionHost interface
@@ -221,6 +235,7 @@ export class QueuePanel
         }
 
         .track-item {
+            position: relative;
             display: flex;
             align-items: center;
             padding: 8px 16px;
@@ -322,8 +337,35 @@ export class QueuePanel
                 rgba(255, 212, 59, 0.2);
         }
 
-        .panel-content.drag-over .drop-indicator {
+        .panel-content.drag-over.empty-drag
+            .drop-indicator {
             display: block;
+        }
+
+        .track-item.drop-before::before {
+            content: '';
+            position: absolute;
+            top: -1px;
+            left: 8px;
+            right: 8px;
+            height: 2px;
+            background: #ffd43b;
+            border-radius: 1px;
+            z-index: 5;
+            pointer-events: none;
+        }
+
+        .track-item.drop-after::after {
+            content: '';
+            position: absolute;
+            bottom: -1px;
+            left: 8px;
+            right: 8px;
+            height: 2px;
+            background: #ffd43b;
+            border-radius: 1px;
+            z-index: 5;
+            pointer-events: none;
         }
 
         .empty-state {
@@ -409,6 +451,10 @@ export class QueuePanel
             'click',
             this.clearSelectionHandler,
         );
+        document.addEventListener(
+            'dragend',
+            this.onDocumentDragEnd,
+        );
     }
 
     override disconnectedCallback() {
@@ -437,10 +483,21 @@ export class QueuePanel
             'click',
             this.clearSelectionHandler,
         );
+        document.removeEventListener(
+            'dragend',
+            this.onDocumentDragEnd,
+        );
     }
 
     override updated() {
         const currentIndex = this.queue.currentIndex;
+
+        // Force virtualizer to re-render visible items when the
+        // active track changes so the highlight stays in sync.
+        if (currentIndex !== this.lastRenderedIndex) {
+            this.lastRenderedIndex = currentIndex;
+            this.virtualizer?.requestUpdate();
+        }
 
         // Auto-scroll to the active track when it changes.
         if (
@@ -645,37 +702,82 @@ export class QueuePanel
     // Drop target (tracks dropped into queue)
     // =================================================================
 
-    private onPanelDragOver = (e: DragEvent) => {
-        if (!hasTrackPayload(e)) return;
-
-        e.preventDefault();
-
-        if (e.dataTransfer) {
-            e.dataTransfer.dropEffect = 'copy';
-        }
-
-        if (!this.dragOver) {
-            this.dragOver = true;
-        }
-    };
-
-    private onPanelDragLeave = (e: DragEvent) => {
-        // Only reset when leaving the panel-content
-        // element itself (not a child).
-        const related = e.relatedTarget as Node | null;
+    /**
+     * Toggle the drag-over CSS classes directly on the
+     * DOM element. This avoids Lit re-renders which
+     * cause DOM mutations that break the browser's
+     * drag event stream.
+     */
+    private updateDragOverClass() {
         const panel =
             this.shadowRoot?.querySelector(
                 '.panel-content',
             );
 
-        if (panel && !panel.contains(related)) {
-            this.dragOver = false;
+        if (!panel) return;
+
+        const isEmpty = this.queue.tracks.length === 0;
+
+        panel.classList.toggle(
+            'drag-over',
+            this.dragOver,
+        );
+        panel.classList.toggle(
+            'empty-drag',
+            this.dragOver && isEmpty,
+        );
+    }
+
+    private onPanelDragEnter = (e: DragEvent) => {
+        if (!hasTrackPayload(e)) return;
+
+        e.preventDefault();
+
+        if (e.dataTransfer) {
+            const isInternal =
+                getActiveDragSource() === 'queue';
+            e.dataTransfer.dropEffect = isInternal
+                ? 'move'
+                : 'copy';
         }
+
+        if (!this.dragOver) {
+            this.dragOver = true;
+            this.updateDragOverClass();
+            this.startAutoScroll();
+        }
+    };
+
+    private onPanelDragOver = (e: DragEvent) => {
+        if (!hasTrackPayload(e)) return;
+
+        e.preventDefault();
+
+        const isInternal =
+            getActiveDragSource() === 'queue';
+
+        if (e.dataTransfer) {
+            e.dataTransfer.dropEffect = isInternal
+                ? 'move'
+                : 'copy';
+        }
+
+        this.updateDropTargetIndex(e.clientY);
+        this.updateAutoScrollDelta(e.clientY);
+    };
+
+    private onPanelDragLeave = (_e: DragEvent) => {
+        // No-op: cleanup is handled by dragend / drop.
+        // Firing here would break due to child-boundary
+        // and virtualizer re-render events.
     };
 
     private onPanelDrop = (e: DragEvent) => {
         e.preventDefault();
-        this.dragOver = false;
+
+        const targetIndex = this.dropTargetIndex;
+
+        this.cleanupDragState();
 
         const payload = getDragPayload(e);
 
@@ -686,11 +788,203 @@ export class QueuePanel
             return;
         }
 
-        // Don't allow dropping queue items back
-        // onto the queue.
-        if (payload.source === 'queue') return;
+        if (payload.source === 'queue') {
+            // Internal reorder.
+            const fromIndices = this.selection
+                .getSelectedIndices();
 
-        this.queue.addTracksToQueue(payload.filePaths);
+            if (fromIndices.length > 0) {
+                this.queue.moveTracksInQueue(
+                    fromIndices,
+                    targetIndex >= 0
+                        ? targetIndex
+                        : this.queue.tracks.length,
+                );
+            }
+        } else {
+            // External insert at position.
+            const idx =
+                targetIndex >= 0
+                    ? targetIndex
+                    : this.queue.tracks.length;
+            this.queue.insertTracksAtIndex(
+                payload.filePaths,
+                idx,
+            );
+        }
+    };
+
+    /**
+     * Calculate the drop target index from cursor Y
+     * position relative to the virtualizer's children.
+     */
+    private updateDropTargetIndex(clientY: number) {
+        const newIdx =
+            this.computeDropTargetIndex(clientY);
+
+        if (newIdx !== this.dropTargetIndex) {
+            this.dropTargetIndex = newIdx;
+
+            // Debounce via RAF to avoid layout thrashing
+            // that interrupts the browser drag stream.
+            if (!this.dropTargetRafId) {
+                this.dropTargetRafId =
+                    requestAnimationFrame(() => {
+                        this.dropTargetRafId = 0;
+                        this.virtualizer?.requestUpdate();
+                    });
+            }
+        }
+    }
+
+    private computeDropTargetIndex(
+        clientY: number,
+    ): number {
+        const tracks = this.queue.tracks;
+
+        if (tracks.length === 0) return 0;
+
+        const virt = this.virtualizer;
+
+        if (!virt) return tracks.length;
+
+        const items =
+            virt.querySelectorAll('.track-item');
+
+        if (items.length === 0) return tracks.length;
+
+        // Check each visible item to find the drop
+        // position.
+        for (const item of items) {
+            const rect = item.getBoundingClientRect();
+            const midY = rect.top + rect.height / 2;
+
+            if (clientY < midY) {
+                const idx = Number(
+                    (item as HTMLElement).dataset.index,
+                );
+
+                if (!Number.isNaN(idx)) return idx;
+            }
+        }
+
+        // Cursor is below all visible items — append
+        // at end.
+        const lastItem = items[items.length - 1];
+
+        if (lastItem) {
+            const idx = Number(
+                (lastItem as HTMLElement).dataset
+                    .index,
+            );
+
+            if (!Number.isNaN(idx)) return idx + 1;
+        }
+
+        return tracks.length;
+    }
+
+    // =================================================================
+    // Auto-scroll during drag
+    // =================================================================
+
+    private static readonly SCROLL_ZONE = 60;
+    private static readonly SCROLL_SPEED = 12;
+
+    /**
+     * Update the scroll delta based on cursor proximity
+     * to the top/bottom edges. The RAF loop (started in
+     * onPanelDragEnter) reads this value each frame.
+     * Setting delta to 0 means no scrolling; the loop
+     * stays running until the drag ends.
+     */
+    private updateAutoScrollDelta(clientY: number) {
+        const virt = this.virtualizer;
+
+        if (!virt) return;
+
+        const rect = virt.getBoundingClientRect();
+        const zone = QueuePanel.SCROLL_ZONE;
+
+        const distTop = clientY - rect.top;
+        const distBottom = rect.bottom - clientY;
+
+        if (distTop < zone && distTop >= 0) {
+            this.autoScrollDelta =
+                -QueuePanel.SCROLL_SPEED *
+                (1 - distTop / zone);
+        } else if (
+            distBottom < zone &&
+            distBottom >= 0
+        ) {
+            this.autoScrollDelta =
+                QueuePanel.SCROLL_SPEED *
+                (1 - distBottom / zone);
+        } else {
+            this.autoScrollDelta = 0;
+        }
+    }
+
+    private startAutoScroll() {
+        if (this.autoScrollRafId) return;
+
+        const step = () => {
+            const virt = this.virtualizer;
+
+            if (!virt) {
+                this.autoScrollRafId = 0;
+
+                return;
+            }
+
+            if (this.autoScrollDelta !== 0) {
+                virt.scrollTop += this.autoScrollDelta;
+            }
+
+            this.autoScrollRafId =
+                requestAnimationFrame(step);
+        };
+
+        this.autoScrollRafId =
+            requestAnimationFrame(step);
+    }
+
+    private stopAutoScroll() {
+        if (this.autoScrollRafId) {
+            cancelAnimationFrame(this.autoScrollRafId);
+            this.autoScrollRafId = 0;
+        }
+
+        this.autoScrollDelta = 0;
+    }
+
+    /**
+     * Reset all drag-related state. Called from drop,
+     * dragend, and the global dragend fallback.
+     */
+    private cleanupDragState() {
+        if (!this.dragOver) return;
+
+        this.dragOver = false;
+        this.dropTargetIndex = -1;
+
+        if (this.dropTargetRafId) {
+            cancelAnimationFrame(this.dropTargetRafId);
+            this.dropTargetRafId = 0;
+        }
+
+        this.updateDragOverClass();
+        this.stopAutoScroll();
+        this.virtualizer?.requestUpdate();
+    }
+
+    /**
+     * Global dragend handler catches external drags
+     * (from track-list / cover-grid) that end outside
+     * the queue panel without a drop event.
+     */
+    private onDocumentDragEnd = () => {
+        this.cleanupDragState();
     };
 
     // =================================================================
@@ -706,10 +1000,17 @@ export class QueuePanel
         let filePaths: string[];
 
         if (this.selection.isSelected(String(index))) {
+            // Drag the entire multi-selection.
             filePaths = this.selection
                 .getSelectedIndices()
                 .map((i) => tracks[i]!.filePath);
         } else {
+            // Dragging an unselected track — select
+            // only it so internal reorder works.
+            this.selection.handleContextMenu(
+                String(index),
+            );
+
             const track = tracks[index];
 
             if (!track) return;
@@ -742,6 +1043,7 @@ export class QueuePanel
             this.dragImageEl = null;
         }
 
+        this.cleanupDragState();
         emitDragActive(false);
     };
 
@@ -806,10 +1108,19 @@ export class QueuePanel
             String(index),
         );
 
+        const dropIdx = this.dropTargetIndex;
+        const trackCount = this.queue.tracks.length;
+        const showBefore = dropIdx === index;
+        const showAfter =
+            dropIdx === trackCount &&
+            index === trackCount - 1;
+
         const classes = [
             'track-item',
             active ? 'active' : '',
             selected ? 'selected' : '',
+            showBefore ? 'drop-before' : '',
+            showAfter ? 'drop-after' : '',
         ]
             .filter(Boolean)
             .join(' ');
@@ -817,7 +1128,8 @@ export class QueuePanel
         return html`
             <div
                 class=${classes}
-                draggable=${selected ? 'true' : 'false'}
+                data-index=${index}
+                draggable="true"
                 @click=${(e: MouseEvent) =>
                     this.handleTrackClick(e, track, index)}
                 @dblclick=${() =>
@@ -856,9 +1168,8 @@ export class QueuePanel
 
         return html`
             <div
-                class="panel-content ${this.dragOver
-                    ? 'drag-over'
-                    : ''}"
+                class="panel-content"
+                @dragenter=${this.onPanelDragEnter}
                 @dragover=${this.onPanelDragOver}
                 @dragleave=${this.onPanelDragLeave}
                 @drop=${this.onPanelDrop}

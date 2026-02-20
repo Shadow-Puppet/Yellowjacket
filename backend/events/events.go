@@ -47,6 +47,8 @@ const (
 	RequestPlayTracksNext        = "RequestPlayTracksNext"
 	RequestPlayQueueIndex        = "RequestPlayQueueIndex"
 	RequestRemoveTracksFromQueue = "RequestRemoveTracksFromQueue"
+	RequestInsertTracksAtIndex   = "RequestInsertTracksAtIndex"
+	RequestMoveQueueTracks       = "RequestMoveQueueTracks"
 )
 
 // Config events.

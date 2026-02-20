@@ -26,6 +26,25 @@ export interface DragPayload {
 }
 
 // =====================================================================
+// Active drag source tracking
+// =====================================================================
+
+let activeDragSource: DragSource | null = null;
+let activeDragPlaylistId: number | undefined;
+
+/** Return the source of the in-progress drag, or null. */
+export function getActiveDragSource(): DragSource | null {
+    return activeDragSource;
+}
+
+/** Return the playlist ID of the in-progress drag, if any. */
+export function getActiveDragPlaylistId():
+    | number
+    | undefined {
+    return activeDragPlaylistId;
+}
+
+// =====================================================================
 // Global drag-active event
 // =====================================================================
 
@@ -39,6 +58,11 @@ export interface DragActiveDetail {
  * affordances (e.g. sidebar hover-to-navigate, queue button glow).
  */
 export function emitDragActive(active: boolean): void {
+    if (!active) {
+        activeDragSource = null;
+        activeDragPlaylistId = undefined;
+    }
+
     document.dispatchEvent(
         new CustomEvent<DragActiveDetail>(
             'yj-drag-active',
@@ -65,7 +89,10 @@ export function setDragPayload(
 ): boolean {
     if (!e.dataTransfer) return false;
 
-    e.dataTransfer.effectAllowed = 'copy';
+    activeDragSource = payload.source;
+    activeDragPlaylistId = payload.sourcePlaylistId;
+
+    e.dataTransfer.effectAllowed = 'copyMove';
     e.dataTransfer.setData(
         DRAG_MIME,
         JSON.stringify(payload),

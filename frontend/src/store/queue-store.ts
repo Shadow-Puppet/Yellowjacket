@@ -132,6 +132,38 @@ class QueueStore {
         }
 
         break;
+
+      case 'move':
+        if (delta.positions && delta.tracks) {
+          const removeSet = new Set(delta.positions);
+          const remaining = tracks.filter(
+            (_, i) => !removeSet.has(i),
+          );
+
+          // Adjust insertion index for removed elements.
+          let adjustedIdx = delta.index;
+
+          for (const pos of delta.positions) {
+            if (pos < delta.index) {
+              adjustedIdx--;
+            }
+          }
+
+          adjustedIdx = Math.max(
+            0,
+            Math.min(adjustedIdx, remaining.length),
+          );
+
+          const before = remaining.slice(0, adjustedIdx);
+          const after = remaining.slice(adjustedIdx);
+          this.state.tracks = [
+            ...before,
+            ...delta.tracks,
+            ...after,
+          ];
+        }
+
+        break;
     }
 
     this.state.currentIndex = delta.currentIndex;
@@ -196,6 +228,25 @@ class QueueStore {
 
   playAtIndex(index: number): void {
     EventsEmit(Events.RequestPlayQueueIndex, index);
+  }
+
+  insertTracksAtIndex(filePaths: string[], index: number): void {
+    EventsEmit(
+      Events.RequestInsertTracksAtIndex,
+      filePaths,
+      index,
+    );
+  }
+
+  moveTracksInQueue(
+    fromIndices: number[],
+    toIndex: number,
+  ): void {
+    EventsEmit(
+      Events.RequestMoveQueueTracks,
+      fromIndices,
+      toIndex,
+    );
   }
 
   // ===================================================================

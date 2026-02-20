@@ -37,6 +37,8 @@ export const Events = {
     RequestPlayTracksNext: "RequestPlayTracksNext",
     RequestPlayQueueIndex: "RequestPlayQueueIndex",
     RequestRemoveTracksFromQueue: "RequestRemoveTracksFromQueue",
+    RequestInsertTracksAtIndex: "RequestInsertTracksAtIndex",
+    RequestMoveQueueTracks: "RequestMoveQueueTracks",
 
     // Library events
     LibraryScanStarted: "LibraryScanStarted",

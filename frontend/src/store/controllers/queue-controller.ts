@@ -118,4 +118,18 @@ export class QueueController implements ReactiveController {
   playAtIndex(index: number): void {
     queueStore.playAtIndex(index);
   }
+
+  insertTracksAtIndex(
+    filePaths: string[],
+    index: number,
+  ): void {
+    queueStore.insertTracksAtIndex(filePaths, index);
+  }
+
+  moveTracksInQueue(
+    fromIndices: number[],
+    toIndex: number,
+  ): void {
+    queueStore.moveTracksInQueue(fromIndices, toIndex);
+  }
 }

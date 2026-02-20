@@ -26,6 +26,8 @@ import {
     getDragPayload,
     setDragPayload,
     emitDragActive,
+    getActiveDragSource,
+    getActiveDragPlaylistId,
 } from '@utils/drag-controller';
 import {
     createDragImage,
@@ -801,6 +803,19 @@ export class PlaylistView
     ) => {
         if (!hasTrackPayload(e)) return;
 
+        // Don't allow dropping tracks back onto
+        // the same playlist.
+        const entry = this.entries[index];
+
+        if (
+            entry &&
+            getActiveDragSource() === 'playlist' &&
+            getActiveDragPlaylistId() ===
+                entry.summary.ID
+        ) {
+            return;
+        }
+
         e.preventDefault();
 
         if (e.dataTransfer) {
@@ -851,6 +866,16 @@ export class PlaylistView
         const entry = this.entries[index];
 
         if (!entry) return;
+
+        // Don't allow dropping tracks back onto
+        // the same playlist.
+        if (
+            payload.source === 'playlist' &&
+            payload.sourcePlaylistId ===
+                entry.summary.ID
+        ) {
+            return;
+        }
 
         try {
             await AddTracksToPlaylist(
@@ -1280,9 +1305,7 @@ export class PlaylistView
                         return html`
                             <div
                                 class=${classes}
-                                draggable=${selected
-                                    ? 'true'
-                                    : 'false'}
+                                draggable="true"
                                 @click=${(
                                     e: MouseEvent,
                                 ) =>

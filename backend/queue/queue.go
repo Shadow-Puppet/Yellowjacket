@@ -272,6 +272,28 @@ func (q *Queue) registerEventHandlers() {
 			q.handleRemoveTracksFromQueue(data...)
 		},
 	)
+
+	runtime.EventsOn(
+		q.ctx,
+		events.RequestInsertTracksAtIndex,
+		func(data ...any) {
+			q.logger.Info(
+				"Received RequestInsertTracksAtIndex",
+			)
+			q.handleInsertTracksAtIndex(data...)
+		},
+	)
+
+	runtime.EventsOn(
+		q.ctx,
+		events.RequestMoveQueueTracks,
+		func(data ...any) {
+			q.logger.Info(
+				"Received RequestMoveQueueTracks",
+			)
+			q.handleMoveQueueTracks(data...)
+		},
+	)
 }
 
 // handleSetQueue processes the RequestSetQueue event payload.
@@ -433,6 +455,92 @@ func (q *Queue) handleAddTracksToQueue(data ...any) {
 	}
 
 	q.AddTracks(filePaths)
+}
+
+// handleInsertTracksAtIndex processes the RequestInsertTracksAtIndex event
+// payload. Expects data[0] = []interface{} of file path strings,
+// data[1] = float64 target index.
+func (q *Queue) handleInsertTracksAtIndex(data ...any) {
+	if len(data) < 2 {
+		q.logger.Error(
+			"RequestInsertTracksAtIndex: missing data",
+		)
+
+		return
+	}
+
+	filePathsRaw, ok := data[0].([]interface{})
+	if !ok {
+		q.logger.Error(
+			"RequestInsertTracksAtIndex: invalid filePaths type",
+			"got", data[0],
+		)
+
+		return
+	}
+
+	filePaths := make([]string, 0, len(filePathsRaw))
+
+	for _, fp := range filePathsRaw {
+		if s, ok := fp.(string); ok {
+			filePaths = append(filePaths, s)
+		}
+	}
+
+	idx, ok := data[1].(float64)
+	if !ok {
+		q.logger.Error(
+			"RequestInsertTracksAtIndex: invalid index type",
+			"got", data[1],
+		)
+
+		return
+	}
+
+	q.InsertTracksAt(filePaths, int(idx))
+}
+
+// handleMoveQueueTracks processes the RequestMoveQueueTracks event payload.
+// Expects data[0] = []interface{} of float64 source indices,
+// data[1] = float64 target index.
+func (q *Queue) handleMoveQueueTracks(data ...any) {
+	if len(data) < 2 {
+		q.logger.Error(
+			"RequestMoveQueueTracks: missing data",
+		)
+
+		return
+	}
+
+	indicesRaw, ok := data[0].([]interface{})
+	if !ok {
+		q.logger.Error(
+			"RequestMoveQueueTracks: invalid indices type",
+			"got", data[0],
+		)
+
+		return
+	}
+
+	fromIndices := make([]int, 0, len(indicesRaw))
+
+	for _, v := range indicesRaw {
+		if f, ok := v.(float64); ok {
+			fromIndices = append(fromIndices, int(f))
+		}
+	}
+
+	toIdx, ok := data[1].(float64)
+	if !ok {
+		q.logger.Error(
+			"RequestMoveQueueTracks: invalid toIndex type",
+			"got", data[1],
+		)
+
+		return
+	}
+
+	q.MoveQueueTracks(fromIndices, int(toIdx))
 }
 
 // handlePlayQueueIndex processes the RequestPlayQueueIndex event payload.
@@ -644,7 +752,7 @@ func (q *Queue) resolveRemainingTracks(
 }
 
 // AddTrack appends a track to the end of the queue.
-// If the queue was empty, it starts playing the added track immediately.
+// If the queue was empty, it loads the added track in a paused state.
 func (q *Queue) AddTrack(filePath string) {
 	meta := q.lookupTrackMetaBatch([]string{filePath})
 
@@ -690,10 +798,10 @@ func (q *Queue) AddTrack(filePath string) {
 		q.shuffleOrder = append(q.shuffleOrder, len(q.tracks)-1)
 	}
 
-	// Auto-play if this is the first track added to an empty queue.
+	// Load (paused) if this is the first track added to an empty queue.
 	if wasEmpty {
 		q.currentIndex = 0
-		q.playCurrentTrack()
+		q.loadCurrentTrack()
 	}
 
 	q.persistState()
@@ -706,7 +814,7 @@ func (q *Queue) AddTrack(filePath string) {
 }
 
 // AddTracks appends multiple tracks to the end of the queue.
-// If the queue was empty, it starts playing the first added track immediately.
+// If the queue was empty, it loads the first added track in a paused state.
 func (q *Queue) AddTracks(filePaths []string) {
 	allMeta := q.lookupTrackMetaBatch(filePaths)
 
@@ -751,7 +859,7 @@ func (q *Queue) AddTracks(filePaths []string) {
 
 	if wasEmpty && len(q.tracks) > 0 {
 		q.currentIndex = 0
-		q.playCurrentTrack()
+		q.loadCurrentTrack()
 	}
 
 	q.emitTracksModified(
@@ -763,6 +871,7 @@ func (q *Queue) AddTracks(filePaths []string) {
 }
 
 // InsertNextTracks inserts multiple tracks as a contiguous block after the current track.
+// If the queue was empty, it loads the first inserted track in a paused state.
 func (q *Queue) InsertNextTracks(filePaths []string) {
 	allMeta := q.lookupTrackMetaBatch(filePaths)
 
@@ -818,7 +927,7 @@ func (q *Queue) InsertNextTracks(filePaths []string) {
 
 	if wasEmpty {
 		q.currentIndex = 0
-		q.playCurrentTrack()
+		q.loadCurrentTrack()
 	}
 
 	q.emitTracksModified(
@@ -880,6 +989,246 @@ func (q *Queue) InsertNext(filePath string) {
 		insertPos,
 		nil,
 	)
+}
+
+// InsertTracksAt inserts multiple tracks at the given index.
+// If the queue was empty, it loads the first inserted track in a paused state.
+func (q *Queue) InsertTracksAt(filePaths []string, index int) {
+	allMeta := q.lookupTrackMetaBatch(filePaths)
+
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	wasEmpty := len(q.tracks) == 0
+
+	// Clamp index to valid range.
+	if index < 0 {
+		index = 0
+	}
+
+	if index > len(q.tracks) {
+		index = len(q.tracks)
+	}
+
+	var newTracks []Track
+
+	for _, fp := range filePaths {
+		m, ok := allMeta[fp]
+		if !ok {
+			q.logger.Warn(
+				"Could not find audio file",
+				"path", fp,
+			)
+
+			continue
+		}
+
+		newTracks = append(newTracks, Track{
+			AudioFileID: m.AudioFileID,
+			FilePath:    m.FilePath,
+			Title:       m.Title,
+			Artist:      m.Artist,
+		})
+	}
+
+	if len(newTracks) == 0 {
+		return
+	}
+
+	// Insert the block into the slice at index.
+	tail := make([]Track, len(q.tracks[index:]))
+	copy(tail, q.tracks[index:])
+	q.tracks = append(q.tracks[:index], newTracks...)
+	q.tracks = append(q.tracks, tail...)
+
+	// Shift currentIndex if insertion is at or before it.
+	if q.currentIndex >= 0 && index <= q.currentIndex {
+		q.currentIndex += len(newTracks)
+	}
+
+	q.reindexPositions()
+
+	if q.shuffleMode {
+		q.generateShuffleOrder()
+	}
+
+	q.persistTracks()
+	q.persistState()
+
+	if wasEmpty {
+		q.currentIndex = 0
+		q.loadCurrentTrack()
+	}
+
+	q.emitTracksModified(
+		"insert",
+		newTracks,
+		index,
+		nil,
+	)
+}
+
+// MoveQueueTracks moves tracks at the given indices to a new position
+// as a contiguous block. The toIndex is the target position in the
+// original (pre-move) array.
+func (q *Queue) MoveQueueTracks(
+	fromIndices []int,
+	toIndex int,
+) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	if len(fromIndices) == 0 || len(q.tracks) == 0 {
+		return
+	}
+
+	// De-duplicate and sort source indices.
+	seen := make(map[int]bool, len(fromIndices))
+
+	var sorted []int
+
+	for _, idx := range fromIndices {
+		if idx >= 0 && idx < len(q.tracks) && !seen[idx] {
+			seen[idx] = true
+
+			sorted = append(sorted, idx)
+		}
+	}
+
+	if len(sorted) == 0 {
+		return
+	}
+
+	sortInts(sorted)
+
+	// Clamp toIndex.
+	if toIndex < 0 {
+		toIndex = 0
+	}
+
+	if toIndex > len(q.tracks) {
+		toIndex = len(q.tracks)
+	}
+
+	// Check if this is a no-op: all source indices are contiguous
+	// and already start at the target position.
+	isContiguous := true
+
+	for i := 1; i < len(sorted); i++ {
+		if sorted[i] != sorted[i-1]+1 {
+			isContiguous = false
+
+			break
+		}
+	}
+
+	lastSorted := sorted[len(sorted)-1]
+
+	if isContiguous &&
+		(sorted[0] == toIndex || lastSorted+1 == toIndex) {
+		return
+	}
+
+	// Find where currentIndex ends up after the move.
+	currentTrackIdx := q.currentIndex
+
+	// Extract the tracks to move.
+	moving := make([]Track, len(sorted))
+	for i, idx := range sorted {
+		moving[i] = q.tracks[idx]
+	}
+
+	// Build a new slice without the moved tracks.
+	remaining := make([]Track, 0, len(q.tracks)-len(sorted))
+	removeSet := make(map[int]bool, len(sorted))
+
+	for _, idx := range sorted {
+		removeSet[idx] = true
+	}
+
+	for i, t := range q.tracks {
+		if !removeSet[i] {
+			remaining = append(remaining, t)
+		}
+	}
+
+	// Calculate adjusted insertion index in the remaining slice.
+	adjustedIdx := toIndex
+
+	for _, idx := range sorted {
+		if idx < toIndex {
+			adjustedIdx--
+		}
+	}
+
+	if adjustedIdx < 0 {
+		adjustedIdx = 0
+	}
+
+	if adjustedIdx > len(remaining) {
+		adjustedIdx = len(remaining)
+	}
+
+	// Insert the moved block at the adjusted position.
+	tail := make([]Track, len(remaining[adjustedIdx:]))
+	copy(tail, remaining[adjustedIdx:])
+	remaining = append(remaining[:adjustedIdx], moving...)
+	remaining = append(remaining, tail...)
+	q.tracks = remaining
+
+	// Track currentIndex through the move.
+	if currentTrackIdx >= 0 {
+		if removeSet[currentTrackIdx] {
+			// The current track was moved — find its new position.
+			for ri, orig := range sorted {
+				if orig == currentTrackIdx {
+					q.currentIndex = adjustedIdx + ri
+
+					break
+				}
+			}
+		} else {
+			// The current track was not moved. Find its position
+			// in 'remaining', then account for the insertion.
+			posInRemaining := currentTrackIdx
+
+			for _, idx := range sorted {
+				if idx < currentTrackIdx {
+					posInRemaining--
+				}
+			}
+
+			if adjustedIdx <= posInRemaining {
+				q.currentIndex = posInRemaining + len(sorted)
+			} else {
+				q.currentIndex = posInRemaining
+			}
+		}
+	}
+
+	q.reindexPositions()
+
+	if q.shuffleMode {
+		q.generateShuffleOrder()
+	}
+
+	q.persistTracks()
+	q.persistState()
+	q.emitTracksModified(
+		"move",
+		moving,
+		toIndex,
+		sorted,
+	)
+}
+
+// sortInts sorts a slice of ints in ascending order.
+func sortInts(s []int) {
+	for i := 1; i < len(s); i++ {
+		for j := i; j > 0 && s[j-1] > s[j]; j-- {
+			s[j], s[j-1] = s[j-1], s[j]
+		}
+	}
 }
 
 // RemoveTrack removes a track at the given position from the queue.

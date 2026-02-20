@@ -327,7 +327,7 @@ export class AlbumDropdown extends LitElement {
         return html`
             <div
                 class=${classes}
-                draggable=${selected ? 'true' : 'false'}
+                draggable="true"
                 @click=${(e: MouseEvent) =>
                     this.onTrackClick(e, track, index)}
                 @dblclick=${(e: MouseEvent) =>

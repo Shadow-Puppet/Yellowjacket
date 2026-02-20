@@ -2601,7 +2601,7 @@ export class CoverGrid extends LitElement {
                 role="button"
                 data-index=${index}
                 aria-label="${album.Name} by ${album.ArtistName}"
-                draggable=${selected ? 'true' : 'false'}
+                draggable="true"
                 @dragstart=${this.onAlbumDragStart}
                 @dragend=${this.onAlbumDragEnd}
             >
