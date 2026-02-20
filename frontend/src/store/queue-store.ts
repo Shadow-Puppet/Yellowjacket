@@ -249,6 +249,10 @@ class QueueStore {
     );
   }
 
+  clearQueue(): void {
+    EventsEmit(Events.RequestClearQueue);
+  }
+
   // ===================================================================
   // SUBSCRIPTION SYSTEM
   // ===================================================================

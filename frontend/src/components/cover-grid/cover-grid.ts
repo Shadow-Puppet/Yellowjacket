@@ -31,6 +31,7 @@ import {
 } from '@utils/drag-controller';
 import type { DragPayload } from '@utils/drag-controller';
 import {
+    createAlbumArtDragImage,
     createDragImage,
     removeDragImage,
 } from '@utils/drag-image';
@@ -76,6 +77,14 @@ export class CoverGrid extends LitElement {
     > | null = null;
 
     private closeHandler = () => this.closeContextMenu();
+
+    /**
+     * When true, the next split→single transition
+     * skips the expensive overlay capture and scroll
+     * restore.  Used by the select-toggle checkbox
+     * so closing the dropdown is instant.
+     */
+    private skipOverlay = false;
 
     /** Current card width — driven by the store. */
     private get cardWidth(): number {
@@ -162,8 +171,7 @@ export class CoverGrid extends LitElement {
     private wheelListenerAttached = false;
 
     // buildGridEntries() memoization cache.
-    private entriesCacheAlbums: library.Album[] = [];
-    private entriesCache: GridEntry[] = [];
+
 
     static override styles = css`
         :host {
@@ -204,8 +212,8 @@ export class CoverGrid extends LitElement {
         }
 
         .album-card.expanded {
-            outline: 2px solid #ffd43b;
-            outline-offset: 2px;
+            background-color: #343a40;
+            border-radius: 8px 8px 0 0;
         }
 
         .album-card:focus-visible {
@@ -220,12 +228,57 @@ export class CoverGrid extends LitElement {
             border-radius: 4px;
             overflow: hidden;
             background-color: #282828;
+            transition: scale 0.15s ease;
+        }
+
+        .album-card.selected .cover-container {
+            scale: 0.95;
+        }
+
+        /* ========================================
+         * Selection checkbox overlay
+         * ======================================== */
+
+        .select-toggle {
+            position: absolute;
+            top: 6px;
+            left: 6px;
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            border: 2px solid rgba(255, 255, 255, 0.8);
+            background-color: rgba(0, 0, 0, 0.4);
+            cursor: pointer;
+            opacity: 0;
+            transition: opacity 0.15s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+        }
+
+        .album-card:hover .select-toggle {
+            opacity: 1;
+        }
+
+        .select-toggle.checked {
+            opacity: 1;
+            background-color: #ffd43b;
+            border-color: #ffd43b;
+        }
+
+        .check-icon {
+            color: #000;
+            font-size: 14px;
+            font-weight: bold;
+            line-height: 1;
         }
 
         .cover-image {
             width: 100%;
             height: 100%;
             object-fit: cover;
+            -webkit-user-drag: none;
         }
 
         .placeholder-cover {
@@ -247,6 +300,11 @@ export class CoverGrid extends LitElement {
             margin-top: 4px;
             min-width: 0;
             text-align: center;
+            transition: scale 0.15s ease;
+        }
+
+        .album-card.selected .album-info {
+            scale: 0.95;
         }
 
         .album-name {
@@ -545,110 +603,124 @@ export class CoverGrid extends LitElement {
             this.expandedTracks.length === 0 &&
             this.splitMode
         ) {
-            // Capture the raw split-mode scrollTop
-            // before converting to single-mode coords.
-            const rawScrollTop =
-                this.scrollContainer?.scrollTop ?? 0;
+            if (this.skipOverlay) {
+                // Lightweight exit: skip the
+                // overlay capture and scroll
+                // restore so the transition is
+                // instant.
+                this.skipOverlay = false;
+                this.splitMode = false;
+            } else {
+                // Capture the raw split-mode scrollTop
+                // before converting to single-mode coords.
+                const rawScrollTop =
+                    this.scrollContainer?.scrollTop ??
+                    0;
 
-            // Convert to dropdown-free coordinates
-            // before exiting split mode.
-            this.savedScrollTop =
-                this.computeAdjustedScrollTop();
+                // Convert to dropdown-free coordinates
+                // before exiting split mode.
+                this.savedScrollTop =
+                    this.computeAdjustedScrollTop();
 
-            // If switching to a new album (not
-            // closing), record the viewport offset
-            // of the newly-expanded album in the
-            // OLD split layout so the enter-split
-            // restore can place it at the same
-            // visual position.
-            if (this.expandedAlbumId !== null) {
-                const idx = this.albums.findIndex(
-                    (a) =>
-                        a.ID ===
-                        this.expandedAlbumId,
+                // If switching to a new album (not
+                // closing), record the viewport offset
+                // of the newly-expanded album in the
+                // OLD split layout so the enter-split
+                // restore can place it at the same
+                // visual position.
+                if (this.expandedAlbumId !== null) {
+                    const idx = this.albums.findIndex(
+                        (a) =>
+                            a.ID ===
+                            this.expandedAlbumId,
+                    );
+
+                    if (idx >= 0) {
+                        const gap =
+                            CoverGrid.GRID_GAP;
+                        const pad =
+                            CoverGrid.GRID_PADDING;
+                        const cols =
+                            this.getColumnCount();
+                        const rowStep =
+                            this.cardHeight + gap;
+                        const row = Math.floor(
+                            idx / cols,
+                        );
+
+                        // Album's Y in single-mode
+                        // (no dropdown) coordinates.
+                        const albumY =
+                            pad + row * rowStep;
+
+                        // In the old split layout
+                        // the dropdown shifts
+                        // everything below it.
+                        const oldBeforeRows =
+                            Math.ceil(
+                                this.splitIndex /
+                                    cols,
+                            );
+                        const oldDropdownTop =
+                            pad +
+                            oldBeforeRows * rowStep;
+                        const dropdown =
+                            this.shadowRoot?.querySelector(
+                                'album-dropdown',
+                            );
+                        const oldDropdownHeight =
+                            (
+                                dropdown as HTMLElement
+                            )?.offsetHeight ?? 0;
+
+                        const albumYOldSplit =
+                            albumY >= oldDropdownTop
+                                ? albumY +
+                                  oldDropdownHeight
+                                : albumY;
+
+                        // Viewport offset in
+                        // old-split coordinates.
+                        this.savedAlbumViewportOffset =
+                            albumYOldSplit -
+                            rawScrollTop;
+
+                        console.log(
+                            '[willUpdate] anchor capture',
+                            {
+                                albumY,
+                                oldDropdownTop,
+                                oldDropdownHeight,
+                                albumYOldSplit,
+                                rawScrollTop,
+                                offset: this
+                                    .savedAlbumViewportOffset,
+                            },
+                        );
+                    }
+                } else {
+                    this.savedAlbumViewportOffset =
+                        null;
+                }
+
+                console.log(
+                    '[willUpdate] exit split (tracks empty)',
+                    {
+                        savedScrollTop:
+                            this.savedScrollTop,
+                        savedAlbumViewportOffset:
+                            this
+                                .savedAlbumViewportOffset,
+                        expandedAlbumId:
+                            this.expandedAlbumId,
+                    },
                 );
 
-                if (idx >= 0) {
-                    const gap = CoverGrid.GRID_GAP;
-                    const pad =
-                        CoverGrid.GRID_PADDING;
-                    const cols =
-                        this.getColumnCount();
-                    const rowStep =
-                        this.cardHeight + gap;
-                    const row = Math.floor(
-                        idx / cols,
-                    );
-
-                    // Album's Y in single-mode
-                    // (no dropdown) coordinates.
-                    const albumY =
-                        pad + row * rowStep;
-
-                    // In the old split layout the
-                    // dropdown shifts everything
-                    // below it.  Determine if
-                    // album B sits below the old
-                    // dropdown.
-                    const oldBeforeRows = Math.ceil(
-                        this.splitIndex / cols,
-                    );
-                    const oldDropdownTop =
-                        pad + oldBeforeRows * rowStep;
-                    const dropdown =
-                        this.shadowRoot?.querySelector(
-                            'album-dropdown',
-                        );
-                    const oldDropdownHeight =
-                        (dropdown as HTMLElement)
-                            ?.offsetHeight ?? 0;
-
-                    const albumYOldSplit =
-                        albumY >= oldDropdownTop
-                            ? albumY +
-                              oldDropdownHeight
-                            : albumY;
-
-                    // Viewport offset in old-split
-                    // coordinates: use the raw
-                    // (un-adjusted) scrollTop.
-                    this.savedAlbumViewportOffset =
-                        albumYOldSplit - rawScrollTop;
-
-                    console.log(
-                        '[willUpdate] anchor capture',
-                        {
-                            albumY,
-                            oldDropdownTop,
-                            oldDropdownHeight,
-                            albumYOldSplit,
-                            rawScrollTop,
-                            offset: this
-                                .savedAlbumViewportOffset,
-                        },
-                    );
-                }
-            } else {
-                this.savedAlbumViewportOffset =
-                    null;
+                this.captureOverlay();
+                this.splitMode = false;
+                this.needsScrollRestore = true;
+                this.showDropdownAfterRestore = false;
             }
-
-            console.log(
-                '[willUpdate] exit split (tracks empty)',
-                {
-                    savedScrollTop:
-                        this.savedScrollTop,
-                    savedAlbumViewportOffset:
-                        this.savedAlbumViewportOffset,
-                    expandedAlbumId:
-                        this.expandedAlbumId,
-                },
-            );
-
-            this.captureOverlay();
-            this.splitMode = false;
-            this.needsScrollRestore = true;
-            this.showDropdownAfterRestore = false;
         }
 
         // Enter split mode when tracks have loaded.
@@ -1360,6 +1432,46 @@ export class CoverGrid extends LitElement {
         return el?.clientWidth ?? 800;
     }
 
+    /**
+     * Width of the album row: from the left edge of
+     * the leftmost card to the right edge of the
+     * rightmost card, including card padding but not
+     * the outer grid padding.
+     */
+    private getGridRowWidth(): number {
+        const cols = this.getColumnCount();
+        const gap = CoverGrid.GRID_GAP;
+
+        return (
+            cols * this.cardWidth +
+            (cols - 1) * gap
+        );
+    }
+
+    /**
+     * Horizontal offset of the carat (in pixels from
+     * the left edge of the dropdown) so that it points
+     * at the center of the expanded album card.
+     */
+    private getCaratOffset(): number {
+        if (this.expandedAlbumId === null) return 0;
+
+        const idx = this.albums.findIndex(
+            (a) => a.ID === this.expandedAlbumId,
+        );
+
+        if (idx < 0) return 0;
+
+        const cols = this.getColumnCount();
+        const colIndex = idx % cols;
+        const gap = CoverGrid.GRID_GAP;
+
+        return (
+            colIndex * (this.cardWidth + gap) +
+            this.cardWidth / 2
+        );
+    }
+
     /* ====================================================================
      * Split-mode helpers
      *
@@ -1406,14 +1518,11 @@ export class CoverGrid extends LitElement {
 
     /**
      * Build a flat GridEntry array for a given album
-     * slice.  Used by both single and split modes.
+     * slice.  Always returns a new array so the
+     * virtualizer re-renders visible items when
+     * component state (e.g. selectedAlbums) changes.
      */
     private buildGridEntries(): GridEntry[] {
-        // Return cached result when input unchanged.
-        if (this.entriesCacheAlbums === this.albums) {
-            return this.entriesCache;
-        }
-
         const entries: GridEntry[] = [];
 
         for (let i = 0; i < this.albums.length; i++) {
@@ -1422,9 +1531,6 @@ export class CoverGrid extends LitElement {
                 albumIndex: i,
             });
         }
-
-        this.entriesCacheAlbums = this.albums;
-        this.entriesCache = entries;
 
         return entries;
     }
@@ -1868,13 +1974,6 @@ export class CoverGrid extends LitElement {
             this.selectedAlbums.has(a.ID),
         );
 
-        // Prune stale entries.
-        for (const id of this.albumFilePathCache.keys()) {
-            if (!this.selectedAlbums.has(id)) {
-                this.albumFilePathCache.delete(id);
-            }
-        }
-
         // Fetch missing entries.
         for (const album of selected) {
             if (this.albumFilePathCache.has(album.ID)) {
@@ -1992,6 +2091,16 @@ export class CoverGrid extends LitElement {
         }
     }
 
+    /** Close the dropdown if one is open. */
+    private closeDropdown() {
+        if (this.expandedAlbumId === null) return;
+
+        this.expandedAlbumId = null;
+        this.expandedTracks = [];
+        this.selectedTracks = new Set();
+        this.lastSelectedTrackIndex = null;
+    }
+
     /* ====================================================================
      * Event delegation helpers
      * ==================================================================== */
@@ -2055,6 +2164,7 @@ export class CoverGrid extends LitElement {
             }
 
             this.selectedAlbums = next;
+            this.closeDropdown();
             void this.warmAlbumFilePathCache();
         } else if (isCtrl) {
             const next = new Set(this.selectedAlbums);
@@ -2067,8 +2177,10 @@ export class CoverGrid extends LitElement {
 
             this.selectedAlbums = next;
             this.lastSelectedAlbumIndex = index;
+            this.closeDropdown();
             void this.warmAlbumFilePathCache();
         } else {
+            this.selectedAlbums = new Set();
             void this.toggleDropdown(album);
             this.lastSelectedAlbumIndex = index;
         }
@@ -2124,6 +2236,48 @@ export class CoverGrid extends LitElement {
 
         this.contextMenuTarget = { kind: 'album' };
         this.openContextMenuAt(e.clientX, e.clientY);
+    };
+
+    /**
+     * Selection checkbox toggle on album cards.
+     * Stops propagation so that the card click
+     * handler (which toggles the dropdown) does
+     * not fire.
+     */
+    private onSelectToggleClick = (
+        e: MouseEvent,
+    ) => {
+        e.stopPropagation();
+
+        const hit = this.resolveAlbumFromEvent(e);
+
+        if (!hit) return;
+
+        const { album, index } = hit;
+        const next = new Set(this.selectedAlbums);
+
+        if (next.has(album.ID)) {
+            next.delete(album.ID);
+        } else {
+            next.add(album.ID);
+        }
+
+        this.selectedAlbums = next;
+        this.lastSelectedAlbumIndex = index;
+
+        // Lightweight dropdown close: set the
+        // skipOverlay flag so willUpdate skips
+        // the expensive overlay capture and
+        // scroll-restore machinery.
+        if (this.expandedAlbumId !== null) {
+            this.skipOverlay = true;
+            this.expandedAlbumId = null;
+            this.expandedTracks = [];
+            this.selectedTracks = new Set();
+            this.lastSelectedTrackIndex = null;
+        }
+
+        void this.warmAlbumFilePathCache();
     };
 
     /**
@@ -2297,6 +2451,36 @@ export class CoverGrid extends LitElement {
      * Drag source (album cards)
      * ==================================================================== */
 
+    /**
+     * Pre-warm the file-path cache for the album under
+     * the pointer so that a subsequent dragstart (which
+     * is synchronous) can read the paths immediately.
+     */
+    private onAlbumPointerDown = (e: PointerEvent) => {
+        // Only act on primary button (left-click).
+        if (e.button !== 0) return;
+
+        const hit = this.resolveAlbumFromEvent(e);
+
+        if (!hit) return;
+
+        if (this.albumFilePathCache.has(hit.album.ID)) {
+            return;
+        }
+
+        // Fire-and-forget: warm the cache entry.
+        void this.getAlbumFilePaths(hit.album).then(
+            (paths) => {
+                if (paths.length > 0) {
+                    this.albumFilePathCache.set(
+                        hit.album.ID,
+                        paths,
+                    );
+                }
+            },
+        );
+    };
+
     private onAlbumDragStart = (e: DragEvent) => {
         const hit = this.resolveAlbumFromEvent(e);
 
@@ -2304,20 +2488,26 @@ export class CoverGrid extends LitElement {
 
         // Read file paths synchronously from the
         // pre-warmed cache.  The cache is populated
-        // asynchronously whenever the album selection
-        // changes, so by the time the user drags, the
-        // data is already available.
+        // via pointerdown or selection-change warming.
         let filePaths: string[];
+        let isSingleAlbum: boolean;
 
         if (this.selectedAlbums.has(hit.album.ID)) {
+            // Dragged album is part of the selection —
+            // drag all selected albums' tracks.
             filePaths =
                 this.getCachedSelectedAlbumFilePaths();
+            isSingleAlbum =
+                this.selectedAlbums.size === 1;
         } else {
-            // Single unselected album — check cache.
+            // Dragged album is not selected — clear
+            // selection and drag only this album.
+            this.selectedAlbums = new Set();
             filePaths =
                 this.albumFilePathCache.get(
                     hit.album.ID,
                 ) ?? [];
+            isSingleAlbum = true;
         }
 
         if (filePaths.length === 0) {
@@ -2332,9 +2522,19 @@ export class CoverGrid extends LitElement {
             source: 'cover-grid',
         });
 
-        this.dragImageEl = createDragImage(
-            filePaths.length,
-        );
+        // Single album: show cover art thumbnail.
+        // Multiple albums: show track-count badge.
+        if (isSingleAlbum && hit.album.CoverArtPath) {
+            this.dragImageEl =
+                createAlbumArtDragImage(
+                    this.getCoverUrl(hit.album),
+                );
+        } else {
+            this.dragImageEl = createDragImage(
+                filePaths.length,
+            );
+        }
+
         e.dataTransfer?.setDragImage(
             this.dragImageEl,
             0,
@@ -2602,6 +2802,7 @@ export class CoverGrid extends LitElement {
                 data-index=${index}
                 aria-label="${album.Name} by ${album.ArtistName}"
                 draggable="true"
+                @pointerdown=${this.onAlbumPointerDown}
                 @dragstart=${this.onAlbumDragStart}
                 @dragend=${this.onAlbumDragEnd}
             >
@@ -2621,6 +2822,18 @@ export class CoverGrid extends LitElement {
                           >
                               ${this.getAlbumInitial(album.Name)}
                           </div>`}
+                    <div
+                        class="select-toggle ${selected ? 'checked' : ''}"
+                        @click=${this.onSelectToggleClick}
+                    >
+                        ${selected
+                ? html`<span
+                                  class="check-icon"
+                              >
+                                  &#10003;
+                              </span>`
+                : nothing}
+                    </div>
                 </div>
                 <div class="album-info">
                     <div
@@ -2725,6 +2938,9 @@ export class CoverGrid extends LitElement {
                 .tracks=${this.expandedTracks}
                 .selectedTracks=${this.selectedTracks}
                 .containerWidth=${this.getContainerWidth()}
+                .gridRowWidth=${this.getGridRowWidth()}
+                .caratOffset=${this.getCaratOffset()}
+                style="margin-left:${(this.getContainerWidth() - this.getGridRowWidth()) / 2}px"
                 @track-click=${this.onTrackClick}
                 @track-dblclick=${this.onTrackDblClick}
                 @track-contextmenu=${this.onTrackContextMenu}

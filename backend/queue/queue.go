@@ -294,6 +294,15 @@ func (q *Queue) registerEventHandlers() {
 			q.handleMoveQueueTracks(data...)
 		},
 	)
+
+	runtime.EventsOn(
+		q.ctx,
+		events.RequestClearQueue,
+		func(_ ...any) {
+			q.logger.Info("Received RequestClearQueue")
+			q.Clear()
+		},
+	)
 }
 
 // handleSetQueue processes the RequestSetQueue event payload.

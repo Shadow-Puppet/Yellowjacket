@@ -206,7 +206,13 @@ export class QueuePanel
             font-weight: 600;
         }
 
-        .add-to-playlist-button {
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .header-action-button {
             background: none;
             border: none;
             color: inherit;
@@ -216,11 +222,11 @@ export class QueuePanel
             align-items: center;
         }
 
-        .add-to-playlist-button:hover {
+        .header-action-button:hover {
             color: #ffd43b;
         }
 
-        .add-to-playlist-button:disabled {
+        .header-action-button:disabled {
             color: #555;
             cursor: not-allowed;
         }
@@ -514,6 +520,10 @@ export class QueuePanel
             });
         }
     }
+
+    private handleClearQueue = () => {
+        this.queue.clearQueue();
+    };
 
     private async handleAddToPlaylist() {
         if (this.queue.tracks.length === 0) return;
@@ -1182,14 +1192,28 @@ export class QueuePanel
                 ></div>
                 <div class="header">
                     <h3>Queue</h3>
-                    <button
-                        class="add-to-playlist-button"
-                        @click=${this.handleAddToPlaylist}
-                        ?disabled=${tracks.length === 0}
-                        title="Add queue to playlist"
-                    >
-                        <wa-icon name="plus"></wa-icon>
-                    </button>
+                    <div class="header-actions">
+                        <button
+                            class="header-action-button"
+                            @click=${this.handleClearQueue}
+                            ?disabled=${tracks.length === 0}
+                            title="Clear queue"
+                        >
+                            <wa-icon
+                                name="trash"
+                            ></wa-icon>
+                        </button>
+                        <button
+                            class="header-action-button add-to-playlist-button"
+                            @click=${this.handleAddToPlaylist}
+                            ?disabled=${tracks.length === 0}
+                            title="Add queue to playlist"
+                        >
+                            <wa-icon
+                                name="plus"
+                            ></wa-icon>
+                        </button>
+                    </div>
                 </div>
 
                 <wa-popup

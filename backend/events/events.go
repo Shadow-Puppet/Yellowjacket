@@ -49,6 +49,7 @@ const (
 	RequestRemoveTracksFromQueue = "RequestRemoveTracksFromQueue"
 	RequestInsertTracksAtIndex   = "RequestInsertTracksAtIndex"
 	RequestMoveQueueTracks       = "RequestMoveQueueTracks"
+	RequestClearQueue            = "RequestClearQueue"
 )
 
 // Config events.

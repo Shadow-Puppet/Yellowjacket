@@ -53,17 +53,35 @@ export class AlbumDropdown extends LitElement {
     @property({ type: Number })
     containerWidth = 800;
 
+    /** Width of the album row in pixels (cards + gaps, no outer padding). */
+    @property({ type: Number })
+    gridRowWidth = 800;
+
+    /** Horizontal offset of the carat from the dropdown's left edge. */
+    @property({ type: Number })
+    caratOffset = 0;
+
     static override styles = css`
         :host {
             display: block;
         }
 
         .album-dropdown {
-            background-color: #212529;
-            border: 2px solid #ffd43b;
-            border-radius: 4px;
+            background-color: #343a40;
+            border-radius: 0 0 4px 4px;
             padding: 12px 16px;
             box-sizing: border-box;
+            position: relative;
+        }
+
+        .carat {
+            position: absolute;
+            top: -8px;
+            width: 0;
+            height: 0;
+            border-left: 9px solid transparent;
+            border-right: 9px solid transparent;
+            border-bottom: 8px solid #343a40;
         }
 
         .dropdown-tracks {
@@ -366,7 +384,14 @@ export class AlbumDropdown extends LitElement {
 
     override render() {
         return html`
-            <div class="album-dropdown">
+            <div
+                class="album-dropdown"
+                style="width:${this.gridRowWidth}px"
+            >
+                <div
+                    class="carat"
+                    style="left:${this.caratOffset}px;transform:translateX(-50%)"
+                ></div>
                 <div
                     class="dropdown-tracks"
                     style="height:${this.tracksHeight}px;column-count:${this.columnCount}"

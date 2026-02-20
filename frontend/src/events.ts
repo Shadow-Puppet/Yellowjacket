@@ -39,6 +39,7 @@ export const Events = {
     RequestRemoveTracksFromQueue: "RequestRemoveTracksFromQueue",
     RequestInsertTracksAtIndex: "RequestInsertTracksAtIndex",
     RequestMoveQueueTracks: "RequestMoveQueueTracks",
+    RequestClearQueue: "RequestClearQueue",
 
     // Playlist events
     PlaylistCreated: "PlaylistCreated",

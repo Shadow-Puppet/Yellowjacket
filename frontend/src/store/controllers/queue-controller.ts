@@ -132,4 +132,8 @@ export class QueueController implements ReactiveController {
   ): void {
     queueStore.moveTracksInQueue(fromIndices, toIndex);
   }
+
+  clearQueue(): void {
+    queueStore.clearQueue();
+  }
 }

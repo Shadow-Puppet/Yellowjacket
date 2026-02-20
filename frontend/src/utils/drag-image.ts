@@ -28,6 +28,44 @@ export function createDragImage(count: number): HTMLElement {
     return el;
 }
 
+/**
+ * Creates a drag image showing an album cover art thumbnail.
+ * Falls back to the track-count badge if the image fails to load.
+ */
+export function createAlbumArtDragImage(
+    coverUrl: string,
+): HTMLElement {
+    const size = 64;
+    const wrapper = document.createElement('div');
+
+    wrapper.style.cssText = [
+        'position: fixed',
+        'top: -1000px',
+        'left: -1000px',
+        'pointer-events: none',
+        'z-index: 9999',
+    ].join(';');
+
+    const img = document.createElement('img');
+
+    img.src = coverUrl;
+    img.width = size;
+    img.height = size;
+    img.style.cssText = [
+        'display: block',
+        `width: ${size}px`,
+        `height: ${size}px`,
+        'border-radius: 6px',
+        'object-fit: cover',
+        'box-shadow: 0 2px 8px rgba(0,0,0,0.4)',
+    ].join(';');
+
+    wrapper.appendChild(img);
+    document.body.appendChild(wrapper);
+
+    return wrapper;
+}
+
 /** Remove a drag image element created by createDragImage. */
 export function removeDragImage(el: HTMLElement): void {
     el.remove();
