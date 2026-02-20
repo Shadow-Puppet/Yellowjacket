@@ -183,6 +183,8 @@ export class ConfigPage extends LitElement {
     @state() private statusMessage = '';
     @state() private metrics: ScanMetrics | null = null;
     @state() private copied = false;
+    @state() private errorsCopied = false;
+    @state() private scanErrors = '';
     @state() private concurrencyMode = 'auto';
 
     private cancelScanStarted?: () => void;
@@ -291,6 +293,49 @@ export class ConfigPage extends LitElement {
 
         .status-bar.active {
             color: var(--yj-accent, #ffd43b);
+        }
+
+        /* Error block */
+        .error-block {
+            margin-top: 1em;
+            border: 1px solid var(--yj-error, #e03131);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .error-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.5em 1em;
+            background: color-mix(
+                in srgb,
+                var(--yj-error, #e03131) 15%,
+                var(--yj-bg-elevated, #343a40)
+            );
+        }
+
+        .error-title {
+            font-size: 0.8em;
+            font-weight: 600;
+            color: var(--yj-error, #e03131);
+        }
+
+        .error-body {
+            max-height: 200px;
+            overflow-y: auto;
+            padding: 0.75em 1em;
+            background: var(--yj-bg-elevated, #343a40);
+        }
+
+        .error-body pre {
+            margin: 0;
+            font-size: 0.8em;
+            font-family: inherit;
+            white-space: pre-wrap;
+            word-break: break-word;
+            color: var(--yj-text-secondary, #adb5bd);
+            line-height: 1.6;
         }
 
         /* Metrics tree */
@@ -472,6 +517,8 @@ export class ConfigPage extends LitElement {
         this.statusMessage = 'Scanning...';
         this.metrics = null;
         this.copied = false;
+        this.scanErrors = '';
+        this.errorsCopied = false;
     };
 
     private handleScanComplete = (
@@ -536,7 +583,9 @@ export class ConfigPage extends LitElement {
         try {
             await Scan();
         } catch (err) {
-            this.statusMessage = `Scan failed: ${err}`;
+            this.statusMessage =
+                'Scan completed with errors.';
+            this.scanErrors = String(err);
         }
     };
 
@@ -550,7 +599,9 @@ export class ConfigPage extends LitElement {
         try {
             await FullRescan();
         } catch (err) {
-            this.statusMessage = `Full rescan failed: ${err}`;
+            this.statusMessage =
+                'Full rescan completed with errors.';
+            this.scanErrors = String(err);
         }
     };
 
@@ -572,6 +623,27 @@ export class ConfigPage extends LitElement {
             );
         }
     };
+
+    private handleCopyErrors =
+        async (): Promise<void> => {
+            if (!this.scanErrors) return;
+
+            try {
+                await navigator.clipboard.writeText(
+                    this.scanErrors,
+                );
+                this.errorsCopied = true;
+
+                setTimeout(() => {
+                    this.errorsCopied = false;
+                }, 2000);
+            } catch (err) {
+                console.error(
+                    'Failed to copy errors:',
+                    err,
+                );
+            }
+        };
 
     // ===================================================================
     // THEME HANDLERS
@@ -816,6 +888,29 @@ export class ConfigPage extends LitElement {
                 >
                     ${this.statusMessage || 'Ready.'}
                 </div>
+
+                ${this.scanErrors
+                    ? html`
+                          <div class="error-block">
+                              <div class="error-header">
+                                  <span class="error-title">
+                                      Scan Errors
+                                  </span>
+                                  <button
+                                      class="btn-ghost ${this.errorsCopied ? 'copied' : ''}"
+                                      @click=${this.handleCopyErrors}
+                                  >
+                                      ${this.errorsCopied
+                                          ? 'Copied!'
+                                          : 'Copy'}
+                                  </button>
+                              </div>
+                              <div class="error-body">
+                                  <pre>${this.scanErrors}</pre>
+                              </div>
+                          </div>
+                      `
+                    : ''}
 
                 ${this.renderMetrics()}
             </config-section>

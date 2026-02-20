@@ -15,12 +15,15 @@ import (
 func getTrackDuration(f *os.File) (int64, error) {
 	ext := filepath.Ext(f.Name())
 
-	if ext == ".mp3" {
+	switch ext {
+	case ".mp3":
 		return getMP3Duration(f)
+	case ".flac":
+		return getFlacDuration(f)
 	}
 
-	// FLAC, OGG, and WAV: beep's Decode() + Len() is already
-	// cheap (reads headers/metadata only, no full audio decode).
+	// OGG and WAV: beep's Decode() + Len() is already cheap
+	// (reads headers/metadata only, no full audio decode).
 	streamer, format, err := DecodeFile(f)
 	if err != nil {
 		return 0, fmt.Errorf("error decoding file: %w", err)

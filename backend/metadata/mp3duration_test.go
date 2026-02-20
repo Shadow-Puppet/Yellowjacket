@@ -115,3 +115,159 @@ func TestGetMP3Duration_BasicParsing(t *testing.T) {
 		t.Errorf("expected positive duration, got %d", ms)
 	}
 }
+
+// TestGetMP3Duration_WithMultipleID3v2 creates a temporary MP3 file
+// with two consecutive ID3v2 tags prepended and verifies that
+// getMP3Duration correctly skips both and finds the audio.
+func TestGetMP3Duration_WithMultipleID3v2(t *testing.T) {
+	files := testMP3Files(t)
+	src := files[0]
+
+	srcData, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatalf("reading source: %v", err)
+	}
+
+	// Get reference duration from the original file.
+	origF, err := os.Open(src)
+	if err != nil {
+		t.Fatalf("open original: %v", err)
+	}
+
+	defer func() { _ = origF.Close() }()
+
+	origMS, err := getMP3Duration(origF)
+	if err != nil {
+		t.Fatalf("getMP3Duration on original: %v", err)
+	}
+
+	// Build a file with two ID3v2 tags: 1 KB + 2 KB of padding.
+	//nolint:mnd // synthetic tag construction.
+	tag1Size := 1024
+	tag2Size := 2048
+
+	tag1 := buildID3v2Header(tag1Size)
+	tag2 := buildID3v2Header(tag2Size)
+
+	out := make(
+		[]byte,
+		0,
+		len(tag1)+tag1Size+len(tag2)+tag2Size+len(srcData),
+	)
+	out = append(out, tag1...)
+	out = append(out, make([]byte, tag1Size)...)
+	out = append(out, tag2...)
+	out = append(out, make([]byte, tag2Size)...)
+	out = append(out, srcData...)
+
+	tmpDir := t.TempDir()
+	tmpPath := filepath.Join(tmpDir, "multi_id3v2.mp3")
+
+	if err := os.WriteFile(
+		tmpPath, out, 0o644,
+	); err != nil {
+		t.Fatalf("writing temp file: %v", err)
+	}
+
+	tmpF, err := os.Open(tmpPath)
+	if err != nil {
+		t.Fatalf("open temp: %v", err)
+	}
+
+	defer func() { _ = tmpF.Close() }()
+
+	wrappedMS, err := getMP3Duration(tmpF)
+	if err != nil {
+		t.Fatalf(
+			"getMP3Duration on multi-ID3v2 file: %v", err,
+		)
+	}
+
+	diffMS := origMS - wrappedMS
+	if diffMS < 0 {
+		diffMS = -diffMS
+	}
+
+	// The CBR calculation uses file size, so the prepended tags
+	// will cause a slight overestimate.  Allow generous tolerance.
+	const toleranceMS = 5000
+
+	t.Logf(
+		"original=%dms  wrapped=%dms  diff=%dms",
+		origMS, wrappedMS, diffMS,
+	)
+
+	if diffMS > toleranceMS {
+		t.Errorf(
+			"duration mismatch: original=%dms "+
+				"wrapped=%dms (diff %dms "+
+				"exceeds %dms tolerance)",
+			origMS, wrappedMS, diffMS, toleranceMS,
+		)
+	}
+}
+
+// TestSkipAdditionalID3v2 verifies that skipAdditionalID3v2 handles
+// files with no additional tags, one additional tag, and multiple
+// additional tags.
+func TestSkipAdditionalID3v2(t *testing.T) {
+	// Build a file: [ID3v2(100)] [ID3v2(200)] [ID3v2(50)] [data]
+	//nolint:mnd // synthetic tag sizes for test.
+	sizes := []int{100, 200, 50}
+
+	var buf []byte
+
+	for _, sz := range sizes {
+		buf = append(buf, buildID3v2Header(sz)...)
+		buf = append(buf, make([]byte, sz)...)
+	}
+
+	buf = append(buf, []byte("audio data here")...)
+
+	tmpDir := t.TempDir()
+	tmpPath := filepath.Join(tmpDir, "multi_id3.bin")
+
+	if err := os.WriteFile(
+		tmpPath, buf, 0o644,
+	); err != nil {
+		t.Fatalf("writing temp file: %v", err)
+	}
+
+	f, err := os.Open(tmpPath)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	defer func() { _ = f.Close() }()
+
+	// skipID3v2 handles the first tag.
+	firstEnd, err := skipID3v2(f)
+	if err != nil {
+		t.Fatalf("skipID3v2: %v", err)
+	}
+
+	//nolint:mnd // expected offset after first tag.
+	expectedFirst := int64(10 + 100)
+	if firstEnd != expectedFirst {
+		t.Fatalf(
+			"first tag end: got %d, want %d",
+			firstEnd, expectedFirst,
+		)
+	}
+
+	// skipAdditionalID3v2 handles the remaining tags.
+	finalOffset, err := skipAdditionalID3v2(f, firstEnd)
+	if err != nil {
+		t.Fatalf("skipAdditionalID3v2: %v", err)
+	}
+
+	// Expected: 10+100 + 10+200 + 10+50 = 380
+	//nolint:mnd // expected offset after all tags.
+	expectedAll := int64(10 + 100 + 10 + 200 + 10 + 50)
+	if finalOffset != expectedAll {
+		t.Errorf(
+			"final offset: got %d, want %d",
+			finalOffset, expectedAll,
+		)
+	}
+}

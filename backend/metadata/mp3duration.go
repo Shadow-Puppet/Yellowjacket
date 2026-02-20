@@ -13,8 +13,14 @@ import (
 var errNoSyncWord = errors.New("could not find MP3 sync word")
 
 // maxSyncSearchBytes limits how far we scan for the first sync word
-// after skipping any ID3v2 tag.
-const maxSyncSearchBytes = 64 * 1024
+// after skipping any ID3v2 tags.  512 KB accommodates files with
+// large embedded artwork or multiple prepended ID3v2 tags.
+const maxSyncSearchBytes = 512 * 1024
+
+// maxID3v2Tags limits how many consecutive ID3v2 tags we skip.
+// Some files contain multiple prepended tags from different tagging
+// tools.
+const maxID3v2Tags = 5
 
 // MPEG version constants.
 const (
@@ -64,10 +70,18 @@ func samplesPerFrame(version int) int {
 //
 // The file position is undefined after this call.
 func getMP3Duration(f *os.File) (int64, error) {
-	// 1. Skip a leading ID3v2 tag if present.
+	// 1. Skip all leading ID3v2 tags.  Some files have multiple
+	//    consecutive tags from different tagging tools.
 	audioStart, err := skipID3v2(f)
 	if err != nil {
 		return 0, fmt.Errorf("skipping ID3v2: %w", err)
+	}
+
+	audioStart, err = skipAdditionalID3v2(f, audioStart)
+	if err != nil {
+		return 0, fmt.Errorf(
+			"skipping additional ID3v2 tags: %w", err,
+		)
 	}
 
 	// 2. Find and parse the first MP3 frame header.
@@ -136,6 +150,39 @@ func skipID3v2(f *os.File) (int64, error) {
 		int64(buf[9])
 
 	return 10 + size, nil
+}
+
+// skipAdditionalID3v2 looks for further ID3v2 tags starting at
+// offset and advances past each one found.  This handles files
+// where multiple tagging tools have each prepended their own ID3v2
+// header.
+//
+//nolint:mnd // byte offsets from the ID3v2 spec.
+func skipAdditionalID3v2(
+	f *os.File,
+	offset int64,
+) (int64, error) {
+	var buf [10]byte
+
+	for range maxID3v2Tags {
+		if _, err := f.ReadAt(buf[:], offset); err != nil {
+			// EOF or short read means no more tags.
+			return offset, nil //nolint:nilerr
+		}
+
+		if string(buf[:3]) != "ID3" {
+			return offset, nil
+		}
+
+		size := int64(buf[6])<<21 |
+			int64(buf[7])<<14 |
+			int64(buf[8])<<7 |
+			int64(buf[9])
+
+		offset += 10 + size
+	}
+
+	return offset, nil
 }
 
 // findFrameHeader scans from startOffset for the first valid MP3
