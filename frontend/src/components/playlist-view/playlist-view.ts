@@ -67,6 +67,7 @@ export class PlaylistView
 
     @state() private entries: PlaylistEntry[] = [];
     @state() private loading = true;
+    @state() private refreshing = false;
     @state() private creating = false;
     @state() private newPlaylistName = '';
     @state() private contextMenuOpen = false;
@@ -213,6 +214,25 @@ export class PlaylistView
             font-size: 18px;
             font-weight: 600;
             color: var(--yj-text-primary, #fff);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .header-spinner {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid var(--yj-border-subtle, #555);
+            border-top-color: var(--yj-text-primary, #fff);
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
         }
 
         .new-playlist-button {
@@ -644,6 +664,41 @@ export class PlaylistView
         this.restoreScrollPosition();
     }
 
+    /**
+     * Re-fetches playlists without clearing the current view.
+     * Shows a spinner in the header while the fetch is in-flight
+     * and preserves the expanded/collapsed state of each playlist.
+     */
+    private async refreshPlaylists() {
+        this.refreshing = true;
+
+        try {
+            const playlists =
+                await this.playlistCtrl.refetch();
+
+            const expandedIDs = new Set(
+                this.entries
+                    .filter((e) => e.expanded)
+                    .map((e) => e.summary.ID),
+            );
+
+            this.entries = playlists.map((p) => ({
+                summary: p.Summary,
+                expanded: expandedIDs.has(
+                    p.Summary.ID,
+                ),
+                tracks: p.Tracks ?? [],
+            }));
+        } catch (err) {
+            console.error(
+                'Failed to refresh playlists:',
+                err,
+            );
+        } finally {
+            this.refreshing = false;
+        }
+    }
+
     private handleToggle = (index: number) => {
         const entry = this.entries[index];
 
@@ -796,8 +851,7 @@ export class PlaylistView
                 trackIDs,
             );
 
-            this.playlistCtrl.invalidate();
-            await this.loadPlaylists();
+            await this.refreshPlaylists();
         } catch (err) {
             console.error(
                 'Failed to remove tracks:',
@@ -954,8 +1008,7 @@ export class PlaylistView
                 entry.summary.ID,
                 payload.filePaths,
             );
-            this.playlistCtrl.invalidate();
-            await this.loadPlaylists();
+            await this.refreshPlaylists();
         } catch (err) {
             console.error(
                 'Failed to add tracks to playlist:',
@@ -1127,8 +1180,7 @@ export class PlaylistView
     ) {
         try {
             await DeletePlaylist(playlistID);
-            this.playlistCtrl.invalidate();
-            await this.loadPlaylists();
+            await this.refreshPlaylists();
         } catch (err) {
             console.error(
                 'Failed to delete playlist:',
@@ -1183,8 +1235,7 @@ export class PlaylistView
                 entry.summary.ID,
                 trimmed,
             );
-            this.playlistCtrl.invalidate();
-            await this.loadPlaylists();
+            await this.refreshPlaylists();
         } catch (err) {
             console.error(
                 'Failed to rename playlist:',
@@ -1205,8 +1256,7 @@ export class PlaylistView
             if (!filePath) return;
 
             await ImportPlaylist(filePath);
-            this.playlistCtrl.invalidate();
-            await this.loadPlaylists();
+            await this.refreshPlaylists();
         } catch (err) {
             console.error(
                 'Failed to import playlist:',
@@ -1246,8 +1296,7 @@ export class PlaylistView
             await CreatePlaylist(name);
             this.creating = false;
             this.newPlaylistName = '';
-            this.playlistCtrl.invalidate();
-            await this.loadPlaylists();
+            await this.refreshPlaylists();
         } catch (err) {
             console.error(
                 'Failed to create playlist:',
@@ -1276,7 +1325,14 @@ export class PlaylistView
     override render() {
         return html`
             <div class="header">
-                <h2>Playlists</h2>
+                <h2>
+                    Playlists
+                    ${this.refreshing
+                        ? html`<span
+                              class="header-spinner"
+                          ></span>`
+                        : nothing}
+                </h2>
                 <div
                     style="display: flex; gap: 8px;"
                 >
@@ -1306,7 +1362,8 @@ export class PlaylistView
             ${this.creating
                 ? this.renderCreateForm()
                 : nothing}
-            ${this.loading
+            ${this.loading &&
+            this.entries.length === 0
                 ? html`<div class="loading">
                       Loading playlists...
                   </div>`

@@ -66,6 +66,14 @@ export class PlaylistController implements ReactiveController {
     }
 
     // ===================================================================
+    // REFETCH
+    // ===================================================================
+
+    async refetch(): Promise<playlist.WithTracks[]> {
+        return playlistStore.refetch();
+    }
+
+    // ===================================================================
     // INVALIDATION
     // ===================================================================
 

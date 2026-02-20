@@ -91,6 +91,31 @@ class PlaylistStore {
     }
 
     // ===================================================================
+    // REFETCH
+    // Fetches fresh data without clearing the cache first, so existing
+    // consumers keep rendering stale data until the new data arrives.
+    // ===================================================================
+
+    async refetch(): Promise<playlist.WithTracks[]> {
+        if (this.playlistsLoading) {
+            return this.waitForPlaylists();
+        }
+
+        this.playlistsLoading = true;
+
+        try {
+            const result =
+                await GetAllPlaylistsWithTracks();
+            this.playlists = result ?? [];
+
+            return this.playlists;
+        } finally {
+            this.playlistsLoading = false;
+            this.notify();
+        }
+    }
+
+    // ===================================================================
     // INVALIDATION
     // ===================================================================
 
