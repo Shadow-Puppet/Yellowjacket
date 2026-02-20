@@ -33,6 +33,11 @@ p {
     justify-content: space-between;
     align-items: center;
     background-color: var(--yj-bg-elevated, #343a40);
+    gap: 1em;
+}
+
+.top-bar search-bar {
+    flex: 0 1 320px;
 }
 
 ul {

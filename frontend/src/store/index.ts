@@ -7,3 +7,5 @@ export { QueueController } from './controllers/queue-controller';
 export { themeStore } from './theme-store';
 export type { ThemeState, BackgroundShade } from './theme-store';
 export { ThemeController } from './controllers/theme-controller';
+export { searchStore } from './search-store';
+export { SearchController } from './controllers/search-controller';

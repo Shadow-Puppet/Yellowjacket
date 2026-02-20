@@ -10,6 +10,7 @@ import { grid } from '@lit-labs/virtualizer/layouts/grid.js';
 import { GetAlbumTracks } from '@go/library/Library';
 import { library } from '@go/models';
 import { LibraryController } from '@store/controllers/library-controller';
+import { SearchController } from '@store/controllers/search-controller';
 import { queueStore } from '@store/queue-store';
 import { Events } from '../../events';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
@@ -63,7 +64,9 @@ const ZOOM_STEP = 16;
 @customElement('cover-grid')
 export class CoverGrid extends LitElement {
     private libraryCtrl = new LibraryController(this);
+    private searchCtrl = new SearchController(this);
     private cancelScanComplete?: () => void;
+    private lastSearchTerm = '';
 
     // Fixed grid spacing constants.
     private static readonly GRID_GAP = 8;
@@ -162,6 +165,25 @@ export class CoverGrid extends LitElement {
         number,
         string[]
     >();
+
+    // =================================================================
+    // Filtered albums (search)
+    // =================================================================
+
+    private get filteredAlbums(): library.Album[] {
+        const term =
+            this.searchCtrl.term.toLowerCase();
+
+        if (!term) return this.albums;
+
+        return this.albums.filter(
+            (a) =>
+                a.Name.toLowerCase().includes(term) ||
+                a.ArtistName.toLowerCase().includes(
+                    term,
+                ),
+        );
+    }
 
     /** Wheel event handler ref for manual add/remove. */
     private wheelHandler = (e: WheelEvent) => {
@@ -634,7 +656,9 @@ export class CoverGrid extends LitElement {
                 // restore can place it at the same
                 // visual position.
                 if (this.expandedAlbumId !== null) {
-                    const idx = this.albums.findIndex(
+                    const filtered =
+                        this.filteredAlbums;
+                    const idx = filtered.findIndex(
                         (a) =>
                             a.ID ===
                             this.expandedAlbumId,
@@ -921,7 +945,7 @@ export class CoverGrid extends LitElement {
                         this.expandedAlbumId !== null
                     ) {
                         const idx =
-                            this.albums.findIndex(
+                            this.filteredAlbums.findIndex(
                                 (a) =>
                                     a.ID ===
                                     this
@@ -1001,6 +1025,17 @@ export class CoverGrid extends LitElement {
 
                 this.scrollRestoreResolved = gen;
             })();
+        }
+
+        // Close dropdown and clear selection when
+        // the search term changes.
+        const currentTerm = this.searchCtrl.term;
+
+        if (currentTerm !== this.lastSearchTerm) {
+            this.lastSearchTerm = currentTerm;
+            this.closeDropdown();
+            this.selectedAlbums = new Set();
+            this.lastSelectedAlbumIndex = null;
         }
 
         // On zoom while dropdown is open, recompute
@@ -1133,7 +1168,7 @@ export class CoverGrid extends LitElement {
 
         const safeIndex = Math.min(
             saved,
-            this.albums.length - 1,
+            this.filteredAlbums.length - 1,
         );
 
         if (safeIndex <= 0) return;
@@ -1352,10 +1387,11 @@ export class CoverGrid extends LitElement {
     ) {
         const pad = CoverGrid.GRID_PADDING;
         const cols = this.currentColumnCount;
+        const filtered = this.filteredAlbums;
 
         // Prefer the expanded album as focus.
         if (this.expandedAlbumId !== null) {
-            const idx = this.albums.findIndex(
+            const idx = filtered.findIndex(
                 (a) => a.ID === this.expandedAlbumId,
             );
 
@@ -1387,7 +1423,7 @@ export class CoverGrid extends LitElement {
         );
         const albumIndex = Math.min(
             centerRow * cols,
-            Math.max(0, this.albums.length - 1),
+            Math.max(0, filtered.length - 1),
         );
 
         // Pixel offset from that album's top edge
@@ -1461,7 +1497,7 @@ export class CoverGrid extends LitElement {
     private getCaratOffset(): number {
         if (this.expandedAlbumId === null) return 0;
 
-        const idx = this.albums.findIndex(
+        const idx = this.filteredAlbums.findIndex(
             (a) => a.ID === this.expandedAlbumId,
         );
 
@@ -1492,19 +1528,21 @@ export class CoverGrid extends LitElement {
      * "before" virtualizer; the rest go into "after".
      */
     private computeSplitIndex() {
+        const filtered = this.filteredAlbums;
+
         if (this.expandedAlbumId === null) {
-            this.splitIndex = this.albums.length;
+            this.splitIndex = filtered.length;
 
             return;
         }
 
         const columns = this.getColumnCount();
-        const expandedIndex = this.albums.findIndex(
+        const expandedIndex = filtered.findIndex(
             (a) => a.ID === this.expandedAlbumId,
         );
 
         if (expandedIndex < 0) {
-            this.splitIndex = this.albums.length;
+            this.splitIndex = filtered.length;
 
             return;
         }
@@ -1513,7 +1551,7 @@ export class CoverGrid extends LitElement {
             (Math.floor(expandedIndex / columns) +
                 1) *
                 columns,
-            this.albums.length,
+            filtered.length,
         );
     }
 
@@ -1528,11 +1566,12 @@ export class CoverGrid extends LitElement {
      * component state (e.g. selectedAlbums) changes.
      */
     private buildGridEntries(): GridEntry[] {
+        const filtered = this.filteredAlbums;
         const entries: GridEntry[] = [];
 
-        for (let i = 0; i < this.albums.length; i++) {
+        for (let i = 0; i < filtered.length; i++) {
             entries.push({
-                album: this.albums[i]!,
+                album: filtered[i]!,
                 albumIndex: i,
             });
         }
@@ -1814,7 +1853,8 @@ export class CoverGrid extends LitElement {
             return;
         }
 
-        const expandedIndex = this.albums.findIndex(
+        const filtered = this.filteredAlbums;
+        const expandedIndex = filtered.findIndex(
             (a) => a.ID === this.expandedAlbumId,
         );
 
@@ -1920,12 +1960,13 @@ export class CoverGrid extends LitElement {
         from: number,
         to: number,
     ): Set<number> {
+        const filtered = this.filteredAlbums;
         const start = Math.min(from, to);
         const end = Math.max(from, to);
         const ids = new Set<number>();
 
         for (let i = start; i <= end; i++) {
-            const album = this.albums[i];
+            const album = filtered[i];
 
             if (album) {
                 ids.add(album.ID);
@@ -2119,6 +2160,7 @@ export class CoverGrid extends LitElement {
         e: Event,
     ): { album: library.Album; index: number } | null {
         const path = e.composedPath();
+        const filtered = this.filteredAlbums;
 
         for (const el of path) {
             if (
@@ -2130,7 +2172,7 @@ export class CoverGrid extends LitElement {
                 if (raw === undefined) return null;
 
                 const index = parseInt(raw, 10);
-                const album = this.albums[index];
+                const album = filtered[index];
 
                 if (!album) return null;
 
@@ -2309,7 +2351,7 @@ export class CoverGrid extends LitElement {
         if (raw === undefined) return;
 
         const index = parseInt(raw, 10);
-        const album = this.albums[index];
+        const album = this.filteredAlbums[index];
 
         if (album && img.src !== album.CoverArtPath) {
             img.src = album.CoverArtPath;
@@ -2882,6 +2924,14 @@ export class CoverGrid extends LitElement {
                         Add music to your library to see
                         album covers here.
                     </p>
+                </div>
+            `;
+        }
+
+        if (this.filteredAlbums.length === 0) {
+            return html`
+                <div class="empty-state">
+                    <p>No albums match your search.</p>
                 </div>
             `;
         }

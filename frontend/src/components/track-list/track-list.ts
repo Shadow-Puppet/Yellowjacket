@@ -6,6 +6,7 @@ import { formatMilliseconds } from '@utils/time';
 import { SelectionController } from '@utils/selection-controller';
 import type { SelectionHost } from '@utils/selection-controller';
 import { PlayerController } from '@store/controllers/player-controller';
+import { SearchController } from '@store/controllers/search-controller';
 import { queueStore } from '@store/queue-store';
 import { LibraryController } from '@store/controllers/library-controller';
 import { Events } from '../../events';
@@ -38,8 +39,10 @@ const COLUMN_COUNT = 3;
 export class TrackList extends LitElement implements SelectionHost {
     private player = new PlayerController(this);
     private libraryCtrl = new LibraryController(this);
+    private searchCtrl = new SearchController(this);
     private selection = new SelectionController(this);
     private cancelScanComplete?: () => void;
+    private lastSearchTerm = '';
 
     @state()
     private tracks: library.Track[] = [];
@@ -90,15 +93,35 @@ export class TrackList extends LitElement implements SelectionHost {
     private hasRestoredScroll = false;
 
     // =================================================================
+    // Filtered tracks (search)
+    // =================================================================
+
+    private get filteredTracks(): library.Track[] {
+        const term = this.searchCtrl.term.toLowerCase();
+
+        if (!term) return this.tracks;
+
+        return this.tracks.filter(
+            (t) =>
+                t.TrackName.toLowerCase().includes(
+                    term,
+                ) ||
+                t.ArtistName.toLowerCase().includes(
+                    term,
+                ),
+        );
+    }
+
+    // =================================================================
     // SelectionHost interface
     // =================================================================
 
     getItemKey(index: number): string | undefined {
-        return this.tracks[index]?.FilePath;
+        return this.filteredTracks[index]?.FilePath;
     }
 
     getItemCount(): number {
-        return this.tracks.length;
+        return this.filteredTracks.length;
     }
 
     onSelectionChanged(): void {
@@ -295,6 +318,12 @@ export class TrackList extends LitElement implements SelectionHost {
       background-color: var(--yj-text-tertiary, #6c757d);
     }
 
+    .no-results {
+      padding: 24px 16px;
+      color: var(--yj-text-secondary, #b3b3b3);
+      font-size: 13px;
+    }
+
     lit-virtualizer {
       flex: 1;
       overflow-x: hidden;
@@ -455,6 +484,14 @@ export class TrackList extends LitElement implements SelectionHost {
         if (currentPath !== this.lastActiveTrackPath) {
             this.lastActiveTrackPath = currentPath;
             this.virtualizer?.requestUpdate();
+        }
+
+        // Clear selection when search term changes.
+        const currentTerm = this.searchCtrl.term;
+
+        if (currentTerm !== this.lastSearchTerm) {
+            this.lastSearchTerm = currentTerm;
+            this.selection.clear();
         }
     }
 
@@ -752,6 +789,8 @@ export class TrackList extends LitElement implements SelectionHost {
     };
 
     override render() {
+        const visibleTracks = this.filteredTracks;
+
         return html`
       ${this.tracks.length === 0
                 ? html`<p>Loading tracks...</p>`
@@ -761,12 +800,18 @@ export class TrackList extends LitElement implements SelectionHost {
               <div class="header-cell">Artist</div>
               <div class="header-cell">Track Length</div>
             </div>
-            <lit-virtualizer
-              scroller
-              .items=${this.tracks}
-              .renderItem=${this.renderTrackRow}
-              .layout=${this.flowLayout}
-            ></lit-virtualizer>
+            ${visibleTracks.length === 0
+                        ? html`<p class="no-results">
+                      No tracks match your search.
+                    </p>`
+                        : html`
+                      <lit-virtualizer
+                        scroller
+                        .items=${visibleTracks}
+                        .renderItem=${this.renderTrackRow}
+                        .layout=${this.flowLayout}
+                      ></lit-virtualizer>
+                    `}
           `}
 
       <div class="resize-overlay">

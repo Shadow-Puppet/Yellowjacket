@@ -7,12 +7,15 @@ import '@components/queue-panel/queue-panel.ts';
 import '@components/playlist-view/playlist-view.ts';
 import '@components/library-manager/library-manager.ts';
 import '@components/config-page/config-page.ts';
+import '@components/search-bar/search-bar.ts';
+import type { SearchBar } from '@components/search-bar/search-bar.ts';
 import '@awesome.me/webawesome/dist/styles/themes/default.css';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import { setBasePath } from '@awesome.me/webawesome/dist/webawesome.js';
 import { libraryStore } from '@store/library-store';
 import { playlistStore } from '@store/playlist-store';
 import { queueStore } from '@store/queue-store';
+import { searchStore } from '@store/search-store';
 // Importing the theme store triggers initialization: it fetches the saved
 // theme from the backend and applies CSS custom properties to :root.
 import '@store/theme-store';
@@ -36,6 +39,8 @@ document.addEventListener('navigate', (e: Event) => {
     const mainContent = document.getElementById('main-content');
 
     if (!mainContent) return;
+
+    searchStore.setCurrentView(view);
 
     switch (view) {
         case 'albums':
@@ -118,3 +123,20 @@ if (queueButton && queuePanel) {
         }) as EventListener,
     );
 }
+
+// ---------------------------------------------------------------
+// Ctrl+F to focus the search bar
+// ---------------------------------------------------------------
+
+document.addEventListener('keydown', (e: KeyboardEvent) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+        const bar = document.querySelector(
+            'search-bar',
+        ) as SearchBar | null;
+
+        if (bar && !bar.hasAttribute('hidden')) {
+            e.preventDefault();
+            bar.focusInput();
+        }
+    }
+});

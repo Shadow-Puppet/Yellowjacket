@@ -20,6 +20,7 @@ import type { playlist } from '@go/models';
 import { queueStore } from '@store/queue-store';
 import { PlayerController } from '@store/controllers/player-controller';
 import { PlaylistController } from '@store/controllers/playlist-controller';
+import { SearchController } from '@store/controllers/search-controller';
 import '@components/track-info/track-info';
 import '@components/playlist-picker/playlist-picker.js';
 import type { PlaylistPicker } from '@components/playlist-picker/playlist-picker.js';
@@ -53,17 +54,102 @@ export class PlaylistView
 {
     private player = new PlayerController(this);
     private playlistCtrl = new PlaylistController(this);
+    private searchCtrl = new SearchController(this);
     private selection = new SelectionController(this);
     private cancelScanComplete?: () => void;
     private scrollDebounceTimer: ReturnType<
         typeof setTimeout
     > | null = null;
+    private lastSearchTerm = '';
 
     /**
      * Index of the playlist whose tracks are currently
      * selectable. -1 means no active selection scope.
      */
     private activePlaylistIndex = -1;
+
+    // =================================================================
+    // Filtered entries (search)
+    // =================================================================
+
+    private get filteredEntries(): PlaylistEntry[] {
+        const term =
+            this.searchCtrl.term.toLowerCase();
+
+        if (!term) return this.entries;
+
+        return this.entries.filter(
+            (e) =>
+                e.summary.Name.toLowerCase().includes(
+                    term,
+                ) ||
+                e.tracks.some(
+                    (t) =>
+                        t.Title.toLowerCase().includes(
+                            term,
+                        ) ||
+                        t.Artist.toLowerCase().includes(
+                            term,
+                        ),
+                ),
+        );
+    }
+
+    /**
+     * Return the tracks to display for a playlist entry,
+     * preserving original indices for event handlers.
+     * When a search term is active, only tracks matching
+     * the term are shown.  When there is no search term
+     * (or the playlist matched by name), all tracks are
+     * returned.
+     */
+    private getVisibleTracks(
+        entry: PlaylistEntry,
+    ): { track: playlist.Track; trackIndex: number }[] {
+        const term =
+            this.searchCtrl.term.toLowerCase();
+
+        if (!term) {
+            return entry.tracks.map(
+                (track, trackIndex) => ({
+                    track,
+                    trackIndex,
+                }),
+            );
+        }
+
+        // If the playlist name itself matches, show
+        // all tracks — the whole playlist is relevant.
+        if (
+            entry.summary.Name.toLowerCase().includes(
+                term,
+            )
+        ) {
+            return entry.tracks.map(
+                (track, trackIndex) => ({
+                    track,
+                    trackIndex,
+                }),
+            );
+        }
+
+        // Otherwise only show tracks whose metadata
+        // matches.
+        return entry.tracks
+            .map((track, trackIndex) => ({
+                track,
+                trackIndex,
+            }))
+            .filter(
+                ({ track }) =>
+                    track.Title.toLowerCase().includes(
+                        term,
+                    ) ||
+                    track.Artist.toLowerCase().includes(
+                        term,
+                    ),
+            );
+    }
 
     @state() private entries: PlaylistEntry[] = [];
     @state() private loading = true;
@@ -605,6 +691,39 @@ export class PlaylistView
             'click',
             this.clearSelectionHandler,
         );
+    }
+
+    override updated() {
+        const currentTerm = this.searchCtrl.term;
+
+        if (currentTerm !== this.lastSearchTerm) {
+            this.lastSearchTerm = currentTerm;
+            this.selection.clear();
+            this.activePlaylistIndex = -1;
+
+            const term = currentTerm.toLowerCase();
+
+            this.entries = this.entries.map((e) => {
+                if (!term) {
+                    return { ...e, expanded: false };
+                }
+
+                const hasTrackMatch = e.tracks.some(
+                    (t) =>
+                        t.Title.toLowerCase().includes(
+                            term,
+                        ) ||
+                        t.Artist.toLowerCase().includes(
+                            term,
+                        ),
+                );
+
+                return {
+                    ...e,
+                    expanded: hasTrackMatch,
+                };
+            });
+        }
     }
 
     private get scrollContainer(): HTMLElement | null {
@@ -1559,14 +1678,30 @@ export class PlaylistView
             `;
         }
 
+        const visible = this.filteredEntries;
+
+        if (visible.length === 0) {
+            return html`
+                <div class="empty-state">
+                    <p>No playlists match your search.</p>
+                </div>
+            `;
+        }
+
         return html`
             <ul
                 class="playlist-list"
                 @scroll=${this.onScroll}
             >
-                ${this.entries.map((entry, i) =>
-                    this.renderPlaylistItem(entry, i),
-                )}
+                ${visible.map((entry) => {
+                    const originalIndex =
+                        this.entries.indexOf(entry);
+
+                    return this.renderPlaylistItem(
+                        entry,
+                        originalIndex,
+                    );
+                })}
             </ul>
         `;
     }
@@ -1686,8 +1821,8 @@ export class PlaylistView
                         Play All
                     </button>
                 </div>
-                ${entry.tracks.map(
-                    (track, trackIndex) => {
+                ${this.getVisibleTracks(entry).map(
+                    ({ track, trackIndex }) => {
                         const isPhantom =
                             track.Phantom;
                         const active =
