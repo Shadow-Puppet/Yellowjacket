@@ -55,6 +55,7 @@ const (
 // Config events.
 const (
 	LibraryConfigChanged = "LibraryConfigChanged"
+	ThemeConfigChanged   = "ThemeConfigChanged"
 )
 
 // Playlist events.

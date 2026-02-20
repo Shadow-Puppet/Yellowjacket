@@ -203,21 +203,21 @@ export class CoverGrid extends LitElement {
         }
 
         .album-card:hover {
-            background-color: rgba(255, 255, 255, 0.1);
+            background-color: var(--yj-hover-overlay, rgba(255, 255, 255, 0.1));
         }
 
         .album-card.selected {
-            outline: 2px solid #ffd43b;
+            outline: 2px solid var(--yj-accent, #ffd43b);
             outline-offset: 2px;
         }
 
         .album-card.expanded {
-            background-color: #343a40;
+            background-color: var(--yj-bg-elevated, #343a40);
             border-radius: 8px 8px 0 0;
         }
 
         .album-card:focus-visible {
-            outline: 2px solid #ffd43b;
+            outline: 2px solid var(--yj-accent, #ffd43b);
             outline-offset: 2px;
         }
 
@@ -227,7 +227,7 @@ export class CoverGrid extends LitElement {
             aspect-ratio: 1;
             border-radius: 4px;
             overflow: hidden;
-            background-color: #282828;
+            background-color: var(--yj-bg-surface, #282828);
             transition: scale 0.15s ease;
         }
 
@@ -263,8 +263,8 @@ export class CoverGrid extends LitElement {
 
         .select-toggle.checked {
             opacity: 1;
-            background-color: #ffd43b;
-            border-color: #ffd43b;
+            background-color: var(--yj-accent, #ffd43b);
+            border-color: var(--yj-accent, #ffd43b);
         }
 
         .check-icon {
@@ -289,10 +289,10 @@ export class CoverGrid extends LitElement {
             justify-content: center;
             background: linear-gradient(
                 135deg,
-                #404040 0%,
-                #282828 100%
+                var(--yj-bg-overlay, #404040) 0%,
+                var(--yj-bg-surface, #282828) 100%
             );
-            color: #b3b3b3;
+            color: var(--yj-text-secondary, #b3b3b3);
             font-size: var(--placeholder-font, 48px);
         }
 
@@ -310,7 +310,7 @@ export class CoverGrid extends LitElement {
         .album-name {
             font-size: var(--album-name-font, 14px);
             font-weight: 400;
-            color: #fff;
+            color: var(--yj-text-primary, #fff);
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -318,7 +318,7 @@ export class CoverGrid extends LitElement {
 
         .artist-name {
             font-size: var(--artist-name-font, 12px);
-            color: #b3b3b3;
+            color: var(--yj-text-secondary, #b3b3b3);
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -326,7 +326,7 @@ export class CoverGrid extends LitElement {
         }
 
         .album-year {
-            color: #888;
+            color: var(--yj-text-tertiary, #888);
         }
 
         /* ========================================
@@ -338,7 +338,7 @@ export class CoverGrid extends LitElement {
             justify-content: center;
             align-items: center;
             padding: 32px;
-            color: #b3b3b3;
+            color: var(--yj-text-secondary, #b3b3b3);
         }
 
         .empty-state {
@@ -347,7 +347,7 @@ export class CoverGrid extends LitElement {
             justify-content: center;
             align-items: center;
             padding: 48px;
-            color: #b3b3b3;
+            color: var(--yj-text-secondary, #b3b3b3);
             text-align: center;
         }
 
@@ -364,8 +364,8 @@ export class CoverGrid extends LitElement {
         }
 
         .context-menu-panel {
-            background-color: #343a40;
-            border: 1px solid #444;
+            background-color: var(--yj-bg-elevated, #343a40);
+            border: 1px solid var(--yj-border, #444);
             border-radius: 6px;
             padding: 4px 0;
             box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
@@ -377,16 +377,14 @@ export class CoverGrid extends LitElement {
         }
 
         .context-menu-panel wa-dropdown-item {
-            --wa-color-text-normal: #fff;
+            --wa-color-text-normal: var(--yj-text-primary, #fff);
             font-size: 13px;
         }
 
         .context-menu-panel wa-dropdown-item:hover {
-            background-color: rgba(
-                255,
-                255,
-                255,
-                0.1
+            background-color: var(
+                --yj-hover-overlay,
+                rgba(255, 255, 255, 0.1)
             );
         }
 

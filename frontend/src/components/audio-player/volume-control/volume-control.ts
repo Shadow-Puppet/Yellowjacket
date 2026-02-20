@@ -35,8 +35,8 @@ export class VolumeControl extends LitElement {
       bottom: 100%;
       left: 50%;
       transform: translateX(-50%);
-      background: #1a1a1a;
-      border: 1px solid #333;
+      background: var(--yj-bg-surface, #1a1a1a);
+      border: 1px solid var(--yj-border-subtle, #333);
       border-radius: 8px;
       padding: 1em 0.5em;
       margin-bottom: 0.5em;
@@ -52,16 +52,16 @@ export class VolumeControl extends LitElement {
     }
 
     wa-slider::part(track) {
-      background: white;
+      background: var(--yj-text-primary, white);
       height: 120px;
     }
 
     wa-slider::part(indicator) {
-      background: yellow;
+      background: var(--yj-accent, yellow);
     }
 
     wa-slider::part(thumb) {
-      background: black;
+      background: var(--yj-bg-base, black);
     }
   `;
 

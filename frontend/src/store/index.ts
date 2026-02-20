@@ -4,3 +4,6 @@ export { PlayerController } from './controllers/player-controller';
 export { queueStore } from './queue-store';
 export type { QueueState, QueueTrack, RepeatMode } from './queue-store';
 export { QueueController } from './controllers/queue-controller';
+export { themeStore } from './theme-store';
+export type { ThemeState, BackgroundShade } from './theme-store';
+export { ThemeController } from './controllers/theme-controller';

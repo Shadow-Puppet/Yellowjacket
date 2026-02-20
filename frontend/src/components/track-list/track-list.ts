@@ -252,8 +252,8 @@ export class TrackList extends LitElement implements SelectionHost {
       grid-template-columns: var(--grid-cols, 1fr 1fr 80px);
       padding: 8px;
       font-weight: bold;
-      color: #fff;
-      border-bottom: 1px solid #666;
+      color: var(--yj-text-primary, #fff);
+      border-bottom: 1px solid var(--yj-text-tertiary, #666);
       flex-shrink: 0;
     }
 
@@ -277,7 +277,7 @@ export class TrackList extends LitElement implements SelectionHost {
       width: 1px;
       cursor: col-resize;
       pointer-events: auto;
-      background-color: #444;
+      background-color: var(--yj-border, #444);
       transition: background-color 0.15s ease;
     }
 
@@ -292,7 +292,7 @@ export class TrackList extends LitElement implements SelectionHost {
 
     .col-resize-handle:hover,
     .col-resize-handle.active {
-      background-color: #6c757d;
+      background-color: var(--yj-text-tertiary, #6c757d);
     }
 
     lit-virtualizer {
@@ -307,7 +307,7 @@ export class TrackList extends LitElement implements SelectionHost {
       grid-template-columns: var(--grid-cols, 1fr 1fr 80px);
       font-size: 12px;
       padding: 8px;
-      border-bottom: 1px solid #333;
+      border-bottom: 1px solid var(--yj-border-subtle, #333);
       align-items: center;
       width: 100%;
       cursor: default;
@@ -324,23 +324,23 @@ export class TrackList extends LitElement implements SelectionHost {
     }
 
     .track-row:hover {
-      background-color: rgba(255, 255, 255, 0.05);
+      background-color: var(--yj-hover-overlay, rgba(255, 255, 255, 0.05));
     }
 
     .track-row.selected {
-      background-color: rgba(100, 160, 255, 0.15);
+      background-color: var(--yj-selection-bg, rgba(100, 160, 255, 0.15));
     }
 
     .track-row.active {
-      background-color: rgba(255, 212, 59, 0.1);
+      background-color: var(--yj-accent-bg, rgba(255, 212, 59, 0.1));
     }
 
     .track-row.active {
-      color: #ffd43b;
+      color: var(--yj-accent, #ffd43b);
     }
 
     .track-row.selected.active {
-      background-color: rgba(100, 160, 255, 0.15);
+      background-color: var(--yj-selection-bg, rgba(100, 160, 255, 0.15));
     }
 
     .track-name {
@@ -363,8 +363,8 @@ export class TrackList extends LitElement implements SelectionHost {
     }
 
     .context-menu-panel {
-      background-color: #343a40;
-      border: 1px solid #444;
+      background-color: var(--yj-bg-elevated, #343a40);
+      border: 1px solid var(--yj-border, #444);
       border-radius: 6px;
       padding: 4px 0;
       box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
@@ -376,12 +376,12 @@ export class TrackList extends LitElement implements SelectionHost {
     }
 
     .context-menu-panel wa-dropdown-item {
-      --wa-color-text-normal: #fff;
+      --wa-color-text-normal: var(--yj-text-primary, #fff);
       font-size: 13px;
     }
 
     .context-menu-panel wa-dropdown-item:hover {
-      background-color: rgba(255, 255, 255, 0.1);
+      background-color: var(--yj-hover-overlay, rgba(255, 255, 255, 0.1));
     }
 
     .submenu-item {

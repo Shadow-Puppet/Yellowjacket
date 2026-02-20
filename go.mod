@@ -8,7 +8,6 @@ require (
 	github.com/a-h/templ v0.3.977
 	github.com/dhowden/tag v0.0.0-20240417053706-3d75831295e8
 	github.com/golang-cz/devslog v0.0.15
-	github.com/gorilla/schema v1.4.1
 	github.com/wailsapp/wails/v2 v2.10.2
 	golang.org/x/image v0.12.0
 	golang.org/x/sync v0.19.0

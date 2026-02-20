@@ -242,7 +242,7 @@ export class LibraryManager extends LitElement {
         :host {
             display: block;
             padding: 1.5em;
-            color: #e9ecef;
+            color: var(--yj-text-primary, #e9ecef);
             font-family: system-ui, -apple-system, sans-serif;
             overflow-y: auto;
         }
@@ -251,13 +251,13 @@ export class LibraryManager extends LitElement {
             margin: 0 0 1em 0;
             font-size: 1.4em;
             font-weight: 600;
-            color: #f8f9fa;
+            color: var(--yj-text-primary, #f8f9fa);
         }
 
         .section {
             margin-bottom: 2em;
             padding: 1.25em;
-            background: #2b3035;
+            background: var(--yj-bg-surface, #2b3035);
             border-radius: 8px;
         }
 
@@ -265,7 +265,7 @@ export class LibraryManager extends LitElement {
             margin: 0 0 0.75em 0;
             font-size: 1em;
             font-weight: 600;
-            color: #dee2e6;
+            color: var(--yj-text-primary, #dee2e6);
         }
 
         .section-header {
@@ -282,7 +282,7 @@ export class LibraryManager extends LitElement {
         .section-description {
             margin: 0 0 1em 0;
             font-size: 0.85em;
-            color: #868e96;
+            color: var(--yj-text-tertiary, #868e96);
             line-height: 1.4;
         }
 
@@ -296,10 +296,10 @@ export class LibraryManager extends LitElement {
         .directory-path {
             flex: 1;
             padding: 0.5em 0.75em;
-            background: #1a1d20;
-            border: 1px solid #495057;
+            background: var(--yj-bg-elevated, #1a1d20);
+            border: 1px solid var(--yj-bg-overlay, #495057);
             border-radius: 4px;
-            color: #adb5bd;
+            color: var(--yj-text-secondary, #adb5bd);
             font-size: 0.85em;
             font-family: monospace;
             overflow: hidden;
@@ -309,7 +309,7 @@ export class LibraryManager extends LitElement {
         }
 
         .directory-path.has-value {
-            color: #e9ecef;
+            color: var(--yj-text-primary, #e9ecef);
         }
 
         button {
@@ -329,57 +329,57 @@ export class LibraryManager extends LitElement {
         }
 
         .btn-primary {
-            background: #4263eb;
+            background: var(--yj-info, #4263eb);
             color: white;
         }
 
         .btn-primary:hover:not(:disabled) {
-            background: #3b5bdb;
+            background: var(--yj-info-hover, #3b5bdb);
         }
 
         .btn-success {
-            background: #2f9e44;
+            background: var(--yj-success, #2f9e44);
             color: white;
         }
 
         .btn-success:hover:not(:disabled) {
-            background: #2b8a3e;
+            background: var(--yj-success-hover, #2b8a3e);
         }
 
         .btn-warning {
-            background: #e8590c;
+            background: var(--yj-warning, #e8590c);
             color: white;
         }
 
         .btn-warning:hover:not(:disabled) {
-            background: #d9480f;
+            background: var(--yj-warning-hover, #d9480f);
         }
 
         .btn-danger {
-            background: #e03131;
+            background: var(--yj-error, #e03131);
             color: white;
         }
 
         .btn-danger:hover:not(:disabled) {
-            background: #c92a2a;
+            background: var(--yj-error-hover, #c92a2a);
         }
 
         .btn-ghost {
             background: transparent;
-            color: #868e96;
+            color: var(--yj-text-tertiary, #868e96);
             padding: 0.3em 0.75em;
             font-size: 0.75em;
-            border: 1px solid #495057;
+            border: 1px solid var(--yj-bg-overlay, #495057);
         }
 
         .btn-ghost:hover:not(:disabled) {
-            background: #495057;
-            color: #e9ecef;
+            background: var(--yj-bg-overlay, #495057);
+            color: var(--yj-text-primary, #e9ecef);
         }
 
         .btn-ghost.copied {
-            border-color: #2f9e44;
-            color: #2f9e44;
+            border-color: var(--yj-success, #2f9e44);
+            color: var(--yj-success, #2f9e44);
         }
 
         .setting-row {
@@ -390,16 +390,16 @@ export class LibraryManager extends LitElement {
         }
 
         .setting-row label {
-            color: #adb5bd;
+            color: var(--yj-text-secondary, #adb5bd);
             min-width: 8em;
         }
 
         .setting-row select {
             padding: 0.4em 0.6em;
-            background: #1a1d20;
-            border: 1px solid #495057;
+            background: var(--yj-bg-elevated, #1a1d20);
+            border: 1px solid var(--yj-bg-overlay, #495057);
             border-radius: 4px;
-            color: #e9ecef;
+            color: var(--yj-text-primary, #e9ecef);
             font-size: 1em;
             font-family: inherit;
             cursor: pointer;
@@ -408,12 +408,12 @@ export class LibraryManager extends LitElement {
 
         .setting-row select:focus {
             outline: none;
-            border-color: #4263eb;
+            border-color: var(--yj-info, #4263eb);
         }
 
         .setting-row select option {
-            background: #2b3035;
-            color: #e9ecef;
+            background: var(--yj-bg-surface, #2b3035);
+            color: var(--yj-text-primary, #e9ecef);
         }
 
         .scan-actions {
@@ -425,15 +425,15 @@ export class LibraryManager extends LitElement {
         .status-bar {
             margin-top: 1.5em;
             padding: 0.75em 1em;
-            background: #1a1d20;
+            background: var(--yj-bg-elevated, #1a1d20);
             border-radius: 4px;
             font-size: 0.85em;
-            color: #868e96;
+            color: var(--yj-text-tertiary, #868e96);
             min-height: 1.2em;
         }
 
         .status-bar.active {
-            color: #ffd43b;
+            color: var(--yj-accent, #ffd43b);
         }
 
         /* --- Metrics tree --- */
@@ -453,7 +453,7 @@ export class LibraryManager extends LitElement {
             cursor: pointer;
             padding: 0.25em 0;
             font-size: 0.85em;
-            color: #ced4da;
+            color: var(--yj-text-secondary, #ced4da);
             list-style: none;
         }
 
@@ -484,21 +484,21 @@ export class LibraryManager extends LitElement {
         }
 
         .metric-label {
-            color: #adb5bd;
+            color: var(--yj-text-secondary, #adb5bd);
         }
 
         .metric-value {
-            color: #e9ecef;
+            color: var(--yj-text-primary, #e9ecef);
             font-family: monospace;
             font-weight: 500;
         }
 
         .metric-value.highlight {
-            color: #ffd43b;
+            color: var(--yj-accent, #ffd43b);
         }
 
         .metric-note {
-            color: #868e96;
+            color: var(--yj-text-tertiary, #868e96);
             font-size: 0.75em;
             font-style: italic;
             padding-left: 1.35em;
@@ -513,11 +513,11 @@ export class LibraryManager extends LitElement {
         }
 
         .count-label {
-            color: #adb5bd;
+            color: var(--yj-text-secondary, #adb5bd);
         }
 
         .count-value {
-            color: #e9ecef;
+            color: var(--yj-text-primary, #e9ecef);
             font-family: monospace;
         }
     `;

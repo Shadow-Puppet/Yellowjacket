@@ -10,8 +10,8 @@ html {
 }
 
 body {
-    background-color: black;
-    color: white;
+    background-color: var(--yj-bg-base, black);
+    color: var(--yj-text-primary, white);
     margin: 0;
     height: 100vh;
     display: grid;
@@ -32,7 +32,7 @@ p {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    background-color: #343a40;
+    background-color: var(--yj-bg-elevated, #343a40);
 }
 
 ul {
@@ -51,14 +51,14 @@ ul {
 
 body div.sidebar {
     grid-area: sidebar;
-    background-color: #212529;
+    background-color: var(--yj-bg-surface, #212529);
     overflow: hidden;
 }
 
 .bottom-bar {
     grid-area: bottom-bar;
     padding: 0.25em;
-    background-color: #343a40;
+    background-color: var(--yj-bg-elevated, #343a40);
     display: grid;
     grid-template-columns: var(--now-playing-width, 200px) 1fr auto;
     align-items: center;
@@ -75,7 +75,7 @@ body div.sidebar {
             height: 3.5em;
             min-height: 3.5em;
             border-radius: 0.25em;
-            background-color: #ffd43b;
+            background-color: var(--yj-accent, #ffd43b);
         }
 
         #track-info {
@@ -114,12 +114,12 @@ body div.sidebar {
     }
 
     #queue-button:hover {
-        color: #ffd43b;
+        color: var(--yj-accent, #ffd43b);
     }
 
     #queue-button.drag-over {
-        color: #ffd43b;
-        outline: 2px dashed #ffd43b;
+        color: var(--yj-accent, #ffd43b);
+        outline: 2px dashed var(--yj-accent, #ffd43b);
         outline-offset: -2px;
         border-radius: 4px;
     }
@@ -135,7 +135,7 @@ body div.sidebar {
     flex: 1;
     min-width: 0;
     padding: 0.25em;
-    background-color: #212529;
+    background-color: var(--yj-bg-surface, #212529);
     overflow: hidden;
 }
 

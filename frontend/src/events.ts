@@ -48,6 +48,9 @@ export const Events = {
     PlaylistTracksChanged: "PlaylistTracksChanged",
     PlaylistsRestored: "PlaylistsRestored",
 
+    // Config events
+    ThemeConfigChanged: "ThemeConfigChanged",
+
     // Library events
     LibraryScanStarted: "LibraryScanStarted",
     LibraryScanComplete: "LibraryScanComplete",

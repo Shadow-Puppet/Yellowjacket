@@ -22,23 +22,23 @@ export class SeekBar extends LitElement {
       --track-size: 6px;
       flex: 1;
       margin: 0 1em;
-      --wa-tooltip-background-color: #343a40;
-      --wa-tooltip-content-color: white;
-      --wa-tooltip-border-color: #343a40;
+      --wa-tooltip-background-color: var(--yj-bg-elevated, #343a40);
+      --wa-tooltip-content-color: var(--yj-text-primary, white);
+      --wa-tooltip-border-color: var(--yj-bg-elevated, #343a40);
       --wa-tooltip-border-radius: 4px;
       --wa-tooltip-font-size: 0.875em;
     }
 
     wa-slider::part(track) {
-      background: white;
+      background: var(--yj-text-primary, white);
     }
 
     wa-slider::part(indicator) {
-      background: yellow;
+      background: var(--yj-accent, yellow);
     }
 
     wa-slider::part(thumb) {
-      background: black;
+      background: var(--yj-bg-base, black);
     }
 
     #seek-bar-container {

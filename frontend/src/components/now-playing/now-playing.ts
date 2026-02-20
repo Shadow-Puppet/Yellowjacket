@@ -48,14 +48,14 @@ export class NowPlaying extends LitElement {
     .cover-placeholder {
       width: 100%;
       height: 100%;
-      background-color: #000;
+      background-color: var(--yj-bg-base, #000);
       display: flex;
       align-items: center;
       justify-content: center;
     }
 
     .cover-placeholder wa-icon {
-      color: #fff;
+      color: var(--yj-text-primary, #fff);
       font-size: 24px;
     }
 
@@ -76,7 +76,7 @@ export class NowPlaying extends LitElement {
 
     .track-artist {
       font-size: 12px;
-      color: #666;
+      color: var(--yj-text-tertiary, #666);
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -96,7 +96,7 @@ export class NowPlaying extends LitElement {
 
     .resize-handle:hover,
     .resize-handle.dragging {
-      background-color: #6c757d;
+      background-color: var(--yj-text-tertiary, #6c757d);
     }
   `;
 

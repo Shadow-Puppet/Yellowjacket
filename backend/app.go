@@ -65,7 +65,6 @@ func NewYellowJacketApp(
 	}
 
 	yjApp.appConfig = appConfig
-	yjApp.assetHandler.RegisterHandler("/config", yjApp.appConfig)
 
 	// create frontendUtil
 	feUtil, err := frontendutil.NewFrontendUtil()

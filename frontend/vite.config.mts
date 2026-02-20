@@ -17,7 +17,6 @@ export default defineConfig({
         rollupOptions: {
             input: {
                 main: "index.html",
-                config: "src/pages/config/index.html",
             },
         },
     },

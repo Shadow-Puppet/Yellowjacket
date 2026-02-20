@@ -10,16 +10,20 @@ export function GetScanConcurrency() {
   return window['go']['config']['Config']['GetScanConcurrency']();
 }
 
+export function GetThemeAccentColor() {
+  return window['go']['config']['Config']['GetThemeAccentColor']();
+}
+
+export function GetThemeBackgroundShade() {
+  return window['go']['config']['Config']['GetThemeBackgroundShade']();
+}
+
 export function Load() {
   return window['go']['config']['Config']['Load']();
 }
 
 export function Save() {
   return window['go']['config']['Config']['Save']();
-}
-
-export function ServeHTTP(arg1, arg2) {
-  return window['go']['config']['Config']['ServeHTTP'](arg1, arg2);
 }
 
 export function SetContext(arg1) {
@@ -32,6 +36,14 @@ export function SetLibraryDirectory(arg1) {
 
 export function SetScanConcurrency(arg1) {
   return window['go']['config']['Config']['SetScanConcurrency'](arg1);
+}
+
+export function SetThemeAccentColor(arg1) {
+  return window['go']['config']['Config']['SetThemeAccentColor'](arg1);
+}
+
+export function SetThemeBackgroundShade(arg1) {
+  return window['go']['config']['Config']['SetThemeBackgroundShade'](arg1);
 }
 
 export function Validate() {

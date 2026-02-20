@@ -37,8 +37,8 @@ export class PlaylistPicker extends LitElement {
         }
 
         .picker-panel {
-            background-color: #343a40;
-            border: 1px solid #444;
+            background-color: var(--yj-bg-elevated, #343a40);
+            border: 1px solid var(--yj-border, #444);
             border-radius: 6px;
             padding: 4px 0;
             box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
@@ -49,17 +49,17 @@ export class PlaylistPicker extends LitElement {
 
         .picker-panel wa-dropdown-item {
             cursor: pointer;
-            --wa-color-text-normal: #fff;
+            --wa-color-text-normal: var(--yj-text-primary, #fff);
             font-size: 13px;
         }
 
         .picker-panel wa-dropdown-item:hover {
-            background-color: rgba(255, 255, 255, 0.1);
+            background-color: var(--yj-hover-overlay, rgba(255, 255, 255, 0.05));
         }
 
         .separator {
             height: 1px;
-            background: #555;
+            background: var(--yj-border-subtle, #555);
             margin: 4px 0;
         }
 
@@ -71,10 +71,10 @@ export class PlaylistPicker extends LitElement {
         }
 
         .create-form input {
-            background: #2a2d30;
-            border: 1px solid #555;
+            background: var(--yj-bg-surface, #2b3035);
+            border: 1px solid var(--yj-border-subtle, #555);
             border-radius: 4px;
-            color: #fff;
+            color: var(--yj-text-primary, #fff);
             padding: 6px 8px;
             font-size: 13px;
             outline: none;
@@ -82,11 +82,11 @@ export class PlaylistPicker extends LitElement {
         }
 
         .create-form input:focus {
-            border-color: #ffd43b;
+            border-color: var(--yj-accent, #ffd43b);
         }
 
         .create-form input::placeholder {
-            color: #888;
+            color: var(--yj-text-tertiary, #888);
         }
 
         .button-row {
@@ -96,10 +96,10 @@ export class PlaylistPicker extends LitElement {
         }
 
         .button-row button {
-            background: #495057;
+            background: var(--yj-bg-overlay, #495057);
             border: none;
             border-radius: 4px;
-            color: #fff;
+            color: var(--yj-text-primary, #fff);
             padding: 4px 10px;
             font-size: 12px;
             cursor: pointer;
@@ -111,23 +111,23 @@ export class PlaylistPicker extends LitElement {
         }
 
         .button-row button.primary {
-            background: #ffd43b;
+            background: var(--yj-accent, #ffd43b);
             color: #000;
         }
 
         .button-row button.primary:hover {
-            background: #ffe066;
+            background: var(--yj-accent-hover, #ffe066);
         }
 
         .button-row button.primary:disabled {
-            background: #665a1e;
-            color: #888;
+            background: var(--yj-accent-muted, #665a1e);
+            color: var(--yj-text-tertiary, #888);
             cursor: not-allowed;
         }
 
         .empty-message {
             padding: 8px 12px;
-            color: #888;
+            color: var(--yj-text-tertiary, #888);
             font-size: 13px;
         }
     `;

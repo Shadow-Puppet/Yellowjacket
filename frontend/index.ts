@@ -6,12 +6,16 @@ import '@components/sidebar/app-sidebar.ts';
 import '@components/queue-panel/queue-panel.ts';
 import '@components/playlist-view/playlist-view.ts';
 import '@components/library-manager/library-manager.ts';
+import '@components/config-page/config-page.ts';
 import '@awesome.me/webawesome/dist/styles/themes/default.css';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import { setBasePath } from '@awesome.me/webawesome/dist/webawesome.js';
 import { libraryStore } from '@store/library-store';
 import { playlistStore } from '@store/playlist-store';
 import { queueStore } from '@store/queue-store';
+// Importing the theme store triggers initialization: it fetches the saved
+// theme from the backend and applies CSS custom properties to :root.
+import '@store/theme-store';
 import {
     hasTrackPayload,
     getDragPayload,
@@ -46,8 +50,11 @@ document.addEventListener('navigate', (e: Event) => {
         case 'libraries':
             mainContent.innerHTML = '<library-manager></library-manager>';
             break;
+        case 'settings':
+            mainContent.innerHTML = '<config-page></config-page>';
+            break;
         default:
-            mainContent.innerHTML = `<div style="padding: 1em; color: #b3b3b3;">
+            mainContent.innerHTML = `<div style="padding: 1em; color: var(--yj-text-secondary, #b3b3b3);">
                 <p>Coming soon: ${view}</p>
             </div>`;
     }

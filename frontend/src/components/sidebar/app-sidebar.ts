@@ -1,13 +1,15 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
+import '@awesome.me/webawesome/dist/components/icon/icon.js';
 
 import type { DragActiveDetail } from '@utils/drag-controller';
 
-type View = 'home' | 'libraries' | 'playlists' | 'artists' | 'albums' | 'tracks';
+type View = 'home' | 'libraries' | 'playlists' | 'artists' | 'albums' | 'tracks' | 'settings';
 
 interface NavItem {
     id: View;
     label: string;
+    icon: string;
 }
 
 const MIN_WIDTH = 120;
@@ -21,7 +23,7 @@ export class AppSidebar extends LitElement {
             display: block;
             position: relative;
             height: 100%;
-            background-color: #212529;
+            background-color: var(--yj-bg-surface, #212529);
             min-width: ${MIN_WIDTH}px;
             max-width: ${MAX_WIDTH}px;
         }
@@ -40,7 +42,7 @@ export class AppSidebar extends LitElement {
 
         .resize-handle:hover,
         .resize-handle.dragging {
-            background-color: #6c757d;
+            background-color: var(--yj-text-tertiary, #6c757d);
         }
 
         ul {
@@ -50,19 +52,28 @@ export class AppSidebar extends LitElement {
         }
 
         li {
-            text-align: left;
+            display: flex;
+            align-items: center;
+            gap: 0.6em;
             border-radius: 5px;
             padding: 0.5em;
             cursor: pointer;
             transition: background-color 0.15s ease;
         }
 
+        li wa-icon {
+            font-size: 0.9em;
+            flex-shrink: 0;
+            width: 1.2em;
+            text-align: center;
+        }
+
         li:hover {
-            background-color: #343a40;
+            background-color: var(--yj-bg-elevated, #343a40);
         }
 
         li.active {
-            background-color: #495057;
+            background-color: var(--yj-bg-overlay, #495057);
         }
 
         li p {
@@ -73,8 +84,8 @@ export class AppSidebar extends LitElement {
         }
 
         li.drag-hover {
-            background-color: rgba(255, 212, 59, 0.15);
-            outline: 1px dashed #ffd43b;
+            background-color: var(--yj-accent-bg-strong, rgba(255, 212, 59, 0.15));
+            outline: 1px dashed var(--yj-accent, #ffd43b);
             outline-offset: -1px;
         }
     `;
@@ -101,12 +112,13 @@ export class AppSidebar extends LitElement {
     > | null = null;
 
     private navItems: NavItem[] = [
-        { id: 'home', label: 'Home' },
-        { id: 'libraries', label: 'Libraries' },
-        { id: 'playlists', label: 'Playlists' },
-        { id: 'artists', label: 'Artists' },
-        { id: 'albums', label: 'Albums' },
-        { id: 'tracks', label: 'Tracks' },
+        { id: 'home', label: 'Home', icon: 'house' },
+        { id: 'libraries', label: 'Libraries', icon: 'folder-open' },
+        { id: 'playlists', label: 'Playlists', icon: 'list' },
+        { id: 'artists', label: 'Artists', icon: 'user-group' },
+        { id: 'albums', label: 'Albums', icon: 'compact-disc' },
+        { id: 'tracks', label: 'Tracks', icon: 'music' },
+        { id: 'settings', label: 'Settings', icon: 'gear' },
     ];
 
     override connectedCallback() {
@@ -179,6 +191,9 @@ export class AppSidebar extends LitElement {
                             @drop=${(e: DragEvent) =>
                                 this.onNavDrop(e)}
                         >
+                            <wa-icon
+                                name=${item.icon}
+                            ></wa-icon>
                             <p>${item.label}</p>
                         </li>
                     `;

@@ -205,21 +205,21 @@ export class PlaylistView
             align-items: center;
             padding: 16px;
             flex-shrink: 0;
-            border-bottom: 1px solid #333;
+            border-bottom: 1px solid var(--yj-border-subtle, #333);
         }
 
         .header h2 {
             margin: 0;
             font-size: 18px;
             font-weight: 600;
-            color: #fff;
+            color: var(--yj-text-primary, #fff);
         }
 
         .new-playlist-button {
             background: none;
-            border: 1px solid #555;
+            border: 1px solid var(--yj-border-subtle, #555);
             border-radius: 4px;
-            color: #fff;
+            color: var(--yj-text-primary, #fff);
             padding: 6px 12px;
             font-size: 13px;
             cursor: pointer;
@@ -230,8 +230,8 @@ export class PlaylistView
         }
 
         .new-playlist-button:hover {
-            border-color: #ffd43b;
-            color: #ffd43b;
+            border-color: var(--yj-accent, #ffd43b);
+            color: var(--yj-accent, #ffd43b);
         }
 
         .create-form {
@@ -239,16 +239,16 @@ export class PlaylistView
             align-items: center;
             gap: 8px;
             padding: 12px 16px;
-            border-bottom: 1px solid #333;
+            border-bottom: 1px solid var(--yj-border-subtle, #333);
             flex-shrink: 0;
         }
 
         .create-form input {
             flex: 1;
-            background: #2a2d30;
-            border: 1px solid #555;
+            background: var(--yj-bg-surface, #2b3035);
+            border: 1px solid var(--yj-border-subtle, #555);
             border-radius: 4px;
-            color: #fff;
+            color: var(--yj-text-primary, #fff);
             padding: 6px 10px;
             font-size: 13px;
             outline: none;
@@ -256,18 +256,18 @@ export class PlaylistView
         }
 
         .create-form input:focus {
-            border-color: #ffd43b;
+            border-color: var(--yj-accent, #ffd43b);
         }
 
         .create-form input::placeholder {
-            color: #888;
+            color: var(--yj-text-tertiary, #888);
         }
 
         .create-form button {
-            background: #495057;
+            background: var(--yj-bg-overlay, #495057);
             border: none;
             border-radius: 4px;
-            color: #fff;
+            color: var(--yj-text-primary, #fff);
             padding: 6px 12px;
             font-size: 13px;
             cursor: pointer;
@@ -275,21 +275,21 @@ export class PlaylistView
         }
 
         .create-form button:hover {
-            background: #5a6268;
+            background: var(--yj-bg-overlay, #5a6268);
         }
 
         .create-form button.primary {
-            background: #ffd43b;
+            background: var(--yj-accent, #ffd43b);
             color: #000;
         }
 
         .create-form button.primary:hover {
-            background: #ffe066;
+            background: var(--yj-accent-hover, #ffe066);
         }
 
         .create-form button.primary:disabled {
-            background: #665a1e;
-            color: #888;
+            background: var(--yj-accent-muted, #665a1e);
+            color: var(--yj-text-tertiary, #888);
             cursor: not-allowed;
         }
 
@@ -303,7 +303,7 @@ export class PlaylistView
 
         .playlist-item {
             border-bottom: 1px solid
-                rgba(255, 255, 255, 0.05);
+                var(--yj-hover-overlay, rgba(255, 255, 255, 0.05));
         }
 
         .playlist-header {
@@ -316,18 +316,18 @@ export class PlaylistView
         }
 
         .playlist-header:hover {
-            background-color: rgba(255, 255, 255, 0.05);
+            background-color: var(--yj-hover-overlay, rgba(255, 255, 255, 0.05));
         }
 
         .playlist-item.drag-over > .playlist-header {
-            background-color: rgba(255, 212, 59, 0.15);
-            outline: 1px dashed #ffd43b;
+            background-color: var(--yj-accent-bg-strong, rgba(255, 212, 59, 0.15));
+            outline: 1px dashed var(--yj-accent, #ffd43b);
             outline-offset: -1px;
         }
 
         .chevron {
             font-size: 14px;
-            color: #888;
+            color: var(--yj-text-tertiary, #888);
             flex-shrink: 0;
             transition: transform 0.15s ease;
         }
@@ -338,13 +338,13 @@ export class PlaylistView
 
         .playlist-icon {
             font-size: 18px;
-            color: #888;
+            color: var(--yj-text-tertiary, #888);
             flex-shrink: 0;
         }
 
         .playlist-name {
             font-size: 14px;
-            color: #fff;
+            color: var(--yj-text-primary, #fff);
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -353,7 +353,7 @@ export class PlaylistView
 
         .track-count {
             font-size: 11px;
-            color: #666;
+            color: var(--yj-text-tertiary, #666);
             flex-shrink: 0;
         }
 
@@ -370,9 +370,9 @@ export class PlaylistView
 
         .play-all-button {
             background: none;
-            border: 1px solid #555;
+            border: 1px solid var(--yj-border-subtle, #555);
             border-radius: 4px;
-            color: #fff;
+            color: var(--yj-text-primary, #fff);
             padding: 4px 10px;
             font-size: 12px;
             cursor: pointer;
@@ -383,8 +383,8 @@ export class PlaylistView
         }
 
         .play-all-button:hover {
-            border-color: #ffd43b;
-            color: #ffd43b;
+            border-color: var(--yj-accent, #ffd43b);
+            color: var(--yj-accent, #ffd43b);
         }
 
         .track-item {
@@ -396,20 +396,20 @@ export class PlaylistView
         }
 
         .track-item:hover {
-            background-color: rgba(255, 255, 255, 0.05);
+            background-color: var(--yj-hover-overlay, rgba(255, 255, 255, 0.05));
         }
 
         .track-item.selected {
-            background-color: rgba(100, 160, 255, 0.15);
+            background-color: var(--yj-selection-bg, rgba(100, 160, 255, 0.15));
         }
 
         .track-item.active {
-            background-color: rgba(255, 212, 59, 0.1);
-            color: #ffd43b;
+            background-color: var(--yj-accent-bg, rgba(255, 212, 59, 0.1));
+            color: var(--yj-accent, #ffd43b);
         }
 
         .track-item.selected.active {
-            background-color: rgba(100, 160, 255, 0.15);
+            background-color: var(--yj-selection-bg, rgba(100, 160, 255, 0.15));
         }
 
         .track-item.phantom {
@@ -424,7 +424,7 @@ export class PlaylistView
         .phantom-badge {
             display: inline-block;
             font-size: 10px;
-            color: #e67700;
+            color: var(--yj-warning, #e67700);
             background: rgba(230, 119, 0, 0.15);
             padding: 1px 6px;
             border-radius: 3px;
@@ -438,7 +438,7 @@ export class PlaylistView
 
         .tracks-empty {
             padding: 12px 0;
-            color: #666;
+            color: var(--yj-text-tertiary, #666);
             font-size: 12px;
         }
 
@@ -447,7 +447,7 @@ export class PlaylistView
             justify-content: center;
             align-items: center;
             padding: 32px;
-            color: #b3b3b3;
+            color: var(--yj-text-secondary, #b3b3b3);
         }
 
         .empty-state {
@@ -456,7 +456,7 @@ export class PlaylistView
             align-items: center;
             justify-content: center;
             padding: 48px 20px;
-            color: #b3b3b3;
+            color: var(--yj-text-secondary, #b3b3b3);
             text-align: center;
             gap: 8px;
         }
@@ -474,8 +474,8 @@ export class PlaylistView
         }
 
         .context-menu-panel {
-            background-color: #343a40;
-            border: 1px solid #444;
+            background-color: var(--yj-bg-elevated, #343a40);
+            border: 1px solid var(--yj-border, #444);
             border-radius: 6px;
             padding: 4px 0;
             box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
@@ -484,7 +484,7 @@ export class PlaylistView
 
         .context-menu-panel wa-dropdown-item {
             cursor: pointer;
-            --wa-color-text-normal: #fff;
+            --wa-color-text-normal: var(--yj-text-primary, #fff);
             font-size: 13px;
         }
 
@@ -512,10 +512,10 @@ export class PlaylistView
 
         .rename-input {
             flex: 1;
-            background: #2a2d30;
-            border: 1px solid #ffd43b;
+            background: var(--yj-bg-surface, #2b3035);
+            border: 1px solid var(--yj-accent, #ffd43b);
             border-radius: 4px;
-            color: #fff;
+            color: var(--yj-text-primary, #fff);
             padding: 4px 8px;
             font-size: 14px;
             outline: none;
@@ -525,9 +525,9 @@ export class PlaylistView
 
         .import-button {
             background: none;
-            border: 1px solid #555;
+            border: 1px solid var(--yj-border-subtle, #555);
             border-radius: 4px;
-            color: #fff;
+            color: var(--yj-text-primary, #fff);
             padding: 6px 12px;
             font-size: 13px;
             cursor: pointer;
@@ -538,8 +538,8 @@ export class PlaylistView
         }
 
         .import-button:hover {
-            border-color: #ffd43b;
-            color: #ffd43b;
+            border-color: var(--yj-accent, #ffd43b);
+            color: var(--yj-accent, #ffd43b);
         }
     `;
 

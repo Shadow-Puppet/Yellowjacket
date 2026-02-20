@@ -58,11 +58,11 @@ export class PlayerControls extends LitElement {
     }
 
     button:hover {
-      color: #ffd43b;
+      color: var(--yj-accent, #ffd43b);
     }
 
     .active {
-      color: #ffd43b;
+      color: var(--yj-accent, #ffd43b);
     }
 
     .repeat-one {

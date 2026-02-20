@@ -67,7 +67,7 @@ export class AlbumDropdown extends LitElement {
         }
 
         .album-dropdown {
-            background-color: #343a40;
+            background-color: var(--yj-bg-elevated, #343a40);
             border-radius: 0 0 4px 4px;
             padding: 12px 16px;
             box-sizing: border-box;
@@ -81,7 +81,7 @@ export class AlbumDropdown extends LitElement {
             height: 0;
             border-left: 9px solid transparent;
             border-right: 9px solid transparent;
-            border-bottom: 8px solid #343a40;
+            border-bottom: 8px solid var(--yj-bg-elevated, #343a40);
         }
 
         .dropdown-tracks {
@@ -103,11 +103,9 @@ export class AlbumDropdown extends LitElement {
         }
 
         .track-row:hover {
-            background-color: rgba(
-                255,
-                255,
-                255,
-                0.05
+            background-color: var(
+                --yj-hover-overlay,
+                rgba(255, 255, 255, 0.05)
             );
         }
 
@@ -121,13 +119,11 @@ export class AlbumDropdown extends LitElement {
         }
 
         .track-row.active {
-            background-color: rgba(
-                255,
-                212,
-                59,
-                0.1
+            background-color: var(
+                --yj-accent-bg,
+                rgba(255, 212, 59, 0.1)
             );
-            color: #ffd43b;
+            color: var(--yj-accent, #ffd43b);
         }
 
         .track-row.selected.active {
@@ -140,14 +136,14 @@ export class AlbumDropdown extends LitElement {
         }
 
         .track-number {
-            color: #888;
+            color: var(--yj-text-tertiary, #888);
             min-width: 22px;
             text-align: right;
             flex-shrink: 0;
         }
 
         .track-title {
-            color: #fff;
+            color: var(--yj-text-primary, #fff);
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
@@ -156,7 +152,7 @@ export class AlbumDropdown extends LitElement {
         }
 
         .track-duration {
-            color: #888;
+            color: var(--yj-text-tertiary, #888);
             flex-shrink: 0;
             margin-left: auto;
         }

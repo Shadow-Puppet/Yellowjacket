@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
 	"path"
 
@@ -16,17 +15,17 @@ import (
 	"yellowjacket/backend/events"
 	"yellowjacket/backend/library"
 	"yellowjacket/backend/system"
+	"yellowjacket/backend/theme"
 )
 
 // Config represents the application configuration.
 type Config struct {
 	ctx      context.Context
 	logger   *slog.Logger
-	serveMux *http.ServeMux
 	filePath string          // required
-	Library  *library.Config `form:"Library" schema:"library,required"`
-
-	Window *WindowConfig `toml:"Window"`
+	Library  *library.Config `toml:"Library"`
+	Theme    *theme.Config   `toml:"Theme"`
+	Window   *WindowConfig   `toml:"Window"`
 }
 
 // NewConfig creates a new config by loading it from disk.
@@ -38,11 +37,9 @@ func NewConfig(logger *slog.Logger) (*Config, error) {
 
 	conf := &Config{
 		filePath: path.Join(confDir, "config.toml"),
-		serveMux: http.NewServeMux(),
 	}
 	conf.applyDefaults()
 	conf.logger = logger.WithGroup("config").With("config", conf)
-	conf.serveMux.HandleFunc("/", conf.handle)
 
 	if err := conf.Load(); err != nil {
 		return nil, fmt.Errorf("could not load config: %w", err)
@@ -67,8 +64,17 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	if c.Theme != nil {
+		if err := c.Theme.Validate(); err != nil {
+			configErrs = errors.Join(configErrs, err)
+		}
+	}
+
 	if configErrs != nil {
-		return fmt.Errorf("one or more config parts are invalid: %w", configErrs)
+		return fmt.Errorf(
+			"one or more config parts are invalid: %w",
+			configErrs,
+		)
 	}
 
 	return nil
@@ -148,6 +154,12 @@ func (c *Config) applyDefaults() {
 	if c.Library != nil {
 		c.Library.ApplyDefaults()
 	}
+
+	if c.Theme == nil {
+		c.Theme = &theme.Config{}
+	}
+
+	c.Theme.ApplyDefaults()
 }
 
 // SetContext sets the Wails runtime context for event emission.
@@ -244,4 +256,104 @@ func (c *Config) SetScanConcurrency(mode string) error {
 	)
 
 	return nil
+}
+
+// GetThemeAccentColor returns the configured accent colour.
+func (c *Config) GetThemeAccentColor() string {
+	if c.Theme == nil {
+		return theme.DefaultAccentColor
+	}
+
+	return c.Theme.AccentColor
+}
+
+// GetThemeBackgroundShade returns the configured background shade.
+func (c *Config) GetThemeBackgroundShade() string {
+	if c.Theme == nil {
+		return string(theme.DefaultBackgroundShade)
+	}
+
+	return string(c.Theme.BackgroundShade)
+}
+
+// SetThemeAccentColor validates and saves a new accent colour.
+func (c *Config) SetThemeAccentColor(
+	color string,
+) error {
+	if c.Theme == nil {
+		c.Theme = &theme.Config{}
+		c.Theme.ApplyDefaults()
+	}
+
+	c.Theme.AccentColor = color
+
+	if err := c.Theme.Validate(); err != nil {
+		return fmt.Errorf(
+			"invalid theme accent color: %w", err,
+		)
+	}
+
+	if err := c.Save(); err != nil {
+		return fmt.Errorf(
+			"could not save config: %w", err,
+		)
+	}
+
+	c.emitThemeChanged()
+
+	c.logger.Info(
+		"theme accent color updated",
+		"color", color,
+	)
+
+	return nil
+}
+
+// SetThemeBackgroundShade validates and saves a new background shade.
+func (c *Config) SetThemeBackgroundShade(
+	shade string,
+) error {
+	if c.Theme == nil {
+		c.Theme = &theme.Config{}
+		c.Theme.ApplyDefaults()
+	}
+
+	c.Theme.BackgroundShade = theme.BackgroundShade(shade)
+
+	if err := c.Theme.Validate(); err != nil {
+		return fmt.Errorf(
+			"invalid theme background shade: %w", err,
+		)
+	}
+
+	if err := c.Save(); err != nil {
+		return fmt.Errorf(
+			"could not save config: %w", err,
+		)
+	}
+
+	c.emitThemeChanged()
+
+	c.logger.Info(
+		"theme background shade updated",
+		"shade", shade,
+	)
+
+	return nil
+}
+
+// emitThemeChanged sends the ThemeConfigChanged event to the frontend.
+func (c *Config) emitThemeChanged() {
+	if c.ctx == nil || c.Theme == nil {
+		return
+	}
+
+	runtime.EventsEmit(
+		c.ctx,
+		events.ThemeConfigChanged,
+		map[string]any{
+			"AccentColor":     c.Theme.AccentColor,
+			"BackgroundShade": string(c.Theme.BackgroundShade),
+		},
+	)
 }

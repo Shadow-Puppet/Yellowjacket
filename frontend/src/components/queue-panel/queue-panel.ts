@@ -153,7 +153,7 @@ export class QueuePanel
             flex-shrink: 0;
             width: 0;
             overflow: hidden;
-            background-color: #212529;
+            background-color: var(--yj-bg-surface, #212529);
             display: flex;
             flex-direction: row;
         }
@@ -163,7 +163,7 @@ export class QueuePanel
                 --queue-width,
                 ${unsafeCSS(DEFAULT_WIDTH)}px
             );
-            border-left: 1px solid #333;
+            border-left: 1px solid var(--yj-border-subtle, #333);
         }
 
         .resize-handle {
@@ -180,7 +180,7 @@ export class QueuePanel
 
         .resize-handle:hover,
         .resize-handle.dragging {
-            background-color: #6c757d;
+            background-color: var(--yj-text-tertiary, #6c757d);
         }
 
         .panel-content {
@@ -196,7 +196,7 @@ export class QueuePanel
             justify-content: space-between;
             align-items: center;
             padding: 12px 16px;
-            border-bottom: 1px solid #333;
+            border-bottom: 1px solid var(--yj-border-subtle, #333);
             flex-shrink: 0;
         }
 
@@ -223,11 +223,11 @@ export class QueuePanel
         }
 
         .header-action-button:hover {
-            color: #ffd43b;
+            color: var(--yj-accent, #ffd43b);
         }
 
         .header-action-button:disabled {
-            color: #555;
+            color: var(--yj-border-subtle, #555);
             cursor: not-allowed;
         }
 
@@ -247,7 +247,7 @@ export class QueuePanel
             padding: 8px 16px;
             gap: 12px;
             border-bottom: 1px solid
-                rgba(255, 255, 255, 0.05);
+                var(--yj-hover-overlay, rgba(255, 255, 255, 0.05));
             cursor: default;
             user-select: none;
             width: 100%;
@@ -255,30 +255,30 @@ export class QueuePanel
         }
 
         .track-item:hover {
-            background-color: rgba(255, 255, 255, 0.05);
+            background-color: var(--yj-hover-overlay, rgba(255, 255, 255, 0.05));
         }
 
         .track-item.selected {
-            background-color: rgba(100, 160, 255, 0.15);
+            background-color: var(--yj-selection-bg, rgba(100, 160, 255, 0.15));
         }
 
         .track-item.active {
-            background-color: rgba(255, 212, 59, 0.1);
+            background-color: var(--yj-accent-bg, rgba(255, 212, 59, 0.1));
         }
 
         .track-item.selected.active {
-            background-color: rgba(100, 160, 255, 0.15);
+            background-color: var(--yj-selection-bg, rgba(100, 160, 255, 0.15));
         }
 
         .track-position {
             font-size: 12px;
-            color: #888;
+            color: var(--yj-text-tertiary, #888);
             min-width: 20px;
             text-align: right;
         }
 
         .track-item.active .track-position {
-            color: #ffd43b;
+            color: var(--yj-accent, #ffd43b);
         }
 
         .track-details {
@@ -297,12 +297,12 @@ export class QueuePanel
         }
 
         .track-item.active .track-title {
-            color: #ffd43b;
+            color: var(--yj-accent, #ffd43b);
         }
 
         .track-artist {
             font-size: 11px;
-            color: #b3b3b3;
+            color: var(--yj-text-secondary, #b3b3b3);
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -311,7 +311,7 @@ export class QueuePanel
         .remove-button {
             background: none;
             border: none;
-            color: #888;
+            color: var(--yj-text-tertiary, #888);
             cursor: pointer;
             padding: 4px;
             display: flex;
@@ -325,11 +325,11 @@ export class QueuePanel
         }
 
         .remove-button:hover {
-            color: #ff6b6b;
+            color: var(--yj-error, #ff6b6b);
         }
 
         .panel-content.drag-over {
-            outline: 2px dashed #ffd43b;
+            outline: 2px dashed var(--yj-accent, #ffd43b);
             outline-offset: -2px;
         }
 
@@ -338,7 +338,7 @@ export class QueuePanel
             padding: 12px 16px;
             text-align: center;
             font-size: 12px;
-            color: #ffd43b;
+            color: var(--yj-accent, #ffd43b);
             border-bottom: 1px solid
                 rgba(255, 212, 59, 0.2);
         }
@@ -355,7 +355,7 @@ export class QueuePanel
             left: 8px;
             right: 8px;
             height: 2px;
-            background: #ffd43b;
+            background: var(--yj-accent, #ffd43b);
             border-radius: 1px;
             z-index: 5;
             pointer-events: none;
@@ -368,7 +368,7 @@ export class QueuePanel
             left: 8px;
             right: 8px;
             height: 2px;
-            background: #ffd43b;
+            background: var(--yj-accent, #ffd43b);
             border-radius: 1px;
             z-index: 5;
             pointer-events: none;
@@ -380,7 +380,7 @@ export class QueuePanel
             align-items: center;
             justify-content: center;
             padding: 40px 20px;
-            color: #b3b3b3;
+            color: var(--yj-text-secondary, #b3b3b3);
             text-align: center;
             gap: 8px;
         }
@@ -394,8 +394,8 @@ export class QueuePanel
         }
 
         .context-menu-panel {
-            background-color: #343a40;
-            border: 1px solid #444;
+            background-color: var(--yj-bg-elevated, #343a40);
+            border: 1px solid var(--yj-border, #444);
             border-radius: 6px;
             padding: 4px 0;
             box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
@@ -404,7 +404,7 @@ export class QueuePanel
 
         .context-menu-panel wa-dropdown-item {
             cursor: pointer;
-            --wa-color-text-normal: #fff;
+            --wa-color-text-normal: var(--yj-text-primary, #fff);
             font-size: 13px;
         }
 

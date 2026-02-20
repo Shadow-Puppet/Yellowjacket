@@ -63,14 +63,14 @@ export class TrackInfo extends LitElement {
         .cover-placeholder {
             width: 100%;
             height: 100%;
-            background-color: #2a2d30;
+            background-color: var(--yj-bg-elevated, #2a2d30);
             display: flex;
             align-items: center;
             justify-content: center;
         }
 
         .cover-placeholder wa-icon {
-            color: #666;
+            color: var(--yj-text-tertiary, #666);
             font-size: 18px;
         }
 
@@ -85,7 +85,7 @@ export class TrackInfo extends LitElement {
         .title {
             font-size: 13px;
             font-weight: 500;
-            color: #fff;
+            color: var(--yj-text-primary, #fff);
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -93,7 +93,7 @@ export class TrackInfo extends LitElement {
 
         .secondary {
             font-size: 11px;
-            color: #888;
+            color: var(--yj-text-tertiary, #888);
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -101,7 +101,7 @@ export class TrackInfo extends LitElement {
 
         .duration {
             font-size: 12px;
-            color: #888;
+            color: var(--yj-text-tertiary, #888);
             flex-shrink: 0;
             font-variant-numeric: tabular-nums;
         }
