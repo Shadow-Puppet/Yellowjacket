@@ -605,11 +605,18 @@ export class CoverGrid extends LitElement {
         ) {
             if (this.skipOverlay) {
                 // Lightweight exit: skip the
-                // overlay capture and scroll
-                // restore so the transition is
-                // instant.
+                // expensive overlay capture but
+                // still restore scroll position
+                // since the DOM restructure
+                // (split → single virtualizer)
+                // resets scrollTop.
                 this.skipOverlay = false;
+                this.savedScrollTop =
+                    this.computeAdjustedScrollTop();
+                this.savedAlbumViewportOffset = null;
                 this.splitMode = false;
+                this.needsScrollRestore = true;
+                this.showDropdownAfterRestore = false;
             } else {
                 // Capture the raw split-mode scrollTop
                 // before converting to single-mode coords.
