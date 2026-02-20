@@ -10,7 +10,11 @@ import {
     CreatePlaylist,
     AddTracksToPlaylist,
     RemoveTracksFromPlaylist,
+    DeletePlaylist,
+    RenamePlaylist,
+    ImportPlaylist,
 } from '@go/playlist/Service';
+import { PlaylistFilePicker } from '@go/frontendutil/FrontendUtil';
 import { Events } from '../../events';
 import type { playlist } from '@go/models';
 import { queueStore } from '@store/queue-store';
@@ -67,6 +71,10 @@ export class PlaylistView
     @state() private newPlaylistName = '';
     @state() private contextMenuOpen = false;
     @state() private playlistSubmenuOpen = false;
+    @state() private playlistContextMenuOpen = false;
+    @state() private playlistContextMenuIndex = -1;
+    @state() private renamingPlaylistIndex = -1;
+    @state() private renameValue = '';
 
     /** Index of the playlist currently hovered during a drag. */
     @state() private dragOverPlaylistIndex = -1;
@@ -79,8 +87,13 @@ export class PlaylistView
     @query('#playlist-submenu')
     private playlistSubmenuPopup!: HTMLElement;
 
-    private closeContextMenuHandler = () =>
+    @query('#playlist-context-menu')
+    private playlistContextMenuPopup!: HTMLElement;
+
+    private closeContextMenuHandler = () => {
         this.closeContextMenu();
+        this.closePlaylistContextMenu();
+    };
 
     private clearSelectionHandler = (e: MouseEvent) => {
         const path = e.composedPath();
@@ -399,6 +412,26 @@ export class PlaylistView
             background-color: rgba(100, 160, 255, 0.15);
         }
 
+        .track-item.phantom {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+
+        .track-item.phantom:hover {
+            background-color: transparent;
+        }
+
+        .phantom-badge {
+            display: inline-block;
+            font-size: 10px;
+            color: #e67700;
+            background: rgba(230, 119, 0, 0.15);
+            padding: 1px 6px;
+            border-radius: 3px;
+            margin-left: 8px;
+            vertical-align: middle;
+        }
+
         .track-item:last-child {
             border-bottom: none;
         }
@@ -471,6 +504,42 @@ export class PlaylistView
 
         #playlist-submenu {
             z-index: 210;
+        }
+
+        #playlist-context-menu {
+            z-index: 200;
+        }
+
+        .rename-input {
+            flex: 1;
+            background: #2a2d30;
+            border: 1px solid #ffd43b;
+            border-radius: 4px;
+            color: #fff;
+            padding: 4px 8px;
+            font-size: 14px;
+            outline: none;
+            font-family: inherit;
+            min-width: 0;
+        }
+
+        .import-button {
+            background: none;
+            border: 1px solid #555;
+            border-radius: 4px;
+            color: #fff;
+            padding: 6px 12px;
+            font-size: 13px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-family: inherit;
+        }
+
+        .import-button:hover {
+            border-color: #ffd43b;
+            color: #ffd43b;
         }
     `;
 
@@ -599,11 +668,14 @@ export class PlaylistView
     private handlePlayAll = (index: number) => {
         const entry = this.entries[index];
 
-        if (!entry || entry.tracks.length === 0) return;
+        if (!entry || entry.tracks.length === 0)
+            return;
 
-        const filePaths = entry.tracks.map(
-            (t) => t.FilePath,
-        );
+        const filePaths = entry.tracks
+            .filter((t) => !t.Phantom)
+            .map((t) => t.FilePath);
+
+        if (filePaths.length === 0) return;
 
         queueStore.setQueue(filePaths, 0);
     };
@@ -961,6 +1033,189 @@ export class PlaylistView
     }
 
     // =================================================================
+    // Playlist-level context menu (rename, delete)
+    // =================================================================
+
+    private handlePlaylistContextMenu = (
+        e: MouseEvent,
+        index: number,
+    ) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        this.closeContextMenu();
+        this.playlistContextMenuIndex = index;
+        this.playlistContextMenuOpen = true;
+
+        this.updateComplete.then(() => {
+            const popup =
+                this.playlistContextMenuPopup;
+
+            if (popup) {
+                (popup as any).anchor = {
+                    getBoundingClientRect() {
+                        return {
+                            width: 0,
+                            height: 0,
+                            x: e.clientX,
+                            y: e.clientY,
+                            top: e.clientY,
+                            left: e.clientX,
+                            right: e.clientX,
+                            bottom: e.clientY,
+                        };
+                    },
+                };
+                (popup as any).active = true;
+            }
+        });
+    };
+
+    private closePlaylistContextMenu() {
+        if (!this.playlistContextMenuOpen) return;
+
+        this.playlistContextMenuOpen = false;
+        this.playlistContextMenuIndex = -1;
+
+        const popup =
+            this.playlistContextMenuPopup;
+
+        if (popup) {
+            (popup as any).active = false;
+        }
+    }
+
+    private onPlaylistContextAction(
+        action: string,
+    ) {
+        const index =
+            this.playlistContextMenuIndex;
+        const entry = this.entries[index];
+
+        if (!entry) return;
+
+        switch (action) {
+            case 'rename':
+                this.renamingPlaylistIndex = index;
+                this.renameValue =
+                    entry.summary.Name;
+
+                void this.updateComplete.then(
+                    () => {
+                        const input =
+                            this.shadowRoot?.querySelector<HTMLInputElement>(
+                                '.rename-input',
+                            );
+
+                        input?.focus();
+                        input?.select();
+                    },
+                );
+                break;
+            case 'delete':
+                void this.handleDeletePlaylist(
+                    entry.summary.ID,
+                );
+                break;
+        }
+
+        this.closePlaylistContextMenu();
+    }
+
+    private async handleDeletePlaylist(
+        playlistID: number,
+    ) {
+        try {
+            await DeletePlaylist(playlistID);
+            this.playlistCtrl.invalidate();
+            await this.loadPlaylists();
+        } catch (err) {
+            console.error(
+                'Failed to delete playlist:',
+                err,
+            );
+        }
+    }
+
+    private handleRenameKeydown = async (
+        e: KeyboardEvent,
+    ) => {
+        if (e.key === 'Enter') {
+            await this.submitRename();
+        } else if (e.key === 'Escape') {
+            this.renamingPlaylistIndex = -1;
+            this.renameValue = '';
+        }
+    };
+
+    private handleRenameBlur = async () => {
+        await this.submitRename();
+    };
+
+    private handleRenameInput = (e: Event) => {
+        const input = e.target as HTMLInputElement;
+        this.renameValue = input.value;
+    };
+
+    private async submitRename() {
+        const index = this.renamingPlaylistIndex;
+
+        if (index < 0) return;
+
+        const entry = this.entries[index];
+
+        if (!entry) return;
+
+        const trimmed = this.renameValue.trim();
+
+        this.renamingPlaylistIndex = -1;
+        this.renameValue = '';
+
+        if (
+            !trimmed ||
+            trimmed === entry.summary.Name
+        ) {
+            return;
+        }
+
+        try {
+            await RenamePlaylist(
+                entry.summary.ID,
+                trimmed,
+            );
+            this.playlistCtrl.invalidate();
+            await this.loadPlaylists();
+        } catch (err) {
+            console.error(
+                'Failed to rename playlist:',
+                err,
+            );
+        }
+    }
+
+    // =================================================================
+    // Import playlist
+    // =================================================================
+
+    private handleImportPlaylist = async () => {
+        try {
+            const filePath =
+                await PlaylistFilePicker();
+
+            if (!filePath) return;
+
+            await ImportPlaylist(filePath);
+            this.playlistCtrl.invalidate();
+            await this.loadPlaylists();
+        } catch (err) {
+            console.error(
+                'Failed to import playlist:',
+                err,
+            );
+        }
+    };
+
+    // =================================================================
     // Create playlist
     // =================================================================
 
@@ -1022,13 +1277,30 @@ export class PlaylistView
         return html`
             <div class="header">
                 <h2>Playlists</h2>
-                <button
-                    class="new-playlist-button"
-                    @click=${this.handleNewPlaylistClick}
+                <div
+                    style="display: flex; gap: 8px;"
                 >
-                    <wa-icon name="plus"></wa-icon>
-                    New Playlist
-                </button>
+                    <button
+                        class="import-button"
+                        @click=${this
+                            .handleImportPlaylist}
+                    >
+                        <wa-icon
+                            name="file-import"
+                        ></wa-icon>
+                        Import
+                    </button>
+                    <button
+                        class="new-playlist-button"
+                        @click=${this
+                            .handleNewPlaylistClick}
+                    >
+                        <wa-icon
+                            name="plus"
+                        ></wa-icon>
+                        New Playlist
+                    </button>
+                </div>
             </div>
 
             ${this.creating
@@ -1143,6 +1415,48 @@ export class PlaylistView
                       `
                     : nothing}
             </wa-popup>
+
+            <wa-popup
+                id="playlist-context-menu"
+                placement="bottom-start"
+                flip
+                shift
+                .active=${this
+                    .playlistContextMenuOpen}
+            >
+                ${this.playlistContextMenuOpen
+                    ? html`
+                          <div
+                              class="context-menu-panel"
+                          >
+                              <wa-dropdown-item
+                                  @click=${() =>
+                                      this.onPlaylistContextAction(
+                                          'rename',
+                                      )}
+                              >
+                                  <wa-icon
+                                      slot="icon"
+                                      name="pen"
+                                  ></wa-icon>
+                                  Rename
+                              </wa-dropdown-item>
+                              <wa-dropdown-item
+                                  @click=${() =>
+                                      this.onPlaylistContextAction(
+                                          'delete',
+                                      )}
+                              >
+                                  <wa-icon
+                                      slot="icon"
+                                      name="trash"
+                                  ></wa-icon>
+                                  Delete Playlist
+                              </wa-dropdown-item>
+                          </div>
+                      `
+                    : nothing}
+            </wa-popup>
         `;
     }
 
@@ -1209,6 +1523,9 @@ export class PlaylistView
         const isDragOver =
             this.dragOverPlaylistIndex === index;
 
+        const isRenaming =
+            this.renamingPlaylistIndex === index;
+
         return html`
             <li
                 class="playlist-item ${isDragOver
@@ -1225,6 +1542,11 @@ export class PlaylistView
                     class="playlist-header"
                     @click=${() =>
                         this.handleToggle(index)}
+                    @contextmenu=${(e: MouseEvent) =>
+                        this.handlePlaylistContextMenu(
+                            e,
+                            index,
+                        )}
                 >
                     <wa-icon
                         class="chevron ${entry.expanded
@@ -1236,9 +1558,33 @@ export class PlaylistView
                         class="playlist-icon"
                         name="list"
                     ></wa-icon>
-                    <span class="playlist-name">
-                        ${entry.summary.Name}
-                    </span>
+                    ${isRenaming
+                        ? html`
+                              <input
+                                  class="rename-input"
+                                  type="text"
+                                  .value=${this
+                                      .renameValue}
+                                  @input=${this
+                                      .handleRenameInput}
+                                  @keydown=${this
+                                      .handleRenameKeydown}
+                                  @blur=${this
+                                      .handleRenameBlur}
+                                  @click=${(
+                                      e: Event,
+                                  ) =>
+                                      e.stopPropagation()}
+                              />
+                          `
+                        : html`
+                              <span
+                                  class="playlist-name"
+                              >
+                                  ${entry.summary
+                                      .Name}
+                              </span>
+                          `}
                     <span class="track-count">
                         ${countLabel}
                     </span>
@@ -1285,9 +1631,15 @@ export class PlaylistView
                 </div>
                 ${entry.tracks.map(
                     (track, trackIndex) => {
+                        const isPhantom =
+                            track.Phantom;
                         const active =
-                            this.isActiveTrack(track);
+                            !isPhantom &&
+                            this.isActiveTrack(
+                                track,
+                            );
                         const selected =
+                            !isPhantom &&
                             this.activePlaylistIndex ===
                                 playlistIndex &&
                             this.selection.isSelected(
@@ -1297,7 +1649,12 @@ export class PlaylistView
                         const classes = [
                             'track-item',
                             active ? 'active' : '',
-                            selected ? 'selected' : '',
+                            selected
+                                ? 'selected'
+                                : '',
+                            isPhantom
+                                ? 'phantom'
+                                : '',
                         ]
                             .filter(Boolean)
                             .join(' ');
@@ -1305,48 +1662,68 @@ export class PlaylistView
                         return html`
                             <div
                                 class=${classes}
-                                draggable="true"
-                                @click=${(
-                                    e: MouseEvent,
-                                ) =>
-                                    this.handleTrackClick(
-                                        e,
-                                        track,
-                                        trackIndex,
-                                        playlistIndex,
-                                    )}
-                                @dblclick=${() =>
-                                    this.handleTrackDblClick(
-                                        track,
-                                        trackIndex,
-                                        playlistIndex,
-                                    )}
-                                @contextmenu=${(
-                                    e: MouseEvent,
-                                ) =>
-                                    this.handleTrackContextMenu(
-                                        e,
-                                        trackIndex,
-                                        playlistIndex,
-                                    )}
-                                @dragstart=${(
-                                    e: DragEvent,
-                                ) =>
-                                    this.onTrackDragStart(
-                                        e,
-                                        track,
-                                        trackIndex,
-                                        playlistIndex,
-                                    )}
-                                @dragend=${this
-                                    .onTrackDragEnd}
+                                draggable=${isPhantom
+                                    ? 'false'
+                                    : 'true'}
+                                @click=${isPhantom
+                                    ? nothing
+                                    : (
+                                          e: MouseEvent,
+                                      ) =>
+                                          this.handleTrackClick(
+                                              e,
+                                              track,
+                                              trackIndex,
+                                              playlistIndex,
+                                          )}
+                                @dblclick=${isPhantom
+                                    ? nothing
+                                    : () =>
+                                          this.handleTrackDblClick(
+                                              track,
+                                              trackIndex,
+                                              playlistIndex,
+                                          )}
+                                @contextmenu=${isPhantom
+                                    ? nothing
+                                    : (
+                                          e: MouseEvent,
+                                      ) =>
+                                          this.handleTrackContextMenu(
+                                              e,
+                                              trackIndex,
+                                              playlistIndex,
+                                          )}
+                                @dragstart=${isPhantom
+                                    ? nothing
+                                    : (
+                                          e: DragEvent,
+                                      ) =>
+                                          this.onTrackDragStart(
+                                              e,
+                                              track,
+                                              trackIndex,
+                                              playlistIndex,
+                                          )}
+                                @dragend=${isPhantom
+                                    ? nothing
+                                    : this
+                                          .onTrackDragEnd}
                             >
                                 <track-info
-                                    .trackTitle=${track.Title}
+                                    .trackTitle=${track.Title ||
+                                    track.FilePath}
                                     .artist=${track.Artist}
                                     .duration=${track.Duration}
                                     .filePath=${track.FilePath}
                                 ></track-info>
+                                ${isPhantom
+                                    ? html`<span
+                                          class="phantom-badge"
+                                          >File not
+                                          found</span
+                                      >`
+                                    : nothing}
                             </div>
                         `;
                     },

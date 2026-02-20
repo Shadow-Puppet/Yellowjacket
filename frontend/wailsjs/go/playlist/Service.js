@@ -14,6 +14,10 @@ export function CreatePlaylistWithTracks(arg1, arg2) {
   return window['go']['playlist']['Service']['CreatePlaylistWithTracks'](arg1, arg2);
 }
 
+export function DeletePlaylist(arg1) {
+  return window['go']['playlist']['Service']['DeletePlaylist'](arg1);
+}
+
 export function GetAllPlaylists() {
   return window['go']['playlist']['Service']['GetAllPlaylists']();
 }
@@ -26,8 +30,20 @@ export function GetPlaylistTracks(arg1) {
   return window['go']['playlist']['Service']['GetPlaylistTracks'](arg1);
 }
 
+export function ImportPlaylist(arg1) {
+  return window['go']['playlist']['Service']['ImportPlaylist'](arg1);
+}
+
 export function RemoveTracksFromPlaylist(arg1, arg2) {
   return window['go']['playlist']['Service']['RemoveTracksFromPlaylist'](arg1, arg2);
+}
+
+export function RenamePlaylist(arg1, arg2) {
+  return window['go']['playlist']['Service']['RenamePlaylist'](arg1, arg2);
+}
+
+export function RestoreAllPlaylists() {
+  return window['go']['playlist']['Service']['RestoreAllPlaylists']();
 }
 
 export function SetContext(arg1) {

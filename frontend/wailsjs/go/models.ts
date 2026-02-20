@@ -425,6 +425,7 @@ export namespace playlist {
 	    CoverArtMedium: string;
 	    CoverArtLarge: string;
 	    Duration: string;
+	    Phantom: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new Track(source);
@@ -443,6 +444,7 @@ export namespace playlist {
 	        this.CoverArtMedium = source["CoverArtMedium"];
 	        this.CoverArtLarge = source["CoverArtLarge"];
 	        this.Duration = source["Duration"];
+	        this.Phantom = source["Phantom"];
 	    }
 	}
 	export class WithTracks {

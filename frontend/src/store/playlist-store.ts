@@ -15,6 +15,26 @@ class PlaylistStore {
         EventsOn(Events.LibraryScanComplete, () => {
             this.invalidate();
         });
+
+        EventsOn(Events.PlaylistCreated, () => {
+            this.invalidate();
+        });
+
+        EventsOn(Events.PlaylistDeleted, () => {
+            this.invalidate();
+        });
+
+        EventsOn(Events.PlaylistRenamed, () => {
+            this.invalidate();
+        });
+
+        EventsOn(Events.PlaylistTracksChanged, () => {
+            this.invalidate();
+        });
+
+        EventsOn(Events.PlaylistsRestored, () => {
+            this.invalidate();
+        });
     }
 
     // ===================================================================

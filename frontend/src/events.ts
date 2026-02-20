@@ -40,6 +40,13 @@ export const Events = {
     RequestInsertTracksAtIndex: "RequestInsertTracksAtIndex",
     RequestMoveQueueTracks: "RequestMoveQueueTracks",
 
+    // Playlist events
+    PlaylistCreated: "PlaylistCreated",
+    PlaylistDeleted: "PlaylistDeleted",
+    PlaylistRenamed: "PlaylistRenamed",
+    PlaylistTracksChanged: "PlaylistTracksChanged",
+    PlaylistsRestored: "PlaylistsRestored",
+
     // Library events
     LibraryScanStarted: "LibraryScanStarted",
     LibraryScanComplete: "LibraryScanComplete",

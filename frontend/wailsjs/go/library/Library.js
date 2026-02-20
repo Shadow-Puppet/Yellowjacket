@@ -26,6 +26,10 @@ export function SetContext(arg1) {
   return window['go']['library']['Library']['SetContext'](arg1);
 }
 
+export function SetPlaylistRestorer(arg1) {
+  return window['go']['library']['Library']['SetPlaylistRestorer'](arg1);
+}
+
 export function SetQueue(arg1) {
   return window['go']['library']['Library']['SetQueue'](arg1);
 }

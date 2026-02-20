@@ -56,6 +56,15 @@ const (
 	LibraryConfigChanged = "LibraryConfigChanged"
 )
 
+// Playlist events.
+const (
+	PlaylistCreated       = "PlaylistCreated"
+	PlaylistDeleted       = "PlaylistDeleted"
+	PlaylistRenamed       = "PlaylistRenamed"
+	PlaylistTracksChanged = "PlaylistTracksChanged"
+	PlaylistsRestored     = "PlaylistsRestored"
+)
+
 // Library events.
 const (
 	LibraryScanStarted  = "LibraryScanStarted"

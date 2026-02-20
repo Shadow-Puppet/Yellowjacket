@@ -9,12 +9,20 @@ export function CreatePlaylist(arg1:string):Promise<playlist.Summary>;
 
 export function CreatePlaylistWithTracks(arg1:string,arg2:Array<string>):Promise<playlist.Summary>;
 
+export function DeletePlaylist(arg1:number):Promise<void>;
+
 export function GetAllPlaylists():Promise<Array<playlist.Summary>>;
 
 export function GetAllPlaylistsWithTracks():Promise<Array<playlist.WithTracks>>;
 
 export function GetPlaylistTracks(arg1:number):Promise<Array<playlist.Track>>;
 
+export function ImportPlaylist(arg1:string):Promise<playlist.Summary>;
+
 export function RemoveTracksFromPlaylist(arg1:number,arg2:Array<number>):Promise<void>;
+
+export function RenamePlaylist(arg1:number,arg2:string):Promise<void>;
+
+export function RestoreAllPlaylists():Promise<void>;
 
 export function SetContext(arg1:context.Context):Promise<void>;

@@ -63,13 +63,20 @@ type queueClearer interface {
 	Clear()
 }
 
+// playlistRestorer is a narrow interface for restoring playlists
+// from M3U8 files after a library rescan.
+type playlistRestorer interface {
+	RestoreAllPlaylists()
+}
+
 // Library manages scanning and querying the music collection.
 type Library struct {
-	ctx    context.Context
-	logger *slog.Logger
-	conf   *Config
-	db     *database.DB
-	queue  queueClearer
+	ctx              context.Context
+	logger           *slog.Logger
+	conf             *Config
+	db               *database.DB
+	queue            queueClearer
+	playlistRestorer playlistRestorer
 }
 
 // SetQueue provides the library with a reference to the queue so
@@ -77,6 +84,13 @@ type Library struct {
 // and stop playback before wiping data.
 func (l *Library) SetQueue(q queueClearer) {
 	l.queue = q
+}
+
+// SetPlaylistRestorer provides the library with a reference to
+// the playlist service so that FullRescan can restore playlists
+// from M3U8 files after wiping data.
+func (l *Library) SetPlaylistRestorer(p playlistRestorer) {
+	l.playlistRestorer = p
 }
 
 // NewLibrary creates a new library with the given configuration.

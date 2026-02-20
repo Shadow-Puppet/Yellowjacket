@@ -96,7 +96,9 @@ func NewYellowJacketApp(
 	yjApp.assetHandler.RegisterHandler("/covers/", coverHandler)
 
 	// create playlist service
-	yjApp.playlist = playlist.NewService(yjApp.logger, yjApp.database)
+	yjApp.playlist = playlist.NewService(
+		yjApp.logger, yjApp.database, yjApp.appConfig,
+	)
 
 	yjApp.FEBindings = []any{
 		yjApp.FrontendUtil,
@@ -145,6 +147,10 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 	// Give the library a reference to the queue so FullRescan can
 	// clear the queue and stop playback before wiping data.
 	yj.library.SetQueue(yj.queue)
+
+	// Give the library a reference to the playlist service so
+	// FullRescan can restore playlists from M3U8 files.
+	yj.library.SetPlaylistRestorer(yj.playlist)
 
 	// Register playback finished handler to drive queue auto-advance.
 	yj.player.SetPlaybackFinishedHandler(yj.queue.OnPlaybackFinished)

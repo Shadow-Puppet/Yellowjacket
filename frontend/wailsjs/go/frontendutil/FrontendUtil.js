@@ -6,6 +6,10 @@ export function DirectoryPicker() {
   return window['go']['frontendutil']['FrontendUtil']['DirectoryPicker']();
 }
 
+export function PlaylistFilePicker() {
+  return window['go']['frontendutil']['FrontendUtil']['PlaylistFilePicker']();
+}
+
 export function SetContext(arg1) {
   return window['go']['frontendutil']['FrontendUtil']['SetContext'](arg1);
 }

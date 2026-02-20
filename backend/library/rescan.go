@@ -68,6 +68,12 @@ func (l *Library) FullRescan() (*ScanMetrics, error) {
 			clearDBDur + clearFilesDur
 	}
 
+	// Restore playlists from M3U8 files now that the library
+	// has been rescanned and audio_files are populated again.
+	if l.playlistRestorer != nil {
+		l.playlistRestorer.RestoreAllPlaylists()
+	}
+
 	return metrics, err
 }
 
