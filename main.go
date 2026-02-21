@@ -14,6 +14,7 @@ import (
 	"yellowjacket/backend"
 	"yellowjacket/backend/assets"
 	"yellowjacket/backend/logging"
+	"yellowjacket/backend/profiling"
 	"yellowjacket/internal/dev"
 )
 
@@ -44,16 +45,22 @@ func main() {
 	slog.SetDefault(sLogger)
 	sLogger.Info("starting yellowjacket", "version", version, "commit", commit)
 
+	// Start profiling server (pprof + trace). In production builds this
+	// is a no-op — the compiler eliminates all profiling code.
+	stopProfiler := profiling.Start(sLogger)
+
 	// create asset handler
 	assetHandler, err := assets.NewAssetHandler(sLogger, frontendDistAssets)
 	if err != nil {
 		sLogger.Error("could not create asset handler", "err", err.Error())
+		stopProfiler()
 		os.Exit(1)
 	}
 
 	yjApp, err := backend.NewYellowJacketApp(sLogger, assetHandler)
 	if err != nil {
 		sLogger.Error("problem initializing yellowjacket", "err", err.Error())
+		stopProfiler()
 		os.Exit(1)
 	}
 
@@ -83,6 +90,9 @@ func main() {
 			WebviewGpuPolicy: linux.WebviewGpuPolicyAlways,
 		},
 	})
+
+	stopProfiler()
+
 	if err != nil {
 		sLogger.Error("application error", "err", err.Error())
 		os.Exit(1)

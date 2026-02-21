@@ -5,3 +5,7 @@ test_data
 test.db
 .aider*
 lefthook-local.yml
+
+# Profiling artifacts
+trace-*.out
+*.pprof
