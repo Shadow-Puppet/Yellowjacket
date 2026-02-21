@@ -57,6 +57,7 @@ export class QueuePanel
     private playlistSubmenuOpen = false;
 
     private dragOver = false;
+    private dragEnterCount = 0;
 
     private dropTargetIndex = -1;
     private dropTargetRafId = 0;
@@ -344,21 +345,6 @@ export class QueuePanel
             outline-offset: -2px;
         }
 
-        .drop-indicator {
-            display: none;
-            padding: 12px 16px;
-            text-align: center;
-            font-size: 12px;
-            color: var(--yj-accent, #ffd43b);
-            border-bottom: 1px solid
-                rgba(255, 212, 59, 0.2);
-        }
-
-        .panel-content.drag-over.empty-drag
-            .drop-indicator {
-            display: block;
-        }
-
         .track-item.drop-before::before {
             content: '';
             position: absolute;
@@ -386,18 +372,39 @@ export class QueuePanel
         }
 
         .empty-state {
+            flex: 1;
             display: flex;
-            flex-direction: column;
             align-items: center;
             justify-content: center;
-            padding: 40px 20px;
-            color: var(--yj-text-secondary, #b3b3b3);
-            text-align: center;
-            gap: 8px;
         }
 
-        .empty-state wa-icon {
-            font-size: 32px;
+        .drop-zone-icon {
+            display: none;
+            align-items: center;
+            justify-content: center;
+            width: 56px;
+            height: 56px;
+            border-radius: 12px;
+            background: var(
+                --yj-accent-bg-strong,
+                rgba(255, 212, 59, 0.18)
+            );
+            color: var(--yj-accent, #ffd43b);
+            font-size: 28px;
+            pointer-events: none;
+        }
+
+        .panel-content.drag-over.empty-drag
+            .empty-state {
+            background-color: var(
+                --yj-accent-bg-strong,
+                rgba(255, 212, 59, 0.15)
+            );
+        }
+
+        .panel-content.drag-over.empty-drag
+            .drop-zone-icon {
+            display: flex;
         }
 
         #context-menu {
@@ -761,6 +768,7 @@ export class QueuePanel
         if (!hasTrackPayload(e)) return;
 
         e.preventDefault();
+        this.dragEnterCount++;
 
         if (e.dataTransfer) {
             const isInternal =
@@ -796,9 +804,16 @@ export class QueuePanel
     };
 
     private onPanelDragLeave = (_e: DragEvent) => {
-        // No-op: cleanup is handled by dragend / drop.
-        // Firing here would break due to child-boundary
-        // and virtualizer re-render events.
+        this.dragEnterCount--;
+
+        // Each child-boundary crossing fires a
+        // paired dragenter/dragleave.  The counter
+        // only reaches 0 when the cursor truly
+        // leaves the panel.
+        if (this.dragEnterCount <= 0) {
+            this.dragEnterCount = 0;
+            this.cleanupDragState();
+        }
     };
 
     private onPanelDrop = (e: DragEvent) => {
@@ -995,6 +1010,7 @@ export class QueuePanel
         if (!this.dragOver) return;
 
         this.dragOver = false;
+        this.dragEnterCount = 0;
         this.dropTargetIndex = -1;
 
         if (this.dropTargetRafId) {
@@ -1255,21 +1271,14 @@ export class QueuePanel
                         : nothing}
                 </wa-popup>
 
-                <div class="drop-indicator">
-                    Drop tracks here to add to queue
-                </div>
-
                 ${tracks.length === 0
-                    ? html`
-                          <div class="empty-state">
-                              <wa-icon name="list"></wa-icon>
-                              <p>Queue is empty</p>
-                              <p style="font-size: 12px;">
-                                  Click a track to start
-                                  playing
-                              </p>
+                    ? html`<div class="empty-state">
+                          <div class="drop-zone-icon">
+                              <wa-icon
+                                  name="plus"
+                              ></wa-icon>
                           </div>
-                      `
+                      </div>`
                     : html`
                           <lit-virtualizer
                               scroller

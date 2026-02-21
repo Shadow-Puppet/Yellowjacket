@@ -52,6 +52,17 @@ func NewDB(logger *slog.Logger) (*DB, error) {
 
 	db.SetMaxOpenConns(1) // SQLite only supports one writer at a time
 
+	// Enable foreign key enforcement — SQLite disables it by
+	// default, which means ON DELETE CASCADE will not work without
+	// this pragma.
+	if _, err := db.ExecContext(
+		dbCtx, "PRAGMA foreign_keys = ON",
+	); err != nil {
+		return nil, fmt.Errorf(
+			"could not enable foreign keys: %w", err,
+		)
+	}
+
 	// Execute SQL files from the embedded schemas directory
 	logger.Debug("reading sql schema files from embedded directory")
 
@@ -84,6 +95,24 @@ func NewDB(logger *slog.Logger) (*DB, error) {
 				return nil, fmt.Errorf("error executing sql from file %s: %w", filePath, err)
 			}
 		}
+	}
+
+	// Remove orphaned playlist_tracks left behind by past deletes
+	// that ran without foreign key enforcement.
+	orphanResult, err := db.ExecContext(
+		dbCtx,
+		"DELETE FROM playlist_tracks WHERE playlist_id NOT IN (SELECT id FROM playlists)",
+	)
+	if err != nil {
+		logger.Warn(
+			"could not clean orphaned playlist tracks",
+			"err", err,
+		)
+	} else if n, _ := orphanResult.RowsAffected(); n > 0 {
+		logger.Info(
+			"Cleaned orphaned playlist tracks",
+			"deleted", n,
+		)
 	}
 
 	// Get generated queries

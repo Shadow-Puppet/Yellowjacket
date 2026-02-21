@@ -8,6 +8,7 @@ import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 
 import {
     CreatePlaylist,
+    CreatePlaylistWithTracks,
     AddTracksToPlaylist,
     RemoveTracksFromPlaylist,
     DeletePlaylist,
@@ -165,6 +166,18 @@ export class PlaylistView
 
     /** Index of the playlist currently hovered during a drag. */
     @state() private dragOverPlaylistIndex = -1;
+
+    /** True when dragging over empty space in the playlist list. */
+    @state() private dragOverEmptyZone = false;
+
+    /** True when dragging over the "New Playlist" button. */
+    @state() private dragOverNewButton = false;
+
+    /**
+     * File paths from a drop that landed outside any playlist.
+     * When non-empty the create form is in "create-and-add" mode.
+     */
+    private pendingDropPaths: string[] = [];
 
     private dragImageEl: HTMLElement | null = null;
 
@@ -352,9 +365,17 @@ export class PlaylistView
             font-family: inherit;
         }
 
-        .new-playlist-button:hover {
+        .new-playlist-button:hover,
+        .new-playlist-button.drag-over {
             border-color: var(--yj-accent, #ffd43b);
             color: var(--yj-accent, #ffd43b);
+        }
+
+        .new-playlist-button.drag-over {
+            background-color: var(
+                --yj-accent-bg-strong,
+                rgba(255, 212, 59, 0.15)
+            );
         }
 
         .create-form {
@@ -422,6 +443,8 @@ export class PlaylistView
             padding: 0;
             margin: 0;
             list-style: none;
+            display: flex;
+            flex-direction: column;
         }
 
         .playlist-item {
@@ -590,6 +613,58 @@ export class PlaylistView
 
         .empty-state p {
             margin: 4px 0;
+        }
+
+        .drop-zone-icon {
+            display: none;
+            align-items: center;
+            justify-content: center;
+            width: 56px;
+            height: 56px;
+            border-radius: 12px;
+            background: var(
+                --yj-accent-bg-strong,
+                rgba(255, 212, 59, 0.18)
+            );
+            color: var(--yj-accent, #ffd43b);
+            font-size: 28px;
+            pointer-events: none;
+        }
+
+        .empty-state.drag-over {
+            background-color: var(
+                --yj-accent-bg-strong,
+                rgba(255, 212, 59, 0.15)
+            );
+            outline: 2px dashed
+                var(--yj-accent, #ffd43b);
+            outline-offset: -4px;
+        }
+
+        .empty-state.drag-over .drop-zone-icon {
+            display: flex;
+        }
+
+        .drop-zone {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 80px;
+        }
+
+        .drop-zone.drag-over {
+            background-color: var(
+                --yj-accent-bg-strong,
+                rgba(255, 212, 59, 0.15)
+            );
+            outline: 2px dashed
+                var(--yj-accent, #ffd43b);
+            outline-offset: -4px;
+        }
+
+        .drop-zone.drag-over .drop-zone-icon {
+            display: flex;
         }
 
         #context-menu {
@@ -1095,6 +1170,16 @@ export class PlaylistView
         if (this.dragOverPlaylistIndex !== index) {
             this.dragOverPlaylistIndex = index;
         }
+
+        // A specific playlist is targeted — hide the
+        // "new playlist" drop zone highlights.
+        if (this.dragOverEmptyZone) {
+            this.dragOverEmptyZone = false;
+        }
+
+        if (this.dragOverNewButton) {
+            this.dragOverNewButton = false;
+        }
     };
 
     private onPlaylistDragLeave = (
@@ -1122,6 +1207,7 @@ export class PlaylistView
         index: number,
     ) => {
         e.preventDefault();
+        e.stopPropagation();
         this.dragOverPlaylistIndex = -1;
 
         const payload = getDragPayload(e);
@@ -1159,6 +1245,116 @@ export class PlaylistView
                 err,
             );
         }
+    };
+
+    // =================================================================
+    // Drop target (empty space → create new playlist)
+    // =================================================================
+
+    private onEmptyZoneDragOver = (e: DragEvent) => {
+        if (!hasTrackPayload(e)) return;
+
+        e.preventDefault();
+
+        if (e.dataTransfer) {
+            e.dataTransfer.dropEffect = 'copy';
+        }
+
+        // Only show the "new playlist" drop zone when
+        // not hovering a specific playlist item.
+        if (
+            this.dragOverPlaylistIndex === -1 &&
+            !this.dragOverEmptyZone
+        ) {
+            this.dragOverEmptyZone = true;
+        }
+
+        if (this.dragOverNewButton) {
+            this.dragOverNewButton = false;
+        }
+    };
+
+    private onEmptyZoneDragLeave = (e: DragEvent) => {
+        const related =
+            e.relatedTarget as Node | null;
+
+        if (!related || !this.contains(related)) {
+            this.dragOverEmptyZone = false;
+        }
+    };
+
+    private onEmptyZoneDrop = (e: DragEvent) => {
+        e.preventDefault();
+        this.dragOverEmptyZone = false;
+
+        const payload = getDragPayload(e);
+
+        if (
+            !payload ||
+            payload.filePaths.length === 0
+        ) {
+            return;
+        }
+
+        this.pendingDropPaths = payload.filePaths;
+        this.creating = true;
+        this.newPlaylistName = '';
+
+        void this.updateComplete.then(() => {
+            const input =
+                this.shadowRoot?.querySelector<HTMLInputElement>(
+                    '.create-form input',
+                );
+
+            input?.focus();
+        });
+    };
+
+    // =================================================================
+    // Drop target ("New Playlist" button)
+    // =================================================================
+
+    private onNewButtonDragOver = (e: DragEvent) => {
+        if (!hasTrackPayload(e)) return;
+
+        e.preventDefault();
+        e.stopPropagation();
+
+        if (e.dataTransfer) {
+            e.dataTransfer.dropEffect = 'copy';
+        }
+
+        if (!this.dragOverNewButton) {
+            this.dragOverNewButton = true;
+        }
+
+        // Hide the empty-zone highlight while
+        // hovering the button.
+        if (this.dragOverEmptyZone) {
+            this.dragOverEmptyZone = false;
+        }
+    };
+
+    private onNewButtonDragLeave = (
+        e: DragEvent,
+    ) => {
+        const related =
+            e.relatedTarget as Node | null;
+        const btn =
+            this.shadowRoot?.querySelector(
+                '.new-playlist-button',
+            );
+
+        if (btn && !btn.contains(related)) {
+            this.dragOverNewButton = false;
+        }
+    };
+
+    private onNewButtonDrop = (e: DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.dragOverNewButton = false;
+        this.onEmptyZoneDrop(e);
     };
 
     private closeContextMenu(clearSelection = false) {
@@ -1430,16 +1626,28 @@ export class PlaylistView
     private handleCancelCreate = () => {
         this.creating = false;
         this.newPlaylistName = '';
+        this.pendingDropPaths = [];
     };
 
     private handleCreatePlaylist = async () => {
         const name = this.newPlaylistName.trim();
         if (!name) return;
 
+        const paths = this.pendingDropPaths;
+
         try {
-            await CreatePlaylist(name);
+            if (paths.length > 0) {
+                await CreatePlaylistWithTracks(
+                    name,
+                    paths,
+                );
+            } else {
+                await CreatePlaylist(name);
+            }
+
             this.creating = false;
             this.newPlaylistName = '';
+            this.pendingDropPaths = [];
             await this.refreshPlaylists();
         } catch (err) {
             console.error(
@@ -1491,9 +1699,15 @@ export class PlaylistView
                         Import
                     </button>
                     <button
-                        class="new-playlist-button"
+                        class="new-playlist-button ${this.dragOverNewButton ? 'drag-over' : ''}"
                         @click=${this
                             .handleNewPlaylistClick}
+                        @dragover=${this
+                            .onNewButtonDragOver}
+                        @dragleave=${this
+                            .onNewButtonDragLeave}
+                        @drop=${this
+                            .onNewButtonDrop}
                     >
                         <wa-icon
                             name="plus"
@@ -1693,11 +1907,22 @@ export class PlaylistView
     private renderPlaylistList() {
         if (this.entries.length === 0) {
             return html`
-                <div class="empty-state">
+                <div
+                    class="empty-state ${this.dragOverEmptyZone ? 'drag-over' : ''}"
+                    @dragover=${this.onEmptyZoneDragOver}
+                    @dragleave=${this.onEmptyZoneDragLeave}
+                    @drop=${this.onEmptyZoneDrop}
+                >
+                    <div class="drop-zone-icon">
+                        <wa-icon
+                            name="plus"
+                        ></wa-icon>
+                    </div>
                     <wa-icon name="list"></wa-icon>
                     <p>No playlists yet</p>
                     <p style="font-size: 12px;">
-                        Create a playlist to get started.
+                        Create a playlist or drop
+                        tracks here.
                     </p>
                 </div>
             `;
@@ -1707,8 +1932,21 @@ export class PlaylistView
 
         if (visible.length === 0) {
             return html`
-                <div class="empty-state">
-                    <p>No playlists match your search.</p>
+                <div
+                    class="empty-state ${this.dragOverEmptyZone ? 'drag-over' : ''}"
+                    @dragover=${this.onEmptyZoneDragOver}
+                    @dragleave=${this.onEmptyZoneDragLeave}
+                    @drop=${this.onEmptyZoneDrop}
+                >
+                    <div class="drop-zone-icon">
+                        <wa-icon
+                            name="plus"
+                        ></wa-icon>
+                    </div>
+                    <p>
+                        No playlists match your
+                        search.
+                    </p>
                 </div>
             `;
         }
@@ -1727,6 +1965,20 @@ export class PlaylistView
                         originalIndex,
                     );
                 })}
+                <li
+                    class="drop-zone ${this.dragOverEmptyZone ? 'drag-over' : ''}"
+                    @dragover=${this
+                        .onEmptyZoneDragOver}
+                    @dragleave=${this
+                        .onEmptyZoneDragLeave}
+                    @drop=${this.onEmptyZoneDrop}
+                >
+                    <div class="drop-zone-icon">
+                        <wa-icon
+                            name="plus"
+                        ></wa-icon>
+                    </div>
+                </li>
             </ul>
         `;
     }

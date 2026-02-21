@@ -12,9 +12,10 @@ interface NavItem {
     icon: string;
 }
 
-const MIN_WIDTH = 120;
+const MIN_WIDTH = 56;
 const MAX_WIDTH = 400;
 const DEFAULT_WIDTH = 200;
+const COLLAPSE_WIDTH = 142;
 
 @customElement('app-sidebar')
 export class AppSidebar extends LitElement {
@@ -84,9 +85,30 @@ export class AppSidebar extends LitElement {
         }
 
         li.drag-hover {
-            background-color: var(--yj-accent-bg-strong, rgba(255, 212, 59, 0.15));
+            background-color: var(
+                --yj-accent-bg-strong,
+                rgba(255, 212, 59, 0.15)
+            );
             outline: 1px dashed var(--yj-accent, #ffd43b);
             outline-offset: -1px;
+        }
+
+        /* Icon-only collapsed mode */
+        :host(.collapsed) ul {
+            padding: 0.5em;
+        }
+
+        :host(.collapsed) li {
+            justify-content: center;
+            padding: 0.6em;
+        }
+
+        :host(.collapsed) li p {
+            display: none;
+        }
+
+        :host(.collapsed) li wa-icon {
+            font-size: 1.1em;
         }
     `;
 
@@ -98,6 +120,9 @@ export class AppSidebar extends LitElement {
 
     @state()
     private isDragging = false;
+
+    @state()
+    private collapsed = false;
 
     /** Whether a track drag is in progress somewhere in the app. */
     @state()
@@ -155,6 +180,10 @@ export class AppSidebar extends LitElement {
         this.clearDragHoverTimer();
     }
 
+    override updated() {
+        this.classList.toggle('collapsed', this.collapsed);
+    }
+
     override render() {
         return html`
             <div
@@ -163,33 +192,33 @@ export class AppSidebar extends LitElement {
             ></div>
             <ul>
                 ${this.navItems.map((item) => {
-                    const classes = [
-                        this.activeView === item.id
-                            ? 'active'
-                            : '',
-                        this.dragHoverView === item.id
-                            ? 'drag-hover'
-                            : '',
-                    ]
-                        .filter(Boolean)
-                        .join(' ');
+            const classes = [
+                this.activeView === item.id
+                    ? 'active'
+                    : '',
+                this.dragHoverView === item.id
+                    ? 'drag-hover'
+                    : '',
+            ]
+                .filter(Boolean)
+                .join(' ');
 
-                    return html`
+            return html`
                         <li
                             class=${classes}
                             @click=${() =>
-                                this.navigate(item.id)}
+                    this.navigate(item.id)}
                             @dragover=${(e: DragEvent) =>
-                                this.onNavDragOver(
-                                    e,
-                                    item.id,
-                                )}
+                    this.onNavDragOver(
+                        e,
+                        item.id,
+                    )}
                             @dragleave=${() =>
-                                this.onNavDragLeave(
-                                    item.id,
-                                )}
+                    this.onNavDragLeave(
+                        item.id,
+                    )}
                             @drop=${(e: DragEvent) =>
-                                this.onNavDrop(e)}
+                    this.onNavDrop(e)}
                         >
                             <wa-icon
                                 name=${item.icon}
@@ -197,7 +226,7 @@ export class AppSidebar extends LitElement {
                             <p>${item.label}</p>
                         </li>
                     `;
-                })}
+        })}
             </ul>
         `;
     }
@@ -212,9 +241,13 @@ export class AppSidebar extends LitElement {
 
         const rect = this.getBoundingClientRect();
         const newWidth = e.clientX - rect.left;
-        const clampedWidth = Math.min(Math.max(newWidth, MIN_WIDTH), MAX_WIDTH);
+        const clampedWidth = Math.min(
+            Math.max(newWidth, MIN_WIDTH),
+            MAX_WIDTH,
+        );
 
         this.style.width = `${clampedWidth}px`;
+        this.collapsed = clampedWidth < COLLAPSE_WIDTH;
     };
 
     private handleMouseUp = () => {
