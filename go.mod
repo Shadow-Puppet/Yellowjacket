@@ -100,7 +100,7 @@ require (
 	github.com/ebitengine/purego v0.9.1 // indirect
 	github.com/emirpasic/gods v1.18.1 // indirect
 	github.com/ettle/strcase v0.2.0 // indirect
-	github.com/evilmartians/lefthook v1.13.6 // indirect
+	github.com/evilmartians/lefthook/v2 v2.1.1 // indirect
 	github.com/fatih/color v1.18.0 // indirect
 	github.com/fatih/structtag v1.2.0 // indirect
 	github.com/firefart/nonamedreturns v1.0.6 // indirect
