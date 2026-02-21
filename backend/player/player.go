@@ -22,6 +22,7 @@ import (
 	"yellowjacket/backend/events"
 	"yellowjacket/backend/library"
 	"yellowjacket/backend/metadata"
+	"yellowjacket/backend/profiling"
 )
 
 // Player handles audio playback and state management.
@@ -64,6 +65,8 @@ var speakerSampleRate = beep.SampleRate(44100)
 
 // NewPlayer creates a player and initializes the audio speaker.
 func NewPlayer(ctx context.Context, logger *slog.Logger, db *database.DB) (*Player, error) {
+	defer profiling.TimeOp(logger, "player.NewPlayer")()
+
 	player := &Player{
 		ctx:          ctx,
 		logger:       logger,
@@ -313,6 +316,8 @@ func (p *Player) startPaused() {
 
 // LoadFile opens and decodes an audio file for playback.
 func (p *Player) LoadFile(filePath string) error {
+	defer profiling.TimeOp(p.logger, "player.LoadFile")()
+
 	// opening file
 	f, err := os.Open(filePath)
 	if err != nil {
@@ -724,6 +729,8 @@ func (p *Player) saveState() {
 
 // RestoreState loads the persisted player state from the database.
 func (p *Player) RestoreState() {
+	defer profiling.TimeOp(p.logger, "player.RestoreState")()
+
 	if p.db == nil {
 		p.logger.Warn("No database available, cannot restore player state")
 

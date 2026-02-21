@@ -36,3 +36,16 @@ install: ## Install all development dependencies (Go tools, frontend packages)
 
 setup: install ## Install dependencies and set up git hooks
 	go tool lefthook install
+
+# Profiling (dev builds only — pprof server on :6060 starts automatically)
+profile: ## Open interactive profiling menu (CPU, heap, trace, etc.)
+	@./scripts/profile.sh
+
+profile-cpu: ## Capture CPU profile and open flame graph in browser
+	@./scripts/profile.sh cpu
+
+profile-heap: ## Capture heap profile and open in browser
+	@./scripts/profile.sh heap
+
+profile-trace: ## Capture execution trace and open trace viewer
+	@./scripts/profile.sh trace

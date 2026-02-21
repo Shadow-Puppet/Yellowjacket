@@ -19,6 +19,7 @@ import (
 	"yellowjacket/backend/library"
 	"yellowjacket/backend/player"
 	"yellowjacket/backend/playlist"
+	"yellowjacket/backend/profiling"
 	"yellowjacket/backend/queue"
 )
 
@@ -43,6 +44,8 @@ func NewYellowJacketApp(
 	logger *slog.Logger,
 	assetHandler *assets.Handler,
 ) (*YellowJacketApp, error) {
+	defer profiling.TimeOp(logger, "app.NewYellowJacketApp")()
+
 	// initialize anything that does not need access to the wails runtime here
 	yjApp := &YellowJacketApp{
 		logger:       logger,
@@ -118,6 +121,8 @@ var startupErr error
 
 // OnStartup initializes components that require the Wails runtime context.
 func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
+	defer profiling.TimeOp(yj.logger, "app.OnStartup")()
+
 	// initialize anything that needs to use the wails runtime AFTER its been initialized
 	// you CANNOT use the wails runtime during this function
 	yj.appContext = ctx

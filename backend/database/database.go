@@ -13,6 +13,7 @@ import (
 	_ "modernc.org/sqlite" // Register sqlite driver.
 
 	"yellowjacket/backend/database/sql/sqlcgen"
+	"yellowjacket/backend/profiling"
 	"yellowjacket/backend/system"
 )
 
@@ -31,6 +32,8 @@ type DB struct {
 
 // NewDB opens the database and applies schema migrations.
 func NewDB(logger *slog.Logger) (*DB, error) {
+	defer profiling.TimeOp(logger, "database.NewDB")()
+
 	dbCtx := context.Background()
 
 	userDataDir, err := system.GetUserDataDirPath()

@@ -19,6 +19,7 @@ import (
 	"yellowjacket/backend/database"
 	"yellowjacket/backend/database/sql/sqlcgen"
 	"yellowjacket/backend/events"
+	"yellowjacket/backend/profiling"
 )
 
 // RepeatMode represents the queue repeat behavior.
@@ -611,6 +612,8 @@ func (q *Queue) handlePlayTracksNext(data ...any) {
 // resolved in the background. A generation counter ensures stale
 // background work is discarded if SetQueue is called again.
 func (q *Queue) SetQueue(filePaths []string, startIndex int) {
+	defer profiling.TimeOp(q.logger, "queue.SetQueue")()
+
 	gen := q.setQueueGen.Add(1)
 
 	if startIndex < 0 || startIndex >= len(filePaths) {
@@ -1592,6 +1595,8 @@ func (q *Queue) SaveState() {
 
 // RestoreState loads the queue state from the database.
 func (q *Queue) RestoreState() {
+	defer profiling.TimeOp(q.logger, "queue.RestoreState")()
+
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
