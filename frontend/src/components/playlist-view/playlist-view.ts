@@ -182,6 +182,23 @@ export class PlaylistView
         this.closePlaylistContextMenu();
     };
 
+    private mousedownCloseHandler = (
+        e: MouseEvent,
+    ) => {
+        const path = e.composedPath();
+        const popup = this.contextMenuPopup;
+        const submenu = this.playlistSubmenuPopup;
+        const plPopup =
+            this.playlistContextMenuPopup;
+
+        if (popup && path.includes(popup)) return;
+        if (submenu && path.includes(submenu)) return;
+        if (plPopup && path.includes(plPopup)) return;
+
+        this.closeContextMenu();
+        this.closePlaylistContextMenu();
+    };
+
     private clearSelectionHandler = (e: MouseEvent) => {
         const path = e.composedPath();
         const isTrackClick = path.some(
@@ -665,6 +682,10 @@ export class PlaylistView
             this.closeContextMenuHandler,
         );
         document.addEventListener(
+            'mousedown',
+            this.mousedownCloseHandler,
+        );
+        document.addEventListener(
             'click',
             this.clearSelectionHandler,
         );
@@ -686,6 +707,10 @@ export class PlaylistView
         document.removeEventListener(
             'contextmenu',
             this.closeContextMenuHandler,
+        );
+        document.removeEventListener(
+            'mousedown',
+            this.mousedownCloseHandler,
         );
         document.removeEventListener(
             'click',

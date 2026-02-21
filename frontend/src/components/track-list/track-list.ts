@@ -66,6 +66,19 @@ export class TrackList extends LitElement implements SelectionHost {
 
     private closeHandler = () => this.closeContextMenu();
 
+    private mousedownCloseHandler = (
+        e: MouseEvent,
+    ) => {
+        const path = e.composedPath();
+        const popup = this.contextMenuPopup;
+        const submenu = this.playlistSubmenuPopup;
+
+        if (popup && path.includes(popup)) return;
+        if (submenu && path.includes(submenu)) return;
+
+        this.closeContextMenu();
+    };
+
     private clearSelectionHandler = (e: MouseEvent) => {
         const path = e.composedPath();
         const isTrackClick = path.some(
@@ -437,6 +450,7 @@ export class TrackList extends LitElement implements SelectionHost {
         );
         document.addEventListener('click', this.closeHandler);
         document.addEventListener('contextmenu', this.closeHandler);
+        document.addEventListener('mousedown', this.mousedownCloseHandler);
         document.addEventListener('click', this.clearSelectionHandler);
         document.addEventListener('mousemove', this.onColResizeMove);
         document.addEventListener('mouseup', this.onColResizeEnd);
@@ -458,6 +472,7 @@ export class TrackList extends LitElement implements SelectionHost {
         this.cancelScanComplete?.();
         document.removeEventListener('click', this.closeHandler);
         document.removeEventListener('contextmenu', this.closeHandler);
+        document.removeEventListener('mousedown', this.mousedownCloseHandler);
         document.removeEventListener('click', this.clearSelectionHandler);
         document.removeEventListener('mousemove', this.onColResizeMove);
         document.removeEventListener('mouseup', this.onColResizeEnd);

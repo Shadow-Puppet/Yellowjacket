@@ -64,6 +64,7 @@ export class AlbumDropdown extends LitElement {
     static override styles = css`
         :host {
             display: block;
+            margin-top: 14px;
         }
 
         .album-dropdown {
@@ -76,12 +77,12 @@ export class AlbumDropdown extends LitElement {
 
         .carat {
             position: absolute;
-            top: -8px;
+            top: -10px;
             width: 0;
             height: 0;
-            border-left: 9px solid transparent;
-            border-right: 9px solid transparent;
-            border-bottom: 8px solid var(--yj-bg-elevated, #343a40);
+            border-left: 11px solid transparent;
+            border-right: 11px solid transparent;
+            border-bottom: 10px solid var(--yj-bg-elevated, #343a40);
         }
 
         .dropdown-tracks {
@@ -343,21 +344,21 @@ export class AlbumDropdown extends LitElement {
                 class=${classes}
                 draggable="true"
                 @click=${(e: MouseEvent) =>
-                    this.onTrackClick(e, track, index)}
+                this.onTrackClick(e, track, index)}
                 @dblclick=${(e: MouseEvent) =>
-                    this.onTrackDblClick(
-                        e,
-                        track,
-                        index,
-                    )}
+                this.onTrackDblClick(
+                    e,
+                    track,
+                    index,
+                )}
                 @contextmenu=${(e: MouseEvent) =>
-                    this.onTrackContextMenu(e, track)}
+                this.onTrackContextMenu(e, track)}
                 @dragstart=${(e: DragEvent) =>
-                    this.onTrackDragStart(
-                        e,
-                        track,
-                        index,
-                    )}
+                this.onTrackDragStart(
+                    e,
+                    track,
+                    index,
+                )}
                 @dragend=${() => this.onTrackDragEnd()}
             >
                 <span class="track-number">
@@ -371,8 +372,8 @@ export class AlbumDropdown extends LitElement {
                 </span>
                 <span class="track-duration">
                     ${formatMilliseconds(
-                        track.TrackLength,
-                    )}
+                    track.TrackLength,
+                )}
                 </span>
             </div>
         `;
@@ -393,9 +394,9 @@ export class AlbumDropdown extends LitElement {
                     style="height:${this.tracksHeight}px;column-count:${this.columnCount}"
                 >
                     ${this.tracks.map(
-                        (track, i) =>
-                            this.renderTrackRow(track, i),
-                    )}
+            (track, i) =>
+                this.renderTrackRow(track, i),
+        )}
                 </div>
             </div>
         `;

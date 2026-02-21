@@ -97,6 +97,17 @@ export class QueuePanel
     private closeContextMenuHandler = () =>
         this.closeContextMenu();
 
+    private mousedownCloseHandler = (e: MouseEvent) => {
+        const path = e.composedPath();
+        const popup = this.contextMenuPopup;
+        const submenu = this.playlistSubmenuPopup;
+
+        if (popup && path.includes(popup)) return;
+        if (submenu && path.includes(submenu)) return;
+
+        this.closeContextMenu();
+    };
+
     private clearSelectionHandler = (e: MouseEvent) => {
         const path = e.composedPath();
         const isTrackClick = path.some(
@@ -454,6 +465,10 @@ export class QueuePanel
             this.closeContextMenuHandler,
         );
         document.addEventListener(
+            'mousedown',
+            this.mousedownCloseHandler,
+        );
+        document.addEventListener(
             'click',
             this.clearSelectionHandler,
         );
@@ -484,6 +499,10 @@ export class QueuePanel
         document.removeEventListener(
             'contextmenu',
             this.closeContextMenuHandler,
+        );
+        document.removeEventListener(
+            'mousedown',
+            this.mousedownCloseHandler,
         );
         document.removeEventListener(
             'click',

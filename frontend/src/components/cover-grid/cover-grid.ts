@@ -81,11 +81,23 @@ export class CoverGrid extends LitElement {
 
     private closeHandler = () => this.closeContextMenu();
 
+    private mousedownCloseHandler = (
+        e: MouseEvent,
+    ) => {
+        const path = e.composedPath();
+        const popup = this.contextMenuPopup;
+        const submenu = this.playlistSubmenuPopup;
+
+        if (popup && path.includes(popup)) return;
+        if (submenu && path.includes(submenu)) return;
+
+        this.closeContextMenu();
+    };
+
     /**
      * When true, the next split→single transition
      * skips the expensive overlay capture and scroll
-     * restore.  Used by the select-toggle checkbox
-     * so closing the dropdown is instant.
+     * restore.
      */
     private skipOverlay = false;
 
@@ -233,11 +245,6 @@ export class CoverGrid extends LitElement {
             outline-offset: 2px;
         }
 
-        .album-card.expanded {
-            background-color: var(--yj-bg-elevated, #343a40);
-            border-radius: 8px 8px 0 0;
-        }
-
         .album-card:focus-visible {
             outline: 2px solid var(--yj-accent, #ffd43b);
             outline-offset: 2px;
@@ -255,45 +262,6 @@ export class CoverGrid extends LitElement {
 
         .album-card.selected .cover-container {
             scale: 0.95;
-        }
-
-        /* ========================================
-         * Selection checkbox overlay
-         * ======================================== */
-
-        .select-toggle {
-            position: absolute;
-            top: 6px;
-            left: 6px;
-            width: 22px;
-            height: 22px;
-            border-radius: 50%;
-            border: 2px solid rgba(255, 255, 255, 0.8);
-            background-color: rgba(0, 0, 0, 0.4);
-            cursor: pointer;
-            opacity: 0;
-            transition: opacity 0.15s ease;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 10;
-        }
-
-        .album-card:hover .select-toggle {
-            opacity: 1;
-        }
-
-        .select-toggle.checked {
-            opacity: 1;
-            background-color: var(--yj-accent, #ffd43b);
-            border-color: var(--yj-accent, #ffd43b);
-        }
-
-        .check-icon {
-            color: #000;
-            font-size: 14px;
-            font-weight: bold;
-            line-height: 1;
         }
 
         .cover-image {
@@ -564,6 +532,10 @@ export class CoverGrid extends LitElement {
             'contextmenu',
             this.closeHandler,
         );
+        document.addEventListener(
+            'mousedown',
+            this.mousedownCloseHandler,
+        );
 
         // error events do not bubble — use capture
         // phase to catch <img> load failures.
@@ -584,6 +556,10 @@ export class CoverGrid extends LitElement {
         document.removeEventListener(
             'contextmenu',
             this.closeHandler,
+        );
+        document.removeEventListener(
+            'mousedown',
+            this.mousedownCloseHandler,
         );
         this.removeEventListener(
             'error',
@@ -2104,28 +2080,36 @@ export class CoverGrid extends LitElement {
      * Dropdown (expand/collapse)
      * ==================================================================== */
 
-    private async toggleDropdown(
+    /** Close the dropdown if one is open. */
+    private closeDropdown() {
+        if (this.expandedAlbumId === null) return;
+
+        this.expandedAlbumId = null;
+        this.expandedTracks = [];
+        this.selectedTracks = new Set();
+        this.lastSelectedTrackIndex = null;
+    }
+
+    /**
+     * Open (or switch to) the given album's
+     * dropdown. If the dropdown is already open
+     * for the same album this is a no-op.
+     */
+    private async openDropdown(
         album: library.Album,
     ) {
-        if (this.expandedAlbumId === album.ID) {
-            // Close
-            this.expandedAlbumId = null;
-            this.expandedTracks = [];
-            this.selectedTracks = new Set();
-            this.lastSelectedTrackIndex = null;
+        if (this.expandedAlbumId === album.ID) return;
 
-            return;
-        }
-
-        // Open (or switch)
         this.expandedAlbumId = album.ID;
         this.expandedTracks = [];
         this.selectedTracks = new Set();
         this.lastSelectedTrackIndex = null;
-        try {
-            const tracks = await GetAlbumTracks(album.ID);
 
-            // Only apply if still the same album
+        try {
+            const tracks = await GetAlbumTracks(
+                album.ID,
+            );
+
             if (this.expandedAlbumId === album.ID) {
                 this.expandedTracks = tracks;
             }
@@ -2137,14 +2121,25 @@ export class CoverGrid extends LitElement {
         }
     }
 
-    /** Close the dropdown if one is open. */
-    private closeDropdown() {
-        if (this.expandedAlbumId === null) return;
+    /**
+     * Synchronise the dropdown to the current
+     * selection: open the sole selected album's
+     * dropdown, or close it when zero or many
+     * albums are selected.
+     */
+    private syncDropdownToSelection() {
+        if (this.selectedAlbums.size === 1) {
+            const [albumId] = this.selectedAlbums;
+            const album = this.filteredAlbums.find(
+                (a) => a.ID === albumId,
+            );
 
-        this.expandedAlbumId = null;
-        this.expandedTracks = [];
-        this.selectedTracks = new Set();
-        this.lastSelectedTrackIndex = null;
+            if (album) {
+                void this.openDropdown(album);
+            }
+        } else {
+            this.closeDropdown();
+        }
     }
 
     /* ====================================================================
@@ -2211,7 +2206,7 @@ export class CoverGrid extends LitElement {
             }
 
             this.selectedAlbums = next;
-            this.closeDropdown();
+            this.syncDropdownToSelection();
             void this.warmAlbumFilePathCache();
         } else if (isCtrl) {
             const next = new Set(this.selectedAlbums);
@@ -2224,12 +2219,28 @@ export class CoverGrid extends LitElement {
 
             this.selectedAlbums = next;
             this.lastSelectedAlbumIndex = index;
-            this.closeDropdown();
+            this.syncDropdownToSelection();
             void this.warmAlbumFilePathCache();
         } else {
-            this.selectedAlbums = new Set();
-            void this.toggleDropdown(album);
+            // Plain click: if this album is the
+            // sole selection, deselect + close.
+            // Otherwise select only this album
+            // and open its dropdown.
+            if (
+                this.selectedAlbums.size === 1 &&
+                this.selectedAlbums.has(album.ID)
+            ) {
+                this.selectedAlbums = new Set();
+                this.closeDropdown();
+            } else {
+                this.selectedAlbums = new Set([
+                    album.ID,
+                ]);
+                void this.openDropdown(album);
+            }
+
             this.lastSelectedAlbumIndex = index;
+            void this.warmAlbumFilePathCache();
         }
     };
 
@@ -2247,6 +2258,7 @@ export class CoverGrid extends LitElement {
         if (filePaths.length === 0) return;
 
         this.selectedAlbums = new Set();
+        this.closeDropdown();
         queueStore.setQueue(filePaths, 0);
     };
 
@@ -2260,8 +2272,24 @@ export class CoverGrid extends LitElement {
         if (!hit) return;
 
         e.preventDefault();
-        void this.toggleDropdown(hit.album);
-        this.lastSelectedAlbumIndex = hit.index;
+
+        const { album, index } = hit;
+
+        // Mirror plain-click behaviour: toggle
+        // sole selection, or select and open.
+        if (
+            this.selectedAlbums.size === 1 &&
+            this.selectedAlbums.has(album.ID)
+        ) {
+            this.selectedAlbums = new Set();
+            this.closeDropdown();
+        } else {
+            this.selectedAlbums = new Set([album.ID]);
+            void this.openDropdown(album);
+        }
+
+        this.lastSelectedAlbumIndex = index;
+        void this.warmAlbumFilePathCache();
     };
 
     private onGridAlbumContextMenu = (
@@ -2278,53 +2306,12 @@ export class CoverGrid extends LitElement {
             this.selectedAlbums = new Set([
                 hit.album.ID,
             ]);
+            this.syncDropdownToSelection();
             void this.warmAlbumFilePathCache();
         }
 
         this.contextMenuTarget = { kind: 'album' };
         this.openContextMenuAt(e.clientX, e.clientY);
-    };
-
-    /**
-     * Selection checkbox toggle on album cards.
-     * Stops propagation so that the card click
-     * handler (which toggles the dropdown) does
-     * not fire.
-     */
-    private onSelectToggleClick = (
-        e: MouseEvent,
-    ) => {
-        e.stopPropagation();
-
-        const hit = this.resolveAlbumFromEvent(e);
-
-        if (!hit) return;
-
-        const { album, index } = hit;
-        const next = new Set(this.selectedAlbums);
-
-        if (next.has(album.ID)) {
-            next.delete(album.ID);
-        } else {
-            next.add(album.ID);
-        }
-
-        this.selectedAlbums = next;
-        this.lastSelectedAlbumIndex = index;
-
-        // Lightweight dropdown close: set the
-        // skipOverlay flag so willUpdate skips
-        // the expensive overlay capture and
-        // scroll-restore machinery.
-        if (this.expandedAlbumId !== null) {
-            this.skipOverlay = true;
-            this.expandedAlbumId = null;
-            this.expandedTracks = [];
-            this.selectedTracks = new Set();
-            this.lastSelectedTrackIndex = null;
-        }
-
-        void this.warmAlbumFilePathCache();
     };
 
     /**
@@ -2869,18 +2856,6 @@ export class CoverGrid extends LitElement {
                           >
                               ${this.getAlbumInitial(album.Name)}
                           </div>`}
-                    <div
-                        class="select-toggle ${selected ? 'checked' : ''}"
-                        @click=${this.onSelectToggleClick}
-                    >
-                        ${selected
-                ? html`<span
-                                  class="check-icon"
-                              >
-                                  &#10003;
-                              </span>`
-                : nothing}
-                    </div>
                 </div>
                 <div class="album-info">
                     <div
