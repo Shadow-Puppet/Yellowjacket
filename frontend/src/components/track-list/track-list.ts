@@ -521,6 +521,23 @@ export class TrackList extends LitElement implements SelectionHost {
       background-color: var(--yj-text-tertiary, #6c757d);
     }
 
+    .search-indicator {
+      position: absolute;
+      top: 8px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 5;
+      pointer-events: none;
+      background: var(--yj-bg-overlay, #495057);
+      color: var(--yj-text-secondary, #b3b3b3);
+      font-size: 12px;
+      padding: 4px 14px;
+      border-radius: 12px;
+      border: 1px solid var(--yj-border-subtle, #555);
+      white-space: nowrap;
+      opacity: 0.92;
+    }
+
     .no-results {
       padding: 24px 16px;
       color: var(--yj-text-secondary, #b3b3b3);
@@ -1027,6 +1044,13 @@ export class TrackList extends LitElement implements SelectionHost {
                       ></lit-virtualizer>
                     `}
           `}
+
+      ${this.searchCtrl.term && visibleTracks.length > 0
+                ? html`<div class="search-indicator">
+                Showing results for
+                &ldquo;${this.searchCtrl.term}&rdquo;
+            </div>`
+                : nothing}
 
       <div class="resize-overlay">
         ${this.colBoundaryPositions.map(
