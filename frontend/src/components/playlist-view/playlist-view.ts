@@ -645,6 +645,10 @@ export class PlaylistView
             display: flex;
         }
 
+        .empty-state.drag-over > :not(.drop-zone-icon) {
+            display: none;
+        }
+
         .drop-zone {
             flex: 1;
             display: flex;

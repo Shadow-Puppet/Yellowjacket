@@ -247,6 +247,13 @@ export class QueuePanel
             z-index: 210;
         }
 
+        .list-area {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+        }
+
         lit-virtualizer {
             flex: 1;
             overflow-y: auto;
@@ -340,7 +347,7 @@ export class QueuePanel
             color: var(--yj-error, #ff6b6b);
         }
 
-        .panel-content.drag-over {
+        .list-area.drag-over {
             outline: 2px dashed var(--yj-accent, #ffd43b);
             outline-offset: -2px;
         }
@@ -374,8 +381,21 @@ export class QueuePanel
         .empty-state {
             flex: 1;
             display: flex;
+            flex-direction: column;
             align-items: center;
             justify-content: center;
+            padding: 48px 20px;
+            color: var(--yj-text-secondary, #b3b3b3);
+            text-align: center;
+            gap: 8px;
+        }
+
+        .empty-state wa-icon {
+            font-size: 32px;
+        }
+
+        .empty-state p {
+            margin: 4px 0;
         }
 
         .drop-zone-icon {
@@ -394,7 +414,7 @@ export class QueuePanel
             pointer-events: none;
         }
 
-        .panel-content.drag-over.empty-drag
+        .list-area.drag-over.empty-drag
             .empty-state {
             background-color: var(
                 --yj-accent-bg-strong,
@@ -402,9 +422,15 @@ export class QueuePanel
             );
         }
 
-        .panel-content.drag-over.empty-drag
+        .list-area.drag-over.empty-drag
             .drop-zone-icon {
             display: flex;
+        }
+
+        .list-area.drag-over.empty-drag
+            .empty-state
+            > :not(.drop-zone-icon) {
+            display: none;
         }
 
         #context-menu {
@@ -747,7 +773,7 @@ export class QueuePanel
     private updateDragOverClass() {
         const panel =
             this.shadowRoot?.querySelector(
-                '.panel-content',
+                '.list-area',
             );
 
         if (!panel) return;
@@ -1212,13 +1238,7 @@ export class QueuePanel
         const tracks = this.queue.tracks;
 
         return html`
-            <div
-                class="panel-content"
-                @dragenter=${this.onPanelDragEnter}
-                @dragover=${this.onPanelDragOver}
-                @dragleave=${this.onPanelDragLeave}
-                @drop=${this.onPanelDrop}
-            >
+            <div class="panel-content">
                 <div
                     class="resize-handle ${this.isDragging
                         ? 'dragging'
@@ -1271,23 +1291,40 @@ export class QueuePanel
                         : nothing}
                 </wa-popup>
 
-                ${tracks.length === 0
-                    ? html`<div class="empty-state">
-                          <div class="drop-zone-icon">
+                <div
+                    class="list-area"
+                    @dragenter=${this.onPanelDragEnter}
+                    @dragover=${this.onPanelDragOver}
+                    @dragleave=${this.onPanelDragLeave}
+                    @drop=${this.onPanelDrop}
+                >
+                    ${tracks.length === 0
+                        ? html`<div class="empty-state">
+                              <div class="drop-zone-icon">
+                                  <wa-icon
+                                      name="plus"
+                                  ></wa-icon>
+                              </div>
                               <wa-icon
-                                  name="plus"
+                                  name="list"
                               ></wa-icon>
-                          </div>
-                      </div>`
-                    : html`
-                          <lit-virtualizer
-                              scroller
-                              .items=${tracks}
-                              .renderItem=${this
-                                  .renderTrackItem}
-                              .layout=${this.flowLayout}
-                          ></lit-virtualizer>
-                      `}
+                              <p>Queue is empty</p>
+                              <p style="font-size: 12px;">
+                                  Add tracks from your
+                                  library or drop them
+                                  here.
+                              </p>
+                          </div>`
+                        : html`
+                              <lit-virtualizer
+                                  scroller
+                                  .items=${tracks}
+                                  .renderItem=${this
+                                      .renderTrackItem}
+                                  .layout=${this.flowLayout}
+                              ></lit-virtualizer>
+                          `}
+                </div>
             </div>
 
             <wa-popup
