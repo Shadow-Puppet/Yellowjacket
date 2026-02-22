@@ -36,8 +36,12 @@ import '@components/playlist-picker/playlist-picker.js';
 import type { PlaylistPicker } from '@components/playlist-picker/playlist-picker.js';
 
 const COLUMN_STORAGE_KEY = 'track-list-column-widths';
+const SORT_FIELD_KEY = 'track-list-sort-field';
+const SORT_DIR_KEY = 'track-list-sort-direction';
 const MIN_COLUMN_WIDTH = 50;
 const DEFAULT_FIXED_WIDTH = 80;
+
+type SortDirection = 'asc' | 'desc';
 
 @customElement('track-list')
 export class TrackList extends LitElement implements SelectionHost {
@@ -127,6 +131,21 @@ export class TrackList extends LitElement implements SelectionHost {
     @state()
     private columnWidths: number[] = [];
 
+    /** Column ID to sort by, or null for default order. */
+    @state()
+    private sortField: string | null = null;
+
+    /** Current sort direction. */
+    @state()
+    private sortDirection: SortDirection = 'asc';
+
+    /** Whether the sort dropdown popup is open. */
+    @state()
+    private sortDropdownOpen = false;
+
+    @query('#sort-dropdown')
+    private sortDropdownPopup!: HTMLElement;
+
     private resizingColumn: number | null = null;
     private resizeStartX = 0;
     private resizeStartWidths: number[] = [];
@@ -158,15 +177,36 @@ export class TrackList extends LitElement implements SelectionHost {
     }
 
     // =================================================================
+    // Sorted tracks
+    // =================================================================
+
+    private get sortedTracks(): library.Track[] {
+        const tracks = this.filteredTracks;
+
+        if (!this.sortField) return tracks;
+
+        const col = COLUMN_DEFS[this.sortField];
+
+        if (!col?.comparator) return tracks;
+
+        const dir =
+            this.sortDirection === 'asc' ? 1 : -1;
+
+        return [...tracks].sort(
+            (a, b) => dir * col.comparator!(a, b),
+        );
+    }
+
+    // =================================================================
     // SelectionHost interface
     // =================================================================
 
     getItemKey(index: number): string | undefined {
-        return this.filteredTracks[index]?.FilePath;
+        return this.sortedTracks[index]?.FilePath;
     }
 
     getItemCount(): number {
-        return this.filteredTracks.length;
+        return this.sortedTracks.length;
     }
 
     onSelectionChanged(): void {
@@ -564,11 +604,122 @@ export class TrackList extends LitElement implements SelectionHost {
 
     static override styles = css`
     :host {
-      position: relative;
       display: flex;
       flex-direction: column;
       overflow: hidden;
     }
+
+    .table-container {
+      position: relative;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ---- Sort toolbar ---- */
+
+    .sort-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 8px;
+      font-size: 12px;
+      color: var(--yj-text-secondary, #b3b3b3);
+      border-bottom: 1px solid
+        var(--yj-border-subtle, #333);
+      flex-shrink: 0;
+      user-select: none;
+    }
+
+    .sort-anchor {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      cursor: pointer;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: transparent;
+      border: none;
+      color: inherit;
+      font: inherit;
+    }
+
+    .sort-anchor:hover {
+      background: var(
+        --yj-hover-overlay,
+        rgba(255, 255, 255, 0.05)
+      );
+    }
+
+    .sort-anchor .sort-label {
+      color: var(--yj-text-primary, #fff);
+    }
+
+    .sort-dir-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 24px;
+      height: 24px;
+      cursor: pointer;
+      border: none;
+      border-radius: 4px;
+      background: transparent;
+      color: var(--yj-text-secondary, #b3b3b3);
+      font-size: 12px;
+      padding: 0;
+    }
+
+    .sort-dir-btn:hover {
+      background: var(
+        --yj-hover-overlay,
+        rgba(255, 255, 255, 0.05)
+      );
+      color: var(--yj-text-primary, #fff);
+    }
+
+    .sort-dropdown-panel {
+      background-color: var(
+        --yj-bg-elevated,
+        #343a40
+      );
+      border: 1px solid var(--yj-border, #444);
+      border-radius: 6px;
+      padding: 4px 0;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+      min-width: 140px;
+    }
+
+    .sort-dropdown-panel wa-dropdown-item {
+      cursor: pointer;
+      --wa-color-text-normal: var(
+        --yj-text-primary,
+        #fff
+      );
+      font-size: 13px;
+    }
+
+    .sort-dropdown-panel wa-dropdown-item:hover {
+      background-color: var(
+        --yj-hover-overlay,
+        rgba(255, 255, 255, 0.1)
+      );
+    }
+
+    .sort-dropdown-panel wa-dropdown-item.active-sort {
+      color: var(--yj-accent, #ffd43b);
+      --wa-color-text-normal: var(
+        --yj-accent,
+        #ffd43b
+      );
+    }
+
+    #sort-dropdown {
+      z-index: 200;
+    }
+
+    /* ---- Header row ---- */
 
     .header-row {
       display: grid;
@@ -576,7 +727,8 @@ export class TrackList extends LitElement implements SelectionHost {
       padding: 8px;
       font-weight: bold;
       color: var(--yj-text-primary, #fff);
-      border-bottom: 1px solid var(--yj-text-tertiary, #666);
+      border-bottom: 1px solid
+        var(--yj-text-tertiary, #666);
       flex-shrink: 0;
       overflow: hidden;
     }
@@ -585,6 +737,20 @@ export class TrackList extends LitElement implements SelectionHost {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .header-cell:hover {
+      color: var(--yj-accent, #ffd43b);
+    }
+
+    .sort-arrow {
+      font-size: 10px;
+      flex-shrink: 0;
+      color: var(--yj-accent, #ffd43b);
     }
 
     .resize-overlay {
@@ -746,6 +912,7 @@ export class TrackList extends LitElement implements SelectionHost {
 
     override connectedCallback() {
         super.connectedCallback();
+        this.restoreSortPreferences();
         this.loadTracks();
         this.cancelScanComplete = EventsOn(
             Events.LibraryScanComplete,
@@ -754,6 +921,7 @@ export class TrackList extends LitElement implements SelectionHost {
         document.addEventListener('click', this.closeHandler);
         document.addEventListener('contextmenu', this.closeHandler);
         document.addEventListener('mousedown', this.mousedownCloseHandler);
+        document.addEventListener('mousedown', this.sortDropdownCloseHandler);
         document.addEventListener('click', this.clearSelectionHandler);
         document.addEventListener('mousemove', this.onColResizeMove);
         document.addEventListener('mouseup', this.onColResizeEnd);
@@ -778,6 +946,7 @@ export class TrackList extends LitElement implements SelectionHost {
         document.removeEventListener('click', this.closeHandler);
         document.removeEventListener('contextmenu', this.closeHandler);
         document.removeEventListener('mousedown', this.mousedownCloseHandler);
+        document.removeEventListener('mousedown', this.sortDropdownCloseHandler);
         document.removeEventListener('click', this.clearSelectionHandler);
         document.removeEventListener('mousemove', this.onColResizeMove);
         document.removeEventListener('mouseup', this.onColResizeEnd);
@@ -1062,6 +1231,161 @@ export class TrackList extends LitElement implements SelectionHost {
         this.closeContextMenu(true);
     };
 
+    // =================================================================
+    // Sort controls
+    // =================================================================
+
+    /** Restore sort preferences from localStorage. */
+    private restoreSortPreferences() {
+        try {
+            const field =
+                localStorage.getItem(SORT_FIELD_KEY);
+            const dir =
+                localStorage.getItem(SORT_DIR_KEY);
+
+            if (
+                field &&
+                COLUMN_DEFS[field]?.comparator
+            ) {
+                this.sortField = field;
+            }
+
+            if (dir === 'asc' || dir === 'desc') {
+                this.sortDirection = dir;
+            }
+        } catch {
+            // Ignore storage errors.
+        }
+    }
+
+    /** Persist sort preferences to localStorage. */
+    private saveSortPreferences() {
+        try {
+            if (this.sortField) {
+                localStorage.setItem(
+                    SORT_FIELD_KEY,
+                    this.sortField,
+                );
+            } else {
+                localStorage.removeItem(
+                    SORT_FIELD_KEY,
+                );
+            }
+
+            localStorage.setItem(
+                SORT_DIR_KEY,
+                this.sortDirection,
+            );
+        } catch {
+            // Ignore storage errors.
+        }
+    }
+
+    /**
+     * Handle a click on a column header to toggle sorting.
+     * First click: sort ascending. Second: descending.
+     * Third: clear sort (back to default order).
+     */
+    private onHeaderCellClick(colId: string) {
+        const col = COLUMN_DEFS[colId];
+
+        if (!col?.comparator) return;
+
+        if (this.sortField === colId) {
+            if (this.sortDirection === 'asc') {
+                this.sortDirection = 'desc';
+            } else {
+                this.sortField = null;
+                this.sortDirection = 'asc';
+            }
+        } else {
+            this.sortField = colId;
+            this.sortDirection = 'asc';
+        }
+
+        this.saveSortPreferences();
+    }
+
+    /** Set sort from the dropdown and close it. */
+    private onSortDropdownSelect(
+        colId: string | null,
+    ) {
+        if (colId === null) {
+            this.sortField = null;
+            this.sortDirection = 'asc';
+        } else {
+            this.sortField = colId;
+        }
+
+        this.saveSortPreferences();
+        this.closeSortDropdown();
+    }
+
+    /** Toggle sort direction via the toolbar button. */
+    private toggleSortDirection() {
+        this.sortDirection =
+            this.sortDirection === 'asc'
+                ? 'desc'
+                : 'asc';
+        this.saveSortPreferences();
+    }
+
+    private toggleSortDropdown() {
+        if (this.sortDropdownOpen) {
+            this.closeSortDropdown();
+        } else {
+            this.openSortDropdown();
+        }
+    }
+
+    private async openSortDropdown() {
+        this.sortDropdownOpen = true;
+
+        await this.updateComplete;
+
+        const popup = this.sortDropdownPopup;
+        const anchor = this.shadowRoot?.querySelector(
+            '.sort-anchor',
+        );
+
+        if (popup && anchor) {
+            (popup as any).anchor = anchor;
+            (popup as any).active = true;
+        }
+    }
+
+    private closeSortDropdown() {
+        if (!this.sortDropdownOpen) return;
+
+        this.sortDropdownOpen = false;
+
+        const popup = this.sortDropdownPopup;
+
+        if (popup) {
+            (popup as any).active = false;
+        }
+    }
+
+    private sortDropdownCloseHandler = (
+        e: MouseEvent,
+    ) => {
+        if (!this.sortDropdownOpen) return;
+
+        const path = e.composedPath();
+        const popup = this.sortDropdownPopup;
+
+        if (popup && path.includes(popup)) return;
+
+        const anchor =
+            this.shadowRoot?.querySelector(
+                '.sort-anchor',
+            );
+
+        if (anchor && path.includes(anchor)) return;
+
+        this.closeSortDropdown();
+    };
+
     private isActiveTrack(track: library.Track): boolean {
         const currentTrack = this.player.currentTrack;
 
@@ -1114,19 +1438,134 @@ export class TrackList extends LitElement implements SelectionHost {
     `;
     };
 
+    /** Render the sort toolbar above the header row. */
+    private renderSortToolbar() {
+        const activeCol = this.sortField
+            ? COLUMN_DEFS[this.sortField]
+            : null;
+
+        const label = activeCol
+            ? activeCol.label
+            : 'Default';
+
+        const dirIcon =
+            this.sortDirection === 'asc'
+                ? 'arrow-up-short-wide'
+                : 'arrow-down-wide-short';
+
+        return html`
+            <div class="sort-toolbar">
+                <span>Sort:</span>
+                <button
+                    class="sort-anchor"
+                    @click=${() =>
+                        this.toggleSortDropdown()}
+                >
+                    <span class="sort-label">
+                        ${label}
+                    </span>
+                    <wa-icon
+                        name="chevron-down"
+                    ></wa-icon>
+                </button>
+                ${this.sortField
+                    ? html`
+                          <button
+                              class="sort-dir-btn"
+                              title="${this.sortDirection === 'asc' ? 'Ascending' : 'Descending'}"
+                              @click=${() =>
+                                  this.toggleSortDirection()}
+                          >
+                              <wa-icon
+                                  name=${dirIcon}
+                              ></wa-icon>
+                          </button>
+                      `
+                    : nothing}
+            </div>
+            ${this.renderSortDropdownPopup()}
+        `;
+    }
+
+    /** Render the sort dropdown popup. */
+    private renderSortDropdownPopup() {
+        const cols = this.activeColumns;
+
+        return html`
+            <wa-popup
+                id="sort-dropdown"
+                placement="bottom-start"
+                flip
+                shift
+                .active=${this.sortDropdownOpen}
+            >
+                ${this.sortDropdownOpen
+                    ? html`
+                          <div
+                              class="sort-dropdown-panel"
+                          >
+                              <wa-dropdown-item
+                                  class=${!this.sortField ? 'active-sort' : ''}
+                                  @click=${() =>
+                                      this.onSortDropdownSelect(
+                                          null,
+                                      )}
+                              >
+                                  Default
+                              </wa-dropdown-item>
+                              ${cols
+                                  .filter(
+                                      (c) =>
+                                          c.comparator,
+                                  )
+                                  .map(
+                                      (col) => html`
+                                      <wa-dropdown-item
+                                          class=${this.sortField === col.id ? 'active-sort' : ''}
+                                          @click=${() =>
+                                              this.onSortDropdownSelect(
+                                                  col.id,
+                                              )}
+                                      >
+                                          ${col.label}
+                                      </wa-dropdown-item>
+                                  `,
+                                  )}
+                          </div>
+                      `
+                    : nothing}
+            </wa-popup>
+        `;
+    }
+
     override render() {
-        const visibleTracks = this.filteredTracks;
+        const visibleTracks = this.sortedTracks;
         const cols = this.activeColumns;
 
         return html`
       ${this.tracks.length === 0
                 ? html`<p>Loading tracks...</p>`
                 : html`
+            ${this.renderSortToolbar()}
+            <div class="table-container">
             <div class="header-row">
               ${cols.map(
                     (col) => html`
-                <div class="header-cell ${col.align === 'right' ? 'cell-right' : ''}">
-                  ${col.label}
+                <div
+                  class="header-cell ${col.align === 'right' ? 'cell-right' : ''}"
+                  @click=${() =>
+                          this.onHeaderCellClick(
+                              col.id,
+                          )}
+                >
+                  <span>${col.label}</span>
+                  ${this.sortField === col.id
+                              ? html`<span
+                            class="sort-arrow"
+                        >
+                            ${this.sortDirection === 'asc' ? '\u25B2' : '\u25BC'}
+                        </span>`
+                              : nothing}
                 </div>
               `,
                 )}
@@ -1143,27 +1582,28 @@ export class TrackList extends LitElement implements SelectionHost {
                         .layout=${this.flowLayout}
                       ></lit-virtualizer>
                     `}
-          `}
 
       ${this.searchCtrl.term && visibleTracks.length > 0
-                ? html`<div class="search-indicator">
+                        ? html`<div class="search-indicator">
                 Showing results for
                 &ldquo;${this.searchCtrl.term}&rdquo;
             </div>`
-                : nothing}
+                        : nothing}
 
       <div class="resize-overlay">
         ${this.colBoundaryPositions.map(
-                (pos, i) => html`
+                        (pos, i) => html`
             <div
               class="col-resize-handle ${this.resizingColumn === i ? 'active' : ''}"
               style="left: ${pos}px"
               @mousedown=${(e: MouseEvent) =>
-                        this.onColResizeStart(e, i)}
+                            this.onColResizeStart(e, i)}
             ></div>
           `,
-            )}
+                    )}
       </div>
+            </div>
+          `}
 
       <wa-popup
         id="context-menu"

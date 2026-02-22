@@ -61,6 +61,67 @@ const SCROLL_DEBOUNCE_MS = 100;
 /** Pixels to change card width per scroll tick. */
 const ZOOM_STEP = 16;
 
+/** localStorage keys for sort preferences. */
+const SORT_FIELD_KEY = 'cover-grid-sort-field';
+const SORT_DIR_KEY = 'cover-grid-sort-direction';
+
+/** Available sort fields for the album grid. */
+type AlbumSortField = 'name' | 'artist' | 'year';
+
+/** Sort option definition for the dropdown. */
+interface AlbumSortOption {
+    id: AlbumSortField;
+    label: string;
+    comparator: (
+        a: library.Album,
+        b: library.Album,
+    ) => number;
+}
+
+/** All available sort options for albums. */
+const ALBUM_SORT_OPTIONS: AlbumSortOption[] = [
+    {
+        id: 'name',
+        label: 'Name',
+        comparator: (a, b) =>
+            a.Name.localeCompare(b.Name),
+    },
+    {
+        id: 'artist',
+        label: 'Artist',
+        comparator: (a, b) => {
+            const cmp = a.ArtistName.localeCompare(
+                b.ArtistName,
+            );
+
+            if (cmp !== 0) return cmp;
+
+            return a.Name.localeCompare(b.Name);
+        },
+    },
+    {
+        id: 'year',
+        label: 'Year',
+        comparator: (a, b) => {
+            // Albums without a year sort last.
+            if (!a.Year && !b.Year) {
+                return a.Name.localeCompare(b.Name);
+            }
+
+            if (!a.Year) return 1;
+            if (!b.Year) return -1;
+
+            const cmp = a.Year - b.Year;
+
+            if (cmp !== 0) return cmp;
+
+            return a.Name.localeCompare(b.Name);
+        },
+    },
+];
+
+type SortDirection = 'asc' | 'desc';
+
 @customElement('cover-grid')
 export class CoverGrid extends LitElement {
     private libraryCtrl = new LibraryController(this);
@@ -186,14 +247,34 @@ export class CoverGrid extends LitElement {
         const term =
             this.searchCtrl.term.toLowerCase();
 
-        if (!term) return this.albums;
+        let albums: library.Album[];
 
-        return this.albums.filter(
-            (a) =>
-                a.Name.toLowerCase().includes(term) ||
-                a.ArtistName.toLowerCase().includes(
-                    term,
-                ),
+        if (!term) {
+            albums = this.albums;
+        } else {
+            albums = this.albums.filter(
+                (a) =>
+                    a.Name.toLowerCase().includes(
+                        term,
+                    ) ||
+                    a.ArtistName.toLowerCase().includes(
+                        term,
+                    ),
+            );
+        }
+
+        // Apply sort.
+        const opt = ALBUM_SORT_OPTIONS.find(
+            (o) => o.id === this.sortField,
+        );
+
+        if (!opt) return albums;
+
+        const dir =
+            this.sortDirection === 'asc' ? 1 : -1;
+
+        return [...albums].sort(
+            (a, b) => dir * opt.comparator(a, b),
         );
     }
 
@@ -213,6 +294,120 @@ export class CoverGrid extends LitElement {
             flex-direction: column;
             overflow: hidden;
             position: relative;
+        }
+
+        /* ========================================
+         * Sort toolbar
+         * ======================================== */
+
+        .sort-toolbar {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 8px;
+            font-size: 12px;
+            color: var(
+                --yj-text-secondary,
+                #b3b3b3
+            );
+            border-bottom: 1px solid
+                var(--yj-border-subtle, #333);
+            flex-shrink: 0;
+            user-select: none;
+        }
+
+        .sort-anchor {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            cursor: pointer;
+            padding: 2px 6px;
+            border-radius: 4px;
+            background: transparent;
+            border: none;
+            color: inherit;
+            font: inherit;
+        }
+
+        .sort-anchor:hover {
+            background: var(
+                --yj-hover-overlay,
+                rgba(255, 255, 255, 0.05)
+            );
+        }
+
+        .sort-anchor .sort-label {
+            color: var(--yj-text-primary, #fff);
+        }
+
+        .sort-dir-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 24px;
+            height: 24px;
+            cursor: pointer;
+            border: none;
+            border-radius: 4px;
+            background: transparent;
+            color: var(
+                --yj-text-secondary,
+                #b3b3b3
+            );
+            font-size: 12px;
+            padding: 0;
+        }
+
+        .sort-dir-btn:hover {
+            background: var(
+                --yj-hover-overlay,
+                rgba(255, 255, 255, 0.05)
+            );
+            color: var(--yj-text-primary, #fff);
+        }
+
+        .sort-dropdown-panel {
+            background-color: var(
+                --yj-bg-elevated,
+                #343a40
+            );
+            border: 1px solid
+                var(--yj-border, #444);
+            border-radius: 6px;
+            padding: 4px 0;
+            box-shadow: 0 8px 24px
+                rgba(0, 0, 0, 0.5);
+            min-width: 140px;
+        }
+
+        .sort-dropdown-panel wa-dropdown-item {
+            cursor: pointer;
+            --wa-color-text-normal: var(
+                --yj-text-primary,
+                #fff
+            );
+            font-size: 13px;
+        }
+
+        .sort-dropdown-panel
+            wa-dropdown-item:hover {
+            background-color: var(
+                --yj-hover-overlay,
+                rgba(255, 255, 255, 0.1)
+            );
+        }
+
+        .sort-dropdown-panel
+            wa-dropdown-item.active-sort {
+            color: var(--yj-accent, #ffd43b);
+            --wa-color-text-normal: var(
+                --yj-accent,
+                #ffd43b
+            );
+        }
+
+        #sort-dropdown {
+            z-index: 200;
         }
 
         .grid-scroll-container {
@@ -438,6 +633,21 @@ export class CoverGrid extends LitElement {
     @state()
     private playlistFilePaths: string[] = [];
 
+    /** Current album sort field. */
+    @state()
+    private sortField: AlbumSortField = 'name';
+
+    /** Current sort direction. */
+    @state()
+    private sortDirection: SortDirection = 'asc';
+
+    /** Whether the sort dropdown popup is open. */
+    @state()
+    private sortDropdownOpen = false;
+
+    @query('#sort-dropdown')
+    private sortDropdownPopup!: HTMLElement;
+
     /** ID of the album whose dropdown is currently open, or null. */
     @state()
     private expandedAlbumId: number | null = null;
@@ -532,11 +742,134 @@ export class CoverGrid extends LitElement {
         null;
 
     /* ====================================================================
+     * Sort controls
+     * ==================================================================== */
+
+    /** Restore sort preferences from localStorage. */
+    private restoreSortPreferences() {
+        try {
+            const field = localStorage.getItem(
+                SORT_FIELD_KEY,
+            );
+            const dir =
+                localStorage.getItem(SORT_DIR_KEY);
+
+            if (
+                field &&
+                ALBUM_SORT_OPTIONS.some(
+                    (o) => o.id === field,
+                )
+            ) {
+                this.sortField =
+                    field as AlbumSortField;
+            }
+
+            if (dir === 'asc' || dir === 'desc') {
+                this.sortDirection = dir;
+            }
+        } catch {
+            // Ignore storage errors.
+        }
+    }
+
+    /** Persist sort preferences to localStorage. */
+    private saveSortPreferences() {
+        try {
+            localStorage.setItem(
+                SORT_FIELD_KEY,
+                this.sortField,
+            );
+            localStorage.setItem(
+                SORT_DIR_KEY,
+                this.sortDirection,
+            );
+        } catch {
+            // Ignore storage errors.
+        }
+    }
+
+    /** Set the sort field from the dropdown. */
+    private onSortDropdownSelect(
+        field: AlbumSortField,
+    ) {
+        this.sortField = field;
+        this.saveSortPreferences();
+        this.closeSortDropdown();
+    }
+
+    /** Toggle sort direction. */
+    private toggleSortDirection() {
+        this.sortDirection =
+            this.sortDirection === 'asc'
+                ? 'desc'
+                : 'asc';
+        this.saveSortPreferences();
+    }
+
+    private toggleSortDropdown() {
+        if (this.sortDropdownOpen) {
+            this.closeSortDropdown();
+        } else {
+            this.openSortDropdown();
+        }
+    }
+
+    private async openSortDropdown() {
+        this.sortDropdownOpen = true;
+
+        await this.updateComplete;
+
+        const popup = this.sortDropdownPopup;
+        const anchor =
+            this.shadowRoot?.querySelector(
+                '.sort-anchor',
+            );
+
+        if (popup && anchor) {
+            (popup as any).anchor = anchor;
+            (popup as any).active = true;
+        }
+    }
+
+    private closeSortDropdown() {
+        if (!this.sortDropdownOpen) return;
+
+        this.sortDropdownOpen = false;
+
+        const popup = this.sortDropdownPopup;
+
+        if (popup) {
+            (popup as any).active = false;
+        }
+    }
+
+    private sortDropdownCloseHandler = (
+        e: MouseEvent,
+    ) => {
+        if (!this.sortDropdownOpen) return;
+
+        const path = e.composedPath();
+        const popup = this.sortDropdownPopup;
+
+        if (popup && path.includes(popup)) return;
+
+        const anchor =
+            this.shadowRoot?.querySelector(
+                '.sort-anchor',
+            );
+
+        if (anchor && path.includes(anchor)) return;
+
+        this.closeSortDropdown();
+    };
+
+    /* ====================================================================
      * Lifecycle
      * ==================================================================== */
 
     override connectedCallback() {
         super.connectedCallback();
+        this.restoreSortPreferences();
         this.loadAlbums();
         this.cancelScanComplete = EventsOn(
             Events.LibraryScanComplete,
@@ -553,6 +886,10 @@ export class CoverGrid extends LitElement {
         document.addEventListener(
             'mousedown',
             this.mousedownCloseHandler,
+        );
+        document.addEventListener(
+            'mousedown',
+            this.sortDropdownCloseHandler,
         );
 
         // error events do not bubble — use capture
@@ -578,6 +915,10 @@ export class CoverGrid extends LitElement {
         document.removeEventListener(
             'mousedown',
             this.mousedownCloseHandler,
+        );
+        document.removeEventListener(
+            'mousedown',
+            this.sortDropdownCloseHandler,
         );
         this.removeEventListener(
             'error',
@@ -2765,6 +3106,90 @@ export class CoverGrid extends LitElement {
     };
 
     /* ====================================================================
+     * Render: sort toolbar
+     * ==================================================================== */
+
+    /** Render the sort toolbar above the grid. */
+    private renderSortToolbar() {
+        const activeOpt = ALBUM_SORT_OPTIONS.find(
+            (o) => o.id === this.sortField,
+        );
+
+        const label = activeOpt
+            ? activeOpt.label
+            : 'Name';
+
+        const dirIcon =
+            this.sortDirection === 'asc'
+                ? 'arrow-up-short-wide'
+                : 'arrow-down-wide-short';
+
+        return html`
+            <div class="sort-toolbar">
+                <span>Sort:</span>
+                <button
+                    class="sort-anchor"
+                    @click=${() =>
+                        this.toggleSortDropdown()}
+                >
+                    <span class="sort-label">
+                        ${label}
+                    </span>
+                    <wa-icon
+                        name="chevron-down"
+                    ></wa-icon>
+                </button>
+                <button
+                    class="sort-dir-btn"
+                    title="${this.sortDirection === 'asc' ? 'Ascending' : 'Descending'}"
+                    @click=${() =>
+                        this.toggleSortDirection()}
+                >
+                    <wa-icon
+                        name=${dirIcon}
+                    ></wa-icon>
+                </button>
+            </div>
+            ${this.renderSortDropdownPopup()}
+        `;
+    }
+
+    /** Render the sort dropdown popup. */
+    private renderSortDropdownPopup() {
+        return html`
+            <wa-popup
+                id="sort-dropdown"
+                placement="bottom-start"
+                flip
+                shift
+                .active=${this.sortDropdownOpen}
+            >
+                ${this.sortDropdownOpen
+                    ? html`
+                          <div
+                              class="sort-dropdown-panel"
+                          >
+                              ${ALBUM_SORT_OPTIONS.map(
+                                  (opt) => html`
+                                      <wa-dropdown-item
+                                          class=${this.sortField === opt.id ? 'active-sort' : ''}
+                                          @click=${() =>
+                                              this.onSortDropdownSelect(
+                                                  opt.id,
+                                              )}
+                                      >
+                                          ${opt.label}
+                                      </wa-dropdown-item>
+                                  `,
+                              )}
+                          </div>
+                      `
+                    : nothing}
+            </wa-popup>
+        `;
+    }
+
+    /* ====================================================================
      * Rendering helpers
      * ==================================================================== */
 
@@ -2934,6 +3359,7 @@ export class CoverGrid extends LitElement {
             : this.renderSingleGrid();
 
         return html`
+            ${this.renderSortToolbar()}
             ${this.searchCtrl.term
                 ? html`<div class="search-indicator">
                       Showing results for
