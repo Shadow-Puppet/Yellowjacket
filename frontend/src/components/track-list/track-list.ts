@@ -130,7 +130,9 @@ export class TrackList extends LitElement implements SelectionHost {
     private resizingColumn: number | null = null;
     private resizeStartX = 0;
     private resizeStartWidths: number[] = [];
-    private resizeObserver: ResizeObserver | null = null;
+    private resizeObserver: ResizeObserver | null =
+        null;
+
     private flowLayout = flow();
     private hasRestoredScroll = false;
 
@@ -192,7 +194,11 @@ export class TrackList extends LitElement implements SelectionHost {
         const positions: number[] = [];
         let cumulative = padding;
 
-        for (let i = 0; i < this.columnWidths.length - 1; i++) {
+        for (
+            let i = 0;
+            i < this.columnWidths.length - 1;
+            i++
+        ) {
             cumulative += this.columnWidths[i] ?? 0;
             positions.push(cumulative);
         }
@@ -429,30 +435,122 @@ export class TrackList extends LitElement implements SelectionHost {
     private onColResizeMove = (e: MouseEvent) => {
         if (this.resizingColumn === null) return;
 
+        const container = this.clientWidth;
+
+        if (container <= 0) return;
+
         const delta = e.clientX - this.resizeStartX;
         const col = this.resizingColumn;
-        const nextCol = col + 1;
-        const startLeft = this.resizeStartWidths[col] ?? 0;
-        const startRight = this.resizeStartWidths[nextCol] ?? 0;
-        const total = startLeft + startRight;
+        const starts = this.resizeStartWidths;
 
-        let newLeft = startLeft + delta;
-        let newRight = startRight - delta;
+        // Sum of columns to the left (unchanged).
+        let leftSum = 0;
 
-        if (newLeft < MIN_COLUMN_WIDTH) {
-            newLeft = MIN_COLUMN_WIDTH;
-            newRight = total - MIN_COLUMN_WIDTH;
+        for (let i = 0; i < col; i++) {
+            leftSum += starts[i] ?? 0;
         }
 
-        if (newRight < MIN_COLUMN_WIDTH) {
-            newRight = MIN_COLUMN_WIDTH;
-            newLeft = total - MIN_COLUMN_WIDTH;
+        // Count and sum of columns to the right.
+        const rightCount =
+            starts.length - col - 1;
+
+        let rightSum = 0;
+
+        for (
+            let i = col + 1;
+            i < starts.length;
+            i++
+        ) {
+            rightSum += starts[i] ?? 0;
         }
 
-        const updated = [...this.resizeStartWidths];
+        // Clamp dragged column: leave at least
+        // MIN_COLUMN_WIDTH for each right column.
+        const maxWidth =
+            container -
+            leftSum -
+            rightCount * MIN_COLUMN_WIDTH;
 
-        updated[col] = newLeft;
-        updated[nextCol] = newRight;
+        let newWidth = Math.max(
+            MIN_COLUMN_WIDTH,
+            Math.min(
+                maxWidth,
+                (starts[col] ?? 0) + delta,
+            ),
+        );
+
+        const updated: number[] = new Array(
+            starts.length,
+        );
+
+        // Left columns keep starting widths.
+        for (let i = 0; i < col; i++) {
+            updated[i] = starts[i] ?? 0;
+        }
+
+        updated[col] = newWidth;
+
+        // Right columns always fill remaining space
+        // proportionally (handles both grow & shrink).
+        const availableForRight =
+            container - leftSum - newWidth;
+
+        if (rightCount === 0 || rightSum <= 0) {
+            // Nothing to distribute.
+        } else {
+            const scale =
+                availableForRight / rightSum;
+
+            let roundedSum = 0;
+            let maxIdx = -1;
+            let maxVal = 0;
+
+            for (
+                let i = col + 1;
+                i < starts.length;
+                i++
+            ) {
+                const scaled = Math.max(
+                    MIN_COLUMN_WIDTH,
+                    Math.round(
+                        (starts[i] ?? 0) * scale,
+                    ),
+                );
+
+                updated[i] = scaled;
+                roundedSum += scaled;
+
+                if (scaled > maxVal) {
+                    maxVal = scaled;
+                    maxIdx = i;
+                }
+            }
+
+            // Fix rounding remainder on the widest
+            // right column.
+            const diff =
+                availableForRight - roundedSum;
+
+            if (diff !== 0 && maxIdx >= 0) {
+                updated[maxIdx] =
+                    (updated[maxIdx] ?? 0) + diff;
+            }
+
+            // Re-derive dragged width so total is
+            // exactly container.
+            newWidth =
+                container -
+                leftSum -
+                roundedSum -
+                diff;
+
+            if (newWidth < MIN_COLUMN_WIDTH) {
+                newWidth = MIN_COLUMN_WIDTH;
+            }
+
+            updated[col] = newWidth;
+        }
+
         this.columnWidths = updated;
     };
 
@@ -660,9 +758,11 @@ export class TrackList extends LitElement implements SelectionHost {
         document.addEventListener('mousemove', this.onColResizeMove);
         document.addEventListener('mouseup', this.onColResizeEnd);
 
-        this.resizeObserver = new ResizeObserver(() => {
-            this.onHostResize();
-        });
+        this.resizeObserver = new ResizeObserver(
+            () => {
+                this.onHostResize();
+            },
+        );
 
         this.resizeObserver.observe(this);
     }
