@@ -94,7 +94,7 @@ export namespace library {
 	    TrackNumber: number;
 	    DiscNumber: number;
 	    Album: string;
-	    Genre: string;
+	    Genre: string[];
 	    Year: number;
 	    Composer: string;
 	    FileType: string;

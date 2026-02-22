@@ -5,3 +5,9 @@ CREATE TABLE IF NOT EXISTS artist_credit_artist (
   FOREIGN KEY(artist_id) REFERENCES artists(id),
   FOREIGN KEY(credit_id) REFERENCES artist_credit(id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_artist_credit_artist_artist_id
+    ON artist_credit_artist(artist_id);
+
+CREATE INDEX IF NOT EXISTS idx_artist_credit_artist_credit_id
+    ON artist_credit_artist(credit_id);

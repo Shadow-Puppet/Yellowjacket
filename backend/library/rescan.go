@@ -102,6 +102,12 @@ func (l *Library) clearLibraryTables() error {
 		)
 	}
 
+	if err := txq.DeleteAllRecordingGenres(l.ctx); err != nil {
+		return fmt.Errorf(
+			"could not clear recording genres: %w", err,
+		)
+	}
+
 	if err := txq.DeleteAllReleaseGroupRecordings(l.ctx); err != nil {
 		return fmt.Errorf(
 			"could not clear release group recordings: %w", err,
@@ -149,6 +155,12 @@ func (l *Library) clearLibraryTables() error {
 	if err := txq.DeleteAllArtists(l.ctx); err != nil {
 		return fmt.Errorf(
 			"could not clear artists: %w", err,
+		)
+	}
+
+	if err := txq.DeleteAllGenres(l.ctx); err != nil {
+		return fmt.Errorf(
+			"could not clear genres: %w", err,
 		)
 	}
 

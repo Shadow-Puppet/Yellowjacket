@@ -44,7 +44,7 @@ export const COLUMN_DEFS: Record<string, ColumnDef> = {
     genre: {
         id: 'genre',
         label: 'Genre',
-        accessor: (t) => t.Genre,
+        accessor: (t) => (t.Genre ?? []).join(', '),
         defaultWidth: '120px',
     },
     year: {

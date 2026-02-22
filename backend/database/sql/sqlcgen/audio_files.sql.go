@@ -199,7 +199,13 @@ SELECT
     r.track_number,
     r.disc_number,
     COALESCE(rg.name, '') AS album,
-    COALESCE(r.genre, '') AS genre,
+    CAST(COALESCE(
+        (SELECT GROUP_CONCAT(g.name, '||')
+         FROM recording_genres rg_sub
+         JOIN genres g ON rg_sub.genre_id = g.id
+         WHERE rg_sub.recording_id = r.id),
+        ''
+    ) AS TEXT) AS genre,
     COALESCE(r.year, 0) AS year,
     COALESCE(r.composer, '') AS composer,
     COALESCE(ft.extension, '') AS file_type

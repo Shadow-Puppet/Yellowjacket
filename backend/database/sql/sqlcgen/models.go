@@ -45,6 +45,11 @@ type FileType struct {
 	Extension string
 }
 
+type Genre struct {
+	ID   int64
+	Name string
+}
+
 type PlayerState struct {
 	ID                  int64
 	Volume              int64
@@ -93,6 +98,12 @@ type Recording struct {
 	Composer       sql.NullString
 	Lyrics         sql.NullString
 	Comment        sql.NullString
+}
+
+type RecordingGenre struct {
+	ID          int64
+	RecordingID int64
+	GenreID     int64
 }
 
 type ReleaseGroup struct {

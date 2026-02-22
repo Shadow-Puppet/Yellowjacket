@@ -7,3 +7,6 @@ CREATE TABLE IF NOT EXISTS audio_files (
   FOREIGN KEY(file_type_id) REFERENCES file_types(id),
   FOREIGN KEY(recording_id) REFERENCES recordings(id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_audio_files_recording_id
+    ON audio_files(recording_id);

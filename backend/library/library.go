@@ -43,6 +43,7 @@ type entityCache struct {
 	artists       map[string]sqlcgen.Artist
 	releaseGroups map[string]sqlcgen.ReleaseGroup
 	coverArt      map[string]sqlcgen.CoverArt
+	genres        map[string]sqlcgen.Genre
 	// linkedCredits tracks artist-credit-artist links already created
 	// so we skip the duplicate INSERT.  Key is "artistID:creditID".
 	linkedCredits map[string]struct{}
@@ -54,6 +55,7 @@ func newEntityCache() *entityCache {
 		artists:       make(map[string]sqlcgen.Artist),
 		releaseGroups: make(map[string]sqlcgen.ReleaseGroup),
 		coverArt:      make(map[string]sqlcgen.CoverArt),
+		genres:        make(map[string]sqlcgen.Genre),
 		linkedCredits: make(map[string]struct{}),
 	}
 }
@@ -856,7 +858,10 @@ func (l *Library) processMetadata(
 		)
 	}
 
-	// 6. Link recording to release group.
+	// 6. Link recording to genres.
+	l.linkRecordingGenres(q, cache, tags.Genre, recording.ID)
+
+	// 7. Link recording to release group.
 	if releaseGroupID.Valid {
 		_, err = q.CreateReleaseGroupRecording(
 			l.ctx,
@@ -988,6 +993,67 @@ func (l *Library) cachedLinkArtist(
 	)
 
 	cache.linkedCredits[linkKey] = struct{}{}
+}
+
+// cachedUpsertGenre returns the genre for the given name, using
+// the cache when possible.
+func (l *Library) cachedUpsertGenre(
+	q *sqlcgen.Queries,
+	cache *entityCache,
+	name string,
+) (sqlcgen.Genre, error) {
+	if cached, ok := cache.genres[name]; ok {
+		return cached, nil
+	}
+
+	genre, err := q.UpsertGenre(l.ctx, name)
+	if err != nil {
+		return sqlcgen.Genre{}, err
+	}
+
+	cache.genres[name] = genre
+
+	return genre, nil
+}
+
+// linkRecordingGenres parses the raw genre string, upserts each
+// individual genre, and creates the recording-genre associations.
+func (l *Library) linkRecordingGenres(
+	q *sqlcgen.Queries,
+	cache *entityCache,
+	rawGenre string,
+	recordingID int64,
+) {
+	genres := metadata.ParseGenres(rawGenre)
+
+	for _, name := range genres {
+		genre, err := l.cachedUpsertGenre(q, cache, name)
+		if err != nil {
+			l.logger.Warn(
+				"could not upsert genre",
+				"genre", name,
+				"err", err,
+			)
+
+			continue
+		}
+
+		err = q.CreateRecordingGenre(
+			l.ctx,
+			sqlcgen.CreateRecordingGenreParams{
+				RecordingID: recordingID,
+				GenreID:     genre.ID,
+			},
+		)
+		if err != nil {
+			l.logger.Warn(
+				"could not link recording to genre",
+				"genre", name,
+				"recordingID", recordingID,
+				"err", err,
+			)
+		}
+	}
 }
 
 // resolveAlbumArtistCredit returns the album artist credit ID.

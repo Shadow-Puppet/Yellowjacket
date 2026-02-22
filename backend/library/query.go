@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 // Sentinel errors for library queries.
@@ -22,10 +23,24 @@ type Track struct {
 	TrackNumber int64
 	DiscNumber  int64
 	Album       string
-	Genre       string
+	Genre       []string
 	Year        int64
 	Composer    string
 	FileType    string
+}
+
+// genreDelimiter is the separator used by GROUP_CONCAT in the
+// GetAllTracksWithFullMetadata query.
+const genreDelimiter = "||"
+
+// splitGenres splits a GROUP_CONCAT genre string into individual
+// genre names.  An empty string returns nil.
+func splitGenres(concatenated string) []string {
+	if concatenated == "" {
+		return nil
+	}
+
+	return strings.Split(concatenated, genreDelimiter)
 }
 
 // Album represents an album for the cover grid display.
@@ -75,7 +90,7 @@ func (l *Library) GetAllTracks() ([]Track, error) {
 			TrackNumber: row.TrackNumber.Int64,
 			DiscNumber:  row.DiscNumber.Int64,
 			Album:       row.Album,
-			Genre:       row.Genre,
+			Genre:       splitGenres(row.Genre),
 			Year:        row.Year,
 			Composer:    row.Composer,
 			FileType:    row.FileType,

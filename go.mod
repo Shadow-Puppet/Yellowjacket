@@ -11,6 +11,7 @@ require (
 	github.com/wailsapp/wails/v2 v2.10.2
 	golang.org/x/image v0.12.0
 	golang.org/x/sync v0.19.0
+	golang.org/x/text v0.34.0
 	modernc.org/sqlite v1.45.0
 )
 
@@ -349,7 +350,6 @@ require (
 	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/telemetry v0.0.0-20260209163413-e7419c687ee4 // indirect
 	golang.org/x/term v0.40.0 // indirect
-	golang.org/x/text v0.34.0 // indirect
 	golang.org/x/tools v0.42.0 // indirect
 	golang.org/x/vuln v1.1.4 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20250707201910-8d1bb00bc6a7 // indirect

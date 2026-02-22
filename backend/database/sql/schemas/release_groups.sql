@@ -9,3 +9,9 @@ CREATE TABLE IF NOT EXISTS release_groups (
   FOREIGN KEY(cover_art_id) REFERENCES cover_art(id),
   FOREIGN KEY(album_artist_credit_id) REFERENCES artist_credit(id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_release_groups_cover_art_id
+    ON release_groups(cover_art_id);
+
+CREATE INDEX IF NOT EXISTS idx_release_groups_album_artist_credit_id
+    ON release_groups(album_artist_credit_id);
