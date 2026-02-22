@@ -50,6 +50,7 @@ export const Events = {
 
     // Config events
     ThemeConfigChanged: "ThemeConfigChanged",
+    TrackListConfigChanged: "TrackListConfigChanged",
 
     // Library events
     LibraryScanStarted: "LibraryScanStarted",

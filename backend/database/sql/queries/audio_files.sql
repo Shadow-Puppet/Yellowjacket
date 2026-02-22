@@ -71,6 +71,26 @@ LEFT JOIN cover_art ca ON rg.cover_art_id = ca.id
 WHERE af.file_path = ?
 LIMIT 1;
 
+-- name: GetAllTracksWithFullMetadata :many
+SELECT
+    af.file_path,
+    af.length_milliseconds,
+    COALESCE(r.name, '') AS title,
+    COALESCE(ac.text, '') AS artist_name,
+    r.track_number,
+    r.disc_number,
+    COALESCE(rg.name, '') AS album,
+    COALESCE(r.genre, '') AS genre,
+    COALESCE(r.year, 0) AS year,
+    COALESCE(r.composer, '') AS composer,
+    COALESCE(ft.extension, '') AS file_type
+FROM audio_files af
+JOIN recordings r ON af.recording_id = r.id
+JOIN artist_credit ac ON r.artist_credit_id = ac.id
+LEFT JOIN release_group_recordings rgr ON r.id = rgr.recording_id
+LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
+LEFT JOIN file_types ft ON af.file_type_id = ft.id;
+
 -- name: DeleteAllAudioFiles :exec
 DELETE FROM audio_files;
 

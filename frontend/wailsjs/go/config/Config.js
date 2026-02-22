@@ -18,6 +18,10 @@ export function GetThemeBackgroundShade() {
   return window['go']['config']['Config']['GetThemeBackgroundShade']();
 }
 
+export function GetTrackListColumns() {
+  return window['go']['config']['Config']['GetTrackListColumns']();
+}
+
 export function Load() {
   return window['go']['config']['Config']['Load']();
 }
@@ -44,6 +48,10 @@ export function SetThemeAccentColor(arg1) {
 
 export function SetThemeBackgroundShade(arg1) {
   return window['go']['config']['Config']['SetThemeBackgroundShade'](arg1);
+}
+
+export function SetTrackListColumns(arg1) {
+  return window['go']['config']['Config']['SetTrackListColumns'](arg1);
 }
 
 export function Validate() {

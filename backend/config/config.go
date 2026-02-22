@@ -16,16 +16,18 @@ import (
 	"yellowjacket/backend/library"
 	"yellowjacket/backend/system"
 	"yellowjacket/backend/theme"
+	"yellowjacket/backend/tracklist"
 )
 
 // Config represents the application configuration.
 type Config struct {
-	ctx      context.Context
-	logger   *slog.Logger
-	filePath string          // required
-	Library  *library.Config `toml:"Library"`
-	Theme    *theme.Config   `toml:"Theme"`
-	Window   *WindowConfig   `toml:"Window"`
+	ctx       context.Context
+	logger    *slog.Logger
+	filePath  string            // required
+	Library   *library.Config   `toml:"Library"`
+	Theme     *theme.Config     `toml:"Theme"`
+	Window    *WindowConfig     `toml:"Window"`
+	TrackList *tracklist.Config `toml:"TrackList"`
 }
 
 // NewConfig creates a new config by loading it from disk.
@@ -66,6 +68,12 @@ func (c *Config) Validate() error {
 
 	if c.Theme != nil {
 		if err := c.Theme.Validate(); err != nil {
+			configErrs = errors.Join(configErrs, err)
+		}
+	}
+
+	if c.TrackList != nil {
+		if err := c.TrackList.Validate(); err != nil {
 			configErrs = errors.Join(configErrs, err)
 		}
 	}
@@ -160,6 +168,12 @@ func (c *Config) applyDefaults() {
 	}
 
 	c.Theme.ApplyDefaults()
+
+	if c.TrackList == nil {
+		c.TrackList = &tracklist.Config{}
+	}
+
+	c.TrackList.ApplyDefaults()
 }
 
 // SetContext sets the Wails runtime context for event emission.
@@ -354,6 +368,71 @@ func (c *Config) emitThemeChanged() {
 		map[string]any{
 			"AccentColor":     c.Theme.AccentColor,
 			"BackgroundShade": string(c.Theme.BackgroundShade),
+		},
+	)
+}
+
+// GetTrackListColumns returns the configured track-list columns.
+func (c *Config) GetTrackListColumns() []tracklist.Column {
+	if c.TrackList == nil {
+		return tracklist.DefaultColumns
+	}
+
+	return c.TrackList.Columns
+}
+
+// SetTrackListColumns validates and saves a new column layout.
+func (c *Config) SetTrackListColumns(
+	columns []tracklist.Column,
+) error {
+	if c.TrackList == nil {
+		c.TrackList = &tracklist.Config{}
+	}
+
+	c.TrackList.Columns = columns
+
+	if err := c.TrackList.Validate(); err != nil {
+		return fmt.Errorf(
+			"invalid track-list columns: %w", err,
+		)
+	}
+
+	if err := c.Save(); err != nil {
+		return fmt.Errorf(
+			"could not save config: %w", err,
+		)
+	}
+
+	c.emitTrackListChanged()
+
+	c.logger.Info(
+		"track-list columns updated",
+		"count", len(columns),
+	)
+
+	return nil
+}
+
+// emitTrackListChanged sends the TrackListConfigChanged event
+// to the frontend.
+func (c *Config) emitTrackListChanged() {
+	if c.ctx == nil || c.TrackList == nil {
+		return
+	}
+
+	cols := make([]map[string]any, 0, len(c.TrackList.Columns))
+
+	for _, col := range c.TrackList.Columns {
+		cols = append(cols, map[string]any{
+			"id": string(col.ID),
+		})
+	}
+
+	runtime.EventsEmit(
+		c.ctx,
+		events.TrackListConfigChanged,
+		map[string]any{
+			"columns": cols,
 		},
 	)
 }

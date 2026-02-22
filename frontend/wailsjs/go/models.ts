@@ -93,6 +93,11 @@ export namespace library {
 	    FilePath: string;
 	    TrackNumber: number;
 	    DiscNumber: number;
+	    Album: string;
+	    Genre: string;
+	    Year: number;
+	    Composer: string;
+	    FileType: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Track(source);
@@ -106,6 +111,11 @@ export namespace library {
 	        this.FilePath = source["FilePath"];
 	        this.TrackNumber = source["TrackNumber"];
 	        this.DiscNumber = source["DiscNumber"];
+	        this.Album = source["Album"];
+	        this.Genre = source["Genre"];
+	        this.Year = source["Year"];
+	        this.Composer = source["Composer"];
+	        this.FileType = source["FileType"];
 	    }
 	}
 
@@ -192,6 +202,23 @@ export namespace playlist {
 		    }
 		    return a;
 		}
+	}
+
+}
+
+export namespace tracklist {
+	
+	export class Column {
+	    id: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Column(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	    }
 	}
 
 }

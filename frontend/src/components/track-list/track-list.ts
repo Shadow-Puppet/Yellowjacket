@@ -2,14 +2,19 @@ import { library } from '@go/models';
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state, query } from 'lit/decorators.js';
 import { EventsOn } from '@runtime/runtime';
-import { formatMilliseconds } from '@utils/time';
 import { SelectionController } from '@utils/selection-controller';
 import type { SelectionHost } from '@utils/selection-controller';
 import { PlayerController } from '@store/controllers/player-controller';
 import { SearchController } from '@store/controllers/search-controller';
+import { TrackListController } from '@store/controllers/tracklist-controller';
 import { queueStore } from '@store/queue-store';
 import { LibraryController } from '@store/controllers/library-controller';
 import { Events } from '../../events';
+import {
+    COLUMN_DEFS,
+    DEFAULT_COLUMN_IDS,
+} from './columns';
+import type { ColumnDef } from './columns';
 import {
     setDragPayload,
     emitDragActive,
@@ -32,17 +37,41 @@ import type { PlaylistPicker } from '@components/playlist-picker/playlist-picker
 
 const COLUMN_STORAGE_KEY = 'track-list-column-widths';
 const MIN_COLUMN_WIDTH = 50;
-const DEFAULT_DURATION_WIDTH = 80;
-const COLUMN_COUNT = 3;
+const DEFAULT_FIXED_WIDTH = 80;
 
 @customElement('track-list')
 export class TrackList extends LitElement implements SelectionHost {
     private player = new PlayerController(this);
     private libraryCtrl = new LibraryController(this);
     private searchCtrl = new SearchController(this);
+    private trackListCtrl = new TrackListController(this);
     private selection = new SelectionController(this);
     private cancelScanComplete?: () => void;
     private lastSearchTerm = '';
+
+    /**
+     * Resolved column definitions for the currently configured
+     * column IDs.  Falls back to defaults for any unknown ID.
+     */
+    private get activeColumns(): ColumnDef[] {
+        const ids = this.trackListCtrl.columnIds;
+
+        if (!ids || ids.length === 0) {
+            return DEFAULT_COLUMN_IDS
+                .map((id) => COLUMN_DEFS[id])
+                .filter(
+                    (d): d is ColumnDef =>
+                        d !== undefined,
+                );
+        }
+
+        return ids
+            .map((id) => COLUMN_DEFS[id])
+            .filter(
+                (d): d is ColumnDef =>
+                    d !== undefined,
+            );
+    }
 
     @state()
     private tracks: library.Track[] = [];
@@ -114,14 +143,15 @@ export class TrackList extends LitElement implements SelectionHost {
 
         if (!term) return this.tracks;
 
-        return this.tracks.filter(
-            (t) =>
-                t.TrackName.toLowerCase().includes(
-                    term,
-                ) ||
-                t.ArtistName.toLowerCase().includes(
-                    term,
-                ),
+        const cols = this.activeColumns;
+
+        return this.tracks.filter((t) =>
+            cols.some((col) =>
+                col
+                    .accessor(t)
+                    .toLowerCase()
+                    .includes(term),
+            ),
         );
     }
 
@@ -142,8 +172,12 @@ export class TrackList extends LitElement implements SelectionHost {
     }
 
     private get gridTemplateColumns(): string {
+        const cols = this.activeColumns;
+
         if (this.columnWidths.length === 0) {
-            return '1fr 1fr 80px';
+            return cols
+                .map((c) => c.defaultWidth)
+                .join(' ');
         }
 
         return this.columnWidths
@@ -183,36 +217,103 @@ export class TrackList extends LitElement implements SelectionHost {
 
         if (totalWidth <= 0) return;
 
-        const remaining = totalWidth - DEFAULT_DURATION_WIDTH;
-        const half = Math.floor(remaining / 2);
+        const cols = this.activeColumns;
 
-        this.columnWidths = [
-            half,
-            remaining - half,
-            DEFAULT_DURATION_WIDTH,
-        ];
+        if (cols.length === 0) return;
+
+        // Fixed-width columns use their pixel default;
+        // flex columns share the remainder equally.
+        const fixedTotal = cols.reduce((sum, c) => {
+            if (c.defaultWidth.endsWith('px')) {
+                return (
+                    sum +
+                    parseInt(c.defaultWidth, 10)
+                );
+            }
+
+            return sum;
+        }, 0);
+
+        const flexCols = cols.filter(
+            (c) => !c.defaultWidth.endsWith('px'),
+        );
+
+        const remaining = Math.max(
+            0,
+            totalWidth - fixedTotal,
+        );
+
+        const perFlex =
+            flexCols.length > 0
+                ? Math.floor(
+                      remaining / flexCols.length,
+                  )
+                : DEFAULT_FIXED_WIDTH;
+
+        const raw = cols.map((c) => {
+            if (c.defaultWidth.endsWith('px')) {
+                return parseInt(c.defaultWidth, 10);
+            }
+
+            return Math.max(
+                MIN_COLUMN_WIDTH,
+                perFlex,
+            );
+        });
+
+        this.columnWidths = this.normalizeWidths(raw);
     }
 
     private loadColumnWidths(): number[] | null {
         try {
-            const raw = localStorage.getItem(COLUMN_STORAGE_KEY);
+            const raw = localStorage.getItem(
+                COLUMN_STORAGE_KEY,
+            );
 
             if (!raw) return null;
 
             const parsed: unknown = JSON.parse(raw);
 
+            // Support new id-keyed format: Record<string, number>.
             if (
-                !Array.isArray(parsed) ||
-                parsed.length !== COLUMN_COUNT ||
-                !parsed.every(
-                    (v: unknown) =>
-                        typeof v === 'number' && v >= MIN_COLUMN_WIDTH,
-                )
+                parsed !== null &&
+                typeof parsed === 'object' &&
+                !Array.isArray(parsed)
             ) {
-                return null;
+                const map = parsed as Record<
+                    string,
+                    unknown
+                >;
+                const cols = this.activeColumns;
+
+                const widths = cols.map((c) => {
+                    const w = map[c.id];
+
+                    if (
+                        typeof w === 'number' &&
+                        w >= MIN_COLUMN_WIDTH
+                    ) {
+                        return w;
+                    }
+
+                    // Fallback for columns without saved width.
+                    if (
+                        c.defaultWidth.endsWith('px')
+                    ) {
+                        return parseInt(
+                            c.defaultWidth,
+                            10,
+                        );
+                    }
+
+                    return MIN_COLUMN_WIDTH;
+                });
+
+                return this.normalizeWidths(widths);
             }
 
-            return parsed as number[];
+            // Legacy array format — discard on column count mismatch.
+            return null;
         } catch {
             return null;
         }
@@ -220,13 +321,101 @@ export class TrackList extends LitElement implements SelectionHost {
 
     private saveColumnWidths() {
         try {
+            const cols = this.activeColumns;
+
+            const map: Record<string, number> = {};
+
+            cols.forEach((c, i) => {
+                map[c.id] =
+                    this.columnWidths[i] ??
+                    MIN_COLUMN_WIDTH;
+            });
+
             localStorage.setItem(
                 COLUMN_STORAGE_KEY,
-                JSON.stringify(this.columnWidths),
+                JSON.stringify(map),
             );
         } catch {
             // Ignore storage errors.
         }
+    }
+
+    /**
+     * Scale widths so they sum to exactly the container width.
+     * Every column is guaranteed at least MIN_COLUMN_WIDTH.
+     */
+    private normalizeWidths(
+        widths: number[],
+    ): number[] {
+        const container = this.clientWidth;
+
+        if (container <= 0 || widths.length === 0) {
+            return widths;
+        }
+
+        const minTotal =
+            widths.length * MIN_COLUMN_WIDTH;
+
+        // If the container can't even fit minimums,
+        // give every column the minimum.
+        if (container <= minTotal) {
+            return widths.map(
+                () => MIN_COLUMN_WIDTH,
+            );
+        }
+
+        const sum = widths.reduce(
+            (a, b) => a + b,
+            0,
+        );
+
+        if (sum <= 0) {
+            const even = Math.floor(
+                container / widths.length,
+            );
+
+            return widths.map(() =>
+                Math.max(MIN_COLUMN_WIDTH, even),
+            );
+        }
+
+        // Scale proportionally.
+        const scale = container / sum;
+
+        const scaled = widths.map((w) =>
+            Math.max(
+                MIN_COLUMN_WIDTH,
+                Math.round(w * scale),
+            ),
+        );
+
+        // Fix rounding remainder so the total is
+        // exactly containerWidth.
+        const scaledSum = scaled.reduce(
+            (a, b) => a + b,
+            0,
+        );
+
+        const diff = container - scaledSum;
+
+        if (diff !== 0) {
+            // Apply remainder to the widest column.
+            let maxIdx = 0;
+
+            for (let i = 1; i < scaled.length; i++) {
+                if (
+                    (scaled[i] ?? 0) >
+                    (scaled[maxIdx] ?? 0)
+                ) {
+                    maxIdx = i;
+                }
+            }
+
+            scaled[maxIdx] =
+                (scaled[maxIdx] ?? 0) + diff;
+        }
+
+        return scaled;
     }
 
     private onColResizeStart = (e: MouseEvent, columnIndex: number) => {
@@ -285,12 +474,13 @@ export class TrackList extends LitElement implements SelectionHost {
 
     .header-row {
       display: grid;
-      grid-template-columns: var(--grid-cols, 1fr 1fr 80px);
+      grid-template-columns: var(--grid-cols);
       padding: 8px;
       font-weight: bold;
       color: var(--yj-text-primary, #fff);
       border-bottom: 1px solid var(--yj-text-tertiary, #666);
       flex-shrink: 0;
+      overflow: hidden;
     }
 
     .header-cell {
@@ -346,7 +536,7 @@ export class TrackList extends LitElement implements SelectionHost {
 
     .track-row {
       display: grid;
-      grid-template-columns: var(--grid-cols, 1fr 1fr 80px);
+      grid-template-columns: var(--grid-cols);
       font-size: 12px;
       padding: 8px;
       border-bottom: 1px solid var(--yj-border-subtle, #333);
@@ -354,6 +544,7 @@ export class TrackList extends LitElement implements SelectionHost {
       width: 100%;
       cursor: default;
       user-select: none;
+      overflow: hidden;
     }
 
     .track-row > * {
@@ -385,7 +576,7 @@ export class TrackList extends LitElement implements SelectionHost {
       background-color: var(--yj-selection-bg, rgba(100, 160, 255, 0.15));
     }
 
-    .track-name {
+    .cell {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -393,11 +584,8 @@ export class TrackList extends LitElement implements SelectionHost {
       user-select: none;
     }
 
-    .artist-name,
-    .track-length {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+    .cell-right {
+      text-align: right;
     }
 
     #context-menu {
@@ -486,6 +674,16 @@ export class TrackList extends LitElement implements SelectionHost {
     }
 
     override updated(changed: Map<string, unknown>) {
+        // Recompute widths when the column config changes.
+        const colKey = this.trackListCtrl.columnIds.join(
+            ',',
+        );
+
+        if (colKey !== this.previousColumnIds) {
+            this.previousColumnIds = colKey;
+            this.initColumnWidths();
+        }
+
         if (changed.has('columnWidths')) {
             this.style.setProperty(
                 '--grid-cols',
@@ -511,6 +709,7 @@ export class TrackList extends LitElement implements SelectionHost {
     }
 
     private previousHostWidth = 0;
+    private previousColumnIds = '';
 
     private onHostResize() {
         const newWidth = this.clientWidth;
@@ -529,20 +728,8 @@ export class TrackList extends LitElement implements SelectionHost {
             return;
         }
 
-        const oldTotal = this.columnWidths.reduce(
-            (sum, w) => sum + w,
-            0,
-        );
-
-        if (oldTotal <= 0) return;
-
-        const scale = newWidth / oldTotal;
-
-        this.columnWidths = this.columnWidths.map((w) =>
-            Math.max(
-                MIN_COLUMN_WIDTH,
-                Math.round(w * scale),
-            ),
+        this.columnWidths = this.normalizeWidths(
+            this.columnWidths,
         );
 
         this.previousHostWidth = newWidth;
@@ -771,7 +958,9 @@ export class TrackList extends LitElement implements SelectionHost {
         index: number,
     ): unknown => {
         const active = this.isActiveTrack(track);
-        const selected = this.selection.isSelected(track.FilePath);
+        const selected = this.selection.isSelected(
+            track.FilePath,
+        );
 
         const classes = [
             'track-row',
@@ -781,39 +970,49 @@ export class TrackList extends LitElement implements SelectionHost {
             .filter(Boolean)
             .join(' ');
 
+        const cols = this.activeColumns;
+
         return html`
       <div
         class=${classes}
         draggable="true"
         @click=${(e: MouseEvent) =>
                 this.onTrackRowClick(e, track, index)}
-        @dblclick=${() => this.onTrackRowDblClick(track)}
+        @dblclick=${() =>
+                this.onTrackRowDblClick(track)}
         @contextmenu=${(e: MouseEvent) =>
                 this.onTrackContextMenu(e, track)}
         @dragstart=${(e: DragEvent) =>
                 this.onTrackDragStart(e, track)}
         @dragend=${this.onTrackDragEnd}
       >
-        <div class="track-name">${track.TrackName}</div>
-        <div class="artist-name">${track.ArtistName}</div>
-        <div class="track-length">
-          ${formatMilliseconds(track.TrackLength)}
-        </div>
+        ${cols.map(
+                (col) => html`
+            <div class="cell ${col.align === 'right' ? 'cell-right' : ''}">
+              ${col.accessor(track)}
+            </div>
+          `,
+            )}
       </div>
     `;
     };
 
     override render() {
         const visibleTracks = this.filteredTracks;
+        const cols = this.activeColumns;
 
         return html`
       ${this.tracks.length === 0
                 ? html`<p>Loading tracks...</p>`
                 : html`
             <div class="header-row">
-              <div class="header-cell">Track Name</div>
-              <div class="header-cell">Artist</div>
-              <div class="header-cell">Track Length</div>
+              ${cols.map(
+                    (col) => html`
+                <div class="header-cell ${col.align === 'right' ? 'cell-right' : ''}">
+                  ${col.label}
+                </div>
+              `,
+                )}
             </div>
             ${visibleTracks.length === 0
                         ? html`<p class="no-results">

@@ -10,9 +10,14 @@ import {
 } from '@go/config/Config';
 import { DirectoryPicker } from '@go/frontendutil/FrontendUtil';
 import { ThemeController } from '@store/controllers/theme-controller';
+import { TrackListController } from '@store/controllers/tracklist-controller';
 import { Events } from '../../events';
 import type { ConfigFieldChangeEvent } from './config-field';
 import type { BackgroundShade } from '@store/theme-store';
+import {
+    COLUMN_DEFS,
+    ALL_COLUMN_IDS,
+} from '@components/track-list/columns';
 
 import './config-field';
 import './config-section';
@@ -175,6 +180,9 @@ function formatMetricsText(m: ScanMetrics): string {
 export class ConfigPage extends LitElement {
     // --- Theme controller for reading/writing theme state ---
     private themeCtrl = new ThemeController(this);
+
+    // --- Track-list column config controller ---
+    private trackListCtrl = new TrackListController(this);
 
     // --- Library state ---
     @state() private libraryDirectory = '';
@@ -464,6 +472,76 @@ export class ConfigPage extends LitElement {
             flex-direction: column;
             align-items: center;
         }
+
+        /* Track list column configurator */
+        .column-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .column-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5em;
+            padding: 0.5em 0.75em;
+            border-bottom: 1px solid
+                var(--yj-border-subtle, #333);
+            font-size: 0.85em;
+        }
+
+        .column-item:last-child {
+            border-bottom: none;
+        }
+
+        .column-item.enabled {
+            color: var(--yj-text-primary, #fff);
+        }
+
+        .column-item.disabled {
+            color: var(--yj-text-tertiary, #888);
+        }
+
+        .column-toggle {
+            cursor: pointer;
+            accent-color: var(
+                --yj-accent,
+                #ffd43b
+            );
+        }
+
+        .column-label {
+            flex: 1;
+        }
+
+        .column-arrows {
+            display: flex;
+            gap: 0.15em;
+            margin-left: auto;
+        }
+
+        .column-arrow-btn {
+            background: none;
+            border: 1px solid transparent;
+            border-radius: 3px;
+            color: var(--yj-text-tertiary, #888);
+            cursor: pointer;
+            font-size: 0.65em;
+            line-height: 1;
+            padding: 0.2em 0.35em;
+            transition:
+                color 0.15s,
+                border-color 0.15s;
+        }
+
+        .column-arrow-btn:hover {
+            color: var(--yj-text-primary, #fff);
+            border-color: var(
+                --yj-border-subtle,
+                #333
+            );
+        }
+
     `;
 
     // ===================================================================
@@ -680,6 +758,93 @@ export class ConfigPage extends LitElement {
     };
 
     // ===================================================================
+    // TRACK LIST COLUMN HANDLERS
+    // ===================================================================
+
+    private handleColumnToggle = (
+        columnId: string,
+    ): void => {
+        const current = [
+            ...this.trackListCtrl.columnIds,
+        ];
+        const idx = current.indexOf(columnId);
+
+        if (idx >= 0) {
+            // Don't allow removing the last column.
+            if (current.length <= 1) return;
+
+            current.splice(idx, 1);
+        } else {
+            current.push(columnId);
+        }
+
+        this.trackListCtrl
+            .setColumns(current)
+            .catch((err: unknown) => {
+                console.error(
+                    'Failed to update columns:',
+                    err,
+                );
+            });
+    };
+
+    /**
+     * Builds the merged column order: enabled IDs first
+     * (in their configured display order), then disabled
+     * IDs (in default static order).
+     */
+    private getMergedColumnOrder(): string[] {
+        const enabledIds = [
+            ...this.trackListCtrl.columnIds,
+        ];
+
+        const disabledIds = ALL_COLUMN_IDS.filter(
+            (id) => !enabledIds.includes(id),
+        );
+
+        return [...enabledIds, ...disabledIds];
+    }
+
+    private handleColumnMove = (
+        columnId: string,
+        direction: 'up' | 'down',
+    ): void => {
+        const order = this.getMergedColumnOrder();
+        const idx = order.indexOf(columnId);
+
+        if (idx < 0) return;
+
+        const targetIdx =
+            direction === 'up' ? idx - 1 : idx + 1;
+
+        if (targetIdx < 0 || targetIdx >= order.length)
+            return;
+
+        // Swap adjacent items in the full list.
+        const tmp = order[targetIdx]!;
+        order[targetIdx] = order[idx]!;
+        order[idx] = tmp;
+
+        // Keep only the enabled columns, preserving
+        // the new order.
+        const enabledSet = new Set(
+            this.trackListCtrl.columnIds,
+        );
+        const newEnabled = order.filter((id) =>
+            enabledSet.has(id),
+        );
+
+        this.trackListCtrl
+            .setColumns(newEnabled)
+            .catch((err: unknown) => {
+                console.error(
+                    'Failed to reorder columns:',
+                    err,
+                );
+            });
+    };
+
+    // ===================================================================
     // COMPUTED
     // ===================================================================
 
@@ -711,6 +876,7 @@ export class ConfigPage extends LitElement {
             <h2>Settings</h2>
 
             ${this.renderThemeSection()}
+            ${this.renderTrackListSection()}
             ${this.renderLibrarySection()}
         `;
     }
@@ -800,6 +966,91 @@ export class ConfigPage extends LitElement {
                 </div>
             `,
         );
+    }
+
+    // --- Track list section ---
+
+    private renderTrackListSection() {
+        const enabledIds = this.trackListCtrl.columnIds;
+        const order = this.getMergedColumnOrder();
+
+        return html`
+            <config-section
+                heading="Track List Columns"
+                description="Choose which columns are visible and set their display order."
+            >
+                <ul class="column-list">
+                    ${order.map((id, idx) => {
+                        const checked =
+                            enabledIds.includes(id);
+                        const onlyOne =
+                            checked &&
+                            enabledIds.length <= 1;
+                        const isFirst = idx === 0;
+                        const isLast =
+                            idx === order.length - 1;
+
+                        return html`
+                            <li
+                                class="column-item ${checked ? 'enabled' : 'disabled'}"
+                            >
+                                <input
+                                    type="checkbox"
+                                    class="column-toggle"
+                                    .checked=${checked}
+                                    ?disabled=${onlyOne}
+                                    @change=${() =>
+                                        this.handleColumnToggle(
+                                            id,
+                                        )}
+                                />
+                                <span
+                                    class="column-label"
+                                >
+                                    ${COLUMN_DEFS[id]
+                                        ?.label ??
+                                    id}
+                                </span>
+                                <span
+                                    class="column-arrows"
+                                >
+                                    ${isFirst
+                                        ? nothing
+                                        : html`
+                                              <button
+                                                  class="column-arrow-btn"
+                                                  title="Move up"
+                                                  @click=${() =>
+                                                      this.handleColumnMove(
+                                                          id,
+                                                          'up',
+                                                      )}
+                                              >
+                                                  ▲
+                                              </button>
+                                          `}
+                                    ${isLast
+                                        ? nothing
+                                        : html`
+                                              <button
+                                                  class="column-arrow-btn"
+                                                  title="Move down"
+                                                  @click=${() =>
+                                                      this.handleColumnMove(
+                                                          id,
+                                                          'down',
+                                                      )}
+                                              >
+                                                  ▼
+                                              </button>
+                                          `}
+                                </span>
+                            </li>
+                        `;
+                    })}
+                </ul>
+            </config-section>
+        `;
     }
 
     // --- Library section ---

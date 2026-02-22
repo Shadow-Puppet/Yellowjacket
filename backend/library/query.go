@@ -21,6 +21,11 @@ type Track struct {
 	FilePath    string
 	TrackNumber int64
 	DiscNumber  int64
+	Album       string
+	Genre       string
+	Year        int64
+	Composer    string
+	FileType    string
 }
 
 // Album represents an album for the cover grid display.
@@ -37,36 +42,51 @@ type Album struct {
 
 // GetAllTracks returns an array of track structs of every file in the library.
 func (l *Library) GetAllTracks() ([]Track, error) {
-	audioFiles, err := l.db.Queries.GetAllAudioFilesWithArtist(l.ctx)
+	rows, err := l.db.Queries.GetAllTracksWithFullMetadata(
+		l.ctx,
+	)
 	if err != nil {
-		l.logger.Error("could not retrieve audio files", "error", err)
+		l.logger.Error(
+			"could not retrieve audio files",
+			"error", err,
+		)
 
 		return nil, err
 	}
 
-	l.logger.Info("audio file list", "count", len(audioFiles))
+	l.logger.Info("audio file list", "count", len(rows))
 
-	if len(audioFiles) == 0 {
+	if len(rows) == 0 {
 		l.logger.Error("no tracks in library")
 
 		return nil, errNoTracksInLibrary
 	}
 
-	var formattedTracks []Track
+	tracks := make([]Track, 0, len(rows))
 
-	for _, file := range audioFiles {
+	for _, row := range rows {
 		track := Track{
-			TrackName:   file.Title,
-			ArtistName:  file.ArtistName,
-			TrackLength: strconv.FormatInt(file.LengthMilliseconds, 10),
-			FilePath:    file.FilePath,
+			TrackName:  row.Title,
+			ArtistName: row.ArtistName,
+			TrackLength: strconv.FormatInt(
+				row.LengthMilliseconds, 10,
+			),
+			FilePath:    row.FilePath,
+			TrackNumber: row.TrackNumber.Int64,
+			DiscNumber:  row.DiscNumber.Int64,
+			Album:       row.Album,
+			Genre:       row.Genre,
+			Year:        row.Year,
+			Composer:    row.Composer,
+			FileType:    row.FileType,
 		}
-		formattedTracks = append(formattedTracks, track)
+
+		tracks = append(tracks, track)
 	}
 
-	l.logger.Info("formatted tracks", "count", len(formattedTracks))
+	l.logger.Info("formatted tracks", "count", len(tracks))
 
-	return formattedTracks, nil
+	return tracks, nil
 }
 
 // GetAlbumTracks returns all tracks for a given album (release group), ordered by disc and track number.
