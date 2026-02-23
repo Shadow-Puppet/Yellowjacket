@@ -7,6 +7,8 @@ import '@components/queue-panel/queue-panel.ts';
 import '@components/playlist-view/playlist-view.ts';
 import '@components/library-manager/library-manager.ts';
 import '@components/config-page/config-page.ts';
+import '@components/artists-view/artists-view.ts';
+import '@components/artist-details/artist-details.ts';
 import '@components/search-bar/search-bar.ts';
 import type { SearchBar } from '@components/search-bar/search-bar.ts';
 import '@awesome.me/webawesome/dist/styles/themes/default.css';
@@ -52,6 +54,20 @@ document.addEventListener('navigate', (e: Event) => {
         case 'playlists':
             mainContent.innerHTML = '<playlist-view></playlist-view>';
             break;
+        case 'artists':
+            mainContent.innerHTML = '<artists-view></artists-view>';
+            break;
+        case 'artist-details': {
+            const { artistId, artistName } =
+                (e as CustomEvent).detail;
+            const el = document.createElement('artist-details');
+
+            el.setAttribute('artist-id', String(artistId));
+            el.setAttribute('artist-name', artistName);
+            mainContent.innerHTML = '';
+            mainContent.appendChild(el);
+            break;
+        }
         case 'libraries':
             mainContent.innerHTML = '<library-manager></library-manager>';
             break;

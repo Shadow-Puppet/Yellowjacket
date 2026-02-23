@@ -43,6 +43,12 @@ func splitGenres(concatenated string) []string {
 	return strings.Split(concatenated, genreDelimiter)
 }
 
+// Artist represents an artist in the library.
+type Artist struct {
+	ID   int64
+	Name string
+}
+
 // Album represents an album for the cover grid display.
 type Album struct {
 	ID             int64
@@ -146,6 +152,93 @@ func (l *Library) GetAllAlbums() ([]Album, error) {
 	}
 
 	l.logger.Info("album list", "count", len(rows))
+
+	albums := make([]Album, 0, len(rows))
+
+	for _, row := range rows {
+		album := Album{
+			ID:         row.ID,
+			Name:       row.Name,
+			ArtistName: row.ArtistName,
+		}
+
+		if row.Year.Valid {
+			album.Year = row.Year.Int64
+		}
+
+		// Convert filesystem path to URL path for the asset handler.
+		if row.CoverArtPath != "" {
+			base := filepath.Base(row.CoverArtPath)
+			album.CoverArtPath = "/covers/" + base
+			album.CoverArtSmall = "/covers/" +
+				SizedFilename(base, "_sm")
+			album.CoverArtMedium = "/covers/" +
+				SizedFilename(base, "_md")
+			album.CoverArtLarge = "/covers/" +
+				SizedFilename(base, "_lg")
+		}
+
+		albums = append(albums, album)
+	}
+
+	return albums, nil
+}
+
+// GetAllArtists returns artists that are credited as album artists, ordered by name.
+func (l *Library) GetAllArtists() ([]Artist, error) {
+	rows, err := l.db.Queries.GetAlbumArtists(l.ctx)
+	if err != nil {
+		l.logger.Error(
+			"could not retrieve artists",
+			"error", err,
+		)
+
+		return nil, fmt.Errorf(
+			"could not get artists: %w",
+			err,
+		)
+	}
+
+	l.logger.Info("artist list", "count", len(rows))
+
+	artists := make([]Artist, 0, len(rows))
+
+	for _, row := range rows {
+		artists = append(artists, Artist{
+			ID:   row.ID,
+			Name: row.Name,
+		})
+	}
+
+	return artists, nil
+}
+
+// GetAlbumsByArtist returns all albums where the given artist is the album artist.
+func (l *Library) GetAlbumsByArtist(
+	artistID int64,
+) ([]Album, error) {
+	rows, err := l.db.Queries.GetAlbumsByArtist(
+		l.ctx,
+		artistID,
+	)
+	if err != nil {
+		l.logger.Error(
+			"could not retrieve albums for artist",
+			"artistID", artistID,
+			"error", err,
+		)
+
+		return nil, fmt.Errorf(
+			"could not get albums for artist: %w",
+			err,
+		)
+	}
+
+	l.logger.Info(
+		"albums for artist",
+		"artistID", artistID,
+		"count", len(rows),
+	)
 
 	albums := make([]Album, 0, len(rows))
 

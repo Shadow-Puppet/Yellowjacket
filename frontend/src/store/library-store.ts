@@ -1,5 +1,10 @@
 import { EventsOn } from '@runtime/runtime';
-import { GetAllTracks, GetAllAlbums } from '@go/library/Library';
+import {
+    GetAllTracks,
+    GetAllAlbums,
+    GetAllArtists,
+    GetAlbumsByArtist,
+} from '@go/library/Library';
 import type { library } from '@go/models';
 import { Events } from '../events';
 
@@ -22,9 +27,11 @@ const COVER_SIZE_KEY = 'cover-grid-size';
 class LibraryStore {
     private tracks: library.Track[] | null = null;
     private albums: library.Album[] | null = null;
+    private artists: library.Artist[] | null = null;
 
     private tracksLoading = false;
     private albumsLoading = false;
+    private artistsLoading = false;
 
     private coverSizeValue: number = COVER_SIZE_DEFAULT;
 
@@ -94,6 +101,35 @@ class LibraryStore {
         }
     }
 
+    async getArtists(): Promise<library.Artist[]> {
+        if (this.artists !== null) {
+            return this.artists;
+        }
+
+        if (this.artistsLoading) {
+            return this.waitForArtists();
+        }
+
+        this.artistsLoading = true;
+        this.notify();
+
+        try {
+            const artists = await GetAllArtists();
+            this.artists = artists;
+
+            return artists;
+        } finally {
+            this.artistsLoading = false;
+            this.notify();
+        }
+    }
+
+    async getAlbumsByArtist(
+        artistID: number,
+    ): Promise<library.Album[]> {
+        return GetAlbumsByArtist(artistID);
+    }
+
     // ===================================================================
     // STATE ACCESSORS
     // Synchronous access for controllers that need current cached values.
@@ -113,6 +149,14 @@ class LibraryStore {
 
     isAlbumsLoading(): boolean {
         return this.albumsLoading;
+    }
+
+    getCachedArtists(): library.Artist[] | null {
+        return this.artists;
+    }
+
+    isArtistsLoading(): boolean {
+        return this.artistsLoading;
     }
 
     // ===================================================================
@@ -184,6 +228,7 @@ class LibraryStore {
     private invalidate(): void {
         this.tracks = null;
         this.albums = null;
+        this.artists = null;
         this.scrollPositions = { tracks: 0, albums: 0 };
         this.notify();
     }
@@ -224,6 +269,17 @@ class LibraryStore {
                 if (!this.albumsLoading && this.albums !== null) {
                     unsub();
                     resolve(this.albums);
+                }
+            });
+        });
+    }
+
+    private waitForArtists(): Promise<library.Artist[]> {
+        return new Promise((resolve) => {
+            const unsub = this.subscribe(() => {
+                if (!this.artistsLoading && this.artists !== null) {
+                    unsub();
+                    resolve(this.artists);
                 }
             });
         });

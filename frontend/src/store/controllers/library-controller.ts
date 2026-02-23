@@ -51,6 +51,16 @@ export class LibraryController implements ReactiveController {
         return libraryStore.getAlbums();
     }
 
+    async getArtists(): Promise<library.Artist[]> {
+        return libraryStore.getArtists();
+    }
+
+    async getAlbumsByArtist(
+        artistID: number,
+    ): Promise<library.Album[]> {
+        return libraryStore.getAlbumsByArtist(artistID);
+    }
+
     get cachedTracks(): library.Track[] | null {
         return libraryStore.getCachedTracks();
     }
@@ -59,12 +69,20 @@ export class LibraryController implements ReactiveController {
         return libraryStore.getCachedAlbums();
     }
 
+    get cachedArtists(): library.Artist[] | null {
+        return libraryStore.getCachedArtists();
+    }
+
     get tracksLoading(): boolean {
         return libraryStore.isTracksLoading();
     }
 
     get albumsLoading(): boolean {
         return libraryStore.isAlbumsLoading();
+    }
+
+    get artistsLoading(): boolean {
+        return libraryStore.isArtistsLoading();
     }
 
     // ===================================================================

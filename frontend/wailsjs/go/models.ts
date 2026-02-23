@@ -26,6 +26,20 @@ export namespace library {
 	        this.Year = source["Year"];
 	    }
 	}
+	export class Artist {
+	    ID: number;
+	    Name: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Artist(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ID = source["ID"];
+	        this.Name = source["Name"];
+	    }
+	}
 	export class ScanMetrics {
 	    total: number;
 	    loadExisting: number;

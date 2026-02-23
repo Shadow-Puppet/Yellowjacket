@@ -1,5 +1,10 @@
 import { LitElement, html, css, nothing } from 'lit';
-import { customElement, state, query } from 'lit/decorators.js';
+import {
+    customElement,
+    property,
+    state,
+    query,
+} from 'lit/decorators.js';
 import { EventsOn } from '@runtime/runtime';
 import '@lit-labs/virtualizer';
 import type {
@@ -124,6 +129,15 @@ type SortDirection = 'asc' | 'desc';
 
 @customElement('cover-grid')
 export class CoverGrid extends LitElement {
+    /**
+     * When set, the grid displays these albums instead of
+     * fetching all albums from the library store.  The
+     * component also skips the LibraryScanComplete listener
+     * since the parent is responsible for reloading.
+     */
+    @property({ type: Array, attribute: false })
+    externalAlbums?: library.Album[];
+
     private libraryCtrl = new LibraryController(this);
     private searchCtrl = new SearchController(this);
     private cancelScanComplete?: () => void;
@@ -871,10 +885,16 @@ export class CoverGrid extends LitElement {
         super.connectedCallback();
         this.restoreSortPreferences();
         this.loadAlbums();
-        this.cancelScanComplete = EventsOn(
-            Events.LibraryScanComplete,
-            () => this.loadAlbums(),
-        );
+
+        // Skip the scan listener when driven by an
+        // external album list — the parent manages
+        // reloading.
+        if (!this.externalAlbums) {
+            this.cancelScanComplete = EventsOn(
+                Events.LibraryScanComplete,
+                () => this.loadAlbums(),
+            );
+        }
         document.addEventListener(
             'click',
             this.closeHandler,
@@ -948,6 +968,15 @@ export class CoverGrid extends LitElement {
         changed: Map<PropertyKey, unknown>,
     ) {
         super.willUpdate(changed);
+
+        // When the parent provides a new external album
+        // list, update local albums and reset selection.
+        if (changed.has('externalAlbums') && this.externalAlbums) {
+            this.albums = this.externalAlbums;
+            this.selectedAlbums = new Set();
+            this.lastSelectedAlbumIndex = null;
+            this.loading = false;
+        }
 
         // When switching albums, expandedTracks
         // briefly goes to [].  Exit split mode so
@@ -1468,10 +1497,13 @@ export class CoverGrid extends LitElement {
         try {
             this.loading = true;
 
-            const albums =
-                await this.libraryCtrl.getAlbums();
+            // When driven by an external album list,
+            // skip the backend fetch entirely.
+            const albums = this.externalAlbums
+                ?? (await this.libraryCtrl.getAlbums())
+                ?? [];
 
-            this.albums = albums ?? [];
+            this.albums = albums;
             this.selectedAlbums = new Set();
             this.lastSelectedAlbumIndex = null;
         } catch (error) {

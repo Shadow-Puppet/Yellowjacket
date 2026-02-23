@@ -10,8 +10,16 @@ export function GetAlbumTracks(arg1) {
   return window['go']['library']['Library']['GetAlbumTracks'](arg1);
 }
 
+export function GetAlbumsByArtist(arg1) {
+  return window['go']['library']['Library']['GetAlbumsByArtist'](arg1);
+}
+
 export function GetAllAlbums() {
   return window['go']['library']['Library']['GetAllAlbums']();
+}
+
+export function GetAllArtists() {
+  return window['go']['library']['Library']['GetAllArtists']();
 }
 
 export function GetAllTracks() {

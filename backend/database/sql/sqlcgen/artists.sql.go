@@ -40,6 +40,38 @@ func (q *Queries) DeleteArtist(ctx context.Context, id int64) error {
 	return err
 }
 
+const getAlbumArtists = `-- name: GetAlbumArtists :many
+SELECT DISTINCT a.id, a.name
+FROM artists a
+JOIN artist_credit_artist aca ON aca.artist_id = a.id
+JOIN artist_credit ac ON ac.id = aca.credit_id
+JOIN release_groups rg ON rg.album_artist_credit_id = ac.id
+ORDER BY a.name
+`
+
+func (q *Queries) GetAlbumArtists(ctx context.Context) ([]Artist, error) {
+	rows, err := q.db.QueryContext(ctx, getAlbumArtists)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Artist
+	for rows.Next() {
+		var i Artist
+		if err := rows.Scan(&i.ID, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getAllArtists = `-- name: GetAllArtists :many
 SELECT id, name FROM artists
 ORDER BY name

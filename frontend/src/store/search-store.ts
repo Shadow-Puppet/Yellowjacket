@@ -1,5 +1,5 @@
 /** Searchable views that respond to the global search term. */
-const SEARCHABLE_VIEWS = new Set(['tracks', 'albums', 'playlists']);
+const SEARCHABLE_VIEWS = new Set(['tracks', 'albums', 'playlists', 'artists']);
 
 type Subscriber = () => void;
 

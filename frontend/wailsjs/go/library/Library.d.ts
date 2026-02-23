@@ -7,7 +7,11 @@ export function FullRescan():Promise<library.ScanMetrics>;
 
 export function GetAlbumTracks(arg1:number):Promise<Array<library.Track>>;
 
+export function GetAlbumsByArtist(arg1:number):Promise<Array<library.Album>>;
+
 export function GetAllAlbums():Promise<Array<library.Album>>;
+
+export function GetAllArtists():Promise<Array<library.Artist>>;
 
 export function GetAllTracks():Promise<Array<library.Track>>;
 
