@@ -1,13 +1,26 @@
-import { LitElement, html, css } from 'lit';
-import { customElement, state } from 'lit/decorators.js';
+import { LitElement, html, css, nothing } from 'lit';
+import {
+    customElement,
+    state,
+    query,
+} from 'lit/decorators.js';
 import { EventsOn } from '@runtime/runtime';
 import '@lit-labs/virtualizer';
 import { grid } from '@lit-labs/virtualizer/layouts/grid.js';
+import {
+    GetAlbumsByArtist,
+    GetAlbumTracks,
+} from '@go/library/Library';
 import { library } from '@go/models';
 import { LibraryController } from '@store/controllers/library-controller';
 import { SearchController } from '@store/controllers/search-controller';
+import { queueStore } from '@store/queue-store';
 import { Events } from '../../events';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
+import '@awesome.me/webawesome/dist/components/popup/popup.js';
+import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
+import '@components/playlist-picker/playlist-picker.js';
+import type { PlaylistPicker } from '@components/playlist-picker/playlist-picker.js';
 
 /** Pixels to change card width per scroll tick. */
 const ZOOM_STEP = 16;
@@ -44,13 +57,56 @@ export class ArtistsView extends LitElement {
     @state()
     private cardSize: number = CARD_SIZE_DEFAULT;
 
-    // Fixed grid spacing constants.
+    // ----- Context menu state -----
+
+    @state()
+    private contextMenuOpen = false;
+
+    @state()
+    private playlistSubmenuOpen = false;
+
+    @state()
+    private playlistFilePaths: string[] = [];
+
+    /** The artist targeted by the current context menu. */
+    private contextMenuArtist: library.Artist | null =
+        null;
+
+    @query('#context-menu')
+    private contextMenuPopup!: HTMLElement;
+
+    @query('#playlist-submenu')
+    private playlistSubmenuPopup!: HTMLElement;
+
+    // ----- Close handlers -----
+
+    private closeHandler = () =>
+        this.closeContextMenu();
+
+    private mousedownCloseHandler = (
+        e: MouseEvent,
+    ) => {
+        const path = e.composedPath();
+        const popup = this.contextMenuPopup;
+        const submenu = this.playlistSubmenuPopup;
+
+        if (popup && path.includes(popup)) return;
+        if (submenu && path.includes(submenu)) return;
+
+        this.closeContextMenu();
+    };
+
+    // ----- Grid spacing constants -----
+
     private static readonly GRID_GAP = 8;
     private static readonly GRID_PADDING = 8;
     private static readonly CARD_PADDING = 5;
 
     private get imageSize(): number {
-        return this.cardSize - ArtistsView.CARD_PADDING * 2;
+        return (
+            this.cardSize -
+            ArtistsView.CARD_PADDING * 2
+        );
     }
 
     private get cardTextHeight(): number {
@@ -184,13 +240,17 @@ export class ArtistsView extends LitElement {
         .artist-name {
             width: 100%;
             text-align: center;
-            font-size: var(--artist-name-font, 14px);
+            font-size: var(
+                --artist-name-font,
+                14px
+            );
             font-weight: 500;
             color: var(--yj-text-primary, #fff);
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
-            padding: var(--artist-name-pad, 6px) 2px 0;
+            padding: var(--artist-name-pad, 6px) 2px
+                0;
             line-height: 1.3;
         }
 
@@ -206,7 +266,64 @@ export class ArtistsView extends LitElement {
             );
             font-size: 14px;
         }
+
+        /* ====================================
+         * Context menu
+         * ==================================== */
+
+        #context-menu {
+            z-index: 200;
+        }
+
+        .context-menu-panel {
+            background-color: var(
+                --yj-bg-elevated,
+                #343a40
+            );
+            border: 1px solid
+                var(--yj-border, #444);
+            border-radius: 6px;
+            padding: 4px 0;
+            box-shadow: 0 8px 24px
+                rgba(0, 0, 0, 0.5);
+            min-width: 160px;
+        }
+
+        .context-menu-panel wa-dropdown-item {
+            cursor: pointer;
+            --wa-color-text-normal: var(
+                --yj-text-primary,
+                #fff
+            );
+            font-size: 13px;
+        }
+
+        .context-menu-panel
+            wa-dropdown-item:hover {
+            background-color: var(
+                --yj-hover-overlay,
+                rgba(255, 255, 255, 0.1)
+            );
+        }
+
+        .submenu-item {
+            position: relative;
+        }
+
+        .submenu-arrow {
+            font-size: 10px;
+            margin-left: auto;
+            padding-left: 12px;
+        }
+
+        #playlist-submenu {
+            z-index: 210;
+        }
     `;
+
+    /* ================================================================
+     * Lifecycle
+     * ================================================================ */
 
     override connectedCallback() {
         super.connectedCallback();
@@ -216,12 +333,36 @@ export class ArtistsView extends LitElement {
             Events.LibraryScanComplete,
             () => this.loadArtists(),
         );
+        document.addEventListener(
+            'click',
+            this.closeHandler,
+        );
+        document.addEventListener(
+            'contextmenu',
+            this.closeHandler,
+        );
+        document.addEventListener(
+            'mousedown',
+            this.mousedownCloseHandler,
+        );
     }
 
     override disconnectedCallback() {
         super.disconnectedCallback();
         this.cancelScanComplete?.();
         this.detachWheelListener();
+        document.removeEventListener(
+            'click',
+            this.closeHandler,
+        );
+        document.removeEventListener(
+            'contextmenu',
+            this.closeHandler,
+        );
+        document.removeEventListener(
+            'mousedown',
+            this.mousedownCloseHandler,
+        );
     }
 
     override updated() {
@@ -321,14 +462,19 @@ export class ArtistsView extends LitElement {
     }
 
     private ensureWheelListener() {
-        const container = this.shadowRoot?.querySelector(
-            '.grid-scroll-container',
-        );
+        const container =
+            this.shadowRoot?.querySelector(
+                '.grid-scroll-container',
+            );
 
-        if (container && !this.wheelListenerAttached) {
+        if (
+            container &&
+            !this.wheelListenerAttached
+        ) {
             container.addEventListener(
                 'wheel',
-                this.wheelHandler as EventListener,
+                this
+                    .wheelHandler as EventListener,
                 { passive: false },
             );
             this.wheelListenerAttached = true;
@@ -336,14 +482,19 @@ export class ArtistsView extends LitElement {
     }
 
     private detachWheelListener() {
-        const container = this.shadowRoot?.querySelector(
-            '.grid-scroll-container',
-        );
+        const container =
+            this.shadowRoot?.querySelector(
+                '.grid-scroll-container',
+            );
 
-        if (container && this.wheelListenerAttached) {
+        if (
+            container &&
+            this.wheelListenerAttached
+        ) {
             container.removeEventListener(
                 'wheel',
-                this.wheelHandler as EventListener,
+                this
+                    .wheelHandler as EventListener,
             );
             this.wheelListenerAttached = false;
         }
@@ -356,7 +507,9 @@ export class ArtistsView extends LitElement {
     private lastLayoutWidth = 0;
 
     private updateGridLayout() {
-        if (this.cardSize === this.lastLayoutWidth) {
+        if (
+            this.cardSize === this.lastLayoutWidth
+        ) {
             return;
         }
 
@@ -405,7 +558,9 @@ export class ArtistsView extends LitElement {
      * Artist card click
      * ================================================================ */
 
-    private onArtistClick(artist: library.Artist) {
+    private onArtistClick(
+        artist: library.Artist,
+    ) {
         this.dispatchEvent(
             new CustomEvent('navigate', {
                 bubbles: true,
@@ -420,10 +575,196 @@ export class ArtistsView extends LitElement {
     }
 
     /* ================================================================
+     * Context menu
+     * ================================================================ */
+
+    private onArtistContextMenu = (
+        e: MouseEvent,
+        artist: library.Artist,
+    ) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        this.contextMenuArtist = artist;
+        this.openContextMenuAt(
+            e.clientX,
+            e.clientY,
+        );
+    };
+
+    private openContextMenuAt(
+        clientX: number,
+        clientY: number,
+    ) {
+        this.contextMenuOpen = true;
+
+        this.updateComplete.then(() => {
+            const popup = this.contextMenuPopup;
+
+            if (popup) {
+                (popup as any).anchor = {
+                    getBoundingClientRect() {
+                        return {
+                            width: 0,
+                            height: 0,
+                            x: clientX,
+                            y: clientY,
+                            top: clientY,
+                            left: clientX,
+                            right: clientX,
+                            bottom: clientY,
+                        };
+                    },
+                };
+                (popup as any).active = true;
+            }
+        });
+    }
+
+    private closeContextMenu() {
+        if (!this.contextMenuOpen) return;
+
+        this.closePlaylistSubmenu();
+        this.contextMenuOpen = false;
+        this.playlistFilePaths = [];
+        this.contextMenuArtist = null;
+
+        const popup = this.contextMenuPopup;
+
+        if (popup) {
+            (popup as any).active = false;
+        }
+    }
+
+    private async onContextMenuAction(
+        action: string,
+    ) {
+        const artist = this.contextMenuArtist;
+
+        if (!artist) return;
+
+        const filePaths =
+            await this.getArtistFilePaths(artist);
+
+        if (filePaths.length === 0) return;
+
+        switch (action) {
+            case 'play':
+                queueStore.setQueue(filePaths, 0);
+                break;
+            case 'add-to-queue':
+                queueStore.addTracksToQueue(
+                    filePaths,
+                );
+                break;
+            case 'play-next':
+                queueStore.playTracksNext(
+                    filePaths,
+                );
+                break;
+        }
+
+        this.closeContextMenu();
+    }
+
+    /* ================================================================
+     * Playlist submenu
+     * ================================================================ */
+
+    private async showPlaylistSubmenu() {
+        if (this.playlistSubmenuOpen) return;
+
+        const artist = this.contextMenuArtist;
+
+        if (!artist) return;
+
+        this.playlistFilePaths =
+            await this.getArtistFilePaths(artist);
+
+        this.playlistSubmenuOpen = true;
+
+        await this.updateComplete;
+
+        const submenu = this.playlistSubmenuPopup;
+        const trigger =
+            this.shadowRoot?.querySelector(
+                '.submenu-item',
+            );
+
+        if (submenu && trigger) {
+            (submenu as any).anchor = trigger;
+            (submenu as any).active = true;
+        }
+
+        const picker =
+            this.shadowRoot?.querySelector(
+                'playlist-picker',
+            ) as PlaylistPicker | null;
+
+        picker?.reset();
+    }
+
+    private closePlaylistSubmenu() {
+        if (!this.playlistSubmenuOpen) return;
+
+        this.playlistSubmenuOpen = false;
+
+        const submenu = this.playlistSubmenuPopup;
+
+        if (submenu) {
+            (submenu as any).active = false;
+        }
+    }
+
+    private onPlaylistActionComplete = () => {
+        this.closeContextMenu();
+    };
+
+    /* ================================================================
+     * File path resolution
+     * ================================================================ */
+
+    /**
+     * Fetches all file paths for an artist by
+     * loading their albums, then each album's
+     * tracks.
+     */
+    private async getArtistFilePaths(
+        artist: library.Artist,
+    ): Promise<string[]> {
+        try {
+            const albums =
+                await GetAlbumsByArtist(artist.ID);
+
+            const allPaths: string[] = [];
+
+            for (const album of albums) {
+                const tracks =
+                    await GetAlbumTracks(album.ID);
+
+                for (const t of tracks) {
+                    allPaths.push(t.FilePath);
+                }
+            }
+
+            return allPaths;
+        } catch (error) {
+            console.error(
+                'Error loading artist tracks:',
+                error,
+            );
+
+            return [];
+        }
+    }
+
+    /* ================================================================
      * Helpers
      * ================================================================ */
 
-    private getArtistInitial(name: string): string {
+    private getArtistInitial(
+        name: string,
+    ): string {
         if (!name) return '?';
 
         return name.charAt(0).toUpperCase();
@@ -433,9 +774,7 @@ export class ArtistsView extends LitElement {
      * Rendering
      * ================================================================ */
 
-    private renderArtistCard(
-        entry: ArtistEntry,
-    ) {
+    private renderArtistCard(entry: ArtistEntry) {
         const { artist } = entry;
         const imgSize = this.imageSize;
         const placeholderFont = Math.round(
@@ -454,6 +793,11 @@ export class ArtistsView extends LitElement {
                 "
                 @click=${() =>
                     this.onArtistClick(artist)}
+                @contextmenu=${(e: MouseEvent) =>
+                    this.onArtistContextMenu(
+                        e,
+                        artist,
+                    )}
                 @keydown=${(e: KeyboardEvent) => {
                     if (
                         e.key === 'Enter' ||
@@ -478,6 +822,108 @@ export class ArtistsView extends LitElement {
                     ${artist.Name}
                 </div>
             </div>
+        `;
+    }
+
+    private renderContextMenu() {
+        return html`
+            <wa-popup
+                id="context-menu"
+                placement="bottom-start"
+                flip
+                shift
+                .active=${this.contextMenuOpen}
+            >
+                ${this.contextMenuOpen
+                    ? html`
+                          <div
+                              class="context-menu-panel"
+                          >
+                              <wa-dropdown-item
+                                  @click=${() =>
+                                      this.onContextMenuAction(
+                                          'play',
+                                      )}
+                              >
+                                  <wa-icon
+                                      slot="icon"
+                                      name="play"
+                                  ></wa-icon>
+                                  Play
+                              </wa-dropdown-item>
+                              <wa-dropdown-item
+                                  @click=${() =>
+                                      this.onContextMenuAction(
+                                          'add-to-queue',
+                                      )}
+                              >
+                                  <wa-icon
+                                      slot="icon"
+                                      name="plus"
+                                  ></wa-icon>
+                                  Add to Queue
+                              </wa-dropdown-item>
+                              <wa-dropdown-item
+                                  @click=${() =>
+                                      this.onContextMenuAction(
+                                          'play-next',
+                                      )}
+                              >
+                                  <wa-icon
+                                      slot="icon"
+                                      name="forward-step"
+                                  ></wa-icon>
+                                  Play Next
+                              </wa-dropdown-item>
+                              <wa-dropdown-item
+                                  class="submenu-item"
+                                  @mouseenter=${() =>
+                                      this.showPlaylistSubmenu()}
+                                  @click=${(
+                                      e: Event,
+                                  ) => {
+                                      e.stopPropagation();
+                                      void this.showPlaylistSubmenu();
+                                  }}
+                              >
+                                  <wa-icon
+                                      slot="icon"
+                                      name="plus"
+                                  ></wa-icon>
+                                  Add to Playlist
+                                  <span
+                                      class="submenu-arrow"
+                                      >&#9654;</span
+                                  >
+                              </wa-dropdown-item>
+                          </div>
+                      `
+                    : nothing}
+            </wa-popup>
+
+            <wa-popup
+                id="playlist-submenu"
+                placement="right-start"
+                flip
+                shift
+                .active=${this
+                    .playlistSubmenuOpen}
+            >
+                ${this.playlistSubmenuOpen
+                    ? html`
+                          <playlist-picker
+                              .filePaths=${this
+                                  .playlistFilePaths}
+                              @playlist-action-complete=${this
+                                  .onPlaylistActionComplete}
+                              @click=${(
+                                  e: Event,
+                              ) =>
+                                  e.stopPropagation()}
+                          ></playlist-picker>
+                      `
+                    : nothing}
+            </wa-popup>
         `;
     }
 
@@ -509,10 +955,13 @@ export class ArtistsView extends LitElement {
                     .renderItem=${(
                         entry: ArtistEntry,
                     ) =>
-                        this.renderArtistCard(entry)}
+                        this.renderArtistCard(
+                            entry,
+                        )}
                     .layout=${this.gridLayout}
                 ></lit-virtualizer>
             </div>
+            ${this.renderContextMenu()}
         `;
     }
 }
