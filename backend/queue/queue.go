@@ -307,7 +307,8 @@ func (q *Queue) registerEventHandlers() {
 }
 
 // handleSetQueue processes the RequestSetQueue event payload.
-// Expects data[0] = []interface{} of file path strings, data[1] = float64 start index.
+// Expects data[0] = []interface{} of file path strings,
+// data[1] = float64 start index, data[2] = bool shuffleStart (optional).
 func (q *Queue) handleSetQueue(data ...any) {
 	if len(data) < 2 {
 		q.logger.Error("RequestSetQueue: missing data")
@@ -336,7 +337,15 @@ func (q *Queue) handleSetQueue(data ...any) {
 		startIndex = int(si)
 	}
 
-	q.SetQueue(filePaths, startIndex)
+	shuffleStart := false
+
+	if len(data) > 2 {
+		if ss, ok := data[2].(bool); ok {
+			shuffleStart = ss
+		}
+	}
+
+	q.SetQueue(filePaths, startIndex, shuffleStart)
 }
 
 // handleAddToQueue processes the RequestAddToQueue event payload.
@@ -606,12 +615,19 @@ func (q *Queue) handlePlayTracksNext(data ...any) {
 }
 
 // SetQueue replaces the entire queue with new tracks and starts playing.
+// When shuffleStart is true and shuffle mode is active, a random first
+// track is chosen instead of the one at startIndex. This is intended for
+// "Play All" type actions where no specific track was selected.
 // It uses a two-phase approach: the first batch of tracks (up to
 // initialBatchSize) is resolved immediately so playback begins and the
 // queue panel is populated without delay. The remaining tracks are then
 // resolved in the background. A generation counter ensures stale
 // background work is discarded if SetQueue is called again.
-func (q *Queue) SetQueue(filePaths []string, startIndex int) {
+func (q *Queue) SetQueue(
+	filePaths []string,
+	startIndex int,
+	shuffleStart bool,
+) {
 	defer profiling.TimeOp(q.logger, "queue.SetQueue")()
 
 	gen := q.setQueueGen.Add(1)
@@ -673,9 +689,24 @@ func (q *Queue) SetQueue(filePaths []string, startIndex int) {
 		}
 	}
 
+	// When the caller signals that shuffle should pick the first track
+	// (e.g. "Play All" rather than a specific track click) and shuffle
+	// mode is active, generate a shuffle order and start from its first
+	// element — a random track.
+	if shuffleStart && q.shuffleMode && len(q.tracks) > 1 {
+		q.currentIndex = -1
+		q.generateShuffleOrder()
+		q.currentIndex = q.shuffleOrder[0]
+	}
+
 	// Start playing immediately.
 	q.playCurrentTrack()
 	q.emitQueueChanged()
+
+	// Record the path actually playing so Phase 2 can find it after the
+	// full track list is rebuilt.
+	playingPath := q.tracks[q.currentIndex].FilePath
+
 	q.mu.Unlock()
 
 	// Phase 2: if there are more tracks beyond the initial batch,
@@ -683,6 +714,11 @@ func (q *Queue) SetQueue(filePaths []string, startIndex int) {
 	// batch we can persist and finish synchronously.
 	if len(filePaths) <= initialBatchSize {
 		q.mu.Lock()
+
+		if shuffleStart && q.shuffleMode {
+			q.generateShuffleOrder()
+		}
+
 		q.persistTracks()
 		q.persistState()
 		q.mu.Unlock()
@@ -690,16 +726,18 @@ func (q *Queue) SetQueue(filePaths []string, startIndex int) {
 		return
 	}
 
-	go q.resolveRemainingTracks(gen, filePaths, startIndex)
+	go q.resolveRemainingTracks(gen, filePaths, playingPath)
 }
 
 // resolveRemainingTracks runs in a goroutine to batch-resolve all tracks
 // for a SetQueue call. It checks the generation counter before applying
-// results to avoid overwriting a newer SetQueue call.
+// results to avoid overwriting a newer SetQueue call. playingPath is the
+// file path of the track that is currently playing so the correct
+// currentIndex can be located in the rebuilt track list.
 func (q *Queue) resolveRemainingTracks(
 	gen int64,
 	filePaths []string,
-	startIndex int,
+	playingPath string,
 ) {
 	allMeta := q.lookupTrackMetaBatch(filePaths)
 
@@ -740,14 +778,13 @@ func (q *Queue) resolveRemainingTracks(
 
 	q.tracks = tracks
 
-	// Recalculate startIndex: the original index might be shifted if
-	// earlier tracks were missing from the database. Find the track that
-	// matches the originally requested start path.
-	startPath := filePaths[startIndex]
+	// Recalculate currentIndex: find the track that is actually playing.
+	// This may differ from the original startIndex when shuffleStart was
+	// used to pick a random first track.
 	q.currentIndex = 0
 
 	for i, t := range q.tracks {
-		if t.FilePath == startPath {
+		if t.FilePath == playingPath {
 			q.currentIndex = i
 
 			break

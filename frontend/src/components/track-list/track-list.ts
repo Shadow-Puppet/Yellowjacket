@@ -1215,7 +1215,7 @@ export class TrackList extends LitElement implements SelectionHost {
 
         switch (action) {
             case 'play':
-                queueStore.setQueue(filePaths, 0);
+                queueStore.setQueue(filePaths, 0, true);
                 break;
             case 'add-to-queue':
                 queueStore.addTracksToQueue(filePaths);

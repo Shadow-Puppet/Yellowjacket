@@ -190,8 +190,17 @@ class QueueStore {
     EventsEmit(Events.RequestPrevious);
   }
 
-  setQueue(filePaths: string[], startIndex: number): void {
-    EventsEmit(Events.RequestSetQueue, filePaths, startIndex);
+  setQueue(
+    filePaths: string[],
+    startIndex: number,
+    shuffleStart = false,
+  ): void {
+    EventsEmit(
+      Events.RequestSetQueue,
+      filePaths,
+      startIndex,
+      shuffleStart,
+    );
   }
 
   addToQueue(filePath: string): void {

@@ -79,8 +79,12 @@ export class QueueController implements ReactiveController {
     queueStore.previous();
   }
 
-  setQueue(filePaths: string[], startIndex: number): void {
-    queueStore.setQueue(filePaths, startIndex);
+  setQueue(
+    filePaths: string[],
+    startIndex: number,
+    shuffleStart = false,
+  ): void {
+    queueStore.setQueue(filePaths, startIndex, shuffleStart);
   }
 
   addToQueue(filePath: string): void {

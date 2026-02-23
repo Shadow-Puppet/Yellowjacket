@@ -2661,7 +2661,7 @@ export class CoverGrid extends LitElement {
 
         this.selectedAlbums = new Set();
         this.closeDropdown();
-        queueStore.setQueue(filePaths, 0);
+        queueStore.setQueue(filePaths, 0, true);
     };
 
     private onGridAlbumKeydown = (
@@ -3068,7 +3068,7 @@ export class CoverGrid extends LitElement {
 
         switch (action) {
             case 'play':
-                queueStore.setQueue(filePaths, 0);
+                queueStore.setQueue(filePaths, 0, true);
                 break;
             case 'add-to-queue':
                 queueStore.addTracksToQueue(filePaths);

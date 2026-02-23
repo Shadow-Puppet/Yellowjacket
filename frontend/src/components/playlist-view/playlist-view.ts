@@ -989,7 +989,7 @@ export class PlaylistView
 
         if (filePaths.length === 0) return;
 
-        queueStore.setQueue(filePaths, 0);
+        queueStore.setQueue(filePaths, 0, true);
     };
 
     // =================================================================
@@ -1074,7 +1074,7 @@ export class PlaylistView
 
         switch (action) {
             case 'play':
-                queueStore.setQueue(filePaths, 0);
+                queueStore.setQueue(filePaths, 0, true);
                 break;
             case 'add-to-queue':
                 queueStore.addTracksToQueue(
