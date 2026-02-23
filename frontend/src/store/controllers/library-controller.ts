@@ -2,7 +2,7 @@ import type { ReactiveController, ReactiveControllerHost } from 'lit';
 import type { library } from '@go/models';
 import { libraryStore } from '../library-store';
 
-type ViewName = 'tracks' | 'albums';
+type ViewName = 'tracks' | 'albums' | 'artists' | 'genres';
 
 /**
  * LibraryController connects a Lit component to the LibraryStore.

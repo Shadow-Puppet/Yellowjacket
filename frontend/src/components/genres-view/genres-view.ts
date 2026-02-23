@@ -6,6 +6,10 @@ import {
 } from 'lit/decorators.js';
 import { EventsOn } from '@runtime/runtime';
 import '@lit-labs/virtualizer';
+import type {
+    LitVirtualizer,
+    VisibilityChangedEvent,
+} from '@lit-labs/virtualizer';
 import { grid } from '@lit-labs/virtualizer/layouts/grid.js';
 import { library } from '@go/models';
 import { LibraryController } from '@store/controllers/library-controller';
@@ -29,6 +33,9 @@ const CARD_SIZE_MIN = 100;
 const CARD_SIZE_MAX = 350;
 const CARD_SIZE_DEFAULT = 176;
 
+/** Debounce delay for saving scroll position. */
+const SCROLL_DEBOUNCE_MS = 100;
+
 /** A genre extracted from the track library. */
 interface Genre {
     name: string;
@@ -48,6 +55,9 @@ export class GenresView extends LitElement {
     private cancelScanComplete?: () => void;
     private wheelListenerAttached = false;
     private lastSearchTerm = '';
+    private scrollDebounceTimer: ReturnType<
+        typeof setTimeout
+    > | null = null;
 
     /** All tracks from the library (used to derive genres). */
     private allTracks: library.Track[] = [];
@@ -57,6 +67,9 @@ export class GenresView extends LitElement {
 
     @state()
     private loading = true;
+
+    @state()
+    private restoringScroll = false;
 
     @state()
     private cardSize: number = CARD_SIZE_DEFAULT;
@@ -404,6 +417,11 @@ export class GenresView extends LitElement {
         super.disconnectedCallback();
         this.cancelScanComplete?.();
         this.detachWheelListener();
+
+        if (this.scrollDebounceTimer !== null) {
+            clearTimeout(this.scrollDebounceTimer);
+        }
+
         document.removeEventListener(
             'click',
             this.closeHandler,
@@ -454,8 +472,17 @@ export class GenresView extends LitElement {
             this.allTracks = [];
             this.genres = [];
         } finally {
+            const saved =
+                this.libraryCtrl.getScrollPosition(
+                    'genres',
+                );
+
+            this.restoringScroll = saved > 0;
             this.loading = false;
         }
+
+        await this.updateComplete;
+        this.restoreScrollPosition();
     }
 
     /**
@@ -491,6 +518,74 @@ export class GenresView extends LitElement {
         );
 
         return result;
+    }
+
+    /* ================================================================
+     * Scroll position persistence
+     * ================================================================ */
+
+    /**
+     * Save the first visible item index on scroll.
+     */
+    private onVisibilityChanged = (
+        e: VisibilityChangedEvent,
+    ) => {
+        if (this.restoringScroll) return;
+
+        if (this.scrollDebounceTimer !== null) {
+            clearTimeout(this.scrollDebounceTimer);
+        }
+
+        this.scrollDebounceTimer = setTimeout(
+            () => {
+                this.libraryCtrl.setScrollPosition(
+                    'genres',
+                    e.first,
+                );
+            },
+            SCROLL_DEBOUNCE_MS,
+        );
+    };
+
+    /**
+     * Restore scroll position from the store.
+     */
+    private restoreScrollPosition(): void {
+        const saved =
+            this.libraryCtrl.getScrollPosition(
+                'genres',
+            );
+
+        if (saved <= 0) {
+            this.restoringScroll = false;
+
+            return;
+        }
+
+        const virt =
+            this.shadowRoot?.querySelector(
+                'lit-virtualizer',
+            ) as LitVirtualizer | null;
+
+        if (!virt) {
+            this.restoringScroll = false;
+
+            return;
+        }
+
+        const safeIndex = Math.min(
+            saved,
+            this.filteredGenres.length - 1,
+        );
+
+        if (safeIndex <= 0) {
+            this.restoringScroll = false;
+
+            return;
+        }
+
+        virt.scrollToIndex(safeIndex, 'start');
+        this.restoringScroll = false;
     }
 
     /* ================================================================
@@ -1187,6 +1282,9 @@ export class GenresView extends LitElement {
                 : nothing}
             <div
                 class="grid-scroll-container"
+                style=${this.restoringScroll
+                    ? 'visibility: hidden'
+                    : ''}
                 @click=${this.onGridClick}
             >
                 <lit-virtualizer
@@ -1196,6 +1294,7 @@ export class GenresView extends LitElement {
                     ) =>
                         this.renderGenreCard(entry)}
                     .layout=${this.gridLayout}
+                    @visibilityChanged=${this.onVisibilityChanged}
                 ></lit-virtualizer>
             </div>
             ${this.renderContextMenu()}

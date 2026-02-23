@@ -8,7 +8,7 @@ import {
 import type { library } from '@go/models';
 import { Events } from '../events';
 
-type ViewName = 'tracks' | 'albums';
+type ViewName = 'tracks' | 'albums' | 'artists' | 'genres';
 
 type Subscriber = () => void;
 
@@ -38,6 +38,8 @@ class LibraryStore {
     private scrollPositions: Record<ViewName, number> = {
         tracks: 0,
         albums: 0,
+        artists: 0,
+        genres: 0,
     };
 
     private subscribers = new Set<Subscriber>();
@@ -247,7 +249,7 @@ class LibraryStore {
         this.tracks = null;
         this.albums = null;
         this.artists = null;
-        this.scrollPositions = { tracks: 0, albums: 0 };
+        this.scrollPositions = { tracks: 0, albums: 0, artists: 0, genres: 0 };
         this.notify();
     }
 

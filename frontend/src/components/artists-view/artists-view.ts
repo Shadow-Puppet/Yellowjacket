@@ -6,6 +6,10 @@ import {
 } from 'lit/decorators.js';
 import { EventsOn } from '@runtime/runtime';
 import '@lit-labs/virtualizer';
+import type {
+    LitVirtualizer,
+    VisibilityChangedEvent,
+} from '@lit-labs/virtualizer';
 import { grid } from '@lit-labs/virtualizer/layouts/grid.js';
 import {
     GetAlbumsByArtist,
@@ -33,6 +37,9 @@ const CARD_SIZE_MIN = 100;
 const CARD_SIZE_MAX = 350;
 const CARD_SIZE_DEFAULT = 176;
 
+/** Debounce delay for saving scroll position. */
+const SCROLL_DEBOUNCE_MS = 100;
+
 /**
  * Grid entry for the virtualized artist grid.
  */
@@ -48,12 +55,18 @@ export class ArtistsView extends LitElement {
     private cancelScanComplete?: () => void;
     private wheelListenerAttached = false;
     private lastSearchTerm = '';
+    private scrollDebounceTimer: ReturnType<
+        typeof setTimeout
+    > | null = null;
 
     @state()
     private artists: library.Artist[] = [];
 
     @state()
     private loading = true;
+
+    @state()
+    private restoringScroll = false;
 
     @state()
     private cardSize: number = CARD_SIZE_DEFAULT;
@@ -398,6 +411,11 @@ export class ArtistsView extends LitElement {
         super.disconnectedCallback();
         this.cancelScanComplete?.();
         this.detachWheelListener();
+
+        if (this.scrollDebounceTimer !== null) {
+            clearTimeout(this.scrollDebounceTimer);
+        }
+
         document.removeEventListener(
             'click',
             this.closeHandler,
@@ -445,8 +463,85 @@ export class ArtistsView extends LitElement {
             );
             this.artists = [];
         } finally {
+            const saved =
+                this.libraryCtrl.getScrollPosition(
+                    'artists',
+                );
+
+            this.restoringScroll = saved > 0;
             this.loading = false;
         }
+
+        await this.updateComplete;
+        this.restoreScrollPosition();
+    }
+
+    /* ================================================================
+     * Scroll position persistence
+     * ================================================================ */
+
+    /**
+     * Save the first visible item index on scroll.
+     */
+    private onVisibilityChanged = (
+        e: VisibilityChangedEvent,
+    ) => {
+        if (this.restoringScroll) return;
+
+        if (this.scrollDebounceTimer !== null) {
+            clearTimeout(this.scrollDebounceTimer);
+        }
+
+        this.scrollDebounceTimer = setTimeout(
+            () => {
+                this.libraryCtrl.setScrollPosition(
+                    'artists',
+                    e.first,
+                );
+            },
+            SCROLL_DEBOUNCE_MS,
+        );
+    };
+
+    /**
+     * Restore scroll position from the store.
+     */
+    private restoreScrollPosition(): void {
+        const saved =
+            this.libraryCtrl.getScrollPosition(
+                'artists',
+            );
+
+        if (saved <= 0) {
+            this.restoringScroll = false;
+
+            return;
+        }
+
+        const virt =
+            this.shadowRoot?.querySelector(
+                'lit-virtualizer',
+            ) as LitVirtualizer | null;
+
+        if (!virt) {
+            this.restoringScroll = false;
+
+            return;
+        }
+
+        const safeIndex = Math.min(
+            saved,
+            this.filteredArtists.length - 1,
+        );
+
+        if (safeIndex <= 0) {
+            this.restoringScroll = false;
+
+            return;
+        }
+
+        virt.scrollToIndex(safeIndex, 'start');
+        this.restoringScroll = false;
     }
 
     /* ================================================================
@@ -1182,6 +1277,9 @@ export class ArtistsView extends LitElement {
                 : nothing}
             <div
                 class="grid-scroll-container"
+                style=${this.restoringScroll
+                    ? 'visibility: hidden'
+                    : ''}
                 @click=${this.onGridClick}
             >
                 <lit-virtualizer
@@ -1193,6 +1291,7 @@ export class ArtistsView extends LitElement {
                             entry,
                         )}
                     .layout=${this.gridLayout}
+                    @visibilityChanged=${this.onVisibilityChanged}
                 ></lit-virtualizer>
             </div>
             ${this.renderContextMenu()}
