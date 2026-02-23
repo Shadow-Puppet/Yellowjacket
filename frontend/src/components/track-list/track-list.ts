@@ -1,6 +1,11 @@
 import { library } from '@go/models';
 import { LitElement, html, css, nothing } from 'lit';
-import { customElement, state, query } from 'lit/decorators.js';
+import {
+    customElement,
+    property,
+    state,
+    query,
+} from 'lit/decorators.js';
 import { EventsOn } from '@runtime/runtime';
 import { SelectionController } from '@utils/selection-controller';
 import type { SelectionHost } from '@utils/selection-controller';
@@ -49,6 +54,15 @@ type SortDirection = 'asc' | 'desc';
 
 @customElement('track-list')
 export class TrackList extends LitElement implements SelectionHost {
+    /**
+     * When set, the list displays these tracks instead of
+     * fetching all tracks from the library store.  The
+     * component also skips the LibraryScanComplete listener
+     * since the parent is responsible for reloading.
+     */
+    @property({ type: Array, attribute: false })
+    externalTracks?: library.Track[];
+
     private player = new PlayerController(this);
     private libraryCtrl = new LibraryController(this);
     private searchCtrl = new SearchController(this);
@@ -924,11 +938,16 @@ export class TrackList extends LitElement implements SelectionHost {
     override connectedCallback() {
         super.connectedCallback();
         this.restoreSortPreferences();
-        this.loadTracks();
-        this.cancelScanComplete = EventsOn(
-            Events.LibraryScanComplete,
-            () => this.loadTracks(),
-        );
+
+        if (this.externalTracks) {
+            this.tracks = this.externalTracks;
+        } else {
+            this.loadTracks();
+            this.cancelScanComplete = EventsOn(
+                Events.LibraryScanComplete,
+                () => this.loadTracks(),
+            );
+        }
         document.addEventListener('click', this.closeHandler);
         document.addEventListener('contextmenu', this.closeHandler);
         document.addEventListener('mousedown', this.mousedownCloseHandler);
@@ -964,6 +983,22 @@ export class TrackList extends LitElement implements SelectionHost {
 
         this.resizeObserver?.disconnect();
         this.resizeObserver = null;
+    }
+
+    override willUpdate(
+        changed: Map<PropertyKey, unknown>,
+    ) {
+        super.willUpdate(changed);
+
+        // When the parent provides a new external track
+        // list, update local tracks and reset selection.
+        if (
+            changed.has('externalTracks') &&
+            this.externalTracks
+        ) {
+            this.tracks = this.externalTracks;
+            this.selection.clear();
+        }
     }
 
     override firstUpdated() {

@@ -9,6 +9,8 @@ import '@components/library-manager/library-manager.ts';
 import '@components/config-page/config-page.ts';
 import '@components/artists-view/artists-view.ts';
 import '@components/artist-details/artist-details.ts';
+import '@components/genres-view/genres-view.ts';
+import '@components/genre-details/genre-details.ts';
 import '@components/search-bar/search-bar.ts';
 import '@components/track-details/track-details.ts';
 import type { SearchBar } from '@components/search-bar/search-bar.ts';
@@ -67,6 +69,19 @@ document.addEventListener('navigate', (e: Event) => {
             el.setAttribute('artist-name', artistName);
             mainContent.innerHTML = '';
             mainContent.appendChild(el);
+            break;
+        }
+        case 'genres':
+            mainContent.innerHTML = '<genres-view></genres-view>';
+            break;
+        case 'genre-details': {
+            const { genreName } =
+                (e as CustomEvent).detail;
+            const genreEl = document.createElement('genre-details');
+
+            genreEl.setAttribute('genre-name', genreName);
+            mainContent.innerHTML = '';
+            mainContent.appendChild(genreEl);
             break;
         }
         case 'libraries':
