@@ -61,6 +61,14 @@ export class LibraryController implements ReactiveController {
         return libraryStore.getAlbumsByArtist(artistID);
     }
 
+    getAlbumsByArtistNameCached(
+        artistName: string,
+    ): library.Album[] | null {
+        return libraryStore.getAlbumsByArtistNameCached(
+            artistName,
+        );
+    }
+
     get cachedTracks(): library.Track[] | null {
         return libraryStore.getCachedTracks();
     }

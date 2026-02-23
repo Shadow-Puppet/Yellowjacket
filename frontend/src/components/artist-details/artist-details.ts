@@ -150,18 +150,6 @@ export class ArtistDetails extends LitElement {
             height: 100%;
         }
 
-        .loading-message,
-        .empty-message {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            height: 100%;
-            color: var(
-                --yj-text-secondary,
-                #b3b3b3
-            );
-            font-size: 14px;
-        }
     `;
 
     override connectedCallback() {
@@ -185,24 +173,74 @@ export class ArtistDetails extends LitElement {
     private async loadAlbums() {
         if (!this.artistId) return;
 
-        try {
-            this.loading = true;
+        // Try to populate instantly from the
+        // cached all-albums list if available.
+        const cached =
+            this.libraryCtrl.getAlbumsByArtistNameCached(
+                this.artistName,
+            );
 
+        if (cached !== null && cached.length > 0) {
+            this.albums = cached;
+            this.loading = false;
+        }
+
+        // Always run the authoritative backend
+        // query.  If we got a cache hit above,
+        // this serves as a correction pass.
+        try {
             const albums =
                 await this.libraryCtrl.getAlbumsByArtist(
                     this.artistId,
                 );
 
-            this.albums = albums ?? [];
+            const result = albums ?? [];
+
+            // Skip update if the cached result
+            // is identical (same IDs in same
+            // order) to avoid a re-render.
+            if (!this.albumsMatch(result)) {
+                this.albums = result;
+            }
         } catch (error) {
             console.error(
                 'Error loading artist albums:',
                 error,
             );
-            this.albums = [];
+
+            // Only overwrite if we had no cached
+            // result to fall back on.
+            if (cached === null) {
+                this.albums = [];
+            }
         } finally {
             this.loading = false;
         }
+    }
+
+    /**
+     * Compare two album lists by ID to avoid
+     * unnecessary re-renders when the backend
+     * result matches the cached approximation.
+     */
+    private albumsMatch(
+        incoming: library.Album[],
+    ): boolean {
+        const current = this.albums;
+
+        if (current.length !== incoming.length) {
+            return false;
+        }
+
+        for (let i = 0; i < current.length; i++) {
+            if (
+                current[i]!.ID !== incoming[i]!.ID
+            ) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /* ================================================================
@@ -277,20 +315,9 @@ export class ArtistDetails extends LitElement {
                 </div>
             </div>
             <div class="content">
-                ${this.loading
-                    ? html`
-                          <div
-                              class="loading-message"
-                          >
-                              Loading albums...
-                          </div>
-                      `
-                    : html`
-                          <cover-grid
-                              .externalAlbums=${this
-                                  .albums}
-                          ></cover-grid>
-                      `}
+                <cover-grid
+                    .externalAlbums=${this.albums}
+                ></cover-grid>
             </div>
         `;
     }

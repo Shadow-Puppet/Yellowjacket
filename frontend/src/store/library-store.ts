@@ -130,6 +130,24 @@ class LibraryStore {
         return GetAlbumsByArtist(artistID);
     }
 
+    /**
+     * Returns albums filtered by artist name from
+     * the in-memory cache, or null if the cache is
+     * not populated.  This provides an instant
+     * result when the all-albums list has already
+     * been loaded (e.g. the user visited the albums
+     * view first).
+     */
+    getAlbumsByArtistNameCached(
+        artistName: string,
+    ): library.Album[] | null {
+        if (this.albums === null) return null;
+
+        return this.albums.filter(
+            (a) => a.ArtistName === artistName,
+        );
+    }
+
     // ===================================================================
     // STATE ACCESSORS
     // Synchronous access for controllers that need current cached values.
