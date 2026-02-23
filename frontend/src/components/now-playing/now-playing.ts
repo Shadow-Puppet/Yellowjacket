@@ -1,6 +1,7 @@
-import { LitElement, html, css } from 'lit';
+import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
+import '@awesome.me/webawesome/dist/components/popup/popup.js';
 import { PlayerController } from '@store/controllers/player-controller';
 
 const MIN_WIDTH = 120;
@@ -13,6 +14,9 @@ export class NowPlaying extends LitElement {
 
     @state()
     private isDragging = false;
+
+    @state()
+    private showCoverPreview = false;
 
     static override styles = css`
     :host {
@@ -57,6 +61,25 @@ export class NowPlaying extends LitElement {
     .cover-placeholder wa-icon {
       color: var(--yj-text-primary, #fff);
       font-size: 24px;
+    }
+
+    .cover-art-wrapper {
+      position: relative;
+    }
+
+    .cover-preview-panel {
+      width: 500px;
+      height: 500px;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+      pointer-events: none;
+    }
+
+    .cover-preview-panel img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
     }
 
     .track-info {
@@ -132,23 +155,54 @@ export class NowPlaying extends LitElement {
 
         return html`
       <div class="now-playing">
-        <div class="cover-art">
-          ${track.coverArt
-            ? html`<img
-                src="${track.coverArtSmall || track.coverArt}"
-                alt="Album cover"
-                @error=${(e: Event) => {
-                    const img = e.target as HTMLImageElement;
-                    if (track.coverArt && img.src !== track.coverArt) {
-                        img.src = track.coverArt;
-                    }
-                }}
-              />`
-            : html`<div class="cover-placeholder"><wa-icon name="music"></wa-icon></div>`}
+        <div class="cover-art-wrapper">
+          <div
+            class="cover-art"
+            @mouseenter=${this.handleCoverMouseEnter}
+            @mouseleave=${this.handleCoverMouseLeave}
+          >
+            ${track.coverArt
+              ? html`<img
+                  src="${track.coverArtSmall || track.coverArt}"
+                  alt="Album cover"
+                  @error=${(e: Event) => {
+                      const img = e.target as HTMLImageElement;
+                      if (
+                          track.coverArt &&
+                          img.src !== track.coverArt
+                      ) {
+                          img.src = track.coverArt;
+                      }
+                  }}
+                />`
+              : html`<div class="cover-placeholder">
+                  <wa-icon name="music"></wa-icon>
+                </div>`}
+          </div>
+          <wa-popup
+            id="cover-preview"
+            placement="top-start"
+            flip
+            shift
+            .active=${this.showCoverPreview}
+          >
+            ${this.showCoverPreview && track.coverArt
+              ? html`
+                  <div class="cover-preview-panel">
+                    <img
+                      src="${track.coverArt}"
+                      alt="Album cover full size"
+                    />
+                  </div>
+                `
+              : nothing}
+          </wa-popup>
         </div>
         <div class="track-info">
           <span class="track-title">${track.title}</span>
-          <span class="track-artist">${track.artist || 'Unknown Artist'}</span>
+          <span class="track-artist">
+            ${track.artist || 'Unknown Artist'}
+          </span>
         </div>
       </div>
       <div
@@ -157,6 +211,31 @@ export class NowPlaying extends LitElement {
       ></div>
     `;
     }
+
+    private handleCoverMouseEnter = () => {
+        const track = this.player.currentTrack;
+
+        if (!track?.coverArt) return;
+
+        this.showCoverPreview = true;
+
+        this.updateComplete.then(() => {
+            const popup = this.shadowRoot?.querySelector(
+                '#cover-preview',
+            );
+            const anchor = this.shadowRoot?.querySelector(
+                '.cover-art',
+            );
+
+            if (popup && anchor) {
+                (popup as any).anchor = anchor;
+            }
+        });
+    };
+
+    private handleCoverMouseLeave = () => {
+        this.showCoverPreview = false;
+    };
 
     private handleMouseDown = (e: MouseEvent) => {
         e.preventDefault();
