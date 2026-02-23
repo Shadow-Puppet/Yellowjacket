@@ -29,6 +29,10 @@ import {
     createTrackCardDragImage,
     removeDragImage,
 } from '@utils/drag-image';
+import { libraryStore } from '@store/library-store';
+import '@components/track-details/track-details.js';
+import type { TrackDetails } from '@components/track-details/track-details.js';
+import type { CoverArtUrls } from '@components/track-details/track-details.js';
 
 const MIN_WIDTH = 200;
 const MAX_WIDTH = 500;
@@ -79,6 +83,9 @@ export class QueuePanel
 
     @query('lit-virtualizer')
     private virtualizer!: LitVirtualizer;
+
+    @query('track-details')
+    private trackDetailsDialog!: TrackDetails;
 
     private closePickerHandler = (e: MouseEvent) => {
         const path = e.composedPath();
@@ -686,11 +693,66 @@ export class QueuePanel
                 this.queue.playAtIndex(indices[0]!);
                 break;
             case 'remove':
-                this.queue.removeTracksFromQueue(indices);
+                this.queue.removeTracksFromQueue(
+                    indices,
+                );
+                break;
+            case 'track-details':
+                this.openTrackDetails(indices[0]!);
                 break;
         }
 
         this.closeContextMenu(true);
+    }
+
+    private openTrackDetails(index: number) {
+        const queueTrack =
+            this.queue.tracks[index];
+
+        if (!queueTrack) return;
+
+        const tracks =
+            libraryStore.getCachedTracks();
+        const track = tracks?.find(
+            (t) =>
+                t.FilePath === queueTrack.filePath,
+        );
+
+        if (!track) return;
+
+        const coverArt =
+            this.resolveQueueCoverArt(track.Album);
+
+        this.trackDetailsDialog?.show(
+            track,
+            coverArt ?? undefined,
+        );
+    }
+
+    private resolveQueueCoverArt(
+        albumName: string,
+    ): CoverArtUrls | null {
+        if (!albumName) return null;
+
+        const albums =
+            libraryStore.getCachedAlbums();
+
+        if (!albums) return null;
+
+        const album = albums.find(
+            (a) => a.Name === albumName,
+        );
+
+        if (!album || !album.CoverArtPath) {
+            return null;
+        }
+
+        return {
+            coverArtPath: album.CoverArtPath,
+            coverArtSmall: album.CoverArtSmall,
+            coverArtMedium: album.CoverArtMedium,
+            coverArtLarge: album.CoverArtLarge,
+        };
     }
 
     private closeContextMenu(clearSelection = false) {
@@ -1394,6 +1456,24 @@ export class QueuePanel
                                       &#9654;
                                   </span>
                               </wa-dropdown-item>
+                              ${this.selection
+                                  .selectionCount === 1
+                                  ? html`
+                                        <wa-dropdown-item
+                                            @click=${() =>
+                                                this.onContextMenuAction(
+                                                    'track-details',
+                                                )}
+                                        >
+                                            <wa-icon
+                                                slot="icon"
+                                                name="circle-info"
+                                            ></wa-icon>
+                                            Track
+                                            Details
+                                        </wa-dropdown-item>
+                                    `
+                                  : nothing}
                           </div>
                       `
                     : nothing}
@@ -1420,6 +1500,8 @@ export class QueuePanel
                       `
                     : nothing}
             </wa-popup>
+
+            <track-details></track-details>
         `;
     }
 }

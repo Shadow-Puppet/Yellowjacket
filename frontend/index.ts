@@ -10,6 +10,7 @@ import '@components/config-page/config-page.ts';
 import '@components/artists-view/artists-view.ts';
 import '@components/artist-details/artist-details.ts';
 import '@components/search-bar/search-bar.ts';
+import '@components/track-details/track-details.ts';
 import type { SearchBar } from '@components/search-bar/search-bar.ts';
 import '@awesome.me/webawesome/dist/styles/themes/default.css';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';

@@ -40,6 +40,10 @@ import {
     createTrackCardDragImage,
     removeDragImage,
 } from '@utils/drag-image';
+import { libraryStore } from '@store/library-store';
+import '@components/track-details/track-details.js';
+import type { TrackDetails } from '@components/track-details/track-details.js';
+import type { CoverArtUrls } from '@components/track-details/track-details.js';
 
 const SCROLL_DEBOUNCE_MS = 100;
 
@@ -190,6 +194,9 @@ export class PlaylistView
 
     @query('#playlist-context-menu')
     private playlistContextMenuPopup!: HTMLElement;
+
+    @query('track-details')
+    private trackDetailsDialog!: TrackDetails;
 
     private closeContextMenuHandler = () => {
         this.closeContextMenu();
@@ -1066,7 +1073,9 @@ export class PlaylistView
                 queueStore.setQueue(filePaths, 0);
                 break;
             case 'add-to-queue':
-                queueStore.addTracksToQueue(filePaths);
+                queueStore.addTracksToQueue(
+                    filePaths,
+                );
                 break;
             case 'play-next':
                 queueStore.playTracksNext(filePaths);
@@ -1074,9 +1083,58 @@ export class PlaylistView
             case 'remove':
                 void this.removeSelectedTracks();
                 break;
+            case 'track-details':
+                this.openTrackDetails(filePaths[0]!);
+                break;
         }
 
         this.closeContextMenu(true);
+    }
+
+    private openTrackDetails(filePath: string) {
+        const tracks =
+            libraryStore.getCachedTracks();
+        const track = tracks?.find(
+            (t) => t.FilePath === filePath,
+        );
+
+        if (!track) return;
+
+        const coverArt =
+            this.resolvePlaylistCoverArt(
+                track.Album,
+            );
+
+        this.trackDetailsDialog?.show(
+            track,
+            coverArt ?? undefined,
+        );
+    }
+
+    private resolvePlaylistCoverArt(
+        albumName: string,
+    ): CoverArtUrls | null {
+        if (!albumName) return null;
+
+        const albums =
+            libraryStore.getCachedAlbums();
+
+        if (!albums) return null;
+
+        const album = albums.find(
+            (a) => a.Name === albumName,
+        );
+
+        if (!album || !album.CoverArtPath) {
+            return null;
+        }
+
+        return {
+            coverArtPath: album.CoverArtPath,
+            coverArtSmall: album.CoverArtSmall,
+            coverArtMedium: album.CoverArtMedium,
+            coverArtLarge: album.CoverArtLarge,
+        };
     }
 
     private async removeSelectedTracks() {
@@ -1840,12 +1898,30 @@ export class PlaylistView
                                       name="plus"
                                   ></wa-icon>
                                   Add to Playlist
-                                  <span
-                                      class="submenu-arrow"
-                                  >
-                                      &#9654;
-                                  </span>
+                                   <span
+                                       class="submenu-arrow"
+                                   >
+                                       &#9654;
+                                   </span>
                               </wa-dropdown-item>
+                              ${this.selection
+                                  .selectionCount === 1
+                                  ? html`
+                                        <wa-dropdown-item
+                                            @click=${() =>
+                                                this.onContextMenuAction(
+                                                    'track-details',
+                                                )}
+                                        >
+                                            <wa-icon
+                                                slot="icon"
+                                                name="circle-info"
+                                            ></wa-icon>
+                                            Track
+                                            Details
+                                        </wa-dropdown-item>
+                                    `
+                                  : nothing}
                           </div>
                       `
                     : nothing}
@@ -1913,6 +1989,8 @@ export class PlaylistView
                       `
                     : nothing}
             </wa-popup>
+
+            <track-details></track-details>
         `;
     }
 

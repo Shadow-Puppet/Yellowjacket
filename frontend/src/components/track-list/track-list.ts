@@ -35,6 +35,9 @@ import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@components/playlist-picker/playlist-picker.js';
 import type { PlaylistPicker } from '@components/playlist-picker/playlist-picker.js';
+import '@components/track-details/track-details.js';
+import type { TrackDetails } from '@components/track-details/track-details.js';
+import type { CoverArtUrls } from '@components/track-details/track-details.js';
 
 const COLUMN_STORAGE_KEY = 'track-list-column-widths';
 const SORT_FIELD_KEY = 'track-list-sort-field';
@@ -92,6 +95,9 @@ export class TrackList extends LitElement implements SelectionHost {
 
     @query('#playlist-submenu')
     private playlistSubmenuPopup!: HTMLElement;
+
+    @query('track-details')
+    private trackDetailsDialog!: TrackDetails;
 
     @query('lit-virtualizer')
     private virtualizer!: LitVirtualizer;
@@ -1163,7 +1169,8 @@ export class TrackList extends LitElement implements SelectionHost {
     };
 
     private onContextMenuAction(action: string) {
-        const filePaths = this.selection.getSelectedKeysOrdered();
+        const filePaths =
+            this.selection.getSelectedKeysOrdered();
 
         if (filePaths.length === 0) return;
 
@@ -1177,9 +1184,51 @@ export class TrackList extends LitElement implements SelectionHost {
             case 'play-next':
                 queueStore.playTracksNext(filePaths);
                 break;
+            case 'track-details':
+                this.openTrackDetails(filePaths[0]!);
+                break;
         }
 
         this.closeContextMenu(true);
+    }
+
+    private openTrackDetails(filePath: string) {
+        const track = this.tracks.find(
+            (t) => t.FilePath === filePath,
+        );
+
+        if (!track) return;
+
+        const coverArt =
+            this.resolveCoverArt(track.Album);
+
+        this.trackDetailsDialog?.show(
+            track,
+            coverArt ?? undefined,
+        );
+    }
+
+    private resolveCoverArt(
+        albumName: string,
+    ): CoverArtUrls | null {
+        if (!albumName) return null;
+
+        const albums = this.libraryCtrl.cachedAlbums;
+
+        if (!albums) return null;
+
+        const album = albums.find(
+            (a) => a.Name === albumName,
+        );
+
+        if (!album || !album.CoverArtPath) return null;
+
+        return {
+            coverArtPath: album.CoverArtPath,
+            coverArtSmall: album.CoverArtSmall,
+            coverArtMedium: album.CoverArtMedium,
+            coverArtLarge: album.CoverArtLarge,
+        };
     }
 
     private closeContextMenu(clearSelection = false) {
@@ -1651,6 +1700,22 @@ export class TrackList extends LitElement implements SelectionHost {
                   Add to Playlist
                   <span class="submenu-arrow">&#9654;</span>
                 </wa-dropdown-item>
+                ${this.selection.selectionCount === 1
+                    ? html`
+                          <wa-dropdown-item
+                              @click=${() =>
+                                  this.onContextMenuAction(
+                                      'track-details',
+                                  )}
+                          >
+                              <wa-icon
+                                  slot="icon"
+                                  name="circle-info"
+                              ></wa-icon>
+                              Track Details
+                          </wa-dropdown-item>
+                      `
+                    : nothing}
               </div>
             `
                 : nothing}
@@ -1673,6 +1738,8 @@ export class TrackList extends LitElement implements SelectionHost {
             `
                 : nothing}
       </wa-popup>
+
+      <track-details></track-details>
     `;
     }
 }

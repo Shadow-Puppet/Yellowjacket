@@ -23,6 +23,9 @@ import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@components/playlist-picker/playlist-picker.js';
 import type { PlaylistPicker } from '@components/playlist-picker/playlist-picker.js';
+import '@components/track-details/track-details.js';
+import type { TrackDetails } from '@components/track-details/track-details.js';
+import type { CoverArtUrls } from '@components/track-details/track-details.js';
 import './album-dropdown.js';
 import type {
     TrackClickDetail,
@@ -695,6 +698,9 @@ export class CoverGrid extends LitElement {
 
     @query('#playlist-submenu')
     private playlistSubmenuPopup!: HTMLElement;
+
+    @query('track-details')
+    private trackDetailsDialog!: TrackDetails;
 
     @query('#grid-single')
     private virtualizerSingle!: LitVirtualizer;
@@ -3066,9 +3072,47 @@ export class CoverGrid extends LitElement {
             case 'play-next':
                 queueStore.playTracksNext(filePaths);
                 break;
+            case 'track-details':
+                this.openTrackDetails(filePaths[0]!);
+                break;
         }
 
         this.closeContextMenu(true);
+    }
+
+    private openTrackDetails(filePath: string) {
+        const track = this.expandedTracks.find(
+            (t) => t.FilePath === filePath,
+        );
+
+        if (!track) return;
+
+        const coverArt =
+            this.resolveTrackCoverArt(track.Album);
+
+        this.trackDetailsDialog?.show(
+            track,
+            coverArt ?? undefined,
+        );
+    }
+
+    private resolveTrackCoverArt(
+        albumName: string,
+    ): CoverArtUrls | null {
+        if (!albumName) return null;
+
+        const album = this.albums.find(
+            (a) => a.Name === albumName,
+        );
+
+        if (!album || !album.CoverArtPath) return null;
+
+        return {
+            coverArtPath: album.CoverArtPath,
+            coverArtSmall: album.CoverArtSmall,
+            coverArtMedium: album.CoverArtMedium,
+            coverArtLarge: album.CoverArtLarge,
+        };
     }
 
     private closeContextMenu(clearSelection = false) {
@@ -3548,12 +3592,33 @@ export class CoverGrid extends LitElement {
                                       slot="icon"
                                       name="plus"
                                   ></wa-icon>
-                                  Add to Playlist
-                                  <span
-                                      class="submenu-arrow"
-                                      >&#9654;</span
-                                  >
+                                   Add to Playlist
+                                   <span
+                                       class="submenu-arrow"
+                                       >&#9654;</span
+                                   >
                               </wa-dropdown-item>
+                              ${this.contextMenuTarget
+                                      .kind ===
+                                  'track' &&
+                              this.selectedTracks
+                                  .size === 1
+                                  ? html`
+                                        <wa-dropdown-item
+                                            @click=${() =>
+                                                this.onContextMenuAction(
+                                                    'track-details',
+                                                )}
+                                        >
+                                            <wa-icon
+                                                slot="icon"
+                                                name="circle-info"
+                                            ></wa-icon>
+                                            Track
+                                            Details
+                                        </wa-dropdown-item>
+                                    `
+                                  : nothing}
                           </div>
                       `
                 : nothing}
@@ -3577,6 +3642,8 @@ export class CoverGrid extends LitElement {
                       `
                 : nothing}
             </wa-popup>
+
+            <track-details></track-details>
         `;
     }
 }

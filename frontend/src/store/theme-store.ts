@@ -280,10 +280,38 @@ class ThemeStore {
 
         // Set the document color-scheme so native form controls
         // (select dropdowns, scrollbars, etc.) match the theme.
-        root.style.colorScheme =
-            this.state.backgroundShade === 'light'
-                ? 'light'
-                : 'dark';
+        const isDark =
+            this.state.backgroundShade !== 'light';
+
+        root.style.colorScheme = isDark
+            ? 'dark'
+            : 'light';
+
+        // Bridge to WebAwesome's theme system so wa-dialog,
+        // wa-drawer, and other WA components inherit the
+        // correct surface colours instead of defaulting to
+        // white (light mode).
+        if (isDark) {
+            root.classList.add('wa-dark');
+        } else {
+            root.classList.remove('wa-dark');
+        }
+
+        const palette =
+            SHADE_PALETTES[this.state.backgroundShade];
+
+        root.style.setProperty(
+            '--wa-color-surface-raised',
+            palette.bgSurface,
+        );
+        root.style.setProperty(
+            '--wa-color-surface-default',
+            palette.bgBase,
+        );
+        root.style.setProperty(
+            '--wa-color-surface-lowered',
+            palette.bgElevated,
+        );
     }
 }
 
