@@ -104,6 +104,10 @@ export class TrackList extends LitElement implements SelectionHost {
 
     private lastActiveTrackPath: string | null = null;
 
+    private submenuCloseTimer: ReturnType<
+        typeof setTimeout
+    > | null = null;
+
     private closeHandler = () => this.closeContextMenu();
 
     private mousedownCloseHandler = (
@@ -1248,7 +1252,24 @@ export class TrackList extends LitElement implements SelectionHost {
         }
     }
 
+    private clearSubmenuCloseTimer() {
+        if (this.submenuCloseTimer !== null) {
+            clearTimeout(this.submenuCloseTimer);
+            this.submenuCloseTimer = null;
+        }
+    }
+
+    private scheduleSubmenuClose = () => {
+        this.clearSubmenuCloseTimer();
+        this.submenuCloseTimer = setTimeout(() => {
+            this.submenuCloseTimer = null;
+            this.closePlaylistSubmenu();
+        }, 150);
+    };
+
     private async showPlaylistSubmenu() {
+        this.clearSubmenuCloseTimer();
+
         if (this.playlistSubmenuOpen) return;
 
         this.playlistSubmenuOpen = true;
@@ -1271,6 +1292,8 @@ export class TrackList extends LitElement implements SelectionHost {
     }
 
     private closePlaylistSubmenu() {
+        this.clearSubmenuCloseTimer();
+
         if (!this.playlistSubmenuOpen) return;
 
         this.playlistSubmenuOpen = false;
@@ -1672,25 +1695,32 @@ export class TrackList extends LitElement implements SelectionHost {
               <div class="context-menu-panel">
                 <wa-dropdown-item
                   @click=${() => this.onContextMenuAction('play')}
+                  @mouseenter=${() => this.closePlaylistSubmenu()}
                 >
                   <wa-icon slot="icon" name="play"></wa-icon>
                   Play
                 </wa-dropdown-item>
                 <wa-dropdown-item
                   @click=${() => this.onContextMenuAction('add-to-queue')}
+                  @mouseenter=${() => this.closePlaylistSubmenu()}
                 >
                   <wa-icon slot="icon" name="plus"></wa-icon>
                   Add to Queue
                 </wa-dropdown-item>
                 <wa-dropdown-item
                   @click=${() => this.onContextMenuAction('play-next')}
+                  @mouseenter=${() => this.closePlaylistSubmenu()}
                 >
                   <wa-icon slot="icon" name="forward-step"></wa-icon>
                   Play Next
                 </wa-dropdown-item>
                 <wa-dropdown-item
                   class="submenu-item"
-                  @mouseenter=${() => this.showPlaylistSubmenu()}
+                  @mouseenter=${() => {
+                        this.clearSubmenuCloseTimer();
+                        void this.showPlaylistSubmenu();
+                    }}
+                  @mouseleave=${this.scheduleSubmenuClose}
                   @click=${(e: Event) => {
                         e.stopPropagation();
                         void this.showPlaylistSubmenu();
@@ -1707,6 +1737,8 @@ export class TrackList extends LitElement implements SelectionHost {
                                   this.onContextMenuAction(
                                       'track-details',
                                   )}
+                              @mouseenter=${() =>
+                                  this.closePlaylistSubmenu()}
                           >
                               <wa-icon
                                   slot="icon"
@@ -1730,11 +1762,17 @@ export class TrackList extends LitElement implements SelectionHost {
       >
         ${this.playlistSubmenuOpen && this.selection.hasSelection
                 ? html`
-              <playlist-picker
-                .filePaths=${this.selection.getSelectedKeysOrdered()}
-                @playlist-action-complete=${this.onPlaylistActionComplete}
-                @click=${(e: Event) => e.stopPropagation()}
-              ></playlist-picker>
+              <div
+                @mouseenter=${() =>
+                    this.clearSubmenuCloseTimer()}
+                @mouseleave=${this.scheduleSubmenuClose}
+              >
+                <playlist-picker
+                  .filePaths=${this.selection.getSelectedKeysOrdered()}
+                  @playlist-action-complete=${this.onPlaylistActionComplete}
+                  @click=${(e: Event) => e.stopPropagation()}
+                ></playlist-picker>
+              </div>
             `
                 : nothing}
       </wa-popup>

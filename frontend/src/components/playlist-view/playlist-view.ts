@@ -198,6 +198,10 @@ export class PlaylistView
     @query('track-details')
     private trackDetailsDialog!: TrackDetails;
 
+    private submenuCloseTimer: ReturnType<
+        typeof setTimeout
+    > | null = null;
+
     private closeContextMenuHandler = () => {
         this.closeContextMenu();
         this.closePlaylistContextMenu();
@@ -1464,7 +1468,24 @@ export class PlaylistView
         }
     }
 
+    private clearSubmenuCloseTimer() {
+        if (this.submenuCloseTimer !== null) {
+            clearTimeout(this.submenuCloseTimer);
+            this.submenuCloseTimer = null;
+        }
+    }
+
+    private scheduleSubmenuClose = () => {
+        this.clearSubmenuCloseTimer();
+        this.submenuCloseTimer = setTimeout(() => {
+            this.submenuCloseTimer = null;
+            this.closePlaylistSubmenu();
+        }, 150);
+    };
+
     private async showPlaylistSubmenu() {
+        this.clearSubmenuCloseTimer();
+
         if (this.playlistSubmenuOpen) return;
 
         this.playlistSubmenuOpen = true;
@@ -1490,6 +1511,8 @@ export class PlaylistView
     }
 
     private closePlaylistSubmenu() {
+        this.clearSubmenuCloseTimer();
+
         if (!this.playlistSubmenuOpen) return;
 
         this.playlistSubmenuOpen = false;
@@ -1841,6 +1864,8 @@ export class PlaylistView
                                       this.onContextMenuAction(
                                           'play',
                                       )}
+                                  @mouseenter=${() =>
+                                      this.closePlaylistSubmenu()}
                               >
                                   <wa-icon
                                       slot="icon"
@@ -1853,6 +1878,8 @@ export class PlaylistView
                                       this.onContextMenuAction(
                                           'add-to-queue',
                                       )}
+                                  @mouseenter=${() =>
+                                      this.closePlaylistSubmenu()}
                               >
                                   <wa-icon
                                       slot="icon"
@@ -1865,6 +1892,8 @@ export class PlaylistView
                                       this.onContextMenuAction(
                                           'play-next',
                                       )}
+                                  @mouseenter=${() =>
+                                      this.closePlaylistSubmenu()}
                               >
                                   <wa-icon
                                       slot="icon"
@@ -1877,6 +1906,8 @@ export class PlaylistView
                                       this.onContextMenuAction(
                                           'remove',
                                       )}
+                                  @mouseenter=${() =>
+                                      this.closePlaylistSubmenu()}
                               >
                                   <wa-icon
                                       slot="icon"
@@ -1886,8 +1917,12 @@ export class PlaylistView
                               </wa-dropdown-item>
                               <wa-dropdown-item
                                   class="submenu-item"
-                                  @mouseenter=${() =>
-                                      this.showPlaylistSubmenu()}
+                                  @mouseenter=${() => {
+                                      this.clearSubmenuCloseTimer();
+                                      void this.showPlaylistSubmenu();
+                                  }}
+                                  @mouseleave=${this
+                                      .scheduleSubmenuClose}
                                   @click=${(e: Event) => {
                                       e.stopPropagation();
                                       void this.showPlaylistSubmenu();
@@ -1912,6 +1947,8 @@ export class PlaylistView
                                                 this.onContextMenuAction(
                                                     'track-details',
                                                 )}
+                                            @mouseenter=${() =>
+                                                this.closePlaylistSubmenu()}
                                         >
                                             <wa-icon
                                                 slot="icon"
@@ -1937,13 +1974,20 @@ export class PlaylistView
                 ${this.playlistSubmenuOpen &&
                 this.selection.hasSelection
                     ? html`
-                          <playlist-picker
-                              .filePaths=${this.getSelectedFilePaths()}
-                              @playlist-action-complete=${this
-                                  .onPlaylistActionComplete}
-                              @click=${(e: Event) =>
-                                  e.stopPropagation()}
-                          ></playlist-picker>
+                          <div
+                              @mouseenter=${() =>
+                                  this.clearSubmenuCloseTimer()}
+                              @mouseleave=${this
+                                  .scheduleSubmenuClose}
+                          >
+                              <playlist-picker
+                                  .filePaths=${this.getSelectedFilePaths()}
+                                  @playlist-action-complete=${this
+                                      .onPlaylistActionComplete}
+                                  @click=${(e: Event) =>
+                                      e.stopPropagation()}
+                              ></playlist-picker>
+                          </div>
                       `
                     : nothing}
             </wa-popup>

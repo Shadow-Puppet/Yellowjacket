@@ -158,6 +158,10 @@ export class CoverGrid extends LitElement {
         typeof setTimeout
     > | null = null;
 
+    private submenuCloseTimer: ReturnType<
+        typeof setTimeout
+    > | null = null;
+
     private closeHandler = () => this.closeContextMenu();
 
     private mousedownCloseHandler = (
@@ -3139,7 +3143,24 @@ export class CoverGrid extends LitElement {
         }
     }
 
+    private clearSubmenuCloseTimer() {
+        if (this.submenuCloseTimer !== null) {
+            clearTimeout(this.submenuCloseTimer);
+            this.submenuCloseTimer = null;
+        }
+    }
+
+    private scheduleSubmenuClose = () => {
+        this.clearSubmenuCloseTimer();
+        this.submenuCloseTimer = setTimeout(() => {
+            this.submenuCloseTimer = null;
+            this.closePlaylistSubmenu();
+        }, 150);
+    };
+
     private async showPlaylistSubmenu() {
+        this.clearSubmenuCloseTimer();
+
         if (this.playlistSubmenuOpen) return;
 
         if (this.contextMenuTarget.kind === 'track') {
@@ -3174,6 +3195,8 @@ export class CoverGrid extends LitElement {
     }
 
     private closePlaylistSubmenu() {
+        this.clearSubmenuCloseTimer();
+
         if (!this.playlistSubmenuOpen) return;
 
         this.playlistSubmenuOpen = false;
@@ -3548,6 +3571,8 @@ export class CoverGrid extends LitElement {
                         this.onContextMenuAction(
                             'play',
                         )}
+                                  @mouseenter=${() =>
+                        this.closePlaylistSubmenu()}
                               >
                                   <wa-icon
                                       slot="icon"
@@ -3560,6 +3585,8 @@ export class CoverGrid extends LitElement {
                         this.onContextMenuAction(
                             'add-to-queue',
                         )}
+                                  @mouseenter=${() =>
+                        this.closePlaylistSubmenu()}
                               >
                                   <wa-icon
                                       slot="icon"
@@ -3572,6 +3599,8 @@ export class CoverGrid extends LitElement {
                         this.onContextMenuAction(
                             'play-next',
                         )}
+                                  @mouseenter=${() =>
+                        this.closePlaylistSubmenu()}
                               >
                                   <wa-icon
                                       slot="icon"
@@ -3581,8 +3610,12 @@ export class CoverGrid extends LitElement {
                               </wa-dropdown-item>
                               <wa-dropdown-item
                                   class="submenu-item"
-                                  @mouseenter=${() =>
-                        this.showPlaylistSubmenu()}
+                                  @mouseenter=${() => {
+                        this.clearSubmenuCloseTimer();
+                        void this.showPlaylistSubmenu();
+                    }}
+                                  @mouseleave=${this
+                        .scheduleSubmenuClose}
                                   @click=${(e: Event) => {
                         e.stopPropagation();
                         void this.showPlaylistSubmenu();
@@ -3609,6 +3642,8 @@ export class CoverGrid extends LitElement {
                                                 this.onContextMenuAction(
                                                     'track-details',
                                                 )}
+                                            @mouseenter=${() =>
+                                                this.closePlaylistSubmenu()}
                                         >
                                             <wa-icon
                                                 slot="icon"
@@ -3633,12 +3668,21 @@ export class CoverGrid extends LitElement {
             >
                 ${this.playlistSubmenuOpen
                 ? html`
-                          <playlist-picker
-                              .filePaths=${this.playlistFilePaths}
-                              @playlist-action-complete=${this.onPlaylistActionComplete}
-                              @click=${(e: Event) =>
+                          <div
+                              @mouseenter=${() =>
+                        this.clearSubmenuCloseTimer()}
+                              @mouseleave=${this
+                        .scheduleSubmenuClose}
+                          >
+                              <playlist-picker
+                                  .filePaths=${this
+                        .playlistFilePaths}
+                                  @playlist-action-complete=${this
+                        .onPlaylistActionComplete}
+                                  @click=${(e: Event) =>
                         e.stopPropagation()}
-                          ></playlist-picker>
+                              ></playlist-picker>
+                          </div>
                       `
                 : nothing}
             </wa-popup>
