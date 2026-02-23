@@ -47,6 +47,7 @@ export class ArtistsView extends LitElement {
     private searchCtrl = new SearchController(this);
     private cancelScanComplete?: () => void;
     private wheelListenerAttached = false;
+    private lastSearchTerm = '';
 
     @state()
     private artists: library.Artist[] = [];
@@ -56,6 +57,14 @@ export class ArtistsView extends LitElement {
 
     @state()
     private cardSize: number = CARD_SIZE_DEFAULT;
+
+    // ----- Multi-select state -----
+
+    @state()
+    private selectedArtists: Set<number> = new Set();
+
+    private lastSelectedArtistIndex: number | null =
+        null;
 
     // ----- Context menu state -----
 
@@ -67,10 +76,6 @@ export class ArtistsView extends LitElement {
 
     @state()
     private playlistFilePaths: string[] = [];
-
-    /** The artist targeted by the current context menu. */
-    private contextMenuArtist: library.Artist | null =
-        null;
 
     @query('#context-menu')
     private contextMenuPopup!: HTMLElement;
@@ -211,6 +216,20 @@ export class ArtistsView extends LitElement {
 
         .artist-card:active {
             transform: scale(0.97);
+        }
+
+        .artist-card.selected {
+            outline: 2px solid
+                var(--yj-accent, #ffd43b);
+            outline-offset: 2px;
+        }
+
+        .artist-card.selected .avatar-container {
+            scale: 0.95;
+        }
+
+        .artist-card.selected .artist-name {
+            scale: 0.95;
         }
 
         .avatar-container {
@@ -397,6 +416,14 @@ export class ArtistsView extends LitElement {
         this.updateSizeProperties();
         this.ensureWheelListener();
         this.updateGridLayout();
+
+        // Clear selection when search term changes.
+        const currentTerm = this.searchCtrl.term;
+
+        if (currentTerm !== this.lastSearchTerm) {
+            this.lastSearchTerm = currentTerm;
+            this.clearSelection();
+        }
     }
 
     /* ================================================================
@@ -583,23 +610,119 @@ export class ArtistsView extends LitElement {
     }
 
     /* ================================================================
+     * Artist selection helpers
+     * ================================================================ */
+
+    /**
+     * Select a contiguous range of artist IDs
+     * between two indices in filteredArtists.
+     */
+    private selectArtistRange(
+        from: number,
+        to: number,
+    ): Set<number> {
+        const filtered = this.filteredArtists;
+        const start = Math.min(from, to);
+        const end = Math.max(from, to);
+        const ids = new Set<number>();
+
+        for (let i = start; i <= end; i++) {
+            const artist = filtered[i];
+
+            if (artist) {
+                ids.add(artist.ID);
+            }
+        }
+
+        return ids;
+    }
+
+    /**
+     * Fetches all file paths for every selected
+     * artist.
+     */
+    private async getSelectedArtistFilePaths(): Promise<
+        string[]
+    > {
+        const selected = this.artists.filter((a) =>
+            this.selectedArtists.has(a.ID),
+        );
+        const allPaths: string[] = [];
+
+        for (const artist of selected) {
+            const paths =
+                await this.getArtistFilePaths(
+                    artist,
+                );
+            allPaths.push(...paths);
+        }
+
+        return allPaths;
+    }
+
+    /** Clear the current artist selection. */
+    private clearSelection() {
+        this.selectedArtists = new Set();
+        this.lastSelectedArtistIndex = null;
+    }
+
+    /* ================================================================
      * Artist card click
      * ================================================================ */
 
     private onArtistClick(
+        e: MouseEvent,
         artist: library.Artist,
+        index: number,
     ) {
-        this.dispatchEvent(
-            new CustomEvent('navigate', {
-                bubbles: true,
-                composed: true,
-                detail: {
-                    view: 'artist-details',
-                    artistId: artist.ID,
-                    artistName: artist.Name,
-                },
-            }),
-        );
+        const isCtrl = e.ctrlKey || e.metaKey;
+        const isShift = e.shiftKey;
+
+        if (
+            isShift &&
+            this.lastSelectedArtistIndex !== null
+        ) {
+            const range = this.selectArtistRange(
+                this.lastSelectedArtistIndex,
+                index,
+            );
+            const next = new Set(
+                this.selectedArtists,
+            );
+
+            for (const id of range) {
+                next.add(id);
+            }
+
+            this.selectedArtists = next;
+        } else if (isCtrl) {
+            const next = new Set(
+                this.selectedArtists,
+            );
+
+            if (next.has(artist.ID)) {
+                next.delete(artist.ID);
+            } else {
+                next.add(artist.ID);
+            }
+
+            this.selectedArtists = next;
+            this.lastSelectedArtistIndex = index;
+        } else {
+            // Plain click: navigate to details.
+            this.clearSelection();
+            this.dispatchEvent(
+                new CustomEvent('navigate', {
+                    bubbles: true,
+                    composed: true,
+                    detail: {
+                        view: 'artist-details',
+                        artistId: artist.ID,
+                        artistName: artist.Name,
+                    },
+                }),
+            );
+        }
     }
 
     /* ================================================================
@@ -613,7 +736,22 @@ export class ArtistsView extends LitElement {
         e.preventDefault();
         e.stopPropagation();
 
-        this.contextMenuArtist = artist;
+        // If right-clicked artist is not in the
+        // current selection, replace the selection
+        // with just this artist.
+        if (
+            !this.selectedArtists.has(artist.ID)
+        ) {
+            const idx =
+                this.filteredArtists.indexOf(artist);
+
+            this.selectedArtists = new Set([
+                artist.ID,
+            ]);
+            this.lastSelectedArtistIndex =
+                idx >= 0 ? idx : null;
+        }
+
         this.openContextMenuAt(
             e.clientX,
             e.clientY,
@@ -655,7 +793,6 @@ export class ArtistsView extends LitElement {
         this.closePlaylistSubmenu();
         this.contextMenuOpen = false;
         this.playlistFilePaths = [];
-        this.contextMenuArtist = null;
 
         const popup = this.contextMenuPopup;
 
@@ -667,12 +804,10 @@ export class ArtistsView extends LitElement {
     private async onContextMenuAction(
         action: string,
     ) {
-        const artist = this.contextMenuArtist;
-
-        if (!artist) return;
+        if (this.selectedArtists.size === 0) return;
 
         const filePaths =
-            await this.getArtistFilePaths(artist);
+            await this.getSelectedArtistFilePaths();
 
         if (filePaths.length === 0) return;
 
@@ -719,12 +854,10 @@ export class ArtistsView extends LitElement {
 
         if (this.playlistSubmenuOpen) return;
 
-        const artist = this.contextMenuArtist;
-
-        if (!artist) return;
+        if (this.selectedArtists.size === 0) return;
 
         this.playlistFilePaths =
-            await this.getArtistFilePaths(artist);
+            await this.getSelectedArtistFilePaths();
 
         this.playlistSubmenuOpen = true;
 
@@ -822,24 +955,33 @@ export class ArtistsView extends LitElement {
      * ================================================================ */
 
     private renderArtistCard(entry: ArtistEntry) {
-        const { artist } = entry;
+        const { artist, index } = entry;
         const imgSize = this.imageSize;
         const placeholderFont = Math.round(
             imgSize * 0.38,
         );
+        const isSelected =
+            this.selectedArtists.has(artist.ID);
 
         return html`
             <div
-                class="artist-card"
+                class="artist-card${isSelected
+                    ? ' selected'
+                    : ''}"
                 tabindex="0"
                 role="button"
                 aria-label="${artist.Name}"
+                aria-selected="${isSelected}"
                 style="
                     --avatar-size: ${imgSize}px;
                     --placeholder-font: ${placeholderFont}px;
                 "
-                @click=${() =>
-                    this.onArtistClick(artist)}
+                @click=${(e: MouseEvent) =>
+                    this.onArtistClick(
+                        e,
+                        artist,
+                        index,
+                    )}
                 @contextmenu=${(e: MouseEvent) =>
                     this.onArtistContextMenu(
                         e,
@@ -851,7 +993,23 @@ export class ArtistsView extends LitElement {
                         e.key === ' '
                     ) {
                         e.preventDefault();
-                        this.onArtistClick(artist);
+                        this.clearSelection();
+                        this.dispatchEvent(
+                            new CustomEvent(
+                                'navigate',
+                                {
+                                    bubbles: true,
+                                    composed: true,
+                                    detail: {
+                                        view: 'artist-details',
+                                        artistId:
+                                            artist.ID,
+                                        artistName:
+                                            artist.Name,
+                                    },
+                                },
+                            ),
+                        );
                     }
                 }}
             >
@@ -1022,7 +1180,10 @@ export class ArtistsView extends LitElement {
                           .term}&rdquo;
                   </div>`
                 : nothing}
-            <div class="grid-scroll-container">
+            <div
+                class="grid-scroll-container"
+                @click=${this.onGridClick}
+            >
                 <lit-virtualizer
                     .items=${entries}
                     .renderItem=${(
@@ -1037,4 +1198,22 @@ export class ArtistsView extends LitElement {
             ${this.renderContextMenu()}
         `;
     }
+
+    /**
+     * Click on empty area of the grid clears the
+     * selection.
+     */
+    private onGridClick = (e: MouseEvent) => {
+        const path = e.composedPath();
+
+        const clickedCard = path.some(
+            (el) =>
+                el instanceof HTMLElement &&
+                el.classList.contains('artist-card'),
+        );
+
+        if (!clickedCard) {
+            this.clearSelection();
+        }
+    };
 }

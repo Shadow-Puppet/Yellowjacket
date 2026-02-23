@@ -47,6 +47,7 @@ export class GenresView extends LitElement {
     private searchCtrl = new SearchController(this);
     private cancelScanComplete?: () => void;
     private wheelListenerAttached = false;
+    private lastSearchTerm = '';
 
     /** All tracks from the library (used to derive genres). */
     private allTracks: library.Track[] = [];
@@ -60,6 +61,14 @@ export class GenresView extends LitElement {
     @state()
     private cardSize: number = CARD_SIZE_DEFAULT;
 
+    // ----- Multi-select state -----
+
+    @state()
+    private selectedGenres: Set<string> = new Set();
+
+    private lastSelectedGenreIndex: number | null =
+        null;
+
     // ----- Context menu state -----
 
     @state()
@@ -70,9 +79,6 @@ export class GenresView extends LitElement {
 
     @state()
     private playlistFilePaths: string[] = [];
-
-    /** The genre targeted by the current context menu. */
-    private contextMenuGenre: Genre | null = null;
 
     @query('#context-menu')
     private contextMenuPopup!: HTMLElement;
@@ -213,6 +219,20 @@ export class GenresView extends LitElement {
 
         .genre-card:active {
             transform: scale(0.97);
+        }
+
+        .genre-card.selected {
+            outline: 2px solid
+                var(--yj-accent, #ffd43b);
+            outline-offset: 2px;
+        }
+
+        .genre-card.selected .avatar-container {
+            scale: 0.95;
+        }
+
+        .genre-card.selected .genre-name {
+            scale: 0.95;
         }
 
         .avatar-container {
@@ -402,6 +422,14 @@ export class GenresView extends LitElement {
         this.updateSizeProperties();
         this.ensureWheelListener();
         this.updateGridLayout();
+
+        // Clear selection when search term changes.
+        const currentTerm = this.searchCtrl.term;
+
+        if (currentTerm !== this.lastSearchTerm) {
+            this.lastSearchTerm = currentTerm;
+            this.clearSelection();
+        }
     }
 
     /* ================================================================
@@ -626,20 +654,120 @@ export class GenresView extends LitElement {
     }
 
     /* ================================================================
+     * Genre selection helpers
+     * ================================================================ */
+
+    /**
+     * Select a contiguous range of genre names
+     * between two indices in filteredGenres.
+     */
+    private selectGenreRange(
+        from: number,
+        to: number,
+    ): Set<string> {
+        const filtered = this.filteredGenres;
+        const start = Math.min(from, to);
+        const end = Math.max(from, to);
+        const names = new Set<string>();
+
+        for (let i = start; i <= end; i++) {
+            const genre = filtered[i];
+
+            if (genre) {
+                names.add(genre.name);
+            }
+        }
+
+        return names;
+    }
+
+    /**
+     * Returns all file paths for every selected
+     * genre.
+     */
+    private getSelectedGenreFilePaths(): string[] {
+        const allPaths: string[] = [];
+        const seen = new Set<string>();
+
+        for (const track of this.allTracks) {
+            if (seen.has(track.FilePath)) continue;
+
+            const genres = track.Genre ?? [];
+            const match = genres.some((g) =>
+                this.selectedGenres.has(g),
+            );
+
+            if (match) {
+                allPaths.push(track.FilePath);
+                seen.add(track.FilePath);
+            }
+        }
+
+        return allPaths;
+    }
+
+    /** Clear the current genre selection. */
+    private clearSelection() {
+        this.selectedGenres = new Set();
+        this.lastSelectedGenreIndex = null;
+    }
+
+    /* ================================================================
      * Genre card click
      * ================================================================ */
 
-    private onGenreClick(genre: Genre) {
-        this.dispatchEvent(
-            new CustomEvent('navigate', {
-                bubbles: true,
-                composed: true,
-                detail: {
-                    view: 'genre-details',
-                    genreName: genre.name,
-                },
-            }),
-        );
+    private onGenreClick(
+        e: MouseEvent,
+        genre: Genre,
+        index: number,
+    ) {
+        const isCtrl = e.ctrlKey || e.metaKey;
+        const isShift = e.shiftKey;
+
+        if (
+            isShift &&
+            this.lastSelectedGenreIndex !== null
+        ) {
+            const range = this.selectGenreRange(
+                this.lastSelectedGenreIndex,
+                index,
+            );
+            const next = new Set(
+                this.selectedGenres,
+            );
+
+            for (const name of range) {
+                next.add(name);
+            }
+
+            this.selectedGenres = next;
+        } else if (isCtrl) {
+            const next = new Set(
+                this.selectedGenres,
+            );
+
+            if (next.has(genre.name)) {
+                next.delete(genre.name);
+            } else {
+                next.add(genre.name);
+            }
+
+            this.selectedGenres = next;
+            this.lastSelectedGenreIndex = index;
+        } else {
+            // Plain click: navigate to details.
+            this.clearSelection();
+            this.dispatchEvent(
+                new CustomEvent('navigate', {
+                    bubbles: true,
+                    composed: true,
+                    detail: {
+                        view: 'genre-details',
+                        genreName: genre.name,
+                    },
+                }),
+            );
+        }
     }
 
     /* ================================================================
@@ -653,7 +781,20 @@ export class GenresView extends LitElement {
         e.preventDefault();
         e.stopPropagation();
 
-        this.contextMenuGenre = genre;
+        // If right-clicked genre is not in the
+        // current selection, replace the selection
+        // with just this genre.
+        if (!this.selectedGenres.has(genre.name)) {
+            const idx =
+                this.filteredGenres.indexOf(genre);
+
+            this.selectedGenres = new Set([
+                genre.name,
+            ]);
+            this.lastSelectedGenreIndex =
+                idx >= 0 ? idx : null;
+        }
+
         this.openContextMenuAt(
             e.clientX,
             e.clientY,
@@ -695,7 +836,6 @@ export class GenresView extends LitElement {
         this.closePlaylistSubmenu();
         this.contextMenuOpen = false;
         this.playlistFilePaths = [];
-        this.contextMenuGenre = null;
 
         const popup = this.contextMenuPopup;
 
@@ -705,12 +845,10 @@ export class GenresView extends LitElement {
     }
 
     private onContextMenuAction(action: string) {
-        const genre = this.contextMenuGenre;
-
-        if (!genre) return;
+        if (this.selectedGenres.size === 0) return;
 
         const filePaths =
-            this.getGenreFilePaths(genre.name);
+            this.getSelectedGenreFilePaths();
 
         if (filePaths.length === 0) return;
 
@@ -757,12 +895,10 @@ export class GenresView extends LitElement {
 
         if (this.playlistSubmenuOpen) return;
 
-        const genre = this.contextMenuGenre;
-
-        if (!genre) return;
+        if (this.selectedGenres.size === 0) return;
 
         this.playlistFilePaths =
-            this.getGenreFilePaths(genre.name);
+            this.getSelectedGenreFilePaths();
 
         this.playlistSubmenuOpen = true;
 
@@ -811,20 +947,6 @@ export class GenresView extends LitElement {
      * File path resolution
      * ================================================================ */
 
-    /**
-     * Returns all file paths for tracks that
-     * contain the given genre name.
-     */
-    private getGenreFilePaths(
-        genreName: string,
-    ): string[] {
-        return this.allTracks
-            .filter((t) =>
-                (t.Genre ?? []).includes(genreName),
-            )
-            .map((t) => t.FilePath);
-    }
-
     /* ================================================================
      * Helpers
      * ================================================================ */
@@ -840,24 +962,33 @@ export class GenresView extends LitElement {
      * ================================================================ */
 
     private renderGenreCard(entry: GenreEntry) {
-        const { genre } = entry;
+        const { genre, index } = entry;
         const imgSize = this.imageSize;
         const placeholderFont = Math.round(
             imgSize * 0.38,
         );
+        const isSelected =
+            this.selectedGenres.has(genre.name);
 
         return html`
             <div
-                class="genre-card"
+                class="genre-card${isSelected
+                    ? ' selected'
+                    : ''}"
                 tabindex="0"
                 role="button"
                 aria-label="${genre.name}"
+                aria-selected="${isSelected}"
                 style="
                     --avatar-size: ${imgSize}px;
                     --placeholder-font: ${placeholderFont}px;
                 "
-                @click=${() =>
-                    this.onGenreClick(genre)}
+                @click=${(e: MouseEvent) =>
+                    this.onGenreClick(
+                        e,
+                        genre,
+                        index,
+                    )}
                 @contextmenu=${(e: MouseEvent) =>
                     this.onGenreContextMenu(
                         e,
@@ -869,7 +1000,21 @@ export class GenresView extends LitElement {
                         e.key === ' '
                     ) {
                         e.preventDefault();
-                        this.onGenreClick(genre);
+                        this.clearSelection();
+                        this.dispatchEvent(
+                            new CustomEvent(
+                                'navigate',
+                                {
+                                    bubbles: true,
+                                    composed: true,
+                                    detail: {
+                                        view: 'genre-details',
+                                        genreName:
+                                            genre.name,
+                                    },
+                                },
+                            ),
+                        );
                     }
                 }}
             >
@@ -1040,7 +1185,10 @@ export class GenresView extends LitElement {
                           .term}&rdquo;
                   </div>`
                 : nothing}
-            <div class="grid-scroll-container">
+            <div
+                class="grid-scroll-container"
+                @click=${this.onGridClick}
+            >
                 <lit-virtualizer
                     .items=${entries}
                     .renderItem=${(
@@ -1053,4 +1201,22 @@ export class GenresView extends LitElement {
             ${this.renderContextMenu()}
         `;
     }
+
+    /**
+     * Click on empty area of the grid clears the
+     * selection.
+     */
+    private onGridClick = (e: MouseEvent) => {
+        const path = e.composedPath();
+
+        const clickedCard = path.some(
+            (el) =>
+                el instanceof HTMLElement &&
+                el.classList.contains('genre-card'),
+        );
+
+        if (!clickedCard) {
+            this.clearSelection();
+        }
+    };
 }
