@@ -26,6 +26,7 @@ import {
 } from '@utils/drag-controller';
 import {
     createDragImage,
+    createTrackCardDragImage,
     removeDragImage,
 } from '@utils/drag-image';
 
@@ -1096,9 +1097,21 @@ export class QueuePanel
             source: 'queue',
         });
 
-        this.dragImageEl = createDragImage(
-            filePaths.length,
-        );
+        if (filePaths.length === 1) {
+            const t = tracks[index]!;
+
+            this.dragImageEl =
+                createTrackCardDragImage(
+                    t.title,
+                    t.artist,
+                    t.filePath,
+                );
+        } else {
+            this.dragImageEl = createDragImage(
+                filePaths.length,
+            );
+        }
+
         e.dataTransfer?.setDragImage(
             this.dragImageEl,
             0,

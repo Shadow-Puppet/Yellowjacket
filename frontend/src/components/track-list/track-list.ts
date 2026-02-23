@@ -21,6 +21,7 @@ import {
 } from '@utils/drag-controller';
 import {
     createDragImage,
+    createTrackCardDragImage,
     removeDragImage,
 } from '@utils/drag-image';
 import '@lit-labs/virtualizer';
@@ -1135,9 +1136,14 @@ export class TrackList extends LitElement implements SelectionHost {
         });
 
         // Custom drag image.
-        this.dragImageEl = createDragImage(
-            filePaths.length,
-        );
+        this.dragImageEl =
+            filePaths.length === 1
+                ? createTrackCardDragImage(
+                      track.TrackName,
+                      track.ArtistName,
+                      track.FilePath,
+                  )
+                : createDragImage(filePaths.length);
         e.dataTransfer?.setDragImage(
             this.dragImageEl,
             0,

@@ -37,6 +37,7 @@ import {
 } from '@utils/drag-controller';
 import {
     createDragImage,
+    createTrackCardDragImage,
     removeDragImage,
 } from '@utils/drag-image';
 
@@ -1143,9 +1144,14 @@ export class PlaylistView
             sourcePlaylistId: entry.summary.ID,
         });
 
-        this.dragImageEl = createDragImage(
-            filePaths.length,
-        );
+        this.dragImageEl =
+            filePaths.length === 1
+                ? createTrackCardDragImage(
+                      track.Title,
+                      track.Artist,
+                      track.FilePath,
+                  )
+                : createDragImage(filePaths.length);
         e.dataTransfer?.setDragImage(
             this.dragImageEl,
             0,

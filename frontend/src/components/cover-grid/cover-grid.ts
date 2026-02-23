@@ -39,6 +39,7 @@ import type { DragPayload } from '@utils/drag-controller';
 import {
     createAlbumArtDragImage,
     createDragImage,
+    createTrackCardDragImage,
     removeDragImage,
 } from '@utils/drag-image';
 
@@ -2850,9 +2851,16 @@ export class CoverGrid extends LitElement {
                 JSON.stringify(payload),
             );
 
-            this.dragImageEl = createDragImage(
-                filePaths.length,
-            );
+            this.dragImageEl =
+                filePaths.length === 1
+                    ? createTrackCardDragImage(
+                          track.TrackName,
+                          track.ArtistName,
+                          track.FilePath,
+                      )
+                    : createDragImage(
+                          filePaths.length,
+                      );
             dataTransfer.setDragImage(
                 this.dragImageEl,
                 0,
