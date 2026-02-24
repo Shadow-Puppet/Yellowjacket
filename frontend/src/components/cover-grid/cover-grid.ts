@@ -17,6 +17,7 @@ import { LibraryController } from '@store/controllers/library-controller';
 import { SearchController } from '@store/controllers/search-controller';
 import { queueStore } from '@store/queue-store';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
+import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@components/playlist-picker/playlist-picker.js';
@@ -290,7 +291,7 @@ export class CoverGrid
     private sortDropdownOpen = false;
 
     @query('#sort-dropdown')
-    private sortDropdownPopup!: HTMLElement;
+    private sortDropdownPopup!: WaPopup;
 
     /** ID of the album whose dropdown is currently open, or null. */
     @state()
@@ -321,17 +322,17 @@ export class CoverGrid
     splitIndex = 0;
 
     @query('#context-menu')
-    private contextMenuPopup!: HTMLElement;
+    private contextMenuPopup!: WaPopup;
 
     @query('#playlist-submenu')
-    private playlistSubmenuPopup!: HTMLElement;
+    private playlistSubmenuPopup!: WaPopup;
 
     // ContextMenuHost interface.
-    getContextMenuPopup(): HTMLElement | undefined {
+    getContextMenuPopup(): WaPopup | undefined {
         return this.contextMenuPopup;
     }
 
-    getPlaylistSubmenuPopup(): HTMLElement | undefined {
+    getPlaylistSubmenuPopup(): WaPopup | undefined {
         return this.playlistSubmenuPopup;
     }
 
@@ -435,8 +436,8 @@ export class CoverGrid
             );
 
         if (popup && anchor) {
-            (popup as any).anchor = anchor;
-            (popup as any).active = true;
+            popup.anchor = anchor;
+            popup.active = true;
         }
     }
 
@@ -448,7 +449,7 @@ export class CoverGrid
         const popup = this.sortDropdownPopup;
 
         if (popup) {
-            (popup as any).active = false;
+            popup.active = false;
         }
     }
 

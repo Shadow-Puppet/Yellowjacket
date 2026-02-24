@@ -2,6 +2,7 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
+import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
 import { PlayerController } from '@store/controllers/player-controller';
 
 const MIN_WIDTH = 120;
@@ -220,15 +221,16 @@ export class NowPlaying extends LitElement {
         this.showCoverPreview = true;
 
         this.updateComplete.then(() => {
-            const popup = this.shadowRoot?.querySelector(
-                '#cover-preview',
-            );
+            const popup =
+                this.shadowRoot?.querySelector<WaPopup>(
+                    '#cover-preview',
+                );
             const anchor = this.shadowRoot?.querySelector(
                 '.cover-art',
             );
 
             if (popup && anchor) {
-                (popup as any).anchor = anchor;
+                popup.anchor = anchor;
             }
         });
     };

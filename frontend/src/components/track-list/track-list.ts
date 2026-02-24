@@ -39,6 +39,7 @@ import type {
 } from '@lit-labs/virtualizer';
 import { flow } from '@lit-labs/virtualizer/layouts/flow.js';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
+import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@components/playlist-picker/playlist-picker.js';
@@ -104,18 +105,18 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
     private tracks: library.Track[] = [];
 
     @query('#context-menu')
-    private contextMenuPopup!: HTMLElement;
+    private contextMenuPopup!: WaPopup;
 
     @query('#playlist-submenu')
-    private playlistSubmenuPopup!: HTMLElement;
+    private playlistSubmenuPopup!: WaPopup;
 
     // -- ContextMenuHost interface --
 
-    getContextMenuPopup(): HTMLElement | undefined {
+    getContextMenuPopup(): WaPopup | undefined {
         return this.contextMenuPopup;
     }
 
-    getPlaylistSubmenuPopup(): HTMLElement | undefined {
+    getPlaylistSubmenuPopup(): WaPopup | undefined {
         return this.playlistSubmenuPopup;
     }
 
@@ -169,7 +170,7 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
     private sortDropdownOpen = false;
 
     @query('#sort-dropdown')
-    private sortDropdownPopup!: HTMLElement;
+    private sortDropdownPopup!: WaPopup;
 
     private resizingColumn: number | null = null;
     private resizeStartX = 0;
@@ -1371,8 +1372,8 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
         );
 
         if (popup && anchor) {
-            (popup as any).anchor = anchor;
-            (popup as any).active = true;
+            popup.anchor = anchor;
+            popup.active = true;
         }
     }
 
@@ -1384,7 +1385,7 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
         const popup = this.sortDropdownPopup;
 
         if (popup) {
-            (popup as any).active = false;
+            popup.active = false;
         }
     }
 

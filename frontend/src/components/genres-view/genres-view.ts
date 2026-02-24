@@ -21,6 +21,7 @@ import {
 import type { ContextMenuHost } from '@utils/context-menu-controller.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
+import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 import '@components/playlist-picker/playlist-picker.js';
 
@@ -102,19 +103,19 @@ export class GenresView
     private contextMenuGenreName: string | null = null;
 
     @query('#context-menu')
-    private contextMenuPopup!: HTMLElement;
+    private contextMenuPopup!: WaPopup;
 
     @query('#playlist-submenu')
-    private playlistSubmenuPopup!: HTMLElement;
+    private playlistSubmenuPopup!: WaPopup;
 
     // ----- ContextMenuHost interface -----
 
-    getContextMenuPopup(): HTMLElement | undefined {
+    getContextMenuPopup(): WaPopup | undefined {
         return this.contextMenuPopup;
     }
 
     getPlaylistSubmenuPopup():
-        | HTMLElement
+        | WaPopup
         | undefined {
         return this.playlistSubmenuPopup;
     }

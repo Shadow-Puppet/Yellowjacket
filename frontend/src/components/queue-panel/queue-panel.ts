@@ -7,6 +7,7 @@ import {
 } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
+import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 import { QueueController } from '@store/controllers/queue-controller';
 import '@components/playlist-picker/playlist-picker.js';
@@ -73,13 +74,13 @@ export class QueuePanel
     private dragImageEl: HTMLElement | null = null;
 
     @query('#add-to-playlist-popup')
-    private addToPlaylistPopup!: HTMLElement;
+    private addToPlaylistPopup!: WaPopup;
 
     @query('#context-menu')
-    private contextMenuPopup!: HTMLElement;
+    private contextMenuPopup!: WaPopup;
 
     @query('#playlist-submenu')
-    private playlistSubmenuPopup!: HTMLElement;
+    private playlistSubmenuPopup!: WaPopup;
 
     @query('lit-virtualizer')
     private virtualizer!: LitVirtualizer;
@@ -158,11 +159,11 @@ export class QueuePanel
     // ContextMenuHost interface
     // =================================================================
 
-    getContextMenuPopup(): HTMLElement | undefined {
+    getContextMenuPopup(): WaPopup | undefined {
         return this.contextMenuPopup;
     }
 
-    getPlaylistSubmenuPopup(): HTMLElement | undefined {
+    getPlaylistSubmenuPopup(): WaPopup | undefined {
         return this.playlistSubmenuPopup;
     }
 
@@ -536,8 +537,8 @@ export class QueuePanel
         );
 
         if (popup && btn) {
-            (popup as any).anchor = btn;
-            (popup as any).active = this.playlistPickerOpen;
+            popup.anchor = btn;
+            popup.active = this.playlistPickerOpen;
         }
 
         if (this.playlistPickerOpen) {
@@ -557,7 +558,7 @@ export class QueuePanel
         const popup = this.addToPlaylistPopup;
 
         if (popup) {
-            (popup as any).active = false;
+            popup.active = false;
         }
     }
 

@@ -1,7 +1,8 @@
 import { EventsOn, EventsEmit } from '@runtime/runtime';
 import { Events } from '../events';
 
-// Types
+// TrackInfo mirrors the player.TrackInfo struct in the Go backend.
+// Fields are serialized as camelCase JSON via struct tags.
 export interface TrackInfo {
   fileName: string;
   filePath: string;

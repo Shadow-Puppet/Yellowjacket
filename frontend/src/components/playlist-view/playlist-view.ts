@@ -2,6 +2,7 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state, query } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
+import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 
 import {
@@ -63,12 +64,12 @@ export class PlaylistView
     private selection = new SelectionController(this);
     private ctxMenu = new ContextMenuController(this);
 
-    getContextMenuPopup(): HTMLElement | undefined {
+    getContextMenuPopup(): WaPopup | undefined {
         return this.contextMenuPopup;
     }
 
     getPlaylistSubmenuPopup():
-        | HTMLElement
+        | WaPopup
         | undefined {
         return this.playlistSubmenuPopup;
     }
@@ -199,13 +200,13 @@ export class PlaylistView
     private dragImageEl: HTMLElement | null = null;
 
     @query('#context-menu')
-    private contextMenuPopup!: HTMLElement;
+    private contextMenuPopup!: WaPopup;
 
     @query('#playlist-submenu')
-    private playlistSubmenuPopup!: HTMLElement;
+    private playlistSubmenuPopup!: WaPopup;
 
     @query('#playlist-context-menu')
-    private playlistContextMenuPopup!: HTMLElement;
+    private playlistContextMenuPopup!: WaPopup;
 
     @query('track-details')
     private trackDetailsDialog!: TrackDetails;
@@ -1438,21 +1439,17 @@ export class PlaylistView
                 this.playlistContextMenuPopup;
 
             if (popup) {
-                (popup as any).anchor = {
+                popup.anchor = {
                     getBoundingClientRect() {
-                        return {
-                            width: 0,
-                            height: 0,
-                            x: e.clientX,
-                            y: e.clientY,
-                            top: e.clientY,
-                            left: e.clientX,
-                            right: e.clientX,
-                            bottom: e.clientY,
-                        };
+                        return new DOMRect(
+                            e.clientX,
+                            e.clientY,
+                            0,
+                            0,
+                        );
                     },
                 };
-                (popup as any).active = true;
+                popup.active = true;
             }
         });
     };
@@ -1467,7 +1464,7 @@ export class PlaylistView
             this.playlistContextMenuPopup;
 
         if (popup) {
-            (popup as any).active = false;
+            popup.active = false;
         }
     }
 

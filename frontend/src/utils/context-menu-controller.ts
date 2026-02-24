@@ -3,6 +3,7 @@ import type {
     ReactiveController,
     ReactiveControllerHost,
 } from 'lit';
+import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
 
 /**
  * Host interface for components using the ContextMenuController.
@@ -15,9 +16,9 @@ export interface ContextMenuHost
     updateComplete: Promise<boolean>;
     shadowRoot: ShadowRoot | null;
     /** Return the main context-menu popup element. */
-    getContextMenuPopup(): HTMLElement | undefined;
+    getContextMenuPopup(): WaPopup | undefined;
     /** Return the playlist submenu popup element. */
-    getPlaylistSubmenuPopup(): HTMLElement | undefined;
+    getPlaylistSubmenuPopup(): WaPopup | undefined;
     /**
      * Called when the context menu is closed by an
      * outside click/contextmenu/mousedown.  Components
@@ -144,21 +145,17 @@ export class ContextMenuController
 
             if (!popup) return;
 
-            (popup as any).anchor = {
+            popup.anchor = {
                 getBoundingClientRect() {
-                    return {
-                        width: 0,
-                        height: 0,
-                        x: clientX,
-                        y: clientY,
-                        top: clientY,
-                        left: clientX,
-                        right: clientX,
-                        bottom: clientY,
-                    };
+                    return new DOMRect(
+                        clientX,
+                        clientY,
+                        0,
+                        0,
+                    );
                 },
             };
-            (popup as any).active = true;
+            popup.active = true;
         });
     }
 
@@ -178,7 +175,7 @@ export class ContextMenuController
             this.host.getContextMenuPopup();
 
         if (popup) {
-            (popup as any).active = false;
+            popup.active = false;
         }
 
         this.host.onContextMenuClose?.();
@@ -220,8 +217,8 @@ export class ContextMenuController
             );
 
         if (submenu && trigger) {
-            (submenu as any).anchor = trigger;
-            (submenu as any).active = true;
+            submenu.anchor = trigger;
+            submenu.active = true;
         }
 
         const picker =
@@ -246,7 +243,7 @@ export class ContextMenuController
             this.host.getPlaylistSubmenuPopup();
 
         if (submenu) {
-            (submenu as any).active = false;
+            submenu.active = false;
         }
 
         this.host.requestUpdate();

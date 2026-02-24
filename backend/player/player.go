@@ -64,6 +64,26 @@ const (
 	Stopped State = "stopped"
 )
 
+// TrackInfo contains metadata and playback state for the currently
+// loaded track. It is emitted as the payload of the TrackChanged
+// event and serialized as camelCase JSON to match the frontend
+// TrackInfo interface in player-store.ts.
+type TrackInfo struct {
+	FileName       string `json:"fileName"`
+	FilePath       string `json:"filePath"`
+	State          State  `json:"state"`
+	Title          string `json:"title"`
+	Artist         string `json:"artist"`
+	Album          string `json:"album"`
+	CoverArt       string `json:"coverArt"`
+	CoverArtSmall  string `json:"coverArtSmall"`
+	CoverArtMedium string `json:"coverArtMedium"`
+	CoverArtLarge  string `json:"coverArtLarge"`
+	TrackLength    int    `json:"trackLength"`
+	SeekPosition   int    `json:"seekPosition"`
+	TrackChangeID  uint64 `json:"trackChangeId"`
+}
+
 // Sentinel errors for player operations.
 var (
 	errNoControlStreamer = errors.New("no control streamer")
@@ -307,28 +327,19 @@ func (p *Player) emitTrackChanged() {
 		return
 	}
 
+	trackInfo := p.getCurrentTrackInfoLocked()
+
 	trackLengthSecs, err := p.trackLengthLocked()
 	if err != nil {
 		p.logger.Error("Cannot get track length")
 	}
 
-	trackInfo, err := p.getCurrentTrackInfoLocked()
-	if err != nil {
-		p.logger.Error("Cannot get track info")
-
-		trackInfo = map[string]interface{}{
-			"fileName": "",
-			"filePath": "",
-			"state":    string(p.state),
-		}
-	}
+	trackInfo.TrackLength = trackLengthSecs
 
 	// Compute current seek position in seconds.
-	seekPosition := 0
-
 	if p.seeker != nil {
 		speaker.Lock()
-		seekPosition = p.seeker.Position() /
+		trackInfo.SeekPosition = p.seeker.Position() /
 			int(p.format.SampleRate)
 		speaker.Unlock()
 	}
@@ -336,12 +347,11 @@ func (p *Player) emitTrackChanged() {
 	// Increment track change ID so the frontend can detect changes
 	// even when the same file plays consecutively.
 	p.trackChangeID++
+	trackInfo.TrackChangeID = p.trackChangeID
 
-	// Emit comprehensive track info.
-	trackInfo["trackLength"] = trackLengthSecs
-	trackInfo["seekPosition"] = seekPosition
-	trackInfo["trackChangeId"] = p.trackChangeID
-	runtime.EventsEmit(p.ctx, events.TrackChanged, trackInfo)
+	runtime.EventsEmit(
+		p.ctx, events.TrackChanged, trackInfo,
+	)
 
 	p.logger.Info(
 		"Emitting TrackChangedEvent with track info",
@@ -824,85 +834,58 @@ func (p *Player) seekLocked(targetSeconds int) error {
 
 // GetCurrentTrackInfo returns information about the currently
 // loaded track.
-func (p *Player) GetCurrentTrackInfo() (
-	map[string]interface{}, error,
-) {
+func (p *Player) GetCurrentTrackInfo() TrackInfo {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	return p.getCurrentTrackInfoLocked()
 }
 
-func (p *Player) getCurrentTrackInfoLocked() (
-	map[string]interface{}, error,
-) {
-	if p.currentFile == nil {
-		return map[string]interface{}{
-			"fileName": "",
-			"filePath": "",
-			"state":    string(p.state),
-			"title":    "",
-			"artist":   "",
-			"album":    "",
-			"coverArt": "",
-		}, nil
+func (p *Player) getCurrentTrackInfoLocked() TrackInfo {
+	info := TrackInfo{
+		State: p.state,
 	}
 
-	fileName := filepath.Base(p.currentFile.Name())
-	filePath := p.currentFile.Name()
+	if p.currentFile == nil {
+		return info
+	}
 
-	// Default values.
-	title := fileName
-	artist := ""
-	album := ""
-	coverArt := ""
-	coverArtSmall := ""
-	coverArtMedium := ""
-	coverArtLarge := ""
+	info.FileName = filepath.Base(p.currentFile.Name())
+	info.FilePath = p.currentFile.Name()
+	info.Title = info.FileName // default title is the filename
 
 	// Try to get metadata from database.
 	if p.db != nil {
 		meta, err := p.db.Queries.GetTrackMetadataByPath(
-			p.ctx, filePath,
+			p.ctx, info.FilePath,
 		)
 		if err == nil {
 			if meta.Title != "" {
-				title = meta.Title
+				info.Title = meta.Title
 			}
 
-			artist = meta.Artist
-			album = meta.Album
+			info.Artist = meta.Artist
+			info.Album = meta.Album
 
 			if meta.CoverArtPath != "" {
 				base := filepath.Base(meta.CoverArtPath)
-				coverArt = "/covers/" + base
-				coverArtSmall = "/covers/" +
+				info.CoverArt = "/covers/" + base
+				info.CoverArtSmall = "/covers/" +
 					library.SizedFilename(base, "_sm")
-				coverArtMedium = "/covers/" +
+				info.CoverArtMedium = "/covers/" +
 					library.SizedFilename(base, "_md")
-				coverArtLarge = "/covers/" +
+				info.CoverArtLarge = "/covers/" +
 					library.SizedFilename(base, "_lg")
 			}
 		} else {
 			p.logger.Debug(
 				"Could not get track metadata from database",
-				"path", filePath, "err", err,
+				"path", info.FilePath, "err", err,
 			)
 		}
 	}
 
-	return map[string]interface{}{
-		"fileName":       fileName,
-		"filePath":       filePath,
-		"state":          string(p.state),
-		"title":          title,
-		"artist":         artist,
-		"album":          album,
-		"coverArt":       coverArt,
-		"coverArtSmall":  coverArtSmall,
-		"coverArtMedium": coverArtMedium,
-		"coverArtLarge":  coverArtLarge,
-	}, nil
+	return info
 }
 
 // TrackLengthInSeconds returns the duration of the current track.

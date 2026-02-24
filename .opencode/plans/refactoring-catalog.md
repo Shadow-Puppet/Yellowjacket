@@ -42,30 +42,11 @@ Prioritized list of architectural improvements identified during a full codebase
 
 ---
 
-### 8. Type the WebAwesome popup interactions (eliminate 49x `as any`)
-
-**Problem:** Every component with a context menu uses `(popup as any).anchor = ...` and `(popup as any).active = true`. This pattern appears 49 times across `track-list.ts`, `cover-grid.ts`, `queue-panel.ts`, `playlist-view.ts`, `genres-view.ts`, `artists-view.ts`.
-
-**Why it matters:** Type safety is completely bypassed for a core interaction pattern. Typos in property names (`actve` instead of `active`) would silently fail.
-
-**Approach:** Create a type declaration for the WebAwesome popup element (or find one in their package). Alternatively, write a small typed utility:
-
-```typescript
-function openPopup(popup: Element, anchor: Element | VirtualAnchor): void
-function closePopup(popup: Element): void
-```
-
-Replace all 49 `as any` casts with calls to these utilities.
+### ~~8. Type the WebAwesome popup interactions (eliminate 49x `as any`)~~ — solved
 
 ---
 
-### 9. Replace `GetCurrentTrackInfo` `map[string]interface{}` with a struct
-
-**Problem:** `player.GetCurrentTrackInfo()` returns `map[string]interface{}` with stringly-typed keys (`"fileName"`, `"filePath"`, `"state"`, `"title"`, etc.). The `emitTrackChanged()` method mutates this map by adding keys after the fact.
-
-**Why it matters:** No compile-time safety — typos in key names are silent bugs. The Wails binding generator would produce typed TypeScript if given a struct.
-
-**Approach:** Define a `TrackInfo` struct in the player package with all the fields. Return it from `GetCurrentTrackInfo`. Update `emitTrackChanged` to build the struct directly instead of mutating a map.
+### ~~9. Replace `GetCurrentTrackInfo` `map[string]interface{}` with a struct~~ — solved
 
 ---
 
