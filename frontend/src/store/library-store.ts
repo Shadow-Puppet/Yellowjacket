@@ -251,6 +251,19 @@ class LibraryStore {
         this.artists = null;
         this.scrollPositions = { tracks: 0, albums: 0, artists: 0, genres: 0 };
         this.notify();
+        this.eagerRefetch();
+    }
+
+    /**
+     * Re-fetches all data after cache invalidation so that
+     * controller subscribers receive fresh data on the next
+     * requestUpdate() cycle without needing their own
+     * LibraryScanComplete listener.
+     */
+    private eagerRefetch(): void {
+        void this.getTracks();
+        void this.getAlbums();
+        void this.getArtists();
     }
 
     // ===================================================================

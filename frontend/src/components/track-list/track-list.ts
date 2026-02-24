@@ -6,7 +6,6 @@ import {
     state,
     query,
 } from 'lit/decorators.js';
-import { EventsOn } from '@runtime/runtime';
 import { SelectionController } from '@utils/selection-controller';
 import type { SelectionHost } from '@utils/selection-controller';
 import {
@@ -19,7 +18,6 @@ import { SearchController } from '@store/controllers/search-controller';
 import { TrackListController } from '@store/controllers/tracklist-controller';
 import { queueStore } from '@store/queue-store';
 import { LibraryController } from '@store/controllers/library-controller';
-import { Events } from '../../events';
 import {
     COLUMN_DEFS,
     DEFAULT_COLUMN_IDS,
@@ -61,8 +59,7 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
     /**
      * When set, the list displays these tracks instead of
      * fetching all tracks from the library store.  The
-     * component also skips the LibraryScanComplete listener
-     * since the parent is responsible for reloading.
+     * parent is responsible for reloading when data changes.
      */
     @property({ type: Array, attribute: false })
     externalTracks?: library.Track[];
@@ -73,8 +70,11 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
     private trackListCtrl = new TrackListController(this);
     private selection = new SelectionController(this);
     private ctxMenu = new ContextMenuController(this);
-    private cancelScanComplete?: () => void;
     private lastSearchTerm = '';
+
+    /** Tracks the store's cached array reference to detect refreshes. */
+    private lastTracksRef: library.Track[] | null =
+        null;
 
     /**
      * Resolved column definitions for the currently configured
@@ -942,10 +942,6 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
             this.tracks = this.externalTracks;
         } else {
             this.loadTracks();
-            this.cancelScanComplete = EventsOn(
-                Events.LibraryScanComplete,
-                () => this.loadTracks(),
-            );
         }
         document.addEventListener('mousedown', this.sortDropdownCloseHandler);
         document.addEventListener('click', this.clearSelectionHandler);
@@ -968,7 +964,6 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
         );
         this.hasRestoredScroll = false;
         super.disconnectedCallback();
-        this.cancelScanComplete?.();
         document.removeEventListener('mousedown', this.sortDropdownCloseHandler);
         document.removeEventListener('click', this.clearSelectionHandler);
         document.removeEventListener('mousemove', this.onColResizeMove);
@@ -1032,6 +1027,21 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
         if (currentTerm !== this.lastSearchTerm) {
             this.lastSearchTerm = currentTerm;
             this.selection.clear();
+        }
+
+        // Re-fetch when the store delivers fresh
+        // data after eager refetch on invalidation.
+        if (!this.externalTracks) {
+            const cached =
+                this.libraryCtrl.cachedTracks;
+
+            if (
+                cached !== null &&
+                cached !== this.lastTracksRef
+            ) {
+                this.lastTracksRef = cached;
+                this.loadTracks();
+            }
         }
     }
 

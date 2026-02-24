@@ -4,7 +4,6 @@ import {
     state,
     query,
 } from 'lit/decorators.js';
-import { EventsOn } from '@runtime/runtime';
 import '@lit-labs/virtualizer';
 import type {
     LitVirtualizer,
@@ -24,7 +23,6 @@ import {
     contextMenuStyles,
 } from '@utils/context-menu-controller.js';
 import type { ContextMenuHost } from '@utils/context-menu-controller.js';
-import { Events } from '../../events';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
@@ -60,9 +58,12 @@ export class ArtistsView
     private libraryCtrl = new LibraryController(this);
     private searchCtrl = new SearchController(this);
     private ctxMenu = new ContextMenuController(this);
-    private cancelScanComplete?: () => void;
     private wheelListenerAttached = false;
     private lastSearchTerm = '';
+
+    /** Tracks the store's cached array reference to detect refreshes. */
+    private lastArtistsRef: library.Artist[] | null =
+        null;
     private scrollDebounceTimer: ReturnType<
         typeof setTimeout
     > | null = null;
@@ -376,15 +377,10 @@ export class ArtistsView
         super.connectedCallback();
         this.loadCardSize();
         this.loadArtists();
-        this.cancelScanComplete = EventsOn(
-            Events.LibraryScanComplete,
-            () => this.loadArtists(),
-        );
     }
 
     override disconnectedCallback() {
         super.disconnectedCallback();
-        this.cancelScanComplete?.();
         this.detachWheelListener();
 
         if (this.scrollDebounceTimer !== null) {
@@ -403,6 +399,19 @@ export class ArtistsView
         if (currentTerm !== this.lastSearchTerm) {
             this.lastSearchTerm = currentTerm;
             this.clearSelection();
+        }
+
+        // Re-fetch when the store delivers fresh
+        // data after eager refetch on invalidation.
+        const cached =
+            this.libraryCtrl.cachedArtists;
+
+        if (
+            cached !== null &&
+            cached !== this.lastArtistsRef
+        ) {
+            this.lastArtistsRef = cached;
+            this.loadArtists();
         }
     }
 

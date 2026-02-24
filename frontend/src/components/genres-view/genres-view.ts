@@ -4,7 +4,6 @@ import {
     state,
     query,
 } from 'lit/decorators.js';
-import { EventsOn } from '@runtime/runtime';
 import '@lit-labs/virtualizer';
 import type {
     LitVirtualizer,
@@ -15,7 +14,6 @@ import { library } from '@go/models';
 import { LibraryController } from '@store/controllers/library-controller';
 import { SearchController } from '@store/controllers/search-controller';
 import { queueStore } from '@store/queue-store';
-import { Events } from '../../events';
 import {
     ContextMenuController,
     contextMenuStyles,
@@ -60,9 +58,12 @@ export class GenresView
     private libraryCtrl = new LibraryController(this);
     private searchCtrl = new SearchController(this);
     private ctxMenu = new ContextMenuController(this);
-    private cancelScanComplete?: () => void;
     private wheelListenerAttached = false;
     private lastSearchTerm = '';
+
+    /** Tracks the store's cached array reference to detect refreshes. */
+    private lastTracksRef: library.Track[] | null =
+        null;
     private scrollDebounceTimer: ReturnType<
         typeof setTimeout
     > | null = null;
@@ -376,15 +377,10 @@ export class GenresView
         super.connectedCallback();
         this.loadCardSize();
         this.loadGenres();
-        this.cancelScanComplete = EventsOn(
-            Events.LibraryScanComplete,
-            () => this.loadGenres(),
-        );
     }
 
     override disconnectedCallback() {
         super.disconnectedCallback();
-        this.cancelScanComplete?.();
         this.detachWheelListener();
 
         if (this.scrollDebounceTimer !== null) {
@@ -403,6 +399,19 @@ export class GenresView
         if (currentTerm !== this.lastSearchTerm) {
             this.lastSearchTerm = currentTerm;
             this.clearSelection();
+        }
+
+        // Re-fetch when the store delivers fresh
+        // data after eager refetch on invalidation.
+        const cached =
+            this.libraryCtrl.cachedTracks;
+
+        if (
+            cached !== null &&
+            cached !== this.lastTracksRef
+        ) {
+            this.lastTracksRef = cached;
+            this.loadGenres();
         }
     }
 

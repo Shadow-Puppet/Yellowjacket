@@ -4,10 +4,8 @@ import {
     property,
     state,
 } from 'lit/decorators.js';
-import { EventsOn } from '@runtime/runtime';
 import { library } from '@go/models';
 import { LibraryController } from '@store/controllers/library-controller';
-import { Events } from '../../events';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@components/cover-grid/cover-grid.js';
 
@@ -26,7 +24,9 @@ export class ArtistDetails extends LitElement {
     private loading = true;
 
     private libraryCtrl = new LibraryController(this);
-    private cancelScanComplete?: () => void;
+
+    /** Tracks the store's cached array reference to detect refreshes. */
+    private lastAlbumsRef: library.Album[] | null = null;
 
     static override styles = css`
         :host {
@@ -155,15 +155,18 @@ export class ArtistDetails extends LitElement {
     override connectedCallback() {
         super.connectedCallback();
         this.loadAlbums();
-        this.cancelScanComplete = EventsOn(
-            Events.LibraryScanComplete,
-            () => this.loadAlbums(),
-        );
     }
 
-    override disconnectedCallback() {
-        super.disconnectedCallback();
-        this.cancelScanComplete?.();
+    override updated() {
+        const cached = this.libraryCtrl.cachedAlbums;
+
+        if (
+            cached !== null &&
+            cached !== this.lastAlbumsRef
+        ) {
+            this.lastAlbumsRef = cached;
+            this.loadAlbums();
+        }
     }
 
     /* ================================================================

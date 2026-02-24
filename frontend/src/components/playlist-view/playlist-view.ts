@@ -1,7 +1,5 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state, query } from 'lit/decorators.js';
-import { EventsOn } from '@runtime/runtime';
-
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
@@ -16,7 +14,6 @@ import {
     ImportPlaylist,
 } from '@go/playlist/Service';
 import { PlaylistFilePicker } from '@go/frontendutil/FrontendUtil';
-import { Events } from '../../events';
 import type { playlist } from '@go/models';
 import { queueStore } from '@store/queue-store';
 import { PlayerController } from '@store/controllers/player-controller';
@@ -75,7 +72,11 @@ export class PlaylistView
         | undefined {
         return this.playlistSubmenuPopup;
     }
-    private cancelScanComplete?: () => void;
+    /** Tracks the store's cached array reference to detect refreshes. */
+    private lastPlaylistsRef:
+        | playlist.WithTracks[]
+        | null = null;
+
     private scrollDebounceTimer: ReturnType<
         typeof setTimeout
     > | null = null;
@@ -750,10 +751,6 @@ export class PlaylistView
     override connectedCallback() {
         super.connectedCallback();
         this.loadPlaylists();
-        this.cancelScanComplete = EventsOn(
-            Events.LibraryScanComplete,
-            () => this.loadPlaylists(),
-        );
         document.addEventListener(
             'click',
             this.closePlaylistCtxMenuHandler,
@@ -774,7 +771,6 @@ export class PlaylistView
 
     override disconnectedCallback() {
         super.disconnectedCallback();
-        this.cancelScanComplete?.();
 
         if (this.scrollDebounceTimer !== null) {
             clearTimeout(this.scrollDebounceTimer);
@@ -829,6 +825,19 @@ export class PlaylistView
                     expanded: hasTrackMatch,
                 };
             });
+        }
+
+        // Re-fetch when the store delivers fresh
+        // data after eager refetch on invalidation.
+        const cached =
+            this.playlistCtrl.cachedPlaylists;
+
+        if (
+            cached !== null &&
+            cached !== this.lastPlaylistsRef
+        ) {
+            this.lastPlaylistsRef = cached;
+            this.loadPlaylists();
         }
     }
 

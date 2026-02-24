@@ -123,6 +123,7 @@ class PlaylistStore {
         this.playlists = null;
         this.scrollPosition = 0;
         this.notify();
+        void this.getPlaylists();
     }
 
     // ===================================================================

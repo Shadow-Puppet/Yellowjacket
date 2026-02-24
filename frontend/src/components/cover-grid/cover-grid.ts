@@ -5,7 +5,6 @@ import {
     state,
     query,
 } from 'lit/decorators.js';
-import { EventsOn } from '@runtime/runtime';
 import '@lit-labs/virtualizer';
 import type {
     LitVirtualizer,
@@ -17,7 +16,6 @@ import { library } from '@go/models';
 import { LibraryController } from '@store/controllers/library-controller';
 import { SearchController } from '@store/controllers/search-controller';
 import { queueStore } from '@store/queue-store';
-import { Events } from '../../events';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
@@ -70,16 +68,18 @@ export class CoverGrid
     /**
      * When set, the grid displays these albums instead of
      * fetching all albums from the library store.  The
-     * component also skips the LibraryScanComplete listener
-     * since the parent is responsible for reloading.
+     * parent is responsible for reloading when data changes.
      */
     @property({ type: Array, attribute: false })
     externalAlbums?: library.Album[];
 
     libraryCtrl = new LibraryController(this);
     private searchCtrl = new SearchController(this);
-    private cancelScanComplete?: () => void;
     private lastSearchTerm = '';
+
+    /** Tracks the store's cached array reference to detect refreshes. */
+    private lastAlbumsRef: library.Album[] | null =
+        null;
 
     // Fixed grid spacing constants.
     private static readonly GRID_GAP = 8;
@@ -481,16 +481,6 @@ export class CoverGrid
         this.restoreSortPreferences();
         this.loadAlbums();
 
-        // Skip the scan listener when driven by an
-        // external album list — the parent manages
-        // reloading.
-        if (!this.externalAlbums) {
-            this.cancelScanComplete = EventsOn(
-                Events.LibraryScanComplete,
-                () => this.loadAlbums(),
-            );
-        }
-
         document.addEventListener(
             'mousedown',
             this.sortDropdownCloseHandler,
@@ -507,7 +497,6 @@ export class CoverGrid
 
     override disconnectedCallback() {
         super.disconnectedCallback();
-        this.cancelScanComplete?.();
 
         document.removeEventListener(
             'mousedown',
@@ -724,6 +713,21 @@ export class CoverGrid
                     this.shadowRoot,
                 );
             })();
+        }
+
+        // Re-fetch when the store delivers fresh
+        // data after eager refetch on invalidation.
+        if (!this.externalAlbums) {
+            const cached =
+                this.libraryCtrl.cachedAlbums;
+
+            if (
+                cached !== null &&
+                cached !== this.lastAlbumsRef
+            ) {
+                this.lastAlbumsRef = cached;
+                this.loadAlbums();
+            }
         }
     }
 

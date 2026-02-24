@@ -18,30 +18,13 @@ Prioritized list of architectural improvements identified during a full codebase
 
 ---
 
-### 4. Split `cover-grid.ts` (3740 lines)
-
-**Problem:** The largest frontend component by far. It likely handles album grid rendering, context menus, drag-and-drop, selection, sorting, resizing, and more — all in a single file.
-
-**Why it matters:** Difficult to understand, modify, or review. Changes to context menu logic risk breaking grid rendering and vice versa.
-
-**Approach:** Extract logical sections into separate files/components:
-
-- Context menu logic into a shared utility or sub-component
-- Selection logic already uses a `SelectionController` — verify it's fully extracted
-- Drag-and-drop setup into the existing `DragController` if not already
-- Grid rendering as the core component, delegating to these helpers
+### 4. ~~Split `cover-grid.ts` (3740 lines)~~ - solved
 
 ---
 
 ## P2 — Fix when convenient
 
-### 5. Delete `backend/models/` package (dead code)
-
-**Problem:** The `models` package (`files.go`, `music.go`, `art.go`) defines `AudioFile`, `AudioFileType`, `Album`, `Track`, `Artist`, and `Art` types. No package imports it anywhere.
-
-**Why it matters:** Dead code creates confusion — new contributors may think these are the canonical domain types, but the actual types are in `library/`, `queue/`, `playlist/`, and `sqlcgen/`.
-
-**Approach:** Delete the entire `backend/models/` directory.
+### ~~5. Delete `backend/models/` package (dead code)~~ - solved
 
 ---
 
@@ -55,13 +38,7 @@ Prioritized list of architectural improvements identified during a full codebase
 
 ---
 
-### 7. Consolidate `LibraryScanComplete` handling
-
-**Problem:** `LibraryScanComplete` is listened to directly in 10+ components (`genres-view.ts`, `artists-view.ts`, `cover-grid.ts`, `track-list.ts`, `playlist-view.ts`, `genre-details.ts`, `artist-details.ts`, `playlist-picker.ts`, `config-page.ts`, `library-manager.ts`) in addition to `library-store.ts` and `playlist-store.ts`. Each component independently re-fetches its data.
-
-**Why it matters:** The stores already invalidate their caches and notify subscribers on this event. Components that use the store controllers should get re-rendered automatically. The direct listeners exist because many components load data independently from the stores (calling Go bindings directly), which means the stores aren't serving their full purpose as centralized data sources.
-
-**Approach:** For components that already use `LibraryController`/`PlaylistController`, the store subscription should handle cache invalidation. The controller's `hostConnected` subscribes and `requestUpdate` triggers a re-render, which calls the async data getter, which will re-fetch since the cache was invalidated. Remove the redundant direct `EventsOn(LibraryScanComplete)` from components that go through stores. For components like `playlist-picker.ts` that call Go bindings directly (bypassing stores), either route them through the store or accept the direct listener as intentional.
+### 7. ~~Consolidate `LibraryScanComplete` handling~~ — solved
 
 ---
 
