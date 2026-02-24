@@ -175,8 +175,40 @@ export class GenresView extends LitElement {
         });
     }
 
-    /** Filtered genres based on search term. */
-    private get filteredGenres(): Genre[] {
+    // -- Memoisation caches for filtered genres --
+    private cachedFilteredGenres: Genre[] = [];
+    private cachedGridEntries: GenreEntry[] = [];
+    private prevFilterGenres: Genre[] = [];
+    private prevFilterTerm = '';
+
+    /**
+     * Recompute the filtered-genres and grid-entries
+     * caches when their inputs have changed.  Called
+     * from willUpdate() so the caches are ready
+     * before render().
+     */
+    private recomputeGenreCaches() {
+        const term = this.searchCtrl.term;
+
+        if (
+            this.genres !== this.prevFilterGenres ||
+            term !== this.prevFilterTerm
+        ) {
+            this.prevFilterGenres = this.genres;
+            this.prevFilterTerm = term;
+            this.cachedFilteredGenres =
+                this.computeFilteredGenres();
+            this.cachedGridEntries =
+                this.cachedFilteredGenres.map(
+                    (genre, index) => ({
+                        genre,
+                        index,
+                    }),
+                );
+        }
+    }
+
+    private computeFilteredGenres(): Genre[] {
         const term =
             this.searchCtrl.term.toLowerCase();
 
@@ -186,16 +218,6 @@ export class GenresView extends LitElement {
 
         return this.genres.filter((g) =>
             g.name.toLowerCase().includes(term),
-        );
-    }
-
-    /** Build grid entries from filtered genres. */
-    private get gridEntries(): GenreEntry[] {
-        return this.filteredGenres.map(
-            (genre, index) => ({
-                genre,
-                index,
-            }),
         );
     }
 
@@ -227,7 +249,7 @@ export class GenresView extends LitElement {
             cursor: pointer;
             transition:
                 background-color 0.15s ease,
-                transform 0.1s ease;
+                transform 0.15s ease;
             overflow: hidden;
         }
 
@@ -398,6 +420,13 @@ export class GenresView extends LitElement {
     /* ================================================================
      * Lifecycle
      * ================================================================ */
+
+    override willUpdate(
+        changed: Map<PropertyKey, unknown>,
+    ) {
+        super.willUpdate(changed);
+        this.recomputeGenreCaches();
+    }
 
     override connectedCallback() {
         super.connectedCallback();
@@ -583,7 +612,7 @@ export class GenresView extends LitElement {
 
         const safeIndex = Math.min(
             saved,
-            this.filteredGenres.length - 1,
+            this.cachedFilteredGenres.length - 1,
         );
 
         if (safeIndex <= 0) {
@@ -768,7 +797,7 @@ export class GenresView extends LitElement {
         from: number,
         to: number,
     ): Set<string> {
-        const filtered = this.filteredGenres;
+        const filtered = this.cachedFilteredGenres;
         const start = Math.min(from, to);
         const end = Math.max(from, to);
         const names = new Set<string>();
@@ -1294,7 +1323,7 @@ export class GenresView extends LitElement {
             `;
         }
 
-        const entries = this.gridEntries;
+        const entries = this.cachedGridEntries;
 
         if (entries.length === 0) {
             return html`

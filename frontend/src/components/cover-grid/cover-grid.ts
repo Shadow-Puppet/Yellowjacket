@@ -261,11 +261,41 @@ export class CoverGrid extends LitElement {
         string[]
     >();
 
+    // -- Memoisation caches for filtered albums --
+    private cachedFilteredAlbums: library.Album[] = [];
+    private prevFilterAlbums: library.Album[] = [];
+    private prevFilterTerm = '';
+    private prevSortField: AlbumSortField = 'name';
+    private prevSortDir: SortDirection = 'asc';
+
     // =================================================================
-    // Filtered albums (search)
+    // Filtered albums (memoised)
     // =================================================================
 
-    private get filteredAlbums(): library.Album[] {
+    /**
+     * Recompute the filtered-albums cache when its
+     * inputs have changed.  Called from willUpdate()
+     * so the cache is ready before render().
+     */
+    private recomputeAlbumCache() {
+        const term = this.searchCtrl.term;
+
+        if (
+            this.albums !== this.prevFilterAlbums ||
+            term !== this.prevFilterTerm ||
+            this.sortField !== this.prevSortField ||
+            this.sortDirection !== this.prevSortDir
+        ) {
+            this.prevFilterAlbums = this.albums;
+            this.prevFilterTerm = term;
+            this.prevSortField = this.sortField;
+            this.prevSortDir = this.sortDirection;
+            this.cachedFilteredAlbums =
+                this.computeFilteredAlbums();
+        }
+    }
+
+    private computeFilteredAlbums(): library.Album[] {
         const term =
             this.searchCtrl.term.toLowerCase();
 
@@ -448,7 +478,9 @@ export class CoverGrid extends LitElement {
             cursor: pointer;
             border-radius: 8px;
             padding: 5px;
-            transition: background-color 0.2s ease;
+            transition:
+                background-color 0.2s ease,
+                transform 0.15s ease;
             box-sizing: border-box;
             width: var(--card-width, 176px);
         }
@@ -987,6 +1019,7 @@ export class CoverGrid extends LitElement {
         changed: Map<PropertyKey, unknown>,
     ) {
         super.willUpdate(changed);
+        this.recomputeAlbumCache();
 
         // When the parent provides a new external album
         // list, update local albums and reset selection.
@@ -1040,7 +1073,7 @@ export class CoverGrid extends LitElement {
                 // visual position.
                 if (this.expandedAlbumId !== null) {
                     const filtered =
-                        this.filteredAlbums;
+                        this.cachedFilteredAlbums;
                     const idx = filtered.findIndex(
                         (a) =>
                             a.ID ===
@@ -1328,7 +1361,7 @@ export class CoverGrid extends LitElement {
                         this.expandedAlbumId !== null
                     ) {
                         const idx =
-                            this.filteredAlbums.findIndex(
+                            this.cachedFilteredAlbums.findIndex(
                                 (a) =>
                                     a.ID ===
                                     this
@@ -1554,7 +1587,7 @@ export class CoverGrid extends LitElement {
 
         const safeIndex = Math.min(
             saved,
-            this.filteredAlbums.length - 1,
+            this.cachedFilteredAlbums.length - 1,
         );
 
         if (safeIndex <= 0) return;
@@ -1773,7 +1806,7 @@ export class CoverGrid extends LitElement {
     ) {
         const pad = CoverGrid.GRID_PADDING;
         const cols = this.currentColumnCount;
-        const filtered = this.filteredAlbums;
+        const filtered = this.cachedFilteredAlbums;
 
         // Prefer the expanded album as focus.
         if (this.expandedAlbumId !== null) {
@@ -1883,7 +1916,7 @@ export class CoverGrid extends LitElement {
     private getCaratOffset(): number {
         if (this.expandedAlbumId === null) return 0;
 
-        const idx = this.filteredAlbums.findIndex(
+        const idx = this.cachedFilteredAlbums.findIndex(
             (a) => a.ID === this.expandedAlbumId,
         );
 
@@ -1914,7 +1947,7 @@ export class CoverGrid extends LitElement {
      * "before" virtualizer; the rest go into "after".
      */
     private computeSplitIndex() {
-        const filtered = this.filteredAlbums;
+        const filtered = this.cachedFilteredAlbums;
 
         if (this.expandedAlbumId === null) {
             this.splitIndex = filtered.length;
@@ -1952,7 +1985,7 @@ export class CoverGrid extends LitElement {
      * component state (e.g. selectedAlbums) changes.
      */
     private buildGridEntries(): GridEntry[] {
-        const filtered = this.filteredAlbums;
+        const filtered = this.cachedFilteredAlbums;
         const entries: GridEntry[] = [];
 
         for (let i = 0; i < filtered.length; i++) {
@@ -2239,7 +2272,7 @@ export class CoverGrid extends LitElement {
             return;
         }
 
-        const filtered = this.filteredAlbums;
+        const filtered = this.cachedFilteredAlbums;
         const expandedIndex = filtered.findIndex(
             (a) => a.ID === this.expandedAlbumId,
         );
@@ -2346,7 +2379,7 @@ export class CoverGrid extends LitElement {
         from: number,
         to: number,
     ): Set<number> {
-        const filtered = this.filteredAlbums;
+        const filtered = this.cachedFilteredAlbums;
         const start = Math.min(from, to);
         const end = Math.max(from, to);
         const ids = new Set<number>();
@@ -2574,7 +2607,7 @@ export class CoverGrid extends LitElement {
     private syncDropdownToSelection() {
         if (this.selectedAlbums.size === 1) {
             const [albumId] = this.selectedAlbums;
-            const album = this.filteredAlbums.find(
+            const album = this.cachedFilteredAlbums.find(
                 (a) => a.ID === albumId,
             );
 
@@ -2599,7 +2632,7 @@ export class CoverGrid extends LitElement {
         e: Event,
     ): { album: library.Album; index: number } | null {
         const path = e.composedPath();
-        const filtered = this.filteredAlbums;
+        const filtered = this.cachedFilteredAlbums;
 
         for (const el of path) {
             if (
@@ -2775,7 +2808,7 @@ export class CoverGrid extends LitElement {
         if (raw === undefined) return;
 
         const index = parseInt(raw, 10);
-        const album = this.filteredAlbums[index];
+        const album = this.cachedFilteredAlbums[index];
 
         if (album && img.src !== album.CoverArtPath) {
             img.src = album.CoverArtPath;
@@ -3494,7 +3527,7 @@ export class CoverGrid extends LitElement {
             `;
         }
 
-        if (this.filteredAlbums.length === 0) {
+        if (this.cachedFilteredAlbums.length === 0) {
             return html`
                 <div class="empty-state">
                     <p>No albums match your search.</p>

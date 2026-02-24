@@ -172,8 +172,41 @@ export class ArtistsView extends LitElement {
         });
     }
 
-    /** Filtered artists based on search term. */
-    private get filteredArtists(): library.Artist[] {
+    // -- Memoisation caches for filtered artists --
+    private cachedFilteredArtists: library.Artist[] =
+        [];
+    private cachedGridEntries: ArtistEntry[] = [];
+    private prevFilterArtists: library.Artist[] = [];
+    private prevFilterTerm = '';
+
+    /**
+     * Recompute the filtered-artists and grid-entries
+     * caches when their inputs have changed.  Called
+     * from willUpdate() so the caches are ready
+     * before render().
+     */
+    private recomputeArtistCaches() {
+        const term = this.searchCtrl.term;
+
+        if (
+            this.artists !== this.prevFilterArtists ||
+            term !== this.prevFilterTerm
+        ) {
+            this.prevFilterArtists = this.artists;
+            this.prevFilterTerm = term;
+            this.cachedFilteredArtists =
+                this.computeFilteredArtists();
+            this.cachedGridEntries =
+                this.cachedFilteredArtists.map(
+                    (artist, index) => ({
+                        artist,
+                        index,
+                    }),
+                );
+        }
+    }
+
+    private computeFilteredArtists(): library.Artist[] {
         const term =
             this.searchCtrl.term.toLowerCase();
 
@@ -183,16 +216,6 @@ export class ArtistsView extends LitElement {
 
         return this.artists.filter((a) =>
             a.Name.toLowerCase().includes(term),
-        );
-    }
-
-    /** Build grid entries from filtered artists. */
-    private get gridEntries(): ArtistEntry[] {
-        return this.filteredArtists.map(
-            (artist, index) => ({
-                artist,
-                index,
-            }),
         );
     }
 
@@ -224,7 +247,7 @@ export class ArtistsView extends LitElement {
             cursor: pointer;
             transition:
                 background-color 0.15s ease,
-                transform 0.1s ease;
+                transform 0.15s ease;
             overflow: hidden;
         }
 
@@ -393,6 +416,13 @@ export class ArtistsView extends LitElement {
      * Lifecycle
      * ================================================================ */
 
+    override willUpdate(
+        changed: Map<PropertyKey, unknown>,
+    ) {
+        super.willUpdate(changed);
+        this.recomputeArtistCaches();
+    }
+
     override connectedCallback() {
         super.connectedCallback();
         this.loadCardSize();
@@ -539,7 +569,7 @@ export class ArtistsView extends LitElement {
 
         const safeIndex = Math.min(
             saved,
-            this.filteredArtists.length - 1,
+            this.cachedFilteredArtists.length - 1,
         );
 
         if (safeIndex <= 0) {
@@ -724,7 +754,7 @@ export class ArtistsView extends LitElement {
         from: number,
         to: number,
     ): Set<number> {
-        const filtered = this.filteredArtists;
+        const filtered = this.cachedFilteredArtists;
         const start = Math.min(from, to);
         const end = Math.max(from, to);
         const ids = new Set<number>();
@@ -1282,7 +1312,7 @@ export class ArtistsView extends LitElement {
             `;
         }
 
-        const entries = this.gridEntries;
+        const entries = this.cachedGridEntries;
 
         if (entries.length === 0) {
             return html`
