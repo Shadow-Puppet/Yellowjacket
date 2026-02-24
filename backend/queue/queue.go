@@ -181,7 +181,7 @@ func (q *Queue) registerEventHandlers() {
 
 	runtime.EventsOn(q.ctx, events.RequestPlay, func(_ ...any) {
 		q.logger.Info("Received RequestPlay")
-		q.PlayFromStart()
+		q.Play()
 	})
 
 	runtime.EventsOn(q.ctx, events.RequestNext, func(_ ...any) {
@@ -1481,6 +1481,43 @@ func (q *Queue) Previous() {
 	q.emitIndexChanged()
 }
 
+// Play handles a play request by either resuming the current track or
+// starting playback from the beginning of the queue. When a track is
+// already active (currentIndex != -1) the player is told to resume;
+// otherwise playback starts from the first track (or a random one when
+// shuffle is enabled).
+func (q *Queue) Play() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	if len(q.tracks) == 0 {
+		return
+	}
+
+	// A track is already active — ask the player to resume.
+	if q.currentIndex != -1 {
+		if q.player == nil {
+			q.logger.Error(
+				"No player set, cannot resume",
+			)
+
+			return
+		}
+
+		if err := q.player.Play(); err != nil {
+			q.logger.Warn(
+				"Resume requested but player not ready",
+				"err", err,
+			)
+		}
+
+		return
+	}
+
+	// No active track — start from the beginning.
+	q.playFromStart()
+}
+
 // PlayFromStart restarts playback from the beginning of the queue.
 // If shuffle is enabled, a new shuffle order is generated and playback
 // starts from a random track. This is a no-op when a track is already
@@ -1489,6 +1526,12 @@ func (q *Queue) PlayFromStart() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
+	q.playFromStart()
+}
+
+// playFromStart is the lock-free inner implementation of PlayFromStart.
+// The caller must hold q.mu.
+func (q *Queue) playFromStart() {
 	if q.currentIndex != -1 {
 		return
 	}

@@ -146,21 +146,6 @@ func (p *Player) registerEventHandlers() {
 
 	runtime.EventsOn(
 		ctx,
-		events.RequestPlay,
-		func(_ ...any) {
-			p.logger.Info("Received RequestPlayEvent")
-
-			if err := p.Play(); err != nil {
-				p.logger.Warn(
-					"Play requested but not ready",
-					"err", err,
-				)
-			}
-		},
-	)
-
-	runtime.EventsOn(
-		ctx,
 		events.RequestPause,
 		func(_ ...any) {
 			p.logger.Info("Received RequestPauseEvent")

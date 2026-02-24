@@ -122,6 +122,16 @@ export class TrackList extends LitElement implements SelectionHost {
         typeof setTimeout
     > | null = null;
 
+    // -- Memoisation caches for filtered / sorted tracks --
+    private cachedFilteredTracks: library.Track[] = [];
+    private cachedSortedTracks: library.Track[] = [];
+    private prevFilterTracks: library.Track[] = [];
+    private prevFilterTerm = '';
+    private prevFilterColIds = '';
+    private prevSortFiltered: library.Track[] = [];
+    private prevSortField: string | null = null;
+    private prevSortDir: SortDirection = 'asc';
+
     private closeHandler = () => this.closeContextMenu();
 
     private mousedownCloseHandler = (
@@ -181,11 +191,49 @@ export class TrackList extends LitElement implements SelectionHost {
     private hasRestoredScroll = false;
 
     // =================================================================
-    // Filtered tracks (search)
+    // Filtered / sorted tracks (memoised)
     // =================================================================
 
-    private get filteredTracks(): library.Track[] {
-        const term = this.searchCtrl.term.toLowerCase();
+    /**
+     * Recompute the filtered and sorted track caches when
+     * their inputs have changed.  Called from willUpdate()
+     * so the caches are ready before render().
+     */
+    private recomputeTrackCaches() {
+        const term = this.searchCtrl.term;
+        const colIds =
+            this.trackListCtrl.columnIds.join(',');
+
+        if (
+            this.tracks !== this.prevFilterTracks ||
+            term !== this.prevFilterTerm ||
+            colIds !== this.prevFilterColIds
+        ) {
+            this.prevFilterTracks = this.tracks;
+            this.prevFilterTerm = term;
+            this.prevFilterColIds = colIds;
+            this.cachedFilteredTracks =
+                this.computeFilteredTracks();
+        }
+
+        if (
+            this.cachedFilteredTracks !==
+                this.prevSortFiltered ||
+            this.sortField !== this.prevSortField ||
+            this.sortDirection !== this.prevSortDir
+        ) {
+            this.prevSortFiltered =
+                this.cachedFilteredTracks;
+            this.prevSortField = this.sortField;
+            this.prevSortDir = this.sortDirection;
+            this.cachedSortedTracks =
+                this.computeSortedTracks();
+        }
+    }
+
+    private computeFilteredTracks(): library.Track[] {
+        const term =
+            this.searchCtrl.term.toLowerCase();
 
         if (!term) return this.tracks;
 
@@ -201,12 +249,8 @@ export class TrackList extends LitElement implements SelectionHost {
         );
     }
 
-    // =================================================================
-    // Sorted tracks
-    // =================================================================
-
-    private get sortedTracks(): library.Track[] {
-        const tracks = this.filteredTracks;
+    private computeSortedTracks(): library.Track[] {
+        const tracks = this.cachedFilteredTracks;
 
         if (!this.sortField) return tracks;
 
@@ -227,11 +271,11 @@ export class TrackList extends LitElement implements SelectionHost {
     // =================================================================
 
     getItemKey(index: number): string | undefined {
-        return this.sortedTracks[index]?.FilePath;
+        return this.cachedSortedTracks[index]?.FilePath;
     }
 
     getItemCount(): number {
-        return this.sortedTracks.length;
+        return this.cachedSortedTracks.length;
     }
 
     onSelectionChanged(): void {
@@ -1003,6 +1047,8 @@ export class TrackList extends LitElement implements SelectionHost {
             this.tracks = this.externalTracks;
             this.selection.clear();
         }
+
+        this.recomputeTrackCaches();
     }
 
     override firstUpdated() {
@@ -1664,7 +1710,7 @@ export class TrackList extends LitElement implements SelectionHost {
     }
 
     override render() {
-        const visibleTracks = this.sortedTracks;
+        const visibleTracks = this.cachedSortedTracks;
         const cols = this.activeColumns;
 
         return html`
