@@ -16,8 +16,6 @@ Prioritized list of architectural improvements identified during a full codebase
 
 ### 3. ~~Split `queue.go` (2254 lines)~~ — solved
 
-Split into 5 files: `queue.go` (core types, operations, constructor), `handlers.go` (event handlers + `toStringSlice`/`toIntSlice` helpers), `persistence.go` (DB I/O), `navigation.go` (shuffle/navigation), `emit.go` (event emission). Also applied in-place improvements: `trackMeta.toTrack()` method, `commitMutation()` helper, `slices.Insert` for slice operations, fixed `InsertNext` empty-queue bug, fixed `AddTracks` persist ordering, unified `AddTrack` persistence.
-
 ---
 
 ### 4. Split `cover-grid.ts` (3740 lines)
@@ -27,6 +25,7 @@ Split into 5 files: `queue.go` (core types, operations, constructor), `handlers.
 **Why it matters:** Difficult to understand, modify, or review. Changes to context menu logic risk breaking grid rendering and vice versa.
 
 **Approach:** Extract logical sections into separate files/components:
+
 - Context menu logic into a shared utility or sub-component
 - Selection logic already uses a `SelectionController` — verify it's fully extracted
 - Drag-and-drop setup into the existing `DragController` if not already
@@ -73,10 +72,12 @@ Split into 5 files: `queue.go` (core types, operations, constructor), `handlers.
 **Why it matters:** Type safety is completely bypassed for a core interaction pattern. Typos in property names (`actve` instead of `active`) would silently fail.
 
 **Approach:** Create a type declaration for the WebAwesome popup element (or find one in their package). Alternatively, write a small typed utility:
+
 ```typescript
 function openPopup(popup: Element, anchor: Element | VirtualAnchor): void
 function closePopup(popup: Element): void
 ```
+
 Replace all 49 `as any` casts with calls to these utilities.
 
 ---
@@ -118,6 +119,7 @@ Replace all 49 `as any` casts with calls to these utilities.
 **Why it matters:** Inconsistency makes the codebase harder to learn. The queue's event-only approach requires substantial boilerplate that the playlist avoids. New features on the queue require touching 4 files (Go event constant, TS event constant, Go handler, TS store method) vs 1-2 files for the playlist.
 
 **Approach:** This is a larger refactor. Two options:
+
 1. **Move queue to bindings** (recommended): Add the queue to `FEBindings`, expose typed methods, call them directly from the frontend store. Remove the event handlers and the `Request*` events. Keep the backend-to-frontend events (`QueueChanged`, etc.) for state push.
 2. **Accept the inconsistency**: Document the rationale (queue existed before playlists, events were the original pattern, bindings were adopted later). Add a comment in AGENTS.md.
 

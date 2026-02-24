@@ -19,12 +19,16 @@ import { library } from '@go/models';
 import { LibraryController } from '@store/controllers/library-controller';
 import { SearchController } from '@store/controllers/search-controller';
 import { queueStore } from '@store/queue-store';
+import {
+    ContextMenuController,
+    contextMenuStyles,
+} from '@utils/context-menu-controller.js';
+import type { ContextMenuHost } from '@utils/context-menu-controller.js';
 import { Events } from '../../events';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 import '@components/playlist-picker/playlist-picker.js';
-import type { PlaylistPicker } from '@components/playlist-picker/playlist-picker.js';
 
 /** Pixels to change card width per scroll tick. */
 const ZOOM_STEP = 16;
@@ -49,9 +53,13 @@ interface ArtistEntry {
 }
 
 @customElement('artists-view')
-export class ArtistsView extends LitElement {
+export class ArtistsView
+    extends LitElement
+    implements ContextMenuHost
+{
     private libraryCtrl = new LibraryController(this);
     private searchCtrl = new SearchController(this);
+    private ctxMenu = new ContextMenuController(this);
     private cancelScanComplete?: () => void;
     private wheelListenerAttached = false;
     private lastSearchTerm = '';
@@ -81,9 +89,6 @@ export class ArtistsView extends LitElement {
 
     // ----- Context menu state -----
 
-    @state()
-    private contextMenuOpen = false;
-
     /**
      * Artist ID that was right-clicked to open the
      * context menu.  Used as fallback when the
@@ -92,39 +97,25 @@ export class ArtistsView extends LitElement {
      */
     private contextMenuArtistId: number | null = null;
 
-    @state()
-    private playlistSubmenuOpen = false;
-
-    @state()
-    private playlistFilePaths: string[] = [];
-
     @query('#context-menu')
     private contextMenuPopup!: HTMLElement;
 
     @query('#playlist-submenu')
     private playlistSubmenuPopup!: HTMLElement;
 
-    private submenuCloseTimer: ReturnType<
-        typeof setTimeout
-    > | null = null;
+    getContextMenuPopup(): HTMLElement | undefined {
+        return this.contextMenuPopup;
+    }
 
-    // ----- Close handlers -----
+    getPlaylistSubmenuPopup():
+        | HTMLElement
+        | undefined {
+        return this.playlistSubmenuPopup;
+    }
 
-    private closeHandler = () =>
-        this.closeContextMenu();
-
-    private mousedownCloseHandler = (
-        e: MouseEvent,
-    ) => {
-        const path = e.composedPath();
-        const popup = this.contextMenuPopup;
-        const submenu = this.playlistSubmenuPopup;
-
-        if (popup && path.includes(popup)) return;
-        if (submenu && path.includes(submenu)) return;
-
-        this.closeContextMenu();
-    };
+    onContextMenuClose(): void {
+        this.contextMenuArtistId = null;
+    }
 
     // ----- Grid spacing constants -----
 
@@ -219,198 +210,156 @@ export class ArtistsView extends LitElement {
         );
     }
 
-    static override styles = css`
-        :host {
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-            position: relative;
-        }
+    static override styles = [
+        contextMenuStyles,
+        css`
+            :host {
+                display: flex;
+                flex-direction: column;
+                overflow: hidden;
+                position: relative;
+            }
 
-        .grid-scroll-container {
-            flex: 1;
-            overflow-y: auto;
-            overflow-x: hidden;
-        }
+            .grid-scroll-container {
+                flex: 1;
+                overflow-y: auto;
+                overflow-x: hidden;
+            }
 
-        lit-virtualizer {
-            width: 100%;
-            min-height: 100%;
-        }
+            lit-virtualizer {
+                width: 100%;
+                min-height: 100%;
+            }
 
-        .artist-card {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            padding: 5px;
-            border-radius: 8px;
-            cursor: pointer;
-            transition:
-                background-color 0.15s ease,
-                transform 0.15s ease;
-            overflow: hidden;
-        }
+            .artist-card {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                padding: 5px;
+                border-radius: 8px;
+                cursor: pointer;
+                transition:
+                    background-color 0.15s ease,
+                    transform 0.15s ease;
+                overflow: hidden;
+            }
 
-        .artist-card:hover {
-            background-color: var(
-                --yj-bg-overlay,
-                rgba(255, 255, 255, 0.06)
-            );
-        }
+            .artist-card:hover {
+                background-color: var(
+                    --yj-bg-overlay,
+                    rgba(255, 255, 255, 0.06)
+                );
+            }
 
-        .artist-card:active {
-            transform: scale(0.97);
-        }
+            .artist-card:active {
+                transform: scale(0.97);
+            }
 
-        .artist-card.selected {
-            outline: 2px solid
-                var(--yj-accent, #ffd43b);
-            outline-offset: 2px;
-        }
+            .artist-card.selected {
+                outline: 2px solid
+                    var(--yj-accent, #ffd43b);
+                outline-offset: 2px;
+            }
 
-        .artist-card.selected .avatar-container {
-            scale: 0.95;
-        }
+            .artist-card.selected
+                .avatar-container {
+                scale: 0.95;
+            }
 
-        .artist-card.selected .artist-name {
-            scale: 0.95;
-        }
+            .artist-card.selected .artist-name {
+                scale: 0.95;
+            }
 
-        .avatar-container {
-            width: var(--avatar-size);
-            height: var(--avatar-size);
-            border-radius: 50%;
-            overflow: hidden;
-            background: linear-gradient(
-                135deg,
-                var(--yj-bg-overlay, #404040) 0%,
-                var(--yj-bg-surface, #282828) 100%
-            );
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            flex-shrink: 0;
-        }
+            .avatar-container {
+                width: var(--avatar-size);
+                height: var(--avatar-size);
+                border-radius: 50%;
+                overflow: hidden;
+                background: linear-gradient(
+                    135deg,
+                    var(--yj-bg-overlay, #404040) 0%,
+                    var(--yj-bg-surface, #282828)
+                        100%
+                );
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                flex-shrink: 0;
+            }
 
-        .avatar-placeholder {
-            color: var(
-                --yj-text-secondary,
-                #b3b3b3
-            );
-            font-size: var(--placeholder-font, 48px);
-            font-weight: 600;
-            text-transform: uppercase;
-            user-select: none;
-            line-height: 1;
-        }
+            .avatar-placeholder {
+                color: var(
+                    --yj-text-secondary,
+                    #b3b3b3
+                );
+                font-size: var(
+                    --placeholder-font,
+                    48px
+                );
+                font-weight: 600;
+                text-transform: uppercase;
+                user-select: none;
+                line-height: 1;
+            }
 
-        .artist-name {
-            width: 100%;
-            text-align: center;
-            font-size: var(
-                --artist-name-font,
-                14px
-            );
-            font-weight: 500;
-            color: var(--yj-text-primary, #fff);
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            padding: var(--artist-name-pad, 6px) 2px
-                0;
-            line-height: 1.3;
-        }
+            .artist-name {
+                width: 100%;
+                text-align: center;
+                font-size: var(
+                    --artist-name-font,
+                    14px
+                );
+                font-weight: 500;
+                color: var(
+                    --yj-text-primary,
+                    #fff
+                );
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                padding: var(--artist-name-pad, 6px)
+                    2px 0;
+                line-height: 1.3;
+            }
 
-        .search-indicator {
-            position: absolute;
-            top: 8px;
-            left: 50%;
-            transform: translateX(-50%);
-            z-index: 5;
-            pointer-events: none;
-            background: var(
-                --yj-bg-overlay,
-                #495057
-            );
-            color: var(
-                --yj-text-secondary,
-                #b3b3b3
-            );
-            font-size: 12px;
-            padding: 4px 14px;
-            border-radius: 12px;
-            border: 1px solid
-                var(--yj-border-subtle, #555);
-            white-space: nowrap;
-            opacity: 0.92;
-        }
+            .search-indicator {
+                position: absolute;
+                top: 8px;
+                left: 50%;
+                transform: translateX(-50%);
+                z-index: 5;
+                pointer-events: none;
+                background: var(
+                    --yj-bg-overlay,
+                    #495057
+                );
+                color: var(
+                    --yj-text-secondary,
+                    #b3b3b3
+                );
+                font-size: 12px;
+                padding: 4px 14px;
+                border-radius: 12px;
+                border: 1px solid
+                    var(--yj-border-subtle, #555);
+                white-space: nowrap;
+                opacity: 0.92;
+            }
 
-        .loading-message,
-        .empty-message {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            height: 100%;
-            color: var(
-                --yj-text-secondary,
-                #b3b3b3
-            );
-            font-size: 14px;
-        }
-
-        /* ====================================
-         * Context menu
-         * ==================================== */
-
-        #context-menu {
-            z-index: 200;
-        }
-
-        .context-menu-panel {
-            background-color: var(
-                --yj-bg-elevated,
-                #343a40
-            );
-            border: 1px solid
-                var(--yj-border, #444);
-            border-radius: 6px;
-            padding: 4px 0;
-            box-shadow: 0 8px 24px
-                rgba(0, 0, 0, 0.5);
-            min-width: 160px;
-        }
-
-        .context-menu-panel wa-dropdown-item {
-            cursor: pointer;
-            --wa-color-text-normal: var(
-                --yj-text-primary,
-                #fff
-            );
-            font-size: 13px;
-        }
-
-        .context-menu-panel
-            wa-dropdown-item:hover {
-            background-color: var(
-                --yj-hover-overlay,
-                rgba(255, 255, 255, 0.1)
-            );
-        }
-
-        .submenu-item {
-            position: relative;
-        }
-
-        .submenu-arrow {
-            font-size: 10px;
-            margin-left: auto;
-            padding-left: 12px;
-        }
-
-        #playlist-submenu {
-            z-index: 210;
-        }
-    `;
+            .loading-message,
+            .empty-message {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                height: 100%;
+                color: var(
+                    --yj-text-secondary,
+                    #b3b3b3
+                );
+                font-size: 14px;
+            }
+        `,
+    ];
 
     /* ================================================================
      * Lifecycle
@@ -431,18 +380,6 @@ export class ArtistsView extends LitElement {
             Events.LibraryScanComplete,
             () => this.loadArtists(),
         );
-        document.addEventListener(
-            'click',
-            this.closeHandler,
-        );
-        document.addEventListener(
-            'contextmenu',
-            this.closeHandler,
-        );
-        document.addEventListener(
-            'mousedown',
-            this.mousedownCloseHandler,
-        );
     }
 
     override disconnectedCallback() {
@@ -453,19 +390,6 @@ export class ArtistsView extends LitElement {
         if (this.scrollDebounceTimer !== null) {
             clearTimeout(this.scrollDebounceTimer);
         }
-
-        document.removeEventListener(
-            'click',
-            this.closeHandler,
-        );
-        document.removeEventListener(
-            'contextmenu',
-            this.closeHandler,
-        );
-        document.removeEventListener(
-            'mousedown',
-            this.mousedownCloseHandler,
-        );
     }
 
     override updated() {
@@ -905,55 +829,11 @@ export class ArtistsView extends LitElement {
 
         this.contextMenuArtistId = artist.ID;
 
-        this.openContextMenuAt(
+        this.ctxMenu.openAt(
             e.clientX,
             e.clientY,
         );
     };
-
-    private openContextMenuAt(
-        clientX: number,
-        clientY: number,
-    ) {
-        this.contextMenuOpen = true;
-
-        this.updateComplete.then(() => {
-            const popup = this.contextMenuPopup;
-
-            if (popup) {
-                (popup as any).anchor = {
-                    getBoundingClientRect() {
-                        return {
-                            width: 0,
-                            height: 0,
-                            x: clientX,
-                            y: clientY,
-                            top: clientY,
-                            left: clientX,
-                            right: clientX,
-                            bottom: clientY,
-                        };
-                    },
-                };
-                (popup as any).active = true;
-            }
-        });
-    }
-
-    private closeContextMenu() {
-        if (!this.contextMenuOpen) return;
-
-        this.closePlaylistSubmenu();
-        this.contextMenuOpen = false;
-        this.playlistFilePaths = [];
-        this.contextMenuArtistId = null;
-
-        const popup = this.contextMenuPopup;
-
-        if (popup) {
-            (popup as any).active = false;
-        }
-    }
 
     private async onContextMenuAction(
         action: string,
@@ -965,7 +845,11 @@ export class ArtistsView extends LitElement {
 
         switch (action) {
             case 'play':
-                queueStore.setQueue(filePaths, 0, true);
+                queueStore.setQueue(
+                    filePaths,
+                    0,
+                    true,
+                );
                 break;
             case 'add-to-queue':
                 queueStore.addTracksToQueue(
@@ -979,80 +863,19 @@ export class ArtistsView extends LitElement {
                 break;
         }
 
-        this.closeContextMenu();
+        this.ctxMenu.close();
     }
 
-    /* ================================================================
-     * Playlist submenu
-     * ================================================================ */
-
-    private clearSubmenuCloseTimer() {
-        if (this.submenuCloseTimer !== null) {
-            clearTimeout(this.submenuCloseTimer);
-            this.submenuCloseTimer = null;
-        }
-    }
-
-    private scheduleSubmenuClose = () => {
-        this.clearSubmenuCloseTimer();
-        this.submenuCloseTimer = setTimeout(() => {
-            this.submenuCloseTimer = null;
-            this.closePlaylistSubmenu();
-        }, 150);
-    };
-
-    private async showPlaylistSubmenu() {
-        this.clearSubmenuCloseTimer();
-
-        if (this.playlistSubmenuOpen) return;
-
-        this.playlistFilePaths =
+    /**
+     * Resolve artist file paths and show the
+     * playlist submenu.
+     */
+    private async handleShowPlaylistSubmenu() {
+        const paths =
             await this.getContextMenuArtistFilePaths();
 
-        if (this.playlistFilePaths.length === 0) {
-            return;
-        }
-
-        this.playlistSubmenuOpen = true;
-
-        await this.updateComplete;
-
-        const submenu = this.playlistSubmenuPopup;
-        const trigger =
-            this.shadowRoot?.querySelector(
-                '.submenu-item',
-            );
-
-        if (submenu && trigger) {
-            (submenu as any).anchor = trigger;
-            (submenu as any).active = true;
-        }
-
-        const picker =
-            this.shadowRoot?.querySelector(
-                'playlist-picker',
-            ) as PlaylistPicker | null;
-
-        picker?.reset();
+        void this.ctxMenu.showPlaylistSubmenu(paths);
     }
-
-    private closePlaylistSubmenu() {
-        this.clearSubmenuCloseTimer();
-
-        if (!this.playlistSubmenuOpen) return;
-
-        this.playlistSubmenuOpen = false;
-
-        const submenu = this.playlistSubmenuPopup;
-
-        if (submenu) {
-            (submenu as any).active = false;
-        }
-    }
-
-    private onPlaylistActionComplete = () => {
-        this.closeContextMenu();
-    };
 
     /* ================================================================
      * File path resolution
@@ -1191,9 +1014,10 @@ export class ArtistsView extends LitElement {
                 placement="bottom-start"
                 flip
                 shift
-                .active=${this.contextMenuOpen}
+                .active=${this.ctxMenu
+                    .contextMenuOpen}
             >
-                ${this.contextMenuOpen
+                ${this.ctxMenu.contextMenuOpen
                     ? html`
                           <div
                               class="context-menu-panel"
@@ -1204,7 +1028,7 @@ export class ArtistsView extends LitElement {
                                           'play',
                                       )}
                                   @mouseenter=${() =>
-                                      this.closePlaylistSubmenu()}
+                                      this.ctxMenu.closePlaylistSubmenu()}
                               >
                                   <wa-icon
                                       slot="icon"
@@ -1218,7 +1042,7 @@ export class ArtistsView extends LitElement {
                                           'add-to-queue',
                                       )}
                                   @mouseenter=${() =>
-                                      this.closePlaylistSubmenu()}
+                                      this.ctxMenu.closePlaylistSubmenu()}
                               >
                                   <wa-icon
                                       slot="icon"
@@ -1232,7 +1056,7 @@ export class ArtistsView extends LitElement {
                                           'play-next',
                                       )}
                                   @mouseenter=${() =>
-                                      this.closePlaylistSubmenu()}
+                                      this.ctxMenu.closePlaylistSubmenu()}
                               >
                                   <wa-icon
                                       slot="icon"
@@ -1243,16 +1067,17 @@ export class ArtistsView extends LitElement {
                               <wa-dropdown-item
                                   class="submenu-item"
                                   @mouseenter=${() => {
-                                      this.clearSubmenuCloseTimer();
-                                      void this.showPlaylistSubmenu();
+                                      this.ctxMenu.clearSubmenuCloseTimer();
+                                      void this.handleShowPlaylistSubmenu();
                                   }}
                                   @mouseleave=${this
+                                      .ctxMenu
                                       .scheduleSubmenuClose}
                                   @click=${(
                                       e: Event,
                                   ) => {
                                       e.stopPropagation();
-                                      void this.showPlaylistSubmenu();
+                                      void this.handleShowPlaylistSubmenu();
                                   }}
                               >
                                   <wa-icon
@@ -1275,21 +1100,24 @@ export class ArtistsView extends LitElement {
                 placement="right-start"
                 flip
                 shift
-                .active=${this
+                .active=${this.ctxMenu
                     .playlistSubmenuOpen}
             >
-                ${this.playlistSubmenuOpen
+                ${this.ctxMenu.playlistSubmenuOpen
                     ? html`
                           <div
                               @mouseenter=${() =>
-                                  this.clearSubmenuCloseTimer()}
+                                  this.ctxMenu.clearSubmenuCloseTimer()}
                               @mouseleave=${this
+                                  .ctxMenu
                                   .scheduleSubmenuClose}
                           >
                               <playlist-picker
                                   .filePaths=${this
+                                      .ctxMenu
                                       .playlistFilePaths}
                                   @playlist-action-complete=${this
+                                      .ctxMenu
                                       .onPlaylistActionComplete}
                                   @click=${(
                                       e: Event,

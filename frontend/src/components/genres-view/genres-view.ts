@@ -16,11 +16,15 @@ import { LibraryController } from '@store/controllers/library-controller';
 import { SearchController } from '@store/controllers/search-controller';
 import { queueStore } from '@store/queue-store';
 import { Events } from '../../events';
+import {
+    ContextMenuController,
+    contextMenuStyles,
+} from '@utils/context-menu-controller.js';
+import type { ContextMenuHost } from '@utils/context-menu-controller.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 import '@components/playlist-picker/playlist-picker.js';
-import type { PlaylistPicker } from '@components/playlist-picker/playlist-picker.js';
 
 /** Pixels to change card width per scroll tick. */
 const ZOOM_STEP = 16;
@@ -49,9 +53,13 @@ interface GenreEntry {
 }
 
 @customElement('genres-view')
-export class GenresView extends LitElement {
+export class GenresView
+    extends LitElement
+    implements ContextMenuHost
+{
     private libraryCtrl = new LibraryController(this);
     private searchCtrl = new SearchController(this);
+    private ctxMenu = new ContextMenuController(this);
     private cancelScanComplete?: () => void;
     private wheelListenerAttached = false;
     private lastSearchTerm = '';
@@ -84,9 +92,6 @@ export class GenresView extends LitElement {
 
     // ----- Context menu state -----
 
-    @state()
-    private contextMenuOpen = false;
-
     /**
      * Genre name that was right-clicked to open the
      * context menu.  Used as fallback when the
@@ -95,39 +100,27 @@ export class GenresView extends LitElement {
      */
     private contextMenuGenreName: string | null = null;
 
-    @state()
-    private playlistSubmenuOpen = false;
-
-    @state()
-    private playlistFilePaths: string[] = [];
-
     @query('#context-menu')
     private contextMenuPopup!: HTMLElement;
 
     @query('#playlist-submenu')
     private playlistSubmenuPopup!: HTMLElement;
 
-    private submenuCloseTimer: ReturnType<
-        typeof setTimeout
-    > | null = null;
+    // ----- ContextMenuHost interface -----
 
-    // ----- Close handlers -----
+    getContextMenuPopup(): HTMLElement | undefined {
+        return this.contextMenuPopup;
+    }
 
-    private closeHandler = () =>
-        this.closeContextMenu();
+    getPlaylistSubmenuPopup():
+        | HTMLElement
+        | undefined {
+        return this.playlistSubmenuPopup;
+    }
 
-    private mousedownCloseHandler = (
-        e: MouseEvent,
-    ) => {
-        const path = e.composedPath();
-        const popup = this.contextMenuPopup;
-        const submenu = this.playlistSubmenuPopup;
-
-        if (popup && path.includes(popup)) return;
-        if (submenu && path.includes(submenu)) return;
-
-        this.closeContextMenu();
-    };
+    onContextMenuClose(): void {
+        this.contextMenuGenreName = null;
+    }
 
     // ----- Grid spacing constants -----
 
@@ -221,7 +214,9 @@ export class GenresView extends LitElement {
         );
     }
 
-    static override styles = css`
+    static override styles = [
+        contextMenuStyles,
+        css`
         :host {
             display: flex;
             flex-direction: column;
@@ -363,59 +358,8 @@ export class GenresView extends LitElement {
             font-size: 14px;
         }
 
-        /* ====================================
-         * Context menu
-         * ==================================== */
-
-        #context-menu {
-            z-index: 200;
-        }
-
-        .context-menu-panel {
-            background-color: var(
-                --yj-bg-elevated,
-                #343a40
-            );
-            border: 1px solid
-                var(--yj-border, #444);
-            border-radius: 6px;
-            padding: 4px 0;
-            box-shadow: 0 8px 24px
-                rgba(0, 0, 0, 0.5);
-            min-width: 160px;
-        }
-
-        .context-menu-panel wa-dropdown-item {
-            cursor: pointer;
-            --wa-color-text-normal: var(
-                --yj-text-primary,
-                #fff
-            );
-            font-size: 13px;
-        }
-
-        .context-menu-panel
-            wa-dropdown-item:hover {
-            background-color: var(
-                --yj-hover-overlay,
-                rgba(255, 255, 255, 0.1)
-            );
-        }
-
-        .submenu-item {
-            position: relative;
-        }
-
-        .submenu-arrow {
-            font-size: 10px;
-            margin-left: auto;
-            padding-left: 12px;
-        }
-
-        #playlist-submenu {
-            z-index: 210;
-        }
-    `;
+    `,
+    ];
 
     /* ================================================================
      * Lifecycle
@@ -436,18 +380,6 @@ export class GenresView extends LitElement {
             Events.LibraryScanComplete,
             () => this.loadGenres(),
         );
-        document.addEventListener(
-            'click',
-            this.closeHandler,
-        );
-        document.addEventListener(
-            'contextmenu',
-            this.closeHandler,
-        );
-        document.addEventListener(
-            'mousedown',
-            this.mousedownCloseHandler,
-        );
     }
 
     override disconnectedCallback() {
@@ -458,19 +390,6 @@ export class GenresView extends LitElement {
         if (this.scrollDebounceTimer !== null) {
             clearTimeout(this.scrollDebounceTimer);
         }
-
-        document.removeEventListener(
-            'click',
-            this.closeHandler,
-        );
-        document.removeEventListener(
-            'contextmenu',
-            this.closeHandler,
-        );
-        document.removeEventListener(
-            'mousedown',
-            this.mousedownCloseHandler,
-        );
     }
 
     override updated() {
@@ -954,55 +873,11 @@ export class GenresView extends LitElement {
 
         this.contextMenuGenreName = genre.name;
 
-        this.openContextMenuAt(
+        this.ctxMenu.openAt(
             e.clientX,
             e.clientY,
         );
     };
-
-    private openContextMenuAt(
-        clientX: number,
-        clientY: number,
-    ) {
-        this.contextMenuOpen = true;
-
-        this.updateComplete.then(() => {
-            const popup = this.contextMenuPopup;
-
-            if (popup) {
-                (popup as any).anchor = {
-                    getBoundingClientRect() {
-                        return {
-                            width: 0,
-                            height: 0,
-                            x: clientX,
-                            y: clientY,
-                            top: clientY,
-                            left: clientX,
-                            right: clientX,
-                            bottom: clientY,
-                        };
-                    },
-                };
-                (popup as any).active = true;
-            }
-        });
-    }
-
-    private closeContextMenu() {
-        if (!this.contextMenuOpen) return;
-
-        this.closePlaylistSubmenu();
-        this.contextMenuOpen = false;
-        this.playlistFilePaths = [];
-        this.contextMenuGenreName = null;
-
-        const popup = this.contextMenuPopup;
-
-        if (popup) {
-            (popup as any).active = false;
-        }
-    }
 
     private onContextMenuAction(action: string) {
         const filePaths =
@@ -1026,86 +901,8 @@ export class GenresView extends LitElement {
                 break;
         }
 
-        this.closeContextMenu();
+        this.ctxMenu.close();
     }
-
-    /* ================================================================
-     * Playlist submenu
-     * ================================================================ */
-
-    private clearSubmenuCloseTimer() {
-        if (this.submenuCloseTimer !== null) {
-            clearTimeout(this.submenuCloseTimer);
-            this.submenuCloseTimer = null;
-        }
-    }
-
-    private scheduleSubmenuClose = () => {
-        this.clearSubmenuCloseTimer();
-        this.submenuCloseTimer = setTimeout(() => {
-            this.submenuCloseTimer = null;
-            this.closePlaylistSubmenu();
-        }, 150);
-    };
-
-    private showPlaylistSubmenu() {
-        this.clearSubmenuCloseTimer();
-
-        if (this.playlistSubmenuOpen) return;
-
-        this.playlistFilePaths =
-            this.getContextMenuGenreFilePaths();
-
-        if (this.playlistFilePaths.length === 0) {
-            return;
-        }
-
-        this.playlistSubmenuOpen = true;
-
-        void this.updateComplete.then(() => {
-            const submenu =
-                this.playlistSubmenuPopup;
-
-            const trigger =
-                this.shadowRoot?.querySelector(
-                    '.submenu-item',
-                );
-
-            if (submenu && trigger) {
-                (submenu as any).anchor = trigger;
-                (submenu as any).active = true;
-            }
-
-            const picker =
-                this.shadowRoot?.querySelector(
-                    'playlist-picker',
-                ) as PlaylistPicker | null;
-
-            picker?.reset();
-        });
-    }
-
-    private closePlaylistSubmenu() {
-        this.clearSubmenuCloseTimer();
-
-        if (!this.playlistSubmenuOpen) return;
-
-        this.playlistSubmenuOpen = false;
-
-        const submenu = this.playlistSubmenuPopup;
-
-        if (submenu) {
-            (submenu as any).active = false;
-        }
-    }
-
-    private onPlaylistActionComplete = () => {
-        this.closeContextMenu();
-    };
-
-    /* ================================================================
-     * File path resolution
-     * ================================================================ */
 
     /* ================================================================
      * Helpers
@@ -1202,9 +999,10 @@ export class GenresView extends LitElement {
                 placement="bottom-start"
                 flip
                 shift
-                .active=${this.contextMenuOpen}
+                .active=${this.ctxMenu
+                    .contextMenuOpen}
             >
-                ${this.contextMenuOpen
+                ${this.ctxMenu.contextMenuOpen
                     ? html`
                           <div
                               class="context-menu-panel"
@@ -1215,7 +1013,7 @@ export class GenresView extends LitElement {
                                           'play',
                                       )}
                                   @mouseenter=${() =>
-                                      this.closePlaylistSubmenu()}
+                                      this.ctxMenu.closePlaylistSubmenu()}
                               >
                                   <wa-icon
                                       slot="icon"
@@ -1229,7 +1027,7 @@ export class GenresView extends LitElement {
                                           'add-to-queue',
                                       )}
                                   @mouseenter=${() =>
-                                      this.closePlaylistSubmenu()}
+                                      this.ctxMenu.closePlaylistSubmenu()}
                               >
                                   <wa-icon
                                       slot="icon"
@@ -1243,7 +1041,7 @@ export class GenresView extends LitElement {
                                           'play-next',
                                       )}
                                   @mouseenter=${() =>
-                                      this.closePlaylistSubmenu()}
+                                      this.ctxMenu.closePlaylistSubmenu()}
                               >
                                   <wa-icon
                                       slot="icon"
@@ -1254,16 +1052,21 @@ export class GenresView extends LitElement {
                               <wa-dropdown-item
                                   class="submenu-item"
                                   @mouseenter=${() => {
-                                      this.clearSubmenuCloseTimer();
-                                      this.showPlaylistSubmenu();
+                                      this.ctxMenu.clearSubmenuCloseTimer();
+                                      void this.ctxMenu.showPlaylistSubmenu(
+                                          this.getContextMenuGenreFilePaths(),
+                                      );
                                   }}
                                   @mouseleave=${this
+                                      .ctxMenu
                                       .scheduleSubmenuClose}
                                   @click=${(
                                       e: Event,
                                   ) => {
                                       e.stopPropagation();
-                                      this.showPlaylistSubmenu();
+                                      void this.ctxMenu.showPlaylistSubmenu(
+                                          this.getContextMenuGenreFilePaths(),
+                                      );
                                   }}
                               >
                                   <wa-icon
@@ -1286,21 +1089,24 @@ export class GenresView extends LitElement {
                 placement="right-start"
                 flip
                 shift
-                .active=${this
+                .active=${this.ctxMenu
                     .playlistSubmenuOpen}
             >
-                ${this.playlistSubmenuOpen
+                ${this.ctxMenu.playlistSubmenuOpen
                     ? html`
                           <div
                               @mouseenter=${() =>
-                                  this.clearSubmenuCloseTimer()}
+                                  this.ctxMenu.clearSubmenuCloseTimer()}
                               @mouseleave=${this
+                                  .ctxMenu
                                   .scheduleSubmenuClose}
                           >
                               <playlist-picker
                                   .filePaths=${this
+                                      .ctxMenu
                                       .playlistFilePaths}
                                   @playlist-action-complete=${this
+                                      .ctxMenu
                                       .onPlaylistActionComplete}
                                   @click=${(
                                       e: Event,

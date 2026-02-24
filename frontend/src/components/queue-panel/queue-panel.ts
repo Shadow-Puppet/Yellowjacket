@@ -18,6 +18,11 @@ import type { QueueTrack } from '@store/queue-store';
 import { SelectionController } from '@utils/selection-controller';
 import type { SelectionHost } from '@utils/selection-controller';
 import {
+    ContextMenuController,
+    contextMenuStyles,
+} from '@utils/context-menu-controller.js';
+import type { ContextMenuHost } from '@utils/context-menu-controller.js';
+import {
     hasTrackPayload,
     getDragPayload,
     setDragPayload,
@@ -41,10 +46,11 @@ const DEFAULT_WIDTH = 320;
 @customElement('queue-panel')
 export class QueuePanel
     extends LitElement
-    implements SelectionHost
+    implements SelectionHost, ContextMenuHost
 {
     private queue = new QueueController(this);
     private selection = new SelectionController(this);
+    private ctxMenu = new ContextMenuController(this);
 
     @property({ type: Boolean, reflect: true })
     open = false;
@@ -54,12 +60,6 @@ export class QueuePanel
 
     @state()
     private playlistPickerOpen = false;
-
-    @state()
-    private contextMenuOpen = false;
-
-    @state()
-    private playlistSubmenuOpen = false;
 
     private dragOver = false;
     private dragEnterCount = 0;
@@ -101,24 +101,6 @@ export class QueuePanel
         ) {
             this.closePlaylistPicker();
         }
-    };
-
-    private submenuCloseTimer: ReturnType<
-        typeof setTimeout
-    > | null = null;
-
-    private closeContextMenuHandler = () =>
-        this.closeContextMenu();
-
-    private mousedownCloseHandler = (e: MouseEvent) => {
-        const path = e.composedPath();
-        const popup = this.contextMenuPopup;
-        const submenu = this.playlistSubmenuPopup;
-
-        if (popup && path.includes(popup)) return;
-        if (submenu && path.includes(submenu)) return;
-
-        this.closeContextMenu();
     };
 
     private clearSelectionHandler = (e: MouseEvent) => {
@@ -172,7 +154,19 @@ export class QueuePanel
         this.virtualizer?.requestUpdate();
     }
 
-    static override styles = css`
+    // =================================================================
+    // ContextMenuHost interface
+    // =================================================================
+
+    getContextMenuPopup(): HTMLElement | undefined {
+        return this.contextMenuPopup;
+    }
+
+    getPlaylistSubmenuPopup(): HTMLElement | undefined {
+        return this.playlistSubmenuPopup;
+    }
+
+    static override styles = [contextMenuStyles, css`
         :host {
             flex-shrink: 0;
             width: 0;
@@ -445,43 +439,7 @@ export class QueuePanel
             display: none;
         }
 
-        #context-menu {
-            z-index: 200;
-        }
-
-        .context-menu-panel {
-            background-color: var(--yj-bg-elevated, #343a40);
-            border: 1px solid var(--yj-border, #444);
-            border-radius: 6px;
-            padding: 4px 0;
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
-            min-width: 160px;
-        }
-
-        .context-menu-panel wa-dropdown-item {
-            cursor: pointer;
-            --wa-color-text-normal: var(--yj-text-primary, #fff);
-            font-size: 13px;
-        }
-
-        .context-menu-panel wa-dropdown-item:hover {
-            background-color: rgba(255, 255, 255, 0.1);
-        }
-
-        .submenu-item {
-            position: relative;
-        }
-
-        .submenu-arrow {
-            font-size: 10px;
-            margin-left: auto;
-            padding-left: 12px;
-        }
-
-        #playlist-submenu {
-            z-index: 210;
-        }
-    `;
+    `];
 
     override connectedCallback() {
         super.connectedCallback();
@@ -500,18 +458,6 @@ export class QueuePanel
         document.addEventListener(
             'click',
             this.closePickerHandler,
-        );
-        document.addEventListener(
-            'click',
-            this.closeContextMenuHandler,
-        );
-        document.addEventListener(
-            'contextmenu',
-            this.closeContextMenuHandler,
-        );
-        document.addEventListener(
-            'mousedown',
-            this.mousedownCloseHandler,
         );
         document.addEventListener(
             'click',
@@ -536,18 +482,6 @@ export class QueuePanel
         document.removeEventListener(
             'click',
             this.closePickerHandler,
-        );
-        document.removeEventListener(
-            'click',
-            this.closeContextMenuHandler,
-        );
-        document.removeEventListener(
-            'contextmenu',
-            this.closeContextMenuHandler,
-        );
-        document.removeEventListener(
-            'mousedown',
-            this.mousedownCloseHandler,
         );
         document.removeEventListener(
             'click',
@@ -660,30 +594,7 @@ export class QueuePanel
         e.stopPropagation();
 
         this.selection.handleContextMenu(String(index));
-        this.contextMenuOpen = true;
-
-        // Position at mouse cursor using a virtual anchor.
-        this.updateComplete.then(() => {
-            const popup = this.contextMenuPopup;
-
-            if (popup) {
-                (popup as any).anchor = {
-                    getBoundingClientRect() {
-                        return {
-                            width: 0,
-                            height: 0,
-                            x: e.clientX,
-                            y: e.clientY,
-                            top: e.clientY,
-                            left: e.clientX,
-                            right: e.clientX,
-                            bottom: e.clientY,
-                        };
-                    },
-                };
-                (popup as any).active = true;
-            }
-        });
+        this.ctxMenu.openAt(e.clientX, e.clientY);
     }
 
     private onContextMenuAction(action: string) {
@@ -706,7 +617,8 @@ export class QueuePanel
                 break;
         }
 
-        this.closeContextMenu(true);
+        this.selection.clear();
+        this.ctxMenu.close();
     }
 
     private openTrackDetails(index: number) {
@@ -759,76 +671,10 @@ export class QueuePanel
         };
     }
 
-    private closeContextMenu(clearSelection = false) {
-        if (!this.contextMenuOpen) return;
-
-        this.closePlaylistSubmenu();
-        this.contextMenuOpen = false;
-
-        if (clearSelection) {
-            this.selection.clear();
-        }
-
-        const popup = this.contextMenuPopup;
-
-        if (popup) {
-            (popup as any).active = false;
-        }
-    }
-
-    private clearSubmenuCloseTimer() {
-        if (this.submenuCloseTimer !== null) {
-            clearTimeout(this.submenuCloseTimer);
-            this.submenuCloseTimer = null;
-        }
-    }
-
-    private scheduleSubmenuClose = () => {
-        this.clearSubmenuCloseTimer();
-        this.submenuCloseTimer = setTimeout(() => {
-            this.submenuCloseTimer = null;
-            this.closePlaylistSubmenu();
-        }, 150);
+    private onContextPlaylistActionComplete = () => {
+        this.selection.clear();
+        this.ctxMenu.close();
     };
-
-    private async showPlaylistSubmenu() {
-        this.clearSubmenuCloseTimer();
-
-        if (this.playlistSubmenuOpen) return;
-
-        this.playlistSubmenuOpen = true;
-
-        await this.updateComplete;
-
-        const submenu = this.playlistSubmenuPopup;
-        const trigger =
-            this.shadowRoot?.querySelector('.submenu-item');
-
-        if (submenu && trigger) {
-            (submenu as any).anchor = trigger;
-            (submenu as any).active = true;
-        }
-
-        const picker = this.shadowRoot?.querySelector(
-            '#context-playlist-picker',
-        ) as PlaylistPicker | null;
-
-        picker?.reset();
-    }
-
-    private closePlaylistSubmenu() {
-        this.clearSubmenuCloseTimer();
-
-        if (!this.playlistSubmenuOpen) return;
-
-        this.playlistSubmenuOpen = false;
-
-        const submenu = this.playlistSubmenuPopup;
-
-        if (submenu) {
-            (submenu as any).active = false;
-        }
-    }
 
     /**
      * Derive file paths from selected indices for
@@ -841,10 +687,6 @@ export class QueuePanel
             .getSelectedIndices()
             .map((i) => tracks[i]!.filePath);
     }
-
-    private onContextPlaylistActionComplete = () => {
-        this.closeContextMenu(true);
-    };
 
     // =================================================================
     // Drop target (tracks dropped into queue)
@@ -1430,9 +1272,9 @@ export class QueuePanel
                 placement="bottom-start"
                 flip
                 shift
-                .active=${this.contextMenuOpen}
+                .active=${this.ctxMenu.contextMenuOpen}
             >
-                ${this.contextMenuOpen
+                ${this.ctxMenu.contextMenuOpen
                     ? html`
                           <div class="context-menu-panel">
                               <wa-dropdown-item
@@ -1441,7 +1283,7 @@ export class QueuePanel
                                           'play',
                                       )}
                                   @mouseenter=${() =>
-                                      this.closePlaylistSubmenu()}
+                                      this.ctxMenu.closePlaylistSubmenu()}
                               >
                                   <wa-icon
                                       slot="icon"
@@ -1455,7 +1297,7 @@ export class QueuePanel
                                           'remove',
                                       )}
                                   @mouseenter=${() =>
-                                      this.closePlaylistSubmenu()}
+                                      this.ctxMenu.closePlaylistSubmenu()}
                               >
                                   <wa-icon
                                       slot="icon"
@@ -1466,14 +1308,14 @@ export class QueuePanel
                               <wa-dropdown-item
                                   class="submenu-item"
                                   @mouseenter=${() => {
-                                      this.clearSubmenuCloseTimer();
-                                      void this.showPlaylistSubmenu();
+                                      this.ctxMenu.clearSubmenuCloseTimer();
+                                      void this.ctxMenu.showPlaylistSubmenu(this.getSelectedFilePaths());
                                   }}
                                   @mouseleave=${this
-                                      .scheduleSubmenuClose}
+                                      .ctxMenu.scheduleSubmenuClose}
                                   @click=${(e: Event) => {
                                       e.stopPropagation();
-                                      void this.showPlaylistSubmenu();
+                                      void this.ctxMenu.showPlaylistSubmenu(this.getSelectedFilePaths());
                                   }}
                               >
                                   <wa-icon
@@ -1496,7 +1338,7 @@ export class QueuePanel
                                                     'track-details',
                                                 )}
                                             @mouseenter=${() =>
-                                                this.closePlaylistSubmenu()}
+                                                this.ctxMenu.closePlaylistSubmenu()}
                                         >
                                             <wa-icon
                                                 slot="icon"
@@ -1517,20 +1359,20 @@ export class QueuePanel
                 placement="right-start"
                 flip
                 shift
-                .active=${this.playlistSubmenuOpen}
+                .active=${this.ctxMenu.playlistSubmenuOpen}
             >
-                ${this.playlistSubmenuOpen &&
+                ${this.ctxMenu.playlistSubmenuOpen &&
                 this.selection.hasSelection
                     ? html`
                           <div
                               @mouseenter=${() =>
-                                  this.clearSubmenuCloseTimer()}
+                                  this.ctxMenu.clearSubmenuCloseTimer()}
                               @mouseleave=${this
-                                  .scheduleSubmenuClose}
+                                  .ctxMenu.scheduleSubmenuClose}
                           >
                               <playlist-picker
                                   id="context-playlist-picker"
-                                  .filePaths=${this.getSelectedFilePaths()}
+                                  .filePaths=${this.ctxMenu.playlistFilePaths}
                                   @playlist-action-complete=${this
                                       .onContextPlaylistActionComplete}
                                   @click=${(e: Event) =>
