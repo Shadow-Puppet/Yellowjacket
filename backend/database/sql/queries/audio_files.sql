@@ -1,5 +1,5 @@
 -- name: CreateAudioFile :one
-INSERT INTO audio_files (file_path, length_milliseconds, file_type_id, recording_id) VALUES (?, ?, ?, ?)
+INSERT INTO audio_files (file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: GetAudioFile :one
@@ -12,12 +12,12 @@ WHERE file_path = ? LIMIT 1;
 
 -- name: UpdateAudioFile :exec
 UPDATE audio_files 
-SET file_path = ?, length_milliseconds = ?, file_type_id = ?, recording_id = ?
+SET file_path = ?, length_milliseconds = ?, file_type_id = ?, recording_id = ?, sample_rate = ?, bit_depth = ?, channels = ?, bitrate = ?, file_size = ?
 WHERE id = ?;
 
 -- name: UpdateAudioFileRecording :exec
 UPDATE audio_files
-SET recording_id = ?
+SET recording_id = ?, sample_rate = ?, bit_depth = ?, channels = ?, bitrate = ?, file_size = ?
 WHERE id = ?;
 
 -- name: DeleteAudioFile :exec
@@ -89,7 +89,12 @@ SELECT
     ) AS TEXT) AS genre,
     COALESCE(r.year, 0) AS year,
     COALESCE(r.composer, '') AS composer,
-    COALESCE(ft.extension, '') AS file_type
+    COALESCE(ft.extension, '') AS file_type,
+    af.sample_rate,
+    af.bit_depth,
+    af.channels,
+    af.bitrate,
+    af.file_size
 FROM audio_files af
 JOIN recordings r ON af.recording_id = r.id
 JOIN artist_credit ac ON r.artist_credit_id = ac.id

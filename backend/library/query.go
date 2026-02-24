@@ -27,6 +27,11 @@ type Track struct {
 	Year        int64
 	Composer    string
 	FileType    string
+	SampleRate  int64
+	BitDepth    int64
+	Channels    int64
+	Bitrate     int64
+	FileSize    int64
 }
 
 // genreDelimiter is the separator used by GROUP_CONCAT in the
@@ -100,6 +105,11 @@ func (l *Library) GetAllTracks() ([]Track, error) {
 			Year:        row.Year,
 			Composer:    row.Composer,
 			FileType:    row.FileType,
+			SampleRate:  row.SampleRate,
+			BitDepth:    row.BitDepth,
+			Channels:    row.Channels,
+			Bitrate:     row.Bitrate,
+			FileSize:    row.FileSize,
 		}
 
 		tracks = append(tracks, track)

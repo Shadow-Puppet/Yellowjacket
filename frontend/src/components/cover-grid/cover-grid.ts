@@ -646,6 +646,14 @@ export class CoverGrid extends LitElement {
         kind: 'album',
     };
 
+    /**
+     * Album ID that was right-clicked to open the
+     * context menu.  Used as fallback when the
+     * right-clicked album is not part of the current
+     * visual selection.
+     */
+    private contextMenuAlbumId: number | null = null;
+
     @state()
     private selectedAlbums: Set<number> = new Set();
 
@@ -2371,6 +2379,40 @@ export class CoverGrid extends LitElement {
         return allPaths;
     }
 
+    /**
+     * Return file paths for the context menu target.
+     * If the right-clicked album is part of the current
+     * selection, return paths for all selected albums.
+     * Otherwise return paths for the right-clicked
+     * album only.
+     */
+    private async getContextMenuAlbumFilePaths(): Promise<
+        string[]
+    > {
+        if (
+            this.contextMenuAlbumId !== null &&
+            !this.selectedAlbums.has(
+                this.contextMenuAlbumId,
+            )
+        ) {
+            const album = this.albums.find(
+                (a) =>
+                    a.ID ===
+                    this.contextMenuAlbumId,
+            );
+
+            if (album) {
+                return this.getAlbumFilePaths(
+                    album,
+                );
+            }
+
+            return [];
+        }
+
+        return this.getSelectedAlbumFilePaths();
+    }
+
     private async getAlbumFilePaths(
         album: library.Album,
     ): Promise<string[]> {
@@ -2704,14 +2746,7 @@ export class CoverGrid extends LitElement {
         e.preventDefault();
         e.stopPropagation();
 
-        if (!this.selectedAlbums.has(hit.album.ID)) {
-            this.selectedAlbums = new Set([
-                hit.album.ID,
-            ]);
-            this.syncDropdownToSelection();
-            void this.warmAlbumFilePathCache();
-        }
-
+        this.contextMenuAlbumId = hit.album.ID;
         this.contextMenuTarget = { kind: 'album' };
         this.openContextMenuAt(e.clientX, e.clientY);
     };
@@ -3059,10 +3094,15 @@ export class CoverGrid extends LitElement {
     }
 
     private async onContextMenuAction(action: string) {
-        const filePaths =
-            this.contextMenuTarget.kind === 'track'
-                ? this.getSelectedTrackFilePaths()
-                : await this.getSelectedAlbumFilePaths();
+        let filePaths: string[];
+
+        if (this.contextMenuTarget.kind === 'track') {
+            filePaths =
+                this.getSelectedTrackFilePaths();
+        } else {
+            filePaths =
+                await this.getContextMenuAlbumFilePaths();
+        }
 
         if (filePaths.length === 0) return;
 
@@ -3125,6 +3165,7 @@ export class CoverGrid extends LitElement {
         this.closePlaylistSubmenu();
         this.contextMenuOpen = false;
         this.playlistFilePaths = [];
+        this.contextMenuAlbumId = null;
 
         if (clearSelection) {
             if (
@@ -3166,9 +3207,9 @@ export class CoverGrid extends LitElement {
         if (this.contextMenuTarget.kind === 'track') {
             this.playlistFilePaths =
                 this.getSelectedTrackFilePaths();
-        } else if (this.selectedAlbums.size > 0) {
+        } else {
             this.playlistFilePaths =
-                await this.getSelectedAlbumFilePaths();
+                await this.getContextMenuAlbumFilePaths();
         }
 
         this.playlistSubmenuOpen = true;

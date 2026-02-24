@@ -4,6 +4,11 @@ CREATE TABLE IF NOT EXISTS audio_files (
   length_milliseconds int NOT NULL,
   file_type_id int NOT NULL,
   recording_id int NOT NULL,
+  sample_rate int NOT NULL DEFAULT 0,
+  bit_depth int NOT NULL DEFAULT 0,
+  channels int NOT NULL DEFAULT 0,
+  bitrate int NOT NULL DEFAULT 0,
+  file_size int NOT NULL DEFAULT 0,
   FOREIGN KEY(file_type_id) REFERENCES file_types(id),
   FOREIGN KEY(recording_id) REFERENCES recordings(id)
 );

@@ -87,6 +87,14 @@ export class GenresView extends LitElement {
     @state()
     private contextMenuOpen = false;
 
+    /**
+     * Genre name that was right-clicked to open the
+     * context menu.  Used as fallback when the
+     * right-clicked genre is not in the current
+     * visual selection.
+     */
+    private contextMenuGenreName: string | null = null;
+
     @state()
     private playlistSubmenuOpen = false;
 
@@ -801,6 +809,45 @@ export class GenresView extends LitElement {
         return allPaths;
     }
 
+    /**
+     * Return file paths for the context menu target.
+     * If the right-clicked genre is part of the
+     * current selection, return paths for all selected
+     * genres.  Otherwise return paths for the
+     * right-clicked genre only.
+     */
+    private getContextMenuGenreFilePaths(): string[] {
+        if (
+            this.contextMenuGenreName !== null &&
+            !this.selectedGenres.has(
+                this.contextMenuGenreName,
+            )
+        ) {
+            const paths: string[] = [];
+            const seen = new Set<string>();
+
+            for (const track of this.allTracks) {
+                if (seen.has(track.FilePath)) {
+                    continue;
+                }
+
+                const genres = track.Genre ?? [];
+                const match = genres.includes(
+                    this.contextMenuGenreName,
+                );
+
+                if (match) {
+                    paths.push(track.FilePath);
+                    seen.add(track.FilePath);
+                }
+            }
+
+            return paths;
+        }
+
+        return this.getSelectedGenreFilePaths();
+    }
+
     /** Clear the current genre selection. */
     private clearSelection() {
         this.selectedGenres = new Set();
@@ -876,19 +923,7 @@ export class GenresView extends LitElement {
         e.preventDefault();
         e.stopPropagation();
 
-        // If right-clicked genre is not in the
-        // current selection, replace the selection
-        // with just this genre.
-        if (!this.selectedGenres.has(genre.name)) {
-            const idx =
-                this.filteredGenres.indexOf(genre);
-
-            this.selectedGenres = new Set([
-                genre.name,
-            ]);
-            this.lastSelectedGenreIndex =
-                idx >= 0 ? idx : null;
-        }
+        this.contextMenuGenreName = genre.name;
 
         this.openContextMenuAt(
             e.clientX,
@@ -931,6 +966,7 @@ export class GenresView extends LitElement {
         this.closePlaylistSubmenu();
         this.contextMenuOpen = false;
         this.playlistFilePaths = [];
+        this.contextMenuGenreName = null;
 
         const popup = this.contextMenuPopup;
 
@@ -940,10 +976,8 @@ export class GenresView extends LitElement {
     }
 
     private onContextMenuAction(action: string) {
-        if (this.selectedGenres.size === 0) return;
-
         const filePaths =
-            this.getSelectedGenreFilePaths();
+            this.getContextMenuGenreFilePaths();
 
         if (filePaths.length === 0) return;
 
@@ -990,10 +1024,12 @@ export class GenresView extends LitElement {
 
         if (this.playlistSubmenuOpen) return;
 
-        if (this.selectedGenres.size === 0) return;
-
         this.playlistFilePaths =
-            this.getSelectedGenreFilePaths();
+            this.getContextMenuGenreFilePaths();
+
+        if (this.playlistFilePaths.length === 0) {
+            return;
+        }
 
         this.playlistSubmenuOpen = true;
 

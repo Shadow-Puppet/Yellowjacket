@@ -63,23 +63,32 @@ func samplesPerFrame(version int) int {
 	return 576 // MPEG2 / MPEG2.5
 }
 
+// mp3BitDepth is the effective bit depth for decoded MP3 audio.
+// The MPEG standard decodes to 16-bit PCM.
+const mp3BitDepth = 16
+
 // getMP3Duration computes the duration of an MP3 file in
 // milliseconds by reading only the first frame's header and any
 // Xing/VBRI VBR header it contains.  For CBR files (no VBR header)
-// it falls back to fileSize / bitrate.
+// it falls back to fileSize / bitrate.  It also returns audio
+// properties extracted from the frame header.
 //
 // The file position is undefined after this call.
-func getMP3Duration(f *os.File) (int64, error) {
+func getMP3Duration(
+	f *os.File,
+) (int64, *AudioProperties, error) {
 	// 1. Skip all leading ID3v2 tags.  Some files have multiple
 	//    consecutive tags from different tagging tools.
 	audioStart, err := skipID3v2(f)
 	if err != nil {
-		return 0, fmt.Errorf("skipping ID3v2: %w", err)
+		return 0, nil, fmt.Errorf(
+			"skipping ID3v2: %w", err,
+		)
 	}
 
 	audioStart, err = skipAdditionalID3v2(f, audioStart)
 	if err != nil {
-		return 0, fmt.Errorf(
+		return 0, nil, fmt.Errorf(
 			"skipping additional ID3v2 tags: %w", err,
 		)
 	}
@@ -87,14 +96,29 @@ func getMP3Duration(f *os.File) (int64, error) {
 	// 2. Find and parse the first MP3 frame header.
 	hdr, frameOffset, err := findFrameHeader(f, audioStart)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
+	}
+
+	// Build audio properties from the frame header.
+	channels := 2
+	if hdr.channelMode == 3 { //nolint:mnd // 3 = mono
+		channels = 1
+	}
+
+	props := &AudioProperties{
+		SampleRate: hdr.sampleRate,
+		BitDepth:   mp3BitDepth,
+		Channels:   channels,
+		Bitrate:    hdr.bitrateKbps,
 	}
 
 	// 3. Attempt to read a VBR header (Xing/Info or VBRI) from
 	//    inside the first frame.
-	vbrFrames, found, err := readVBRHeader(f, hdr, frameOffset)
+	vbrFrames, found, err := readVBRHeader(
+		f, hdr, frameOffset,
+	)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 
 	if found && vbrFrames > 0 {
@@ -102,20 +126,22 @@ func getMP3Duration(f *os.File) (int64, error) {
 		durationMS := int64(vbrFrames) *
 			int64(spf) * 1000 / int64(hdr.sampleRate)
 
-		return durationMS, nil
+		return durationMS, props, nil
 	}
 
 	// 4. CBR fallback: duration = audioBytes * 8 / bitrate.
 	fi, err := f.Stat()
 	if err != nil {
-		return 0, fmt.Errorf("stat file for CBR duration: %w", err)
+		return 0, nil, fmt.Errorf(
+			"stat file for CBR duration: %w", err,
+		)
 	}
 
 	audioBytes := fi.Size() - audioStart
 	durationMS := audioBytes * 8 * 1000 /
 		(int64(hdr.bitrateKbps) * 1000)
 
-	return durationMS, nil
+	return durationMS, props, nil
 }
 
 // mpegFrameHeader holds the parsed fields of a 4-byte MPEG audio

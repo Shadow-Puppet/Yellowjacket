@@ -51,7 +51,7 @@ func TestGetFlacDuration_BasicParsing(t *testing.T) {
 
 			defer func() { _ = f.Close() }()
 
-			ms, err := getFlacDuration(f)
+			ms, props, err := getFlacDuration(f)
 			if err != nil {
 				t.Fatalf("getFlacDuration: %v", err)
 			}
@@ -63,7 +63,36 @@ func TestGetFlacDuration_BasicParsing(t *testing.T) {
 				)
 			}
 
-			t.Logf("duration: %dms", ms)
+			if props == nil {
+				t.Fatal("expected non-nil AudioProperties")
+			}
+
+			if props.SampleRate <= 0 {
+				t.Errorf(
+					"expected positive sample rate, got %d",
+					props.SampleRate,
+				)
+			}
+
+			if props.BitDepth <= 0 {
+				t.Errorf(
+					"expected positive bit depth, got %d",
+					props.BitDepth,
+				)
+			}
+
+			if props.Channels <= 0 {
+				t.Errorf(
+					"expected positive channels, got %d",
+					props.Channels,
+				)
+			}
+
+			t.Logf(
+				"duration: %dms  rate: %dHz  depth: %d  ch: %d",
+				ms, props.SampleRate, props.BitDepth,
+				props.Channels,
+			)
 		})
 	}
 }
@@ -86,7 +115,7 @@ func TestGetFlacDuration_MatchesBeepDecode(t *testing.T) {
 
 			defer func() { _ = f.Close() }()
 
-			fastMS, err := getFlacDuration(f)
+			fastMS, _, err := getFlacDuration(f)
 			if err != nil {
 				t.Fatalf("getFlacDuration: %v", err)
 			}
@@ -156,7 +185,7 @@ func TestGetFlacDuration_WithPrependedID3v2(t *testing.T) {
 
 	defer func() { _ = origF.Close() }()
 
-	origMS, err := getFlacDuration(origF)
+	origMS, _, err := getFlacDuration(origF)
 	if err != nil {
 		t.Fatalf("getFlacDuration on original: %v", err)
 	}
@@ -169,7 +198,7 @@ func TestGetFlacDuration_WithPrependedID3v2(t *testing.T) {
 
 	defer func() { _ = tmpF.Close() }()
 
-	wrappedMS, err := getFlacDuration(tmpF)
+	wrappedMS, _, err := getFlacDuration(tmpF)
 	if err != nil {
 		t.Fatalf(
 			"getFlacDuration on ID3v2-wrapped file: %v", err,
@@ -222,12 +251,14 @@ func TestParseFlacStreamInfo(t *testing.T) {
 	si[16] = 0x38
 	si[17] = 0x9E
 
-	sr, total := parseFlacStreamInfo(si)
+	sr, total, ch, bps := parseFlacStreamInfo(si)
 
 	//nolint:mnd // expected test values.
 	const (
-		wantSR    = 44100
-		wantTotal = 11614366
+		wantSR       = 44100
+		wantTotal    = 11614366
+		wantChannels = 2
+		wantBPS      = 16
 	)
 
 	if sr != wantSR {
@@ -238,6 +269,18 @@ func TestParseFlacStreamInfo(t *testing.T) {
 		t.Errorf(
 			"total samples: got %d, want %d",
 			total, wantTotal,
+		)
+	}
+
+	if ch != wantChannels {
+		t.Errorf(
+			"channels: got %d, want %d", ch, wantChannels,
+		)
+	}
+
+	if bps != wantBPS {
+		t.Errorf(
+			"bits per sample: got %d, want %d", bps, wantBPS,
 		)
 	}
 }

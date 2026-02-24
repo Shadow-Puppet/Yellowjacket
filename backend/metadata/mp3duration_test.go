@@ -61,7 +61,7 @@ func TestGetMP3Duration_MatchesBeepDecode(t *testing.T) {
 
 			defer func() { _ = f.Close() }()
 
-			fastMS, err := getMP3Duration(f)
+			fastMS, _, err := getMP3Duration(f)
 			if err != nil {
 				t.Fatalf(
 					"getMP3Duration failed: %v", err,
@@ -106,7 +106,7 @@ func TestGetMP3Duration_BasicParsing(t *testing.T) {
 
 	defer func() { _ = f.Close() }()
 
-	ms, err := getMP3Duration(f)
+	ms, _, err := getMP3Duration(f)
 	if err != nil {
 		t.Fatalf("getMP3Duration: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestGetMP3Duration_WithMultipleID3v2(t *testing.T) {
 
 	defer func() { _ = origF.Close() }()
 
-	origMS, err := getMP3Duration(origF)
+	origMS, _, err := getMP3Duration(origF)
 	if err != nil {
 		t.Fatalf("getMP3Duration on original: %v", err)
 	}
@@ -176,7 +176,7 @@ func TestGetMP3Duration_WithMultipleID3v2(t *testing.T) {
 
 	defer func() { _ = tmpF.Close() }()
 
-	wrappedMS, err := getMP3Duration(tmpF)
+	wrappedMS, _, err := getMP3Duration(tmpF)
 	if err != nil {
 		t.Fatalf(
 			"getMP3Duration on multi-ID3v2 file: %v", err,

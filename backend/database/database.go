@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"path"
+	"strings"
 
 	_ "modernc.org/sqlite" // Register sqlite driver.
 
@@ -97,6 +98,14 @@ func NewDB(logger *slog.Logger) (*DB, error) {
 		}
 	}
 
+	// Run versioned schema migrations for columns that cannot be
+	// added with CREATE TABLE IF NOT EXISTS on existing databases.
+	if err := runMigrations(dbCtx, db, logger); err != nil {
+		return nil, fmt.Errorf(
+			"could not run schema migrations: %w", err,
+		)
+	}
+
 	// Remove orphaned playlist_tracks left behind by past deletes
 	// that ran without foreign key enforcement.
 	orphanResult, err := db.ExecContext(
@@ -139,4 +148,78 @@ func (d *DB) ExecContext(query string, args ...any) (sql.Result, error) {
 // QueryContext executes a query that returns rows.
 func (d *DB) QueryContext(query string, args ...any) (*sql.Rows, error) {
 	return d.db.QueryContext(d.Ctx, query, args...)
+}
+
+// runMigrations applies incremental schema changes using SQLite's
+// PRAGMA user_version as the version tracker.  Each migration runs
+// once and bumps the version so it is never re-applied.
+func runMigrations(
+	ctx context.Context,
+	db *sql.DB,
+	logger *slog.Logger,
+) error {
+	var version int
+
+	if err := db.QueryRowContext(
+		ctx, "PRAGMA user_version",
+	).Scan(&version); err != nil {
+		return fmt.Errorf(
+			"could not read user_version: %w", err,
+		)
+	}
+
+	logger.Debug(
+		"current schema version",
+		"user_version", version,
+	)
+
+	// Migration 1: add audio-property columns to audio_files.
+	if version < 1 {
+		logger.Info("applying migration 1: audio file properties")
+
+		cols := []string{
+			"sample_rate int NOT NULL DEFAULT 0",
+			"bit_depth int NOT NULL DEFAULT 0",
+			"channels int NOT NULL DEFAULT 0",
+			"bitrate int NOT NULL DEFAULT 0",
+			"file_size int NOT NULL DEFAULT 0",
+		}
+
+		for _, col := range cols {
+			stmt := "ALTER TABLE audio_files ADD COLUMN " + col
+
+			if _, err := db.ExecContext(ctx, stmt); err != nil {
+				// Column may already exist on a fresh DB that
+				// ran the updated CREATE TABLE.  SQLite returns
+				// "duplicate column name" in that case.
+				if isDuplicateColumnErr(err) {
+					continue
+				}
+
+				return fmt.Errorf(
+					"migration 1 failed (%s): %w", col, err,
+				)
+			}
+		}
+
+		if _, err := db.ExecContext(
+			ctx, "PRAGMA user_version = 1",
+		); err != nil {
+			return fmt.Errorf(
+				"could not set user_version to 1: %w", err,
+			)
+		}
+	}
+
+	return nil
+}
+
+// isDuplicateColumnErr returns true when the error is SQLite's
+// "duplicate column name" error from an ALTER TABLE ADD COLUMN
+// on a column that already exists.
+func isDuplicateColumnErr(err error) bool {
+	return err != nil &&
+		strings.Contains(
+			err.Error(), "duplicate column name",
+		)
 }

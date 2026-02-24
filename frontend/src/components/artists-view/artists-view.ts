@@ -84,6 +84,14 @@ export class ArtistsView extends LitElement {
     @state()
     private contextMenuOpen = false;
 
+    /**
+     * Artist ID that was right-clicked to open the
+     * context menu.  Used as fallback when the
+     * right-clicked artist is not in the current
+     * visual selection.
+     */
+    private contextMenuArtistId: number | null = null;
+
     @state()
     private playlistSubmenuOpen = false;
 
@@ -755,6 +763,40 @@ export class ArtistsView extends LitElement {
         return allPaths;
     }
 
+    /**
+     * Return file paths for the context menu target.
+     * If the right-clicked artist is part of the
+     * current selection, return paths for all selected
+     * artists.  Otherwise return paths for the
+     * right-clicked artist only.
+     */
+    private async getContextMenuArtistFilePaths(): Promise<
+        string[]
+    > {
+        if (
+            this.contextMenuArtistId !== null &&
+            !this.selectedArtists.has(
+                this.contextMenuArtistId,
+            )
+        ) {
+            const artist = this.artists.find(
+                (a) =>
+                    a.ID ===
+                    this.contextMenuArtistId,
+            );
+
+            if (artist) {
+                return this.getArtistFilePaths(
+                    artist,
+                );
+            }
+
+            return [];
+        }
+
+        return this.getSelectedArtistFilePaths();
+    }
+
     /** Clear the current artist selection. */
     private clearSelection() {
         this.selectedArtists = new Set();
@@ -831,21 +873,7 @@ export class ArtistsView extends LitElement {
         e.preventDefault();
         e.stopPropagation();
 
-        // If right-clicked artist is not in the
-        // current selection, replace the selection
-        // with just this artist.
-        if (
-            !this.selectedArtists.has(artist.ID)
-        ) {
-            const idx =
-                this.filteredArtists.indexOf(artist);
-
-            this.selectedArtists = new Set([
-                artist.ID,
-            ]);
-            this.lastSelectedArtistIndex =
-                idx >= 0 ? idx : null;
-        }
+        this.contextMenuArtistId = artist.ID;
 
         this.openContextMenuAt(
             e.clientX,
@@ -888,6 +916,7 @@ export class ArtistsView extends LitElement {
         this.closePlaylistSubmenu();
         this.contextMenuOpen = false;
         this.playlistFilePaths = [];
+        this.contextMenuArtistId = null;
 
         const popup = this.contextMenuPopup;
 
@@ -899,10 +928,8 @@ export class ArtistsView extends LitElement {
     private async onContextMenuAction(
         action: string,
     ) {
-        if (this.selectedArtists.size === 0) return;
-
         const filePaths =
-            await this.getSelectedArtistFilePaths();
+            await this.getContextMenuArtistFilePaths();
 
         if (filePaths.length === 0) return;
 
@@ -949,10 +976,12 @@ export class ArtistsView extends LitElement {
 
         if (this.playlistSubmenuOpen) return;
 
-        if (this.selectedArtists.size === 0) return;
-
         this.playlistFilePaths =
-            await this.getSelectedArtistFilePaths();
+            await this.getContextMenuArtistFilePaths();
+
+        if (this.playlistFilePaths.length === 0) {
+            return;
+        }
 
         this.playlistSubmenuOpen = true;
 

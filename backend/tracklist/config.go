@@ -28,6 +28,11 @@ const (
 	ColDiscNumber  ColumnID = "discNumber"
 	ColFilePath    ColumnID = "filePath"
 	ColFileType    ColumnID = "fileType"
+	ColSampleRate  ColumnID = "sampleRate"
+	ColBitDepth    ColumnID = "bitDepth"
+	ColChannels    ColumnID = "channels"
+	ColBitrate     ColumnID = "bitrate"
+	ColFileSize    ColumnID = "fileSize"
 )
 
 // AllColumnIDs lists every recognised column in default display
@@ -44,6 +49,11 @@ var AllColumnIDs = []ColumnID{
 	ColDiscNumber,
 	ColFilePath,
 	ColFileType,
+	ColSampleRate,
+	ColBitDepth,
+	ColChannels,
+	ColBitrate,
+	ColFileSize,
 }
 
 // DefaultColumns is the initial column configuration matching the

@@ -1,4 +1,11 @@
 import type { library } from '@go/models';
+import {
+    formatSampleRate,
+    formatBitDepth,
+    formatChannels,
+    formatBitrate,
+    formatFileSize,
+} from '@utils/format';
 import { formatMilliseconds } from '@utils/time';
 
 /** Compares two strings using locale-aware ordering. */
@@ -134,6 +141,50 @@ export const COLUMN_DEFS: Record<string, ColumnDef> = {
         defaultWidth: '80px',
         comparator: (a, b) =>
             compareStr(a.FileType, b.FileType),
+    },
+    sampleRate: {
+        id: 'sampleRate',
+        label: 'Sample Rate',
+        accessor: (t) => formatSampleRate(t.SampleRate),
+        defaultWidth: '100px',
+        align: 'right',
+        comparator: (a, b) =>
+            compareNum(a.SampleRate, b.SampleRate),
+    },
+    bitDepth: {
+        id: 'bitDepth',
+        label: 'Bit Depth',
+        accessor: (t) => formatBitDepth(t.BitDepth),
+        defaultWidth: '80px',
+        align: 'right',
+        comparator: (a, b) =>
+            compareNum(a.BitDepth, b.BitDepth),
+    },
+    channels: {
+        id: 'channels',
+        label: 'Channels',
+        accessor: (t) => formatChannels(t.Channels),
+        defaultWidth: '80px',
+        comparator: (a, b) =>
+            compareNum(a.Channels, b.Channels),
+    },
+    bitrate: {
+        id: 'bitrate',
+        label: 'Bitrate',
+        accessor: (t) => formatBitrate(t.Bitrate),
+        defaultWidth: '100px',
+        align: 'right',
+        comparator: (a, b) =>
+            compareNum(a.Bitrate, b.Bitrate),
+    },
+    fileSize: {
+        id: 'fileSize',
+        label: 'File Size',
+        accessor: (t) => formatFileSize(t.FileSize),
+        defaultWidth: '80px',
+        align: 'right',
+        comparator: (a, b) =>
+            compareNum(a.FileSize, b.FileSize),
     },
 };
 

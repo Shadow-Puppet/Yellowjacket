@@ -1,5 +1,6 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
+import { repeat } from 'lit/directives/repeat.js';
 import { EventsOn } from '@runtime/runtime';
 import { Scan, FullRescan } from '@go/library/Library';
 import {
@@ -980,7 +981,7 @@ export class ConfigPage extends LitElement {
                 description="Choose which columns are visible and set their display order."
             >
                 <ul class="column-list">
-                    ${order.map((id, idx) => {
+                    ${repeat(order, (id) => id, (id, idx) => {
                         const checked =
                             enabledIds.includes(id);
                         const onlyOne =

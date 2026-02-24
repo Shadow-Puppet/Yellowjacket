@@ -38,7 +38,9 @@ const streamInfoBlockType = 0
 
 // getFlacDuration computes the duration of a FLAC file in
 // milliseconds by reading only the StreamInfo metadata block header.
-// It handles an optional prepended ID3v2 tag by seeking past it.
+// It also extracts sample rate, bit depth, and channel count from
+// the same header.  It handles an optional prepended ID3v2 tag by
+// seeking past it.
 //
 // This replaces the previous beep/mewkiz-flac decode path which has
 // a bug in its ID3v2 skip logic (bufio over bufseekio causes a
@@ -47,23 +49,25 @@ const streamInfoBlockType = 0
 // The file position is undefined after this call.
 //
 //nolint:mnd // byte offsets and bit shifts from the FLAC spec.
-func getFlacDuration(f *os.File) (int64, error) {
+func getFlacDuration(
+	f *os.File,
+) (int64, *AudioProperties, error) {
 	audioStart, err := skipID3v2(f)
 	if err != nil {
-		return 0, fmt.Errorf("skipping ID3v2: %w", err)
+		return 0, nil, fmt.Errorf("skipping ID3v2: %w", err)
 	}
 
 	// Read the 4-byte FLAC signature.
 	var sig [4]byte
 
 	if _, err := f.ReadAt(sig[:], audioStart); err != nil {
-		return 0, fmt.Errorf(
+		return 0, nil, fmt.Errorf(
 			"reading FLAC signature: %w", err,
 		)
 	}
 
 	if sig != flacSignatureBytes {
-		return 0, fmt.Errorf(
+		return 0, nil, fmt.Errorf(
 			"%w: expected %q, got %q",
 			errInvalidFLACSignature, flacSignatureBytes, sig,
 		)
@@ -76,7 +80,7 @@ func getFlacDuration(f *os.File) (int64, error) {
 	if _, err := f.ReadAt(
 		mbh[:], audioStart+4,
 	); err != nil {
-		return 0, fmt.Errorf(
+		return 0, nil, fmt.Errorf(
 			"reading metadata block header: %w", err,
 		)
 	}
@@ -89,7 +93,7 @@ func getFlacDuration(f *os.File) (int64, error) {
 
 	if blockType != streamInfoBlockType ||
 		blockLen != streamInfoLength {
-		return 0, fmt.Errorf(
+		return 0, nil, fmt.Errorf(
 			"%w: type=%d, length=%d",
 			errInvalidStreamInfo, blockType, blockLen,
 		)
@@ -101,41 +105,50 @@ func getFlacDuration(f *os.File) (int64, error) {
 	if _, err := f.ReadAt(
 		si[:], audioStart+8,
 	); err != nil {
-		return 0, fmt.Errorf(
+		return 0, nil, fmt.Errorf(
 			"reading StreamInfo block: %w", err,
 		)
 	}
 
-	sampleRate, totalSamples := parseFlacStreamInfo(si)
+	sampleRate, totalSamples, channels, bitDepth := parseFlacStreamInfo(si)
 
 	if sampleRate == 0 {
-		return 0, errZeroSampleRate
+		return 0, nil, errZeroSampleRate
 	}
 
 	durationMS := int64(totalSamples) * 1000 /
 		int64(sampleRate)
 
-	return durationMS, nil
+	props := &AudioProperties{
+		SampleRate: int(sampleRate),
+		BitDepth:   int(bitDepth),
+		Channels:   int(channels),
+	}
+
+	return durationMS, props, nil
 }
 
-// parseFlacStreamInfo extracts the sample rate (20 bits) and total
-// sample count (36 bits) from a 34-byte FLAC StreamInfo body.
+// parseFlacStreamInfo extracts key fields from a 34-byte FLAC
+// StreamInfo body.
 //
 // StreamInfo layout (bytes 10-17 contain the fields we need):
 //
 //	bits  0-19:  sample rate in Hz     (20 bits)
-//	bits 20-22:  number of channels -1 (3 bits, unused here)
-//	bits 23-27:  bits per sample -1    (5 bits, unused here)
+//	bits 20-22:  number of channels -1 (3 bits)
+//	bits 23-27:  bits per sample -1    (5 bits)
 //	bits 28-63:  total samples         (36 bits)
 //
 //nolint:mnd // bit offsets from the FLAC spec.
 func parseFlacStreamInfo(
 	si [streamInfoLength]byte,
-) (sampleRate uint32, totalSamples uint64) {
+) (sampleRate uint32, totalSamples uint64, channels uint32, bitDepth uint32) {
 	// Bytes 10-13 packed as big-endian uint32 contain sample rate
-	// in the upper 20 bits.
+	// in the upper 20 bits, channels in bits 9-11, and bits per
+	// sample in bits 4-8.
 	packed := binary.BigEndian.Uint32(si[10:14])
 	sampleRate = packed >> 12
+	channels = (packed>>9)&0x07 + 1
+	bitDepth = (packed>>4)&0x1F + 1
 
 	// Total samples: 4 low bits of byte 13, then bytes 14-17.
 	totalSamples = uint64(si[13]&0x0F)<<32 |
@@ -144,5 +157,5 @@ func parseFlacStreamInfo(
 		uint64(si[16])<<8 |
 		uint64(si[17])
 
-	return sampleRate, totalSamples
+	return sampleRate, totalSamples, channels, bitDepth
 }

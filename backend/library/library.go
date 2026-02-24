@@ -576,6 +576,7 @@ type importResult struct {
 	fileType       metadata.AudioFileExtension
 	lengthMillis   int64
 	tags           *metadata.TrackMetadata
+	audioProps     *metadata.AudioProperties
 	existingFileID int64 // non-zero if this is an update
 	needsUpdate    bool
 }
@@ -597,7 +598,7 @@ func (l *Library) extractAudioMetadata(
 	// Skip duration decode if we already have it from a previous import.
 	skipDuration := work.needsUpdate && work.existingLength > 0
 
-	tags, lengthMillis, timing, err := metadata.ExtractAllMetadata(
+	tags, lengthMillis, audioProps, timing, err := metadata.ExtractAllMetadata(
 		work.absolutePath, skipDuration,
 	)
 
@@ -618,6 +619,7 @@ func (l *Library) extractAudioMetadata(
 	}
 
 	result.tags = tags
+	result.audioProps = audioProps
 
 	if skipDuration {
 		result.lengthMillis = work.existingLength
@@ -721,6 +723,11 @@ func (l *Library) saveAudioFile(
 		return fmt.Errorf("could not process metadata: %w", err)
 	}
 
+	props := result.audioProps
+	if props == nil {
+		props = &metadata.AudioProperties{}
+	}
+
 	if _, err := q.CreateAudioFile(
 		l.ctx, sqlcgen.CreateAudioFileParams{
 			FilePath:           result.absolutePath,
@@ -732,6 +739,11 @@ func (l *Library) saveAudioFile(
 				),
 			),
 			RecordingID: recordingID,
+			SampleRate:  int64(props.SampleRate),
+			BitDepth:    int64(props.BitDepth),
+			Channels:    int64(props.Channels),
+			Bitrate:     int64(props.Bitrate),
+			FileSize:    props.FileSize,
 		}); err != nil {
 		return fmt.Errorf(
 			"could not save audio file to db: %w", err,
@@ -768,9 +780,19 @@ func (l *Library) updateAudioFileMetadata(
 		return fmt.Errorf("could not process metadata: %w", err)
 	}
 
+	props := result.audioProps
+	if props == nil {
+		props = &metadata.AudioProperties{}
+	}
+
 	if err := q.UpdateAudioFileRecording(
 		l.ctx, sqlcgen.UpdateAudioFileRecordingParams{
 			RecordingID: recordingID,
+			SampleRate:  int64(props.SampleRate),
+			BitDepth:    int64(props.BitDepth),
+			Channels:    int64(props.Channels),
+			Bitrate:     int64(props.Bitrate),
+			FileSize:    props.FileSize,
 			ID:          result.existingFileID,
 		}); err != nil {
 		return fmt.Errorf(

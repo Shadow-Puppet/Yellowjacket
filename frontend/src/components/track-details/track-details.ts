@@ -5,6 +5,13 @@ import {
     query,
 } from 'lit/decorators.js';
 import type { library } from '@go/models';
+import {
+    formatSampleRate,
+    formatBitDepth,
+    formatChannels,
+    formatBitrate,
+    formatFileSize,
+} from '@utils/format';
 import { formatMilliseconds } from '@utils/time';
 
 import '@awesome.me/webawesome/dist/components/dialog/dialog.js';
@@ -182,6 +189,15 @@ export class TrackDetails extends LitElement {
             margin-bottom: 16px;
         }
 
+        .section-label {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--yj-text-tertiary, #888);
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            margin-bottom: 10px;
+        }
+
         .metadata-grid {
             display: grid;
             grid-template-columns: 120px 1fr;
@@ -329,6 +345,13 @@ export class TrackDetails extends LitElement {
             <div class="divider"></div>
             <div class="metadata-grid">
                 ${this.renderDetailFields(t)}
+            </div>
+            <div class="divider"></div>
+            <div class="section-label">
+                Audio Properties
+            </div>
+            <div class="metadata-grid">
+                ${this.renderAudioProperties(t)}
             </div>
             <div class="action-bar">
                 ${this.renderActions()}
@@ -509,6 +532,45 @@ export class TrackDetails extends LitElement {
         ];
 
         return fields.map((f) => this.renderField(f));
+    }
+
+    private renderAudioProperties(t: library.Track) {
+        const props: { label: string; value: string }[] = [
+            {
+                label: 'Sample Rate',
+                value: formatSampleRate(t.SampleRate),
+            },
+            {
+                label: 'Bit Depth',
+                value: formatBitDepth(t.BitDepth),
+            },
+            {
+                label: 'Channels',
+                value: formatChannels(t.Channels),
+            },
+            {
+                label: 'Bitrate',
+                value: formatBitrate(t.Bitrate),
+            },
+            {
+                label: 'File Size',
+                value: formatFileSize(t.FileSize),
+            },
+        ];
+
+        return props.map(
+            (p) => html`
+                <span class="meta-label">${p.label}</span>
+                <span
+                    class="meta-value ${p.value ===
+                    '\u2014'
+                        ? 'empty'
+                        : ''}"
+                >
+                    ${p.value}
+                </span>
+            `,
+        );
     }
 
     private renderField(f: MetadataField) {

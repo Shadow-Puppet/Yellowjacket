@@ -894,6 +894,10 @@ export class TrackList extends LitElement implements SelectionHost {
       text-align: right;
     }
 
+    .cell-center {
+      text-align: center;
+    }
+
     #context-menu {
       z-index: 200;
     }
@@ -1540,13 +1544,21 @@ export class TrackList extends LitElement implements SelectionHost {
                 this.onTrackDragStart(e, track)}
         @dragend=${this.onTrackDragEnd}
       >
-        ${cols.map(
-                (col) => html`
-            <div class="cell ${col.align === 'right' ? 'cell-right' : ''}">
-              ${col.accessor(track)}
-            </div>
-          `,
-            )}
+        ${cols.map((col) => {
+                const val = col.accessor(track);
+                const centered = val === '\u2014';
+                const align = centered
+                    ? 'cell-center'
+                    : col.align === 'right'
+                      ? 'cell-right'
+                      : '';
+
+                return html`
+                    <div class="cell ${align}">
+                        ${val}
+                    </div>
+                `;
+            })}
       </div>
     `;
     };

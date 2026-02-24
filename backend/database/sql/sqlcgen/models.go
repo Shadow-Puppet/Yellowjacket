@@ -31,6 +31,11 @@ type AudioFile struct {
 	LengthMilliseconds int64
 	FileTypeID         int64
 	RecordingID        int64
+	SampleRate         int64
+	BitDepth           int64
+	Channels           int64
+	Bitrate            int64
+	FileSize           int64
 }
 
 type CoverArt struct {

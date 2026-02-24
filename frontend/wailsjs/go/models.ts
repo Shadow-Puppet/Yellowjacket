@@ -112,6 +112,11 @@ export namespace library {
 	    Year: number;
 	    Composer: string;
 	    FileType: string;
+	    SampleRate: number;
+	    BitDepth: number;
+	    Channels: number;
+	    Bitrate: number;
+	    FileSize: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new Track(source);
@@ -130,6 +135,11 @@ export namespace library {
 	        this.Year = source["Year"];
 	        this.Composer = source["Composer"];
 	        this.FileType = source["FileType"];
+	        this.SampleRate = source["SampleRate"];
+	        this.BitDepth = source["BitDepth"];
+	        this.Channels = source["Channels"];
+	        this.Bitrate = source["Bitrate"];
+	        this.FileSize = source["FileSize"];
 	    }
 	}
 
