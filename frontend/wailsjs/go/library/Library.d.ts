@@ -19,6 +19,4 @@ export function Scan():Promise<library.ScanMetrics>;
 
 export function SetContext(arg1:context.Context):Promise<void>;
 
-export function SetPlaylistRestorer(arg1:library.playlistRestorer):Promise<void>;
-
-export function SetQueue(arg1:library.queueClearer):Promise<void>;
+export function SetRescanHooks(arg1:library.RescanHooks):Promise<void>;

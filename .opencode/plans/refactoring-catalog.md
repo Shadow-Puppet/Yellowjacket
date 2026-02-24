@@ -1,6 +1,6 @@
 # Refactoring Catalog
 
-Prioritized list of architectural improvements identified during a full codebase audit (Feb 2026). Items are grouped by priority — tackle P1 before adding major new features, P2 as convenient, P3 opportunistically.
+Prioritized list of architectural improvements identified during a full codebase audit (Feb 2026). Items are grouped by priority — tackle P1 before adding major features, P2 as convenient, P3 opportunistically.
 
 ---
 
@@ -50,23 +50,15 @@ Prioritized list of architectural improvements identified during a full codebase
 
 ---
 
-### 10. Move `FullRescan` orchestration from library to app
+### ~~10. Move `FullRescan` orchestration from library to app~~ — solved
 
-**Problem:** `library.Library` holds references to the queue (`queueClearer` interface) and playlist service (`playlistRestorer` interface), set via `SetQueue()` and `SetPlaylistRestorer()`. The `FullRescan` method in `rescan.go` orchestrates clearing the queue and restoring playlists — cross-cutting concerns that aren't really library responsibilities.
-
-**Why it matters:** The library package shouldn't know about queue clearing or playlist restoration. This creates a dependency web (`app` -> `library` -> `queue`, `app` -> `library` -> `playlist`).
-
-**Approach:** Move the `FullRescan` orchestration to the `app` level. The app already has references to all three packages. The library would only expose `Scan()` and a `ClearAndRescan()` that handles only library concerns (clear DB, walk files, extract metadata). The app's `FullRescan` handler would call `queue.Clear()`, `library.ClearAndRescan()`, then `playlist.RestoreAll()`.
+Replaced `queueClearer`/`playlistRestorer` interfaces and `SetQueue`/`SetPlaylistRestorer` setters with a single `RescanHooks` struct containing `PreClear`/`PostScan` function callbacks. The app wires `queue.Clear` and `playlist.RestoreAllPlaylists` as hooks, so the library no longer has any knowledge of or dependency on those packages.
 
 ---
 
-### 11. Fix double `LibraryScanStarted` event during FullRescan
+### ~~11. Fix double `LibraryScanStarted` event during FullRescan~~ — solved
 
-**Problem:** `rescan.go:22` emits `LibraryScanStarted`, then calls `Scan()` which emits `LibraryScanStarted` again at `library.go:191`. The frontend receives two `LibraryScanStarted` events for a single full rescan.
-
-**Why it matters:** Frontend components may show duplicate "scanning" UI state transitions or start/reset loading indicators twice.
-
-**Approach:** Remove the `LibraryScanStarted` emission from either `FullRescan` or `Scan`. Since `Scan` is also called independently, keep it in `Scan` and remove it from `FullRescan`.
+Removed the `LibraryScanStarted` emission from `FullRescan` (resolved as part of item #10). The event is now only emitted from `Scan()`, giving exactly one emission per rescan.
 
 ---
 

@@ -6,9 +6,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
-
-	"yellowjacket/backend/events"
 	"yellowjacket/backend/system"
 )
 
@@ -19,14 +16,13 @@ import (
 func (l *Library) FullRescan() (*ScanMetrics, error) {
 	l.logger.Info("beginning full library rescan")
 
-	runtime.EventsEmit(l.ctx, events.LibraryScanStarted)
-
-	// Stop playback and clear the queue before wiping data so
-	// the player is not referencing now-deleted tracks.
+	// Run the pre-clear hook (e.g. clear queue / stop playback)
+	// before wiping data so the player is not referencing
+	// now-deleted tracks.
 	clearQueueStart := time.Now()
 
-	if l.queue != nil {
-		l.queue.Clear()
+	if l.rescanHooks.PreClear != nil {
+		l.rescanHooks.PreClear()
 	}
 
 	clearQueueDur := time.Since(clearQueueStart)
@@ -68,10 +64,10 @@ func (l *Library) FullRescan() (*ScanMetrics, error) {
 			clearDBDur + clearFilesDur
 	}
 
-	// Restore playlists from M3U8 files now that the library
-	// has been rescanned and audio_files are populated again.
-	if l.playlistRestorer != nil {
-		l.playlistRestorer.RestoreAllPlaylists()
+	// Run the post-scan hook (e.g. restore playlists from M3U8
+	// files) now that audio_files are populated again.
+	if l.rescanHooks.PostScan != nil {
+		l.rescanHooks.PostScan()
 	}
 
 	return metrics, err

@@ -148,13 +148,13 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 	yj.queue.SetPlayer(yj.player)
 	yj.queue.RestoreState()
 
-	// Give the library a reference to the queue so FullRescan can
-	// clear the queue and stop playback before wiping data.
-	yj.library.SetQueue(yj.queue)
-
-	// Give the library a reference to the playlist service so
-	// FullRescan can restore playlists from M3U8 files.
-	yj.library.SetPlaylistRestorer(yj.playlist)
+	// Wire cross-cutting rescan hooks so the library can
+	// orchestrate queue clearing and playlist restoration
+	// without depending on those packages directly.
+	yj.library.SetRescanHooks(library.RescanHooks{
+		PreClear: yj.queue.Clear,
+		PostScan: yj.playlist.RestoreAllPlaylists,
+	})
 
 	// Register playback finished handler to drive queue auto-advance.
 	yj.player.SetPlaybackFinishedHandler(yj.queue.OnPlaybackFinished)

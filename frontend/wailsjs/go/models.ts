@@ -40,6 +40,18 @@ export namespace library {
 	        this.Name = source["Name"];
 	    }
 	}
+	export class RescanHooks {
+	
+	
+	    static createFrom(source: any = {}) {
+	        return new RescanHooks(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	
+	    }
+	}
 	export class ScanMetrics {
 	    total: number;
 	    loadExisting: number;

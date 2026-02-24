@@ -60,39 +60,33 @@ func newEntityCache() *entityCache {
 	}
 }
 
-// queueClearer is a narrow interface for clearing the playback queue.
-type queueClearer interface {
-	Clear()
-}
-
-// playlistRestorer is a narrow interface for restoring playlists
-// from M3U8 files after a library rescan.
-type playlistRestorer interface {
-	RestoreAllPlaylists()
+// RescanHooks holds optional callbacks that run before and after
+// the library-clear-and-scan phase of a full rescan.  The app
+// layer sets these to coordinate cross-cutting concerns (e.g.
+// clearing the queue, restoring playlists) without the library
+// needing to know about those packages.
+type RescanHooks struct {
+	// PreClear runs before library data is wiped
+	// (e.g. clear queue and stop playback).
+	PreClear func()
+	// PostScan runs after the scan completes
+	// (e.g. restore playlists from M3U8 files).
+	PostScan func()
 }
 
 // Library manages scanning and querying the music collection.
 type Library struct {
-	ctx              context.Context
-	logger           *slog.Logger
-	conf             *Config
-	db               *database.DB
-	queue            queueClearer
-	playlistRestorer playlistRestorer
+	ctx         context.Context
+	logger      *slog.Logger
+	conf        *Config
+	db          *database.DB
+	rescanHooks RescanHooks
 }
 
-// SetQueue provides the library with a reference to the queue so
-// that destructive operations like FullRescan can clear the queue
-// and stop playback before wiping data.
-func (l *Library) SetQueue(q queueClearer) {
-	l.queue = q
-}
-
-// SetPlaylistRestorer provides the library with a reference to
-// the playlist service so that FullRescan can restore playlists
-// from M3U8 files after wiping data.
-func (l *Library) SetPlaylistRestorer(p playlistRestorer) {
-	l.playlistRestorer = p
+// SetRescanHooks provides optional hooks for cross-cutting
+// orchestration during FullRescan.
+func (l *Library) SetRescanHooks(h RescanHooks) {
+	l.rescanHooks = h
 }
 
 // NewLibrary creates a new library with the given configuration.
