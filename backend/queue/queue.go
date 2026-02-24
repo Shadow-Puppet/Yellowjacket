@@ -3,22 +3,12 @@ package queue
 
 import (
 	"context"
-	"database/sql"
-	"encoding/json"
-	"errors"
-	"fmt"
 	"log/slog"
-	"math/rand/v2"
 	"slices"
-	"strings"
 	"sync"
 	"sync/atomic"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
-
 	"yellowjacket/backend/database"
-	"yellowjacket/backend/database/sql/sqlcgen"
-	"yellowjacket/backend/events"
 	"yellowjacket/backend/profiling"
 )
 
@@ -50,6 +40,17 @@ type trackMeta struct {
 	FilePath    string
 	Title       string
 	Artist      string
+}
+
+// toTrack converts metadata lookup results into a queue Track.
+func (m trackMeta) toTrack(position int64) Track {
+	return Track{
+		AudioFileID: m.AudioFileID,
+		FilePath:    m.FilePath,
+		Position:    position,
+		Title:       m.Title,
+		Artist:      m.Artist,
+	}
 }
 
 // TrackLoader is the interface the queue uses to tell the player to load a file.
@@ -140,480 +141,6 @@ func (q *Queue) SetPlayer(player TrackLoader) {
 	q.player = player
 }
 
-// OnPlaybackFinished is called when a track finishes playing naturally.
-// This drives the auto-advance behavior.
-func (q *Queue) OnPlaybackFinished() {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
-	if len(q.tracks) == 0 {
-		return
-	}
-
-	// Repeat One: replay the current track.
-	if q.repeatMode == RepeatOne {
-		q.playCurrentTrack()
-		q.emitIndexChanged()
-
-		return
-	}
-
-	nextIdx := q.nextIndex()
-	if nextIdx == -1 {
-		// Queue exhausted — this is the extension point for a future fallback playlist.
-		q.onQueueExhausted()
-
-		return
-	}
-
-	q.currentIndex = nextIdx
-	q.playCurrentTrack()
-	q.emitIndexChanged()
-}
-
-// registerEventHandlers sets up Wails event listeners for queue commands.
-func (q *Queue) registerEventHandlers() {
-	if q.ctx == nil {
-		q.logger.Error("Context is nil, cannot register event handlers")
-
-		return
-	}
-
-	runtime.EventsOn(q.ctx, events.RequestPlay, func(_ ...any) {
-		q.logger.Info("Received RequestPlay")
-		q.Play()
-	})
-
-	runtime.EventsOn(q.ctx, events.RequestNext, func(_ ...any) {
-		q.logger.Info("Received RequestNext")
-		q.Next()
-	})
-
-	runtime.EventsOn(q.ctx, events.RequestPrevious, func(_ ...any) {
-		q.logger.Info("Received RequestPrevious")
-		q.Previous()
-	})
-
-	runtime.EventsOn(q.ctx, events.RequestSetQueue, func(data ...any) {
-		q.logger.Info("Received RequestSetQueue")
-		q.handleSetQueue(data...)
-	})
-
-	runtime.EventsOn(q.ctx, events.RequestAddToQueue, func(data ...any) {
-		q.logger.Info("Received RequestAddToQueue")
-		q.handleAddToQueue(data...)
-	})
-
-	runtime.EventsOn(q.ctx, events.RequestPlayNext, func(data ...any) {
-		q.logger.Info("Received RequestPlayNext")
-		q.handlePlayNext(data...)
-	})
-
-	runtime.EventsOn(
-		q.ctx,
-		events.RequestRemoveFromQueue,
-		func(data ...any) {
-			q.logger.Info("Received RequestRemoveFromQueue")
-			q.handleRemoveFromQueue(data...)
-		},
-	)
-
-	runtime.EventsOn(
-		q.ctx,
-		events.RequestToggleShuffle,
-		func(_ ...any) {
-			q.logger.Info("Received RequestToggleShuffle")
-			q.ToggleShuffle()
-		},
-	)
-
-	runtime.EventsOn(
-		q.ctx,
-		events.RequestCycleRepeat,
-		func(_ ...any) {
-			q.logger.Info("Received RequestCycleRepeat")
-			q.CycleRepeat()
-		},
-	)
-
-	runtime.EventsOn(
-		q.ctx,
-		events.RequestAddTracksToQueue,
-		func(data ...any) {
-			q.logger.Info("Received RequestAddTracksToQueue")
-			q.handleAddTracksToQueue(data...)
-		},
-	)
-
-	runtime.EventsOn(
-		q.ctx,
-		events.RequestPlayTracksNext,
-		func(data ...any) {
-			q.logger.Info("Received RequestPlayTracksNext")
-			q.handlePlayTracksNext(data...)
-		},
-	)
-
-	runtime.EventsOn(
-		q.ctx,
-		events.RequestPlayQueueIndex,
-		func(data ...any) {
-			q.logger.Info("Received RequestPlayQueueIndex")
-			q.handlePlayQueueIndex(data...)
-		},
-	)
-
-	runtime.EventsOn(
-		q.ctx,
-		events.RequestRemoveTracksFromQueue,
-		func(data ...any) {
-			q.logger.Info(
-				"Received RequestRemoveTracksFromQueue",
-			)
-			q.handleRemoveTracksFromQueue(data...)
-		},
-	)
-
-	runtime.EventsOn(
-		q.ctx,
-		events.RequestInsertTracksAtIndex,
-		func(data ...any) {
-			q.logger.Info(
-				"Received RequestInsertTracksAtIndex",
-			)
-			q.handleInsertTracksAtIndex(data...)
-		},
-	)
-
-	runtime.EventsOn(
-		q.ctx,
-		events.RequestMoveQueueTracks,
-		func(data ...any) {
-			q.logger.Info(
-				"Received RequestMoveQueueTracks",
-			)
-			q.handleMoveQueueTracks(data...)
-		},
-	)
-
-	runtime.EventsOn(
-		q.ctx,
-		events.RequestClearQueue,
-		func(_ ...any) {
-			q.logger.Info("Received RequestClearQueue")
-			q.Clear()
-		},
-	)
-}
-
-// handleSetQueue processes the RequestSetQueue event payload.
-// Expects data[0] = []interface{} of file path strings,
-// data[1] = float64 start index, data[2] = bool shuffleStart (optional).
-func (q *Queue) handleSetQueue(data ...any) {
-	if len(data) < 2 {
-		q.logger.Error("RequestSetQueue: missing data")
-
-		return
-	}
-
-	filePathsRaw, ok := data[0].([]interface{})
-	if !ok {
-		q.logger.Error("RequestSetQueue: invalid filePaths type")
-
-		return
-	}
-
-	filePaths := make([]string, 0, len(filePathsRaw))
-
-	for _, fp := range filePathsRaw {
-		if s, ok := fp.(string); ok {
-			filePaths = append(filePaths, s)
-		}
-	}
-
-	startIndex := 0
-
-	if si, ok := data[1].(float64); ok {
-		startIndex = int(si)
-	}
-
-	shuffleStart := false
-
-	if len(data) > 2 {
-		if ss, ok := data[2].(bool); ok {
-			shuffleStart = ss
-		}
-	}
-
-	q.SetQueue(filePaths, startIndex, shuffleStart)
-}
-
-// handleAddToQueue processes the RequestAddToQueue event payload.
-// Expects data[0] = string file path.
-func (q *Queue) handleAddToQueue(data ...any) {
-	if len(data) < 1 {
-		q.logger.Error("RequestAddToQueue: missing data")
-
-		return
-	}
-
-	filePath, ok := data[0].(string)
-	if !ok {
-		q.logger.Error(
-			"RequestAddToQueue: invalid filePath type",
-			"got", data[0],
-		)
-
-		return
-	}
-
-	q.AddTrack(filePath)
-}
-
-// handlePlayNext processes the RequestPlayNext event payload.
-// Expects data[0] = string file path.
-func (q *Queue) handlePlayNext(data ...any) {
-	if len(data) < 1 {
-		q.logger.Error("RequestPlayNext: missing data")
-
-		return
-	}
-
-	filePath, ok := data[0].(string)
-	if !ok {
-		q.logger.Error(
-			"RequestPlayNext: invalid filePath type",
-			"got", data[0],
-		)
-
-		return
-	}
-
-	q.InsertNext(filePath)
-}
-
-// handleRemoveFromQueue processes the RequestRemoveFromQueue event payload.
-// Expects data[0] = float64 position.
-func (q *Queue) handleRemoveFromQueue(data ...any) {
-	if len(data) < 1 {
-		q.logger.Error("RequestRemoveFromQueue: missing data")
-
-		return
-	}
-
-	position, ok := data[0].(float64)
-	if !ok {
-		q.logger.Error(
-			"RequestRemoveFromQueue: invalid position type",
-			"got", data[0],
-		)
-
-		return
-	}
-
-	q.RemoveTrack(int(position))
-}
-
-// handleRemoveTracksFromQueue processes the RequestRemoveTracksFromQueue
-// event payload. Expects data[0] = []interface{} of float64 positions.
-func (q *Queue) handleRemoveTracksFromQueue(data ...any) {
-	if len(data) < 1 {
-		q.logger.Error(
-			"RequestRemoveTracksFromQueue: missing data",
-		)
-
-		return
-	}
-
-	positionsRaw, ok := data[0].([]interface{})
-	if !ok {
-		q.logger.Error(
-			"RequestRemoveTracksFromQueue: invalid positions type",
-			"got", data[0],
-		)
-
-		return
-	}
-
-	positions := make([]int, 0, len(positionsRaw))
-
-	for _, p := range positionsRaw {
-		if f, ok := p.(float64); ok {
-			positions = append(positions, int(f))
-		}
-	}
-
-	q.RemoveTracks(positions)
-}
-
-// handleAddTracksToQueue processes the RequestAddTracksToQueue event payload.
-// Expects data[0] = []interface{} of file path strings.
-func (q *Queue) handleAddTracksToQueue(data ...any) {
-	if len(data) < 1 {
-		q.logger.Error("RequestAddTracksToQueue: missing data")
-
-		return
-	}
-
-	filePathsRaw, ok := data[0].([]interface{})
-	if !ok {
-		q.logger.Error(
-			"RequestAddTracksToQueue: invalid filePaths type",
-			"got", data[0],
-		)
-
-		return
-	}
-
-	filePaths := make([]string, 0, len(filePathsRaw))
-
-	for _, fp := range filePathsRaw {
-		if s, ok := fp.(string); ok {
-			filePaths = append(filePaths, s)
-		}
-	}
-
-	q.AddTracks(filePaths)
-}
-
-// handleInsertTracksAtIndex processes the RequestInsertTracksAtIndex event
-// payload. Expects data[0] = []interface{} of file path strings,
-// data[1] = float64 target index.
-func (q *Queue) handleInsertTracksAtIndex(data ...any) {
-	if len(data) < 2 {
-		q.logger.Error(
-			"RequestInsertTracksAtIndex: missing data",
-		)
-
-		return
-	}
-
-	filePathsRaw, ok := data[0].([]interface{})
-	if !ok {
-		q.logger.Error(
-			"RequestInsertTracksAtIndex: invalid filePaths type",
-			"got", data[0],
-		)
-
-		return
-	}
-
-	filePaths := make([]string, 0, len(filePathsRaw))
-
-	for _, fp := range filePathsRaw {
-		if s, ok := fp.(string); ok {
-			filePaths = append(filePaths, s)
-		}
-	}
-
-	idx, ok := data[1].(float64)
-	if !ok {
-		q.logger.Error(
-			"RequestInsertTracksAtIndex: invalid index type",
-			"got", data[1],
-		)
-
-		return
-	}
-
-	q.InsertTracksAt(filePaths, int(idx))
-}
-
-// handleMoveQueueTracks processes the RequestMoveQueueTracks event payload.
-// Expects data[0] = []interface{} of float64 source indices,
-// data[1] = float64 target index.
-func (q *Queue) handleMoveQueueTracks(data ...any) {
-	if len(data) < 2 {
-		q.logger.Error(
-			"RequestMoveQueueTracks: missing data",
-		)
-
-		return
-	}
-
-	indicesRaw, ok := data[0].([]interface{})
-	if !ok {
-		q.logger.Error(
-			"RequestMoveQueueTracks: invalid indices type",
-			"got", data[0],
-		)
-
-		return
-	}
-
-	fromIndices := make([]int, 0, len(indicesRaw))
-
-	for _, v := range indicesRaw {
-		if f, ok := v.(float64); ok {
-			fromIndices = append(fromIndices, int(f))
-		}
-	}
-
-	toIdx, ok := data[1].(float64)
-	if !ok {
-		q.logger.Error(
-			"RequestMoveQueueTracks: invalid toIndex type",
-			"got", data[1],
-		)
-
-		return
-	}
-
-	q.MoveQueueTracks(fromIndices, int(toIdx))
-}
-
-// handlePlayQueueIndex processes the RequestPlayQueueIndex event payload.
-// Expects data[0] = float64 index.
-func (q *Queue) handlePlayQueueIndex(data ...any) {
-	if len(data) < 1 {
-		q.logger.Error("RequestPlayQueueIndex: missing data")
-
-		return
-	}
-
-	index, ok := data[0].(float64)
-	if !ok {
-		q.logger.Error(
-			"RequestPlayQueueIndex: invalid index type",
-			"got", data[0],
-		)
-
-		return
-	}
-
-	q.PlayIndex(int(index))
-}
-
-// handlePlayTracksNext processes the RequestPlayTracksNext event payload.
-// Expects data[0] = []interface{} of file path strings.
-func (q *Queue) handlePlayTracksNext(data ...any) {
-	if len(data) < 1 {
-		q.logger.Error("RequestPlayTracksNext: missing data")
-
-		return
-	}
-
-	filePathsRaw, ok := data[0].([]interface{})
-	if !ok {
-		q.logger.Error(
-			"RequestPlayTracksNext: invalid filePaths type",
-			"got", data[0],
-		)
-
-		return
-	}
-
-	filePaths := make([]string, 0, len(filePathsRaw))
-
-	for _, fp := range filePathsRaw {
-		if s, ok := fp.(string); ok {
-			filePaths = append(filePaths, s)
-		}
-	}
-
-	q.InsertNextTracks(filePaths)
-}
-
 // SetQueue replaces the entire queue with new tracks and starts playing.
 // When shuffleStart is true and shuffle mode is active, a random first
 // track is chosen instead of the one at startIndex. This is intended for
@@ -657,13 +184,7 @@ func (q *Queue) SetQueue(
 			continue
 		}
 
-		tracks = append(tracks, Track{
-			AudioFileID: m.AudioFileID,
-			FilePath:    m.FilePath,
-			Position:    int64(i),
-			Title:       m.Title,
-			Artist:      m.Artist,
-		})
+		tracks = append(tracks, m.toTrack(int64(i)))
 	}
 
 	if len(tracks) == 0 {
@@ -721,6 +242,7 @@ func (q *Queue) SetQueue(
 
 		q.persistTracks()
 		q.persistState()
+
 		q.mu.Unlock()
 
 		return
@@ -767,13 +289,7 @@ func (q *Queue) resolveRemainingTracks(
 			continue
 		}
 
-		tracks = append(tracks, Track{
-			AudioFileID: meta.AudioFileID,
-			FilePath:    meta.FilePath,
-			Position:    int64(i),
-			Title:       meta.Title,
-			Artist:      meta.Artist,
-		})
+		tracks = append(tracks, meta.toTrack(int64(i)))
 	}
 
 	q.tracks = tracks
@@ -791,12 +307,7 @@ func (q *Queue) resolveRemainingTracks(
 		}
 	}
 
-	if q.shuffleMode {
-		q.generateShuffleOrder()
-	}
-
-	q.persistTracks()
-	q.persistState()
+	q.commitMutation(false)
 	q.emitQueueChanged()
 }
 
@@ -820,32 +331,9 @@ func (q *Queue) AddTrack(filePath string) {
 
 	wasEmpty := len(q.tracks) == 0
 
-	track := Track{
-		AudioFileID: m.AudioFileID,
-		FilePath:    m.FilePath,
-		Position:    int64(len(q.tracks)),
-		Title:       m.Title,
-		Artist:      m.Artist,
-	}
+	track := m.toTrack(int64(len(q.tracks)))
 
 	q.tracks = append(q.tracks, track)
-
-	// Persist.
-	_, insertErr := q.db.Queries.InsertQueueTrack(
-		q.db.Ctx,
-		sqlcgen.InsertQueueTrackParams{
-			AudioFileID: m.AudioFileID,
-			Position:    track.Position,
-		},
-	)
-	if insertErr != nil {
-		q.logger.Error("Failed to persist queue track", "err", insertErr)
-	}
-
-	// Update shuffle order if shuffle is on.
-	if q.shuffleMode {
-		q.shuffleOrder = append(q.shuffleOrder, len(q.tracks)-1)
-	}
 
 	// Load (paused) if this is the first track added to an empty queue.
 	if wasEmpty {
@@ -853,7 +341,7 @@ func (q *Queue) AddTrack(filePath string) {
 		q.loadCurrentTrack()
 	}
 
-	q.persistState()
+	q.commitMutation(false)
 	q.emitTracksModified(
 		"add",
 		[]Track{track},
@@ -886,31 +374,19 @@ func (q *Queue) AddTracks(filePaths []string) {
 			continue
 		}
 
-		track := Track{
-			AudioFileID: m.AudioFileID,
-			FilePath:    m.FilePath,
-			Position:    int64(len(q.tracks)),
-			Title:       m.Title,
-			Artist:      m.Artist,
-		}
-
+		track := m.toTrack(int64(len(q.tracks)))
 		q.tracks = append(q.tracks, track)
 
 		newTracks = append(newTracks, track)
 	}
 
-	if q.shuffleMode {
-		q.generateShuffleOrder()
-	}
-
-	q.persistTracks()
-	q.persistState()
-
+	// Load (paused) if this is the first track added to an empty queue.
 	if wasEmpty && len(q.tracks) > 0 {
 		q.currentIndex = 0
 		q.loadCurrentTrack()
 	}
 
+	q.commitMutation(false)
 	q.emitTracksModified(
 		"add",
 		newTracks,
@@ -947,38 +423,21 @@ func (q *Queue) InsertNextTracks(filePaths []string) {
 			continue
 		}
 
-		newTracks = append(newTracks, Track{
-			AudioFileID: m.AudioFileID,
-			FilePath:    m.FilePath,
-			Title:       m.Title,
-			Artist:      m.Artist,
-		})
+		newTracks = append(newTracks, m.toTrack(0))
 	}
 
 	if len(newTracks) == 0 {
 		return
 	}
 
-	// Insert the block into the slice at insertPos.
-	tail := make([]Track, len(q.tracks[insertPos:]))
-	copy(tail, q.tracks[insertPos:])
-	q.tracks = append(q.tracks[:insertPos], newTracks...)
-	q.tracks = append(q.tracks, tail...)
-
-	q.reindexPositions()
-
-	if q.shuffleMode {
-		q.generateShuffleOrder()
-	}
-
-	q.persistTracks()
-	q.persistState()
+	q.tracks = slices.Insert(q.tracks, insertPos, newTracks...)
 
 	if wasEmpty {
 		q.currentIndex = 0
 		q.loadCurrentTrack()
 	}
 
+	q.commitMutation(true)
 	q.emitTracksModified(
 		"insert",
 		newTracks,
@@ -988,6 +447,7 @@ func (q *Queue) InsertNextTracks(filePaths []string) {
 }
 
 // InsertNext inserts a track right after the currently playing track.
+// If the queue was empty, it loads the inserted track in a paused state.
 func (q *Queue) InsertNext(filePath string) {
 	meta := q.lookupTrackMetaBatch([]string{filePath})
 
@@ -1004,34 +464,23 @@ func (q *Queue) InsertNext(filePath string) {
 		return
 	}
 
+	wasEmpty := len(q.tracks) == 0
+
 	insertPos := q.currentIndex + 1
 	if insertPos > len(q.tracks) {
 		insertPos = len(q.tracks)
 	}
 
-	track := Track{
-		AudioFileID: m.AudioFileID,
-		FilePath:    m.FilePath,
-		Position:    int64(insertPos),
-		Title:       m.Title,
-		Artist:      m.Artist,
+	track := m.toTrack(int64(insertPos))
+	q.tracks = slices.Insert(q.tracks, insertPos, track)
+
+	// Load (paused) if this is the first track added to an empty queue.
+	if wasEmpty {
+		q.currentIndex = 0
+		q.loadCurrentTrack()
 	}
 
-	// Insert into slice.
-	q.tracks = append(q.tracks, Track{})
-	copy(q.tracks[insertPos+1:], q.tracks[insertPos:])
-	q.tracks[insertPos] = track
-
-	// Reindex positions.
-	q.reindexPositions()
-
-	// Regenerate shuffle order if needed.
-	if q.shuffleMode {
-		q.generateShuffleOrder()
-	}
-
-	q.persistTracks()
-	q.persistState()
+	q.commitMutation(true)
 	q.emitTracksModified(
 		"insert",
 		[]Track{track},
@@ -1072,43 +521,26 @@ func (q *Queue) InsertTracksAt(filePaths []string, index int) {
 			continue
 		}
 
-		newTracks = append(newTracks, Track{
-			AudioFileID: m.AudioFileID,
-			FilePath:    m.FilePath,
-			Title:       m.Title,
-			Artist:      m.Artist,
-		})
+		newTracks = append(newTracks, m.toTrack(0))
 	}
 
 	if len(newTracks) == 0 {
 		return
 	}
 
-	// Insert the block into the slice at index.
-	tail := make([]Track, len(q.tracks[index:]))
-	copy(tail, q.tracks[index:])
-	q.tracks = append(q.tracks[:index], newTracks...)
-	q.tracks = append(q.tracks, tail...)
+	q.tracks = slices.Insert(q.tracks, index, newTracks...)
 
 	// Shift currentIndex if insertion is at or before it.
 	if q.currentIndex >= 0 && index <= q.currentIndex {
 		q.currentIndex += len(newTracks)
 	}
 
-	q.reindexPositions()
-
-	if q.shuffleMode {
-		q.generateShuffleOrder()
-	}
-
-	q.persistTracks()
-	q.persistState()
-
 	if wasEmpty {
 		q.currentIndex = 0
 		q.loadCurrentTrack()
 	}
 
+	q.commitMutation(true)
 	q.emitTracksModified(
 		"insert",
 		newTracks,
@@ -1148,7 +580,7 @@ func (q *Queue) MoveQueueTracks(
 		return
 	}
 
-	sortInts(sorted)
+	slices.Sort(sorted)
 
 	// Clamp toIndex.
 	if toIndex < 0 {
@@ -1219,11 +651,7 @@ func (q *Queue) MoveQueueTracks(
 	}
 
 	// Insert the moved block at the adjusted position.
-	tail := make([]Track, len(remaining[adjustedIdx:]))
-	copy(tail, remaining[adjustedIdx:])
-	remaining = append(remaining[:adjustedIdx], moving...)
-	remaining = append(remaining, tail...)
-	q.tracks = remaining
+	q.tracks = slices.Insert(remaining, adjustedIdx, moving...)
 
 	// Track currentIndex through the move.
 	if currentTrackIdx >= 0 {
@@ -1255,29 +683,13 @@ func (q *Queue) MoveQueueTracks(
 		}
 	}
 
-	q.reindexPositions()
-
-	if q.shuffleMode {
-		q.generateShuffleOrder()
-	}
-
-	q.persistTracks()
-	q.persistState()
+	q.commitMutation(true)
 	q.emitTracksModified(
 		"move",
 		moving,
 		toIndex,
 		sorted,
 	)
-}
-
-// sortInts sorts a slice of ints in ascending order.
-func sortInts(s []int) {
-	for i := 1; i < len(s); i++ {
-		for j := i; j > 0 && s[j-1] > s[j]; j-- {
-			s[j], s[j-1] = s[j-1], s[j]
-		}
-	}
 }
 
 // RemoveTrack removes a track at the given position from the queue.
@@ -1308,14 +720,7 @@ func (q *Queue) RemoveTrack(position int) {
 		q.currentIndex = len(q.tracks) - 1
 	}
 
-	q.reindexPositions()
-
-	if q.shuffleMode {
-		q.generateShuffleOrder()
-	}
-
-	q.persistTracks()
-	q.persistState()
+	q.commitMutation(true)
 	q.emitTracksModified(
 		"remove",
 		nil,
@@ -1377,14 +782,7 @@ func (q *Queue) RemoveTracks(positions []int) {
 		}
 	}
 
-	q.reindexPositions()
-
-	if q.shuffleMode {
-		q.generateShuffleOrder()
-	}
-
-	q.persistTracks()
-	q.persistState()
+	q.commitMutation(true)
 	q.emitTracksModified(
 		"remove",
 		nil,
@@ -1518,18 +916,10 @@ func (q *Queue) Play() {
 	q.playFromStart()
 }
 
-// PlayFromStart restarts playback from the beginning of the queue.
+// playFromStart restarts playback from the beginning of the queue.
 // If shuffle is enabled, a new shuffle order is generated and playback
 // starts from a random track. This is a no-op when a track is already
 // active (currentIndex != -1) or the queue is empty.
-func (q *Queue) PlayFromStart() {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
-	q.playFromStart()
-}
-
-// playFromStart is the lock-free inner implementation of PlayFromStart.
 // The caller must hold q.mu.
 func (q *Queue) playFromStart() {
 	if q.currentIndex != -1 {
@@ -1644,8 +1034,7 @@ func (q *Queue) Clear() {
 		q.player.UnloadTrack()
 	}
 
-	q.persistTracks()
-	q.persistState()
+	q.commitMutation(false)
 	q.emitQueueChanged()
 }
 
@@ -1656,222 +1045,6 @@ func (q *Queue) EmitCurrentState() {
 	defer q.mu.Unlock()
 
 	q.emitQueueChanged()
-}
-
-// SaveState persists the queue state to the database.
-func (q *Queue) SaveState() {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
-	q.persistTracks()
-	q.persistState()
-	q.logger.Info("Queue state saved",
-		"trackCount", len(q.tracks),
-		"currentIndex", q.currentIndex,
-		"shuffleMode", q.shuffleMode,
-		"repeatMode", q.repeatMode,
-	)
-}
-
-// RestoreState loads the queue state from the database.
-func (q *Queue) RestoreState() {
-	defer profiling.TimeOp(q.logger, "queue.RestoreState")()
-
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
-	// Restore queue metadata.
-	state, err := q.db.Queries.GetQueueState(q.db.Ctx)
-	if err != nil {
-		q.logger.Error("Failed to load queue state", "err", err)
-
-		return
-	}
-
-	q.currentIndex = int(state.CurrentPosition)
-	q.shuffleMode = state.ShuffleMode
-	q.repeatMode = RepeatMode(state.RepeatMode)
-
-	if state.SourcePlaylistID.Valid {
-		q.sourcePlaylistID = state.SourcePlaylistID.Int64
-	}
-
-	// Restore shuffle order.
-	if state.ShuffleOrder.Valid && state.ShuffleOrder.String != "" {
-		var order []int
-
-		if err := json.Unmarshal(
-			[]byte(state.ShuffleOrder.String), &order,
-		); err != nil {
-			q.logger.Warn("Failed to parse shuffle order", "err", err)
-		} else {
-			q.shuffleOrder = order
-		}
-	}
-
-	// Restore queue tracks.
-	rows, err := q.db.Queries.GetQueueTracks(q.db.Ctx)
-	if err != nil {
-		q.logger.Error("Failed to load queue tracks", "err", err)
-
-		return
-	}
-
-	q.tracks = make([]Track, 0, len(rows))
-
-	for _, row := range rows {
-		q.tracks = append(q.tracks, Track{
-			ID:          row.ID,
-			AudioFileID: row.AudioFileID,
-			FilePath:    row.FilePath,
-			Position:    row.Position,
-			Title:       row.Title,
-			Artist:      row.Artist,
-		})
-	}
-
-	// Clamp current index. A value of -1 is valid and means "no current
-	// track" (e.g. the queue was exhausted before shutdown). Only clamp
-	// when the index exceeds the restored track count.
-	if q.currentIndex >= len(q.tracks) && len(q.tracks) > 0 {
-		q.currentIndex = len(q.tracks) - 1
-	}
-
-	q.logger.Info("Queue state restored",
-		"trackCount", len(q.tracks),
-		"currentIndex", q.currentIndex,
-		"shuffleMode", q.shuffleMode,
-		"repeatMode", q.repeatMode,
-	)
-}
-
-// nextIndex returns the next track index respecting shuffle and repeat modes.
-// Returns -1 if there is no next track (queue exhausted).
-func (q *Queue) nextIndex() int {
-	if len(q.tracks) == 0 {
-		return -1
-	}
-
-	if q.shuffleMode && len(q.shuffleOrder) > 0 {
-		return q.nextShuffledIndex()
-	}
-
-	next := q.currentIndex + 1
-	if next >= len(q.tracks) {
-		if q.repeatMode == RepeatAll {
-			return 0
-		}
-
-		return -1
-	}
-
-	return next
-}
-
-// previousIndex returns the previous track index respecting shuffle and repeat.
-// Returns -1 if there is no previous track.
-func (q *Queue) previousIndex() int {
-	if len(q.tracks) == 0 {
-		return -1
-	}
-
-	if q.shuffleMode && len(q.shuffleOrder) > 0 {
-		return q.previousShuffledIndex()
-	}
-
-	prev := q.currentIndex - 1
-	if prev < 0 {
-		if q.repeatMode == RepeatAll {
-			return len(q.tracks) - 1
-		}
-
-		return -1
-	}
-
-	return prev
-}
-
-// nextShuffledIndex finds the next index in the shuffle order.
-func (q *Queue) nextShuffledIndex() int {
-	shufflePos := q.currentShufflePosition()
-	if shufflePos == -1 {
-		// Current track not found in shuffle order — shouldn't happen.
-		return -1
-	}
-
-	nextShufflePos := shufflePos + 1
-	if nextShufflePos >= len(q.shuffleOrder) {
-		if q.repeatMode == RepeatAll {
-			return q.shuffleOrder[0]
-		}
-
-		return -1
-	}
-
-	return q.shuffleOrder[nextShufflePos]
-}
-
-// previousShuffledIndex finds the previous index in the shuffle order.
-func (q *Queue) previousShuffledIndex() int {
-	shufflePos := q.currentShufflePosition()
-	if shufflePos == -1 {
-		return -1
-	}
-
-	prevShufflePos := shufflePos - 1
-	if prevShufflePos < 0 {
-		if q.repeatMode == RepeatAll {
-			return q.shuffleOrder[len(q.shuffleOrder)-1]
-		}
-
-		return -1
-	}
-
-	return q.shuffleOrder[prevShufflePos]
-}
-
-// currentShufflePosition finds where the current track index is in the shuffle order.
-func (q *Queue) currentShufflePosition() int {
-	for i, idx := range q.shuffleOrder {
-		if idx == q.currentIndex {
-			return i
-		}
-	}
-
-	return -1
-}
-
-// generateShuffleOrder creates a Fisher-Yates shuffled index order,
-// placing the current track at position 0 so it doesn't replay immediately.
-func (q *Queue) generateShuffleOrder() {
-	n := len(q.tracks)
-	if n == 0 {
-		q.shuffleOrder = nil
-
-		return
-	}
-
-	order := make([]int, n)
-	for i := range order {
-		order[i] = i
-	}
-
-	// Fisher-Yates shuffle.
-	for i := n - 1; i > 0; i-- {
-		j := rand.IntN(i + 1)
-		order[i], order[j] = order[j], order[i]
-	}
-
-	// Move the current track to position 0 so it doesn't replay immediately.
-	for i, idx := range order {
-		if idx == q.currentIndex {
-			order[0], order[i] = order[i], order[0]
-
-			break
-		}
-	}
-
-	q.shuffleOrder = order
 }
 
 // playOrLoadCurrentTrack loads the current track and optionally starts
@@ -1979,318 +1152,18 @@ func (q *Queue) reindexPositions() {
 	}
 }
 
-// lookupTrackMetaBatch fetches audio file IDs and metadata for a batch of
-// file paths using a single query per chunk (instead of 2 queries per track).
-// Returns a map keyed by file path. This is safe to call without holding q.mu.
-func (q *Queue) lookupTrackMetaBatch(
-	filePaths []string,
-) map[string]trackMeta {
-	result := make(map[string]trackMeta, len(filePaths))
-
-	// Deduplicate paths to avoid redundant work.
-	unique := make([]string, 0, len(filePaths))
-	seen := make(map[string]bool, len(filePaths))
-
-	for _, fp := range filePaths {
-		if !seen[fp] {
-			seen[fp] = true
-
-			unique = append(unique, fp)
-		}
+// commitMutation persists the current queue state after a mutation.
+// When reindex is true, track positions are renumbered first.
+// The caller must hold q.mu.
+func (q *Queue) commitMutation(reindex bool) {
+	if reindex {
+		q.reindexPositions()
 	}
 
-	// Process in chunks to stay under the SQLite bind variable limit.
-	for i := 0; i < len(unique); i += maxSQLiteVars {
-		end := i + maxSQLiteVars
-		if end > len(unique) {
-			end = len(unique)
-		}
-
-		chunk := unique[i:end]
-		q.lookupChunk(chunk, result)
+	if q.shuffleMode {
+		q.generateShuffleOrder()
 	}
 
-	return result
+	q.persistTracks()
+	q.persistState()
 }
-
-// lookupChunk executes a single batch query for a chunk of file paths.
-func (q *Queue) lookupChunk(
-	paths []string,
-	result map[string]trackMeta,
-) {
-	if len(paths) == 0 {
-		return
-	}
-
-	placeholders := make([]string, len(paths))
-	args := make([]any, len(paths))
-
-	for i, fp := range paths {
-		placeholders[i] = "?"
-		args[i] = fp
-	}
-
-	query := fmt.Sprintf(
-		`SELECT af.id, af.file_path,
-			COALESCE(r.name, '') AS title,
-			COALESCE(ac.text, '') AS artist
-		FROM audio_files af
-		LEFT JOIN recordings r ON af.recording_id = r.id
-		LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
-		WHERE af.file_path IN (%s)`,
-		strings.Join(placeholders, ","),
-	)
-
-	rows, err := q.db.QueryContext(query, args...)
-	if err != nil {
-		q.logger.Error("Batch metadata lookup failed", "err", err)
-
-		return
-	}
-
-	defer func() {
-		if closeErr := rows.Close(); closeErr != nil {
-			q.logger.Error(
-				"Failed to close rows",
-				"err", closeErr,
-			)
-		}
-	}()
-
-	for rows.Next() {
-		var m trackMeta
-
-		if scanErr := rows.Scan(
-			&m.AudioFileID, &m.FilePath, &m.Title, &m.Artist,
-		); scanErr != nil {
-			q.logger.Error(
-				"Failed to scan batch metadata row",
-				"err", scanErr,
-			)
-
-			continue
-		}
-
-		result[m.FilePath] = m
-	}
-
-	if rowsErr := rows.Err(); rowsErr != nil {
-		q.logger.Error(
-			"Error iterating batch metadata rows",
-			"err", rowsErr,
-		)
-	}
-}
-
-// persistTracks writes the current queue tracks to the database atomically
-// using a transaction with batched multi-row inserts.
-func (q *Queue) persistTracks() {
-	tx, err := q.db.BeginTx()
-	if err != nil {
-		q.logger.Error("Failed to begin transaction", "err", err)
-
-		return
-	}
-
-	committed := false
-
-	defer func() {
-		if !committed {
-			if rbErr := tx.Rollback(); rbErr != nil {
-				q.logger.Error(
-					"Failed to rollback transaction",
-					"err", rbErr,
-				)
-			}
-		}
-	}()
-
-	// Clear existing tracks.
-	txQueries := q.db.Queries.WithTx(tx)
-
-	if clearErr := txQueries.ClearQueueTracks(q.db.Ctx); clearErr != nil {
-		q.logger.Error("Failed to clear queue tracks", "err", clearErr)
-
-		return
-	}
-
-	// Batch insert tracks. Each row needs 2 bind vars (audio_file_id, position).
-	const varsPerRow = 2
-
-	batchSize := maxSQLiteVars / varsPerRow
-
-	for i := 0; i < len(q.tracks); i += batchSize {
-		end := i + batchSize
-		if end > len(q.tracks) {
-			end = len(q.tracks)
-		}
-
-		batch := q.tracks[i:end]
-
-		if insertErr := q.insertTrackBatch(tx, batch); insertErr != nil {
-			q.logger.Error(
-				"Failed to batch insert queue tracks",
-				"err", insertErr,
-			)
-
-			return
-		}
-	}
-
-	if commitErr := tx.Commit(); commitErr != nil {
-		q.logger.Error("Failed to commit transaction", "err", commitErr)
-
-		return
-	}
-
-	committed = true
-}
-
-// insertTrackBatch inserts a batch of tracks in a single multi-row INSERT.
-func (q *Queue) insertTrackBatch(tx *sql.Tx, batch []Track) error {
-	if len(batch) == 0 {
-		return nil
-	}
-
-	valuePlaceholders := make([]string, len(batch))
-	args := make([]any, 0, len(batch)*2)
-
-	for i, track := range batch {
-		valuePlaceholders[i] = "(?, ?)"
-
-		args = append(args, track.AudioFileID, track.Position)
-	}
-
-	query := "INSERT INTO queue_tracks (audio_file_id, position) VALUES " +
-		strings.Join(valuePlaceholders, ",")
-
-	_, err := tx.ExecContext(q.db.Ctx, query, args...)
-	if err != nil {
-		return fmt.Errorf("batch insert failed: %w", err)
-	}
-
-	return nil
-}
-
-// persistState writes the queue metadata to the database.
-func (q *Queue) persistState() {
-	var shuffleOrderJSON sql.NullString
-
-	if len(q.shuffleOrder) > 0 {
-		data, err := json.Marshal(q.shuffleOrder)
-		if err != nil {
-			q.logger.Error(
-				"Failed to marshal shuffle order",
-				"err", err,
-			)
-		} else {
-			shuffleOrderJSON = sql.NullString{
-				String: string(data),
-				Valid:  true,
-			}
-		}
-	}
-
-	sourcePlaylistID := sql.NullInt64{}
-	if q.sourcePlaylistID > 0 {
-		sourcePlaylistID = sql.NullInt64{
-			Int64: q.sourcePlaylistID,
-			Valid: true,
-		}
-	}
-
-	err := q.db.Queries.UpdateQueueState(
-		q.db.Ctx,
-		sqlcgen.UpdateQueueStateParams{
-			SourcePlaylistID: sourcePlaylistID,
-			CurrentPosition:  int64(q.currentIndex),
-			ShuffleMode:      q.shuffleMode,
-			RepeatMode:       string(q.repeatMode),
-			ShuffleOrder:     shuffleOrderJSON,
-		},
-	)
-	if err != nil {
-		q.logger.Error("Failed to persist queue state", "err", err)
-	}
-}
-
-// emitQueueChanged emits the full queue state to the frontend.
-func (q *Queue) emitQueueChanged() {
-	if q.ctx == nil {
-		return
-	}
-
-	state := State{
-		Tracks:           q.tracks,
-		CurrentIndex:     q.currentIndex,
-		ShuffleMode:      q.shuffleMode,
-		RepeatMode:       q.repeatMode,
-		SourcePlaylistID: q.sourcePlaylistID,
-	}
-
-	// Ensure tracks is never nil in JSON.
-	if state.Tracks == nil {
-		state.Tracks = []Track{}
-	}
-
-	runtime.EventsEmit(q.ctx, events.QueueChanged, state)
-}
-
-// emitIndexChanged emits only the current index to the frontend.
-func (q *Queue) emitIndexChanged() {
-	if q.ctx == nil {
-		return
-	}
-
-	runtime.EventsEmit(
-		q.ctx,
-		events.QueueIndexChanged,
-		IndexChanged{CurrentIndex: q.currentIndex},
-	)
-}
-
-// emitModeChanged emits only the shuffle/repeat mode to the frontend.
-func (q *Queue) emitModeChanged() {
-	if q.ctx == nil {
-		return
-	}
-
-	runtime.EventsEmit(
-		q.ctx,
-		events.QueueModeChanged,
-		ModeChanged{
-			ShuffleMode: q.shuffleMode,
-			RepeatMode:  q.repeatMode,
-		},
-	)
-}
-
-// emitTracksModified emits a delta update for track list changes.
-func (q *Queue) emitTracksModified(
-	action string,
-	tracks []Track,
-	index int,
-	positions []int,
-) {
-	if q.ctx == nil {
-		return
-	}
-
-	runtime.EventsEmit(
-		q.ctx,
-		events.QueueTracksModified,
-		TracksModified{
-			Action:       action,
-			Tracks:       tracks,
-			Index:        index,
-			Positions:    positions,
-			CurrentIndex: q.currentIndex,
-		},
-	)
-}
-
-// Sentinel errors.
-var (
-	ErrEmptyQueue = errors.New("queue is empty")
-	ErrNoPlayer   = errors.New("no player set")
-)

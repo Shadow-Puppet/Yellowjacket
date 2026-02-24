@@ -158,9 +158,6 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 
 	// Register playback finished handler to drive queue auto-advance.
 	yj.player.SetPlaybackFinishedHandler(yj.queue.OnPlaybackFinished)
-
-	// Add player to frontend bindings
-	yj.FEBindings = append(yj.FEBindings, yj.player)
 }
 
 // OnBeforeClose captures window state while the window is still alive.

@@ -1,0 +1,333 @@
+package queue
+
+import (
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"strings"
+
+	"yellowjacket/backend/database/sql/sqlcgen"
+	"yellowjacket/backend/profiling"
+)
+
+// lookupTrackMetaBatch fetches audio file IDs and metadata for a batch of
+// file paths using a single query per chunk (instead of 2 queries per track).
+// Returns a map keyed by file path. This is safe to call without holding q.mu.
+func (q *Queue) lookupTrackMetaBatch(
+	filePaths []string,
+) map[string]trackMeta {
+	result := make(map[string]trackMeta, len(filePaths))
+
+	// Deduplicate paths to avoid redundant work.
+	unique := make([]string, 0, len(filePaths))
+	seen := make(map[string]bool, len(filePaths))
+
+	for _, fp := range filePaths {
+		if !seen[fp] {
+			seen[fp] = true
+
+			unique = append(unique, fp)
+		}
+	}
+
+	// Process in chunks to stay under the SQLite bind variable limit.
+	for i := 0; i < len(unique); i += maxSQLiteVars {
+		end := i + maxSQLiteVars
+		if end > len(unique) {
+			end = len(unique)
+		}
+
+		chunk := unique[i:end]
+		q.lookupChunk(chunk, result)
+	}
+
+	return result
+}
+
+// lookupChunk executes a single batch query for a chunk of file paths.
+func (q *Queue) lookupChunk(
+	paths []string,
+	result map[string]trackMeta,
+) {
+	if len(paths) == 0 {
+		return
+	}
+
+	placeholders := make([]string, len(paths))
+	args := make([]any, len(paths))
+
+	for i, fp := range paths {
+		placeholders[i] = "?"
+		args[i] = fp
+	}
+
+	query := fmt.Sprintf(
+		`SELECT af.id, af.file_path,
+			COALESCE(r.name, '') AS title,
+			COALESCE(ac.text, '') AS artist
+		FROM audio_files af
+		LEFT JOIN recordings r ON af.recording_id = r.id
+		LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
+		WHERE af.file_path IN (%s)`,
+		strings.Join(placeholders, ","),
+	)
+
+	rows, err := q.db.QueryContext(query, args...)
+	if err != nil {
+		q.logger.Error("Batch metadata lookup failed", "err", err)
+
+		return
+	}
+
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			q.logger.Error(
+				"Failed to close rows",
+				"err", closeErr,
+			)
+		}
+	}()
+
+	for rows.Next() {
+		var m trackMeta
+
+		if scanErr := rows.Scan(
+			&m.AudioFileID, &m.FilePath, &m.Title, &m.Artist,
+		); scanErr != nil {
+			q.logger.Error(
+				"Failed to scan batch metadata row",
+				"err", scanErr,
+			)
+
+			continue
+		}
+
+		result[m.FilePath] = m
+	}
+
+	if rowsErr := rows.Err(); rowsErr != nil {
+		q.logger.Error(
+			"Error iterating batch metadata rows",
+			"err", rowsErr,
+		)
+	}
+}
+
+// persistTracks writes the current queue tracks to the database atomically
+// using a transaction with batched multi-row inserts.
+func (q *Queue) persistTracks() {
+	tx, err := q.db.BeginTx()
+	if err != nil {
+		q.logger.Error("Failed to begin transaction", "err", err)
+
+		return
+	}
+
+	committed := false
+
+	defer func() {
+		if !committed {
+			if rbErr := tx.Rollback(); rbErr != nil {
+				q.logger.Error(
+					"Failed to rollback transaction",
+					"err", rbErr,
+				)
+			}
+		}
+	}()
+
+	// Clear existing tracks.
+	txQueries := q.db.Queries.WithTx(tx)
+
+	if clearErr := txQueries.ClearQueueTracks(q.db.Ctx); clearErr != nil {
+		q.logger.Error("Failed to clear queue tracks", "err", clearErr)
+
+		return
+	}
+
+	// Batch insert tracks. Each row needs 2 bind vars (audio_file_id, position).
+	const varsPerRow = 2
+
+	batchSize := maxSQLiteVars / varsPerRow
+
+	for i := 0; i < len(q.tracks); i += batchSize {
+		end := i + batchSize
+		if end > len(q.tracks) {
+			end = len(q.tracks)
+		}
+
+		batch := q.tracks[i:end]
+
+		if insertErr := q.insertTrackBatch(tx, batch); insertErr != nil {
+			q.logger.Error(
+				"Failed to batch insert queue tracks",
+				"err", insertErr,
+			)
+
+			return
+		}
+	}
+
+	if commitErr := tx.Commit(); commitErr != nil {
+		q.logger.Error("Failed to commit transaction", "err", commitErr)
+
+		return
+	}
+
+	committed = true
+}
+
+// insertTrackBatch inserts a batch of tracks in a single multi-row INSERT.
+func (q *Queue) insertTrackBatch(tx *sql.Tx, batch []Track) error {
+	if len(batch) == 0 {
+		return nil
+	}
+
+	valuePlaceholders := make([]string, len(batch))
+	args := make([]any, 0, len(batch)*2)
+
+	for i, track := range batch {
+		valuePlaceholders[i] = "(?, ?)"
+
+		args = append(args, track.AudioFileID, track.Position)
+	}
+
+	query := "INSERT INTO queue_tracks (audio_file_id, position) VALUES " +
+		strings.Join(valuePlaceholders, ",")
+
+	_, err := tx.ExecContext(q.db.Ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("batch insert failed: %w", err)
+	}
+
+	return nil
+}
+
+// persistState writes the queue metadata to the database.
+func (q *Queue) persistState() {
+	var shuffleOrderJSON sql.NullString
+
+	if len(q.shuffleOrder) > 0 {
+		data, err := json.Marshal(q.shuffleOrder)
+		if err != nil {
+			q.logger.Error(
+				"Failed to marshal shuffle order",
+				"err", err,
+			)
+		} else {
+			shuffleOrderJSON = sql.NullString{
+				String: string(data),
+				Valid:  true,
+			}
+		}
+	}
+
+	sourcePlaylistID := sql.NullInt64{}
+	if q.sourcePlaylistID > 0 {
+		sourcePlaylistID = sql.NullInt64{
+			Int64: q.sourcePlaylistID,
+			Valid: true,
+		}
+	}
+
+	err := q.db.Queries.UpdateQueueState(
+		q.db.Ctx,
+		sqlcgen.UpdateQueueStateParams{
+			SourcePlaylistID: sourcePlaylistID,
+			CurrentPosition:  int64(q.currentIndex),
+			ShuffleMode:      q.shuffleMode,
+			RepeatMode:       string(q.repeatMode),
+			ShuffleOrder:     shuffleOrderJSON,
+		},
+	)
+	if err != nil {
+		q.logger.Error("Failed to persist queue state", "err", err)
+	}
+}
+
+// SaveState persists the queue state to the database.
+func (q *Queue) SaveState() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	q.persistTracks()
+	q.persistState()
+	q.logger.Info("Queue state saved",
+		"trackCount", len(q.tracks),
+		"currentIndex", q.currentIndex,
+		"shuffleMode", q.shuffleMode,
+		"repeatMode", q.repeatMode,
+	)
+}
+
+// RestoreState loads the queue state from the database.
+func (q *Queue) RestoreState() {
+	defer profiling.TimeOp(q.logger, "queue.RestoreState")()
+
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	// Restore queue metadata.
+	state, err := q.db.Queries.GetQueueState(q.db.Ctx)
+	if err != nil {
+		q.logger.Error("Failed to load queue state", "err", err)
+
+		return
+	}
+
+	q.currentIndex = int(state.CurrentPosition)
+	q.shuffleMode = state.ShuffleMode
+	q.repeatMode = RepeatMode(state.RepeatMode)
+
+	if state.SourcePlaylistID.Valid {
+		q.sourcePlaylistID = state.SourcePlaylistID.Int64
+	}
+
+	// Restore shuffle order.
+	if state.ShuffleOrder.Valid && state.ShuffleOrder.String != "" {
+		var order []int
+
+		if err := json.Unmarshal(
+			[]byte(state.ShuffleOrder.String), &order,
+		); err != nil {
+			q.logger.Warn("Failed to parse shuffle order", "err", err)
+		} else {
+			q.shuffleOrder = order
+		}
+	}
+
+	// Restore queue tracks.
+	rows, err := q.db.Queries.GetQueueTracks(q.db.Ctx)
+	if err != nil {
+		q.logger.Error("Failed to load queue tracks", "err", err)
+
+		return
+	}
+
+	q.tracks = make([]Track, 0, len(rows))
+
+	for _, row := range rows {
+		q.tracks = append(q.tracks, Track{
+			ID:          row.ID,
+			AudioFileID: row.AudioFileID,
+			FilePath:    row.FilePath,
+			Position:    row.Position,
+			Title:       row.Title,
+			Artist:      row.Artist,
+		})
+	}
+
+	// Clamp current index. A value of -1 is valid and means "no current
+	// track" (e.g. the queue was exhausted before shutdown). Only clamp
+	// when the index exceeds the restored track count.
+	if q.currentIndex >= len(q.tracks) && len(q.tracks) > 0 {
+		q.currentIndex = len(q.tracks) - 1
+	}
+
+	q.logger.Info("Queue state restored",
+		"trackCount", len(q.tracks),
+		"currentIndex", q.currentIndex,
+		"shuffleMode", q.shuffleMode,
+		"repeatMode", q.repeatMode,
+	)
+}

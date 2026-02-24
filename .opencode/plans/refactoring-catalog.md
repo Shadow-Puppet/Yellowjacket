@@ -6,38 +6,17 @@ Prioritized list of architectural improvements identified during a full codebase
 
 ## P1 — Should fix before adding major features
 
-### 1. Resolve `RequestPlay` dual-handler ambiguity
-
-**Problem:** Both `player.registerEventHandlers()` (`player.go`) and `queue.registerEventHandlers()` (`queue.go:182`) listen for the `RequestPlay` event. The player calls `Play()` (resume audio), while the queue calls `PlayFromStart()` (play from beginning if `currentIndex == -1`). Both fire on every `RequestPlay` event since Wails delivers to all listeners.
-
-**Why it matters:** This works by coincidence — `PlayFromStart` is a no-op when `currentIndex != -1`, so the two handlers don't conflict in the common case. But it's fragile and semantically confusing. A single event triggering two different actions in two packages is an anti-pattern that will cause bugs as the codebase grows.
-
-**Approach:** Remove the `RequestPlay` handler from the player. The queue should be the sole handler — it already calls `player.Play()` internally when needed. If the queue needs to distinguish "resume" from "play from start", add a separate event or an argument to the existing one.
+### 1. ~~Resolve `RequestPlay` dual-handler ambiguity~~ — solved
 
 ---
 
-### 2. Remove player from Wails `FEBindings` (or remove event handlers)
-
-**Problem:** The player is added to `FEBindings` in `app.go:163`, which generates JS bindings for all exported methods (`Play()`, `Pause()`, `LoadFile()`, `Seek()`, `SetVolume()`, etc.). However, the frontend exclusively uses events for player control. This creates two parallel APIs for the same operations.
-
-**Why it matters:** It exposes internal lifecycle methods (`SetContext()`, `SaveState()`, `RestoreState()`) to the frontend as callable JS functions. New developers won't know which API to use. Any method added to the player automatically becomes a frontend-callable binding.
-
-**Approach:** Remove the player from `FEBindings`. The frontend uses events exclusively and the player doesn't need direct bindings. If `GetCurrentTrackInfo()` is needed as a binding for some edge case, extract it to a separate small struct that only exposes that method.
+### 2. ~~Remove player from Wails `FEBindings` (or remove event handlers)~~ — solved
 
 ---
 
-### 3. Split `queue.go` (2254 lines)
+### 3. ~~Split `queue.go` (2254 lines)~~ — solved
 
-**Problem:** The queue package is a single 2254-line file containing types, state management, ~300 lines of event handler boilerplate, persistence logic, shuffle algorithms, and emit helpers.
-
-**Why it matters:** Hard to navigate, hard to review changes, easy to introduce bugs in unrelated sections.
-
-**Approach:** Split into focused files:
-- `queue.go` — Core types (`Track`, `State`, `Queue` struct), constructor, `SetContext`, `SetPlayer`
-- `handlers.go` — `registerEventHandlers()` and all `handle*` methods
-- `persistence.go` — `persistTracks`, `persistState`, `RestoreState`, `SaveState`, `lookupTrackMetaBatch`
-- `shuffle.go` — Shuffle order generation and navigation
-- `emit.go` — All `emit*` methods
+Split into 5 files: `queue.go` (core types, operations, constructor), `handlers.go` (event handlers + `toStringSlice`/`toIntSlice` helpers), `persistence.go` (DB I/O), `navigation.go` (shuffle/navigation), `emit.go` (event emission). Also applied in-place improvements: `trackMeta.toTrack()` method, `commitMutation()` helper, `slices.Insert` for slice operations, fixed `InsertNext` empty-queue bug, fixed `AddTracks` persist ordering, unified `AddTrack` persistence.
 
 ---
 
@@ -154,11 +133,9 @@ Replace all 49 `as any` casts with calls to these utilities.
 
 ---
 
-### 14. Unused queue sentinels: `ErrEmptyQueue`, `ErrNoPlayer`
+### 14. ~~Unused queue sentinels: `ErrEmptyQueue`, `ErrNoPlayer`~~ — solved
 
-**Problem:** Defined in `queue.go` but never returned or checked.
-
-**Approach:** Delete them, or wire them into the appropriate error paths if they were intended for future validation.
+Removed during the queue.go split/rewrite (item #3).
 
 ---
 
@@ -186,11 +163,9 @@ Replace all 49 `as any` casts with calls to these utilities.
 
 ---
 
-### 18. Custom `sortInts` in queue instead of `slices.Sort`
+### 18. ~~Custom `sortInts` in queue instead of `slices.Sort`~~ — solved
 
-**Problem:** `queue.go` has a hand-written insertion sort for int slices, but `slices.Sort()` is already used elsewhere in the same file.
-
-**Approach:** Replace the custom `sortInts` with `slices.Sort`. Single-line change.
+Replaced during the queue.go refactoring (item #3).
 
 ---
 
