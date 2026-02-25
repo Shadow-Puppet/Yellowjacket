@@ -194,6 +194,16 @@ export const COLUMN_DEFS: Record<string, ColumnDef> = {
  */
 export const ALL_COLUMN_IDS: string[] = Object.keys(COLUMN_DEFS);
 
+/**
+ * Column IDs that are always searched regardless of visibility.
+ * These represent the most common search targets.
+ */
+export const CORE_SEARCH_COLUMN_IDS: string[] = [
+    'trackName',
+    'artistName',
+    'album',
+];
+
 /** Default column IDs matching the original hardcoded layout. */
 export const DEFAULT_COLUMN_IDS: string[] = [
     'trackName',

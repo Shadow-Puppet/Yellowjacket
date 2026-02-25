@@ -24,6 +24,10 @@ import {
 } from './columns';
 import type { ColumnDef } from './columns';
 import {
+    rankTracks,
+    highlightText,
+} from './search-ranking';
+import {
     setDragPayload,
     emitDragActive,
 } from '@utils/drag-controller';
@@ -131,6 +135,10 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
     // -- Memoisation caches for filtered / sorted tracks --
     private cachedFilteredTracks: library.Track[] = [];
     private cachedSortedTracks: library.Track[] = [];
+    private cachedRelevanceScores = new Map<
+        string,
+        number
+    >();
     private prevFilterTracks: library.Track[] = [];
     private prevFilterTerm = '';
     private prevFilterColIds = '';
@@ -223,38 +231,66 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
     }
 
     private computeFilteredTracks(): library.Track[] {
-        const term =
-            this.searchCtrl.term.toLowerCase();
+        const term = this.searchCtrl.term;
 
-        if (!term) return this.tracks;
+        if (!term) {
+            this.cachedRelevanceScores.clear();
 
-        const cols = this.activeColumns;
+            return this.tracks;
+        }
 
-        return this.tracks.filter((t) =>
-            cols.some((col) =>
-                col
-                    .accessor(t)
-                    .toLowerCase()
-                    .includes(term),
-            ),
+        const result = rankTracks(
+            this.tracks,
+            term,
+            this.activeColumns,
         );
+
+        this.cachedRelevanceScores = result.scores;
+
+        return result.tracks;
     }
 
     private computeSortedTracks(): library.Track[] {
         const tracks = this.cachedFilteredTracks;
+        const hasSearch =
+            this.cachedRelevanceScores.size > 0;
+        const col = this.sortField
+            ? COLUMN_DEFS[this.sortField]
+            : undefined;
+        const hasColSort = col?.comparator != null;
 
-        if (!this.sortField) return tracks;
+        // No search, no column sort — default order.
+        if (!hasSearch && !hasColSort) return tracks;
 
-        const col = COLUMN_DEFS[this.sortField];
+        // No search, column sort only — sort by column.
+        if (!hasSearch && hasColSort) {
+            const dir =
+                this.sortDirection === 'asc' ? 1 : -1;
 
-        if (!col?.comparator) return tracks;
+            return [...tracks].sort(
+                (a, b) =>
+                    dir * col!.comparator!(a, b),
+            );
+        }
 
+        // Search active — relevance is primary sort,
+        // column sort (if any) is the tiebreaker.
+        const scores = this.cachedRelevanceScores;
         const dir =
             this.sortDirection === 'asc' ? 1 : -1;
 
-        return [...tracks].sort(
-            (a, b) => dir * col.comparator!(a, b),
-        );
+        return [...tracks].sort((a, b) => {
+            const sa = scores.get(a.FilePath) ?? 0;
+            const sb = scores.get(b.FilePath) ?? 0;
+
+            if (sa !== sb) return sb - sa;
+
+            if (hasColSort) {
+                return dir * col!.comparator!(a, b);
+            }
+
+            return 0;
+        });
     }
 
     // =================================================================
@@ -933,6 +969,11 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
       text-align: center;
     }
 
+    .search-match {
+      background-color: rgba(255, 212, 59, 0.15);
+      border-radius: 2px;
+    }
+
   `];
 
     override connectedCallback() {
@@ -1458,10 +1499,15 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
                     : col.align === 'right'
                       ? 'cell-right'
                       : '';
+                const term =
+                    this.searchCtrl.term;
+                const display = term
+                    ? highlightText(val, term)
+                    : val;
 
                 return html`
                     <div class="cell ${align}">
-                        ${val}
+                        ${display}
                     </div>
                 `;
             })}
