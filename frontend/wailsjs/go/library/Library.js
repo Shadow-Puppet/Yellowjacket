@@ -22,12 +22,24 @@ export function GetAllArtists() {
   return window['go']['library']['Library']['GetAllArtists']();
 }
 
+export function GetAllGenresWithCounts() {
+  return window['go']['library']['Library']['GetAllGenresWithCounts']();
+}
+
 export function GetAllTracks() {
   return window['go']['library']['Library']['GetAllTracks']();
 }
 
+export function GetTracksByGenre(arg1) {
+  return window['go']['library']['Library']['GetTracksByGenre'](arg1);
+}
+
 export function Scan() {
   return window['go']['library']['Library']['Scan']();
+}
+
+export function SearchTracks(arg1) {
+  return window['go']['library']['Library']['SearchTracks'](arg1);
 }
 
 export function SetContext(arg1) {

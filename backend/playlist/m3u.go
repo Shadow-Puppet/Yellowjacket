@@ -19,7 +19,6 @@ const (
 )
 
 var (
-	errInvalidM3U     = errors.New("invalid M3U file: missing #EXTM3U header")
 	errEmptyM3UFile   = errors.New("M3U file is empty")
 	errPlaylistDirNil = errors.New("playlists directory path is empty")
 )
@@ -132,15 +131,15 @@ func parseM3U8(filePath string) (parsedPlaylist, error) {
 			continue
 		}
 
-		// Check header.
+		// Check header. If the first non-empty line is not
+		// #EXTM3U, treat the file as a simple M3U (just
+		// path lines) and fall through to process normally.
 		if !headerSeen {
-			if line == m3uHeader {
-				headerSeen = true
+			headerSeen = true
 
+			if line == m3uHeader {
 				continue
 			}
-
-			return parsedPlaylist{}, errInvalidM3U
 		}
 
 		// Playlist name directive.
@@ -300,11 +299,16 @@ func findPlaylistFile(
 		)
 	}
 
-	if len(matches) == 0 {
-		return "", nil
+	// Filter matches to ensure the extracted ID matches the
+	// target. The glob pattern "1-*.m3u8" also matches
+	// "10-foo.m3u8", "11-bar.m3u8", etc.
+	for _, m := range matches {
+		if extractPlaylistID(m) == id {
+			return m, nil
+		}
 	}
 
-	return matches[0], nil
+	return "", nil
 }
 
 // removeOldPlaylistFile removes an old playlist file for the given
@@ -407,6 +411,74 @@ func extractPlaylistID(filePath string) int64 {
 	}
 
 	return id
+}
+
+// removeM3UEntries removes entries from a slice whose resolved
+// absolute paths appear in the target set.
+func removeM3UEntries(
+	entries []m3uEntry,
+	targetAbsPaths map[string]struct{},
+	libraryRoot string,
+) []m3uEntry {
+	result := make([]m3uEntry, 0, len(entries))
+
+	for _, e := range entries {
+		absPath := toAbsolutePath(
+			e.RelativePath, libraryRoot,
+		)
+		if _, remove := targetAbsPaths[absPath]; remove {
+			continue
+		}
+
+		result = append(result, e)
+	}
+
+	return result
+}
+
+// replaceM3UEntryPaths replaces the relative paths of entries
+// whose resolved absolute paths match keys in the replacements
+// map. Values are new relative paths.
+func replaceM3UEntryPaths(
+	entries []m3uEntry,
+	replacements map[string]string,
+	libraryRoot string,
+) []m3uEntry {
+	result := make([]m3uEntry, len(entries))
+
+	for i, e := range entries {
+		result[i] = e
+
+		absPath := toAbsolutePath(
+			e.RelativePath, libraryRoot,
+		)
+
+		if newRel, ok := replacements[absPath]; ok {
+			result[i].RelativePath = newRel
+		}
+	}
+
+	return result
+}
+
+// findM3UEntry finds the M3U entry whose resolved absolute path
+// matches the given target path. Returns the entry and its index,
+// or -1 if not found.
+func findM3UEntry(
+	entries []m3uEntry,
+	targetAbsPath string,
+	libraryRoot string,
+) (m3uEntry, int) {
+	for i, e := range entries {
+		absPath := toAbsolutePath(
+			e.RelativePath, libraryRoot,
+		)
+		if absPath == targetAbsPath {
+			return e, i
+		}
+	}
+
+	return m3uEntry{}, -1
 }
 
 // displayTitle builds an EXTINF display title from artist and title.

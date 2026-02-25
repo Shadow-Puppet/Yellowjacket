@@ -22,8 +22,8 @@ func (q *Queries) CountAudioFiles(ctx context.Context) (int64, error) {
 }
 
 const createAudioFile = `-- name: CreateAudioFile :one
-INSERT INTO audio_files (file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size
+INSERT INTO audio_files (file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size, basename) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size, basename
 `
 
 type CreateAudioFileParams struct {
@@ -36,6 +36,7 @@ type CreateAudioFileParams struct {
 	Channels           int64
 	Bitrate            int64
 	FileSize           int64
+	Basename           string
 }
 
 func (q *Queries) CreateAudioFile(ctx context.Context, arg CreateAudioFileParams) (AudioFile, error) {
@@ -49,6 +50,7 @@ func (q *Queries) CreateAudioFile(ctx context.Context, arg CreateAudioFileParams
 		arg.Channels,
 		arg.Bitrate,
 		arg.FileSize,
+		arg.Basename,
 	)
 	var i AudioFile
 	err := row.Scan(
@@ -62,6 +64,7 @@ func (q *Queries) CreateAudioFile(ctx context.Context, arg CreateAudioFileParams
 		&i.Channels,
 		&i.Bitrate,
 		&i.FileSize,
+		&i.Basename,
 	)
 	return i, err
 }
@@ -118,7 +121,7 @@ func (q *Queries) GetAllAudioFilePaths(ctx context.Context) ([]GetAllAudioFilePa
 }
 
 const getAllAudioFiles = `-- name: GetAllAudioFiles :many
-SELECT id, file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size FROM audio_files
+SELECT id, file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size, basename FROM audio_files
 `
 
 func (q *Queries) GetAllAudioFiles(ctx context.Context) ([]AudioFile, error) {
@@ -141,6 +144,7 @@ func (q *Queries) GetAllAudioFiles(ctx context.Context) ([]AudioFile, error) {
 			&i.Channels,
 			&i.Bitrate,
 			&i.FileSize,
+			&i.Basename,
 		); err != nil {
 			return nil, err
 		}
@@ -302,7 +306,7 @@ func (q *Queries) GetAllTracksWithFullMetadata(ctx context.Context) ([]GetAllTra
 }
 
 const getAudioFile = `-- name: GetAudioFile :one
-SELECT id, file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size FROM audio_files 
+SELECT id, file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size, basename FROM audio_files 
 WHERE id = ? LIMIT 1
 `
 
@@ -320,12 +324,13 @@ func (q *Queries) GetAudioFile(ctx context.Context, id int64) (AudioFile, error)
 		&i.Channels,
 		&i.Bitrate,
 		&i.FileSize,
+		&i.Basename,
 	)
 	return i, err
 }
 
 const getAudioFileByPath = `-- name: GetAudioFileByPath :one
-SELECT id, file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size FROM audio_files
+SELECT id, file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size, basename FROM audio_files
 WHERE file_path = ? LIMIT 1
 `
 
@@ -343,6 +348,7 @@ func (q *Queries) GetAudioFileByPath(ctx context.Context, filePath string) (Audi
 		&i.Channels,
 		&i.Bitrate,
 		&i.FileSize,
+		&i.Basename,
 	)
 	return i, err
 }
@@ -403,7 +409,7 @@ func (q *Queries) GetAudioFilesByReleaseGroup(ctx context.Context, releaseGroupI
 }
 
 const getAudioFilesNeedingMetadata = `-- name: GetAudioFilesNeedingMetadata :many
-SELECT id, file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size FROM audio_files
+SELECT id, file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size, basename FROM audio_files
 WHERE recording_id = 0
 `
 
@@ -427,6 +433,7 @@ func (q *Queries) GetAudioFilesNeedingMetadata(ctx context.Context) ([]AudioFile
 			&i.Channels,
 			&i.Bitrate,
 			&i.FileSize,
+			&i.Basename,
 		); err != nil {
 			return nil, err
 		}
@@ -492,9 +499,71 @@ func (q *Queries) GetTrackMetadataByPath(ctx context.Context, filePath string) (
 	return i, err
 }
 
+const searchAudioFilesByBasename = `-- name: SearchAudioFilesByBasename :many
+SELECT
+    af.file_path,
+    af.length_milliseconds,
+    COALESCE(r.name, '') AS title,
+    COALESCE(ac.text, '') AS artist,
+    COALESCE(rg.name, '') AS album
+FROM audio_files af
+LEFT JOIN recordings r ON af.recording_id = r.id
+LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
+LEFT JOIN (
+    SELECT recording_id, MIN(release_group_id) AS release_group_id
+    FROM release_group_recordings
+    GROUP BY recording_id
+) rgr ON r.id = rgr.recording_id
+LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
+WHERE af.basename = ?
+LIMIT ?
+`
+
+type SearchAudioFilesByBasenameParams struct {
+	Basename string
+	Limit    int64
+}
+
+type SearchAudioFilesByBasenameRow struct {
+	FilePath           string
+	LengthMilliseconds int64
+	Title              string
+	Artist             string
+	Album              string
+}
+
+func (q *Queries) SearchAudioFilesByBasename(ctx context.Context, arg SearchAudioFilesByBasenameParams) ([]SearchAudioFilesByBasenameRow, error) {
+	rows, err := q.db.QueryContext(ctx, searchAudioFilesByBasename, arg.Basename, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SearchAudioFilesByBasenameRow
+	for rows.Next() {
+		var i SearchAudioFilesByBasenameRow
+		if err := rows.Scan(
+			&i.FilePath,
+			&i.LengthMilliseconds,
+			&i.Title,
+			&i.Artist,
+			&i.Album,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateAudioFile = `-- name: UpdateAudioFile :exec
 UPDATE audio_files 
-SET file_path = ?, length_milliseconds = ?, file_type_id = ?, recording_id = ?, sample_rate = ?, bit_depth = ?, channels = ?, bitrate = ?, file_size = ?
+SET file_path = ?, length_milliseconds = ?, file_type_id = ?, recording_id = ?, sample_rate = ?, bit_depth = ?, channels = ?, bitrate = ?, file_size = ?, basename = ?
 WHERE id = ?
 `
 
@@ -508,6 +577,7 @@ type UpdateAudioFileParams struct {
 	Channels           int64
 	Bitrate            int64
 	FileSize           int64
+	Basename           string
 	ID                 int64
 }
 
@@ -522,6 +592,7 @@ func (q *Queries) UpdateAudioFile(ctx context.Context, arg UpdateAudioFileParams
 		arg.Channels,
 		arg.Bitrate,
 		arg.FileSize,
+		arg.Basename,
 		arg.ID,
 	)
 	return err

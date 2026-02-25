@@ -18,12 +18,20 @@ export function DeletePlaylist(arg1) {
   return window['go']['playlist']['Service']['DeletePlaylist'](arg1);
 }
 
+export function FindPhantomMatches(arg1, arg2) {
+  return window['go']['playlist']['Service']['FindPhantomMatches'](arg1, arg2);
+}
+
 export function GetAllPlaylists() {
   return window['go']['playlist']['Service']['GetAllPlaylists']();
 }
 
 export function GetAllPlaylistsWithTracks() {
   return window['go']['playlist']['Service']['GetAllPlaylistsWithTracks']();
+}
+
+export function GetPhantomCandidates(arg1, arg2) {
+  return window['go']['playlist']['Service']['GetPhantomCandidates'](arg1, arg2);
 }
 
 export function GetPlaylistTracks(arg1) {
@@ -34,6 +42,10 @@ export function ImportPlaylist(arg1) {
   return window['go']['playlist']['Service']['ImportPlaylist'](arg1);
 }
 
+export function RemovePhantomTracks(arg1, arg2) {
+  return window['go']['playlist']['Service']['RemovePhantomTracks'](arg1, arg2);
+}
+
 export function RemoveTracksFromPlaylist(arg1, arg2) {
   return window['go']['playlist']['Service']['RemoveTracksFromPlaylist'](arg1, arg2);
 }
@@ -42,8 +54,16 @@ export function RenamePlaylist(arg1, arg2) {
   return window['go']['playlist']['Service']['RenamePlaylist'](arg1, arg2);
 }
 
+export function ResolvePhantomTracks(arg1, arg2) {
+  return window['go']['playlist']['Service']['ResolvePhantomTracks'](arg1, arg2);
+}
+
 export function RestoreAllPlaylists() {
   return window['go']['playlist']['Service']['RestoreAllPlaylists']();
+}
+
+export function SearchLibrary(arg1) {
+  return window['go']['playlist']['Service']['SearchLibrary'](arg1);
 }
 
 export function SetContext(arg1) {

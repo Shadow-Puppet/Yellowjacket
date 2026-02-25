@@ -5,7 +5,9 @@ import {
     state,
 } from 'lit/decorators.js';
 import { library } from '@go/models';
-import { LibraryController } from '@store/controllers/library-controller';
+import { GetTracksByGenre } from '@go/library/Library';
+import { EventsOn } from '@runtime/runtime';
+import { Events } from '../../events';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@components/track-list/track-list.js';
 
@@ -20,10 +22,8 @@ export class GenreDetails extends LitElement {
     @state()
     private loading = true;
 
-    private libraryCtrl = new LibraryController(this);
-
-    /** Tracks the store's cached array reference to detect refreshes. */
-    private lastTracksRef: library.Track[] | null = null;
+    private scanCompleteCleanup: (() => void) | null =
+        null;
 
     static override styles = css`
         :host {
@@ -151,17 +151,19 @@ export class GenreDetails extends LitElement {
     override connectedCallback() {
         super.connectedCallback();
         this.loadTracks();
+
+        this.scanCompleteCleanup = EventsOn(
+            Events.LibraryScanComplete,
+            () => this.loadTracks(),
+        );
     }
 
-    override updated() {
-        const cached = this.libraryCtrl.cachedTracks;
+    override disconnectedCallback() {
+        super.disconnectedCallback();
 
-        if (
-            cached !== null &&
-            cached !== this.lastTracksRef
-        ) {
-            this.lastTracksRef = cached;
-            this.loadTracks();
+        if (this.scanCompleteCleanup) {
+            this.scanCompleteCleanup();
+            this.scanCompleteCleanup = null;
         }
     }
 
@@ -173,14 +175,8 @@ export class GenreDetails extends LitElement {
         if (!this.genreName) return;
 
         try {
-            const allTracks =
-                await this.libraryCtrl.getTracks();
-
-            this.tracks = (allTracks ?? []).filter(
-                (t) =>
-                    (t.Genre ?? []).includes(
-                        this.genreName,
-                    ),
+            this.tracks = await GetTracksByGenre(
+                this.genreName,
             );
         } catch (error) {
             console.error(

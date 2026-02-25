@@ -211,6 +211,115 @@ func runMigrations(
 		}
 	}
 
+	// Migration 2: add basename column and populate search index.
+	if version < 2 {
+		if err := migration2BasenameAndFTS(
+			ctx, db, logger,
+		); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migration2BasenameAndFTS adds the basename column to audio_files,
+// backfills it from file_path, creates the basename index, and
+// populates the FTS5 search_index table.
+func migration2BasenameAndFTS(
+	ctx context.Context,
+	db *sql.DB,
+	logger *slog.Logger,
+) error {
+	logger.Info(
+		"applying migration 2: basename column + FTS5 search index",
+	)
+
+	// Add basename column (may already exist on fresh DBs).
+	if _, err := db.ExecContext(
+		ctx,
+		"ALTER TABLE audio_files ADD COLUMN basename text NOT NULL DEFAULT ''",
+	); err != nil && !isDuplicateColumnErr(err) {
+		return fmt.Errorf(
+			"migration 2: could not add basename column: %w",
+			err,
+		)
+	}
+
+	// Backfill basename from file_path for existing rows.
+	// SQLite doesn't have a basename function, so we use
+	// REPLACE to strip directories by finding everything
+	// after the last '/'.
+	if _, err := db.ExecContext(ctx, `
+		UPDATE audio_files
+		SET basename = CASE
+			WHEN INSTR(file_path, '/') > 0
+			THEN SUBSTR(
+				file_path,
+				LENGTH(file_path)
+					- LENGTH(
+						REPLACE(file_path, '/', '')
+					)
+					+ 1
+			)
+			ELSE file_path
+		END
+		WHERE basename = ''
+	`); err != nil {
+		return fmt.Errorf(
+			"migration 2: could not backfill basename: %w",
+			err,
+		)
+	}
+
+	// Create index (IF NOT EXISTS handles fresh DBs).
+	if _, err := db.ExecContext(ctx, `
+		CREATE INDEX IF NOT EXISTS idx_audio_files_basename
+		ON audio_files(basename)
+	`); err != nil {
+		return fmt.Errorf(
+			"migration 2: could not create basename index: %w",
+			err,
+		)
+	}
+
+	// Populate FTS5 search index from existing data.
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO search_index(rowid, file_path, title, artist, album)
+		SELECT
+			af.id,
+			af.file_path,
+			COALESCE(r.name, ''),
+			COALESCE(ac.text, ''),
+			COALESCE(rg.name, '')
+		FROM audio_files af
+		LEFT JOIN recordings r ON af.recording_id = r.id
+		LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
+		LEFT JOIN (
+			SELECT recording_id,
+				MIN(release_group_id) AS release_group_id
+			FROM release_group_recordings
+			GROUP BY recording_id
+		) rgr ON r.id = rgr.recording_id
+		LEFT JOIN release_groups rg
+			ON rgr.release_group_id = rg.id
+	`); err != nil {
+		return fmt.Errorf(
+			"migration 2: could not populate search index: %w",
+			err,
+		)
+	}
+
+	if _, err := db.ExecContext(
+		ctx, "PRAGMA user_version = 2",
+	); err != nil {
+		return fmt.Errorf(
+			"could not set user_version to 2: %w", err,
+		)
+	}
+
+	logger.Info("migration 2 complete")
+
 	return nil
 }
 

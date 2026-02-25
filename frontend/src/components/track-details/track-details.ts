@@ -48,10 +48,7 @@ export class TrackDetails extends LitElement {
     @state() private editValues: Record<string, string> = {};
 
     @query('wa-dialog')
-    private dialog!: HTMLElement & {
-        show: () => void;
-        hide: () => void;
-    };
+    private dialog!: HTMLElement & { open: boolean };
 
     // =================================================================
     // PUBLIC API
@@ -68,13 +65,13 @@ export class TrackDetails extends LitElement {
         this.editValues = {};
 
         this.updateComplete.then(() => {
-            this.dialog?.show();
+            if (this.dialog) this.dialog.open = true;
         });
     }
 
     /** Close the dialog. */
     close(): void {
-        this.dialog?.hide();
+        if (this.dialog) this.dialog.open = false;
         this.editing = false;
         this.editValues = {};
     }

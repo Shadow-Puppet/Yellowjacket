@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -65,6 +66,32 @@ type Track struct {
 type WithTracks struct {
 	Summary Summary `json:"Summary"`
 	Tracks  []Track `json:"Tracks"`
+}
+
+// CandidateTrack represents a potential library match for a
+// phantom track.
+type CandidateTrack struct {
+	FilePath string  `json:"FilePath"`
+	Title    string  `json:"Title"`
+	Artist   string  `json:"Artist"`
+	Album    string  `json:"Album"`
+	Duration string  `json:"Duration"`
+	Score    float64 `json:"Score"`
+}
+
+// PhantomMatch represents a high-confidence pairing of a phantom
+// track to a library track.
+type PhantomMatch struct {
+	PhantomPath  string         `json:"PhantomPath"`
+	PhantomTitle string         `json:"PhantomTitle"`
+	Candidate    CandidateTrack `json:"Candidate"`
+}
+
+// PhantomSearchResult contains auto-matched pairs and remaining
+// unmatched phantom paths for a batch search operation.
+type PhantomSearchResult struct {
+	AutoMatched []PhantomMatch `json:"AutoMatched"`
+	Unmatched   []string       `json:"Unmatched"`
 }
 
 // Service manages playlist operations.
@@ -679,9 +706,10 @@ func (s *Service) ImportPlaylist(
 	var (
 		resolved   int
 		unresolved int
+		position   int
 	)
 
-	for i, entry := range parsed.Entries {
+	for _, entry := range parsed.Entries {
 		absPath := toAbsolutePath(
 			entry.RelativePath, libraryRoot,
 		)
@@ -701,7 +729,7 @@ func (s *Service) ImportPlaylist(
 			sqlcgen.AddPlaylistTrackParams{
 				PlaylistID:  created.ID,
 				AudioFileID: audioFile.ID,
-				Position:    int64(i),
+				Position:    int64(position),
 			},
 		)
 		if addErr != nil {
@@ -715,6 +743,7 @@ func (s *Service) ImportPlaylist(
 			continue
 		}
 
+		position++
 		resolved++
 	}
 
@@ -834,7 +863,9 @@ func (s *Service) restoreSinglePlaylist(
 		return 0, 0
 	}
 
-	for i, entry := range parsed.Entries {
+	var position int
+
+	for _, entry := range parsed.Entries {
 		absPath := toAbsolutePath(
 			entry.RelativePath, libraryRoot,
 		)
@@ -853,7 +884,7 @@ func (s *Service) restoreSinglePlaylist(
 			sqlcgen.AddPlaylistTrackParams{
 				PlaylistID:  playlistID,
 				AudioFileID: audioFile.ID,
-				Position:    int64(i),
+				Position:    int64(position),
 			},
 		)
 		if addErr != nil {
@@ -867,6 +898,7 @@ func (s *Service) restoreSinglePlaylist(
 			continue
 		}
 
+		position++
 		restored++
 	}
 
@@ -1195,4 +1227,539 @@ func (s *Service) migrateExistingPlaylists() {
 			"count", migrated,
 		)
 	}
+}
+
+// =================================================================
+// Phantom track resolution
+// =================================================================
+
+// FindPhantomMatches searches the library for matches for the
+// given phantom file paths. High-confidence matches are returned
+// as auto-matched pairs; the rest remain in the unmatched list.
+func (s *Service) FindPhantomMatches(
+	playlistID int64,
+	phantomPaths []string,
+) (PhantomSearchResult, error) {
+	if len(phantomPaths) == 0 {
+		return PhantomSearchResult{}, nil
+	}
+
+	dir, err := s.playlistsDir()
+	if err != nil {
+		return PhantomSearchResult{}, fmt.Errorf(
+			"could not get playlists dir: %w", err,
+		)
+	}
+
+	libraryRoot := s.getLibraryRoot()
+
+	// Load M3U8 entries for display title / duration data.
+	m3uPath, err := findPlaylistFile(dir, playlistID)
+	if err != nil {
+		return PhantomSearchResult{}, fmt.Errorf(
+			"could not find playlist file: %w", err,
+		)
+	}
+
+	var entries []m3uEntry
+
+	if m3uPath != "" {
+		parsed, parseErr := parseM3U8(m3uPath)
+		if parseErr == nil {
+			entries = parsed.Entries
+		}
+	}
+
+	// Build a lookup from absolute path to M3U entry.
+	entryByPath := make(map[string]m3uEntry, len(entries))
+
+	for _, e := range entries {
+		absPath := toAbsolutePath(
+			e.RelativePath, libraryRoot,
+		)
+		entryByPath[absPath] = e
+	}
+
+	// Track which candidates have been claimed by auto-match
+	// so we don't assign the same candidate to two phantoms.
+	claimed := make(map[string]struct{})
+
+	var result PhantomSearchResult
+
+	for _, phantomPath := range phantomPaths {
+		entry := entryByPath[phantomPath]
+		candidates := s.searchCandidates(
+			phantomPath, entry,
+		)
+
+		matched := false
+
+		for _, c := range candidates {
+			if _, taken := claimed[c.FilePath]; taken {
+				continue
+			}
+
+			if c.Score >= autoMatchMinimum {
+				result.AutoMatched = append(
+					result.AutoMatched,
+					PhantomMatch{
+						PhantomPath:  phantomPath,
+						PhantomTitle: entry.DisplayTitle,
+						Candidate:    c,
+					},
+				)
+
+				claimed[c.FilePath] = struct{}{}
+				matched = true
+
+				break
+			}
+		}
+
+		if !matched {
+			result.Unmatched = append(
+				result.Unmatched, phantomPath,
+			)
+		}
+	}
+
+	return result, nil
+}
+
+// GetPhantomCandidates returns scored candidate matches for a
+// single phantom track.
+func (s *Service) GetPhantomCandidates(
+	playlistID int64,
+	phantomPath string,
+) ([]CandidateTrack, error) {
+	dir, err := s.playlistsDir()
+	if err != nil {
+		return nil, fmt.Errorf(
+			"could not get playlists dir: %w", err,
+		)
+	}
+
+	libraryRoot := s.getLibraryRoot()
+
+	// Find the M3U entry for this phantom.
+	m3uPath, err := findPlaylistFile(dir, playlistID)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"could not find playlist file: %w", err,
+		)
+	}
+
+	var entry m3uEntry
+
+	if m3uPath != "" {
+		parsed, parseErr := parseM3U8(m3uPath)
+		if parseErr == nil {
+			entry, _ = findM3UEntry(
+				parsed.Entries, phantomPath, libraryRoot,
+			)
+		}
+	}
+
+	return s.searchCandidates(
+		phantomPath, entry,
+	), nil
+}
+
+// SearchLibrary searches the entire library by a free-text query
+// for manual phantom resolution.
+func (s *Service) SearchLibrary(
+	query string,
+) ([]CandidateTrack, error) {
+	trimmed := strings.TrimSpace(query)
+	if trimmed == "" {
+		return []CandidateTrack{}, nil
+	}
+
+	rows, err := s.db.SearchFTS(
+		trimmed, maxLibrarySearchResults,
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"library search failed: %w", err,
+		)
+	}
+
+	candidates := make([]CandidateTrack, 0, len(rows))
+
+	for _, row := range rows {
+		candidates = append(candidates, CandidateTrack{
+			FilePath: row.FilePath,
+			Title:    row.Title,
+			Artist:   row.Artist,
+			Album:    row.Album,
+			Duration: strconv.FormatInt(
+				row.LengthMilliseconds, 10,
+			),
+		})
+	}
+
+	return candidates, nil
+}
+
+// ResolvePhantomTracks replaces phantom entries in a playlist
+// with real library tracks. The matches map keys are phantom
+// absolute paths and values are resolved absolute paths.
+func (s *Service) ResolvePhantomTracks(
+	playlistID int64,
+	matches map[string]string,
+) error {
+	if len(matches) == 0 {
+		return nil
+	}
+
+	dir, err := s.playlistsDir()
+	if err != nil {
+		return fmt.Errorf(
+			"could not get playlists dir: %w", err,
+		)
+	}
+
+	libraryRoot := s.getLibraryRoot()
+
+	m3uPath, err := findPlaylistFile(dir, playlistID)
+	if err != nil || m3uPath == "" {
+		return fmt.Errorf(
+			"could not find M3U8 file for playlist %d: %w",
+			playlistID, err,
+		)
+	}
+
+	parsed, err := parseM3U8(m3uPath)
+	if err != nil {
+		return fmt.Errorf(
+			"could not parse M3U8: %w", err,
+		)
+	}
+
+	// Get next available DB position.
+	nextPos, err := s.db.Queries.GetNextPlaylistTrackPosition(
+		s.db.Ctx, playlistID,
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"could not get next position: %w", err,
+		)
+	}
+
+	// Build M3U path replacements and insert DB rows.
+	pathReplacements := make(
+		map[string]string, len(matches),
+	)
+
+	var resolved int
+
+	for phantomAbs, resolvedAbs := range matches {
+		audioFile, lookupErr := s.db.Queries.GetAudioFileByPath(
+			s.db.Ctx, resolvedAbs,
+		)
+		if lookupErr != nil {
+			s.logger.Warn(
+				"Resolved path not found in library",
+				"phantomPath", phantomAbs,
+				"resolvedPath", resolvedAbs,
+				"err", lookupErr,
+			)
+
+			continue
+		}
+
+		_, addErr := s.db.Queries.AddPlaylistTrack(
+			s.db.Ctx,
+			sqlcgen.AddPlaylistTrackParams{
+				PlaylistID:  playlistID,
+				AudioFileID: audioFile.ID,
+				Position:    nextPos + int64(resolved),
+			},
+		)
+		if addErr != nil {
+			s.logger.Warn(
+				"Could not add resolved track",
+				"playlistId", playlistID,
+				"path", resolvedAbs,
+				"err", addErr,
+			)
+
+			continue
+		}
+
+		newRel := toRelativePath(resolvedAbs, libraryRoot)
+		pathReplacements[phantomAbs] = newRel
+		resolved++
+	}
+
+	// Rewrite the M3U8 with updated paths.
+	if resolved > 0 {
+		updated := replaceM3UEntryPaths(
+			parsed.Entries, pathReplacements, libraryRoot,
+		)
+
+		playlist, nameErr := s.db.Queries.GetPlaylist(
+			s.db.Ctx, playlistID,
+		)
+		if nameErr != nil {
+			return fmt.Errorf(
+				"could not get playlist name: %w", nameErr,
+			)
+		}
+
+		if writeErr := writeM3U8(
+			dir, playlistID, playlist.Name, updated,
+		); writeErr != nil {
+			return fmt.Errorf(
+				"could not rewrite M3U8: %w", writeErr,
+			)
+		}
+	}
+
+	s.logger.Info(
+		"Phantom tracks resolved",
+		"playlistId", playlistID,
+		"resolved", resolved,
+		"requested", len(matches),
+	)
+
+	s.emitEvent(events.PlaylistTracksChanged, playlistID)
+
+	return nil
+}
+
+// RemovePhantomTracks removes phantom entries from a playlist's
+// M3U8 file. Since phantom tracks have no DB rows, only the
+// M3U8 file is modified.
+func (s *Service) RemovePhantomTracks(
+	playlistID int64,
+	phantomPaths []string,
+) error {
+	if len(phantomPaths) == 0 {
+		return nil
+	}
+
+	dir, err := s.playlistsDir()
+	if err != nil {
+		return fmt.Errorf(
+			"could not get playlists dir: %w", err,
+		)
+	}
+
+	libraryRoot := s.getLibraryRoot()
+
+	m3uPath, err := findPlaylistFile(dir, playlistID)
+	if err != nil || m3uPath == "" {
+		return fmt.Errorf(
+			"could not find M3U8 file for playlist %d: %w",
+			playlistID, err,
+		)
+	}
+
+	parsed, err := parseM3U8(m3uPath)
+	if err != nil {
+		return fmt.Errorf(
+			"could not parse M3U8: %w", err,
+		)
+	}
+
+	targetSet := make(
+		map[string]struct{}, len(phantomPaths),
+	)
+
+	for _, p := range phantomPaths {
+		targetSet[p] = struct{}{}
+	}
+
+	updated := removeM3UEntries(
+		parsed.Entries, targetSet, libraryRoot,
+	)
+
+	playlist, err := s.db.Queries.GetPlaylist(
+		s.db.Ctx, playlistID,
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"could not get playlist name: %w", err,
+		)
+	}
+
+	if err := writeM3U8(
+		dir, playlistID, playlist.Name, updated,
+	); err != nil {
+		return fmt.Errorf(
+			"could not rewrite M3U8: %w", err,
+		)
+	}
+
+	s.logger.Info(
+		"Phantom tracks removed",
+		"playlistId", playlistID,
+		"removed", len(phantomPaths),
+	)
+
+	s.emitEvent(events.PlaylistTracksChanged, playlistID)
+
+	return nil
+}
+
+// searchCandidates finds and scores candidate library tracks
+// for a single phantom track.
+func (s *Service) searchCandidates(
+	phantomPath string,
+	entry m3uEntry,
+) []CandidateTrack {
+	basename := filepath.Base(phantomPath)
+	seen := make(map[string]struct{})
+
+	var combined []database.SearchRow
+
+	// 1. Exact basename match via indexed column.
+	bnRows, err := s.db.Queries.SearchAudioFilesByBasename(
+		s.db.Ctx,
+		sqlcgen.SearchAudioFilesByBasenameParams{
+			Basename: basename,
+			Limit:    int64(maxCandidates),
+		},
+	)
+	if err != nil {
+		s.logger.Warn(
+			"Basename search failed",
+			"basename", basename,
+			"err", err,
+		)
+	}
+
+	for _, r := range bnRows {
+		if _, ok := seen[r.FilePath]; ok {
+			continue
+		}
+
+		seen[r.FilePath] = struct{}{}
+
+		combined = append(combined, database.SearchRow{
+			FilePath:           r.FilePath,
+			LengthMilliseconds: r.LengthMilliseconds,
+			Title:              r.Title,
+			Artist:             r.Artist,
+			Album:              r.Album,
+		})
+	}
+
+	// 2. FTS5 filename-token search for fuzzy basename
+	// matches (e.g. different extension).
+	ftsFileRows, err := s.db.SearchFTSByFilename(
+		basename, maxCandidates,
+	)
+	if err != nil {
+		s.logger.Warn(
+			"FTS filename search failed",
+			"basename", basename,
+			"err", err,
+		)
+	}
+
+	for _, r := range ftsFileRows {
+		if _, ok := seen[r.FilePath]; ok {
+			continue
+		}
+
+		seen[r.FilePath] = struct{}{}
+
+		combined = append(combined, r)
+	}
+
+	// 3. FTS5 keyword search from path + display title.
+	keywords := extractKeywords(phantomPath)
+
+	if entry.DisplayTitle != "" {
+		titleKeywords := extractKeywords(
+			entry.DisplayTitle,
+		)
+		keywords = append(keywords, titleKeywords...)
+		keywords = dedupStrings(keywords)
+	}
+
+	if len(keywords) > 0 {
+		kwQuery := strings.Join(keywords, " ")
+
+		kwRows, kwErr := s.db.SearchFTS(
+			kwQuery, maxCandidates,
+		)
+		if kwErr != nil {
+			s.logger.Warn(
+				"FTS keyword search failed",
+				"keywords", keywords,
+				"err", kwErr,
+			)
+		}
+
+		for _, r := range kwRows {
+			if _, ok := seen[r.FilePath]; ok {
+				continue
+			}
+
+			seen[r.FilePath] = struct{}{}
+
+			combined = append(combined, r)
+		}
+	}
+
+	// Score each candidate.
+	pp := newPhantomProfile(
+		phantomPath, entry.DisplayTitle,
+		entry.DurationSec,
+	)
+
+	candidates := make(
+		[]CandidateTrack, 0, len(combined),
+	)
+
+	for _, row := range combined {
+		score := scoreCandidate(
+			pp,
+			row.FilePath,
+			row.Title,
+			row.Artist,
+			row.LengthMilliseconds,
+		)
+
+		candidates = append(candidates, CandidateTrack{
+			FilePath: row.FilePath,
+			Title:    row.Title,
+			Artist:   row.Artist,
+			Album:    row.Album,
+			Duration: strconv.FormatInt(
+				row.LengthMilliseconds, 10,
+			),
+			Score: score,
+		})
+	}
+
+	// Sort by score descending.
+	sortCandidatesByScore(candidates)
+
+	if len(candidates) > maxCandidates {
+		candidates = candidates[:maxCandidates]
+	}
+
+	return candidates
+}
+
+// sortCandidatesByScore sorts candidates by score descending.
+func sortCandidatesByScore(candidates []CandidateTrack) {
+	slices.SortFunc(
+		candidates,
+		func(a, b CandidateTrack) int {
+			if a.Score > b.Score {
+				return -1
+			}
+
+			if a.Score < b.Score {
+				return 1
+			}
+
+			return 0
+		},
+	)
 }

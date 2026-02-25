@@ -160,6 +160,15 @@ func (l *Library) clearLibraryTables() error {
 		)
 	}
 
+	// Clear FTS5 search index.
+	if _, err := tx.ExecContext(
+		l.ctx, `DELETE FROM search_index`,
+	); err != nil {
+		return fmt.Errorf(
+			"could not clear search index: %w", err,
+		)
+	}
+
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf(
 			"could not commit library clear transaction: %w", err,

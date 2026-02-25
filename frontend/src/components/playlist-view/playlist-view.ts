@@ -13,6 +13,7 @@ import {
     DeletePlaylist,
     RenamePlaylist,
     ImportPlaylist,
+    RemovePhantomTracks,
 } from '@go/playlist/Service';
 import { PlaylistFilePicker } from '@go/frontendutil/FrontendUtil';
 import type { playlist } from '@go/models';
@@ -44,6 +45,8 @@ import { contextMenuStyles } from '@utils/context-menu-controller.js';
 import '@components/track-details/track-details.js';
 import type { TrackDetails } from '@components/track-details/track-details.js';
 import type { CoverArtUrls } from '@components/track-details/track-details.js';
+import '@components/phantom-resolver/phantom-resolver.js';
+import type { PhantomResolver } from '@components/phantom-resolver/phantom-resolver.js';
 
 const SCROLL_DEBOUNCE_MS = 100;
 
@@ -191,6 +194,9 @@ export class PlaylistView
     /** True when dragging over the "New Playlist" button. */
     @state() private dragOverNewButton = false;
 
+    /** Error message from the last failed import, auto-clears. */
+    @state() private importError = '';
+
     /**
      * File paths from a drop that landed outside any playlist.
      * When non-empty the create form is in "create-and-add" mode.
@@ -210,6 +216,9 @@ export class PlaylistView
 
     @query('track-details')
     private trackDetailsDialog!: TrackDetails;
+
+    @query('phantom-resolver')
+    private phantomResolver!: PhantomResolver;
 
     private closePlaylistCtxMenuHandler =
         () => this.closePlaylistContextMenu();
@@ -579,23 +588,83 @@ export class PlaylistView
         }
 
         .track-item.phantom {
-            opacity: 0.45;
-            cursor: not-allowed;
+            cursor: pointer;
         }
 
         .track-item.phantom:hover {
-            background-color: transparent;
+            background-color: var(
+                --yj-hover-overlay,
+                rgba(255, 255, 255, 0.05)
+            );
         }
 
-        .phantom-badge {
-            display: inline-block;
-            font-size: 10px;
+        .track-item.phantom.selected {
+            background-color: var(
+                --yj-selection-bg,
+                rgba(100, 160, 255, 0.15)
+            );
+        }
+
+        .phantom-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
+            width: 100%;
+        }
+
+        .phantom-caution {
+            flex-shrink: 0;
+            font-size: 14px;
             color: var(--yj-warning, #e67700);
-            background: rgba(230, 119, 0, 0.15);
-            padding: 1px 6px;
+        }
+
+        .phantom-path {
+            flex: 1;
+            min-width: 0;
+            font-size: 12px;
+            color: var(--yj-text-tertiary, #888);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .phantom-actions {
+            display: flex;
+            align-items: center;
+            gap: 2px;
+            flex-shrink: 0;
+        }
+
+        .phantom-icon-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: none;
+            border: none;
+            color: var(--yj-text-tertiary, #888);
+            cursor: pointer;
+            padding: 4px;
             border-radius: 3px;
-            margin-left: 8px;
-            vertical-align: middle;
+            font-size: 13px;
+        }
+
+        .phantom-icon-btn:hover {
+            color: var(
+                --yj-text-primary,
+                #fff
+            );
+            background: rgba(
+                255,
+                255,
+                255,
+                0.08
+            );
+        }
+
+        .phantom-icon-btn.phantom-icon-remove:hover {
+            color: var(--yj-error, #e03131);
+            background: rgba(224, 49, 49, 0.12);
         }
 
         .track-item:last-child {
@@ -747,6 +816,23 @@ export class PlaylistView
             border-color: var(--yj-accent, #ffd43b);
             color: var(--yj-accent, #ffd43b);
         }
+
+        .import-error {
+            padding: 0.5em 0.75em;
+            margin: 0.5em 16px 0;
+            font-size: 0.8em;
+            color: var(--yj-error, #e03131);
+            background: color-mix(
+                in srgb,
+                var(--yj-error, #e03131) 10%,
+                var(--yj-bg-elevated, #343a40)
+            );
+            border-radius: 4px;
+            border-left: 3px solid
+                var(--yj-error, #e03131);
+        }
+
+
     `];
 
     override connectedCallback() {
@@ -1045,10 +1131,58 @@ export class PlaylistView
             case 'track-details':
                 this.openTrackDetails(filePaths[0]!);
                 break;
+            case 'phantom-locate':
+                if (this.activePlaylistIndex >= 0) {
+                    this.openPhantomResolver(
+                        this.activePlaylistIndex,
+                    );
+                }
+
+                break;
+            case 'phantom-remove':
+                void this.removeSelectedPhantoms();
+                break;
         }
 
         this.selection.clear();
         this.ctxMenu.close();
+    }
+
+    private async removeSelectedPhantoms(): Promise<void> {
+        if (this.activePlaylistIndex < 0) return;
+
+        const entry =
+            this.entries[
+                this.activePlaylistIndex
+            ];
+
+        if (!entry) return;
+
+        const selectedIndices =
+            this.selection.getSelectedIndices();
+        const phantomPaths = selectedIndices
+            .map((i) => entry.tracks[i])
+            .filter(
+                (t): t is playlist.Track =>
+                    t !== undefined &&
+                    t.Phantom,
+            )
+            .map((t) => t.FilePath);
+
+        if (phantomPaths.length === 0) return;
+
+        try {
+            await RemovePhantomTracks(
+                entry.summary.ID,
+                phantomPaths,
+            );
+            await this.refreshPlaylists();
+        } catch (err) {
+            console.error(
+                'Failed to remove phantom tracks:',
+                err,
+            );
+        }
     }
 
     private openTrackDetails(filePath: string) {
@@ -1574,6 +1708,143 @@ export class PlaylistView
         }
     }
 
+    /**
+     * Check whether all currently selected tracks are phantoms.
+     * Returns false if nothing is selected or the active playlist
+     * index is unset.
+     */
+    private isPhantomSelection(): boolean {
+        if (this.activePlaylistIndex < 0) return false;
+
+        const entry =
+            this.entries[this.activePlaylistIndex];
+
+        if (!entry) return false;
+
+        const indices =
+            this.selection.getSelectedIndices();
+
+        if (indices.length === 0) return false;
+
+        return indices.every((i) => {
+            const t = entry.tracks[i];
+
+            return t !== undefined && t.Phantom;
+        });
+    }
+
+    // =================================================================
+    // Phantom track interactions
+    // =================================================================
+
+    private handlePhantomClick(
+        e: MouseEvent,
+        trackIndex: number,
+        playlistIndex: number,
+    ): void {
+        this.ensureSelectionScope(playlistIndex);
+        this.selection.handleItemClick(
+            e,
+            String(trackIndex),
+            trackIndex,
+        );
+    }
+
+    private handlePhantomContextMenu(
+        e: MouseEvent,
+        trackIndex: number,
+        playlistIndex: number,
+    ): void {
+        e.preventDefault();
+        e.stopPropagation();
+        this.ensureSelectionScope(playlistIndex);
+        this.selection.handleContextMenu(
+            String(trackIndex),
+        );
+        this.ctxMenu.openAt(e.clientX, e.clientY);
+    }
+
+    private openPhantomResolver(
+        playlistIndex: number,
+        trackIndex?: number,
+    ): void {
+        const entry =
+            this.entries[playlistIndex];
+
+        if (!entry) return;
+
+        // Collect selected phantom tracks, or just the
+        // one that was clicked.
+        let phantoms: playlist.Track[];
+
+        if (
+            this.activePlaylistIndex ===
+            playlistIndex
+        ) {
+            const selectedIndices =
+                this.selection.getSelectedIndices();
+            phantoms = selectedIndices
+                .map(
+                    (i) => entry.tracks[i],
+                )
+                .filter(
+                    (t): t is playlist.Track =>
+                        t !== undefined &&
+                        t.Phantom,
+                );
+        } else {
+            phantoms = [];
+        }
+
+        // Fall back to the clicked track.
+        if (
+            phantoms.length === 0 &&
+            trackIndex !== undefined
+        ) {
+            const track =
+                entry.tracks[trackIndex];
+
+            if (track?.Phantom) {
+                phantoms = [track];
+            }
+        }
+
+        if (phantoms.length === 0) return;
+
+        this.phantomResolver.show(
+            entry.summary.ID,
+            phantoms,
+        );
+    }
+
+    private async removePhantomTrack(
+        playlistIndex: number,
+        trackIndex: number,
+    ): Promise<void> {
+        const entry =
+            this.entries[playlistIndex];
+
+        if (!entry) return;
+
+        const track =
+            entry.tracks[trackIndex];
+
+        if (!track?.Phantom) return;
+
+        try {
+            await RemovePhantomTracks(
+                entry.summary.ID,
+                [track.FilePath],
+            );
+            await this.refreshPlaylists();
+        } catch (err) {
+            console.error(
+                'Failed to remove phantom track:',
+                err,
+            );
+        }
+    }
+
     // =================================================================
     // Import playlist
     // =================================================================
@@ -1585,13 +1856,20 @@ export class PlaylistView
 
             if (!filePath) return;
 
+            this.importError = '';
             await ImportPlaylist(filePath);
-            await this.refreshPlaylists();
         } catch (err) {
             console.error(
                 'Failed to import playlist:',
                 err,
             );
+            this.importError =
+                err instanceof Error
+                    ? err.message
+                    : String(err);
+            setTimeout(() => {
+                this.importError = '';
+            }, 6000);
         }
     };
 
@@ -1707,6 +1985,12 @@ export class PlaylistView
                 </div>
             </div>
 
+            ${this.importError
+                ? html`<div class="import-error">
+                      ${this.importError}
+                  </div>`
+                : nothing}
+
             ${this.searchCtrl.term &&
             this.filteredEntries.length > 0
                 ? html`<div class="search-indicator">
@@ -1735,111 +2019,144 @@ export class PlaylistView
                     .contextMenuOpen}
             >
                 ${this.ctxMenu.contextMenuOpen
-                    ? html`
-                          <div class="context-menu-panel">
-                              <wa-dropdown-item
-                                  @click=${() =>
-                                      this.onContextMenuAction(
-                                          'play',
-                                      )}
-                                  @mouseenter=${() =>
-                                      this.ctxMenu.closePlaylistSubmenu()}
-                              >
-                                  <wa-icon
-                                      slot="icon"
-                                      name="play"
-                                  ></wa-icon>
-                                  Play
-                              </wa-dropdown-item>
-                              <wa-dropdown-item
-                                  @click=${() =>
-                                      this.onContextMenuAction(
-                                          'add-to-queue',
-                                      )}
-                                  @mouseenter=${() =>
-                                      this.ctxMenu.closePlaylistSubmenu()}
-                              >
-                                  <wa-icon
-                                      slot="icon"
-                                      name="plus"
-                                  ></wa-icon>
-                                  Add to Queue
-                              </wa-dropdown-item>
-                              <wa-dropdown-item
-                                  @click=${() =>
-                                      this.onContextMenuAction(
-                                          'play-next',
-                                      )}
-                                  @mouseenter=${() =>
-                                      this.ctxMenu.closePlaylistSubmenu()}
-                              >
-                                  <wa-icon
-                                      slot="icon"
-                                      name="forward-step"
-                                  ></wa-icon>
-                                  Play Next
-                              </wa-dropdown-item>
-                              <wa-dropdown-item
-                                  @click=${() =>
-                                      this.onContextMenuAction(
-                                          'remove',
-                                      )}
-                                  @mouseenter=${() =>
-                                      this.ctxMenu.closePlaylistSubmenu()}
-                              >
-                                  <wa-icon
-                                      slot="icon"
-                                      name="trash"
-                                  ></wa-icon>
-                                  Remove from Playlist
-                              </wa-dropdown-item>
-                              <wa-dropdown-item
-                                  class="submenu-item"
-                                  @mouseenter=${() => {
-                                      this.ctxMenu.clearSubmenuCloseTimer();
-                                      void this.ctxMenu.showPlaylistSubmenu(this.getSelectedFilePaths());
-                                  }}
-                                  @mouseleave=${this
-                                      .ctxMenu
-                                      .scheduleSubmenuClose}
-                                  @click=${(e: Event) => {
-                                      e.stopPropagation();
-                                      void this.ctxMenu.showPlaylistSubmenu(this.getSelectedFilePaths());
-                                  }}
-                              >
-                                  <wa-icon
-                                      slot="icon"
-                                      name="plus"
-                                  ></wa-icon>
-                                  Add to Playlist
-                                   <span
-                                       class="submenu-arrow"
-                                   >
-                                       &#9654;
-                                   </span>
-                              </wa-dropdown-item>
-                              ${this.selection
-                                  .selectionCount === 1
-                                  ? html`
-                                        <wa-dropdown-item
-                                            @click=${() =>
-                                                this.onContextMenuAction(
-                                                    'track-details',
-                                                )}
-                                            @mouseenter=${() =>
-                                                this.ctxMenu.closePlaylistSubmenu()}
-                                        >
-                                            <wa-icon
-                                                slot="icon"
-                                                name="circle-info"
-                                            ></wa-icon>
-                                            Track
-                                            Details
-                                        </wa-dropdown-item>
-                                    `
-                                  : nothing}
-                          </div>
-                      `
+                    ? this.isPhantomSelection()
+                        ? html`
+                              <div class="context-menu-panel">
+                                  <wa-dropdown-item
+                                      @click=${() =>
+                                          this.onContextMenuAction(
+                                              'phantom-locate',
+                                          )}
+                                  >
+                                      <wa-icon
+                                          slot="icon"
+                                          name="magnifying-glass"
+                                      ></wa-icon>
+                                      Locate in
+                                      Library
+                                  </wa-dropdown-item>
+                                  <wa-dropdown-item
+                                      @click=${() =>
+                                          this.onContextMenuAction(
+                                              'phantom-remove',
+                                          )}
+                                  >
+                                      <wa-icon
+                                          slot="icon"
+                                          name="trash"
+                                      ></wa-icon>
+                                      Remove from
+                                      Playlist
+                                  </wa-dropdown-item>
+                              </div>
+                          `
+                        : html`
+                              <div class="context-menu-panel">
+                                  <wa-dropdown-item
+                                      @click=${() =>
+                                          this.onContextMenuAction(
+                                              'play',
+                                          )}
+                                      @mouseenter=${() =>
+                                          this.ctxMenu.closePlaylistSubmenu()}
+                                  >
+                                      <wa-icon
+                                          slot="icon"
+                                          name="play"
+                                      ></wa-icon>
+                                      Play
+                                  </wa-dropdown-item>
+                                  <wa-dropdown-item
+                                      @click=${() =>
+                                          this.onContextMenuAction(
+                                              'add-to-queue',
+                                          )}
+                                      @mouseenter=${() =>
+                                          this.ctxMenu.closePlaylistSubmenu()}
+                                  >
+                                      <wa-icon
+                                          slot="icon"
+                                          name="plus"
+                                      ></wa-icon>
+                                      Add to Queue
+                                  </wa-dropdown-item>
+                                  <wa-dropdown-item
+                                      @click=${() =>
+                                          this.onContextMenuAction(
+                                              'play-next',
+                                          )}
+                                      @mouseenter=${() =>
+                                          this.ctxMenu.closePlaylistSubmenu()}
+                                  >
+                                      <wa-icon
+                                          slot="icon"
+                                          name="forward-step"
+                                      ></wa-icon>
+                                      Play Next
+                                  </wa-dropdown-item>
+                                  <wa-dropdown-item
+                                      @click=${() =>
+                                          this.onContextMenuAction(
+                                              'remove',
+                                          )}
+                                      @mouseenter=${() =>
+                                          this.ctxMenu.closePlaylistSubmenu()}
+                                  >
+                                      <wa-icon
+                                          slot="icon"
+                                          name="trash"
+                                      ></wa-icon>
+                                      Remove from
+                                      Playlist
+                                  </wa-dropdown-item>
+                                  <wa-dropdown-item
+                                      class="submenu-item"
+                                      @mouseenter=${() => {
+                                          this.ctxMenu.clearSubmenuCloseTimer();
+                                          void this.ctxMenu.showPlaylistSubmenu(this.getSelectedFilePaths());
+                                      }}
+                                      @mouseleave=${this
+                                          .ctxMenu
+                                          .scheduleSubmenuClose}
+                                      @click=${(e: Event) => {
+                                          e.stopPropagation();
+                                          void this.ctxMenu.showPlaylistSubmenu(this.getSelectedFilePaths());
+                                      }}
+                                  >
+                                      <wa-icon
+                                          slot="icon"
+                                          name="plus"
+                                      ></wa-icon>
+                                      Add to Playlist
+                                       <span
+                                           class="submenu-arrow"
+                                       >
+                                           &#9654;
+                                       </span>
+                                  </wa-dropdown-item>
+                                  ${this.selection
+                                      .selectionCount ===
+                                  1
+                                      ? html`
+                                            <wa-dropdown-item
+                                                @click=${() =>
+                                                    this.onContextMenuAction(
+                                                        'track-details',
+                                                    )}
+                                                @mouseenter=${() =>
+                                                    this.ctxMenu.closePlaylistSubmenu()}
+                                            >
+                                                <wa-icon
+                                                    slot="icon"
+                                                    name="circle-info"
+                                                ></wa-icon>
+                                                Track
+                                                Details
+                                            </wa-dropdown-item>
+                                        `
+                                      : nothing}
+                              </div>
+                          `
                     : nothing}
             </wa-popup>
 
@@ -1917,6 +2234,10 @@ export class PlaylistView
             </wa-popup>
 
             <track-details></track-details>
+            <phantom-resolver
+                @phantom-resolved=${() =>
+                    this.refreshPlaylists()}
+            ></phantom-resolver>
         `;
     }
 
@@ -2153,7 +2474,6 @@ export class PlaylistView
                                 track,
                             );
                         const selected =
-                            !isPhantom &&
                             this.activePlaylistIndex ===
                                 playlistIndex &&
                             this.selection.isSelected(
@@ -2180,7 +2500,14 @@ export class PlaylistView
                                     ? 'false'
                                     : 'true'}
                                 @click=${isPhantom
-                                    ? nothing
+                                    ? (
+                                          e: MouseEvent,
+                                      ) =>
+                                          this.handlePhantomClick(
+                                              e,
+                                              trackIndex,
+                                              playlistIndex,
+                                          )
                                     : (
                                           e: MouseEvent,
                                       ) =>
@@ -2199,7 +2526,14 @@ export class PlaylistView
                                               playlistIndex,
                                           )}
                                 @contextmenu=${isPhantom
-                                    ? nothing
+                                    ? (
+                                          e: MouseEvent,
+                                      ) =>
+                                          this.handlePhantomContextMenu(
+                                              e,
+                                              trackIndex,
+                                              playlistIndex,
+                                          )
                                     : (
                                           e: MouseEvent,
                                       ) =>
@@ -2224,20 +2558,67 @@ export class PlaylistView
                                     : this
                                           .onTrackDragEnd}
                             >
-                                <track-info
-                                    .trackTitle=${track.Title ||
-                                    track.FilePath}
-                                    .artist=${track.Artist}
-                                    .duration=${track.Duration}
-                                    .filePath=${track.FilePath}
-                                ></track-info>
                                 ${isPhantom
-                                    ? html`<span
-                                          class="phantom-badge"
-                                          >File not
-                                          found</span
-                                      >`
-                                    : nothing}
+                                    ? html`<div
+                                          class="phantom-row"
+                                      >
+                                          <wa-icon
+                                              class="phantom-caution"
+                                              name="triangle-exclamation"
+                                              title="File not found"
+                                          ></wa-icon>
+                                          <span
+                                              class="phantom-path"
+                                              title=${track.FilePath}
+                                          >
+                                              ${track.FilePath}
+                                          </span>
+                                          <div
+                                              class="phantom-actions"
+                                          >
+                                              <button
+                                                  class="phantom-icon-btn"
+                                                  title="Locate in library"
+                                                  @click=${(
+                                                      e: Event,
+                                                  ) => {
+                                                      e.stopPropagation();
+                                                      this.openPhantomResolver(
+                                                          playlistIndex,
+                                                          trackIndex,
+                                                      );
+                                                  }}
+                                              >
+                                                  <wa-icon
+                                                      name="magnifying-glass"
+                                                  ></wa-icon>
+                                              </button>
+                                              <button
+                                                  class="phantom-icon-btn phantom-icon-remove"
+                                                  title="Remove from playlist"
+                                                  @click=${(
+                                                      e: Event,
+                                                  ) => {
+                                                      e.stopPropagation();
+                                                      void this.removePhantomTrack(
+                                                          playlistIndex,
+                                                          trackIndex,
+                                                      );
+                                                  }}
+                                              >
+                                                  <wa-icon
+                                                      name="xmark"
+                                                  ></wa-icon>
+                                              </button>
+                                          </div>
+                                      </div>`
+                                    : html`<track-info
+                                          .trackTitle=${track.Title ||
+                                          track.FilePath}
+                                          .artist=${track.Artist}
+                                          .duration=${track.Duration}
+                                          .filePath=${track.FilePath}
+                                      ></track-info>`}
                             </div>
                         `;
                     },

@@ -485,6 +485,17 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 			return true
 		}
 
+		// Remove from FTS5 search index.
+		if err := l.db.DeleteSearchIndex(
+			audioFile.ID,
+		); err != nil {
+			l.logger.Warn(
+				"failed to delete FTS entry for orphan",
+				"id", audioFile.ID,
+				"err", err,
+			)
+		}
+
 		removed.Add(1)
 
 		return true
@@ -652,7 +663,7 @@ func (l *Library) commitBatch(
 
 		if result.needsUpdate {
 			saveErr = l.updateAudioFileMetadata(
-				txq, cache, metrics, *result,
+				txq, tx, cache, metrics, *result,
 				thumbChan,
 			)
 			if saveErr == nil {
@@ -660,7 +671,7 @@ func (l *Library) commitBatch(
 			}
 		} else {
 			saveErr = l.saveAudioFile(
-				txq, cache, metrics, *result,
+				txq, tx, cache, metrics, *result,
 				thumbChan,
 			)
 			if saveErr == nil {
@@ -692,6 +703,7 @@ func (l *Library) commitBatch(
 // saveAudioFile writes audio file metadata to the database (new files).
 func (l *Library) saveAudioFile(
 	q *sqlcgen.Queries,
+	tx *sql.Tx,
 	cache *entityCache,
 	metrics *ScanMetrics,
 	result importResult,
@@ -722,7 +734,14 @@ func (l *Library) saveAudioFile(
 		props = &metadata.AudioProperties{}
 	}
 
-	if _, err := q.CreateAudioFile(
+	tags := result.tags
+	if tags == nil {
+		tags = &metadata.TrackMetadata{}
+	}
+
+	basename := filepath.Base(result.absolutePath)
+
+	af, err := q.CreateAudioFile(
 		l.ctx, sqlcgen.CreateAudioFileParams{
 			FilePath:           result.absolutePath,
 			LengthMilliseconds: result.lengthMillis,
@@ -738,9 +757,34 @@ func (l *Library) saveAudioFile(
 			Channels:    int64(props.Channels),
 			Bitrate:     int64(props.Bitrate),
 			FileSize:    props.FileSize,
-		}); err != nil {
+			Basename:    basename,
+		})
+	if err != nil {
 		return fmt.Errorf(
 			"could not save audio file to db: %w", err,
+		)
+	}
+
+	// Index in FTS5 search_index.
+	title := l.getRecordingName(tags, result.absolutePath)
+
+	artistName := tags.Artist
+	if artistName == "" {
+		artistName = "Unknown Artist"
+	}
+
+	album := tags.Album
+
+	if _, err := tx.ExecContext(
+		l.ctx,
+		`INSERT INTO search_index(rowid, file_path, title, artist, album)
+		 VALUES (?, ?, ?, ?, ?)`,
+		af.ID, result.absolutePath, title, artistName, album,
+	); err != nil {
+		l.logger.Warn(
+			"could not index audio file in FTS",
+			"path", result.absolutePath,
+			"err", err,
 		)
 	}
 
@@ -755,6 +799,7 @@ func (l *Library) saveAudioFile(
 // updateAudioFileMetadata updates an existing audio file with extracted metadata.
 func (l *Library) updateAudioFileMetadata(
 	q *sqlcgen.Queries,
+	tx *sql.Tx,
 	cache *entityCache,
 	metrics *ScanMetrics,
 	result importResult,
@@ -791,6 +836,50 @@ func (l *Library) updateAudioFileMetadata(
 		}); err != nil {
 		return fmt.Errorf(
 			"could not update audio file recording: %w", err,
+		)
+	}
+
+	// Index in FTS5 search_index (delete old entry, insert new).
+	tags := result.tags
+	if tags == nil {
+		tags = &metadata.TrackMetadata{}
+	}
+
+	title := l.getRecordingName(tags, result.absolutePath)
+
+	artistName := tags.Artist
+	if artistName == "" {
+		artistName = "Unknown Artist"
+	}
+
+	album := tags.Album
+
+	if _, err := tx.ExecContext(
+		l.ctx,
+		`DELETE FROM search_index WHERE rowid = ?`,
+		result.existingFileID,
+	); err != nil {
+		l.logger.Warn(
+			"could not remove old FTS entry",
+			"id", result.existingFileID,
+			"err", err,
+		)
+	}
+
+	if _, err := tx.ExecContext(
+		l.ctx,
+		`INSERT INTO search_index(rowid, file_path, title, artist, album)
+		 VALUES (?, ?, ?, ?, ?)`,
+		result.existingFileID,
+		result.absolutePath,
+		title,
+		artistName,
+		album,
+	); err != nil {
+		l.logger.Warn(
+			"could not index updated audio file in FTS",
+			"path", result.absolutePath,
+			"err", err,
 		)
 	}
 

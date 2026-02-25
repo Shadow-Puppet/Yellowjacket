@@ -36,6 +36,7 @@ type AudioFile struct {
 	Channels           int64
 	Bitrate            int64
 	FileSize           int64
+	Basename           string
 }
 
 type CoverArt struct {
@@ -127,4 +128,11 @@ type ReleaseGroupRecording struct {
 	RecordingID    int64
 	TrackNumber    sql.NullInt64
 	DiscNumber     sql.NullInt64
+}
+
+type SearchIndex struct {
+	FilePath string
+	Title    string
+	Artist   string
+	Album    string
 }

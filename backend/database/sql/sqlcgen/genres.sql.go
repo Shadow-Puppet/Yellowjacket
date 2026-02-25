@@ -7,6 +7,7 @@ package sqlcgen
 
 import (
 	"context"
+	"database/sql"
 )
 
 const createRecordingGenre = `-- name: CreateRecordingGenre :exec
@@ -52,6 +53,42 @@ func (q *Queries) DeleteRecordingGenres(ctx context.Context, recordingID int64) 
 	return err
 }
 
+const getAllGenresWithCounts = `-- name: GetAllGenresWithCounts :many
+SELECT g.name, COUNT(rg.recording_id) AS track_count
+FROM genres g
+JOIN recording_genres rg ON g.id = rg.genre_id
+GROUP BY g.id, g.name
+ORDER BY g.name
+`
+
+type GetAllGenresWithCountsRow struct {
+	Name       string
+	TrackCount int64
+}
+
+func (q *Queries) GetAllGenresWithCounts(ctx context.Context) ([]GetAllGenresWithCountsRow, error) {
+	rows, err := q.db.QueryContext(ctx, getAllGenresWithCounts)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetAllGenresWithCountsRow
+	for rows.Next() {
+		var i GetAllGenresWithCountsRow
+		if err := rows.Scan(&i.Name, &i.TrackCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getGenresByRecordingID = `-- name: GetGenresByRecordingID :many
 SELECT g.id, g.name
 FROM genres g
@@ -69,6 +106,106 @@ func (q *Queries) GetGenresByRecordingID(ctx context.Context, recordingID int64)
 	for rows.Next() {
 		var i Genre
 		if err := rows.Scan(&i.ID, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getTracksByGenre = `-- name: GetTracksByGenre :many
+SELECT
+    af.file_path,
+    af.length_milliseconds,
+    COALESCE(r.name, '') AS title,
+    COALESCE(ac.text, '') AS artist_name,
+    r.track_number,
+    r.disc_number,
+    COALESCE(rlg.name, '') AS album,
+    CAST(COALESCE(
+        (SELECT GROUP_CONCAT(g2.name, '||')
+         FROM recording_genres rg2
+         JOIN genres g2 ON rg2.genre_id = g2.id
+         WHERE rg2.recording_id = r.id),
+        ''
+    ) AS TEXT) AS genre,
+    COALESCE(r.year, 0) AS year,
+    COALESCE(r.composer, '') AS composer,
+    COALESCE(ft.extension, '') AS file_type,
+    af.sample_rate,
+    af.bit_depth,
+    af.channels,
+    af.bitrate,
+    af.file_size
+FROM genres g
+JOIN recording_genres rg ON g.id = rg.genre_id
+JOIN recordings r ON rg.recording_id = r.id
+JOIN audio_files af ON af.recording_id = r.id
+JOIN artist_credit ac ON r.artist_credit_id = ac.id
+LEFT JOIN (
+    SELECT recording_id,
+        MIN(release_group_id) AS release_group_id
+    FROM release_group_recordings
+    GROUP BY recording_id
+) rgr ON r.id = rgr.recording_id
+LEFT JOIN release_groups rlg ON rgr.release_group_id = rlg.id
+LEFT JOIN file_types ft ON af.file_type_id = ft.id
+WHERE g.name = ?
+ORDER BY r.name
+`
+
+type GetTracksByGenreRow struct {
+	FilePath           string
+	LengthMilliseconds int64
+	Title              string
+	ArtistName         string
+	TrackNumber        sql.NullInt64
+	DiscNumber         sql.NullInt64
+	Album              string
+	Genre              string
+	Year               int64
+	Composer           string
+	FileType           string
+	SampleRate         int64
+	BitDepth           int64
+	Channels           int64
+	Bitrate            int64
+	FileSize           int64
+}
+
+func (q *Queries) GetTracksByGenre(ctx context.Context, name string) ([]GetTracksByGenreRow, error) {
+	rows, err := q.db.QueryContext(ctx, getTracksByGenre, name)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetTracksByGenreRow
+	for rows.Next() {
+		var i GetTracksByGenreRow
+		if err := rows.Scan(
+			&i.FilePath,
+			&i.LengthMilliseconds,
+			&i.Title,
+			&i.ArtistName,
+			&i.TrackNumber,
+			&i.DiscNumber,
+			&i.Album,
+			&i.Genre,
+			&i.Year,
+			&i.Composer,
+			&i.FileType,
+			&i.SampleRate,
+			&i.BitDepth,
+			&i.Channels,
+			&i.Bitrate,
+			&i.FileSize,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

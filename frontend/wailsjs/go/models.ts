@@ -40,6 +40,20 @@ export namespace library {
 	        this.Name = source["Name"];
 	    }
 	}
+	export class GenreWithCount {
+	    Name: string;
+	    TrackCount: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new GenreWithCount(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Name = source["Name"];
+	        this.TrackCount = source["TrackCount"];
+	    }
+	}
 	export class RescanHooks {
 	
 	
@@ -159,6 +173,94 @@ export namespace library {
 
 export namespace playlist {
 	
+	export class CandidateTrack {
+	    FilePath: string;
+	    Title: string;
+	    Artist: string;
+	    Album: string;
+	    Duration: string;
+	    Score: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new CandidateTrack(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.FilePath = source["FilePath"];
+	        this.Title = source["Title"];
+	        this.Artist = source["Artist"];
+	        this.Album = source["Album"];
+	        this.Duration = source["Duration"];
+	        this.Score = source["Score"];
+	    }
+	}
+	export class PhantomMatch {
+	    PhantomPath: string;
+	    PhantomTitle: string;
+	    Candidate: CandidateTrack;
+	
+	    static createFrom(source: any = {}) {
+	        return new PhantomMatch(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.PhantomPath = source["PhantomPath"];
+	        this.PhantomTitle = source["PhantomTitle"];
+	        this.Candidate = this.convertValues(source["Candidate"], CandidateTrack);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class PhantomSearchResult {
+	    AutoMatched: PhantomMatch[];
+	    Unmatched: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new PhantomSearchResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.AutoMatched = this.convertValues(source["AutoMatched"], PhantomMatch);
+	        this.Unmatched = source["Unmatched"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class Summary {
 	    ID: number;
 	    Name: string;

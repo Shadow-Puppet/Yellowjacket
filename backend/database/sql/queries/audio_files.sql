@@ -1,5 +1,5 @@
 -- name: CreateAudioFile :one
-INSERT INTO audio_files (file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO audio_files (file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size, basename) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: GetAudioFile :one
@@ -12,7 +12,7 @@ WHERE file_path = ? LIMIT 1;
 
 -- name: UpdateAudioFile :exec
 UPDATE audio_files 
-SET file_path = ?, length_milliseconds = ?, file_type_id = ?, recording_id = ?, sample_rate = ?, bit_depth = ?, channels = ?, bitrate = ?, file_size = ?
+SET file_path = ?, length_milliseconds = ?, file_type_id = ?, recording_id = ?, sample_rate = ?, bit_depth = ?, channels = ?, bitrate = ?, file_size = ?, basename = ?
 WHERE id = ?;
 
 -- name: UpdateAudioFileRecording :exec
@@ -101,6 +101,25 @@ JOIN artist_credit ac ON r.artist_credit_id = ac.id
 LEFT JOIN release_group_recordings rgr ON r.id = rgr.recording_id
 LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
 LEFT JOIN file_types ft ON af.file_type_id = ft.id;
+
+-- name: SearchAudioFilesByBasename :many
+SELECT
+    af.file_path,
+    af.length_milliseconds,
+    COALESCE(r.name, '') AS title,
+    COALESCE(ac.text, '') AS artist,
+    COALESCE(rg.name, '') AS album
+FROM audio_files af
+LEFT JOIN recordings r ON af.recording_id = r.id
+LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
+LEFT JOIN (
+    SELECT recording_id, MIN(release_group_id) AS release_group_id
+    FROM release_group_recordings
+    GROUP BY recording_id
+) rgr ON r.id = rgr.recording_id
+LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
+WHERE af.basename = ?
+LIMIT ?;
 
 -- name: DeleteAllAudioFiles :exec
 DELETE FROM audio_files;

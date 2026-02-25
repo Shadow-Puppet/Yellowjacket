@@ -10,7 +10,12 @@ import type {
     VisibilityChangedEvent,
 } from '@lit-labs/virtualizer';
 import { grid } from '@lit-labs/virtualizer/layouts/grid.js';
-import { library } from '@go/models';
+import {
+    GetAllGenresWithCounts,
+    GetTracksByGenre,
+} from '@go/library/Library';
+import { EventsOn } from '@runtime/runtime';
+import { Events } from '../../events';
 import { LibraryController } from '@store/controllers/library-controller';
 import { SearchController } from '@store/controllers/search-controller';
 import { queueStore } from '@store/queue-store';
@@ -61,16 +66,12 @@ export class GenresView
     private ctxMenu = new ContextMenuController(this);
     private wheelListenerAttached = false;
     private lastSearchTerm = '';
-
-    /** Tracks the store's cached array reference to detect refreshes. */
-    private lastTracksRef: library.Track[] | null =
+    private scanCompleteCleanup: (() => void) | null =
         null;
+
     private scrollDebounceTimer: ReturnType<
         typeof setTimeout
     > | null = null;
-
-    /** All tracks from the library (used to derive genres). */
-    private allTracks: library.Track[] = [];
 
     @state()
     private genres: Genre[] = [];
@@ -378,11 +379,21 @@ export class GenresView
         super.connectedCallback();
         this.loadCardSize();
         this.loadGenres();
+
+        this.scanCompleteCleanup = EventsOn(
+            Events.LibraryScanComplete,
+            () => this.loadGenres(),
+        );
     }
 
     override disconnectedCallback() {
         super.disconnectedCallback();
         this.detachWheelListener();
+
+        if (this.scanCompleteCleanup) {
+            this.scanCompleteCleanup();
+            this.scanCompleteCleanup = null;
+        }
 
         if (this.scrollDebounceTimer !== null) {
             clearTimeout(this.scrollDebounceTimer);
@@ -401,19 +412,6 @@ export class GenresView
             this.lastSearchTerm = currentTerm;
             this.clearSelection();
         }
-
-        // Re-fetch when the store delivers fresh
-        // data after eager refetch on invalidation.
-        const cached =
-            this.libraryCtrl.cachedTracks;
-
-        if (
-            cached !== null &&
-            cached !== this.lastTracksRef
-        ) {
-            this.lastTracksRef = cached;
-            this.loadGenres();
-        }
     }
 
     /* ================================================================
@@ -424,18 +422,18 @@ export class GenresView
         try {
             this.loading = true;
 
-            const tracks =
-                await this.libraryCtrl.getTracks();
+            const rows =
+                await GetAllGenresWithCounts();
 
-            this.allTracks = tracks ?? [];
-            this.genres =
-                this.extractGenres(this.allTracks);
+            this.genres = (rows ?? []).map((r) => ({
+                name: r.Name,
+                trackCount: r.TrackCount,
+            }));
         } catch (error) {
             console.error(
                 'Error loading genres:',
                 error,
             );
-            this.allTracks = [];
             this.genres = [];
         } finally {
             const saved =
@@ -449,41 +447,6 @@ export class GenresView
 
         await this.updateComplete;
         this.restoreScrollPosition();
-    }
-
-    /**
-     * Extract unique genres from all tracks,
-     * sorted alphabetically by name.
-     */
-    private extractGenres(
-        tracks: library.Track[],
-    ): Genre[] {
-        const counts = new Map<string, number>();
-
-        for (const track of tracks) {
-            const genres = track.Genre ?? [];
-
-            for (const name of genres) {
-                if (!name) continue;
-
-                counts.set(
-                    name,
-                    (counts.get(name) ?? 0) + 1,
-                );
-            }
-        }
-
-        const result: Genre[] = [];
-
-        for (const [name, trackCount] of counts) {
-            result.push({ name, trackCount });
-        }
-
-        result.sort((a, b) =>
-            a.name.localeCompare(b.name),
-        );
-
-        return result;
     }
 
     /* ================================================================
@@ -743,24 +706,28 @@ export class GenresView
     }
 
     /**
-     * Returns all file paths for every selected
-     * genre.
+     * Fetch file paths for a set of genre names by
+     * querying the backend for each genre.
      */
-    private getSelectedGenreFilePaths(): string[] {
-        const allPaths: string[] = [];
+    private async getFilePathsForGenres(
+        genreNames: Iterable<string>,
+    ): Promise<string[]> {
         const seen = new Set<string>();
+        const allPaths: string[] = [];
 
-        for (const track of this.allTracks) {
-            if (seen.has(track.FilePath)) continue;
+        const promises = Array.from(
+            genreNames,
+            (name) => GetTracksByGenre(name),
+        );
 
-            const genres = track.Genre ?? [];
-            const match = genres.some((g) =>
-                this.selectedGenres.has(g),
-            );
+        const results = await Promise.all(promises);
 
-            if (match) {
-                allPaths.push(track.FilePath);
-                seen.add(track.FilePath);
+        for (const tracks of results) {
+            for (const track of tracks ?? []) {
+                if (!seen.has(track.FilePath)) {
+                    seen.add(track.FilePath);
+                    allPaths.push(track.FilePath);
+                }
             }
         }
 
@@ -774,36 +741,23 @@ export class GenresView
      * genres.  Otherwise return paths for the
      * right-clicked genre only.
      */
-    private getContextMenuGenreFilePaths(): string[] {
+    private async getContextMenuGenreFilePaths(): Promise<
+        string[]
+    > {
         if (
             this.contextMenuGenreName !== null &&
             !this.selectedGenres.has(
                 this.contextMenuGenreName,
             )
         ) {
-            const paths: string[] = [];
-            const seen = new Set<string>();
-
-            for (const track of this.allTracks) {
-                if (seen.has(track.FilePath)) {
-                    continue;
-                }
-
-                const genres = track.Genre ?? [];
-                const match = genres.includes(
-                    this.contextMenuGenreName,
-                );
-
-                if (match) {
-                    paths.push(track.FilePath);
-                    seen.add(track.FilePath);
-                }
-            }
-
-            return paths;
+            return this.getFilePathsForGenres([
+                this.contextMenuGenreName,
+            ]);
         }
 
-        return this.getSelectedGenreFilePaths();
+        return this.getFilePathsForGenres(
+            this.selectedGenres,
+        );
     }
 
     /** Clear the current genre selection. */
@@ -889,9 +843,11 @@ export class GenresView
         );
     };
 
-    private onContextMenuAction(action: string) {
+    private async onContextMenuAction(
+        action: string,
+    ) {
         const filePaths =
-            this.getContextMenuGenreFilePaths();
+            await this.getContextMenuGenreFilePaths();
 
         if (filePaths.length === 0) return;
 
@@ -1063,8 +1019,11 @@ export class GenresView
                                   class="submenu-item"
                                   @mouseenter=${() => {
                                       this.ctxMenu.clearSubmenuCloseTimer();
-                                      void this.ctxMenu.showPlaylistSubmenu(
-                                          this.getContextMenuGenreFilePaths(),
+                                      void this.getContextMenuGenreFilePaths().then(
+                                          (paths) =>
+                                              this.ctxMenu.showPlaylistSubmenu(
+                                                  paths,
+                                              ),
                                       );
                                   }}
                                   @mouseleave=${this
@@ -1074,8 +1033,11 @@ export class GenresView
                                       e: Event,
                                   ) => {
                                       e.stopPropagation();
-                                      void this.ctxMenu.showPlaylistSubmenu(
-                                          this.getContextMenuGenreFilePaths(),
+                                      void this.getContextMenuGenreFilePaths().then(
+                                          (paths) =>
+                                              this.ctxMenu.showPlaylistSubmenu(
+                                                  paths,
+                                              ),
                                       );
                                   }}
                               >
