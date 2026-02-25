@@ -15,8 +15,8 @@ import (
 
 	"golang.org/x/image/draw"
 
+	"yellowjacket/backend/coverart"
 	"yellowjacket/backend/metadata"
-	"yellowjacket/backend/system"
 )
 
 // thumbnailTier defines a single size tier for generated cover art thumbnails.
@@ -80,15 +80,13 @@ func (l *Library) saveCoverArt(
 
 	saveStart := time.Now()
 
-	// Get the data directory for storing cover art.
-	dataDir, err := system.GetUserDataDirPath()
+	// Get the covers directory for storing cover art.
+	coverDir, err := coverart.CoversDir()
 	if err != nil {
 		return "", fmt.Errorf(
-			"could not get user data directory: %w", err,
+			"could not resolve covers directory: %w", err,
 		)
 	}
-
-	coverDir := filepath.Join(dataDir, "covers")
 
 	// Ensure directory exists.
 	if err := os.MkdirAll(coverDir, 0o755); err != nil {
@@ -324,14 +322,12 @@ func encodeAndSaveImage(
 // _thumb files to _md, and generates any missing sized variants for each
 // original cover art file.
 func (l *Library) generateMissingSizedVariants() error {
-	dataDir, err := system.GetUserDataDirPath()
+	coverDir, err := coverart.CoversDir()
 	if err != nil {
 		return fmt.Errorf(
-			"could not get user data directory: %w", err,
+			"could not resolve covers directory: %w", err,
 		)
 	}
-
-	coverDir := filepath.Join(dataDir, "covers")
 
 	entries, err := os.ReadDir(coverDir)
 	if err != nil {
@@ -481,16 +477,6 @@ func (l *Library) migrateLegacyThumbs(
 	}
 
 	return migrated
-}
-
-// SizedFilename derives a sized-variant filename from an original cover art
-// filename and a size suffix.
-// For example, SizedFilename("a1b2c3d4.jpg", "_sm") returns "a1b2c3d4_sm.jpg".
-func SizedFilename(originalFilename, suffix string) string {
-	ext := filepath.Ext(originalFilename)
-	name := strings.TrimSuffix(originalFilename, ext)
-
-	return name + suffix + ".jpg"
 }
 
 // extensionFromMIME returns a file extension for common image MIME types.

@@ -14,6 +14,7 @@ import (
 
 	"yellowjacket/backend/assets"
 	"yellowjacket/backend/config"
+	"yellowjacket/backend/coverart"
 	"yellowjacket/backend/database"
 	"yellowjacket/backend/frontendutil"
 	"yellowjacket/backend/library"
@@ -90,12 +91,12 @@ func NewYellowJacketApp(
 	yjApp.library = lib
 
 	// create cover art handler
-	coverHandler, err := library.NewCoverArtHandler()
+	coverHandler, err := coverart.NewHandler()
 	if err != nil {
 		return nil, fmt.Errorf("could not create cover art handler: %w", err)
 	}
 
-	yjApp.assetHandler.RegisterHandler("/covers/", coverHandler)
+	yjApp.assetHandler.RegisterHandler(coverart.PathPrefix, coverHandler)
 
 	// create playlist service
 	yjApp.playlist = playlist.NewService(

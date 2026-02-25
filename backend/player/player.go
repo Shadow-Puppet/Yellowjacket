@@ -18,10 +18,10 @@ import (
 	"github.com/TheCodeOfCaleb/beep/v2/speaker"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"yellowjacket/backend/coverart"
 	"yellowjacket/backend/database"
 	"yellowjacket/backend/database/sql/sqlcgen"
 	"yellowjacket/backend/events"
-	"yellowjacket/backend/library"
 	"yellowjacket/backend/metadata"
 	"yellowjacket/backend/profiling"
 )
@@ -868,14 +868,11 @@ func (p *Player) getCurrentTrackInfoLocked() TrackInfo {
 			info.Album = meta.Album
 
 			if meta.CoverArtPath != "" {
-				base := filepath.Base(meta.CoverArtPath)
-				info.CoverArt = "/covers/" + base
-				info.CoverArtSmall = "/covers/" +
-					library.SizedFilename(base, "_sm")
-				info.CoverArtMedium = "/covers/" +
-					library.SizedFilename(base, "_md")
-				info.CoverArtLarge = "/covers/" +
-					library.SizedFilename(base, "_lg")
+				urls := coverart.ResolveURLs(meta.CoverArtPath)
+				info.CoverArt = urls.Original
+				info.CoverArtSmall = urls.Small
+				info.CoverArtMedium = urls.Medium
+				info.CoverArtLarge = urls.Large
 			}
 		} else {
 			p.logger.Debug(

@@ -4,9 +4,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strconv"
 	"strings"
+
+	"yellowjacket/backend/coverart"
 )
 
 // Sentinel errors for library queries.
@@ -258,14 +259,11 @@ func (l *Library) GetAllAlbums() ([]Album, error) {
 
 		// Convert filesystem path to URL path for the asset handler.
 		if row.CoverArtPath != "" {
-			base := filepath.Base(row.CoverArtPath)
-			album.CoverArtPath = "/covers/" + base
-			album.CoverArtSmall = "/covers/" +
-				SizedFilename(base, "_sm")
-			album.CoverArtMedium = "/covers/" +
-				SizedFilename(base, "_md")
-			album.CoverArtLarge = "/covers/" +
-				SizedFilename(base, "_lg")
+			urls := coverart.ResolveURLs(row.CoverArtPath)
+			album.CoverArtPath = urls.Original
+			album.CoverArtSmall = urls.Small
+			album.CoverArtMedium = urls.Medium
+			album.CoverArtLarge = urls.Large
 		}
 
 		albums = append(albums, album)
@@ -345,14 +343,11 @@ func (l *Library) GetAlbumsByArtist(
 
 		// Convert filesystem path to URL path for the asset handler.
 		if row.CoverArtPath != "" {
-			base := filepath.Base(row.CoverArtPath)
-			album.CoverArtPath = "/covers/" + base
-			album.CoverArtSmall = "/covers/" +
-				SizedFilename(base, "_sm")
-			album.CoverArtMedium = "/covers/" +
-				SizedFilename(base, "_md")
-			album.CoverArtLarge = "/covers/" +
-				SizedFilename(base, "_lg")
+			urls := coverart.ResolveURLs(row.CoverArtPath)
+			album.CoverArtPath = urls.Original
+			album.CoverArtSmall = urls.Small
+			album.CoverArtMedium = urls.Medium
+			album.CoverArtLarge = urls.Large
 		}
 
 		albums = append(albums, album)

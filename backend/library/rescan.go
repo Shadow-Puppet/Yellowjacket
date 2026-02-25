@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"yellowjacket/backend/system"
+	"yellowjacket/backend/coverart"
 )
 
 // FullRescan clears the queue and player, wipes all library data
@@ -182,14 +182,12 @@ func (l *Library) clearLibraryTables() error {
 
 // clearCoverArtFiles removes all files from the covers directory.
 func (l *Library) clearCoverArtFiles() error {
-	dataDir, err := system.GetUserDataDirPath()
+	coverDir, err := coverart.CoversDir()
 	if err != nil {
 		return fmt.Errorf(
-			"could not get user data directory: %w", err,
+			"could not resolve covers directory: %w", err,
 		)
 	}
-
-	coverDir := filepath.Join(dataDir, "covers")
 
 	entries, err := os.ReadDir(coverDir)
 	if err != nil {

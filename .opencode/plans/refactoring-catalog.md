@@ -28,13 +28,9 @@ Prioritized list of architectural improvements identified during a full codebase
 
 ---
 
-### 6. Extract `SizedFilename` to a shared utility package
+### ~~6. Extract `SizedFilename` to a shared utility package~~ — solved
 
-**Problem:** `library.SizedFilename()` is a small string utility for generating thumbnail filenames. Both `player/player.go` and `playlist/playlist.go` import the entire `library` package solely for this function.
-
-**Why it matters:** Creates unnecessary coupling — `player` -> `library` and `playlist` -> `library` dependencies exist only for one utility function.
-
-**Approach:** Move `SizedFilename` to a shared package (e.g., `backend/coverart/` or `backend/fileutil/`). Update the three callers: `library/`, `player/`, and `playlist/`.
+Created `backend/coverart/` package with `SizedFilename`, a `ResolveURLs` helper (encapsulates the repeated pattern of resolving filesystem paths to all size-variant URL paths), a `URLs` struct, and a `PathPrefix` constant. Removed `SizedFilename` from `library/coverart.go`. Updated all four callers (`library/query.go`, `player/player.go`, `playlist/playlist.go`, `app.go`) to use `coverart.ResolveURLs`, eliminating the `player` -> `library` and `playlist` -> `library` coupling. Added tests for the new package.
 
 ---
 

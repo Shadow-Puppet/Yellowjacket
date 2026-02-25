@@ -14,10 +14,10 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"yellowjacket/backend/coverart"
 	"yellowjacket/backend/database"
 	"yellowjacket/backend/database/sql/sqlcgen"
 	"yellowjacket/backend/events"
-	"yellowjacket/backend/library"
 	"yellowjacket/backend/system"
 )
 
@@ -380,14 +380,11 @@ func trackFromRow(
 	}
 
 	if coverArtPath != "" {
-		base := filepath.Base(coverArtPath)
-		track.CoverArtPath = "/covers/" + base
-		track.CoverArtSmall = "/covers/" +
-			library.SizedFilename(base, "_sm")
-		track.CoverArtMedium = "/covers/" +
-			library.SizedFilename(base, "_md")
-		track.CoverArtLarge = "/covers/" +
-			library.SizedFilename(base, "_lg")
+		urls := coverart.ResolveURLs(coverArtPath)
+		track.CoverArtPath = urls.Original
+		track.CoverArtSmall = urls.Small
+		track.CoverArtMedium = urls.Medium
+		track.CoverArtLarge = urls.Large
 	}
 
 	return track
