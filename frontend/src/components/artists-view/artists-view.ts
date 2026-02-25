@@ -23,6 +23,7 @@ import {
     contextMenuStyles,
 } from '@utils/context-menu-controller.js';
 import type { ContextMenuHost } from '@utils/context-menu-controller.js';
+
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
 import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
@@ -360,6 +361,7 @@ export class ArtistsView
                 );
                 font-size: 14px;
             }
+
         `,
     ];
 

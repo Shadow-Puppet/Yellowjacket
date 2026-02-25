@@ -35,6 +35,8 @@ class PlaylistStore {
         EventsOn(Events.PlaylistsRestored, () => {
             this.invalidate();
         });
+
+        void this.getPlaylists();
     }
 
     // ===================================================================

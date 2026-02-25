@@ -3,6 +3,7 @@ import {
     GetAllTracks,
     GetAllAlbums,
     GetAllArtists,
+    GetAllGenresWithCounts,
     GetAlbumsByArtist,
 } from '@go/library/Library';
 import type { library } from '@go/models';
@@ -28,10 +29,12 @@ class LibraryStore {
     private tracks: library.Track[] | null = null;
     private albums: library.Album[] | null = null;
     private artists: library.Artist[] | null = null;
+    private genres: library.GenreWithCount[] | null = null;
 
     private tracksLoading = false;
     private albumsLoading = false;
     private artistsLoading = false;
+    private genresLoading = false;
 
     private coverSizeValue: number = COVER_SIZE_DEFAULT;
 
@@ -50,6 +53,7 @@ class LibraryStore {
         });
 
         this.loadCoverSize();
+        this.eagerFetch();
     }
 
     // ===================================================================
@@ -126,6 +130,29 @@ class LibraryStore {
         }
     }
 
+    async getGenres(): Promise<library.GenreWithCount[]> {
+        if (this.genres !== null) {
+            return this.genres;
+        }
+
+        if (this.genresLoading) {
+            return this.waitForGenres();
+        }
+
+        this.genresLoading = true;
+        this.notify();
+
+        try {
+            const genres = await GetAllGenresWithCounts();
+            this.genres = genres;
+
+            return genres;
+        } finally {
+            this.genresLoading = false;
+            this.notify();
+        }
+    }
+
     async getAlbumsByArtist(
         artistID: number,
     ): Promise<library.Album[]> {
@@ -177,6 +204,14 @@ class LibraryStore {
 
     isArtistsLoading(): boolean {
         return this.artistsLoading;
+    }
+
+    getCachedGenres(): library.GenreWithCount[] | null {
+        return this.genres;
+    }
+
+    isGenresLoading(): boolean {
+        return this.genresLoading;
     }
 
     // ===================================================================
@@ -249,21 +284,24 @@ class LibraryStore {
         this.tracks = null;
         this.albums = null;
         this.artists = null;
+        this.genres = null;
         this.scrollPositions = { tracks: 0, albums: 0, artists: 0, genres: 0 };
         this.notify();
-        this.eagerRefetch();
+        this.eagerFetch();
     }
 
     /**
-     * Re-fetches all data after cache invalidation so that
+     * Fetches all library data.  Called from the constructor
+     * (initial load) and after cache invalidation so that
      * controller subscribers receive fresh data on the next
      * requestUpdate() cycle without needing their own
      * LibraryScanComplete listener.
      */
-    private eagerRefetch(): void {
+    private eagerFetch(): void {
         void this.getTracks();
         void this.getAlbums();
         void this.getArtists();
+        void this.getGenres();
     }
 
     // ===================================================================
@@ -313,6 +351,17 @@ class LibraryStore {
                 if (!this.artistsLoading && this.artists !== null) {
                     unsub();
                     resolve(this.artists);
+                }
+            });
+        });
+    }
+
+    private waitForGenres(): Promise<library.GenreWithCount[]> {
+        return new Promise((resolve) => {
+            const unsub = this.subscribe(() => {
+                if (!this.genresLoading && this.genres !== null) {
+                    unsub();
+                    resolve(this.genres);
                 }
             });
         });

@@ -55,6 +55,10 @@ export class LibraryController implements ReactiveController {
         return libraryStore.getArtists();
     }
 
+    async getGenres(): Promise<library.GenreWithCount[]> {
+        return libraryStore.getGenres();
+    }
+
     async getAlbumsByArtist(
         artistID: number,
     ): Promise<library.Album[]> {
@@ -81,6 +85,10 @@ export class LibraryController implements ReactiveController {
         return libraryStore.getCachedArtists();
     }
 
+    get cachedGenres(): library.GenreWithCount[] | null {
+        return libraryStore.getCachedGenres();
+    }
+
     get tracksLoading(): boolean {
         return libraryStore.isTracksLoading();
     }
@@ -91,6 +99,10 @@ export class LibraryController implements ReactiveController {
 
     get artistsLoading(): boolean {
         return libraryStore.isArtistsLoading();
+    }
+
+    get genresLoading(): boolean {
+        return libraryStore.isGenresLoading();
     }
 
     // ===================================================================

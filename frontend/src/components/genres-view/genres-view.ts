@@ -10,12 +10,8 @@ import type {
     VisibilityChangedEvent,
 } from '@lit-labs/virtualizer';
 import { grid } from '@lit-labs/virtualizer/layouts/grid.js';
-import {
-    GetAllGenresWithCounts,
-    GetTracksByGenre,
-} from '@go/library/Library';
-import { EventsOn } from '@runtime/runtime';
-import { Events } from '../../events';
+import { GetTracksByGenre } from '@go/library/Library';
+import type { library } from '@go/models';
 import { LibraryController } from '@store/controllers/library-controller';
 import { SearchController } from '@store/controllers/search-controller';
 import { queueStore } from '@store/queue-store';
@@ -24,6 +20,7 @@ import {
     contextMenuStyles,
 } from '@utils/context-menu-controller.js';
 import type { ContextMenuHost } from '@utils/context-menu-controller.js';
+
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
 import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
@@ -66,8 +63,11 @@ export class GenresView
     private ctxMenu = new ContextMenuController(this);
     private wheelListenerAttached = false;
     private lastSearchTerm = '';
-    private scanCompleteCleanup: (() => void) | null =
-        null;
+
+    /** Tracks the store's cached array reference to detect refreshes. */
+    private lastGenresRef:
+        | library.GenreWithCount[]
+        | null = null;
 
     private scrollDebounceTimer: ReturnType<
         typeof setTimeout
@@ -379,21 +379,11 @@ export class GenresView
         super.connectedCallback();
         this.loadCardSize();
         this.loadGenres();
-
-        this.scanCompleteCleanup = EventsOn(
-            Events.LibraryScanComplete,
-            () => this.loadGenres(),
-        );
     }
 
     override disconnectedCallback() {
         super.disconnectedCallback();
         this.detachWheelListener();
-
-        if (this.scanCompleteCleanup) {
-            this.scanCompleteCleanup();
-            this.scanCompleteCleanup = null;
-        }
 
         if (this.scrollDebounceTimer !== null) {
             clearTimeout(this.scrollDebounceTimer);
@@ -412,6 +402,19 @@ export class GenresView
             this.lastSearchTerm = currentTerm;
             this.clearSelection();
         }
+
+        // Re-fetch when the store delivers fresh
+        // data after eager refetch on invalidation.
+        const cached =
+            this.libraryCtrl.cachedGenres;
+
+        if (
+            cached !== null &&
+            cached !== this.lastGenresRef
+        ) {
+            this.lastGenresRef = cached;
+            this.loadGenres();
+        }
     }
 
     /* ================================================================
@@ -423,7 +426,7 @@ export class GenresView
             this.loading = true;
 
             const rows =
-                await GetAllGenresWithCounts();
+                await this.libraryCtrl.getGenres();
 
             this.genres = (rows ?? []).map((r) => ({
                 name: r.Name,

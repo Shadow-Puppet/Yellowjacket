@@ -12,6 +12,7 @@ import {
     ContextMenuController,
     contextMenuStyles,
 } from '@utils/context-menu-controller.js';
+
 import type { ContextMenuHost } from '@utils/context-menu-controller.js';
 import { PlayerController } from '@store/controllers/player-controller';
 import { SearchController } from '@store/controllers/search-controller';
@@ -727,6 +728,7 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
       flex-shrink: 0;
       user-select: none;
     }
+
 
     .sort-anchor {
       display: inline-flex;
