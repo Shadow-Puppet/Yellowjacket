@@ -71,6 +71,10 @@ export class QueueController implements ReactiveController {
   // ACTIONS
   // ===================================================================
 
+  play(): void {
+    queueStore.play();
+  }
+
   next(): void {
     queueStore.next();
   }

@@ -171,6 +171,47 @@ export namespace library {
 
 }
 
+export namespace player {
+	
+	export class TrackInfo {
+	    fileName: string;
+	    filePath: string;
+	    state: string;
+	    title: string;
+	    artist: string;
+	    album: string;
+	    coverArt: string;
+	    coverArtSmall: string;
+	    coverArtMedium: string;
+	    coverArtLarge: string;
+	    trackLength: number;
+	    seekPosition: number;
+	    trackChangeId: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new TrackInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.fileName = source["fileName"];
+	        this.filePath = source["filePath"];
+	        this.state = source["state"];
+	        this.title = source["title"];
+	        this.artist = source["artist"];
+	        this.album = source["album"];
+	        this.coverArt = source["coverArt"];
+	        this.coverArtSmall = source["coverArtSmall"];
+	        this.coverArtMedium = source["coverArtMedium"];
+	        this.coverArtLarge = source["coverArtLarge"];
+	        this.trackLength = source["trackLength"];
+	        this.seekPosition = source["seekPosition"];
+	        this.trackChangeId = source["trackChangeId"];
+	    }
+	}
+
+}
+
 export namespace playlist {
 	
 	export class CandidateTrack {
@@ -321,6 +362,71 @@ export namespace playlist {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Summary = this.convertValues(source["Summary"], Summary);
 	        this.Tracks = this.convertValues(source["Tracks"], Track);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
+export namespace queue {
+	
+	export class Track {
+	    id: number;
+	    audioFileId: number;
+	    filePath: string;
+	    position: number;
+	    title: string;
+	    artist: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Track(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.audioFileId = source["audioFileId"];
+	        this.filePath = source["filePath"];
+	        this.position = source["position"];
+	        this.title = source["title"];
+	        this.artist = source["artist"];
+	    }
+	}
+	export class State {
+	    tracks: Track[];
+	    currentIndex: number;
+	    shuffleMode: boolean;
+	    repeatMode: string;
+	    sourcePlaylistId: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new State(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.tracks = this.convertValues(source["tracks"], Track);
+	        this.currentIndex = source["currentIndex"];
+	        this.shuffleMode = source["shuffleMode"];
+	        this.repeatMode = source["repeatMode"];
+	        this.sourcePlaylistId = source["sourcePlaylistId"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

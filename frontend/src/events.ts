@@ -2,44 +2,18 @@
 // These names must match the corresponding event names in the Go backend.
 
 export const Events = {
-    // Playback control events
+    // Playback events (backend → frontend push)
     PlaybackStateChanged: "PlaybackStateChanged",
     PlaybackFinished: "PlaybackFinished",
-    RequestPlay: "RequestPlay",
-    RequestPause: "RequestPause",
-    RequestLoadFile: "RequestLoadFile",
-
-    // Track events
     TrackChanged: "TrackChanged",
-
-    // Seek events
-    Seek: "Seek",
     SeekFailed: "SeekFailed",
-
-    // Volume events
-    RequestSetVolume: "RequestSetVolume",
     VolumeChanged: "VolumeChanged",
 
-    // Queue events
+    // Queue events (backend → frontend push)
     QueueChanged: "QueueChanged",
     QueueIndexChanged: "QueueIndexChanged",
     QueueModeChanged: "QueueModeChanged",
     QueueTracksModified: "QueueTracksModified",
-    RequestNext: "RequestNext",
-    RequestPrevious: "RequestPrevious",
-    RequestSetQueue: "RequestSetQueue",
-    RequestAddToQueue: "RequestAddToQueue",
-    RequestPlayNext: "RequestPlayNext",
-    RequestRemoveFromQueue: "RequestRemoveFromQueue",
-    RequestToggleShuffle: "RequestToggleShuffle",
-    RequestCycleRepeat: "RequestCycleRepeat",
-    RequestAddTracksToQueue: "RequestAddTracksToQueue",
-    RequestPlayTracksNext: "RequestPlayTracksNext",
-    RequestPlayQueueIndex: "RequestPlayQueueIndex",
-    RequestRemoveTracksFromQueue: "RequestRemoveTracksFromQueue",
-    RequestInsertTracksAtIndex: "RequestInsertTracksAtIndex",
-    RequestMoveQueueTracks: "RequestMoveQueueTracks",
-    RequestClearQueue: "RequestClearQueue",
 
     // Playlist events
     PlaylistCreated: "PlaylistCreated",

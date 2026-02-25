@@ -80,7 +80,7 @@ export class PlayerControls extends LitElement {
   `;
 
   private handlePlayClick = () => {
-    this.player.play();
+    queueStore.play();
   };
 
   private handlePauseClick = () => {

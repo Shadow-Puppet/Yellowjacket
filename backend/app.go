@@ -103,11 +103,22 @@ func NewYellowJacketApp(
 		yjApp.logger, yjApp.database, yjApp.appConfig,
 	)
 
+	// create queue (before wails.Run so it can be bound)
+	yjApp.queue = queue.NewQueue(yjApp.logger, yjApp.database)
+
+	// create player (before wails.Run so it can be bound;
+	// speaker hardware is initialized later in OnStartup)
+	yjApp.player = player.NewPlayer(
+		yjApp.logger.WithGroup("player"), yjApp.database,
+	)
+
 	yjApp.FEBindings = []any{
 		yjApp.FrontendUtil,
 		yjApp.appConfig,
 		yjApp.library,
 		yjApp.playlist,
+		yjApp.queue,
+		yjApp.player,
 	}
 
 	return yjApp, nil
@@ -134,17 +145,18 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 	yj.library.SetContext(ctx)
 	yj.playlist.SetContext(ctx)
 
-	var err error
-	// create player
-	yj.player, err = player.NewPlayer(ctx, yj.logger.WithGroup("player"), yj.database)
-	if err != nil {
-		startupErr = errors.Join(startupErr, fmt.Errorf("could not create player: %w", err))
+	// Initialize speaker hardware (player struct created in
+	// NewYellowJacketApp for Wails binding registration).
+	if err := yj.player.InitSpeaker(); err != nil {
+		startupErr = errors.Join(
+			startupErr,
+			fmt.Errorf("could not initialize speaker: %w", err),
+		)
 	}
 
 	yj.player.SetContext(ctx)
 
-	// create queue
-	yj.queue = queue.NewQueue(yj.logger, yj.database)
+	// Wire queue (created in NewYellowJacketApp for Wails binding)
 	yj.queue.SetContext(ctx)
 	yj.queue.SetPlayer(yj.player)
 	yj.queue.RestoreState()

@@ -1,5 +1,6 @@
-import { EventsOn, EventsEmit } from '@runtime/runtime';
+import { EventsOn } from '@runtime/runtime';
 import { Events } from '../events';
+import * as Queue from '@go/queue/Queue';
 
 // Types
 export interface QueueTrack {
@@ -179,15 +180,19 @@ class QueueStore {
 
   // ===================================================================
   // ACTIONS
-  // These delegate to the backend via Wails events
+  // These delegate to the backend via Wails bindings
   // ===================================================================
 
+  play(): void {
+    Queue.Play();
+  }
+
   next(): void {
-    EventsEmit(Events.RequestNext);
+    Queue.Next();
   }
 
   previous(): void {
-    EventsEmit(Events.RequestPrevious);
+    Queue.Previous();
   }
 
   setQueue(
@@ -195,71 +200,61 @@ class QueueStore {
     startIndex: number,
     shuffleStart = false,
   ): void {
-    EventsEmit(
-      Events.RequestSetQueue,
-      filePaths,
-      startIndex,
-      shuffleStart,
-    );
+    Queue.SetQueue(filePaths, startIndex, shuffleStart);
   }
 
   addToQueue(filePath: string): void {
-    EventsEmit(Events.RequestAddToQueue, filePath);
+    Queue.AddTrack(filePath);
   }
 
   playNext(filePath: string): void {
-    EventsEmit(Events.RequestPlayNext, filePath);
+    Queue.InsertNext(filePath);
   }
 
   removeFromQueue(position: number): void {
-    EventsEmit(Events.RequestRemoveFromQueue, position);
+    Queue.RemoveTrack(position);
   }
 
   removeTracksFromQueue(positions: number[]): void {
-    EventsEmit(Events.RequestRemoveTracksFromQueue, positions);
+    Queue.RemoveTracks(positions);
   }
 
   addTracksToQueue(filePaths: string[]): void {
-    EventsEmit(Events.RequestAddTracksToQueue, filePaths);
+    Queue.AddTracks(filePaths);
   }
 
   playTracksNext(filePaths: string[]): void {
-    EventsEmit(Events.RequestPlayTracksNext, filePaths);
+    Queue.InsertNextTracks(filePaths);
   }
 
   toggleShuffle(): void {
-    EventsEmit(Events.RequestToggleShuffle);
+    Queue.ToggleShuffle();
   }
 
   cycleRepeat(): void {
-    EventsEmit(Events.RequestCycleRepeat);
+    Queue.CycleRepeat();
   }
 
   playAtIndex(index: number): void {
-    EventsEmit(Events.RequestPlayQueueIndex, index);
+    Queue.PlayIndex(index);
   }
 
-  insertTracksAtIndex(filePaths: string[], index: number): void {
-    EventsEmit(
-      Events.RequestInsertTracksAtIndex,
-      filePaths,
-      index,
-    );
+  insertTracksAtIndex(
+    filePaths: string[],
+    index: number,
+  ): void {
+    Queue.InsertTracksAt(filePaths, index);
   }
 
   moveTracksInQueue(
     fromIndices: number[],
     toIndex: number,
   ): void {
-    EventsEmit(
-      Events.RequestMoveQueueTracks,
-      fromIndices,
-      toIndex,
-    );
+    Queue.MoveQueueTracks(fromIndices, toIndex);
   }
 
   clearQueue(): void {
-    EventsEmit(Events.RequestClearQueue);
+    Queue.Clear();
   }
 
   // ===================================================================

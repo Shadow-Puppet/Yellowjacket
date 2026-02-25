@@ -94,16 +94,10 @@ var (
 
 var speakerSampleRate = beep.SampleRate(44100)
 
-// NewPlayer creates a player and initializes the audio speaker.
-func NewPlayer(
-	ctx context.Context,
-	logger *slog.Logger,
-	db *database.DB,
-) (*Player, error) {
-	defer profiling.TimeOp(logger, "player.NewPlayer")()
-
-	player := &Player{
-		ctx:          ctx,
+// NewPlayer creates a player. Call InitSpeaker separately to
+// initialize the audio output device.
+func NewPlayer(logger *slog.Logger, db *database.DB) *Player {
+	return &Player{
 		logger:       logger,
 		db:           db,
 		state:        Stopped,
@@ -112,19 +106,27 @@ func NewPlayer(
 			SampleRate: speakerSampleRate,
 		},
 	}
+}
 
-	// TODO: allow user to change buffer size and speaker sample rate
+// InitSpeaker initializes the audio output device. This is
+// separated from NewPlayer so the player struct can be created
+// before wails.Run (for binding registration) while deferring
+// hardware initialization to OnStartup.
+func (p *Player) InitSpeaker() error {
+	defer profiling.TimeOp(p.logger, "player.InitSpeaker")()
+
+	// TODO: allow user to change buffer size and speaker sample rate.
 	err := speaker.Init(
-		player.format.SampleRate,
-		player.format.SampleRate.N(time.Second/10),
+		p.format.SampleRate,
+		p.format.SampleRate.N(time.Second/10),
 	)
 	if err != nil {
-		return nil, fmt.Errorf(
+		return fmt.Errorf(
 			"failed to initialize speaker: %w", err,
 		)
 	}
 
-	return player, nil
+	return nil
 }
 
 // SetPlaybackFinishedHandler sets a callback invoked when a track
@@ -137,138 +139,16 @@ func (p *Player) SetPlaybackFinishedHandler(handler func()) {
 	p.playbackFinishedHandler = handler
 }
 
-// SetContext sets the Wails context, registers event handlers, and
-// restores persisted state.
+// SetContext sets the Wails runtime context and restores persisted
+// state.
 func (p *Player) SetContext(ctx context.Context) {
 	p.mu.Lock()
 	p.ctx = ctx
 	p.mu.Unlock()
 
-	p.registerEventHandlers()
-
 	p.mu.Lock()
 	p.restoreStateLocked()
 	p.mu.Unlock()
-}
-
-func (p *Player) registerEventHandlers() {
-	p.mu.Lock()
-	ctx := p.ctx
-	p.mu.Unlock()
-
-	if ctx == nil {
-		p.logger.Error(
-			"Context is nil, cannot register event handlers",
-		)
-
-		return
-	}
-
-	runtime.EventsOn(
-		ctx,
-		events.RequestPause,
-		func(_ ...any) {
-			p.logger.Info("Received RequestPauseEvent")
-
-			if err := p.Pause(); err != nil {
-				p.logger.Error("failed to pause", "err", err)
-			}
-		},
-	)
-
-	runtime.EventsOn(
-		ctx,
-		events.RequestLoadFile,
-		func(data ...any) {
-			p.logger.Info("Received RequestLoadFileEvent")
-
-			if len(data) < 1 {
-				p.logger.Warn(
-					"RequestLoadFile: missing file path argument",
-				)
-
-				return
-			}
-
-			filePath, ok := data[0].(string)
-			if !ok {
-				p.logger.Warn(
-					"RequestLoadFile: invalid file path type",
-					"got", fmt.Sprintf("%T", data[0]),
-				)
-
-				return
-			}
-
-			err := p.LoadFile(filePath)
-			if err != nil {
-				p.logger.Error(err.Error())
-			}
-		},
-	)
-
-	runtime.EventsOn(ctx, events.Seek, func(data ...any) {
-		p.logger.Info("Received SeekEvent")
-
-		if len(data) < 1 {
-			p.logger.Warn("Seek: missing seek value argument")
-
-			return
-		}
-
-		seekFloat, ok := data[0].(float64)
-		if !ok {
-			p.logger.Warn(
-				"Seek: invalid seek value type",
-				"got", fmt.Sprintf("%T", data[0]),
-			)
-
-			return
-		}
-
-		seekValue := int(seekFloat)
-
-		err := p.Seek(seekValue)
-		if err != nil {
-			p.logger.Error("cannot seek", "error", err)
-		}
-	})
-
-	runtime.EventsOn(
-		ctx,
-		events.RequestSetVolume,
-		func(data ...any) {
-			if len(data) < 1 {
-				p.logger.Warn(
-					"RequestSetVolume: missing volume argument",
-				)
-
-				return
-			}
-
-			volFloat, ok := data[0].(float64)
-			if !ok {
-				p.logger.Warn(
-					"RequestSetVolume: invalid volume type",
-					"got", fmt.Sprintf("%T", data[0]),
-				)
-
-				return
-			}
-
-			desiredVolume := UserVolume(volFloat)
-			p.logger.Info(
-				"Received RequestSetVolumeEvent",
-				"volume", desiredVolume,
-			)
-
-			p.mu.Lock()
-			p.setVolumeLocked(desiredVolume)
-			p.emitVolumeChanged()
-			p.saveState()
-			p.mu.Unlock()
-		},
-	)
 }
 
 // ---------------------------------------------------------------
@@ -695,14 +575,15 @@ func (p *Player) UnloadTrack() {
 // Volume
 // ---------------------------------------------------------------
 
-// SetVolume sets the playback volume (0-100).
-func (p *Player) SetVolume(desiredVolume UserVolume) error {
+// SetVolume sets the playback volume (0-100), emits a
+// VolumeChanged event, and persists the new level.
+func (p *Player) SetVolume(desiredVolume UserVolume) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	p.setVolumeLocked(desiredVolume)
-
-	return nil
+	p.emitVolumeChanged()
+	p.saveState()
 }
 
 func (p *Player) setVolumeLocked(desiredVolume UserVolume) {

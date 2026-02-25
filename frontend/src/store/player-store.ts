@@ -1,5 +1,6 @@
-import { EventsOn, EventsEmit } from '@runtime/runtime';
+import { EventsOn } from '@runtime/runtime';
 import { Events } from '../events';
+import * as Player from '@go/player/Player';
 
 // TrackInfo mirrors the player.TrackInfo struct in the Go backend.
 // Fields are serialized as camelCase JSON via struct tags.
@@ -79,27 +80,23 @@ class PlayerStore {
 
   // ===================================================================
   // ACTIONS
-  // These delegate to the backend via Wails events
+  // These delegate to the backend via Wails bindings
   // ===================================================================
 
-  play(): void {
-    EventsEmit(Events.RequestPlay);
-  }
-
   pause(): void {
-    EventsEmit(Events.RequestPause);
+    Player.Pause();
   }
 
   loadTrack(filePath: string): void {
-    EventsEmit(Events.RequestLoadFile, filePath);
+    Player.LoadFile(filePath);
   }
 
   seek(seconds: number): void {
-    EventsEmit(Events.Seek, seconds);
+    Player.Seek(seconds);
   }
 
   setVolume(level: number): void {
-    EventsEmit(Events.RequestSetVolume, level);
+    Player.SetVolume(level);
   }
 
   // ===================================================================

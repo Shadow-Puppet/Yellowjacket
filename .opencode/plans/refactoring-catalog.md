@@ -30,8 +30,6 @@ Prioritized list of architectural improvements identified during a full codebase
 
 ### ~~6. Extract `SizedFilename` to a shared utility package~~ — solved
 
-Created `backend/coverart/` package with `SizedFilename`, a `ResolveURLs` helper (encapsulates the repeated pattern of resolving filesystem paths to all size-variant URL paths), a `URLs` struct, and a `PathPrefix` constant. Removed `SizedFilename` from `library/coverart.go`. Updated all four callers (`library/query.go`, `player/player.go`, `playlist/playlist.go`, `app.go`) to use `coverart.ResolveURLs`, eliminating the `player` -> `library` and `playlist` -> `library` coupling. Added tests for the new package.
-
 ---
 
 ### 7. ~~Consolidate `LibraryScanComplete` handling~~ — solved
@@ -48,13 +46,9 @@ Created `backend/coverart/` package with `SizedFilename`, a `ResolveURLs` helper
 
 ### ~~10. Move `FullRescan` orchestration from library to app~~ — solved
 
-Replaced `queueClearer`/`playlistRestorer` interfaces and `SetQueue`/`SetPlaylistRestorer` setters with a single `RescanHooks` struct containing `PreClear`/`PostScan` function callbacks. The app wires `queue.Clear` and `playlist.RestoreAllPlaylists` as hooks, so the library no longer has any knowledge of or dependency on those packages.
-
 ---
 
 ### ~~11. Fix double `LibraryScanStarted` event during FullRescan~~ — solved
-
-Removed the `LibraryScanStarted` emission from `FullRescan` (resolved as part of item #10). The event is now only emitted from `Scan()`, giving exactly one emission per rescan.
 
 ---
 
@@ -82,8 +76,6 @@ Removed the `LibraryScanStarted` emission from `FullRescan` (resolved as part of
 ---
 
 ### 14. ~~Unused queue sentinels: `ErrEmptyQueue`, `ErrNoPlayer`~~ — solved
-
-Removed during the queue.go split/rewrite (item #3).
 
 ---
 
