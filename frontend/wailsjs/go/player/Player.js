@@ -62,6 +62,10 @@ export function SetContext(arg1) {
   return window['go']['player']['Player']['SetContext'](arg1);
 }
 
+export function SetMediaControls(arg1) {
+  return window['go']['player']['Player']['SetMediaControls'](arg1);
+}
+
 export function SetPlaybackFinishedHandler(arg1) {
   return window['go']['player']['Player']['SetPlaybackFinishedHandler'](arg1);
 }

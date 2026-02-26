@@ -7,6 +7,7 @@ require (
 	github.com/TheCodeOfCaleb/beep/v2 v2.1.2
 	github.com/a-h/templ v0.3.977
 	github.com/dhowden/tag v0.0.0-20240417053706-3d75831295e8
+	github.com/godbus/dbus/v5 v5.1.0
 	github.com/golang-cz/devslog v0.0.15
 	github.com/wailsapp/wails/v2 v2.10.2
 	golang.org/x/image v0.12.0
@@ -128,7 +129,6 @@ require (
 	github.com/go-xmlfmt/xmlfmt v1.1.3 // indirect
 	github.com/gobwas/glob v0.2.3 // indirect
 	github.com/goccy/go-yaml v1.19.2 // indirect
-	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/godoc-lint/godoc-lint v0.11.1 // indirect
 	github.com/gofrs/flock v0.13.0 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect

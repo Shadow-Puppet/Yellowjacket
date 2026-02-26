@@ -22,6 +22,7 @@ import (
 	"yellowjacket/backend/database"
 	"yellowjacket/backend/database/sql/sqlcgen"
 	"yellowjacket/backend/events"
+	"yellowjacket/backend/mediacontrols"
 	"yellowjacket/backend/metadata"
 	"yellowjacket/backend/profiling"
 )
@@ -52,6 +53,7 @@ type Player struct {
 	speakerStreamer         beep.Streamer
 	playbackFinishedHandler func()
 	trackChangeID           uint64
+	mediaControls           mediacontrols.Handler
 }
 
 // State represents the current playback state.
@@ -139,6 +141,16 @@ func (p *Player) SetPlaybackFinishedHandler(handler func()) {
 	p.playbackFinishedHandler = handler
 }
 
+// SetMediaControls provides an OS media controls handler. When set,
+// the player pushes metadata, playback state, volume, and seek
+// notifications to the OS media overlay.
+func (p *Player) SetMediaControls(h mediacontrols.Handler) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.mediaControls = h
+}
+
 // SetContext sets the Wails runtime context and restores persisted
 // state.
 func (p *Player) SetContext(ctx context.Context) {
@@ -172,6 +184,13 @@ func (p *Player) emitPlaybackStateChanged(state State) {
 		events.PlaybackStateChanged,
 		map[string]string{"state": string(state)},
 	)
+
+	if p.mediaControls != nil {
+		p.mediaControls.UpdatePlaybackState(
+			stateToMediaControls(state),
+			p.currentPositionSecondsLocked(),
+		)
+	}
 }
 
 func (p *Player) emitPlaybackFinished() {
@@ -198,6 +217,13 @@ func (p *Player) emitVolumeChanged() {
 	)
 
 	runtime.EventsEmit(p.ctx, events.VolumeChanged, volume)
+
+	if p.mediaControls != nil {
+		// MPRIS volume is 0.0–1.0 linear.
+		p.mediaControls.UpdateVolume(
+			float64(volume) / float64(MaxUserVol),
+		)
+	}
 }
 
 func (p *Player) emitTrackChanged() {
@@ -237,6 +263,14 @@ func (p *Player) emitTrackChanged() {
 		"Emitting TrackChangedEvent with track info",
 		"trackInfo", trackInfo,
 	)
+
+	if p.mediaControls != nil {
+		p.mediaControls.UpdateMetadata(
+			p.buildMediaMetadata(
+				trackInfo, trackLengthSecs,
+			),
+		)
+	}
 }
 
 // EmitCurrentState pushes the current player state to the frontend.
@@ -325,12 +359,29 @@ func (p *Player) onPlaybackFinished() {
 	p.mu.Lock()
 	p.state = Stopped
 	handler := p.playbackFinishedHandler
+	mc := p.mediaControls
 	p.mu.Unlock()
 
-	// Emit events outside the lock — these are non-blocking Wails
+	// Emit Wails events outside the lock — these are non-blocking
 	// calls that don't need player state.
-	p.emitPlaybackStateChanged(Stopped)
 	p.emitPlaybackFinished()
+
+	if p.ctx != nil {
+		runtime.EventsEmit(
+			p.ctx,
+			events.PlaybackStateChanged,
+			map[string]string{"state": string(Stopped)},
+		)
+	}
+
+	// Notify media controls outside the lock. The track just
+	// ended so position is 0.
+	if mc != nil {
+		mc.UpdatePlaybackState(
+			mediacontrols.StateStopped, 0,
+		)
+	}
+
 	p.logger.Info("Playback finished naturally")
 
 	// Notify queue for auto-advance. Called without p.mu held
@@ -566,6 +617,11 @@ func (p *Player) UnloadTrack() {
 	// Notify frontend that there is no longer a current track.
 	p.emitPlaybackStateChanged(p.state)
 	runtime.EventsEmit(p.ctx, events.TrackChanged, nil)
+
+	if p.mediaControls != nil {
+		p.mediaControls.UpdateMetadata(mediacontrols.Metadata{})
+	}
+
 	p.saveState()
 
 	p.logger.Info("Track unloaded")
@@ -706,6 +762,10 @@ func (p *Player) seekLocked(targetSeconds int) error {
 
 	speaker.Unlock()
 
+	if p.mediaControls != nil {
+		p.mediaControls.NotifySeek(targetSeconds)
+	}
+
 	return nil
 }
 
@@ -784,6 +844,67 @@ func (p *Player) trackLengthLocked() (int, error) {
 	speaker.Unlock()
 
 	return length, nil
+}
+
+// ---------------------------------------------------------------
+// Media controls helpers
+// ---------------------------------------------------------------
+
+// stateToMediaControls maps the player's State type to the
+// mediacontrols PlaybackState.
+func stateToMediaControls(s State) mediacontrols.PlaybackState {
+	switch s {
+	case Playing:
+		return mediacontrols.StatePlaying
+	case Paused:
+		return mediacontrols.StatePaused
+	default:
+		return mediacontrols.StateStopped
+	}
+}
+
+// currentPositionSecondsLocked returns the playback position in
+// seconds. Must be called with p.mu held.
+func (p *Player) currentPositionSecondsLocked() int {
+	if p.seeker == nil {
+		return 0
+	}
+
+	speaker.Lock()
+	pos := p.seeker.Position() / int(p.format.SampleRate)
+	speaker.Unlock()
+
+	return pos
+}
+
+// buildMediaMetadata constructs a mediacontrols.Metadata from a
+// TrackInfo and duration. It resolves the cover art filesystem path
+// from the database for use by MPRIS (which needs file:// URIs).
+// Must be called with p.mu held.
+func (p *Player) buildMediaMetadata(
+	info TrackInfo,
+	durationSec int,
+) mediacontrols.Metadata {
+	meta := mediacontrols.Metadata{
+		Title:       info.Title,
+		Artist:      info.Artist,
+		Album:       info.Album,
+		DurationSec: durationSec,
+	}
+
+	// Resolve cover art filesystem path. The database stores the
+	// full path; ResolveURLs converts it to relative HTTP paths
+	// for the frontend, but MPRIS needs the actual file path.
+	if p.db != nil && info.FilePath != "" {
+		dbMeta, err := p.db.Queries.GetTrackMetadataByPath(
+			p.ctx, info.FilePath,
+		)
+		if err == nil && dbMeta.CoverArtPath != "" {
+			meta.ArtFilePath = dbMeta.CoverArtPath
+		}
+	}
+
+	return meta
 }
 
 // ---------------------------------------------------------------

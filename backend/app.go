@@ -17,6 +17,7 @@ import (
 	"yellowjacket/backend/database"
 	"yellowjacket/backend/frontendutil"
 	"yellowjacket/backend/library"
+	"yellowjacket/backend/mediacontrols"
 	"yellowjacket/backend/player"
 	"yellowjacket/backend/playlist"
 	"yellowjacket/backend/profiling"
@@ -28,15 +29,16 @@ type YellowJacketApp struct {
 	FEBindings   []any
 	FrontendUtil *frontendutil.FrontendUtil
 
-	logger       *slog.Logger
-	assetHandler *assets.Handler
-	database     *database.DB
-	library      *library.Library
-	player       *player.Player
-	playlist     *playlist.Service
-	queue        *queue.Queue
-	appContext   context.Context
-	appConfig    *config.Config
+	logger        *slog.Logger
+	assetHandler  *assets.Handler
+	database      *database.DB
+	library       *library.Library
+	player        *player.Player
+	playlist      *playlist.Service
+	queue         *queue.Queue
+	mediaControls mediacontrols.Handler
+	appContext    context.Context
+	appConfig     *config.Config
 }
 
 // NewYellowJacketApp creates and initializes the application.
@@ -170,6 +172,41 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 
 	// Register playback finished handler to drive queue auto-advance.
 	yj.player.SetPlaybackFinishedHandler(yj.queue.OnPlaybackFinished)
+
+	// Initialize OS media controls (MPRIS on Linux, no-op elsewhere).
+	yj.mediaControls = mediacontrols.NewHandler(yj.logger)
+
+	if err := yj.mediaControls.Init(mediacontrols.Callbacks{
+		OnPlay:  yj.queue.Play,
+		OnPause: func() { _ = yj.player.Pause() },
+		OnPlayPause: func() {
+			if yj.player.IsPlaying() {
+				_ = yj.player.Pause()
+			} else {
+				yj.queue.Play()
+			}
+		},
+		OnStop:     func() { _ = yj.player.Pause() },
+		OnNext:     yj.queue.Next,
+		OnPrevious: yj.queue.Previous,
+		OnSeek: func(positionSec int) {
+			_ = yj.player.Seek(positionSec)
+		},
+		OnVolume: func(vol float64) {
+			yj.player.SetVolume(
+				player.UserVolume(
+					vol * float64(player.MaxUserVol),
+				),
+			)
+		},
+	}); err != nil {
+		yj.logger.Error(
+			"Failed to initialize media controls",
+			"err", err,
+		)
+	}
+
+	yj.player.SetMediaControls(yj.mediaControls)
 }
 
 // OnBeforeClose captures window state while the window is still alive.
@@ -197,6 +234,10 @@ func (yj *YellowJacketApp) OnShutdown(_ context.Context) {
 
 	if yj.queue != nil {
 		yj.queue.SaveState()
+	}
+
+	if yj.mediaControls != nil {
+		yj.mediaControls.Close()
 	}
 }
 
