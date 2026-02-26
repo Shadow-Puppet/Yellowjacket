@@ -209,6 +209,37 @@ func (q *Queries) GetPlaylist(ctx context.Context, id int64) (Playlist, error) {
 	return i, err
 }
 
+const getPlaylistTrackFilePaths = `-- name: GetPlaylistTrackFilePaths :many
+SELECT af.file_path
+FROM playlist_tracks pt
+JOIN audio_files af ON pt.audio_file_id = af.id
+WHERE pt.playlist_id = ?
+ORDER BY pt.position
+`
+
+func (q *Queries) GetPlaylistTrackFilePaths(ctx context.Context, playlistID int64) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, getPlaylistTrackFilePaths, playlistID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var file_path string
+		if err := rows.Scan(&file_path); err != nil {
+			return nil, err
+		}
+		items = append(items, file_path)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getPlaylistTracks = `-- name: GetPlaylistTracks :many
 SELECT pt.id, pt.playlist_id, pt.audio_file_id, pt.position, af.file_path
 FROM playlist_tracks pt
@@ -328,12 +359,49 @@ func (q *Queries) GetPlaylistTracksWithMetadata(ctx context.Context, playlistID 
 	return items, nil
 }
 
+const isTrackInPlaylist = `-- name: IsTrackInPlaylist :one
+SELECT EXISTS(
+    SELECT 1 FROM playlist_tracks pt
+    JOIN audio_files af ON pt.audio_file_id = af.id
+    WHERE pt.playlist_id = ? AND af.file_path = ?
+) AS in_playlist
+`
+
+type IsTrackInPlaylistParams struct {
+	PlaylistID int64
+	FilePath   string
+}
+
+func (q *Queries) IsTrackInPlaylist(ctx context.Context, arg IsTrackInPlaylistParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, isTrackInPlaylist, arg.PlaylistID, arg.FilePath)
+	var in_playlist int64
+	err := row.Scan(&in_playlist)
+	return in_playlist, err
+}
+
 const removePlaylistTrack = `-- name: RemovePlaylistTrack :exec
 DELETE FROM playlist_tracks WHERE id = ?
 `
 
 func (q *Queries) RemovePlaylistTrack(ctx context.Context, id int64) error {
 	_, err := q.db.ExecContext(ctx, removePlaylistTrack, id)
+	return err
+}
+
+const removePlaylistTrackByPath = `-- name: RemovePlaylistTrackByPath :exec
+DELETE FROM playlist_tracks
+WHERE playlist_id = ? AND audio_file_id = (
+    SELECT id FROM audio_files WHERE file_path = ?
+)
+`
+
+type RemovePlaylistTrackByPathParams struct {
+	PlaylistID int64
+	FilePath   string
+}
+
+func (q *Queries) RemovePlaylistTrackByPath(ctx context.Context, arg RemovePlaylistTrackByPathParams) error {
+	_, err := q.db.ExecContext(ctx, removePlaylistTrackByPath, arg.PlaylistID, arg.FilePath)
 	return err
 }
 

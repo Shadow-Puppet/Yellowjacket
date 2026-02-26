@@ -42,6 +42,7 @@ import { libraryStore } from '@store/library-store';
 import { ContextMenuController } from '@utils/context-menu-controller.js';
 import type { ContextMenuHost } from '@utils/context-menu-controller.js';
 import { contextMenuStyles } from '@utils/context-menu-controller.js';
+import { FavoritesController } from '@store/controllers/favorites-controller';
 import '@components/track-details/track-details.js';
 import type { TrackDetails } from '@components/track-details/track-details.js';
 import type { CoverArtUrls } from '@components/track-details/track-details.js';
@@ -66,6 +67,7 @@ export class PlaylistView
     private searchCtrl = new SearchController(this);
     private selection = new SelectionController(this);
     private ctxMenu = new ContextMenuController(this);
+    private favCtrl = new FavoritesController(this);
 
     getContextMenuPopup(): WaPopup | undefined {
         return this.contextMenuPopup;
@@ -1148,6 +1150,26 @@ export class PlaylistView
         this.ctxMenu.close();
     }
 
+    private onContextMenuFavoriteToggle() {
+        const filePaths =
+            this.getSelectedFilePaths();
+
+        if (filePaths.length === 0) return;
+
+        if (this.favCtrl.allFavorited(filePaths)) {
+            void this.favCtrl.removeFromFavorites(
+                filePaths,
+            );
+        } else {
+            void this.favCtrl.addToFavorites(
+                filePaths,
+            );
+        }
+
+        this.selection.clear();
+        this.ctxMenu.close();
+    }
+
     private async removeSelectedPhantoms(): Promise<void> {
         if (this.activePlaylistIndex < 0) return;
 
@@ -2133,6 +2155,18 @@ export class PlaylistView
                                        >
                                            &#9654;
                                        </span>
+                                  </wa-dropdown-item>
+                                  <wa-dropdown-item
+                                      @click=${() =>
+                                          this.onContextMenuFavoriteToggle()}
+                                      @mouseenter=${() =>
+                                          this.ctxMenu.closePlaylistSubmenu()}
+                                  >
+                                       <wa-icon
+                                           slot="icon"
+                                           name=${this.favCtrl.iconName}
+                                       ></wa-icon>
+                                      ${this.favCtrl.allFavorited(this.getSelectedFilePaths()) ? `Remove from ${this.favCtrl.playlistName}` : `Add to ${this.favCtrl.playlistName}`}
                                   </wa-dropdown-item>
                                   ${this.selection
                                       .selectionCount ===

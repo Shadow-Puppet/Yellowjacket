@@ -3,6 +3,10 @@
 import {tracklist} from '../models';
 import {context} from '../models';
 
+export function GetFavoritesIconStyle():Promise<string>;
+
+export function GetFavoritesPlaylistID():Promise<number>;
+
 export function GetLibraryDirectory():Promise<string>;
 
 export function GetScanConcurrency():Promise<string>;
@@ -18,6 +22,10 @@ export function Load():Promise<void>;
 export function Save():Promise<void>;
 
 export function SetContext(arg1:context.Context):Promise<void>;
+
+export function SetFavoritesIconStyle(arg1:string):Promise<void>;
+
+export function SetFavoritesPlaylistID(arg1:number):Promise<void>;
 
 export function SetLibraryDirectory(arg1:string):Promise<void>;
 

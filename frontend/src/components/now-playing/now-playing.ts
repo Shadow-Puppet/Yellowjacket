@@ -4,6 +4,7 @@ import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
 import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
 import { PlayerController } from '@store/controllers/player-controller';
+import { FavoritesController } from '@store/controllers/favorites-controller';
 
 const MIN_WIDTH = 120;
 const MAX_WIDTH = 350;
@@ -12,6 +13,7 @@ const DEFAULT_WIDTH = 200;
 @customElement('now-playing')
 export class NowPlaying extends LitElement {
     private player = new PlayerController(this);
+    private favCtrl = new FavoritesController(this);
 
     @state()
     private isDragging = false;
@@ -83,11 +85,46 @@ export class NowPlaying extends LitElement {
       object-fit: cover;
     }
 
+    .track-info-wrapper {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      flex: 1;
+    }
+
     .track-info {
       display: flex;
       flex-direction: column;
       gap: 2px;
       min-width: 0;
+    }
+
+    .fav-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      cursor: pointer;
+      color: var(--yj-text-tertiary, #666);
+      font-size: 14px;
+      transition: color 0.1s ease;
+      background: none;
+      border: none;
+      padding: 0;
+    }
+
+    .fav-btn:hover {
+      color: var(--yj-text-primary, #fff);
+    }
+
+    .fav-btn.favorited {
+      color: var(--yj-accent, #ffd43b);
+    }
+
+    .fav-btn.favorited:hover {
+      color: var(--yj-accent, #ffd43b);
+      opacity: 0.8;
     }
 
     .track-title {
@@ -154,6 +191,11 @@ export class NowPlaying extends LitElement {
       `;
         }
 
+        const isFav = track.filePath
+            ? this.favCtrl.isFavorited(track.filePath)
+            : false;
+        const favVariant = isFav ? 'solid' : 'regular';
+
         return html`
       <div class="now-playing">
         <div class="cover-art-wrapper">
@@ -199,11 +241,32 @@ export class NowPlaying extends LitElement {
               : nothing}
           </wa-popup>
         </div>
-        <div class="track-info">
-          <span class="track-title">${track.title}</span>
-          <span class="track-artist">
-            ${track.artist || 'Unknown Artist'}
-          </span>
+        <div class="track-info-wrapper">
+          <div class="track-info">
+            <span class="track-title">
+              ${track.title}
+            </span>
+            <span class="track-artist">
+              ${track.artist || 'Unknown Artist'}
+            </span>
+          </div>
+          ${track.filePath
+              ? html`
+                <button
+                  class="fav-btn ${isFav ? 'favorited' : ''}"
+                  title="${isFav ? `Remove from ${this.favCtrl.playlistName}` : `Add to ${this.favCtrl.playlistName}`}"
+                  @click=${() =>
+                      void this.favCtrl.toggleFavorite(
+                          track.filePath,
+                      )}
+                >
+                  <wa-icon
+                    name=${this.favCtrl.iconName}
+                    variant=${favVariant}
+                  ></wa-icon>
+                </button>
+              `
+              : nothing}
         </div>
       </div>
       <div

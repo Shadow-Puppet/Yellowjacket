@@ -96,10 +96,11 @@ type PhantomSearchResult struct {
 
 // Service manages playlist operations.
 type Service struct {
-	ctx        context.Context
-	logger     *slog.Logger
-	db         *database.DB
-	libraryDir LibraryDirProvider
+	ctx           context.Context
+	logger        *slog.Logger
+	db            *database.DB
+	libraryDir    LibraryDirProvider
+	favoritesConf FavoritesConfigProvider
 }
 
 // NewService creates a new playlist service.
@@ -113,6 +114,14 @@ func NewService(
 		db:         db,
 		libraryDir: libraryDir,
 	}
+}
+
+// SetFavoritesConfig sets the provider used to read and write
+// the default-playlist configuration.
+func (s *Service) SetFavoritesConfig(
+	provider FavoritesConfigProvider,
+) {
+	s.favoritesConf = provider
 }
 
 // SetContext sets the Wails runtime context and runs the
@@ -583,6 +592,8 @@ func (s *Service) RemoveTracksFromPlaylist(
 }
 
 // DeletePlaylist deletes a playlist and its M3U8 file.
+// If the deleted playlist was the default, a new default
+// playlist is automatically created.
 func (s *Service) DeletePlaylist(playlistID int64) error {
 	if err := s.db.Queries.DeletePlaylist(
 		s.db.Ctx, playlistID,
@@ -605,6 +616,11 @@ func (s *Service) DeletePlaylist(playlistID int64) error {
 	)
 
 	s.emitEvent(events.PlaylistDeleted, playlistID)
+
+	// Recreate the default playlist if we just deleted it.
+	if s.defaultPlaylistID() == playlistID {
+		s.EnsureDefaultPlaylist()
+	}
 
 	return nil
 }

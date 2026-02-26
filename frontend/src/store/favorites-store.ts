@@ -1,0 +1,278 @@
+import { EventsOn } from '@runtime/runtime';
+import {
+    GetDefaultPlaylistTrackPaths,
+    GetDefaultPlaylistInfo,
+    ToggleDefaultPlaylistTrack,
+    AddToDefaultPlaylist,
+    RemoveFromDefaultPlaylist,
+} from '@go/playlist/Service';
+import {
+    GetFavoritesIconStyle,
+    GetFavoritesPlaylistID,
+    SetFavoritesIconStyle,
+    SetFavoritesPlaylistID,
+} from '@go/config/Config';
+import { Events } from '../events';
+
+export type IconStyle = 'heart' | 'star';
+
+export interface FavoritesState {
+    playlistId: number;
+    playlistName: string;
+    iconStyle: IconStyle;
+    favoritedPaths: Set<string>;
+}
+
+type Subscriber = () => void;
+
+class FavoritesStore {
+    private playlistId = 0;
+    private playlistName = 'Favorites';
+    private iconStyle: IconStyle = 'heart';
+    private favoritedPaths = new Set<string>();
+    private subscribers = new Set<Subscriber>();
+    private loading = false;
+
+    constructor() {
+        // Load initial state.
+        void this.loadConfig();
+        void this.loadPaths();
+
+        // React to changes from the backend.
+        EventsOn(
+            Events.FavoritesConfigChanged,
+            (data: {
+                PlaylistID: number;
+                IconStyle: string;
+            }) => {
+                this.playlistId = data.PlaylistID;
+                this.iconStyle =
+                    data.IconStyle as IconStyle;
+                void this.loadPlaylistName();
+                void this.loadPaths();
+            },
+        );
+
+        EventsOn(
+            Events.DefaultPlaylistChanged,
+            () => {
+                void this.loadPaths();
+            },
+        );
+
+        // When a playlist's tracks change, check if it's
+        // our default playlist and reload if so.
+        EventsOn(
+            Events.PlaylistTracksChanged,
+            (playlistId: number) => {
+                if (playlistId === this.playlistId) {
+                    void this.loadPaths();
+                }
+            },
+        );
+
+        // When a playlist is deleted and recreated,
+        // reload everything.
+        EventsOn(Events.PlaylistDeleted, () => {
+            void this.loadConfig();
+            void this.loadPaths();
+        });
+
+        EventsOn(Events.PlaylistRenamed, () => {
+            void this.loadPlaylistName();
+        });
+
+        EventsOn(Events.PlaylistsRestored, () => {
+            void this.loadPaths();
+        });
+    }
+
+    // ===============================================================
+    // DATA ACCESS
+    // ===============================================================
+
+    isFavorited(filePath: string): boolean {
+        return this.favoritedPaths.has(filePath);
+    }
+
+    /**
+     * Check if all given file paths are in the default
+     * playlist.
+     */
+    allFavorited(filePaths: string[]): boolean {
+        if (filePaths.length === 0) return false;
+
+        return filePaths.every((fp) =>
+            this.favoritedPaths.has(fp),
+        );
+    }
+
+    getIconStyle(): IconStyle {
+        return this.iconStyle;
+    }
+
+    getPlaylistName(): string {
+        return this.playlistName;
+    }
+
+    getPlaylistId(): number {
+        return this.playlistId;
+    }
+
+    isLoading(): boolean {
+        return this.loading;
+    }
+
+    // ===============================================================
+    // ACTIONS
+    // ===============================================================
+
+    async toggleFavorite(filePath: string): Promise<void> {
+        // Optimistic update.
+        const wasIn = this.favoritedPaths.has(filePath);
+
+        if (wasIn) {
+            this.favoritedPaths.delete(filePath);
+        } else {
+            this.favoritedPaths.add(filePath);
+        }
+
+        this.notify();
+
+        try {
+            await ToggleDefaultPlaylistTrack(filePath);
+        } catch {
+            // Revert optimistic update.
+            if (wasIn) {
+                this.favoritedPaths.add(filePath);
+            } else {
+                this.favoritedPaths.delete(filePath);
+            }
+
+            this.notify();
+        }
+    }
+
+    async addToFavorites(
+        filePaths: string[],
+    ): Promise<void> {
+        for (const fp of filePaths) {
+            this.favoritedPaths.add(fp);
+        }
+
+        this.notify();
+
+        try {
+            await AddToDefaultPlaylist(filePaths);
+        } catch {
+            void this.loadPaths();
+        }
+    }
+
+    async removeFromFavorites(
+        filePaths: string[],
+    ): Promise<void> {
+        for (const fp of filePaths) {
+            this.favoritedPaths.delete(fp);
+        }
+
+        this.notify();
+
+        try {
+            await RemoveFromDefaultPlaylist(filePaths);
+        } catch {
+            void this.loadPaths();
+        }
+    }
+
+    async setIconStyle(
+        style: IconStyle,
+    ): Promise<void> {
+        this.iconStyle = style;
+        this.notify();
+        await SetFavoritesIconStyle(style);
+    }
+
+    async setDefaultPlaylist(
+        id: number,
+    ): Promise<void> {
+        this.playlistId = id;
+        this.notify();
+        await SetFavoritesPlaylistID(id);
+        await this.loadPlaylistName();
+        await this.loadPaths();
+    }
+
+    // ===============================================================
+    // SUBSCRIPTION SYSTEM
+    // ===============================================================
+
+    subscribe(callback: Subscriber): () => void {
+        this.subscribers.add(callback);
+
+        return () => this.subscribers.delete(callback);
+    }
+
+    private notify(): void {
+        this.subscribers.forEach((cb) => cb());
+    }
+
+    // ===============================================================
+    // LOADING HELPERS
+    // ===============================================================
+
+    private async loadConfig(): Promise<void> {
+        try {
+            const [id, style] = await Promise.all([
+                GetFavoritesPlaylistID(),
+                GetFavoritesIconStyle(),
+            ]);
+
+            this.playlistId = id;
+            this.iconStyle = style as IconStyle;
+            await this.loadPlaylistName();
+            this.notify();
+        } catch {
+            // Defaults are already set.
+        }
+    }
+
+    private async loadPlaylistName(): Promise<void> {
+        if (this.playlistId === 0) {
+            this.playlistName = 'Favorites';
+            this.notify();
+
+            return;
+        }
+
+        try {
+            const info =
+                await GetDefaultPlaylistInfo();
+
+            if (info?.Name) {
+                this.playlistName = info.Name;
+                this.notify();
+            }
+        } catch {
+            // Keep current name.
+        }
+    }
+
+    private async loadPaths(): Promise<void> {
+        this.loading = true;
+
+        try {
+            const paths =
+                await GetDefaultPlaylistTrackPaths();
+            this.favoritedPaths = new Set(paths ?? []);
+        } catch {
+            // Keep current set.
+        } finally {
+            this.loading = false;
+            this.notify();
+        }
+    }
+}
+
+// Singleton instance.
+export const favoritesStore = new FavoritesStore();

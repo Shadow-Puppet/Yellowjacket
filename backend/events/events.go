@@ -25,15 +25,17 @@ const (
 	LibraryConfigChanged   = "LibraryConfigChanged"
 	ThemeConfigChanged     = "ThemeConfigChanged"
 	TrackListConfigChanged = "TrackListConfigChanged"
+	FavoritesConfigChanged = "FavoritesConfigChanged"
 )
 
 // Playlist events.
 const (
-	PlaylistCreated       = "PlaylistCreated"
-	PlaylistDeleted       = "PlaylistDeleted"
-	PlaylistRenamed       = "PlaylistRenamed"
-	PlaylistTracksChanged = "PlaylistTracksChanged"
-	PlaylistsRestored     = "PlaylistsRestored"
+	PlaylistCreated        = "PlaylistCreated"
+	PlaylistDeleted        = "PlaylistDeleted"
+	PlaylistRenamed        = "PlaylistRenamed"
+	PlaylistTracksChanged  = "PlaylistTracksChanged"
+	PlaylistsRestored      = "PlaylistsRestored"
+	DefaultPlaylistChanged = "DefaultPlaylistChanged"
 )
 
 // Library events.

@@ -23,6 +23,7 @@ import {
     contextMenuStyles,
 } from '@utils/context-menu-controller.js';
 import type { ContextMenuHost } from '@utils/context-menu-controller.js';
+import { FavoritesController } from '@store/controllers/favorites-controller';
 
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
@@ -60,6 +61,7 @@ export class ArtistsView
     private libraryCtrl = new LibraryController(this);
     private searchCtrl = new SearchController(this);
     private ctxMenu = new ContextMenuController(this);
+    private favCtrl = new FavoritesController(this);
     private wheelListenerAttached = false;
     private lastSearchTerm = '';
 
@@ -889,6 +891,25 @@ export class ArtistsView
         void this.ctxMenu.showPlaylistSubmenu(paths);
     }
 
+    private async onContextMenuFavoriteToggle() {
+        const filePaths =
+            await this.getContextMenuArtistFilePaths();
+
+        if (filePaths.length === 0) return;
+
+        if (this.favCtrl.allFavorited(filePaths)) {
+            void this.favCtrl.removeFromFavorites(
+                filePaths,
+            );
+        } else {
+            void this.favCtrl.addToFavorites(
+                filePaths,
+            );
+        }
+
+        this.ctxMenu.close();
+    }
+
     /* ================================================================
      * File path resolution
      * ================================================================ */
@@ -1101,6 +1122,18 @@ export class ArtistsView
                                       class="submenu-arrow"
                                       >&#9654;</span
                                   >
+                              </wa-dropdown-item>
+                              <wa-dropdown-item
+                                  @click=${() =>
+                                      this.onContextMenuFavoriteToggle()}
+                                  @mouseenter=${() =>
+                                      this.ctxMenu.closePlaylistSubmenu()}
+                              >
+                                   <wa-icon
+                                       slot="icon"
+                                       name=${this.favCtrl.iconName}
+                                   ></wa-icon>
+                                  ${this.favCtrl.allFavorited(this.ctxMenu.playlistFilePaths) ? `Remove from ${this.favCtrl.playlistName}` : `Add to ${this.favCtrl.playlistName}`}
                               </wa-dropdown-item>
                           </div>
                       `

@@ -103,6 +103,7 @@ func NewYellowJacketApp(
 	yjApp.playlist = playlist.NewService(
 		yjApp.logger, yjApp.database, yjApp.appConfig,
 	)
+	yjApp.playlist.SetFavoritesConfig(yjApp.appConfig)
 
 	// create queue (before wails.Run so it can be bound)
 	yjApp.queue = queue.NewQueue(yjApp.logger, yjApp.database)
@@ -145,6 +146,7 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 	yj.FrontendUtil.SetContext(ctx)
 	yj.library.SetContext(ctx)
 	yj.playlist.SetContext(ctx)
+	yj.playlist.EnsureDefaultPlaylist()
 
 	// Initialize speaker hardware (player struct created in
 	// NewYellowJacketApp for Wails binding registration).

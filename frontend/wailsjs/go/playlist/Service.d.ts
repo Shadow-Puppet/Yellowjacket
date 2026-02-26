@@ -3,6 +3,8 @@
 import {playlist} from '../models';
 import {context} from '../models';
 
+export function AddToDefaultPlaylist(arg1:Array<string>):Promise<void>;
+
 export function AddTracksToPlaylist(arg1:number,arg2:Array<string>):Promise<void>;
 
 export function CreatePlaylist(arg1:string):Promise<playlist.Summary>;
@@ -11,17 +13,25 @@ export function CreatePlaylistWithTracks(arg1:string,arg2:Array<string>):Promise
 
 export function DeletePlaylist(arg1:number):Promise<void>;
 
+export function EnsureDefaultPlaylist():Promise<void>;
+
 export function FindPhantomMatches(arg1:number,arg2:Array<string>):Promise<playlist.PhantomSearchResult>;
 
 export function GetAllPlaylists():Promise<Array<playlist.Summary>>;
 
 export function GetAllPlaylistsWithTracks():Promise<Array<playlist.WithTracks>>;
 
+export function GetDefaultPlaylistInfo():Promise<playlist.Summary>;
+
+export function GetDefaultPlaylistTrackPaths():Promise<Array<string>>;
+
 export function GetPhantomCandidates(arg1:number,arg2:string):Promise<Array<playlist.CandidateTrack>>;
 
 export function GetPlaylistTracks(arg1:number):Promise<Array<playlist.Track>>;
 
 export function ImportPlaylist(arg1:string):Promise<playlist.Summary>;
+
+export function RemoveFromDefaultPlaylist(arg1:Array<string>):Promise<void>;
 
 export function RemovePhantomTracks(arg1:number,arg2:Array<string>):Promise<void>;
 
@@ -36,3 +46,7 @@ export function RestoreAllPlaylists():Promise<void>;
 export function SearchLibrary(arg1:string):Promise<Array<playlist.CandidateTrack>>;
 
 export function SetContext(arg1:context.Context):Promise<void>;
+
+export function SetFavoritesConfig(arg1:playlist.FavoritesConfigProvider):Promise<void>;
+
+export function ToggleDefaultPlaylistTrack(arg1:string):Promise<boolean>;

@@ -12,9 +12,13 @@ import {
 import { DirectoryPicker } from '@go/frontendutil/FrontendUtil';
 import { ThemeController } from '@store/controllers/theme-controller';
 import { TrackListController } from '@store/controllers/tracklist-controller';
+import { FavoritesController } from '@store/controllers/favorites-controller';
+import { GetAllPlaylists } from '@go/playlist/Service';
+import type { playlist } from '@go/models';
 import { Events } from '../../events';
 import type { ConfigFieldChangeEvent } from './config-field';
 import type { BackgroundShade } from '@store/theme-store';
+import type { IconStyle } from '@store/favorites-store';
 import {
     COLUMN_DEFS,
     ALL_COLUMN_IDS,
@@ -184,6 +188,12 @@ export class ConfigPage extends LitElement {
 
     // --- Track-list column config controller ---
     private trackListCtrl = new TrackListController(this);
+
+    // --- Favorites controller ---
+    private favCtrl = new FavoritesController(this);
+
+    // --- Favorites state ---
+    @state() private playlists: playlist.Summary[] = [];
 
     // --- Library state ---
     @state() private libraryDirectory = '';
@@ -552,6 +562,7 @@ export class ConfigPage extends LitElement {
     override connectedCallback(): void {
         super.connectedCallback();
         this.loadLibraryConfig();
+        void this.loadPlaylists();
 
         this.cancelScanStarted = EventsOn(
             Events.LibraryScanStarted,
@@ -759,6 +770,56 @@ export class ConfigPage extends LitElement {
     };
 
     // ===================================================================
+    // FAVORITES HANDLERS
+    // ===================================================================
+
+    private async loadPlaylists(): Promise<void> {
+        try {
+            this.playlists =
+                await GetAllPlaylists();
+        } catch (err) {
+            console.error(
+                'Failed to load playlists:',
+                err,
+            );
+        }
+    }
+
+    private handleFavIconStyleChange = (
+        e: CustomEvent<ConfigFieldChangeEvent>,
+    ): void => {
+        const style = String(
+            e.detail.value,
+        ) as IconStyle;
+
+        this.favCtrl
+            .setIconStyle(style)
+            .catch((err: unknown) => {
+                console.error(
+                    'Failed to set icon style:',
+                    err,
+                );
+            });
+    };
+
+    private handleFavPlaylistChange = (
+        e: CustomEvent<ConfigFieldChangeEvent>,
+    ): void => {
+        const id = Number(e.detail.value);
+
+        if (Number.isNaN(id)) return;
+
+        this.favCtrl
+            .setDefaultPlaylist(id)
+            .catch((err: unknown) => {
+                console.error(
+                    'Failed to set default playlist:',
+                    err,
+                );
+            });
+    };
+
+    // ===================================================================
     // TRACK LIST COLUMN HANDLERS
     // ===================================================================
 
@@ -877,6 +938,7 @@ export class ConfigPage extends LitElement {
             <h2>Settings</h2>
 
             ${this.renderThemeSection()}
+            ${this.renderFavoritesSection()}
             ${this.renderTrackListSection()}
             ${this.renderLibrarySection()}
         `;
@@ -967,6 +1029,61 @@ export class ConfigPage extends LitElement {
                 </div>
             `,
         );
+    }
+
+    // --- Favorites section ---
+
+    private renderFavoritesSection() {
+        const playlistOptions =
+            this.playlists.map((p) => ({
+                value: String(p.ID),
+                label: p.Name,
+            }));
+
+        return html`
+            <config-section
+                heading="Favorites"
+                description="Configure the default playlist used for quick-favouriting tracks."
+            >
+                <config-field
+                    .schema=${{
+                        key: 'favoritesPlaylist',
+                        label: 'Default Playlist',
+                        description:
+                            'The playlist used when toggling the favourite icon on tracks.',
+                        type: 'select' as const,
+                        options: playlistOptions,
+                    }}
+                    .value=${String(
+                        this.favCtrl.playlistId,
+                    )}
+                    @config-change=${this.handleFavPlaylistChange}
+                ></config-field>
+
+                <config-field
+                    .schema=${{
+                        key: 'favoritesIcon',
+                        label: 'Icon Style',
+                        description:
+                            'Choose heart or star for the favourite indicator.',
+                        type: 'select' as const,
+                        options: [
+                            {
+                                value: 'heart',
+                                label: '\u2665 Heart',
+                            },
+                            {
+                                value: 'star',
+                                label: '\u2605 Star',
+                            },
+                        ],
+                    }}
+                    .value=${this.favCtrl
+                        .iconStyle}
+                    @config-change=${this.handleFavIconStyleChange}
+                ></config-field>
+            </config-section>
+        `;
     }
 
     // --- Track list section ---

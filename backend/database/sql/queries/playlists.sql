@@ -88,3 +88,23 @@ DELETE FROM playlist_tracks;
 -- name: GetNextPlaylistTrackPosition :one
 SELECT COALESCE(MAX(position), -1) + 1 AS next_position
 FROM playlist_tracks WHERE playlist_id = ?;
+
+-- name: GetPlaylistTrackFilePaths :many
+SELECT af.file_path
+FROM playlist_tracks pt
+JOIN audio_files af ON pt.audio_file_id = af.id
+WHERE pt.playlist_id = ?
+ORDER BY pt.position;
+
+-- name: IsTrackInPlaylist :one
+SELECT EXISTS(
+    SELECT 1 FROM playlist_tracks pt
+    JOIN audio_files af ON pt.audio_file_id = af.id
+    WHERE pt.playlist_id = ? AND af.file_path = ?
+) AS in_playlist;
+
+-- name: RemovePlaylistTrackByPath :exec
+DELETE FROM playlist_tracks
+WHERE playlist_id = ? AND audio_file_id = (
+    SELECT id FROM audio_files WHERE file_path = ?
+);

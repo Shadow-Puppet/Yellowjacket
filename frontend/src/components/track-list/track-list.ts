@@ -17,6 +17,7 @@ import type { ContextMenuHost } from '@utils/context-menu-controller.js';
 import { PlayerController } from '@store/controllers/player-controller';
 import { SearchController } from '@store/controllers/search-controller';
 import { TrackListController } from '@store/controllers/tracklist-controller';
+import { FavoritesController } from '@store/controllers/favorites-controller';
 import { queueStore } from '@store/queue-store';
 import { LibraryController } from '@store/controllers/library-controller';
 import {
@@ -74,6 +75,7 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
     private libraryCtrl = new LibraryController(this);
     private searchCtrl = new SearchController(this);
     private trackListCtrl = new TrackListController(this);
+    private favCtrl = new FavoritesController(this);
     private selection = new SelectionController(this);
     private ctxMenu = new ContextMenuController(this);
     private lastSearchTerm = '';
@@ -312,24 +314,34 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
 
     private get gridTemplateColumns(): string {
         const cols = this.activeColumns;
+        const favCol = '24px';
 
         if (this.columnWidths.length === 0) {
-            return cols
-                .map((c) => c.defaultWidth)
-                .join(' ');
+            return (
+                favCol +
+                ' ' +
+                cols
+                    .map((c) => c.defaultWidth)
+                    .join(' ')
+            );
         }
 
-        return this.columnWidths
-            .map((w) => `${w}px`)
-            .join(' ');
+        return (
+            favCol +
+            ' ' +
+            this.columnWidths
+                .map((w) => `${w}px`)
+                .join(' ')
+        );
     }
 
     private get colBoundaryPositions(): number[] {
         if (this.columnWidths.length === 0) return [];
 
         const padding = 8;
+        const favColWidth = 24;
         const positions: number[] = [];
-        let cumulative = padding;
+        let cumulative = padding + favColWidth;
 
         for (
             let i = 0;
@@ -930,7 +942,7 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
       min-width: 0;
     }
 
-    .header-cell + .header-cell,
+    .header-row > :not(:first-child),
     .track-row > :not(:first-child) {
       padding-left: 6px;
     }
@@ -969,6 +981,31 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
 
     .cell-center {
       text-align: center;
+    }
+
+    .fav-icon {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 24px;
+      flex-shrink: 0;
+      cursor: pointer;
+      color: var(--yj-text-tertiary, #666);
+      font-size: 12px;
+      transition: color 0.1s ease;
+    }
+
+    .fav-icon:hover {
+      color: var(--yj-text-primary, #fff);
+    }
+
+    .fav-icon.favorited {
+      color: var(--yj-accent, #ffd43b);
+    }
+
+    .fav-icon.favorited:hover {
+      color: var(--yj-accent, #ffd43b);
+      opacity: 0.8;
     }
 
     .search-match {
@@ -1258,6 +1295,26 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
         this.ctxMenu.close();
     }
 
+    private onContextMenuFavoriteToggle() {
+        const filePaths =
+            this.selection.getSelectedKeysOrdered();
+
+        if (filePaths.length === 0) return;
+
+        if (this.favCtrl.allFavorited(filePaths)) {
+            void this.favCtrl.removeFromFavorites(
+                filePaths,
+            );
+        } else {
+            void this.favCtrl.addToFavorites(
+                filePaths,
+            );
+        }
+
+        this.selection.clear();
+        this.ctxMenu.close();
+    }
+
     private openTrackDetails(filePath: string) {
         const track = this.tracks.find(
             (t) => t.FilePath === filePath,
@@ -1479,6 +1536,13 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
 
         const cols = this.activeColumns;
 
+        const isFav = this.favCtrl.isFavorited(
+            track.FilePath,
+        );
+        const favVariant = isFav
+            ? 'solid'
+            : 'regular';
+
         return html`
       <div
         class=${classes}
@@ -1493,6 +1557,20 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
                 this.onTrackDragStart(e, track)}
         @dragend=${this.onTrackDragEnd}
       >
+        <div
+          class="fav-icon ${isFav ? 'favorited' : ''}"
+          @click=${(e: MouseEvent) => {
+                    e.stopPropagation();
+                    void this.favCtrl.toggleFavorite(
+                        track.FilePath,
+                    );
+                }}
+        >
+          <wa-icon
+            name=${this.favCtrl.iconName}
+            variant=${favVariant}
+          ></wa-icon>
+        </div>
         ${cols.map((col) => {
                 const val = col.accessor(track);
                 const centered = val === '\u2014';
@@ -1628,6 +1706,7 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
             ${this.renderSortToolbar()}
             <div class="table-container">
             <div class="header-row">
+              <div></div>
               ${cols.map(
                     (col) => html`
                 <div
@@ -1730,6 +1809,18 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
                   <wa-icon slot="icon" name="plus"></wa-icon>
                   Add to Playlist
                   <span class="submenu-arrow">&#9654;</span>
+                </wa-dropdown-item>
+                <wa-dropdown-item
+                  @click=${() =>
+                        this.onContextMenuFavoriteToggle()}
+                  @mouseenter=${() =>
+                        this.ctxMenu.closePlaylistSubmenu()}
+                >
+                  <wa-icon
+                    slot="icon"
+                    name=${this.favCtrl.iconName}
+                  ></wa-icon>
+                  ${this.favCtrl.allFavorited(this.selection.getSelectedKeysOrdered()) ? `Remove from ${this.favCtrl.playlistName}` : `Add to ${this.favCtrl.playlistName}`}
                 </wa-dropdown-item>
                 ${this.selection.selectionCount === 1
                     ? html`

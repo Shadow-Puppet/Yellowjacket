@@ -23,6 +23,7 @@ import {
     contextMenuStyles,
 } from '@utils/context-menu-controller.js';
 import type { ContextMenuHost } from '@utils/context-menu-controller.js';
+import { FavoritesController } from '@store/controllers/favorites-controller';
 import {
     hasTrackPayload,
     getDragPayload,
@@ -52,6 +53,7 @@ export class QueuePanel
     private queue = new QueueController(this);
     private selection = new SelectionController(this);
     private ctxMenu = new ContextMenuController(this);
+    private favCtrl = new FavoritesController(this);
 
     @property({ type: Boolean, reflect: true })
     open = false;
@@ -616,6 +618,26 @@ export class QueuePanel
             case 'track-details':
                 this.openTrackDetails(indices[0]!);
                 break;
+        }
+
+        this.selection.clear();
+        this.ctxMenu.close();
+    }
+
+    private onContextMenuFavoriteToggle() {
+        const filePaths =
+            this.getSelectedFilePaths();
+
+        if (filePaths.length === 0) return;
+
+        if (this.favCtrl.allFavorited(filePaths)) {
+            void this.favCtrl.removeFromFavorites(
+                filePaths,
+            );
+        } else {
+            void this.favCtrl.addToFavorites(
+                filePaths,
+            );
         }
 
         this.selection.clear();
@@ -1329,6 +1351,18 @@ export class QueuePanel
                                   >
                                       &#9654;
                                   </span>
+                              </wa-dropdown-item>
+                              <wa-dropdown-item
+                                  @click=${() =>
+                                      this.onContextMenuFavoriteToggle()}
+                                  @mouseenter=${() =>
+                                      this.ctxMenu.closePlaylistSubmenu()}
+                              >
+                                   <wa-icon
+                                       slot="icon"
+                                       name=${this.favCtrl.iconName}
+                                   ></wa-icon>
+                                  ${this.favCtrl.allFavorited(this.getSelectedFilePaths()) ? `Remove from ${this.favCtrl.playlistName}` : `Add to ${this.favCtrl.playlistName}`}
                               </wa-dropdown-item>
                               ${this.selection
                                   .selectionCount === 1

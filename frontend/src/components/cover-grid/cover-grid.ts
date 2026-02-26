@@ -41,6 +41,7 @@ import {
 import type { DragPayload } from '@utils/drag-controller';
 import { ContextMenuController } from '@utils/context-menu-controller.js';
 import type { ContextMenuHost } from '@utils/context-menu-controller.js';
+import { FavoritesController } from '@store/controllers/favorites-controller';
 import {
     createAlbumArtDragImage,
     createDragImage,
@@ -88,6 +89,7 @@ export class CoverGrid
     private static readonly CARD_PADDING = 5;
 
     private ctxMenu = new ContextMenuController(this);
+    private favCtrl = new FavoritesController(this);
     private selMgr = new AlbumSelectionManager();
     private scrollMgr = new ScrollManager(this, {
         GRID_GAP: CoverGrid.GRID_GAP,
@@ -1508,6 +1510,26 @@ export class CoverGrid
         this.ctxMenu.close();
     }
 
+    private async onContextMenuFavoriteToggle() {
+        const filePaths =
+            await this.getPlaylistSubmenuFilePaths();
+
+        if (filePaths.length === 0) return;
+
+        if (this.favCtrl.allFavorited(filePaths)) {
+            void this.favCtrl.removeFromFavorites(
+                filePaths,
+            );
+        } else {
+            void this.favCtrl.addToFavorites(
+                filePaths,
+            );
+        }
+
+        this.clearContextMenuSelection();
+        this.ctxMenu.close();
+    }
+
     /** Clear the selection that was active for the context menu. */
     private clearContextMenuSelection() {
         if (this.contextMenuTarget.kind === 'track') {
@@ -1989,6 +2011,18 @@ export class CoverGrid
                                        class="submenu-arrow"
                                        >&#9654;</span
                                    >
+                              </wa-dropdown-item>
+                              <wa-dropdown-item
+                                  @click=${() =>
+                                      this.onContextMenuFavoriteToggle()}
+                                  @mouseenter=${() =>
+                                      ctxMenu.closePlaylistSubmenu()}
+                              >
+                                   <wa-icon
+                                       slot="icon"
+                                       name=${this.favCtrl.iconName}
+                                   ></wa-icon>
+                                  ${this.favCtrl.allFavorited(this.ctxMenu.playlistFilePaths) ? `Remove from ${this.favCtrl.playlistName}` : `Add to ${this.favCtrl.playlistName}`}
                               </wa-dropdown-item>
                               ${this.contextMenuTarget
                                       .kind ===

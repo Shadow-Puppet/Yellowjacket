@@ -13,6 +13,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"yellowjacket/backend/events"
+	"yellowjacket/backend/favorites"
 	"yellowjacket/backend/library"
 	"yellowjacket/backend/system"
 	"yellowjacket/backend/theme"
@@ -28,6 +29,7 @@ type Config struct {
 	Theme     *theme.Config     `toml:"Theme"`
 	Window    *WindowConfig     `toml:"Window"`
 	TrackList *tracklist.Config `toml:"TrackList"`
+	Favorites *favorites.Config `toml:"Favorites"`
 }
 
 // NewConfig creates a new config by loading it from disk.
@@ -74,6 +76,12 @@ func (c *Config) Validate() error {
 
 	if c.TrackList != nil {
 		if err := c.TrackList.Validate(); err != nil {
+			configErrs = errors.Join(configErrs, err)
+		}
+	}
+
+	if c.Favorites != nil {
+		if err := c.Favorites.Validate(); err != nil {
 			configErrs = errors.Join(configErrs, err)
 		}
 	}
@@ -174,6 +182,12 @@ func (c *Config) applyDefaults() {
 	}
 
 	c.TrackList.ApplyDefaults()
+
+	if c.Favorites == nil {
+		c.Favorites = &favorites.Config{}
+	}
+
+	c.Favorites.ApplyDefaults()
 }
 
 // SetContext sets the Wails runtime context for event emission.
@@ -433,6 +447,99 @@ func (c *Config) emitTrackListChanged() {
 		events.TrackListConfigChanged,
 		map[string]any{
 			"columns": cols,
+		},
+	)
+}
+
+// GetFavoritesPlaylistID returns the configured default playlist ID.
+func (c *Config) GetFavoritesPlaylistID() int64 {
+	if c.Favorites == nil {
+		return 0
+	}
+
+	return c.Favorites.PlaylistID
+}
+
+// SetFavoritesPlaylistID saves a new default playlist ID.
+func (c *Config) SetFavoritesPlaylistID(id int64) error {
+	if c.Favorites == nil {
+		c.Favorites = &favorites.Config{}
+		c.Favorites.ApplyDefaults()
+	}
+
+	c.Favorites.PlaylistID = id
+
+	if err := c.Save(); err != nil {
+		return fmt.Errorf(
+			"could not save config: %w", err,
+		)
+	}
+
+	c.emitFavoritesChanged()
+
+	c.logger.Info(
+		"favorites playlist ID updated",
+		"playlistId", id,
+	)
+
+	return nil
+}
+
+// GetFavoritesIconStyle returns the configured icon style.
+func (c *Config) GetFavoritesIconStyle() string {
+	if c.Favorites == nil {
+		return string(favorites.DefaultIconStyle)
+	}
+
+	return string(c.Favorites.IconStyle)
+}
+
+// SetFavoritesIconStyle validates and saves a new icon style.
+func (c *Config) SetFavoritesIconStyle(
+	style string,
+) error {
+	if c.Favorites == nil {
+		c.Favorites = &favorites.Config{}
+		c.Favorites.ApplyDefaults()
+	}
+
+	c.Favorites.IconStyle = favorites.IconStyle(style)
+
+	if err := c.Favorites.Validate(); err != nil {
+		return fmt.Errorf(
+			"invalid favorites icon style: %w", err,
+		)
+	}
+
+	if err := c.Save(); err != nil {
+		return fmt.Errorf(
+			"could not save config: %w", err,
+		)
+	}
+
+	c.emitFavoritesChanged()
+
+	c.logger.Info(
+		"favorites icon style updated",
+		"style", style,
+	)
+
+	return nil
+}
+
+// emitFavoritesChanged sends the FavoritesConfigChanged event
+// to the frontend.
+func (c *Config) emitFavoritesChanged() {
+	if c.ctx == nil || c.Favorites == nil {
+		return
+	}
+
+	runtime.EventsEmit(
+		c.ctx,
+		events.FavoritesConfigChanged,
+		map[string]any{
+			"PlaylistID": c.Favorites.PlaylistID,
+			"IconStyle":  string(c.Favorites.IconStyle),
 		},
 	)
 }

@@ -21,10 +21,12 @@ export const Events = {
     PlaylistRenamed: "PlaylistRenamed",
     PlaylistTracksChanged: "PlaylistTracksChanged",
     PlaylistsRestored: "PlaylistsRestored",
+    DefaultPlaylistChanged: "DefaultPlaylistChanged",
 
     // Config events
     ThemeConfigChanged: "ThemeConfigChanged",
     TrackListConfigChanged: "TrackListConfigChanged",
+    FavoritesConfigChanged: "FavoritesConfigChanged",
 
     // Library events
     LibraryScanStarted: "LibraryScanStarted",
