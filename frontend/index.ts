@@ -19,6 +19,8 @@ import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import { setBasePath } from '@awesome.me/webawesome/dist/webawesome.js';
 import { queueStore } from '@store/queue-store';
 import { searchStore } from '@store/search-store';
+import * as Player from '@go/player/Player';
+import * as Queue from '@go/queue/Queue';
 // Importing the theme store triggers initialization: it fetches the saved
 // theme from the backend and applies CSS custom properties to :root.
 import '@store/theme-store';
@@ -164,3 +166,14 @@ document.addEventListener('keydown', (e: KeyboardEvent) => {
         }
     }
 });
+
+// ---------------------------------------------------------------
+// Request current state from the backend
+// ---------------------------------------------------------------
+// All stores have registered their EventsOn listeners by now
+// (module-level singletons are instantiated during import
+// evaluation), so the state-push events emitted by these
+// binding calls will be received deterministically — no sleep
+// or timing assumptions needed.
+void Player.EmitCurrentState();
+void Queue.EmitCurrentState();

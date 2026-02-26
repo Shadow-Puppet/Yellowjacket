@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"time"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
@@ -202,25 +201,13 @@ func (yj *YellowJacketApp) OnShutdown(_ context.Context) {
 }
 
 // OnDomReady handles post-DOM initialization and startup error reporting.
+// State synchronisation (player volume, track info, queue contents) is
+// driven by the frontend: once its stores have registered their event
+// listeners, index.ts calls Player.EmitCurrentState() and
+// Queue.EmitCurrentState() via Wails bindings.
 func (yj *YellowJacketApp) OnDomReady(ctx context.Context) {
 	if startupErr != nil {
 		yj.logger.Error("startup error", "err", startupErr.Error())
 		wailsruntime.Quit(ctx)
 	}
-
-	// Push current player and queue state to the frontend. The heavy lifting
-	// (file load, seek, volume) already happened during OnStartup via
-	// RestoreState; this just emits events. A short delay ensures the
-	// frontend JS modules have loaded and registered their event listeners.
-	go func() {
-		time.Sleep(200 * time.Millisecond)
-
-		if yj.player != nil {
-			yj.player.EmitCurrentState()
-		}
-
-		if yj.queue != nil {
-			yj.queue.EmitCurrentState()
-		}
-	}()
 }
