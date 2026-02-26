@@ -4,11 +4,11 @@ go 1.25.0
 
 require (
 	github.com/BurntSushi/toml v1.6.0
-	github.com/TheCodeOfCaleb/beep/v2 v2.1.2
 	github.com/a-h/templ v0.3.977
 	github.com/dhowden/tag v0.0.0-20240417053706-3d75831295e8
 	github.com/godbus/dbus/v5 v5.1.0
 	github.com/golang-cz/devslog v0.0.15
+	github.com/gopxl/beep/v2 v2.1.1
 	github.com/wailsapp/wails/v2 v2.10.2
 	golang.org/x/image v0.12.0
 	golang.org/x/sync v0.19.0
@@ -381,5 +381,3 @@ tool (
 	golang.org/x/vuln/cmd/govulncheck
 	yellowjacket
 )
-
-// replace github.com/TheCodeOfCaleb/beep/v2 => /mnt/vault/dev/golang/beep/

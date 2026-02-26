@@ -12,10 +12,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/TheCodeOfCaleb/beep/v2"
-	"github.com/TheCodeOfCaleb/beep/v2/effects"
-	"github.com/TheCodeOfCaleb/beep/v2/generators"
-	"github.com/TheCodeOfCaleb/beep/v2/speaker"
+	"github.com/gopxl/beep/v2"
+	"github.com/gopxl/beep/v2/effects"
+	"github.com/gopxl/beep/v2/generators"
+	"github.com/gopxl/beep/v2/speaker"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"yellowjacket/backend/coverart"
