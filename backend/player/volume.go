@@ -8,13 +8,14 @@ type Volume float64
 
 // User volume range bounds.
 const (
-	MinUserVol UserVolume = 0
-	MaxUserVol UserVolume = 100
+	MinUserVol     UserVolume = 0
+	MaxUserVol     UserVolume = 100
+	DefaultUserVol UserVolume = 50
 )
 
 // Internal volume range bounds.
 const (
-	MinVol Volume = -6
+	MinVol Volume = -5
 	MaxVol Volume = 0
 )
 

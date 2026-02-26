@@ -810,7 +810,7 @@ func (p *Player) saveState() {
 		return
 	}
 
-	volume := int64(MaxUserVol)
+	volume := int64(DefaultUserVol)
 	muted := false
 
 	if p.volume != nil {
