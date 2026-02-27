@@ -89,38 +89,38 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| CORR-01 | — | Pending |
-| CORR-02 | — | Pending |
-| CORR-03 | — | Pending |
-| CORR-04 | — | Pending |
-| CORR-05 | — | Pending |
-| CORR-06 | — | Pending |
-| CORR-07 | — | Pending |
-| CORR-08 | — | Pending |
-| CORR-09 | — | Pending |
-| QUAL-01 | — | Pending |
-| QUAL-02 | — | Pending |
-| QUAL-03 | — | Pending |
-| QUAL-04 | — | Pending |
-| PERF-01 | — | Pending |
-| PERF-02 | — | Pending |
-| PERF-03 | — | Pending |
-| PERF-04 | — | Pending |
-| PERF-05 | — | Pending |
-| TEST-01 | — | Pending |
-| TEST-02 | — | Pending |
-| TEST-03 | — | Pending |
-| TEST-04 | — | Pending |
-| TEST-05 | — | Pending |
-| TEST-06 | — | Pending |
-| UX-01 | — | Pending |
-| UX-02 | — | Pending |
+| CORR-01 | Phase 1: Concurrency Race Fixes | Pending |
+| CORR-02 | Phase 1: Concurrency Race Fixes | Pending |
+| CORR-03 | Phase 1: Concurrency Race Fixes | Pending |
+| CORR-04 | Phase 1: Concurrency Race Fixes | Pending |
+| CORR-05 | Phase 2: Backend Correctness | Pending |
+| CORR-06 | Phase 2: Backend Correctness | Pending |
+| CORR-07 | Phase 2: Backend Correctness | Pending |
+| CORR-08 | Phase 2: Backend Correctness | Pending |
+| CORR-09 | Phase 2: Backend Correctness | Pending |
+| QUAL-01 | Phase 6: SQL Consolidation & Code Quality | Pending |
+| QUAL-02 | Phase 6: SQL Consolidation & Code Quality | Pending |
+| QUAL-03 | Phase 6: SQL Consolidation & Code Quality | Pending |
+| QUAL-04 | Phase 6: SQL Consolidation & Code Quality | Pending |
+| PERF-01 | Phase 7: Backend Performance | Pending |
+| PERF-02 | Phase 7: Backend Performance | Pending |
+| PERF-03 | Phase 7: Backend Performance | Pending |
+| PERF-04 | Phase 3: Test Infrastructure | Pending |
+| PERF-05 | Phase 8: Frontend Performance & UX | Pending |
+| TEST-01 | Phase 3: Test Infrastructure | Pending |
+| TEST-02 | Phase 4: Queue, Config & Player Tests | Pending |
+| TEST-03 | Phase 5: Database & Library Tests | Pending |
+| TEST-04 | Phase 4: Queue, Config & Player Tests | Pending |
+| TEST-05 | Phase 4: Queue, Config & Player Tests | Pending |
+| TEST-06 | Phase 5: Database & Library Tests | Pending |
+| UX-01 | Phase 8: Frontend Performance & UX | Pending |
+| UX-02 | Phase 8: Frontend Performance & UX | Pending |
 
 **Coverage:**
 - v1 requirements: 26 total
-- Mapped to phases: 0
-- Unmapped: 26
+- Mapped to phases: 26
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-02-27*
-*Last updated: 2026-02-27 after initial definition*
+*Last updated: 2026-02-27 after roadmap creation (traceability updated)*
