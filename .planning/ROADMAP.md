@@ -27,7 +27,9 @@
   2. Queue.SetContext(), Library.SetContext(), and Playlist.Service.SetContext() each acquire their mutex before writing the ctx field
   3. Player.SetContext() uses a single lock acquisition instead of the double-lock pattern
   4. Concurrent calls to SetContext from multiple goroutines do not corrupt shared state
-**Plans:** TBD
+**Plans:** 1 plan
+Plans:
+- [ ] 01-01-PLAN.md — Add mutex protection to all SetContext methods and collapse Player double-lock
 
 ### Phase 2: Backend Correctness
 **Goal:** All known error handling gaps are closed, configuration is secure, and the backend reports problems honestly instead of swallowing them
@@ -110,7 +112,7 @@
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Concurrency Race Fixes | 0/? | Not started | — |
+| 1. Concurrency Race Fixes | 0/1 | Planned | — |
 | 2. Backend Correctness | 0/? | Not started | — |
 | 3. Test Infrastructure | 0/? | Not started | — |
 | 4. Queue, Config & Player Tests | 0/? | Not started | — |
