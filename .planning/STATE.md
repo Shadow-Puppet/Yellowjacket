@@ -80,7 +80,7 @@ None currently.
 | 001 | Multi-playlist import support | 2026-02-28 | 50c8a33 | [001-multi-playlist-import-support](./quick/001-multi-playlist-import-support/) |
 | 002 | Auto-rename duplicate playlists on import | 2026-02-28 | 8ba8bbe | [002-auto-rename-duplicate-playlists-on-import](./quick/002-auto-rename-duplicate-playlists-on-import/) |
 | 003 | Add multi-select to playlist view with context menu delete support | 2026-02-28 | c92ced2 | [3-add-multi-select-to-playlist-view-with-c](./quick/3-add-multi-select-to-playlist-view-with-c/) |
-| 004 | Add "Set as Default Playlist" context menu option | 2026-02-28 | 9971b63 | [4-add-set-as-default-playlist-context-menu](./quick/4-add-set-as-default-playlist-context-menu/) |
+| 004 | Add "set as default playlist" context menu option for single playlist selection | 2026-02-28 | 9971b63 | [4-add-set-as-default-playlist-context-menu](./quick/4-add-set-as-default-playlist-context-menu/) |
 
 ## Session Continuity
 
@@ -100,5 +100,5 @@ None currently.
 
 ---
 *State initialized: 2026-02-27*
-Last activity: 2026-02-28 - Completed quick task 004: Add "Set as Default Playlist" context menu option
+Last activity: 2026-02-28 - Completed quick task 004: Add "set as default playlist" context menu option for single playlist selection
 *Last updated: 2026-02-28*
