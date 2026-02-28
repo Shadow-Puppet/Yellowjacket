@@ -78,6 +78,7 @@ None currently.
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 001 | Multi-playlist import support | 2026-02-28 | 50c8a33 | [001-multi-playlist-import-support](./quick/001-multi-playlist-import-support/) |
+| 002 | Auto-rename duplicate playlists on import | 2026-02-28 | 8ba8bbe | [002-auto-rename-duplicate-playlists-on-import](./quick/002-auto-rename-duplicate-playlists-on-import/) |
 
 ## Session Continuity
 
@@ -97,5 +98,5 @@ None currently.
 
 ---
 *State initialized: 2026-02-27*
-Last activity: 2026-02-28 - Completed quick task 001: Multi-playlist import support
+Last activity: 2026-02-28 - Completed quick task 002: Auto-rename duplicate playlists on import
 *Last updated: 2026-02-28*
