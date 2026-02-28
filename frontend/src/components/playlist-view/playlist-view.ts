@@ -187,6 +187,12 @@ export class PlaylistView
     @state() private renamingPlaylistIndex = -1;
     @state() private renameValue = '';
 
+    /** Indices of playlists selected via Ctrl/Shift+Click. */
+    @state() private selectedPlaylists: Set<number> = new Set();
+
+    /** Anchor index for Shift+Click range selection on playlists. */
+    private lastSelectedPlaylistIndex: number | null = null;
+
     /** Index of the playlist currently hovered during a drag. */
     @state() private dragOverPlaylistIndex = -1;
 
@@ -248,9 +254,20 @@ export class PlaylistView
                 el.classList.contains('track-item') &&
                 this.shadowRoot?.contains(el),
         );
+        const isPlaylistHeaderClick = path.some(
+            (el) =>
+                el instanceof HTMLElement &&
+                el.classList.contains('playlist-header') &&
+                this.shadowRoot?.contains(el),
+        );
 
         if (!isTrackClick) {
             this.selection.clear();
+        }
+
+        if (!isPlaylistHeaderClick && !isTrackClick) {
+            this.selectedPlaylists = new Set();
+            this.lastSelectedPlaylistIndex = null;
         }
     };
 
@@ -329,6 +346,12 @@ export class PlaylistView
     private ensureSelectionScope(
         playlistIndex: number,
     ): void {
+        // Clear playlist-level selection when entering track selection
+        if (this.selectedPlaylists.size > 0) {
+            this.selectedPlaylists = new Set();
+            this.lastSelectedPlaylistIndex = null;
+        }
+
         if (
             this.activePlaylistIndex !== playlistIndex
         ) {
@@ -494,6 +517,10 @@ export class PlaylistView
 
         .playlist-header:hover {
             background-color: var(--yj-hover-overlay, rgba(255, 255, 255, 0.05));
+        }
+
+        .playlist-header.selected {
+            background-color: var(--yj-selection-bg, rgba(100, 160, 255, 0.15));
         }
 
         .playlist-item.drag-over > .playlist-header {
@@ -1022,10 +1049,55 @@ export class PlaylistView
         }
     }
 
-    private handleToggle = (index: number) => {
+    private handlePlaylistHeaderClick = (
+        e: MouseEvent,
+        index: number,
+    ) => {
         const entry = this.entries[index];
 
         if (!entry) return;
+
+        const isCtrl = e.ctrlKey || e.metaKey;
+        const isShift = e.shiftKey;
+
+        if (isCtrl) {
+            // Ctrl/Cmd+Click: toggle playlist in selection
+            const next = new Set(this.selectedPlaylists);
+
+            if (next.has(index)) {
+                next.delete(index);
+            } else {
+                next.add(index);
+            }
+
+            this.selectedPlaylists = next;
+            this.lastSelectedPlaylistIndex = index;
+            // Clear track-level selection
+            this.selection.clear();
+            this.activePlaylistIndex = -1;
+            return;
+        }
+
+        if (isShift && this.lastSelectedPlaylistIndex !== null) {
+            // Shift+Click: range-select playlists
+            const start = Math.min(this.lastSelectedPlaylistIndex, index);
+            const end = Math.max(this.lastSelectedPlaylistIndex, index);
+            const next = new Set(this.selectedPlaylists);
+
+            for (let i = start; i <= end; i++) {
+                next.add(i);
+            }
+
+            this.selectedPlaylists = next;
+            // Clear track-level selection
+            this.selection.clear();
+            this.activePlaylistIndex = -1;
+            return;
+        }
+
+        // Plain click: clear playlist selection, toggle expand/collapse
+        this.selectedPlaylists = new Set();
+        this.lastSelectedPlaylistIndex = null;
 
         // If collapsing the active playlist, clear selection.
         if (
@@ -2409,9 +2481,9 @@ export class PlaylistView
                     this.onPlaylistDrop(e, index)}
             >
                 <div
-                    class="playlist-header"
-                    @click=${() =>
-                        this.handleToggle(index)}
+                    class="playlist-header ${this.selectedPlaylists.has(index) ? 'selected' : ''}"
+                    @click=${(e: MouseEvent) =>
+                        this.handlePlaylistHeaderClick(e, index)}
                     @contextmenu=${(e: MouseEvent) =>
                         this.handlePlaylistContextMenu(
                             e,
