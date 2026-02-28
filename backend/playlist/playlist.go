@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
@@ -96,6 +97,9 @@ type PhantomSearchResult struct {
 
 // Service manages playlist operations.
 type Service struct {
+	// mu protects ctx and favoritesConf from concurrent access
+	// during initialization.
+	mu            sync.Mutex
 	ctx           context.Context
 	logger        *slog.Logger
 	db            *database.DB
@@ -121,6 +125,9 @@ func NewService(
 func (s *Service) SetFavoritesConfig(
 	provider FavoritesConfigProvider,
 ) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	s.favoritesConf = provider
 }
 
@@ -128,7 +135,10 @@ func (s *Service) SetFavoritesConfig(
 // one-time startup migration to bootstrap M3U8 files for
 // existing playlists.
 func (s *Service) SetContext(ctx context.Context) {
+	s.mu.Lock()
 	s.ctx = ctx
+	s.mu.Unlock()
+
 	s.migrateExistingPlaylists()
 }
 

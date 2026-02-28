@@ -76,6 +76,9 @@ type RescanHooks struct {
 
 // Library manages scanning and querying the music collection.
 type Library struct {
+	// mu protects ctx, conf, and rescanHooks from concurrent
+	// access during initialization.
+	mu          sync.Mutex
 	ctx         context.Context
 	logger      *slog.Logger
 	conf        *Config
@@ -86,6 +89,9 @@ type Library struct {
 // SetRescanHooks provides optional hooks for cross-cutting
 // orchestration during FullRescan.
 func (l *Library) SetRescanHooks(h RescanHooks) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
 	l.rescanHooks = h
 }
 
@@ -118,7 +124,10 @@ func NewLibrary(
 
 // SetContext sets the Wails runtime context and registers event handlers.
 func (l *Library) SetContext(ctx context.Context) {
+	l.mu.Lock()
 	l.ctx = ctx
+	l.mu.Unlock()
+
 	l.registerEventHandlers()
 }
 

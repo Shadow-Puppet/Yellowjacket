@@ -132,6 +132,9 @@ func NewQueue(logger *slog.Logger, db *database.DB) *Queue {
 
 // SetContext sets the Wails runtime context for event emission.
 func (q *Queue) SetContext(ctx context.Context) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
 	q.ctx = ctx
 }
 
