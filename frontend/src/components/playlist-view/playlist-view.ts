@@ -1659,6 +1659,14 @@ export class PlaylistView
         e.stopPropagation();
 
         this.ctxMenu.close();
+
+        // If the right-clicked playlist is NOT in the current
+        // multi-selection, replace the selection with just that one.
+        if (!this.selectedPlaylists.has(index)) {
+            this.selectedPlaylists = new Set([index]);
+            this.lastSelectedPlaylistIndex = index;
+        }
+
         this.playlistContextMenuIndex = index;
         this.playlistContextMenuOpen = true;
 
@@ -1696,7 +1704,7 @@ export class PlaylistView
         }
     }
 
-    private onPlaylistContextAction(
+    private async onPlaylistContextAction(
         action: string,
     ) {
         const index =
@@ -1723,13 +1731,32 @@ export class PlaylistView
                     },
                 );
                 break;
-            case 'delete':
-                void this.handleDeletePlaylist(
-                    entry.summary.ID,
-                );
+            case 'delete': {
+                if (this.selectedPlaylists.size > 1) {
+                    const ids = [...this.selectedPlaylists]
+                        .map(i => this.entries[i])
+                        .filter((e): e is PlaylistEntry => e !== undefined)
+                        .map(e => e.summary.ID);
+
+                    for (const id of ids) {
+                        await DeletePlaylist(id);
+                    }
+
+                    this.selectedPlaylists = new Set();
+                    this.lastSelectedPlaylistIndex = null;
+                    await this.refreshPlaylists();
+                } else {
+                    await this.handleDeletePlaylist(
+                        entry.summary.ID,
+                    );
+                }
+
                 break;
+            }
         }
 
+        this.selectedPlaylists = new Set();
+        this.lastSelectedPlaylistIndex = null;
         this.closePlaylistContextMenu();
     }
 
@@ -2311,21 +2338,25 @@ export class PlaylistView
                           <div
                               class="context-menu-panel"
                           >
+                              ${this.selectedPlaylists.size <= 1
+                                  ? html`
+                                        <wa-dropdown-item
+                                            @click=${() =>
+                                                void this.onPlaylistContextAction(
+                                                    'rename',
+                                                )}
+                                        >
+                                            <wa-icon
+                                                slot="icon"
+                                                name="pen"
+                                            ></wa-icon>
+                                            Rename
+                                        </wa-dropdown-item>
+                                    `
+                                  : nothing}
                               <wa-dropdown-item
                                   @click=${() =>
-                                      this.onPlaylistContextAction(
-                                          'rename',
-                                      )}
-                              >
-                                  <wa-icon
-                                      slot="icon"
-                                      name="pen"
-                                  ></wa-icon>
-                                  Rename
-                              </wa-dropdown-item>
-                              <wa-dropdown-item
-                                  @click=${() =>
-                                      this.onPlaylistContextAction(
+                                      void this.onPlaylistContextAction(
                                           'delete',
                                       )}
                               >
@@ -2333,7 +2364,9 @@ export class PlaylistView
                                       slot="icon"
                                       name="trash"
                                   ></wa-icon>
-                                  Delete Playlist
+                                  ${this.selectedPlaylists.size > 1
+                                      ? `Delete ${this.selectedPlaylists.size} Playlists`
+                                      : 'Delete Playlist'}
                               </wa-dropdown-item>
                           </div>
                       `
