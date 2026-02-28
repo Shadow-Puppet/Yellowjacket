@@ -58,6 +58,10 @@ export function ImportPlaylist(arg1) {
   return window['go']['playlist']['Service']['ImportPlaylist'](arg1);
 }
 
+export function ImportPlaylists(arg1) {
+  return window['go']['playlist']['Service']['ImportPlaylists'](arg1);
+}
+
 export function RemoveFromDefaultPlaylist(arg1) {
   return window['go']['playlist']['Service']['RemoveFromDefaultPlaylist'](arg1);
 }

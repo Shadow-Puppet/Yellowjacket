@@ -12,7 +12,7 @@ import {
     RemoveTracksFromPlaylist,
     DeletePlaylist,
     RenamePlaylist,
-    ImportPlaylist,
+    ImportPlaylists,
     RemovePhantomTracks,
 } from '@go/playlist/Service';
 import { PlaylistFilePicker } from '@go/frontendutil/FrontendUtil';
@@ -1873,13 +1873,14 @@ export class PlaylistView
 
     private handleImportPlaylist = async () => {
         try {
-            const filePath =
+            const filePaths =
                 await PlaylistFilePicker();
 
-            if (!filePath) return;
+            if (!filePaths || filePaths.length === 0)
+                return;
 
             this.importError = '';
-            await ImportPlaylist(filePath);
+            await ImportPlaylists(filePaths);
         } catch (err) {
             console.error(
                 'Failed to import playlist:',

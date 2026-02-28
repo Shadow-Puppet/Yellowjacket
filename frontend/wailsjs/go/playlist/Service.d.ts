@@ -31,6 +31,8 @@ export function GetPlaylistTracks(arg1:number):Promise<Array<playlist.Track>>;
 
 export function ImportPlaylist(arg1:string):Promise<playlist.Summary>;
 
+export function ImportPlaylists(arg1:Array<string>):Promise<Array<playlist.Summary>>;
+
 export function RemoveFromDefaultPlaylist(arg1:Array<string>):Promise<void>;
 
 export function RemovePhantomTracks(arg1:number,arg2:Array<string>):Promise<void>;
