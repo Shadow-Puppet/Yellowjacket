@@ -1731,6 +1731,16 @@ export class PlaylistView
                     },
                 );
                 break;
+            case 'set-default':
+                void this.favCtrl
+                    .setDefaultPlaylist(entry.summary.ID)
+                    .catch((err: unknown) => {
+                        console.error(
+                            'Failed to set default playlist:',
+                            err,
+                        );
+                    });
+                break;
             case 'delete': {
                 if (this.selectedPlaylists.size > 1) {
                     const ids = [...this.selectedPlaylists]
@@ -2351,6 +2361,18 @@ export class PlaylistView
                                                 name="pen"
                                             ></wa-icon>
                                             Rename
+                                        </wa-dropdown-item>
+                                        <wa-dropdown-item
+                                            @click=${() =>
+                                                void this.onPlaylistContextAction(
+                                                    'set-default',
+                                                )}
+                                        >
+                                            <wa-icon
+                                                slot="icon"
+                                                name="star"
+                                            ></wa-icon>
+                                            Set as Default Playlist
                                         </wa-dropdown-item>
                                     `
                                   : nothing}
