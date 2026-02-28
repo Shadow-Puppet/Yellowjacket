@@ -41,6 +41,17 @@ func (q *Queries) ClearPlaylistTracks(ctx context.Context, playlistID int64) err
 	return err
 }
 
+const countPlaylistsByName = `-- name: CountPlaylistsByName :one
+SELECT COUNT(*) AS count FROM playlists WHERE name = ?
+`
+
+func (q *Queries) CountPlaylistsByName(ctx context.Context, name string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countPlaylistsByName, name)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createPlaylist = `-- name: CreatePlaylist :one
 INSERT INTO playlists (name) VALUES (?)
 RETURNING id, name, created_at, updated_at

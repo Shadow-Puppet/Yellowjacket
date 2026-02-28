@@ -14,6 +14,9 @@ UPDATE playlists SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?;
 -- name: DeletePlaylist :exec
 DELETE FROM playlists WHERE id = ?;
 
+-- name: CountPlaylistsByName :one
+SELECT COUNT(*) AS count FROM playlists WHERE name = ?;
+
 -- name: AddPlaylistTrack :one
 INSERT INTO playlist_tracks (playlist_id, audio_file_id, position) VALUES (?, ?, ?)
 RETURNING *;
