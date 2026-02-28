@@ -681,6 +681,23 @@ func (s *Service) RenamePlaylist(
 	return nil
 }
 
+// uniquePlaylistName returns a name that doesn't collide with existing
+// playlists. If "Chill Vibes" exists, returns "Chill Vibes (1)".
+// If that also exists, returns "Chill Vibes (2)", etc.
+func (s *Service) uniquePlaylistName(name string) string {
+	count, err := s.db.Queries.CountPlaylistsByName(s.db.Ctx, name)
+	if err != nil || count == 0 {
+		return name
+	}
+	for i := 1; ; i++ {
+		candidate := fmt.Sprintf("%s (%d)", name, i)
+		c, err := s.db.Queries.CountPlaylistsByName(s.db.Ctx, candidate)
+		if err != nil || c == 0 {
+			return candidate
+		}
+	}
+}
+
 // ImportPlaylist imports a playlist from an external M3U/M3U8
 // file. It creates a new playlist in the DB, resolves tracks
 // against the library, and saves an M3U8 file.
@@ -713,6 +730,8 @@ func (s *Service) ImportPlaylist(
 			base, filepath.Ext(base),
 		)
 	}
+
+	playlistName = s.uniquePlaylistName(playlistName)
 
 	// Create playlist in DB.
 	created, err := s.db.Queries.CreatePlaylist(
