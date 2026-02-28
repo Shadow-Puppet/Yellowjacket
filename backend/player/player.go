@@ -54,6 +54,13 @@ type Player struct {
 	playbackFinishedHandler func()
 	trackChangeID           uint64
 	mediaControls           mediacontrols.Handler
+
+	// trackLengthMs holds the authoritative track duration in
+	// milliseconds, sourced from the database (which uses the
+	// custom header parser).  The go-mp3 decoder's Len() can be
+	// inflated for files with multiple ID3v2 tags, so this value
+	// is preferred for display and position calculations.
+	trackLengthMs int64
 }
 
 // State represents the current playback state.
@@ -155,12 +162,10 @@ func (p *Player) SetMediaControls(h mediacontrols.Handler) {
 // state.
 func (p *Player) SetContext(ctx context.Context) {
 	p.mu.Lock()
-	p.ctx = ctx
-	p.mu.Unlock()
+	defer p.mu.Unlock()
 
-	p.mu.Lock()
+	p.ctx = ctx
 	p.restoreStateLocked()
-	p.mu.Unlock()
 }
 
 // ---------------------------------------------------------------
@@ -242,13 +247,8 @@ func (p *Player) emitTrackChanged() {
 
 	trackInfo.TrackLength = trackLengthSecs
 
-	// Compute current seek position in seconds.
-	if p.seeker != nil {
-		speaker.Lock()
-		trackInfo.SeekPosition = p.seeker.Position() /
-			int(p.format.SampleRate)
-		speaker.Unlock()
-	}
+	// Compute current seek position in display seconds.
+	trackInfo.SeekPosition = p.displayPositionSecsLocked()
 
 	// Increment track change ID so the frontend can detect changes
 	// even when the same file plays consecutively.
@@ -611,6 +611,7 @@ func (p *Player) UnloadTrack() {
 	p.resampled = nil
 	p.control = nil
 	p.speakerStreamer = nil
+	p.trackLengthMs = 0
 
 	p.state = Stopped
 
@@ -682,7 +683,7 @@ func (p *Player) MuteToggle() error {
 // ---------------------------------------------------------------
 
 // CurrentPositionSeconds returns the current playback position in
-// seconds.
+// display seconds.
 func (p *Player) CurrentPositionSeconds() (int, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -691,11 +692,7 @@ func (p *Player) CurrentPositionSeconds() (int, error) {
 		return 0, errNoAudioFileLoaded
 	}
 
-	speaker.Lock()
-	pos := p.seeker.Position() / int(p.format.SampleRate)
-	speaker.Unlock()
-
-	return pos, nil
+	return p.displayPositionSecsLocked(), nil
 }
 
 // CurrentPosition returns the playback position as a percentage
@@ -807,6 +804,7 @@ func (p *Player) getCurrentTrackInfoLocked() TrackInfo {
 
 			info.Artist = meta.Artist
 			info.Album = meta.Album
+			p.trackLengthMs = meta.LengthMilliseconds
 
 			if meta.CoverArtPath != "" {
 				urls := coverart.ResolveURLs(meta.CoverArtPath)
@@ -835,6 +833,21 @@ func (p *Player) TrackLengthInSeconds() (int, error) {
 }
 
 func (p *Player) trackLengthLocked() (int, error) {
+	// Prefer the database duration — the custom header parser
+	// handles multiple ID3v2 tags correctly, whereas go-mp3's
+	// Len() can be inflated by phantom frames.
+	if p.trackLengthMs > 0 {
+		return int(p.trackLengthMs / 1000), nil
+	}
+
+	return p.seekerLengthSecsLocked()
+}
+
+// seekerLengthSecsLocked returns the track length in seconds as
+// reported by the beep decoder.  This may differ from the
+// database duration for MP3 files with multiple ID3v2 tags.
+// It is used internally for seek sample calculations.
+func (p *Player) seekerLengthSecsLocked() (int, error) {
 	if p.seeker == nil {
 		return 0, errNoAudioFileLoaded
 	}
@@ -844,6 +857,37 @@ func (p *Player) trackLengthLocked() (int, error) {
 	speaker.Unlock()
 
 	return length, nil
+}
+
+// displayPositionSecsLocked converts the current seeker position to
+// display seconds.  When the DB duration is available, the position
+// is scaled from the (potentially inflated) seeker time scale to the
+// correct display time scale.  Must be called with p.mu held.
+func (p *Player) displayPositionSecsLocked() int {
+	if p.seeker == nil {
+		return 0
+	}
+
+	speaker.Lock()
+	pos := p.seeker.Position()
+	total := p.seeker.Len()
+	speaker.Unlock()
+
+	if total == 0 {
+		return 0
+	}
+
+	displayLength, err := p.trackLengthLocked()
+	if err != nil {
+		return pos / int(p.format.SampleRate)
+	}
+
+	return int(
+		math.Round(
+			float64(pos) / float64(total) *
+				float64(displayLength),
+		),
+	)
 }
 
 // ---------------------------------------------------------------
@@ -864,17 +908,9 @@ func stateToMediaControls(s State) mediacontrols.PlaybackState {
 }
 
 // currentPositionSecondsLocked returns the playback position in
-// seconds. Must be called with p.mu held.
+// display seconds.  Must be called with p.mu held.
 func (p *Player) currentPositionSecondsLocked() int {
-	if p.seeker == nil {
-		return 0
-	}
-
-	speaker.Lock()
-	pos := p.seeker.Position() / int(p.format.SampleRate)
-	speaker.Unlock()
-
-	return pos
+	return p.displayPositionSecsLocked()
 }
 
 // buildMediaMetadata constructs a mediacontrols.Metadata from a
@@ -944,14 +980,7 @@ func (p *Player) saveState() {
 		trackPath = p.currentFile.Name()
 	}
 
-	positionSeconds := int64(0)
-
-	if p.seeker != nil {
-		speaker.Lock()
-		positionSeconds = int64(p.seeker.Position()) /
-			int64(p.format.SampleRate)
-		speaker.Unlock()
-	}
+	positionSeconds := int64(p.displayPositionSecsLocked())
 
 	err := p.db.Queries.UpdatePlayerState(
 		p.db.Ctx,
