@@ -7,7 +7,7 @@
 
 ## Phases
 
-- [ ] **Phase 1: Concurrency Race Fixes** — Eliminate all SetContext data races across Queue, Library, Playlist, and Player
+- [x] **Phase 1: Concurrency Race Fixes** — Eliminate all SetContext data races across Queue, Library, Playlist, and Player
 - [ ] **Phase 2: Backend Correctness** — Fix error handling gaps, file permissions, package-level state, and scan error separation
 - [ ] **Phase 3: Test Infrastructure** — Create in-memory SQLite test helper and apply production SQLite PRAGMAs
 - [ ] **Phase 4: Queue, Config & Player Tests** — Write unit tests for queue operations, config roundtrip, and extracted player pure logic
@@ -29,7 +29,7 @@
   4. Concurrent calls to SetContext from multiple goroutines do not corrupt shared state
 **Plans:** 1 plan
 Plans:
-- [ ] 01-01-PLAN.md — Add mutex protection to all SetContext methods and collapse Player double-lock
+- [x] 01-01-PLAN.md — Add mutex protection to all SetContext methods and collapse Player double-lock
 
 ### Phase 2: Backend Correctness
 **Goal:** All known error handling gaps are closed, configuration is secure, and the backend reports problems honestly instead of swallowing them
@@ -112,7 +112,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Concurrency Race Fixes | 0/1 | Planned | — |
+| 1. Concurrency Race Fixes | 1/1 | Complete | 2026-02-28 |
 | 2. Backend Correctness | 0/? | Not started | — |
 | 3. Test Infrastructure | 0/? | Not started | — |
 | 4. Queue, Config & Player Tests | 0/? | Not started | — |
@@ -123,4 +123,4 @@ Plans:
 
 ---
 *Roadmap created: 2026-02-27*
-*Last updated: 2026-02-27*
+*Last updated: 2026-02-28*

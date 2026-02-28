@@ -9,10 +9,10 @@ Requirements for the consolidation milestone. Each maps to roadmap phases.
 
 ### Correctness
 
-- [ ] **CORR-01**: Queue.SetContext() acquires q.mu before writing q.ctx, eliminating the data race
-- [ ] **CORR-02**: Library.SetContext() and field setters (ctx, conf, rescanHooks) are protected by a mutex
-- [ ] **CORR-03**: Playlist.Service.SetContext() acquires lock before writing s.ctx, eliminating the data race
-- [ ] **CORR-04**: Player.SetContext() combines the double-lock pattern into a single lock acquisition
+- [x] **CORR-01**: Queue.SetContext() acquires q.mu before writing q.ctx, eliminating the data race
+- [x] **CORR-02**: Library.SetContext() and field setters (ctx, conf, rescanHooks) are protected by a mutex
+- [x] **CORR-03**: Playlist.Service.SetContext() acquires lock before writing s.ctx, eliminating the data race
+- [x] **CORR-04**: Player.SetContext() combines the double-lock pattern into a single lock acquisition
 - [ ] **CORR-05**: Package-level startupErr variable is moved to a YellowJacketApp struct field
 - [ ] **CORR-06**: Config file is written with 0o644 permissions instead of 0o666
 - [ ] **CORR-07**: MPRIS lifecycle callback errors (Pause, Seek) are logged instead of silently swallowed
@@ -89,10 +89,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| CORR-01 | Phase 1: Concurrency Race Fixes | Pending |
-| CORR-02 | Phase 1: Concurrency Race Fixes | Pending |
-| CORR-03 | Phase 1: Concurrency Race Fixes | Pending |
-| CORR-04 | Phase 1: Concurrency Race Fixes | Pending |
+| CORR-01 | Phase 1: Concurrency Race Fixes | Complete |
+| CORR-02 | Phase 1: Concurrency Race Fixes | Complete |
+| CORR-03 | Phase 1: Concurrency Race Fixes | Complete |
+| CORR-04 | Phase 1: Concurrency Race Fixes | Complete |
 | CORR-05 | Phase 2: Backend Correctness | Pending |
 | CORR-06 | Phase 2: Backend Correctness | Pending |
 | CORR-07 | Phase 2: Backend Correctness | Pending |

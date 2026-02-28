@@ -3,28 +3,29 @@
 ## Project Reference
 
 **Core value:** The music player works reliably and feels solid — every interaction is correct, responsive, and trustworthy.
-**Current focus:** Roadmap created, awaiting Phase 1 planning.
+**Current focus:** Phase 1 complete, ready for Phase 2 planning.
 **Milestone:** Consolidation (correctness, performance, code quality, UX polish, test coverage)
 
 ## Current Position
 
-**Phase:** — (not started)
-**Plan:** — (not started)
-**Status:** Roadmap complete, ready for phase planning
+**Phase:** 01-concurrency-race-fixes (complete)
+**Plan:** 1/1 (complete)
+**Status:** Phase 1 complete, ready for Phase 2 planning
 
 ```
-Phase Progress: [........] 0/8 phases complete
+Phase Progress: [#.......] 1/8 phases complete
 ```
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Phases complete | 0/8 |
-| Plans complete | 0/? |
-| Requirements delivered | 0/26 |
+| Phases complete | 1/8 |
+| Plans complete | 1/1 (Phase 1) |
+| Requirements delivered | 4/26 |
 | Tests added | 0 |
-| Bugs fixed | 0 |
+| Bugs fixed | 4 |
+| 01-01 duration | 11 min |
 
 ## Accumulated Context
 
@@ -37,10 +38,13 @@ Phase Progress: [........] 0/8 phases complete
 | Tests before refactoring | Research unanimously recommends characterization tests as safety net | Phase 4-5 → 6-7 |
 | SQL consolidation after DB tests | FTS5 search tests verify VIEW doesn't change ranking | Phase 5 → 6 |
 | Frontend last | Backend API should be stable before frontend adapts | Phase 8 |
+| Release mutex before Wails runtime calls | Library/Playlist SetContext releases lock before registerEventHandlers/migrateExistingPlaylists to avoid blocking | Phase 1 |
+| Player SetContext single-lock | Collapsed double-lock to prevent partially-initialized observable state | Phase 1 |
 
 ### TODOs
 
-- [ ] Plan Phase 1 (next step)
+- [x] Plan Phase 1 (complete)
+- [x] Execute Phase 1 Plan 01 (complete)
 - [ ] Validate sqlc + SQLite VIEW + FTS5 compatibility during Phase 6 planning (research flag)
 - [ ] Design queue test architecture during Phase 4 planning (research flag)
 - [ ] Determine library scan test fixture strategy during Phase 5 planning (research flag)
@@ -60,18 +64,18 @@ None currently.
 
 ### Last Session
 
-**Date:** 2026-02-27
-**What happened:** Project initialized — codebase analysis, research, requirements definition, roadmap creation
-**Where we stopped:** Roadmap created with 8 phases covering 26 requirements
-**Next action:** `/gsd-plan-phase 1` to create execution plan for Concurrency Race Fixes
+**Date:** 2026-02-28
+**What happened:** Executed Phase 1 Plan 01 — added mutex protection to all SetContext methods across Queue, Library, Playlist, and Player
+**Where we stopped:** Completed 01-01-PLAN.md (all tasks, verification passed)
+**Next action:** `/gsd-plan-phase 2` to create execution plan for Backend Correctness
 
 ### Context for Next Session
 
-- All 26 v1 requirements mapped across 8 phases
-- Dependency chain: correctness → test infra → tests → SQL/perf optimization → frontend
-- Phase 1 is 4 requirements (CORR-01 to CORR-04), all mechanical mutex additions
-- Research says Phase 1 fixes are "textbook race, LOW effort" — standard patterns, skip research-phase
+- Phase 1 complete: all SetContext data races eliminated (CORR-01 through CORR-04)
+- All four packages pass `go test -race`, `go vet`, `golangci-lint` with 0 issues
+- Library and Playlist gained struct-level mutexes; Queue and Player already had them
+- Ready for Phase 2 (Backend Correctness) — error handling, config permissions, MPRIS errors
 
 ---
 *State initialized: 2026-02-27*
-*Last updated: 2026-02-27*
+*Last updated: 2026-02-28*
