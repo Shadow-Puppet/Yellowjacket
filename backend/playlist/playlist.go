@@ -793,6 +793,46 @@ func (s *Service) ImportPlaylist(
 	return summary, nil
 }
 
+// ImportPlaylists imports multiple playlists from external M3U/M3U8
+// files. Each file is imported sequentially using ImportPlaylist.
+// Errors from individual imports are collected; partial success is
+// possible. Returns the summaries of successfully imported playlists
+// and the first error encountered (if any).
+func (s *Service) ImportPlaylists(
+	filePaths []string,
+) ([]Summary, error) {
+	if len(filePaths) == 0 {
+		return nil, errNoFilePaths
+	}
+
+	summaries := make([]Summary, 0, len(filePaths))
+
+	var firstErr error
+
+	for _, fp := range filePaths {
+		summary, err := s.ImportPlaylist(fp)
+		if err != nil {
+			s.logger.Warn(
+				"Failed to import playlist file",
+				"path", fp,
+				"err", err,
+			)
+
+			if firstErr == nil {
+				firstErr = fmt.Errorf(
+					"import %q failed: %w", fp, err,
+				)
+			}
+
+			continue
+		}
+
+		summaries = append(summaries, summary)
+	}
+
+	return summaries, firstErr
+}
+
 // RestoreAllPlaylists restores playlist tracks from M3U8 files.
 // This is called after a full library rescan to repopulate
 // playlist_tracks from the surviving M3U8 files.

@@ -40,14 +40,14 @@ func (fe *FrontendUtil) DirectoryPicker() (string, error) {
 }
 
 // PlaylistFilePicker opens a file selection dialog filtered
-// to M3U/M3U8 playlist files.
+// to M3U/M3U8 playlist files. Multiple files may be selected.
 func (fe *FrontendUtil) PlaylistFilePicker() (
-	string,
+	[]string,
 	error,
 ) {
-	runtime.LogInfo(fe.ctx, "selecting a playlist file")
+	runtime.LogInfo(fe.ctx, "selecting playlist files")
 
-	file, err := runtime.OpenFileDialog(
+	files, err := runtime.OpenMultipleFilesDialog(
 		fe.ctx,
 		runtime.OpenDialogOptions{
 			Title: "Import Playlist",
@@ -60,10 +60,10 @@ func (fe *FrontendUtil) PlaylistFilePicker() (
 		},
 	)
 	if err != nil {
-		return "", fmt.Errorf(
+		return nil, fmt.Errorf(
 			"could not open file dialog: %w", err,
 		)
 	}
 
-	return file, nil
+	return files, nil
 }
