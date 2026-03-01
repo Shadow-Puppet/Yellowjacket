@@ -1,5 +1,5 @@
 import { LitElement, html, css, nothing } from 'lit';
-import { customElement, property, state } from 'lit/decorators.js';
+import { customElement, property, state, query } from 'lit/decorators.js';
 import { EventsOn } from '@runtime/runtime';
 
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
@@ -9,9 +9,12 @@ import {
     GetAllPlaylists,
     AddTracksToPlaylist,
     CreatePlaylistWithTracks,
+    FindDuplicateTracksInPlaylist,
 } from '@go/playlist/Service';
 import { Events } from '../../events';
 import type { playlist } from '@go/models';
+import '@components/duplicate-tracks-dialog/duplicate-tracks-dialog.js';
+import type { DuplicateTracksDialog } from '@components/duplicate-tracks-dialog/duplicate-tracks-dialog.js';
 
 /**
  * A reusable playlist picker that displays existing playlists
@@ -25,6 +28,9 @@ export class PlaylistPicker extends LitElement {
     /** File paths to add when a playlist is selected or created. */
     @property({ type: Array }) filePaths: string[] = [];
     private cancelScanComplete?: () => void;
+
+    @query('duplicate-tracks-dialog')
+    private duplicateDialog!: DuplicateTracksDialog;
 
     @state() private mode: 'list' | 'create' = 'list';
     @state() private playlists: playlist.Summary[] = [];
@@ -161,6 +167,23 @@ export class PlaylistPicker extends LitElement {
         this.loading = true;
 
         try {
+            const result = await FindDuplicateTracksInPlaylist(
+                playlistId,
+                this.filePaths,
+            );
+            const duplicates = result.Duplicates ?? [];
+            const unique = result.Unique ?? [];
+
+            if (duplicates.length > 0) {
+                // Show dialog — it handles adding tracks and dispatching completion.
+                this.loading = false;
+                await this.updateComplete;
+                this.duplicateDialog.show(playlistId, duplicates, unique);
+
+                return;
+            }
+
+            // No duplicates — add all directly.
             await AddTracksToPlaylist(playlistId, this.filePaths);
             this.dispatchComplete();
         } catch (err) {
@@ -239,11 +262,14 @@ export class PlaylistPicker extends LitElement {
     }
 
     override render() {
-        if (this.mode === 'create') {
-            return this.renderCreateForm();
-        }
-
-        return this.renderPlaylistList();
+        return html`
+            ${this.mode === 'create'
+                ? this.renderCreateForm()
+                : this.renderPlaylistList()}
+            <duplicate-tracks-dialog
+                @playlist-action-complete=${this.dispatchComplete}
+            ></duplicate-tracks-dialog>
+        `;
     }
 
     private renderPlaylistList() {

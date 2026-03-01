@@ -14,6 +14,7 @@ import {
     RenamePlaylist,
     ImportPlaylists,
     RemovePhantomTracks,
+    FindDuplicateTracksInPlaylist,
 } from '@go/playlist/Service';
 import { PlaylistFilePicker } from '@go/frontendutil/FrontendUtil';
 import type { playlist } from '@go/models';
@@ -48,6 +49,8 @@ import type { TrackDetails } from '@components/track-details/track-details.js';
 import type { CoverArtUrls } from '@components/track-details/track-details.js';
 import '@components/phantom-resolver/phantom-resolver.js';
 import type { PhantomResolver } from '@components/phantom-resolver/phantom-resolver.js';
+import '@components/duplicate-tracks-dialog/duplicate-tracks-dialog.js';
+import type { DuplicateTracksDialog } from '@components/duplicate-tracks-dialog/duplicate-tracks-dialog.js';
 
 const SCROLL_DEBOUNCE_MS = 100;
 
@@ -252,6 +255,9 @@ export class PlaylistView
 
     @query('phantom-resolver')
     private phantomResolver!: PhantomResolver;
+
+    @query('duplicate-tracks-dialog')
+    private duplicateDialog!: DuplicateTracksDialog;
 
     private closePlaylistCtxMenuHandler =
         () => this.closePlaylistContextMenu();
@@ -1821,6 +1827,24 @@ export class PlaylistView
         }
 
         try {
+            const result = await FindDuplicateTracksInPlaylist(
+                entry.summary.ID,
+                payload.filePaths,
+            );
+            const duplicates = result.Duplicates ?? [];
+            const unique = result.Unique ?? [];
+
+            if (duplicates.length > 0) {
+                await this.updateComplete;
+                this.duplicateDialog.show(
+                    entry.summary.ID,
+                    duplicates,
+                    unique,
+                );
+
+                return;
+            }
+
             await AddTracksToPlaylist(
                 entry.summary.ID,
                 payload.filePaths,
@@ -2785,6 +2809,10 @@ export class PlaylistView
                 @phantom-resolved=${() =>
                     this.refreshPlaylists()}
             ></phantom-resolver>
+            <duplicate-tracks-dialog
+                @playlist-action-complete=${() =>
+                    this.refreshPlaylists()}
+            ></duplicate-tracks-dialog>
         `;
     }
 
