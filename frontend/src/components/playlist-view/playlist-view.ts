@@ -51,6 +51,19 @@ import type { PhantomResolver } from '@components/phantom-resolver/phantom-resol
 
 const SCROLL_DEBOUNCE_MS = 100;
 
+type PlaylistSortField = 'name' | 'created' | 'modified' | 'tracks';
+type SortDirection = 'asc' | 'desc';
+
+const PLAYLIST_SORT_KEY = 'playlist-view-sort-field';
+const PLAYLIST_SORT_DIR_KEY = 'playlist-view-sort-direction';
+
+const SORT_OPTIONS: { id: PlaylistSortField; label: string }[] = [
+    { id: 'modified', label: 'Recent' },
+    { id: 'name', label: 'Name' },
+    { id: 'created', label: 'Date Created' },
+    { id: 'tracks', label: 'Track Count' },
+];
+
 interface PlaylistEntry {
     summary: playlist.Summary;
     expanded: boolean;
@@ -204,6 +217,18 @@ export class PlaylistView
 
     /** Error message from the last failed import, auto-clears. */
     @state() private importError = '';
+
+    /** Active sort field for playlists. */
+    @state() private sortField: PlaylistSortField = 'modified';
+
+    /** Sort direction. */
+    @state() private sortDirection: SortDirection = 'desc';
+
+    /** Whether the sort dropdown is open. */
+    @state() private sortDropdownOpen = false;
+
+    @query('#sort-dropdown')
+    private sortDropdownPopup!: WaPopup;
 
     /**
      * File paths from a drop that landed outside any playlist.
@@ -861,11 +886,271 @@ export class PlaylistView
                 var(--yj-error, #e03131);
         }
 
+        /* ---- Sort toolbar ---- */
+
+        .sort-toolbar {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          padding: 4px 8px;
+          font-size: 12px;
+          color: var(--yj-text-secondary, #b3b3b3);
+          border-bottom: 1px solid
+            var(--yj-border-subtle, #333);
+          flex-shrink: 0;
+          user-select: none;
+        }
+
+        .sort-anchor {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          cursor: pointer;
+          padding: 2px 6px;
+          border-radius: 4px;
+          background: transparent;
+          border: none;
+          color: inherit;
+          font: inherit;
+        }
+
+        .sort-anchor:hover {
+          background: var(
+            --yj-hover-overlay,
+            rgba(255, 255, 255, 0.05)
+          );
+        }
+
+        .sort-anchor .sort-label {
+          color: var(--yj-text-primary, #fff);
+        }
+
+        .sort-dir-btn {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 24px;
+          height: 24px;
+          cursor: pointer;
+          border: none;
+          border-radius: 4px;
+          background: transparent;
+          color: var(--yj-text-secondary, #b3b3b3);
+          font-size: 12px;
+          padding: 0;
+        }
+
+        .sort-dir-btn:hover {
+          background: var(
+            --yj-hover-overlay,
+            rgba(255, 255, 255, 0.05)
+          );
+          color: var(--yj-text-primary, #fff);
+        }
+
+        .sort-dropdown-panel {
+          background-color: var(
+            --yj-bg-elevated,
+            #343a40
+          );
+          border: 1px solid var(--yj-border, #444);
+          border-radius: 6px;
+          padding: 4px 0;
+          box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+          min-width: 140px;
+        }
+
+        .sort-dropdown-panel wa-dropdown-item {
+          cursor: pointer;
+          --wa-color-text-normal: var(
+            --yj-text-primary,
+            #fff
+          );
+          font-size: 13px;
+        }
+
+        .sort-dropdown-panel wa-dropdown-item:hover {
+          background-color: var(
+            --yj-hover-overlay,
+            rgba(255, 255, 255, 0.1)
+          );
+        }
+
+        .sort-dropdown-panel wa-dropdown-item.active-sort {
+          color: var(--yj-accent, #ffd43b);
+          --wa-color-text-normal: var(
+            --yj-accent,
+            #ffd43b
+          );
+        }
+
+        #sort-dropdown {
+          z-index: 200;
+        }
 
     `];
 
+    // =================================================================
+    // Sort controls
+    // =================================================================
+
+    private restoreSortPreferences() {
+        try {
+            const field =
+                localStorage.getItem(PLAYLIST_SORT_KEY);
+
+            if (
+                field &&
+                SORT_OPTIONS.some(
+                    (o) => o.id === field,
+                )
+            ) {
+                this.sortField =
+                    field as PlaylistSortField;
+            }
+
+            const dir = localStorage.getItem(
+                PLAYLIST_SORT_DIR_KEY,
+            );
+
+            if (dir === 'asc' || dir === 'desc') {
+                this.sortDirection = dir;
+            }
+        } catch {
+            /* localStorage unavailable */
+        }
+    }
+
+    private saveSortPreferences() {
+        try {
+            localStorage.setItem(
+                PLAYLIST_SORT_KEY,
+                this.sortField,
+            );
+            localStorage.setItem(
+                PLAYLIST_SORT_DIR_KEY,
+                this.sortDirection,
+            );
+        } catch {
+            /* localStorage unavailable */
+        }
+    }
+
+    private get sortedEntries(): PlaylistEntry[] {
+        const entries = this.filteredEntries;
+        const dir =
+            this.sortDirection === 'asc' ? 1 : -1;
+
+        return [...entries].sort((a, b) => {
+            let cmp = 0;
+
+            switch (this.sortField) {
+                case 'name':
+                    cmp = a.summary.Name.localeCompare(
+                        b.summary.Name,
+                    );
+                    break;
+                case 'created':
+                    cmp = (
+                        a.summary.CreatedAt || ''
+                    ).localeCompare(
+                        b.summary.CreatedAt || '',
+                    );
+                    break;
+                case 'modified':
+                    cmp = (
+                        a.summary.UpdatedAt || ''
+                    ).localeCompare(
+                        b.summary.UpdatedAt || '',
+                    );
+                    break;
+                case 'tracks':
+                    cmp =
+                        a.tracks.length -
+                        b.tracks.length;
+                    break;
+            }
+
+            return cmp * dir;
+        });
+    }
+
+    private toggleSortDropdown() {
+        if (this.sortDropdownOpen) {
+            this.closeSortDropdown();
+        } else {
+            this.openSortDropdown();
+        }
+    }
+
+    private async openSortDropdown() {
+        this.sortDropdownOpen = true;
+
+        await this.updateComplete;
+
+        const popup = this.sortDropdownPopup;
+        const anchor =
+            this.shadowRoot?.querySelector(
+                '.sort-anchor',
+            );
+
+        if (popup && anchor) {
+            popup.anchor = anchor;
+            popup.active = true;
+        }
+    }
+
+    private closeSortDropdown() {
+        if (!this.sortDropdownOpen) return;
+
+        this.sortDropdownOpen = false;
+
+        const popup = this.sortDropdownPopup;
+
+        if (popup) {
+            popup.active = false;
+        }
+    }
+
+    private onSortDropdownSelect(
+        field: PlaylistSortField,
+    ) {
+        this.sortField = field;
+        this.saveSortPreferences();
+        this.closeSortDropdown();
+    }
+
+    private toggleSortDirection() {
+        this.sortDirection =
+            this.sortDirection === 'asc'
+                ? 'desc'
+                : 'asc';
+        this.saveSortPreferences();
+    }
+
+    private sortDropdownCloseHandler = (
+        e: MouseEvent,
+    ) => {
+        if (!this.sortDropdownOpen) return;
+
+        const path = e.composedPath();
+        const popup = this.sortDropdownPopup;
+
+        if (popup && path.includes(popup)) return;
+
+        const anchor =
+            this.shadowRoot?.querySelector(
+                '.sort-anchor',
+            );
+
+        if (anchor && path.includes(anchor)) return;
+
+        this.closeSortDropdown();
+    };
+
     override connectedCallback() {
         super.connectedCallback();
+        this.restoreSortPreferences();
         this.loadPlaylists();
         document.addEventListener(
             'click',
@@ -882,6 +1167,10 @@ export class PlaylistView
         document.addEventListener(
             'click',
             this.clearSelectionHandler,
+        );
+        document.addEventListener(
+            'mousedown',
+            this.sortDropdownCloseHandler,
         );
     }
 
@@ -908,6 +1197,10 @@ export class PlaylistView
         document.removeEventListener(
             'click',
             this.clearSelectionHandler,
+        );
+        document.removeEventListener(
+            'mousedown',
+            this.sortDropdownCloseHandler,
         );
     }
 
@@ -2074,6 +2367,80 @@ export class PlaylistView
     // Render
     // =================================================================
 
+    private renderSortToolbar() {
+        const activeOption = SORT_OPTIONS.find(
+            (o) => o.id === this.sortField,
+        );
+        const label = activeOption?.label ?? 'Recent';
+        const dirIcon =
+            this.sortDirection === 'asc'
+                ? 'arrow-up-short-wide'
+                : 'arrow-down-wide-short';
+
+        return html`
+            <div class="sort-toolbar">
+                <span>Sort:</span>
+                <button
+                    class="sort-anchor"
+                    @click=${() =>
+                        this.toggleSortDropdown()}
+                >
+                    <span class="sort-label">
+                        ${label}
+                    </span>
+                    <wa-icon
+                        name="chevron-down"
+                    ></wa-icon>
+                </button>
+                <button
+                    class="sort-dir-btn"
+                    title="${this.sortDirection === 'asc' ? 'Ascending' : 'Descending'}"
+                    @click=${() =>
+                        this.toggleSortDirection()}
+                >
+                    <wa-icon
+                        name=${dirIcon}
+                    ></wa-icon>
+                </button>
+            </div>
+            ${this.renderSortDropdownPopup()}
+        `;
+    }
+
+    private renderSortDropdownPopup() {
+        return html`
+            <wa-popup
+                id="sort-dropdown"
+                placement="bottom-start"
+                flip
+                shift
+                .active=${this.sortDropdownOpen}
+            >
+                ${this.sortDropdownOpen
+                    ? html`
+                          <div
+                              class="sort-dropdown-panel"
+                          >
+                              ${SORT_OPTIONS.map(
+                                  (opt) => html`
+                                  <wa-dropdown-item
+                                      class=${this.sortField === opt.id ? 'active-sort' : ''}
+                                      @click=${() =>
+                                          this.onSortDropdownSelect(
+                                              opt.id,
+                                          )}
+                                  >
+                                      ${opt.label}
+                                  </wa-dropdown-item>
+                              `,
+                              )}
+                          </div>
+                      `
+                    : nothing}
+            </wa-popup>
+        `;
+    }
+
     override render() {
         return html`
             <div class="header">
@@ -2122,6 +2489,8 @@ export class PlaylistView
                       ${this.importError}
                   </div>`
                 : nothing}
+
+            ${this.renderSortToolbar()}
 
             ${this.searchCtrl.term &&
             this.filteredEntries.length > 0
@@ -2456,7 +2825,7 @@ export class PlaylistView
             `;
         }
 
-        const visible = this.filteredEntries;
+        const visible = this.sortedEntries;
 
         if (visible.length === 0) {
             return html`
