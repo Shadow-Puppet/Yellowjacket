@@ -84,14 +84,15 @@ None currently.
 | 005 | Add sort dropdown to playlist view | 2026-03-01 | 5c07485 | [5-add-sort-dropdown-to-playlist-view](./quick/5-add-sort-dropdown-to-playlist-view/) |
 | 006 | Remove list icon from playlist names, add favorites icon to default | 2026-03-01 | 3c19766 | [6-remove-list-icon-from-playlist-names-and](./quick/6-remove-list-icon-from-playlist-names-and/) |
 | 007 | Pin default playlist to top of playlist view | 2026-03-01 | e6378e1 | [7-pin-default-playlist-to-top-of-playlist-](./quick/7-pin-default-playlist-to-top-of-playlist-/) |
+| 008 | Add duplicate tracks dialog to playlist | 2026-03-01 | 917a79a | [8-add-duplicate-tracks-dialog-to-playlist](./quick/8-add-duplicate-tracks-dialog-to-playlist/) |
 
 ## Session Continuity
 
 ### Last Session
 
 **Date:** 2026-03-01
-**What happened:** Executed quick task 007 — pin default playlist to top of playlist view with config toggle
-**Where we stopped:** Completed quick task 007 (all tasks, verification passed)
+**What happened:** Executed quick task 008 — add duplicate tracks dialog to playlist additions
+**Where we stopped:** Completed quick task 008 (all tasks, verification passed)
 **Next action:** `/gsd-plan-phase 2` to create execution plan for Backend Correctness
 
 ### Context for Next Session
@@ -103,8 +104,9 @@ None currently.
 - Quick task 005: Playlist view now has sort dropdown (Recent, Name, Date Created, Track Count) with persistent preferences
 - Quick task 006: Playlist list icon removed; default playlist shows favorites icon (heart/star per config), others show no icon
 - Quick task 007: Default playlist pinned to top of playlist list (configurable toggle in Settings > Favorites)
+- Quick task 008: Duplicate tracks dialog intercepts playlist additions — shows Add/Skip per duplicate with batch-apply toggle
 
 ---
 *State initialized: 2026-02-27*
-Last activity: 2026-03-01 - Completed quick task 007: Pin default playlist to top of playlist view
+Last activity: 2026-03-01 - Completed quick task 008: Add duplicate tracks dialog to playlist
 *Last updated: 2026-03-01*
