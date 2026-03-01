@@ -236,6 +236,59 @@ export namespace playlist {
 	        this.Score = source["Score"];
 	    }
 	}
+	export class DuplicateTrackInfo {
+	    FilePath: string;
+	    Title: string;
+	    Artist: string;
+	    Album: string;
+	    Duration: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new DuplicateTrackInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.FilePath = source["FilePath"];
+	        this.Title = source["Title"];
+	        this.Artist = source["Artist"];
+	        this.Album = source["Album"];
+	        this.Duration = source["Duration"];
+	    }
+	}
+	export class DuplicateCheckResult {
+	    Duplicates: DuplicateTrackInfo[];
+	    Unique: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new DuplicateCheckResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Duplicates = this.convertValues(source["Duplicates"], DuplicateTrackInfo);
+	        this.Unique = source["Unique"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
 	export class PhantomMatch {
 	    PhantomPath: string;
 	    PhantomTitle: string;

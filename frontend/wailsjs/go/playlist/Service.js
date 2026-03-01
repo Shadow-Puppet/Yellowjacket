@@ -26,6 +26,10 @@ export function EnsureDefaultPlaylist() {
   return window['go']['playlist']['Service']['EnsureDefaultPlaylist']();
 }
 
+export function FindDuplicateTracksInPlaylist(arg1, arg2) {
+  return window['go']['playlist']['Service']['FindDuplicateTracksInPlaylist'](arg1, arg2);
+}
+
 export function FindPhantomMatches(arg1, arg2) {
   return window['go']['playlist']['Service']['FindPhantomMatches'](arg1, arg2);
 }

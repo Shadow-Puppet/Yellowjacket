@@ -15,6 +15,8 @@ export function DeletePlaylist(arg1:number):Promise<void>;
 
 export function EnsureDefaultPlaylist():Promise<void>;
 
+export function FindDuplicateTracksInPlaylist(arg1:number,arg2:Array<string>):Promise<playlist.DuplicateCheckResult>;
+
 export function FindPhantomMatches(arg1:number,arg2:Array<string>):Promise<playlist.PhantomSearchResult>;
 
 export function GetAllPlaylists():Promise<Array<playlist.Summary>>;

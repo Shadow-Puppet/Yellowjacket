@@ -98,6 +98,23 @@ type PhantomSearchResult struct {
 	Unmatched   []string       `json:"Unmatched"`
 }
 
+// DuplicateTrackInfo holds metadata for a track that already
+// exists in a playlist.
+type DuplicateTrackInfo struct {
+	FilePath string `json:"FilePath"`
+	Title    string `json:"Title"`
+	Artist   string `json:"Artist"`
+	Album    string `json:"Album"`
+	Duration string `json:"Duration"`
+}
+
+// DuplicateCheckResult contains the outcome of checking for
+// duplicate tracks in a playlist.
+type DuplicateCheckResult struct {
+	Duplicates []DuplicateTrackInfo `json:"Duplicates"`
+	Unique     []string             `json:"Unique"`
+}
+
 // Service manages playlist operations.
 type Service struct {
 	// mu protects ctx and favoritesConf from concurrent access
@@ -507,6 +524,64 @@ func (s *Service) AddTracksToPlaylist(
 	s.emitEvent(events.PlaylistTracksChanged, playlistID)
 
 	return nil
+}
+
+// FindDuplicateTracksInPlaylist checks which of the given file
+// paths already exist in the specified playlist. Returns metadata
+// for each duplicate and a list of non-duplicate file paths.
+func (s *Service) FindDuplicateTracksInPlaylist(
+	playlistID int64,
+	filePaths []string,
+) (DuplicateCheckResult, error) {
+	rows, err := s.db.Queries.GetPlaylistTracksWithMetadata(
+		s.db.Ctx,
+		playlistID,
+	)
+	if err != nil {
+		s.logger.Error(
+			"Failed to get playlist tracks for duplicate check",
+			"playlistId", playlistID,
+			"err", err,
+		)
+
+		return DuplicateCheckResult{}, fmt.Errorf(
+			"failed to get playlist tracks: %w", err,
+		)
+	}
+
+	existingPaths := make(
+		map[string]sqlcgen.GetPlaylistTracksWithMetadataRow,
+		len(rows),
+	)
+
+	for _, row := range rows {
+		existingPaths[row.FilePath] = row
+	}
+
+	var duplicates []DuplicateTrackInfo
+
+	var unique []string
+
+	for _, fp := range filePaths {
+		if row, exists := existingPaths[fp]; exists {
+			duplicates = append(duplicates, DuplicateTrackInfo{
+				FilePath: fp,
+				Title:    row.Title,
+				Artist:   row.Artist,
+				Album:    row.Album,
+				Duration: strconv.FormatInt(
+					row.LengthMilliseconds, 10,
+				),
+			})
+		} else {
+			unique = append(unique, fp)
+		}
+	}
+
+	return DuplicateCheckResult{
+		Duplicates: duplicates,
+		Unique:     unique,
+	}, nil
 }
 
 // CreatePlaylistWithTracks creates a new playlist and populates
