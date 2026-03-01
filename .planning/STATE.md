@@ -82,14 +82,15 @@ None currently.
 | 003 | Add multi-select to playlist view with context menu delete support | 2026-02-28 | c92ced2 | [3-add-multi-select-to-playlist-view-with-c](./quick/3-add-multi-select-to-playlist-view-with-c/) |
 | 004 | Add "set as default playlist" context menu option for single playlist selection | 2026-02-28 | 9971b63 | [4-add-set-as-default-playlist-context-menu](./quick/4-add-set-as-default-playlist-context-menu/) |
 | 005 | Add sort dropdown to playlist view | 2026-03-01 | 5c07485 | [5-add-sort-dropdown-to-playlist-view](./quick/5-add-sort-dropdown-to-playlist-view/) |
+| 006 | Remove list icon from playlist names, add favorites icon to default | 2026-03-01 | 3c19766 | [6-remove-list-icon-from-playlist-names-and](./quick/6-remove-list-icon-from-playlist-names-and/) |
 
 ## Session Continuity
 
 ### Last Session
 
 **Date:** 2026-03-01
-**What happened:** Executed quick task 005 — added sort dropdown to playlist view with four sort options and direction toggle
-**Where we stopped:** Completed quick task 005 (all tasks, verification passed)
+**What happened:** Executed quick task 006 — removed list icon from playlist names, added favorites icon (heart/star) to default playlist only
+**Where we stopped:** Completed quick task 006 (all tasks, verification passed)
 **Next action:** `/gsd-plan-phase 2` to create execution plan for Backend Correctness
 
 ### Context for Next Session
@@ -99,8 +100,9 @@ None currently.
 - Library and Playlist gained struct-level mutexes; Queue and Player already had them
 - Ready for Phase 2 (Backend Correctness) — error handling, config permissions, MPRIS errors
 - Quick task 005: Playlist view now has sort dropdown (Recent, Name, Date Created, Track Count) with persistent preferences
+- Quick task 006: Playlist list icon removed; default playlist shows favorites icon (heart/star per config), others show no icon
 
 ---
 *State initialized: 2026-02-27*
-Last activity: 2026-03-01 - Completed quick task 005: Add sort dropdown to playlist view
+Last activity: 2026-03-01 - Completed quick task 006: Remove list icon from playlist names, add favorites icon to default
 *Last updated: 2026-03-01*
