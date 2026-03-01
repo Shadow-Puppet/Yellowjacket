@@ -184,7 +184,9 @@ func (c *Config) applyDefaults() {
 	c.TrackList.ApplyDefaults()
 
 	if c.Favorites == nil {
-		c.Favorites = &favorites.Config{}
+		c.Favorites = &favorites.Config{
+			PinDefault: true,
+		}
 	}
 
 	c.Favorites.ApplyDefaults()
@@ -527,6 +529,42 @@ func (c *Config) SetFavoritesIconStyle(
 	return nil
 }
 
+// GetPinDefaultPlaylist returns whether the default playlist
+// is pinned to the top of the playlist view.
+func (c *Config) GetPinDefaultPlaylist() bool {
+	if c.Favorites == nil {
+		return true // default: pinned
+	}
+
+	return c.Favorites.PinDefault
+}
+
+// SetPinDefaultPlaylist saves whether the default playlist
+// should be pinned to the top of the playlist view.
+func (c *Config) SetPinDefaultPlaylist(pin bool) error {
+	if c.Favorites == nil {
+		c.Favorites = &favorites.Config{}
+		c.Favorites.ApplyDefaults()
+	}
+
+	c.Favorites.PinDefault = pin
+
+	if err := c.Save(); err != nil {
+		return fmt.Errorf(
+			"could not save config: %w", err,
+		)
+	}
+
+	c.emitFavoritesChanged()
+
+	c.logger.Info(
+		"pin default playlist updated",
+		"pin", pin,
+	)
+
+	return nil
+}
+
 // emitFavoritesChanged sends the FavoritesConfigChanged event
 // to the frontend.
 func (c *Config) emitFavoritesChanged() {
@@ -540,6 +578,7 @@ func (c *Config) emitFavoritesChanged() {
 		map[string]any{
 			"PlaylistID": c.Favorites.PlaylistID,
 			"IconStyle":  string(c.Favorites.IconStyle),
+			"PinDefault": c.Favorites.PinDefault,
 		},
 	)
 }

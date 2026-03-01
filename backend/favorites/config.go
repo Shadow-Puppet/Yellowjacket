@@ -33,6 +33,7 @@ const DefaultPlaylistName = "Favorites"
 type Config struct {
 	PlaylistID int64     `toml:"PlaylistID"`
 	IconStyle  IconStyle `toml:"IconStyle"`
+	PinDefault bool      `toml:"PinDefault"`
 }
 
 // ApplyDefaults fills zero-value fields with sensible defaults.
