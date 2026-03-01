@@ -3,6 +3,7 @@ package playlist
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"yellowjacket/backend/database/sql/sqlcgen"
 	"yellowjacket/backend/events"
@@ -82,7 +83,10 @@ func (s *Service) EnsureDefaultPlaylist() {
 	)
 
 	s.emitEvent(events.PlaylistCreated, Summary{
-		ID: created.ID, Name: created.Name,
+		ID:        created.ID,
+		Name:      created.Name,
+		CreatedAt: created.CreatedAt.Format(time.RFC3339),
+		UpdatedAt: created.UpdatedAt.Format(time.RFC3339),
 	})
 }
 
@@ -138,7 +142,12 @@ func (s *Service) GetDefaultPlaylistInfo() (
 		)
 	}
 
-	return Summary{ID: pl.ID, Name: pl.Name}, nil
+	return Summary{
+		ID:        pl.ID,
+		Name:      pl.Name,
+		CreatedAt: pl.CreatedAt.Format(time.RFC3339),
+		UpdatedAt: pl.UpdatedAt.Format(time.RFC3339),
+	}, nil
 }
 
 // ToggleDefaultPlaylistTrack adds or removes a single track

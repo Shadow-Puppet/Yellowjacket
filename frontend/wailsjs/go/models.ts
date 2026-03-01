@@ -305,6 +305,8 @@ export namespace playlist {
 	export class Summary {
 	    ID: number;
 	    Name: string;
+	    CreatedAt: string;
+	    UpdatedAt: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Summary(source);
@@ -314,6 +316,8 @@ export namespace playlist {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.ID = source["ID"];
 	        this.Name = source["Name"];
+	        this.CreatedAt = source["CreatedAt"];
+	        this.UpdatedAt = source["UpdatedAt"];
 	    }
 	}
 	export class Track {

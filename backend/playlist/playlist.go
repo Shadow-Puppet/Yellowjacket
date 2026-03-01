@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
@@ -42,8 +43,10 @@ type LibraryDirProvider interface {
 // Summary is a lightweight representation of a playlist for the
 // picker UI.
 type Summary struct {
-	ID   int64  `json:"ID"`
-	Name string `json:"Name"`
+	ID        int64  `json:"ID"`
+	Name      string `json:"Name"`
+	CreatedAt string `json:"CreatedAt"`
+	UpdatedAt string `json:"UpdatedAt"`
 }
 
 // Track represents a track within a playlist, including its
@@ -160,8 +163,10 @@ func (s *Service) GetAllPlaylists() ([]Summary, error) {
 
 	for _, p := range playlists {
 		summaries = append(summaries, Summary{
-			ID:   p.ID,
-			Name: p.Name,
+			ID:        p.ID,
+			Name:      p.Name,
+			CreatedAt: p.CreatedAt.Format(time.RFC3339),
+			UpdatedAt: p.UpdatedAt.Format(time.RFC3339),
 		})
 	}
 
@@ -236,8 +241,13 @@ func (s *Service) GetAllPlaylistsWithTracks() (
 		)
 
 		result = append(result, WithTracks{
-			Summary: Summary{ID: p.ID, Name: p.Name},
-			Tracks:  tracks,
+			Summary: Summary{
+				ID:        p.ID,
+				Name:      p.Name,
+				CreatedAt: p.CreatedAt.Format(time.RFC3339),
+				UpdatedAt: p.UpdatedAt.Format(time.RFC3339),
+			},
+			Tracks: tracks,
 		})
 	}
 
@@ -439,11 +449,17 @@ func (s *Service) CreatePlaylist(
 
 	s.savePlaylistFile(created.ID, created.Name)
 	s.emitEvent(events.PlaylistCreated, Summary{
-		ID: created.ID, Name: created.Name,
+		ID:        created.ID,
+		Name:      created.Name,
+		CreatedAt: created.CreatedAt.Format(time.RFC3339),
+		UpdatedAt: created.UpdatedAt.Format(time.RFC3339),
 	})
 
 	return Summary{
-		ID: created.ID, Name: created.Name,
+		ID:        created.ID,
+		Name:      created.Name,
+		CreatedAt: created.CreatedAt.Format(time.RFC3339),
+		UpdatedAt: created.UpdatedAt.Format(time.RFC3339),
 	}, nil
 }
 
@@ -543,7 +559,10 @@ func (s *Service) CreatePlaylistWithTracks(
 	}
 
 	summary := Summary{
-		ID: created.ID, Name: created.Name,
+		ID:        created.ID,
+		Name:      created.Name,
+		CreatedAt: created.CreatedAt.Format(time.RFC3339),
+		UpdatedAt: created.UpdatedAt.Format(time.RFC3339),
 	}
 
 	s.logger.Info(
@@ -675,7 +694,8 @@ func (s *Service) RenamePlaylist(
 	)
 
 	s.emitEvent(events.PlaylistRenamed, Summary{
-		ID: playlistID, Name: trimmed,
+		ID:   playlistID,
+		Name: trimmed,
 	})
 
 	return nil
@@ -689,8 +709,10 @@ func (s *Service) uniquePlaylistName(name string) string {
 	if err != nil || count == 0 {
 		return name
 	}
+
 	for i := 1; ; i++ {
 		candidate := fmt.Sprintf("%s (%d)", name, i)
+
 		c, err := s.db.Queries.CountPlaylistsByName(s.db.Ctx, candidate)
 		if err != nil || c == 0 {
 			return candidate
@@ -804,7 +826,10 @@ func (s *Service) ImportPlaylist(
 	)
 
 	summary := Summary{
-		ID: created.ID, Name: playlistName,
+		ID:        created.ID,
+		Name:      playlistName,
+		CreatedAt: created.CreatedAt.Format(time.RFC3339),
+		UpdatedAt: created.UpdatedAt.Format(time.RFC3339),
 	}
 
 	s.emitEvent(events.PlaylistCreated, summary)
