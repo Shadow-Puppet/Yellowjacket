@@ -587,7 +587,7 @@ export class PlaylistView
         }
 
         .playlist-body {
-            padding: 0 16px 12px 42px;
+            padding: 0 16px 12px 32px;
         }
 
         .playlist-actions {
@@ -2920,10 +2920,12 @@ export class PlaylistView
                             : ''}"
                         name="chevron-right"
                     ></wa-icon>
-                    <wa-icon
-                        class="playlist-icon"
-                        name="list"
-                    ></wa-icon>
+                    ${entry.summary.ID === this.favCtrl.playlistId
+                        ? html`<wa-icon
+                              class="playlist-icon"
+                              name=${this.favCtrl.iconName}
+                          ></wa-icon>`
+                        : nothing}
                     ${isRenaming
                         ? html`
                               <input
