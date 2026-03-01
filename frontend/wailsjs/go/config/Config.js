@@ -14,6 +14,10 @@ export function GetLibraryDirectory() {
   return window['go']['config']['Config']['GetLibraryDirectory']();
 }
 
+export function GetPinDefaultPlaylist() {
+  return window['go']['config']['Config']['GetPinDefaultPlaylist']();
+}
+
 export function GetScanConcurrency() {
   return window['go']['config']['Config']['GetScanConcurrency']();
 }
@@ -52,6 +56,10 @@ export function SetFavoritesPlaylistID(arg1) {
 
 export function SetLibraryDirectory(arg1) {
   return window['go']['config']['Config']['SetLibraryDirectory'](arg1);
+}
+
+export function SetPinDefaultPlaylist(arg1) {
+  return window['go']['config']['Config']['SetPinDefaultPlaylist'](arg1);
 }
 
 export function SetScanConcurrency(arg1) {

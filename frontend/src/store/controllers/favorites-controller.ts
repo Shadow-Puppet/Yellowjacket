@@ -69,6 +69,10 @@ export class FavoritesController
         return favoritesStore.getPlaylistId();
     }
 
+    get pinDefault(): boolean {
+        return favoritesStore.getPinDefault();
+    }
+
     /**
      * Returns the icon name for the current icon style.
      */
@@ -112,5 +116,11 @@ export class FavoritesController
         id: number,
     ): Promise<void> {
         await favoritesStore.setDefaultPlaylist(id);
+    }
+
+    async setPinDefault(
+        pin: boolean,
+    ): Promise<void> {
+        await favoritesStore.setPinDefault(pin);
     }
 }

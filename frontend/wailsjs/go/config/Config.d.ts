@@ -9,6 +9,8 @@ export function GetFavoritesPlaylistID():Promise<number>;
 
 export function GetLibraryDirectory():Promise<string>;
 
+export function GetPinDefaultPlaylist():Promise<boolean>;
+
 export function GetScanConcurrency():Promise<string>;
 
 export function GetThemeAccentColor():Promise<string>;
@@ -28,6 +30,8 @@ export function SetFavoritesIconStyle(arg1:string):Promise<void>;
 export function SetFavoritesPlaylistID(arg1:number):Promise<void>;
 
 export function SetLibraryDirectory(arg1:string):Promise<void>;
+
+export function SetPinDefaultPlaylist(arg1:boolean):Promise<void>;
 
 export function SetScanConcurrency(arg1:string):Promise<void>;
 

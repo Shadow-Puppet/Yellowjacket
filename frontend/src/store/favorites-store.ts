@@ -9,8 +9,10 @@ import {
 import {
     GetFavoritesIconStyle,
     GetFavoritesPlaylistID,
+    GetPinDefaultPlaylist,
     SetFavoritesIconStyle,
     SetFavoritesPlaylistID,
+    SetPinDefaultPlaylist,
 } from '@go/config/Config';
 import { Events } from '../events';
 
@@ -29,6 +31,7 @@ class FavoritesStore {
     private playlistId = 0;
     private playlistName = 'Favorites';
     private iconStyle: IconStyle = 'heart';
+    private pinDefault = true;
     private favoritedPaths = new Set<string>();
     private subscribers = new Set<Subscriber>();
     private loading = false;
@@ -44,10 +47,13 @@ class FavoritesStore {
             (data: {
                 PlaylistID: number;
                 IconStyle: string;
+                PinDefault: boolean;
             }) => {
                 this.playlistId = data.PlaylistID;
                 this.iconStyle =
                     data.IconStyle as IconStyle;
+                this.pinDefault = data.PinDefault;
+                this.notify();
                 void this.loadPlaylistName();
                 void this.loadPaths();
             },
@@ -117,6 +123,10 @@ class FavoritesStore {
 
     getPlaylistId(): number {
         return this.playlistId;
+    }
+
+    getPinDefault(): boolean {
+        return this.pinDefault;
     }
 
     isLoading(): boolean {
@@ -203,6 +213,14 @@ class FavoritesStore {
         await this.loadPaths();
     }
 
+    async setPinDefault(
+        pin: boolean,
+    ): Promise<void> {
+        this.pinDefault = pin;
+        this.notify();
+        await SetPinDefaultPlaylist(pin);
+    }
+
     // ===============================================================
     // SUBSCRIPTION SYSTEM
     // ===============================================================
@@ -223,13 +241,16 @@ class FavoritesStore {
 
     private async loadConfig(): Promise<void> {
         try {
-            const [id, style] = await Promise.all([
-                GetFavoritesPlaylistID(),
-                GetFavoritesIconStyle(),
-            ]);
+            const [id, style, pin] =
+                await Promise.all([
+                    GetFavoritesPlaylistID(),
+                    GetFavoritesIconStyle(),
+                    GetPinDefaultPlaylist(),
+                ]);
 
             this.playlistId = id;
             this.iconStyle = style as IconStyle;
+            this.pinDefault = pin;
             await this.loadPlaylistName();
             this.notify();
         } catch {

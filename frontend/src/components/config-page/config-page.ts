@@ -819,6 +819,21 @@ export class ConfigPage extends LitElement {
             });
     };
 
+    private handlePinDefaultChange = (
+        e: CustomEvent<ConfigFieldChangeEvent>,
+    ): void => {
+        const pin = Boolean(e.detail.value);
+
+        this.favCtrl
+            .setPinDefault(pin)
+            .catch((err: unknown) => {
+                console.error(
+                    'Failed to set pin default:',
+                    err,
+                );
+            });
+    };
+
     // ===================================================================
     // TRACK LIST COLUMN HANDLERS
     // ===================================================================
@@ -1081,6 +1096,18 @@ export class ConfigPage extends LitElement {
                     .value=${this.favCtrl
                         .iconStyle}
                     @config-change=${this.handleFavIconStyleChange}
+                ></config-field>
+
+                <config-field
+                    .schema=${{
+                        key: 'pinDefaultPlaylist',
+                        label: 'Pin to Top',
+                        description:
+                            'Always show the default playlist first, regardless of sort order.',
+                        type: 'toggle' as const,
+                    }}
+                    .value=${this.favCtrl.pinDefault}
+                    @config-change=${this.handlePinDefaultChange}
                 ></config-field>
             </config-section>
         `;

@@ -1042,6 +1042,22 @@ export class PlaylistView
             this.sortDirection === 'asc' ? 1 : -1;
 
         return [...entries].sort((a, b) => {
+            // Pin default playlist to top when enabled.
+            if (this.favCtrl.pinDefault) {
+                const aIsDefault =
+                    a.summary.ID ===
+                    this.favCtrl.playlistId;
+                const bIsDefault =
+                    b.summary.ID ===
+                    this.favCtrl.playlistId;
+
+                if (aIsDefault && !bIsDefault)
+                    return -1;
+
+                if (!aIsDefault && bIsDefault)
+                    return 1;
+            }
+
             let cmp = 0;
 
             switch (this.sortField) {
