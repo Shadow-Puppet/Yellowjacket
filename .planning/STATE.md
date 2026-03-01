@@ -81,14 +81,15 @@ None currently.
 | 002 | Auto-rename duplicate playlists on import | 2026-02-28 | 8ba8bbe | [002-auto-rename-duplicate-playlists-on-import](./quick/002-auto-rename-duplicate-playlists-on-import/) |
 | 003 | Add multi-select to playlist view with context menu delete support | 2026-02-28 | c92ced2 | [3-add-multi-select-to-playlist-view-with-c](./quick/3-add-multi-select-to-playlist-view-with-c/) |
 | 004 | Add "set as default playlist" context menu option for single playlist selection | 2026-02-28 | 9971b63 | [4-add-set-as-default-playlist-context-menu](./quick/4-add-set-as-default-playlist-context-menu/) |
+| 005 | Add sort dropdown to playlist view | 2026-03-01 | 5c07485 | [5-add-sort-dropdown-to-playlist-view](./quick/5-add-sort-dropdown-to-playlist-view/) |
 
 ## Session Continuity
 
 ### Last Session
 
-**Date:** 2026-02-28
-**What happened:** Executed Phase 1 Plan 01 — added mutex protection to all SetContext methods across Queue, Library, Playlist, and Player
-**Where we stopped:** Completed 01-01-PLAN.md (all tasks, verification passed)
+**Date:** 2026-03-01
+**What happened:** Executed quick task 005 — added sort dropdown to playlist view with four sort options and direction toggle
+**Where we stopped:** Completed quick task 005 (all tasks, verification passed)
 **Next action:** `/gsd-plan-phase 2` to create execution plan for Backend Correctness
 
 ### Context for Next Session
@@ -97,8 +98,9 @@ None currently.
 - All four packages pass `go test -race`, `go vet`, `golangci-lint` with 0 issues
 - Library and Playlist gained struct-level mutexes; Queue and Player already had them
 - Ready for Phase 2 (Backend Correctness) — error handling, config permissions, MPRIS errors
+- Quick task 005: Playlist view now has sort dropdown (Recent, Name, Date Created, Track Count) with persistent preferences
 
 ---
 *State initialized: 2026-02-27*
-Last activity: 2026-02-28 - Completed quick task 004: Add "set as default playlist" context menu option for single playlist selection
-*Last updated: 2026-02-28*
+Last activity: 2026-03-01 - Completed quick task 005: Add sort dropdown to playlist view
+*Last updated: 2026-03-01*
