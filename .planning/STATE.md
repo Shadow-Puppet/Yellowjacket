@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: completed
-last_updated: "2026-02-28T17:16:32.158Z"
+status: in-progress
+last_updated: "2026-03-02T23:40:25Z"
 progress:
-  total_phases: 1
+  total_phases: 2
   completed_phases: 1
-  total_plans: 1
-  completed_plans: 1
+  total_plans: 3
+  completed_plans: 2
 ---
 
 # YellowJacket — Consolidation Milestone State
@@ -16,17 +16,17 @@ progress:
 ## Project Reference
 
 **Core value:** The music player works reliably and feels solid — every interaction is correct, responsive, and trustworthy.
-**Current focus:** Phase 1 complete, ready for Phase 2 planning.
+**Current focus:** Phase 2 in progress — error handling and config fixes.
 **Milestone:** Consolidation (correctness, performance, code quality, UX polish, test coverage)
 
 ## Current Position
 
-**Phase:** 01-concurrency-race-fixes (complete)
-**Plan:** 1/1 (complete)
-**Status:** Milestone complete
+**Phase:** 02-backend-correctness (in progress)
+**Plan:** 1/2 complete
+**Status:** Executing Phase 2
 
 ```
-Phase Progress: [#.......] 1/8 phases complete
+Phase Progress: [##......] 1/8 phases complete (Phase 2: 1/2 plans done)
 ```
 
 ## Performance Metrics
@@ -34,11 +34,12 @@ Phase Progress: [#.......] 1/8 phases complete
 | Metric | Value |
 |--------|-------|
 | Phases complete | 1/8 |
-| Plans complete | 1/1 (Phase 1) |
-| Requirements delivered | 4/26 |
+| Plans complete | 1/2 (Phase 2) |
+| Requirements delivered | 7/26 |
 | Tests added | 0 |
-| Bugs fixed | 4 |
+| Bugs fixed | 7 |
 | 01-01 duration | 11 min |
+| 02-01 duration | 12 min |
 
 ## Accumulated Context
 
@@ -53,11 +54,14 @@ Phase Progress: [#.......] 1/8 phases complete
 | Frontend last | Backend API should be stable before frontend adapts | Phase 8 |
 | Release mutex before Wails runtime calls | Library/Playlist SetContext releases lock before registerEventHandlers/migrateExistingPlaylists to avoid blocking | Phase 1 |
 | Player SetContext single-lock | Collapsed double-lock to prevent partially-initialized observable state | Phase 1 |
+| MPRIS closures inline, Warn level | Non-fatal OS media control failures logged at Warn, kept as inline closures | Phase 2 |
 
 ### TODOs
 
 - [x] Plan Phase 1 (complete)
 - [x] Execute Phase 1 Plan 01 (complete)
+- [x] Plan Phase 2 (complete)
+- [x] Execute Phase 2 Plan 01 (complete)
 - [ ] Validate sqlc + SQLite VIEW + FTS5 compatibility during Phase 6 planning (research flag)
 - [ ] Design queue test architecture during Phase 4 planning (research flag)
 - [ ] Determine library scan test fixture strategy during Phase 5 planning (research flag)
@@ -90,23 +94,18 @@ None currently.
 
 ### Last Session
 
-**Date:** 2026-03-01
-**What happened:** Executed quick task 008 — add duplicate tracks dialog to playlist additions
-**Where we stopped:** Completed quick task 008 (all tasks, verification passed)
-**Next action:** `/gsd-plan-phase 2` to create execution plan for Backend Correctness
+**Date:** 2026-03-02
+**What happened:** Executed Phase 2 Plan 01 — error handling and config fixes
+**Where we stopped:** Completed 02-01-PLAN.md (all 2 tasks, verification passed)
+**Next action:** Execute Phase 2 Plan 02
 
 ### Context for Next Session
 
-- Phase 1 complete: all SetContext data races eliminated (CORR-01 through CORR-04)
-- All four packages pass `go test -race`, `go vet`, `golangci-lint` with 0 issues
-- Library and Playlist gained struct-level mutexes; Queue and Player already had them
-- Ready for Phase 2 (Backend Correctness) — error handling, config permissions, MPRIS errors
-- Quick task 005: Playlist view now has sort dropdown (Recent, Name, Date Created, Track Count) with persistent preferences
-- Quick task 006: Playlist list icon removed; default playlist shows favorites icon (heart/star per config), others show no icon
-- Quick task 007: Default playlist pinned to top of playlist list (configurable toggle in Settings > Favorites)
-- Quick task 008: Duplicate tracks dialog intercepts playlist additions — shows Add/Skip per duplicate with batch-apply toggle
+- Phase 2 Plan 01 complete: startupErr struct field, 0o644 config perms, MPRIS error logging (CORR-05/06/07)
+- `codegen-check` lefthook pre-commit hook hangs — use `LEFTHOOK_EXCLUDE=codegen-check` for commits
+- Phase 2 Plan 02 remaining for backend correctness completion
 
 ---
 *State initialized: 2026-02-27*
-Last activity: 2026-03-01 - Completed quick task 008: Add duplicate tracks dialog to playlist
-*Last updated: 2026-03-01*
+Last activity: 2026-03-02 - Completed 02-01: Error handling & config fixes
+*Last updated: 2026-03-02*

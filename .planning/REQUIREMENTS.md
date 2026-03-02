@@ -13,9 +13,9 @@ Requirements for the consolidation milestone. Each maps to roadmap phases.
 - [x] **CORR-02**: Library.SetContext() and field setters (ctx, conf, rescanHooks) are protected by a mutex
 - [x] **CORR-03**: Playlist.Service.SetContext() acquires lock before writing s.ctx, eliminating the data race
 - [x] **CORR-04**: Player.SetContext() combines the double-lock pattern into a single lock acquisition
-- [ ] **CORR-05**: Package-level startupErr variable is moved to a YellowJacketApp struct field
-- [ ] **CORR-06**: Config file is written with 0o644 permissions instead of 0o666
-- [ ] **CORR-07**: MPRIS lifecycle callback errors (Pause, Seek) are logged instead of silently swallowed
+- [x] **CORR-05**: Package-level startupErr variable is moved to a YellowJacketApp struct field
+- [x] **CORR-06**: Config file is written with 0o644 permissions instead of 0o666
+- [x] **CORR-07**: MPRIS lifecycle callback errors (Pause, Seek) are logged instead of silently swallowed
 - [ ] **CORR-08**: Artist credit link creation error is checked; only UNIQUE constraint violations are ignored
 - [ ] **CORR-09**: Library.Scan() separates warnings from fatal errors — warnings returned in ScanMetrics, fatal errors in the error return
 
@@ -93,9 +93,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CORR-02 | Phase 1: Concurrency Race Fixes | Complete |
 | CORR-03 | Phase 1: Concurrency Race Fixes | Complete |
 | CORR-04 | Phase 1: Concurrency Race Fixes | Complete |
-| CORR-05 | Phase 2: Backend Correctness | Pending |
-| CORR-06 | Phase 2: Backend Correctness | Pending |
-| CORR-07 | Phase 2: Backend Correctness | Pending |
+| CORR-05 | Phase 2: Backend Correctness | Complete |
+| CORR-06 | Phase 2: Backend Correctness | Complete |
+| CORR-07 | Phase 2: Backend Correctness | Complete |
 | CORR-08 | Phase 2: Backend Correctness | Pending |
 | CORR-09 | Phase 2: Backend Correctness | Pending |
 | QUAL-01 | Phase 6: SQL Consolidation & Code Quality | Pending |
