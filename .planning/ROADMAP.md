@@ -41,7 +41,10 @@ Plans:
   3. MPRIS lifecycle callback errors (Pause, Seek) appear in the application log instead of being silently discarded
   4. Artist credit link creation checks the actual error — only UNIQUE constraint violations are ignored, all other errors are surfaced
   5. Library.Scan() returns warnings (skipped files, partial failures) in ScanMetrics and fatal errors (database failures) in the error return, so callers can distinguish between "scan completed with issues" and "scan failed"
-**Plans:** TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 02-01-PLAN.md — Fix startupErr global state, config permissions, and MPRIS callback error logging
+- [ ] 02-02-PLAN.md — Add IsUniqueViolation helper, migration 3, and separate scan warnings from fatal errors
 
 ### Phase 3: Test Infrastructure
 **Goal:** A reliable, production-mirroring test foundation exists so that all subsequent test phases can write database-backed tests with confidence
@@ -113,7 +116,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Concurrency Race Fixes | 1/1 | Complete | 2026-02-28 |
-| 2. Backend Correctness | 0/? | Not started | — |
+| 2. Backend Correctness | 0/2 | Planned | — |
 | 3. Test Infrastructure | 0/? | Not started | — |
 | 4. Queue, Config & Player Tests | 0/? | Not started | — |
 | 5. Database & Library Tests | 0/? | Not started | — |
@@ -123,4 +126,4 @@ Plans:
 
 ---
 *Roadmap created: 2026-02-27*
-*Last updated: 2026-02-28*
+*Last updated: 2026-03-02*
