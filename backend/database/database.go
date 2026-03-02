@@ -220,6 +220,48 @@ func runMigrations(
 		}
 	}
 
+	// Migration 3: add UNIQUE constraint to artist_credit_artist.
+	if version < 3 {
+		logger.Info(
+			"applying migration 3: artist_credit_artist unique constraint",
+		)
+
+		// Remove duplicates first (keep lowest ID per pair).
+		if _, err := db.ExecContext(ctx, `
+			DELETE FROM artist_credit_artist
+			WHERE id NOT IN (
+				SELECT MIN(id)
+				FROM artist_credit_artist
+				GROUP BY artist_id, credit_id
+			)
+		`); err != nil {
+			return fmt.Errorf(
+				"migration 3: could not deduplicate: %w", err,
+			)
+		}
+
+		if _, err := db.ExecContext(ctx, `
+			CREATE UNIQUE INDEX IF NOT EXISTS
+				idx_artist_credit_artist_unique
+			ON artist_credit_artist(artist_id, credit_id)
+		`); err != nil {
+			return fmt.Errorf(
+				"migration 3: could not create unique index: %w",
+				err,
+			)
+		}
+
+		if _, err := db.ExecContext(
+			ctx, "PRAGMA user_version = 3",
+		); err != nil {
+			return fmt.Errorf(
+				"could not set user_version to 3: %w", err,
+			)
+		}
+
+		logger.Info("migration 3 complete")
+	}
+
 	return nil
 }
 

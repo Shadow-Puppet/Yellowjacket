@@ -39,6 +39,7 @@ type YellowJacketApp struct {
 	mediaControls mediacontrols.Handler
 	appContext    context.Context
 	appConfig     *config.Config
+	startupErr    error
 }
 
 // NewYellowJacketApp creates and initializes the application.
@@ -131,8 +132,6 @@ func (yj *YellowJacketApp) WindowConfig() *config.WindowConfig {
 	return yj.appConfig.Window
 }
 
-var startupErr error
-
 // OnStartup initializes components that require the Wails runtime context.
 func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 	defer profiling.TimeOp(yj.logger, "app.OnStartup")()
@@ -151,8 +150,8 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 	// Initialize speaker hardware (player struct created in
 	// NewYellowJacketApp for Wails binding registration).
 	if err := yj.player.InitSpeaker(); err != nil {
-		startupErr = errors.Join(
-			startupErr,
+		yj.startupErr = errors.Join(
+			yj.startupErr,
 			fmt.Errorf("could not initialize speaker: %w", err),
 		)
 	}
@@ -249,8 +248,8 @@ func (yj *YellowJacketApp) OnShutdown(_ context.Context) {
 // listeners, index.ts calls Player.EmitCurrentState() and
 // Queue.EmitCurrentState() via Wails bindings.
 func (yj *YellowJacketApp) OnDomReady(ctx context.Context) {
-	if startupErr != nil {
-		yj.logger.Error("startup error", "err", startupErr.Error())
+	if yj.startupErr != nil {
+		yj.logger.Error("startup error", "err", yj.startupErr.Error())
 		wailsruntime.Quit(ctx)
 	}
 }

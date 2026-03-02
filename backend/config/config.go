@@ -149,7 +149,7 @@ func (c *Config) Save() error {
 		return fmt.Errorf("could not marshal config struct: %w", err)
 	}
 
-	err = os.WriteFile(c.filePath, confFileData, os.FileMode(int(0o666)))
+	err = os.WriteFile(c.filePath, confFileData, 0o644)
 	if err != nil {
 		return fmt.Errorf("could not write config file (%s): %w", c.filePath, err)
 	}
