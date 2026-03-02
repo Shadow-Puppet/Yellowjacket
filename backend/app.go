@@ -178,20 +178,32 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 	yj.mediaControls = mediacontrols.NewHandler(yj.logger)
 
 	if err := yj.mediaControls.Init(mediacontrols.Callbacks{
-		OnPlay:  yj.queue.Play,
-		OnPause: func() { _ = yj.player.Pause() },
+		OnPlay: yj.queue.Play,
+		OnPause: func() {
+			if err := yj.player.Pause(); err != nil {
+				yj.logger.Warn("MPRIS Pause failed", "err", err)
+			}
+		},
 		OnPlayPause: func() {
 			if yj.player.IsPlaying() {
-				_ = yj.player.Pause()
+				if err := yj.player.Pause(); err != nil {
+					yj.logger.Warn("MPRIS PlayPause(pause) failed", "err", err)
+				}
 			} else {
 				yj.queue.Play()
 			}
 		},
-		OnStop:     func() { _ = yj.player.Pause() },
+		OnStop: func() {
+			if err := yj.player.Pause(); err != nil {
+				yj.logger.Warn("MPRIS Stop failed", "err", err)
+			}
+		},
 		OnNext:     yj.queue.Next,
 		OnPrevious: yj.queue.Previous,
 		OnSeek: func(positionSec int) {
-			_ = yj.player.Seek(positionSec)
+			if err := yj.player.Seek(positionSec); err != nil {
+				yj.logger.Warn("MPRIS Seek failed", "err", err)
+			}
 		},
 		OnVolume: func(vol float64) {
 			yj.player.SetVolume(
