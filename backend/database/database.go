@@ -53,15 +53,8 @@ func NewDB(logger *slog.Logger) (*DB, error) {
 
 	db.SetMaxOpenConns(1) // SQLite only supports one writer at a time
 
-	// Enable foreign key enforcement — SQLite disables it by
-	// default, which means ON DELETE CASCADE will not work without
-	// this pragma.
-	if _, err := db.ExecContext(
-		dbCtx, "PRAGMA foreign_keys = ON",
-	); err != nil {
-		return nil, fmt.Errorf(
-			"could not enable foreign keys: %w", err,
-		)
+	if err := applyPRAGMAs(dbCtx, db); err != nil {
+		return nil, fmt.Errorf("could not apply PRAGMAs: %w", err)
 	}
 
 	// Execute SQL files from the embedded schemas directory
@@ -148,6 +141,27 @@ func (d *DB) ExecContext(query string, args ...any) (sql.Result, error) {
 // QueryContext executes a query that returns rows.
 func (d *DB) QueryContext(query string, args ...any) (*sql.Rows, error) {
 	return d.db.QueryContext(d.Ctx, query, args...)
+}
+
+// applyPRAGMAs configures SQLite connection settings. Called by both
+// NewDB and NewTestDB to ensure identical behavior.
+func applyPRAGMAs(ctx context.Context, db *sql.DB) error {
+	pragmas := []string{
+		"PRAGMA foreign_keys = ON",
+		"PRAGMA synchronous = NORMAL",
+		"PRAGMA cache_size = -8000",
+		"PRAGMA mmap_size = 67108864",
+	}
+
+	for _, pragma := range pragmas {
+		if _, err := db.ExecContext(ctx, pragma); err != nil {
+			return fmt.Errorf(
+				"could not apply PRAGMA %q: %w", pragma, err,
+			)
+		}
+	}
+
+	return nil
 }
 
 // runMigrations applies incremental schema changes using SQLite's
