@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: completed
-last_updated: "2026-03-03T00:24:22.298Z"
+status: in-progress
+last_updated: "2026-03-03T03:05:48Z"
 progress:
-  total_phases: 2
-  completed_phases: 2
-  total_plans: 3
-  completed_plans: 3
+  total_phases: 3
+  completed_phases: 3
+  total_plans: 4
+  completed_plans: 4
 ---
 
 # YellowJacket — Consolidation Milestone State
@@ -16,31 +16,32 @@ progress:
 ## Project Reference
 
 **Core value:** The music player works reliably and feels solid — every interaction is correct, responsive, and trustworthy.
-**Current focus:** Phase 2 complete — all backend correctness requirements delivered.
+**Current focus:** Phase 3 complete — test infrastructure foundation with NewTestDB helper.
 **Milestone:** Consolidation (correctness, performance, code quality, UX polish, test coverage)
 
 ## Current Position
 
-**Phase:** 02-backend-correctness (complete)
-**Plan:** 2/2 (complete)
-**Status:** Milestone complete
+**Phase:** 03-test-infrastructure (complete)
+**Plan:** 1/1 (complete)
+**Status:** In progress
 
 ```
-Phase Progress: [##......] 2/8 phases complete
+Phase Progress: [###.....] 3/8 phases complete
 ```
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Phases complete | 2/8 |
-| Plans complete | 2/2 (Phase 2) |
-| Requirements delivered | 9/26 |
+| Phases complete | 3/8 |
+| Plans complete | 1/1 (Phase 3) |
+| Requirements delivered | 11/26 |
 | Tests added | 0 |
 | Bugs fixed | 9 |
 | 01-01 duration | 11 min |
 | 02-01 duration | 12 min |
 | 02-02 duration | 50 min |
+| 03-01 duration | 3 min |
 
 ## Accumulated Context
 
@@ -58,6 +59,8 @@ Phase Progress: [##......] 2/8 phases complete
 | MPRIS closures inline, Warn level | Non-fatal OS media control failures logged at Warn, kept as inline closures | Phase 2 |
 | Pass metrics through cachedLinkArtist | Consistent void-return pattern; warnings collected via addWarning | Phase 2 |
 | Fatal vs warning error classification | tx.Commit failures are fatal; all other scan errors are warnings in ScanMetrics | Phase 2 |
+| applyPRAGMAs unexported, shared | Package-internal function ensures NewDB and NewTestDB have identical PRAGMA config | Phase 3 |
+| NewTestDB uses t.Fatalf not error return | Test DB setup failures are always fatal — no partial test execution | Phase 3 |
 
 ### TODOs
 
@@ -66,6 +69,8 @@ Phase Progress: [##......] 2/8 phases complete
 - [x] Plan Phase 2 (complete)
 - [x] Execute Phase 2 Plan 01 (complete)
 - [x] Execute Phase 2 Plan 02 (complete)
+- [x] Plan Phase 3 (complete)
+- [x] Execute Phase 3 Plan 01 (complete)
 - [ ] Validate sqlc + SQLite VIEW + FTS5 compatibility during Phase 6 planning (research flag)
 - [ ] Design queue test architecture during Phase 4 planning (research flag)
 - [ ] Determine library scan test fixture strategy during Phase 5 planning (research flag)
@@ -99,20 +104,19 @@ None currently.
 ### Last Session
 
 **Date:** 2026-03-03
-**What happened:** Executed Phase 2 Plan 02 — artist credit error checking & scan warning separation
-**Where we stopped:** Completed 02-02-PLAN.md (all 2 tasks, verification passed)
-**Next action:** `/gsd-plan-phase 3` to create execution plan for Test Infrastructure
+**What happened:** Executed Phase 3 Plan 01 — test infrastructure with shared applyPRAGMAs + NewTestDB helper
+**Where we stopped:** Completed 03-01-PLAN.md (all 2 tasks, verification passed)
+**Next action:** `/gsd-plan-phase 4` to create execution plan for Backend Unit Tests
 
 ### Context for Next Session
 
-- Phase 2 complete: all 5 correctness requirements (CORR-05 through CORR-09) delivered
-- `database.IsUniqueViolation` helper available for other upsert patterns
-- `ScanMetrics.Warnings` collects non-fatal scan issues; `Scan()` error return is fatal-only
-- Migration 3 added UNIQUE index on artist_credit_artist(artist_id, credit_id)
+- Phase 3 complete: TEST-01 and PERF-04 requirements delivered
+- `NewTestDB(t)` available in `database` package for all future DB tests
+- `applyPRAGMAs` shared between NewDB and NewTestDB — production PRAGMAs: foreign_keys, synchronous=NORMAL, cache_size=-8000, mmap_size=67108864
 - `codegen-check` lefthook pre-commit hook hangs — use `LEFTHOOK=0` for commits
-- Ready for Phase 3 (Test Infrastructure)
+- Ready for Phase 4 (Backend Unit Tests)
 
 ---
 *State initialized: 2026-02-27*
-Last activity: 2026-03-03 - Completed 02-02: Artist credit error checking & scan warning separation
+Last activity: 2026-03-03 - Completed 03-01: Test infrastructure with shared applyPRAGMAs + NewTestDB
 *Last updated: 2026-03-03*

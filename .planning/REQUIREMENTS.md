@@ -31,12 +31,12 @@ Requirements for the consolidation milestone. Each maps to roadmap phases.
 - [ ] **PERF-01**: Queue single-track mutations (add, remove) use incremental INSERT/DELETE via existing sqlc queries instead of full table rewrite
 - [ ] **PERF-02**: SetQueue Phase 2 (resolveRemainingTracks) skips file paths already resolved in Phase 1, avoiding redundant database lookups
 - [ ] **PERF-03**: Library store constructor no longer calls eagerFetch(); data loads lazily on first access via existing getTracks()/getAlbums()/etc. getters
-- [ ] **PERF-04**: SQLite connection applies performance PRAGMAs (synchronous=NORMAL, cache_size=-8000, mmap_size=67108864) at database open
+- [x] **PERF-04**: SQLite connection applies performance PRAGMAs (synchronous=NORMAL, cache_size=-8000, mmap_size=67108864) at database open
 - [ ] **PERF-05**: Frontend track/album lists use Lit repeat() directive with stable keys (filePath/albumId) for efficient DOM reuse, and store notifications are debounced via queueMicrotask() during rapid updates
 
 ### Testing
 
-- [ ] **TEST-01**: In-memory SQLite test helper (database.NewTestDB) exists, applies same migrations and PRAGMAs as production NewDB, returns a clean DB per test
+- [x] **TEST-01**: In-memory SQLite test helper (database.NewTestDB) exists, applies same migrations and PRAGMAs as production NewDB, returns a clean DB per test
 - [ ] **TEST-02**: Queue package has unit tests covering SetQueue, Next, Previous, shuffle mode, repeat modes, and state persistence (~15-20 tests)
 - [ ] **TEST-03**: Database package has unit tests covering FTS5 search queries (basic, empty, special characters), search index rebuild, and schema migrations (~10-15 tests)
 - [ ] **TEST-04**: Config package has unit tests covering load/save roundtrip, validation rules, default application, and behavior with missing/empty config files (~8-10 tests)
@@ -105,9 +105,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PERF-01 | Phase 7: Backend Performance | Pending |
 | PERF-02 | Phase 7: Backend Performance | Pending |
 | PERF-03 | Phase 7: Backend Performance | Pending |
-| PERF-04 | Phase 3: Test Infrastructure | Pending |
+| PERF-04 | Phase 3: Test Infrastructure | Complete |
 | PERF-05 | Phase 8: Frontend Performance & UX | Pending |
-| TEST-01 | Phase 3: Test Infrastructure | Pending |
+| TEST-01 | Phase 3: Test Infrastructure | Complete |
 | TEST-02 | Phase 4: Queue, Config & Player Tests | Pending |
 | TEST-03 | Phase 5: Database & Library Tests | Pending |
 | TEST-04 | Phase 4: Queue, Config & Player Tests | Pending |
