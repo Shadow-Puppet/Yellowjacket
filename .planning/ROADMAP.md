@@ -55,7 +55,9 @@ Plans:
   2. Production SQLite connection applies `synchronous=NORMAL`, `cache_size=-8000`, and `mmap_size=67108864` PRAGMAs at database open
   3. Each test gets an isolated database instance — no shared state between test functions
   4. Tests using `NewTestDB` pass with `-race` flag enabled
-**Plans:** TBD
+**Plans:** 1 plan
+Plans:
+- [ ] 03-01-PLAN.md — Extract shared applyPRAGMAs, add production PRAGMAs, and create NewTestDB helper
 
 ### Phase 4: Queue, Config & Player Tests
 **Goal:** The queue, config, and player packages have comprehensive unit tests that characterize current behavior and serve as a safety net for later refactoring
@@ -117,7 +119,7 @@ Plans:
 |-------|----------------|--------|-----------|
 | 1. Concurrency Race Fixes | 1/1 | Complete | 2026-02-28 |
 | 2. Backend Correctness | 2/2 | Complete | 2026-03-03 |
-| 3. Test Infrastructure | 0/? | Not started | — |
+| 3. Test Infrastructure | 0/1 | Planned | — |
 | 4. Queue, Config & Player Tests | 0/? | Not started | — |
 | 5. Database & Library Tests | 0/? | Not started | — |
 | 6. SQL Consolidation & Code Quality | 0/? | Not started | — |
