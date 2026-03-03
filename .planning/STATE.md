@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: in-progress
-last_updated: "2026-03-03T22:00:46Z"
+last_updated: "2026-03-03T22:02:12Z"
 progress:
   total_phases: 4
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 6
-  completed_plans: 5
+  completed_plans: 6
 ---
 
 # YellowJacket — Consolidation Milestone State
@@ -16,33 +16,34 @@ progress:
 ## Project Reference
 
 **Core value:** The music player works reliably and feels solid — every interaction is correct, responsive, and trustworthy.
-**Current focus:** Phase 4 in progress — queue unit tests complete, config/player tests next.
+**Current focus:** Phase 4 complete — queue, config, and player tests all passing with -race.
 **Milestone:** Consolidation (correctness, performance, code quality, UX polish, test coverage)
 
 ## Current Position
 
-**Phase:** 04-queue-config-player-tests (in progress)
-**Plan:** 1/2 (Plan 01 complete)
-**Status:** In progress
+**Phase:** 04-queue-config-player-tests (complete)
+**Plan:** 2/2 (complete)
+**Status:** Phase complete
 
 ```
-Phase Progress: [###.....] 3/8 phases complete (Phase 4: 1/2 plans)
+Phase Progress: [####....] 4/8 phases complete
 ```
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Phases complete | 3/8 |
-| Plans complete | 1/2 (Phase 4) |
-| Requirements delivered | 12/26 |
-| Tests added | 29 |
+| Phases complete | 4/8 |
+| Plans complete | 2/2 (Phase 4) |
+| Requirements delivered | 14/26 |
+| Tests added | 56 |
 | Bugs fixed | 9 |
 | 01-01 duration | 11 min |
 | 02-01 duration | 12 min |
 | 02-02 duration | 50 min |
 | 03-01 duration | 3 min |
 | 04-01 duration | 3 min |
+| 04-02 duration | 4 min |
 
 ## Accumulated Context
 
@@ -64,6 +65,7 @@ Phase Progress: [###.....] 3/8 phases complete (Phase 4: 1/2 plans)
 | NewTestDB uses t.Fatalf not error return | Test DB setup failures are always fatal — no partial test execution | Phase 3 |
 | Internal queue tests (package queue) | Access unexported fields (shuffleOrder, mu) for thorough state verification | Phase 4 |
 | Persistence roundtrip verifies shuffleOrder JSON | Safety net for Phase 7 incremental persistence refactoring | Phase 4 |
+| Volume roundtrip ±1 tolerance | ToUserVolume uses int truncation not rounding, causing up to 1 unit drift | Phase 4 |
 
 ### TODOs
 
@@ -107,19 +109,19 @@ None currently.
 ### Last Session
 
 **Date:** 2026-03-03
-**What happened:** Executed Phase 4 Plan 01 — 29 queue unit tests (core ops, navigation, persistence roundtrip)
-**Where we stopped:** Completed 04-01-PLAN.md (all 2 tasks, verification passed)
-**Next action:** `/gsd-execute-phase 4` to execute Plan 04-02 (config/player tests)
+**What happened:** Executed Phase 4 Plan 02 — config/sub-config validation + player volume/state mapping tests
+**Where we stopped:** Completed 04-02-PLAN.md (all 2 tasks, verification passed)
+**Next action:** `/gsd-plan-phase 5` to plan database query tests
 
 ### Context for Next Session
 
-- Phase 4 Plan 01 complete: TEST-02 requirement delivered (queue tests)
-- 29 queue tests passing with `-race`: 14 core ops, 9 navigation, 6 persistence
-- mockTrackLoader and seedAudioFiles helpers available in queue package for reuse
+- Phase 4 complete: TEST-02, TEST-03, TEST-04, TEST-05 requirements delivered
+- 56 tests total: 29 queue + 27 config/player, all passing with `-race`
+- Volume roundtrip characterization: ±1 tolerance due to int truncation (not rounding)
 - `codegen-check` lefthook pre-commit hook hangs — use `LEFTHOOK=0` for commits
-- Plan 04-02 (config/player tests) is next
+- Ready for Phase 5 (database query tests)
 
 ---
 *State initialized: 2026-02-27*
-Last activity: 2026-03-03 - Completed 04-01: Queue unit tests (core ops, navigation, persistence)
+Last activity: 2026-03-03 - Completed 04-02: Config/player tests (validation, volume, state mapping)
 *Last updated: 2026-03-03*
