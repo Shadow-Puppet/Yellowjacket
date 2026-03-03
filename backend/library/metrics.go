@@ -49,6 +49,16 @@ type ScanMetrics struct {
 	Updated int64 `json:"updated"`
 	Skipped int64 `json:"skipped"`
 	Removed int64 `json:"removed"`
+
+	// Non-fatal issues encountered during scanning.
+	Warnings []ScanWarning `json:"warnings"`
+}
+
+// ScanWarning represents a non-fatal issue encountered during scanning.
+type ScanWarning struct {
+	FilePath string `json:"filePath"`
+	Phase    string `json:"phase"`
+	Err      error  `json:"err"`
 }
 
 func newScanMetrics() *ScanMetrics {
@@ -78,6 +88,18 @@ func (m *ScanMetrics) addExtraction(
 // art file.  Called from the single-threaded DB writer.
 func (m *ScanMetrics) addCoverArtSave(d time.Duration) {
 	m.CoverArtSave += d
+}
+
+// addWarning records a non-fatal scan issue.  Safe for concurrent use.
+func (m *ScanMetrics) addWarning(filePath, phase string, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.Warnings = append(m.Warnings, ScanWarning{
+		FilePath: filePath,
+		Phase:    phase,
+		Err:      err,
+	})
 }
 
 // addThumbnailTier records the time spent generating a single

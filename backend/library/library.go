@@ -317,15 +317,13 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 		)
 
 		if walkErr != nil {
-			errMu.Lock()
-			scanErr = errors.Join(
-				scanErr,
+			metrics.addWarning(
+				"", "walk",
 				fmt.Errorf(
 					"problem walking library directory: %w",
 					walkErr,
 				),
 			)
-			errMu.Unlock()
 		}
 	}()
 
@@ -351,6 +349,10 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 						"could not generate thumbnails",
 						"hash", work.hashStr,
 						"err", err,
+					)
+
+					metrics.addWarning(
+						"", "variant", err,
 					)
 				}
 			}
@@ -433,9 +435,10 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 					"err", err,
 				)
 
-				errMu.Lock()
-				scanErr = errors.Join(scanErr, err)
-				errMu.Unlock()
+				metrics.addWarning(
+					work.absolutePath,
+					"extraction", err,
+				)
 
 				return nil
 			}
@@ -491,6 +494,8 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 				"err", err,
 			)
 
+			metrics.addWarning(path, "orphan", err)
+
 			return true
 		}
 
@@ -503,6 +508,8 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 				"id", audioFile.ID,
 				"err", err,
 			)
+
+			metrics.addWarning(path, "orphan", err)
 		}
 
 		removed.Add(1)
@@ -520,6 +527,8 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 			"could not generate missing sized variants",
 			"err", err,
 		)
+
+		metrics.addWarning("", "variant", err)
 	}
 
 	metrics.PostScanVariants = time.Since(variantStart)
@@ -663,8 +672,6 @@ func (l *Library) commitBatch(
 
 	txq := l.db.Queries.WithTx(tx)
 
-	var batchErr error
-
 	for i := range batch {
 		result := &batch[i]
 
@@ -695,7 +702,9 @@ func (l *Library) commitBatch(
 				"err", saveErr,
 			)
 
-			batchErr = errors.Join(batchErr, saveErr)
+			metrics.addWarning(
+				result.absolutePath, "commit", saveErr,
+			)
 		}
 	}
 
@@ -706,7 +715,7 @@ func (l *Library) commitBatch(
 		)
 	}
 
-	return batchErr
+	return nil
 }
 
 // saveAudioFile writes audio file metadata to the database (new files).
@@ -795,6 +804,8 @@ func (l *Library) saveAudioFile(
 			"path", result.absolutePath,
 			"err", err,
 		)
+
+		metrics.addWarning(result.absolutePath, "commit", err)
 	}
 
 	l.logger.Debug(
@@ -873,6 +884,8 @@ func (l *Library) updateAudioFileMetadata(
 			"id", result.existingFileID,
 			"err", err,
 		)
+
+		metrics.addWarning(result.absolutePath, "commit", err)
 	}
 
 	if _, err := tx.ExecContext(
@@ -890,6 +903,8 @@ func (l *Library) updateAudioFileMetadata(
 			"path", result.absolutePath,
 			"err", err,
 		)
+
+		metrics.addWarning(result.absolutePath, "commit", err)
 	}
 
 	l.logger.Debug(
@@ -938,11 +953,11 @@ func (l *Library) processMetadata(
 		)
 	}
 
-	l.cachedLinkArtist(q, cache, artistName, artistCredit.ID)
+	l.cachedLinkArtist(q, cache, metrics, artistName, artistCredit.ID)
 
 	// 3. Get or create artist credit for album artist.
 	albumArtistCreditID := l.resolveAlbumArtistCredit(
-		q, cache, tags, artistCredit.ID,
+		q, cache, metrics, tags, artistCredit.ID,
 	)
 
 	// 4. Get or create release group (album).
@@ -1071,9 +1086,12 @@ func (l *Library) cachedUpsertArtistCredit(
 
 // cachedLinkArtist upserts the artist record and creates the
 // artist-credit-artist link, skipping work already done.
+// UNIQUE constraint violations are silently ignored (link already
+// exists in the database).  Other errors are recorded as scan warnings.
 func (l *Library) cachedLinkArtist(
 	q *sqlcgen.Queries,
 	cache *entityCache,
+	metrics *ScanMetrics,
 	name string,
 	creditID int64,
 ) {
@@ -1098,13 +1116,34 @@ func (l *Library) cachedLinkArtist(
 		return
 	}
 
-	_, _ = q.CreateArtistCreditArtist(
+	_, err := q.CreateArtistCreditArtist(
 		l.ctx,
 		sqlcgen.CreateArtistCreditArtistParams{
 			ArtistID: artist.ID,
 			CreditID: creditID,
 		},
 	)
+	if err != nil {
+		if !database.IsUniqueViolation(err) {
+			l.logger.Warn(
+				"could not link artist to credit",
+				"artist", name,
+				"creditID", creditID,
+				"err", err,
+			)
+
+			metrics.addWarning(
+				name, "commit",
+				fmt.Errorf(
+					"artist-credit link failed for %q: %w",
+					name, err,
+				),
+			)
+		}
+
+		// UNIQUE violation: link already exists in DB, not an error.
+		return
+	}
 
 	cache.linkedCredits[linkKey] = struct{}{}
 }
@@ -1176,6 +1215,7 @@ func (l *Library) linkRecordingGenres(
 func (l *Library) resolveAlbumArtistCredit(
 	q *sqlcgen.Queries,
 	cache *entityCache,
+	metrics *ScanMetrics,
 	tags *metadata.TrackMetadata,
 	trackArtistCreditID int64,
 ) sql.NullInt64 {
@@ -1197,7 +1237,7 @@ func (l *Library) resolveAlbumArtistCredit(
 	}
 
 	l.cachedLinkArtist(
-		q, cache, tags.AlbumArtist, albumArtistCredit.ID,
+		q, cache, metrics, tags.AlbumArtist, albumArtistCredit.ID,
 	)
 
 	return sql.NullInt64{
@@ -1322,13 +1362,18 @@ func (l *Library) handleConfigUpdate(updatedConfigValues Config) error {
 
 		l.conf.DirectoryPath = updatedConfigValues.DirectoryPath
 
-		if _, err := l.Scan(); err != nil {
+		if scanMetrics, err := l.Scan(); err != nil {
 			updateErr = errors.Join(
 				updateErr,
 				fmt.Errorf(
 					"problem scanning library on config update: %w",
 					err,
 				),
+			)
+		} else if len(scanMetrics.Warnings) > 0 {
+			l.logger.Warn(
+				"library scan completed with warnings",
+				"warningCount", len(scanMetrics.Warnings),
 			)
 		}
 	}
