@@ -16,8 +16,8 @@ Requirements for the consolidation milestone. Each maps to roadmap phases.
 - [x] **CORR-05**: Package-level startupErr variable is moved to a YellowJacketApp struct field
 - [x] **CORR-06**: Config file is written with 0o644 permissions instead of 0o666
 - [x] **CORR-07**: MPRIS lifecycle callback errors (Pause, Seek) are logged instead of silently swallowed
-- [ ] **CORR-08**: Artist credit link creation error is checked; only UNIQUE constraint violations are ignored
-- [ ] **CORR-09**: Library.Scan() separates warnings from fatal errors — warnings returned in ScanMetrics, fatal errors in the error return
+- [x] **CORR-08**: Artist credit link creation error is checked; only UNIQUE constraint violations are ignored
+- [x] **CORR-09**: Library.Scan() separates warnings from fatal errors — warnings returned in ScanMetrics, fatal errors in the error return
 
 ### Code Quality
 
@@ -96,8 +96,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CORR-05 | Phase 2: Backend Correctness | Complete |
 | CORR-06 | Phase 2: Backend Correctness | Complete |
 | CORR-07 | Phase 2: Backend Correctness | Complete |
-| CORR-08 | Phase 2: Backend Correctness | Pending |
-| CORR-09 | Phase 2: Backend Correctness | Pending |
+| CORR-08 | Phase 2: Backend Correctness | Complete |
+| CORR-09 | Phase 2: Backend Correctness | Complete |
 | QUAL-01 | Phase 6: SQL Consolidation & Code Quality | Pending |
 | QUAL-02 | Phase 6: SQL Consolidation & Code Quality | Pending |
 | QUAL-03 | Phase 6: SQL Consolidation & Code Quality | Pending |

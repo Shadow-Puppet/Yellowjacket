@@ -8,7 +8,7 @@
 ## Phases
 
 - [x] **Phase 1: Concurrency Race Fixes** — Eliminate all SetContext data races across Queue, Library, Playlist, and Player
-- [ ] **Phase 2: Backend Correctness** — Fix error handling gaps, file permissions, package-level state, and scan error separation
+- [x] **Phase 2: Backend Correctness** — Fix error handling gaps, file permissions, package-level state, and scan error separation
 - [ ] **Phase 3: Test Infrastructure** — Create in-memory SQLite test helper and apply production SQLite PRAGMAs
 - [ ] **Phase 4: Queue, Config & Player Tests** — Write unit tests for queue operations, config roundtrip, and extracted player pure logic
 - [ ] **Phase 5: Database & Library Tests** — Write unit tests for FTS5 search queries, migrations, library scan, and entity cache
@@ -43,8 +43,8 @@ Plans:
   5. Library.Scan() returns warnings (skipped files, partial failures) in ScanMetrics and fatal errors (database failures) in the error return, so callers can distinguish between "scan completed with issues" and "scan failed"
 **Plans:** 2 plans
 Plans:
-- [ ] 02-01-PLAN.md — Fix startupErr global state, config permissions, and MPRIS callback error logging
-- [ ] 02-02-PLAN.md — Add IsUniqueViolation helper, migration 3, and separate scan warnings from fatal errors
+- [x] 02-01-PLAN.md — Fix startupErr global state, config permissions, and MPRIS callback error logging
+- [x] 02-02-PLAN.md — Add IsUniqueViolation helper, migration 3, and separate scan warnings from fatal errors
 
 ### Phase 3: Test Infrastructure
 **Goal:** A reliable, production-mirroring test foundation exists so that all subsequent test phases can write database-backed tests with confidence
@@ -116,7 +116,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Concurrency Race Fixes | 1/1 | Complete | 2026-02-28 |
-| 2. Backend Correctness | 0/2 | Planned | — |
+| 2. Backend Correctness | 2/2 | Complete | 2026-03-03 |
 | 3. Test Infrastructure | 0/? | Not started | — |
 | 4. Queue, Config & Player Tests | 0/? | Not started | — |
 | 5. Database & Library Tests | 0/? | Not started | — |
