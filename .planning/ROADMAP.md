@@ -68,7 +68,10 @@ Plans:
   2. Config package has ~8-10 tests covering load/save roundtrip fidelity, validation rule enforcement, default value application, and graceful handling of missing or empty config files
   3. Player pure logic (UserVolume↔Volume conversion, state serialization/deserialization, format detection from file extension) is extracted into standalone functions with ~5-8 unit tests
   4. All tests in this phase pass with `-race` flag enabled
-**Plans:** TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 04-01-PLAN.md — Queue package unit tests (core operations, navigation, persistence roundtrip)
+- [ ] 04-02-PLAN.md — Config + Player tests (sub-config validators, load/save roundtrip, volume conversion, state mapping)
 
 ### Phase 5: Database & Library Tests
 **Goal:** Database queries (especially FTS5 search) and library scan logic have unit tests that lock down current behavior before SQL consolidation and performance optimization
@@ -120,7 +123,7 @@ Plans:
 | 1. Concurrency Race Fixes | 1/1 | Complete | 2026-02-28 |
 | 2. Backend Correctness | 2/2 | Complete | 2026-03-03 |
 | 3. Test Infrastructure | 0/1 | Planned | — |
-| 4. Queue, Config & Player Tests | 0/? | Not started | — |
+| 4. Queue, Config & Player Tests | 0/2 | Planned | — |
 | 5. Database & Library Tests | 0/? | Not started | — |
 | 6. SQL Consolidation & Code Quality | 0/? | Not started | — |
 | 7. Backend Performance | 0/? | Not started | — |
