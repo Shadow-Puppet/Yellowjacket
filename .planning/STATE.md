@@ -16,14 +16,14 @@ progress:
 ## Project Reference
 
 **Core value:** The music player works reliably and feels solid — every interaction is correct, responsive, and trustworthy.
-**Current focus:** Phase 5 complete — database query tests and library scan tests all passing with -race.
+**Current focus:** Phase 5 complete — 15 database search tests + 13 library scan tests all passing with -race.
 **Milestone:** Consolidation (correctness, performance, code quality, UX polish, test coverage)
 
 ## Current Position
 
-**Phase:** 05-database-library-tests (in progress)
-**Plan:** 2/2 (plan 02 complete, plan 01 pending)
-**Status:** Phase 5 in progress
+**Phase:** 05-database-library-tests (complete)
+**Plan:** 2/2 (complete)
+**Status:** Phase 5 complete
 
 ```
 Phase Progress: [#####...] 5/8 phases complete
@@ -36,7 +36,7 @@ Phase Progress: [#####...] 5/8 phases complete
 | Phases complete | 5/8 |
 | Plans complete | 1/2 (Phase 5) |
 | Requirements delivered | 16/26 |
-| Tests added | 69 |
+| Tests added | 84 |
 | Bugs fixed | 9 |
 | 01-01 duration | 11 min |
 | 02-01 duration | 12 min |
@@ -44,8 +44,9 @@ Phase Progress: [#####...] 5/8 phases complete
 | 03-01 duration | 3 min |
 | 04-01 duration | 3 min |
 | 04-02 duration | 4 min |
-| 05-01 duration | TBD |
+| 05-01 duration | 9 min |
 | 05-02 duration | 4 min |
+| Phase 05 P01 | 9 min | 2 tasks | 1 files |
 | Phase 05 P02 | 4 min | 2 tasks | 1 files |
 
 ## Accumulated Context
@@ -114,19 +115,20 @@ None currently.
 ### Last Session
 
 **Date:** 2026-03-04
-**What happened:** Executed Phase 5 Plan 02 — library scan tests (entity cache, pure helpers, orphan cleanup)
-**Where we stopped:** Completed 05-02-PLAN.md (all 2 tasks, verification passed)
+**What happened:** Executed Phase 5 Plan 01 — FTS5 search tests (pure helpers, search queries, index ops, migrations)
+**Where we stopped:** Completed 05-01-PLAN.md (all 2 tasks, verification passed). Phase 5 fully complete.
 **Next action:** `/gsd-plan-phase 6` to plan SQL consolidation
 
 ### Context for Next Session
 
-- Phase 5 complete: TEST-03, TEST-06 requirements delivered
-- 69 tests total: 29 queue + 27 config/player + 13 library scan, all passing with `-race`
+- Phase 5 complete: TEST-03 (15 database tests) + TEST-06 (13 library tests) requirements delivered
+- 84 tests total: 29 queue + 27 config/player + 15 database search + 13 library scan, all passing with `-race`
 - Contentless FTS5 limitation documented — DELETE fails on content='' tables
+- QueryContext rows must be closed before next ExecContext on single-connection SQLite
 - `codegen-check` lefthook pre-commit hook hangs — use `LEFTHOOK=0` for commits
 - Ready for Phase 6 (SQL consolidation)
 
 ---
 *State initialized: 2026-02-27*
-Last activity: 2026-03-04 - Completed 05-02: Library scan tests (entity cache, pure helpers, orphan cleanup)
+Last activity: 2026-03-04 - Completed 05-01: FTS5 search tests (helpers, queries, index ops, migrations)
 *Last updated: 2026-03-04*
