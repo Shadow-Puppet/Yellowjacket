@@ -82,7 +82,10 @@ Plans:
   2. Library scan logic has ~10-15 tests covering metadata extraction processing, entity cache hit/miss behavior, and orphan track cleanup
   3. FTS5 search tests verify that search ranking produces consistent, expected ordering for known test data
   4. All tests in this phase pass with `-race` flag enabled
-**Plans:** TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 05-01-PLAN.md — FTS5 search tests, pure helper tests, search index operations, migration verification
+- [ ] 05-02-PLAN.md — Entity cache tests, library pure helpers, orphan cleanup tests
 
 ### Phase 6: SQL Consolidation & Code Quality
 **Goal:** Duplicated SQL patterns are eliminated, event names are provably synchronized between Go and TypeScript, and intentional SQL exceptions are documented
@@ -124,7 +127,7 @@ Plans:
 | 2. Backend Correctness | 2/2 | Complete | 2026-03-03 |
 | 3. Test Infrastructure | 0/1 | Planned | — |
 | 4. Queue, Config & Player Tests | 0/2 | Planned | — |
-| 5. Database & Library Tests | 0/? | Not started | — |
+| 5. Database & Library Tests | 0/2 | Planned | — |
 | 6. SQL Consolidation & Code Quality | 0/? | Not started | — |
 | 7. Backend Performance | 0/? | Not started | — |
 | 8. Frontend Performance & UX | 0/? | Not started | — |
