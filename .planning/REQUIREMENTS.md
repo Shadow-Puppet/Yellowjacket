@@ -41,7 +41,7 @@ Requirements for the consolidation milestone. Each maps to roadmap phases.
 - [ ] **TEST-03**: Database package has unit tests covering FTS5 search queries (basic, empty, special characters), search index rebuild, and schema migrations (~10-15 tests)
 - [x] **TEST-04**: Config package has unit tests covering load/save roundtrip, validation rules, default application, and behavior with missing/empty config files (~8-10 tests)
 - [x] **TEST-05**: Player pure logic (UserVolume-to-Volume conversion, state serialization, format detection) is extracted into testable functions with unit tests (~5-8 tests)
-- [ ] **TEST-06**: Library scan logic has unit tests covering metadata processing, entity cache behavior, and orphan cleanup (~10-15 tests)
+- [x] **TEST-06**: Library scan logic has unit tests covering metadata processing, entity cache behavior, and orphan cleanup (~10-15 tests)
 
 ### UX
 
@@ -112,7 +112,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TEST-03 | Phase 5: Database & Library Tests | Pending |
 | TEST-04 | Phase 4: Queue, Config & Player Tests | Complete |
 | TEST-05 | Phase 4: Queue, Config & Player Tests | Complete |
-| TEST-06 | Phase 5: Database & Library Tests | Pending |
+| TEST-06 | Phase 5: Database & Library Tests | Complete |
 | UX-01 | Phase 8: Frontend Performance & UX | Pending |
 | UX-02 | Phase 8: Frontend Performance & UX | Pending |
 

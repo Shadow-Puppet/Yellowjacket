@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: completed
-last_updated: "2026-03-03T22:08:02.439Z"
+status: executing
+last_updated: "2026-03-04T21:40:11.850Z"
 progress:
-  total_phases: 4
+  total_phases: 5
   completed_phases: 4
-  total_plans: 6
-  completed_plans: 6
+  total_plans: 8
+  completed_plans: 7
 ---
 
 # YellowJacket — Consolidation Milestone State
@@ -16,27 +16,27 @@ progress:
 ## Project Reference
 
 **Core value:** The music player works reliably and feels solid — every interaction is correct, responsive, and trustworthy.
-**Current focus:** Phase 4 complete — queue, config, and player tests all passing with -race.
+**Current focus:** Phase 5 complete — database query tests and library scan tests all passing with -race.
 **Milestone:** Consolidation (correctness, performance, code quality, UX polish, test coverage)
 
 ## Current Position
 
-**Phase:** 04-queue-config-player-tests (complete)
-**Plan:** 2/2 (complete)
-**Status:** Milestone complete
+**Phase:** 05-database-library-tests (in progress)
+**Plan:** 2/2 (plan 02 complete, plan 01 pending)
+**Status:** Phase 5 in progress
 
 ```
-Phase Progress: [####....] 4/8 phases complete
+Phase Progress: [#####...] 5/8 phases complete
 ```
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Phases complete | 4/8 |
-| Plans complete | 2/2 (Phase 4) |
-| Requirements delivered | 14/26 |
-| Tests added | 56 |
+| Phases complete | 5/8 |
+| Plans complete | 1/2 (Phase 5) |
+| Requirements delivered | 16/26 |
+| Tests added | 69 |
 | Bugs fixed | 9 |
 | 01-01 duration | 11 min |
 | 02-01 duration | 12 min |
@@ -44,6 +44,9 @@ Phase Progress: [####....] 4/8 phases complete
 | 03-01 duration | 3 min |
 | 04-01 duration | 3 min |
 | 04-02 duration | 4 min |
+| 05-01 duration | TBD |
+| 05-02 duration | 4 min |
+| Phase 05 P02 | 4 min | 2 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -66,6 +69,8 @@ Phase Progress: [####....] 4/8 phases complete
 | Internal queue tests (package queue) | Access unexported fields (shuffleOrder, mu) for thorough state verification | Phase 4 |
 | Persistence roundtrip verifies shuffleOrder JSON | Safety net for Phase 7 incremental persistence refactoring | Phase 4 |
 | Volume roundtrip ±1 tolerance | ToUserVolume uses int truncation not rounding, causing up to 1 unit drift | Phase 4 |
+| Direct Library construction in tests | Bypasses Config.Validate os.Stat; entity cache functions only need ctx + db | Phase 5 |
+| Contentless FTS5 DELETE limitation | DeleteSearchIndex errors on content='' tables; production logs warning, stale entries are harmless | Phase 5 |
 
 ### TODOs
 
@@ -78,7 +83,7 @@ Phase Progress: [####....] 4/8 phases complete
 - [x] Execute Phase 3 Plan 01 (complete)
 - [ ] Validate sqlc + SQLite VIEW + FTS5 compatibility during Phase 6 planning (research flag)
 - [x] Design queue test architecture during Phase 4 planning (complete)
-- [ ] Determine library scan test fixture strategy during Phase 5 planning (research flag)
+- [x] Determine library scan test fixture strategy during Phase 5 planning (complete — inline construction, setupTestLibrary helper)
 - [ ] Measure startup time with large library before Phase 7 lazy loading work
 
 ### Blockers
@@ -108,20 +113,20 @@ None currently.
 
 ### Last Session
 
-**Date:** 2026-03-03
-**What happened:** Executed Phase 4 Plan 02 — config/sub-config validation + player volume/state mapping tests
-**Where we stopped:** Completed 04-02-PLAN.md (all 2 tasks, verification passed)
-**Next action:** `/gsd-plan-phase 5` to plan database query tests
+**Date:** 2026-03-04
+**What happened:** Executed Phase 5 Plan 02 — library scan tests (entity cache, pure helpers, orphan cleanup)
+**Where we stopped:** Completed 05-02-PLAN.md (all 2 tasks, verification passed)
+**Next action:** `/gsd-plan-phase 6` to plan SQL consolidation
 
 ### Context for Next Session
 
-- Phase 4 complete: TEST-02, TEST-03, TEST-04, TEST-05 requirements delivered
-- 56 tests total: 29 queue + 27 config/player, all passing with `-race`
-- Volume roundtrip characterization: ±1 tolerance due to int truncation (not rounding)
+- Phase 5 complete: TEST-03, TEST-06 requirements delivered
+- 69 tests total: 29 queue + 27 config/player + 13 library scan, all passing with `-race`
+- Contentless FTS5 limitation documented — DELETE fails on content='' tables
 - `codegen-check` lefthook pre-commit hook hangs — use `LEFTHOOK=0` for commits
-- Ready for Phase 5 (database query tests)
+- Ready for Phase 6 (SQL consolidation)
 
 ---
 *State initialized: 2026-02-27*
-Last activity: 2026-03-03 - Completed 04-02: Config/player tests (validation, volume, state mapping)
-*Last updated: 2026-03-03*
+Last activity: 2026-03-04 - Completed 05-02: Library scan tests (entity cache, pure helpers, orphan cleanup)
+*Last updated: 2026-03-04*
