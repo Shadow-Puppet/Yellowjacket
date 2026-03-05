@@ -217,17 +217,24 @@ func (l *Library) GetAlbumTracks(albumID int64) ([]Track, error) {
 	tracks := make([]Track, 0, len(rows))
 
 	for _, row := range rows {
-		tracks = append(tracks, Track{
-			TrackName:  row.Title,
-			ArtistName: row.ArtistName,
-			TrackLength: strconv.FormatInt(
-				row.LengthMilliseconds,
-				10,
-			),
-			FilePath:    row.FilePath,
-			TrackNumber: row.TrackNumber.Int64,
-			DiscNumber:  row.DiscNumber.Int64,
-		})
+		tracks = append(tracks, mapTrackRow(
+			row.FilePath,
+			row.LengthMilliseconds,
+			row.Title,
+			row.ArtistName,
+			row.TrackNumber,
+			row.DiscNumber,
+			row.Album,
+			row.Genre,
+			row.Year,
+			row.Composer,
+			row.FileType,
+			row.SampleRate,
+			row.BitDepth,
+			row.Channels,
+			row.Bitrate,
+			row.FileSize,
+		))
 	}
 
 	return tracks, nil
