@@ -11,7 +11,6 @@ import type {
     VisibilityChangedEvent,
 } from '@lit-labs/virtualizer';
 import { grid } from '@lit-labs/virtualizer/layouts/grid.js';
-import { repeat } from 'lit/directives/repeat.js';
 import { GetAlbumTracks } from '@go/library/Library';
 import { library } from '@go/models';
 import { LibraryController } from '@store/controllers/library-controller';
@@ -1848,17 +1847,15 @@ export class CoverGrid
             <lit-virtualizer
                 id="grid-single"
                 .items=${this.buildGridEntries()}
+                .renderItem=${this.renderGridEntry}
+                .keyFunction=${(entry: GridEntry) => entry.album.ID}
                 .layout=${this.gridLayout}
                 @click=${this.onGridAlbumClick}
                 @dblclick=${this.onGridAlbumDblClick}
                 @keydown=${this.onGridAlbumKeydown}
                 @contextmenu=${this.onGridAlbumContextMenu}
                 @visibilityChanged=${this.onVisibilityChanged}
-            >${repeat(
-                this.buildGridEntries(),
-                (entry) => entry.album.ID,
-                (entry) => this.renderGridEntry(entry),
-            )}</lit-virtualizer>
+            ></lit-virtualizer>
         `;
     }
 
@@ -1877,17 +1874,15 @@ export class CoverGrid
             <lit-virtualizer
                 id="grid-before"
                 .items=${this.getBeforeEntries()}
+                .renderItem=${this.renderGridEntry}
+                .keyFunction=${(entry: GridEntry) => entry.album.ID}
                 .layout=${this.gridLayout}
                 @click=${this.onGridAlbumClick}
                 @dblclick=${this.onGridAlbumDblClick}
                 @keydown=${this.onGridAlbumKeydown}
                 @contextmenu=${this.onGridAlbumContextMenu}
                 @visibilityChanged=${this.onVisibilityChanged}
-            >${repeat(
-                this.getBeforeEntries(),
-                (entry) => entry.album.ID,
-                (entry) => this.renderGridEntry(entry),
-            )}</lit-virtualizer>
+            ></lit-virtualizer>
 
             <album-dropdown
                 .tracks=${this.expandedTracks}
@@ -1908,16 +1903,14 @@ export class CoverGrid
                       <lit-virtualizer
                           id="grid-after"
                           .items=${afterEntries}
+                          .renderItem=${this.renderGridEntry}
+                          .keyFunction=${(entry: GridEntry) => entry.album.ID}
                           .layout=${this.gridLayoutAfter}
                           @click=${this.onGridAlbumClick}
                           @dblclick=${this.onGridAlbumDblClick}
                           @keydown=${this.onGridAlbumKeydown}
                           @contextmenu=${this.onGridAlbumContextMenu}
-                      >${repeat(
-                          afterEntries,
-                          (entry) => entry.album.ID,
-                          (entry) => this.renderGridEntry(entry),
-                      )}</lit-virtualizer>
+                      ></lit-virtualizer>
                   `
                 : nothing}
         `;

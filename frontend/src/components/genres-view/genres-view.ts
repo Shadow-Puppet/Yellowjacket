@@ -10,7 +10,6 @@ import type {
     VisibilityChangedEvent,
 } from '@lit-labs/virtualizer';
 import { grid } from '@lit-labs/virtualizer/layouts/grid.js';
-import { repeat } from 'lit/directives/repeat.js';
 import { GetTracksByGenre } from '@go/library/Library';
 import type { library } from '@go/models';
 import { LibraryController } from '@store/controllers/library-controller';
@@ -1169,13 +1168,11 @@ export class GenresView
             >
                 <lit-virtualizer
                     .items=${entries}
+                    .renderItem=${(entry: GenreEntry) => this.renderGenreCard(entry)}
+                    .keyFunction=${(entry: GenreEntry) => entry.genre.name}
                     .layout=${this.gridLayout}
                     @visibilityChanged=${this.onVisibilityChanged}
-                >${repeat(
-                    entries,
-                    (entry) => entry.genre.name,
-                    (entry) => this.renderGenreCard(entry),
-                )}</lit-virtualizer>
+                ></lit-virtualizer>
             </div>
             ${this.renderContextMenu()}
         `;

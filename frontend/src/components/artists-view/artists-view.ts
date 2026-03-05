@@ -10,7 +10,6 @@ import type {
     VisibilityChangedEvent,
 } from '@lit-labs/virtualizer';
 import { grid } from '@lit-labs/virtualizer/layouts/grid.js';
-import { repeat } from 'lit/directives/repeat.js';
 import {
     GetAlbumsByArtist,
     GetAlbumTracks,
@@ -1217,13 +1216,11 @@ export class ArtistsView
             >
                 <lit-virtualizer
                     .items=${entries}
+                    .renderItem=${(entry: ArtistEntry) => this.renderArtistCard(entry)}
+                    .keyFunction=${(entry: ArtistEntry) => entry.artist.ID}
                     .layout=${this.gridLayout}
                     @visibilityChanged=${this.onVisibilityChanged}
-                >${repeat(
-                    entries,
-                    (entry) => entry.artist.ID,
-                    (entry) => this.renderArtistCard(entry),
-                )}</lit-virtualizer>
+                ></lit-virtualizer>
             </div>
             ${this.renderContextMenu()}
         `;

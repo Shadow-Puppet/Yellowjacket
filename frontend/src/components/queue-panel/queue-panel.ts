@@ -16,7 +16,6 @@ import type { PlaylistPicker } from '@components/playlist-picker/playlist-picker
 import '@lit-labs/virtualizer';
 import type { LitVirtualizer } from '@lit-labs/virtualizer';
 import { flow } from '@lit-labs/virtualizer/layouts/flow.js';
-import { repeat } from 'lit/directives/repeat.js';
 import { classMap } from 'lit/directives/class-map.js';
 import type { QueueTrack } from '@store/queue-store';
 import { SelectionController } from '@utils/selection-controller';
@@ -1281,12 +1280,10 @@ export class QueuePanel
                               <lit-virtualizer
                                   scroller
                                   .items=${tracks}
+                                  .renderItem=${this.renderTrackItem}
+                                  .keyFunction=${(track: QueueTrack) => track.id}
                                   .layout=${this.flowLayout}
-                              >${repeat(
-                                  tracks,
-                                  (track) => track.id,
-                                  (track, index) => this.renderTrackItem(track, index),
-                              )}</lit-virtualizer>
+                              ></lit-virtualizer>
                           `}
                 </div>
             </div>
