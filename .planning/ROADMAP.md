@@ -96,7 +96,11 @@ Plans:
   2. A code generator reads Go event constants from `backend/events/events.go` and produces `frontend/src/events.ts`, wired into `go generate` and the pre-commit hook — adding an event in Go without regenerating TypeScript fails the hook
   3. Queue batch lookups in `persistence.go` use `sqlc.slice()` for IN clauses where sqlc supports it, replacing `fmt.Sprintf` placeholder construction
   4. Every hand-crafted SQL statement that intentionally bypasses sqlc has a `// SAFETY:` comment explaining why (batch INSERT, dynamic IN clauses, etc.)
-**Plans:** TBD
+**Plans:** 3 plans
+Plans:
+- [ ] 06-01-PLAN.md — Create track_metadata VIEW and consolidate search queries
+- [ ] 06-02-PLAN.md — Event codegen tool (Go→TypeScript) and pre-commit hook wiring
+- [ ] 06-03-PLAN.md — Migrate lookupChunk to sqlc.slice() and add SAFETY comments to all hand-crafted SQL
 
 ### Phase 7: Backend Performance
 **Goal:** Queue mutations and library loading are fast — single-track queue changes are O(1) instead of O(n), and the library doesn't block startup with a full data fetch
@@ -128,7 +132,7 @@ Plans:
 | 3. Test Infrastructure | 0/1 | Planned | — |
 | 4. Queue, Config & Player Tests | 0/2 | Planned | — |
 | 5. Database & Library Tests | 0/2 | Planned | — |
-| 6. SQL Consolidation & Code Quality | 0/? | Not started | — |
+| 6. SQL Consolidation & Code Quality | 0/3 | Planned | — |
 | 7. Backend Performance | 0/? | Not started | — |
 | 8. Frontend Performance & UX | 0/? | Not started | — |
 
