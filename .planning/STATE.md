@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: in-progress
-last_updated: "2026-03-05T01:54:49Z"
+last_updated: "2026-03-05T01:58:48Z"
 progress:
   total_phases: 8
-  completed_phases: 6
+  completed_phases: 7
   total_plans: 13
-  completed_plans: 12
+  completed_plans: 13
 ---
 
 # YellowJacket — Consolidation Milestone State
@@ -16,25 +16,25 @@ progress:
 ## Project Reference
 
 **Core value:** The music player works reliably and feels solid — every interaction is correct, responsive, and trustworthy.
-**Current focus:** Phase 7 in progress — deferred library loading complete (Plan 02). Plan 01 pending.
+**Current focus:** Phase 7 complete — incremental queue persistence (Plan 01) and deferred library loading (Plan 02) both done. Ready for Phase 8.
 **Milestone:** Consolidation (correctness, performance, code quality, UX polish, test coverage)
 
 ## Current Position
 
-**Phase:** 07-backend-performance (in progress)
-**Plan:** 1/2 (Plan 02 complete)
-**Status:** In progress
+**Phase:** 07-backend-performance (complete)
+**Plan:** 2/2 (all complete)
+**Status:** Phase 7 complete
 
 ```
-Phase Progress: [######..] 6/8 phases — Phase 7: 1/2 plans complete
+Phase Progress: [#######.] 7/8 phases — Phase 7: 2/2 plans complete ✓
 ```
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Phases complete | 6/8 |
-| Plans complete | 1/2 (Phase 7) |
+| Phases complete | 7/8 |
+| Plans complete | 2/2 (Phase 7) |
 | Requirements delivered | 18/26 |
 | Tests added | 84 |
 | Bugs fixed | 9 |
@@ -51,6 +51,7 @@ Phase Progress: [######..] 6/8 phases — Phase 7: 1/2 plans complete
 | Phase 06 P01 | 2 min | 2 tasks | 4 files |
 | Phase 06 P02 | 2 min | 2 tasks | 3 files |
 | Phase 06 P03 | 6 min | 2 tasks | 7 files |
+| Phase 07 P01 | 5 min | 2 tasks | 2 files |
 | Phase 07 P02 | 1 min | 1 tasks | 1 files |
 
 ## Accumulated Context
@@ -81,6 +82,8 @@ Phase Progress: [######..] 6/8 phases — Phase 7: 1/2 plans complete
 | sqlc.slice() for batch lookups | LookupTrackMetaByPaths uses track_metadata VIEW; chunking preserved at 900 since sqlc.slice() doesn't auto-chunk | Phase 6 |
 | SAFETY comment convention | Two-part format (why + safety assurance); cross-references from library.go/rescan.go to search.go | Phase 6 |
 | DOMContentLoaded over load event | Fires earlier (after HTML parsed) without waiting for all resources; still defers past module evaluation | Phase 7 |
+| Incremental persistence for single-item mutations | Single-track add/remove use INSERT/DELETE + position shift; bulk ops keep full rewrite | Phase 7 |
+| Hand-crafted SQL for variable-N position shift | sqlc ShiftQueuePositionsUp only shifts by 1; variable-N needs raw UPDATE with SAFETY comment | Phase 7 |
 
 ### TODOs
 
@@ -124,18 +127,18 @@ None currently.
 ### Last Session
 
 **Date:** 2026-03-05
-**What happened:** Executed Phase 7 Plan 02 — deferred LibraryStore eagerFetch from constructor to DOMContentLoaded event
-**Where we stopped:** Completed 07-02-PLAN.md (1 task, all verification passed). Phase 7: 1/2 plans complete.
-**Next action:** Execute 07-01-PLAN.md (lazy module loading) or continue to next phase
+**What happened:** Executed Phase 7 Plan 01 — incremental queue persistence helpers and SetQueue Phase 2 dedup
+**Where we stopped:** Completed 07-01-PLAN.md (2 tasks, all verification passed). Phase 7 complete (2/2 plans).
+**Next action:** `/gsd-plan-phase 08` to plan Phase 8 (frontend polish)
 
 ### Context for Next Session
 
-- Phase 7 Plan 02 complete: deferred library loading
-- LibraryStore no longer fires backend roundtrips during module evaluation
-- App shell renders before data fetches begin
-- Plan 01 (lazy module loading) still pending
+- Phase 7 fully complete: incremental persistence + deferred loading
+- Queue mutations (add/remove/insert) no longer rewrite entire table
+- SetQueue Phase 2 skips already-resolved paths from Phase 1
+- Ready for Phase 8 (frontend polish)
 
 ---
 *State initialized: 2026-02-27*
-Last activity: 2026-03-05 - Completed 07-02: deferred LibraryStore eagerFetch to DOMContentLoaded
+Last activity: 2026-03-05 - Completed 07-01: incremental queue persistence + SetQueue Phase 2 dedup
 *Last updated: 2026-03-05*
