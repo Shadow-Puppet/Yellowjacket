@@ -53,7 +53,32 @@ class LibraryStore {
         });
 
         this.loadCoverSize();
-        this.eagerFetch();
+        this.deferEagerFetch();
+    }
+
+    /**
+     * Schedules eagerFetch() to run after the DOM is ready.
+     * The LibraryStore singleton is instantiated during ES module
+     * evaluation (import time), so calling eagerFetch() in the
+     * constructor would fire 4 backend roundtrips before the app
+     * shell has rendered.  Deferring to the 'DOMContentLoaded'
+     * event (or calling immediately if the DOM is already parsed)
+     * lets the shell paint first, then begins data loading.
+     */
+    private deferEagerFetch(): void {
+        if (document.readyState === 'loading') {
+            window.addEventListener(
+                'DOMContentLoaded',
+                () => {
+                    this.eagerFetch();
+                },
+                { once: true },
+            );
+        } else {
+            // DOM already parsed (shouldn't happen during module
+            // eval, but handles dynamic instantiation safely).
+            this.eagerFetch();
+        }
     }
 
     // ===================================================================
@@ -291,11 +316,11 @@ class LibraryStore {
     }
 
     /**
-     * Fetches all library data.  Called from the constructor
-     * (initial load) and after cache invalidation so that
-     * controller subscribers receive fresh data on the next
-     * requestUpdate() cycle without needing their own
-     * LibraryScanComplete listener.
+     * Fetches all library data.  Called after DOM ready
+     * (initial load, via deferEagerFetch) and after cache
+     * invalidation so that controller subscribers receive
+     * fresh data on the next requestUpdate() cycle without
+     * needing their own LibraryScanComplete listener.
      */
     private eagerFetch(): void {
         void this.getTracks();
