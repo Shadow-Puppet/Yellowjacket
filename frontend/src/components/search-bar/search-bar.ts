@@ -10,6 +10,7 @@ import '@awesome.me/webawesome/dist/components/icon/icon.js';
 @customElement('search-bar')
 export class SearchBar extends LitElement {
     private searchCtrl = new SearchController(this);
+    private searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
     @query('input')
     private inputEl!: HTMLInputElement;
@@ -105,7 +106,22 @@ export class SearchBar extends LitElement {
 
     private handleInput = (e: Event) => {
         const input = e.target as HTMLInputElement;
-        this.searchCtrl.term = input.value;
+        const value = input.value;
+
+        if (this.searchDebounceTimer !== null) {
+            clearTimeout(this.searchDebounceTimer);
+            this.searchDebounceTimer = null;
+        }
+
+        if (value === '') {
+            // Instant clear for responsive feedback.
+            this.searchCtrl.term = '';
+        } else {
+            this.searchDebounceTimer = setTimeout(() => {
+                this.searchDebounceTimer = null;
+                this.searchCtrl.term = value;
+            }, 150);
+        }
     };
 
     private handleClear = () => {

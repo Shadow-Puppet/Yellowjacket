@@ -46,6 +46,7 @@ class LibraryStore {
     };
 
     private subscribers = new Set<Subscriber>();
+    private notifyScheduled = false;
 
     constructor() {
         EventsOn(Events.LibraryScanComplete, () => {
@@ -340,7 +341,12 @@ class LibraryStore {
     }
 
     private notify(): void {
-        this.subscribers.forEach((callback) => callback());
+        if (this.notifyScheduled) return;
+        this.notifyScheduled = true;
+        queueMicrotask(() => {
+            this.notifyScheduled = false;
+            this.subscribers.forEach((callback) => callback());
+        });
     }
 
     // ===================================================================
