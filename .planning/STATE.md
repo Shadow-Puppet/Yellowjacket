@@ -61,17 +61,18 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 | 010b | Fix contentless FTS5 DELETE error blocking rescan | 2026-03-05 | 8e9a616 |
 | 011 | Fix neovim crash during library scan (configurable log level) | 2026-03-05 | c45bca4 |
 | 012 | Add favorite icon to album dropdown track rows | 2026-03-05 | 12a0bbc |
+| 013 | Fix all golangci-lint issues (zero issues) | 2026-03-05 | e1a95e6 |
 
 ## Session Continuity
 
 ### Last Session
 
 **Date:** 2026-03-05
-**What happened:** Quick task 12 — added favorite icon to album dropdown track rows. Added FavoritesController + classMap integration with compact sizing (18px/11px) for the dropdown context. Icon between track number and title, with stopPropagation click handler.
-**Where we stopped:** Quick task 12 complete. Album dropdown now shows per-track favorite icons.
-**Next action:** Visually verify favorite icons in album grid dropdown
+**What happened:** Quick task 13 — fixed all 31+ golangci-lint issues across 12 Go files. Mechanical fixes only (errcheck, golines, gofumpt, wsl, nlreturn, intrange, unused). Zero behavioral changes.
+**Where we stopped:** Quick task 13 complete. `golangci-lint run ./...` reports 0 issues.
+**Next action:** Continue with next task
 
 ---
 *State initialized: 2026-02-27*
-Last activity: 2026-03-05 - Add favorite icon to album dropdown track rows
+Last activity: 2026-03-05 - Fix all golangci-lint issues
 *Last updated: 2026-03-05*
