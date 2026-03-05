@@ -151,6 +151,7 @@ func (q *Queue) insertTrackBatch(tx *sql.Tx, batch []Track) error {
 		args = append(args, track.AudioFileID, track.Position)
 	}
 
+	// SAFETY: Multi-row INSERT with variable row count unsupported by sqlc. Placeholder count matches args length; no string interpolation.
 	query := "INSERT INTO queue_tracks (audio_file_id, position) VALUES " +
 		strings.Join(valuePlaceholders, ",")
 

@@ -793,6 +793,7 @@ func (l *Library) saveAudioFile(
 
 	album := tags.Album
 
+	// SAFETY: FTS5 virtual table, see search.go:InsertSearchIndex. All values parameterized.
 	if _, err := tx.ExecContext(
 		l.ctx,
 		`INSERT INTO search_index(rowid, file_path, title, artist, album)
@@ -874,6 +875,7 @@ func (l *Library) updateAudioFileMetadata(
 
 	album := tags.Album
 
+	// SAFETY: FTS5 virtual table, see search.go:DeleteSearchIndex. Rowid parameterized.
 	if _, err := tx.ExecContext(
 		l.ctx,
 		`DELETE FROM search_index WHERE rowid = ?`,
@@ -888,6 +890,7 @@ func (l *Library) updateAudioFileMetadata(
 		metrics.addWarning(result.absolutePath, "commit", err)
 	}
 
+	// SAFETY: FTS5 virtual table, see search.go:InsertSearchIndex. All values parameterized.
 	if _, err := tx.ExecContext(
 		l.ctx,
 		`INSERT INTO search_index(rowid, file_path, title, artist, album)

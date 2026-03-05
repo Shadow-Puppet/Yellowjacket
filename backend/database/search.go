@@ -31,6 +31,7 @@ func (d *DB) SearchFTS(
 	// special characters are treated as literals.
 	ftsQuery := buildFTSQuery(query)
 
+	// SAFETY: FTS5 MATCH syntax unsupported by sqlc. Query is parameterized; no string interpolation.
 	rows, err := d.db.QueryContext(d.Ctx, `
 		SELECT
 			tm.file_path,
@@ -77,6 +78,7 @@ func (d *DB) SearchFTSByFilename(
 	ftsQuery := "file_path : " +
 		strings.Join(tokens, " ")
 
+	// SAFETY: FTS5 MATCH syntax unsupported by sqlc. Query is parameterized; no string interpolation.
 	rows, err := d.db.QueryContext(d.Ctx, `
 		SELECT
 			tm.file_path,
@@ -106,6 +108,7 @@ func (d *DB) InsertSearchIndex(
 	rowid int64,
 	filePath, title, artist, album string,
 ) error {
+	// SAFETY: FTS5 virtual table INSERT unsupported by sqlc. All values are parameterized.
 	_, err := d.db.ExecContext(d.Ctx, `
 		INSERT INTO search_index(rowid, file_path, title, artist, album)
 		VALUES (?, ?, ?, ?, ?)
@@ -116,6 +119,7 @@ func (d *DB) InsertSearchIndex(
 
 // DeleteSearchIndex removes a row from the FTS5 search_index.
 func (d *DB) DeleteSearchIndex(rowid int64) error {
+	// SAFETY: FTS5 virtual table DELETE unsupported by sqlc. Rowid is parameterized.
 	_, err := d.db.ExecContext(d.Ctx, `
 		DELETE FROM search_index WHERE rowid = ?
 	`, rowid)
@@ -125,6 +129,7 @@ func (d *DB) DeleteSearchIndex(rowid int64) error {
 
 // ClearSearchIndex removes all rows from the FTS5 search_index.
 func (d *DB) ClearSearchIndex() error {
+	// SAFETY: FTS5 virtual table DELETE unsupported by sqlc. No parameters; unconditional delete.
 	_, err := d.db.ExecContext(d.Ctx, `
 		DELETE FROM search_index
 	`)
@@ -141,6 +146,7 @@ func (d *DB) RebuildSearchIndex() error {
 		)
 	}
 
+	// SAFETY: FTS5 virtual table INSERT unsupported by sqlc. All values sourced from track_metadata VIEW; no user input.
 	_, err := d.db.ExecContext(d.Ctx, `
 		INSERT INTO search_index(rowid, file_path, title, artist, album)
 		SELECT id, file_path, title, artist_name, album
@@ -189,6 +195,7 @@ func (d *DB) SearchFTSTracks(
 
 	ftsQuery := buildFTSQuery(query)
 
+	// SAFETY: FTS5 MATCH syntax unsupported by sqlc. Query is parameterized; no string interpolation.
 	rows, err := d.db.QueryContext(d.Ctx, `
 		SELECT
 			tm.file_path,

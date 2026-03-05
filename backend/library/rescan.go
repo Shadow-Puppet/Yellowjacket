@@ -161,6 +161,7 @@ func (l *Library) clearLibraryTables() error {
 	}
 
 	// Clear FTS5 search index.
+	// SAFETY: FTS5 virtual table, see search.go:ClearSearchIndex. No parameters; unconditional delete.
 	if _, err := tx.ExecContext(
 		l.ctx, `DELETE FROM search_index`,
 	); err != nil {
