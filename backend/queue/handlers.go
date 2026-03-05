@@ -12,8 +12,9 @@ func (q *Queue) OnPlaybackFinished() {
 
 	// Repeat One: replay the current track.
 	if q.repeatMode == RepeatOne {
-		q.playCurrentTrack()
-		q.emitIndexChanged()
+		if q.playCurrentTrack() {
+			q.emitIndexChanged()
+		}
 
 		return
 	}
@@ -26,7 +27,14 @@ func (q *Queue) OnPlaybackFinished() {
 		return
 	}
 
+	prevIndex := q.currentIndex
 	q.currentIndex = nextIdx
-	q.playCurrentTrack()
+
+	if !q.playCurrentTrack() {
+		q.currentIndex = prevIndex
+
+		return
+	}
+
 	q.emitIndexChanged()
 }

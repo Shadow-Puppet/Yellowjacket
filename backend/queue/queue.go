@@ -880,8 +880,9 @@ func (q *Queue) Next() {
 
 	// Repeat One: replay the current track.
 	if q.repeatMode == RepeatOne {
-		q.playOrLoadCurrentTrack(wasPlaying)
-		q.emitIndexChanged()
+		if q.playOrLoadCurrentTrack(wasPlaying) {
+			q.emitIndexChanged()
+		}
 
 		return
 	}
@@ -893,8 +894,15 @@ func (q *Queue) Next() {
 		return
 	}
 
+	prevIndex := q.currentIndex
 	q.currentIndex = nextIdx
-	q.playOrLoadCurrentTrack(wasPlaying)
+
+	if !q.playOrLoadCurrentTrack(wasPlaying) {
+		q.currentIndex = prevIndex
+
+		return
+	}
+
 	q.emitIndexChanged()
 }
 
@@ -913,8 +921,9 @@ func (q *Queue) Previous() {
 
 	// Repeat One: replay the current track.
 	if q.repeatMode == RepeatOne {
-		q.playOrLoadCurrentTrack(wasPlaying)
-		q.emitIndexChanged()
+		if q.playOrLoadCurrentTrack(wasPlaying) {
+			q.emitIndexChanged()
+		}
 
 		return
 	}
@@ -923,8 +932,9 @@ func (q *Queue) Previous() {
 	if q.player != nil {
 		posSecs, err := q.player.CurrentPositionSeconds()
 		if err == nil && posSecs > PreviousRestartThreshold {
-			q.playOrLoadCurrentTrack(wasPlaying)
-			q.emitIndexChanged()
+			if q.playOrLoadCurrentTrack(wasPlaying) {
+				q.emitIndexChanged()
+			}
 
 			return
 		}
@@ -933,14 +943,22 @@ func (q *Queue) Previous() {
 	prevIdx := q.previousIndex()
 	if prevIdx == -1 {
 		// At the beginning — just restart the current track.
-		q.playOrLoadCurrentTrack(wasPlaying)
-		q.emitIndexChanged()
+		if q.playOrLoadCurrentTrack(wasPlaying) {
+			q.emitIndexChanged()
+		}
 
 		return
 	}
 
+	prevCurrentIndex := q.currentIndex
 	q.currentIndex = prevIdx
-	q.playOrLoadCurrentTrack(wasPlaying)
+
+	if !q.playOrLoadCurrentTrack(wasPlaying) {
+		q.currentIndex = prevCurrentIndex
+
+		return
+	}
+
 	q.emitIndexChanged()
 }
 
@@ -1002,7 +1020,12 @@ func (q *Queue) playFromStart() {
 		q.currentIndex = 0
 	}
 
-	q.playCurrentTrack()
+	if !q.playCurrentTrack() {
+		q.currentIndex = -1
+
+		return
+	}
+
 	q.emitIndexChanged()
 }
 
@@ -1024,8 +1047,15 @@ func (q *Queue) PlayIndex(index int) {
 		return
 	}
 
+	prevIndex := q.currentIndex
 	q.currentIndex = index
-	q.playCurrentTrack()
+
+	if !q.playCurrentTrack() {
+		q.currentIndex = prevIndex
+
+		return
+	}
+
 	q.emitIndexChanged()
 }
 
