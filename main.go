@@ -5,6 +5,7 @@ import (
 	"embed"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/golang-cz/devslog"
 	"github.com/wailsapp/wails/v2"
@@ -30,12 +31,7 @@ var frontendDistAssets embed.FS
 func main() {
 	isDev := dev.IsDev
 	// create sLogger
-	var loglevel slog.Level
-	if isDev {
-		loglevel = slog.LevelDebug
-	} else {
-		loglevel = slog.LevelInfo
-	}
+	loglevel := resolveLogLevel(isDev)
 
 	sLogger := slog.New(devslog.NewHandler(os.Stdout, &devslog.Options{
 		HandlerOptions: &slog.HandlerOptions{
@@ -97,4 +93,28 @@ func main() {
 		sLogger.Error("application error", "err", err.Error())
 		os.Exit(1)
 	}
+}
+
+// resolveLogLevel determines the slog level.  In dev mode the default
+// is Info (not Debug) to avoid flooding stdout during library scans.
+// Set YJ_LOG_LEVEL=debug to restore verbose logging.
+//
+// Accepted values: debug, info, warn, error (case-insensitive).
+// Production builds always default to Info.
+func resolveLogLevel(_ bool) slog.Level {
+	if env := os.Getenv("YJ_LOG_LEVEL"); env != "" {
+		switch strings.ToLower(env) {
+		case "debug":
+			return slog.LevelDebug
+		case "info":
+			return slog.LevelInfo
+		case "warn":
+			return slog.LevelWarn
+		case "error":
+			return slog.LevelError
+		}
+	}
+
+	// Default: Info for both dev and prod.
+	return slog.LevelInfo
 }
