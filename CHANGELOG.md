@@ -1,3 +1,10 @@
+## [1.1.3](https://github.com/onion-4-dinner/yellowjacket/compare/v1.1.2...v1.1.3) (2026-02-21)
+
+### Bug Fixes
+
+* add typescript as explicit devDependency and auto-install frontend deps in setup ([#70](https://github.com/onion-4-dinner/yellowjacket/issues/70)) ([7316587](https://github.com/onion-4-dinner/yellowjacket/commit/73165877fa79656ab9bc6f60bd8e9e52d6be206c))
+* use local tsc binary in pre-commit hook to avoid PATH issues ([#71](https://github.com/onion-4-dinner/yellowjacket/issues/71)) ([6079e55](https://github.com/onion-4-dinner/yellowjacket/commit/6079e558ff913d38c7f1c4aeb52cc09474c4ed20))
+
 ## [1.1.2](https://github.com/onion-4-dinner/yellowjacket/compare/v1.1.1...v1.1.2) (2026-02-15)
 
 ### Bug Fixes
