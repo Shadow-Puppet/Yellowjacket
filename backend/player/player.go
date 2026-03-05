@@ -48,6 +48,7 @@ type Player struct {
 	baseStreamer            beep.Streamer
 	seeker                  beep.StreamSeeker
 	resampled               beep.Streamer
+	buffered                *BufferedStreamer
 	control                 *beep.Ctrl
 	volume                  *effects.Volume
 	speakerStreamer         beep.Streamer
@@ -125,9 +126,12 @@ func (p *Player) InitSpeaker() error {
 	defer profiling.TimeOp(p.logger, "player.InitSpeaker")()
 
 	// TODO: allow user to change buffer size and speaker sample rate.
+	// Speaker buffer is 200ms (~8820 samples at 44100 Hz), providing
+	// secondary protection against underruns behind the read-ahead
+	// BufferedStreamer.
 	err := speaker.Init(
 		p.format.SampleRate,
-		p.format.SampleRate.N(time.Second/10),
+		p.format.SampleRate.N(time.Second/5),
 	)
 	if err != nil {
 		return fmt.Errorf(
@@ -307,8 +311,15 @@ func (p *Player) updateStreamers(
 		4, sr, speakerSampleRate, p.baseStreamer,
 	)
 
+	// Buffer resampled audio to decouple disk I/O from speaker
+	// timing. 2 seconds of read-ahead at speaker sample rate
+	// absorbs I/O stalls and GC pauses without audible glitches.
+	p.buffered = NewBufferedStreamer(
+		p.resampled, int(speakerSampleRate)*2,
+	)
+
 	// wrap in ctrl streamer to allow play/pause
-	p.control = &beep.Ctrl{Streamer: p.resampled}
+	p.control = &beep.Ctrl{Streamer: p.buffered}
 
 	// Preserve existing volume settings across track changes.
 	prevVolume := 0.0
@@ -431,6 +442,11 @@ func (p *Player) loadFileLocked(filePath string) error {
 
 	p.state = Stopped
 	speaker.Unlock()
+
+	// Stop the read-ahead goroutine for the previous track.
+	if p.buffered != nil {
+		p.buffered.Close()
+	}
 
 	if p.currentFile != nil {
 		if closeErr := p.currentFile.Close(); closeErr != nil {
@@ -604,11 +620,17 @@ func (p *Player) UnloadTrack() {
 		p.currentFile = nil
 	}
 
+	// Stop the read-ahead goroutine before releasing the chain.
+	if p.buffered != nil {
+		p.buffered.Close()
+	}
+
 	// Release streamer chain. Volume is intentionally kept so the
 	// user's volume setting persists across tracks.
 	p.baseStreamer = nil
 	p.seeker = nil
 	p.resampled = nil
+	p.buffered = nil
 	p.control = nil
 	p.speakerStreamer = nil
 	p.trackLengthMs = 0
