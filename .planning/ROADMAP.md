@@ -9,12 +9,12 @@
 
 - [x] **Phase 1: Concurrency Race Fixes** — Eliminate all SetContext data races across Queue, Library, Playlist, and Player
 - [x] **Phase 2: Backend Correctness** — Fix error handling gaps, file permissions, package-level state, and scan error separation
-- [ ] **Phase 3: Test Infrastructure** — Create in-memory SQLite test helper and apply production SQLite PRAGMAs
-- [ ] **Phase 4: Queue, Config & Player Tests** — Write unit tests for queue operations, config roundtrip, and extracted player pure logic
-- [ ] **Phase 5: Database & Library Tests** — Write unit tests for FTS5 search queries, migrations, library scan, and entity cache
-- [ ] **Phase 6: SQL Consolidation & Code Quality** — Deduplicate FTS5 queries via VIEW, add event codegen, migrate to sqlc where feasible, document exceptions
-- [ ] **Phase 7: Backend Performance** — Optimize queue persistence, fix SetQueue Phase 2 redundancy, enable lazy library loading
-- [ ] **Phase 8: Frontend Performance & UX** — Optimize frontend rendering for large libraries and fix visual inconsistencies
+- [x] **Phase 3: Test Infrastructure** — Create in-memory SQLite test helper and apply production SQLite PRAGMAs
+- [x] **Phase 4: Queue, Config & Player Tests** — Write unit tests for queue operations, config roundtrip, and extracted player pure logic
+- [x] **Phase 5: Database & Library Tests** — Write unit tests for FTS5 search queries, migrations, library scan, and entity cache
+- [x] **Phase 6: SQL Consolidation & Code Quality** — Deduplicate FTS5 queries via VIEW, add event codegen, migrate to sqlc where feasible, document exceptions
+- [x] **Phase 7: Backend Performance** — Optimize queue persistence, fix SetQueue Phase 2 redundancy, enable lazy library loading
+- [x] **Phase 8: Frontend Performance & UX** — Optimize frontend rendering for large libraries and fix visual inconsistencies
 
 ## Phase Details
 
@@ -100,7 +100,7 @@ Plans:
 Plans:
 - [x] 06-01-PLAN.md — Create track_metadata VIEW and consolidate search queries
 - [x] 06-02-PLAN.md — Event codegen tool (Go→TypeScript) and pre-commit hook wiring
-- [ ] 06-03-PLAN.md — Migrate lookupChunk to sqlc.slice() and add SAFETY comments to all hand-crafted SQL
+- [x] 06-03-PLAN.md — Migrate lookupChunk to sqlc.slice() and add SAFETY comments to all hand-crafted SQL
 
 ### Phase 7: Backend Performance
 **Goal:** Queue mutations and library loading are fast — single-track queue changes are O(1) instead of O(n), and the library doesn't block startup with a full data fetch
@@ -112,8 +112,8 @@ Plans:
   3. Library store constructor no longer calls `eagerFetch()` — data loads lazily on first access via the existing `getTracks()`/`getAlbums()`/etc. getters, and the app starts without blocking on a full library load
 **Plans:** 2 plans
 Plans:
-- [ ] 07-01-PLAN.md — Incremental queue persistence + SetQueue Phase 2 dedup
-- [ ] 07-02-PLAN.md — Library store deferred eager loading
+- [x] 07-01-PLAN.md — Incremental queue persistence + SetQueue Phase 2 dedup
+- [x] 07-02-PLAN.md — Library store deferred eager loading
 
 ### Phase 8: Frontend Performance & UX
 **Goal:** The app feels smooth and visually consistent — large libraries render without jank, and the UI follows a coherent visual language
@@ -126,10 +126,10 @@ Plans:
   4. Scrolling, view switching, and search filtering in a 10k+ track library are smooth with no visible jank or dropped frames
 **Plans:** 4 plans
 Plans:
-- [ ] 08-01-PLAN.md — Store debouncing (queueMicrotask), search debounce, design token definitions
-- [ ] 08-02-PLAN.md — Virtualizer repeat() directive migration (all 5 components)
-- [ ] 08-03-PLAN.md — Track-list/queue-panel render optimization (classMap, search highlight short-circuit)
-- [ ] 08-04-PLAN.md — Visual consistency audit & token application across all components
+- [x] 08-01-PLAN.md — Store debouncing (queueMicrotask), search debounce, design token definitions
+- [x] 08-02-PLAN.md — Virtualizer repeat() directive migration (all 5 components)
+- [x] 08-03-PLAN.md — Track-list/queue-panel render optimization (classMap, search highlight short-circuit)
+- [x] 08-04-PLAN.md — Visual consistency audit & token application across all components
 
 ## Progress
 
@@ -140,9 +140,9 @@ Plans:
 | 3. Test Infrastructure | 1/1 | Complete | 2026-03-04 |
 | 4. Queue, Config & Player Tests | 2/2 | Complete | 2026-03-04 |
 | 5. Database & Library Tests | 2/2 | Complete | 2026-03-04 |
-| 6. SQL Consolidation & Code Quality | 2/3 | In Progress | — |
-| 7. Backend Performance | 0/2 | Not started | — |
-| 8. Frontend Performance & UX | 0/4 | Not started | — |
+| 6. SQL Consolidation & Code Quality | 3/3 | Complete | 2026-03-04 |
+| 7. Backend Performance | 2/2 | Complete | 2026-03-05 |
+| 8. Frontend Performance & UX | 4/4 | Complete | 2026-03-05 |
 
 ---
 *Roadmap created: 2026-02-27*
