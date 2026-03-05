@@ -23,8 +23,8 @@ Requirements for the consolidation milestone. Each maps to roadmap phases.
 
 - [x] **QUAL-01**: Duplicated FTS5 JOIN pattern (5+ copies) is consolidated into a single SQLite VIEW (track_metadata or similar)
 - [x] **QUAL-02**: Event name constants are generated from Go source (backend/events/events.go) to TypeScript (frontend/src/events.ts) via codegen, wired into go generate and pre-commit hook
-- [ ] **QUAL-03**: Queue batch lookups in persistence.go use sqlc.slice() instead of fmt.Sprintf placeholder construction where feasible
-- [ ] **QUAL-04**: Intentional hand-crafted SQL exceptions (batch INSERT, dynamic IN clauses) are documented with // SAFETY: comments explaining why they bypass sqlc
+- [x] **QUAL-03**: Queue batch lookups in persistence.go use sqlc.slice() instead of fmt.Sprintf placeholder construction where feasible
+- [x] **QUAL-04**: Intentional hand-crafted SQL exceptions (batch INSERT, dynamic IN clauses) are documented with // SAFETY: comments explaining why they bypass sqlc
 
 ### Performance
 
@@ -100,8 +100,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CORR-09 | Phase 2: Backend Correctness | Complete |
 | QUAL-01 | Phase 6: SQL Consolidation & Code Quality | Complete |
 | QUAL-02 | Phase 6: SQL Consolidation & Code Quality | Complete |
-| QUAL-03 | Phase 6: SQL Consolidation & Code Quality | Pending |
-| QUAL-04 | Phase 6: SQL Consolidation & Code Quality | Pending |
+| QUAL-03 | Phase 6: SQL Consolidation & Code Quality | Complete |
+| QUAL-04 | Phase 6: SQL Consolidation & Code Quality | Complete |
 | PERF-01 | Phase 7: Backend Performance | Pending |
 | PERF-02 | Phase 7: Backend Performance | Pending |
 | PERF-03 | Phase 7: Backend Performance | Pending |
