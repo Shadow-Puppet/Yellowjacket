@@ -243,17 +243,19 @@ const gridStyles = css`
         color: var(--yj-text-secondary, #b3b3b3);
     }
 
+    .sort-toolbar {
+        position: relative;
+    }
+
     .search-indicator {
         position: absolute;
-        top: 8px;
         left: 50%;
         transform: translateX(-50%);
-        z-index: 5;
         pointer-events: none;
         background: var(--yj-bg-overlay, #495057);
         color: var(--yj-text-secondary, #b3b3b3);
         font-size: var(--yj-text-sm);
-        padding: 4px 14px;
+        padding: 2px 14px;
         border-radius: 12px;
         border: 1px solid
             var(--yj-border-subtle, #555);

@@ -326,13 +326,23 @@ export class GenresView
             line-height: 1.3;
         }
 
-        .search-indicator {
-            position: absolute;
-            top: 8px;
-            left: 50%;
-            transform: translateX(-50%);
-            z-index: 5;
-            pointer-events: none;
+        .search-bar-row {
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 30px;
+            border-bottom: 1px solid
+                var(--yj-border-subtle, #333);
+            flex-shrink: 0;
+            user-select: none;
+        }
+
+            .search-indicator {
+                position: absolute;
+                left: 50%;
+                transform: translateX(-50%);
+                pointer-events: none;
             background: var(
                 --yj-bg-overlay,
                 #495057
@@ -342,7 +352,7 @@ export class GenresView
                 #b3b3b3
             );
             font-size: 12px;
-            padding: 4px 14px;
+            padding: 2px 14px;
             border-radius: 12px;
             border: 1px solid
                 var(--yj-border-subtle, #555);
@@ -1138,9 +1148,19 @@ export class GenresView
         }
 
         const entries = this.cachedGridEntries;
+        const searchBar = this.searchCtrl.term
+            ? html`<div class="search-bar-row">
+                  <div class="search-indicator">
+                      Showing results for
+                      &ldquo;${this.searchCtrl
+                          .term}&rdquo;
+                  </div>
+              </div>`
+            : nothing;
 
         if (entries.length === 0) {
             return html`
+                ${searchBar}
                 <div class="empty-message">
                     ${this.searchCtrl.term
                         ? 'No genres match your search.'
@@ -1150,15 +1170,7 @@ export class GenresView
         }
 
         return html`
-            ${this.searchCtrl.term
-                ? html`<div
-                      class="search-indicator"
-                  >
-                      Showing results for
-                      &ldquo;${this.searchCtrl
-                          .term}&rdquo;
-                  </div>`
-                : nothing}
+            ${searchBar}
             <div
                 class="grid-scroll-container"
                 style=${this.restoringScroll

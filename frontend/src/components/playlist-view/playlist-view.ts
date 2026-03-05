@@ -745,12 +745,14 @@ export class PlaylistView
             color: var(--yj-text-secondary, #b3b3b3);
         }
 
+        .sort-toolbar {
+            position: relative;
+        }
+
         .search-indicator {
             position: absolute;
-            top: 8px;
             left: 50%;
             transform: translateX(-50%);
-            z-index: 5;
             pointer-events: none;
             background: var(--yj-bg-overlay, #495057);
             color: var(
@@ -758,7 +760,7 @@ export class PlaylistView
                 #b3b3b3
             );
             font-size: 12px;
-            padding: 4px 14px;
+            padding: 2px 14px;
             border-radius: 12px;
             border: 1px solid
                 var(--yj-border-subtle, #555);
@@ -2442,6 +2444,12 @@ export class PlaylistView
                         name=${dirIcon}
                     ></wa-icon>
                 </button>
+                ${this.searchCtrl.term
+                    ? html`<div class="search-indicator">
+                          Showing results for
+                          &ldquo;${this.searchCtrl.term}&rdquo;
+                      </div>`
+                    : nothing}
             </div>
             ${this.renderSortDropdownPopup()}
         `;
@@ -2531,15 +2539,6 @@ export class PlaylistView
                 : nothing}
 
             ${this.renderSortToolbar()}
-
-            ${this.searchCtrl.term &&
-            this.filteredEntries.length > 0
-                ? html`<div class="search-indicator">
-                      Showing results for
-                      &ldquo;${this.searchCtrl
-                          .term}&rdquo;
-                  </div>`
-                : nothing}
 
             ${this.creating
                 ? this.renderCreateForm()

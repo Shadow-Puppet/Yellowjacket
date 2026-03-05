@@ -897,17 +897,19 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
       background-color: var(--yj-text-tertiary, #6c757d);
     }
 
+    .sort-toolbar {
+      position: relative;
+    }
+
     .search-indicator {
       position: absolute;
-      top: 8px;
       left: 50%;
       transform: translateX(-50%);
-      z-index: 5;
       pointer-events: none;
       background: var(--yj-bg-overlay, #495057);
       color: var(--yj-text-secondary, #b3b3b3);
       font-size: var(--yj-text-sm);
-      padding: 4px 14px;
+      padding: 2px 14px;
       border-radius: 12px;
       border: 1px solid var(--yj-border-subtle, #555);
       white-space: nowrap;
@@ -1640,6 +1642,12 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
                           </button>
                       `
                     : nothing}
+                ${this.searchCtrl.term
+                    ? html`<div class="search-indicator">
+                          Showing results for
+                          &ldquo;${this.searchCtrl.term}&rdquo;
+                      </div>`
+                    : nothing}
             </div>
             ${this.renderSortDropdownPopup()}
         `;
@@ -1742,13 +1750,6 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
                         .layout=${this.flowLayout}
                       ></lit-virtualizer>
                     `}
-
-      ${this.searchCtrl.term && visibleTracks.length > 0
-                        ? html`<div class="search-indicator">
-                Showing results for
-                &ldquo;${this.searchCtrl.term}&rdquo;
-            </div>`
-                        : nothing}
 
       <div class="resize-overlay">
         ${this.colBoundaryPositions.map(

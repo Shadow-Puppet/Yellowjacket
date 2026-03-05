@@ -1613,6 +1613,12 @@ export class CoverGrid
                         name=${dirIcon}
                     ></wa-icon>
                 </button>
+                ${this.searchCtrl.term
+                    ? html`<div class="search-indicator">
+                          Showing results for
+                          &ldquo;${this.searchCtrl.term}&rdquo;
+                      </div>`
+                    : nothing}
             </div>
             ${this.renderSortDropdownPopup()}
         `;
@@ -1812,6 +1818,7 @@ export class CoverGrid
 
         if (this.cachedFilteredAlbums.length === 0) {
             return html`
+                ${this.renderSortToolbar()}
                 <div class="empty-state">
                     <p>No albums match your search.</p>
                 </div>
@@ -1824,12 +1831,6 @@ export class CoverGrid
 
         return html`
             ${this.renderSortToolbar()}
-            ${this.searchCtrl.term
-                ? html`<div class="search-indicator">
-                      Showing results for
-                      &ldquo;${this.searchCtrl.term}&rdquo;
-                  </div>`
-                : nothing}
             <div
                 class="grid-scroll-container"
                 @click=${this.onGridClick}

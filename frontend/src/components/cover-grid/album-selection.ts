@@ -313,10 +313,12 @@ export class AlbumSelectionManager {
         albumName: string,
         expandedAlbumId: number | null,
     ): CoverArtUrls | null {
-        if (!albumName) return null;
-
         // Prefer the expanded album (we know the track
-        // belongs to it) for an O(1) lookup.
+        // belongs to it) for an O(1) lookup.  This must
+        // run before the albumName guard because
+        // GetAlbumTracks returns tracks without an Album
+        // field, so albumName may be empty even when the
+        // album ID is known.
         if (expandedAlbumId !== null) {
             const album = this.albumById.get(
                 expandedAlbumId,
@@ -332,6 +334,8 @@ export class AlbumSelectionManager {
                 };
             }
         }
+
+        if (!albumName) return null;
 
         // Fallback: name-based search across all albums.
         for (const album of this.albumById.values()) {
