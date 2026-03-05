@@ -25,6 +25,7 @@ import {
     DEFAULT_COLUMN_IDS,
 } from './columns';
 import type { ColumnDef } from './columns';
+import { repeat } from 'lit/directives/repeat.js';
 import {
     rankTracks,
     highlightText,
@@ -1736,9 +1737,12 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
                       <lit-virtualizer
                         scroller
                         .items=${visibleTracks}
-                        .renderItem=${this.renderTrackRow}
                         .layout=${this.flowLayout}
-                      ></lit-virtualizer>
+                      >${repeat(
+                          visibleTracks,
+                          (track) => track.FilePath,
+                          (track, index) => this.renderTrackRow(track, index),
+                      )}</lit-virtualizer>
                     `}
 
       ${this.searchCtrl.term && visibleTracks.length > 0
