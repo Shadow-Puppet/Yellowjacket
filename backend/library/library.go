@@ -1261,8 +1261,18 @@ func (l *Library) resolveReleaseGroup(
 		return sql.NullInt64{}
 	}
 
+	// Build composite cache key: "albumName\x00artistCreditID"
+	// (or "albumName\x00-1" if no artist).  This prevents albums
+	// with the same name by different artists from colliding.
+	artistID := int64(-1)
+	if albumArtistCreditID.Valid {
+		artistID = albumArtistCreditID.Int64
+	}
+
+	cacheKey := fmt.Sprintf("%s\x00%d", tags.Album, artistID)
+
 	// Check cache first.
-	if cached, ok := cache.releaseGroups[tags.Album]; ok {
+	if cached, ok := cache.releaseGroups[cacheKey]; ok {
 		// If the cached release group lacks cover art and we now
 		// have it, update it.
 		if coverArtID.Valid && !cached.CoverArtID.Valid {
@@ -1280,7 +1290,7 @@ func (l *Library) resolveReleaseGroup(
 				)
 			} else {
 				cached.CoverArtID = coverArtID
-				cache.releaseGroups[tags.Album] = cached
+				cache.releaseGroups[cacheKey] = cached
 			}
 		}
 
@@ -1321,7 +1331,7 @@ func (l *Library) resolveReleaseGroup(
 		}
 	}
 
-	cache.releaseGroups[tags.Album] = rg
+	cache.releaseGroups[cacheKey] = rg
 
 	return sql.NullInt64{Int64: rg.ID, Valid: true}
 }

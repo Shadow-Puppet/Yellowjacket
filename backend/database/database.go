@@ -285,6 +285,18 @@ func runMigrations(
 		}
 	}
 
+	// Migration 5: rebuild release_groups with composite unique
+	// constraint on (name, album_artist_credit_id) instead of
+	// name alone, so albums with the same name by different
+	// artists are stored as separate rows.
+	if version < 5 {
+		if err := migration5ReleaseGroupCompositeUnique(
+			ctx, db, logger,
+		); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -454,6 +466,184 @@ func migration4TrackMetadataView(
 	}
 
 	logger.Info("migration 4 complete")
+
+	return nil
+}
+
+// migration5ReleaseGroupCompositeUnique rebuilds the release_groups
+// table with UNIQUE(name, album_artist_credit_id) instead of
+// UNIQUE(name).  SQLite cannot ALTER a UNIQUE constraint, so we
+// must rebuild the table.
+//
+// SAFETY: Hand-crafted SQL for schema migration.
+func migration5ReleaseGroupCompositeUnique(
+	ctx context.Context,
+	db *sql.DB,
+	logger *slog.Logger,
+) error {
+	logger.Info(
+		"applying migration 5: release_groups composite unique constraint",
+	)
+
+	// Temporarily disable FK checks for table rebuild.
+	if _, err := db.ExecContext(
+		ctx, "PRAGMA foreign_keys = OFF",
+	); err != nil {
+		return fmt.Errorf(
+			"migration 5: could not disable foreign keys: %w",
+			err,
+		)
+	}
+
+	// Drop the track_metadata VIEW that references release_groups
+	// so the table rebuild can proceed without SQLite complaining
+	// about a dangling VIEW reference.
+	if _, err := db.ExecContext(
+		ctx, "DROP VIEW IF EXISTS track_metadata",
+	); err != nil {
+		return fmt.Errorf(
+			"migration 5: could not drop track_metadata VIEW: %w",
+			err,
+		)
+	}
+
+	// Create new table with composite unique constraint.
+	if _, err := db.ExecContext(ctx, `
+		CREATE TABLE release_groups_new (
+			id                     INTEGER PRIMARY KEY,
+			name                   TEXT NOT NULL,
+			cover_art_id           INTEGER,
+			album_artist_credit_id INTEGER,
+			year                   INTEGER,
+			total_tracks           INTEGER,
+			total_discs            INTEGER,
+			FOREIGN KEY(cover_art_id) REFERENCES cover_art(id),
+			FOREIGN KEY(album_artist_credit_id) REFERENCES artist_credit(id),
+			UNIQUE(name, album_artist_credit_id)
+		)
+	`); err != nil {
+		return fmt.Errorf(
+			"migration 5: could not create release_groups_new: %w",
+			err,
+		)
+	}
+
+	// Copy all data.
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO release_groups_new
+		SELECT * FROM release_groups
+	`); err != nil {
+		return fmt.Errorf(
+			"migration 5: could not copy data: %w", err,
+		)
+	}
+
+	// Drop old table.
+	if _, err := db.ExecContext(
+		ctx, "DROP TABLE release_groups",
+	); err != nil {
+		return fmt.Errorf(
+			"migration 5: could not drop old table: %w", err,
+		)
+	}
+
+	// Rename new table.
+	if _, err := db.ExecContext(ctx, `
+		ALTER TABLE release_groups_new
+		RENAME TO release_groups
+	`); err != nil {
+		return fmt.Errorf(
+			"migration 5: could not rename table: %w", err,
+		)
+	}
+
+	// Recreate indexes.
+	if _, err := db.ExecContext(ctx, `
+		CREATE INDEX IF NOT EXISTS idx_release_groups_cover_art_id
+			ON release_groups(cover_art_id)
+	`); err != nil {
+		return fmt.Errorf(
+			"migration 5: could not create cover_art_id index: %w",
+			err,
+		)
+	}
+
+	if _, err := db.ExecContext(ctx, `
+		CREATE INDEX IF NOT EXISTS idx_release_groups_album_artist_credit_id
+			ON release_groups(album_artist_credit_id)
+	`); err != nil {
+		return fmt.Errorf(
+			"migration 5: could not create album_artist_credit_id index: %w",
+			err,
+		)
+	}
+
+	// Recreate the track_metadata VIEW that was dropped above.
+	// The definition must match the embedded schema file
+	// (sql/schemas/track_metadata_view.sql) exactly.
+	if _, err := db.ExecContext(ctx, `
+		CREATE VIEW IF NOT EXISTS track_metadata AS
+		SELECT
+			af.id,
+			af.file_path,
+			af.length_milliseconds,
+			COALESCE(r.name, '') AS title,
+			COALESCE(ac.text, '') AS artist_name,
+			r.track_number,
+			r.disc_number,
+			COALESCE(rg.name, '') AS album,
+			CAST(COALESCE(
+				(SELECT GROUP_CONCAT(g.name, '||')
+				 FROM recording_genres rg_sub
+				 JOIN genres g ON rg_sub.genre_id = g.id
+				 WHERE rg_sub.recording_id = r.id),
+				''
+			) AS TEXT) AS genre,
+			COALESCE(r.year, 0) AS year,
+			COALESCE(r.composer, '') AS composer,
+			COALESCE(ft.extension, '') AS file_type,
+			af.sample_rate,
+			af.bit_depth,
+			af.channels,
+			af.bitrate,
+			af.file_size
+		FROM audio_files af
+		LEFT JOIN recordings r ON af.recording_id = r.id
+		LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
+		LEFT JOIN (
+			SELECT recording_id,
+				MIN(release_group_id) AS release_group_id
+			FROM release_group_recordings
+			GROUP BY recording_id
+		) rgr ON r.id = rgr.recording_id
+		LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
+		LEFT JOIN file_types ft ON af.file_type_id = ft.id
+	`); err != nil {
+		return fmt.Errorf(
+			"migration 5: could not recreate track_metadata VIEW: %w",
+			err,
+		)
+	}
+
+	// Re-enable FK checks.
+	if _, err := db.ExecContext(
+		ctx, "PRAGMA foreign_keys = ON",
+	); err != nil {
+		return fmt.Errorf(
+			"migration 5: could not re-enable foreign keys: %w",
+			err,
+		)
+	}
+
+	if _, err := db.ExecContext(
+		ctx, "PRAGMA user_version = 5",
+	); err != nil {
+		return fmt.Errorf(
+			"could not set user_version to 5: %w", err,
+		)
+	}
+
+	logger.Info("migration 5 complete")
 
 	return nil
 }

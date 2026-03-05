@@ -533,7 +533,9 @@ func TestResolveReleaseGroup(t *testing.T) {
 	}
 
 	// Cover art should be updated on the cached release group.
-	cachedRG := cache.releaseGroups["A Night at the Opera"]
+	// Cache key is composite: "albumName\x00artistCreditID".
+	cacheKey := fmt.Sprintf("%s\x00%d", "A Night at the Opera", ac.ID)
+	cachedRG := cache.releaseGroups[cacheKey]
 	if !cachedRG.CoverArtID.Valid {
 		t.Error("expected CoverArtID to be set after update")
 	}
@@ -559,7 +561,8 @@ func TestResolveReleaseGroup_CacheHit(t *testing.T) {
 	q := lib.db.Queries
 
 	// Pre-populate cache with a known release group.
-	cache.releaseGroups["Cached Album"] = sqlcgen.ReleaseGroup{
+	// Cache key is composite: "albumName\x00artistCreditID" (use -1 for no artist).
+	cache.releaseGroups[fmt.Sprintf("%s\x00%d", "Cached Album", int64(-1))] = sqlcgen.ReleaseGroup{
 		ID:   42,
 		Name: "Cached Album",
 	}
