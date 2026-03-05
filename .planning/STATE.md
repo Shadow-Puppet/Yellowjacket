@@ -60,17 +60,18 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 | 010 | Fix duplicate album merging bug (composite unique constraint) | 2026-03-05 | d43ba7b |
 | 010b | Fix contentless FTS5 DELETE error blocking rescan | 2026-03-05 | 8e9a616 |
 | 011 | Fix neovim crash during library scan (configurable log level) | 2026-03-05 | c45bca4 |
+| 012 | Add favorite icon to album dropdown track rows | 2026-03-05 | 12a0bbc |
 
 ## Session Continuity
 
 ### Last Session
 
 **Date:** 2026-03-05
-**What happened:** Quick task 11 — fixed neovim display corruption during library scan. Root cause: dev mode hardcoded slog.LevelDebug, flooding stdout with ~14 debug lines per audio file. Added resolveLogLevel() with YJ_LOG_LEVEL env var support, defaulting to Info. Added `make dev-debug` target for opt-in verbose logging.
-**Where we stopped:** Quick task 11 complete. Dev mode now defaults to Info-level logging.
-**Next action:** Test `make dev` with library scan to confirm neovim stability
+**What happened:** Quick task 12 — added favorite icon to album dropdown track rows. Added FavoritesController + classMap integration with compact sizing (18px/11px) for the dropdown context. Icon between track number and title, with stopPropagation click handler.
+**Where we stopped:** Quick task 12 complete. Album dropdown now shows per-track favorite icons.
+**Next action:** Visually verify favorite icons in album grid dropdown
 
 ---
 *State initialized: 2026-02-27*
-Last activity: 2026-03-05 - Fix neovim crash during library scan (configurable log level)
+Last activity: 2026-03-05 - Add favorite icon to album dropdown track rows
 *Last updated: 2026-03-05*
