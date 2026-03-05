@@ -14,7 +14,7 @@ func newTestQueueDirect(tracks int, currentIndex int) *Queue {
 	}
 
 	q.tracks = make([]Track, tracks)
-	for i := 0; i < tracks; i++ {
+	for i := range tracks {
 		q.tracks[i] = Track{FilePath: "/test/track.mp3", Position: int64(i)}
 	}
 
@@ -135,11 +135,15 @@ func TestGenerateShuffleOrder_Properties(t *testing.T) {
 
 			// Property 2: current track is at shuffleOrder[0].
 			if q.shuffleOrder[0] != tc.currentIdx {
-				t.Errorf("shuffleOrder[0]: got %d, want %d (currentIndex)", q.shuffleOrder[0], tc.currentIdx)
+				t.Errorf(
+					"shuffleOrder[0]: got %d, want %d (currentIndex)",
+					q.shuffleOrder[0], tc.currentIdx,
+				)
 			}
 
 			// Property 3: all indices present (no duplicates, no missing).
 			seen := make(map[int]bool, tc.trackCount)
+
 			for _, idx := range q.shuffleOrder {
 				if idx < 0 || idx >= tc.trackCount {
 					t.Errorf("shuffleOrder contains out-of-range index: %d", idx)
@@ -153,7 +157,10 @@ func TestGenerateShuffleOrder_Properties(t *testing.T) {
 			}
 
 			if len(seen) != tc.trackCount {
-				t.Errorf("unique indices in shuffleOrder: got %d, want %d", len(seen), tc.trackCount)
+				t.Errorf(
+					"unique indices in shuffleOrder: got %d, want %d",
+					len(seen), tc.trackCount,
+				)
 			}
 		})
 	}
@@ -177,6 +184,7 @@ func TestNextIndex_ShuffleMode(t *testing.T) {
 	// Advance to index 4 and get next.
 	q.currentIndex = 4
 	got = q.nextIndex()
+
 	if got != 0 {
 		t.Errorf("nextIndex (shuffle, pos 2): got %d, want 0", got)
 	}
@@ -184,6 +192,7 @@ func TestNextIndex_ShuffleMode(t *testing.T) {
 	// At the end of shuffle order with RepeatOff.
 	q.currentIndex = 1 // last in shuffleOrder
 	got = q.nextIndex()
+
 	if got != -1 {
 		t.Errorf("nextIndex (shuffle, end, repeatOff): got %d, want -1", got)
 	}
@@ -191,7 +200,11 @@ func TestNextIndex_ShuffleMode(t *testing.T) {
 	// At the end of shuffle order with RepeatAll.
 	q.repeatMode = RepeatAll
 	got = q.nextIndex()
+
 	if got != 2 {
-		t.Errorf("nextIndex (shuffle, end, repeatAll): got %d, want 2 (wraps to shuffleOrder[0])", got)
+		t.Errorf(
+			"nextIndex (shuffle, end, repeatAll): got %d, want 2 "+
+				"(wraps to shuffleOrder[0])", got,
+		)
 	}
 }

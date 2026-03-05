@@ -126,8 +126,11 @@ func TestUserVolume_ToVolume_Roundtrip(t *testing.T) {
 
 		diff := int(roundtripped) - int(i)
 		if diff < -1 || diff > 1 {
-			t.Errorf("Roundtrip UserVolume(%d) -> Volume(%f) -> UserVolume(%d): drift %d exceeds ±1",
-				i, vol, roundtripped, diff)
+			t.Errorf(
+				"Roundtrip UserVolume(%d) -> Volume(%f) -> UserVolume(%d): "+
+					"drift %d exceeds ±1",
+				i, vol, roundtripped, diff,
+			)
 		}
 	}
 
@@ -138,8 +141,11 @@ func TestUserVolume_ToVolume_Roundtrip(t *testing.T) {
 		roundtripped := vol.ToUserVolume()
 
 		if roundtripped != uv {
-			t.Errorf("Exact roundtrip UserVolume(%d) -> Volume(%f) -> UserVolume(%d): want exact match",
-				uv, vol, roundtripped)
+			t.Errorf(
+				"Exact roundtrip UserVolume(%d) -> Volume(%f) -> "+
+					"UserVolume(%d): want exact match",
+				uv, vol, roundtripped,
+			)
 		}
 	}
 }

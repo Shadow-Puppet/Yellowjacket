@@ -229,6 +229,7 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 		"count", len(existingFiles),
 		"library-directory", l.conf.DirectoryPath,
 	)
+
 	workChan := make(chan scanWork, 100)
 	resultChan := make(chan importResult, 100)
 
@@ -531,10 +532,14 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 	// point so it is safe to close.
 	thumbStart := time.Now()
 
-	runtime.EventsEmit(l.ctx, events.LibraryScanProgress,
-		ScanProgress{Phase: "thumbnails", Total: totalFiles,
-			Processed: a + s + u, Added: a, Skipped: s, Updated: u},
-	)
+	runtime.EventsEmit(l.ctx, events.LibraryScanProgress, ScanProgress{
+		Phase:     "thumbnails",
+		Total:     totalFiles,
+		Processed: a + s + u,
+		Added:     a,
+		Skipped:   s,
+		Updated:   u,
+	})
 
 	close(thumbChan)
 	thumbWg.Wait()
@@ -542,10 +547,10 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 	metrics.ThumbnailWallClock = time.Since(thumbStart)
 
 	// --- Phase 5: orphan cleanup ---
-	runtime.EventsEmit(l.ctx, events.LibraryScanProgress,
-		ScanProgress{Phase: "orphans", Total: totalFiles,
-			Processed: a + s + u, Added: a, Skipped: s, Updated: u},
-	)
+	runtime.EventsEmit(l.ctx, events.LibraryScanProgress, ScanProgress{
+		Phase: "orphans", Total: totalFiles,
+		Processed: a + s + u, Added: a, Skipped: s, Updated: u,
+	})
 
 	orphanStart := time.Now()
 

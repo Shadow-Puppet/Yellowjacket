@@ -44,28 +44,50 @@ func seedSearchData(t *testing.T, db *DB) {
 	intPtr := func(v int64) *int64 { return &v }
 
 	tracks := []track{
-		{1, "/music/queen/bohemian_rhapsody.mp3", "Bohemian Rhapsody", "Queen", "A Night at the Opera", intPtr(11), intPtr(1), 1975, "Rock", "Freddie Mercury", 354000, 0, 44100, 16, 2, 320000, 8500000},
-		{2, "/music/beyonce/halo.flac", "Halo", "Beyoncé", "Lemonade", intPtr(1), intPtr(1), 2008, "Pop", "Ryan Tedder", 261000, 1, 96000, 24, 2, 1411000, 42000000},
-		{3, "/music/acdc/back_in_black.mp3", "Back in Black", "AC/DC", "Back in Black", intPtr(1), intPtr(1), 1980, "Hard Rock", "Angus Young", 255000, 0, 44100, 16, 2, 320000, 6100000},
-		{4, "/music/pinkfloyd/comfortably_numb.flac", "Comfortably Numb", "Pink Floyd", "The Dark Side of the Moon", intPtr(6), intPtr(1), 1979, "Progressive Rock", "David Gilmour", 382000, 1, 96000, 24, 2, 1411000, 54000000},
-		{5, "/music/queen/another_one_bites_the_dust.mp3", "Another One Bites the Dust", "Queen", "The Game", intPtr(3), intPtr(1), 1980, "Funk Rock", "John Deacon", 215000, 0, 44100, 16, 2, 320000, 5200000},
-		{6, "/music/acdc/thunderstruck.mp3", "Thunderstruck", "AC/DC", "The Razors Edge", intPtr(1), intPtr(1), 1990, "Hard Rock", "Angus Young", 292000, 0, 44100, 16, 2, 320000, 7000000},
-		{7, "/music/qotsa/queen_of_the_stone_age.mp3", "Queen of the Stone Age", "Queens of the Stone Age", "Rated R", intPtr(1), intPtr(1), 2000, "Stoner Rock", "Josh Homme", 310000, 0, 44100, 16, 2, 320000, 7400000},
+		{
+			1, "/music/queen/bohemian_rhapsody.mp3", "Bohemian Rhapsody", "Queen",
+			"A Night at the Opera", intPtr(11), intPtr(1), 1975, "Rock",
+			"Freddie Mercury", 354000, 0, 44100, 16, 2, 320000, 8500000,
+		},
+		{
+			2, "/music/beyonce/halo.flac", "Halo", "Beyoncé", "Lemonade",
+			intPtr(1), intPtr(1), 2008, "Pop", "Ryan Tedder", 261000, 1,
+			96000, 24, 2, 1411000, 42000000,
+		},
+		{
+			3, "/music/acdc/back_in_black.mp3", "Back in Black", "AC/DC",
+			"Back in Black", intPtr(1), intPtr(1), 1980, "Hard Rock",
+			"Angus Young", 255000, 0, 44100, 16, 2, 320000, 6100000,
+		},
+		{
+			4, "/music/pinkfloyd/comfortably_numb.flac", "Comfortably Numb",
+			"Pink Floyd", "The Dark Side of the Moon", intPtr(6), intPtr(1),
+			1979, "Progressive Rock", "David Gilmour", 382000, 1, 96000, 24,
+			2, 1411000, 54000000,
+		},
+		{
+			5, "/music/queen/another_one_bites_the_dust.mp3",
+			"Another One Bites the Dust", "Queen", "The Game", intPtr(3),
+			intPtr(1), 1980, "Funk Rock", "John Deacon", 215000, 0, 44100,
+			16, 2, 320000, 5200000,
+		},
+		{
+			6, "/music/acdc/thunderstruck.mp3", "Thunderstruck", "AC/DC",
+			"The Razors Edge", intPtr(1), intPtr(1), 1990, "Hard Rock",
+			"Angus Young", 292000, 0, 44100, 16, 2, 320000, 7000000,
+		},
+		{
+			7, "/music/qotsa/queen_of_the_stone_age.mp3",
+			"Queen of the Stone Age", "Queens of the Stone Age", "Rated R",
+			intPtr(1), intPtr(1), 2000, "Stoner Rock", "Josh Homme", 310000,
+			0, 44100, 16, 2, 320000, 7400000,
+		},
 	}
 
 	// Build unique sets.
-	type artistEntry struct {
-		id   int64
-		text string
-	}
-
-	type albumEntry struct {
-		id   int64
-		name string
-	}
-
 	artistMap := map[string]int64{}
 	albumMap := map[string]int64{}
+
 	var artistID, albumID int64
 
 	for _, tr := range tracks {
@@ -104,6 +126,7 @@ func seedSearchData(t *testing.T, db *DB) {
 
 	// Insert genres + recording_genres.
 	genreMap := map[string]int64{}
+
 	var genreID int64
 
 	for _, tr := range tracks {
@@ -131,8 +154,11 @@ func seedSearchData(t *testing.T, db *DB) {
 
 		// Insert recording.
 		_, err := db.ExecContext(
-			"INSERT INTO recordings (id, name, artist_credit_id, track_number, disc_number, year, genre, composer) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-			tr.id, tr.title, acID, tr.trackNum, tr.discNum, tr.year, tr.genre, tr.composer,
+			"INSERT INTO recordings (id, name, artist_credit_id, "+
+				"track_number, disc_number, year, genre, composer) "+
+				"VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+			tr.id, tr.title, acID, tr.trackNum, tr.discNum,
+			tr.year, tr.genre, tr.composer,
 		)
 		if err != nil {
 			t.Fatalf("insert recording %d %q: %v", tr.id, tr.title, err)
@@ -140,8 +166,12 @@ func seedSearchData(t *testing.T, db *DB) {
 
 		// Insert audio_files.
 		_, err = db.ExecContext(
-			"INSERT INTO audio_files (id, file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-			tr.id, tr.filePath, tr.lenMs, tr.ftID, tr.id, tr.sr, tr.bd, tr.ch, tr.br, tr.fsize,
+			"INSERT INTO audio_files (id, file_path, "+
+				"length_milliseconds, file_type_id, recording_id, "+
+				"sample_rate, bit_depth, channels, bitrate, file_size) "+
+				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			tr.id, tr.filePath, tr.lenMs, tr.ftID, tr.id,
+			tr.sr, tr.bd, tr.ch, tr.br, tr.fsize,
 		)
 		if err != nil {
 			t.Fatalf("insert audio_file %d: %v", tr.id, err)
@@ -149,7 +179,9 @@ func seedSearchData(t *testing.T, db *DB) {
 
 		// Link recording to release_group.
 		_, err = db.ExecContext(
-			"INSERT INTO release_group_recordings (release_group_id, recording_id, track_number, disc_number) VALUES (?, ?, ?, ?)",
+			"INSERT INTO release_group_recordings "+
+				"(release_group_id, recording_id, track_number, disc_number) "+
+				"VALUES (?, ?, ?, ?)",
 			rgID, tr.id, tr.trackNum, tr.discNum,
 		)
 		if err != nil {
@@ -368,6 +400,7 @@ func TestSearchFTS_SpecialCharacters(t *testing.T) {
 
 	// Verify at least one AC/DC track is present.
 	found := false
+
 	for _, r := range results {
 		if r.Artist == "AC/DC" {
 			found = true
@@ -432,6 +465,7 @@ func TestSearchFTS_Diacritics(t *testing.T) {
 	}
 
 	found := false
+
 	for _, r := range results {
 		if r.Artist == "Beyoncé" {
 			found = true
@@ -489,6 +523,7 @@ func TestSearchFTSByFilename(t *testing.T) {
 	}
 
 	found := false
+
 	for _, r := range results {
 		if r.Title == "Bohemian Rhapsody" {
 			found = true
@@ -620,7 +655,9 @@ func TestInsertAndDeleteSearchIndex(t *testing.T) {
 	}
 
 	// Insert into search index.
-	if err := db.InsertSearchIndex(1, "/test/track.mp3", "Test Track", "Test Artist", "Test Album"); err != nil {
+	if err := db.InsertSearchIndex(
+		1, "/test/track.mp3", "Test Track", "Test Artist", "Test Album",
+	); err != nil {
 		t.Fatalf("InsertSearchIndex: %v", err)
 	}
 
@@ -781,11 +818,13 @@ func TestMigrationsApplied(t *testing.T) {
 
 	if !rows.Next() {
 		_ = rows.Close()
+
 		t.Fatal("PRAGMA user_version: no row returned")
 	}
 
 	if err := rows.Scan(&version); err != nil {
 		_ = rows.Close()
+
 		t.Fatalf("scan user_version: %v", err)
 	}
 

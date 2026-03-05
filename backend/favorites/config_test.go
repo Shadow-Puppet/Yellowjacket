@@ -31,6 +31,7 @@ func TestFavoritesConfig_Validate_InvalidIconStyle(t *testing.T) {
 	t.Parallel()
 
 	c := &Config{IconStyle: "diamond"}
+
 	err := c.Validate()
 	if err == nil {
 		t.Fatal("Validate() expected error for unknown icon style, got nil")

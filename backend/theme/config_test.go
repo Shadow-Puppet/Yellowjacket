@@ -49,6 +49,7 @@ func TestThemeConfig_Validate_InvalidHexColor(t *testing.T) {
 			t.Parallel()
 
 			c := &Config{AccentColor: tt.color, BackgroundShade: BackgroundDark}
+
 			err := c.Validate()
 			if err == nil {
 				t.Error("Validate() expected error for invalid hex color, got nil")
@@ -61,6 +62,7 @@ func TestThemeConfig_Validate_InvalidBackgroundShade(t *testing.T) {
 	t.Parallel()
 
 	c := &Config{AccentColor: "#ffd43b", BackgroundShade: "neon"}
+
 	err := c.Validate()
 	if err == nil {
 		t.Fatal("Validate() expected error for unknown shade, got nil")

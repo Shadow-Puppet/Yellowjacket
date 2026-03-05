@@ -396,7 +396,10 @@ func TestCachedLinkArtist(t *testing.T) {
 	lib.cachedLinkArtist(q, cache, metrics, "Queen", ac.ID)
 
 	if len(cache.linkedCredits) != 1 {
-		t.Errorf("linkedCredits after duplicate = %d, want 1 (should skip)", len(cache.linkedCredits))
+		t.Errorf(
+			"linkedCredits after duplicate = %d, want 1 (should skip)",
+			len(cache.linkedCredits),
+		)
 	}
 }
 
@@ -536,6 +539,7 @@ func TestResolveReleaseGroup(t *testing.T) {
 	// Cache key is composite: "albumName\x00artistCreditID".
 	cacheKey := fmt.Sprintf("%s\x00%d", "A Night at the Opera", ac.ID)
 	cachedRG := cache.releaseGroups[cacheKey]
+
 	if !cachedRG.CoverArtID.Valid {
 		t.Error("expected CoverArtID to be set after update")
 	}
@@ -616,7 +620,9 @@ func TestOrphanDeletion(t *testing.T) {
 	}
 
 	// Add FTS search index entry.
-	if err := db.InsertSearchIndex(af.ID, "/music/test.mp3", "Test Song", "Test Artist", ""); err != nil {
+	if err := db.InsertSearchIndex(
+		af.ID, "/music/test.mp3", "Test Song", "Test Artist", "",
+	); err != nil {
 		t.Fatalf("insert search index: %v", err)
 	}
 
@@ -651,11 +657,12 @@ func TestOrphanDeletion(t *testing.T) {
 	// become stale but harmless (they reference a non-existent
 	// audio_file ID, so JOINs return no results).
 	// ClearSearchIndex (used during full rescan) handles bulk cleanup.
+	// DeleteSearchIndex on contentless FTS5 is expected to error.
+	// Not a fatal error — documents the contentless FTS5 limitation.
 	err = db.DeleteSearchIndex(af.ID)
 	if err == nil {
 		t.Log("DeleteSearchIndex succeeded (unexpected for contentless FTS5)")
 	}
-	// Not a fatal error — documents the contentless FTS5 limitation.
 }
 
 // ---------------------------------------------------------------------------
@@ -705,7 +712,10 @@ func TestEntityCache_EmptyFields(t *testing.T) {
 	}
 
 	if albumACID.Int64 != trackAC.ID {
-		t.Errorf("empty AlbumArtist should reuse track credit: got %d, want %d", albumACID.Int64, trackAC.ID)
+		t.Errorf(
+			"empty AlbumArtist should reuse track credit: got %d, want %d",
+			albumACID.Int64, trackAC.ID,
+		)
 	}
 
 	// resolveAlbumArtistCredit when AlbumArtist matches Artist also reuses.
@@ -716,6 +726,9 @@ func TestEntityCache_EmptyFields(t *testing.T) {
 
 	sameACID := lib.resolveAlbumArtistCredit(q, cache, metrics, sameTags, trackAC.ID)
 	if sameACID.Int64 != trackAC.ID {
-		t.Errorf("matching AlbumArtist should reuse track credit: got %d, want %d", sameACID.Int64, trackAC.ID)
+		t.Errorf(
+			"matching AlbumArtist should reuse track credit: got %d, want %d",
+			sameACID.Int64, trackAC.ID,
+		)
 	}
 }

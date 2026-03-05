@@ -16,6 +16,7 @@ type mockTrackLoader struct {
 
 func (m *mockTrackLoader) LoadFile(filePath string) error {
 	m.loadedFile = filePath
+
 	return nil
 }
 
@@ -53,7 +54,7 @@ func seedAudioFiles(t *testing.T, db *database.DB, count int) []string {
 
 	paths := make([]string, count)
 
-	for i := 0; i < count; i++ {
+	for i := range count {
 		recID := i + 1
 		afID := i + 1
 		fp := fmt.Sprintf("/test/track%d.mp3", i+1)
@@ -68,7 +69,9 @@ func seedAudioFiles(t *testing.T, db *database.DB, count int) []string {
 		}
 
 		_, err = db.ExecContext(
-			"INSERT OR IGNORE INTO audio_files (id, file_path, length_milliseconds, file_type_id, recording_id) VALUES (?, ?, 180000, 0, ?)",
+			"INSERT OR IGNORE INTO audio_files (id, file_path, "+
+				"length_milliseconds, file_type_id, recording_id) "+
+				"VALUES (?, ?, 180000, 0, ?)",
 			afID, fp, recID,
 		)
 		if err != nil {
@@ -292,7 +295,10 @@ func TestRemoveTrack_RemoveCurrentTrack(t *testing.T) {
 
 	// After removing currentIndex=2, index should be clamped to valid range.
 	if state.CurrentIndex < 0 || state.CurrentIndex >= len(state.Tracks) {
-		t.Errorf("currentIndex out of range: got %d, track count %d", state.CurrentIndex, len(state.Tracks))
+		t.Errorf(
+			"currentIndex out of range: got %d, track count %d",
+			state.CurrentIndex, len(state.Tracks),
+		)
 	}
 }
 

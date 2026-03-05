@@ -63,7 +63,7 @@ func NewTestDB(t *testing.T) *DB {
 
 	queries := sqlcgen.New(db)
 
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() { _ = db.Close() })
 
 	return &DB{
 		db:      db,

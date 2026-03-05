@@ -32,6 +32,7 @@ func main() {
 
 	if *output == "" || *output == "/dev/stdout" {
 		fmt.Print(ts)
+
 		return
 	}
 
@@ -57,6 +58,7 @@ type constEntry struct {
 // groups in declaration order.
 func parseEvents(path string) ([]constGroup, error) {
 	fset := token.NewFileSet()
+
 	f, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
 	if err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
@@ -82,11 +84,14 @@ func parseEvents(path string) ([]constGroup, error) {
 			if !ok {
 				continue
 			}
+
 			for i, name := range vs.Names {
 				if i >= len(vs.Values) {
 					continue
 				}
+
 				bl, ok := vs.Values[i].(*ast.BasicLit)
+
 				if !ok || bl.Kind != token.STRING {
 					continue
 				}
@@ -110,6 +115,7 @@ func parseEvents(path string) ([]constGroup, error) {
 func cleanComment(s string) string {
 	s = strings.TrimSpace(s)
 	s = strings.TrimSuffix(s, ".")
+
 	return s
 }
 
@@ -126,6 +132,7 @@ func generateTypeScript(groups []constGroup) string {
 		if g.Comment != "" {
 			b.WriteString("    // " + g.Comment + "\n")
 		}
+
 		for _, c := range g.Consts {
 			b.WriteString(fmt.Sprintf("    %s: %q,\n", c.Name, c.Value))
 		}
@@ -146,20 +153,26 @@ func generateTypeScript(groups []constGroup) string {
 // then renames it into place for atomic replacement.
 func writeAtomic(path, data string) error {
 	dir := filepath.Dir(path)
+
 	tmp, err := os.CreateTemp(dir, ".genevents-*.tmp")
 	if err != nil {
 		return err
 	}
+
 	tmpName := tmp.Name()
 
 	if _, err := tmp.WriteString(data); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+
 		return err
 	}
+
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmpName)
+		_ = os.Remove(tmpName)
+
 		return err
 	}
+
 	return os.Rename(tmpName, path)
 }

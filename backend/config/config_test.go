@@ -72,7 +72,10 @@ func TestConfig_LoadSave_Roundtrip(t *testing.T) {
 	}
 
 	if loaded.Theme.BackgroundShade != theme.BackgroundLight {
-		t.Errorf("Theme.BackgroundShade = %q, want %q", loaded.Theme.BackgroundShade, theme.BackgroundLight)
+		t.Errorf(
+			"Theme.BackgroundShade = %q, want %q",
+			loaded.Theme.BackgroundShade, theme.BackgroundLight,
+		)
 	}
 
 	// Verify tracklist.
@@ -86,13 +89,19 @@ func TestConfig_LoadSave_Roundtrip(t *testing.T) {
 	}
 	for i, want := range wantColumns {
 		if loaded.TrackList.Columns[i].ID != want {
-			t.Errorf("TrackList.Columns[%d].ID = %q, want %q", i, loaded.TrackList.Columns[i].ID, want)
+			t.Errorf(
+				"TrackList.Columns[%d].ID = %q, want %q",
+				i, loaded.TrackList.Columns[i].ID, want,
+			)
 		}
 	}
 
 	// Verify favorites.
 	if loaded.Favorites.IconStyle != favorites.IconStar {
-		t.Errorf("Favorites.IconStyle = %q, want %q", loaded.Favorites.IconStyle, favorites.IconStar)
+		t.Errorf(
+			"Favorites.IconStyle = %q, want %q",
+			loaded.Favorites.IconStyle, favorites.IconStar,
+		)
 	}
 
 	if loaded.Favorites.PinDefault != false {
@@ -105,7 +114,10 @@ func TestConfig_LoadSave_Roundtrip(t *testing.T) {
 	}
 
 	if loaded.Library.ScanConcurrency != library.ScanConcurrencySSD {
-		t.Errorf("Library.ScanConcurrency = %q, want %q", loaded.Library.ScanConcurrency, library.ScanConcurrencySSD)
+		t.Errorf(
+			"Library.ScanConcurrency = %q, want %q",
+			loaded.Library.ScanConcurrency, library.ScanConcurrencySSD,
+		)
 	}
 
 	// Verify window.
@@ -206,9 +218,6 @@ func TestConfig_ApplyDefaults_NilSubConfigs(t *testing.T) {
 	if c.Favorites == nil {
 		t.Error("Favorites should not be nil after applyDefaults")
 	}
-
-	// Library is intentionally left nil by applyDefaults when it
-	// starts as nil (no library dir configured yet).
 }
 
 // containsSubstring is a test helper for checking error messages.

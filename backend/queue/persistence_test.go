@@ -35,7 +35,10 @@ func TestSaveState_RestoreState_Roundtrip(t *testing.T) {
 	// Each track's FilePath, Title, Artist.
 	for i := range s1.Tracks {
 		if s2.Tracks[i].FilePath != s1.Tracks[i].FilePath {
-			t.Errorf("track[%d] FilePath: got %q, want %q", i, s2.Tracks[i].FilePath, s1.Tracks[i].FilePath)
+			t.Errorf(
+				"track[%d] FilePath: got %q, want %q",
+				i, s2.Tracks[i].FilePath, s1.Tracks[i].FilePath,
+			)
 		}
 
 		if s2.Tracks[i].Title != s1.Tracks[i].Title {
@@ -43,7 +46,10 @@ func TestSaveState_RestoreState_Roundtrip(t *testing.T) {
 		}
 
 		if s2.Tracks[i].Artist != s1.Tracks[i].Artist {
-			t.Errorf("track[%d] Artist: got %q, want %q", i, s2.Tracks[i].Artist, s1.Tracks[i].Artist)
+			t.Errorf(
+				"track[%d] Artist: got %q, want %q",
+				i, s2.Tracks[i].Artist, s1.Tracks[i].Artist,
+			)
 		}
 	}
 
@@ -71,7 +77,10 @@ func TestSaveState_RestoreState_Roundtrip(t *testing.T) {
 	} else {
 		for i := range q.shuffleOrder {
 			if q2.shuffleOrder[i] != q.shuffleOrder[i] {
-				t.Errorf("shuffleOrder[%d]: got %d, want %d", i, q2.shuffleOrder[i], q.shuffleOrder[i])
+				t.Errorf(
+					"shuffleOrder[%d]: got %d, want %d",
+					i, q2.shuffleOrder[i], q.shuffleOrder[i],
+				)
 			}
 		}
 	}
