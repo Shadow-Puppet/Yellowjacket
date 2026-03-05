@@ -259,13 +259,18 @@ func (q *Queries) GetReleaseGroup(ctx context.Context, id int64) (ReleaseGroup, 
 	return i, err
 }
 
-const getReleaseGroupByName = `-- name: GetReleaseGroupByName :one
+const getReleaseGroupByNameAndArtist = `-- name: GetReleaseGroupByNameAndArtist :one
 SELECT id, name, cover_art_id, album_artist_credit_id, year, total_tracks, total_discs FROM release_groups
-WHERE name = ? LIMIT 1
+WHERE name = ? AND album_artist_credit_id = ? LIMIT 1
 `
 
-func (q *Queries) GetReleaseGroupByName(ctx context.Context, name string) (ReleaseGroup, error) {
-	row := q.db.QueryRowContext(ctx, getReleaseGroupByName, name)
+type GetReleaseGroupByNameAndArtistParams struct {
+	Name                string
+	AlbumArtistCreditID sql.NullInt64
+}
+
+func (q *Queries) GetReleaseGroupByNameAndArtist(ctx context.Context, arg GetReleaseGroupByNameAndArtistParams) (ReleaseGroup, error) {
+	row := q.db.QueryRowContext(ctx, getReleaseGroupByNameAndArtist, arg.Name, arg.AlbumArtistCreditID)
 	var i ReleaseGroup
 	err := row.Scan(
 		&i.ID,
@@ -314,7 +319,7 @@ func (q *Queries) UpdateReleaseGroupCoverArt(ctx context.Context, arg UpdateRele
 const upsertReleaseGroup = `-- name: UpsertReleaseGroup :one
 INSERT INTO release_groups (name, album_artist_credit_id, year)
 VALUES (?, ?, ?)
-ON CONFLICT(name) DO UPDATE SET
+ON CONFLICT(name, album_artist_credit_id) DO UPDATE SET
   album_artist_credit_id = COALESCE(excluded.album_artist_credit_id, release_groups.album_artist_credit_id),
   year = COALESCE(excluded.year, release_groups.year)
 RETURNING id, name, cover_art_id, album_artist_credit_id, year, total_tracks, total_discs

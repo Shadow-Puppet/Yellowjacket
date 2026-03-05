@@ -12,14 +12,14 @@ RETURNING *;
 SELECT * FROM release_groups 
 WHERE id = ? LIMIT 1;
 
--- name: GetReleaseGroupByName :one
+-- name: GetReleaseGroupByNameAndArtist :one
 SELECT * FROM release_groups
-WHERE name = ? LIMIT 1;
+WHERE name = ? AND album_artist_credit_id = ? LIMIT 1;
 
 -- name: UpsertReleaseGroup :one
 INSERT INTO release_groups (name, album_artist_credit_id, year)
 VALUES (?, ?, ?)
-ON CONFLICT(name) DO UPDATE SET
+ON CONFLICT(name, album_artist_credit_id) DO UPDATE SET
   album_artist_credit_id = COALESCE(excluded.album_artist_credit_id, release_groups.album_artist_credit_id),
   year = COALESCE(excluded.year, release_groups.year)
 RETURNING *;
