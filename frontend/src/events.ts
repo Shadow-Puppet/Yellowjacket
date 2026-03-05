@@ -30,6 +30,7 @@ export const Events = {
 
     // Library events
     LibraryScanStarted: "LibraryScanStarted",
+    LibraryScanProgress: "LibraryScanProgress",
     LibraryScanComplete: "LibraryScanComplete",
 } as const;
 

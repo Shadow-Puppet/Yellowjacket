@@ -33,6 +33,15 @@ import './config-section';
 
 const NS_PER_MS = 1_000_000;
 
+interface ScanProgress {
+    phase: 'counting' | 'scanning' | 'orphans' | 'thumbnails';
+    total: number;
+    processed: number;
+    added: number;
+    skipped: number;
+    updated: number;
+}
+
 interface ScanMetrics {
     total: number;
     loadExisting: number;
@@ -200,6 +209,7 @@ export class ConfigPage extends LitElement {
     @state() private selectedDirectory = '';
     @state() private scanning = false;
     @state() private statusMessage = '';
+    @state() private scanProgress: ScanProgress | null = null;
     @state() private metrics: ScanMetrics | null = null;
     @state() private copied = false;
     @state() private errorsCopied = false;
@@ -207,6 +217,7 @@ export class ConfigPage extends LitElement {
     @state() private concurrencyMode = 'auto';
 
     private cancelScanStarted?: () => void;
+    private cancelScanProgress?: () => void;
     private cancelScanComplete?: () => void;
 
     static override styles = css`
@@ -312,6 +323,46 @@ export class ConfigPage extends LitElement {
 
         .status-bar.active {
             color: var(--yj-accent, #ffd43b);
+        }
+
+        /* Progress bar */
+        .progress-info {
+            display: flex;
+            align-items: baseline;
+            gap: 0.5em;
+            margin-bottom: 0.5em;
+        }
+
+        .progress-label {
+            font-weight: 500;
+        }
+
+        .progress-detail {
+            color: var(--yj-text-tertiary, #868e96);
+            font-size: 0.95em;
+        }
+
+        .progress-percent {
+            margin-left: auto;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .progress-phase {
+            font-weight: 500;
+        }
+
+        .progress-track {
+            height: 6px;
+            background: var(--yj-bg-base, #1a1b1e);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: var(--yj-accent, #ffd43b);
+            border-radius: 3px;
+            transition: width 300ms ease;
         }
 
         /* Error block */
@@ -568,6 +619,10 @@ export class ConfigPage extends LitElement {
             Events.LibraryScanStarted,
             this.handleScanStarted,
         );
+        this.cancelScanProgress = EventsOn(
+            Events.LibraryScanProgress,
+            this.handleScanProgress,
+        );
         this.cancelScanComplete = EventsOn(
             Events.LibraryScanComplete,
             this.handleScanComplete,
@@ -577,6 +632,7 @@ export class ConfigPage extends LitElement {
     override disconnectedCallback(): void {
         super.disconnectedCallback();
         this.cancelScanStarted?.();
+        this.cancelScanProgress?.();
         this.cancelScanComplete?.();
     }
 
@@ -604,17 +660,27 @@ export class ConfigPage extends LitElement {
 
     private handleScanStarted = (): void => {
         this.scanning = true;
-        this.statusMessage = 'Scanning...';
+        this.statusMessage = '';
+        this.scanProgress = null;
         this.metrics = null;
         this.copied = false;
         this.scanErrors = '';
         this.errorsCopied = false;
     };
 
+    private handleScanProgress = (
+        progress?: ScanProgress,
+    ): void => {
+        if (progress) {
+            this.scanProgress = progress;
+        }
+    };
+
     private handleScanComplete = (
         metrics?: ScanMetrics,
     ): void => {
         this.scanning = false;
+        this.scanProgress = null;
         this.statusMessage = 'Scan complete.';
 
         if (metrics) {
@@ -1282,7 +1348,9 @@ export class ConfigPage extends LitElement {
                 <div
                     class="status-bar ${this.scanning ? 'active' : ''}"
                 >
-                    ${this.statusMessage || 'Ready.'}
+                    ${this.scanProgress
+                        ? this.renderScanProgress()
+                        : this.statusMessage || 'Ready.'}
                 </div>
 
                 ${this.scanErrors
@@ -1327,6 +1395,80 @@ export class ConfigPage extends LitElement {
                     class="metric-value ${highlight ? 'highlight' : ''}"
                     >${value}</span
                 >
+            </div>
+        `;
+    }
+
+    private renderScanProgress() {
+        const p = this.scanProgress;
+
+        if (!p) return nothing;
+
+        if (p.phase === 'counting') {
+            return html`
+                <div class="progress-phase">
+                    Counting files\u2026
+                </div>
+            `;
+        }
+
+        const percent =
+            p.total > 0
+                ? Math.min(
+                      100,
+                      Math.round(
+                          (p.processed / p.total) * 100,
+                      ),
+                  )
+                : 0;
+
+        const phaseLabel: Record<string, string> = {
+            scanning: 'Scanning',
+            orphans: 'Cleaning up',
+            thumbnails: 'Generating thumbnails',
+        };
+
+        const label = phaseLabel[p.phase] ?? 'Scanning';
+
+        // Build detail string: "1,247 / 2,013 files (891 new, 23 updated, 356 skipped)"
+        const parts: string[] = [];
+
+        if (p.added > 0)
+            parts.push(`${p.added.toLocaleString()} new`);
+        if (p.updated > 0)
+            parts.push(
+                `${p.updated.toLocaleString()} updated`,
+            );
+        if (p.skipped > 0)
+            parts.push(
+                `${p.skipped.toLocaleString()} skipped`,
+            );
+
+        const detail =
+            p.phase === 'scanning' && p.total > 0
+                ? html`<span class="progress-detail">
+                      ${p.processed.toLocaleString()} /
+                      ${p.total.toLocaleString()} files${parts.length
+                          ? ` (${parts.join(', ')})`
+                          : ''}
+                  </span>`
+                : nothing;
+
+        return html`
+            <div class="progress-info">
+                <span class="progress-label">
+                    ${label}\u2026
+                </span>
+                ${detail}
+                <span class="progress-percent">
+                    ${percent}%
+                </span>
+            </div>
+            <div class="progress-track">
+                <div
+                    class="progress-fill"
+                    style="width: ${percent}%"
+                ></div>
             </div>
         `;
     }

@@ -54,6 +54,17 @@ type ScanMetrics struct {
 	Warnings []ScanWarning `json:"warnings"`
 }
 
+// ScanProgress is the payload emitted periodically during a scan to
+// report live progress to the frontend.
+type ScanProgress struct {
+	Phase     string `json:"phase"`     // "counting", "scanning", "orphans", "thumbnails"
+	Total     int64  `json:"total"`     // total audio files from pre-walk count
+	Processed int64  `json:"processed"` // added + skipped + updated so far
+	Added     int64  `json:"added"`
+	Skipped   int64  `json:"skipped"`
+	Updated   int64  `json:"updated"`
+}
+
 // ScanWarning represents a non-fatal issue encountered during scanning.
 type ScanWarning struct {
 	FilePath string `json:"filePath"`

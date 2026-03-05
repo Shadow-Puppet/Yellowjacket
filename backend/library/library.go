@@ -193,6 +193,20 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 
 	runtime.EventsEmit(l.ctx, events.LibraryScanStarted)
 
+	basePath := string(l.conf.DirectoryPath)
+
+	// --- Pre-walk: count audio files for progress reporting ---
+	runtime.EventsEmit(l.ctx, events.LibraryScanProgress,
+		ScanProgress{Phase: "counting"},
+	)
+
+	totalFiles := countAudioFiles(basePath)
+
+	l.logger.Debug(
+		"pre-walk file count complete",
+		"total", totalFiles,
+	)
+
 	// --- Phase 1: load existing files from DB ---
 	loadStart := time.Now()
 
@@ -215,8 +229,6 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 		"count", len(existingFiles),
 		"library-directory", l.conf.DirectoryPath,
 	)
-
-	basePath := string(l.conf.DirectoryPath)
 	workChan := make(chan scanWork, 100)
 	resultChan := make(chan importResult, 100)
 
@@ -359,6 +371,41 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 		}()
 	}
 
+	// --- Progress ticker ---
+	// Periodically emits scan progress to the frontend.  Stopped
+	// when the main scan phases (walk + extraction + DB writes)
+	// are complete, before orphan cleanup begins.
+	stopProgress := make(chan struct{})
+
+	go func() {
+		ticker := time.NewTicker(progressInterval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				a := added.Load()
+				s := skipped.Load()
+				u := updated.Load()
+
+				runtime.EventsEmit(
+					l.ctx,
+					events.LibraryScanProgress,
+					ScanProgress{
+						Phase:     "scanning",
+						Total:     totalFiles,
+						Processed: a + s + u,
+						Added:     a,
+						Skipped:   s,
+						Updated:   u,
+					},
+				)
+			case <-stopProgress:
+				return
+			}
+		}
+	}()
+
 	// --- Phase 4: DB writer goroutine ---
 	var dbWg sync.WaitGroup
 
@@ -460,10 +507,34 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 	close(resultChan)
 	dbWg.Wait()
 
+	// Stop the progress ticker — main scan phases are done.
+	close(stopProgress)
+
+	// Emit a final "scanning" progress so the bar reaches 100%.
+	a := added.Load()
+	s := skipped.Load()
+	u := updated.Load()
+
+	runtime.EventsEmit(l.ctx, events.LibraryScanProgress,
+		ScanProgress{
+			Phase:     "scanning",
+			Total:     totalFiles,
+			Processed: a + s + u,
+			Added:     a,
+			Skipped:   s,
+			Updated:   u,
+		},
+	)
+
 	// Close thumbnail channel and wait for all thumbnail workers
 	// to finish.  The DB writer has stopped sending work at this
 	// point so it is safe to close.
 	thumbStart := time.Now()
+
+	runtime.EventsEmit(l.ctx, events.LibraryScanProgress,
+		ScanProgress{Phase: "thumbnails", Total: totalFiles,
+			Processed: a + s + u, Added: a, Skipped: s, Updated: u},
+	)
 
 	close(thumbChan)
 	thumbWg.Wait()
@@ -471,6 +542,11 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 	metrics.ThumbnailWallClock = time.Since(thumbStart)
 
 	// --- Phase 5: orphan cleanup ---
+	runtime.EventsEmit(l.ctx, events.LibraryScanProgress,
+		ScanProgress{Phase: "orphans", Total: totalFiles,
+			Processed: a + s + u, Added: a, Skipped: s, Updated: u},
+	)
+
 	orphanStart := time.Now()
 
 	var removed atomic.Int64
@@ -555,6 +631,35 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 	)
 
 	return metrics, scanErr
+}
+
+// progressInterval controls how often scan progress events are
+// emitted to the frontend.
+const progressInterval = 300 * time.Millisecond
+
+// countAudioFiles performs a fast walk of the library directory,
+// counting only files with supported audio extensions.  No per-file
+// I/O is performed — this reads only directory entries.
+func countAudioFiles(basePath string) int64 {
+	var count int64
+
+	_ = fs.WalkDir(
+		os.DirFS(basePath), ".",
+		func(_ string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+
+			ext := filepath.Ext(d.Name())
+			if _, ok := metadata.GetSupportedFileType(ext); ok {
+				count++
+			}
+
+			return nil
+		},
+	)
+
+	return count
 }
 
 // hddWorkerCount is the maximum number of concurrent extraction
