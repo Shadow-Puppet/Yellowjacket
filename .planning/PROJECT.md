@@ -1,8 +1,8 @@
-# YellowJacket — Consolidation Milestone
+# YellowJacket
 
 ## What This Is
 
-YellowJacket is a cross-platform desktop music player built with Go (Wails v2) and TypeScript (Lit Web Components). It plays local music files (MP3, FLAC, OGG, WAV), manages a music library via SQLite, and provides queue management, playlists, cover art, and MPRIS media controls on Linux. This milestone focuses on strengthening the existing foundation — correctness, performance, code quality, UX polish, and test coverage — before adding new features.
+YellowJacket is a cross-platform desktop music player built with Go (Wails v2) and TypeScript (Lit Web Components). It plays local music files (MP3, FLAC, OGG, WAV), manages a music library via SQLite, and provides queue management, playlists, cover art, and MPRIS media controls on Linux. The v1.0 Consolidation milestone strengthened the foundation — all known concurrency races are fixed, error handling is honest, SQL patterns are consolidated, performance bottlenecks are resolved, the frontend follows a consistent design language, and 84 unit tests provide a safety net for future work.
 
 ## Core Value
 
@@ -11,8 +11,6 @@ The music player works reliably and feels solid. Every interaction is correct, r
 ## Requirements
 
 ### Validated
-
-<!-- Existing capabilities confirmed working in the codebase. -->
 
 - ✓ Audio playback (play, pause, stop, seek, volume) for MP3, FLAC, OGG, WAV — existing
 - ✓ Library scanning with concurrent metadata extraction pipeline — existing
@@ -32,54 +30,45 @@ The music player works reliably and feels solid. Every interaction is correct, r
 - ✓ TOML-based user configuration with live reload — existing
 - ✓ Browse by albums, artists, genres with detail views — existing
 - ✓ Virtual scrolling for large lists — existing
+- ✓ Concurrency race-free SetContext across Queue, Library, Playlist, Player — v1.0
+- ✓ Error handling: startupErr moved to struct, config 0o644, MPRIS errors logged, scan warnings separated — v1.0
+- ✓ FTS5 JOIN pattern consolidated into track_metadata VIEW — v1.0
+- ✓ Event name codegen (Go→TypeScript) with pre-commit hook enforcement — v1.0
+- ✓ Queue batch lookups use sqlc.slice(), all hand-crafted SQL documented with SAFETY comments — v1.0
+- ✓ Incremental queue persistence (O(1) add/remove) and SetQueue Phase 2 dedup — v1.0
+- ✓ Library store deferred loading for instant app shell — v1.0
+- ✓ SQLite performance PRAGMAs (synchronous, cache_size, mmap_size) — v1.0
+- ✓ Frontend repeat() with stable keys, queueMicrotask coalescing, classMap directives — v1.0
+- ✓ Design token system and visual consistency across all 15 components — v1.0
+- ✓ 84 unit tests: queue (29), config/player (10+), FTS5 search (15), library scan (13), entity cache (13+) — v1.0
 
 ### Active
 
-<!-- Current scope: consolidation and quality improvements. -->
-
-- [ ] Fix concurrency races in Queue, Library, and Playlist SetContext patterns
-- [ ] Fix error handling gaps (swallowed errors in lifecycle callbacks, silent artist credit failures)
-- [ ] Eliminate duplicated FTS5 JOIN query patterns across search functions
-- [ ] Migrate raw SQL in queue persistence and search to sqlc-generated or type-safe queries
-- [ ] Optimize library store to avoid eager full-library fetch on startup
-- [ ] Optimize queue persistence to use incremental updates instead of full rewrites
-- [ ] Fix SetQueue Phase 2 to skip already-resolved tracks from Phase 1
-- [ ] Improve frontend rendering performance for large libraries
-- [ ] Polish UI interactions — responsiveness, visual consistency, transitions
-- [ ] Add unit tests for queue operations (SetQueue, navigation, shuffle, repeat, persistence)
-- [ ] Add unit tests for library scan logic (metadata processing, entity cache, orphan cleanup)
-- [ ] Add unit tests for database layer (FTS5 queries, migrations)
-- [ ] Add unit tests for config (load/save roundtrip, validation, defaults)
-- [ ] Extract testable pure logic from player (volume math, state serialization)
-- [ ] Fix config file permissions (0o666 → 0o644)
-- [ ] Address package-level startupErr variable (move to struct field)
-- [ ] Add event name parity validation between Go and TypeScript
+(No active requirements — next milestone not yet scoped. Run `/gsd-new-milestone` to define.)
 
 ### Out of Scope
-
-<!-- Explicit boundaries for this milestone. -->
 
 - Tag writing (track metadata editing) — feature work, not consolidation
 - Scan cancellation — feature work, deferred to future milestone
 - Cross-platform media controls (macOS/Windows) — feature work
 - Database health checking / reconnection — low priority, desktop app context
-- New features of any kind — this milestone is purely about improving what exists
 - File decomposition for its own sake — only extract when it enables reuse or fixes problems
+- ORM or query builder — would fight existing sqlc architecture
+- Connection pooling for SQLite — meaningless with SetMaxOpenConns(1)
 
 ## Context
 
-YellowJacket is a personal project built by a single developer. The core music player functionality is complete and working. The developer uses the app daily and notices quality-of-life issues that accumulate. Before adding new features (which are planned but not yet scoped), the goal is to reach a confidence level where the foundation can be trusted.
-
-**Codebase state (as of 2026-02-26):**
+**Current state (v1.0 shipped 2026-03-05):**
 - Go 1.25, Wails v2.10.2, Lit 3.2.1, SQLite via modernc.org/sqlite
+- ~22,450 Go LOC + ~28,600 TypeScript LOC + ~5,200 Go test LOC
 - ~15 backend packages, ~20 frontend components
 - Strict linting (golangci-lint v2) and TypeScript strict mode
-- No unit tests for queue, library, database, config packages
-- Player tests require hardware (skipped in CI)
-- No frontend tests
-- Several known concurrency races (documented but not fixed)
-- Performance bottlenecks identified in library loading and queue persistence
-- Large frontend components (1400-2600 lines) with mixed concerns
+- 84 unit tests covering queue, config, player, database, library packages
+- All concurrency races fixed, app runs clean under `-race`
+- SQL consolidated: track_metadata VIEW, sqlc.slice(), SAFETY comments
+- Frontend: design token system, virtual scrolling with stable keys, debounced store notifications
+- Player tests still require hardware (skipped in CI)
+- No frontend unit tests (deferred to v2)
 
 **Codebase analysis available in:**
 - `.planning/codebase/ARCHITECTURE.md`
@@ -101,10 +90,15 @@ YellowJacket is a personal project built by a single developer. The core music p
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Consolidation before features | Technical debt compounds — fixing it now is cheaper than fixing it later under more code | — Pending |
-| Tests support refactoring, not standalone goal | Testing is a means to safe refactoring, not a coverage target | — Pending |
-| No cosmetic file splitting | Large files are only a problem if they cause real issues; extract only for reuse or correctness | — Pending |
-| All improvement areas equal priority | Correctness, performance, code quality, UX, and testing are interdependent | — Pending |
+| Consolidation before features | Technical debt compounds — fixing it now is cheaper than fixing it later under more code | ✓ Good — solid foundation established |
+| Tests support refactoring, not standalone goal | Testing is a means to safe refactoring, not a coverage target | ✓ Good — 84 tests enabled safe SQL and perf refactoring |
+| No cosmetic file splitting | Large files are only a problem if they cause real issues; extract only for reuse or correctness | ✓ Good — avoided unnecessary churn |
+| All improvement areas equal priority | Correctness, performance, code quality, UX, and testing are interdependent | ✓ Good — balanced approach worked well |
+| Fix races → tests → refactoring order | Can't run `-race`-clean tests with active data races; can't safely refactor without tests | ✓ Good — each phase built on the last |
+| SQLite VIEW for JOIN dedup | track_metadata VIEW consolidates 5-table JOIN; migration keeps inline for upgrade | ✓ Good — 60 lines eliminated, tests unchanged |
+| AST-based event codegen | Deterministic declaration-order output, no regex fragility | ✓ Good — found LibraryConfigChanged gap automatically |
+| queueMicrotask over setTimeout | Synchronous microtask batching is more predictable than macrotask scheduling | ✓ Good — coalesces 8+ notifications per scan |
+| Design tokens via :host scope | Component-level token scope matches Lit's shadow DOM encapsulation | ✓ Good — consistent visual language achieved |
 
 ---
-*Last updated: 2026-02-27 after initialization*
+*Last updated: 2026-03-05 after v1.0 milestone*
