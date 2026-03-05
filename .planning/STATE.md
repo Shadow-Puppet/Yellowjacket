@@ -56,17 +56,18 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 | 006 | Remove list icon, add favorites icon | 2026-03-01 | 3c19766 |
 | 007 | Pin default playlist to top | 2026-03-01 | e6378e1 |
 | 008 | Duplicate tracks dialog | 2026-03-01 | 917a79a |
+| 009 | Fix queue panel scroll bar not following mouse | 2026-03-05 | ebde5e5 |
 
 ## Session Continuity
 
 ### Last Session
 
 **Date:** 2026-03-05
-**What happened:** Completed v1.0 milestone — archived roadmap, requirements, and phase directories to milestones/. Updated PROJECT.md, ROADMAP.md, RETROSPECTIVE.md. Tagged v1.0.
-**Where we stopped:** Milestone v1.0 shipped.
-**Next action:** `/gsd-new-milestone` to define next milestone
+**What happened:** Quick task 9 — fixed queue panel scrollbar not following mouse on large queues by setting fixed height on track items.
+**Where we stopped:** Completed quick-9 plan. Needs human verification of scrollbar behavior.
+**Next action:** Verify scrollbar tracks mouse 1:1 on 20k+ queue, then `/gsd-new-milestone`
 
 ---
 *State initialized: 2026-02-27*
-Last activity: 2026-03-05 - v1.0 Consolidation milestone shipped
+Last activity: 2026-03-05 - Quick task 9: fix queue panel scroll bar
 *Last updated: 2026-03-05*
