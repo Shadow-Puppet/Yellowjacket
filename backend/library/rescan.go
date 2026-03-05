@@ -160,19 +160,18 @@ func (l *Library) clearLibraryTables() error {
 		)
 	}
 
-	// Clear FTS5 search index.
-	// SAFETY: FTS5 virtual table, see search.go:ClearSearchIndex. No parameters; unconditional delete.
-	if _, err := tx.ExecContext(
-		l.ctx, `DELETE FROM search_index`,
-	); err != nil {
-		return fmt.Errorf(
-			"could not clear search index: %w", err,
-		)
-	}
-
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf(
 			"could not commit library clear transaction: %w", err,
+		)
+	}
+
+	// Clear FTS5 search index AFTER the transaction.
+	// ClearSearchIndex drops and recreates the contentless FTS5
+	// virtual table, which cannot run inside a transaction.
+	if err := l.db.ClearSearchIndex(); err != nil {
+		return fmt.Errorf(
+			"could not clear search index: %w", err,
 		)
 	}
 

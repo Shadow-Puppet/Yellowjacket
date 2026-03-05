@@ -742,14 +742,21 @@ func TestClearSearchIndex(t *testing.T) {
 		t.Fatal("SearchFTS before clear: got 0 results")
 	}
 
-	// ClearSearchIndex uses DELETE on a contentless FTS5 table
-	// (content=''), which SQLite does not support. This documents
-	// the limitation — the error is expected. RebuildSearchIndex
-	// only succeeds when the index is empty (e.g., after drop+recreate
-	// or on a fresh database before any inserts).
+	// ClearSearchIndex drops and recreates the contentless FTS5
+	// table, which is the only way to clear a content='' table.
 	err = db.ClearSearchIndex()
-	if err == nil {
-		t.Log("ClearSearchIndex succeeded (unexpected for contentless FTS5 with data)")
+	if err != nil {
+		t.Fatalf("ClearSearchIndex: %v", err)
+	}
+
+	// Verify the index is empty after clear.
+	results, err = db.SearchFTS("queen", 10)
+	if err != nil {
+		t.Fatalf("SearchFTS after clear: %v", err)
+	}
+
+	if len(results) != 0 {
+		t.Fatalf("SearchFTS after clear: got %d results, want 0", len(results))
 	}
 }
 

@@ -860,7 +860,12 @@ func (l *Library) updateAudioFileMetadata(
 		)
 	}
 
-	// Index in FTS5 search_index (delete old entry, insert new).
+	// Re-index in FTS5 search_index.
+	// Contentless FTS5 (content='') does not support DELETE, so we
+	// cannot remove the old entry.  Inserting a new row with the
+	// same rowid is accepted by FTS5 — the old entry becomes stale
+	// but harmless (search JOINs against track_metadata filter it).
+	// The index is fully rebuilt during FullRescan.
 	tags := result.tags
 	if tags == nil {
 		tags = &metadata.TrackMetadata{}
@@ -874,21 +879,6 @@ func (l *Library) updateAudioFileMetadata(
 	}
 
 	album := tags.Album
-
-	// SAFETY: FTS5 virtual table, see search.go:DeleteSearchIndex. Rowid parameterized.
-	if _, err := tx.ExecContext(
-		l.ctx,
-		`DELETE FROM search_index WHERE rowid = ?`,
-		result.existingFileID,
-	); err != nil {
-		l.logger.Warn(
-			"could not remove old FTS entry",
-			"id", result.existingFileID,
-			"err", err,
-		)
-
-		metrics.addWarning(result.absolutePath, "commit", err)
-	}
 
 	// SAFETY: FTS5 virtual table, see search.go:InsertSearchIndex. All values parameterized.
 	if _, err := tx.ExecContext(
