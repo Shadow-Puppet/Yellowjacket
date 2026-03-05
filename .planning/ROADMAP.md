@@ -124,7 +124,12 @@ Plans:
   2. Store notifications during rapid updates (e.g., library scan) are debounced via `queueMicrotask()` to prevent layout thrashing
   3. Visual inconsistencies (spacing, colors, typography, icon sizing) are audited and follow a consistent pattern across all components
   4. Scrolling, view switching, and search filtering in a 10k+ track library are smooth with no visible jank or dropped frames
-**Plans:** TBD
+**Plans:** 4 plans
+Plans:
+- [ ] 08-01-PLAN.md — Store debouncing (queueMicrotask), search debounce, design token definitions
+- [ ] 08-02-PLAN.md — Virtualizer repeat() directive migration (all 5 components)
+- [ ] 08-03-PLAN.md — Track-list/queue-panel render optimization (classMap, search highlight short-circuit)
+- [ ] 08-04-PLAN.md — Visual consistency audit & token application across all components
 
 ## Progress
 
@@ -137,7 +142,7 @@ Plans:
 | 5. Database & Library Tests | 2/2 | Complete | 2026-03-04 |
 | 6. SQL Consolidation & Code Quality | 2/3 | In Progress | — |
 | 7. Backend Performance | 0/2 | Not started | — |
-| 8. Frontend Performance & UX | 0/? | Not started | — |
+| 8. Frontend Performance & UX | 0/4 | Not started | — |
 
 ---
 *Roadmap created: 2026-02-27*
