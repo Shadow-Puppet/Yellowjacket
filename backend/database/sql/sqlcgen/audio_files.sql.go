@@ -8,6 +8,7 @@ package sqlcgen
 import (
 	"context"
 	"database/sql"
+	"strings"
 )
 
 const countAudioFiles = `-- name: CountAudioFiles :one
@@ -464,6 +465,7 @@ func (q *Queries) GetRandomAudioFilePath(ctx context.Context) (string, error) {
 const getTrackMetadataByPath = `-- name: GetTrackMetadataByPath :one
 SELECT 
     af.file_path,
+    af.length_milliseconds,
     COALESCE(r.name, '') AS title,
     COALESCE(ac.text, '') AS artist,
     COALESCE(rg.name, '') AS album,
@@ -479,11 +481,12 @@ LIMIT 1
 `
 
 type GetTrackMetadataByPathRow struct {
-	FilePath     string
-	Title        string
-	Artist       string
-	Album        string
-	CoverArtPath string
+	FilePath           string
+	LengthMilliseconds int64
+	Title              string
+	Artist             string
+	Album              string
+	CoverArtPath       string
 }
 
 func (q *Queries) GetTrackMetadataByPath(ctx context.Context, filePath string) (GetTrackMetadataByPathRow, error) {
@@ -491,12 +494,64 @@ func (q *Queries) GetTrackMetadataByPath(ctx context.Context, filePath string) (
 	var i GetTrackMetadataByPathRow
 	err := row.Scan(
 		&i.FilePath,
+		&i.LengthMilliseconds,
 		&i.Title,
 		&i.Artist,
 		&i.Album,
 		&i.CoverArtPath,
 	)
 	return i, err
+}
+
+const lookupTrackMetaByPaths = `-- name: LookupTrackMetaByPaths :many
+SELECT id, file_path, title, artist_name
+FROM track_metadata
+WHERE file_path IN (/*SLICE:paths*/?)
+`
+
+type LookupTrackMetaByPathsRow struct {
+	ID         int64
+	FilePath   string
+	Title      string
+	ArtistName string
+}
+
+func (q *Queries) LookupTrackMetaByPaths(ctx context.Context, paths []string) ([]LookupTrackMetaByPathsRow, error) {
+	query := lookupTrackMetaByPaths
+	var queryParams []interface{}
+	if len(paths) > 0 {
+		for _, v := range paths {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:paths*/?", strings.Repeat(",?", len(paths))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:paths*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LookupTrackMetaByPathsRow
+	for rows.Next() {
+		var i LookupTrackMetaByPathsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.FilePath,
+			&i.Title,
+			&i.ArtistName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const searchAudioFilesByBasename = `-- name: SearchAudioFilesByBasename :many

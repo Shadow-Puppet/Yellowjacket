@@ -44,7 +44,9 @@ func (q *Queue) lookupTrackMetaBatch(
 	return result
 }
 
-// lookupChunk executes a single batch query for a chunk of file paths.
+// lookupChunk executes a single batch query for a chunk of file paths
+// using the sqlc-generated LookupTrackMetaByPaths query against the
+// track_metadata VIEW.
 func (q *Queue) lookupChunk(
 	paths []string,
 	result map[string]trackMeta,
@@ -53,63 +55,20 @@ func (q *Queue) lookupChunk(
 		return
 	}
 
-	placeholders := make([]string, len(paths))
-	args := make([]any, len(paths))
-
-	for i, fp := range paths {
-		placeholders[i] = "?"
-		args[i] = fp
-	}
-
-	query := fmt.Sprintf(
-		`SELECT af.id, af.file_path,
-			COALESCE(r.name, '') AS title,
-			COALESCE(ac.text, '') AS artist
-		FROM audio_files af
-		LEFT JOIN recordings r ON af.recording_id = r.id
-		LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
-		WHERE af.file_path IN (%s)`,
-		strings.Join(placeholders, ","),
-	)
-
-	rows, err := q.db.QueryContext(query, args...)
+	rows, err := q.db.Queries.LookupTrackMetaByPaths(q.db.Ctx, paths)
 	if err != nil {
 		q.logger.Error("Batch metadata lookup failed", "err", err)
 
 		return
 	}
 
-	defer func() {
-		if closeErr := rows.Close(); closeErr != nil {
-			q.logger.Error(
-				"Failed to close rows",
-				"err", closeErr,
-			)
+	for _, row := range rows {
+		result[row.FilePath] = trackMeta{
+			AudioFileID: row.ID,
+			FilePath:    row.FilePath,
+			Title:       row.Title,
+			Artist:      row.ArtistName,
 		}
-	}()
-
-	for rows.Next() {
-		var m trackMeta
-
-		if scanErr := rows.Scan(
-			&m.AudioFileID, &m.FilePath, &m.Title, &m.Artist,
-		); scanErr != nil {
-			q.logger.Error(
-				"Failed to scan batch metadata row",
-				"err", scanErr,
-			)
-
-			continue
-		}
-
-		result[m.FilePath] = m
-	}
-
-	if rowsErr := rows.Err(); rowsErr != nil {
-		q.logger.Error(
-			"Error iterating batch metadata rows",
-			"err", rowsErr,
-		)
 	}
 }
 

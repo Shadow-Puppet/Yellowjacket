@@ -58,6 +58,7 @@ JOIN artist_credit ac ON r.artist_credit_id = ac.id;
 -- name: GetTrackMetadataByPath :one
 SELECT 
     af.file_path,
+    af.length_milliseconds,
     COALESCE(r.name, '') AS title,
     COALESCE(ac.text, '') AS artist,
     COALESCE(rg.name, '') AS album,
@@ -120,6 +121,11 @@ LEFT JOIN (
 LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
 WHERE af.basename = ?
 LIMIT ?;
+
+-- name: LookupTrackMetaByPaths :many
+SELECT id, file_path, title, artist_name
+FROM track_metadata
+WHERE file_path IN (sqlc.slice('paths'));
 
 -- name: DeleteAllAudioFiles :exec
 DELETE FROM audio_files;
