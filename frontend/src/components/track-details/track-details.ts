@@ -16,6 +16,7 @@ import { formatMilliseconds } from '@utils/time';
 
 import '@awesome.me/webawesome/dist/components/dialog/dialog.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
+import { designTokens } from '../../styles/tokens.css';
 
 /** Cover art URLs resolved from the album cache. */
 export interface CoverArtUrls {
@@ -80,7 +81,7 @@ export class TrackDetails extends LitElement {
     // STYLES
     // =================================================================
 
-    static override styles = css`
+    static override styles = [designTokens, css`
         wa-dialog {
             --width: 640px;
         }
@@ -93,7 +94,7 @@ export class TrackDetails extends LitElement {
         }
 
         wa-dialog::part(title) {
-            font-size: 16px;
+            font-size: 16px; /* dialog header — outside type scale */
             font-weight: 600;
             color: var(--yj-text-primary, #fff);
             padding: 16px 20px 8px;
@@ -145,7 +146,7 @@ export class TrackDetails extends LitElement {
 
         .cover-placeholder wa-icon {
             color: var(--yj-text-tertiary, #888);
-            font-size: 64px;
+            font-size: 64px; /* large decorative placeholder */
         }
 
         .main-meta {
@@ -158,24 +159,24 @@ export class TrackDetails extends LitElement {
         }
 
         .main-meta .title {
-            font-size: 22px;
+            font-size: 22px; /* dialog title — outside type scale */
             font-weight: 600;
             color: var(--yj-text-primary, #fff);
             word-break: break-word;
         }
 
         .main-meta .artist {
-            font-size: 15px;
+            font-size: var(--yj-text-lg);
             color: var(--yj-text-secondary, #b3b3b3);
         }
 
         .main-meta .album {
-            font-size: 14px;
+            font-size: var(--yj-text-lg);
             color: var(--yj-text-tertiary, #888);
         }
 
         .main-meta .duration {
-            font-size: 13px;
+            font-size: var(--yj-text-md);
             color: var(--yj-text-tertiary, #888);
             font-variant-numeric: tabular-nums;
         }
@@ -187,7 +188,7 @@ export class TrackDetails extends LitElement {
         }
 
         .section-label {
-            font-size: 11px;
+            font-size: var(--yj-text-xs);
             font-weight: 600;
             color: var(--yj-text-tertiary, #888);
             text-transform: uppercase;
@@ -203,7 +204,7 @@ export class TrackDetails extends LitElement {
         }
 
         .meta-label {
-            font-size: 12px;
+            font-size: var(--yj-text-sm);
             font-weight: 500;
             color: var(--yj-text-tertiary, #888);
             text-transform: uppercase;
@@ -211,7 +212,7 @@ export class TrackDetails extends LitElement {
         }
 
         .meta-value {
-            font-size: 13px;
+            font-size: var(--yj-text-md);
             color: var(--yj-text-secondary, #b3b3b3);
             word-break: break-word;
         }
@@ -230,7 +231,7 @@ export class TrackDetails extends LitElement {
                 var(--yj-border-subtle, #333);
             border-radius: 4px;
             color: var(--yj-text-primary, #fff);
-            font-size: 13px;
+            font-size: var(--yj-text-md);
             padding: 4px 8px;
             font-family: inherit;
         }
@@ -258,16 +259,16 @@ export class TrackDetails extends LitElement {
         }
 
         .main-input.title-input {
-            font-size: 20px;
+            font-size: 20px; /* edit mode title — outside type scale */
             font-weight: 600;
         }
 
         .main-input.artist-input {
-            font-size: 14px;
+            font-size: var(--yj-text-lg);
         }
 
         .main-input.album-input {
-            font-size: 13px;
+            font-size: var(--yj-text-md);
         }
 
         /* Action bar */
@@ -287,7 +288,7 @@ export class TrackDetails extends LitElement {
                 #343a40
             );
             color: var(--yj-text-primary, #fff);
-            font-size: 13px;
+            font-size: var(--yj-text-md);
             cursor: pointer;
             font-family: inherit;
             transition: background-color 0.15s ease;
@@ -313,7 +314,7 @@ export class TrackDetails extends LitElement {
                 #ffe066
             );
         }
-    `;
+    `];
 
     // =================================================================
     // RENDER

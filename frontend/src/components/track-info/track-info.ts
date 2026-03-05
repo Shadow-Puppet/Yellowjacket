@@ -2,6 +2,7 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
+import { designTokens } from '../../styles/tokens.css';
 
 import { formatMilliseconds } from '@utils/time';
 
@@ -38,7 +39,7 @@ export class TrackInfo extends LitElement {
     @property() duration?: string;
     @property() filePath?: string;
 
-    static override styles = css`
+    static override styles = [designTokens, css`
         :host {
             display: flex;
             align-items: center;
@@ -71,7 +72,7 @@ export class TrackInfo extends LitElement {
 
         .cover-placeholder wa-icon {
             color: var(--yj-text-tertiary, #666);
-            font-size: 18px;
+            font-size: var(--yj-icon-md);
         }
 
         .text {
@@ -83,7 +84,7 @@ export class TrackInfo extends LitElement {
         }
 
         .title {
-            font-size: 13px;
+            font-size: var(--yj-text-md);
             font-weight: 500;
             color: var(--yj-text-primary, #fff);
             white-space: nowrap;
@@ -92,7 +93,7 @@ export class TrackInfo extends LitElement {
         }
 
         .secondary {
-            font-size: 11px;
+            font-size: var(--yj-text-xs);
             color: var(--yj-text-tertiary, #888);
             white-space: nowrap;
             overflow: hidden;
@@ -100,12 +101,12 @@ export class TrackInfo extends LitElement {
         }
 
         .duration {
-            font-size: 12px;
+            font-size: var(--yj-text-sm);
             color: var(--yj-text-tertiary, #888);
             flex-shrink: 0;
             font-variant-numeric: tabular-nums;
         }
-    `;
+    `];
 
     override render() {
         const showCover =

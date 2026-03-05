@@ -10,6 +10,7 @@ import { EventsOn } from '@runtime/runtime';
 import { Events } from '../../events';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@components/track-list/track-list.js';
+import { designTokens } from '../../styles/tokens.css';
 
 @customElement('genre-details')
 export class GenreDetails extends LitElement {
@@ -25,7 +26,7 @@ export class GenreDetails extends LitElement {
     private scanCompleteCleanup: (() => void) | null =
         null;
 
-    static override styles = css`
+    static override styles = [designTokens, css`
         :host {
             display: flex;
             flex-direction: column;
@@ -76,7 +77,7 @@ export class GenreDetails extends LitElement {
         }
 
         .back-button wa-icon {
-            font-size: 16px;
+            font-size: 16px; /* back button — outside type scale */
         }
 
         .genre-avatar {
@@ -100,7 +101,7 @@ export class GenreDetails extends LitElement {
                 --yj-text-secondary,
                 #b3b3b3
             );
-            font-size: 32px;
+            font-size: 32px; /* large decorative initial */
             font-weight: 600;
             text-transform: uppercase;
             user-select: none;
@@ -115,7 +116,7 @@ export class GenreDetails extends LitElement {
         }
 
         .genre-title {
-            font-size: 24px;
+            font-size: 24px; /* page title — outside type scale */
             font-weight: 700;
             color: var(--yj-text-primary, #fff);
             white-space: nowrap;
@@ -126,7 +127,7 @@ export class GenreDetails extends LitElement {
         }
 
         .track-count {
-            font-size: 13px;
+            font-size: var(--yj-text-md);
             color: var(
                 --yj-text-secondary,
                 #b3b3b3
@@ -146,7 +147,7 @@ export class GenreDetails extends LitElement {
             width: 100%;
             height: 100%;
         }
-    `;
+    `];
 
     override connectedCallback() {
         super.connectedCallback();

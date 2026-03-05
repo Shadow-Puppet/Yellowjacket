@@ -8,6 +8,7 @@ import { library } from '@go/models';
 import { LibraryController } from '@store/controllers/library-controller';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@components/cover-grid/cover-grid.js';
+import { designTokens } from '../../styles/tokens.css';
 
 @customElement('artist-details')
 export class ArtistDetails extends LitElement {
@@ -28,7 +29,7 @@ export class ArtistDetails extends LitElement {
     /** Tracks the store's cached array reference to detect refreshes. */
     private lastAlbumsRef: library.Album[] | null = null;
 
-    static override styles = css`
+    static override styles = [designTokens, css`
         :host {
             display: flex;
             flex-direction: column;
@@ -79,7 +80,7 @@ export class ArtistDetails extends LitElement {
         }
 
         .back-button wa-icon {
-            font-size: 16px;
+            font-size: 16px; /* back button — outside type scale */
         }
 
         .artist-avatar {
@@ -103,7 +104,7 @@ export class ArtistDetails extends LitElement {
                 --yj-text-secondary,
                 #b3b3b3
             );
-            font-size: 32px;
+            font-size: 32px; /* large decorative initial */
             font-weight: 600;
             text-transform: uppercase;
             user-select: none;
@@ -118,7 +119,7 @@ export class ArtistDetails extends LitElement {
         }
 
         .artist-title {
-            font-size: 24px;
+            font-size: 24px; /* page title — outside type scale */
             font-weight: 700;
             color: var(--yj-text-primary, #fff);
             white-space: nowrap;
@@ -129,7 +130,7 @@ export class ArtistDetails extends LitElement {
         }
 
         .album-count {
-            font-size: 13px;
+            font-size: var(--yj-text-md);
             color: var(
                 --yj-text-secondary,
                 #b3b3b3
@@ -150,7 +151,7 @@ export class ArtistDetails extends LitElement {
             height: 100%;
         }
 
-    `;
+    `];
 
     override connectedCallback() {
         super.connectedCallback();

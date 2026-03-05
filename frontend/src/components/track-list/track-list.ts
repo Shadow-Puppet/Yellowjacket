@@ -1,5 +1,6 @@
 import { library } from '@go/models';
 import { LitElement, html, css, nothing } from 'lit';
+import { designTokens } from '../../styles/tokens.css';
 import {
     customElement,
     property,
@@ -713,7 +714,7 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
         this.requestUpdate();
     };
 
-    static override styles = [contextMenuStyles, css`
+    static override styles = [designTokens, contextMenuStyles, css`
     :host {
       display: flex;
       flex-direction: column;
@@ -735,7 +736,7 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
       align-items: center;
       gap: 6px;
       padding: 4px 8px;
-      font-size: 12px;
+      font-size: var(--yj-text-sm);
       color: var(--yj-text-secondary, #b3b3b3);
       border-bottom: 1px solid
         var(--yj-border-subtle, #333);
@@ -779,7 +780,7 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
       border-radius: 4px;
       background: transparent;
       color: var(--yj-text-secondary, #b3b3b3);
-      font-size: 12px;
+      font-size: var(--yj-text-sm);
       padding: 0;
     }
 
@@ -809,7 +810,7 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
         --yj-text-primary,
         #fff
       );
-      font-size: 13px;
+      font-size: var(--yj-text-md);
     }
 
     .sort-dropdown-panel wa-dropdown-item:hover {
@@ -860,7 +861,7 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
     }
 
     .sort-arrow {
-      font-size: 10px;
+      font-size: 10px; /* intentionally sub-token: tiny sort indicator */
       flex-shrink: 0;
       color: var(--yj-accent, #ffd43b);
     }
@@ -906,7 +907,7 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
       pointer-events: none;
       background: var(--yj-bg-overlay, #495057);
       color: var(--yj-text-secondary, #b3b3b3);
-      font-size: 12px;
+      font-size: var(--yj-text-sm);
       padding: 4px 14px;
       border-radius: 12px;
       border: 1px solid var(--yj-border-subtle, #555);
@@ -917,7 +918,7 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
     .no-results {
       padding: 24px 16px;
       color: var(--yj-text-secondary, #b3b3b3);
-      font-size: 13px;
+      font-size: var(--yj-text-md);
     }
 
     lit-virtualizer {
@@ -930,7 +931,7 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
     .track-row {
       display: grid;
       grid-template-columns: var(--grid-cols);
-      font-size: 12px;
+      font-size: var(--yj-text-sm);
       padding: 8px;
       border-bottom: 1px solid var(--yj-border-subtle, #333);
       align-items: center;
@@ -993,7 +994,7 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
       flex-shrink: 0;
       cursor: pointer;
       color: var(--yj-text-tertiary, #666);
-      font-size: 12px;
+      font-size: var(--yj-text-sm);
       transition: color 0.1s ease;
     }
 

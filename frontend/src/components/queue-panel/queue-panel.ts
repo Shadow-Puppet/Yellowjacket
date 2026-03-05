@@ -1,4 +1,5 @@
 import { LitElement, html, css, nothing, unsafeCSS } from 'lit';
+import { designTokens } from '../../styles/tokens.css';
 import {
     customElement,
     property,
@@ -171,7 +172,7 @@ export class QueuePanel
         return this.playlistSubmenuPopup;
     }
 
-    static override styles = [contextMenuStyles, css`
+    static override styles = [designTokens, contextMenuStyles, css`
         :host {
             flex-shrink: 0;
             width: 0;
@@ -225,7 +226,7 @@ export class QueuePanel
 
         .header h3 {
             margin: 0;
-            font-size: 14px;
+            font-size: var(--yj-text-lg);
             font-weight: 600;
         }
 
@@ -301,7 +302,7 @@ export class QueuePanel
         }
 
         .track-position {
-            font-size: 12px;
+            font-size: var(--yj-text-sm);
             color: var(--yj-text-tertiary, #888);
             min-width: 20px;
             text-align: right;
@@ -320,7 +321,7 @@ export class QueuePanel
         }
 
         .track-title {
-            font-size: 13px;
+            font-size: var(--yj-text-md);
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -331,7 +332,7 @@ export class QueuePanel
         }
 
         .track-artist {
-            font-size: 11px;
+            font-size: var(--yj-text-xs);
             color: var(--yj-text-secondary, #b3b3b3);
             white-space: nowrap;
             overflow: hidden;
@@ -402,7 +403,7 @@ export class QueuePanel
         }
 
         .empty-state wa-icon {
-            font-size: 32px;
+            font-size: 32px; /* intentionally large decorative icon */
         }
 
         .empty-state p {

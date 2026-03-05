@@ -1,5 +1,6 @@
 import { css } from 'lit';
 import { contextMenuStyles } from '@utils/context-menu-controller.js';
+import { designTokens } from '../../styles/tokens.css';
 
 /** Component-specific styles for the cover grid. */
 const gridStyles = css`
@@ -19,7 +20,7 @@ const gridStyles = css`
         align-items: center;
         gap: 6px;
         padding: 4px 8px;
-        font-size: 12px;
+        font-size: var(--yj-text-sm);
         color: var(
             --yj-text-secondary,
             #b3b3b3
@@ -68,7 +69,7 @@ const gridStyles = css`
             --yj-text-secondary,
             #b3b3b3
         );
-        font-size: 12px;
+        font-size: var(--yj-text-sm);
         padding: 0;
     }
 
@@ -100,7 +101,7 @@ const gridStyles = css`
             --yj-text-primary,
             #fff
         );
-        font-size: 13px;
+        font-size: var(--yj-text-md);
     }
 
     .sort-dropdown-panel
@@ -251,7 +252,7 @@ const gridStyles = css`
         pointer-events: none;
         background: var(--yj-bg-overlay, #495057);
         color: var(--yj-text-secondary, #b3b3b3);
-        font-size: 12px;
+        font-size: var(--yj-text-sm);
         padding: 4px 14px;
         border-radius: 12px;
         border: 1px solid
@@ -277,6 +278,7 @@ const gridStyles = css`
 
 /** Combined styles for the cover grid component. */
 export const coverGridStyles = [
+    designTokens,
     gridStyles,
     contextMenuStyles,
 ];

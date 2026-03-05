@@ -755,12 +755,12 @@ export class CoverGrid
             `${placeholderFont}px`,
         );
 
-        // Text sizing tiers.
+        // Text sizing tiers mapped to design tokens.
         if (w < 160) {
             this.classList.add('size-small');
             this.style.setProperty(
                 '--album-name-font',
-                '11px',
+                'var(--yj-text-xs)',
             );
             this.style.setProperty(
                 '--artist-name-font',
@@ -770,21 +770,21 @@ export class CoverGrid
             this.classList.remove('size-small');
             this.style.setProperty(
                 '--album-name-font',
-                '16px',
+                'var(--yj-text-lg)',
             );
             this.style.setProperty(
                 '--artist-name-font',
-                '13px',
+                'var(--yj-text-md)',
             );
         } else {
             this.classList.remove('size-small');
             this.style.setProperty(
                 '--album-name-font',
-                '14px',
+                'var(--yj-text-lg)',
             );
             this.style.setProperty(
                 '--artist-name-font',
-                '12px',
+                'var(--yj-text-sm)',
             );
         }
     }
