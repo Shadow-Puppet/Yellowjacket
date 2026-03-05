@@ -16,6 +16,7 @@ import '@lit-labs/virtualizer';
 import type { LitVirtualizer } from '@lit-labs/virtualizer';
 import { flow } from '@lit-labs/virtualizer/layouts/flow.js';
 import { repeat } from 'lit/directives/repeat.js';
+import { classMap } from 'lit/directives/class-map.js';
 import type { QueueTrack } from '@store/queue-store';
 import { SelectionController } from '@utils/selection-controller';
 import type { SelectionHost } from '@utils/selection-controller';
@@ -1150,19 +1151,15 @@ export class QueuePanel
             dropIdx === trackCount &&
             index === trackCount - 1;
 
-        const classes = [
-            'track-item',
-            active ? 'active' : '',
-            selected ? 'selected' : '',
-            showBefore ? 'drop-before' : '',
-            showAfter ? 'drop-after' : '',
-        ]
-            .filter(Boolean)
-            .join(' ');
-
         return html`
             <div
-                class=${classes}
+                class=${classMap({
+                    'track-item': true,
+                    active,
+                    selected,
+                    'drop-before': showBefore,
+                    'drop-after': showAfter,
+                })}
                 data-index=${index}
                 draggable="true"
                 @click=${(e: MouseEvent) =>

@@ -1572,25 +1572,26 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
             variant=${favVariant}
           ></wa-icon>
         </div>
-        ${cols.map((col) => {
-                const val = col.accessor(track);
-                const centered = val === '\u2014';
-                const term =
-                    this.searchCtrl.term;
-                const display = term
-                    ? highlightText(val, term)
-                    : val;
+        ${(() => {
+                const term = this.searchCtrl.term;
+                return cols.map((col) => {
+                    const val = col.accessor(track);
+                    const centered = val === '\u2014';
+                    const display = term
+                        ? highlightText(val, term)
+                        : val;
 
-                return html`
-                    <div class=${classMap({
-                        cell: true,
-                        'cell-center': centered,
-                        'cell-right': !centered && col.align === 'right',
-                    })}>
-                        ${display}
-                    </div>
-                `;
-            })}
+                    return html`
+                        <div class=${classMap({
+                            cell: true,
+                            'cell-center': centered,
+                            'cell-right': !centered && col.align === 'right',
+                        })}>
+                            ${display}
+                        </div>
+                    `;
+                });
+            })()}
       </div>
     `;
     };
