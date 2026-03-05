@@ -57,17 +57,18 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 | 007 | Pin default playlist to top | 2026-03-01 | e6378e1 |
 | 008 | Duplicate tracks dialog | 2026-03-01 | 917a79a |
 | 009 | Fix queue panel scroll bar not following mouse | 2026-03-05 | ebde5e5 |
+| 010 | Fix duplicate album merging bug (composite unique constraint) | 2026-03-05 | d43ba7b |
 
 ## Session Continuity
 
 ### Last Session
 
 **Date:** 2026-03-05
-**What happened:** Quick task 9 — fixed queue panel scrollbar not following mouse on large queues by setting fixed height on track items.
-**Where we stopped:** Completed quick-9 plan. Needs human verification of scrollbar behavior.
-**Next action:** Verify scrollbar tracks mouse 1:1 on 20k+ queue, then `/gsd-new-milestone`
+**What happened:** Quick task 10 — fixed album merging bug where albums with same name but different artists were merged into a single entry. Added composite unique constraint on (name, album_artist_credit_id), migration 5, and fixed entity cache.
+**Where we stopped:** Completed quick-10 plan. User should trigger full library rescan to split previously merged albums.
+**Next action:** Rescan library to split merged albums, then `/gsd-new-milestone`
 
 ---
 *State initialized: 2026-02-27*
-Last activity: 2026-03-05 - Quick task 9: fix queue panel scroll bar
+Last activity: 2026-03-05 - Quick task 10: fix duplicate album merging bug
 *Last updated: 2026-03-05*
