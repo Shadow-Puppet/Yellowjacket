@@ -63,17 +63,18 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 | 012 | Add favorite icon to album dropdown track rows | 2026-03-05 | 12a0bbc |
 | 013 | Fix all golangci-lint issues (zero issues) | 2026-03-05 | e1a95e6 |
 | 014 | Fix queue/player desync after track load failure | 2026-03-05 | 2820de2 |
+| 015 | Fix audio glitches with BufferedStreamer read-ahead | 2026-03-05 | 8a0b16a |
 
 ## Session Continuity
 
 ### Last Session
 
 **Date:** 2026-03-05
-**What happened:** Quick task 14 — fixed queue/player desync after track load failure. Added roll-back-on-failure semantics to all queue index advancement paths (Next, Previous, OnPlaybackFinished, PlayIndex, playFromStart). `playCurrentTrack` and `playOrLoadCurrentTrack` now return bool.
-**Where we stopped:** Quick task 14 complete. All 28 queue tests pass, go vet clean.
+**What happened:** Quick task 15 — fixed audio glitches and skips by adding a BufferedStreamer with goroutine read-ahead between decoder/resampler and speaker output. Ring buffer provides 2s of audio runway. Speaker buffer increased from 100ms to 200ms. 5 unit tests, all 12 player tests pass.
+**Where we stopped:** Quick task 15 complete. All player tests pass, go build/vet clean.
 **Next action:** Continue with next task
 
 ---
 *State initialized: 2026-02-27*
-Last activity: 2026-03-05 - Fix queue/player desync after track load failure
+Last activity: 2026-03-05 - Fix audio glitches with BufferedStreamer read-ahead
 *Last updated: 2026-03-05*
