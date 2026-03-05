@@ -110,7 +110,10 @@ Plans:
   1. Adding or removing a single track from the queue uses incremental INSERT/DELETE via existing sqlc queries, not a full table rewrite
   2. SetQueue Phase 2 (`resolveRemainingTracks`) skips file paths that were already resolved in Phase 1, eliminating redundant database lookups
   3. Library store constructor no longer calls `eagerFetch()` — data loads lazily on first access via the existing `getTracks()`/`getAlbums()`/etc. getters, and the app starts without blocking on a full library load
-**Plans:** TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 07-01-PLAN.md — Incremental queue persistence + SetQueue Phase 2 dedup
+- [ ] 07-02-PLAN.md — Library store deferred eager loading
 
 ### Phase 8: Frontend Performance & UX
 **Goal:** The app feels smooth and visually consistent — large libraries render without jank, and the UI follows a coherent visual language
@@ -133,7 +136,7 @@ Plans:
 | 4. Queue, Config & Player Tests | 2/2 | Complete | 2026-03-04 |
 | 5. Database & Library Tests | 2/2 | Complete | 2026-03-04 |
 | 6. SQL Consolidation & Code Quality | 2/3 | In Progress | — |
-| 7. Backend Performance | 0/? | Not started | — |
+| 7. Backend Performance | 0/2 | Not started | — |
 | 8. Frontend Performance & UX | 0/? | Not started | — |
 
 ---
