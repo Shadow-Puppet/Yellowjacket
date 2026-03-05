@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: completed
-last_updated: "2026-03-04T21:49:00.903Z"
+status: in-progress
+last_updated: "2026-03-05T00:23:19Z"
 progress:
-  total_phases: 5
+  total_phases: 8
   completed_phases: 5
-  total_plans: 8
-  completed_plans: 8
+  total_plans: 11
+  completed_plans: 10
 ---
 
 # YellowJacket — Consolidation Milestone State
@@ -16,17 +16,17 @@ progress:
 ## Project Reference
 
 **Core value:** The music player works reliably and feels solid — every interaction is correct, responsive, and trustworthy.
-**Current focus:** Phase 5 complete — 15 database search tests + 13 library scan tests all passing with -race.
+**Current focus:** Phase 6 in progress — track_metadata VIEW + event codegen complete, 1 plan remaining (SAFETY comments).
 **Milestone:** Consolidation (correctness, performance, code quality, UX polish, test coverage)
 
 ## Current Position
 
-**Phase:** 05-database-library-tests (complete)
-**Plan:** 2/2 (complete)
-**Status:** Milestone complete
+**Phase:** 06-sql-consolidation-code-quality (in progress)
+**Plan:** 2/3 (06-01, 06-02 complete)
+**Status:** In progress
 
 ```
-Phase Progress: [#####...] 5/8 phases complete
+Phase Progress: [######..] 6/8 phases — Phase 6: 2/3 plans complete
 ```
 
 ## Performance Metrics
@@ -48,6 +48,8 @@ Phase Progress: [#####...] 5/8 phases complete
 | 05-02 duration | 4 min |
 | Phase 05 P01 | 9 min | 2 tasks | 1 files |
 | Phase 05 P02 | 4 min | 2 tasks | 1 files |
+| Phase 06 P01 | 2 min | 2 tasks | 4 files |
+| Phase 06 P02 | 2 min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -72,6 +74,8 @@ Phase Progress: [#####...] 5/8 phases complete
 | Volume roundtrip ±1 tolerance | ToUserVolume uses int truncation not rounding, causing up to 1 unit drift | Phase 4 |
 | Direct Library construction in tests | Bypasses Config.Validate os.Stat; entity cache functions only need ctx + db | Phase 5 |
 | Contentless FTS5 DELETE limitation | DeleteSearchIndex errors on content='' tables; production logs warning, stale entries are harmless | Phase 5 |
+| SQLite VIEW for JOIN dedup | track_metadata VIEW consolidates 5-table JOIN; migration2 keeps inline JOIN for upgrade path | Phase 6 |
+| AST-based event codegen | Iterate f.Decls directly for deterministic declaration-order output; atomic writes via temp+rename | Phase 6 |
 
 ### TODOs
 
@@ -82,7 +86,7 @@ Phase Progress: [#####...] 5/8 phases complete
 - [x] Execute Phase 2 Plan 02 (complete)
 - [x] Plan Phase 3 (complete)
 - [x] Execute Phase 3 Plan 01 (complete)
-- [ ] Validate sqlc + SQLite VIEW + FTS5 compatibility during Phase 6 planning (research flag)
+- [x] Validate sqlc + SQLite VIEW + FTS5 compatibility during Phase 6 planning (validated — sqlc generates TrackMetadatum model, all tests pass)
 - [x] Design queue test architecture during Phase 4 planning (complete)
 - [x] Determine library scan test fixture strategy during Phase 5 planning (complete — inline construction, setupTestLibrary helper)
 - [ ] Measure startup time with large library before Phase 7 lazy loading work
@@ -114,21 +118,20 @@ None currently.
 
 ### Last Session
 
-**Date:** 2026-03-04
-**What happened:** Executed Phase 5 Plan 01 — FTS5 search tests (pure helpers, search queries, index ops, migrations)
-**Where we stopped:** Completed 05-01-PLAN.md (all 2 tasks, verification passed). Phase 5 fully complete.
-**Next action:** `/gsd-plan-phase 6` to plan SQL consolidation
+**Date:** 2026-03-05
+**What happened:** Executed Phase 6 Plan 02 — Go→TypeScript event codegen tool with go/ast, fixing LibraryConfigChanged gap
+**Where we stopped:** Completed 06-02-PLAN.md (2 tasks, all verification passed). Phase 6 plan 2/3 done.
+**Next action:** `/gsd-execute-phase 06` to continue with 06-03-PLAN.md
 
 ### Context for Next Session
 
-- Phase 5 complete: TEST-03 (15 database tests) + TEST-06 (13 library tests) requirements delivered
-- 84 tests total: 29 queue + 27 config/player + 15 database search + 13 library scan, all passing with `-race`
-- Contentless FTS5 limitation documented — DELETE fails on content='' tables
-- QueryContext rows must be closed before next ExecContext on single-connection SQLite
-- `codegen-check` lefthook pre-commit hook hangs — use `LEFTHOOK=0` for commits
-- Ready for Phase 6 (SQL consolidation)
+- Event codegen tool at backend/events/cmd/genevents/main.go
+- LibraryConfigChanged gap automatically fixed by codegen
+- `go generate ./...` completes in ~1.8s, codegen-check hook works end-to-end
+- `codegen-check` pre-commit hook no longer hangs — can use LEFTHOOK=1 for commits
+- Phase 6: 2/3 plans complete, SAFETY comments plan remaining
 
 ---
 *State initialized: 2026-02-27*
-Last activity: 2026-03-04 - Completed 05-01: FTS5 search tests (helpers, queries, index ops, migrations)
-*Last updated: 2026-03-04*
+Last activity: 2026-03-05 - Completed 06-02: Go→TypeScript event codegen with go/ast and pre-commit hook
+*Last updated: 2026-03-05*

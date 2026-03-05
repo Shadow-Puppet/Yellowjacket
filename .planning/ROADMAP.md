@@ -57,7 +57,7 @@ Plans:
   4. Tests using `NewTestDB` pass with `-race` flag enabled
 **Plans:** 1 plan
 Plans:
-- [ ] 03-01-PLAN.md — Extract shared applyPRAGMAs, add production PRAGMAs, and create NewTestDB helper
+- [x] 03-01-PLAN.md — Extract shared applyPRAGMAs, add production PRAGMAs, and create NewTestDB helper
 
 ### Phase 4: Queue, Config & Player Tests
 **Goal:** The queue, config, and player packages have comprehensive unit tests that characterize current behavior and serve as a safety net for later refactoring
@@ -70,8 +70,8 @@ Plans:
   4. All tests in this phase pass with `-race` flag enabled
 **Plans:** 2 plans
 Plans:
-- [ ] 04-01-PLAN.md — Queue package unit tests (core operations, navigation, persistence roundtrip)
-- [ ] 04-02-PLAN.md — Config + Player tests (sub-config validators, load/save roundtrip, volume conversion, state mapping)
+- [x] 04-01-PLAN.md — Queue package unit tests (core operations, navigation, persistence roundtrip)
+- [x] 04-02-PLAN.md — Config + Player tests (sub-config validators, load/save roundtrip, volume conversion, state mapping)
 
 ### Phase 5: Database & Library Tests
 **Goal:** Database queries (especially FTS5 search) and library scan logic have unit tests that lock down current behavior before SQL consolidation and performance optimization
@@ -84,8 +84,8 @@ Plans:
   4. All tests in this phase pass with `-race` flag enabled
 **Plans:** 2 plans
 Plans:
-- [ ] 05-01-PLAN.md — FTS5 search tests, pure helper tests, search index operations, migration verification
-- [ ] 05-02-PLAN.md — Entity cache tests, library pure helpers, orphan cleanup tests
+- [x] 05-01-PLAN.md — FTS5 search tests, pure helper tests, search index operations, migration verification
+- [x] 05-02-PLAN.md — Entity cache tests, library pure helpers, orphan cleanup tests
 
 ### Phase 6: SQL Consolidation & Code Quality
 **Goal:** Duplicated SQL patterns are eliminated, event names are provably synchronized between Go and TypeScript, and intentional SQL exceptions are documented
@@ -98,8 +98,8 @@ Plans:
   4. Every hand-crafted SQL statement that intentionally bypasses sqlc has a `// SAFETY:` comment explaining why (batch INSERT, dynamic IN clauses, etc.)
 **Plans:** 3 plans
 Plans:
-- [ ] 06-01-PLAN.md — Create track_metadata VIEW and consolidate search queries
-- [ ] 06-02-PLAN.md — Event codegen tool (Go→TypeScript) and pre-commit hook wiring
+- [x] 06-01-PLAN.md — Create track_metadata VIEW and consolidate search queries
+- [x] 06-02-PLAN.md — Event codegen tool (Go→TypeScript) and pre-commit hook wiring
 - [ ] 06-03-PLAN.md — Migrate lookupChunk to sqlc.slice() and add SAFETY comments to all hand-crafted SQL
 
 ### Phase 7: Backend Performance
@@ -129,13 +129,13 @@ Plans:
 |-------|----------------|--------|-----------|
 | 1. Concurrency Race Fixes | 1/1 | Complete | 2026-02-28 |
 | 2. Backend Correctness | 2/2 | Complete | 2026-03-03 |
-| 3. Test Infrastructure | 0/1 | Planned | — |
-| 4. Queue, Config & Player Tests | 0/2 | Planned | — |
-| 5. Database & Library Tests | 0/2 | Planned | — |
-| 6. SQL Consolidation & Code Quality | 0/3 | Planned | — |
+| 3. Test Infrastructure | 1/1 | Complete | 2026-03-04 |
+| 4. Queue, Config & Player Tests | 2/2 | Complete | 2026-03-04 |
+| 5. Database & Library Tests | 2/2 | Complete | 2026-03-04 |
+| 6. SQL Consolidation & Code Quality | 2/3 | In Progress | — |
 | 7. Backend Performance | 0/? | Not started | — |
 | 8. Frontend Performance & UX | 0/? | Not started | — |
 
 ---
 *Roadmap created: 2026-02-27*
-*Last updated: 2026-03-02*
+*Last updated: 2026-03-05*
