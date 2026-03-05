@@ -32,7 +32,7 @@ Requirements for the consolidation milestone. Each maps to roadmap phases.
 - [x] **PERF-02**: SetQueue Phase 2 (resolveRemainingTracks) skips file paths already resolved in Phase 1, avoiding redundant database lookups
 - [x] **PERF-03**: Library store constructor no longer calls eagerFetch(); data loads lazily on first access via existing getTracks()/getAlbums()/etc. getters
 - [x] **PERF-04**: SQLite connection applies performance PRAGMAs (synchronous=NORMAL, cache_size=-8000, mmap_size=67108864) at database open
-- [ ] **PERF-05**: Frontend track/album lists use Lit repeat() directive with stable keys (filePath/albumId) for efficient DOM reuse, and store notifications are debounced via queueMicrotask() during rapid updates
+- [x] **PERF-05**: Frontend track/album lists use Lit repeat() directive with stable keys (filePath/albumId) for efficient DOM reuse, and store notifications are debounced via queueMicrotask() during rapid updates
 
 ### Testing
 
@@ -45,7 +45,7 @@ Requirements for the consolidation milestone. Each maps to roadmap phases.
 
 ### UX
 
-- [ ] **UX-01**: Visual inconsistencies across components are audited and fixed (spacing, colors, typography, icon sizing follow a consistent pattern)
+- [x] **UX-01**: Visual inconsistencies across components are audited and fixed (spacing, colors, typography, icon sizing follow a consistent pattern)
 - [ ] **UX-02**: Frontend rendering for large libraries (10k+ tracks) is smooth — no jank during scrolling, view switching, or search filtering
 
 ## v2 Requirements
@@ -106,14 +106,14 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PERF-02 | Phase 7: Backend Performance | Complete |
 | PERF-03 | Phase 7: Backend Performance | Complete |
 | PERF-04 | Phase 3: Test Infrastructure | Complete |
-| PERF-05 | Phase 8: Frontend Performance & UX | Pending |
+| PERF-05 | Phase 8: Frontend Performance & UX | Complete |
 | TEST-01 | Phase 3: Test Infrastructure | Complete |
 | TEST-02 | Phase 4: Queue, Config & Player Tests | Complete |
 | TEST-03 | Phase 5: Database & Library Tests | Complete |
 | TEST-04 | Phase 4: Queue, Config & Player Tests | Complete |
 | TEST-05 | Phase 4: Queue, Config & Player Tests | Complete |
 | TEST-06 | Phase 5: Database & Library Tests | Complete |
-| UX-01 | Phase 8: Frontend Performance & UX | Pending |
+| UX-01 | Phase 8: Frontend Performance & UX | Complete |
 | UX-02 | Phase 8: Frontend Performance & UX | Pending |
 
 **Coverage:**

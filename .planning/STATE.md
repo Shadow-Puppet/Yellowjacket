@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: completed
-last_updated: "2026-03-05T02:04:09.789Z"
+status: in-progress
+last_updated: "2026-03-05T04:15:16Z"
 progress:
-  total_phases: 7
+  total_phases: 8
   completed_phases: 7
-  total_plans: 13
-  completed_plans: 13
+  total_plans: 17
+  completed_plans: 14
 ---
 
 # YellowJacket — Consolidation Milestone State
@@ -16,17 +16,17 @@ progress:
 ## Project Reference
 
 **Core value:** The music player works reliably and feels solid — every interaction is correct, responsive, and trustworthy.
-**Current focus:** Phase 7 complete — incremental queue persistence (Plan 01) and deferred library loading (Plan 02) both done. Ready for Phase 8.
+**Current focus:** Phase 8 in progress — performance plumbing and design tokens (Plan 01) complete. Continuing with frontend polish.
 **Milestone:** Consolidation (correctness, performance, code quality, UX polish, test coverage)
 
 ## Current Position
 
-**Phase:** 07-backend-performance (complete)
-**Plan:** 2/2 (all complete)
-**Status:** Milestone complete
+**Phase:** 08-frontend-performance-ux
+**Plan:** 1/4 (Plan 01 complete)
+**Status:** In progress
 
 ```
-Phase Progress: [#######.] 7/8 phases — Phase 7: 2/2 plans complete ✓
+Phase Progress: [########] 8/8 phases — Phase 8: 1/4 plans complete
 ```
 
 ## Performance Metrics
@@ -34,8 +34,8 @@ Phase Progress: [#######.] 7/8 phases — Phase 7: 2/2 plans complete ✓
 | Metric | Value |
 |--------|-------|
 | Phases complete | 7/8 |
-| Plans complete | 2/2 (Phase 7) |
-| Requirements delivered | 18/26 |
+| Plans complete | 1/4 (Phase 8) |
+| Requirements delivered | 20/26 |
 | Tests added | 84 |
 | Bugs fixed | 9 |
 | 01-01 duration | 11 min |
@@ -53,6 +53,7 @@ Phase Progress: [#######.] 7/8 phases — Phase 7: 2/2 plans complete ✓
 | Phase 06 P03 | 6 min | 2 tasks | 7 files |
 | Phase 07 P01 | 5 min | 2 tasks | 2 files |
 | Phase 07 P02 | 1 min | 1 tasks | 1 files |
+| Phase 08 P01 | 1 min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -84,6 +85,9 @@ Phase Progress: [#######.] 7/8 phases — Phase 7: 2/2 plans complete ✓
 | DOMContentLoaded over load event | Fires earlier (after HTML parsed) without waiting for all resources; still defers past module evaluation | Phase 7 |
 | Incremental persistence for single-item mutations | Single-track add/remove use INSERT/DELETE + position shift; bulk ops keep full rewrite | Phase 7 |
 | Hand-crafted SQL for variable-N position shift | sqlc ShiftQueuePositionsUp only shifts by 1; variable-N needs raw UPDATE with SAFETY comment | Phase 7 |
+| queueMicrotask coalescing over setTimeout | Synchronous microtask batching is more predictable and lower latency than macrotask scheduling | Phase 8 |
+| 150ms search debounce with instant clear | Balances responsiveness with computation cost; empty clears are immediate for snappy UX | Phase 8 |
+| :host scoped design tokens | Component-level token scope matches Lit's shadow DOM encapsulation model | Phase 8 |
 
 ### TODOs
 
@@ -127,18 +131,18 @@ None currently.
 ### Last Session
 
 **Date:** 2026-03-05
-**What happened:** Executed Phase 7 Plan 01 — incremental queue persistence helpers and SetQueue Phase 2 dedup
-**Where we stopped:** Completed 07-01-PLAN.md (2 tasks, all verification passed). Phase 7 complete (2/2 plans).
-**Next action:** `/gsd-plan-phase 08` to plan Phase 8 (frontend polish)
+**What happened:** Executed Phase 8 Plan 01 — performance plumbing and design tokens
+**Where we stopped:** Completed 08-01-PLAN.md (2 tasks, all verification passed). Phase 8: 1/4 plans complete.
+**Next action:** Execute Phase 8 Plan 02
 
 ### Context for Next Session
 
-- Phase 7 fully complete: incremental persistence + deferred loading
-- Queue mutations (add/remove/insert) no longer rewrite entire table
-- SetQueue Phase 2 skips already-resolved paths from Phase 1
-- Ready for Phase 8 (frontend polish)
+- Phase 8 Plan 01 complete: queueMicrotask coalescing + search debounce + design tokens
+- Library store now coalesces 8+ notifications into 1 per microtask tick
+- Design tokens in frontend/src/styles/tokens.css.ts ready for component adoption
+- 3 plans remaining in Phase 8
 
 ---
 *State initialized: 2026-02-27*
-Last activity: 2026-03-05 - Completed 07-01: incremental queue persistence + SetQueue Phase 2 dedup
+Last activity: 2026-03-05 - Completed 08-01: queueMicrotask coalescing + search debounce + design tokens
 *Last updated: 2026-03-05*
