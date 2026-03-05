@@ -59,17 +59,18 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 | 009 | Fix queue panel scroll bar not following mouse | 2026-03-05 | ebde5e5 |
 | 010 | Fix duplicate album merging bug (composite unique constraint) | 2026-03-05 | d43ba7b |
 | 010b | Fix contentless FTS5 DELETE error blocking rescan | 2026-03-05 | 8e9a616 |
+| 011 | Fix neovim crash during library scan (configurable log level) | 2026-03-05 | c45bca4 |
 
 ## Session Continuity
 
 ### Last Session
 
 **Date:** 2026-03-05
-**What happened:** Quick task 10b — fixed FTS5 search_index clear failure during FullRescan. The search_index is a contentless FTS5 table (content='') which does not support DELETE. Changed ClearSearchIndex to drop+recreate the virtual table, and made single-row DeleteSearchIndex a no-op (stale entries filtered by JOIN).
-**Where we stopped:** FTS5 fix committed. User should retry full library rescan.
-**Next action:** Retry library rescan, then `/gsd-new-milestone`
+**What happened:** Quick task 11 — fixed neovim display corruption during library scan. Root cause: dev mode hardcoded slog.LevelDebug, flooding stdout with ~14 debug lines per audio file. Added resolveLogLevel() with YJ_LOG_LEVEL env var support, defaulting to Info. Added `make dev-debug` target for opt-in verbose logging.
+**Where we stopped:** Quick task 11 complete. Dev mode now defaults to Info-level logging.
+**Next action:** Test `make dev` with library scan to confirm neovim stability
 
 ---
 *State initialized: 2026-02-27*
-Last activity: 2026-03-05 - Fix contentless FTS5 DELETE error blocking rescan
+Last activity: 2026-03-05 - Fix neovim crash during library scan (configurable log level)
 *Last updated: 2026-03-05*
