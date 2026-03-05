@@ -10,6 +10,187 @@ import (
 	"yellowjacket/backend/profiling"
 )
 
+// persistAddTrack inserts a single track at the end of the queue.
+// No position shifting is needed because this is always an append.
+// The caller must hold q.mu.
+func (q *Queue) persistAddTrack(track Track) {
+	_, err := q.db.Queries.InsertQueueTrack(q.db.Ctx, sqlcgen.InsertQueueTrackParams{
+		AudioFileID: track.AudioFileID,
+		Position:    track.Position,
+	})
+	if err != nil {
+		q.logger.Error("Failed to persist added track", "err", err)
+	}
+}
+
+// persistAddTracks inserts multiple tracks at the end of the queue
+// atomically in a transaction. No position shifting is needed because
+// these are always appends.
+// The caller must hold q.mu.
+func (q *Queue) persistAddTracks(tracks []Track) {
+	if len(tracks) == 0 {
+		return
+	}
+
+	tx, err := q.db.BeginTx()
+	if err != nil {
+		q.logger.Error("Failed to begin transaction", "err", err)
+
+		return
+	}
+
+	committed := false
+
+	defer func() {
+		if !committed {
+			if rbErr := tx.Rollback(); rbErr != nil {
+				q.logger.Error(
+					"Failed to rollback transaction",
+					"err", rbErr,
+				)
+			}
+		}
+	}()
+
+	txQueries := q.db.Queries.WithTx(tx)
+
+	for _, track := range tracks {
+		_, insertErr := txQueries.InsertQueueTrack(q.db.Ctx, sqlcgen.InsertQueueTrackParams{
+			AudioFileID: track.AudioFileID,
+			Position:    track.Position,
+		})
+		if insertErr != nil {
+			q.logger.Error("Failed to insert track", "err", insertErr)
+
+			return
+		}
+	}
+
+	if commitErr := tx.Commit(); commitErr != nil {
+		q.logger.Error("Failed to commit transaction", "err", commitErr)
+
+		return
+	}
+
+	committed = true
+}
+
+// persistInsertTracks inserts multiple tracks at a given position,
+// shifting existing tracks to make room. Uses a transaction for atomicity.
+// The caller must hold q.mu.
+func (q *Queue) persistInsertTracks(tracks []Track, insertPos int) {
+	if len(tracks) == 0 {
+		return
+	}
+
+	tx, err := q.db.BeginTx()
+	if err != nil {
+		q.logger.Error("Failed to begin transaction", "err", err)
+
+		return
+	}
+
+	committed := false
+
+	defer func() {
+		if !committed {
+			if rbErr := tx.Rollback(); rbErr != nil {
+				q.logger.Error(
+					"Failed to rollback transaction",
+					"err", rbErr,
+				)
+			}
+		}
+	}()
+
+	// SAFETY: Multi-row position shift by variable N unsupported by sqlc
+	// (ShiftQueuePositionsUp only shifts by 1). Bind variables match args;
+	// no string interpolation.
+	_, err = tx.ExecContext(
+		q.db.Ctx,
+		"UPDATE queue_tracks SET position = position + ? WHERE position >= ?",
+		len(tracks), insertPos,
+	)
+	if err != nil {
+		q.logger.Error("Failed to shift positions up", "err", err)
+
+		return
+	}
+
+	txQueries := q.db.Queries.WithTx(tx)
+
+	for i, track := range tracks {
+		_, insertErr := txQueries.InsertQueueTrack(q.db.Ctx, sqlcgen.InsertQueueTrackParams{
+			AudioFileID: track.AudioFileID,
+			Position:    int64(insertPos + i),
+		})
+		if insertErr != nil {
+			q.logger.Error("Failed to insert track", "err", insertErr)
+
+			return
+		}
+	}
+
+	if commitErr := tx.Commit(); commitErr != nil {
+		q.logger.Error("Failed to commit transaction", "err", commitErr)
+
+		return
+	}
+
+	committed = true
+}
+
+// persistRemoveTrack deletes a single track at the given position and
+// shifts subsequent positions down to close the gap.
+// The caller must hold q.mu.
+func (q *Queue) persistRemoveTrack(position int) {
+	tx, err := q.db.BeginTx()
+	if err != nil {
+		q.logger.Error("Failed to begin transaction", "err", err)
+
+		return
+	}
+
+	committed := false
+
+	defer func() {
+		if !committed {
+			if rbErr := tx.Rollback(); rbErr != nil {
+				q.logger.Error(
+					"Failed to rollback transaction",
+					"err", rbErr,
+				)
+			}
+		}
+	}()
+
+	txQueries := q.db.Queries.WithTx(tx)
+
+	if removeErr := txQueries.RemoveQueueTrackByPosition(
+		q.db.Ctx, int64(position),
+	); removeErr != nil {
+		q.logger.Error("Failed to remove track by position", "err", removeErr)
+
+		return
+	}
+
+	if shiftErr := txQueries.ShiftQueuePositionsDown(
+		q.db.Ctx, int64(position),
+	); shiftErr != nil {
+		q.logger.Error("Failed to shift positions down", "err", shiftErr)
+
+		return
+	}
+
+	if commitErr := tx.Commit(); commitErr != nil {
+		q.logger.Error("Failed to commit transaction", "err", commitErr)
+
+		return
+	}
+
+	committed = true
+}
+
 // lookupTrackMetaBatch fetches audio file IDs and metadata for a batch of
 // file paths using a single query per chunk (instead of 2 queries per track).
 // Returns a map keyed by file path. This is safe to call without holding q.mu.

@@ -343,7 +343,12 @@ func (q *Queue) AddTrack(filePath string) {
 		q.loadCurrentTrack()
 	}
 
-	q.commitMutation(false)
+	if q.shuffleMode {
+		q.generateShuffleOrder()
+	}
+
+	q.persistAddTrack(track)
+	q.persistState()
 	q.emitTracksModified(
 		"add",
 		[]Track{track},
@@ -388,7 +393,12 @@ func (q *Queue) AddTracks(filePaths []string) {
 		q.loadCurrentTrack()
 	}
 
-	q.commitMutation(false)
+	if q.shuffleMode {
+		q.generateShuffleOrder()
+	}
+
+	q.persistAddTracks(newTracks)
+	q.persistState()
 	q.emitTracksModified(
 		"add",
 		newTracks,
@@ -439,7 +449,14 @@ func (q *Queue) InsertNextTracks(filePaths []string) {
 		q.loadCurrentTrack()
 	}
 
-	q.commitMutation(true)
+	q.reindexPositions()
+
+	if q.shuffleMode {
+		q.generateShuffleOrder()
+	}
+
+	q.persistInsertTracks(newTracks, insertPos)
+	q.persistState()
 	q.emitTracksModified(
 		"insert",
 		newTracks,
@@ -482,7 +499,14 @@ func (q *Queue) InsertNext(filePath string) {
 		q.loadCurrentTrack()
 	}
 
-	q.commitMutation(true)
+	q.reindexPositions()
+
+	if q.shuffleMode {
+		q.generateShuffleOrder()
+	}
+
+	q.persistInsertTracks([]Track{track}, insertPos)
+	q.persistState()
 	q.emitTracksModified(
 		"insert",
 		[]Track{track},
@@ -542,7 +566,14 @@ func (q *Queue) InsertTracksAt(filePaths []string, index int) {
 		q.loadCurrentTrack()
 	}
 
-	q.commitMutation(true)
+	q.reindexPositions()
+
+	if q.shuffleMode {
+		q.generateShuffleOrder()
+	}
+
+	q.persistInsertTracks(newTracks, index)
+	q.persistState()
 	q.emitTracksModified(
 		"insert",
 		newTracks,
@@ -722,7 +753,14 @@ func (q *Queue) RemoveTrack(position int) {
 		q.currentIndex = len(q.tracks) - 1
 	}
 
-	q.commitMutation(true)
+	q.persistRemoveTrack(position)
+	q.reindexPositions()
+
+	if q.shuffleMode {
+		q.generateShuffleOrder()
+	}
+
+	q.persistState()
 	q.emitTracksModified(
 		"remove",
 		nil,
@@ -784,7 +822,14 @@ func (q *Queue) RemoveTracks(positions []int) {
 		}
 	}
 
-	q.commitMutation(true)
+	q.reindexPositions()
+
+	if q.shuffleMode {
+		q.generateShuffleOrder()
+	}
+
+	q.persistTracks()
+	q.persistState()
 	q.emitTracksModified(
 		"remove",
 		nil,
