@@ -46,7 +46,7 @@ Requirements for the consolidation milestone. Each maps to roadmap phases.
 ### UX
 
 - [x] **UX-01**: Visual inconsistencies across components are audited and fixed (spacing, colors, typography, icon sizing follow a consistent pattern)
-- [ ] **UX-02**: Frontend rendering for large libraries (10k+ tracks) is smooth — no jank during scrolling, view switching, or search filtering
+- [x] **UX-02**: Frontend rendering for large libraries (10k+ tracks) is smooth — no jank during scrolling, view switching, or search filtering
 
 ## v2 Requirements
 
@@ -114,7 +114,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TEST-05 | Phase 4: Queue, Config & Player Tests | Complete |
 | TEST-06 | Phase 5: Database & Library Tests | Complete |
 | UX-01 | Phase 8: Frontend Performance & UX | Complete |
-| UX-02 | Phase 8: Frontend Performance & UX | Pending |
+| UX-02 | Phase 8: Frontend Performance & UX | Complete |
 
 **Coverage:**
 - v1 requirements: 26 total

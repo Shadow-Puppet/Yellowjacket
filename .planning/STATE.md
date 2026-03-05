@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: in-progress
-last_updated: "2026-03-05T04:15:16Z"
+last_updated: "2026-03-05T04:17:06Z"
 progress:
   total_phases: 8
   completed_phases: 7
   total_plans: 17
-  completed_plans: 14
+  completed_plans: 15
 ---
 
 # YellowJacket — Consolidation Milestone State
@@ -16,17 +16,17 @@ progress:
 ## Project Reference
 
 **Core value:** The music player works reliably and feels solid — every interaction is correct, responsive, and trustworthy.
-**Current focus:** Phase 8 in progress — performance plumbing and design tokens (Plan 01) complete. Continuing with frontend polish.
+**Current focus:** Phase 8 in progress — Plans 01-02 complete. Virtualizer repeat() migration done. Continuing with frontend polish.
 **Milestone:** Consolidation (correctness, performance, code quality, UX polish, test coverage)
 
 ## Current Position
 
 **Phase:** 08-frontend-performance-ux
-**Plan:** 1/4 (Plan 01 complete)
+**Plan:** 2/4 (Plans 01-02 complete)
 **Status:** In progress
 
 ```
-Phase Progress: [########] 8/8 phases — Phase 8: 1/4 plans complete
+Phase Progress: [########] 8/8 phases — Phase 8: 2/4 plans complete
 ```
 
 ## Performance Metrics
@@ -34,8 +34,8 @@ Phase Progress: [########] 8/8 phases — Phase 8: 1/4 plans complete
 | Metric | Value |
 |--------|-------|
 | Phases complete | 7/8 |
-| Plans complete | 1/4 (Phase 8) |
-| Requirements delivered | 20/26 |
+| Plans complete | 2/4 (Phase 8) |
+| Requirements delivered | 22/26 |
 | Tests added | 84 |
 | Bugs fixed | 9 |
 | 01-01 duration | 11 min |
@@ -54,6 +54,7 @@ Phase Progress: [########] 8/8 phases — Phase 8: 1/4 plans complete
 | Phase 07 P01 | 5 min | 2 tasks | 2 files |
 | Phase 07 P02 | 1 min | 1 tasks | 1 files |
 | Phase 08 P01 | 1 min | 2 tasks | 3 files |
+| Phase 08 P02 | 3 min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -88,6 +89,7 @@ Phase Progress: [########] 8/8 phases — Phase 8: 1/4 plans complete
 | queueMicrotask coalescing over setTimeout | Synchronous microtask batching is more predictable and lower latency than macrotask scheduling | Phase 8 |
 | 150ms search debounce with instant clear | Balances responsiveness with computation cost; empty clears are immediate for snappy UX | Phase 8 |
 | :host scoped design tokens | Component-level token scope matches Lit's shadow DOM encapsulation model | Phase 8 |
+| Inline repeat() keys over gridKeyFunction | Dead method removal; key logic is cleaner inline in repeat() calls | Phase 8 |
 
 ### TODOs
 
@@ -131,18 +133,18 @@ None currently.
 ### Last Session
 
 **Date:** 2026-03-05
-**What happened:** Executed Phase 8 Plan 01 — performance plumbing and design tokens
-**Where we stopped:** Completed 08-01-PLAN.md (2 tasks, all verification passed). Phase 8: 1/4 plans complete.
-**Next action:** Execute Phase 8 Plan 02
+**What happened:** Executed Phase 8 Plan 02 — virtualizer repeat() directive migration
+**Where we stopped:** Completed 08-02-PLAN.md (2 tasks, all verification passed). Phase 8: 2/4 plans complete.
+**Next action:** Execute Phase 8 Plan 03
 
 ### Context for Next Session
 
-- Phase 8 Plan 01 complete: queueMicrotask coalescing + search debounce + design tokens
-- Library store now coalesces 8+ notifications into 1 per microtask tick
-- Design tokens in frontend/src/styles/tokens.css.ts ready for component adoption
-- 3 plans remaining in Phase 8
+- Phase 8 Plans 01-02 complete
+- All 7 lit-virtualizer instances now use repeat() with stable entity keys
+- DOM recycling enabled for scrolling/filtering in large libraries
+- 2 plans remaining in Phase 8
 
 ---
 *State initialized: 2026-02-27*
-Last activity: 2026-03-05 - Completed 08-01: queueMicrotask coalescing + search debounce + design tokens
+Last activity: 2026-03-05 - Completed 08-02: virtualizer repeat() directive migration
 *Last updated: 2026-03-05*
