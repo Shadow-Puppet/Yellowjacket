@@ -1115,12 +1115,13 @@ func (q *Queue) EmitCurrentState() {
 // playOrLoadCurrentTrack loads the current track and optionally starts
 // playback. When autoPlay is true it behaves like playCurrentTrack;
 // when false it only loads the file (leaving the player paused).
-func (q *Queue) playOrLoadCurrentTrack(autoPlay bool) {
+// Returns true if the file was loaded (and optionally played) successfully.
+func (q *Queue) playOrLoadCurrentTrack(autoPlay bool) bool {
 	if autoPlay {
-		q.playCurrentTrack()
-	} else {
-		q.loadCurrentTrack()
+		return q.playCurrentTrack()
 	}
+
+	return q.loadCurrentTrack()
 }
 
 // loadCurrentTrack tells the player to load the current track without
@@ -1166,9 +1167,10 @@ func (q *Queue) loadCurrentTrack() bool {
 }
 
 // playCurrentTrack tells the player to load and play the current track.
-func (q *Queue) playCurrentTrack() {
+// Returns true if the file was loaded and playback started successfully.
+func (q *Queue) playCurrentTrack() bool {
 	if !q.loadCurrentTrack() {
-		return
+		return false
 	}
 
 	err := q.player.Play()
@@ -1178,7 +1180,11 @@ func (q *Queue) playCurrentTrack() {
 			"Failed to play file from queue",
 			"filePath", track.FilePath, "err", err,
 		)
+
+		return false
 	}
+
+	return true
 }
 
 // handleCurrentTrackRemoved handles the case where the currently loaded
