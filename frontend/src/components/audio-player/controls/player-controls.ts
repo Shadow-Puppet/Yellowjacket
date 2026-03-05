@@ -4,6 +4,7 @@ import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import { PlayerController } from '@store/controllers/player-controller';
 import { queueStore } from '@store/queue-store';
 import type { RepeatMode } from '@store/queue-store';
+import { designTokens } from '../../../styles/tokens.css';
 
 @customElement('player-controls')
 export class PlayerControls extends LitElement {
@@ -38,7 +39,7 @@ export class PlayerControls extends LitElement {
     this.unsubscribeQueue?.();
   }
 
-  static override styles = css`
+  static override styles = [designTokens, css`
     #player-control-buttons {
       display: flex;
       justify-content: center;
@@ -77,7 +78,7 @@ export class PlayerControls extends LitElement {
       bottom: 2px;
       right: 2px;
     }
-  `;
+  `];
 
   private handlePlayClick = () => {
     queueStore.play();

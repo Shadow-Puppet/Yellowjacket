@@ -4,6 +4,7 @@ import { ref, createRef } from 'lit/directives/ref.js';
 import WaSlider from '@awesome.me/webawesome/dist/components/slider/slider.js';
 import { formatSeconds } from '@utils/time';
 import { PlayerController } from '@store/controllers/player-controller';
+import { designTokens } from '../../../styles/tokens.css';
 
 const ProgressIntervalMillis = 1000;
 
@@ -17,16 +18,16 @@ export class SeekBar extends LitElement {
   @state()
   private seekValue: number = 0;
 
-  static override styles = css`
+  static override styles = [designTokens, css`
     wa-slider {
       --track-size: 6px;
       flex: 1;
-      margin: 0 1em;
+      margin: 0 16px;
       --wa-tooltip-background-color: var(--yj-bg-elevated, #343a40);
       --wa-tooltip-content-color: var(--yj-text-primary, white);
       --wa-tooltip-border-color: var(--yj-bg-elevated, #343a40);
       --wa-tooltip-border-radius: 4px;
-      --wa-tooltip-font-size: 0.875em;
+      --wa-tooltip-font-size: var(--yj-text-lg);
     }
 
     wa-slider::part(track) {
@@ -46,7 +47,7 @@ export class SeekBar extends LitElement {
       justify-content: space-between;
       align-items: center;
     }
-  `;
+  `];
 
   // ===================================================================
   // DERIVED STATE

@@ -2,6 +2,7 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, query } from 'lit/decorators.js';
 import { SearchController } from '@store/controllers/search-controller';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
+import { designTokens } from '../../styles/tokens.css';
 
 /**
  * Global search bar displayed in the top bar.
@@ -15,7 +16,7 @@ export class SearchBar extends LitElement {
     @query('input')
     private inputEl!: HTMLInputElement;
 
-    static override styles = css`
+    static override styles = [designTokens, css`
         :host {
             display: flex;
             align-items: center;
@@ -46,7 +47,7 @@ export class SearchBar extends LitElement {
 
         .search-icon {
             color: var(--yj-text-tertiary, #888);
-            font-size: 14px;
+            font-size: var(--yj-icon-sm);
             flex-shrink: 0;
         }
 
@@ -56,7 +57,7 @@ export class SearchBar extends LitElement {
             border: none;
             outline: none;
             color: var(--yj-text-primary, #fff);
-            font-size: 13px;
+            font-size: var(--yj-text-md);
             font-family: inherit;
             min-width: 0;
         }
@@ -74,14 +75,14 @@ export class SearchBar extends LitElement {
             color: var(--yj-text-tertiary, #888);
             cursor: pointer;
             padding: 0;
-            font-size: 12px;
+            font-size: var(--yj-text-sm);
             flex-shrink: 0;
         }
 
         .clear-button:hover {
             color: var(--yj-text-primary, #fff);
         }
-    `;
+    `];
 
     override updated() {
         // Toggle the hidden attribute based on whether the

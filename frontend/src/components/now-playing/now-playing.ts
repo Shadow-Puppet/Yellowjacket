@@ -5,6 +5,7 @@ import '@awesome.me/webawesome/dist/components/popup/popup.js';
 import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
 import { PlayerController } from '@store/controllers/player-controller';
 import { FavoritesController } from '@store/controllers/favorites-controller';
+import { designTokens } from '../../styles/tokens.css';
 
 const MIN_WIDTH = 120;
 const MAX_WIDTH = 350;
@@ -21,7 +22,7 @@ export class NowPlaying extends LitElement {
     @state()
     private showCoverPreview = false;
 
-    static override styles = css`
+    static override styles = [designTokens, css`
     :host {
       display: block;
       position: relative;
@@ -63,7 +64,7 @@ export class NowPlaying extends LitElement {
 
     .cover-placeholder wa-icon {
       color: var(--yj-text-primary, #fff);
-      font-size: 24px;
+      font-size: var(--yj-icon-lg);
     }
 
     .cover-art-wrapper {
@@ -107,7 +108,7 @@ export class NowPlaying extends LitElement {
       flex-shrink: 0;
       cursor: pointer;
       color: var(--yj-text-tertiary, #666);
-      font-size: 14px;
+      font-size: var(--yj-icon-sm);
       transition: color 0.1s ease;
       background: none;
       border: none;
@@ -128,7 +129,7 @@ export class NowPlaying extends LitElement {
     }
 
     .track-title {
-      font-size: 14px;
+      font-size: var(--yj-text-lg);
       font-weight: 500;
       white-space: nowrap;
       overflow: hidden;
@@ -136,7 +137,7 @@ export class NowPlaying extends LitElement {
     }
 
     .track-artist {
-      font-size: 12px;
+      font-size: var(--yj-text-sm);
       color: var(--yj-text-tertiary, #666);
       white-space: nowrap;
       overflow: hidden;
@@ -159,7 +160,7 @@ export class NowPlaying extends LitElement {
     .resize-handle.dragging {
       background-color: var(--yj-text-tertiary, #6c757d);
     }
-  `;
+  `];
 
     override connectedCallback() {
         super.connectedCallback();

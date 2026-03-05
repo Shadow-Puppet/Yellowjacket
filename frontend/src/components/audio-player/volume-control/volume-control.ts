@@ -4,6 +4,7 @@ import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@awesome.me/webawesome/dist/components/slider/slider.js';
 import type WaSlider from '@awesome.me/webawesome/dist/components/slider/slider.js';
 import { PlayerController } from '@store/controllers/player-controller';
+import { designTokens } from '../../../styles/tokens.css';
 
 @customElement('volume-control')
 export class VolumeControl extends LitElement {
@@ -13,7 +14,7 @@ export class VolumeControl extends LitElement {
   @state()
   private showSlider = false;
 
-  static override styles = css`
+  static override styles = [designTokens, css`
     :host {
       position: relative;
       display: inline-flex;
@@ -25,7 +26,7 @@ export class VolumeControl extends LitElement {
       border: none;
       cursor: pointer;
       color: inherit;
-      padding: 0.25em;
+      padding: 4px;
       display: flex;
       align-items: center;
     }
@@ -38,8 +39,8 @@ export class VolumeControl extends LitElement {
       background: var(--yj-bg-surface, #1a1a1a);
       border: 1px solid var(--yj-border-subtle, #333);
       border-radius: 8px;
-      padding: 1em 0.5em;
-      margin-bottom: 0.5em;
+      padding: 16px 8px;
+      margin-bottom: 8px;
       display: flex;
       justify-content: center;
       z-index: 100;
@@ -47,8 +48,8 @@ export class VolumeControl extends LitElement {
 
     wa-slider {
       --track-size: 6px;
-      --thumb-width: 1em;
-      --thumb-height: 1em;
+      --thumb-width: 16px;
+      --thumb-height: 16px;
     }
 
     wa-slider::part(track) {
@@ -63,7 +64,7 @@ export class VolumeControl extends LitElement {
     wa-slider::part(thumb) {
       background: var(--yj-bg-base, black);
     }
-  `;
+  `];
 
   // ===================================================================
   // DERIVED STATE

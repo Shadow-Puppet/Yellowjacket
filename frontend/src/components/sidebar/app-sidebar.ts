@@ -1,6 +1,7 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
+import { designTokens } from '../../styles/tokens.css';
 
 import type { DragActiveDetail } from '@utils/drag-controller';
 
@@ -19,7 +20,7 @@ const COLLAPSE_WIDTH = 142;
 
 @customElement('app-sidebar')
 export class AppSidebar extends LitElement {
-    static override styles = css`
+    static override styles = [designTokens, css`
         :host {
             display: block;
             position: relative;
@@ -49,23 +50,23 @@ export class AppSidebar extends LitElement {
         ul {
             list-style-type: none;
             margin: 0;
-            padding: 1em;
+            padding: 16px;
         }
 
         li {
             display: flex;
             align-items: center;
-            gap: 0.6em;
+            gap: 10px;
             border-radius: 5px;
-            padding: 0.5em;
+            padding: 8px;
             cursor: pointer;
             transition: background-color 0.15s ease;
         }
 
         li wa-icon {
-            font-size: 0.9em;
+            font-size: var(--yj-icon-md);
             flex-shrink: 0;
-            width: 1.2em;
+            width: 20px;
             text-align: center;
         }
 
@@ -93,14 +94,18 @@ export class AppSidebar extends LitElement {
             outline-offset: -1px;
         }
 
+        li p {
+            font-size: var(--yj-text-md);
+        }
+
         /* Icon-only collapsed mode */
         :host(.collapsed) ul {
-            padding: 0.5em;
+            padding: 8px;
         }
 
         :host(.collapsed) li {
             justify-content: center;
-            padding: 0.6em;
+            padding: 10px;
         }
 
         :host(.collapsed) li p {
@@ -108,9 +113,9 @@ export class AppSidebar extends LitElement {
         }
 
         :host(.collapsed) li wa-icon {
-            font-size: 1.1em;
+            font-size: var(--yj-icon-md);
         }
-    `;
+    `];
 
     /** Delay in ms before a drag-hover triggers navigation. */
     private static readonly HOVER_NAV_DELAY = 600;
