@@ -136,3 +136,23 @@ type SearchIndex struct {
 	Artist   string
 	Album    string
 }
+
+type TrackMetadatum struct {
+	ID                 int64
+	FilePath           string
+	LengthMilliseconds int64
+	Title              string
+	ArtistName         string
+	TrackNumber        sql.NullInt64
+	DiscNumber         sql.NullInt64
+	Album              string
+	Genre              string
+	Year               int64
+	Composer           string
+	FileType           string
+	SampleRate         int64
+	BitDepth           int64
+	Channels           int64
+	Bitrate            int64
+	FileSize           int64
+}
