@@ -3,6 +3,8 @@
 // the corresponding event names in the TypeScript frontend.
 package events
 
+//go:generate go run ./cmd/genevents -source events.go -output ../../frontend/src/events.ts
+
 // Playback events (backend → frontend push).
 const (
 	PlaybackStateChanged = "PlaybackStateChanged"
