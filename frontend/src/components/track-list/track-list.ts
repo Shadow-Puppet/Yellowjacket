@@ -26,6 +26,7 @@ import {
 } from './columns';
 import type { ColumnDef } from './columns';
 import { repeat } from 'lit/directives/repeat.js';
+import { classMap } from 'lit/directives/class-map.js';
 import {
     rankTracks,
     highlightText,
@@ -1527,14 +1528,6 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
             track.FilePath,
         );
 
-        const classes = [
-            'track-row',
-            active ? 'active' : '',
-            selected ? 'selected' : '',
-        ]
-            .filter(Boolean)
-            .join(' ');
-
         const cols = this.activeColumns;
 
         const isFav = this.favCtrl.isFavorited(
@@ -1546,7 +1539,11 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
 
         return html`
       <div
-        class=${classes}
+        class=${classMap({
+            'track-row': true,
+            active,
+            selected,
+        })}
         draggable="true"
         @click=${(e: MouseEvent) =>
                 this.onTrackRowClick(e, track, index)}
@@ -1559,7 +1556,10 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
         @dragend=${this.onTrackDragEnd}
       >
         <div
-          class="fav-icon ${isFav ? 'favorited' : ''}"
+          class=${classMap({
+            'fav-icon': true,
+            favorited: isFav,
+        })}
           @click=${(e: MouseEvent) => {
                     e.stopPropagation();
                     void this.favCtrl.toggleFavorite(
@@ -1575,11 +1575,6 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
         ${cols.map((col) => {
                 const val = col.accessor(track);
                 const centered = val === '\u2014';
-                const align = centered
-                    ? 'cell-center'
-                    : col.align === 'right'
-                      ? 'cell-right'
-                      : '';
                 const term =
                     this.searchCtrl.term;
                 const display = term
@@ -1587,7 +1582,11 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
                     : val;
 
                 return html`
-                    <div class="cell ${align}">
+                    <div class=${classMap({
+                        cell: true,
+                        'cell-center': centered,
+                        'cell-right': !centered && col.align === 'right',
+                    })}>
                         ${display}
                     </div>
                 `;
