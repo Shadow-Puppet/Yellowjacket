@@ -1,7 +1,9 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
+import { classMap } from 'lit/directives/class-map.js';
 import type { library } from '@go/models';
 import { PlayerController } from '@store/controllers/player-controller';
+import { FavoritesController } from '@store/controllers/favorites-controller';
 import { formatMilliseconds } from '@utils/time';
 
 /** Detail payload for the track-click custom event. */
@@ -42,6 +44,7 @@ export interface TrackDragStartDetail {
 @customElement('album-dropdown')
 export class AlbumDropdown extends LitElement {
     private player = new PlayerController(this);
+    private favCtrl = new FavoritesController(this);
 
     @property({ attribute: false })
     tracks: library.Track[] = [];
@@ -156,6 +159,28 @@ export class AlbumDropdown extends LitElement {
             color: var(--yj-text-tertiary, #888);
             flex-shrink: 0;
             margin-left: auto;
+        }
+
+        .fav-icon {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 18px;
+            flex-shrink: 0;
+            cursor: pointer;
+            color: var(--yj-text-tertiary, #666);
+            font-size: 11px;
+            transition: color 0.1s ease;
+        }
+        .fav-icon:hover {
+            color: var(--yj-text-primary, #fff);
+        }
+        .fav-icon.favorited {
+            color: var(--yj-accent, #ffd43b);
+        }
+        .fav-icon.favorited:hover {
+            color: var(--yj-accent, #ffd43b);
+            opacity: 0.8;
         }
     `;
 
@@ -325,6 +350,8 @@ export class AlbumDropdown extends LitElement {
         const selected = this.selectedTracks.has(
             track.FilePath,
         );
+        const isFav = this.favCtrl.isFavorited(track.FilePath);
+        const favVariant = isFav ? 'solid' : 'regular';
 
         const classes = [
             'track-row',
@@ -364,6 +391,18 @@ export class AlbumDropdown extends LitElement {
                 <span class="track-number">
                     ${displayNumber}
                 </span>
+                <div
+                    class=${classMap({ 'fav-icon': true, favorited: isFav })}
+                    @click=${(e: MouseEvent) => {
+                        e.stopPropagation();
+                        void this.favCtrl.toggleFavorite(track.FilePath);
+                    }}
+                >
+                    <wa-icon
+                        name=${this.favCtrl.iconName}
+                        variant=${favVariant}
+                    ></wa-icon>
+                </div>
                 <span
                     class="track-title"
                     title="${track.TrackName}"
