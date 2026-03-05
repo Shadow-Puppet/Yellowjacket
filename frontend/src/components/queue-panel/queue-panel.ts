@@ -282,6 +282,8 @@ export class QueuePanel
             user-select: none;
             width: 100%;
             box-sizing: border-box;
+            height: 49px;
+            overflow: hidden;
         }
 
         .track-item:hover {
@@ -317,6 +319,7 @@ export class QueuePanel
             display: flex;
             flex-direction: column;
             gap: 2px;
+            overflow: hidden;
         }
 
         .track-title {
