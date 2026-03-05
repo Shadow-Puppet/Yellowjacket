@@ -30,7 +30,7 @@ Requirements for the consolidation milestone. Each maps to roadmap phases.
 
 - [ ] **PERF-01**: Queue single-track mutations (add, remove) use incremental INSERT/DELETE via existing sqlc queries instead of full table rewrite
 - [ ] **PERF-02**: SetQueue Phase 2 (resolveRemainingTracks) skips file paths already resolved in Phase 1, avoiding redundant database lookups
-- [ ] **PERF-03**: Library store constructor no longer calls eagerFetch(); data loads lazily on first access via existing getTracks()/getAlbums()/etc. getters
+- [x] **PERF-03**: Library store constructor no longer calls eagerFetch(); data loads lazily on first access via existing getTracks()/getAlbums()/etc. getters
 - [x] **PERF-04**: SQLite connection applies performance PRAGMAs (synchronous=NORMAL, cache_size=-8000, mmap_size=67108864) at database open
 - [ ] **PERF-05**: Frontend track/album lists use Lit repeat() directive with stable keys (filePath/albumId) for efficient DOM reuse, and store notifications are debounced via queueMicrotask() during rapid updates
 
@@ -104,7 +104,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | QUAL-04 | Phase 6: SQL Consolidation & Code Quality | Complete |
 | PERF-01 | Phase 7: Backend Performance | Pending |
 | PERF-02 | Phase 7: Backend Performance | Pending |
-| PERF-03 | Phase 7: Backend Performance | Pending |
+| PERF-03 | Phase 7: Backend Performance | Complete |
 | PERF-04 | Phase 3: Test Infrastructure | Complete |
 | PERF-05 | Phase 8: Frontend Performance & UX | Pending |
 | TEST-01 | Phase 3: Test Infrastructure | Complete |

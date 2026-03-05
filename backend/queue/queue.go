@@ -250,7 +250,7 @@ func (q *Queue) SetQueue(
 		return
 	}
 
-	go q.resolveRemainingTracks(gen, filePaths, playingPath)
+	go q.resolveRemainingTracks(gen, filePaths, playingPath, batchMeta)
 }
 
 // resolveRemainingTracks runs in a goroutine to batch-resolve all tracks
@@ -258,12 +258,30 @@ func (q *Queue) SetQueue(
 // results to avoid overwriting a newer SetQueue call. playingPath is the
 // file path of the track that is currently playing so the correct
 // currentIndex can be located in the rebuilt track list.
+// phase1Meta contains metadata already resolved in Phase 1; those paths
+// are skipped to avoid redundant database lookups.
 func (q *Queue) resolveRemainingTracks(
 	gen int64,
 	filePaths []string,
 	playingPath string,
+	phase1Meta map[string]trackMeta,
 ) {
-	allMeta := q.lookupTrackMetaBatch(filePaths)
+	// Exclude paths already resolved in Phase 1.
+	var unresolvedPaths []string
+
+	for _, fp := range filePaths {
+		if _, alreadyResolved := phase1Meta[fp]; !alreadyResolved {
+			unresolvedPaths = append(unresolvedPaths, fp)
+		}
+	}
+
+	// Only look up paths that Phase 1 didn't cover.
+	allMeta := q.lookupTrackMetaBatch(unresolvedPaths)
+
+	// Merge Phase 1 results into the lookup.
+	for k, v := range phase1Meta {
+		allMeta[k] = v
+	}
 
 	// Check if we have been superseded before acquiring the mutex.
 	if q.setQueueGen.Load() != gen {
