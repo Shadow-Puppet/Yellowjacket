@@ -137,55 +137,55 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SCAN-01 | — | Pending |
-| SCAN-02 | — | Pending |
-| SCAN-03 | — | Pending |
-| KEY-01 | — | Pending |
-| KEY-02 | — | Pending |
-| KEY-03 | — | Pending |
-| KEY-04 | — | Pending |
-| KEY-05 | — | Pending |
-| TAG-01 | — | Pending |
-| TAG-02 | — | Pending |
-| TAG-03 | — | Pending |
-| TAG-04 | — | Pending |
-| TAG-05 | — | Pending |
-| TAG-06 | — | Pending |
-| TAG-07 | — | Pending |
-| SMRT-01 | — | Pending |
-| SMRT-02 | — | Pending |
-| SMRT-03 | — | Pending |
-| SMRT-04 | — | Pending |
-| SMRT-05 | — | Pending |
-| GAP-01 | — | Pending |
-| GAP-02 | — | Pending |
-| GAP-03 | — | Pending |
-| GAP-04 | — | Pending |
-| MB-01 | — | Pending |
-| MB-02 | — | Pending |
-| MB-03 | — | Pending |
-| MB-04 | — | Pending |
-| MB-05 | — | Pending |
-| MB-06 | — | Pending |
-| MB-07 | — | Pending |
-| LAYOUT-01 | — | Pending |
-| LAYOUT-02 | — | Pending |
-| LAYOUT-03 | — | Pending |
-| LAYOUT-04 | — | Pending |
-| LAYOUT-05 | — | Pending |
-| LAYOUT-06 | — | Pending |
-| PLUG-01 | — | Pending |
-| PLUG-02 | — | Pending |
-| PLUG-03 | — | Pending |
-| PLUG-04 | — | Pending |
-| PLUG-05 | — | Pending |
-| PLUG-06 | — | Pending |
+| SCAN-01 | Phase 9 | Pending |
+| SCAN-02 | Phase 9 | Pending |
+| SCAN-03 | Phase 9 | Pending |
+| KEY-01 | Phase 9 | Pending |
+| KEY-02 | Phase 9 | Pending |
+| KEY-03 | Phase 9 | Pending |
+| KEY-04 | Phase 9 | Pending |
+| KEY-05 | Phase 9 | Pending |
+| TAG-01 | Phase 10 | Pending |
+| TAG-02 | Phase 10 | Pending |
+| TAG-03 | Phase 10 | Pending |
+| TAG-04 | Phase 10 | Pending |
+| TAG-05 | Phase 10 | Pending |
+| TAG-06 | Phase 10 | Pending |
+| TAG-07 | Phase 10 | Pending |
+| SMRT-01 | Phase 11 | Pending |
+| SMRT-02 | Phase 11 | Pending |
+| SMRT-03 | Phase 11 | Pending |
+| SMRT-04 | Phase 11 | Pending |
+| SMRT-05 | Phase 11 | Pending |
+| GAP-01 | Phase 12 | Pending |
+| GAP-02 | Phase 12 | Pending |
+| GAP-03 | Phase 12 | Pending |
+| GAP-04 | Phase 12 | Pending |
+| MB-01 | Phase 13 | Pending |
+| MB-02 | Phase 13 | Pending |
+| MB-03 | Phase 13 | Pending |
+| MB-04 | Phase 13 | Pending |
+| MB-05 | Phase 13 | Pending |
+| MB-06 | Phase 13 | Pending |
+| MB-07 | Phase 13 | Pending |
+| LAYOUT-01 | Phase 14 | Pending |
+| LAYOUT-02 | Phase 14 | Pending |
+| LAYOUT-03 | Phase 14 | Pending |
+| LAYOUT-04 | Phase 14 | Pending |
+| LAYOUT-05 | Phase 14 | Pending |
+| LAYOUT-06 | Phase 14 | Pending |
+| PLUG-01 | Phase 14 | Pending |
+| PLUG-02 | Phase 14 | Pending |
+| PLUG-03 | Phase 14 | Pending |
+| PLUG-04 | Phase 14 | Pending |
+| PLUG-05 | Phase 14 | Pending |
+| PLUG-06 | Phase 14 | Pending |
 
 **Coverage:**
 - v1.1 requirements: 43 total
-- Mapped to phases: 0
-- Unmapped: 43
+- Mapped to phases: 43
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-03-06*
-*Last updated: 2026-03-06 after initial definition*
+*Last updated: 2026-03-06 — traceability updated with phase mappings*

@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Features & Extensibility
-status: defining_requirements
+status: roadmap_complete
 last_updated: "2026-03-06"
 progress:
-  total_phases: 0
+  total_phases: 6
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -18,14 +18,31 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-06)
 
 **Core value:** The music player works reliably and feels solid — every interaction is correct, responsive, and trustworthy.
-**Current focus:** v1.1 Features & Extensibility — defining requirements
+**Current focus:** v1.1 Features & Extensibility — roadmap complete, ready for planning
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: 9 — Scan Cancellation & Keyboard Shortcuts
 Plan: —
-Status: Defining requirements
-Last activity: 2026-03-06 — Milestone v1.1 started
+Status: Ready for planning
+Progress: ░░░░░░░░░░░░░░░░░░░░ 0/6 phases (0%)
+Last activity: 2026-03-06 — Roadmap created for v1.1
+
+### Phase Overview
+
+| Phase | Status |
+|-------|--------|
+| 9. Scan Cancellation & Keyboard Shortcuts | Not started |
+| 10. Tag Editing | Not started |
+| 11. Smart Playlists | Not started |
+| 12. Gapless Playback & Crossfade | Not started |
+| 13. MusicBrainz Browser | Not started |
+| 14. Layout Customization & Plugin Foundation | Not started |
+
+## Performance Metrics
+
+**v1.0 baseline:** 8 phases, 17 plans, 34 tasks in 6 days (107 commits)
+**v1.1 scope:** 6 phases, 43 requirements, ~? plans (TBD during planning)
 
 ## Accumulated Context
 
@@ -40,22 +57,44 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 - queueMicrotask coalescing for store notifications
 - `.renderItem` + `.keyFunction` (not `repeat()` children) for lit-virtualizer
 
+### v1.1 Roadmap Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| Phase 9 = Scan Cancel + Shortcuts | Quick wins, validate context cancellation and config extension patterns |
+| Phase 10 = Tag Editing after shortcuts | Introduces 3 new deps, file-write-DB-event pipeline; benefits from validated patterns |
+| Phase 11 = Smart Playlists after tags | DB patterns, benefits from validated DB update pipeline |
+| Phase 12 = Gapless mid-sequence | Highest risk isolated after foundations proven, before meta-features |
+| Phase 13 = MusicBrainz after gapless | First network feature, orthogonal to audio work |
+| Phase 14 = Layout + Plugins last | Meta-features that wrap all others, need stable API surface |
+| Layout + Plugins combined into one phase | Both are extensibility foundations; layout provides component registry that plugins register into |
+
 ### Warnings (carry forward)
 
-- Player lock ordering (`p.mu` before `speaker.Lock()`, goroutine dispatch in beep callback) — do NOT refactor lock-sensitive paths; extract pure logic only
+- Player lock ordering (`p.mu` before `speaker.Lock()`, goroutine dispatch in beep callback) — CRITICAL for Phase 12 gapless work
 - modernc.org/libc version must match exactly when updating modernc.org/sqlite
 - `@lit-labs/signals` is experimental (v0.2.0) — not blocking but noted
+- Tag writing: block edits on currently-playing files (beep holds `*os.File` handle) — Phase 10
+- Scan cancellation: skip orphan cleanup on cancelled scans — Phase 9
+- MusicBrainz: strict 1 req/s rate limit, proper User-Agent, SQLite cache — Phase 13
+- Plugin system: JS-only for v1.1, recover() wrappers, read-only DB access — Phase 14
+- FLAC tag writes load entire file into memory (go-flac) — acceptable for v1.1 — Phase 10
+
+### Research Flags
+
+- **Phase 12 (Gapless + Crossfade):** Needs deeper research — beep Mixer/Seq composition for real-time crossfade not well-documented. Prototype persistent-mixer architecture before committing to implementation.
+- **Phase 14 (Plugin System):** Needs deeper research — plugin API surface design, error containment, security boundaries. Consider spike/prototype.
 
 ## Session Continuity
 
 ### Last Session
 
 **Date:** 2026-03-06
-**What happened:** Started milestone v1.1 Features & Extensibility. Updated PROJECT.md with new milestone goals and active requirements.
-**Where we stopped:** Defining requirements for v1.1.
-**Next action:** Complete requirements definition, create roadmap.
+**What happened:** Created v1.1 roadmap with 6 phases (9-14) covering all 43 requirements. Research summary informed phase ordering. Coverage validated at 43/43.
+**Where we stopped:** Roadmap created, ready for phase planning.
+**Next action:** `/gsd-plan-phase 9` — Plan Scan Cancellation & Keyboard Shortcuts
 
 ---
 *State initialized: 2026-02-27*
-Last activity: 2026-03-06 - Milestone v1.1 started
+Last activity: 2026-03-06 - v1.1 roadmap created
 *Last updated: 2026-03-06*
