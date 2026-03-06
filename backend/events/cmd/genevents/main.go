@@ -134,7 +134,7 @@ func generateTypeScript(groups []constGroup) string {
 		}
 
 		for _, c := range g.Consts {
-			b.WriteString(fmt.Sprintf("    %s: %q,\n", c.Name, c.Value))
+			fmt.Fprintf(&b, "    %s: %q,\n", c.Name, c.Value)
 		}
 		// Blank line between groups, but not after the last one.
 		if i < len(groups)-1 {

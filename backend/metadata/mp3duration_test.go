@@ -13,6 +13,10 @@ func testMP3Files(t *testing.T) []string {
 
 	root := filepath.Join("..", "..", "test_data")
 
+	if _, err := os.Stat(root); os.IsNotExist(err) {
+		t.Skip("test_data directory not present, skipping")
+	}
+
 	var files []string
 
 	err := filepath.Walk(root, func(
