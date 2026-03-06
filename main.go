@@ -29,6 +29,12 @@ var (
 var frontendDistAssets embed.FS
 
 func main() {
+	// Work around WebKitGTK DMABuf rendering crashes on certain
+	// Wayland compositor / GPU-driver combinations.
+	if os.Getenv("WEBKIT_DISABLE_DMABUF_RENDERER") == "" {
+		_ = os.Setenv("WEBKIT_DISABLE_DMABUF_RENDERER", "1")
+	}
+
 	isDev := dev.IsDev
 	// create sLogger
 	loglevel := resolveLogLevel(isDev)
@@ -83,7 +89,7 @@ func main() {
 		MaxWidth:         0,
 		MaxHeight:        0,
 		Linux: &linux.Options{
-			WebviewGpuPolicy: linux.WebviewGpuPolicyAlways,
+			WebviewGpuPolicy: linux.WebviewGpuPolicyOnDemand,
 		},
 	})
 

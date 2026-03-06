@@ -3,16 +3,16 @@ COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 LDFLAGS := -X 'main.version=$(VERSION)' -X 'main.commit=$(COMMIT)'
 
 dev: setup generate clean
-	WEBKIT_DISABLE_DMABUF_RENDERER=1 go tool wails dev -tags webkit2_41 -loglevel Debug -v 2
+	go tool wails dev -tags webkit2_41 -loglevel Debug -v 2
 
 dev-debug: setup generate clean
-	WEBKIT_DISABLE_DMABUF_RENDERER=1 YJ_LOG_LEVEL=debug go tool wails dev -tags webkit2_41 -loglevel Debug -v 2
+	YJ_LOG_LEVEL=debug go tool wails dev -tags webkit2_41 -loglevel Debug -v 2
 
 build-dev: generate
 	go tool wails build -tags webkit2_41 -debug -clean -ldflags "$(LDFLAGS)"
 
 build-prod: generate
-	go tool wails build -tags webkit2_41 -clean -obfuscated -upx -ldflags "-s -w $(LDFLAGS)"
+	go tool wails build -tags webkit2_41 -clean -upx -ldflags "-s -w $(LDFLAGS)"
 
 build-frontend:
 	cd frontend && pnpm install && pnpm build
