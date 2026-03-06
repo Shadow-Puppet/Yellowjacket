@@ -100,6 +100,7 @@ var (
 	errNoAudioFileLoaded = errors.New("no audio file loaded")
 	errNoStreamerToPlay  = errors.New("no streamer to play")
 	errNoAudioStream     = errors.New("no audio stream to pause")
+	errSeekPanicked      = errors.New("seek panicked (go-mp3 bug)")
 )
 
 var speakerSampleRate = beep.SampleRate(44100)
@@ -766,6 +767,19 @@ func (p *Player) seekLocked(targetSeconds int) error {
 		),
 	)
 
+	// Clamp the seek position to valid bounds. The underlying
+	// go-mp3 library (v0.3.4) has a bug where seeking to
+	// positions near the end of certain files causes a slice
+	// bounds panic. Clamping reduces the likelihood of hitting
+	// this, and the recover below catches it if it still occurs.
+	if maxPos := p.seeker.Len() - 1; samples > maxPos {
+		samples = maxPos
+	}
+
+	if samples < 0 {
+		samples = 0
+	}
+
 	p.logger.Debug(
 		"attempting to seek",
 		"target-seconds", targetSeconds,
@@ -773,8 +787,29 @@ func (p *Player) seekLocked(targetSeconds int) error {
 		"samples", samples,
 	)
 
-	if seekErr := p.seeker.Seek(samples); seekErr != nil {
+	// Wrap the seek in a recover to catch panics from the
+	// go-mp3 library's buggy Seek implementation. See:
+	// github.com/hajimehoshi/go-mp3@v0.3.4/decode.go:111
+	seekErr := func() (err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				err = fmt.Errorf("%w: %v", errSeekPanicked, r)
+			}
+		}()
+
+		return p.seeker.Seek(samples)
+	}()
+
+	if seekErr != nil {
 		speaker.Unlock()
+
+		p.logger.Warn(
+			"Seek failed, playback will start from "+
+				"the beginning",
+			"target-seconds", targetSeconds,
+			"samples", samples,
+			"err", seekErr,
+		)
 
 		return fmt.Errorf("failed to seek: %w", seekErr)
 	}
