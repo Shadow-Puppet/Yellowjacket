@@ -1,0 +1,449 @@
+import { LitElement, html, css } from 'lit';
+import { customElement, property } from 'lit/decorators.js';
+import { classMap } from 'lit/directives/class-map.js';
+import type { library } from '@go/models';
+import { PlayerController } from '@store/controllers/player-controller';
+import { FavoritesController } from '@store/controllers/favorites-controller';
+import { formatMilliseconds } from '@utils/time';
+
+/** Detail payload for the track-click custom event. */
+export interface TrackClickDetail {
+    track: library.Track;
+    index: number;
+    ctrlKey: boolean;
+    shiftKey: boolean;
+    metaKey: boolean;
+}
+
+/** Detail payload for the track-dblclick custom event. */
+export interface TrackDblClickDetail {
+    track: library.Track;
+    index: number;
+}
+
+/** Detail payload for the track-contextmenu custom event. */
+export interface TrackContextMenuDetail {
+    track: library.Track;
+    clientX: number;
+    clientY: number;
+}
+
+/** Detail payload for the track-dragstart custom event. */
+export interface TrackDragStartDetail {
+    track: library.Track;
+    index: number;
+    dataTransfer: DataTransfer | null;
+}
+
+/**
+ * Self-contained dropdown that renders an album's track list.
+ *
+ * Owns a PlayerController so that active-track highlighting
+ * only re-renders this component, not the parent grid.
+ */
+@customElement('album-dropdown')
+export class AlbumDropdown extends LitElement {
+    private player = new PlayerController(this);
+    private favCtrl = new FavoritesController(this);
+
+    @property({ attribute: false })
+    tracks: library.Track[] = [];
+
+    @property({ attribute: false })
+    selectedTracks: Set<string> = new Set();
+
+    /** Width of the grid container in pixels (passed from parent). */
+    @property({ type: Number })
+    containerWidth = 800;
+
+    /** Width of the album row in pixels (cards + gaps, no outer padding). */
+    @property({ type: Number })
+    gridRowWidth = 800;
+
+    /** Horizontal offset of the carat from the dropdown's left edge. */
+    @property({ type: Number })
+    caratOffset = 0;
+
+    static override styles = css`
+        :host {
+            display: block;
+            margin-top: 14px;
+        }
+
+        .album-dropdown {
+            background-color: var(--yj-bg-elevated, #343a40);
+            border-radius: 0 0 4px 4px;
+            padding: 12px 16px;
+            box-sizing: border-box;
+            position: relative;
+        }
+
+        .carat {
+            position: absolute;
+            top: -10px;
+            width: 0;
+            height: 0;
+            border-left: 11px solid transparent;
+            border-right: 11px solid transparent;
+            border-bottom: 10px solid var(--yj-bg-elevated, #343a40);
+        }
+
+        .dropdown-tracks {
+            column-fill: auto;
+            column-gap: 24px;
+        }
+
+        .track-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 8px;
+            border-radius: 4px;
+            cursor: default;
+            user-select: none;
+            font-size: 12px;
+            line-height: 16px;
+            break-inside: avoid;
+        }
+
+        .track-row:hover {
+            background-color: var(
+                --yj-hover-overlay,
+                rgba(255, 255, 255, 0.05)
+            );
+        }
+
+        .track-row.selected {
+            background-color: rgba(
+                100,
+                160,
+                255,
+                0.15
+            );
+        }
+
+        .track-row.active {
+            background-color: var(
+                --yj-accent-bg,
+                rgba(255, 212, 59, 0.1)
+            );
+            color: var(--yj-accent, #ffd43b);
+        }
+
+        .track-row.selected.active {
+            background-color: rgba(
+                100,
+                160,
+                255,
+                0.15
+            );
+        }
+
+        .track-number {
+            color: var(--yj-text-tertiary, #888);
+            min-width: 22px;
+            text-align: right;
+            flex-shrink: 0;
+        }
+
+        .track-title {
+            color: var(--yj-text-primary, #fff);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            flex: 1;
+            min-width: 0;
+        }
+
+        .track-duration {
+            color: var(--yj-text-tertiary, #888);
+            flex-shrink: 0;
+            margin-left: auto;
+        }
+
+        .fav-icon {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 18px;
+            flex-shrink: 0;
+            cursor: pointer;
+            color: var(--yj-text-tertiary, #666);
+            font-size: 11px;
+            transition: color 0.1s ease;
+        }
+        .fav-icon:hover {
+            color: var(--yj-text-primary, #fff);
+        }
+        .fav-icon.favorited {
+            color: var(--yj-accent, #ffd43b);
+        }
+        .fav-icon.favorited:hover {
+            color: var(--yj-accent, #ffd43b);
+            opacity: 0.8;
+        }
+    `;
+
+    /* ================================================================
+     * Layout helpers
+     * ================================================================ */
+
+    /**
+     * Derive the number of track-list columns from the
+     * grid container width.
+     */
+    get columnCount(): number {
+        const w = this.containerWidth;
+
+        if (w < 500) return 1;
+        if (w < 800) return 2;
+        if (w < 1200) return 3;
+
+        return 4;
+    }
+
+    /* ================================================================
+     * Rendering helpers
+     * ================================================================ */
+
+    private isActiveTrack(
+        track: library.Track,
+    ): boolean {
+        const currentTrack = this.player.currentTrack;
+
+        if (!currentTrack) return false;
+
+        return currentTrack.filePath === track.FilePath;
+    }
+
+    /** Height of each track row: 16px line-height + 4+4px padding. */
+    private static readonly TRACK_ROW_HEIGHT = 24;
+
+    /**
+     * Height of the inner .dropdown-tracks container.
+     * Sized so that column-fill:auto fills each column
+     * completely before moving to the next.
+     */
+    private get tracksHeight(): number {
+        const cols = this.columnCount;
+        const rowsPerCol = Math.ceil(
+            this.tracks.length / cols,
+        );
+
+        return (
+            rowsPerCol * AlbumDropdown.TRACK_ROW_HEIGHT
+        );
+    }
+
+    /* ================================================================
+     * Event dispatching
+     * ================================================================ */
+
+    private onTrackClick(
+        e: MouseEvent,
+        track: library.Track,
+        index: number,
+    ) {
+        e.stopPropagation();
+
+        this.dispatchEvent(
+            new CustomEvent<TrackClickDetail>(
+                'track-click',
+                {
+                    bubbles: true,
+                    composed: true,
+                    detail: {
+                        track,
+                        index,
+                        ctrlKey: e.ctrlKey,
+                        shiftKey: e.shiftKey,
+                        metaKey: e.metaKey,
+                    },
+                },
+            ),
+        );
+    }
+
+    private onTrackDblClick(
+        e: MouseEvent,
+        track: library.Track,
+        index: number,
+    ) {
+        e.stopPropagation();
+
+        this.dispatchEvent(
+            new CustomEvent<TrackDblClickDetail>(
+                'track-dblclick',
+                {
+                    bubbles: true,
+                    composed: true,
+                    detail: { track, index },
+                },
+            ),
+        );
+    }
+
+    private onTrackDragStart(
+        e: DragEvent,
+        track: library.Track,
+        index: number,
+    ) {
+        // Delegate to the parent cover-grid which
+        // owns the selection state and drag-image.
+        this.dispatchEvent(
+            new CustomEvent<TrackDragStartDetail>(
+                'track-dragstart',
+                {
+                    bubbles: true,
+                    composed: true,
+                    detail: {
+                        track,
+                        index,
+                        dataTransfer: e.dataTransfer,
+                    },
+                },
+            ),
+        );
+    }
+
+    private onTrackDragEnd() {
+        this.dispatchEvent(
+            new CustomEvent('track-dragend', {
+                bubbles: true,
+                composed: true,
+            }),
+        );
+    }
+
+    private onTrackContextMenu(
+        e: MouseEvent,
+        track: library.Track,
+    ) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        this.dispatchEvent(
+            new CustomEvent<TrackContextMenuDetail>(
+                'track-contextmenu',
+                {
+                    bubbles: true,
+                    composed: true,
+                    detail: {
+                        track,
+                        clientX: e.clientX,
+                        clientY: e.clientY,
+                    },
+                },
+            ),
+        );
+    }
+
+    /* ================================================================
+     * Render
+     * ================================================================ */
+
+    private renderTrackRow(
+        track: library.Track,
+        index: number,
+    ) {
+        const active = this.isActiveTrack(track);
+        const selected = this.selectedTracks.has(
+            track.FilePath,
+        );
+        const isFav = this.favCtrl.isFavorited(track.FilePath);
+        const favVariant = isFav ? 'solid' : 'regular';
+
+        const classes = [
+            'track-row',
+            active ? 'active' : '',
+            selected ? 'selected' : '',
+        ]
+            .filter(Boolean)
+            .join(' ');
+
+        const displayNumber =
+            track.TrackNumber > 0
+                ? track.TrackNumber
+                : index + 1;
+
+        return html`
+            <div
+                class=${classes}
+                draggable="true"
+                @click=${(e: MouseEvent) =>
+                this.onTrackClick(e, track, index)}
+                @dblclick=${(e: MouseEvent) =>
+                this.onTrackDblClick(
+                    e,
+                    track,
+                    index,
+                )}
+                @contextmenu=${(e: MouseEvent) =>
+                this.onTrackContextMenu(e, track)}
+                @dragstart=${(e: DragEvent) =>
+                this.onTrackDragStart(
+                    e,
+                    track,
+                    index,
+                )}
+                @dragend=${() => this.onTrackDragEnd()}
+            >
+                <span class="track-number">
+                    ${displayNumber}
+                </span>
+                <div
+                    class=${classMap({ 'fav-icon': true, favorited: isFav })}
+                    @click=${(e: MouseEvent) => {
+                        e.stopPropagation();
+                        void this.favCtrl.toggleFavorite(track.FilePath);
+                    }}
+                >
+                    <wa-icon
+                        name=${this.favCtrl.iconName}
+                        variant=${favVariant}
+                    ></wa-icon>
+                </div>
+                <span
+                    class="track-title"
+                    title="${track.TrackName}"
+                >
+                    ${track.TrackName}
+                </span>
+                <span class="track-duration">
+                    ${formatMilliseconds(
+                    track.TrackLength,
+                )}
+                </span>
+            </div>
+        `;
+    }
+
+    override render() {
+        return html`
+            <div
+                class="album-dropdown"
+                style="width:${this.gridRowWidth}px"
+            >
+                <div
+                    class="carat"
+                    style="left:${this.caratOffset}px;transform:translateX(-50%)"
+                ></div>
+                <div
+                    class="dropdown-tracks"
+                    style="height:${this.tracksHeight}px;column-count:${this.columnCount}"
+                >
+                    ${this.tracks.map(
+            (track, i) =>
+                this.renderTrackRow(track, i),
+        )}
+                </div>
+            </div>
+        `;
+    }
+}
+
+declare global {
+    interface HTMLElementTagNameMap {
+        'album-dropdown': AlbumDropdown;
+    }
+}

@@ -3,12 +3,26 @@
 import {library} from '../models';
 import {context} from '../models';
 
+export function FullRescan():Promise<library.ScanMetrics>;
+
 export function GetAlbumTracks(arg1:number):Promise<Array<library.Track>>;
+
+export function GetAlbumsByArtist(arg1:number):Promise<Array<library.Album>>;
 
 export function GetAllAlbums():Promise<Array<library.Album>>;
 
+export function GetAllArtists():Promise<Array<library.Artist>>;
+
+export function GetAllGenresWithCounts():Promise<Array<library.GenreWithCount>>;
+
 export function GetAllTracks():Promise<Array<library.Track>>;
 
-export function Scan():Promise<void>;
+export function GetTracksByGenre(arg1:string):Promise<Array<library.Track>>;
+
+export function Scan():Promise<library.ScanMetrics>;
+
+export function SearchTracks(arg1:string):Promise<Array<library.Track>>;
 
 export function SetContext(arg1:context.Context):Promise<void>;
+
+export function SetRescanHooks(arg1:library.RescanHooks):Promise<void>;

@@ -7,7 +7,7 @@
 //   - Go and frontend (pnpm) dependency updates are grouped separately to keep
 //     PRs reviewable and CI matrix manageable.
 //   - GitHub Actions are tracked and grouped into a single PR.
-//   - The custom beep fork (TheCodeOfCaleb/beep) is excluded from updates.
+//   - Beep (gopxl/beep) is grouped with other Go dependencies.
 //   - Go tool directives (templ, sqlc, lefthook) are tracked automatically.
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
@@ -81,14 +81,7 @@
       "groupName": "github actions",
     },
 
-    // 4. Ignore the custom beep fork — it's manually managed.
-    {
-      "description": "Ignore custom beep fork (manually managed)",
-      "matchPackageNames": ["github.com/TheCodeOfCaleb/beep/v2"],
-      "enabled": false,
-    },
-
-    // 5. Major updates get individual PRs for careful review.
+    // 4. Major updates get individual PRs for careful review.
     {
       "description": "Separate PRs for major updates",
       "matchUpdateTypes": ["major"],
@@ -96,7 +89,7 @@
       "commitMessagePrefix": "chore(deps)!:",
     },
 
-    // 6. Auto-merge patch-level updates for dev dependencies.
+    // 5. Auto-merge patch-level updates for dev dependencies.
     {
       "description": "Auto-merge patch updates for frontend devDependencies",
       "matchManagers": ["npm"],
@@ -106,14 +99,14 @@
       "automergeType": "pr",
     },
 
-    // 7. Pin htmx.org — it uses exact versioning intentionally.
+    // 6. Pin htmx.org — it uses exact versioning intentionally.
     {
       "description": "Keep htmx.org pinned to exact versions",
       "matchPackageNames": ["htmx.org"],
       "rangeStrategy": "pin",
     },
 
-    // 8. Wails is critical infrastructure — separate PR, never auto-merge.
+    // 7. Wails is critical infrastructure — separate PR, never auto-merge.
     {
       "description": "Wails updates get their own PR (critical dep)",
       "matchPackageNames": ["github.com/wailsapp/wails/v2"],

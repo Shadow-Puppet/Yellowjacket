@@ -1,0 +1,754 @@
+# Architecture Research: Refactoring Patterns for YellowJacket Consolidation
+
+**Domain:** Go/Wails/Lit desktop music player — codebase consolidation
+**Researched:** 2026-02-27
+**Confidence:** HIGH (patterns derived from codebase analysis + Go stdlib + official sqlc docs)
+
+## Issue 1: Two-Phase Initialization Race Conditions
+
+### Current Problem
+
+Six components use a `SetContext(ctx context.Context)` pattern where the Wails runtime context is stored on a struct field without synchronization:
+
+```go
+// queue/queue.go:134 — no lock
+func (q *Queue) SetContext(ctx context.Context) {
+    q.ctx = ctx
+}
+
+// library/library.go:120 — no lock, also calls registerEventHandlers()
+func (l *Library) SetContext(ctx context.Context) {
+    l.ctx = ctx
+    l.registerEventHandlers()
+}
+
+// player/player.go:163 — double lock/unlock
+func (p *Player) SetContext(ctx context.Context) {
+    p.mu.Lock()
+    p.ctx = ctx
+    p.mu.Unlock()
+    p.mu.Lock()
+    p.restoreStateLocked()
+    p.mu.Unlock()
+}
+```
+
+The race is technically real: `q.ctx` is written without `q.mu` but read inside methods that hold `q.mu`. Go's race detector would flag this. In practice it's safe because `SetContext` is called once during sequential startup in `OnStartup()`, before any concurrent access is possible.
+
+### Recommended Approach: Mutex-Guarded SetContext
+
+**Do NOT use `sync.Once` or `atomic.Value`.** These are the wrong tools because:
+
+- `sync.Once` is for "do this exactly once" initialization. `SetContext` doesn't need that — it needs "set this value safely." `sync.Once` would prevent re-setting if the context ever changed (unlikely but architecturally constraining).
+- `atomic.Value` requires boxing `context.Context` into an `any`, adds `.Load().(context.Context)` type assertions everywhere the context is read, and makes code harder to follow for no real benefit.
+
+**Instead, hold the existing mutex through the entire SetContext operation:**
+
+```go
+// queue/queue.go — recommended fix
+func (q *Queue) SetContext(ctx context.Context) {
+    q.mu.Lock()
+    defer q.mu.Unlock()
+
+    q.ctx = ctx
+}
+
+// player/player.go — combine the two lock acquisitions
+func (p *Player) SetContext(ctx context.Context) {
+    p.mu.Lock()
+    defer p.mu.Unlock()
+
+    p.ctx = ctx
+    p.restoreStateLocked()
+}
+```
+
+For **Library** and **Playlist**, which don't have a mutex because they currently have no concurrent access pattern, add one:
+
+```go
+type Library struct {
+    mu          sync.Mutex  // protects ctx and conf
+    ctx         context.Context
+    // ... rest unchanged
+}
+
+func (l *Library) SetContext(ctx context.Context) {
+    l.mu.Lock()
+    defer l.mu.Unlock()
+
+    l.ctx = ctx
+    l.registerEventHandlers()
+}
+```
+
+**For `SetPlayer()` and `SetRescanHooks()`:** These are also startup-only setters. The simplest correct fix is to guard them with the same mutex. Alternatively, document a "must be called before first use" contract with a comment. The mutex approach is preferred because it eliminates the race detector complaint without requiring callers to understand ordering constraints.
+
+### `startupErr` Package-Level Variable
+
+Move to a field on `YellowJacketApp`:
+
+```go
+type YellowJacketApp struct {
+    // ... existing fields ...
+    startupErr error  // set in OnStartup, checked in OnDomReady
+}
+```
+
+This is safe because Wails guarantees `OnStartup` completes before `OnDomReady` runs — they are sequentially called lifecycle hooks, not concurrent.
+
+### Risk Assessment
+
+| Change | Risk | Rationale |
+|--------|------|-----------|
+| Add mutex to Queue/Config SetContext | **Low** | Mechanical — add lock/unlock, no logic change |
+| Combine Player double-lock | **Low** | Reducing lock operations, equivalent behavior |
+| Add mutex to Library/Playlist | **Low** | New mutex, but only guards startup path |
+| Move startupErr to struct | **Very Low** | Field move, identical semantics |
+
+### Dependencies
+
+None — this can be done at any time and is a prerequisite for safe testing of these packages.
+
+---
+
+## Issue 2: Event Name Synchronization
+
+### Current Problem
+
+`backend/events/events.go` defines 19 event name constants. `frontend/src/events.ts` mirrors them as an `as const` object. A typo in either file silently breaks communication with no compile-time or runtime detection.
+
+The TypeScript file is missing `LibraryConfigChanged` from the Go side (it's in the Config events group in Go but absent from the TS events). This is exactly the class of bug this pattern creates.
+
+### Recommended Approach: Build-Time Code Generation
+
+**Generate the TypeScript file from the Go source as part of the build.**
+
+Create a `cmd/genevents/main.go` that parses `backend/events/events.go` using `go/ast` and generates `frontend/src/events.ts`:
+
+```go
+// cmd/genevents/main.go
+package main
+
+import (
+    "go/ast"
+    "go/parser"
+    "go/token"
+    "os"
+    "text/template"
+)
+
+const tmpl = `// Code generated by cmd/genevents. DO NOT EDIT.
+
+export const Events = {
+{{- range .}}
+    {{.Name}}: "{{.Value}}",
+{{- end}}
+} as const;
+
+export type EventName = (typeof Events)[keyof typeof Events];
+`
+
+func main() {
+    fset := token.NewFileSet()
+    f, _ := parser.ParseFile(fset, "backend/events/events.go", nil, 0)
+    
+    var events []struct{ Name, Value string }
+    
+    ast.Inspect(f, func(n ast.Node) bool {
+        vs, ok := n.(*ast.ValueSpec)
+        if !ok || len(vs.Names) == 0 || len(vs.Values) == 0 {
+            return true
+        }
+        bl, ok := vs.Values[0].(*ast.BasicLit)
+        if !ok {
+            return true
+        }
+        name := vs.Names[0].Name
+        value := bl.Value[1 : len(bl.Value)-1] // strip quotes
+        events = append(events, struct{ Name, Value string }{name, value})
+        return true
+    })
+    
+    t := template.Must(template.New("").Parse(tmpl))
+    out, _ := os.Create("frontend/src/events.ts")
+    defer out.Close()
+    t.Execute(out, events)
+}
+```
+
+Wire into the existing `go generate ./...` pipeline via a directive in `events.go`:
+
+```go
+//go:generate go run ../../cmd/genevents/main.go
+package events
+```
+
+**Why not a shared JSON/YAML schema?** It adds a third file and a parsing step for both sides. Go's AST parsing is trivial and keeps the Go file as the single source of truth.
+
+**Why not runtime validation?** It would only catch mismatches when the specific event fires, and by then the damage is done. Build-time generation prevents mismatches entirely.
+
+**Build verification step:** Add a `make` target or pre-commit hook check:
+
+```makefile
+check-events:
+	go generate ./backend/events/...
+	git diff --exit-code frontend/src/events.ts || (echo "events.ts is out of date" && exit 1)
+```
+
+### Risk Assessment
+
+| Change | Risk | Rationale |
+|--------|------|-----------|
+| Code generator | **Low** | Additive — doesn't change existing code behavior |
+| Build integration | **Very Low** | Existing `go generate` pipeline |
+| Pre-commit check | **Very Low** | Fails fast if someone edits Go constants without regenerating |
+
+### Dependencies
+
+None — independent of all other changes.
+
+---
+
+## Issue 3: Store Architecture for Large Datasets
+
+### Current Problem
+
+`LibraryStore` eagerly calls `GetAllTracks()`, `GetAllAlbums()`, `GetAllArtists()`, `GetAllGenres()` on construction (line 300-304). For a 50k+ track library, this loads all data into the webview's JS heap at startup.
+
+The store already has correct lazy-load infrastructure (check `tracks !== null`, loading flags, `waitFor*` methods). The problem is that `eagerFetch()` bypasses all of it by calling all four getters immediately.
+
+### Recommended Approach: Lazy Loading by Active View
+
+The fix is surgical — the infrastructure is already there:
+
+**Step 1: Remove `eagerFetch()` from constructor.** Change the constructor to only set up event listeners:
+
+```typescript
+constructor() {
+    EventsOn(Events.LibraryScanComplete, () => {
+        this.invalidate();
+    });
+    this.loadCoverSize();
+    // Remove: this.eagerFetch();
+}
+```
+
+**Step 2: Make `invalidate()` only clear caches, not re-fetch:**
+
+```typescript
+private invalidate(): void {
+    this.tracks = null;
+    this.albums = null;
+    this.artists = null;
+    this.genres = null;
+    this.scrollPositions = { tracks: 0, albums: 0, artists: 0, genres: 0 };
+    this.notify();
+    // Remove: this.eagerFetch();
+}
+```
+
+Data will be fetched on-demand when a view's controller calls `getTracks()`, `getAlbums()`, etc. The existing null-check + loading-flag + waitFor pattern handles concurrent access correctly.
+
+**Step 3: Prefetch the initial view data only.** If the app opens to the tracks view by default, the tracks controller will trigger `getTracks()` on its first render. This is already what happens — the eager fetch just front-loads all four queries unnecessarily.
+
+**Step 4 (optional, for 100k+ libraries): Implement paginated data providers.** This is a larger change and should only be pursued if lazy loading alone doesn't solve perceived startup lag. The approach:
+
+- Backend: Add `GetTracksPage(offset, limit int)` and `GetTrackCount()` queries to sqlc
+- Frontend: Replace `library.Track[]` with a `DataProvider` interface that the virtual scroller queries by range
+- The existing virtual scrolling components (`track-list`, `cover-grid`) already render only visible rows — they just hold the full dataset backing array
+
+**Recommendation:** Start with Steps 1-3 (remove eager fetch). Measure. Only build Step 4 if data shows the full `GetAllTracks()` call is still a problem for the initial view. For 50k tracks, a single indexed query returning rows is fast (~100ms on SSD); the bigger cost is JSON serialization across the Wails bridge, which lazy loading solves by deferring non-active-view data.
+
+### Risk Assessment
+
+| Change | Risk | Rationale |
+|--------|------|-----------|
+| Remove eagerFetch | **Low** | Lazy infrastructure already exists and is tested by the `getTracks()` pattern |
+| Invalidate without re-fetch | **Low** | Controllers already call getters on update |
+| Paginated data providers | **Medium** | Requires backend + frontend + virtual scroller changes |
+
+### Dependencies
+
+- Independent of backend changes.
+- If paginated data providers are needed, requires new sqlc queries (connects to Issue 5).
+
+---
+
+## Issue 4: Queue Persistence — Incremental Updates
+
+### Current Problem
+
+`commitMutation()` → `persistTracks()` does `DELETE FROM queue_tracks` + batch INSERT for the entire queue on every single mutation (add, remove, move, clear). For a 5000-track queue, every track add triggers a full table rewrite: ~5000 DELETEs + ~5000 INSERTs.
+
+The sqlc queries already define `InsertQueueTrack`, `RemoveQueueTrack`, `RemoveQueueTrackByPosition`, `ShiftQueuePositionsDown`, and `ShiftQueuePositionsUp` — but none of them are used. The persistence layer bypasses sqlc entirely with hand-crafted batch SQL.
+
+### Recommended Approach: Operation-Specific Persistence
+
+Replace the single `persistTracks()` call with operation-specific methods:
+
+**For AddTrack/AddTracks:** INSERT only the new tracks.
+
+```go
+func (q *Queue) persistAddTracks(tracks []Track) {
+    for _, t := range tracks {
+        _, err := q.db.Queries.InsertQueueTrack(q.db.Ctx, sqlcgen.InsertQueueTrackParams{
+            AudioFileID: t.AudioFileID,
+            Position:    t.Position,
+        })
+        if err != nil {
+            q.logger.Error("Failed to persist added track", "err", err)
+        }
+    }
+}
+```
+
+**For RemoveTrack/RemoveTracks:** DELETE specific rows + shift positions.
+
+```go
+func (q *Queue) persistRemoveTracks(positions []int) {
+    tx, err := q.db.BeginTx()
+    if err != nil { return }
+    txQ := q.db.Queries.WithTx(tx)
+    
+    // Remove in descending order to avoid position shifts during removal
+    slices.SortFunc(positions, func(a, b int) int { return b - a })
+    for _, pos := range positions {
+        txQ.RemoveQueueTrackByPosition(q.db.Ctx, int64(pos))
+        txQ.ShiftQueuePositionsDown(q.db.Ctx, int64(pos))
+    }
+    tx.Commit()
+}
+```
+
+**For MoveQueueTracks/InsertNextTracks:** These reorder arbitrary ranges. Use DELETE + INSERT for the affected range only, or fall back to full rewrite when >50% of tracks are affected.
+
+**For SetQueue and Clear:** Keep the existing DELETE ALL + batch INSERT — these are full replacement operations by definition.
+
+**Refactored `commitMutation`:**
+
+```go
+type mutationKind int
+const (
+    mutationFull    mutationKind = iota  // SetQueue, Clear
+    mutationAdd                          // AddTrack, AddTracks
+    mutationRemove                       // RemoveTrack, RemoveTracks
+    mutationReorder                      // MoveQueueTracks, InsertNext*
+)
+
+func (q *Queue) commitMutation(kind mutationKind, affectedTracks []Track, affectedPositions []int) {
+    if q.shuffleMode {
+        q.generateShuffleOrder()
+    }
+    
+    switch kind {
+    case mutationAdd:
+        q.persistAddTracks(affectedTracks)
+    case mutationRemove:
+        q.persistRemoveTracks(affectedPositions)
+    case mutationReorder, mutationFull:
+        q.persistTracks()  // full rewrite for complex operations
+    }
+    
+    q.persistState()
+}
+```
+
+**Performance impact:** For the common case (user adds a track to a 5000-track queue), this goes from ~10,000 SQL operations to 1 INSERT + 1 UPDATE. The full rewrite is reserved for SetQueue (infrequent) and complex reorders.
+
+### Risk Assessment
+
+| Change | Risk | Rationale |
+|--------|------|-----------|
+| Incremental add persistence | **Low** | Uses existing sqlc queries already defined |
+| Incremental remove persistence | **Low** | Uses existing sqlc queries + transaction |
+| Full rewrite for reorder | **Very Low** | Keeps current behavior for complex cases |
+| commitMutation refactor | **Medium** | Changes call signatures throughout queue.go |
+
+### Dependencies
+
+- **Should come after Issue 1** (SetContext fixes) so tests can verify persistence correctness.
+- **Should come after Issue 6** (test architecture) because persistence changes need test coverage to verify correctness.
+
+---
+
+## Issue 5: SQL Query Consolidation — FTS5 JOIN Pattern
+
+### Current Problem
+
+The same JOIN pattern (audio_files → recordings → artist_credit → release_group_recordings → release_groups) appears in:
+
+1. `SearchFTS()` — search.go:34-57
+2. `SearchFTSByFilename()` — search.go:92-116
+3. `SearchFTSTracks()` — search.go:232-274
+4. `RebuildSearchIndex()` — search.go:168-188
+5. `migration2BasenameAndFTS()` — database.go:287-311
+
+Plus a simpler variant in `lookupChunk()` (persistence.go:64-73).
+
+### Recommended Approach: SQLite VIEW + sqlc Queries
+
+**Create a VIEW that encapsulates the common JOIN pattern:**
+
+```sql
+-- sql/schemas/31_views.sql
+CREATE VIEW IF NOT EXISTS track_metadata AS
+SELECT
+    af.id AS audio_file_id,
+    af.file_path,
+    af.length_milliseconds,
+    af.basename,
+    af.sample_rate,
+    af.bit_depth,
+    af.channels,
+    af.bitrate,
+    af.file_size,
+    af.file_type_id,
+    af.recording_id,
+    COALESCE(r.name, '')  AS title,
+    COALESCE(ac.text, '') AS artist_name,
+    r.track_number,
+    r.disc_number,
+    COALESCE(r.year, 0) AS year,
+    COALESCE(r.composer, '') AS composer,
+    COALESCE(rg.name, '') AS album,
+    r.artist_credit_id,
+    r.id AS recording_row_id
+FROM audio_files af
+LEFT JOIN recordings r ON af.recording_id = r.id
+LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
+LEFT JOIN (
+    SELECT recording_id,
+        MIN(release_group_id) AS release_group_id
+    FROM release_group_recordings
+    GROUP BY recording_id
+) rgr ON r.id = rgr.recording_id
+LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id;
+```
+
+**Then use the VIEW in sqlc queries:**
+
+```sql
+-- sql/queries/search.sql
+
+-- name: SearchFTS :many
+SELECT tm.file_path, tm.length_milliseconds, tm.title, tm.artist_name, tm.album
+FROM search_index si
+JOIN track_metadata tm ON tm.audio_file_id = si.rowid
+WHERE search_index MATCH ?
+ORDER BY rank
+LIMIT ?;
+
+-- name: SearchFTSByFilename :many
+SELECT tm.file_path, tm.length_milliseconds, tm.title, tm.artist_name, tm.album
+FROM search_index si
+JOIN track_metadata tm ON tm.audio_file_id = si.rowid
+WHERE search_index MATCH ?
+ORDER BY rank
+LIMIT ?;
+
+-- name: RebuildSearchIndex :exec
+INSERT INTO search_index(rowid, file_path, title, artist, album)
+SELECT audio_file_id, file_path, title, artist_name, album
+FROM track_metadata;
+```
+
+**Why a VIEW and not a Go constant/query builder?**
+- sqlc can parse VIEWs and generate type-safe Go code from queries against them.
+- The JOIN is executed by SQLite's query planner, which optimizes VIEW queries the same as inline JOINs.
+- It eliminates all 5 copies of the JOIN at the SQL level, not just the Go level.
+- A Go string constant containing the JOIN clause would still require hand-crafted SQL around it, defeating sqlc's type safety.
+
+**For `lookupChunk` in queue persistence:** This uses `sqlc.slice()` — migrate to:
+
+```sql
+-- name: LookupTrackMetaBatch :many
+SELECT af.id, af.file_path,
+    COALESCE(r.name, '') AS title,
+    COALESCE(ac.text, '') AS artist
+FROM audio_files af
+LEFT JOIN recordings r ON af.recording_id = r.id
+LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
+WHERE af.file_path IN (sqlc.slice('filePaths'));
+```
+
+This replaces the hand-crafted `fmt.Sprintf` batch query with sqlc-generated code that handles the dynamic IN clause expansion. Confirmed: sqlc `sqlc.slice()` is supported for MySQL and SQLite (verified in official docs at `docs.sqlc.dev/en/stable/howto/select.html`).
+
+**For `SearchFTSTracks` (the 16-column variant):** This query has additional columns (genre via subquery, file_type). Extend the VIEW or create a second wider VIEW `track_metadata_full` that includes genre and file_type JOINs.
+
+**Migration note:** The `migration2BasenameAndFTS` function uses the JOIN inline in a migration. Migrations should NOT reference VIEWs because the VIEW might not exist yet when the migration runs. Keep the inline JOIN in migrations — they run once and don't need deduplication.
+
+### Risk Assessment
+
+| Change | Risk | Rationale |
+|--------|------|-----------|
+| CREATE VIEW | **Low** | SQLite VIEWs are well-supported, IF NOT EXISTS is safe |
+| Migrate search to sqlc | **Medium** | Changing hand-crafted SQL to generated code requires careful testing |
+| sqlc.slice for batch lookups | **Medium** | Different code generation pattern, needs verification |
+| Keep inline JOIN in migrations | **Very Low** | No change to migration code |
+
+### Dependencies
+
+- **Should come after Issue 6** (test architecture) so search behavior can be regression-tested.
+- Independent of Issues 1-4.
+
+---
+
+## Issue 6: Test Architecture for DB-Dependent Packages
+
+### Current Problem
+
+No tests exist for queue, library, database, or config packages. Existing tests (`playlist/match_test.go`, `metadata/*_test.go`) test pure functions that don't require DB or OS dependencies. The player test requires hardware and is skipped in CI.
+
+### Recommended Approach: In-Memory SQLite + Test Helpers
+
+**Core test helper — `testdb` package:**
+
+```go
+// internal/testdb/testdb.go
+package testdb
+
+import (
+    "testing"
+    "yellowjacket/backend/database"
+)
+
+// New creates a fresh in-memory database with all schemas applied.
+// The database is automatically closed when the test completes.
+func New(t *testing.T) *database.DB {
+    t.Helper()
+    
+    db, err := database.NewTestDB()
+    if err != nil {
+        t.Fatalf("failed to create test database: %v", err)
+    }
+    
+    t.Cleanup(func() {
+        db.Close()
+    })
+    
+    return db
+}
+```
+
+**Modify `database.NewDB` to support in-memory mode:**
+
+```go
+// database/database.go
+
+// NewTestDB creates an in-memory database for testing.
+// It applies all schemas and migrations identically to NewDB.
+func NewTestDB() (*DB, error) {
+    return newDB(":memory:")
+}
+
+// Extract common init logic into newDB(dsn string)
+func newDB(dsn string) (*DB, error) {
+    dbCtx := context.Background()
+    db, err := sql.Open("sqlite", dsn+"?_busy_timeout=5000&_journal_mode=WAL")
+    // ... rest of current NewDB logic
+}
+```
+
+The `modernc.org/sqlite` driver fully supports `:memory:` databases. Each test gets an isolated database — no cleanup needed, no file I/O, no disk contention.
+
+**Test pattern for Queue:**
+
+```go
+// queue/queue_test.go
+package queue_test
+
+import (
+    "context"
+    "testing"
+    "log/slog"
+    
+    "yellowjacket/backend/queue"
+    "yellowjacket/internal/testdb"
+)
+
+// mockPlayer implements queue.TrackLoader for tests
+type mockPlayer struct {
+    loaded   string
+    playing  bool
+    position int
+}
+
+func (m *mockPlayer) LoadFile(path string) error { m.loaded = path; return nil }
+func (m *mockPlayer) Play() error                { m.playing = true; return nil }
+func (m *mockPlayer) IsPlaying() bool            { return m.playing }
+func (m *mockPlayer) CurrentPositionSeconds() (int, error) { return m.position, nil }
+func (m *mockPlayer) UnloadTrack()               { m.loaded = ""; m.playing = false }
+
+func TestSetQueueAndNavigate(t *testing.T) {
+    db := testdb.New(t)
+    
+    // Seed test tracks
+    seedTracks(t, db, 10)
+    
+    q := queue.NewQueue(slog.Default(), db)
+    q.SetContext(context.Background())  // no Wails runtime needed for tests
+    q.SetPlayer(&mockPlayer{})
+    
+    paths := getTestTrackPaths(t, db)
+    q.SetQueue(paths, 0, false)
+    
+    state := q.GetState()
+    if state.CurrentIndex != 0 { t.Errorf("expected index 0, got %d", state.CurrentIndex) }
+    if len(state.Tracks) != 10 { t.Errorf("expected 10 tracks, got %d", len(state.Tracks)) }
+}
+```
+
+**Key insight: `context.Background()` works for SetContext in tests.** The Wails context is only needed for `runtime.EventsEmit()` and `runtime.EventsOn()`. In tests, these calls will simply no-op (emit to nobody, subscribe to nobody). Queue logic doesn't depend on event delivery — it just fires and forgets. If a test needs to verify events were emitted, introduce an `EventEmitter` interface later.
+
+**Test pattern for Config:**
+
+```go
+// config/config_test.go
+func TestLoadSaveRoundtrip(t *testing.T) {
+    dir := t.TempDir()
+    // Write a known TOML file
+    // Load it
+    // Verify fields
+    // Save it
+    // Load again
+    // Verify identical
+}
+```
+
+Config tests don't need a database — they need a temp directory for the TOML file. Use `t.TempDir()`.
+
+**Test pattern for Database/Search:**
+
+```go
+func TestSearchFTS(t *testing.T) {
+    db := testdb.New(t)
+    seedTracksWithMetadata(t, db)
+    
+    results, err := db.SearchFTS("beethoven", 10)
+    if err != nil { t.Fatal(err) }
+    if len(results) != 1 { t.Errorf("expected 1 result, got %d", len(results)) }
+}
+```
+
+**Test pattern for Player (pure logic extraction):**
+
+```go
+// player/volume_test.go — no hardware needed
+func TestUserVolumeToInternal(t *testing.T) {
+    tests := []struct{ user UserVolume; expected float64 }{
+        {0, -5.0},
+        {50, -2.5},
+        {100, 0.0},
+    }
+    for _, tt := range tests {
+        got := tt.user.toInternal()
+        if math.Abs(got - tt.expected) > 0.01 {
+            t.Errorf("UserVolume(%d).toInternal() = %f, want %f", tt.user, got, tt.expected)
+        }
+    }
+}
+```
+
+### Mocking Strategy
+
+**Use real in-memory SQLite, not mocked interfaces.** Reasons:
+
+1. The `modernc.org/sqlite` driver is pure Go — no CGo, no external deps, fast in-memory mode
+2. Mocking the DB interface would require mocking `*sqlcgen.Queries` (dozens of methods) — fragile and doesn't test real query behavior
+3. SQLite in-memory is effectively instant — no performance reason to mock
+4. Tests that exercise real SQL catch bugs that mock tests miss (FTS5 tokenization, JOIN correctness, migration logic)
+
+**Mock only at narrow interfaces:**
+- `TrackLoader` for queue tests (already an interface)
+- File system for library scan tests (use `testing/fstest.MapFS` or a temp directory with test audio files)
+- Wails runtime can be a no-op `context.Background()` — events fire into the void
+
+### Risk Assessment
+
+| Change | Risk | Rationale |
+|--------|------|-----------|
+| `NewTestDB()` function | **Very Low** | Extracts existing logic, adds `:memory:` path |
+| `internal/testdb` helper | **Very Low** | New test-only package |
+| Queue tests with mock player | **Low** | Tests new code, doesn't change production code |
+| Config tests with TempDir | **Very Low** | Isolated, no production code changes |
+| Player pure logic extraction | **Low** | Moving existing code to new functions |
+
+### Dependencies
+
+- `NewTestDB()` in database package must be created first — all other test packages depend on it.
+- **This is the foundation for safe refactoring** — should be one of the first things built.
+
+---
+
+## Recommended Build Order
+
+Based on dependency analysis and risk:
+
+```
+Phase 1: Foundation (no dependencies, enables everything else)
+├── 1a. Test architecture (Issue 6) — NewTestDB, testdb helper
+├── 1b. Event code generation (Issue 2) — independent, low risk
+└── 1c. SetContext mutex fixes (Issue 1) — independent, low risk
+
+Phase 2: Safety Net (requires Phase 1a)
+├── 2a. Queue unit tests — using testdb + mock player
+├── 2b. Database/search tests — using testdb
+└── 2c. Config tests — using TempDir
+
+Phase 3: Refactoring (requires Phase 2 tests as safety net)
+├── 3a. SQL VIEW + sqlc migration (Issue 5) — search tests verify no regression
+├── 3b. Queue incremental persistence (Issue 4) — queue tests verify no regression
+└── 3c. Library store lazy loading (Issue 3) — frontend change, lower risk
+
+Phase 4: Extended Tests
+├── 4a. Library scan tests — complex, last because scan code may change during Phase 3
+└── 4b. Player pure logic tests — independent extraction
+```
+
+### Phase Ordering Rationale
+
+1. **Tests before refactoring** because the consolidation milestone's entire purpose is safe improvement. Refactoring without tests in a codebase with known concurrency issues is high-risk.
+
+2. **SetContext fixes (1c) before queue tests (2a)** because the race conditions in SetContext would cause flaky test failures under `-race`.
+
+3. **SQL VIEW (3a) before queue persistence (3b)** because the VIEW changes the database schema that queue queries depend on. Do schema changes first, then change query patterns.
+
+4. **Frontend lazy loading (3c) last in Phase 3** because it's the lowest-risk change (removing code, not adding it) and is independent of backend refactoring.
+
+---
+
+## Anti-Patterns to Avoid
+
+### Anti-Pattern 1: Interface-Heavy Mocking
+
+**What people do:** Create interfaces for everything (`DatabaseInterface`, `ConfigInterface`) to enable mock-based testing.
+**Why it's wrong for this codebase:** SQLite in-memory is as fast as a mock and tests real behavior. Interface proliferation adds complexity without catching real SQL bugs.
+**Do this instead:** Use real in-memory SQLite for DB tests. Only create interfaces at natural boundaries (like `TrackLoader`, which already exists).
+
+### Anti-Pattern 2: Premature Abstraction of Persistence
+
+**What people do:** Build a generic "repository pattern" or ORM-like layer to abstract all SQL.
+**Why it's wrong for this codebase:** sqlc already provides type-safe generated code. Adding another abstraction layer on top of sqlc defeats its purpose.
+**Do this instead:** Use sqlc queries directly. Use VIEWs for complex JOINs. Hand-craft SQL only for dynamic batch operations where sqlc can't help.
+
+### Anti-Pattern 3: Global Event Bus Replacement
+
+**What people do:** Replace Wails events with a custom pub/sub system to enable testing.
+**Why it's wrong for this codebase:** The Wails event system is deeply integrated and works well. The real problem (event name parity) is solved by code generation, not by replacing the event system.
+**Do this instead:** Use `context.Background()` in tests (events no-op). Add code generation for event names. If event verification is needed later, wrap `runtime.EventsEmit` in a thin injectable function.
+
+---
+
+## Sources
+
+- Codebase analysis: `backend/queue/queue.go`, `backend/queue/persistence.go`, `backend/player/player.go`, `backend/library/library.go`, `backend/config/config.go`, `backend/database/search.go`, `backend/database/database.go`, `backend/events/events.go`, `frontend/src/events.ts`, `frontend/src/store/library-store.ts` — **HIGH confidence** (direct code reading)
+- sqlc `sqlc.slice()` for SQLite: `docs.sqlc.dev/en/stable/howto/select.html` — **HIGH confidence** (official documentation, verified)
+- sqlc batch operations (`:batchexec` etc.) are PostgreSQL-only: `docs.sqlc.dev/en/stable/reference/query-annotations.html` — **HIGH confidence** (official documentation, verified)
+- sqlc VIEW support: sqlc parses `CREATE VIEW` in schema files — **MEDIUM confidence** (documented for PostgreSQL; SQLite support inferred from general DDL handling, needs validation)
+- `modernc.org/sqlite` `:memory:` support: standard `database/sql` behavior — **HIGH confidence** (Go stdlib)
+- Go `sync.Mutex` patterns: Go stdlib documentation — **HIGH confidence**
+- Go `go/ast` for code generation: Go stdlib — **HIGH confidence**
+
+---
+*Architecture research for: YellowJacket consolidation milestone*
+*Researched: 2026-02-27*

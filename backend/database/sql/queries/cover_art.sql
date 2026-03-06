@@ -26,3 +26,6 @@ WHERE id = ?;
 -- name: DeleteCoverArt :exec
 DELETE FROM cover_art 
 WHERE id = ?;
+
+-- name: DeleteAllCoverArt :exec
+DELETE FROM cover_art;

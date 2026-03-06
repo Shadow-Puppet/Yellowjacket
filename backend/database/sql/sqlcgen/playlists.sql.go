@@ -41,6 +41,17 @@ func (q *Queries) ClearPlaylistTracks(ctx context.Context, playlistID int64) err
 	return err
 }
 
+const countPlaylistsByName = `-- name: CountPlaylistsByName :one
+SELECT COUNT(*) AS count FROM playlists WHERE name = ?
+`
+
+func (q *Queries) CountPlaylistsByName(ctx context.Context, name string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countPlaylistsByName, name)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createPlaylist = `-- name: CreatePlaylist :one
 INSERT INTO playlists (name) VALUES (?)
 RETURNING id, name, created_at, updated_at
@@ -58,6 +69,15 @@ func (q *Queries) CreatePlaylist(ctx context.Context, name string) (Playlist, er
 	return i, err
 }
 
+const deleteAllPlaylistTracks = `-- name: DeleteAllPlaylistTracks :exec
+DELETE FROM playlist_tracks
+`
+
+func (q *Queries) DeleteAllPlaylistTracks(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, deleteAllPlaylistTracks)
+	return err
+}
+
 const deletePlaylist = `-- name: DeletePlaylist :exec
 DELETE FROM playlists WHERE id = ?
 `
@@ -65,6 +85,79 @@ DELETE FROM playlists WHERE id = ?
 func (q *Queries) DeletePlaylist(ctx context.Context, id int64) error {
 	_, err := q.db.ExecContext(ctx, deletePlaylist, id)
 	return err
+}
+
+const getAllPlaylistTracksWithMetadata = `-- name: GetAllPlaylistTracksWithMetadata :many
+SELECT
+    pt.id,
+    pt.playlist_id,
+    pt.audio_file_id,
+    pt.position,
+    af.file_path,
+    af.length_milliseconds,
+    COALESCE(r.name, '') AS title,
+    COALESCE(ac.text, '') AS artist,
+    COALESCE(rg.name, '') AS album,
+    COALESCE(ca.file_path, '') AS cover_art_path
+FROM playlist_tracks pt
+JOIN audio_files af ON pt.audio_file_id = af.id
+LEFT JOIN recordings r ON af.recording_id = r.id
+LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
+LEFT JOIN (
+    SELECT recording_id, MIN(release_group_id) AS release_group_id
+    FROM release_group_recordings
+    GROUP BY recording_id
+) rgr ON r.id = rgr.recording_id
+LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
+LEFT JOIN cover_art ca ON rg.cover_art_id = ca.id
+ORDER BY pt.playlist_id, pt.position
+`
+
+type GetAllPlaylistTracksWithMetadataRow struct {
+	ID                 int64
+	PlaylistID         int64
+	AudioFileID        int64
+	Position           int64
+	FilePath           string
+	LengthMilliseconds int64
+	Title              string
+	Artist             string
+	Album              string
+	CoverArtPath       string
+}
+
+func (q *Queries) GetAllPlaylistTracksWithMetadata(ctx context.Context) ([]GetAllPlaylistTracksWithMetadataRow, error) {
+	rows, err := q.db.QueryContext(ctx, getAllPlaylistTracksWithMetadata)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetAllPlaylistTracksWithMetadataRow
+	for rows.Next() {
+		var i GetAllPlaylistTracksWithMetadataRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.PlaylistID,
+			&i.AudioFileID,
+			&i.Position,
+			&i.FilePath,
+			&i.LengthMilliseconds,
+			&i.Title,
+			&i.Artist,
+			&i.Album,
+			&i.CoverArtPath,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getAllPlaylists = `-- name: GetAllPlaylists :many
@@ -99,6 +192,18 @@ func (q *Queries) GetAllPlaylists(ctx context.Context) ([]Playlist, error) {
 	return items, nil
 }
 
+const getNextPlaylistTrackPosition = `-- name: GetNextPlaylistTrackPosition :one
+SELECT COALESCE(MAX(position), -1) + 1 AS next_position
+FROM playlist_tracks WHERE playlist_id = ?
+`
+
+func (q *Queries) GetNextPlaylistTrackPosition(ctx context.Context, playlistID int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getNextPlaylistTrackPosition, playlistID)
+	var next_position int64
+	err := row.Scan(&next_position)
+	return next_position, err
+}
+
 const getPlaylist = `-- name: GetPlaylist :one
 SELECT id, name, created_at, updated_at FROM playlists WHERE id = ? LIMIT 1
 `
@@ -113,6 +218,37 @@ func (q *Queries) GetPlaylist(ctx context.Context, id int64) (Playlist, error) {
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const getPlaylistTrackFilePaths = `-- name: GetPlaylistTrackFilePaths :many
+SELECT af.file_path
+FROM playlist_tracks pt
+JOIN audio_files af ON pt.audio_file_id = af.id
+WHERE pt.playlist_id = ?
+ORDER BY pt.position
+`
+
+func (q *Queries) GetPlaylistTrackFilePaths(ctx context.Context, playlistID int64) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, getPlaylistTrackFilePaths, playlistID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var file_path string
+		if err := rows.Scan(&file_path); err != nil {
+			return nil, err
+		}
+		items = append(items, file_path)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getPlaylistTracks = `-- name: GetPlaylistTracks :many
@@ -160,12 +296,123 @@ func (q *Queries) GetPlaylistTracks(ctx context.Context, playlistID int64) ([]Ge
 	return items, nil
 }
 
+const getPlaylistTracksWithMetadata = `-- name: GetPlaylistTracksWithMetadata :many
+SELECT
+    pt.id,
+    pt.playlist_id,
+    pt.audio_file_id,
+    pt.position,
+    af.file_path,
+    af.length_milliseconds,
+    COALESCE(r.name, '') AS title,
+    COALESCE(ac.text, '') AS artist,
+    COALESCE(rg.name, '') AS album,
+    COALESCE(ca.file_path, '') AS cover_art_path
+FROM playlist_tracks pt
+JOIN audio_files af ON pt.audio_file_id = af.id
+LEFT JOIN recordings r ON af.recording_id = r.id
+LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
+LEFT JOIN (
+    SELECT recording_id, MIN(release_group_id) AS release_group_id
+    FROM release_group_recordings
+    GROUP BY recording_id
+) rgr ON r.id = rgr.recording_id
+LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
+LEFT JOIN cover_art ca ON rg.cover_art_id = ca.id
+WHERE pt.playlist_id = ?
+ORDER BY pt.position
+`
+
+type GetPlaylistTracksWithMetadataRow struct {
+	ID                 int64
+	PlaylistID         int64
+	AudioFileID        int64
+	Position           int64
+	FilePath           string
+	LengthMilliseconds int64
+	Title              string
+	Artist             string
+	Album              string
+	CoverArtPath       string
+}
+
+func (q *Queries) GetPlaylistTracksWithMetadata(ctx context.Context, playlistID int64) ([]GetPlaylistTracksWithMetadataRow, error) {
+	rows, err := q.db.QueryContext(ctx, getPlaylistTracksWithMetadata, playlistID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetPlaylistTracksWithMetadataRow
+	for rows.Next() {
+		var i GetPlaylistTracksWithMetadataRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.PlaylistID,
+			&i.AudioFileID,
+			&i.Position,
+			&i.FilePath,
+			&i.LengthMilliseconds,
+			&i.Title,
+			&i.Artist,
+			&i.Album,
+			&i.CoverArtPath,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const isTrackInPlaylist = `-- name: IsTrackInPlaylist :one
+SELECT EXISTS(
+    SELECT 1 FROM playlist_tracks pt
+    JOIN audio_files af ON pt.audio_file_id = af.id
+    WHERE pt.playlist_id = ? AND af.file_path = ?
+) AS in_playlist
+`
+
+type IsTrackInPlaylistParams struct {
+	PlaylistID int64
+	FilePath   string
+}
+
+func (q *Queries) IsTrackInPlaylist(ctx context.Context, arg IsTrackInPlaylistParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, isTrackInPlaylist, arg.PlaylistID, arg.FilePath)
+	var in_playlist int64
+	err := row.Scan(&in_playlist)
+	return in_playlist, err
+}
+
 const removePlaylistTrack = `-- name: RemovePlaylistTrack :exec
 DELETE FROM playlist_tracks WHERE id = ?
 `
 
 func (q *Queries) RemovePlaylistTrack(ctx context.Context, id int64) error {
 	_, err := q.db.ExecContext(ctx, removePlaylistTrack, id)
+	return err
+}
+
+const removePlaylistTrackByPath = `-- name: RemovePlaylistTrackByPath :exec
+DELETE FROM playlist_tracks
+WHERE playlist_id = ? AND audio_file_id = (
+    SELECT id FROM audio_files WHERE file_path = ?
+)
+`
+
+type RemovePlaylistTrackByPathParams struct {
+	PlaylistID int64
+	FilePath   string
+}
+
+func (q *Queries) RemovePlaylistTrackByPath(ctx context.Context, arg RemovePlaylistTrackByPathParams) error {
+	_, err := q.db.ExecContext(ctx, removePlaylistTrackByPath, arg.PlaylistID, arg.FilePath)
 	return err
 }
 

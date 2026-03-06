@@ -1,7 +1,9 @@
-import { EventsOn, EventsEmit } from '@runtime/runtime';
+import { EventsOn } from '@runtime/runtime';
 import { Events } from '../events';
+import * as Player from '@go/player/Player';
 
-// Types
+// TrackInfo mirrors the player.TrackInfo struct in the Go backend.
+// Fields are serialized as camelCase JSON via struct tags.
 export interface TrackInfo {
   fileName: string;
   filePath: string;
@@ -11,7 +13,11 @@ export interface TrackInfo {
   title: string; // track title (falls back to fileName)
   artist: string; // artist name
   album: string; // album name
-  coverArt: string; // URL path to cover art (e.g., "/covers/abc.jpg") or empty string
+  coverArt: string; // URL path to full-size cover art or empty string
+  coverArtSmall: string; // URL path to small variant (100px max) or empty string
+  coverArtMedium: string; // URL path to medium variant (200px max) or empty string
+  coverArtLarge: string; // URL path to large variant (400px max) or empty string
+  trackChangeId: number; // monotonic counter to detect track changes even when the same file plays consecutively
 }
 
 export interface PlayerState {
@@ -50,8 +56,8 @@ class PlayerStore {
       this.update({ isPlaying: data.state === 'playing' });
     });
 
-    EventsOn(Events.TrackChanged, (trackInfo: TrackInfo) => {
-      this.update({ currentTrack: trackInfo });
+    EventsOn(Events.TrackChanged, (trackInfo: TrackInfo | null) => {
+      this.update({ currentTrack: trackInfo ?? null });
     });
 
     EventsOn(Events.PlaybackFinished, () => {
@@ -74,27 +80,23 @@ class PlayerStore {
 
   // ===================================================================
   // ACTIONS
-  // These delegate to the backend via Wails events
+  // These delegate to the backend via Wails bindings
   // ===================================================================
 
-  play(): void {
-    EventsEmit(Events.RequestPlay);
-  }
-
   pause(): void {
-    EventsEmit(Events.RequestPause);
+    Player.Pause();
   }
 
   loadTrack(filePath: string): void {
-    EventsEmit(Events.RequestLoadFile, filePath);
+    Player.LoadFile(filePath);
   }
 
   seek(seconds: number): void {
-    EventsEmit(Events.Seek, seconds);
+    Player.Seek(seconds);
   }
 
   setVolume(level: number): void {
-    EventsEmit(Events.RequestSetVolume, level);
+    Player.SetVolume(level);
   }
 
   // ===================================================================

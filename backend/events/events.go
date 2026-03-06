@@ -3,48 +3,46 @@
 // the corresponding event names in the TypeScript frontend.
 package events
 
-// Playback control events.
+//go:generate go run ./cmd/genevents -source events.go -output ../../frontend/src/events.ts
+
+// Playback events (backend → frontend push).
 const (
 	PlaybackStateChanged = "PlaybackStateChanged"
 	PlaybackFinished     = "PlaybackFinished"
-	RequestPlay          = "RequestPlay"
-	RequestPause         = "RequestPause"
-	RequestLoadFile      = "RequestLoadFile"
+	TrackChanged         = "TrackChanged"
+	SeekFailed           = "SeekFailed"
+	VolumeChanged        = "VolumeChanged"
 )
 
-// Track events.
+// Queue events (backend → frontend push).
 const (
-	TrackChanged = "TrackChanged"
-)
-
-// Seek events.
-const (
-	Seek       = "Seek"
-	SeekFailed = "SeekFailed"
-)
-
-// Volume events.
-const (
-	RequestSetVolume = "RequestSetVolume"
-	VolumeChanged    = "VolumeChanged"
-)
-
-// Queue events.
-const (
-	QueueChanged            = "QueueChanged"
-	RequestNext             = "RequestNext"
-	RequestPrevious         = "RequestPrevious"
-	RequestSetQueue         = "RequestSetQueue"
-	RequestAddToQueue       = "RequestAddToQueue"
-	RequestPlayNext         = "RequestPlayNext"
-	RequestRemoveFromQueue  = "RequestRemoveFromQueue"
-	RequestToggleShuffle    = "RequestToggleShuffle"
-	RequestCycleRepeat      = "RequestCycleRepeat"
-	RequestAddTracksToQueue = "RequestAddTracksToQueue"
-	RequestPlayTracksNext   = "RequestPlayTracksNext"
+	QueueChanged        = "QueueChanged"
+	QueueIndexChanged   = "QueueIndexChanged"
+	QueueModeChanged    = "QueueModeChanged"
+	QueueTracksModified = "QueueTracksModified"
 )
 
 // Config events.
 const (
-	LibraryConfigChanged = "LibraryConfigChanged"
+	LibraryConfigChanged   = "LibraryConfigChanged"
+	ThemeConfigChanged     = "ThemeConfigChanged"
+	TrackListConfigChanged = "TrackListConfigChanged"
+	FavoritesConfigChanged = "FavoritesConfigChanged"
+)
+
+// Playlist events.
+const (
+	PlaylistCreated        = "PlaylistCreated"
+	PlaylistDeleted        = "PlaylistDeleted"
+	PlaylistRenamed        = "PlaylistRenamed"
+	PlaylistTracksChanged  = "PlaylistTracksChanged"
+	PlaylistsRestored      = "PlaylistsRestored"
+	DefaultPlaylistChanged = "DefaultPlaylistChanged"
+)
+
+// Library events.
+const (
+	LibraryScanStarted  = "LibraryScanStarted"
+	LibraryScanProgress = "LibraryScanProgress"
+	LibraryScanComplete = "LibraryScanComplete"
 )

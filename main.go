@@ -5,14 +5,17 @@ import (
 	"embed"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/golang-cz/devslog"
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
+	"github.com/wailsapp/wails/v2/pkg/options/linux"
 
 	"yellowjacket/backend"
 	"yellowjacket/backend/assets"
 	"yellowjacket/backend/logging"
+	"yellowjacket/backend/profiling"
 	"yellowjacket/internal/dev"
 )
 
@@ -28,12 +31,7 @@ var frontendDistAssets embed.FS
 func main() {
 	isDev := dev.IsDev
 	// create sLogger
-	var loglevel slog.Level
-	if isDev {
-		loglevel = slog.LevelDebug
-	} else {
-		loglevel = slog.LevelInfo
-	}
+	loglevel := resolveLogLevel(isDev)
 
 	sLogger := slog.New(devslog.NewHandler(os.Stdout, &devslog.Options{
 		HandlerOptions: &slog.HandlerOptions{
@@ -43,24 +41,32 @@ func main() {
 	slog.SetDefault(sLogger)
 	sLogger.Info("starting yellowjacket", "version", version, "commit", commit)
 
+	// Start profiling server (pprof + trace). In production builds this
+	// is a no-op — the compiler eliminates all profiling code.
+	stopProfiler := profiling.Start(sLogger)
+
 	// create asset handler
 	assetHandler, err := assets.NewAssetHandler(sLogger, frontendDistAssets)
 	if err != nil {
 		sLogger.Error("could not create asset handler", "err", err.Error())
+		stopProfiler()
 		os.Exit(1)
 	}
 
 	yjApp, err := backend.NewYellowJacketApp(sLogger, assetHandler)
 	if err != nil {
 		sLogger.Error("problem initializing yellowjacket", "err", err.Error())
+		stopProfiler()
 		os.Exit(1)
 	}
 
 	// Create application with options
+	winCfg := yjApp.WindowConfig()
+
 	err = wails.Run(&options.App{
 		Title:  "yellowjacket",
-		Width:  512,
-		Height: 384,
+		Width:  winCfg.Width,
+		Height: winCfg.Height,
 		Logger: logging.NewLogger(
 			sLogger,
 			[]string{},
@@ -69,15 +75,46 @@ func main() {
 		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
 		OnStartup:        yjApp.OnStartup,
 		OnDomReady:       yjApp.OnDomReady,
+		OnBeforeClose:    yjApp.OnBeforeClose,
 		OnShutdown:       yjApp.OnShutdown,
 		Bind:             yjApp.FEBindings,
 		MinWidth:         512,
 		MinHeight:        384,
 		MaxWidth:         0,
 		MaxHeight:        0,
+		Linux: &linux.Options{
+			WebviewGpuPolicy: linux.WebviewGpuPolicyAlways,
+		},
 	})
+
+	stopProfiler()
+
 	if err != nil {
 		sLogger.Error("application error", "err", err.Error())
 		os.Exit(1)
 	}
+}
+
+// resolveLogLevel determines the slog level.  In dev mode the default
+// is Info (not Debug) to avoid flooding stdout during library scans.
+// Set YJ_LOG_LEVEL=debug to restore verbose logging.
+//
+// Accepted values: debug, info, warn, error (case-insensitive).
+// Production builds always default to Info.
+func resolveLogLevel(_ bool) slog.Level {
+	if env := os.Getenv("YJ_LOG_LEVEL"); env != "" {
+		switch strings.ToLower(env) {
+		case "debug":
+			return slog.LevelDebug
+		case "info":
+			return slog.LevelInfo
+		case "warn":
+			return slog.LevelWarn
+		case "error":
+			return slog.LevelError
+		}
+	}
+
+	// Default: Info for both dev and prod.
+	return slog.LevelInfo
 }

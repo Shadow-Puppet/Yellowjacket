@@ -21,6 +21,15 @@ func (q *Queries) CreateArtistCredit(ctx context.Context, text string) (ArtistCr
 	return i, err
 }
 
+const deleteAllArtistCredits = `-- name: DeleteAllArtistCredits :exec
+DELETE FROM artist_credit
+`
+
+func (q *Queries) DeleteAllArtistCredits(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, deleteAllArtistCredits)
+	return err
+}
+
 const deleteArtistCredit = `-- name: DeleteArtistCredit :exec
 DELETE FROM artist_credit 
 WHERE id = ?

@@ -71,6 +71,10 @@ export class QueueController implements ReactiveController {
   // ACTIONS
   // ===================================================================
 
+  play(): void {
+    queueStore.play();
+  }
+
   next(): void {
     queueStore.next();
   }
@@ -79,8 +83,12 @@ export class QueueController implements ReactiveController {
     queueStore.previous();
   }
 
-  setQueue(filePaths: string[], startIndex: number): void {
-    queueStore.setQueue(filePaths, startIndex);
+  setQueue(
+    filePaths: string[],
+    startIndex: number,
+    shuffleStart = false,
+  ): void {
+    queueStore.setQueue(filePaths, startIndex, shuffleStart);
   }
 
   addToQueue(filePath: string): void {
@@ -93,6 +101,10 @@ export class QueueController implements ReactiveController {
 
   removeFromQueue(position: number): void {
     queueStore.removeFromQueue(position);
+  }
+
+  removeTracksFromQueue(positions: number[]): void {
+    queueStore.removeTracksFromQueue(positions);
   }
 
   addTracksToQueue(filePaths: string[]): void {
@@ -109,5 +121,27 @@ export class QueueController implements ReactiveController {
 
   cycleRepeat(): void {
     queueStore.cycleRepeat();
+  }
+
+  playAtIndex(index: number): void {
+    queueStore.playAtIndex(index);
+  }
+
+  insertTracksAtIndex(
+    filePaths: string[],
+    index: number,
+  ): void {
+    queueStore.insertTracksAtIndex(filePaths, index);
+  }
+
+  moveTracksInQueue(
+    fromIndices: number[],
+    toIndex: number,
+  ): void {
+    queueStore.moveTracksInQueue(fromIndices, toIndex);
+  }
+
+  clearQueue(): void {
+    queueStore.clearQueue();
   }
 }

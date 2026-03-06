@@ -28,6 +28,9 @@ WHERE id = ?;
 DELETE FROM recordings 
 WHERE id = ?;
 
+-- name: DeleteAllRecordings :exec
+DELETE FROM recordings;
+
 -- name: GetAllRecordings :many
 SELECT * FROM recordings
 ORDER BY name;

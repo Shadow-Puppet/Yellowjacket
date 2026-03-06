@@ -6,8 +6,8 @@
     <meta content="width=device-width, initial-scale=1.0" name="viewport" />
     <link href="./index.css" rel="stylesheet" />
     <title>yellowjacket</title>
+    <script src="/index.ts" type="module"></script>
 </head>
-<script src="/index.ts" type="module"></script>
 
 <body>
     <header class="top-bar">
@@ -15,16 +15,17 @@
             <h1 class="title">YellowJacket</h1>
             <h3 class="subtitle">Music how it was meant to bee.</h3>
         </hgroup>
-        <a href="/src/pages/config/config.html">
-            <img src="/src/assets/images/icons/ui/settings.svg" />
-        </a>
+        <search-bar></search-bar>
     </header>
     <div class="sidebar">
         <app-sidebar></app-sidebar>
     </div>
-    <main class="main-panel" id="main-content">
-        <track-list></track-list>
-    </main>
+    <div class="content-area">
+        <main class="main-panel" id="main-content">
+            <track-list></track-list>
+        </main>
+        <queue-panel id="queue-panel"></queue-panel>
+    </div>
     <footer class="bottom-bar">
         <now-playing></now-playing>
         <audio-player></audio-player>
@@ -32,7 +33,6 @@
             <wa-icon name="list"></wa-icon>
         </button>
     </footer>
-    <queue-panel id="queue-panel"></queue-panel>
 </body>
 
 </html>

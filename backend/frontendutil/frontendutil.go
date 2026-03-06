@@ -31,8 +31,39 @@ func (fe *FrontendUtil) DirectoryPicker() (string, error) {
 		fe.ctx,
 		runtime.OpenDialogOptions{})
 	if err != nil {
-		return "", fmt.Errorf("could not open directory dialog\n%w", err)
+		return "", fmt.Errorf(
+			"could not open directory dialog\n%w", err,
+		)
 	}
 
 	return dir, nil
+}
+
+// PlaylistFilePicker opens a file selection dialog filtered
+// to M3U/M3U8 playlist files. Multiple files may be selected.
+func (fe *FrontendUtil) PlaylistFilePicker() (
+	[]string,
+	error,
+) {
+	runtime.LogInfo(fe.ctx, "selecting playlist files")
+
+	files, err := runtime.OpenMultipleFilesDialog(
+		fe.ctx,
+		runtime.OpenDialogOptions{
+			Title: "Import Playlist",
+			Filters: []runtime.FileFilter{
+				{
+					DisplayName: "Playlist Files (*.m3u, *.m3u8)",
+					Pattern:     "*.m3u;*.m3u8",
+				},
+			},
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"could not open file dialog: %w", err,
+		)
+	}
+
+	return files, nil
 }

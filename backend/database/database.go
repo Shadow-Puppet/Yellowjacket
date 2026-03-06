@@ -9,10 +9,12 @@ import (
 	"io/fs"
 	"log/slog"
 	"path"
+	"strings"
 
 	_ "modernc.org/sqlite" // Register sqlite driver.
 
 	"yellowjacket/backend/database/sql/sqlcgen"
+	"yellowjacket/backend/profiling"
 	"yellowjacket/backend/system"
 )
 
@@ -31,6 +33,8 @@ type DB struct {
 
 // NewDB opens the database and applies schema migrations.
 func NewDB(logger *slog.Logger) (*DB, error) {
+	defer profiling.TimeOp(logger, "database.NewDB")()
+
 	dbCtx := context.Background()
 
 	userDataDir, err := system.GetUserDataDirPath()
@@ -48,6 +52,10 @@ func NewDB(logger *slog.Logger) (*DB, error) {
 	}
 
 	db.SetMaxOpenConns(1) // SQLite only supports one writer at a time
+
+	if err := applyPRAGMAs(dbCtx, db); err != nil {
+		return nil, fmt.Errorf("could not apply PRAGMAs: %w", err)
+	}
 
 	// Execute SQL files from the embedded schemas directory
 	logger.Debug("reading sql schema files from embedded directory")
@@ -83,6 +91,32 @@ func NewDB(logger *slog.Logger) (*DB, error) {
 		}
 	}
 
+	// Run versioned schema migrations for columns that cannot be
+	// added with CREATE TABLE IF NOT EXISTS on existing databases.
+	if err := runMigrations(dbCtx, db, logger); err != nil {
+		return nil, fmt.Errorf(
+			"could not run schema migrations: %w", err,
+		)
+	}
+
+	// Remove orphaned playlist_tracks left behind by past deletes
+	// that ran without foreign key enforcement.
+	orphanResult, err := db.ExecContext(
+		dbCtx,
+		"DELETE FROM playlist_tracks WHERE playlist_id NOT IN (SELECT id FROM playlists)",
+	)
+	if err != nil {
+		logger.Warn(
+			"could not clean orphaned playlist tracks",
+			"err", err,
+		)
+	} else if n, _ := orphanResult.RowsAffected(); n > 0 {
+		logger.Info(
+			"Cleaned orphaned playlist tracks",
+			"deleted", n,
+		)
+	}
+
 	// Get generated queries
 	queries := sqlcgen.New(db)
 
@@ -92,4 +126,534 @@ func NewDB(logger *slog.Logger) (*DB, error) {
 		Queries: queries,
 		logger:  logger,
 	}, err
+}
+
+// BeginTx starts a new database transaction.
+func (d *DB) BeginTx() (*sql.Tx, error) {
+	return d.db.BeginTx(d.Ctx, nil)
+}
+
+// ExecContext executes a query without returning any rows.
+func (d *DB) ExecContext(query string, args ...any) (sql.Result, error) {
+	return d.db.ExecContext(d.Ctx, query, args...)
+}
+
+// QueryContext executes a query that returns rows.
+func (d *DB) QueryContext(query string, args ...any) (*sql.Rows, error) {
+	return d.db.QueryContext(d.Ctx, query, args...)
+}
+
+// applyPRAGMAs configures SQLite connection settings. Called by both
+// NewDB and NewTestDB to ensure identical behavior.
+func applyPRAGMAs(ctx context.Context, db *sql.DB) error {
+	pragmas := []string{
+		"PRAGMA foreign_keys = ON",
+		"PRAGMA synchronous = NORMAL",
+		"PRAGMA cache_size = -8000",
+		"PRAGMA mmap_size = 67108864",
+	}
+
+	for _, pragma := range pragmas {
+		if _, err := db.ExecContext(ctx, pragma); err != nil {
+			return fmt.Errorf(
+				"could not apply PRAGMA %q: %w", pragma, err,
+			)
+		}
+	}
+
+	return nil
+}
+
+// runMigrations applies incremental schema changes using SQLite's
+// PRAGMA user_version as the version tracker.  Each migration runs
+// once and bumps the version so it is never re-applied.
+func runMigrations(
+	ctx context.Context,
+	db *sql.DB,
+	logger *slog.Logger,
+) error {
+	var version int
+
+	if err := db.QueryRowContext(
+		ctx, "PRAGMA user_version",
+	).Scan(&version); err != nil {
+		return fmt.Errorf(
+			"could not read user_version: %w", err,
+		)
+	}
+
+	logger.Debug(
+		"current schema version",
+		"user_version", version,
+	)
+
+	// Migration 1: add audio-property columns to audio_files.
+	if version < 1 {
+		logger.Info("applying migration 1: audio file properties")
+
+		cols := []string{
+			"sample_rate int NOT NULL DEFAULT 0",
+			"bit_depth int NOT NULL DEFAULT 0",
+			"channels int NOT NULL DEFAULT 0",
+			"bitrate int NOT NULL DEFAULT 0",
+			"file_size int NOT NULL DEFAULT 0",
+		}
+
+		for _, col := range cols {
+			stmt := "ALTER TABLE audio_files ADD COLUMN " + col
+
+			if _, err := db.ExecContext(ctx, stmt); err != nil {
+				// Column may already exist on a fresh DB that
+				// ran the updated CREATE TABLE.  SQLite returns
+				// "duplicate column name" in that case.
+				if isDuplicateColumnErr(err) {
+					continue
+				}
+
+				return fmt.Errorf(
+					"migration 1 failed (%s): %w", col, err,
+				)
+			}
+		}
+
+		if _, err := db.ExecContext(
+			ctx, "PRAGMA user_version = 1",
+		); err != nil {
+			return fmt.Errorf(
+				"could not set user_version to 1: %w", err,
+			)
+		}
+	}
+
+	// Migration 2: add basename column and populate search index.
+	if version < 2 {
+		if err := migration2BasenameAndFTS(
+			ctx, db, logger,
+		); err != nil {
+			return err
+		}
+	}
+
+	// Migration 3: add UNIQUE constraint to artist_credit_artist.
+	if version < 3 {
+		logger.Info(
+			"applying migration 3: artist_credit_artist unique constraint",
+		)
+
+		// Remove duplicates first (keep lowest ID per pair).
+		if _, err := db.ExecContext(ctx, `
+			DELETE FROM artist_credit_artist
+			WHERE id NOT IN (
+				SELECT MIN(id)
+				FROM artist_credit_artist
+				GROUP BY artist_id, credit_id
+			)
+		`); err != nil {
+			return fmt.Errorf(
+				"migration 3: could not deduplicate: %w", err,
+			)
+		}
+
+		if _, err := db.ExecContext(ctx, `
+			CREATE UNIQUE INDEX IF NOT EXISTS
+				idx_artist_credit_artist_unique
+			ON artist_credit_artist(artist_id, credit_id)
+		`); err != nil {
+			return fmt.Errorf(
+				"migration 3: could not create unique index: %w",
+				err,
+			)
+		}
+
+		if _, err := db.ExecContext(
+			ctx, "PRAGMA user_version = 3",
+		); err != nil {
+			return fmt.Errorf(
+				"could not set user_version to 3: %w", err,
+			)
+		}
+
+		logger.Info("migration 3 complete")
+	}
+
+	// Migration 4: create track_metadata VIEW.
+	if version < 4 {
+		if err := migration4TrackMetadataView(
+			ctx, db, logger,
+		); err != nil {
+			return err
+		}
+	}
+
+	// Migration 5: rebuild release_groups with composite unique
+	// constraint on (name, album_artist_credit_id) instead of
+	// name alone, so albums with the same name by different
+	// artists are stored as separate rows.
+	if version < 5 {
+		if err := migration5ReleaseGroupCompositeUnique(
+			ctx, db, logger,
+		); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migration2BasenameAndFTS adds the basename column to audio_files,
+// backfills it from file_path, creates the basename index, and
+// populates the FTS5 search_index table.
+func migration2BasenameAndFTS(
+	ctx context.Context,
+	db *sql.DB,
+	logger *slog.Logger,
+) error {
+	logger.Info(
+		"applying migration 2: basename column + FTS5 search index",
+	)
+
+	// Add basename column (may already exist on fresh DBs).
+	if _, err := db.ExecContext(
+		ctx,
+		"ALTER TABLE audio_files ADD COLUMN basename text NOT NULL DEFAULT ''",
+	); err != nil && !isDuplicateColumnErr(err) {
+		return fmt.Errorf(
+			"migration 2: could not add basename column: %w",
+			err,
+		)
+	}
+
+	// Backfill basename from file_path for existing rows.
+	// SQLite doesn't have a basename function, so we use
+	// REPLACE to strip directories by finding everything
+	// after the last '/'.
+	if _, err := db.ExecContext(ctx, `
+		UPDATE audio_files
+		SET basename = CASE
+			WHEN INSTR(file_path, '/') > 0
+			THEN SUBSTR(
+				file_path,
+				LENGTH(file_path)
+					- LENGTH(
+						REPLACE(file_path, '/', '')
+					)
+					+ 1
+			)
+			ELSE file_path
+		END
+		WHERE basename = ''
+	`); err != nil {
+		return fmt.Errorf(
+			"migration 2: could not backfill basename: %w",
+			err,
+		)
+	}
+
+	// Create index (IF NOT EXISTS handles fresh DBs).
+	if _, err := db.ExecContext(ctx, `
+		CREATE INDEX IF NOT EXISTS idx_audio_files_basename
+		ON audio_files(basename)
+	`); err != nil {
+		return fmt.Errorf(
+			"migration 2: could not create basename index: %w",
+			err,
+		)
+	}
+
+	// Populate FTS5 search index from existing data.
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO search_index(rowid, file_path, title, artist, album)
+		SELECT
+			af.id,
+			af.file_path,
+			COALESCE(r.name, ''),
+			COALESCE(ac.text, ''),
+			COALESCE(rg.name, '')
+		FROM audio_files af
+		LEFT JOIN recordings r ON af.recording_id = r.id
+		LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
+		LEFT JOIN (
+			SELECT recording_id,
+				MIN(release_group_id) AS release_group_id
+			FROM release_group_recordings
+			GROUP BY recording_id
+		) rgr ON r.id = rgr.recording_id
+		LEFT JOIN release_groups rg
+			ON rgr.release_group_id = rg.id
+	`); err != nil {
+		return fmt.Errorf(
+			"migration 2: could not populate search index: %w",
+			err,
+		)
+	}
+
+	if _, err := db.ExecContext(
+		ctx, "PRAGMA user_version = 2",
+	); err != nil {
+		return fmt.Errorf(
+			"could not set user_version to 2: %w", err,
+		)
+	}
+
+	logger.Info("migration 2 complete")
+
+	return nil
+}
+
+// migration4TrackMetadataView creates the track_metadata VIEW that
+// consolidates the 5-table JOIN used by FTS5 search queries.
+// Fresh databases get the VIEW from the embedded schema file;
+// this migration covers databases created before the VIEW existed.
+func migration4TrackMetadataView(
+	ctx context.Context,
+	db *sql.DB,
+	logger *slog.Logger,
+) error {
+	logger.Info(
+		"applying migration 4: track_metadata VIEW",
+	)
+
+	if _, err := db.ExecContext(ctx, `
+		CREATE VIEW IF NOT EXISTS track_metadata AS
+		SELECT
+			af.id,
+			af.file_path,
+			af.length_milliseconds,
+			COALESCE(r.name, '') AS title,
+			COALESCE(ac.text, '') AS artist_name,
+			r.track_number,
+			r.disc_number,
+			COALESCE(rg.name, '') AS album,
+			CAST(COALESCE(
+				(SELECT GROUP_CONCAT(g.name, '||')
+				 FROM recording_genres rg_sub
+				 JOIN genres g ON rg_sub.genre_id = g.id
+				 WHERE rg_sub.recording_id = r.id),
+				''
+			) AS TEXT) AS genre,
+			COALESCE(r.year, 0) AS year,
+			COALESCE(r.composer, '') AS composer,
+			COALESCE(ft.extension, '') AS file_type,
+			af.sample_rate,
+			af.bit_depth,
+			af.channels,
+			af.bitrate,
+			af.file_size
+		FROM audio_files af
+		LEFT JOIN recordings r ON af.recording_id = r.id
+		LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
+		LEFT JOIN (
+			SELECT recording_id,
+				MIN(release_group_id) AS release_group_id
+			FROM release_group_recordings
+			GROUP BY recording_id
+		) rgr ON r.id = rgr.recording_id
+		LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
+		LEFT JOIN file_types ft ON af.file_type_id = ft.id
+	`); err != nil {
+		return fmt.Errorf(
+			"migration 4: could not create track_metadata VIEW: %w",
+			err,
+		)
+	}
+
+	if _, err := db.ExecContext(
+		ctx, "PRAGMA user_version = 4",
+	); err != nil {
+		return fmt.Errorf(
+			"could not set user_version to 4: %w", err,
+		)
+	}
+
+	logger.Info("migration 4 complete")
+
+	return nil
+}
+
+// migration5ReleaseGroupCompositeUnique rebuilds the release_groups
+// table with UNIQUE(name, album_artist_credit_id) instead of
+// UNIQUE(name).  SQLite cannot ALTER a UNIQUE constraint, so we
+// must rebuild the table.
+//
+// SAFETY: Hand-crafted SQL for schema migration.
+func migration5ReleaseGroupCompositeUnique(
+	ctx context.Context,
+	db *sql.DB,
+	logger *slog.Logger,
+) error {
+	logger.Info(
+		"applying migration 5: release_groups composite unique constraint",
+	)
+
+	// Temporarily disable FK checks for table rebuild.
+	if _, err := db.ExecContext(
+		ctx, "PRAGMA foreign_keys = OFF",
+	); err != nil {
+		return fmt.Errorf(
+			"migration 5: could not disable foreign keys: %w",
+			err,
+		)
+	}
+
+	// Drop the track_metadata VIEW that references release_groups
+	// so the table rebuild can proceed without SQLite complaining
+	// about a dangling VIEW reference.
+	if _, err := db.ExecContext(
+		ctx, "DROP VIEW IF EXISTS track_metadata",
+	); err != nil {
+		return fmt.Errorf(
+			"migration 5: could not drop track_metadata VIEW: %w",
+			err,
+		)
+	}
+
+	// Create new table with composite unique constraint.
+	if _, err := db.ExecContext(ctx, `
+		CREATE TABLE release_groups_new (
+			id                     INTEGER PRIMARY KEY,
+			name                   TEXT NOT NULL,
+			cover_art_id           INTEGER,
+			album_artist_credit_id INTEGER,
+			year                   INTEGER,
+			total_tracks           INTEGER,
+			total_discs            INTEGER,
+			FOREIGN KEY(cover_art_id) REFERENCES cover_art(id),
+			FOREIGN KEY(album_artist_credit_id) REFERENCES artist_credit(id),
+			UNIQUE(name, album_artist_credit_id)
+		)
+	`); err != nil {
+		return fmt.Errorf(
+			"migration 5: could not create release_groups_new: %w",
+			err,
+		)
+	}
+
+	// Copy all data.
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO release_groups_new
+		SELECT * FROM release_groups
+	`); err != nil {
+		return fmt.Errorf(
+			"migration 5: could not copy data: %w", err,
+		)
+	}
+
+	// Drop old table.
+	if _, err := db.ExecContext(
+		ctx, "DROP TABLE release_groups",
+	); err != nil {
+		return fmt.Errorf(
+			"migration 5: could not drop old table: %w", err,
+		)
+	}
+
+	// Rename new table.
+	if _, err := db.ExecContext(ctx, `
+		ALTER TABLE release_groups_new
+		RENAME TO release_groups
+	`); err != nil {
+		return fmt.Errorf(
+			"migration 5: could not rename table: %w", err,
+		)
+	}
+
+	// Recreate indexes.
+	if _, err := db.ExecContext(ctx, `
+		CREATE INDEX IF NOT EXISTS idx_release_groups_cover_art_id
+			ON release_groups(cover_art_id)
+	`); err != nil {
+		return fmt.Errorf(
+			"migration 5: could not create cover_art_id index: %w",
+			err,
+		)
+	}
+
+	if _, err := db.ExecContext(ctx, `
+		CREATE INDEX IF NOT EXISTS idx_release_groups_album_artist_credit_id
+			ON release_groups(album_artist_credit_id)
+	`); err != nil {
+		return fmt.Errorf(
+			"migration 5: could not create album_artist_credit_id index: %w",
+			err,
+		)
+	}
+
+	// Recreate the track_metadata VIEW that was dropped above.
+	// The definition must match the embedded schema file
+	// (sql/schemas/track_metadata_view.sql) exactly.
+	if _, err := db.ExecContext(ctx, `
+		CREATE VIEW IF NOT EXISTS track_metadata AS
+		SELECT
+			af.id,
+			af.file_path,
+			af.length_milliseconds,
+			COALESCE(r.name, '') AS title,
+			COALESCE(ac.text, '') AS artist_name,
+			r.track_number,
+			r.disc_number,
+			COALESCE(rg.name, '') AS album,
+			CAST(COALESCE(
+				(SELECT GROUP_CONCAT(g.name, '||')
+				 FROM recording_genres rg_sub
+				 JOIN genres g ON rg_sub.genre_id = g.id
+				 WHERE rg_sub.recording_id = r.id),
+				''
+			) AS TEXT) AS genre,
+			COALESCE(r.year, 0) AS year,
+			COALESCE(r.composer, '') AS composer,
+			COALESCE(ft.extension, '') AS file_type,
+			af.sample_rate,
+			af.bit_depth,
+			af.channels,
+			af.bitrate,
+			af.file_size
+		FROM audio_files af
+		LEFT JOIN recordings r ON af.recording_id = r.id
+		LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
+		LEFT JOIN (
+			SELECT recording_id,
+				MIN(release_group_id) AS release_group_id
+			FROM release_group_recordings
+			GROUP BY recording_id
+		) rgr ON r.id = rgr.recording_id
+		LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
+		LEFT JOIN file_types ft ON af.file_type_id = ft.id
+	`); err != nil {
+		return fmt.Errorf(
+			"migration 5: could not recreate track_metadata VIEW: %w",
+			err,
+		)
+	}
+
+	// Re-enable FK checks.
+	if _, err := db.ExecContext(
+		ctx, "PRAGMA foreign_keys = ON",
+	); err != nil {
+		return fmt.Errorf(
+			"migration 5: could not re-enable foreign keys: %w",
+			err,
+		)
+	}
+
+	if _, err := db.ExecContext(
+		ctx, "PRAGMA user_version = 5",
+	); err != nil {
+		return fmt.Errorf(
+			"could not set user_version to 5: %w", err,
+		)
+	}
+
+	logger.Info("migration 5 complete")
+
+	return nil
+}
+
+// isDuplicateColumnErr returns true when the error is SQLite's
+// "duplicate column name" error from an ALTER TABLE ADD COLUMN
+// on a column that already exists.
+func isDuplicateColumnErr(err error) bool {
+	return err != nil &&
+		strings.Contains(
+			err.Error(), "duplicate column name",
+		)
 }

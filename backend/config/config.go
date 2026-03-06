@@ -6,23 +6,30 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
 	"path"
 
 	"github.com/BurntSushi/toml"
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"yellowjacket/backend/events"
+	"yellowjacket/backend/favorites"
 	"yellowjacket/backend/library"
 	"yellowjacket/backend/system"
+	"yellowjacket/backend/theme"
+	"yellowjacket/backend/tracklist"
 )
 
 // Config represents the application configuration.
 type Config struct {
-	ctx      context.Context
-	logger   *slog.Logger
-	serveMux *http.ServeMux
-	filePath string          // required
-	Library  *library.Config `form:"Library" schema:"library,required"`
+	ctx       context.Context
+	logger    *slog.Logger
+	filePath  string            // required
+	Library   *library.Config   `toml:"Library"`
+	Theme     *theme.Config     `toml:"Theme"`
+	Window    *WindowConfig     `toml:"Window"`
+	TrackList *tracklist.Config `toml:"TrackList"`
+	Favorites *favorites.Config `toml:"Favorites"`
 }
 
 // NewConfig creates a new config by loading it from disk.
@@ -34,10 +41,9 @@ func NewConfig(logger *slog.Logger) (*Config, error) {
 
 	conf := &Config{
 		filePath: path.Join(confDir, "config.toml"),
-		serveMux: http.NewServeMux(),
 	}
+	conf.applyDefaults()
 	conf.logger = logger.WithGroup("config").With("config", conf)
-	conf.serveMux.HandleFunc("/", conf.handle)
 
 	if err := conf.Load(); err != nil {
 		return nil, fmt.Errorf("could not load config: %w", err)
@@ -62,8 +68,29 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	if c.Theme != nil {
+		if err := c.Theme.Validate(); err != nil {
+			configErrs = errors.Join(configErrs, err)
+		}
+	}
+
+	if c.TrackList != nil {
+		if err := c.TrackList.Validate(); err != nil {
+			configErrs = errors.Join(configErrs, err)
+		}
+	}
+
+	if c.Favorites != nil {
+		if err := c.Favorites.Validate(); err != nil {
+			configErrs = errors.Join(configErrs, err)
+		}
+	}
+
 	if configErrs != nil {
-		return fmt.Errorf("one or more config parts are invalid: %w", configErrs)
+		return fmt.Errorf(
+			"one or more config parts are invalid: %w",
+			configErrs,
+		)
 	}
 
 	return nil
@@ -99,6 +126,8 @@ func (c *Config) Load() error {
 		return fmt.Errorf("problem parsing config file %s: %w", c.filePath, err)
 	}
 
+	c.applyDefaults()
+
 	// validate the config
 	if err = c.Validate(); err != nil {
 		return fmt.Errorf("invalid config file at %s: %w", c.filePath, err)
@@ -120,7 +149,7 @@ func (c *Config) Save() error {
 		return fmt.Errorf("could not marshal config struct: %w", err)
 	}
 
-	err = os.WriteFile(c.filePath, confFileData, os.FileMode(int(0o666)))
+	err = os.WriteFile(c.filePath, confFileData, 0o644)
 	if err != nil {
 		return fmt.Errorf("could not write config file (%s): %w", c.filePath, err)
 	}
@@ -130,7 +159,426 @@ func (c *Config) Save() error {
 	return nil
 }
 
+// applyDefaults ensures all config sections have valid defaults.
+func (c *Config) applyDefaults() {
+	if c.Window == nil {
+		c.Window = NewDefaultWindowConfig()
+	} else {
+		c.Window.applyDefaults()
+	}
+
+	if c.Library != nil {
+		c.Library.ApplyDefaults()
+	}
+
+	if c.Theme == nil {
+		c.Theme = &theme.Config{}
+	}
+
+	c.Theme.ApplyDefaults()
+
+	if c.TrackList == nil {
+		c.TrackList = &tracklist.Config{}
+	}
+
+	c.TrackList.ApplyDefaults()
+
+	if c.Favorites == nil {
+		c.Favorites = &favorites.Config{
+			PinDefault: true,
+		}
+	}
+
+	c.Favorites.ApplyDefaults()
+}
+
 // SetContext sets the Wails runtime context for event emission.
 func (c *Config) SetContext(ctx context.Context) {
 	c.ctx = ctx
+}
+
+// GetLibraryDirectory returns the currently configured library directory path.
+func (c *Config) GetLibraryDirectory() string {
+	if c.Library == nil {
+		return ""
+	}
+
+	return string(c.Library.DirectoryPath)
+}
+
+// SetLibraryDirectory validates and saves a new library directory,
+// then emits the LibraryConfigChanged event so listeners (e.g. the
+// Library scanner) can react.
+func (c *Config) SetLibraryDirectory(dir string) error {
+	newLibConf, err := library.NewConfig(dir)
+	if err != nil {
+		return fmt.Errorf(
+			"invalid library directory: %w", err,
+		)
+	}
+
+	// Preserve existing scan concurrency setting.
+	if c.Library != nil {
+		newLibConf.ScanConcurrency = c.Library.ScanConcurrency
+	}
+
+	c.Library = newLibConf
+
+	if err := c.Save(); err != nil {
+		return fmt.Errorf(
+			"could not save config after directory change: %w", err,
+		)
+	}
+
+	if c.ctx != nil {
+		runtime.EventsEmit(
+			c.ctx,
+			events.LibraryConfigChanged,
+			map[string]any{
+				"DirectoryPath": dir,
+			},
+		)
+	}
+
+	c.logger.Info(
+		"library directory updated",
+		"directory", dir,
+	)
+
+	return nil
+}
+
+// GetScanConcurrency returns the configured scan concurrency mode.
+func (c *Config) GetScanConcurrency() string {
+	if c.Library == nil {
+		return string(library.DefaultScanConcurrency)
+	}
+
+	return string(c.Library.ScanConcurrency)
+}
+
+// SetScanConcurrency validates and saves a new scan concurrency
+// mode.  The change takes effect on the next scan.
+func (c *Config) SetScanConcurrency(mode string) error {
+	if c.Library == nil {
+		c.Library = &library.Config{}
+		c.Library.ApplyDefaults()
+	}
+
+	c.Library.ScanConcurrency = library.ScanConcurrency(
+		mode,
+	)
+
+	if err := c.Library.Validate(); err != nil {
+		return fmt.Errorf(
+			"invalid scan concurrency mode: %w", err,
+		)
+	}
+
+	if err := c.Save(); err != nil {
+		return fmt.Errorf(
+			"could not save config: %w", err,
+		)
+	}
+
+	c.logger.Info(
+		"scan concurrency updated", "mode", mode,
+	)
+
+	return nil
+}
+
+// GetThemeAccentColor returns the configured accent colour.
+func (c *Config) GetThemeAccentColor() string {
+	if c.Theme == nil {
+		return theme.DefaultAccentColor
+	}
+
+	return c.Theme.AccentColor
+}
+
+// GetThemeBackgroundShade returns the configured background shade.
+func (c *Config) GetThemeBackgroundShade() string {
+	if c.Theme == nil {
+		return string(theme.DefaultBackgroundShade)
+	}
+
+	return string(c.Theme.BackgroundShade)
+}
+
+// SetThemeAccentColor validates and saves a new accent colour.
+func (c *Config) SetThemeAccentColor(
+	color string,
+) error {
+	if c.Theme == nil {
+		c.Theme = &theme.Config{}
+		c.Theme.ApplyDefaults()
+	}
+
+	c.Theme.AccentColor = color
+
+	if err := c.Theme.Validate(); err != nil {
+		return fmt.Errorf(
+			"invalid theme accent color: %w", err,
+		)
+	}
+
+	if err := c.Save(); err != nil {
+		return fmt.Errorf(
+			"could not save config: %w", err,
+		)
+	}
+
+	c.emitThemeChanged()
+
+	c.logger.Info(
+		"theme accent color updated",
+		"color", color,
+	)
+
+	return nil
+}
+
+// SetThemeBackgroundShade validates and saves a new background shade.
+func (c *Config) SetThemeBackgroundShade(
+	shade string,
+) error {
+	if c.Theme == nil {
+		c.Theme = &theme.Config{}
+		c.Theme.ApplyDefaults()
+	}
+
+	c.Theme.BackgroundShade = theme.BackgroundShade(shade)
+
+	if err := c.Theme.Validate(); err != nil {
+		return fmt.Errorf(
+			"invalid theme background shade: %w", err,
+		)
+	}
+
+	if err := c.Save(); err != nil {
+		return fmt.Errorf(
+			"could not save config: %w", err,
+		)
+	}
+
+	c.emitThemeChanged()
+
+	c.logger.Info(
+		"theme background shade updated",
+		"shade", shade,
+	)
+
+	return nil
+}
+
+// emitThemeChanged sends the ThemeConfigChanged event to the frontend.
+func (c *Config) emitThemeChanged() {
+	if c.ctx == nil || c.Theme == nil {
+		return
+	}
+
+	runtime.EventsEmit(
+		c.ctx,
+		events.ThemeConfigChanged,
+		map[string]any{
+			"AccentColor":     c.Theme.AccentColor,
+			"BackgroundShade": string(c.Theme.BackgroundShade),
+		},
+	)
+}
+
+// GetTrackListColumns returns the configured track-list columns.
+func (c *Config) GetTrackListColumns() []tracklist.Column {
+	if c.TrackList == nil {
+		return tracklist.DefaultColumns
+	}
+
+	return c.TrackList.Columns
+}
+
+// SetTrackListColumns validates and saves a new column layout.
+func (c *Config) SetTrackListColumns(
+	columns []tracklist.Column,
+) error {
+	if c.TrackList == nil {
+		c.TrackList = &tracklist.Config{}
+	}
+
+	c.TrackList.Columns = columns
+
+	if err := c.TrackList.Validate(); err != nil {
+		return fmt.Errorf(
+			"invalid track-list columns: %w", err,
+		)
+	}
+
+	if err := c.Save(); err != nil {
+		return fmt.Errorf(
+			"could not save config: %w", err,
+		)
+	}
+
+	c.emitTrackListChanged()
+
+	c.logger.Info(
+		"track-list columns updated",
+		"count", len(columns),
+	)
+
+	return nil
+}
+
+// emitTrackListChanged sends the TrackListConfigChanged event
+// to the frontend.
+func (c *Config) emitTrackListChanged() {
+	if c.ctx == nil || c.TrackList == nil {
+		return
+	}
+
+	cols := make([]map[string]any, 0, len(c.TrackList.Columns))
+
+	for _, col := range c.TrackList.Columns {
+		cols = append(cols, map[string]any{
+			"id": string(col.ID),
+		})
+	}
+
+	runtime.EventsEmit(
+		c.ctx,
+		events.TrackListConfigChanged,
+		map[string]any{
+			"columns": cols,
+		},
+	)
+}
+
+// GetFavoritesPlaylistID returns the configured default playlist ID.
+func (c *Config) GetFavoritesPlaylistID() int64 {
+	if c.Favorites == nil {
+		return 0
+	}
+
+	return c.Favorites.PlaylistID
+}
+
+// SetFavoritesPlaylistID saves a new default playlist ID.
+func (c *Config) SetFavoritesPlaylistID(id int64) error {
+	if c.Favorites == nil {
+		c.Favorites = &favorites.Config{}
+		c.Favorites.ApplyDefaults()
+	}
+
+	c.Favorites.PlaylistID = id
+
+	if err := c.Save(); err != nil {
+		return fmt.Errorf(
+			"could not save config: %w", err,
+		)
+	}
+
+	c.emitFavoritesChanged()
+
+	c.logger.Info(
+		"favorites playlist ID updated",
+		"playlistId", id,
+	)
+
+	return nil
+}
+
+// GetFavoritesIconStyle returns the configured icon style.
+func (c *Config) GetFavoritesIconStyle() string {
+	if c.Favorites == nil {
+		return string(favorites.DefaultIconStyle)
+	}
+
+	return string(c.Favorites.IconStyle)
+}
+
+// SetFavoritesIconStyle validates and saves a new icon style.
+func (c *Config) SetFavoritesIconStyle(
+	style string,
+) error {
+	if c.Favorites == nil {
+		c.Favorites = &favorites.Config{}
+		c.Favorites.ApplyDefaults()
+	}
+
+	c.Favorites.IconStyle = favorites.IconStyle(style)
+
+	if err := c.Favorites.Validate(); err != nil {
+		return fmt.Errorf(
+			"invalid favorites icon style: %w", err,
+		)
+	}
+
+	if err := c.Save(); err != nil {
+		return fmt.Errorf(
+			"could not save config: %w", err,
+		)
+	}
+
+	c.emitFavoritesChanged()
+
+	c.logger.Info(
+		"favorites icon style updated",
+		"style", style,
+	)
+
+	return nil
+}
+
+// GetPinDefaultPlaylist returns whether the default playlist
+// is pinned to the top of the playlist view.
+func (c *Config) GetPinDefaultPlaylist() bool {
+	if c.Favorites == nil {
+		return true // default: pinned
+	}
+
+	return c.Favorites.PinDefault
+}
+
+// SetPinDefaultPlaylist saves whether the default playlist
+// should be pinned to the top of the playlist view.
+func (c *Config) SetPinDefaultPlaylist(pin bool) error {
+	if c.Favorites == nil {
+		c.Favorites = &favorites.Config{}
+		c.Favorites.ApplyDefaults()
+	}
+
+	c.Favorites.PinDefault = pin
+
+	if err := c.Save(); err != nil {
+		return fmt.Errorf(
+			"could not save config: %w", err,
+		)
+	}
+
+	c.emitFavoritesChanged()
+
+	c.logger.Info(
+		"pin default playlist updated",
+		"pin", pin,
+	)
+
+	return nil
+}
+
+// emitFavoritesChanged sends the FavoritesConfigChanged event
+// to the frontend.
+func (c *Config) emitFavoritesChanged() {
+	if c.ctx == nil || c.Favorites == nil {
+		return
+	}
+
+	runtime.EventsEmit(
+		c.ctx,
+		events.FavoritesConfigChanged,
+		map[string]any{
+			"PlaylistID": c.Favorites.PlaylistID,
+			"IconStyle":  string(c.Favorites.IconStyle),
+			"PinDefault": c.Favorites.PinDefault,
+		},
+	)
 }

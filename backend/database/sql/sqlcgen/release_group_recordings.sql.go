@@ -41,6 +41,15 @@ func (q *Queries) CreateReleaseGroupRecording(ctx context.Context, arg CreateRel
 	return i, err
 }
 
+const deleteAllReleaseGroupRecordings = `-- name: DeleteAllReleaseGroupRecordings :exec
+DELETE FROM release_group_recordings
+`
+
+func (q *Queries) DeleteAllReleaseGroupRecordings(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, deleteAllReleaseGroupRecordings)
+	return err
+}
+
 const deleteReleaseGroupRecording = `-- name: DeleteReleaseGroupRecording :exec
 DELETE FROM release_group_recordings 
 WHERE id = ?

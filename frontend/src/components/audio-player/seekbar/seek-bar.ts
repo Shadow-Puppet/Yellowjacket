@@ -4,6 +4,7 @@ import { ref, createRef } from 'lit/directives/ref.js';
 import WaSlider from '@awesome.me/webawesome/dist/components/slider/slider.js';
 import { formatSeconds } from '@utils/time';
 import { PlayerController } from '@store/controllers/player-controller';
+import { designTokens } from '../../../styles/tokens.css';
 
 const ProgressIntervalMillis = 1000;
 
@@ -12,33 +13,33 @@ export class SeekBar extends LitElement {
   private player = new PlayerController(this);
   private rangeRef = createRef<WaSlider>();
   private timerID: number = -1;
-  private previousTrackPath: string | null = null;
+  private previousTrackChangeId: number = -1;
 
   @state()
   private seekValue: number = 0;
 
-  static override styles = css`
+  static override styles = [designTokens, css`
     wa-slider {
       --track-size: 6px;
       flex: 1;
-      margin: 0 1em;
-      --wa-tooltip-background-color: #343a40;
-      --wa-tooltip-content-color: white;
-      --wa-tooltip-border-color: #343a40;
+      margin: 0 16px;
+      --wa-tooltip-background-color: var(--yj-bg-elevated, #343a40);
+      --wa-tooltip-content-color: var(--yj-text-primary, white);
+      --wa-tooltip-border-color: var(--yj-bg-elevated, #343a40);
       --wa-tooltip-border-radius: 4px;
-      --wa-tooltip-font-size: 0.875em;
+      --wa-tooltip-font-size: var(--yj-text-lg);
     }
 
     wa-slider::part(track) {
-      background: white;
+      background: var(--yj-text-primary, white);
     }
 
     wa-slider::part(indicator) {
-      background: yellow;
+      background: var(--yj-accent, yellow);
     }
 
     wa-slider::part(thumb) {
-      background: black;
+      background: var(--yj-bg-base, black);
     }
 
     #seek-bar-container {
@@ -46,7 +47,7 @@ export class SeekBar extends LitElement {
       justify-content: space-between;
       align-items: center;
     }
-  `;
+  `];
 
   // ===================================================================
   // DERIVED STATE
@@ -74,11 +75,13 @@ export class SeekBar extends LitElement {
   }
 
   override updated() {
-    // Detect track change and reset seek position
-    const currentPath = this.player.currentTrack?.filePath ?? null;
+    // Detect track change and reset seek position.
+    // Uses trackChangeId instead of filePath so the seek bar resets
+    // even when the same file plays consecutively in the queue.
+    const currentChangeId = this.player.currentTrack?.trackChangeId ?? -1;
 
-    if (currentPath !== this.previousTrackPath) {
-      this.previousTrackPath = currentPath;
+    if (currentChangeId !== this.previousTrackChangeId) {
+      this.previousTrackChangeId = currentChangeId;
       this.seekValue = this.player.currentTrack?.seekPosition ?? 0;
       this.stopProgress();
     }

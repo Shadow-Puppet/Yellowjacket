@@ -1,149 +1,263 @@
-import { LitElement, html, css, nothing } from 'lit';
-import { customElement, state, query } from 'lit/decorators.js';
-import { EventsEmit } from '@runtime/runtime';
-import { GetAllAlbums, GetAlbumTracks } from '@go/library/Library';
-import { library } from '@go/models';
-import { QueueController } from '@store/controllers/queue-controller';
+import { LitElement, html, nothing } from 'lit';
+import {
+    customElement,
+    property,
+    state,
+    query,
+} from 'lit/decorators.js';
 import '@lit-labs/virtualizer';
+import type {
+    LitVirtualizer,
+    VisibilityChangedEvent,
+} from '@lit-labs/virtualizer';
 import { grid } from '@lit-labs/virtualizer/layouts/grid.js';
+import { GetAlbumTracks } from '@go/library/Library';
+import { library } from '@go/models';
+import { LibraryController } from '@store/controllers/library-controller';
+import { SearchController } from '@store/controllers/search-controller';
+import { queueStore } from '@store/queue-store';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
+import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
+import '@components/playlist-picker/playlist-picker.js';
+import '@components/track-details/track-details.js';
+import type { TrackDetails } from '@components/track-details/track-details.js';
+import { AlbumSelectionManager } from './album-selection.js';
+import { ScrollManager } from './scroll-manager.js';
+import type { ScrollManagerHost } from './scroll-manager.js';
+import './album-dropdown.js';
+import type {
+    TrackClickDetail,
+    TrackDblClickDetail,
+    TrackContextMenuDetail,
+    TrackDragStartDetail,
+} from './album-dropdown.js';
+import {
+    DRAG_MIME,
+    setDragPayload,
+    emitDragActive,
+} from '@utils/drag-controller';
+import type { DragPayload } from '@utils/drag-controller';
+import { ContextMenuController } from '@utils/context-menu-controller.js';
+import type { ContextMenuHost } from '@utils/context-menu-controller.js';
+import { FavoritesController } from '@store/controllers/favorites-controller';
+import {
+    createAlbumArtDragImage,
+    createDragImage,
+    createTrackCardDragImage,
+    removeDragImage,
+} from '@utils/drag-image';
+import { coverGridStyles } from './cover-grid-styles.js';
+import {
+    ALBUM_SORT_OPTIONS,
+    SORT_DIR_KEY,
+    SORT_FIELD_KEY,
+    ZOOM_STEP,
+} from './cover-grid-types.js';
+import type {
+    AlbumSortField,
+    ContextMenuTarget,
+    GridEntry,
+    SortDirection,
+} from './cover-grid-types.js';
 
 @customElement('cover-grid')
-export class CoverGrid extends LitElement {
-    private queue = new QueueController(this);
+export class CoverGrid
+    extends LitElement
+    implements ContextMenuHost, ScrollManagerHost
+{
+    /**
+     * When set, the grid displays these albums instead of
+     * fetching all albums from the library store.  The
+     * parent is responsible for reloading when data changes.
+     */
+    @property({ type: Array, attribute: false })
+    externalAlbums?: library.Album[];
 
-    private closeHandler = () => this.closeContextMenu();
+    libraryCtrl = new LibraryController(this);
+    private searchCtrl = new SearchController(this);
+    private lastSearchTerm = '';
 
-    static override styles = css`
-        :host {
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
+    /** Tracks the store's cached array reference to detect refreshes. */
+    private lastAlbumsRef: library.Album[] | null =
+        null;
+
+    // Fixed grid spacing constants.
+    private static readonly GRID_GAP = 8;
+    private static readonly GRID_PADDING = 8;
+    private static readonly CARD_PADDING = 5;
+
+    private ctxMenu = new ContextMenuController(this);
+    private favCtrl = new FavoritesController(this);
+    private selMgr = new AlbumSelectionManager();
+    private scrollMgr = new ScrollManager(this, {
+        GRID_GAP: CoverGrid.GRID_GAP,
+        GRID_PADDING: CoverGrid.GRID_PADDING,
+    });
+
+    private lastSelectedAlbumIndex: number | null = null;
+    private lastSelectedTrackIndex: number | null = null;
+
+    /**
+     * When true, the next split→single transition
+     * skips the expensive overlay capture and scroll
+     * restore.
+     */
+    private skipOverlay = false;
+
+    /** Current card width — driven by the store. */
+    get cardWidth(): number {
+        return this.libraryCtrl.coverSize;
+    }
+
+    /**
+     * Height of the text area below the cover image.
+     * Two lines: album name (+ year) and artist.
+     */
+    private get cardTextHeight(): number {
+        const w = this.cardWidth;
+
+        if (w < 160) return 36;
+
+        return w > 250 ? 46 : 40;
+    }
+
+    /** Derived card height from card width. */
+    get cardHeight(): number {
+        return this.cardWidth + this.cardTextHeight;
+    }
+
+    /** Image size inside the card (card minus padding). */
+    private get imageSize(): number {
+        return this.cardWidth - CoverGrid.CARD_PADDING * 2;
+    }
+
+    // Virtualizer grid layout instance — recreated when
+    // the card size changes.
+    private gridLayout = this.createGridLayout();
+    private gridLayoutWidth = 0;
+
+    /**
+     * Secondary layout for the "after" virtualizer in
+     * split mode.  Uses zero top padding so there is no
+     * extra gap between the dropdown and the first row.
+     */
+    private gridLayoutAfter = this.createGridLayout(
+        true,
+    );
+
+    private createGridLayout(noTopPad = false) {
+        const w = this.libraryCtrl?.coverSize ?? 176;
+
+        if (!noTopPad) {
+            this.gridLayoutWidth = w;
         }
 
-        lit-virtualizer {
-            flex: 1;
-            overflow-y: auto;
+        const h = w + this.cardTextHeight;
+        const gap = CoverGrid.GRID_GAP;
+        const pad = CoverGrid.GRID_PADDING;
+
+        return grid({
+            itemSize: {
+                width: `${w}px`,
+                height: `${h}px`,
+            },
+            gap: `${gap}px`,
+            padding: noTopPad
+                ? `0 ${pad}px ${pad}px`
+                : `${pad}px`,
+            justify: 'center',
+        });
+    }
+
+    private dragImageEl: HTMLElement | null = null;
+
+    // -- Memoisation caches for filtered albums --
+    cachedFilteredAlbums: library.Album[] = [];
+    private prevFilterAlbums: library.Album[] = [];
+    private prevFilterTerm = '';
+    private prevSortField: AlbumSortField = 'name';
+    private prevSortDir: SortDirection = 'asc';
+
+    // =================================================================
+    // Filtered albums (memoised)
+    // =================================================================
+
+    /**
+     * Recompute the filtered-albums cache when its
+     * inputs have changed.  Called from willUpdate()
+     * so the cache is ready before render().
+     */
+    private recomputeAlbumCache() {
+        const term = this.searchCtrl.term;
+
+        if (
+            this.albums !== this.prevFilterAlbums ||
+            term !== this.prevFilterTerm ||
+            this.sortField !== this.prevSortField ||
+            this.sortDirection !== this.prevSortDir
+        ) {
+            this.prevFilterAlbums = this.albums;
+            this.prevFilterTerm = term;
+            this.prevSortField = this.sortField;
+            this.prevSortDir = this.sortDirection;
+            this.cachedFilteredAlbums =
+                this.computeFilteredAlbums();
+        }
+    }
+
+    private computeFilteredAlbums(): library.Album[] {
+        const term =
+            this.searchCtrl.term.toLowerCase();
+
+        let albums: library.Album[];
+
+        if (!term) {
+            albums = this.albums;
+        } else {
+            albums = this.albums.filter(
+                (a) =>
+                    a.Name.toLowerCase().includes(
+                        term,
+                    ) ||
+                    a.ArtistName.toLowerCase().includes(
+                        term,
+                    ),
+            );
         }
 
-        .album-card {
-            display: flex;
-            flex-direction: column;
-            cursor: pointer;
-            border-radius: 8px;
-            padding: 8px;
-            transition: background-color 0.2s ease;
-            box-sizing: border-box;
-        }
+        // Apply sort.
+        const opt = ALBUM_SORT_OPTIONS.find(
+            (o) => o.id === this.sortField,
+        );
 
-        .album-card:hover {
-            background-color: rgba(255, 255, 255, 0.1);
-        }
+        if (!opt) return albums;
 
-        .album-card:focus {
-            outline: 2px solid #1db954;
-            outline-offset: 2px;
-        }
+        const dir =
+            this.sortDirection === 'asc' ? 1 : -1;
 
-        .cover-container {
-            position: relative;
-            width: 100%;
-            aspect-ratio: 1;
-            border-radius: 4px;
-            overflow: hidden;
-            background-color: #282828;
-        }
+        return [...albums].sort(
+            (a, b) => dir * opt.comparator(a, b),
+        );
+    }
 
-        .cover-image {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-        }
+    /** Wheel event handler ref for manual add/remove. */
+    private wheelHandler = (e: WheelEvent) => {
+        this.onWheel(e);
+    };
 
-        .placeholder-cover {
-            width: 100%;
-            height: 100%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: linear-gradient(135deg, #404040 0%, #282828 100%);
-            color: #b3b3b3;
-            font-size: 48px;
-        }
+    private wheelListenerAttached = false;
 
-        .album-info {
-            margin-top: 8px;
-            min-width: 0;
-        }
+    // buildGridEntries() memoization cache.
+    private gridEntriesCache: GridEntry[] = [];
+    private gridEntriesCacheKey: library.Album[] = [];
 
-        .album-name {
-            font-size: 14px;
-            font-weight: 600;
-            color: #fff;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
+    static override styles = coverGridStyles;
 
-        .artist-name {
-            font-size: 12px;
-            color: #b3b3b3;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            margin-top: 4px;
-        }
-
-        .loading {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            padding: 32px;
-            color: #b3b3b3;
-        }
-
-        .empty-state {
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            padding: 48px;
-            color: #b3b3b3;
-            text-align: center;
-        }
-
-        .empty-state p {
-            margin: 8px 0;
-        }
-
-        #context-menu {
-            z-index: 200;
-        }
-
-        .context-menu-panel {
-            background-color: #2a2a3e;
-            border: 1px solid #444;
-            border-radius: 6px;
-            padding: 4px 0;
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
-            min-width: 160px;
-        }
-
-        .context-menu-panel wa-dropdown-item {
-            cursor: pointer;
-        }
-
-        .context-menu-panel wa-dropdown-item::part(base) {
-            color: #e0e0e0;
-            font-size: 13px;
-        }
-
-        .context-menu-panel wa-dropdown-item::part(base):hover {
-            background-color: rgba(255, 255, 255, 0.1);
-        }
-    `;
+    /* ====================================================================
+     * Reactive state
+     * ==================================================================== */
 
     @state()
     private albums: library.Album[] = [];
@@ -151,229 +265,1817 @@ export class CoverGrid extends LitElement {
     @state()
     private loading = true;
 
-    @state()
-    private contextMenuOpen = false;
+    private contextMenuTarget: ContextMenuTarget = {
+        kind: 'album',
+    };
+
+    /**
+     * Album ID that was right-clicked to open the
+     * context menu.  Used as fallback when the
+     * right-clicked album is not part of the current
+     * visual selection.
+     */
+    private contextMenuAlbumId: number | null = null;
 
     @state()
-    private contextMenuAlbum: library.Album | null = null;
+    private selectedAlbums: Set<number> = new Set();
+
+    /** Current album sort field. */
+    @state()
+    private sortField: AlbumSortField = 'name';
+
+    /** Current sort direction. */
+    @state()
+    private sortDirection: SortDirection = 'asc';
+
+    /** Whether the sort dropdown popup is open. */
+    @state()
+    private sortDropdownOpen = false;
+
+    @query('#sort-dropdown')
+    private sortDropdownPopup!: WaPopup;
+
+    /** ID of the album whose dropdown is currently open, or null. */
+    @state()
+    expandedAlbumId: number | null = null;
+
+    /** Tracks loaded for the expanded album dropdown. */
+    @state()
+    expandedTracks: library.Track[] = [];
+
+    /** Set of file paths of selected tracks inside the dropdown. */
+    @state()
+    private selectedTracks: Set<string> = new Set();
+
+    /**
+     * True when using the dual-virtualizer layout
+     * (dropdown sandwiched between two grids).
+     */
+    @state()
+    splitMode = false;
+
+    /**
+     * Index into this.albums where the split occurs.
+     * Albums [0, splitIndex) go into the "before"
+     * virtualizer; [splitIndex, length) go into "after".
+     * Not `@state()` — always set before `splitMode`
+     * changes, which triggers the render.
+     */
+    splitIndex = 0;
 
     @query('#context-menu')
-    private contextMenuPopup!: HTMLElement;
+    private contextMenuPopup!: WaPopup;
+
+    @query('#playlist-submenu')
+    private playlistSubmenuPopup!: WaPopup;
+
+    // ContextMenuHost interface.
+    getContextMenuPopup(): WaPopup | undefined {
+        return this.contextMenuPopup;
+    }
+
+    getPlaylistSubmenuPopup(): WaPopup | undefined {
+        return this.playlistSubmenuPopup;
+    }
+
+    onContextMenuClose(): void {
+        this.contextMenuAlbumId = null;
+    }
+
+    @query('track-details')
+    private trackDetailsDialog!: TrackDetails;
+
+    @query('#grid-single')
+    private virtualizerSingle!: LitVirtualizer;
+
+    @query('.grid-scroll-container')
+    private scrollContainer!: HTMLElement;
+
+
+
+    /* ====================================================================
+     * Sort controls
+     * ==================================================================== */
+
+    /** Restore sort preferences from localStorage. */
+    private restoreSortPreferences() {
+        try {
+            const field = localStorage.getItem(
+                SORT_FIELD_KEY,
+            );
+            const dir =
+                localStorage.getItem(SORT_DIR_KEY);
+
+            if (
+                field &&
+                ALBUM_SORT_OPTIONS.some(
+                    (o) => o.id === field,
+                )
+            ) {
+                this.sortField =
+                    field as AlbumSortField;
+            }
+
+            if (dir === 'asc' || dir === 'desc') {
+                this.sortDirection = dir;
+            }
+        } catch {
+            // Ignore storage errors.
+        }
+    }
+
+    /** Persist sort preferences to localStorage. */
+    private saveSortPreferences() {
+        try {
+            localStorage.setItem(
+                SORT_FIELD_KEY,
+                this.sortField,
+            );
+            localStorage.setItem(
+                SORT_DIR_KEY,
+                this.sortDirection,
+            );
+        } catch {
+            // Ignore storage errors.
+        }
+    }
+
+    /** Set the sort field from the dropdown. */
+    private onSortDropdownSelect(
+        field: AlbumSortField,
+    ) {
+        this.sortField = field;
+        this.saveSortPreferences();
+        this.closeSortDropdown();
+    }
+
+    /** Toggle sort direction. */
+    private toggleSortDirection() {
+        this.sortDirection =
+            this.sortDirection === 'asc'
+                ? 'desc'
+                : 'asc';
+        this.saveSortPreferences();
+    }
+
+    private toggleSortDropdown() {
+        if (this.sortDropdownOpen) {
+            this.closeSortDropdown();
+        } else {
+            this.openSortDropdown();
+        }
+    }
+
+    private async openSortDropdown() {
+        this.sortDropdownOpen = true;
+
+        await this.updateComplete;
+
+        const popup = this.sortDropdownPopup;
+        const anchor =
+            this.shadowRoot?.querySelector(
+                '.sort-anchor',
+            );
+
+        if (popup && anchor) {
+            popup.anchor = anchor;
+            popup.active = true;
+        }
+    }
+
+    private closeSortDropdown() {
+        if (!this.sortDropdownOpen) return;
+
+        this.sortDropdownOpen = false;
+
+        const popup = this.sortDropdownPopup;
+
+        if (popup) {
+            popup.active = false;
+        }
+    }
+
+    private sortDropdownCloseHandler = (
+        e: MouseEvent,
+    ) => {
+        if (!this.sortDropdownOpen) return;
+
+        const path = e.composedPath();
+        const popup = this.sortDropdownPopup;
+
+        if (popup && path.includes(popup)) return;
+
+        const anchor =
+            this.shadowRoot?.querySelector(
+                '.sort-anchor',
+            );
+
+        if (anchor && path.includes(anchor)) return;
+
+        this.closeSortDropdown();
+    };
+
+    /* ====================================================================
+     * Lifecycle
+     * ==================================================================== */
 
     override connectedCallback() {
         super.connectedCallback();
+        this.restoreSortPreferences();
         this.loadAlbums();
-        document.addEventListener('click', this.closeHandler);
-        document.addEventListener('contextmenu', this.closeHandler);
+
+        document.addEventListener(
+            'mousedown',
+            this.sortDropdownCloseHandler,
+        );
+
+        // error events do not bubble — use capture
+        // phase to catch <img> load failures.
+        this.addEventListener(
+            'error',
+            this.onGridImageError,
+            true,
+        );
     }
 
     override disconnectedCallback() {
         super.disconnectedCallback();
-        document.removeEventListener('click', this.closeHandler);
-        document.removeEventListener('contextmenu', this.closeHandler);
+
+        document.removeEventListener(
+            'mousedown',
+            this.sortDropdownCloseHandler,
+        );
+        this.removeEventListener(
+            'error',
+            this.onGridImageError,
+            true,
+        );
+        this.scrollContainer?.removeEventListener(
+            'wheel',
+            this.wheelHandler,
+        );
+        this.wheelListenerAttached = false;
+
+        this.scrollMgr.teardown();
+        this.scrollMgr.revealContainer(
+            this.scrollContainer,
+        );
     }
+
+    override willUpdate(
+        changed: Map<PropertyKey, unknown>,
+    ) {
+        super.willUpdate(changed);
+        this.recomputeAlbumCache();
+
+        // When the parent provides a new external album
+        // list, update local albums and reset selection.
+        if (changed.has('externalAlbums') && this.externalAlbums) {
+            this.albums = this.externalAlbums;
+            this.selMgr.setAlbums(this.externalAlbums);
+            this.selectedAlbums = new Set();
+            this.lastSelectedAlbumIndex = null;
+            this.loading = false;
+        }
+
+        // When switching albums, expandedTracks
+        // briefly goes to [].  Exit split mode so
+        // the single virtualizer takes over while
+        // loading.
+        if (
+            changed.has('expandedTracks') &&
+            this.expandedTracks.length === 0 &&
+            this.splitMode
+        ) {
+            const sm = this.scrollMgr;
+
+            if (this.skipOverlay) {
+                this.skipOverlay = false;
+                sm.savedScrollTop =
+                    sm.computeAdjustedScrollTop(
+                        this.scrollContainer,
+                        this.shadowRoot,
+                    );
+                sm.savedAlbumViewportOffset = null;
+                this.splitMode = false;
+                sm.needsScrollRestore = true;
+                sm.showDropdownAfterRestore = false;
+            } else {
+                sm.savedScrollTop =
+                    sm.computeAdjustedScrollTop(
+                        this.scrollContainer,
+                        this.shadowRoot,
+                    );
+
+                sm.captureAnchorOffset(
+                    this.scrollContainer,
+                    this.shadowRoot,
+                );
+
+                sm.captureOverlay(
+                    this.scrollContainer,
+                    this.shadowRoot,
+                );
+                this.splitMode = false;
+                sm.needsScrollRestore = true;
+                sm.showDropdownAfterRestore = false;
+            }
+        }
+
+        // Enter split mode when tracks have loaded.
+        if (
+            changed.has('expandedTracks') &&
+            this.expandedAlbumId !== null &&
+            this.expandedTracks.length > 0
+        ) {
+            const sm = this.scrollMgr;
+
+            if (!sm.restoreInFlight) {
+                sm.savedScrollTop =
+                    this.scrollContainer
+                        ?.scrollTop ?? 0;
+            }
+
+            sm.captureOverlay(
+                this.scrollContainer,
+                this.shadowRoot,
+            );
+            this.splitIndex =
+                sm.computeSplitIndex(
+                    this.scrollContainer,
+                );
+            this.splitMode = true;
+            sm.needsScrollRestore = true;
+            sm.showDropdownAfterRestore = true;
+        }
+
+        // Exit split mode when the dropdown closes.
+        if (
+            changed.has('expandedAlbumId') &&
+            this.expandedAlbumId === null &&
+            this.splitMode
+        ) {
+            const sm = this.scrollMgr;
+
+            sm.savedScrollTop =
+                sm.computeAdjustedScrollTop(
+                    this.scrollContainer,
+                    this.shadowRoot,
+                );
+            sm.savedAlbumViewportOffset = null;
+
+            sm.captureOverlay(
+                this.scrollContainer,
+                this.shadowRoot,
+            );
+            this.splitMode = false;
+            sm.needsScrollRestore = true;
+            sm.showDropdownAfterRestore = false;
+        }
+    }
+
+    override updated(
+        changed: Map<PropertyKey, unknown>,
+    ) {
+        super.updated(changed);
+
+        // Ctrl+Scroll zoom — lazily attach to the
+        // scroll container once it exists in the DOM.
+        if (
+            !this.wheelListenerAttached &&
+            this.scrollContainer
+        ) {
+            this.scrollContainer.addEventListener(
+                'wheel',
+                this.wheelHandler,
+                { passive: false },
+            );
+            this.wheelListenerAttached = true;
+        }
+
+        // Recreate the virtualizer grid layout when
+        // the card size changes.
+        const cardSizeChanged =
+            this.gridLayoutWidth !== this.cardWidth;
+
+        if (cardSizeChanged) {
+            this.gridLayout = this.createGridLayout();
+            this.gridLayoutAfter =
+                this.createGridLayout(true);
+        }
+
+        // Apply CSS custom properties for dynamic sizing.
+        this.updateSizeProperties();
+
+        // Restore scroll after a single/split mode
+        // transition (set in willUpdate).
+        if (this.scrollMgr.needsScrollRestore) {
+            this.scrollMgr.runScrollRestore(
+                this.scrollContainer,
+                this.shadowRoot,
+                this.expandedAlbumId,
+                this.updateComplete,
+            );
+        }
+
+        // Close dropdown and clear selection when
+        // the search term changes.
+        const currentTerm = this.searchCtrl.term;
+
+        if (currentTerm !== this.lastSearchTerm) {
+            this.lastSearchTerm = currentTerm;
+            this.closeDropdown();
+            this.selectedAlbums = new Set();
+            this.lastSelectedAlbumIndex = null;
+        }
+
+        // On zoom while dropdown is open, recompute
+        // the split (column count may change) and
+        // re-scroll after layout settles.
+        if (
+            cardSizeChanged &&
+            this.splitMode &&
+            this.expandedTracks.length > 0
+        ) {
+            this.splitIndex =
+                this.scrollMgr.computeSplitIndex(
+                    this.scrollContainer,
+                );
+
+            const sm = this.scrollMgr;
+
+            void (async () => {
+                await this.updateComplete;
+
+                await sm.awaitBeforeLayout(
+                    this.shadowRoot,
+                );
+
+                await sm.scrollToShowDropdown(
+                    this.scrollContainer,
+                    this.shadowRoot,
+                );
+            })();
+        }
+
+        // Re-fetch when the store delivers fresh
+        // data after eager refetch on invalidation.
+        if (!this.externalAlbums) {
+            const cached =
+                this.libraryCtrl.cachedAlbums;
+
+            if (
+                cached !== null &&
+                cached !== this.lastAlbumsRef
+            ) {
+                this.lastAlbumsRef = cached;
+                this.loadAlbums();
+            }
+        }
+    }
+
+    /* ====================================================================
+     * Dynamic size properties
+     * ==================================================================== */
+
+    private updateSizeProperties() {
+        const w = this.cardWidth;
+
+        this.style.setProperty(
+            '--card-width',
+            `${w}px`,
+        );
+
+        // Scale placeholder initial font.
+        const placeholderFont =
+            Math.max(16, Math.round(w * 0.3));
+        this.style.setProperty(
+            '--placeholder-font',
+            `${placeholderFont}px`,
+        );
+
+        // Text sizing tiers mapped to design tokens.
+        if (w < 160) {
+            this.classList.add('size-small');
+            this.style.setProperty(
+                '--album-name-font',
+                'var(--yj-text-xs)',
+            );
+            this.style.setProperty(
+                '--artist-name-font',
+                '10px',
+            );
+        } else if (w > 250) {
+            this.classList.remove('size-small');
+            this.style.setProperty(
+                '--album-name-font',
+                'var(--yj-text-lg)',
+            );
+            this.style.setProperty(
+                '--artist-name-font',
+                'var(--yj-text-md)',
+            );
+        } else {
+            this.classList.remove('size-small');
+            this.style.setProperty(
+                '--album-name-font',
+                'var(--yj-text-lg)',
+            );
+            this.style.setProperty(
+                '--artist-name-font',
+                'var(--yj-text-sm)',
+            );
+        }
+    }
+
+    /* ====================================================================
+     * Ctrl+Scroll zoom
+     * ==================================================================== */
+
+    private onWheel(e: WheelEvent) {
+        if (!e.ctrlKey) return;
+
+        e.preventDefault();
+
+        const delta = e.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP;
+
+        this.libraryCtrl.coverSize =
+            this.cardWidth + delta;
+    }
+
+    /* ====================================================================
+     * Data loading
+     * ==================================================================== */
 
     private async loadAlbums() {
         try {
             this.loading = true;
-            const albums = await GetAllAlbums();
-            this.albums = albums ?? [];
+
+            // When driven by an external album list,
+            // skip the backend fetch entirely.
+            const albums = this.externalAlbums
+                ?? (await this.libraryCtrl.getAlbums())
+                ?? [];
+
+            this.albums = albums;
+            this.selMgr.setAlbums(albums);
+            this.selectedAlbums = new Set();
+            this.lastSelectedAlbumIndex = null;
         } catch (error) {
-            console.error("Error loading albums:", error);
+            console.error(
+                'Error loading albums:',
+                error,
+            );
             this.albums = [];
+            this.selMgr.setAlbums([]);
         } finally {
             this.loading = false;
         }
+
+        await this.updateComplete;
+
+        this.scrollMgr.restoreScrollPosition(
+            this.virtualizerSingle,
+        );
+        this.scrollMgr.setupResizeObserver(
+            this.scrollContainer,
+            async () => {
+                this.splitIndex =
+                    this.scrollMgr.computeSplitIndex(
+                        this.scrollContainer,
+                    );
+                this.requestUpdate();
+
+                await this.updateComplete;
+
+                await this.scrollMgr.awaitBeforeLayout(
+                    this.shadowRoot,
+                );
+
+                await this.scrollMgr.scrollToShowDropdown(
+                    this.scrollContainer,
+                    this.shadowRoot,
+                );
+            },
+        );
     }
 
-    private async getAlbumFilePaths(album: library.Album): Promise<string[]> {
+    /* ====================================================================
+     * Scroll event handler
+     * ==================================================================== */
+
+    private onVisibilityChanged = (
+        e: VisibilityChangedEvent,
+    ) => {
+        const sm = this.scrollMgr;
+        const isSplit = this.splitMode;
+
+        sm.onVisibilityChanged(e.first, () =>
+            isSplit
+                ? this.getBeforeEntries()
+                : this.buildGridEntries(),
+        );
+    };
+
+    /* ====================================================================
+     * Virtualizer items
+     * ==================================================================== */
+
+    /**
+     * Build a flat GridEntry array for the filtered
+     * albums.  Memoized on the cachedFilteredAlbums
+     * reference — only allocates a new array when the
+     * underlying album list changes.
+     */
+    private buildGridEntries(): GridEntry[] {
+        const filtered = this.cachedFilteredAlbums;
+
+        if (filtered === this.gridEntriesCacheKey) {
+            return this.gridEntriesCache;
+        }
+
+        const entries: GridEntry[] = [];
+
+        for (let i = 0; i < filtered.length; i++) {
+            entries.push({
+                album: filtered[i]!,
+                albumIndex: i,
+            });
+        }
+
+        this.gridEntriesCacheKey = filtered;
+        this.gridEntriesCache = entries;
+
+        return entries;
+    }
+
+    /** Entries for the "before" virtualizer. */
+    private getBeforeEntries(): GridEntry[] {
+        return this.buildGridEntries().slice(
+            0,
+            this.splitIndex,
+        );
+    }
+
+    /** Entries for the "after" virtualizer. */
+    private getAfterEntries(): GridEntry[] {
+        return this.buildGridEntries().slice(
+            this.splitIndex,
+        );
+    }
+
+    /* ====================================================================
+     * Dropdown (expand/collapse)
+     * ==================================================================== */
+
+    /** Close the dropdown if one is open. */
+    private closeDropdown() {
+        if (this.expandedAlbumId === null) return;
+
+        this.expandedAlbumId = null;
+        this.expandedTracks = [];
+        this.selectedTracks = new Set();
+        this.lastSelectedTrackIndex = null;
+    }
+
+    /**
+     * Open (or switch to) the given album's
+     * dropdown. If the dropdown is already open
+     * for the same album this is a no-op.
+     */
+    private async openDropdown(
+        album: library.Album,
+    ) {
+        if (this.expandedAlbumId === album.ID) return;
+
+        this.expandedAlbumId = album.ID;
+        this.expandedTracks = [];
+        this.selectedTracks = new Set();
+        this.lastSelectedTrackIndex = null;
+
         try {
-            const tracks = await GetAlbumTracks(album.ID);
+            const tracks = await GetAlbumTracks(
+                album.ID,
+            );
 
-            return tracks.map((t) => t.FilePath);
+            if (this.expandedAlbumId === album.ID) {
+                this.expandedTracks = tracks;
+            }
         } catch (error) {
-            console.error("Error loading album tracks:", error);
-
-            return [];
+            console.error(
+                'Error loading album tracks:',
+                error,
+            );
         }
     }
 
-    private onAlbumContextMenu(e: MouseEvent, album: library.Album) {
+    /**
+     * Synchronise the dropdown to the current
+     * selection: open the sole selected album's
+     * dropdown, or close it when zero or many
+     * albums are selected.
+     */
+    private syncDropdownToSelection() {
+        if (this.selectedAlbums.size === 1) {
+            const [albumId] = this.selectedAlbums;
+            const album = this.cachedFilteredAlbums.find(
+                (a) => a.ID === albumId,
+            );
+
+            if (album) {
+                void this.openDropdown(album);
+            }
+        } else {
+            this.closeDropdown();
+        }
+    }
+
+    /* ====================================================================
+     * Event delegation helpers
+     * ==================================================================== */
+
+    /**
+     * Walk up from the event target to find the nearest
+     * `.album-card` and read its `data-index` attribute.
+     * Returns `null` if the click was not on a card.
+     */
+    private resolveAlbumFromEvent(
+        e: Event,
+    ): { album: library.Album; index: number } | null {
+        const path = e.composedPath();
+        const filtered = this.cachedFilteredAlbums;
+
+        for (const el of path) {
+            if (
+                el instanceof HTMLElement &&
+                el.classList.contains('album-card')
+            ) {
+                const raw = el.dataset['index'];
+
+                if (raw === undefined) return null;
+
+                const index = parseInt(raw, 10);
+                const album = filtered[index];
+
+                if (!album) return null;
+
+                return { album, index };
+            }
+        }
+
+        return null;
+    }
+
+    /* ====================================================================
+     * Delegated album event handlers
+     * ==================================================================== */
+
+    private onGridAlbumClick = (e: MouseEvent) => {
+        const hit = this.resolveAlbumFromEvent(e);
+
+        if (!hit) return;
+
+        const { album, index } = hit;
+        const isCtrl = e.ctrlKey || e.metaKey;
+        const isShift = e.shiftKey;
+
+        if (
+            isShift &&
+            this.lastSelectedAlbumIndex !== null
+        ) {
+            const range = this.selMgr.selectAlbumRange(
+                this.lastSelectedAlbumIndex,
+                index,
+                this.cachedFilteredAlbums,
+            );
+            const next = new Set(this.selectedAlbums);
+
+            for (const id of range) {
+                next.add(id);
+            }
+
+            this.selectedAlbums = next;
+            this.syncDropdownToSelection();
+            void this.selMgr.warmCache(
+                this.selectedAlbums,
+            );
+        } else if (isCtrl) {
+            const next = new Set(this.selectedAlbums);
+
+            if (next.has(album.ID)) {
+                next.delete(album.ID);
+            } else {
+                next.add(album.ID);
+            }
+
+            this.selectedAlbums = next;
+            this.lastSelectedAlbumIndex = index;
+            this.syncDropdownToSelection();
+            void this.selMgr.warmCache(
+                this.selectedAlbums,
+            );
+        } else {
+            // Plain click: if this album is the
+            // sole selection, deselect + close.
+            // Otherwise select only this album
+            // and open its dropdown.
+            if (
+                this.selectedAlbums.size === 1 &&
+                this.selectedAlbums.has(album.ID)
+            ) {
+                this.selectedAlbums = new Set();
+                this.closeDropdown();
+            } else {
+                this.selectedAlbums = new Set([
+                    album.ID,
+                ]);
+                void this.openDropdown(album);
+            }
+
+            this.lastSelectedAlbumIndex = index;
+            void this.selMgr.warmCache(
+                this.selectedAlbums,
+            );
+        }
+    };
+
+    private onGridAlbumDblClick = async (
+        e: MouseEvent,
+    ) => {
+        const hit = this.resolveAlbumFromEvent(e);
+
+        if (!hit) return;
+
+        const filePaths =
+            await this.selMgr.getAlbumFilePaths(
+                hit.album,
+            );
+
+        if (filePaths.length === 0) return;
+
+        this.selectedAlbums = new Set();
+        this.closeDropdown();
+        queueStore.setQueue(filePaths, 0, true);
+    };
+
+    private onGridAlbumKeydown = (
+        e: KeyboardEvent,
+    ) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+
+        const hit = this.resolveAlbumFromEvent(e);
+
+        if (!hit) return;
+
+        e.preventDefault();
+
+        const { album, index } = hit;
+
+        // Mirror plain-click behaviour: toggle
+        // sole selection, or select and open.
+        if (
+            this.selectedAlbums.size === 1 &&
+            this.selectedAlbums.has(album.ID)
+        ) {
+            this.selectedAlbums = new Set();
+            this.closeDropdown();
+        } else {
+            this.selectedAlbums = new Set([album.ID]);
+            void this.openDropdown(album);
+        }
+
+        this.lastSelectedAlbumIndex = index;
+        void this.selMgr.warmCache(
+            this.selectedAlbums,
+        );
+    };
+
+    private onGridAlbumContextMenu = (
+        e: MouseEvent,
+    ) => {
+        const hit = this.resolveAlbumFromEvent(e);
+
+        if (!hit) return;
+
         e.preventDefault();
         e.stopPropagation();
 
-        this.contextMenuAlbum = album;
-        this.contextMenuOpen = true;
+        this.contextMenuAlbumId = hit.album.ID;
+        this.contextMenuTarget = { kind: 'album' };
+        this.ctxMenu.openAt(e.clientX, e.clientY);
+    };
 
-        this.updateComplete.then(() => {
-            const popup = this.contextMenuPopup;
+    /**
+     * Delegated image error handler — falls back from
+     * thumbnail to full-size cover art.
+     */
+    private onGridImageError = (e: Event) => {
+        const img = e.target;
 
-            if (popup) {
-                (popup as any).anchor = {
-                    getBoundingClientRect() {
-                        return {
-                            width: 0,
-                            height: 0,
-                            x: e.clientX,
-                            y: e.clientY,
-                            top: e.clientY,
-                            left: e.clientX,
-                            right: e.clientX,
-                            bottom: e.clientY,
-                        };
-                    },
-                };
-                (popup as any).active = true;
+        if (!(img instanceof HTMLImageElement)) return;
+
+        if (!img.classList.contains('cover-image')) {
+            return;
+        }
+
+        const card = img.closest('.album-card');
+
+        if (!card) return;
+
+        const raw = (card as HTMLElement).dataset[
+            'index'
+        ];
+
+        if (raw === undefined) return;
+
+        const index = parseInt(raw, 10);
+        const album = this.cachedFilteredAlbums[index];
+
+        if (album && img.src !== album.CoverArtPath) {
+            img.src = album.CoverArtPath;
+        }
+    };
+
+    /* ====================================================================
+     * Track event handlers (from album-dropdown)
+     * ==================================================================== */
+
+    private onTrackClick = (
+        e: CustomEvent<TrackClickDetail>,
+    ) => {
+        const {
+            track,
+            index,
+            ctrlKey,
+            shiftKey,
+            metaKey,
+        } = e.detail;
+
+        const isCtrl = ctrlKey || metaKey;
+
+        if (
+            shiftKey &&
+            this.lastSelectedTrackIndex !== null
+        ) {
+            const range = this.selMgr.selectTrackRange(
+                this.lastSelectedTrackIndex,
+                index,
+                this.expandedTracks,
+            );
+            const next = new Set(this.selectedTracks);
+
+            for (const path of range) {
+                next.add(path);
             }
+
+            this.selectedTracks = next;
+        } else if (isCtrl) {
+            const next = new Set(this.selectedTracks);
+
+            if (next.has(track.FilePath)) {
+                next.delete(track.FilePath);
+            } else {
+                next.add(track.FilePath);
+            }
+
+            this.selectedTracks = next;
+            this.lastSelectedTrackIndex = index;
+        } else {
+            this.selectedTracks = new Set([
+                track.FilePath,
+            ]);
+            this.lastSelectedTrackIndex = index;
+        }
+    };
+
+    private onTrackDblClick = (
+        e: CustomEvent<TrackDblClickDetail>,
+    ) => {
+        const { index } = e.detail;
+
+        // Play the full album starting from this track
+        const filePaths = this.expandedTracks.map(
+            (t) => t.FilePath,
+        );
+
+        if (filePaths.length === 0) return;
+
+        this.selectedTracks = new Set();
+        queueStore.setQueue(filePaths, index);
+    };
+
+    private onTrackContextMenu = (
+        e: CustomEvent<TrackContextMenuDetail>,
+    ) => {
+        const { track, clientX, clientY } = e.detail;
+
+        if (!this.selectedTracks.has(track.FilePath)) {
+            this.selectedTracks = new Set([
+                track.FilePath,
+            ]);
+        }
+
+        this.contextMenuTarget = { kind: 'track' };
+        this.ctxMenu.openAt(clientX, clientY);
+    };
+
+    /* ====================================================================
+     * Drag source (dropdown tracks)
+     * ==================================================================== */
+
+    private onTrackDragStart = (
+        e: CustomEvent<TrackDragStartDetail>,
+    ) => {
+        const { track, dataTransfer } = e.detail;
+
+        let filePaths: string[];
+
+        if (this.selectedTracks.has(track.FilePath)) {
+            filePaths =
+                this.selMgr.getSelectedTrackFilePaths(
+                    this.selectedTracks,
+                    this.expandedTracks,
+                );
+        } else {
+            filePaths = [track.FilePath];
+        }
+
+        if (filePaths.length === 0) return;
+
+        if (dataTransfer) {
+            const payload: DragPayload = {
+                filePaths,
+                source: 'cover-grid',
+            };
+
+            dataTransfer.effectAllowed = 'copy';
+            dataTransfer.setData(
+                DRAG_MIME,
+                JSON.stringify(payload),
+            );
+
+            this.dragImageEl =
+                filePaths.length === 1
+                    ? createTrackCardDragImage(
+                          track.TrackName,
+                          track.ArtistName,
+                          track.FilePath,
+                      )
+                    : createDragImage(
+                          filePaths.length,
+                      );
+            dataTransfer.setDragImage(
+                this.dragImageEl,
+                0,
+                0,
+            );
+        }
+
+        emitDragActive(true);
+    };
+
+    private onTrackDragEnd = () => {
+        if (this.dragImageEl) {
+            removeDragImage(this.dragImageEl);
+            this.dragImageEl = null;
+        }
+
+        emitDragActive(false);
+    };
+
+    /* ====================================================================
+     * Drag source (album cards)
+     * ==================================================================== */
+
+    /**
+     * Pre-warm the file-path cache for the album under
+     * the pointer so that a subsequent dragstart (which
+     * is synchronous) can read the paths immediately.
+     */
+    private onAlbumPointerDown = (e: PointerEvent) => {
+        // Only act on primary button (left-click).
+        if (e.button !== 0) return;
+
+        const hit = this.resolveAlbumFromEvent(e);
+
+        if (!hit) return;
+
+        // Fire-and-forget: warm the cache entry.
+        void this.selMgr.warmSingleAlbum(hit.album);
+    };
+
+    private onAlbumDragStart = (e: DragEvent) => {
+        const hit = this.resolveAlbumFromEvent(e);
+
+        if (!hit) return;
+
+        // Read file paths synchronously from the
+        // pre-warmed cache.  The cache is populated
+        // via pointerdown or selection-change warming.
+        let filePaths: string[];
+        let isSingleAlbum: boolean;
+
+        if (this.selectedAlbums.has(hit.album.ID)) {
+            // Dragged album is part of the selection —
+            // drag all selected albums' tracks.
+            filePaths =
+                this.selMgr.getCachedSelectedPaths(
+                    this.selectedAlbums,
+                );
+            isSingleAlbum =
+                this.selectedAlbums.size === 1;
+        } else {
+            // Dragged album is not selected — clear
+            // selection and drag only this album.
+            this.selectedAlbums = new Set();
+            filePaths =
+                this.selMgr.getCachedAlbumPaths(
+                    hit.album.ID,
+                ) ?? [];
+            isSingleAlbum = true;
+        }
+
+        if (filePaths.length === 0) {
+            // Cache miss — cancel the drag.
+            e.preventDefault();
+
+            return;
+        }
+
+        setDragPayload(e, {
+            filePaths,
+            source: 'cover-grid',
         });
-    }
+
+        // Single album: show cover art thumbnail.
+        // Multiple albums: show track-count badge.
+        if (isSingleAlbum && hit.album.CoverArtPath) {
+            this.dragImageEl =
+                createAlbumArtDragImage(
+                    this.getCoverUrl(hit.album),
+                );
+        } else {
+            this.dragImageEl = createDragImage(
+                filePaths.length,
+            );
+        }
+
+        e.dataTransfer?.setDragImage(
+            this.dragImageEl,
+            0,
+            0,
+        );
+
+        emitDragActive(true);
+    };
+
+    private onAlbumDragEnd = () => {
+        if (this.dragImageEl) {
+            removeDragImage(this.dragImageEl);
+            this.dragImageEl = null;
+        }
+
+        emitDragActive(false);
+    };
+
+    /* ====================================================================
+     * Grid click (empty area)
+     * ==================================================================== */
+
+    private onGridClick = (e: MouseEvent) => {
+        for (const el of e.composedPath()) {
+            if (!(el instanceof HTMLElement)) continue;
+
+            if (
+                el.classList.contains('album-card') ||
+                el.classList.contains('album-dropdown')
+            ) {
+                return;
+            }
+        }
+
+        this.selectedAlbums = new Set();
+        this.lastSelectedAlbumIndex = null;
+        this.expandedAlbumId = null;
+        this.expandedTracks = [];
+        this.selectedTracks = new Set();
+        this.lastSelectedTrackIndex = null;
+    };
+
+    /* ====================================================================
+     * Context menu actions
+     * ==================================================================== */
 
     private async onContextMenuAction(action: string) {
-        if (!this.contextMenuAlbum) return;
+        let filePaths: string[];
 
-        const filePaths = await this.getAlbumFilePaths(this.contextMenuAlbum);
+        if (this.contextMenuTarget.kind === 'track') {
+            filePaths =
+                this.selMgr.getSelectedTrackFilePaths(
+                    this.selectedTracks,
+                    this.expandedTracks,
+                );
+        } else {
+            filePaths =
+                await this.selMgr.getContextMenuAlbumFilePaths(
+                    this.contextMenuAlbumId,
+                    this.selectedAlbums,
+                );
+        }
 
         if (filePaths.length === 0) return;
 
         switch (action) {
             case 'play':
-                this.queue.setQueue(filePaths, 0);
+                queueStore.setQueue(filePaths, 0, true);
                 break;
             case 'add-to-queue':
-                this.queue.addTracksToQueue(filePaths);
+                queueStore.addTracksToQueue(filePaths);
                 break;
             case 'play-next':
-                this.queue.playTracksNext(filePaths);
+                queueStore.playTracksNext(filePaths);
+                break;
+            case 'track-details':
+                this.openTrackDetails(filePaths[0]!);
                 break;
         }
 
-        this.closeContextMenu();
+        this.clearContextMenuSelection();
+        this.ctxMenu.close();
     }
 
-    private closeContextMenu() {
-        if (!this.contextMenuOpen) return;
+    private async onContextMenuFavoriteToggle() {
+        const filePaths =
+            await this.getPlaylistSubmenuFilePaths();
 
-        this.contextMenuOpen = false;
-        this.contextMenuAlbum = null;
+        if (filePaths.length === 0) return;
 
-        const popup = this.contextMenuPopup;
+        if (this.favCtrl.allFavorited(filePaths)) {
+            void this.favCtrl.removeFromFavorites(
+                filePaths,
+            );
+        } else {
+            void this.favCtrl.addToFavorites(
+                filePaths,
+            );
+        }
 
-        if (popup) {
-            (popup as any).active = false;
+        this.clearContextMenuSelection();
+        this.ctxMenu.close();
+    }
+
+    /** Clear the selection that was active for the context menu. */
+    private clearContextMenuSelection() {
+        if (this.contextMenuTarget.kind === 'track') {
+            this.selectedTracks = new Set();
+        } else {
+            this.selectedAlbums = new Set();
         }
     }
 
-    private renderAlbumCard = (album: library.Album): unknown => {
+    private openTrackDetails(filePath: string) {
+        const track = this.expandedTracks.find(
+            (t) => t.FilePath === filePath,
+        );
+
+        if (!track) return;
+
+        const coverArt =
+            this.selMgr.resolveTrackCoverArt(
+                track.Album,
+                this.expandedAlbumId,
+            );
+
+        this.trackDetailsDialog?.show(
+            track,
+            coverArt ?? undefined,
+        );
+    }
+
+    /** Resolve file paths for the playlist submenu. */
+    private async getPlaylistSubmenuFilePaths(): Promise<
+        string[]
+    > {
+        if (this.contextMenuTarget.kind === 'track') {
+            return this.selMgr.getSelectedTrackFilePaths(
+                this.selectedTracks,
+                this.expandedTracks,
+            );
+        }
+
+        return this.selMgr.getContextMenuAlbumFilePaths(
+            this.contextMenuAlbumId,
+            this.selectedAlbums,
+        );
+    }
+
+    /* ====================================================================
+     * Render: sort toolbar
+     * ==================================================================== */
+
+    /** Render the sort toolbar above the grid. */
+    private renderSortToolbar() {
+        const activeOpt = ALBUM_SORT_OPTIONS.find(
+            (o) => o.id === this.sortField,
+        );
+
+        const label = activeOpt
+            ? activeOpt.label
+            : 'Name';
+
+        const dirIcon =
+            this.sortDirection === 'asc'
+                ? 'arrow-up-short-wide'
+                : 'arrow-down-wide-short';
+
         return html`
-            <div
-                class="album-card"
-                tabindex="0"
-                role="button"
-                aria-label="${album.Name} by ${album.ArtistName}"
-                @click=${() => this.onAlbumClick(album)}
-                @keydown=${(e: KeyboardEvent) => this.onAlbumKeydown(e, album)}
-                @contextmenu=${(e: MouseEvent) => this.onAlbumContextMenu(e, album)}
-            >
-                <div class="cover-container">
-                    ${album.CoverArtPath
-                        ? html`<img
-                              class="cover-image"
-                              src="${album.CoverArtPath}"
-                              alt="${album.Name} cover"
-                              loading="lazy"
-                          />`
-                        : html`<div class="placeholder-cover">
-                              ${this.getAlbumInitial(album.Name)}
-                          </div>`}
-                </div>
-                <div class="album-info">
-                    <div class="album-name" title="${album.Name}">${album.Name}</div>
-                    <div class="artist-name" title="${album.ArtistName}">
-                        ${album.ArtistName}${album.Year ? ` - ${album.Year}` : ''}
-                    </div>
-                </div>
+            <div class="sort-toolbar">
+                <span>Sort:</span>
+                <button
+                    class="sort-anchor"
+                    @click=${() =>
+                        this.toggleSortDropdown()}
+                >
+                    <span class="sort-label">
+                        ${label}
+                    </span>
+                    <wa-icon
+                        name="chevron-down"
+                    ></wa-icon>
+                </button>
+                <button
+                    class="sort-dir-btn"
+                    title="${this.sortDirection === 'asc' ? 'Ascending' : 'Descending'}"
+                    @click=${() =>
+                        this.toggleSortDirection()}
+                >
+                    <wa-icon
+                        name=${dirIcon}
+                    ></wa-icon>
+                </button>
+                ${this.searchCtrl.term
+                    ? html`<div class="search-indicator">
+                          Showing results for
+                          &ldquo;${this.searchCtrl.term}&rdquo;
+                      </div>`
+                    : nothing}
             </div>
+            ${this.renderSortDropdownPopup()}
         `;
-    };
+    }
+
+    /** Render the sort dropdown popup. */
+    private renderSortDropdownPopup() {
+        return html`
+            <wa-popup
+                id="sort-dropdown"
+                placement="bottom-start"
+                flip
+                shift
+                .active=${this.sortDropdownOpen}
+            >
+                ${this.sortDropdownOpen
+                    ? html`
+                          <div
+                              class="sort-dropdown-panel"
+                          >
+                              ${ALBUM_SORT_OPTIONS.map(
+                                  (opt) => html`
+                                      <wa-dropdown-item
+                                          class=${this.sortField === opt.id ? 'active-sort' : ''}
+                                          @click=${() =>
+                                              this.onSortDropdownSelect(
+                                                  opt.id,
+                                              )}
+                                      >
+                                          ${opt.label}
+                                      </wa-dropdown-item>
+                                  `,
+                              )}
+                          </div>
+                      `
+                    : nothing}
+            </wa-popup>
+        `;
+    }
+
+    /* ====================================================================
+     * Rendering helpers
+     * ==================================================================== */
 
     private getAlbumInitial(name: string): string {
         return name.charAt(0).toUpperCase();
     }
 
-    private onAlbumClick(album: library.Album) {
-        EventsEmit('AlbumSelected', album);
-        this.dispatchEvent(
-            new CustomEvent('album-selected', {
-                detail: album,
-                bubbles: true,
-                composed: true,
-            })
-        );
+    /**
+     * Pick the appropriate cover art URL based on the
+     * current card size and device pixel ratio.
+     */
+    private getCoverUrl(album: library.Album): string {
+        const needed =
+            this.imageSize * window.devicePixelRatio;
+
+        if (needed <= 100) {
+            return (
+                album.CoverArtSmall ||
+                album.CoverArtMedium ||
+                album.CoverArtPath
+            );
+        }
+
+        if (needed <= 200) {
+            return (
+                album.CoverArtMedium ||
+                album.CoverArtLarge ||
+                album.CoverArtPath
+            );
+        }
+
+        if (needed <= 400) {
+            return (
+                album.CoverArtLarge ||
+                album.CoverArtPath
+            );
+        }
+
+        return album.CoverArtPath;
     }
 
-    private onAlbumKeydown(e: KeyboardEvent, album: library.Album) {
-        if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            this.onAlbumClick(album);
-        }
+    /* ====================================================================
+     * Render: grid entry (virtualizer renderItem)
+     * ==================================================================== */
+
+    private renderGridEntry = (
+        entry: GridEntry,
+    ) => {
+        return this.renderAlbumCard(
+            entry.album,
+            entry.albumIndex,
+        );
+    };
+
+    /* ====================================================================
+     * Render: album card
+     *
+     * No per-card event listeners — events are delegated
+     * via data-index on the virtualizer.
+     * ==================================================================== */
+
+    private renderAlbumCard(
+        album: library.Album,
+        index: number,
+    ) {
+        const selected = this.selectedAlbums.has(
+            album.ID,
+        );
+        const expanded =
+            this.expandedAlbumId === album.ID;
+
+        const classes = [
+            'album-card',
+            selected ? 'selected' : '',
+            expanded ? 'expanded' : '',
+        ]
+            .filter(Boolean)
+            .join(' ');
+
+        const imgSize = this.imageSize;
+
+        return html`
+            <div
+                class=${classes}
+                tabindex="0"
+                role="button"
+                data-index=${index}
+                aria-label="${album.Name} by ${album.ArtistName}"
+                draggable="true"
+                @pointerdown=${this.onAlbumPointerDown}
+                @dragstart=${this.onAlbumDragStart}
+                @dragend=${this.onAlbumDragEnd}
+            >
+                <div class="cover-container">
+                    ${album.CoverArtPath
+                ? html`<img
+                              class="cover-image"
+                              src="${this.getCoverUrl(album)}"
+                              alt="${album.Name} cover"
+                              width="${imgSize}"
+                              height="${imgSize}"
+                              loading="lazy"
+                              decoding="async"
+                          />`
+                : html`<div
+                              class="placeholder-cover"
+                          >
+                              ${this.getAlbumInitial(album.Name)}
+                          </div>`}
+                </div>
+                <div class="album-info">
+                    <div
+                        class="album-name"
+                        title="${album.Name}"
+                    >
+                        ${album.Name}${album.Year
+                ? html`
+                              <span class="album-year">
+                                  (${album.Year})</span
+                              >`
+                : nothing}
+                    </div>
+                    <div
+                        class="artist-name"
+                        title="${album.ArtistName}"
+                    >
+                        ${album.ArtistName}
+                    </div>
+                </div>
+            </div>
+        `;
     }
+
+    /* ====================================================================
+     * Render: main
+     * ==================================================================== */
 
     override render() {
         if (this.loading) {
-            return html`<div class="loading">Loading albums...</div>`;
+            return html`<div class="loading">
+                Loading albums...
+            </div>`;
         }
 
         if (this.albums.length === 0) {
             return html`
                 <div class="empty-state">
                     <p>No albums found</p>
-                    <p>Add music to your library to see album covers here.</p>
+                    <p>
+                        Add music to your library to see
+                        album covers here.
+                    </p>
                 </div>
             `;
         }
 
+        if (this.cachedFilteredAlbums.length === 0) {
+            return html`
+                ${this.renderSortToolbar()}
+                <div class="empty-state">
+                    <p>No albums match your search.</p>
+                </div>
+            `;
+        }
+
+        const gridContent = this.splitMode
+            ? this.renderSplitGrid()
+            : this.renderSingleGrid();
+
+        return html`
+            ${this.renderSortToolbar()}
+            <div
+                class="grid-scroll-container"
+                @click=${this.onGridClick}
+            >
+                ${gridContent}
+            </div>
+
+            ${this.renderContextMenu()}
+        `;
+    }
+
+    /** Single virtualizer — no dropdown open. */
+    private renderSingleGrid() {
         return html`
             <lit-virtualizer
-                scroller
-                .items=${this.albums}
-                .renderItem=${this.renderAlbumCard}
-                .layout=${grid({
-                    itemSize: { width: '176px', height: '230px' },
-                    gap: '16px',
-                    padding: '16px',
-                })}
+                id="grid-single"
+                .items=${this.buildGridEntries()}
+                .renderItem=${this.renderGridEntry}
+                .keyFunction=${(entry: GridEntry) => entry.album.ID}
+                .layout=${this.gridLayout}
+                @click=${this.onGridAlbumClick}
+                @dblclick=${this.onGridAlbumDblClick}
+                @keydown=${this.onGridAlbumKeydown}
+                @contextmenu=${this.onGridAlbumContextMenu}
+                @visibilityChanged=${this.onVisibilityChanged}
+            ></lit-virtualizer>
+        `;
+    }
+
+    /**
+     * Dual virtualizer — dropdown sandwiched between
+     * "before" and "after" grids.
+     */
+    private renderSplitGrid() {
+        const sm = this.scrollMgr;
+        const ctr = this.scrollContainer;
+        const containerW = sm.getContainerWidth(ctr);
+        const rowW = sm.getGridRowWidth(ctr);
+        const afterEntries = this.getAfterEntries();
+
+        return html`
+            <lit-virtualizer
+                id="grid-before"
+                .items=${this.getBeforeEntries()}
+                .renderItem=${this.renderGridEntry}
+                .keyFunction=${(entry: GridEntry) => entry.album.ID}
+                .layout=${this.gridLayout}
+                @click=${this.onGridAlbumClick}
+                @dblclick=${this.onGridAlbumDblClick}
+                @keydown=${this.onGridAlbumKeydown}
+                @contextmenu=${this.onGridAlbumContextMenu}
+                @visibilityChanged=${this.onVisibilityChanged}
             ></lit-virtualizer>
 
+            <album-dropdown
+                .tracks=${this.expandedTracks}
+                .selectedTracks=${this.selectedTracks}
+                .containerWidth=${containerW}
+                .gridRowWidth=${rowW}
+                .caratOffset=${sm.getCaratOffset(ctr)}
+                style="margin-left:${(containerW - rowW) / 2}px"
+                @track-click=${this.onTrackClick}
+                @track-dblclick=${this.onTrackDblClick}
+                @track-contextmenu=${this.onTrackContextMenu}
+                @track-dragstart=${this.onTrackDragStart}
+                @track-dragend=${this.onTrackDragEnd}
+            ></album-dropdown>
+
+            ${afterEntries.length > 0
+                ? html`
+                      <lit-virtualizer
+                          id="grid-after"
+                          .items=${afterEntries}
+                          .renderItem=${this.renderGridEntry}
+                          .keyFunction=${(entry: GridEntry) => entry.album.ID}
+                          .layout=${this.gridLayoutAfter}
+                          @click=${this.onGridAlbumClick}
+                          @dblclick=${this.onGridAlbumDblClick}
+                          @keydown=${this.onGridAlbumKeydown}
+                          @contextmenu=${this.onGridAlbumContextMenu}
+                      ></lit-virtualizer>
+                  `
+                : nothing}
+        `;
+    }
+
+    /** Context menu + playlist submenu popups. */
+    /** Trigger playlist submenu with resolved file paths. */
+    private async handleShowPlaylistSubmenu() {
+        const filePaths =
+            await this.getPlaylistSubmenuFilePaths();
+
+        void this.ctxMenu.showPlaylistSubmenu(
+            filePaths,
+        );
+    }
+
+    private renderContextMenu() {
+        const { ctxMenu } = this;
+
+        return html`
             <wa-popup
                 id="context-menu"
                 placement="bottom-start"
-                .active=${this.contextMenuOpen}
+                flip
+                shift
+                .active=${ctxMenu.contextMenuOpen}
             >
-                ${this.contextMenuOpen
-                    ? html`
-                        <div class="context-menu-panel">
-                            <wa-dropdown-item
-                                @click=${() => this.onContextMenuAction('play')}
-                            >
-                                <wa-icon slot="icon" name="play"></wa-icon>
-                                Play
-                            </wa-dropdown-item>
-                            <wa-dropdown-item
-                                @click=${() => this.onContextMenuAction('add-to-queue')}
-                            >
-                                <wa-icon slot="icon" name="plus"></wa-icon>
-                                Add to Queue
-                            </wa-dropdown-item>
-                            <wa-dropdown-item
-                                @click=${() => this.onContextMenuAction('play-next')}
-                            >
-                                <wa-icon slot="icon" name="forward-step"></wa-icon>
-                                Play Next
-                            </wa-dropdown-item>
-                        </div>
-                    `
-                    : nothing}
+                ${ctxMenu.contextMenuOpen
+                ? html`
+                          <div class="context-menu-panel">
+                              <wa-dropdown-item
+                                  @click=${() =>
+                        this.onContextMenuAction(
+                            'play',
+                        )}
+                                  @mouseenter=${() =>
+                        ctxMenu.closePlaylistSubmenu()}
+                              >
+                                  <wa-icon
+                                      slot="icon"
+                                      name="play"
+                                  ></wa-icon>
+                                  Play
+                              </wa-dropdown-item>
+                              <wa-dropdown-item
+                                  @click=${() =>
+                        this.onContextMenuAction(
+                            'add-to-queue',
+                        )}
+                                  @mouseenter=${() =>
+                        ctxMenu.closePlaylistSubmenu()}
+                              >
+                                  <wa-icon
+                                      slot="icon"
+                                      name="plus"
+                                  ></wa-icon>
+                                  Add to Queue
+                              </wa-dropdown-item>
+                              <wa-dropdown-item
+                                  @click=${() =>
+                        this.onContextMenuAction(
+                            'play-next',
+                        )}
+                                  @mouseenter=${() =>
+                        ctxMenu.closePlaylistSubmenu()}
+                              >
+                                  <wa-icon
+                                      slot="icon"
+                                      name="forward-step"
+                                  ></wa-icon>
+                                  Play Next
+                              </wa-dropdown-item>
+                              <wa-dropdown-item
+                                  class="submenu-item"
+                                  @mouseenter=${() => {
+                        ctxMenu.clearSubmenuCloseTimer();
+                        void this.handleShowPlaylistSubmenu();
+                    }}
+                                  @mouseleave=${ctxMenu
+                        .scheduleSubmenuClose}
+                                  @click=${(e: Event) => {
+                        e.stopPropagation();
+                        void this.handleShowPlaylistSubmenu();
+                    }}
+                              >
+                                  <wa-icon
+                                      slot="icon"
+                                      name="plus"
+                                  ></wa-icon>
+                                   Add to Playlist
+                                   <span
+                                       class="submenu-arrow"
+                                       >&#9654;</span
+                                   >
+                              </wa-dropdown-item>
+                              <wa-dropdown-item
+                                  @click=${() =>
+                                      this.onContextMenuFavoriteToggle()}
+                                  @mouseenter=${() =>
+                                      ctxMenu.closePlaylistSubmenu()}
+                              >
+                                   <wa-icon
+                                       slot="icon"
+                                       name=${this.favCtrl.iconName}
+                                   ></wa-icon>
+                                  ${this.favCtrl.allFavorited(this.ctxMenu.playlistFilePaths) ? `Remove from ${this.favCtrl.playlistName}` : `Add to ${this.favCtrl.playlistName}`}
+                              </wa-dropdown-item>
+                              ${this.contextMenuTarget
+                                      .kind ===
+                                  'track' &&
+                              this.selectedTracks
+                                  .size === 1
+                                  ? html`
+                                        <wa-dropdown-item
+                                            @click=${() =>
+                                                this.onContextMenuAction(
+                                                    'track-details',
+                                                )}
+                                            @mouseenter=${() =>
+                                                ctxMenu.closePlaylistSubmenu()}
+                                        >
+                                            <wa-icon
+                                                slot="icon"
+                                                name="circle-info"
+                                            ></wa-icon>
+                                            Track
+                                            Details
+                                        </wa-dropdown-item>
+                                    `
+                                  : nothing}
+                          </div>
+                      `
+                : nothing}
             </wa-popup>
+
+            <wa-popup
+                id="playlist-submenu"
+                placement="right-start"
+                flip
+                shift
+                .active=${ctxMenu.playlistSubmenuOpen}
+            >
+                ${ctxMenu.playlistSubmenuOpen
+                ? html`
+                          <div
+                              @mouseenter=${() =>
+                        ctxMenu.clearSubmenuCloseTimer()}
+                              @mouseleave=${ctxMenu
+                        .scheduleSubmenuClose}
+                          >
+                              <playlist-picker
+                                  .filePaths=${ctxMenu
+                        .playlistFilePaths}
+                                  @playlist-action-complete=${ctxMenu
+                        .onPlaylistActionComplete}
+                                  @click=${(e: Event) =>
+                        e.stopPropagation()}
+                              ></playlist-picker>
+                          </div>
+                      `
+                : nothing}
+            </wa-popup>
+
+            <track-details></track-details>
         `;
     }
 }

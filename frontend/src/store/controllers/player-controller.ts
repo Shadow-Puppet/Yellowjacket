@@ -12,7 +12,7 @@ import { playerStore } from '../player-store';
  *   render() {
  *     return html`
  *       <span>${this.player.currentTrack?.fileName}</span>
- *       <button @click=${() => this.player.play()}>Play</button>
+ *       <button @click=${() => this.player.pause()}>Pause</button>
  *     `;
  *   }
  */
@@ -66,10 +66,6 @@ export class PlayerController implements ReactiveController {
   // ACTIONS
   // Delegate to store (which delegates to backend)
   // ===================================================================
-
-  play(): void {
-    playerStore.play();
-  }
 
   pause(): void {
     playerStore.pause();

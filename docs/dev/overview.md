@@ -40,7 +40,7 @@ Used to generate Go code from SQL.
 
 Used to generate HTML templates with Go code.
 
-### [Beep](https://github.com/TheCodeOfCaleb/beep/v2?tab=readme-ov-file#beep)
+### [Beep](https://github.com/gopxl/beep?tab=readme-ov-file#beep)
 
 Used for audio playback.
 

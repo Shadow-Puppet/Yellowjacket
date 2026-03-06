@@ -9,22 +9,36 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
-	"github.com/TheCodeOfCaleb/beep/v2"
-	"github.com/TheCodeOfCaleb/beep/v2/effects"
-	"github.com/TheCodeOfCaleb/beep/v2/generators"
-	"github.com/TheCodeOfCaleb/beep/v2/speaker"
+	"github.com/gopxl/beep/v2"
+	"github.com/gopxl/beep/v2/effects"
+	"github.com/gopxl/beep/v2/generators"
+	"github.com/gopxl/beep/v2/speaker"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"yellowjacket/backend/coverart"
 	"yellowjacket/backend/database"
 	"yellowjacket/backend/database/sql/sqlcgen"
 	"yellowjacket/backend/events"
+	"yellowjacket/backend/mediacontrols"
 	"yellowjacket/backend/metadata"
+	"yellowjacket/backend/profiling"
 )
 
 // Player handles audio playback and state management.
+//
+// Lock ordering: always acquire p.mu BEFORE speaker.Lock().
+// The beep playback-finished callback dispatches to a new goroutine
+// so it never holds p.mu while the speaker lock is held.
 type Player struct {
+	// mu protects all mutable fields below from concurrent access.
+	// It must be held by every public method and released before
+	// calling the playbackFinishedHandler (which re-enters the player
+	// via the queue).
+	mu sync.Mutex
+
 	ctx                     context.Context
 	logger                  *slog.Logger
 	db                      *database.DB
@@ -34,10 +48,20 @@ type Player struct {
 	baseStreamer            beep.Streamer
 	seeker                  beep.StreamSeeker
 	resampled               beep.Streamer
+	buffered                *BufferedStreamer
 	control                 *beep.Ctrl
 	volume                  *effects.Volume
 	speakerStreamer         beep.Streamer
 	playbackFinishedHandler func()
+	trackChangeID           uint64
+	mediaControls           mediacontrols.Handler
+
+	// trackLengthMs holds the authoritative track duration in
+	// milliseconds, sourced from the database (which uses the
+	// custom header parser).  The go-mp3 decoder's Len() can be
+	// inflated for files with multiple ID3v2 tags, so this value
+	// is preferred for display and position calculations.
+	trackLengthMs int64
 }
 
 // State represents the current playback state.
@@ -50,6 +74,26 @@ const (
 	Stopped State = "stopped"
 )
 
+// TrackInfo contains metadata and playback state for the currently
+// loaded track. It is emitted as the payload of the TrackChanged
+// event and serialized as camelCase JSON to match the frontend
+// TrackInfo interface in player-store.ts.
+type TrackInfo struct {
+	FileName       string `json:"fileName"`
+	FilePath       string `json:"filePath"`
+	State          State  `json:"state"`
+	Title          string `json:"title"`
+	Artist         string `json:"artist"`
+	Album          string `json:"album"`
+	CoverArt       string `json:"coverArt"`
+	CoverArtSmall  string `json:"coverArtSmall"`
+	CoverArtMedium string `json:"coverArtMedium"`
+	CoverArtLarge  string `json:"coverArtLarge"`
+	TrackLength    int    `json:"trackLength"`
+	SeekPosition   int    `json:"seekPosition"`
+	TrackChangeID  uint64 `json:"trackChangeId"`
+}
+
 // Sentinel errors for player operations.
 var (
 	errNoControlStreamer = errors.New("no control streamer")
@@ -60,10 +104,10 @@ var (
 
 var speakerSampleRate = beep.SampleRate(44100)
 
-// NewPlayer creates a player and initializes the audio speaker.
-func NewPlayer(ctx context.Context, logger *slog.Logger, db *database.DB) (*Player, error) {
-	player := &Player{
-		ctx:          ctx,
+// NewPlayer creates a player. Call InitSpeaker separately to
+// initialize the audio output device.
+func NewPlayer(logger *slog.Logger, db *database.DB) *Player {
+	return &Player{
 		logger:       logger,
 		db:           db,
 		state:        Stopped,
@@ -72,86 +116,65 @@ func NewPlayer(ctx context.Context, logger *slog.Logger, db *database.DB) (*Play
 			SampleRate: speakerSampleRate,
 		},
 	}
-
-	// TODO: allow user to change buffer size and speaker sample rate
-	err := speaker.Init(player.format.SampleRate, player.format.SampleRate.N(time.Second/10))
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize speaker %w", err)
-	}
-
-	return player, nil
 }
 
-// SetPlaybackFinishedHandler sets a callback that is invoked when a track finishes naturally.
-// This allows the queue to drive auto-advance without circular imports.
+// InitSpeaker initializes the audio output device. This is
+// separated from NewPlayer so the player struct can be created
+// before wails.Run (for binding registration) while deferring
+// hardware initialization to OnStartup.
+func (p *Player) InitSpeaker() error {
+	defer profiling.TimeOp(p.logger, "player.InitSpeaker")()
+
+	// TODO: allow user to change buffer size and speaker sample rate.
+	// Speaker buffer is 200ms (~8820 samples at 44100 Hz), providing
+	// secondary protection against underruns behind the read-ahead
+	// BufferedStreamer.
+	err := speaker.Init(
+		p.format.SampleRate,
+		p.format.SampleRate.N(time.Second/5),
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"failed to initialize speaker: %w", err,
+		)
+	}
+
+	return nil
+}
+
+// SetPlaybackFinishedHandler sets a callback invoked when a track
+// finishes naturally. This allows the queue to drive auto-advance
+// without circular imports.
 func (p *Player) SetPlaybackFinishedHandler(handler func()) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	p.playbackFinishedHandler = handler
 }
 
-// SetContext sets the Wails context, registers event handlers, and restores persisted state.
+// SetMediaControls provides an OS media controls handler. When set,
+// the player pushes metadata, playback state, volume, and seek
+// notifications to the OS media overlay.
+func (p *Player) SetMediaControls(h mediacontrols.Handler) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.mediaControls = h
+}
+
+// SetContext sets the Wails runtime context and restores persisted
+// state.
 func (p *Player) SetContext(ctx context.Context) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	p.ctx = ctx
-	p.registerEventHandlers()
-	p.RestoreState()
+	p.restoreStateLocked()
 }
 
-func (p *Player) registerEventHandlers() {
-	if p.ctx == nil {
-		p.logger.Error("Context is nil, cannot register event handlers")
-
-		return
-	}
-
-	runtime.EventsOn(p.ctx, events.RequestPlay, func(_ ...any) {
-		p.logger.Info("Received RequestPlayEvent")
-
-		if err := p.Play(); err != nil {
-			p.logger.Error("failed to play", "err", err)
-		}
-	})
-	runtime.EventsOn(p.ctx, events.RequestPause, func(_ ...any) {
-		p.logger.Info("Received RequestPauseEvent")
-
-		if err := p.Pause(); err != nil {
-			p.logger.Error("failed to pause", "err", err)
-		}
-	})
-	runtime.EventsOn(p.ctx, events.RequestLoadFile, func(data ...any) {
-		p.logger.Info("Received RequestLoadFileEvent")
-
-		filePath := data[0].(string)
-		p.logger.Info(filePath)
-
-		err := p.LoadFile(filePath)
-		if err != nil {
-			p.logger.Error(err.Error())
-		} else {
-			p.logger.Info(p.currentFile.Name())
-		}
-	})
-	runtime.EventsOn(p.ctx, events.Seek, func(data ...any) {
-		p.logger.Info("Received SeekEvent", "Data", data[0])
-		seekValue := int(data[0].(float64))
-
-		err := p.Seek(seekValue)
-		if err != nil {
-			p.logger.Error("cannot seek", "error", err)
-		}
-	})
-	runtime.EventsOn(p.ctx, events.RequestSetVolume, func(data ...any) {
-		desiredVolume := UserVolume(data[0].(float64))
-		p.logger.Info("Received RequestSetVolumeEvent", "volume", desiredVolume)
-
-		err := p.SetVolume(desiredVolume)
-		if err != nil {
-			p.logger.Error("cannot set volume", "error", err)
-
-			return
-		}
-
-		p.emitVolumeChanged()
-	})
-}
+// ---------------------------------------------------------------
+// Emit helpers (must be called with p.mu held)
+// ---------------------------------------------------------------
 
 // emitPlaybackStateChanged emits a playback state change event.
 func (p *Player) emitPlaybackStateChanged(state State) {
@@ -161,12 +184,22 @@ func (p *Player) emitPlaybackStateChanged(state State) {
 		return
 	}
 
-	p.logger.Info("Emitting PlaybackStateChangedEvent", "state", state)
+	p.logger.Info(
+		"Emitting PlaybackStateChangedEvent", "state", state,
+	)
+
 	runtime.EventsEmit(
 		p.ctx,
 		events.PlaybackStateChanged,
 		map[string]string{"state": string(state)},
 	)
+
+	if p.mediaControls != nil {
+		p.mediaControls.UpdatePlaybackState(
+			stateToMediaControls(state),
+			p.currentPositionSecondsLocked(),
+		)
+	}
 }
 
 func (p *Player) emitPlaybackFinished() {
@@ -188,8 +221,18 @@ func (p *Player) emitVolumeChanged() {
 	}
 
 	volume := int(p.getUserVolume())
-	p.logger.Info("Emitting VolumeChangedEvent", "volume", volume)
+	p.logger.Info(
+		"Emitting VolumeChangedEvent", "volume", volume,
+	)
+
 	runtime.EventsEmit(p.ctx, events.VolumeChanged, volume)
+
+	if p.mediaControls != nil {
+		// MPRIS volume is 0.0–1.0 linear.
+		p.mediaControls.UpdateVolume(
+			float64(volume) / float64(MaxUserVol),
+		)
+	}
 }
 
 func (p *Player) emitTrackChanged() {
@@ -199,42 +242,49 @@ func (p *Player) emitTrackChanged() {
 		return
 	}
 
-	trackLengthSecs, err := p.TrackLengthInSeconds()
+	trackInfo := p.getCurrentTrackInfoLocked()
+
+	trackLengthSecs, err := p.trackLengthLocked()
 	if err != nil {
 		p.logger.Error("Cannot get track length")
 	}
 
-	trackInfo, err := p.GetCurrentTrackInfo()
-	if err != nil {
-		p.logger.Error("Cannot get track info")
-		trackInfo = map[string]interface{}{
-			"fileName": "",
-			"filePath": "",
-			"state":    string(p.state),
-		}
+	trackInfo.TrackLength = trackLengthSecs
+
+	// Compute current seek position in display seconds.
+	trackInfo.SeekPosition = p.displayPositionSecsLocked()
+
+	// Increment track change ID so the frontend can detect changes
+	// even when the same file plays consecutively.
+	p.trackChangeID++
+	trackInfo.TrackChangeID = p.trackChangeID
+
+	runtime.EventsEmit(
+		p.ctx, events.TrackChanged, trackInfo,
+	)
+
+	p.logger.Info(
+		"Emitting TrackChangedEvent with track info",
+		"trackInfo", trackInfo,
+	)
+
+	if p.mediaControls != nil {
+		p.mediaControls.UpdateMetadata(
+			p.buildMediaMetadata(
+				trackInfo, trackLengthSecs,
+			),
+		)
 	}
-
-	// Compute current seek position in seconds.
-	seekPosition := 0
-
-	if p.seeker != nil {
-		speaker.Lock()
-		seekPosition = p.seeker.Position() / int(p.format.SampleRate)
-		speaker.Unlock()
-	}
-
-	// Emit comprehensive track info
-	trackInfo["trackLength"] = trackLengthSecs
-	trackInfo["seekPosition"] = seekPosition
-	runtime.EventsEmit(p.ctx, events.TrackChanged, trackInfo)
-
-	p.logger.Info("Emitting TrackChangedEvent with track info", "trackInfo", trackInfo)
 }
 
 // EmitCurrentState pushes the current player state to the frontend.
-// This is intended to be called after the frontend is ready to receive events,
-// separately from RestoreState which does the heavy lifting during OnStartup.
+// This is intended to be called after the frontend is ready to
+// receive events, separately from RestoreState which does the heavy
+// lifting during OnStartup.
 func (p *Player) EmitCurrentState() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	p.emitVolumeChanged()
 
 	if p.currentFile != nil {
@@ -243,17 +293,33 @@ func (p *Player) EmitCurrentState() {
 	}
 }
 
-func (p *Player) updateStreamers(newBaseStreamer beep.StreamSeeker, sr beep.SampleRate) error {
+// ---------------------------------------------------------------
+// Streamer management (must be called with p.mu held)
+// ---------------------------------------------------------------
+
+func (p *Player) updateStreamers(
+	newBaseStreamer beep.StreamSeeker,
+	sr beep.SampleRate,
+) error {
 	// set base streamer
 	p.baseStreamer = newBaseStreamer
 	p.seeker = newBaseStreamer
 
 	// resample file stream to match speaker
 	// TODO: variable resample quality
-	p.resampled = beep.Resample(4, sr, speakerSampleRate, p.baseStreamer)
+	p.resampled = beep.Resample(
+		4, sr, speakerSampleRate, p.baseStreamer,
+	)
+
+	// Buffer resampled audio to decouple disk I/O from speaker
+	// timing. 2 seconds of read-ahead at speaker sample rate
+	// absorbs I/O stalls and GC pauses without audible glitches.
+	p.buffered = NewBufferedStreamer(
+		p.resampled, int(speakerSampleRate)*2,
+	)
 
 	// wrap in ctrl streamer to allow play/pause
-	p.control = &beep.Ctrl{Streamer: p.resampled}
+	p.control = &beep.Ctrl{Streamer: p.buffered}
 
 	// Preserve existing volume settings across track changes.
 	prevVolume := 0.0
@@ -278,45 +344,96 @@ func (p *Player) updateStreamers(newBaseStreamer beep.StreamSeeker, sr beep.Samp
 	return nil
 }
 
-// startPaused registers the current streamer chain with the speaker in a
-// paused state. This keeps the speaker always active when a file is loaded,
-// so Play() only ever needs to unpause the control gate.
+// startPaused registers the current streamer chain with the speaker
+// in a paused state. Must be called with p.mu held.
 func (p *Player) startPaused() {
 	speaker.Lock()
 	p.control.Paused = true
 	speaker.Unlock()
 
-	speaker.Play(beep.Seq(p.speakerStreamer, beep.Callback(func() {
-		p.state = Stopped
-		p.emitPlaybackStateChanged(p.state)
-		p.emitPlaybackFinished()
-		p.logger.Info("Playback finished naturally")
-
-		// Notify queue for auto-advance.
-		if p.playbackFinishedHandler != nil {
-			p.playbackFinishedHandler()
-		}
-	})))
+	// The beep.Callback runs with the speaker mutex held, so we
+	// dispatch to a goroutine that can safely acquire p.mu.
+	speaker.Play(beep.Seq(
+		p.speakerStreamer,
+		beep.Callback(func() {
+			go p.onPlaybackFinished()
+		}),
+	))
 
 	p.state = Paused
 }
 
+// onPlaybackFinished handles the natural end of a track. It is
+// called on a new goroutine from the beep callback (which holds
+// the speaker lock) so that it can safely acquire p.mu.
+func (p *Player) onPlaybackFinished() {
+	p.mu.Lock()
+	p.state = Stopped
+	handler := p.playbackFinishedHandler
+	mc := p.mediaControls
+	p.mu.Unlock()
+
+	// Emit Wails events outside the lock — these are non-blocking
+	// calls that don't need player state.
+	p.emitPlaybackFinished()
+
+	if p.ctx != nil {
+		runtime.EventsEmit(
+			p.ctx,
+			events.PlaybackStateChanged,
+			map[string]string{"state": string(Stopped)},
+		)
+	}
+
+	// Notify media controls outside the lock. The track just
+	// ended so position is 0.
+	if mc != nil {
+		mc.UpdatePlaybackState(
+			mediacontrols.StateStopped, 0,
+		)
+	}
+
+	p.logger.Info("Playback finished naturally")
+
+	// Notify queue for auto-advance. Called without p.mu held
+	// because it re-enters the player via LoadFile/Play.
+	if handler != nil {
+		handler()
+	}
+}
+
+// ---------------------------------------------------------------
+// LoadFile
+// ---------------------------------------------------------------
+
 // LoadFile opens and decodes an audio file for playback.
 func (p *Player) LoadFile(filePath string) error {
-	// opening file
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	return p.loadFileLocked(filePath)
+}
+
+func (p *Player) loadFileLocked(filePath string) error {
+	defer profiling.TimeOp(p.logger, "player.LoadFile")()
+
 	f, err := os.Open(filePath)
 	if err != nil {
 		p.logger.Error("Failed to open file")
 
-		return fmt.Errorf("failed to open file %w", err)
+		return fmt.Errorf("failed to open file: %w", err)
 	}
 
 	streamer, format, err := metadata.DecodeFile(f)
 	if err != nil {
-		p.logger.Error("failed to decode audio file", "path", filePath, "err", err)
+		p.logger.Error(
+			"failed to decode audio file",
+			"path", filePath, "err", err,
+		)
 
 		return fmt.Errorf("failed to decode audio file: %w", err)
 	}
+
 	// Stop existing playback before loading new file.
 	speaker.Lock()
 	if p.control != nil {
@@ -326,25 +443,42 @@ func (p *Player) LoadFile(filePath string) error {
 	p.state = Stopped
 	speaker.Unlock()
 
+	// Stop the read-ahead goroutine for the previous track.
+	if p.buffered != nil {
+		p.buffered.Close()
+	}
+
 	if p.currentFile != nil {
 		if closeErr := p.currentFile.Close(); closeErr != nil {
-			p.logger.Warn("failed to close previous audio file", "err", closeErr)
+			p.logger.Warn(
+				"failed to close previous audio file",
+				"err", closeErr,
+			)
 		}
 	}
 
 	p.currentFile = f
 
-	if err := p.updateStreamers(streamer, format.SampleRate); err != nil {
+	if err := p.updateStreamers(
+		streamer, format.SampleRate,
+	); err != nil {
 		return fmt.Errorf("failed to update streamers: %w", err)
 	}
 
 	p.startPaused()
 	p.emitPlaybackStateChanged(p.state)
 	p.emitTrackChanged()
-	p.logger.Info("File loaded, state set to paused", "file", filePath)
+	p.saveState()
+	p.logger.Info(
+		"File loaded, state set to paused", "file", filePath,
+	)
 
 	return nil
 }
+
+// ---------------------------------------------------------------
+// Play / Pause
+// ---------------------------------------------------------------
 
 func (p *Player) validateReadyToPlay() error {
 	if p.control == nil {
@@ -364,6 +498,9 @@ func (p *Player) validateReadyToPlay() error {
 
 // Play starts or resumes audio playback.
 func (p *Player) Play() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	if err := p.validateReadyToPlay(); err != nil {
 		return err
 	}
@@ -374,26 +511,34 @@ func (p *Player) Play() error {
 		return nil
 	}
 
-	// Track finished naturally — seek to the beginning and re-register
-	// a paused stream with the speaker so the unpause below starts it.
+	// Track finished naturally — seek to the beginning and
+	// re-register a paused stream with the speaker so the unpause
+	// below starts it.
 	if p.state == Stopped && p.seeker != nil {
 		speaker.Lock()
 		err := p.seeker.Seek(0)
 		speaker.Unlock()
 
 		if err != nil {
-			return fmt.Errorf("failed to seek to beginning: %w", err)
+			return fmt.Errorf(
+				"failed to seek to beginning: %w", err,
+			)
 		}
 
-		if err := p.updateStreamers(p.seeker, p.format.SampleRate); err != nil {
-			return fmt.Errorf("failed to update streamers for replay: %w", err)
+		if err := p.updateStreamers(
+			p.seeker, p.format.SampleRate,
+		); err != nil {
+			return fmt.Errorf(
+				"failed to update streamers for replay: %w", err,
+			)
 		}
 
 		p.startPaused()
 		p.logger.Info("Rebuilt streamers for replay")
 	}
 
-	// Unpause — works for both resume-from-pause and replay-from-stopped.
+	// Unpause — works for both resume-from-pause and
+	// replay-from-stopped.
 	speaker.Lock()
 	p.control.Paused = false
 	speaker.Unlock()
@@ -407,6 +552,9 @@ func (p *Player) Play() error {
 
 // Pause pauses the current playback.
 func (p *Player) Pause() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	if p.control == nil {
 		return errNoAudioStream
 	}
@@ -425,6 +573,7 @@ func (p *Player) Pause() error {
 		p.state = Paused
 		p.logger.Info("Paused playback")
 		p.emitPlaybackStateChanged(p.state)
+		p.saveState()
 	} else {
 		p.logger.Info("Already paused or not playing")
 	}
@@ -432,23 +581,108 @@ func (p *Player) Pause() error {
 	return nil
 }
 
-// SetVolume sets the playback volume (0-100).
-func (p *Player) SetVolume(desiredVolume UserVolume) error {
-	speaker.Lock()
-	// clamp value between 1 and 100
-	volume := clampVolume(desiredVolume)
+// IsPlaying reports whether the player is currently playing audio.
+func (p *Player) IsPlaying() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 
-	// Apply the volume settings
+	return p.state == Playing
+}
+
+// ---------------------------------------------------------------
+// UnloadTrack
+// ---------------------------------------------------------------
+
+// UnloadTrack tears down the current track, releasing the file and
+// streamer chain. The player returns to the initial "no track
+// loaded" state and emits events so the frontend clears its
+// current-track display.
+func (p *Player) UnloadTrack() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// Stop audio output.
+	if p.control != nil {
+		speaker.Lock()
+		p.control.Paused = true
+		speaker.Unlock()
+	}
+
+	// Close the open audio file.
+	if p.currentFile != nil {
+		if err := p.currentFile.Close(); err != nil {
+			p.logger.Warn(
+				"Failed to close audio file during unload",
+				"err", err,
+			)
+		}
+
+		p.currentFile = nil
+	}
+
+	// Stop the read-ahead goroutine before releasing the chain.
+	if p.buffered != nil {
+		p.buffered.Close()
+	}
+
+	// Release streamer chain. Volume is intentionally kept so the
+	// user's volume setting persists across tracks.
+	p.baseStreamer = nil
+	p.seeker = nil
+	p.resampled = nil
+	p.buffered = nil
+	p.control = nil
+	p.speakerStreamer = nil
+	p.trackLengthMs = 0
+
+	p.state = Stopped
+
+	// Notify frontend that there is no longer a current track.
+	p.emitPlaybackStateChanged(p.state)
+	runtime.EventsEmit(p.ctx, events.TrackChanged, nil)
+
+	if p.mediaControls != nil {
+		p.mediaControls.UpdateMetadata(mediacontrols.Metadata{})
+	}
+
+	p.saveState()
+
+	p.logger.Info("Track unloaded")
+}
+
+// ---------------------------------------------------------------
+// Volume
+// ---------------------------------------------------------------
+
+// SetVolume sets the playback volume (0-100), emits a
+// VolumeChanged event, and persists the new level.
+func (p *Player) SetVolume(desiredVolume UserVolume) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.setVolumeLocked(desiredVolume)
+	p.emitVolumeChanged()
+	p.saveState()
+}
+
+func (p *Player) setVolumeLocked(desiredVolume UserVolume) {
+	speaker.Lock()
+
+	volume := clampVolume(desiredVolume)
 	p.volume.Volume = float64(volume.ToVolume())
 	p.volume.Silent = volume == MinUserVol
-	speaker.Unlock()
 
-	return nil
+	speaker.Unlock()
 }
 
 // ChangeVolume adjusts the volume by a relative amount.
 func (p *Player) ChangeVolume(deltaVolume int) error {
-	return p.SetVolume(p.getUserVolume() + UserVolume(deltaVolume))
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.setVolumeLocked(p.getUserVolume() + UserVolume(deltaVolume))
+
+	return nil
 }
 
 func (p *Player) getUserVolume() UserVolume {
@@ -457,32 +691,47 @@ func (p *Player) getUserVolume() UserVolume {
 
 // MuteToggle toggles the mute state.
 func (p *Player) MuteToggle() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	p.volume.Silent = !p.volume.Silent
+	p.saveState()
 
 	return nil
 }
 
-// CurrentPositionSeconds returns the current playback position in seconds.
+// ---------------------------------------------------------------
+// Position / Seek
+// ---------------------------------------------------------------
+
+// CurrentPositionSeconds returns the current playback position in
+// display seconds.
 func (p *Player) CurrentPositionSeconds() (int, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	if p.seeker == nil {
 		return 0, errNoAudioFileLoaded
 	}
 
-	speaker.Lock()
-	pos := p.seeker.Position() / int(p.format.SampleRate)
-	speaker.Unlock()
-
-	return pos, nil
+	return p.displayPositionSecsLocked(), nil
 }
 
-// CurrentPosition returns the playback position as a percentage (0-100).
+// CurrentPosition returns the playback position as a percentage
+// (0-100).
 func (p *Player) CurrentPosition() (int, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	if p.seeker == nil {
 		return 0, errNoAudioFileLoaded
 	}
 
 	speaker.Lock()
-	pos := math.Round(100.0 * float64(p.seeker.Position()) / float64(p.seeker.Len()))
+	pos := math.Round(
+		100.0 * float64(p.seeker.Position()) /
+			float64(p.seeker.Len()),
+	)
 	speaker.Unlock()
 
 	return int(pos), nil
@@ -490,29 +739,38 @@ func (p *Player) CurrentPosition() (int, error) {
 
 // Seek jumps to a specific position in seconds.
 func (p *Player) Seek(targetSeconds int) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	return p.seekLocked(targetSeconds)
+}
+
+func (p *Player) seekLocked(targetSeconds int) error {
 	if p.seeker == nil {
 		runtime.EventsEmit(p.ctx, events.SeekFailed)
 
 		return errNoAudioFileLoaded
 	}
 
-	lengthSecs, err := p.TrackLengthInSeconds()
+	lengthSecs, err := p.trackLengthLocked()
 	if err != nil {
 		return fmt.Errorf("cannot get track length: %w", err)
 	}
 
 	speaker.Lock()
+
 	samples := int(
-		math.Round((float64(targetSeconds) / float64(lengthSecs)) * float64(p.seeker.Len())),
+		math.Round(
+			(float64(targetSeconds) / float64(lengthSecs)) *
+				float64(p.seeker.Len()),
+		),
 	)
+
 	p.logger.Debug(
 		"attempting to seek",
-		"target-seconds",
-		targetSeconds,
-		"song-length",
-		lengthSecs,
-		"samples",
-		samples,
+		"target-seconds", targetSeconds,
+		"song-length", lengthSecs,
+		"samples", samples,
 	)
 
 	if seekErr := p.seeker.Seek(samples); seekErr != nil {
@@ -523,64 +781,95 @@ func (p *Player) Seek(targetSeconds int) error {
 
 	speaker.Unlock()
 
+	if p.mediaControls != nil {
+		p.mediaControls.NotifySeek(targetSeconds)
+	}
+
 	return nil
 }
 
-// GetCurrentTrackInfo returns information about the currently loaded track.
-func (p *Player) GetCurrentTrackInfo() (map[string]interface{}, error) {
-	if p.currentFile == nil {
-		return map[string]interface{}{
-			"fileName": "",
-			"filePath": "",
-			"state":    string(p.state),
-			"title":    "",
-			"artist":   "",
-			"album":    "",
-			"coverArt": "",
-		}, nil
+// ---------------------------------------------------------------
+// Track info
+// ---------------------------------------------------------------
+
+// GetCurrentTrackInfo returns information about the currently
+// loaded track.
+func (p *Player) GetCurrentTrackInfo() TrackInfo {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	return p.getCurrentTrackInfoLocked()
+}
+
+func (p *Player) getCurrentTrackInfoLocked() TrackInfo {
+	info := TrackInfo{
+		State: p.state,
 	}
 
-	fileName := filepath.Base(p.currentFile.Name())
-	filePath := p.currentFile.Name()
+	if p.currentFile == nil {
+		return info
+	}
 
-	// Default values
-	title := fileName
-	artist := ""
-	album := ""
-	coverArt := ""
+	info.FileName = filepath.Base(p.currentFile.Name())
+	info.FilePath = p.currentFile.Name()
+	info.Title = info.FileName // default title is the filename
 
-	// Try to get metadata from database
+	// Try to get metadata from database.
 	if p.db != nil {
-		meta, err := p.db.Queries.GetTrackMetadataByPath(p.ctx, filePath)
+		meta, err := p.db.Queries.GetTrackMetadataByPath(
+			p.ctx, info.FilePath,
+		)
 		if err == nil {
 			if meta.Title != "" {
-				title = meta.Title
+				info.Title = meta.Title
 			}
 
-			artist = meta.Artist
-			album = meta.Album
+			info.Artist = meta.Artist
+			info.Album = meta.Album
+			p.trackLengthMs = meta.LengthMilliseconds
 
 			if meta.CoverArtPath != "" {
-				coverArt = "/covers/" + filepath.Base(meta.CoverArtPath)
+				urls := coverart.ResolveURLs(meta.CoverArtPath)
+				info.CoverArt = urls.Original
+				info.CoverArtSmall = urls.Small
+				info.CoverArtMedium = urls.Medium
+				info.CoverArtLarge = urls.Large
 			}
 		} else {
-			p.logger.Debug("Could not get track metadata from database", "path", filePath, "err", err)
+			p.logger.Debug(
+				"Could not get track metadata from database",
+				"path", info.FilePath, "err", err,
+			)
 		}
 	}
 
-	return map[string]interface{}{
-		"fileName": fileName,
-		"filePath": filePath,
-		"state":    string(p.state),
-		"title":    title,
-		"artist":   artist,
-		"album":    album,
-		"coverArt": coverArt,
-	}, nil
+	return info
 }
 
 // TrackLengthInSeconds returns the duration of the current track.
 func (p *Player) TrackLengthInSeconds() (int, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	return p.trackLengthLocked()
+}
+
+func (p *Player) trackLengthLocked() (int, error) {
+	// Prefer the database duration — the custom header parser
+	// handles multiple ID3v2 tags correctly, whereas go-mp3's
+	// Len() can be inflated by phantom frames.
+	if p.trackLengthMs > 0 {
+		return int(p.trackLengthMs / 1000), nil
+	}
+
+	return p.seekerLengthSecsLocked()
+}
+
+// seekerLengthSecsLocked returns the track length in seconds as
+// reported by the beep decoder.  This may differ from the
+// database duration for MP3 files with multiple ID3v2 tags.
+// It is used internally for seek sample calculations.
+func (p *Player) seekerLengthSecsLocked() (int, error) {
 	if p.seeker == nil {
 		return 0, errNoAudioFileLoaded
 	}
@@ -592,15 +881,115 @@ func (p *Player) TrackLengthInSeconds() (int, error) {
 	return length, nil
 }
 
+// displayPositionSecsLocked converts the current seeker position to
+// display seconds.  When the DB duration is available, the position
+// is scaled from the (potentially inflated) seeker time scale to the
+// correct display time scale.  Must be called with p.mu held.
+func (p *Player) displayPositionSecsLocked() int {
+	if p.seeker == nil {
+		return 0
+	}
+
+	speaker.Lock()
+	pos := p.seeker.Position()
+	total := p.seeker.Len()
+	speaker.Unlock()
+
+	if total == 0 {
+		return 0
+	}
+
+	displayLength, err := p.trackLengthLocked()
+	if err != nil {
+		return pos / int(p.format.SampleRate)
+	}
+
+	return int(
+		math.Round(
+			float64(pos) / float64(total) *
+				float64(displayLength),
+		),
+	)
+}
+
+// ---------------------------------------------------------------
+// Media controls helpers
+// ---------------------------------------------------------------
+
+// stateToMediaControls maps the player's State type to the
+// mediacontrols PlaybackState.
+func stateToMediaControls(s State) mediacontrols.PlaybackState {
+	switch s {
+	case Playing:
+		return mediacontrols.StatePlaying
+	case Paused:
+		return mediacontrols.StatePaused
+	default:
+		return mediacontrols.StateStopped
+	}
+}
+
+// currentPositionSecondsLocked returns the playback position in
+// display seconds.  Must be called with p.mu held.
+func (p *Player) currentPositionSecondsLocked() int {
+	return p.displayPositionSecsLocked()
+}
+
+// buildMediaMetadata constructs a mediacontrols.Metadata from a
+// TrackInfo and duration. It resolves the cover art filesystem path
+// from the database for use by MPRIS (which needs file:// URIs).
+// Must be called with p.mu held.
+func (p *Player) buildMediaMetadata(
+	info TrackInfo,
+	durationSec int,
+) mediacontrols.Metadata {
+	meta := mediacontrols.Metadata{
+		Title:       info.Title,
+		Artist:      info.Artist,
+		Album:       info.Album,
+		DurationSec: durationSec,
+	}
+
+	// Resolve cover art filesystem path. The database stores the
+	// full path; ResolveURLs converts it to relative HTTP paths
+	// for the frontend, but MPRIS needs the actual file path.
+	if p.db != nil && info.FilePath != "" {
+		dbMeta, err := p.db.Queries.GetTrackMetadataByPath(
+			p.ctx, info.FilePath,
+		)
+		if err == nil && dbMeta.CoverArtPath != "" {
+			meta.ArtFilePath = dbMeta.CoverArtPath
+		}
+	}
+
+	return meta
+}
+
+// ---------------------------------------------------------------
+// State persistence
+// ---------------------------------------------------------------
+
 // SaveState persists the current player state to the database.
+// This is called during shutdown to capture the final state.
 func (p *Player) SaveState() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.saveState()
+}
+
+// saveState is the internal helper that writes the current player
+// state to the database. Must be called with p.mu held.
+func (p *Player) saveState() {
 	if p.db == nil {
-		p.logger.Warn("No database available, cannot save player state")
+		p.logger.Warn(
+			"No database available, cannot save player state",
+		)
 
 		return
 	}
 
-	volume := int64(MaxUserVol)
+	volume := int64(DefaultUserVol)
 	muted := false
 
 	if p.volume != nil {
@@ -613,22 +1002,21 @@ func (p *Player) SaveState() {
 		trackPath = p.currentFile.Name()
 	}
 
-	positionSeconds := int64(0)
+	positionSeconds := int64(p.displayPositionSecsLocked())
 
-	if p.seeker != nil {
-		speaker.Lock()
-		positionSeconds = int64(p.seeker.Position()) / int64(p.format.SampleRate)
-		speaker.Unlock()
-	}
-
-	err := p.db.Queries.UpdatePlayerState(p.db.Ctx, sqlcgen.UpdatePlayerStateParams{
-		Volume:              volume,
-		Muted:               muted,
-		LastTrackPath:       trackPath,
-		LastPositionSeconds: positionSeconds,
-	})
+	err := p.db.Queries.UpdatePlayerState(
+		p.db.Ctx,
+		sqlcgen.UpdatePlayerStateParams{
+			Volume:              volume,
+			Muted:               muted,
+			LastTrackPath:       trackPath,
+			LastPositionSeconds: positionSeconds,
+		},
+	)
 	if err != nil {
-		p.logger.Error("Failed to save player state", "err", err)
+		p.logger.Error(
+			"Failed to save player state", "err", err,
+		)
 
 		return
 	}
@@ -641,25 +1029,42 @@ func (p *Player) SaveState() {
 	)
 }
 
+// ---------------------------------------------------------------
+// State restoration
+// ---------------------------------------------------------------
+
 // RestoreState loads the persisted player state from the database.
 func (p *Player) RestoreState() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.restoreStateLocked()
+}
+
+func (p *Player) restoreStateLocked() {
+	defer profiling.TimeOp(p.logger, "player.RestoreState")()
+
 	if p.db == nil {
-		p.logger.Warn("No database available, cannot restore player state")
+		p.logger.Warn(
+			"No database available, cannot restore player state",
+		)
 
 		return
 	}
 
 	state, err := p.db.Queries.GetPlayerState(p.db.Ctx)
 	if err != nil {
-		p.logger.Error("Failed to load player state", "err", err)
+		p.logger.Error(
+			"Failed to load player state", "err", err,
+		)
 
 		return
 	}
 
 	// Restore volume.
-	// Ensure volume is initialized before restoring settings. The volume
-	// effect is normally created by updateStreamers during LoadFile, but
-	// RestoreState runs before any file is loaded.
+	// Ensure volume is initialized before restoring settings. The
+	// volume effect is normally created by updateStreamers during
+	// LoadFile, but RestoreState runs before any file is loaded.
 	if p.volume == nil {
 		p.volume = &effects.Volume{
 			Streamer: p.control,
@@ -668,11 +1073,7 @@ func (p *Player) RestoreState() {
 	}
 
 	vol := clampVolume(UserVolume(state.Volume))
-
-	err = p.SetVolume(vol)
-	if err != nil {
-		p.logger.Error("Failed to restore volume", "err", err)
-	}
+	p.setVolumeLocked(vol)
 
 	if state.Muted {
 		p.volume.Silent = true
@@ -681,7 +1082,9 @@ func (p *Player) RestoreState() {
 	// Restore last track if the file still exists.
 	if state.LastTrackPath != "" {
 		if _, statErr := os.Stat(state.LastTrackPath); statErr != nil {
-			p.logger.Warn("Last track file no longer exists, skipping restore",
+			p.logger.Warn(
+				"Last track file no longer exists, "+
+					"skipping restore",
 				"path", state.LastTrackPath,
 				"err", statErr,
 			)
@@ -689,18 +1092,22 @@ func (p *Player) RestoreState() {
 			return
 		}
 
-		err = p.LoadFile(state.LastTrackPath)
+		err = p.loadFileLocked(state.LastTrackPath)
 		if err != nil {
-			p.logger.Error("Failed to restore last track", "path", state.LastTrackPath, "err", err)
+			p.logger.Error(
+				"Failed to restore last track",
+				"path", state.LastTrackPath, "err", err,
+			)
 
 			return
 		}
 
 		// Restore playback position.
 		if state.LastPositionSeconds > 0 {
-			err = p.Seek(int(state.LastPositionSeconds))
+			err = p.seekLocked(int(state.LastPositionSeconds))
 			if err != nil {
-				p.logger.Error("Failed to restore playback position",
+				p.logger.Error(
+					"Failed to restore playback position",
 					"seconds", state.LastPositionSeconds,
 					"err", err,
 				)

@@ -7,11 +7,11 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/TheCodeOfCaleb/beep/v2"
-	"github.com/TheCodeOfCaleb/beep/v2/flac"
-	"github.com/TheCodeOfCaleb/beep/v2/mp3"
-	"github.com/TheCodeOfCaleb/beep/v2/vorbis"
-	"github.com/TheCodeOfCaleb/beep/v2/wav"
+	"github.com/gopxl/beep/v2"
+	"github.com/gopxl/beep/v2/flac"
+	"github.com/gopxl/beep/v2/mp3"
+	"github.com/gopxl/beep/v2/vorbis"
+	"github.com/gopxl/beep/v2/wav"
 )
 
 // ErrUnsupportedFileType is returned when the audio file type is not supported.

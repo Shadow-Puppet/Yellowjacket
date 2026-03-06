@@ -31,6 +31,12 @@ type AudioFile struct {
 	LengthMilliseconds int64
 	FileTypeID         int64
 	RecordingID        int64
+	SampleRate         int64
+	BitDepth           int64
+	Channels           int64
+	Bitrate            int64
+	FileSize           int64
+	Basename           string
 }
 
 type CoverArt struct {
@@ -43,6 +49,11 @@ type CoverArt struct {
 type FileType struct {
 	ID        int64
 	Extension string
+}
+
+type Genre struct {
+	ID   int64
+	Name string
 }
 
 type PlayerState struct {
@@ -95,6 +106,12 @@ type Recording struct {
 	Comment        sql.NullString
 }
 
+type RecordingGenre struct {
+	ID          int64
+	RecordingID int64
+	GenreID     int64
+}
+
 type ReleaseGroup struct {
 	ID                  int64
 	Name                string
@@ -111,4 +128,31 @@ type ReleaseGroupRecording struct {
 	RecordingID    int64
 	TrackNumber    sql.NullInt64
 	DiscNumber     sql.NullInt64
+}
+
+type SearchIndex struct {
+	FilePath string
+	Title    string
+	Artist   string
+	Album    string
+}
+
+type TrackMetadatum struct {
+	ID                 int64
+	FilePath           string
+	LengthMilliseconds int64
+	Title              string
+	ArtistName         string
+	TrackNumber        sql.NullInt64
+	DiscNumber         sql.NullInt64
+	Album              string
+	Genre              string
+	Year               int64
+	Composer           string
+	FileType           string
+	SampleRate         int64
+	BitDepth           int64
+	Channels           int64
+	Bitrate            int64
+	FileSize           int64
 }

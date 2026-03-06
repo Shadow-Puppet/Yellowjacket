@@ -1,15 +1,45 @@
 import { LitElement, html, css } from 'lit';
-import { customElement } from 'lit/decorators.js';
+import { customElement, state } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import { PlayerController } from '@store/controllers/player-controller';
-import { QueueController } from '@store/controllers/queue-controller';
+import { queueStore } from '@store/queue-store';
+import type { RepeatMode } from '@store/queue-store';
+import { designTokens } from '../../../styles/tokens.css';
 
 @customElement('player-controls')
 export class PlayerControls extends LitElement {
   private player = new PlayerController(this);
-  private queue = new QueueController(this);
+  private unsubscribeQueue?: () => void;
 
-  static override styles = css`
+  @state() private shuffleMode = false;
+  @state() private repeatMode: RepeatMode = 'off';
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+
+    const s = queueStore.getState();
+    this.shuffleMode = s.shuffleMode;
+    this.repeatMode = s.repeatMode;
+
+    this.unsubscribeQueue = queueStore.subscribe(() => {
+      const qs = queueStore.getState();
+
+      if (
+        qs.shuffleMode !== this.shuffleMode ||
+        qs.repeatMode !== this.repeatMode
+      ) {
+        this.shuffleMode = qs.shuffleMode;
+        this.repeatMode = qs.repeatMode;
+      }
+    });
+  }
+
+  override disconnectedCallback(): void {
+    super.disconnectedCallback();
+    this.unsubscribeQueue?.();
+  }
+
+  static override styles = [designTokens, css`
     #player-control-buttons {
       display: flex;
       justify-content: center;
@@ -29,11 +59,11 @@ export class PlayerControls extends LitElement {
     }
 
     button:hover {
-      color: #ffd43b;
+      color: var(--yj-accent, #ffd43b);
     }
 
     .active {
-      color: #ffd43b;
+      color: var(--yj-accent, #ffd43b);
     }
 
     .repeat-one {
@@ -48,10 +78,10 @@ export class PlayerControls extends LitElement {
       bottom: 2px;
       right: 2px;
     }
-  `;
+  `];
 
   private handlePlayClick = () => {
-    this.player.play();
+    queueStore.play();
   };
 
   private handlePauseClick = () => {
@@ -59,19 +89,19 @@ export class PlayerControls extends LitElement {
   };
 
   private handleNextClick = () => {
-    this.queue.next();
+    queueStore.next();
   };
 
   private handlePreviousClick = () => {
-    this.queue.previous();
+    queueStore.previous();
   };
 
   private handleShuffleClick = () => {
-    this.queue.toggleShuffle();
+    queueStore.toggleShuffle();
   };
 
   private handleRepeatClick = () => {
-    this.queue.cycleRepeat();
+    queueStore.cycleRepeat();
   };
 
   override render() {
@@ -80,8 +110,8 @@ export class PlayerControls extends LitElement {
       ? this.handlePauseClick
       : this.handlePlayClick;
 
-    const shuffleClass = this.queue.shuffleMode ? 'active' : '';
-    const repeatMode = this.queue.repeatMode;
+    const shuffleClass = this.shuffleMode ? 'active' : '';
+    const repeatMode = this.repeatMode;
     const repeatClasses = [
       repeatMode !== 'off' ? 'active' : '',
       repeatMode === 'one' ? 'repeat-one' : '',
