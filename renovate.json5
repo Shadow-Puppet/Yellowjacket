@@ -113,6 +113,15 @@
       "groupName": null,
       "automerge": false,
     },
+
+    // 8. Pin go-webview2 to v1.0.21 — v1.0.22 has a breaking callback
+    //    signature change that is incompatible with Wails v2.10.x.
+    //    See: https://github.com/wailsapp/wails/issues/4560
+    {
+      "description": "Disable go-webview2 updates (incompatible with Wails v2)",
+      "matchPackageNames": ["github.com/wailsapp/go-webview2"],
+      "enabled": false,
+    },
   ],
 
   // ── Vulnerability alerts ───────────────────────────────────
