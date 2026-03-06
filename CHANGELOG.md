@@ -1,3 +1,70 @@
+## [1.2.0](https://github.com/onion-4-dinner/yellowjacket/compare/v1.1.3...v1.2.0) (2026-03-06)
+
+### Features
+
+* **02-02:** add ScanWarning type and reclassify scan errors as warnings ([e6866de](https://github.com/onion-4-dinner/yellowjacket/commit/e6866ded9dc0ea30ff942cd31b6c5ea3269e9584))
+* **03-01:** create NewTestDB helper for in-memory SQLite test databases ([bae9d70](https://github.com/onion-4-dinner/yellowjacket/commit/bae9d70d23157ef4e79e60dd713d9a02ab63790b))
+* **03-01:** extract shared applyPRAGMAs and add production PRAGMAs to NewDB ([d348815](https://github.com/onion-4-dinner/yellowjacket/commit/d34881530adda7fb75be84737798da46d17bfa8c))
+* **06-01:** create track_metadata VIEW schema and migration 4 ([9c7e5a9](https://github.com/onion-4-dinner/yellowjacket/commit/9c7e5a96344a81bf132de487b4763f1dc3ff6df9))
+* **06-02:** create Go→TypeScript event constant codegen tool ([3e9edd0](https://github.com/onion-4-dinner/yellowjacket/commit/3e9edd05e87395499ac24e456640d1f6d9b97f04))
+* **06-03:** migrate lookupChunk to sqlc-generated LookupTrackMetaByPaths query ([2221a68](https://github.com/onion-4-dinner/yellowjacket/commit/2221a68459850a837c996c6e6d2bc95d41b20fb3))
+* **08-01:** define design token CSS custom properties for icon sizes and type scale ([1444a66](https://github.com/onion-4-dinner/yellowjacket/commit/1444a66bb201ce5fdf16552a32bcd281089c64ed))
+* **08-04:** apply design tokens to cover-grid, track-list, queue-panel, and detail components ([1303422](https://github.com/onion-4-dinner/yellowjacket/commit/1303422e69c27d528363900b3ca5287a48cc9f8e))
+* **08-04:** convert sidebar em-based spacing to px and apply icon/type tokens ([aed90d7](https://github.com/onion-4-dinner/yellowjacket/commit/aed90d7b1710d0c5cece2e4956c0a6ce77b9a999))
+* add scan progress bar with phase indicator ([a28b4d1](https://github.com/onion-4-dinner/yellowjacket/commit/a28b4d1e0673658824750d4c702359321dc9a78e))
+* **quick-001:** add multi-file picker and batch import support ([c34e4ad](https://github.com/onion-4-dinner/yellowjacket/commit/c34e4ad029c119bff8f70a07ccc6bca58b11ea3c))
+* **quick-001:** regenerate bindings and update frontend for multi-import ([2a542bf](https://github.com/onion-4-dinner/yellowjacket/commit/2a542bf3bcdc7772edb1aceb41f488774494f656))
+* **quick-002:** add CountPlaylistsByName SQL query and regenerate sqlc ([04b2088](https://github.com/onion-4-dinner/yellowjacket/commit/04b2088b28b84a4d4df25b23d97112c5a955dff1))
+* **quick-002:** add uniquePlaylistName helper and wire into ImportPlaylist ([8ba8bbe](https://github.com/onion-4-dinner/yellowjacket/commit/8ba8bbe7bed2ecff97613ebaa42a49a662050353))
+* **quick-006:** remove list icon from playlists, add favorites icon to default ([3c19766](https://github.com/onion-4-dinner/yellowjacket/commit/3c19766fd0885d4171cf9929db6d69a3d5c1a3ff))
+* **quick-11:** add configurable log level via YJ_LOG_LEVEL env var ([55b4902](https://github.com/onion-4-dinner/yellowjacket/commit/55b4902fac7b7f2c04ad5efac398ecedc5fedc2f))
+* **quick-11:** add make dev-debug target for verbose logging ([c45bca4](https://github.com/onion-4-dinner/yellowjacket/commit/c45bca411ba1d4f32deea6027acf91237173dd15))
+* **quick-12:** add favorite icon to album dropdown track rows ([12a0bbc](https://github.com/onion-4-dinner/yellowjacket/commit/12a0bbc89c19128485d597a61bd16bd0786450ad))
+* **quick-15:** add BufferedStreamer with goroutine read-ahead ([85b23ac](https://github.com/onion-4-dinner/yellowjacket/commit/85b23acb24a048d2f7b85808e477bb991ae124e6))
+* **quick-15:** insert BufferedStreamer into player pipeline and increase speaker buffer ([8a0b16a](https://github.com/onion-4-dinner/yellowjacket/commit/8a0b16a4ec08a95bfd3834c8216e21dce854432d))
+* **quick-3:** add playlist-level multi-select state and selection handling ([e13151f](https://github.com/onion-4-dinner/yellowjacket/commit/e13151ffa5dc86e41ce242421679d65a740c3af0))
+* **quick-3:** wire playlist context menu for batch delete of selected playlists ([c92ced2](https://github.com/onion-4-dinner/yellowjacket/commit/c92ced2c74e72bfc123c880c047462dc969cde34))
+* **quick-4:** add 'Set as Default Playlist' context menu option ([9971b63](https://github.com/onion-4-dinner/yellowjacket/commit/9971b635b81fe3f8621c80a6664eccb3e1fc4bb8))
+* **quick-5:** add CreatedAt/UpdatedAt to playlist Summary struct ([bdaff47](https://github.com/onion-4-dinner/yellowjacket/commit/bdaff478e802ee5c0745327c52dd9b190fcfef7d))
+* **quick-5:** add sort dropdown UI and client-side sorting to playlist view ([5c07485](https://github.com/onion-4-dinner/yellowjacket/commit/5c074855351f1363cc7918837a78bbd3c0b7ebf5))
+* **quick-7:** add PinDefault config field with backend getter/setter ([6e123bd](https://github.com/onion-4-dinner/yellowjacket/commit/6e123bd47f55e6d565f20bf7f19950e65f80787f))
+* **quick-7:** wire frontend pin-default-playlist feature end-to-end ([e6378e1](https://github.com/onion-4-dinner/yellowjacket/commit/e6378e1f0d3b0f2a7604b8ef6097dba9050cdd16))
+* **quick-8:** add FindDuplicateTracksInPlaylist backend method ([83de934](https://github.com/onion-4-dinner/yellowjacket/commit/83de934c39ca7d850a8b5925c90e6d0b3fe0a487))
+* **quick-8:** create duplicate-tracks-dialog component ([9f3ba2b](https://github.com/onion-4-dinner/yellowjacket/commit/9f3ba2b9d474fa30dcb4934b01d4650e0d0d3cba))
+* **quick-8:** wire duplicate detection into playlist-picker and playlist-view ([917a79a](https://github.com/onion-4-dinner/yellowjacket/commit/917a79a8d6e30dddd2170323bb26692386794872))
+
+### Bug Fixes
+
+* **01-01:** add mutex protection to Queue, Library, and Playlist SetContext methods ([daaa6b7](https://github.com/onion-4-dinner/yellowjacket/commit/daaa6b7f9779385979fe9dddae4e7bb388b3e5fb))
+* **01-01:** collapse Player.SetContext double-lock into single acquisition ([3abaeba](https://github.com/onion-4-dinner/yellowjacket/commit/3abaeba3afb0f4d0edb81e26ca55b31bf59990ac))
+* **02-01:** eliminate package-level startupErr and fix config file permissions ([2a86408](https://github.com/onion-4-dinner/yellowjacket/commit/2a864082017e489ffa086c136f1002277a77a7c4))
+* **02-01:** log MPRIS callback errors instead of discarding them ([0860b2f](https://github.com/onion-4-dinner/yellowjacket/commit/0860b2fd4b2250da1eeb80c21f14fdf341697501))
+* **08-02:** revert repeat() inside lit-virtualizer, restore .renderItem + .keyFunction ([72ef719](https://github.com/onion-4-dinner/yellowjacket/commit/72ef719ba70eeca0fa4bae47df092706f6fbaeed))
+* drop+recreate contentless FTS5 index instead of DELETE ([8e9a616](https://github.com/onion-4-dinner/yellowjacket/commit/8e9a61603779eacbee7013b9bc760b315baf782a))
+* **frontend:** reposition search indicator into toolbar and fix album cover art lookup ([a29137b](https://github.com/onion-4-dinner/yellowjacket/commit/a29137b2ba4c6b33ce9a5f868cbd6013e0e3b116))
+* include full track metadata in GetAudioFilesByReleaseGroup query ([97f256d](https://github.com/onion-4-dinner/yellowjacket/commit/97f256d67f463d752f7adc5b400c4bf34eae1df1))
+* **quick-10:** add migration 5 and fix entity cache for composite album key ([d43ba7b](https://github.com/onion-4-dinner/yellowjacket/commit/d43ba7bd0c7ace2a9ed71990a19498f8e9f90751))
+* **quick-10:** update release_groups schema and queries for composite uniqueness ([999ab96](https://github.com/onion-4-dinner/yellowjacket/commit/999ab967beb9107a3f30ba287acbffad22f0b0de))
+* **quick-13:** resolve lint issues in main source files ([e1a95e6](https://github.com/onion-4-dinner/yellowjacket/commit/e1a95e65a9f0f436b2e2d92befa9c881b6e8e430))
+* **quick-14:** add roll-back-on-failure to queue index advancement ([2820de2](https://github.com/onion-4-dinner/yellowjacket/commit/2820de2510560fcd6d1015c18542d5ac30468247))
+* **quick-9:** set fixed height on queue track items for stable virtualizer scroll ([ebde5e5](https://github.com/onion-4-dinner/yellowjacket/commit/ebde5e5a8bc4da8f40bef8f171c7ed86c213a336))
+
+### Performance
+
+* **07-01:** add incremental persistence helpers for queue mutations ([cdd17db](https://github.com/onion-4-dinner/yellowjacket/commit/cdd17db27509908514c21517631306655a2b3bd7))
+* **07-01:** eliminate redundant lookups in SetQueue Phase 2 ([ced58fe](https://github.com/onion-4-dinner/yellowjacket/commit/ced58fe6a93d6f220137562b8ff09ffc33c69266))
+* **07-02:** defer eagerFetch to after DOM ready for instant app shell ([cd98ad6](https://github.com/onion-4-dinner/yellowjacket/commit/cd98ad6dc8c2e4e6e0f01a48099b0c0511bf5a98))
+* **08-01:** add queueMicrotask coalescing to library store and debounce search input ([3bf66ed](https://github.com/onion-4-dinner/yellowjacket/commit/3bf66ed125ed55bfbde95b0bc973710c2f2243b8))
+* **08-02:** migrate cover-grid, artists-view, and genres-view virtualizers to repeat() directive ([1c3514d](https://github.com/onion-4-dinner/yellowjacket/commit/1c3514da1d0491b9758d7a6f9f72d59ef78fc8ed))
+* **08-02:** migrate track-list and queue-panel virtualizers to repeat() directive ([d2d7d8c](https://github.com/onion-4-dinner/yellowjacket/commit/d2d7d8c6ce22923772cae4858b02804d15f74bb7))
+* **08-03:** optimize column rendering and apply classMap to queue-panel renderTrackItem ([62f41c2](https://github.com/onion-4-dinner/yellowjacket/commit/62f41c24910632b270f9f5765e20e48db4b95ec9))
+* **08-03:** replace class string construction with classMap directive in renderTrackRow ([ad21027](https://github.com/onion-4-dinner/yellowjacket/commit/ad210278fc20729dc76390e6bba9bff050549046))
+
+### Refactoring
+
+* **06-01:** consolidate search queries to use track_metadata VIEW ([9159b40](https://github.com/onion-4-dinner/yellowjacket/commit/9159b409dcd2afaa7dcc97bf5b0694edf85f06a4))
+* **quick-14:** make playOrLoadCurrentTrack and playCurrentTrack return bool ([6eeddda](https://github.com/onion-4-dinner/yellowjacket/commit/6eeddda97669258cc5b7ba175a3c98d598a2871f))
+
 ## [1.1.3](https://github.com/onion-4-dinner/yellowjacket/compare/v1.1.2...v1.1.3) (2026-02-21)
 
 ### Bug Fixes
