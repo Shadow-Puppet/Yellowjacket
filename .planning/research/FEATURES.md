@@ -1,362 +1,550 @@
-# Feature Research: Quality Improvements
+# Feature Landscape: v1.1 Features & Extensibility
 
-**Domain:** Go/Wails/Lit desktop music player — consolidation milestone
-**Researched:** 2026-02-27
-**Confidence:** HIGH (improvements grounded in codebase analysis + verified patterns)
-
-## Feature Landscape
-
-This is a consolidation milestone. "Features" here are quality improvements, not new user-facing functionality. Each improvement addresses a specific concern documented in `.planning/codebase/CONCERNS.md`.
+**Domain:** Desktop music player — new capabilities milestone
+**Researched:** 2026-03-06
+**Confidence:** HIGH (grounded in codebase analysis, official documentation, established desktop music player patterns)
 
 ---
 
-### Table Stakes (Must Fix — Codebase Is Unreliable Without These)
+## Overview
 
-These are correctness and reliability issues. Leaving them unfixed means the codebase has known race conditions, swallowed errors, and untested critical paths.
-
-| Improvement | Why Required | Complexity | Concern Ref |
-|-------------|-------------|------------|-------------|
-| **Fix SetContext data races in Queue, Library, Playlist** | `q.ctx`, `l.ctx`, `s.ctx` are written without locks but read under locks. This is a textbook data race detectable by `-race`. Even if startup ordering makes it safe today, any refactoring that changes init order silently introduces corruption. | LOW | Concurrency Concerns |
-| **Fix package-level `startupErr` variable** | Mutable package-level variable shared between `OnStartup` and `OnDomReady`. Not thread-safe, untestable. Move to `YellowJacketApp` struct field. | LOW | Tech Debt |
-| **Fix config file permissions (0o666 → 0o644)** | Writing world-writable config files is a security defect. One-line fix. | LOW | Error Handling Gaps |
-| **Fix swallowed errors in MPRIS lifecycle callbacks** | `_ =` on `Pause()` and `Seek()` errors from OS media controls. Invisible failures. At minimum log; ideally emit frontend notification. | LOW | Error Handling Gaps |
-| **Fix silently swallowed artist credit link error** | `_, _ = CreateArtistCreditArtist(...)` discards non-duplicate errors. Check error, ignore only UNIQUE constraint violations. | LOW | Error Handling Gaps |
-| **Separate scan warnings from fatal errors** | `Scan()` returns `errors.Join()` of all errors. Callers cannot distinguish "scan completed with 3 file warnings" from "scan completely failed". Return warnings in metrics, fatal errors as the error return. | MEDIUM | Error Handling Gaps |
-| **Unit tests for queue operations** | Queue is central to playback — SetQueue, navigation, shuffle, repeat, persistence — all untested. Bugs here cause tracks to skip, repeat wrong, or lose queue on restart. | HIGH | Test Coverage Gaps |
-| **Unit tests for library scan logic** | Metadata processing, entity cache, orphan cleanup — all untested. Bugs silently drop tracks or create duplicates. | HIGH | Test Coverage Gaps |
-| **Unit tests for database layer (FTS5, migrations)** | FTS5 edge cases (special chars, empty queries) and migration failures are completely untested. | MEDIUM | Test Coverage Gaps |
-| **Unit tests for config (load/save roundtrip)** | Config corruption or silent settings loss on upgrade has no safety net. | MEDIUM | Test Coverage Gaps |
-
-#### Concurrency Fix Details
-
-**Pattern:** For `SetContext` race conditions, the fix is uniform across Queue, Library, and Playlist:
-
-```go
-// BEFORE (Queue — race condition):
-func (q *Queue) SetContext(ctx context.Context) {
-    q.ctx = ctx  // no lock, but q.ctx read under q.mu elsewhere
-}
-
-// AFTER (correct):
-func (q *Queue) SetContext(ctx context.Context) {
-    q.mu.Lock()
-    defer q.mu.Unlock()
-    q.ctx = ctx
-}
-```
-
-Player already does this correctly (locks around `p.ctx = ctx` in `SetContext`). Apply the same pattern to Queue, Library, and Playlist. For Library and Playlist which don't currently have a mutex, add one — or document the "set during startup only, before any concurrent access" contract with a comment and `// SAFETY:` annotation.
-
-**Recommendation:** Add a `sync.Mutex` to Library and Playlist. The cost is negligible, and it eliminates the `-race` detector finding permanently. Documenting "safe because startup ordering" is fragile — the next developer (or future-you) may change init order. *Confidence: HIGH — standard Go concurrency practice.*
-
-#### Testing Strategy Details
-
-**In-memory SQLite for DB-dependent tests:** Use `sql.Open("sqlite", ":memory:")` with the `modernc.org/sqlite` driver (already in deps). Apply the same schema migrations used in production. This gives:
-- Fast test execution (no disk I/O)
-- Clean state per test (new DB per test function)
-- Identical query behavior to production
-
-**Pattern for queue/library tests:**
-```go
-func setupTestDB(t *testing.T) *database.DB {
-    t.Helper()
-    db, err := database.NewTestDB(t)  // in-memory, migrations applied
-    require.NoError(t, err)
-    return db
-}
-
-func TestSetQueueAndNavigate(t *testing.T) {
-    db := setupTestDB(t)
-    q := queue.NewQueue(slog.Default(), db)
-    // No SetContext needed — test without Wails runtime
-    // Test pure queue logic without event emission
-}
-```
-
-**Extract testable pure logic from Player:** Volume math (`UserVolume` → `Volume` conversion), state serialization, and format detection can be tested without audio hardware. Create `volume_test.go` with pure function tests. *Confidence: HIGH — standard Go testing pattern.*
-
-**Event-driven testing approach:** For packages that emit events, provide a test double or capture mechanism. Options:
-1. Accept an `EventEmitter` interface (allows mock in tests)
-2. Make event emission optional when `ctx == nil` (already partially the case — `emit` methods check for nil context)
-3. Test state mutations independent of event emission
-
-**Recommendation:** Option 2 is already partially implemented. Lean into it: test queue/library state mutations without Wails context, verify state is correct, don't test event emission in unit tests. *Confidence: HIGH.*
+This research covers 8 feature areas for YellowJacket v1.1: tag editing, scan cancellation, smart playlists, customizable keyboard shortcuts, gapless playback + crossfade, MusicBrainz browser, layout customization, and plugin system. Each is categorized as table stakes, differentiator, or anti-feature relative to the desktop music player domain.
 
 ---
 
-### Differentiators (Raises Quality Significantly)
+## 1. Tag Editing
 
-These improvements go beyond "not broken" to "genuinely well-engineered." They improve performance, maintainability, and user experience noticeably.
+### Table Stakes
 
-| Improvement | Value Proposition | Complexity | Concern Ref |
-|-------------|-------------------|------------|-------------|
-| **Eliminate duplicated FTS5 JOIN query pattern** | Same 5-table JOIN repeated 5+ times across search functions. Schema changes require updating all copies. Extract into shared constant or consolidate into fewer sqlc queries. | MEDIUM | Code Quality |
-| **Migrate raw SQL in queue persistence to sqlc** | `lookupChunk` and `insertTrackBatch` use `fmt.Sprintf` for batch operations. Use `sqlc.slice()` for lookups. Batch inserts can remain hand-crafted but documented. | MEDIUM | Code Quality |
-| **Optimize library store — lazy loading instead of eager fetch** | `eagerFetch()` loads all tracks, albums, artists, genres simultaneously on startup. For 50k+ tracks, this is tens of MB of JS objects loaded before user sees anything. Load only the active view's data. | HIGH | Performance |
-| **Optimize queue persistence — incremental updates** | Every add/remove/move does DELETE ALL + INSERT ALL. For a 5000-track queue, every single mutation rewrites the entire table. Use INSERT/DELETE for individual operations; reserve full rewrite for SetQueue. | MEDIUM | Performance |
-| **Fix SetQueue Phase 2 redundant lookups** | Phase 2 re-fetches metadata for ALL file paths including those already resolved in Phase 1. Pass Phase 1 results to Phase 2, only lookup remaining paths. | LOW | Performance |
-| **Extract testable player logic** | Volume conversion, state serialization, format detection — all testable without audio hardware. Currently locked inside Player struct behind hardware dependency. | LOW | Test Coverage |
-| **Event name parity validation** | Event names must match exactly between Go and TypeScript. No compile-time or runtime verification. Add a build-time check (code generation or test). | LOW | Fragile Areas |
-| **Polish UI transitions and visual consistency** | CSS transitions for panel open/close, list item hover states, loading skeletons. Makes the app feel responsive and intentional. | MEDIUM | UX |
-| **Improve frontend rendering for large libraries** | Even with `lit-virtualizer`, store updates trigger re-renders. Optimize with `repeat()` directive keyed by stable IDs, memoized render functions, and avoiding full-array replacement on updates. | MEDIUM | Performance |
+| Feature | Why Expected | Complexity | Dependencies |
+|---------|--------------|------------|--------------|
+| Edit title, artist, album, genre, year, track number | Every music manager (MusicBee, foobar2000, Clementine, Strawberry) supports this. Users expect to correct metadata without leaving the app. | MEDIUM | Existing metadata extraction pipeline, new tag writing libraries |
+| Edit single track | Right-click → edit properties is the universal pattern | LOW | Tag writing backend |
+| Batch edit multiple tracks | Select multiple → edit shared fields (e.g., set all to same album). This is the primary workflow for fixing album imports. | MEDIUM | Single-track editing must work first |
+| Write changes to actual audio files | Tags must persist to the file on disk, not just the DB. Users expect changes to survive re-imports and transfers to other players. | MEDIUM | Tag writing libraries (format-specific) |
+| Update DB after tag write | After writing tags to file, the DB must reflect the new metadata without requiring a full rescan. | LOW | Existing DB update queries |
+| Cover art assignment | Set/replace embedded cover art from an image file | MEDIUM | Image handling + tag writing |
 
-#### FTS5 Query Consolidation Details
+### Differentiators
 
-**Current state:** The same JOIN pattern appears in:
-1. `SearchFTS()` — 5 columns
-2. `SearchFTSByFilename()` — 5 columns (same query, different WHERE)
-3. `SearchFTSTracks()` — 16 columns (extended version)
-4. `RebuildSearchIndex()` — 5 columns (INSERT INTO ... SELECT)
-5. `migration2BasenameAndFTS()` — same pattern in migration
+| Feature | Value Proposition | Complexity | Dependencies |
+|---------|-------------------|------------|--------------|
+| Undo/redo for tag edits | Safety net — rare in music players, very valued when present | HIGH | Requires edit history tracking |
+| Auto-capitalize/clean tag values | Consistent library appearance with minimal effort | LOW | String utilities |
+| Filename-to-tag inference | Parse "Artist - Title.mp3" patterns to pre-fill fields | MEDIUM | Regex/pattern engine |
+| Tag-to-filename rename | Rename files based on tag template (e.g., "%artist% - %title%.%ext%") | HIGH | File system operations, template engine |
 
-**Recommended approach:** Create a SQL view for the common JOIN:
+### Anti-Features
 
-```sql
-CREATE VIEW IF NOT EXISTS track_metadata_view AS
-SELECT
-    af.id AS audio_file_id,
-    af.file_path,
-    af.length_milliseconds,
-    COALESCE(r.name, '') AS title,
-    COALESCE(ac.text, '') AS artist,
-    COALESCE(rg.name, '') AS album,
-    r.track_number,
-    r.disc_number,
-    -- ... other fields
-FROM audio_files af
-LEFT JOIN recordings r ON af.recording_id = r.id
-LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
-LEFT JOIN (
-    SELECT recording_id, MIN(release_group_id) AS release_group_id
-    FROM release_group_recordings
-    GROUP BY recording_id
-) rgr ON r.id = rgr.recording_id
-LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id;
+| Anti-Feature | Why Avoid | What to Do Instead |
+|--------------|-----------|-------------------|
+| Auto-tag from online DB in tag editor | Conflates two features — tag editing and metadata lookup. MusicBrainz browser is the separate feature for this. | Keep tag editing purely manual; MusicBrainz browser is the lookup tool |
+| Destructive batch operations without confirmation | Mass edits can corrupt a library. | Always show preview/confirmation dialog for batch edits |
+| Writing tags during playback of that file | File locking conflicts on Windows; potential corruption on any OS | Queue the write for after playback stops, or copy-on-write |
+
+### Implementation Notes
+
+**Tag writing requires format-specific libraries (the existing `dhowden/tag` is read-only):**
+
+- **MP3 (ID3v2):** `github.com/bogem/id3v2/v2` — mature, pure Go, supports ID3v2.3/2.4 read+write, handles text frames, pictures, comments. Confirmed: `tag.Open()` → `tag.SetArtist()` → `tag.Save()` pattern. v2.1.4 is current.
+- **FLAC (Vorbis Comments):** `github.com/go-flac/go-flac` + `github.com/go-flac/flacvorbis` — parse FLAC file, modify vorbis comment metadata blocks, save back. Confirmed: `flac.ParseFile()` → modify `Meta` slice → `f.Save()`. v1.0.0/v0.2.0 current (v2 exists).
+- **OGG Vorbis:** No mature pure-Go write library exists. Options: (a) skip OGG tag writing initially, (b) use `go-flac/flacvorbis`-style approach with raw vorbis comment manipulation if a library surfaces, or (c) shell out to `vorbiscomment` CLI tool.
+- **WAV:** WAV metadata (INFO chunks, ID3 headers) is rarely edited. Skip for v1.1.
+
+**Critical constraint:** The existing `dhowden/tag` library is read-only. Tag writing is a completely separate code path requiring new dependencies. Tag reading continues through `dhowden/tag`; writing uses format-specific libraries.
+
+**DB sync pattern:** After writing tags to file, update the specific DB rows rather than triggering a full rescan. Extract the new metadata from the written file (or trust the values just written), update the `recordings`, `artists`, `release_groups`, and `audio_files` tables, then emit a `TrackMetadataChanged` event to sync the frontend.
+
+---
+
+## 2. Scan Cancellation
+
+### Table Stakes
+
+| Feature | Why Expected | Complexity | Dependencies |
+|---------|--------------|------------|--------------|
+| Cancel button during scan | Large libraries take minutes to scan. Users expect to be able to stop a scan in progress. Every file manager and media player with scanning provides this. | LOW | Existing scan pipeline with `context.Context` |
+| Graceful stop (don't corrupt DB) | Cancellation must not leave the DB in an inconsistent state. Complete in-flight transactions, skip remaining files. | LOW | Existing transaction batching |
+| Scan progress reporting | Users need to see what's happening — "Processing 340/2000 files" — to decide whether to wait or cancel. | LOW | Existing `ScanProgress` event (already partially implemented) |
+
+### Differentiators
+
+| Feature | Value Proposition | Complexity | Dependencies |
+|---------|-------------------|------------|--------------|
+| Pause and resume scan | Stop temporarily, resume later without re-scanning already-processed files | HIGH | Would need scan state persistence |
+| Background scan with low priority | Scan without impacting playback or UI responsiveness | LOW | Already partially handled by worker pool concurrency tuning |
+
+### Anti-Features
+
+| Anti-Feature | Why Avoid | What to Do Instead |
+|--------------|-----------|-------------------|
+| Immediate hard kill (kill goroutines) | Data corruption risk — partial writes, broken entity caches | Use context cancellation for cooperative shutdown |
+| Auto-cancel on any error | Users want the scan to continue past individual file failures | Continue scanning, accumulate warnings (already the pattern) |
+
+### Implementation Notes
+
+**The existing scan pipeline already uses `context.Context` — `l.ctx` is available throughout the scan.** The implementation pattern is straightforward:
+
+1. Create a cancellable context: `scanCtx, cancelScan := context.WithCancel(l.ctx)`
+2. Store `cancelScan` so the frontend can trigger it via a Wails binding (e.g., `Library.CancelScan()`)
+3. Check `scanCtx.Done()` in the filesystem walk loop, the worker pool dispatch, and the DB writer
+4. On cancellation, the `errgroup` returns `context.Canceled`, which is caught and treated as a clean stop
+5. Emit `LibraryScanCancelled` event (distinct from `LibraryScanComplete`)
+
+**Key insight:** The existing scan already uses `errgroup` which respects context cancellation. The DB writer goroutine processes whatever is in its batch channel, so in-flight batches complete cleanly. The only new code needed is: (a) storing/exposing the cancel function, (b) checking context in the walk loop, (c) a new event for cancellation.
+
+**Complexity is LOW** because the architecture already supports this pattern. The scan pipeline's multi-phase design means cancellation at any phase is naturally bounded.
+
+---
+
+## 3. Smart Playlists
+
+### Table Stakes
+
+| Feature | Why Expected | Complexity | Dependencies |
+|---------|--------------|------------|--------------|
+| Filter by genre | "All Jazz tracks" — the most basic smart playlist rule | LOW | Existing genre data in DB |
+| Filter by year/year range | "Tracks from 1990-1999" | LOW | Existing year field in DB |
+| Filter by artist | "All tracks by Artist X" | LOW | Existing artist data |
+| Combine multiple rules (AND) | "Jazz tracks from the 1990s" — users expect to stack filters | MEDIUM | Rule evaluation engine |
+| Auto-update when library changes | Smart playlists should refresh when tracks are added/removed. This is the defining feature vs. manual playlists. | MEDIUM | Event subscription to library changes |
+| Name and save smart playlists | Persist rule definitions, show in sidebar alongside regular playlists | LOW | New DB table for rule definitions |
+
+### Differentiators
+
+| Feature | Value Proposition | Complexity | Dependencies |
+|---------|-------------------|------------|--------------|
+| Filter by play count | "Most played" / "Never played" — requires play count tracking (not currently implemented) | MEDIUM | New `play_count` column or table |
+| Filter by date added | "Recently added" — very popular smart playlist | LOW | Existing file modification time or new `added_at` column |
+| Filter by rating | Requires rating system (not currently implemented) | MEDIUM | New rating feature |
+| OR logic and nested groups | "(Genre=Jazz OR Genre=Blues) AND Year>1980" — powerful but complex UI | HIGH | Recursive rule evaluation, complex UI builder |
+| Random/limit results | "Random 50 Jazz tracks" — playlist-as-radio | LOW | SQL `ORDER BY RANDOM() LIMIT N` |
+| Sort order in rules | "Newest first" / "Alphabetical by artist" | LOW | SQL `ORDER BY` clause |
+
+### Anti-Features
+
+| Anti-Feature | Why Avoid | What to Do Instead |
+|--------------|-----------|-------------------|
+| Full SQL WHERE clause as input | Exposes DB internals, injection risk, terrible UX | Structured rule builder with defined fields and operators |
+| Complex nested boolean logic in v1 | Overwhelms users, complex UI, rarely used | Start with flat AND rules; add OR/nesting later if demanded |
+| Real-time updating during playback | Unnecessary overhead — smart playlists don't need sub-second freshness | Refresh on library scan completion and on explicit refresh |
+
+### Implementation Notes
+
+**Rule model — keep it simple for v1:**
+
+```
+SmartPlaylistRule {
+  Field:    "genre" | "year" | "artist" | "album" | "title" | "date_added"
+  Operator: "equals" | "not_equals" | "contains" | "greater_than" | "less_than" | "between"
+  Value:    string (or string pair for "between")
+}
+
+SmartPlaylist {
+  ID:        int64
+  Name:      string
+  Rules:     []SmartPlaylistRule  // all ANDed together
+  SortField: string (optional)
+  SortOrder: "asc" | "desc"
+  Limit:     int (0 = unlimited)
+}
 ```
 
-Then search queries become `SELECT ... FROM search_index si JOIN track_metadata_view tmv ON tmv.audio_file_id = si.rowid WHERE search_index MATCH ?`. Single source of truth for the JOIN pattern.
+**Storage:** New `smart_playlists` table (id, name, rules_json, sort_field, sort_order, limit_count) with rules stored as JSON in a TEXT column. This avoids a complex relational schema for rules and is trivially extensible.
 
-**Alternative:** Extract the JOIN clause as a Go string constant and compose queries from it. Less elegant but simpler to implement.
+**Query generation:** Each rule maps to a SQL WHERE clause fragment. Rules are joined with AND. The existing `track_metadata` VIEW provides all the needed columns for filtering. Generated SQL uses parameterized queries (NOT string concatenation) to prevent injection.
 
-**Recommendation:** Use the SQL view approach. SQLite views are essentially macros — no performance penalty. They can be referenced in sqlc queries. Add the view to the schema, then rewrite search queries against it. *Confidence: MEDIUM — SQLite views in sqlc need verification during implementation. The concept is sound, but sqlc's handling of views with FTS5 virtual tables may have edge cases.*
+**Refresh strategy:** Smart playlists evaluate lazily — results are computed on access and cached. Cache is invalidated on `LibraryScanComplete` events. This avoids expensive re-evaluation on every library change.
 
-#### Queue Persistence Optimization Details
+**Depends on:** Existing `track_metadata` VIEW, playlist sidebar UI, event system.
 
-**Current pattern:**
-```
-Every mutation → commitMutation() → persistTracks() → DELETE ALL + batch INSERT ALL
-```
+---
 
-**Improved pattern:**
-```
-AddTrack → INSERT single row + shift positions
-RemoveTrack → DELETE single row + shift positions  
-MoveTrack → UPDATE positions for affected range
-SetQueue / RestoreState → DELETE ALL + batch INSERT ALL (keep current)
-```
+## 4. Customizable Keyboard Shortcuts
 
-The sqlc queries `InsertQueueTrack`, `RemoveQueueTrack`, `ShiftQueuePositionsDown`, `ShiftQueuePositionsUp` already exist but aren't used by `commitMutation()`. Wire them up for single-track operations.
+### Table Stakes
 
-*Confidence: HIGH — the individual queries already exist in sqlc.*
+| Feature | Why Expected | Complexity | Dependencies |
+|---------|--------------|------------|--------------|
+| Play/pause hotkey | Space bar is universal; must work | LOW | Existing player controls |
+| Next/previous track | Arrow keys or media key equivalents | LOW | Existing queue navigation |
+| Volume up/down | Standard audio app functionality | LOW | Existing volume control |
+| Mute toggle | Expected in any audio application | LOW | Existing mute functionality |
+| Search focus | Ctrl+F or / to focus search — standard in any list-heavy app | LOW | Existing search bar |
+| Default keybindings that work out of box | Users shouldn't have to configure anything to get basic shortcuts | LOW | Hardcoded defaults with override capability |
 
-#### Library Store Lazy Loading Details
+### Differentiators
 
-**Current:** Constructor calls `eagerFetch()` → 4 parallel Wails binding calls → 4 full table scans with JOINs → all data in JS memory.
+| Feature | Value Proposition | Complexity | Dependencies |
+|---------|-------------------|------------|--------------|
+| Full customization UI | Visual keybinding editor with conflict detection | MEDIUM | Settings page extension |
+| Import/export keybindings | Share/backup custom configs | LOW | TOML serialization (already used for config) |
+| Scoped shortcuts (global vs. component-specific) | Different bindings when focus is in search vs. track list | MEDIUM | Focus tracking |
+| "When focused" context awareness | Arrows navigate track list when it's focused, but control volume when player is focused | MEDIUM | Component focus management |
 
-**Improved pattern:**
+### Anti-Features
+
+| Anti-Feature | Why Avoid | What to Do Instead |
+|--------------|-----------|-------------------|
+| Global OS-level hotkeys (outside app window) | Platform-specific, conflicts with OS shortcuts, security concerns on Wayland | App-scoped shortcuts only; MPRIS2 handles media keys |
+| Vim-mode or complex modal keybindings | Niche appeal, confusing for 99% of users | Simple single/modifier key combos (Ctrl+X, Shift+X) |
+| Shortcut for every possible action | Overwhelming configuration UI | Cover the 10-15 most common actions; rest accessible via menus |
+
+### Implementation Notes
+
+**Architecture — event-driven, backend-aware:**
+
+The shortcut system has two layers:
+1. **Frontend key listener:** Captures keyboard events at the document level, maps keystrokes to action names using a binding table
+2. **Action dispatch:** Frontend calls the appropriate Wails binding or emits a frontend event for UI-only actions
+
+**Binding table structure:**
+
 ```typescript
-class LibraryStore {
-    // Load on first access, not constructor
-    async getTracks(): Promise<library.Track[]> {
-        if (this.tracks !== null) return this.tracks;
-        // ... existing lazy logic (already implemented!)
-    }
-
-    // Remove eagerFetch() from constructor
-    constructor() {
-        EventsOn(Events.LibraryScanComplete, () => this.invalidate());
-        this.loadCoverSize();
-        // Don't call eagerFetch() — let components trigger loading
-    }
+interface KeyBinding {
+  action: string;        // "play_pause", "next_track", "volume_up", etc.
+  key: string;           // "Space", "ArrowRight", etc. (KeyboardEvent.key)
+  modifiers: string[];   // ["ctrl"], ["shift"], ["ctrl", "shift"], []
+  scope?: string;        // "global" | "tracklist" | "queue" (optional, default "global")
 }
 ```
 
-The store *already has* lazy loading logic in `getTracks()`, `getAlbums()`, etc. The only change needed is removing the `eagerFetch()` call from the constructor and from `invalidate()`. Components already call the async getters. The eager fetch is redundant.
+**Storage:** Add `[Shortcuts]` section to TOML config. Default bindings are hardcoded; user overrides merge on top. Config change emits `ShortcutConfigChanged` event.
 
-**For even larger libraries (100k+):** Consider pagination. Backend already returns full result sets — add `LIMIT/OFFSET` or cursor-based pagination to the sqlc queries. Frontend virtualizer already handles rendering — it just needs a data provider that fetches pages instead of the full list.
+**Conflict detection:** When user changes a binding, check for conflicts within the same scope. Show warning if two actions share the same keystroke.
 
-*Confidence: HIGH — the lazy loading infrastructure already exists.*
+**Default bindings (the 12 essentials):**
 
-#### Frontend Performance Details
+| Action | Default Key | Scope |
+|--------|-------------|-------|
+| Play/Pause | Space | global |
+| Stop | . (period) | global |
+| Next Track | Ctrl+Right | global |
+| Previous Track | Ctrl+Left | global |
+| Volume Up | Ctrl+Up | global |
+| Volume Down | Ctrl+Down | global |
+| Mute | M | global |
+| Search Focus | Ctrl+F | global |
+| Toggle Queue | Q | global |
+| Toggle Shuffle | S | global |
+| Toggle Repeat | R | global |
+| Select All (track list) | Ctrl+A | tracklist |
 
-**Already in place:** `@lit-labs/virtualizer` with `flow` layout for track-list and `grid` layout for cover-grid. This handles DOM virtualization.
-
-**Additional optimizations:**
-1. **Use `repeat()` with stable keys for virtualized lists.** Lit's `repeat` directive reorders DOM nodes instead of recreating them when list order changes. Use `track.filePath` as key (unique, stable).
-2. **Avoid full-array replacement in store updates.** When a scan completes, `invalidate()` sets `tracks = null` forcing a full refetch. Instead, diff the new data against cached data and apply deltas. For scan completion, a full invalidation is appropriate, but for queue mutations, use the delta protocol already in place (`applyTracksDelta`).
-3. **Debounce store notifications.** When multiple store properties update in rapid succession (e.g., during scan), batch notifications using `queueMicrotask()` instead of notifying per-property.
-
-*Confidence: MEDIUM — `repeat()` performance gains depend on the update patterns. For initially sorted lists that rarely reorder, `map()` is equally fast. For the cover-grid with resize/reflow, `repeat()` is clearly beneficial.*
+**Key insight:** Keyboard shortcuts must NOT interfere with text input. When a text input or textarea has focus, the shortcut system must be disabled (except for Escape to blur). This is the #1 pitfall in keyboard shortcut implementations.
 
 ---
 
-### Anti-Features (Things to Deliberately NOT Do During Refactoring)
+## 5. Gapless Playback + Crossfade
 
-| Anti-Pattern | Why Tempting | Why Problematic | What to Do Instead |
-|-------------|-------------|-----------------|-------------------|
-| **Splitting large files purely for line count** | `playlist.go` (1778 lines) and `library.go` (1328 lines) feel large. Some components exceed 2000 lines. | The project explicitly decided against cosmetic splitting (PROJECT.md: "No cosmetic file splitting"). Splitting for its own sake creates navigation overhead and can break logical grouping. | Extract only when it enables reuse (e.g., shared controllers) or fixes a real problem (e.g., testing). |
-| **Adding a full ORM or query builder** | Raw SQL in `lookupChunk`/`insertTrackBatch` feels inconsistent with sqlc-generated code. | An ORM would fight the existing sqlc architecture. A query builder adds a dependency for 2-3 queries. The hand-crafted SQL is safe (parameterized) and performant. | Document the hand-crafted queries with `// SAFETY:` comments explaining why they're not in sqlc. Use `sqlc.slice()` where it fits. Accept that batch INSERT with dynamic row count is a legitimate sqlc gap for SQLite. |
-| **Rewriting the event system** | Event names are fragile strings that must match between Go and TypeScript. A typed event system would be safer. | The current system works. A rewrite touches every component in both frontend and backend. The risk-to-reward ratio is terrible for a consolidation milestone. | Add a build-time parity check (a test or codegen script that compares event constants). Fix the symptom (fragility) not the architecture. |
-| **Adding frontend unit tests for all components** | No frontend tests exist. The temptation is to add comprehensive Lit component testing. | Large Lit components (1400-2600 lines) are expensive to test in isolation. Testing requires JSDOM or a browser harness, Shadow DOM handling, and Wails binding mocks. The backend is the source of truth — frontend bugs are visual, not data-corruption. | Test frontend-only logic (search ranking, column sorting, selection controller) as pure function tests if extracted. Defer full component testing to a future milestone. |
-| **Making all queue mutations atomic/transactional from Go to frontend** | The delta protocol between queue store and backend could diverge. Adding sequence numbers or full-state hashes seems robust. | The existing `QueueChanged` event already acts as periodic full-state correction. Adding a sequence protocol adds complexity to every mutation path for a problem that manifests as a temporary visual glitch, self-correcting on the next full emit. | Keep the existing delta + periodic full-state pattern. If divergence becomes a real problem (not theoretical), add a generation counter then. |
-| **Over-engineering error types** | The project uses sentinel errors and `fmt.Errorf("%w")`. Defining custom error types with fields (e.g., `ScanError{File, Phase, Cause}`) seems more structured. | Custom error types add boilerplate for minimal benefit in a desktop app. The structured logging already captures context via slog key-value pairs. Error types shine in API servers where callers branch on error details — not here. | Keep sentinel errors for `errors.Is()` checks. Keep `fmt.Errorf("%w")` for wrapping with context. Use `errors.Join()` for accumulation. Separate warnings from fatal errors in scan results via the return signature, not error types. |
-| **Adding connection pooling or health checks for SQLite** | PROJECT.md mentions "No Database Connection Pooling/Health Check" in missing features. | This is a desktop app with a local SQLite file and `SetMaxOpenConns(1)`. Connection pooling is meaningless. Health checks add complexity for a failure mode (corrupt SQLite file) that's better handled by "show error dialog, suggest DB reset." | Leave as-is. This was correctly scoped as out-of-scope in PROJECT.md. |
-| **Wrapping the entire test suite in Docker for CI** | Integration tests require audio hardware. Docker could theoretically provide a virtual audio device. | Massive CI complexity for marginal benefit. The goal is to make unit tests work without hardware, not to make integration tests work in CI. | Extract testable pure logic. Run unit tests in CI. Keep integration tests as manual/local-only with `YELLOWJACKET_INTEGRATION=1`. |
+### Table Stakes
+
+| Feature | Why Expected | Complexity | Dependencies |
+|---------|--------------|------------|--------------|
+| Gapless playback (no silence between tracks) | Expected by any serious music listener. Albums are meant to flow. Strawberry, foobar2000, Deadbeef, Audacious all support this. | HIGH | Fundamental change to audio pipeline |
+| Crossfade setting (on/off, duration) | Standard feature in every modern music player. Even basic mobile players have this. | MEDIUM | Gapless infrastructure + mixer |
+| Crossfade duration control | Users expect 1-10 second configurable fade | LOW | UI slider + config storage |
+| Gapless without crossfade (default) | Pure gapless (no overlap) should be the default. Crossfade is opt-in. | HIGH | Pre-decode/buffer next track |
+
+### Differentiators
+
+| Feature | Value Proposition | Complexity | Dependencies |
+|---------|-------------------|------------|--------------|
+| Per-album gapless (auto-detect live albums) | Disable crossfade within albums, enable between albums | MEDIUM | Album boundary detection in queue |
+| ReplayGain normalization | Consistent volume across tracks from different sources | HIGH | ReplayGain tag parsing + volume adjustment |
+| Fade-in on play, fade-out on pause | Smoother start/stop experience | LOW | Volume envelope on play/pause |
+
+### Anti-Features
+
+| Anti-Feature | Why Avoid | What to Do Instead |
+|--------------|-----------|-------------------|
+| DSP effects chain (equalizer, reverb, etc.) | Scope explosion — not part of gapless/crossfade | Defer to plugin system if ever needed |
+| Crossfade for all transitions (including manual skip) | Crossfade on skip feels sluggish | Only crossfade on auto-advance; manual skip is instant |
+| Pre-loading entire tracks into memory | Memory explosion with FLAC files (50-100MB per track) | Buffer only the crossfade overlap region (last/first N seconds) |
+
+### Implementation Notes
+
+**This is the highest-complexity feature in v1.1.** The current audio pipeline plays one track at a time with a single streamer chain. Gapless playback requires pre-decoding the next track and seamlessly transitioning.
+
+**Current pipeline:** `file → decode → resample → BufferedStreamer → Ctrl → Volume → Speaker`
+
+**Gapless pipeline (conceptual):**
+1. When current track is N seconds from ending, pre-load next track's decoder + resampler
+2. For pure gapless: use `beep.Seq()` to chain current and next streamer — but Seq doesn't support the pre-decode timing
+3. For crossfade: use `beep.Mixer` to overlap the fade-out of current with fade-in of next
+
+**beep library support:**
+- `beep.Mixer` — adds/mixes multiple streamers. This is the foundation for crossfade.
+- `beep.Seq()` — sequences streamers end-to-end. Foundation for gapless without crossfade.
+- `effects.Volume` — volume control already used; can create fade curves by adjusting volume over time.
+- `beep.Take()` — extract N samples from a streamer. Useful for defining crossfade regions.
+
+**Architecture change required:**
+- The `Player` must manage TWO streamer chains simultaneously during crossfade
+- A `TransitionManager` or equivalent coordinates pre-loading the next track
+- The `playbackFinishedHandler` (callback from beep when track ends) must trigger next-track pre-loading rather than waiting for the callback
+- The `Queue` must expose a "peek next" capability (already has `tracks` and `currentIndex`)
+
+**Crossfade implementation sketch:**
+```
+[Track A ~~~~~~~~ fade-out]
+                [fade-in ~~~~~~~~ Track B]
+                |-- overlap (N seconds) --|
+```
+- Track A's volume ramps from 1.0 → 0.0 over N seconds
+- Track B's volume ramps from 0.0 → 1.0 over N seconds
+- Both feed into a `beep.Mixer` during the overlap period
+- After overlap, Track A is closed, Track B continues alone
+
+**Config addition:** `[Playback]` section with `GaplessEnabled` (bool, default true), `CrossfadeEnabled` (bool, default false), `CrossfadeDurationMs` (int, default 3000, range 500-10000).
+
+**Critical constraint:** The beep `speaker.Play()` can only be called once; the speaker's mixer is the root. All track management must happen within the streamer chain that the speaker is already playing. This means using a persistent `beep.Mixer` as the root streamer, adding/removing track streamers from it.
+
+---
+
+## 6. MusicBrainz Browser
+
+### Table Stakes
+
+| Feature | Why Expected | Complexity | Dependencies |
+|---------|--------------|------------|--------------|
+| Search artists by name | The entry point — user types artist name, gets results | MEDIUM | MusicBrainz API integration, HTTP client |
+| View artist discography (release groups) | Browse albums/EPs/singles by an artist | MEDIUM | API browse: release-groups by artist |
+| View album track listing | See what tracks are on a release | MEDIUM | API lookup: release with recordings |
+| View album editions (releases within a release group) | Different pressings, reissues, deluxe editions | MEDIUM | API browse: releases by release-group |
+| Rate limiting compliance | MusicBrainz requires max 1 request/second with meaningful User-Agent | LOW | HTTP rate limiter, User-Agent header |
+| Offline-safe (read-only, no writes) | Read-only browsing — no MusicBrainz account needed | LOW | No authentication required for reads |
+
+### Differentiators
+
+| Feature | Value Proposition | Complexity | Dependencies |
+|---------|-------------------|------------|--------------|
+| Link local tracks to MusicBrainz recordings | Associate library tracks with MBIDs for definitive identity | HIGH | Matching algorithm, DB schema changes |
+| Show cover art from Cover Art Archive | Display album art from MusicBrainz's linked image archive | MEDIUM | coverartarchive.org API |
+| Cache API responses locally | Avoid re-fetching on every browse session | MEDIUM | SQLite cache table with TTL |
+| Search recordings | Find specific songs across all releases | LOW | MusicBrainz recording search API |
+
+### Anti-Features
+
+| Anti-Feature | Why Avoid | What to Do Instead |
+|--------------|-----------|-------------------|
+| Auto-tag from MusicBrainz | This is Picard's domain — extremely complex matching logic | Read-only browsing only. Users can manually apply info from browse to tag editor. |
+| Write data to MusicBrainz | Requires OAuth, community guidelines compliance, edit approval | Strictly read-only |
+| Download/stream from MusicBrainz | MusicBrainz is a metadata database, not a music source | Display metadata only |
+| Background MusicBrainz scanning of entire library | Rate limiting makes this impractical (1 req/sec = 3600 tracks/hour max) | On-demand browsing only |
+
+### Implementation Notes
+
+**MusicBrainz API:** REST API at `https://musicbrainz.org/ws/2/`. JSON format via `fmt=json` parameter. No API key required, but must set meaningful User-Agent header: `YellowJacket/<version> (contact-url-or-email)`.
+
+**Rate limiting:** Strict 1 request/second. Implement with a `time.Ticker`-based rate limiter in the Go backend. All API calls go through a single rate-limited HTTP client.
+
+**Go libraries available:**
+- `github.com/michiwend/gomusicbrainz` — Go client, but may be outdated
+- `go.uploadedlobster.com/musicbrainzws2` — another Go client on SourceHut
+- **Recommended: Build a thin HTTP client** — the API is simple REST/JSON. A custom client with rate limiting, User-Agent, and JSON parsing is ~200 lines and avoids third-party dependency risk.
+
+**API patterns needed for read-only browsing:**
+1. **Search artist:** `GET /ws/2/artist?query=<name>&fmt=json&limit=25`
+2. **Artist discography:** `GET /ws/2/release-group?artist=<mbid>&fmt=json&limit=100&inc=artist-credits`
+3. **Release group releases:** `GET /ws/2/release?release-group=<mbid>&fmt=json&inc=media+recordings`
+4. **Release track listing:** `GET /ws/2/release/<mbid>?fmt=json&inc=recordings+media+artist-credits`
+
+**Frontend architecture:** New view (`musicbrainz-browser` component) accessible from sidebar. Search bar, results list, detail panels for artist/album/release. Navigation is drill-down: search → artist → release group → release → tracks.
+
+**Caching strategy:** Cache API responses in SQLite (`mb_cache` table: url, response_json, fetched_at). TTL of 24 hours for search results, 7 days for entity lookups (MusicBrainz data changes infrequently). Cache reduces API calls and improves responsiveness.
+
+**This is YellowJacket's first network feature** — the app is currently fully offline. Need to handle: network errors gracefully, timeout configuration, offline mode (show cached data), user notification of network status.
+
+---
+
+## 7. Layout Customization System
+
+### Table Stakes
+
+| Feature | Why Expected | Complexity | Dependencies |
+|---------|--------------|------------|--------------|
+| Resizable panels (sidebar, queue, main) | Basic expectation in any multi-panel desktop app. Users want wider sidebar or hidden queue. | MEDIUM | CSS grid/flexbox with drag handles |
+| Show/hide queue panel | Already partially implemented (queue toggle button exists) | LOW | Existing queue panel toggle |
+| Show/hide sidebar sections | Collapse navigation sections user doesn't need | LOW | Sidebar configuration |
+| Persist layout across restarts | Layout changes must survive app restart | LOW | TOML config section |
+
+### Differentiators
+
+| Feature | Value Proposition | Complexity | Dependencies |
+|---------|-------------------|------------|--------------|
+| Section-based component placement (MusicBee-style) | Users choose what goes where — put album art in sidebar, now-playing at top, etc. This is MusicBee's signature feature. | HIGH | Component registry, layout engine, size constraints |
+| Component size constraints | Components declare min/max sizes; layout engine respects constraints | MEDIUM | Component metadata system |
+| Layout presets | "Compact", "Full", "Mini player" — quick switch between configurations | MEDIUM | Preset definitions + switch mechanism |
+| Detachable panels | Pop out queue or now-playing to separate window | HIGH | Wails multi-window support (limited in v2) |
+
+### Anti-Features
+
+| Anti-Feature | Why Avoid | What to Do Instead |
+|--------------|-----------|-------------------|
+| Free-form drag-and-drop layout | Overwhelming complexity, hard to make look good | Section-based: defined slots with selectable components |
+| CSS theme editor | Users don't want to write CSS | Extend existing theme system (accent color, background shade) |
+| Mobile-responsive layout | This is a desktop app with fixed minimum size | Optimize for 1024x768 minimum |
+
+### Implementation Notes
+
+**MusicBee-style layout means section-based composition:**
+
+The UI is divided into named sections (slots):
+- `header` (top bar)
+- `sidebar` (left panel)
+- `main` (center content area)
+- `footer` (bottom bar — now playing + player controls)
+- `right-panel` (queue panel or other content)
+
+Each section has a list of components it can host. Components declare their size constraints (min width/height). Users configure which component goes in which section via a settings UI.
+
+**Implementation approach:**
+
+1. **Component registry:** Each component registers itself with metadata (name, description, supported sections, min/max size). This is a TypeScript Map, not a plugin system yet.
+2. **Layout configuration:** Stored in TOML config under `[Layout]` section. Maps section names to component names.
+3. **Layout renderer:** A root `<app-layout>` component reads config and instantiates the right components in the right sections using dynamic imports.
+4. **Resize handles:** CSS resize or custom drag handles on section boundaries. Store widths/heights as percentages in config.
+
+**Start simple for v1.1:**
+- Phase 1: Resizable panels (sidebar width, queue width) with drag handles + persistence
+- Phase 2: Show/hide sections + layout presets
+- Phase 3: Component-in-section customization (the full MusicBee-style system)
+
+The full section-based system is the v1.1 "foundation" — functional but not complete.
+
+**Depends on:** Config system (TOML), existing component architecture, CSS grid layout.
+
+---
+
+## 8. Plugin System
+
+### Table Stakes
+
+| Feature | Why Expected | Complexity | Dependencies |
+|---------|--------------|------------|--------------|
+| Defined plugin API (what plugins can do) | Without clear API boundaries, plugins break on every update | HIGH | API design + stability commitment |
+| Plugin loading/unloading | Install/remove plugins without rebuilding the app | HIGH | Dynamic loading mechanism |
+| Plugin configuration | Plugins need their own settings that persist | MEDIUM | Extend config system |
+| Plugin isolation (one plugin crash doesn't kill app) | Critical for stability | HIGH | Error boundaries, sandboxing |
+
+### Differentiators
+
+| Feature | Value Proposition | Complexity | Dependencies |
+|---------|-------------------|------------|--------------|
+| UI component plugins (custom panels, visualizations) | Plugins can add new views to the layout system | HIGH | Layout customization system + component registry |
+| Backend hook plugins (custom metadata sources, scrobblers) | Plugins can intercept/extend backend operations | HIGH | Hook system in Go backend |
+| Plugin marketplace/registry | Discover and install plugins | HIGH | External infrastructure |
+| TypeScript/JavaScript plugin runtime | Lowest barrier to entry for plugin authors | MEDIUM | Webview already runs JS |
+
+### Anti-Features
+
+| Anti-Feature | Why Avoid | What to Do Instead |
+|--------------|-----------|-------------------|
+| Go plugin system (`plugin` package) | Linux-only, version-fragile, build-tag sensitive, widely considered broken | Use process-based or embedded scripting approach |
+| Full filesystem access for plugins | Security nightmare | Sandboxed API with explicit permissions |
+| Plugin binary distribution | Build reproducibility, platform issues | Source-based distribution (TypeScript/JS bundles) |
+| Network access for plugins without user consent | Privacy concern | Require explicit network permission declaration |
+
+### Implementation Notes
+
+**Plugin systems in Go desktop apps are notoriously difficult.** The `plugin` package is Linux-only and requires exact build-tag matching. Wails v2 doesn't have a plugin framework.
+
+**Recommended approach for v1.1 "foundation":**
+
+1. **Frontend-first plugins (TypeScript):**
+   - Plugins are JS/TS bundles loaded dynamically into the webview
+   - They register with the component registry (layout system) to add UI
+   - They access backend data through the existing Wails binding layer
+   - Isolation via Shadow DOM for UI, try/catch for errors
+
+2. **Backend hooks (Go):**
+   - Define hook points as interfaces: `OnTrackPlay`, `OnLibraryScan`, `OnMetadataChange`, etc.
+   - Internal Go "plugins" implement these interfaces
+   - For v1.1, hooks are compile-time (not dynamic) — the plugin system defines the API, but plugins are compiled in
+   - Dynamic loading deferred to future (hashicorp/go-plugin RPC, or WASM)
+
+3. **Plugin manifest:**
+   ```json
+   {
+     "name": "my-plugin",
+     "version": "1.0.0",
+     "description": "Does a thing",
+     "entry": "index.js",
+     "hooks": ["onTrackPlay", "onLibraryScan"],
+     "ui": [{"component": "my-panel", "sections": ["sidebar", "right-panel"]}],
+     "permissions": ["network"]
+   }
+   ```
+
+4. **Plugin directory:** `~/.config/yellowjacket/plugins/<name>/` containing manifest + JS bundle
+
+**v1.1 scope should be the API definition and loading mechanism** — not a full marketplace. "Working foundation" means: plugins can be loaded, they can register UI components, they can subscribe to backend events. The API surface is deliberately small and stable.
+
+**Depends on:** Layout customization system (for UI plugins), event system (for hook subscriptions), config system (for plugin settings).
 
 ---
 
 ## Feature Dependencies
 
 ```
-[Fix SetContext races]
-    └── (no deps — standalone fix)
-
-[Fix error handling gaps (MPRIS, artist credit, config perms)]
-    └── (no deps — standalone fixes)
-
-[Separate scan warnings from fatal errors]
-    └── (no deps — changes Library.Scan return signature)
-
-[Add in-memory SQLite test infrastructure]
-    └──requires──> [database.NewTestDB() helper]
-                       └──enables──> [Queue unit tests]
-                       └──enables──> [Library unit tests]  
-                       └──enables──> [Database layer tests]
-                       └──enables──> [Config tests]
-
-[Extract testable player logic]
-    └── (no deps — pure function extraction)
-    └──enables──> [Player pure logic tests]
-
-[FTS5 query consolidation (SQL view)]
-    └──should-precede──> [Database layer tests]
-        (test the consolidated queries, not the duplicated ones)
-
-[Queue persistence optimization (incremental updates)]
-    └──should-precede──> [Queue unit tests]
-        (test the optimized persistence, not the DELETE-ALL pattern)
-
-[Library store lazy loading]
-    └── (no deps — remove eagerFetch() call)
-
-[SetQueue Phase 2 optimization]
-    └──requires──> [Queue unit tests]
-        (need tests to verify the optimization doesn't break resolution)
-
-[Event name parity validation]
-    └── (no deps — standalone build-time check)
-
-[UI polish / transitions]
-    └── (no deps — CSS-only or Lit reactive changes)
-
-[Frontend rendering optimization]
-    └──benefits-from──> [Library store lazy loading]
-        (less data in memory = faster re-renders)
+Scan Cancellation ──── (standalone, no dependencies)
+     │
+Tag Editing ────────── (standalone, needs new libraries)
+     │
+Smart Playlists ────── depends on: existing DB/track_metadata VIEW
+     │
+Keyboard Shortcuts ─── (standalone, frontend-primary)
+     │
+Gapless + Crossfade ── depends on: audio pipeline refactor
+     │
+MusicBrainz Browser ── depends on: HTTP client (new), network handling (new)
+     │
+Layout Customization ── depends on: component registry (new)
+     │
+Plugin System ──────── depends on: Layout Customization, Event system, Config system
 ```
 
-### Dependency Notes
-
-- **Test infrastructure is the critical enabler:** Almost all other improvements benefit from having tests first (to verify refactoring safety) or should happen before tests (to test the right code). The ordering matters: fix persistence patterns *before* writing persistence tests, consolidate SQL *before* writing SQL tests.
-- **Concurrency fixes are independent:** They're small, self-contained, and should be done first — they represent known correctness issues.
-- **Performance optimizations benefit from tests:** The queue persistence optimization and SetQueue Phase 2 fix both modify core queue logic. Having queue tests first provides a safety net.
-- **Frontend work is independent of backend work:** Library store lazy loading, UI polish, and rendering optimization don't depend on backend changes.
+**Dependency ordering (what blocks what):**
+1. **Nothing blocks:** Scan cancellation, tag editing, keyboard shortcuts, smart playlists, MusicBrainz browser
+2. **Layout blocks plugins:** Plugin UI registration needs the layout component registry
+3. **Gapless is self-contained** but is the highest-risk change (audio pipeline)
 
 ---
 
-## Prioritization
+## MVP Recommendation
 
-### Phase 1: Correctness & Test Foundation (Do First)
+### Build First (low risk, high value, unblocked)
+1. **Scan cancellation** — lowest complexity, immediate UX win, architecture already supports it
+2. **Keyboard shortcuts** — low complexity, massive usability improvement, no backend changes
+3. **Smart playlists** — medium complexity, high value, builds on existing DB infrastructure
 
-Fixes known bugs and establishes the test infrastructure that makes everything else safe.
+### Build Second (medium risk, foundational)
+4. **Tag editing** — medium complexity, requires new dependencies, needed before MusicBrainz becomes useful
+5. **MusicBrainz browser** — medium complexity, first network feature, independent of others
+6. **Layout customization** — medium-high complexity, needed before plugins
 
-- [ ] Fix SetContext data races (Queue, Library, Playlist) — LOW effort, HIGH value
-- [ ] Fix package-level `startupErr` → struct field — LOW effort
-- [ ] Fix config file permissions — LOW effort
-- [ ] Fix swallowed errors (MPRIS, artist credit) — LOW effort
-- [ ] Separate scan warnings from fatal errors — MEDIUM effort
-- [ ] Create in-memory SQLite test helper (`database.NewTestDB()`) — MEDIUM effort
-- [ ] Extract testable player pure logic (volume, state) — LOW effort
+### Build Last (high risk, high complexity)
+7. **Gapless playback + crossfade** — highest complexity, fundamental audio pipeline change, can ship independently
+8. **Plugin system** — highest complexity, depends on layout system, explicitly a "foundation" for v1.1
 
-### Phase 2: SQL & Performance Foundations (Do Second)
+### Defer (explicitly)
+- Tag-to-filename rename
+- Undo/redo for tag edits
+- Play count tracking (needed for some smart playlist rules)
+- Rating system
+- Plugin marketplace
+- Dynamic Go plugin loading
+- Detachable panels (Wails v2 limitation)
 
-Improves the code that tests will be written against.
-
-- [ ] Consolidate FTS5 JOIN pattern (SQL view or constant) — MEDIUM effort
-- [ ] Migrate queue lookups to `sqlc.slice()` — MEDIUM effort
-- [ ] Optimize queue persistence (incremental updates) — MEDIUM effort
-- [ ] Fix SetQueue Phase 2 redundant lookups — LOW effort
-- [ ] Remove `eagerFetch()` from library store constructor — LOW effort
-
-### Phase 3: Comprehensive Tests (Do Third)
-
-Tests verify the improved code from Phases 1-2.
-
-- [ ] Queue unit tests (SetQueue, navigation, shuffle, repeat, persistence) — HIGH effort
-- [ ] Library scan unit tests (metadata, entity cache, orphan cleanup) — HIGH effort
-- [ ] Database layer tests (FTS5 queries, migrations) — MEDIUM effort
-- [ ] Config tests (load/save roundtrip, validation, defaults) — MEDIUM effort
-- [ ] Player pure logic tests (volume math, state serialization) — LOW effort
-- [ ] Event name parity test — LOW effort
-
-### Phase 4: Polish & Frontend (Do Last)
-
-Visual and frontend improvements that don't affect backend correctness.
-
-- [ ] UI transitions and responsive feedback — MEDIUM effort
-- [ ] Frontend rendering optimization (repeat directive, debounced notifications) — MEDIUM effort
-- [ ] Document intentional exceptions (hand-crafted SQL, singleton store lifecycle) — LOW effort
-
-## Feature Prioritization Matrix
-
-| Improvement | Reliability Value | Implementation Cost | Priority |
-|-------------|-------------------|---------------------|----------|
-| Fix SetContext data races | HIGH | LOW | **P1** |
-| Fix startupErr, config perms | HIGH | LOW | **P1** |
-| Fix swallowed errors | HIGH | LOW | **P1** |
-| Separate scan warnings/errors | HIGH | MEDIUM | **P1** |
-| In-memory SQLite test helper | HIGH | MEDIUM | **P1** |
-| Extract testable player logic | MEDIUM | LOW | **P1** |
-| FTS5 query consolidation | MEDIUM | MEDIUM | **P2** |
-| Queue persistence optimization | MEDIUM | MEDIUM | **P2** |
-| SetQueue Phase 2 fix | MEDIUM | LOW | **P2** |
-| Library store lazy loading | MEDIUM | LOW | **P2** |
-| Queue unit tests | HIGH | HIGH | **P2** |
-| Library unit tests | HIGH | HIGH | **P2** |
-| Database tests | MEDIUM | MEDIUM | **P2** |
-| Config tests | MEDIUM | MEDIUM | **P2** |
-| Event name parity validation | MEDIUM | LOW | **P2** |
-| Player pure logic tests | MEDIUM | LOW | **P2** |
-| UI transitions / polish | LOW | MEDIUM | **P3** |
-| Frontend rendering optimization | LOW | MEDIUM | **P3** |
-| Migrate queue SQL to sqlc | LOW | MEDIUM | **P3** |
-
-**Priority key:**
-- P1: Must do — correctness issues or critical enablers
-- P2: Should do — significant quality improvement
-- P3: Nice to have — polish, can defer if time-constrained
+---
 
 ## Sources
 
-- Go race detector: https://go.dev/doc/articles/race_detector — HIGH confidence (official Go docs)
-- sqlc `sqlc.slice()` for SQLite: https://docs.sqlc.dev/en/stable/reference/macros.html — HIGH confidence (official sqlc docs, verified via WebFetch)
-- sqlc batch operations: https://docs.sqlc.dev/en/stable/howto/select.html#mysql-and-sqlite — HIGH confidence (official docs)
-- Lit `repeat` directive: https://lit.dev/docs/templates/lists/#the-repeat-directive — HIGH confidence (official Lit docs, verified via WebFetch)
-- Lit rendering model: https://lit.dev/docs/components/rendering/ — HIGH confidence (official docs)
-- `@lit-labs/virtualizer` — already in use in codebase (track-list, cover-grid)
-- `modernc.org/sqlite` in-memory DB — HIGH confidence (`:memory:` is standard SQLite, driver already in deps)
-- Go `errors.Join()` — HIGH confidence (standard library since Go 1.20, already used in codebase)
-- Go mutex patterns — HIGH confidence (standard library, matches existing codebase conventions)
-
----
-*Feature research for: YellowJacket consolidation milestone*
-*Researched: 2026-02-27*
+- MusicBrainz API documentation: https://musicbrainz.org/doc/MusicBrainz_API (HIGH confidence — official docs, verified 2026-03-06)
+- MusicBrainz rate limiting: https://musicbrainz.org/doc/MusicBrainz_API/Rate_Limiting (HIGH confidence — official docs)
+- `github.com/bogem/id3v2/v2` v2.1.4: https://pkg.go.dev/github.com/bogem/id3v2/v2 (HIGH confidence — official pkg.go.dev)
+- `github.com/go-flac/go-flac` v1.0.0: https://pkg.go.dev/github.com/go-flac/go-flac (HIGH confidence — official pkg.go.dev)
+- `github.com/go-flac/flacvorbis` v0.2.0: https://pkg.go.dev/github.com/go-flac/flacvorbis (HIGH confidence — official pkg.go.dev)
+- `github.com/gopxl/beep/v2` v2.1.1: https://pkg.go.dev/github.com/gopxl/beep/v2 (HIGH confidence — official pkg.go.dev, confirms Mixer, Seq, Loop2, effects)
+- YellowJacket codebase analysis: `.planning/codebase/` (HIGH confidence — direct code inspection)
+- Desktop music player patterns: foobar2000, MusicBee, Strawberry, Deadbeef, Audacious (MEDIUM confidence — training data knowledge of established players)
