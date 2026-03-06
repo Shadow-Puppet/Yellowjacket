@@ -1,29 +1,31 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: Consolidation
-status: shipped
-last_updated: "2026-03-05"
+milestone: v1.1
+milestone_name: Features & Extensibility
+status: defining_requirements
+last_updated: "2026-03-06"
 progress:
-  total_phases: 8
-  completed_phases: 8
-  total_plans: 17
-  completed_plans: 17
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
 ---
 
 # YellowJacket — Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-03-05)
+See: .planning/PROJECT.md (updated 2026-03-06)
 
 **Core value:** The music player works reliably and feels solid — every interaction is correct, responsive, and trustworthy.
-**Current focus:** v1.0 Consolidation shipped. Planning next milestone.
+**Current focus:** v1.1 Features & Extensibility — defining requirements
 
 ## Current Position
 
-**Milestone:** v1.0 Consolidation — SHIPPED 2026-03-05
-**Next:** Run `/gsd-new-milestone` to define next milestone
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-03-06 — Milestone v1.1 started
 
 ## Accumulated Context
 
@@ -44,37 +46,16 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 - modernc.org/libc version must match exactly when updating modernc.org/sqlite
 - `@lit-labs/signals` is experimental (v0.2.0) — not blocking but noted
 
-### Quick Tasks Completed (v1.0)
-
-| # | Description | Date | Commit |
-|---|-------------|------|--------|
-| 001 | Multi-playlist import support | 2026-02-28 | 50c8a33 |
-| 002 | Auto-rename duplicate playlists on import | 2026-02-28 | 8ba8bbe |
-| 003 | Multi-select playlist view + context menu delete | 2026-02-28 | c92ced2 |
-| 004 | Set as default playlist context menu | 2026-02-28 | 9971b63 |
-| 005 | Sort dropdown for playlist view | 2026-03-01 | 5c07485 |
-| 006 | Remove list icon, add favorites icon | 2026-03-01 | 3c19766 |
-| 007 | Pin default playlist to top | 2026-03-01 | e6378e1 |
-| 008 | Duplicate tracks dialog | 2026-03-01 | 917a79a |
-| 009 | Fix queue panel scroll bar not following mouse | 2026-03-05 | ebde5e5 |
-| 010 | Fix duplicate album merging bug (composite unique constraint) | 2026-03-05 | d43ba7b |
-| 010b | Fix contentless FTS5 DELETE error blocking rescan | 2026-03-05 | 8e9a616 |
-| 011 | Fix neovim crash during library scan (configurable log level) | 2026-03-05 | c45bca4 |
-| 012 | Add favorite icon to album dropdown track rows | 2026-03-05 | 12a0bbc |
-| 013 | Fix all golangci-lint issues (zero issues) | 2026-03-05 | e1a95e6 |
-| 014 | Fix queue/player desync after track load failure | 2026-03-05 | 2820de2 |
-| 015 | Fix audio glitches with BufferedStreamer read-ahead | 2026-03-05 | 8a0b16a |
-
 ## Session Continuity
 
 ### Last Session
 
-**Date:** 2026-03-05
-**What happened:** Quick task 15 — fixed audio glitches and skips by adding a BufferedStreamer with goroutine read-ahead between decoder/resampler and speaker output. Ring buffer provides 2s of audio runway. Speaker buffer increased from 100ms to 200ms. 5 unit tests, all 12 player tests pass.
-**Where we stopped:** Quick task 15 complete. All player tests pass, go build/vet clean.
-**Next action:** Continue with next task
+**Date:** 2026-03-06
+**What happened:** Started milestone v1.1 Features & Extensibility. Updated PROJECT.md with new milestone goals and active requirements.
+**Where we stopped:** Defining requirements for v1.1.
+**Next action:** Complete requirements definition, create roadmap.
 
 ---
 *State initialized: 2026-02-27*
-Last activity: 2026-03-05 - Fix audio glitches with BufferedStreamer read-ahead
-*Last updated: 2026-03-05*
+Last activity: 2026-03-06 - Milestone v1.1 started
+*Last updated: 2026-03-06*

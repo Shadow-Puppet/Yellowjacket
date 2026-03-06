@@ -44,7 +44,14 @@ The music player works reliably and feels solid. Every interaction is correct, r
 
 ### Active
 
-(No active requirements — next milestone not yet scoped. Run `/gsd-new-milestone` to define.)
+- [ ] Tag editing — edit track metadata (title, artist, album, etc.) from within the app
+- [ ] Scan cancellation — cancel in-progress library scans
+- [ ] Smart playlists — auto-generated playlists with simple filter rules (genre, year, play count, etc.)
+- [ ] Customizable keyboard shortcuts — configurable key bindings for common player actions
+- [ ] Gapless playback + crossfade — seamless track transitions with optional crossfade setting
+- [ ] MusicBrainz browser — read-only catalog browsing (artists, discographies, album editions, track listings)
+- [ ] Layout customization system — section-based UI customization, components declare size constraints, users configure per-section
+- [ ] Plugin system — full-access API for UI components and backend hooks, extensibility foundation
 
 ### Out of Scope
 
@@ -55,6 +62,22 @@ The music player works reliably and feels solid. Every interaction is correct, r
 - File decomposition for its own sake — only extract when it enables reuse or fixes problems
 - ORM or query builder — would fight existing sqlc architecture
 - Connection pooling for SQLite — meaningless with SetMaxOpenConns(1)
+
+## Current Milestone: v1.1 Features & Extensibility
+
+**Goal:** Add core missing features and build the foundations for a customizable, extensible music player.
+
+**Target features:**
+- Tag editing (track metadata editing from within the app)
+- Scan cancellation (cancel in-progress library scans)
+- Smart playlists (simple filter rules — genre, year, play count, etc.)
+- Customizable keyboard shortcuts (configurable key bindings)
+- Gapless playback + crossfade (seamless transitions, optional crossfade)
+- MusicBrainz browser (read-only catalog: artists, discographies, album editions)
+- Layout customization system (MusicBee-style section-based UI configuration)
+- Plugin system (full-access API for UI + backend extensibility)
+
+**"Done" criteria:** Core features complete and working. Big features (layout, plugins, MusicBrainz) have working foundations — functional but not necessarily feature-complete.
 
 ## Context
 
@@ -101,4 +124,4 @@ The music player works reliably and feels solid. Every interaction is correct, r
 | Design tokens via :host scope | Component-level token scope matches Lit's shadow DOM encapsulation | ✓ Good — consistent visual language achieved |
 
 ---
-*Last updated: 2026-03-05 after v1.0 milestone*
+*Last updated: 2026-03-06 after v1.1 milestone start*
