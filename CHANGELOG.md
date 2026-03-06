@@ -1,3 +1,9 @@
+## [1.2.2](https://github.com/onion-4-dinner/yellowjacket/compare/v1.2.1...v1.2.2) (2026-03-06)
+
+### Bug Fixes
+
+* recover from go-mp3 seek panic on startup ([#86](https://github.com/onion-4-dinner/yellowjacket/issues/86)) ([2f9d9f8](https://github.com/onion-4-dinner/yellowjacket/commit/2f9d9f8508b90b6188fe894c282c5b8e330e8046))
+
 ## [1.2.1](https://github.com/onion-4-dinner/yellowjacket/compare/v1.2.0...v1.2.1) (2026-03-06)
 
 ### Bug Fixes
