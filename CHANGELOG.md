@@ -1,3 +1,9 @@
+## [1.2.1](https://github.com/onion-4-dinner/yellowjacket/compare/v1.2.0...v1.2.1) (2026-03-06)
+
+### Bug Fixes
+
+* **deps:** pin go-webview2 to v1.0.21 for Wails v2 compat ([25f0fe8](https://github.com/onion-4-dinner/yellowjacket/commit/25f0fe81560eeff36a0b2beb52ce1bdf13d5e122))
+
 ## [1.2.0](https://github.com/onion-4-dinner/yellowjacket/compare/v1.1.3...v1.2.0) (2026-03-06)
 
 ### Features
