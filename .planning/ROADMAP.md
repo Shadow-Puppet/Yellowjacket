@@ -46,7 +46,13 @@
   3. Default keyboard shortcuts work immediately after install — play/pause, next/prev, volume up/down, search focus, queue toggle, shuffle, repeat all respond to keys
   4. User can open a settings UI, rebind any shortcut to a different key, and the new binding takes effect immediately — conflicts are warned about before saving
   5. Keyboard shortcuts are context-aware — typing in a search box doesn't trigger player shortcuts (except Escape to blur)
-**Plans:** TBD
+**Plans:** 5 plans
+Plans:
+- [ ] 09-01-PLAN.md — Backend scan control (cancel/pause/resume methods, events, metrics)
+- [ ] 09-02-PLAN.md — Backend shortcuts config + frontend keyboard shortcut service
+- [ ] 09-03-PLAN.md — Frontend scan control UI (buttons, cancel dialog)
+- [ ] 09-04-PLAN.md — Frontend shortcut settings UI (record-style capture, conflict detection)
+- [ ] 09-05-PLAN.md — Integration verification checkpoint
 
 ### Phase 10: Tag Editing
 **Goal:** Users can edit track metadata from within the app and changes are written to the actual audio files
@@ -118,7 +124,7 @@
 | 6. SQL Consolidation & Code Quality | v1.0 | 3/3 | Complete | 2026-03-04 |
 | 7. Backend Performance | v1.0 | 2/2 | Complete | 2026-03-05 |
 | 8. Frontend Performance & UX | v1.0 | 4/4 | Complete | 2026-03-05 |
-| 9. Scan Cancellation & Keyboard Shortcuts | v1.1 | 0/? | Not started | - |
+| 9. Scan Cancellation & Keyboard Shortcuts | v1.1 | 0/5 | Planning complete | - |
 | 10. Tag Editing | v1.1 | 0/? | Not started | - |
 | 11. Smart Playlists | v1.1 | 0/? | Not started | - |
 | 12. Gapless Playback & Crossfade | v1.1 | 0/? | Not started | - |
