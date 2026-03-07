@@ -49,8 +49,8 @@
 **Plans:** 5 plans
 Plans:
 - [x] 09-01-PLAN.md — Backend scan control (cancel/pause/resume methods, events, metrics)
-- [ ] 09-02-PLAN.md — Backend shortcuts config + frontend keyboard shortcut service
-- [ ] 09-03-PLAN.md — Frontend scan control UI (buttons, cancel dialog)
+- [x] 09-02-PLAN.md — Backend shortcuts config + frontend keyboard shortcut service
+- [x] 09-03-PLAN.md — Frontend scan control UI (buttons, cancel dialog)
 - [ ] 09-04-PLAN.md — Frontend shortcut settings UI (record-style capture, conflict detection)
 - [ ] 09-05-PLAN.md — Integration verification checkpoint
 
