@@ -32,6 +32,9 @@ import {
 
 import './config-field';
 import './config-section';
+import './shortcut-capture';
+import { shortcutsStore } from '../../store/shortcuts-store';
+import { ShortcutsController } from '../../store/controllers/shortcuts-controller';
 
 // ===================================================================
 // Scan metrics types and helpers (carried over from library-manager)
@@ -208,6 +211,117 @@ export class ConfigPage extends LitElement {
     // --- Favorites controller ---
     private favCtrl = new FavoritesController(this);
 
+    // --- Shortcuts controller ---
+    private shortcutsCtrl = new ShortcutsController(this);
+
+    // --- Shortcut metadata for UI grouping ---
+    private static readonly SHORTCUT_META: Record<
+        string,
+        {
+            label: string;
+            category: string;
+            scope: string;
+            defaultKey: string;
+        }
+    > = {
+        'player.playPause': {
+            label: 'Play / Pause',
+            category: 'Player',
+            scope: 'global',
+            defaultKey: 'Space',
+        },
+        'player.next': {
+            label: 'Next Track',
+            category: 'Player',
+            scope: 'global',
+            defaultKey: 'N',
+        },
+        'player.previous': {
+            label: 'Previous Track',
+            category: 'Player',
+            scope: 'global',
+            defaultKey: 'P',
+        },
+        'player.volumeUp': {
+            label: 'Volume Up',
+            category: 'Player',
+            scope: 'global',
+            defaultKey: 'Up',
+        },
+        'player.volumeDown': {
+            label: 'Volume Down',
+            category: 'Player',
+            scope: 'global',
+            defaultKey: 'Down',
+        },
+        'player.seekForward': {
+            label: 'Seek Forward',
+            category: 'Player',
+            scope: 'global',
+            defaultKey: 'Right',
+        },
+        'player.seekBack': {
+            label: 'Seek Back',
+            category: 'Player',
+            scope: 'global',
+            defaultKey: 'Left',
+        },
+        'player.shuffle': {
+            label: 'Toggle Shuffle',
+            category: 'Player',
+            scope: 'global',
+            defaultKey: 'S',
+        },
+        'player.repeat': {
+            label: 'Cycle Repeat',
+            category: 'Player',
+            scope: 'global',
+            defaultKey: 'R',
+        },
+        'player.mute': {
+            label: 'Toggle Mute',
+            category: 'Player',
+            scope: 'global',
+            defaultKey: 'M',
+        },
+        'nav.search': {
+            label: 'Focus Search',
+            category: 'Navigation',
+            scope: 'global',
+            defaultKey: '/',
+        },
+        'nav.searchAlt': {
+            label: 'Focus Search (Alt)',
+            category: 'Navigation',
+            scope: 'global',
+            defaultKey: 'Ctrl+F',
+        },
+        'nav.queue': {
+            label: 'Toggle Queue',
+            category: 'Navigation',
+            scope: 'global',
+            defaultKey: 'Q',
+        },
+        'app.selectAll': {
+            label: 'Select All',
+            category: 'App',
+            scope: 'global',
+            defaultKey: 'Ctrl+A',
+        },
+        'tracklist.play': {
+            label: 'Play Selected',
+            category: 'Navigation',
+            scope: 'panel:track-list',
+            defaultKey: 'Enter',
+        },
+        'tracklist.delete': {
+            label: 'Remove Selected',
+            category: 'Navigation',
+            scope: 'panel:track-list',
+            defaultKey: 'Delete',
+        },
+    };
+
     // --- Favorites state ---
     @state() private playlists: playlist.Summary[] = [];
 
@@ -225,6 +339,11 @@ export class ConfigPage extends LitElement {
     @state() private scanPaused = false;
     @state() private showCancelDialog = false;
     @state() private cancelMetrics: { added: number } | null = null;
+    @state() private shortcutConflict: {
+        newAction: string;
+        newKey: string;
+        existingAction: string;
+    } | null = null;
 
     private cancelScanStarted?: () => void;
     private cancelScanProgress?: () => void;
@@ -679,6 +798,66 @@ export class ConfigPage extends LitElement {
             color: var(--yj-accent, #ffd43b);
         }
 
+        /* Keyboard shortcuts section */
+        .shortcut-category {
+            margin-bottom: 16px;
+        }
+        .shortcut-category-header {
+            font-size: var(--yj-text-sm, 13px);
+            font-weight: 600;
+            color: var(--yj-text-secondary, #aaa);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+            padding-bottom: 4px;
+            border-bottom: 1px solid
+                var(--yj-border, #444);
+        }
+        .shortcut-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 6px 0;
+            gap: 16px;
+        }
+        .shortcut-label {
+            font-size: var(--yj-text-sm, 13px);
+            color: var(--yj-text-primary, #eee);
+        }
+        .shortcut-scope {
+            font-size: var(--yj-text-xs, 11px);
+            color: var(
+                --yj-text-tertiary,
+                #888
+            );
+            margin-left: 4px;
+        }
+        .shortcut-actions {
+            margin-top: 16px;
+            display: flex;
+            justify-content: flex-end;
+        }
+        .conflict-banner {
+            margin-top: 12px;
+            padding: 12px;
+            background: rgba(255, 165, 0, 0.1);
+            border: 1px solid
+                rgba(255, 165, 0, 0.4);
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+        .conflict-text {
+            font-size: var(--yj-text-sm, 13px);
+        }
+        .conflict-actions {
+            display: flex;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+
     `;
 
     // ===================================================================
@@ -1052,6 +1231,62 @@ export class ConfigPage extends LitElement {
     };
 
     // ===================================================================
+    // KEYBOARD SHORTCUTS HANDLERS
+    // ===================================================================
+
+    private async handleShortcutChange(
+        e: CustomEvent<{ action: string; key: string }>,
+    ) {
+        const { action, key } = e.detail;
+
+        // Check for conflict — find any other action with the same key in the same or overlapping scope
+        const meta = ConfigPage.SHORTCUT_META[action];
+        const conflict = shortcutsStore.findConflict(
+            key,
+            meta?.scope ?? 'global',
+            action,
+        );
+
+        if (conflict) {
+            // Show conflict warning
+            this.shortcutConflict = {
+                newAction: action,
+                newKey: key,
+                existingAction: conflict.action,
+            };
+            return;
+        }
+
+        // No conflict — save directly
+        await shortcutsStore.updateBinding(action, key);
+    }
+
+    private async handleConflictOverwrite() {
+        if (!this.shortcutConflict) return;
+        const { newAction, newKey, existingAction } =
+            this.shortcutConflict;
+        // Unbind the existing action
+        await shortcutsStore.updateBinding(
+            existingAction,
+            '',
+        );
+        // Set the new binding
+        await shortcutsStore.updateBinding(
+            newAction,
+            newKey,
+        );
+        this.shortcutConflict = null;
+    }
+
+    private handleConflictCancel() {
+        this.shortcutConflict = null;
+    }
+
+    private async handleResetAllShortcuts() {
+        await shortcutsStore.resetAll();
+    }
+
+    // ===================================================================
     // TRACK LIST COLUMN HANDLERS
     // ===================================================================
 
@@ -1172,6 +1407,7 @@ export class ConfigPage extends LitElement {
             ${this.renderThemeSection()}
             ${this.renderFavoritesSection()}
             ${this.renderTrackListSection()}
+            ${this.renderShortcutsSection()}
             ${this.renderLibrarySection()}
         `;
     }
@@ -1411,6 +1647,136 @@ export class ConfigPage extends LitElement {
                         `;
                     })}
                 </ul>
+            </config-section>
+        `;
+    }
+
+    // --- Keyboard Shortcuts section ---
+
+    private renderShortcutsSection() {
+        const bindings =
+            this.shortcutsCtrl.state.bindings;
+        const categories = [
+            'Player',
+            'Navigation',
+            'App',
+        ];
+
+        return html`
+            <config-section
+                heading="Keyboard Shortcuts"
+                description="Customise key bindings for player controls, navigation, and app actions."
+            >
+                ${categories.map((cat) => {
+                    const actions = Object.entries(
+                        ConfigPage.SHORTCUT_META,
+                    ).filter(
+                        ([, meta]) =>
+                            meta.category === cat,
+                    );
+
+                    if (actions.length === 0) return '';
+
+                    return html`
+                        <div class="shortcut-category">
+                            <div
+                                class="shortcut-category-header"
+                            >
+                                ${cat}
+                            </div>
+                            ${actions.map(
+                                ([action, meta]) => html`
+                                    <div
+                                        class="shortcut-row"
+                                    >
+                                        <span
+                                            class="shortcut-label"
+                                        >
+                                            ${meta.label}
+                                            ${meta.scope !==
+                                            'global'
+                                                ? html`
+                                                      <span
+                                                          class="shortcut-scope"
+                                                          >(${meta.scope.replace(
+                                                              'panel:',
+                                                              '',
+                                                          )})</span
+                                                      >
+                                                  `
+                                                : ''}
+                                        </span>
+                                        <shortcut-capture
+                                            .action=${action}
+                                            .currentKey=${bindings.get(
+                                                action,
+                                            ) ?? ''}
+                                            .defaultKey=${meta.defaultKey}
+                                            @shortcut-change=${this
+                                                .handleShortcutChange}
+                                        ></shortcut-capture>
+                                    </div>
+                                `,
+                            )}
+                        </div>
+                    `;
+                })}
+
+                <div class="shortcut-actions">
+                    <button
+                        class="btn-ghost"
+                        @click=${this
+                            .handleResetAllShortcuts}
+                    >
+                        Reset All to Defaults
+                    </button>
+                </div>
+
+                ${this.shortcutConflict
+                    ? html`
+                          <div class="conflict-banner">
+                              <span
+                                  class="conflict-text"
+                              >
+                                  <strong
+                                      >${this
+                                          .shortcutConflict
+                                          .newKey}</strong
+                                  >
+                                  is already bound to
+                                  <strong
+                                      >${ConfigPage
+                                          .SHORTCUT_META[
+                                          this
+                                              .shortcutConflict
+                                              .existingAction
+                                      ]?.label ??
+                                      this
+                                          .shortcutConflict
+                                          .existingAction}</strong
+                                  >.
+                              </span>
+                              <div
+                                  class="conflict-actions"
+                              >
+                                  <button
+                                      class="btn-warning"
+                                      @click=${this
+                                          .handleConflictOverwrite}
+                                  >
+                                      Overwrite
+                                  </button>
+                                  <button
+                                      class="btn-ghost"
+                                      @click=${this
+                                          .handleConflictCancel}
+                                  >
+                                      Cancel
+                                  </button>
+                              </div>
+                          </div>
+                      `
+                    : ''}
             </config-section>
         `;
     }
