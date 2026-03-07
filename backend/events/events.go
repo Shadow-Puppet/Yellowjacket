@@ -28,6 +28,7 @@ const (
 	ThemeConfigChanged     = "ThemeConfigChanged"
 	TrackListConfigChanged = "TrackListConfigChanged"
 	FavoritesConfigChanged = "FavoritesConfigChanged"
+	ShortcutsConfigChanged = "ShortcutsConfigChanged"
 )
 
 // Playlist events.
@@ -45,4 +46,11 @@ const (
 	LibraryScanStarted  = "LibraryScanStarted"
 	LibraryScanProgress = "LibraryScanProgress"
 	LibraryScanComplete = "LibraryScanComplete"
+)
+
+// Scan control events.
+const (
+	LibraryScanCancelled = "LibraryScanCancelled"
+	LibraryScanPaused    = "LibraryScanPaused"
+	LibraryScanResumed   = "LibraryScanResumed"
 )

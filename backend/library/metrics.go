@@ -50,6 +50,9 @@ type ScanMetrics struct {
 	Skipped int64 `json:"skipped"`
 	Removed int64 `json:"removed"`
 
+	// Cancelled is true when the scan was stopped via CancelScan.
+	Cancelled bool `json:"cancelled"`
+
 	// Non-fatal issues encountered during scanning.
 	Warnings []ScanWarning `json:"warnings"`
 }
