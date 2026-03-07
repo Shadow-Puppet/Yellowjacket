@@ -16,8 +16,8 @@ Requirements for v1.1 Features & Extensibility milestone. Each maps to roadmap p
 ### Keyboard Shortcuts
 
 - [x] **KEY-01**: Default keybindings work out of box (play/pause, next/prev, volume, search focus, queue toggle, shuffle, repeat)
-- [ ] **KEY-02**: User can customize all keyboard shortcuts via a visual settings UI
-- [ ] **KEY-03**: Shortcut conflicts are detected and warned about when rebinding
+- [x] **KEY-02**: User can customize all keyboard shortcuts via a visual settings UI
+- [x] **KEY-03**: Shortcut conflicts are detected and warned about when rebinding
 - [x] **KEY-04**: Shortcuts are scoped — different bindings apply based on focused component (track list vs player vs global)
 - [x] **KEY-05**: Shortcuts are disabled when text input has focus (except Escape to blur)
 
@@ -141,8 +141,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SCAN-02 | Phase 9 | Complete |
 | SCAN-03 | Phase 9 | Complete |
 | KEY-01 | Phase 9 | Complete |
-| KEY-02 | Phase 9 | Pending |
-| KEY-03 | Phase 9 | Pending |
+| KEY-02 | Phase 9 | Complete |
+| KEY-03 | Phase 9 | Complete |
 | KEY-04 | Phase 9 | Complete |
 | KEY-05 | Phase 9 | Complete |
 | TAG-01 | Phase 10 | Pending |
