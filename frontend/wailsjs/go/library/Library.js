@@ -14,14 +14,6 @@ export function GetAlbumTracks(arg1) {
   return window['go']['library']['Library']['GetAlbumTracks'](arg1);
 }
 
-export function IsScanActive() {
-  return window['go']['library']['Library']['IsScanActive']();
-}
-
-export function IsScanPaused() {
-  return window['go']['library']['Library']['IsScanPaused']();
-}
-
 export function GetAlbumsByArtist(arg1) {
   return window['go']['library']['Library']['GetAlbumsByArtist'](arg1);
 }
@@ -44,6 +36,14 @@ export function GetAllTracks() {
 
 export function GetTracksByGenre(arg1) {
   return window['go']['library']['Library']['GetTracksByGenre'](arg1);
+}
+
+export function IsScanActive() {
+  return window['go']['library']['Library']['IsScanActive']();
+}
+
+export function IsScanPaused() {
+  return window['go']['library']['Library']['IsScanPaused']();
 }
 
 export function PauseScan() {

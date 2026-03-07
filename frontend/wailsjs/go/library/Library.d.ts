@@ -9,10 +9,6 @@ export function FullRescan():Promise<library.ScanMetrics>;
 
 export function GetAlbumTracks(arg1:number):Promise<Array<library.Track>>;
 
-export function IsScanActive():Promise<boolean>;
-
-export function IsScanPaused():Promise<boolean>;
-
 export function GetAlbumsByArtist(arg1:number):Promise<Array<library.Album>>;
 
 export function GetAllAlbums():Promise<Array<library.Album>>;
@@ -24,6 +20,10 @@ export function GetAllGenresWithCounts():Promise<Array<library.GenreWithCount>>;
 export function GetAllTracks():Promise<Array<library.Track>>;
 
 export function GetTracksByGenre(arg1:string):Promise<Array<library.Track>>;
+
+export function IsScanActive():Promise<boolean>;
+
+export function IsScanPaused():Promise<boolean>;
 
 export function PauseScan():Promise<void>;
 
