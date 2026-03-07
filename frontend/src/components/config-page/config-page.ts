@@ -36,6 +36,9 @@ import './shortcut-capture';
 import { shortcutsStore } from '../../store/shortcuts-store';
 import { ShortcutsController } from '../../store/controllers/shortcuts-controller';
 
+const SCROLL_STORAGE_KEY = 'yj-now-playing-scroll-mode';
+const SCROLL_CHANGE_EVENT = 'yj-scroll-mode-changed';
+
 // ===================================================================
 // Scan metrics types and helpers (carried over from library-manager)
 // ===================================================================
@@ -321,6 +324,9 @@ export class ConfigPage extends LitElement {
             defaultKey: 'Delete',
         },
     };
+
+    // --- Now Playing state ---
+    @state() private scrollMode = 'hover';
 
     // --- Favorites state ---
     @state() private playlists: playlist.Summary[] = [];
@@ -868,6 +874,8 @@ export class ConfigPage extends LitElement {
         super.connectedCallback();
         this.loadLibraryConfig();
         void this.loadPlaylists();
+        this.scrollMode =
+            localStorage.getItem(SCROLL_STORAGE_KEY) || 'hover';
 
         this.cancelScanStarted = EventsOn(
             Events.LibraryScanStarted,
@@ -1287,6 +1295,21 @@ export class ConfigPage extends LitElement {
     }
 
     // ===================================================================
+    // NOW PLAYING HANDLERS
+    // ===================================================================
+
+    private handleScrollModeChange = (
+        e: CustomEvent<ConfigFieldChangeEvent>,
+    ): void => {
+        const mode = String(e.detail.value);
+        this.scrollMode = mode;
+        localStorage.setItem(SCROLL_STORAGE_KEY, mode);
+        window.dispatchEvent(
+            new CustomEvent(SCROLL_CHANGE_EVENT),
+        );
+    };
+
+    // ===================================================================
     // TRACK LIST COLUMN HANDLERS
     // ===================================================================
 
@@ -1404,11 +1427,49 @@ export class ConfigPage extends LitElement {
         return html`
             <h2>Settings</h2>
 
+            ${this.renderNowPlayingSection()}
             ${this.renderThemeSection()}
             ${this.renderFavoritesSection()}
             ${this.renderTrackListSection()}
             ${this.renderShortcutsSection()}
             ${this.renderLibrarySection()}
+        `;
+    }
+
+    // --- Now Playing section ---
+
+    private renderNowPlayingSection() {
+        return html`
+            <config-section
+                heading="Now Playing"
+                description="Configure the now-playing display in the bottom bar."
+            >
+                <config-field
+                    .schema=${{
+                        key: 'scrollMode',
+                        label: 'Text Scroll Behaviour',
+                        description:
+                            'How overflowing track title and artist text is handled when it exceeds the available width.',
+                        type: 'select' as const,
+                        options: [
+                            {
+                                value: 'hover',
+                                label: 'Scroll on Hover (Default)',
+                            },
+                            {
+                                value: 'always',
+                                label: 'Always Scroll',
+                            },
+                            {
+                                value: 'never',
+                                label: 'Never (Ellipsis)',
+                            },
+                        ],
+                    }}
+                    .value=${this.scrollMode}
+                    @config-change=${this.handleScrollModeChange}
+                ></config-field>
+            </config-section>
         `;
     }
 

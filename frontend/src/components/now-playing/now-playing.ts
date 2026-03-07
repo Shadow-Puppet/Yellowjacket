@@ -11,6 +11,16 @@ const MIN_WIDTH = 120;
 const MAX_WIDTH = 350;
 const DEFAULT_WIDTH = 200;
 
+const SCROLL_STORAGE_KEY = 'yj-now-playing-scroll-mode';
+const SCROLL_CHANGE_EVENT = 'yj-scroll-mode-changed';
+
+/** Pixels per second the text scrolls at. */
+const SCROLL_SPEED = 30;
+const MIN_DURATION = 3;
+const MAX_DURATION = 15;
+
+type ScrollMode = 'hover' | 'always' | 'never';
+
 @customElement('now-playing')
 export class NowPlaying extends LitElement {
     private player = new PlayerController(this);
@@ -21,6 +31,23 @@ export class NowPlaying extends LitElement {
 
     @state()
     private showCoverPreview = false;
+
+    @state()
+    private scrollMode: ScrollMode = 'hover';
+
+    @state()
+    private titleOverflows = false;
+
+    @state()
+    private artistOverflows = false;
+
+    @state()
+    private titleHovered = false;
+
+    @state()
+    private artistHovered = false;
+
+    private resizeObserver?: ResizeObserver;
 
     static override styles = [designTokens, css`
     :host {
@@ -128,20 +155,65 @@ export class NowPlaying extends LitElement {
       opacity: 0.8;
     }
 
+    /* --- Scrollable text containers --- */
+
+    .track-title,
+    .track-artist {
+      position: relative;
+      white-space: nowrap;
+      overflow: hidden;
+    }
+
     .track-title {
       font-size: var(--yj-text-lg);
       font-weight: 500;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
     }
 
     .track-artist {
       font-size: var(--yj-text-sm);
       color: var(--yj-text-tertiary, #666);
-      white-space: nowrap;
-      overflow: hidden;
+    }
+
+    /* Static ellipsis when not scrolling */
+    .track-title:not(.will-scroll),
+    .track-artist:not(.will-scroll) {
       text-overflow: ellipsis;
+    }
+
+    .scroll-content {
+      display: inline-block;
+      white-space: nowrap;
+    }
+
+    /* Fade-out masks on both edges when scrolling */
+    .track-title.will-scroll,
+    .track-artist.will-scroll {
+      mask-image: linear-gradient(
+        to right,
+        transparent 0%,
+        black 8%,
+        black 92%,
+        transparent 100%
+      );
+      -webkit-mask-image: linear-gradient(
+        to right,
+        transparent 0%,
+        black 8%,
+        black 92%,
+        transparent 100%
+      );
+    }
+
+    .will-scroll .scroll-content {
+      animation: scroll-text var(--scroll-duration, 5s) linear infinite;
+      padding-right: 2em; /* gap before the text repeats visually */
+    }
+
+    @keyframes scroll-text {
+      0%   { transform: translateX(0); }
+      5%   { transform: translateX(0); }
+      95%  { transform: translateX(var(--scroll-distance, -100%)); }
+      100% { transform: translateX(var(--scroll-distance, -100%)); }
     }
 
     .resize-handle {
@@ -164,15 +236,29 @@ export class NowPlaying extends LitElement {
 
     override connectedCallback() {
         super.connectedCallback();
+        this.loadScrollMode();
         this.updateWidth(DEFAULT_WIDTH);
         document.addEventListener('mousemove', this.handleMouseMove);
         document.addEventListener('mouseup', this.handleMouseUp);
+        window.addEventListener(SCROLL_CHANGE_EVENT, this.handleScrollModeEvent);
+
+        this.resizeObserver = new ResizeObserver(() => {
+            this.checkOverflows();
+        });
     }
 
     override disconnectedCallback() {
         super.disconnectedCallback();
         document.removeEventListener('mousemove', this.handleMouseMove);
         document.removeEventListener('mouseup', this.handleMouseUp);
+        window.removeEventListener(SCROLL_CHANGE_EVENT, this.handleScrollModeEvent);
+        this.resizeObserver?.disconnect();
+    }
+
+    protected override updated(): void {
+        this.checkOverflows();
+        this.observeTextContainers();
+        this.applyScrollDistances();
     }
 
     override render() {
@@ -196,6 +282,9 @@ export class NowPlaying extends LitElement {
             ? this.favCtrl.isFavorited(track.filePath)
             : false;
         const favVariant = isFav ? 'solid' : 'regular';
+
+        const titleScrolling = this.shouldScroll('title');
+        const artistScrolling = this.shouldScroll('artist');
 
         return html`
       <div class="now-playing">
@@ -244,11 +333,19 @@ export class NowPlaying extends LitElement {
         </div>
         <div class="track-info-wrapper">
           <div class="track-info">
-            <span class="track-title">
-              ${track.title}
+            <span
+              class="track-title ${titleScrolling ? 'will-scroll' : ''}"
+              @mouseenter=${this.handleTitleMouseEnter}
+              @mouseleave=${this.handleTitleMouseLeave}
+            >
+              <span class="scroll-content">${track.title}</span>
             </span>
-            <span class="track-artist">
-              ${track.artist || 'Unknown Artist'}
+            <span
+              class="track-artist ${artistScrolling ? 'will-scroll' : ''}"
+              @mouseenter=${this.handleArtistMouseEnter}
+              @mouseleave=${this.handleArtistMouseLeave}
+            >
+              <span class="scroll-content">${track.artist || 'Unknown Artist'}</span>
             </span>
           </div>
           ${track.filePath
@@ -277,6 +374,112 @@ export class NowPlaying extends LitElement {
     `;
     }
 
+    // ===================================================================
+    // SCROLL LOGIC
+    // ===================================================================
+
+    private loadScrollMode(): void {
+        const stored = localStorage.getItem(SCROLL_STORAGE_KEY);
+
+        if (stored === 'hover' || stored === 'always' || stored === 'never') {
+            this.scrollMode = stored;
+        }
+    }
+
+    private handleScrollModeEvent = (): void => {
+        this.loadScrollMode();
+    };
+
+    private shouldScroll(field: 'title' | 'artist'): boolean {
+        const overflows = field === 'title' ? this.titleOverflows : this.artistOverflows;
+
+        if (!overflows || this.scrollMode === 'never') return false;
+        if (this.scrollMode === 'always') return true;
+
+        // hover mode
+        return field === 'title' ? this.titleHovered : this.artistHovered;
+    }
+
+    private checkOverflows(): void {
+        const titleEl = this.shadowRoot?.querySelector<HTMLElement>('.track-title');
+        const artistEl = this.shadowRoot?.querySelector<HTMLElement>('.track-artist');
+
+        const titleNow = titleEl ? titleEl.scrollWidth > titleEl.clientWidth : false;
+        const artistNow = artistEl ? artistEl.scrollWidth > artistEl.clientWidth : false;
+
+        // Only update state when changed to avoid infinite loops
+        if (titleNow !== this.titleOverflows) {
+            this.titleOverflows = titleNow;
+        }
+
+        if (artistNow !== this.artistOverflows) {
+            this.artistOverflows = artistNow;
+        }
+    }
+
+    private observeTextContainers(): void {
+        if (!this.resizeObserver) return;
+
+        const titleEl = this.shadowRoot?.querySelector('.track-title');
+        const artistEl = this.shadowRoot?.querySelector('.track-artist');
+
+        // ResizeObserver automatically deduplicates observed elements
+        if (titleEl) this.resizeObserver.observe(titleEl);
+        if (artistEl) this.resizeObserver.observe(artistEl);
+    }
+
+    /**
+     * Set CSS custom properties on each scroll-content span so the
+     * animation knows how far to travel and how long to take.
+     */
+    private applyScrollDistances(): void {
+        const pairs: Array<{ container: string; overflows: boolean }> = [
+            { container: '.track-title', overflows: this.titleOverflows },
+            { container: '.track-artist', overflows: this.artistOverflows },
+        ];
+
+        for (const { container, overflows } of pairs) {
+            if (!overflows) continue;
+
+            const el = this.shadowRoot?.querySelector<HTMLElement>(container);
+            const content = el?.querySelector<HTMLElement>('.scroll-content');
+
+            if (!el || !content) continue;
+
+            const overflow = content.scrollWidth - el.clientWidth;
+
+            if (overflow > 0) {
+                const duration = Math.min(MAX_DURATION, Math.max(MIN_DURATION, overflow / SCROLL_SPEED));
+                el.style.setProperty('--scroll-distance', `-${overflow}px`);
+                el.style.setProperty('--scroll-duration', `${duration.toFixed(1)}s`);
+            }
+        }
+    }
+
+    // ===================================================================
+    // HOVER HANDLERS
+    // ===================================================================
+
+    private handleTitleMouseEnter = (): void => {
+        this.titleHovered = true;
+    };
+
+    private handleTitleMouseLeave = (): void => {
+        this.titleHovered = false;
+    };
+
+    private handleArtistMouseEnter = (): void => {
+        this.artistHovered = true;
+    };
+
+    private handleArtistMouseLeave = (): void => {
+        this.artistHovered = false;
+    };
+
+    // ===================================================================
+    // COVER PREVIEW
+    // ===================================================================
+
     private handleCoverMouseEnter = () => {
         const track = this.player.currentTrack;
 
@@ -302,6 +505,10 @@ export class NowPlaying extends LitElement {
     private handleCoverMouseLeave = () => {
         this.showCoverPreview = false;
     };
+
+    // ===================================================================
+    // RESIZE
+    // ===================================================================
 
     private handleMouseDown = (e: MouseEvent) => {
         e.preventDefault();
