@@ -9,9 +9,9 @@ Requirements for v1.1 Features & Extensibility milestone. Each maps to roadmap p
 
 ### Scan Cancellation
 
-- [ ] **SCAN-01**: User can cancel an in-progress library scan via a cancel button
-- [ ] **SCAN-02**: Cancelled scan stops gracefully without corrupting the database
-- [ ] **SCAN-03**: User can pause a library scan and resume it without re-scanning processed files
+- [x] **SCAN-01**: User can cancel an in-progress library scan via a cancel button
+- [x] **SCAN-02**: Cancelled scan stops gracefully without corrupting the database
+- [x] **SCAN-03**: User can pause a library scan and resume it without re-scanning processed files
 
 ### Keyboard Shortcuts
 
@@ -137,9 +137,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SCAN-01 | Phase 9 | Pending |
-| SCAN-02 | Phase 9 | Pending |
-| SCAN-03 | Phase 9 | Pending |
+| SCAN-01 | Phase 9 | Complete |
+| SCAN-02 | Phase 9 | Complete |
+| SCAN-03 | Phase 9 | Complete |
 | KEY-01 | Phase 9 | Pending |
 | KEY-02 | Phase 9 | Pending |
 | KEY-03 | Phase 9 | Pending |

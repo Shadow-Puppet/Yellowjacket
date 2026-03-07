@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Features & Extensibility
-status: roadmap_complete
-last_updated: "2026-03-06"
+status: in_progress
+last_updated: "2026-03-07"
 progress:
   total_phases: 6
   completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
+  total_plans: 5
+  completed_plans: 1
 ---
 
 # YellowJacket — Project State
@@ -18,21 +18,21 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-06)
 
 **Core value:** The music player works reliably and feels solid — every interaction is correct, responsive, and trustworthy.
-**Current focus:** v1.1 Features & Extensibility — roadmap complete, ready for planning
+**Current focus:** v1.1 Features & Extensibility — Phase 9 in progress
 
 ## Current Position
 
 Phase: 9 — Scan Cancellation & Keyboard Shortcuts
-Plan: —
-Status: Ready for planning
-Progress: ░░░░░░░░░░░░░░░░░░░░ 0/6 phases (0%)
-Last activity: 2026-03-06 — Roadmap created for v1.1
+Plan: 2 of 5
+Status: In progress
+Progress: █░░░░░░░░░░░░░░░░░░░ 1/5 plans (20%)
+Last activity: 2026-03-07 — Completed 09-01 (scan control backend)
 
 ### Phase Overview
 
 | Phase | Status |
 |-------|--------|
-| 9. Scan Cancellation & Keyboard Shortcuts | Not started |
+| 9. Scan Cancellation & Keyboard Shortcuts | In Progress (1/5 plans) |
 | 10. Tag Editing | Not started |
 | 11. Smart Playlists | Not started |
 | 12. Gapless Playback & Crossfade | Not started |
@@ -42,7 +42,11 @@ Last activity: 2026-03-06 — Roadmap created for v1.1
 ## Performance Metrics
 
 **v1.0 baseline:** 8 phases, 17 plans, 34 tasks in 6 days (107 commits)
-**v1.1 scope:** 6 phases, 43 requirements, ~? plans (TBD during planning)
+**v1.1 scope:** 6 phases, 43 requirements, 5 plans (Phase 9)
+
+| Phase | Plan | Duration | Tasks | Files |
+|-------|------|----------|-------|-------|
+| 09-01 | scan control backend | 16 min | 2 | 5 |
 
 ## Accumulated Context
 
@@ -75,7 +79,7 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 - modernc.org/libc version must match exactly when updating modernc.org/sqlite
 - `@lit-labs/signals` is experimental (v0.2.0) — not blocking but noted
 - Tag writing: block edits on currently-playing files (beep holds `*os.File` handle) — Phase 10
-- Scan cancellation: skip orphan cleanup on cancelled scans — Phase 9
+- Scan cancellation: skip orphan cleanup on cancelled scans — Phase 9 ✅ (implemented in 09-01)
 - MusicBrainz: strict 1 req/s rate limit, proper User-Agent, SQLite cache — Phase 13
 - Plugin system: JS-only for v1.1, recover() wrappers, read-only DB access — Phase 14
 - FLAC tag writes load entire file into memory (go-flac) — acceptable for v1.1 — Phase 10
@@ -89,12 +93,12 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 
 ### Last Session
 
-**Date:** 2026-03-06
-**What happened:** Gathered Phase 9 implementation context. Discussed default key bindings (hybrid style), shortcut settings UI (record-style capture), context scoping (3 scopes), and scan control UX (buttons next to existing progress bar, cancel prompts user).
-**Where we stopped:** Phase 9 context gathered → `.planning/phases/09-scan-cancellation-keyboard-shortcuts/09-CONTEXT.md`
-**Next action:** `/gsd-plan-phase 9` — Plan Scan Cancellation & Keyboard Shortcuts
+**Date:** 2026-03-07
+**What happened:** Executed 09-01-PLAN.md — scan control backend. Added CancelScan/PauseScan/ResumeScan methods, per-scan cancellable context, pause checkpoints, and 3 new scan lifecycle events.
+**Where we stopped:** Completed 09-01-PLAN.md
+**Next action:** `/gsd-execute-phase 9` — Execute Plan 02 (keyboard shortcuts config)
 
 ---
 *State initialized: 2026-02-27*
-Last activity: 2026-03-06 - v1.1 roadmap created
-*Last updated: 2026-03-06*
+Last activity: 2026-03-07 - Completed 09-01 scan control backend
+*Last updated: 2026-03-07*

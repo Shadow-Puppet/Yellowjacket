@@ -48,7 +48,7 @@
   5. Keyboard shortcuts are context-aware — typing in a search box doesn't trigger player shortcuts (except Escape to blur)
 **Plans:** 5 plans
 Plans:
-- [ ] 09-01-PLAN.md — Backend scan control (cancel/pause/resume methods, events, metrics)
+- [x] 09-01-PLAN.md — Backend scan control (cancel/pause/resume methods, events, metrics)
 - [ ] 09-02-PLAN.md — Backend shortcuts config + frontend keyboard shortcut service
 - [ ] 09-03-PLAN.md — Frontend scan control UI (buttons, cancel dialog)
 - [ ] 09-04-PLAN.md — Frontend shortcut settings UI (record-style capture, conflict detection)
