@@ -84,6 +84,12 @@ type Library struct {
 	conf        *Config
 	db          *database.DB
 	rescanHooks RescanHooks
+
+	// Scan control fields — protected by mu.
+	scanActive  bool
+	scanCancel  context.CancelFunc
+	scanPaused  bool
+	scanPauseCh chan struct{}
 }
 
 // SetRescanHooks provides optional hooks for cross-cutting
@@ -175,6 +181,32 @@ func (l *Library) registerEventHandlers() {
 func (l *Library) Scan() (*ScanMetrics, error) {
 	metrics := newScanMetrics()
 	scanStart := time.Now()
+
+	scanCtx, scanCancel := context.WithCancel(l.ctx)
+	defer scanCancel()
+
+	l.mu.Lock()
+	l.scanCancel = scanCancel
+	l.scanActive = true
+	l.scanPaused = false
+	l.scanPauseCh = nil
+	l.mu.Unlock()
+
+	defer func() {
+		l.mu.Lock()
+		l.scanCancel = nil
+		l.scanActive = false
+		// If still paused, unpause so no dangling channel.
+		if l.scanPaused {
+			l.scanPaused = false
+			if l.scanPauseCh != nil {
+				close(l.scanPauseCh)
+			}
+		}
+
+		l.scanPauseCh = nil
+		l.mu.Unlock()
+	}()
 
 	if len(l.conf.DirectoryPath) == 0 {
 		return metrics, errLibraryDirNotConfigured
@@ -294,8 +326,8 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 							needsUpdate:    true,
 							existingLength: audioFile.LengthMilliseconds,
 						}:
-						case <-l.ctx.Done():
-							return l.ctx.Err()
+						case <-scanCtx.Done():
+							return scanCtx.Err()
 						}
 
 						return nil
@@ -321,8 +353,8 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 					absolutePath: absoluteFilePath,
 					fileType:     fileType,
 				}:
-				case <-l.ctx.Done():
-					return l.ctx.Err()
+				case <-scanCtx.Done():
+					return scanCtx.Err()
 				}
 
 				return nil
@@ -473,6 +505,10 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 
 	for work := range workChan {
 		g.Go(func() error {
+			if err := l.waitIfPaused(scanCtx); err != nil {
+				return err
+			}
+
 			result, err := l.extractAudioMetadata(
 				work, metrics,
 			)
@@ -493,8 +529,8 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 
 			select {
 			case resultChan <- result:
-			case <-l.ctx.Done():
-				return l.ctx.Err()
+			case <-scanCtx.Done():
+				return scanCtx.Err()
 			}
 
 			return nil
@@ -546,73 +582,84 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 
 	metrics.ThumbnailWallClock = time.Since(thumbStart)
 
-	// --- Phase 5: orphan cleanup ---
-	runtime.EventsEmit(l.ctx, events.LibraryScanProgress, ScanProgress{
-		Phase: "orphans", Total: totalFiles,
-		Processed: a + s + u, Added: a, Skipped: s, Updated: u,
-	})
-
-	orphanStart := time.Now()
+	// Skip orphan cleanup if the scan was cancelled — existingPaths
+	// still contains unvisited files that would be incorrectly deleted.
+	cancelled := scanCtx.Err() != nil
 
 	var removed atomic.Int64
 
-	existingPaths.Range(func(key, value any) bool {
-		path := key.(string)
-		audioFile := value.(sqlcgen.AudioFile)
+	if cancelled {
+		metrics.Cancelled = true
+		l.logger.Info("scan cancelled, skipping orphan cleanup")
+	} else {
+		// --- Phase 5: orphan cleanup ---
+		runtime.EventsEmit(l.ctx, events.LibraryScanProgress, ScanProgress{
+			Phase: "orphans", Total: totalFiles,
+			Processed: a + s + u, Added: a, Skipped: s, Updated: u,
+		})
 
-		l.logger.Debug(
-			"removing orphaned database entry",
-			"path", path, "id", audioFile.ID,
-		)
+		orphanStart := time.Now()
 
-		if err := l.db.Queries.DeleteAudioFile(
-			l.ctx, audioFile.ID,
-		); err != nil {
-			l.logger.Warn(
-				"failed to delete orphaned audio file",
-				"path", path,
-				"id", audioFile.ID,
-				"err", err,
+		existingPaths.Range(func(key, value any) bool {
+			path := key.(string)
+			audioFile := value.(sqlcgen.AudioFile)
+
+			l.logger.Debug(
+				"removing orphaned database entry",
+				"path", path, "id", audioFile.ID,
 			)
 
-			metrics.addWarning(path, "orphan", err)
+			if err := l.db.Queries.DeleteAudioFile(
+				l.ctx, audioFile.ID,
+			); err != nil {
+				l.logger.Warn(
+					"failed to delete orphaned audio file",
+					"path", path,
+					"id", audioFile.ID,
+					"err", err,
+				)
+
+				metrics.addWarning(path, "orphan", err)
+
+				return true
+			}
+
+			// Remove from FTS5 search index.
+			if err := l.db.DeleteSearchIndex(
+				audioFile.ID,
+			); err != nil {
+				l.logger.Warn(
+					"failed to delete FTS entry for orphan",
+					"id", audioFile.ID,
+					"err", err,
+				)
+
+				metrics.addWarning(path, "orphan", err)
+			}
+
+			removed.Add(1)
 
 			return true
-		}
+		})
 
-		// Remove from FTS5 search index.
-		if err := l.db.DeleteSearchIndex(
-			audioFile.ID,
-		); err != nil {
+		metrics.OrphanCleanup = time.Since(orphanStart)
+	}
+
+	// --- Phase 6: post-scan variant generation ---
+	if !cancelled {
+		variantStart := time.Now()
+
+		if err := l.generateMissingSizedVariants(); err != nil {
 			l.logger.Warn(
-				"failed to delete FTS entry for orphan",
-				"id", audioFile.ID,
+				"could not generate missing sized variants",
 				"err", err,
 			)
 
-			metrics.addWarning(path, "orphan", err)
+			metrics.addWarning("", "variant", err)
 		}
 
-		removed.Add(1)
-
-		return true
-	})
-
-	metrics.OrphanCleanup = time.Since(orphanStart)
-
-	// --- Phase 6: post-scan variant generation ---
-	variantStart := time.Now()
-
-	if err := l.generateMissingSizedVariants(); err != nil {
-		l.logger.Warn(
-			"could not generate missing sized variants",
-			"err", err,
-		)
-
-		metrics.addWarning("", "variant", err)
+		metrics.PostScanVariants = time.Since(variantStart)
 	}
-
-	metrics.PostScanVariants = time.Since(variantStart)
 
 	// --- Finalize ---
 	metrics.Added = added.Load()
@@ -627,13 +674,18 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 		"updated", metrics.Updated,
 		"removed", metrics.Removed,
 		"skipped", metrics.Skipped,
+		"cancelled", cancelled,
 		"total", metrics.Total,
 		"library", l.conf.DirectoryPath,
 	)
 
-	runtime.EventsEmit(
-		l.ctx, events.LibraryScanComplete, metrics,
-	)
+	if cancelled {
+		runtime.EventsEmit(l.ctx, events.LibraryScanCancelled, metrics)
+	} else {
+		runtime.EventsEmit(
+			l.ctx, events.LibraryScanComplete, metrics,
+		)
+	}
 
 	return metrics, scanErr
 }
