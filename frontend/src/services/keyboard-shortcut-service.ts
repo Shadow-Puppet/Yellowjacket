@@ -270,7 +270,9 @@ async function dispatch(action: string): Promise<void> {
 
         // App actions
         case 'app.selectAll':
-            document.execCommand('selectAll');
+            document.dispatchEvent(
+                new CustomEvent('shortcut:select-all'),
+            );
             break;
 
         // Panel-specific: track list
