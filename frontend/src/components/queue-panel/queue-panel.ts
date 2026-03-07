@@ -127,7 +127,15 @@ export class QueuePanel
     };
 
     private panelWidth = DEFAULT_WIDTH;
-    private flowLayout = flow();
+    // _itemSize is an internal property applied via Object.assign in BaseLayout's
+    // config setter. Setting it to match the actual fixed .track-item height (49px)
+    // prevents lit-virtualizer's scroll error correction from fighting the native
+    // scrollbar during drag on large lists (20k+ items). Without this, the default
+    // estimate of 100px causes massive scroll height recalculation as items get
+    // measured, which calls scrollTo() and desynchronizes the scrollbar thumb.
+    private flowLayout = flow({
+        _itemSize: { width: 100, height: 49 },
+    } as Parameters<typeof flow>[0]);
 
     /**
      * Track the last currentIndex so we only auto-scroll
