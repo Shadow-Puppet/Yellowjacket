@@ -13,7 +13,6 @@ import '@components/genres-view/genres-view.ts';
 import '@components/genre-details/genre-details.ts';
 import '@components/search-bar/search-bar.ts';
 import '@components/track-details/track-details.ts';
-import type { SearchBar } from '@components/search-bar/search-bar.ts';
 import '@awesome.me/webawesome/dist/styles/themes/default.css';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import { setBasePath } from '@awesome.me/webawesome/dist/webawesome.js';
@@ -24,6 +23,9 @@ import * as Queue from '@go/queue/Queue';
 // Importing the theme store triggers initialization: it fetches the saved
 // theme from the backend and applies CSS custom properties to :root.
 import '@store/theme-store';
+// Importing the keyboard shortcut service triggers initialization:
+// registers the document keydown listener for global shortcuts.
+import './src/services/keyboard-shortcut-service';
 import {
     hasTrackPayload,
     getDragPayload,
@@ -149,23 +151,6 @@ if (queueButton && queuePanel) {
         }) as EventListener,
     );
 }
-
-// ---------------------------------------------------------------
-// Ctrl+F to focus the search bar
-// ---------------------------------------------------------------
-
-document.addEventListener('keydown', (e: KeyboardEvent) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
-        const bar = document.querySelector(
-            'search-bar',
-        ) as SearchBar | null;
-
-        if (bar && !bar.hasAttribute('hidden')) {
-            e.preventDefault();
-            bar.focusInput();
-        }
-    }
-});
 
 // ---------------------------------------------------------------
 // Request current state from the backend
