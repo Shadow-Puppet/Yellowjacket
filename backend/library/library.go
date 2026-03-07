@@ -590,6 +590,7 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 
 	if cancelled {
 		metrics.Cancelled = true
+
 		l.logger.Info("scan cancelled, skipping orphan cleanup")
 	} else {
 		// --- Phase 5: orphan cleanup ---

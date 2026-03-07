@@ -108,6 +108,7 @@ export namespace library {
 	    updated: number;
 	    skipped: number;
 	    removed: number;
+	    cancelled: boolean;
 	    warnings: ScanWarning[];
 	
 	    static createFrom(source: any = {}) {
@@ -141,6 +142,7 @@ export namespace library {
 	        this.updated = source["updated"];
 	        this.skipped = source["skipped"];
 	        this.removed = source["removed"];
+	        this.cancelled = source["cancelled"];
 	        this.warnings = this.convertValues(source["warnings"], ScanWarning);
 	    }
 	

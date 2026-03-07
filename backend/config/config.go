@@ -15,6 +15,7 @@ import (
 	"yellowjacket/backend/events"
 	"yellowjacket/backend/favorites"
 	"yellowjacket/backend/library"
+	"yellowjacket/backend/shortcuts"
 	"yellowjacket/backend/system"
 	"yellowjacket/backend/theme"
 	"yellowjacket/backend/tracklist"
@@ -30,6 +31,7 @@ type Config struct {
 	Window    *WindowConfig     `toml:"Window"`
 	TrackList *tracklist.Config `toml:"TrackList"`
 	Favorites *favorites.Config `toml:"Favorites"`
+	Shortcuts *shortcuts.Config `toml:"Shortcuts"`
 }
 
 // NewConfig creates a new config by loading it from disk.
@@ -82,6 +84,12 @@ func (c *Config) Validate() error {
 
 	if c.Favorites != nil {
 		if err := c.Favorites.Validate(); err != nil {
+			configErrs = errors.Join(configErrs, err)
+		}
+	}
+
+	if c.Shortcuts != nil {
+		if err := c.Shortcuts.Validate(); err != nil {
 			configErrs = errors.Join(configErrs, err)
 		}
 	}
@@ -190,6 +198,12 @@ func (c *Config) applyDefaults() {
 	}
 
 	c.Favorites.ApplyDefaults()
+
+	if c.Shortcuts == nil {
+		c.Shortcuts = &shortcuts.Config{}
+	}
+
+	c.Shortcuts.ApplyDefaults()
 }
 
 // SetContext sets the Wails runtime context for event emission.
@@ -581,4 +595,102 @@ func (c *Config) emitFavoritesChanged() {
 			"PinDefault": c.Favorites.PinDefault,
 		},
 	)
+}
+
+// GetShortcuts returns the current shortcut bindings map.
+func (c *Config) GetShortcuts() map[string]string {
+	if c.Shortcuts == nil {
+		c.Shortcuts = &shortcuts.Config{}
+		c.Shortcuts.ApplyDefaults()
+	}
+
+	return c.Shortcuts.Bindings
+}
+
+// SetShortcuts saves the entire shortcut bindings map.
+func (c *Config) SetShortcuts(
+	bindings map[string]string,
+) error {
+	if c.Shortcuts == nil {
+		c.Shortcuts = &shortcuts.Config{}
+	}
+
+	c.Shortcuts.Bindings = bindings
+
+	if err := c.Save(); err != nil {
+		return fmt.Errorf(
+			"could not save shortcuts config: %w", err,
+		)
+	}
+
+	if c.ctx != nil {
+		runtime.EventsEmit(
+			c.ctx,
+			events.ShortcutsConfigChanged,
+			bindings,
+		)
+	}
+
+	c.logger.Info("shortcuts config updated")
+
+	return nil
+}
+
+// SetShortcut saves a single shortcut binding.
+func (c *Config) SetShortcut(
+	action string, key string,
+) error {
+	if c.Shortcuts == nil {
+		c.Shortcuts = &shortcuts.Config{}
+		c.Shortcuts.ApplyDefaults()
+	}
+
+	c.Shortcuts.Bindings[action] = key
+
+	if err := c.Save(); err != nil {
+		return fmt.Errorf(
+			"could not save shortcut: %w", err,
+		)
+	}
+
+	if c.ctx != nil {
+		runtime.EventsEmit(
+			c.ctx,
+			events.ShortcutsConfigChanged,
+			c.Shortcuts.Bindings,
+		)
+	}
+
+	c.logger.Info(
+		"shortcut updated",
+		"action", action,
+		"key", key,
+	)
+
+	return nil
+}
+
+// ResetShortcuts resets all shortcuts to defaults.
+func (c *Config) ResetShortcuts() error {
+	c.Shortcuts = &shortcuts.Config{
+		Bindings: shortcuts.DefaultBindings(),
+	}
+
+	if err := c.Save(); err != nil {
+		return fmt.Errorf(
+			"could not save shortcuts reset: %w", err,
+		)
+	}
+
+	if c.ctx != nil {
+		runtime.EventsEmit(
+			c.ctx,
+			events.ShortcutsConfigChanged,
+			c.Shortcuts.Bindings,
+		)
+	}
+
+	c.logger.Info("shortcuts reset to defaults")
+
+	return nil
 }

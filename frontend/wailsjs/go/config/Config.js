@@ -22,6 +22,10 @@ export function GetScanConcurrency() {
   return window['go']['config']['Config']['GetScanConcurrency']();
 }
 
+export function GetShortcuts() {
+  return window['go']['config']['Config']['GetShortcuts']();
+}
+
 export function GetThemeAccentColor() {
   return window['go']['config']['Config']['GetThemeAccentColor']();
 }
@@ -36,6 +40,10 @@ export function GetTrackListColumns() {
 
 export function Load() {
   return window['go']['config']['Config']['Load']();
+}
+
+export function ResetShortcuts() {
+  return window['go']['config']['Config']['ResetShortcuts']();
 }
 
 export function Save() {
@@ -64,6 +72,14 @@ export function SetPinDefaultPlaylist(arg1) {
 
 export function SetScanConcurrency(arg1) {
   return window['go']['config']['Config']['SetScanConcurrency'](arg1);
+}
+
+export function SetShortcut(arg1, arg2) {
+  return window['go']['config']['Config']['SetShortcut'](arg1, arg2);
+}
+
+export function SetShortcuts(arg1) {
+  return window['go']['config']['Config']['SetShortcuts'](arg1);
 }
 
 export function SetThemeAccentColor(arg1) {
