@@ -151,6 +151,10 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
     private prevSortField: string | null = null;
     private prevSortDir: SortDirection = 'asc';
 
+    private handleSelectAll = (): void => {
+        this.selection.selectAll();
+    };
+
     private clearSelectionHandler = (e: MouseEvent) => {
         const path = e.composedPath();
         const isTrackClick = path.some(
@@ -1030,6 +1034,7 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
         }
         document.addEventListener('mousedown', this.sortDropdownCloseHandler);
         document.addEventListener('click', this.clearSelectionHandler);
+        document.addEventListener('shortcut:select-all', this.handleSelectAll);
         document.addEventListener('mousemove', this.onColResizeMove);
         document.addEventListener('mouseup', this.onColResizeEnd);
 
@@ -1051,6 +1056,7 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
         super.disconnectedCallback();
         document.removeEventListener('mousedown', this.sortDropdownCloseHandler);
         document.removeEventListener('click', this.clearSelectionHandler);
+        document.removeEventListener('shortcut:select-all', this.handleSelectAll);
         document.removeEventListener('mousemove', this.onColResizeMove);
         document.removeEventListener('mouseup', this.onColResizeEnd);
 

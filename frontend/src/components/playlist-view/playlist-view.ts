@@ -277,6 +277,10 @@ export class PlaylistView
             this.closePlaylistContextMenu();
         };
 
+    private handleSelectAll = (): void => {
+        this.selection.selectAll();
+    };
+
     private clearSelectionHandler = (e: MouseEvent) => {
         const path = e.composedPath();
         const isTrackClick = path.some(
@@ -1196,6 +1200,10 @@ export class PlaylistView
             'mousedown',
             this.sortDropdownCloseHandler,
         );
+        document.addEventListener(
+            'shortcut:select-all',
+            this.handleSelectAll,
+        );
     }
 
     override disconnectedCallback() {
@@ -1225,6 +1233,10 @@ export class PlaylistView
         document.removeEventListener(
             'mousedown',
             this.sortDropdownCloseHandler,
+        );
+        document.removeEventListener(
+            'shortcut:select-all',
+            this.handleSelectAll,
         );
     }
 

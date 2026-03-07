@@ -92,6 +92,10 @@ export class QueuePanel
     @query('track-details')
     private trackDetailsDialog!: TrackDetails;
 
+    private handleSelectAll = (): void => {
+        this.selection.selectAll();
+    };
+
     private closePickerHandler = (e: MouseEvent) => {
         const path = e.composedPath();
         const popup = this.addToPlaylistPopup;
@@ -475,6 +479,10 @@ export class QueuePanel
             'dragend',
             this.onDocumentDragEnd,
         );
+        document.addEventListener(
+            'shortcut:select-all',
+            this.handleSelectAll,
+        );
     }
 
     override disconnectedCallback() {
@@ -498,6 +506,10 @@ export class QueuePanel
         document.removeEventListener(
             'dragend',
             this.onDocumentDragEnd,
+        );
+        document.removeEventListener(
+            'shortcut:select-all',
+            this.handleSelectAll,
         );
     }
 
