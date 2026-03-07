@@ -27,7 +27,7 @@
 
 ### v1.1 Features & Extensibility (Phases 9-14)
 
-- [ ] **Phase 9: Scan Cancellation & Keyboard Shortcuts** — Cancellable library scans and configurable keyboard shortcuts
+- [x] **Phase 9: Scan Cancellation & Keyboard Shortcuts** — Cancellable library scans and configurable keyboard shortcuts
 - [ ] **Phase 10: Tag Editing** — Edit track metadata and write changes to audio files
 - [ ] **Phase 11: Smart Playlists** — Auto-generated playlists with filter rules
 - [ ] **Phase 12: Gapless Playback & Crossfade** — Seamless track transitions with optional crossfade
@@ -51,8 +51,8 @@ Plans:
 - [x] 09-01-PLAN.md — Backend scan control (cancel/pause/resume methods, events, metrics)
 - [x] 09-02-PLAN.md — Backend shortcuts config + frontend keyboard shortcut service
 - [x] 09-03-PLAN.md — Frontend scan control UI (buttons, cancel dialog)
-- [ ] 09-04-PLAN.md — Frontend shortcut settings UI (record-style capture, conflict detection)
-- [ ] 09-05-PLAN.md — Integration verification checkpoint
+- [x] 09-04-PLAN.md — Frontend shortcut settings UI (record-style capture, conflict detection)
+- [x] 09-05-PLAN.md — Integration verification checkpoint
 
 ### Phase 10: Tag Editing
 **Goal:** Users can edit track metadata from within the app and changes are written to the actual audio files

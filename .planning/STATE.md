@@ -6,9 +6,9 @@ status: in_progress
 last_updated: "2026-03-07"
 progress:
   total_phases: 6
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 5
-  completed_plans: 4
+  completed_plans: 5
 ---
 
 # YellowJacket — Project State
@@ -18,21 +18,21 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-06)
 
 **Core value:** The music player works reliably and feels solid — every interaction is correct, responsive, and trustworthy.
-**Current focus:** v1.1 Features & Extensibility — Phase 9 in progress
+**Current focus:** v1.1 Features & Extensibility — Phase 9 complete
 
 ## Current Position
 
 Phase: 9 — Scan Cancellation & Keyboard Shortcuts
 Plan: 5 of 5
-Status: In progress
-Progress: ████████████████░░░░ 4/5 plans (80%)
-Last activity: 2026-03-07 — Completed 09-04 (keyboard shortcuts settings UI)
+Status: Complete
+Progress: ████████████████████ 5/5 plans (100%)
+Last activity: 2026-03-07 — Completed 09-05 (integration testing & verification)
 
 ### Phase Overview
 
 | Phase | Status |
 |-------|--------|
-| 9. Scan Cancellation & Keyboard Shortcuts | In Progress (3/5 plans) |
+| 9. Scan Cancellation & Keyboard Shortcuts | Complete (5/5 plans) ✅ |
 | 10. Tag Editing | Not started |
 | 11. Smart Playlists | Not started |
 | 12. Gapless Playback & Crossfade | Not started |
@@ -50,6 +50,7 @@ Last activity: 2026-03-07 — Completed 09-04 (keyboard shortcuts settings UI)
 | 09-02 | keyboard shortcuts config & service | 35 min | 2 | 12 |
 | 09-04 | keyboard shortcuts settings UI | 5 min | 2 | 2 |
 | 09-03 | scan control UI | 2 min | 1 | 3 |
+| 09-05 | integration testing & verification | 3 min | 2 | 1 |
 
 ## Accumulated Context
 
@@ -83,6 +84,7 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 - `@lit-labs/signals` is experimental (v0.2.0) — not blocking but noted
 - Tag writing: block edits on currently-playing files (beep holds `*os.File` handle) — Phase 10
 - Scan cancellation: skip orphan cleanup on cancelled scans — Phase 9 ✅ (implemented in 09-01)
+- Volume mutations (ChangeVolume/MuteToggle) must emit events + persist state — Phase 9 ✅ (fixed in 09-05)
 - MusicBrainz: strict 1 req/s rate limit, proper User-Agent, SQLite cache — Phase 13
 - Plugin system: JS-only for v1.1, recover() wrappers, read-only DB access — Phase 14
 - FLAC tag writes load entire file into memory (go-flac) — acceptable for v1.1 — Phase 10
@@ -97,11 +99,11 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 ### Last Session
 
 **Date:** 2026-03-07
-**What happened:** Executed 09-04-PLAN.md — keyboard shortcuts settings UI. Created shortcut-capture component, added Keyboard Shortcuts section to config page with category grouping, conflict detection, and reset controls.
-**Where we stopped:** Completed 09-04-PLAN.md
-**Next action:** `/gsd-execute-phase 9` — Execute Plan 05
+**What happened:** Completed 09-05-PLAN.md — integration testing & verification. All automated checks passed. Human verification approved all 23 test scenarios. Fixed volume data flow bug (ChangeVolume/MuteToggle missing event emission and state persistence).
+**Where we stopped:** Completed 09-05-PLAN.md — Phase 9 complete
+**Next action:** `/gsd-plan-phase 10` — Plan Phase 10 (Tag Editing)
 
 ---
 *State initialized: 2026-02-27*
-Last activity: 2026-03-07 - Completed 09-04 keyboard shortcuts settings UI
+Last activity: 2026-03-07 - Completed Phase 9 (scan cancellation & keyboard shortcuts)
 *Last updated: 2026-03-07*
