@@ -2,7 +2,13 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 import { EventsOn } from '@runtime/runtime';
-import { Scan, FullRescan } from '@go/library/Library';
+import {
+    Scan,
+    FullRescan,
+    CancelScan,
+    PauseScan,
+    ResumeScan,
+} from '@go/library/Library';
 import {
     GetLibraryDirectory,
     SetLibraryDirectory,
@@ -68,6 +74,7 @@ interface ScanMetrics {
     updated: number;
     skipped: number;
     removed: number;
+    cancelled: boolean;
 }
 
 function fmtNs(ns: number): string {
@@ -215,10 +222,16 @@ export class ConfigPage extends LitElement {
     @state() private errorsCopied = false;
     @state() private scanErrors = '';
     @state() private concurrencyMode = 'auto';
+    @state() private scanPaused = false;
+    @state() private showCancelDialog = false;
+    @state() private cancelMetrics: { added: number } | null = null;
 
     private cancelScanStarted?: () => void;
     private cancelScanProgress?: () => void;
     private cancelScanComplete?: () => void;
+    private cancelScanPaused?: () => void;
+    private cancelScanResumed?: () => void;
+    private cancelScanCancelled?: () => void;
 
     static override styles = css`
         :host {
@@ -604,6 +617,68 @@ export class ConfigPage extends LitElement {
             );
         }
 
+        /* Cancel confirmation dialog */
+        .cancel-dialog-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.6);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .cancel-dialog {
+            background: var(
+                --yj-bg-surface,
+                #2a2a2a
+            );
+            border: 1px solid
+                var(--yj-border, #444);
+            border-radius: 8px;
+            padding: 24px;
+            max-width: 420px;
+            width: 90%;
+        }
+
+        .cancel-dialog-title {
+            font-size: var(--yj-text-lg, 18px);
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+
+        .cancel-dialog-message {
+            font-size: var(--yj-text-sm, 14px);
+            color: var(
+                --yj-text-secondary,
+                #aaa
+            );
+            margin-bottom: 20px;
+        }
+
+        .cancel-dialog-actions {
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+        }
+
+        .btn-primary {
+            background: var(
+                --yj-accent,
+                #ffd43b
+            );
+            color: var(--yj-bg-base, #1a1b1e);
+            font-weight: 600;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            filter: brightness(1.1);
+        }
+
+        .status-bar.paused {
+            color: var(--yj-accent, #ffd43b);
+        }
+
     `;
 
     // ===================================================================
@@ -627,6 +702,18 @@ export class ConfigPage extends LitElement {
             Events.LibraryScanComplete,
             this.handleScanComplete,
         );
+        this.cancelScanPaused = EventsOn(
+            Events.LibraryScanPaused,
+            this.handleScanPaused,
+        );
+        this.cancelScanResumed = EventsOn(
+            Events.LibraryScanResumed,
+            this.handleScanResumed,
+        );
+        this.cancelScanCancelled = EventsOn(
+            Events.LibraryScanCancelled,
+            this.handleScanCancelled,
+        );
     }
 
     override disconnectedCallback(): void {
@@ -634,6 +721,9 @@ export class ConfigPage extends LitElement {
         this.cancelScanStarted?.();
         this.cancelScanProgress?.();
         this.cancelScanComplete?.();
+        this.cancelScanPaused?.();
+        this.cancelScanResumed?.();
+        this.cancelScanCancelled?.();
     }
 
     private async loadLibraryConfig(): Promise<void> {
@@ -680,12 +770,73 @@ export class ConfigPage extends LitElement {
         metrics?: ScanMetrics,
     ): void => {
         this.scanning = false;
+        this.scanPaused = false;
         this.scanProgress = null;
         this.statusMessage = 'Scan complete.';
 
         if (metrics) {
             this.metrics = metrics;
         }
+    };
+
+    private handleScanPaused = (): void => {
+        this.scanPaused = true;
+    };
+
+    private handleScanResumed = (): void => {
+        this.scanPaused = false;
+    };
+
+    private handleScanCancelled = (
+        metrics?: ScanMetrics,
+    ): void => {
+        this.scanning = false;
+        this.scanPaused = false;
+        this.scanProgress = null;
+
+        if (metrics) {
+            this.metrics = metrics;
+            this.statusMessage =
+                metrics.cancelled
+                    ? 'Scan cancelled.'
+                    : 'Scan complete.';
+        } else {
+            this.statusMessage = 'Scan cancelled.';
+        }
+    };
+
+    private handlePauseScan = (): void => {
+        PauseScan();
+    };
+
+    private handleResumeScan = (): void => {
+        ResumeScan();
+    };
+
+    private handleCancelScan = (): void => {
+        const added =
+            this.scanProgress?.added ?? 0;
+        this.cancelMetrics = { added };
+        this.showCancelDialog = true;
+    };
+
+    private handleCancelKeep = (): void => {
+        this.showCancelDialog = false;
+        this.cancelMetrics = null;
+        CancelScan();
+    };
+
+    private handleCancelDiscard = (): void => {
+        this.showCancelDialog = false;
+        this.cancelMetrics = null;
+        CancelScan();
+        this.statusMessage =
+            'Scan cancelled. Partial results discarded \u2014 run Full Rescan for a clean library.';
+    };
+
+    private handleCancelDialogDismiss = (): void => {
+        this.showCancelDialog = false;
+        this.cancelMetrics = null;
     };
 
     private handleDirectoryBrowse = async (): Promise<void> => {
@@ -1325,32 +1476,52 @@ export class ConfigPage extends LitElement {
                 ></config-field>
 
                 <div class="scan-actions">
-                    <button
-                        class="btn-warning"
-                        ?disabled=${this.scanning}
-                        @click=${this.handleSoftScan}
-                    >
-                        ${this.scanning
-                            ? 'Scanning...'
-                            : 'Soft Scan'}
-                    </button>
-                    <button
-                        class="btn-danger"
-                        ?disabled=${this.scanning}
-                        @click=${this.handleFullRescan}
-                    >
-                        ${this.scanning
-                            ? 'Scanning...'
-                            : 'Full Rescan'}
-                    </button>
+                    ${this.scanning
+                        ? html`
+                              ${this.scanPaused
+                                  ? html`<button
+                                        class="btn-warning"
+                                        @click=${this.handleResumeScan}
+                                    >
+                                        Resume
+                                    </button>`
+                                  : html`<button
+                                        class="btn-warning"
+                                        @click=${this.handlePauseScan}
+                                    >
+                                        Pause
+                                    </button>`}
+                              <button
+                                  class="btn-danger"
+                                  @click=${this.handleCancelScan}
+                              >
+                                  Cancel Scan
+                              </button>
+                          `
+                        : html`
+                              <button
+                                  class="btn-warning"
+                                  @click=${this.handleSoftScan}
+                              >
+                                  Soft Scan
+                              </button>
+                              <button
+                                  class="btn-danger"
+                                  @click=${this.handleFullRescan}
+                              >
+                                  Full Rescan
+                              </button>
+                          `}
                 </div>
 
                 <div
-                    class="status-bar ${this.scanning ? 'active' : ''}"
+                    class="status-bar ${this.scanning ? 'active' : ''} ${this.scanPaused ? 'paused' : ''}"
                 >
-                    ${this.scanProgress
-                        ? this.renderScanProgress()
-                        : this.statusMessage || 'Ready.'}
+                    ${this.scanPaused
+                        ? 'Scan paused.'
+                        : this.scanProgress
+                          ? this.renderScanProgress()
+                          : this.statusMessage || 'Ready.'}
                 </div>
 
                 ${this.scanErrors
@@ -1377,6 +1548,59 @@ export class ConfigPage extends LitElement {
                     : ''}
 
                 ${this.renderMetrics()}
+                ${this.showCancelDialog
+                    ? html`
+                          <div
+                              class="cancel-dialog-overlay"
+                              @click=${this.handleCancelDialogDismiss}
+                          >
+                              <div
+                                  class="cancel-dialog"
+                                  @click=${(e: Event) => e.stopPropagation()}
+                              >
+                                  <div
+                                      class="cancel-dialog-title"
+                                  >
+                                      Cancel Scan
+                                  </div>
+                                  <div
+                                      class="cancel-dialog-message"
+                                  >
+                                      ${this.cancelMetrics
+                                          ?.added
+                                          ? `Keep ${this.cancelMetrics.added} tracks found so far, or discard?`
+                                          : 'Cancel the current scan?'}
+                                  </div>
+                                  <div
+                                      class="cancel-dialog-actions"
+                                  >
+                                      <button
+                                          class="btn-primary"
+                                          @click=${this.handleCancelKeep}
+                                      >
+                                          ${this
+                                              .cancelMetrics
+                                              ?.added
+                                              ? `Keep ${this.cancelMetrics.added} tracks`
+                                              : 'Cancel Scan'}
+                                      </button>
+                                      <button
+                                          class="btn-danger"
+                                          @click=${this.handleCancelDiscard}
+                                      >
+                                          Discard
+                                      </button>
+                                      <button
+                                          class="btn-ghost"
+                                          @click=${this.handleCancelDialogDismiss}
+                                      >
+                                          Continue Scanning
+                                      </button>
+                                  </div>
+                              </div>
+                          </div>
+                      `
+                    : nothing}
             </config-section>
         `;
     }
