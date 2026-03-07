@@ -15,6 +15,7 @@ import '@components/playlist-picker/playlist-picker.js';
 import type { PlaylistPicker } from '@components/playlist-picker/playlist-picker.js';
 import '@lit-labs/virtualizer';
 import type { LitVirtualizer } from '@lit-labs/virtualizer';
+import { virtualizerRef } from '@lit-labs/virtualizer/virtualize.js';
 import { flow } from '@lit-labs/virtualizer/layouts/flow.js';
 import { classMap } from 'lit/directives/class-map.js';
 import type { QueueTrack } from '@store/queue-store';
@@ -96,6 +97,23 @@ export class QueuePanel
         this.selection.selectAll();
     };
 
+    // Detect native scrollbar thumb drag to suppress lit-virtualizer's
+    // scroll error corrections that fight the browser's drag gesture.
+    private onVirtualizerMouseDown = (e: MouseEvent) => {
+        const el = this.virtualizer;
+        if (!el) return;
+        const rect = el.getBoundingClientRect();
+        // Click is in the scrollbar gutter if it's beyond the content area.
+        // clientWidth excludes scrollbar; offsetWidth includes it.
+        if (e.clientX > rect.left + el.clientWidth) {
+            this.scrollbarDragging = true;
+        }
+    };
+
+    private onScrollbarDragEnd = () => {
+        this.scrollbarDragging = false;
+    };
+
     private closePickerHandler = (e: MouseEvent) => {
         const path = e.composedPath();
         const popup = this.addToPlaylistPopup;
@@ -127,6 +145,8 @@ export class QueuePanel
     };
 
     private panelWidth = DEFAULT_WIDTH;
+    private scrollbarDragging = false;
+
     // _itemSize is an internal property applied via Object.assign in BaseLayout's
     // config setter. Setting it to match the actual fixed .track-item height (49px)
     // prevents lit-virtualizer's scroll error correction from fighting the native
@@ -461,6 +481,33 @@ export class QueuePanel
 
     `];
 
+    override firstUpdated() {
+        // Monkey-patch lit-virtualizer's scroll error correction to suppress it
+        // during native scrollbar drag. Without this, the virtualizer calls
+        // scrollTo() to "correct" sub-pixel estimation errors, which fights the
+        // browser's native scrollbar drag gesture and causes the thumb to
+        // desync from the mouse on large lists (20k+ items).
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const virt = (this.virtualizer as any)?.[virtualizerRef];
+        if (virt) {
+            const origCorrect = virt._correctScrollError.bind(virt);
+            virt._correctScrollError = () => {
+                if (this.scrollbarDragging) {
+                    // Discard the error instead of applying it via scrollTo().
+                    // This prevents stale corrections from accumulating and
+                    // being applied in a burst when the drag ends.
+                    virt._scrollError = null;
+                    return;
+                }
+                origCorrect();
+            };
+        }
+        this.virtualizer?.addEventListener(
+            'mousedown',
+            this.onVirtualizerMouseDown,
+        );
+    }
+
     override connectedCallback() {
         super.connectedCallback();
         this.style.setProperty(
@@ -491,6 +538,10 @@ export class QueuePanel
             'shortcut:select-all',
             this.handleSelectAll,
         );
+        document.addEventListener(
+            'mouseup',
+            this.onScrollbarDragEnd,
+        );
     }
 
     override disconnectedCallback() {
@@ -518,6 +569,14 @@ export class QueuePanel
         document.removeEventListener(
             'shortcut:select-all',
             this.handleSelectAll,
+        );
+        document.removeEventListener(
+            'mouseup',
+            this.onScrollbarDragEnd,
+        );
+        this.virtualizer?.removeEventListener(
+            'mousedown',
+            this.onVirtualizerMouseDown,
         );
     }
 
