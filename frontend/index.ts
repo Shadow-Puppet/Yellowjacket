@@ -11,6 +11,7 @@ import '@components/artists-view/artists-view.ts';
 import '@components/artist-details/artist-details.ts';
 import '@components/genres-view/genres-view.ts';
 import '@components/genre-details/genre-details.ts';
+import '@components/playlist-details/playlist-details.ts';
 import '@components/search-bar/search-bar.ts';
 import '@components/track-details/track-details.ts';
 import '@awesome.me/webawesome/dist/styles/themes/default.css';
@@ -65,6 +66,17 @@ document.addEventListener('navigate', (e: Event) => {
             el.setAttribute('artist-name', artistName);
             mainContent.innerHTML = '';
             mainContent.appendChild(el);
+            break;
+        }
+        case 'playlist-details': {
+            const { playlistId, playlistName } =
+                (e as CustomEvent).detail;
+            const plEl = document.createElement('playlist-details');
+
+            plEl.setAttribute('playlist-id', String(playlistId));
+            plEl.setAttribute('playlist-name', playlistName);
+            mainContent.innerHTML = '';
+            mainContent.appendChild(plEl);
             break;
         }
         case 'genres':
