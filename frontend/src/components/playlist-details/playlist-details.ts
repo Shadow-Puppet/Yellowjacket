@@ -43,7 +43,6 @@ import {
     removeDragImage,
 } from '@utils/drag-image';
 import { libraryStore } from '@store/library-store';
-import '@components/track-info/track-info';
 import '@components/playlist-picker/playlist-picker.js';
 import '@components/track-details/track-details.js';
 import type { TrackDetails } from '@components/track-details/track-details.js';
@@ -52,6 +51,7 @@ import '@components/phantom-resolver/phantom-resolver.js';
 import type { PhantomResolver } from '@components/phantom-resolver/phantom-resolver.js';
 import '@components/duplicate-tracks-dialog/duplicate-tracks-dialog.js';
 import type { DuplicateTracksDialog } from '@components/duplicate-tracks-dialog/duplicate-tracks-dialog.js';
+import { formatMilliseconds } from '@utils/time';
 import { designTokens } from '../../styles/tokens.css';
 
 @customElement('playlist-details')
@@ -925,8 +925,55 @@ export class PlaylistDetails
             color: var(--yj-accent, #ffd43b);
         }
 
+        /* Column grid layout */
+        .track-header,
         .track-item {
-            padding: 6px 0;
+            display: grid;
+            grid-template-columns: 40px 1fr 1fr 1fr 80px;
+            align-items: center;
+            gap: 0;
+        }
+
+        .track-header {
+            padding: 6px 8px;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--yj-text-secondary, #b3b3b3);
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            border-bottom: 1px solid var(--yj-text-tertiary, #666);
+            user-select: none;
+        }
+
+        .header-cell,
+        .cell {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            min-width: 0;
+            padding: 0 4px;
+        }
+
+        .col-number {
+            text-align: center;
+            color: var(--yj-text-tertiary, #888);
+            font-variant-numeric: tabular-nums;
+        }
+
+        .col-duration {
+            text-align: right;
+            color: var(--yj-text-tertiary, #888);
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* Phantom rows span full grid */
+        .track-item.phantom {
+            display: grid;
+            grid-template-columns: 40px 1fr 1fr 1fr 80px;
+        }
+
+        .track-item {
+            padding: 6px 8px;
             border-bottom: 1px solid
                 rgba(255, 255, 255, 0.03);
             cursor: default;
@@ -969,6 +1016,7 @@ export class PlaylistDetails
         }
 
         .phantom-row {
+            grid-column: 1 / -1;
             display: flex;
             align-items: center;
             gap: 8px;
@@ -1028,10 +1076,6 @@ export class PlaylistDetails
         .phantom-icon-btn.phantom-icon-remove:hover {
             color: var(--yj-error, #e03131);
             background: rgba(224, 49, 49, 0.12);
-        }
-
-        .track-item:last-child {
-            border-bottom: none;
         }
 
         .tracks-empty {
@@ -1158,6 +1202,13 @@ export class PlaylistDetails
                     Play All
                 </button>
             </div>
+            <div class="track-header">
+                <div class="header-cell col-number">#</div>
+                <div class="header-cell col-title">Title</div>
+                <div class="header-cell col-artist">Artist</div>
+                <div class="header-cell col-album">Album</div>
+                <div class="header-cell col-duration">Duration</div>
+            </div>
             ${visibleTracks.map(
                 ({ track, trackIndex }) => {
                     const isPhantom = track.Phantom;
@@ -1276,13 +1327,11 @@ export class PlaylistDetails
                                           </button>
                                       </div>
                                   </div>`
-                                : html`<track-info
-                                      .trackTitle=${track.Title ||
-                                      track.FilePath}
-                                      .artist=${track.Artist}
-                                      .duration=${track.Duration}
-                                      .filePath=${track.FilePath}
-                                  ></track-info>`}
+                                : html`<span class="cell col-number">${trackIndex + 1}</span>
+                                  <span class="cell col-title" title="${track.Title || track.FilePath}">${track.Title || track.FilePath}</span>
+                                  <span class="cell col-artist" title="${track.Artist}">${track.Artist}</span>
+                                  <span class="cell col-album" title="${track.Album}">${track.Album}</span>
+                                  <span class="cell col-duration">${formatMilliseconds(track.Duration)}</span>`}
                         </div>
                     `;
                 },
