@@ -7,7 +7,7 @@
 ## Milestones
 
 - ✅ **v1.0 Consolidation** — Phases 1-8 (shipped 2026-03-05) — [archive](milestones/v1.0-ROADMAP.md)
-- 🔄 **v1.1 Multi-Library Support** — Phase 9 complete, multi-library phases TBD (in progress)
+- 🔄 **v1.1 Multi-Library Support** — Phase 9 complete, Phases 10-13 in progress
 
 ## Phases
 
@@ -25,10 +25,13 @@
 
 </details>
 
-### v1.1 Multi-Library Support (Phase 9 + Multi-Library Phases)
+### v1.1 Multi-Library Support (Phases 9-13)
 
 - [x] **Phase 9: Scan Cancellation & Keyboard Shortcuts** — Cancellable library scans and configurable keyboard shortcuts
-- [ ] **Phases 10+: Multi-Library Support** — TBD (awaiting roadmap creation from gsd-roadmapper)
+- [ ] **Phase 10: Schema & Migration** — Libraries table, library_id FK, playlist_tracks phantom rebuild, config migration
+- [ ] **Phase 11: Per-Library Scan Pipeline** — Scan pipeline refactored for per-library scanning with sequential coordination
+- [ ] **Phase 12: Library CRUD & Data Integrity** — Library management API, orphan cleanup, queue/playlist lifecycle, library manager UI
+- [ ] **Phase 13: Library Views & Phantom Tracks** — Filtered presentation across all views, search, browse, and phantom track display
 
 ## Phase Details
 
@@ -50,23 +53,51 @@ Plans:
 - [x] 09-04-PLAN.md — Frontend shortcut settings UI (record-style capture, conflict detection)
 - [x] 09-05-PLAN.md — Integration verification checkpoint
 
-### Multi-Library Phases (10+)
+### Phase 10: Schema & Migration
+**Goal:** The database supports multiple libraries and phantom tracks — existing users upgrade seamlessly
+**Depends on:** Phase 9 (builds on existing schema and scan infrastructure)
+**Requirements:** DATA-01, DATA-04, LIB-04, LIB-05, LSCAN-05
+**Success Criteria** (what must be TRUE):
+  1. A fresh install creates a `libraries` table and `audio_files.library_id` FK — new audio files are always associated with a library
+  2. An existing user's database is migrated on first launch: their single directory becomes a named library, all existing audio_files get that library_id, and everything works without any user action
+  3. The `playlist_tracks` table supports nullable `audio_file_id` with phantom metadata columns — the schema is ready for phantom track preservation
+  4. All migration operations complete atomically — a crash mid-migration leaves the database unchanged (not half-migrated)
+**Plans:** TBD
 
-**Awaiting roadmap creation.** The gsd-roadmapper will create phased breakdown covering 20 requirements:
-- LIB-01..06 (Library Management)
-- LSCAN-01..05 (Library Scanning)
-- VIEW-01..04 (Unified Presentation)
-- PLAY-01..04 (Playlists & Queue)
-- DATA-01..04 (Data Integrity)
+### Phase 11: Per-Library Scan Pipeline
+**Goal:** Users can scan individual libraries independently with proper sequential coordination
+**Depends on:** Phase 10 (requires libraries table and library_id FK)
+**Requirements:** LSCAN-01, LSCAN-02, LSCAN-03, LSCAN-04
+**Success Criteria** (what must be TRUE):
+  1. User can trigger a scan for a specific library and only that library's directory is scanned — other libraries are untouched
+  2. Only one library scans at a time — requesting a second scan while one is running either queues it or is rejected with clear feedback
+  3. Scan progress UI identifies which library is currently being scanned (library name visible in progress indicator)
+  4. Existing cancel and pause/resume controls work correctly for per-library scans — cancelling one library's scan doesn't affect others
+**Plans:** TBD
 
-**Architecture decisions:**
-- Hybrid model: `library_id` FK on `audio_files` only; artists/albums/genres stay global
-- Libraries stored in SQLite, not TOML config
-- Sequential scanning (one library at a time)
-- Phantom tracks for playlist preservation on library removal
-- Backend filtering for library views
+### Phase 12: Library CRUD & Data Integrity
+**Goal:** Users can add, rename, and remove libraries through the UI with correct data lifecycle management
+**Depends on:** Phase 11 (requires per-library scanning for add-then-scan workflow)
+**Requirements:** LIB-01, LIB-02, LIB-03, LIB-06, DATA-02, DATA-03, PLAY-04
+**Success Criteria** (what must be TRUE):
+  1. User can add a new library via folder picker, give it a name, and trigger a scan — new tracks appear in the library
+  2. User can rename a library's display name and the change reflects everywhere immediately
+  3. User can remove a library — its tracks are deleted, shared artists/albums/genres used only by that library are cleaned up, but entities shared with other libraries survive intact
+  4. Removing a library cleans up FTS5 search index entries for that library's tracks (no stale search results)
+  5. Queue tracks from a removed library are cascade-deleted; the queue continues playing from the next valid track
+**Plans:** TBD
 
-See `.planning/research/SUMMARY.md` for full research.
+### Phase 13: Library Views & Phantom Tracks
+**Goal:** Users experience a unified multi-library presentation with optional filtering and graceful playlist preservation
+**Depends on:** Phase 12 (requires library CRUD and data integrity for full integration)
+**Requirements:** VIEW-01, VIEW-02, VIEW-03, VIEW-04, PLAY-01, PLAY-02, PLAY-03
+**Success Criteria** (what must be TRUE):
+  1. The default track list shows tracks from all libraries merged — the user sees their complete collection as one unified view
+  2. User can select a specific library from a filter control and all views (tracks, albums, artists, genres) show only that library's content
+  3. Search results respect the active library filter — searching with a library selected returns only matches from that library; with "All Libraries" selected, searches everything
+  4. Playlists can contain tracks from multiple libraries — adding tracks from different libraries to the same playlist works naturally
+  5. When a library is removed, its tracks in playlists become phantom entries — visually distinguished (greyed out / icon) with preserved title, artist, album metadata instead of disappearing
+**Plans:** TBD
 
 ## Progress
 
@@ -81,8 +112,11 @@ See `.planning/research/SUMMARY.md` for full research.
 | 7. Backend Performance | v1.0 | 2/2 | Complete | 2026-03-05 |
 | 8. Frontend Performance & UX | v1.0 | 4/4 | Complete | 2026-03-05 |
 | 9. Scan Cancellation & Keyboard Shortcuts | v1.1 | 5/5 | Complete | 2026-03-07 |
-| 10+ Multi-Library phases | v1.1 | 0/? | Awaiting roadmap | - |
+| 10. Schema & Migration | v1.1 | 0/? | Not started | - |
+| 11. Per-Library Scan Pipeline | v1.1 | 0/? | Not started | - |
+| 12. Library CRUD & Data Integrity | v1.1 | 0/? | Not started | - |
+| 13. Library Views & Phantom Tracks | v1.1 | 0/? | Not started | - |
 
 ---
 *Roadmap created: 2026-02-27*
-*Last updated: 2026-03-08 — v1.1 restructured for multi-library support, old phases 10-14 deferred*
+*Last updated: 2026-03-08 — Multi-library phases 10-13 created from 23 requirements*

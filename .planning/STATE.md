@@ -5,7 +5,7 @@ milestone_name: Multi-Library Support
 status: planning
 last_updated: "2026-03-08"
 progress:
-  total_phases: 1
+  total_phases: 5
   completed_phases: 1
   total_plans: 5
   completed_plans: 5
@@ -18,27 +18,30 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-08)
 
 **Core value:** The music player works reliably and feels solid — every interaction is correct, responsive, and trustworthy.
-**Current focus:** v1.1 Multi-Library Support — roadmap planning
+**Current focus:** v1.1 Multi-Library Support — Phase 10 (Schema & Migration)
 
 ## Current Position
 
-Phase: 9 — Scan Cancellation & Keyboard Shortcuts (last completed)
-Plan: 5 of 5
-Status: Complete — awaiting multi-library roadmap
-Progress: Roadmap creation in progress
-Last activity: 2026-03-08 — Restructured v1.1 milestone for multi-library support
+Phase: 10 — Schema & Migration (next up)
+Plan: TBD (awaiting plan creation)
+Status: Roadmap created — ready for phase planning
+Progress: ████░░░░░░░░░░░░░░░░ 1/5 phases complete (Phase 9)
+Last activity: 2026-03-08 — Multi-library roadmap created (Phases 10-13)
 
 ### Phase Overview
 
 | Phase | Status |
 |-------|--------|
 | 9. Scan Cancellation & Keyboard Shortcuts | Complete (5/5 plans) ✅ |
-| 10+ Multi-Library phases | Awaiting roadmap creation |
+| 10. Schema & Migration | Not started |
+| 11. Per-Library Scan Pipeline | Not started |
+| 12. Library CRUD & Data Integrity | Not started |
+| 13. Library Views & Phantom Tracks | Not started |
 
 ## Performance Metrics
 
 **v1.0 baseline:** 8 phases, 17 plans, 34 tasks in 6 days (107 commits)
-**v1.1 scope:** Phase 9 complete (5 plans), multi-library phases TBD (20 requirements)
+**v1.1 scope:** Phase 9 complete (5 plans), Phases 10-13 pending (20 requirements across 4 phases)
 
 | Phase | Plan | Duration | Tasks | Files |
 |-------|------|----------|-------|-------|
@@ -73,6 +76,7 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 | CASCADE for queue_tracks FK | Queue is ephemeral, not user-curated like playlists |
 | Sequential scanning | SQLite single-writer makes parallel scans pointless |
 | Backend filtering, not frontend | Don't load 150K tracks when viewing one library |
+| 4 multi-library phases (10-13) | Natural delivery boundaries: schema → scan → CRUD → views, each phase delivers verifiable capability |
 
 ### Warnings (carry forward)
 
@@ -96,9 +100,9 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 ### Last Session
 
 **Date:** 2026-03-08
-**What happened:** Restructured v1.1 milestone from "Features & Extensibility" to "Multi-Library Support". Ran 4 parallel researchers (Stack, Features, Architecture, Pitfalls). Defined 20 multi-library requirements (LIB, LSCAN, VIEW, PLAY, DATA). Deferred TAG/SMRT/GAP/MB/LAYOUT/PLUG to future milestones. Updated PROJECT.md, REQUIREMENTS.md, STATE.md, ROADMAP.md.
-**Where we stopped:** Planning documents updated, ready for roadmap creation
-**Next action:** Run gsd-roadmapper to create phased multi-library roadmap (phases 10+)
+**What happened:** Created multi-library roadmap (Phases 10-13) from 20 requirements. Phase 10 = Schema & Migration (DATA-01, DATA-04, LIB-04, LIB-05, LSCAN-05). Phase 11 = Per-Library Scan Pipeline (LSCAN-01..04). Phase 12 = Library CRUD & Data Integrity (LIB-01..03, LIB-06, DATA-02, DATA-03, PLAY-04). Phase 13 = Library Views & Phantom Tracks (VIEW-01..04, PLAY-01..03).
+**Where we stopped:** Roadmap written, ready for phase planning
+**Next action:** Run `gsd-plan-phase 10` to create plans for Schema & Migration
 
 ---
 *State initialized: 2026-02-27*
@@ -111,4 +115,4 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 | 18 | add multi-column metadata display to playlist-details | 2026-03-08 | ce23177 | [18-add-multi-column-metadata-display-to-pla](./quick/18-add-multi-column-metadata-display-to-pla/) |
 
 Last activity: 2026-03-08 - Completed quick task 18: add multi-column metadata display to playlist-details
-*Last updated: 2026-03-08 — v1.1 restructured for multi-library support*
+*Last updated: 2026-03-08 — Multi-library roadmap created (Phases 10-13)*

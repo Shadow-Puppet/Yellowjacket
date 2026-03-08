@@ -180,34 +180,34 @@ Which phases cover which requirements. Updated during roadmap creation.
 | KEY-03 | Phase 9 | Complete |
 | KEY-04 | Phase 9 | Complete |
 | KEY-05 | Phase 9 | Complete |
-| LIB-01 | TBD | Pending |
-| LIB-02 | TBD | Pending |
-| LIB-03 | TBD | Pending |
-| LIB-04 | TBD | Pending |
-| LIB-05 | TBD | Pending |
-| LIB-06 | TBD | Pending |
-| LSCAN-01 | TBD | Pending |
-| LSCAN-02 | TBD | Pending |
-| LSCAN-03 | TBD | Pending |
-| LSCAN-04 | TBD | Pending |
-| LSCAN-05 | TBD | Pending |
-| VIEW-01 | TBD | Pending |
-| VIEW-02 | TBD | Pending |
-| VIEW-03 | TBD | Pending |
-| VIEW-04 | TBD | Pending |
-| PLAY-01 | TBD | Pending |
-| PLAY-02 | TBD | Pending |
-| PLAY-03 | TBD | Pending |
-| PLAY-04 | TBD | Pending |
-| DATA-01 | TBD | Pending |
-| DATA-02 | TBD | Pending |
-| DATA-03 | TBD | Pending |
-| DATA-04 | TBD | Pending |
+| LIB-01 | Phase 12 | Pending |
+| LIB-02 | Phase 12 | Pending |
+| LIB-03 | Phase 12 | Pending |
+| LIB-04 | Phase 10 | Pending |
+| LIB-05 | Phase 10 | Pending |
+| LIB-06 | Phase 12 | Pending |
+| LSCAN-01 | Phase 11 | Pending |
+| LSCAN-02 | Phase 11 | Pending |
+| LSCAN-03 | Phase 11 | Pending |
+| LSCAN-04 | Phase 11 | Pending |
+| LSCAN-05 | Phase 10 | Pending |
+| VIEW-01 | Phase 13 | Pending |
+| VIEW-02 | Phase 13 | Pending |
+| VIEW-03 | Phase 13 | Pending |
+| VIEW-04 | Phase 13 | Pending |
+| PLAY-01 | Phase 13 | Pending |
+| PLAY-02 | Phase 13 | Pending |
+| PLAY-03 | Phase 13 | Pending |
+| PLAY-04 | Phase 12 | Pending |
+| DATA-01 | Phase 10 | Pending |
+| DATA-02 | Phase 12 | Pending |
+| DATA-03 | Phase 12 | Pending |
+| DATA-04 | Phase 10 | Pending |
 
 **Coverage:**
-- v1.1 requirements: 28 total (8 complete + 20 pending)
-- Mapped to phases: 8 (Phase 9 complete)
-- Awaiting roadmap: 20
+- v1.1 requirements: 31 total (8 complete + 23 pending)
+- Mapped to phases: 31/31 ✓ (Phase 9: 8 complete, Phases 10-13: 23 pending)
+- No orphaned requirements
 
 ---
 *Requirements defined: 2026-03-06*
