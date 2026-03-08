@@ -1,9 +1,9 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.1
-milestone_name: Features & Extensibility
-status: unknown
-last_updated: "2026-03-07T15:12:59.202Z"
+milestone_name: Multi-Library Support
+status: planning
+last_updated: "2026-03-08"
 progress:
   total_phases: 1
   completed_phases: 1
@@ -15,34 +15,30 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-03-06)
+See: .planning/PROJECT.md (updated 2026-03-08)
 
 **Core value:** The music player works reliably and feels solid — every interaction is correct, responsive, and trustworthy.
-**Current focus:** v1.1 Features & Extensibility — Phase 9 complete
+**Current focus:** v1.1 Multi-Library Support — roadmap planning
 
 ## Current Position
 
-Phase: 9 — Scan Cancellation & Keyboard Shortcuts
+Phase: 9 — Scan Cancellation & Keyboard Shortcuts (last completed)
 Plan: 5 of 5
-Status: Complete
-Progress: ████████████████████ 5/5 plans (100%)
-Last activity: 2026-03-07 — Completed 09-05 (integration testing & verification)
+Status: Complete — awaiting multi-library roadmap
+Progress: Roadmap creation in progress
+Last activity: 2026-03-08 — Restructured v1.1 milestone for multi-library support
 
 ### Phase Overview
 
 | Phase | Status |
 |-------|--------|
 | 9. Scan Cancellation & Keyboard Shortcuts | Complete (5/5 plans) ✅ |
-| 10. Tag Editing | Not started |
-| 11. Smart Playlists | Not started |
-| 12. Gapless Playback & Crossfade | Not started |
-| 13. MusicBrainz Browser | Not started |
-| 14. Layout Customization & Plugin Foundation | Not started |
+| 10+ Multi-Library phases | Awaiting roadmap creation |
 
 ## Performance Metrics
 
 **v1.0 baseline:** 8 phases, 17 plans, 34 tasks in 6 days (107 commits)
-**v1.1 scope:** 6 phases, 43 requirements, 5 plans (Phase 9)
+**v1.1 scope:** Phase 9 complete (5 plans), multi-library phases TBD (20 requirements)
 
 | Phase | Plan | Duration | Tasks | Files |
 |-------|------|----------|-------|-------|
@@ -70,38 +66,39 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 | Decision | Rationale |
 |----------|-----------|
 | Phase 9 = Scan Cancel + Shortcuts | Quick wins, validate context cancellation and config extension patterns |
-| Phase 10 = Tag Editing after shortcuts | Introduces 3 new deps, file-write-DB-event pipeline; benefits from validated patterns |
-| Phase 11 = Smart Playlists after tags | DB patterns, benefits from validated DB update pipeline |
-| Phase 12 = Gapless mid-sequence | Highest risk isolated after foundations proven, before meta-features |
-| Phase 13 = MusicBrainz after gapless | First network feature, orthogonal to audio work |
-| Phase 14 = Layout + Plugins last | Meta-features that wrap all others, need stable API surface |
-| Layout + Plugins combined into one phase | Both are extensibility foundations; layout provides component registry that plugins register into |
+| v1.1 restructured for multi-library | Tag editing, smart playlists, gapless, MusicBrainz, layout, plugins deferred to future milestones |
+| Hybrid model (library_id on audio_files only) | Physical files belong to libraries; logical entities (artists, albums, genres) are global/shared |
+| Libraries in DB, not TOML | CRUD through UI shouldn't require TOML manipulation; DB is source of truth |
+| SET NULL for playlist_tracks FK | Phantom tracks preserve playlist structure when library removed |
+| CASCADE for queue_tracks FK | Queue is ephemeral, not user-curated like playlists |
+| Sequential scanning | SQLite single-writer makes parallel scans pointless |
+| Backend filtering, not frontend | Don't load 150K tracks when viewing one library |
 
 ### Warnings (carry forward)
 
-- Player lock ordering (`p.mu` before `speaker.Lock()`, goroutine dispatch in beep callback) — CRITICAL for Phase 12 gapless work
+- Player lock ordering (`p.mu` before `speaker.Lock()`, goroutine dispatch in beep callback) — carry forward
 - modernc.org/libc version must match exactly when updating modernc.org/sqlite
 - `@lit-labs/signals` is experimental (v0.2.0) — not blocking but noted
-- Tag writing: block edits on currently-playing files (beep holds `*os.File` handle) — Phase 10
 - Scan cancellation: skip orphan cleanup on cancelled scans — Phase 9 ✅ (implemented in 09-01)
 - Volume mutations (ChangeVolume/MuteToggle) must emit events + persist state — Phase 9 ✅ (fixed in 09-05)
-- MusicBrainz: strict 1 req/s rate limit, proper User-Agent, SQLite cache — Phase 13
-- Plugin system: JS-only for v1.1, recover() wrappers, read-only DB access — Phase 14
-- FLAC tag writes load entire file into memory (go-flac) — acceptable for v1.1 — Phase 10
+- ALTER TABLE ADD COLUMN requires DEFAULT for NOT NULL — create libraries table first
+- Table rebuild must audit ALL CASCADE FKs (playlist_tracks AND queue_tracks)
+- FTS5 contentless can't DELETE rows — stale entries accumulate after library removal; consider contentless_delete migration
+- Orphan cleanup must not delete shared entities across libraries (reference-counting bottom-up)
+- Existing user migration must be seamless (TOML DirectoryPath to DB libraries table)
 
 ### Research Flags
 
-- **Phase 12 (Gapless + Crossfade):** Needs deeper research — beep Mixer/Seq composition for real-time crossfade not well-documented. Prototype persistent-mixer architecture before committing to implementation.
-- **Phase 14 (Plugin System):** Needs deeper research — plugin API surface design, error containment, security boundaries. Consider spike/prototype.
+- **Multi-library research complete** — see `.planning/research/` (STACK.md, FEATURES.md, ARCHITECTURE.md, PITFALLS.md, SUMMARY.md)
 
 ## Session Continuity
 
 ### Last Session
 
-**Date:** 2026-03-07
-**What happened:** Completed 09-05-PLAN.md — integration testing & verification. All automated checks passed. Human verification approved all 23 test scenarios. Fixed volume data flow bug (ChangeVolume/MuteToggle missing event emission and state persistence).
-**Where we stopped:** Completed 09-05-PLAN.md — Phase 9 complete
-**Next action:** `/gsd-plan-phase 10` — Plan Phase 10 (Tag Editing)
+**Date:** 2026-03-08
+**What happened:** Restructured v1.1 milestone from "Features & Extensibility" to "Multi-Library Support". Ran 4 parallel researchers (Stack, Features, Architecture, Pitfalls). Defined 20 multi-library requirements (LIB, LSCAN, VIEW, PLAY, DATA). Deferred TAG/SMRT/GAP/MB/LAYOUT/PLUG to future milestones. Updated PROJECT.md, REQUIREMENTS.md, STATE.md, ROADMAP.md.
+**Where we stopped:** Planning documents updated, ready for roadmap creation
+**Next action:** Run gsd-roadmapper to create phased multi-library roadmap (phases 10+)
 
 ---
 *State initialized: 2026-02-27*
@@ -114,4 +111,4 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 | 18 | add multi-column metadata display to playlist-details | 2026-03-08 | ce23177 | [18-add-multi-column-metadata-display-to-pla](./quick/18-add-multi-column-metadata-display-to-pla/) |
 
 Last activity: 2026-03-08 - Completed quick task 18: add multi-column metadata display to playlist-details
-*Last updated: 2026-03-08*
+*Last updated: 2026-03-08 — v1.1 restructured for multi-library support*

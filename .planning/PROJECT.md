@@ -44,10 +44,15 @@ The music player works reliably and feels solid. Every interaction is correct, r
 
 ### Active
 
+- [ ] Multi-library support — manage multiple library directories with per-library scanning and unified presentation
+- [ ] Library filtering — view tracks from all libraries or filter to a specific library
+- [ ] Cross-library playlists — playlists can reference tracks from any library
+- [ ] Phantom tracks — playlist entries preserved with metadata when a library is removed
+
+### Deferred (Future Milestones)
+
 - [ ] Tag editing — edit track metadata (title, artist, album, etc.) from within the app
-- [ ] Scan cancellation — cancel in-progress library scans
 - [ ] Smart playlists — auto-generated playlists with simple filter rules (genre, year, play count, etc.)
-- [ ] Customizable keyboard shortcuts — configurable key bindings for common player actions
 - [ ] Gapless playback + crossfade — seamless track transitions with optional crossfade setting
 - [ ] MusicBrainz browser — read-only catalog browsing (artists, discographies, album editions, track listings)
 - [ ] Layout customization system — section-based UI customization, components declare size constraints, users configure per-section
@@ -55,29 +60,29 @@ The music player works reliably and feels solid. Every interaction is correct, r
 
 ### Out of Scope
 
-- Tag writing (track metadata editing) — feature work, not consolidation
-- Scan cancellation — feature work, deferred to future milestone
+- Separate databases per library — overly complex, defeats unified presentation
+- Auto-dedup across libraries — complex matching logic, not table stakes
+- User access control per library — desktop app, single user
+- Parallel library scanning — SQLite single-writer makes it pointless
 - Cross-platform media controls (macOS/Windows) — feature work
 - Database health checking / reconnection — low priority, desktop app context
 - File decomposition for its own sake — only extract when it enables reuse or fixes problems
 - ORM or query builder — would fight existing sqlc architecture
 - Connection pooling for SQLite — meaningless with SetMaxOpenConns(1)
 
-## Current Milestone: v1.1 Features & Extensibility
+## Current Milestone: v1.1 Multi-Library Support
 
-**Goal:** Add core missing features and build the foundations for a customizable, extensible music player.
+**Goal:** Transform YellowJacket from a single-directory player into a multi-library music manager with unified presentation, per-library scanning, and graceful library lifecycle management.
 
 **Target features:**
-- Tag editing (track metadata editing from within the app)
-- Scan cancellation (cancel in-progress library scans)
-- Smart playlists (simple filter rules — genre, year, play count, etc.)
-- Customizable keyboard shortcuts (configurable key bindings)
-- Gapless playback + crossfade (seamless transitions, optional crossfade)
-- MusicBrainz browser (read-only catalog: artists, discographies, album editions)
-- Layout customization system (MusicBee-style section-based UI configuration)
-- Plugin system (full-access API for UI + backend extensibility)
+- Library CRUD (add/rename/remove library directories via UI)
+- Per-library scanning (scan individual libraries, sequential coordination)
+- Unified presentation (merged "All Libraries" view, optional per-library filtering)
+- Cross-library playlists (playlists reference tracks from any library)
+- Phantom tracks (playlist entries preserved when library removed)
+- Config migration (TOML DirectoryPath -> DB libraries table)
 
-**"Done" criteria:** Core features complete and working. Big features (layout, plugins, MusicBrainz) have working foundations — functional but not necessarily feature-complete.
+**"Done" criteria:** Users can manage multiple library directories, scan them independently, view tracks from all or one library, and playlists survive library removal with phantom entries.
 
 ## Context
 
@@ -124,4 +129,4 @@ The music player works reliably and feels solid. Every interaction is correct, r
 | Design tokens via :host scope | Component-level token scope matches Lit's shadow DOM encapsulation | ✓ Good — consistent visual language achieved |
 
 ---
-*Last updated: 2026-03-06 after v1.1 milestone start*
+*Last updated: 2026-03-08 after v1.1 restructure for multi-library support*
