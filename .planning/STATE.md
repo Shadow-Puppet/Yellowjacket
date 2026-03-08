@@ -110,6 +110,7 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 16 | add ctrl+a hotkey to multi-select views to select all items | 2026-03-07 | 043c74c | [16-add-ctrl-a-hotkey-to-multi-select-views-](./quick/16-add-ctrl-a-hotkey-to-multi-select-views-/) |
+| 17 | refactor playlist view to use subpages | 2026-03-08 | 955cd68 | [17-refactor-playlist-view-to-use-subpages-l](./quick/17-refactor-playlist-view-to-use-subpages-l/) |
 
-Last activity: 2026-03-07 - Completed quick task 16: add ctrl+a hotkey to multi-select views to select all items
-*Last updated: 2026-03-07*
+Last activity: 2026-03-08 - Completed quick task 17: refactor playlist view to use subpages
+*Last updated: 2026-03-08*
