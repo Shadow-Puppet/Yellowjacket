@@ -1,7 +1,11 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { EventsOn } from '@runtime/runtime';
-import { Scan, FullRescan } from '@go/library/Library';
+import {
+    Scan,
+    FullRescan,
+    ScanAllLibraries,
+} from '@go/library/Library';
 import {
     GetLibraryDirectory,
     SetLibraryDirectory,
@@ -26,6 +30,9 @@ interface ScanProgress {
     added: number;
     skipped: number;
     updated: number;
+    libraryId: number;
+    libraryName: string;
+    queuedCount: number;
 }
 
 interface ScanMetrics {
@@ -247,9 +254,12 @@ export class LibraryManager extends LitElement {
     @state() private errorsCopied = false;
     @state() private scanErrors = '';
     @state() private concurrencyMode = 'auto';
+    @state() private scanQueuedCount = 0;
     private cancelScanStarted?: () => void;
     private cancelScanProgress?: () => void;
     private cancelScanComplete?: () => void;
+    private cancelScanQueued?: () => void;
+    private cancelScanQueueDrained?: () => void;
 
     static override styles = css`
         :host {
@@ -635,6 +645,14 @@ export class LibraryManager extends LitElement {
             Events.LibraryScanComplete,
             this.handleScanComplete,
         );
+        this.cancelScanQueued = EventsOn(
+            Events.LibraryScanQueued,
+            this.handleScanQueued,
+        );
+        this.cancelScanQueueDrained = EventsOn(
+            Events.LibraryScanQueueDrained,
+            this.handleScanQueueDrained,
+        );
     }
 
     override disconnectedCallback(): void {
@@ -642,6 +660,8 @@ export class LibraryManager extends LitElement {
         this.cancelScanStarted?.();
         this.cancelScanProgress?.();
         this.cancelScanComplete?.();
+        this.cancelScanQueued?.();
+        this.cancelScanQueueDrained?.();
     }
 
     private async loadCurrentDirectory(): Promise<void> {
@@ -704,19 +724,39 @@ export class LibraryManager extends LitElement {
     ): void => {
         if (progress) {
             this.scanProgress = progress;
+            this.scanQueuedCount =
+                progress.queuedCount ?? 0;
         }
     };
 
     private handleScanComplete = (
         metrics?: ScanMetrics,
     ): void => {
-        this.scanning = false;
         this.scanProgress = null;
+
+        // If queue still has entries, don't fully reset — next scan will fire ScanStarted
+        if (this.scanQueuedCount > 0) {
+            if (metrics) {
+                this.metrics = metrics;
+            }
+            return;
+        }
+
+        this.scanning = false;
         this.statusMessage = 'Scan complete.';
 
         if (metrics) {
             this.metrics = metrics;
         }
+    };
+
+    private handleScanQueued = (): void => {
+        this.scanQueuedCount++;
+    };
+
+    private handleScanQueueDrained = (): void => {
+        this.scanQueuedCount = 0;
+        this.scanning = false;
     };
 
     private handleSelectDirectory =
@@ -755,6 +795,20 @@ export class LibraryManager extends LitElement {
                 );
             }
         };
+
+    private handleScanAll = async (): Promise<void> => {
+        try {
+            await ScanAllLibraries();
+        } catch (err) {
+            this.statusMessage =
+                'Scan all libraries completed with errors.';
+            this.scanErrors = String(err);
+            console.error(
+                'Scan all libraries failed:',
+                err,
+            );
+        }
+    };
 
     private handleSoftScan = async (): Promise<void> => {
         try {
@@ -874,11 +928,25 @@ export class LibraryManager extends LitElement {
 
         if (!p) return nothing;
 
+        const libraryPrefix = p.libraryName
+            ? `Scanning: ${p.libraryName}`
+            : '';
+
         if (p.phase === 'counting') {
             return html`
                 <div class="progress-phase">
+                    ${libraryPrefix
+                        ? html`<strong>${libraryPrefix}</strong> \u2014 `
+                        : ''}
                     Counting files\u2026
                 </div>
+                ${p.queuedCount > 0
+                    ? html`<div class="progress-detail">
+                          ${p.queuedCount}
+                          ${p.queuedCount === 1 ? 'library' : 'libraries'}
+                          queued
+                      </div>`
+                    : nothing}
             `;
         }
 
@@ -898,7 +966,11 @@ export class LibraryManager extends LitElement {
             thumbnails: 'Generating thumbnails',
         };
 
-        const label = phaseLabel[p.phase] ?? 'Scanning';
+        const baseLabel =
+            phaseLabel[p.phase] ?? 'Scanning';
+        const label = p.libraryName
+            ? `${baseLabel}: ${p.libraryName}`
+            : baseLabel;
 
         const parts: string[] = [];
 
@@ -939,6 +1011,13 @@ export class LibraryManager extends LitElement {
                     style="width: ${percent}%"
                 ></div>
             </div>
+            ${p.queuedCount > 0
+                ? html`<div class="progress-detail">
+                      ${p.queuedCount}
+                      ${p.queuedCount === 1 ? 'library' : 'libraries'}
+                      queued
+                  </div>`
+                : nothing}
         `;
     }
 
@@ -1207,6 +1286,15 @@ export class LibraryManager extends LitElement {
                         ${this.scanning
                             ? 'Scanning...'
                             : 'Full Rescan'}
+                    </button>
+                    <button
+                        class="btn-primary"
+                        ?disabled=${this.scanning}
+                        @click=${this.handleScanAll}
+                    >
+                        ${this.scanning
+                            ? 'Scanning...'
+                            : 'Scan All Libraries'}
                     </button>
                 </div>
             </div>
