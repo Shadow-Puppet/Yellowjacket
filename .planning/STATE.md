@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Multi-Library Support
 status: unknown
-last_updated: "2026-03-09T13:57:33.492Z"
+last_updated: "2026-03-09T20:03:14Z"
 progress:
   total_phases: 2
   completed_phases: 2
-  total_plans: 7
-  completed_plans: 7
+  total_plans: 8
+  completed_plans: 8
 ---
 
 # YellowJacket — Project State
@@ -18,15 +18,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-08)
 
 **Core value:** The music player works reliably and feels solid — every interaction is correct, responsive, and trustworthy.
-**Current focus:** v1.1 Multi-Library Support — Phase 10 (Schema & Migration)
+**Current focus:** v1.1 Multi-Library Support — Phase 11 (Per-Library Scan Pipeline)
 
 ## Current Position
 
-Phase: 10 — Schema & Migration
-Plan: 2 of 2 in Phase (Plan 02 complete)
-Status: Phase 10 complete — ready for Phase 11
-Progress: ████████░░░░░░░░░░░░ 2/5 phases complete (Phase 10)
-Last activity: 2026-03-09 — Completed 10-02 sqlc queries + migration tests
+Phase: 11 — Per-Library Scan Pipeline
+Plan: 1 of 3 in Phase (Plan 01 complete)
+Status: Phase 11 in progress — 2 plans remaining
+Progress: ████████████░░░░░░░░ 2/5 phases complete (Phase 11 in progress)
+Last activity: 2026-03-09 — Completed 11-01 per-library scan pipeline
 
 ### Phase Overview
 
@@ -34,7 +34,7 @@ Last activity: 2026-03-09 — Completed 10-02 sqlc queries + migration tests
 |-------|--------|
 | 9. Scan Cancellation & Keyboard Shortcuts | Complete (5/5 plans) ✅ |
 | 10. Schema & Migration | Complete (2/2 plans) ✅ |
-| 11. Per-Library Scan Pipeline | Not started |
+| 11. Per-Library Scan Pipeline | In Progress (1/3 plans) |
 | 12. Library CRUD & Data Integrity | Not started |
 | 13. Library Views & Phantom Tracks | Not started |
 
@@ -52,6 +52,7 @@ Last activity: 2026-03-09 — Completed 10-02 sqlc queries + migration tests
 | 09-05 | integration testing & verification | 3 min | 2 | 1 |
 | Phase 10-01 P01 | 11 min | 2 tasks | 10 files |
 | Phase 10-02 P02 | 5 min | 2 tasks | 9 files |
+| Phase 11-01 P01 | 7 min | 2 tasks | 11 files |
 
 ## Accumulated Context
 
@@ -91,6 +92,15 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 | COALESCE fallback chain: live → phantom → empty | Playlist queries use 3-level COALESCE so callers always get usable string values |
 | is_phantom computed column via CASE WHEN | Eliminates null-checking logic in callers; simple int64 boolean (0/1) |
 
+### Phase 11 Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| Library ID threaded via importResult | Explicit data flow through scan pipeline, avoids mutating shared Library struct state |
+| scanInternal returns *ScanMetrics only | Called from goroutine in scan queue, error return impractical; errors logged + accumulated in Warnings |
+| Auto worker count per library path | Each library may be on different storage (SSD/HDD), auto-detect per scan |
+| Backward-compatible Scan() wrapper | Keeps handleConfigUpdate and FullRescan working without changes |
+
 ### Warnings (carry forward)
 
 - Player lock ordering (`p.mu` before `speaker.Lock()`, goroutine dispatch in beep callback) — carry forward
@@ -113,9 +123,9 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 ### Last Session
 
 **Date:** 2026-03-09
-**What happened:** Executed Phase 10, Plan 02 — added 7 library CRUD queries, updated all playlist queries for phantom support (LEFT JOINs, COALESCE fallback, is_phantom column), added library-filtered audio file queries, wrote 5 migration 6 integration tests, added NewTestDBWithLibrary helper.
-**Where we stopped:** Completed 10-02-PLAN.md (Phase 10 complete)
-**Next action:** Plan or execute Phase 11 (Per-Library Scan Pipeline)
+**What happened:** Executed Phase 11, Plan 01 — created scan queue coordinator (scan_queue.go), refactored Scan() to scanInternal() with per-library parameters, added ScanLibrary(id)/ScanAllLibraries() Wails bindings, FIFO queue with silent dedup, queue-aware cancel/pause, library_id in CreateAudioFile, library identification in all events.
+**Where we stopped:** Completed 11-01-PLAN.md
+**Next action:** Execute Phase 11, Plan 02
 
 ---
 *State initialized: 2026-02-27*
@@ -128,4 +138,4 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 | 18 | add multi-column metadata display to playlist-details | 2026-03-08 | ce23177 | [18-add-multi-column-metadata-display-to-pla](./quick/18-add-multi-column-metadata-display-to-pla/) |
 
 Last activity: 2026-03-08 - Completed quick task 18: add multi-column metadata display to playlist-details
-*Last updated: 2026-03-09 — Completed 10-02-PLAN.md (Phase 10 complete)*
+*Last updated: 2026-03-09 — Completed 11-01-PLAN.md (Phase 11 complete)*
