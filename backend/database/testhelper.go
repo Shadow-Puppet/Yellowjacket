@@ -81,3 +81,27 @@ func NewTestDB(t *testing.T) *DB {
 		logger:  slog.Default(),
 	}
 }
+
+// NewTestDBWithLibrary returns a test DB with a library row
+// pre-inserted. Returns the DB and the library ID.
+func NewTestDBWithLibrary(
+	t *testing.T,
+	name, libPath string,
+) (*DB, int64) {
+	t.Helper()
+
+	db := NewTestDB(t)
+
+	lib, err := db.Queries.CreateLibrary(
+		db.Ctx,
+		sqlcgen.CreateLibraryParams{
+			Name: name,
+			Path: libPath,
+		},
+	)
+	if err != nil {
+		t.Fatalf("could not create test library: %v", err)
+	}
+
+	return db, lib.ID
+}
