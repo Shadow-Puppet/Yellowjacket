@@ -5,7 +5,9 @@ import { EventsOn } from '@runtime/runtime';
 import {
     Scan,
     FullRescan,
-    CancelScan,
+    CancelCurrentScan,
+    CancelAllScans,
+    ScanAllLibraries,
     PauseScan,
     ResumeScan,
 } from '@go/library/Library';
@@ -52,6 +54,9 @@ interface ScanProgress {
     added: number;
     skipped: number;
     updated: number;
+    libraryId: number;
+    libraryName: string;
+    queuedCount: number;
 }
 
 interface ScanMetrics {
@@ -345,6 +350,7 @@ export class ConfigPage extends LitElement {
     @state() private scanPaused = false;
     @state() private showCancelDialog = false;
     @state() private cancelMetrics: { added: number } | null = null;
+    @state() private scanQueuedCount = 0;
     @state() private shortcutConflict: {
         newAction: string;
         newKey: string;
@@ -357,6 +363,8 @@ export class ConfigPage extends LitElement {
     private cancelScanPaused?: () => void;
     private cancelScanResumed?: () => void;
     private cancelScanCancelled?: () => void;
+    private cancelScanQueued?: () => void;
+    private cancelScanQueueDrained?: () => void;
 
     static override styles = css`
         :host {
@@ -901,6 +909,14 @@ export class ConfigPage extends LitElement {
             Events.LibraryScanCancelled,
             this.handleScanCancelled,
         );
+        this.cancelScanQueued = EventsOn(
+            Events.LibraryScanQueued,
+            this.handleScanQueued,
+        );
+        this.cancelScanQueueDrained = EventsOn(
+            Events.LibraryScanQueueDrained,
+            this.handleScanQueueDrained,
+        );
     }
 
     override disconnectedCallback(): void {
@@ -911,6 +927,8 @@ export class ConfigPage extends LitElement {
         this.cancelScanPaused?.();
         this.cancelScanResumed?.();
         this.cancelScanCancelled?.();
+        this.cancelScanQueued?.();
+        this.cancelScanQueueDrained?.();
     }
 
     private async loadLibraryConfig(): Promise<void> {
@@ -950,20 +968,41 @@ export class ConfigPage extends LitElement {
     ): void => {
         if (progress) {
             this.scanProgress = progress;
+            this.scanQueuedCount =
+                progress.queuedCount ?? 0;
         }
     };
 
     private handleScanComplete = (
         metrics?: ScanMetrics,
     ): void => {
+        this.scanProgress = null;
+
+        // If queue still has entries, don't fully reset — next scan will fire ScanStarted
+        if (this.scanQueuedCount > 0) {
+            if (metrics) {
+                this.metrics = metrics;
+            }
+            return;
+        }
+
         this.scanning = false;
         this.scanPaused = false;
-        this.scanProgress = null;
         this.statusMessage = 'Scan complete.';
 
         if (metrics) {
             this.metrics = metrics;
         }
+    };
+
+    private handleScanQueued = (): void => {
+        this.scanQueuedCount++;
+    };
+
+    private handleScanQueueDrained = (): void => {
+        this.scanQueuedCount = 0;
+        this.scanning = false;
+        this.scanPaused = false;
     };
 
     private handleScanPaused = (): void => {
@@ -1010,15 +1049,22 @@ export class ConfigPage extends LitElement {
     private handleCancelKeep = (): void => {
         this.showCancelDialog = false;
         this.cancelMetrics = null;
-        CancelScan();
+        CancelCurrentScan();
     };
 
     private handleCancelDiscard = (): void => {
         this.showCancelDialog = false;
         this.cancelMetrics = null;
-        CancelScan();
+        CancelCurrentScan();
         this.statusMessage =
             'Scan cancelled. Partial results discarded \u2014 run Full Rescan for a clean library.';
+    };
+
+    private handleCancelAll = (): void => {
+        this.showCancelDialog = false;
+        this.cancelMetrics = null;
+        CancelAllScans();
+        this.statusMessage = 'All scanning cancelled.';
     };
 
     private handleCancelDialogDismiss = (): void => {
@@ -1071,6 +1117,16 @@ export class ConfigPage extends LitElement {
             .catch((err: unknown) => {
                 this.statusMessage = `Failed to save storage type: ${err}`;
             });
+    };
+
+    private handleScanAll = async (): Promise<void> => {
+        try {
+            await ScanAllLibraries();
+        } catch (err) {
+            this.statusMessage =
+                'Scan all libraries completed with errors.';
+            this.scanErrors = String(err);
+        }
     };
 
     private handleSoftScan = async (): Promise<void> => {
@@ -1938,6 +1994,12 @@ export class ConfigPage extends LitElement {
                               >
                                   Full Rescan
                               </button>
+                              <button
+                                  class="btn-primary"
+                                  @click=${this.handleScanAll}
+                              >
+                                  Scan All Libraries
+                              </button>
                           `}
                 </div>
 
@@ -1985,45 +2047,98 @@ export class ConfigPage extends LitElement {
                                   class="cancel-dialog"
                                   @click=${(e: Event) => e.stopPropagation()}
                               >
-                                  <div
-                                      class="cancel-dialog-title"
-                                  >
-                                      Cancel Scan
-                                  </div>
-                                  <div
-                                      class="cancel-dialog-message"
-                                  >
-                                      ${this.cancelMetrics
-                                          ?.added
-                                          ? `Keep ${this.cancelMetrics.added} tracks found so far, or discard?`
-                                          : 'Cancel the current scan?'}
-                                  </div>
-                                  <div
-                                      class="cancel-dialog-actions"
-                                  >
-                                      <button
-                                          class="btn-primary"
-                                          @click=${this.handleCancelKeep}
-                                      >
-                                          ${this
-                                              .cancelMetrics
-                                              ?.added
-                                              ? `Keep ${this.cancelMetrics.added} tracks`
-                                              : 'Cancel Scan'}
-                                      </button>
-                                      <button
-                                          class="btn-danger"
-                                          @click=${this.handleCancelDiscard}
-                                      >
-                                          Discard
-                                      </button>
-                                      <button
-                                          class="btn-ghost"
-                                          @click=${this.handleCancelDialogDismiss}
-                                      >
-                                          Continue Scanning
-                                      </button>
-                                  </div>
+                                  ${this.scanQueuedCount > 0
+                                      ? html`
+                                            <div
+                                                class="cancel-dialog-title"
+                                            >
+                                                Cancel Scanning
+                                            </div>
+                                            <div
+                                                class="cancel-dialog-message"
+                                            >
+                                                A scan is in
+                                                progress with
+                                                ${this
+                                                    .scanQueuedCount}
+                                                ${this
+                                                    .scanQueuedCount ===
+                                                1
+                                                    ? 'library'
+                                                    : 'libraries'}
+                                                still queued.
+                                            </div>
+                                            <div
+                                                class="cancel-dialog-actions"
+                                            >
+                                                <button
+                                                    class="btn-warning"
+                                                    @click=${this.handleCancelKeep}
+                                                >
+                                                    Cancel
+                                                    This
+                                                    Library
+                                                </button>
+                                                <button
+                                                    class="btn-danger"
+                                                    @click=${this.handleCancelAll}
+                                                >
+                                                    Cancel
+                                                    All
+                                                    Scanning
+                                                </button>
+                                                <button
+                                                    class="btn-ghost"
+                                                    @click=${this.handleCancelDialogDismiss}
+                                                >
+                                                    Continue
+                                                    Scanning
+                                                </button>
+                                            </div>
+                                        `
+                                      : html`
+                                            <div
+                                                class="cancel-dialog-title"
+                                            >
+                                                Cancel Scan
+                                            </div>
+                                            <div
+                                                class="cancel-dialog-message"
+                                            >
+                                                ${this
+                                                    .cancelMetrics
+                                                    ?.added
+                                                    ? `Keep ${this.cancelMetrics.added} tracks found so far, or discard?`
+                                                    : 'Cancel the current scan?'}
+                                            </div>
+                                            <div
+                                                class="cancel-dialog-actions"
+                                            >
+                                                <button
+                                                    class="btn-primary"
+                                                    @click=${this.handleCancelKeep}
+                                                >
+                                                    ${this
+                                                        .cancelMetrics
+                                                        ?.added
+                                                        ? `Keep ${this.cancelMetrics.added} tracks`
+                                                        : 'Cancel Scan'}
+                                                </button>
+                                                <button
+                                                    class="btn-danger"
+                                                    @click=${this.handleCancelDiscard}
+                                                >
+                                                    Discard
+                                                </button>
+                                                <button
+                                                    class="btn-ghost"
+                                                    @click=${this.handleCancelDialogDismiss}
+                                                >
+                                                    Continue
+                                                    Scanning
+                                                </button>
+                                            </div>
+                                        `}
                               </div>
                           </div>
                       `
@@ -2055,11 +2170,25 @@ export class ConfigPage extends LitElement {
 
         if (!p) return nothing;
 
+        const libraryPrefix = p.libraryName
+            ? `Scanning: ${p.libraryName}`
+            : '';
+
         if (p.phase === 'counting') {
             return html`
                 <div class="progress-phase">
+                    ${libraryPrefix
+                        ? html`<strong>${libraryPrefix}</strong> \u2014 `
+                        : ''}
                     Counting files\u2026
                 </div>
+                ${p.queuedCount > 0
+                    ? html`<div class="progress-detail">
+                          ${p.queuedCount}
+                          ${p.queuedCount === 1 ? 'library' : 'libraries'}
+                          queued
+                      </div>`
+                    : nothing}
             `;
         }
 
@@ -2079,7 +2208,11 @@ export class ConfigPage extends LitElement {
             thumbnails: 'Generating thumbnails',
         };
 
-        const label = phaseLabel[p.phase] ?? 'Scanning';
+        const baseLabel =
+            phaseLabel[p.phase] ?? 'Scanning';
+        const label = p.libraryName
+            ? `${baseLabel}: ${p.libraryName}`
+            : baseLabel;
 
         // Build detail string: "1,247 / 2,013 files (891 new, 23 updated, 356 skipped)"
         const parts: string[] = [];
@@ -2121,6 +2254,13 @@ export class ConfigPage extends LitElement {
                     style="width: ${percent}%"
                 ></div>
             </div>
+            ${p.queuedCount > 0
+                ? html`<div class="progress-detail">
+                      ${p.queuedCount}
+                      ${p.queuedCount === 1 ? 'library' : 'libraries'}
+                      queued
+                  </div>`
+                : nothing}
         `;
     }
 
