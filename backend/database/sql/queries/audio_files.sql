@@ -127,6 +127,12 @@ SELECT id, file_path, title, artist_name
 FROM track_metadata
 WHERE file_path IN (sqlc.slice('paths'));
 
+-- name: GetAudioFilesByLibrary :many
+SELECT * FROM audio_files WHERE library_id = ?;
+
+-- name: CountAudioFilesByLibrary :one
+SELECT COUNT(*) AS count FROM audio_files WHERE library_id = ?;
+
 -- name: DeleteAllAudioFiles :exec
 DELETE FROM audio_files;
 

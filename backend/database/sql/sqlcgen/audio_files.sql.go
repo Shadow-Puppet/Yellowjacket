@@ -22,6 +22,17 @@ func (q *Queries) CountAudioFiles(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+const countAudioFilesByLibrary = `-- name: CountAudioFilesByLibrary :one
+SELECT COUNT(*) AS count FROM audio_files WHERE library_id = ?
+`
+
+func (q *Queries) CountAudioFilesByLibrary(ctx context.Context, libraryID int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countAudioFilesByLibrary, libraryID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createAudioFile = `-- name: CreateAudioFile :one
 INSERT INTO audio_files (file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size, basename) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING id, file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size, basename, library_id
@@ -356,6 +367,46 @@ func (q *Queries) GetAudioFileByPath(ctx context.Context, filePath string) (Audi
 		&i.LibraryID,
 	)
 	return i, err
+}
+
+const getAudioFilesByLibrary = `-- name: GetAudioFilesByLibrary :many
+SELECT id, file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size, basename, library_id FROM audio_files WHERE library_id = ?
+`
+
+func (q *Queries) GetAudioFilesByLibrary(ctx context.Context, libraryID int64) ([]AudioFile, error) {
+	rows, err := q.db.QueryContext(ctx, getAudioFilesByLibrary, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AudioFile
+	for rows.Next() {
+		var i AudioFile
+		if err := rows.Scan(
+			&i.ID,
+			&i.FilePath,
+			&i.LengthMilliseconds,
+			&i.FileTypeID,
+			&i.RecordingID,
+			&i.SampleRate,
+			&i.BitDepth,
+			&i.Channels,
+			&i.Bitrate,
+			&i.FileSize,
+			&i.Basename,
+			&i.LibraryID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getAudioFilesByReleaseGroup = `-- name: GetAudioFilesByReleaseGroup :many
