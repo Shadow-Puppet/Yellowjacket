@@ -76,7 +76,11 @@ Plans:
   2. Only one library scans at a time — requesting a second scan while one is running either queues it or is rejected with clear feedback
   3. Scan progress UI identifies which library is currently being scanned (library name visible in progress indicator)
   4. Existing cancel and pause/resume controls work correctly for per-library scans — cancelling one library's scan doesn't affect others
-**Plans:** TBD
+**Plans:** 3 plans
+Plans:
+- [ ] 11-01-PLAN.md — Backend scan queue coordinator, per-library scan methods, CreateAudioFile with library_id
+- [ ] 11-02-PLAN.md — Frontend progress UI with library name, cancel scope modal, Scan All button
+- [ ] 11-03-PLAN.md — App startup auto-scan wiring, legacy single-directory cleanup
 
 ### Phase 12: Library CRUD & Data Integrity
 **Goal:** Users can add, rename, and remove libraries through the UI with correct data lifecycle management
