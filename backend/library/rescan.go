@@ -1,6 +1,7 @@
 package library
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,12 +10,32 @@ import (
 	"yellowjacket/backend/coverart"
 )
 
+var errNoLibrariesConfigured = errors.New(
+	"no libraries configured for rescan",
+)
+
 // FullRescan clears the queue and player, wipes all library data
 // (database records and cover art files), and performs a fresh
-// scan from scratch.  The returned ScanMetrics includes timing
+// scan of the first library from the database.  Per-library full
+// rescan will be added in Phase 12; for now this rescans the
+// first/only library.  The returned ScanMetrics includes timing
 // for the clear phases in addition to the normal scan metrics.
 func (l *Library) FullRescan() (*ScanMetrics, error) {
 	l.logger.Info("beginning full library rescan")
+
+	// Resolve the first library from the database.
+	libs, err := l.db.Queries.GetAllLibraries(l.ctx)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"could not get libraries for rescan: %w", err,
+		)
+	}
+
+	if len(libs) == 0 {
+		return nil, errNoLibrariesConfigured
+	}
+
+	lib := libs[0]
 
 	// Run the pre-clear hook (e.g. clear queue / stop playback)
 	// before wiping data so the player is not referencing
@@ -50,9 +71,10 @@ func (l *Library) FullRescan() (*ScanMetrics, error) {
 
 	l.logger.Info("library data cleared successfully")
 
-	// Run the full scan and merge clear-phase times into
-	// the metrics it returns.
-	metrics, err := l.Scan()
+	// Scan the first library directly via scanInternal,
+	// bypassing the queue coordinator.
+	metrics := l.scanInternal(lib.ID, lib.Name, lib.Path)
+
 	if metrics != nil {
 		metrics.ClearQueue = clearQueueDur
 		metrics.ClearDatabase = clearDBDur
@@ -70,7 +92,7 @@ func (l *Library) FullRescan() (*ScanMetrics, error) {
 		l.rescanHooks.PostScan()
 	}
 
-	return metrics, err
+	return metrics, nil
 }
 
 // clearLibraryTables deletes all library-related rows in FK-safe

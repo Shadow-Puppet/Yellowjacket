@@ -76,7 +76,7 @@ Plans:
   2. Only one library scans at a time — requesting a second scan while one is running either queues it or is rejected with clear feedback
   3. Scan progress UI identifies which library is currently being scanned (library name visible in progress indicator)
   4. Existing cancel and pause/resume controls work correctly for per-library scans — cancelling one library's scan doesn't affect others
-**Plans:** 1/3 plans executed
+**Plans:** 2/3 plans executed
 Plans:
 - [ ] 11-01-PLAN.md — Backend scan queue coordinator, per-library scan methods, CreateAudioFile with library_id
 - [ ] 11-02-PLAN.md — Frontend progress UI with library name, cancel scope modal, Scan All button
@@ -120,7 +120,7 @@ Plans:
 | 8. Frontend Performance & UX | v1.0 | 4/4 | Complete | 2026-03-05 |
 | 9. Scan Cancellation & Keyboard Shortcuts | v1.1 | 5/5 | Complete | 2026-03-07 |
 | 10. Schema & Migration | 2/2 | Complete    | 2026-03-09 | - |
-| 11. Per-Library Scan Pipeline | 1/3 | In Progress|  | - |
+| 11. Per-Library Scan Pipeline | 2/3 | In Progress|  | - |
 | 12. Library CRUD & Data Integrity | v1.1 | 0/? | Not started | - |
 | 13. Library Views & Phantom Tracks | v1.1 | 0/? | Not started | - |
 

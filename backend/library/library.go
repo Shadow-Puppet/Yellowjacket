@@ -26,8 +26,6 @@ import (
 	"yellowjacket/backend/system"
 )
 
-var errLibraryDirNotConfigured = errors.New("library directory not configured")
-
 // scanBatchSize controls how many files are committed in a single
 // database transaction during a scan.  Larger batches amortize
 // SQLite's fsync cost but increase the blast radius of a failed commit.
@@ -107,8 +105,8 @@ func (l *Library) SetRescanHooks(h RescanHooks) {
 }
 
 // NewLibrary creates a new library with the given configuration.
-// A nil config is permitted; the library will be inert until a valid
-// configuration is supplied via the LibraryConfigChanged event.
+// A nil config is permitted; scan paths come from the database
+// rather than from the config's DirectoryPath.
 func NewLibrary(
 	ctx context.Context,
 	logger *slog.Logger,
@@ -142,63 +140,16 @@ func (l *Library) SetContext(ctx context.Context) {
 	l.registerEventHandlers()
 }
 
+// registerEventHandlers sets up Wails runtime event listeners.
+// The legacy LibraryConfigChanged handler was removed — in the
+// multi-library model, libraries are managed through the CRUD
+// API (Phase 12) and scanned via ScanLibrary/ScanAllLibraries.
 func (l *Library) registerEventHandlers() {
 	if l.ctx == nil {
-		l.logger.Error("Context is nil, cannot register event handlers")
-
-		return
-	}
-
-	runtime.EventsOn(l.ctx, events.LibraryConfigChanged, func(data ...any) {
-		l.logger.Info("Received LibraryConfigChanged event")
-
-		if len(data) == 0 {
-			l.logger.Error("LibraryConfigChanged event received with no data")
-
-			return
-		}
-
-		configMap, ok := data[0].(map[string]any)
-		if !ok {
-			l.logger.Error("LibraryConfigChanged event data is not a map", "data", data[0])
-
-			return
-		}
-
-		dir, ok := configMap["DirectoryPath"].(string)
-		if !ok {
-			l.logger.Error("DirectoryPath not found or not a string in config event")
-
-			return
-		}
-
-		updatedConfig := Config{DirectoryPath: Directory(dir)}
-		if err := l.handleConfigUpdate(updatedConfig); err != nil {
-			l.logger.Error("Failed to handle config update", "err", err)
-		}
-	})
-}
-
-// Scan syncs the library using the legacy DirectoryPath config.
-// Retained for backward compatibility with handleConfigUpdate.
-//
-// Deprecated: Use ScanLibrary(id) for per-library scanning.
-func (l *Library) Scan() (*ScanMetrics, error) {
-	if len(l.conf.DirectoryPath) == 0 {
-		return newScanMetrics(), errLibraryDirNotConfigured
-	}
-
-	lib, err := l.db.Queries.GetLibraryByPath(
-		l.ctx, string(l.conf.DirectoryPath),
-	)
-	if err != nil {
-		return newScanMetrics(), fmt.Errorf(
-			"could not resolve library for path %s: %w",
-			l.conf.DirectoryPath, err,
+		l.logger.Error(
+			"Context is nil, cannot register event handlers",
 		)
 	}
-
-	return l.scanInternal(lib.ID, lib.Name, lib.Path), nil
 }
 
 // scanInternal performs the full scan pipeline for a single library.
@@ -1579,33 +1530,4 @@ func toNullString(v string) sql.NullString {
 	}
 
 	return sql.NullString{String: v, Valid: true}
-}
-
-func (l *Library) handleConfigUpdate(updatedConfigValues Config) error {
-	l.logger.Info("handling config update", "updated", updatedConfigValues)
-
-	var updateErr error
-
-	if l.conf.DirectoryPath != updatedConfigValues.DirectoryPath {
-		l.logger.Info("new library, scanning")
-
-		l.conf.DirectoryPath = updatedConfigValues.DirectoryPath
-
-		if scanMetrics, err := l.Scan(); err != nil {
-			updateErr = errors.Join(
-				updateErr,
-				fmt.Errorf(
-					"problem scanning library on config update: %w",
-					err,
-				),
-			)
-		} else if len(scanMetrics.Warnings) > 0 {
-			l.logger.Warn(
-				"library scan completed with warnings",
-				"warningCount", len(scanMetrics.Warnings),
-			)
-		}
-	}
-
-	return updateErr
 }

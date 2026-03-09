@@ -34,7 +34,7 @@ Requirements for v1.1 Multi-Library Support milestone. Each maps to roadmap phas
 
 - [x] **LSCAN-01**: User can trigger a scan for a specific library (not all-or-nothing)
 - [x] **LSCAN-02**: Scanning is sequential — only one library scans at a time (SQLite single-writer)
-- [ ] **LSCAN-03**: Scan progress UI shows which library is being scanned
+- [x] **LSCAN-03**: Scan progress UI shows which library is being scanned
 - [x] **LSCAN-04**: Existing scan cancellation and pause/resume work per-library
 - [x] **LSCAN-05**: Audio files are associated with their library via `library_id` foreign key
 
@@ -188,7 +188,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | LIB-06 | Phase 12 | Pending |
 | LSCAN-01 | Phase 11 | Complete |
 | LSCAN-02 | Phase 11 | Complete |
-| LSCAN-03 | Phase 11 | Pending |
+| LSCAN-03 | Phase 11 | Complete |
 | LSCAN-04 | Phase 11 | Complete |
 | LSCAN-05 | Phase 10 | Complete |
 | VIEW-01 | Phase 13 | Pending |

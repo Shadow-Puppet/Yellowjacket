@@ -263,5 +263,16 @@ func (yj *YellowJacketApp) OnDomReady(ctx context.Context) {
 	if yj.startupErr != nil {
 		yj.logger.Error("startup error", "err", yj.startupErr.Error())
 		wailsruntime.Quit(ctx)
+
+		return
 	}
+
+	// Auto-scan all libraries on launch. Runs in a goroutine so
+	// it does not block the DOM-ready callback. Uses the same
+	// ScanAllLibraries codepath as the UI button.
+	go func() {
+		if err := yj.library.ScanAllLibraries(); err != nil {
+			yj.logger.Error("auto-scan failed", "err", err)
+		}
+	}()
 }

@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Multi-Library Support
 status: unknown
-last_updated: "2026-03-09T20:03:14Z"
+last_updated: "2026-03-09T20:11:36Z"
 progress:
   total_phases: 2
   completed_phases: 2
-  total_plans: 8
-  completed_plans: 8
+  total_plans: 9
+  completed_plans: 9
 ---
 
 # YellowJacket — Project State
@@ -23,10 +23,10 @@ See: .planning/PROJECT.md (updated 2026-03-08)
 ## Current Position
 
 Phase: 11 — Per-Library Scan Pipeline
-Plan: 1 of 3 in Phase (Plan 01 complete)
-Status: Phase 11 in progress — 2 plans remaining
+Plan: 2 of 3 in Phase (Plan 02 complete)
+Status: Phase 11 in progress — 1 plan remaining
 Progress: ████████████░░░░░░░░ 2/5 phases complete (Phase 11 in progress)
-Last activity: 2026-03-09 — Completed 11-01 per-library scan pipeline
+Last activity: 2026-03-09 — Completed 11-02 frontend scan UI
 
 ### Phase Overview
 
@@ -34,7 +34,7 @@ Last activity: 2026-03-09 — Completed 11-01 per-library scan pipeline
 |-------|--------|
 | 9. Scan Cancellation & Keyboard Shortcuts | Complete (5/5 plans) ✅ |
 | 10. Schema & Migration | Complete (2/2 plans) ✅ |
-| 11. Per-Library Scan Pipeline | In Progress (1/3 plans) |
+| 11. Per-Library Scan Pipeline | In Progress (2/3 plans) |
 | 12. Library CRUD & Data Integrity | Not started |
 | 13. Library Views & Phantom Tracks | Not started |
 
@@ -53,6 +53,7 @@ Last activity: 2026-03-09 — Completed 11-01 per-library scan pipeline
 | Phase 10-01 P01 | 11 min | 2 tasks | 10 files |
 | Phase 10-02 P02 | 5 min | 2 tasks | 9 files |
 | Phase 11-01 P01 | 7 min | 2 tasks | 11 files |
+| Phase 11-02 P02 | 4 min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -100,6 +101,8 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 | scanInternal returns *ScanMetrics only | Called from goroutine in scan queue, error return impractical; errors logged + accumulated in Warnings |
 | Auto worker count per library path | Each library may be on different storage (SSD/HDD), auto-detect per scan |
 | Backward-compatible Scan() wrapper | Keeps handleConfigUpdate and FullRescan working without changes |
+| Queue-aware cancel dialog scope choice | Two-option "Cancel This Library / Cancel All" only when queuedCount > 0; single-scan keeps existing pattern |
+| handleScanComplete defers reset when queue draining | Prevents premature scanning=false before next library starts |
 
 ### Warnings (carry forward)
 
@@ -123,9 +126,9 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 ### Last Session
 
 **Date:** 2026-03-09
-**What happened:** Executed Phase 11, Plan 01 — created scan queue coordinator (scan_queue.go), refactored Scan() to scanInternal() with per-library parameters, added ScanLibrary(id)/ScanAllLibraries() Wails bindings, FIFO queue with silent dedup, queue-aware cancel/pause, library_id in CreateAudioFile, library identification in all events.
-**Where we stopped:** Completed 11-01-PLAN.md
-**Next action:** Execute Phase 11, Plan 02
+**What happened:** Executed Phase 11, Plan 02 — updated config-page and library-manager with per-library progress display (library name + queue count), queue-aware cancel dialog with scope choice (Cancel This Library / Cancel All Scanning), Scan All Libraries button in both components.
+**Where we stopped:** Completed 11-02-PLAN.md
+**Next action:** Execute Phase 11, Plan 03
 
 ---
 *State initialized: 2026-02-27*
@@ -138,4 +141,4 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 | 18 | add multi-column metadata display to playlist-details | 2026-03-08 | ce23177 | [18-add-multi-column-metadata-display-to-pla](./quick/18-add-multi-column-metadata-display-to-pla/) |
 
 Last activity: 2026-03-08 - Completed quick task 18: add multi-column metadata display to playlist-details
-*Last updated: 2026-03-09 — Completed 11-01-PLAN.md (Phase 11 complete)*
+*Last updated: 2026-03-09 — Completed 11-02-PLAN.md*
