@@ -38,6 +38,10 @@ export const Events = {
     LibraryScanCancelled: "LibraryScanCancelled",
     LibraryScanPaused: "LibraryScanPaused",
     LibraryScanResumed: "LibraryScanResumed",
+
+    // Scan queue events
+    LibraryScanQueued: "LibraryScanQueued",
+    LibraryScanQueueDrained: "LibraryScanQueueDrained",
 } as const;
 
 export type EventName = (typeof Events)[keyof typeof Events];

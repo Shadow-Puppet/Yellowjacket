@@ -54,3 +54,9 @@ const (
 	LibraryScanPaused    = "LibraryScanPaused"
 	LibraryScanResumed   = "LibraryScanResumed"
 )
+
+// Scan queue events.
+const (
+	LibraryScanQueued       = "LibraryScanQueued"
+	LibraryScanQueueDrained = "LibraryScanQueueDrained"
+)

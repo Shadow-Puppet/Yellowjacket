@@ -90,6 +90,11 @@ type Library struct {
 	scanCancel  context.CancelFunc
 	scanPaused  bool
 	scanPauseCh chan struct{}
+
+	// Scan queue fields — protected by mu.
+	scanQueue              []scanQueueEntry
+	currentScanLibraryID   int64
+	currentScanLibraryName string
 }
 
 // SetRescanHooks provides optional hooks for cross-cutting
@@ -174,12 +179,40 @@ func (l *Library) registerEventHandlers() {
 	})
 }
 
-// Scan syncs the library by adding new files and removing deleted ones.
-// Files that exist but have incomplete metadata (recording_id = 0)
-// will be updated.  The returned ScanMetrics contains timing and
-// count data for every phase of the scan.
+// Scan syncs the library using the legacy DirectoryPath config.
+// Retained for backward compatibility with handleConfigUpdate.
+//
+// Deprecated: Use ScanLibrary(id) for per-library scanning.
 func (l *Library) Scan() (*ScanMetrics, error) {
+	if len(l.conf.DirectoryPath) == 0 {
+		return newScanMetrics(), errLibraryDirNotConfigured
+	}
+
+	lib, err := l.db.Queries.GetLibraryByPath(
+		l.ctx, string(l.conf.DirectoryPath),
+	)
+	if err != nil {
+		return newScanMetrics(), fmt.Errorf(
+			"could not resolve library for path %s: %w",
+			l.conf.DirectoryPath, err,
+		)
+	}
+
+	return l.scanInternal(lib.ID, lib.Name, lib.Path), nil
+}
+
+// scanInternal performs the full scan pipeline for a single library.
+// It is called from the scan queue coordinator (startScan) or the
+// legacy Scan() wrapper. The caller is responsible for goroutine
+// management; this method blocks until the scan completes.
+func (l *Library) scanInternal(
+	libraryID int64,
+	libraryName string,
+	libraryPath string,
+) *ScanMetrics {
 	metrics := newScanMetrics()
+	metrics.LibraryID = libraryID
+	metrics.LibraryName = libraryName
 	scanStart := time.Now()
 
 	scanCtx, scanCancel := context.WithCancel(l.ctx)
@@ -195,7 +228,6 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 	defer func() {
 		l.mu.Lock()
 		l.scanCancel = nil
-		l.scanActive = false
 		// If still paused, unpause so no dangling channel.
 		if l.scanPaused {
 			l.scanPaused = false
@@ -208,28 +240,54 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 		l.mu.Unlock()
 	}()
 
-	if len(l.conf.DirectoryPath) == 0 {
-		return metrics, errLibraryDirNotConfigured
-	}
-
 	workerCount := resolveScanWorkerCount(
-		l.conf.ScanConcurrency,
-		string(l.conf.DirectoryPath),
+		ScanConcurrencyAuto,
+		libraryPath,
 	)
 
 	l.logger.Info(
 		"beginning library scan",
+		"libraryID", libraryID,
+		"libraryName", libraryName,
+		"libraryPath", libraryPath,
 		"workers", workerCount,
-		"concurrencyMode", l.conf.ScanConcurrency,
 	)
 
-	runtime.EventsEmit(l.ctx, events.LibraryScanStarted)
+	// Helper to build a ScanProgress with library identification.
+	queuedCount := func() int {
+		l.mu.Lock()
+		defer l.mu.Unlock()
 
-	basePath := string(l.conf.DirectoryPath)
+		return len(l.scanQueue)
+	}
+
+	mkProgress := func(
+		phase string,
+		total, processed, a, s, u int64,
+	) ScanProgress {
+		return ScanProgress{
+			Phase:       phase,
+			Total:       total,
+			Processed:   processed,
+			Added:       a,
+			Skipped:     s,
+			Updated:     u,
+			LibraryID:   libraryID,
+			LibraryName: libraryName,
+			QueuedCount: queuedCount(),
+		}
+	}
+
+	runtime.EventsEmit(l.ctx, events.LibraryScanStarted, map[string]any{
+		"libraryId":   libraryID,
+		"libraryName": libraryName,
+	})
+
+	basePath := libraryPath
 
 	// --- Pre-walk: count audio files for progress reporting ---
 	runtime.EventsEmit(l.ctx, events.LibraryScanProgress,
-		ScanProgress{Phase: "counting"},
+		mkProgress("counting", 0, 0, 0, 0, 0),
 	)
 
 	totalFiles := countAudioFiles(basePath)
@@ -239,14 +297,20 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 		"total", totalFiles,
 	)
 
-	// --- Phase 1: load existing files from DB ---
+	// --- Phase 1: load existing files from DB (per-library) ---
 	loadStart := time.Now()
 
-	existingFiles, err := l.db.Queries.GetAllAudioFiles(l.ctx)
+	existingFiles, err := l.db.Queries.GetAudioFilesByLibrary(
+		l.ctx, libraryID,
+	)
 	if err != nil {
-		return metrics, fmt.Errorf(
-			"could not load existing audio files: %w", err,
+		l.logger.Error(
+			"could not load existing audio files",
+			"libraryID", libraryID,
+			"err", err,
 		)
+
+		return metrics
 	}
 
 	existingPaths := &sync.Map{}
@@ -259,7 +323,8 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 	l.logger.Debug(
 		"loaded existing files from database",
 		"count", len(existingFiles),
-		"library-directory", l.conf.DirectoryPath,
+		"libraryID", libraryID,
+		"libraryPath", libraryPath,
 	)
 
 	workChan := make(chan scanWork, 100)
@@ -424,14 +489,10 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 				runtime.EventsEmit(
 					l.ctx,
 					events.LibraryScanProgress,
-					ScanProgress{
-						Phase:     "scanning",
-						Total:     totalFiles,
-						Processed: a + s + u,
-						Added:     a,
-						Skipped:   s,
-						Updated:   u,
-					},
+					mkProgress(
+						"scanning", totalFiles,
+						a+s+u, a, s, u,
+					),
 				)
 			case <-stopProgress:
 				return
@@ -477,6 +538,9 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 		}
 
 		for result := range resultChan {
+			// Thread library ID into each result for saveAudioFile.
+			result.libraryID = libraryID
+
 			if !dbStarted {
 				dbStartVal = time.Now()
 				dbStarted = true
@@ -553,14 +617,7 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 	u := updated.Load()
 
 	runtime.EventsEmit(l.ctx, events.LibraryScanProgress,
-		ScanProgress{
-			Phase:     "scanning",
-			Total:     totalFiles,
-			Processed: a + s + u,
-			Added:     a,
-			Skipped:   s,
-			Updated:   u,
-		},
+		mkProgress("scanning", totalFiles, a+s+u, a, s, u),
 	)
 
 	// Close thumbnail channel and wait for all thumbnail workers
@@ -568,14 +625,9 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 	// point so it is safe to close.
 	thumbStart := time.Now()
 
-	runtime.EventsEmit(l.ctx, events.LibraryScanProgress, ScanProgress{
-		Phase:     "thumbnails",
-		Total:     totalFiles,
-		Processed: a + s + u,
-		Added:     a,
-		Skipped:   s,
-		Updated:   u,
-	})
+	runtime.EventsEmit(l.ctx, events.LibraryScanProgress,
+		mkProgress("thumbnails", totalFiles, a+s+u, a, s, u),
+	)
 
 	close(thumbChan)
 	thumbWg.Wait()
@@ -594,10 +646,9 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 		l.logger.Info("scan cancelled, skipping orphan cleanup")
 	} else {
 		// --- Phase 5: orphan cleanup ---
-		runtime.EventsEmit(l.ctx, events.LibraryScanProgress, ScanProgress{
-			Phase: "orphans", Total: totalFiles,
-			Processed: a + s + u, Added: a, Skipped: s, Updated: u,
-		})
+		runtime.EventsEmit(l.ctx, events.LibraryScanProgress,
+			mkProgress("orphans", totalFiles, a+s+u, a, s, u),
+		)
 
 		orphanStart := time.Now()
 
@@ -669,26 +720,36 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 	metrics.Removed = removed.Load()
 	metrics.Total = time.Since(scanStart)
 
+	if scanErr != nil {
+		l.logger.Warn(
+			"scan completed with errors",
+			"err", scanErr,
+		)
+	}
+
 	l.logger.Info(
 		"library scan complete",
+		"libraryID", libraryID,
+		"libraryName", libraryName,
 		"added", metrics.Added,
 		"updated", metrics.Updated,
 		"removed", metrics.Removed,
 		"skipped", metrics.Skipped,
 		"cancelled", cancelled,
 		"total", metrics.Total,
-		"library", l.conf.DirectoryPath,
 	)
 
 	if cancelled {
-		runtime.EventsEmit(l.ctx, events.LibraryScanCancelled, metrics)
+		runtime.EventsEmit(
+			l.ctx, events.LibraryScanCancelled, metrics,
+		)
 	} else {
 		runtime.EventsEmit(
 			l.ctx, events.LibraryScanComplete, metrics,
 		)
 	}
 
-	return metrics, scanErr
+	return metrics
 }
 
 // progressInterval controls how often scan progress events are
@@ -765,6 +826,7 @@ type importResult struct {
 	audioProps     *metadata.AudioProperties
 	existingFileID int64 // non-zero if this is an update
 	needsUpdate    bool
+	libraryID      int64 // library this file belongs to
 }
 
 // extractAudioMetadata reads and extracts metadata from an audio file.
@@ -939,6 +1001,7 @@ func (l *Library) saveAudioFile(
 			Bitrate:     int64(props.Bitrate),
 			FileSize:    props.FileSize,
 			Basename:    basename,
+			LibraryID:   result.libraryID,
 		})
 	if err != nil {
 		return fmt.Errorf(

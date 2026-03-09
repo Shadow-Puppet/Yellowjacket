@@ -10,6 +10,9 @@ import (
 
 // CancelScan cancels an in-progress scan. Returns immediately;
 // scan goroutines stop at their next checkpoint.
+//
+// Deprecated: Use CancelCurrentScan or CancelAllScans for
+// queue-aware cancellation.
 func (l *Library) CancelScan() {
 	l.mu.Lock()
 	cancel := l.scanCancel

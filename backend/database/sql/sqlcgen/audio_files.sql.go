@@ -34,7 +34,7 @@ func (q *Queries) CountAudioFilesByLibrary(ctx context.Context, libraryID int64)
 }
 
 const createAudioFile = `-- name: CreateAudioFile :one
-INSERT INTO audio_files (file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size, basename) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO audio_files (file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size, basename, library_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING id, file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size, basename, library_id
 `
 
@@ -49,6 +49,7 @@ type CreateAudioFileParams struct {
 	Bitrate            int64
 	FileSize           int64
 	Basename           string
+	LibraryID          int64
 }
 
 func (q *Queries) CreateAudioFile(ctx context.Context, arg CreateAudioFileParams) (AudioFile, error) {
@@ -63,6 +64,7 @@ func (q *Queries) CreateAudioFile(ctx context.Context, arg CreateAudioFileParams
 		arg.Bitrate,
 		arg.FileSize,
 		arg.Basename,
+		arg.LibraryID,
 	)
 	var i AudioFile
 	err := row.Scan(

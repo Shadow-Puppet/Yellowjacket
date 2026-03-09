@@ -109,6 +109,8 @@ export namespace library {
 	    skipped: number;
 	    removed: number;
 	    cancelled: boolean;
+	    libraryId: number;
+	    libraryName: string;
 	    warnings: ScanWarning[];
 	
 	    static createFrom(source: any = {}) {
@@ -143,6 +145,8 @@ export namespace library {
 	        this.skipped = source["skipped"];
 	        this.removed = source["removed"];
 	        this.cancelled = source["cancelled"];
+	        this.libraryId = source["libraryId"];
+	        this.libraryName = source["libraryName"];
 	        this.warnings = this.convertValues(source["warnings"], ScanWarning);
 	    }
 	
