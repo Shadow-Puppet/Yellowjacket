@@ -115,7 +115,7 @@ Plans:
 | 7. Backend Performance | v1.0 | 2/2 | Complete | 2026-03-05 |
 | 8. Frontend Performance & UX | v1.0 | 4/4 | Complete | 2026-03-05 |
 | 9. Scan Cancellation & Keyboard Shortcuts | v1.1 | 5/5 | Complete | 2026-03-07 |
-| 10. Schema & Migration | 2/2 | Complete   | 2026-03-09 | - |
+| 10. Schema & Migration | 2/2 | Complete    | 2026-03-09 | - |
 | 11. Per-Library Scan Pipeline | v1.1 | 0/? | Not started | - |
 | 12. Library CRUD & Data Integrity | v1.1 | 0/? | Not started | - |
 | 13. Library Views & Phantom Tracks | v1.1 | 0/? | Not started | - |
