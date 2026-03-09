@@ -78,9 +78,9 @@ Plans:
   4. Existing cancel and pause/resume controls work correctly for per-library scans — cancelling one library's scan doesn't affect others
 **Plans:** 3/3 plans complete
 Plans:
-- [ ] 11-01-PLAN.md — Backend scan queue coordinator, per-library scan methods, CreateAudioFile with library_id
-- [ ] 11-02-PLAN.md — Frontend progress UI with library name, cancel scope modal, Scan All button
-- [ ] 11-03-PLAN.md — App startup auto-scan wiring, legacy single-directory cleanup
+- [x] 11-01-PLAN.md — Backend scan queue coordinator, per-library scan methods, CreateAudioFile with library_id
+- [x] 11-02-PLAN.md — Frontend progress UI with library name, cancel scope modal, Scan All button
+- [x] 11-03-PLAN.md — App startup auto-scan wiring, legacy single-directory cleanup
 
 ### Phase 12: Library CRUD & Data Integrity
 **Goal:** Users can add, rename, and remove libraries through the UI with correct data lifecycle management
@@ -120,7 +120,7 @@ Plans:
 | 8. Frontend Performance & UX | v1.0 | 4/4 | Complete | 2026-03-05 |
 | 9. Scan Cancellation & Keyboard Shortcuts | v1.1 | 5/5 | Complete | 2026-03-07 |
 | 10. Schema & Migration | 2/2 | Complete    | 2026-03-09 | - |
-| 11. Per-Library Scan Pipeline | 3/3 | Complete   | 2026-03-09 | - |
+| 11. Per-Library Scan Pipeline | 3/3 | Complete    | 2026-03-09 | - |
 | 12. Library CRUD & Data Integrity | v1.1 | 0/? | Not started | - |
 | 13. Library Views & Phantom Tracks | v1.1 | 0/? | Not started | - |
 
