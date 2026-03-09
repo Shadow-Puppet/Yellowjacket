@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Multi-Library Support
-status: planning
-last_updated: "2026-03-08"
+status: unknown
+last_updated: "2026-03-09T13:43:03.790Z"
 progress:
-  total_phases: 5
+  total_phases: 2
   completed_phases: 1
-  total_plans: 5
-  completed_plans: 5
+  total_plans: 7
+  completed_plans: 6
 ---
 
 # YellowJacket — Project State
@@ -22,18 +22,18 @@ See: .planning/PROJECT.md (updated 2026-03-08)
 
 ## Current Position
 
-Phase: 10 — Schema & Migration (next up)
-Plan: TBD (awaiting plan creation)
-Status: Roadmap created — ready for phase planning
+Phase: 10 — Schema & Migration
+Plan: 1 of 2 in Phase (Plan 01 complete)
+Status: In progress — executing Phase 10
 Progress: ████░░░░░░░░░░░░░░░░ 1/5 phases complete (Phase 9)
-Last activity: 2026-03-08 — Multi-library roadmap created (Phases 10-13)
+Last activity: 2026-03-09 — Completed 10-01 schema files + migration 6
 
 ### Phase Overview
 
 | Phase | Status |
 |-------|--------|
 | 9. Scan Cancellation & Keyboard Shortcuts | Complete (5/5 plans) ✅ |
-| 10. Schema & Migration | Not started |
+| 10. Schema & Migration | In progress (1/2 plans) |
 | 11. Per-Library Scan Pipeline | Not started |
 | 12. Library CRUD & Data Integrity | Not started |
 | 13. Library Views & Phantom Tracks | Not started |
@@ -50,6 +50,7 @@ Last activity: 2026-03-08 — Multi-library roadmap created (Phases 10-13)
 | 09-04 | keyboard shortcuts settings UI | 5 min | 2 | 2 |
 | 09-03 | scan control UI | 2 min | 1 | 3 |
 | 09-05 | integration testing & verification | 3 min | 2 | 1 |
+| Phase 10-01 P01 | 11 min | 2 tasks | 10 files |
 
 ## Accumulated Context
 
@@ -78,6 +79,15 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 | Backend filtering, not frontend | Don't load 150K tracks when viewing one library |
 | 4 multi-library phases (10-13) | Natural delivery boundaries: schema → scan → CRUD → views, each phase delivers verifiable capability |
 
+### Phase 10 Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| Underscore prefix `_libraries.sql` for schema ordering | Go embed.FS ReadDir sorts alphabetically; `_` < `a` ensures libraries table created before audio_files FK |
+| Sentinel library id=0 in test DB | Existing tests use DEFAULT library_id=0; sentinel row satisfies FK without modifying every test |
+| TOML cleanup via generic map[string]any | Preserves all config sections when removing only DirectoryPath; no dependency on full Config struct |
+| sql.NullInt64 for nullable playlist_tracks.audio_file_id | Phantom tracks have NULL audio_file_id; generated sqlc code requires sql.Null types |
+
 ### Warnings (carry forward)
 
 - Player lock ordering (`p.mu` before `speaker.Lock()`, goroutine dispatch in beep callback) — carry forward
@@ -99,10 +109,10 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 
 ### Last Session
 
-**Date:** 2026-03-08
-**What happened:** Created multi-library roadmap (Phases 10-13) from 20 requirements. Phase 10 = Schema & Migration (DATA-01, DATA-04, LIB-04, LIB-05, LSCAN-05). Phase 11 = Per-Library Scan Pipeline (LSCAN-01..04). Phase 12 = Library CRUD & Data Integrity (LIB-01..03, LIB-06, DATA-02, DATA-03, PLAY-04). Phase 13 = Library Views & Phantom Tracks (VIEW-01..04, PLAY-01..03).
-**Where we stopped:** Roadmap written, ready for phase planning
-**Next action:** Run `gsd-plan-phase 10` to create plans for Schema & Migration
+**Date:** 2026-03-09
+**What happened:** Executed Phase 10, Plan 01 — created multi-library schema files (_libraries.sql, updated audio_files/playlist_tracks/track_metadata_view) and implemented migration 6 with backup, TOML config migration, phantom metadata backfill. 3 auto-fixed deviations (sqlc regen, test FK fix, linter fix).
+**Where we stopped:** Completed 10-01-PLAN.md (schema files + migration 6)
+**Next action:** Execute Phase 10, Plan 02 or continue to Phase 11
 
 ---
 *State initialized: 2026-02-27*
@@ -115,4 +125,4 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 | 18 | add multi-column metadata display to playlist-details | 2026-03-08 | ce23177 | [18-add-multi-column-metadata-display-to-pla](./quick/18-add-multi-column-metadata-display-to-pla/) |
 
 Last activity: 2026-03-08 - Completed quick task 18: add multi-column metadata display to playlist-details
-*Last updated: 2026-03-08 — Multi-library roadmap created (Phases 10-13)*
+*Last updated: 2026-03-09 — Completed 10-01-PLAN.md (schema + migration 6)*

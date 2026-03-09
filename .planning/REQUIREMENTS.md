@@ -36,7 +36,7 @@ Requirements for v1.1 Multi-Library Support milestone. Each maps to roadmap phas
 - [ ] **LSCAN-02**: Scanning is sequential — only one library scans at a time (SQLite single-writer)
 - [ ] **LSCAN-03**: Scan progress UI shows which library is being scanned
 - [ ] **LSCAN-04**: Existing scan cancellation and pause/resume work per-library
-- [ ] **LSCAN-05**: Audio files are associated with their library via `library_id` foreign key
+- [x] **LSCAN-05**: Audio files are associated with their library via `library_id` foreign key
 
 ### Unified Presentation
 
@@ -54,10 +54,10 @@ Requirements for v1.1 Multi-Library Support milestone. Each maps to roadmap phas
 
 ### Data Integrity
 
-- [ ] **DATA-01**: Schema migration adds `libraries` table and `library_id` FK on `audio_files`
+- [x] **DATA-01**: Schema migration adds `libraries` table and `library_id` FK on `audio_files`
 - [ ] **DATA-02**: Orphan cleanup after library removal: reference-counting bottom-up deletes for artists, albums, genres only referenced by removed library's tracks
 - [ ] **DATA-03**: FTS5 index entries for removed tracks are cleaned up (handling contentless table limitations)
-- [ ] **DATA-04**: All library operations are transactional — no partial state on failure
+- [x] **DATA-04**: All library operations are transactional — no partial state on failure
 
 ## Future Requirements
 
@@ -190,7 +190,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | LSCAN-02 | Phase 11 | Pending |
 | LSCAN-03 | Phase 11 | Pending |
 | LSCAN-04 | Phase 11 | Pending |
-| LSCAN-05 | Phase 10 | Pending |
+| LSCAN-05 | Phase 10 | Complete |
 | VIEW-01 | Phase 13 | Pending |
 | VIEW-02 | Phase 13 | Pending |
 | VIEW-03 | Phase 13 | Pending |
@@ -199,10 +199,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PLAY-02 | Phase 13 | Pending |
 | PLAY-03 | Phase 13 | Pending |
 | PLAY-04 | Phase 12 | Pending |
-| DATA-01 | Phase 10 | Pending |
+| DATA-01 | Phase 10 | Complete |
 | DATA-02 | Phase 12 | Pending |
 | DATA-03 | Phase 12 | Pending |
-| DATA-04 | Phase 10 | Pending |
+| DATA-04 | Phase 10 | Complete |
 
 **Coverage:**
 - v1.1 requirements: 31 total (8 complete + 23 pending)
