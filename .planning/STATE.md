@@ -23,17 +23,17 @@ See: .planning/PROJECT.md (updated 2026-03-08)
 ## Current Position
 
 Phase: 10 — Schema & Migration
-Plan: 1 of 2 in Phase (Plan 01 complete)
-Status: In progress — executing Phase 10
-Progress: ████░░░░░░░░░░░░░░░░ 1/5 phases complete (Phase 9)
-Last activity: 2026-03-09 — Completed 10-01 schema files + migration 6
+Plan: 2 of 2 in Phase (Plan 02 complete)
+Status: Phase 10 complete — ready for Phase 11
+Progress: ████████░░░░░░░░░░░░ 2/5 phases complete (Phase 10)
+Last activity: 2026-03-09 — Completed 10-02 sqlc queries + migration tests
 
 ### Phase Overview
 
 | Phase | Status |
 |-------|--------|
 | 9. Scan Cancellation & Keyboard Shortcuts | Complete (5/5 plans) ✅ |
-| 10. Schema & Migration | In progress (1/2 plans) |
+| 10. Schema & Migration | Complete (2/2 plans) ✅ |
 | 11. Per-Library Scan Pipeline | Not started |
 | 12. Library CRUD & Data Integrity | Not started |
 | 13. Library Views & Phantom Tracks | Not started |
@@ -51,6 +51,7 @@ Last activity: 2026-03-09 — Completed 10-01 schema files + migration 6
 | 09-03 | scan control UI | 2 min | 1 | 3 |
 | 09-05 | integration testing & verification | 3 min | 2 | 1 |
 | Phase 10-01 P01 | 11 min | 2 tasks | 10 files |
+| Phase 10-02 P02 | 5 min | 2 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -87,6 +88,8 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 | Sentinel library id=0 in test DB | Existing tests use DEFAULT library_id=0; sentinel row satisfies FK without modifying every test |
 | TOML cleanup via generic map[string]any | Preserves all config sections when removing only DirectoryPath; no dependency on full Config struct |
 | sql.NullInt64 for nullable playlist_tracks.audio_file_id | Phantom tracks have NULL audio_file_id; generated sqlc code requires sql.Null types |
+| COALESCE fallback chain: live → phantom → empty | Playlist queries use 3-level COALESCE so callers always get usable string values |
+| is_phantom computed column via CASE WHEN | Eliminates null-checking logic in callers; simple int64 boolean (0/1) |
 
 ### Warnings (carry forward)
 
@@ -110,9 +113,9 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 ### Last Session
 
 **Date:** 2026-03-09
-**What happened:** Executed Phase 10, Plan 01 — created multi-library schema files (_libraries.sql, updated audio_files/playlist_tracks/track_metadata_view) and implemented migration 6 with backup, TOML config migration, phantom metadata backfill. 3 auto-fixed deviations (sqlc regen, test FK fix, linter fix).
-**Where we stopped:** Completed 10-01-PLAN.md (schema files + migration 6)
-**Next action:** Execute Phase 10, Plan 02 or continue to Phase 11
+**What happened:** Executed Phase 10, Plan 02 — added 7 library CRUD queries, updated all playlist queries for phantom support (LEFT JOINs, COALESCE fallback, is_phantom column), added library-filtered audio file queries, wrote 5 migration 6 integration tests, added NewTestDBWithLibrary helper.
+**Where we stopped:** Completed 10-02-PLAN.md (Phase 10 complete)
+**Next action:** Plan or execute Phase 11 (Per-Library Scan Pipeline)
 
 ---
 *State initialized: 2026-02-27*
@@ -125,4 +128,4 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 | 18 | add multi-column metadata display to playlist-details | 2026-03-08 | ce23177 | [18-add-multi-column-metadata-display-to-pla](./quick/18-add-multi-column-metadata-display-to-pla/) |
 
 Last activity: 2026-03-08 - Completed quick task 18: add multi-column metadata display to playlist-details
-*Last updated: 2026-03-09 — Completed 10-01-PLAN.md (schema + migration 6)*
+*Last updated: 2026-03-09 — Completed 10-02-PLAN.md (Phase 10 complete)*

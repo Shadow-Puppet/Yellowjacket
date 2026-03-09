@@ -26,8 +26,8 @@ Requirements for v1.1 Multi-Library Support milestone. Each maps to roadmap phas
 - [ ] **LIB-01**: User can add a new library directory via a folder picker dialog
 - [ ] **LIB-02**: User can rename a library (display name)
 - [ ] **LIB-03**: User can remove a library — tracks are deleted from DB, shared entities (artists, albums, genres) are cleaned up only if no other library references them
-- [ ] **LIB-04**: Libraries are stored in SQLite (not TOML config) with CRUD through the UI
-- [ ] **LIB-05**: Existing single-directory config is migrated seamlessly to the libraries table on first run after upgrade
+- [x] **LIB-04**: Libraries are stored in SQLite (not TOML config) with CRUD through the UI
+- [x] **LIB-05**: Existing single-directory config is migrated seamlessly to the libraries table on first run after upgrade
 - [ ] **LIB-06**: Library list is displayed in a management UI (settings or sidebar section)
 
 ### Library Scanning
@@ -183,8 +183,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | LIB-01 | Phase 12 | Pending |
 | LIB-02 | Phase 12 | Pending |
 | LIB-03 | Phase 12 | Pending |
-| LIB-04 | Phase 10 | Pending |
-| LIB-05 | Phase 10 | Pending |
+| LIB-04 | Phase 10 | Complete |
+| LIB-05 | Phase 10 | Complete |
 | LIB-06 | Phase 12 | Pending |
 | LSCAN-01 | Phase 11 | Pending |
 | LSCAN-02 | Phase 11 | Pending |

@@ -28,7 +28,7 @@
 ### v1.1 Multi-Library Support (Phases 9-13)
 
 - [x] **Phase 9: Scan Cancellation & Keyboard Shortcuts** — Cancellable library scans and configurable keyboard shortcuts
-- [ ] **Phase 10: Schema & Migration** — Libraries table, library_id FK, playlist_tracks phantom rebuild, config migration
+- [x] **Phase 10: Schema & Migration** — Libraries table, library_id FK, playlist_tracks phantom rebuild, config migration (completed 2026-03-09)
 - [ ] **Phase 11: Per-Library Scan Pipeline** — Scan pipeline refactored for per-library scanning with sequential coordination
 - [ ] **Phase 12: Library CRUD & Data Integrity** — Library management API, orphan cleanup, queue/playlist lifecycle, library manager UI
 - [ ] **Phase 13: Library Views & Phantom Tracks** — Filtered presentation across all views, search, browse, and phantom track display
@@ -62,10 +62,10 @@ Plans:
   2. An existing user's database is migrated on first launch: their single directory becomes a named library, all existing audio_files get that library_id, and everything works without any user action
   3. The `playlist_tracks` table supports nullable `audio_file_id` with phantom metadata columns — the schema is ready for phantom track preservation
   4. All migration operations complete atomically — a crash mid-migration leaves the database unchanged (not half-migrated)
-**Plans:** 1/2 plans executed
+**Plans:** 2/2 plans complete
 Plans:
-- [ ] 10-01-PLAN.md — Schema definitions + Migration 6 (libraries table, library_id FK, phantom columns, track_metadata VIEW, backup, TOML migration)
-- [ ] 10-02-PLAN.md — sqlc queries for libraries + updated playlist phantom queries + migration integration tests
+- [x] 10-01-PLAN.md — Schema definitions + Migration 6 (libraries table, library_id FK, phantom columns, track_metadata VIEW, backup, TOML migration)
+- [x] 10-02-PLAN.md — sqlc queries for libraries + updated playlist phantom queries + migration integration tests
 
 ### Phase 11: Per-Library Scan Pipeline
 **Goal:** Users can scan individual libraries independently with proper sequential coordination
@@ -115,7 +115,7 @@ Plans:
 | 7. Backend Performance | v1.0 | 2/2 | Complete | 2026-03-05 |
 | 8. Frontend Performance & UX | v1.0 | 4/4 | Complete | 2026-03-05 |
 | 9. Scan Cancellation & Keyboard Shortcuts | v1.1 | 5/5 | Complete | 2026-03-07 |
-| 10. Schema & Migration | 1/2 | In Progress|  | - |
+| 10. Schema & Migration | 2/2 | Complete   | 2026-03-09 | - |
 | 11. Per-Library Scan Pipeline | v1.1 | 0/? | Not started | - |
 | 12. Library CRUD & Data Integrity | v1.1 | 0/? | Not started | - |
 | 13. Library Views & Phantom Tracks | v1.1 | 0/? | Not started | - |
