@@ -23,10 +23,10 @@ See: .planning/PROJECT.md (updated 2026-03-08)
 ## Current Position
 
 Phase: 11 — Per-Library Scan Pipeline
-Plan: 2 of 3 in Phase (Plan 02 complete)
-Status: Phase 11 in progress — 1 plan remaining
-Progress: ████████████░░░░░░░░ 2/5 phases complete (Phase 11 in progress)
-Last activity: 2026-03-09 — Completed 11-02 frontend scan UI
+Plan: 3 of 3 in Phase (Plan 03 complete)
+Status: Phase 11 complete — all plans done
+Progress: ████████████████░░░░ 3/5 phases complete (Phase 11 complete)
+Last activity: 2026-03-09 — Completed 11-03 wire auto-scan and legacy cleanup
 
 ### Phase Overview
 
@@ -34,7 +34,7 @@ Last activity: 2026-03-09 — Completed 11-02 frontend scan UI
 |-------|--------|
 | 9. Scan Cancellation & Keyboard Shortcuts | Complete (5/5 plans) ✅ |
 | 10. Schema & Migration | Complete (2/2 plans) ✅ |
-| 11. Per-Library Scan Pipeline | In Progress (2/3 plans) |
+| 11. Per-Library Scan Pipeline | Complete (3/3 plans) ✅ |
 | 12. Library CRUD & Data Integrity | Not started |
 | 13. Library Views & Phantom Tracks | Not started |
 
@@ -53,6 +53,7 @@ Last activity: 2026-03-09 — Completed 11-02 frontend scan UI
 | Phase 10-01 P01 | 11 min | 2 tasks | 10 files |
 | Phase 10-02 P02 | 5 min | 2 tasks | 9 files |
 | Phase 11-01 P01 | 7 min | 2 tasks | 11 files |
+| Phase 11-03 P03 | 10 min | 1 task | 3 files |
 | Phase 11-02 P02 | 4 min | 2 tasks | 2 files |
 
 ## Accumulated Context
@@ -103,6 +104,9 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 | Backward-compatible Scan() wrapper | Keeps handleConfigUpdate and FullRescan working without changes |
 | Queue-aware cancel dialog scope choice | Two-option "Cancel This Library / Cancel All" only when queuedCount > 0; single-scan keeps existing pattern |
 | handleScanComplete defers reset when queue draining | Prevents premature scanning=false before next library starts |
+| FullRescan uses first library from GetAllLibraries | Per-library rescan deferred to Phase 12; preserves backward compatibility for config-page "Rescan" button |
+| LibraryConfigChanged handler removed entirely | Multi-library model uses CRUD API (Phase 12), not event-driven config updates |
+| Scan() wrapper deleted | Only callers were handleConfigUpdate (deleted) and FullRescan (updated to scanInternal) |
 
 ### Warnings (carry forward)
 
@@ -126,9 +130,9 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 ### Last Session
 
 **Date:** 2026-03-09
-**What happened:** Executed Phase 11, Plan 02 — updated config-page and library-manager with per-library progress display (library name + queue count), queue-aware cancel dialog with scope choice (Cancel This Library / Cancel All Scanning), Scan All Libraries button in both components.
-**Where we stopped:** Completed 11-02-PLAN.md
-**Next action:** Execute Phase 11, Plan 03
+**What happened:** Executed Phase 11, Plan 03 — wired auto-scan on app launch via ScanAllLibraries goroutine in OnDomReady, removed legacy LibraryConfigChanged handler, handleConfigUpdate, and deprecated Scan() wrapper. Updated FullRescan to resolve library from DB via GetAllLibraries.
+**Where we stopped:** Completed 11-03-PLAN.md — Phase 11 complete
+**Next action:** Plan Phase 12 (Library CRUD & Data Integrity)
 
 ---
 *State initialized: 2026-02-27*
@@ -141,4 +145,4 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 | 18 | add multi-column metadata display to playlist-details | 2026-03-08 | ce23177 | [18-add-multi-column-metadata-display-to-pla](./quick/18-add-multi-column-metadata-display-to-pla/) |
 
 Last activity: 2026-03-08 - Completed quick task 18: add multi-column metadata display to playlist-details
-*Last updated: 2026-03-09 — Completed 11-02-PLAN.md*
+*Last updated: 2026-03-09 — Completed 11-03-PLAN.md (Phase 11 complete)*

@@ -29,7 +29,7 @@
 
 - [x] **Phase 9: Scan Cancellation & Keyboard Shortcuts** — Cancellable library scans and configurable keyboard shortcuts
 - [x] **Phase 10: Schema & Migration** — Libraries table, library_id FK, playlist_tracks phantom rebuild, config migration (completed 2026-03-09)
-- [ ] **Phase 11: Per-Library Scan Pipeline** — Scan pipeline refactored for per-library scanning with sequential coordination
+- [x] **Phase 11: Per-Library Scan Pipeline** — Scan pipeline refactored for per-library scanning with sequential coordination (completed 2026-03-09)
 - [ ] **Phase 12: Library CRUD & Data Integrity** — Library management API, orphan cleanup, queue/playlist lifecycle, library manager UI
 - [ ] **Phase 13: Library Views & Phantom Tracks** — Filtered presentation across all views, search, browse, and phantom track display
 
@@ -76,7 +76,7 @@ Plans:
   2. Only one library scans at a time — requesting a second scan while one is running either queues it or is rejected with clear feedback
   3. Scan progress UI identifies which library is currently being scanned (library name visible in progress indicator)
   4. Existing cancel and pause/resume controls work correctly for per-library scans — cancelling one library's scan doesn't affect others
-**Plans:** 2/3 plans executed
+**Plans:** 3/3 plans complete
 Plans:
 - [ ] 11-01-PLAN.md — Backend scan queue coordinator, per-library scan methods, CreateAudioFile with library_id
 - [ ] 11-02-PLAN.md — Frontend progress UI with library name, cancel scope modal, Scan All button
@@ -120,7 +120,7 @@ Plans:
 | 8. Frontend Performance & UX | v1.0 | 4/4 | Complete | 2026-03-05 |
 | 9. Scan Cancellation & Keyboard Shortcuts | v1.1 | 5/5 | Complete | 2026-03-07 |
 | 10. Schema & Migration | 2/2 | Complete    | 2026-03-09 | - |
-| 11. Per-Library Scan Pipeline | 2/3 | In Progress|  | - |
+| 11. Per-Library Scan Pipeline | 3/3 | Complete   | 2026-03-09 | - |
 | 12. Library CRUD & Data Integrity | v1.1 | 0/? | Not started | - |
 | 13. Library Views & Phantom Tracks | v1.1 | 0/? | Not started | - |
 
