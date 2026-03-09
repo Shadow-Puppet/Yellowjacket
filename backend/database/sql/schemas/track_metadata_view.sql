@@ -22,7 +22,8 @@ SELECT
     af.bit_depth,
     af.channels,
     af.bitrate,
-    af.file_size
+    af.file_size,
+    af.library_id
 FROM audio_files af
 LEFT JOIN recordings r ON af.recording_id = r.id
 LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id

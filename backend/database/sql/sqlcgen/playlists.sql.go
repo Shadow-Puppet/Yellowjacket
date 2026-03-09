@@ -7,16 +7,17 @@ package sqlcgen
 
 import (
 	"context"
+	"database/sql"
 )
 
 const addPlaylistTrack = `-- name: AddPlaylistTrack :one
 INSERT INTO playlist_tracks (playlist_id, audio_file_id, position) VALUES (?, ?, ?)
-RETURNING id, playlist_id, audio_file_id, position
+RETURNING id, playlist_id, audio_file_id, position, phantom_title, phantom_artist, phantom_album, phantom_duration_ms, phantom_genre, phantom_cover_art_path
 `
 
 type AddPlaylistTrackParams struct {
 	PlaylistID  int64
-	AudioFileID int64
+	AudioFileID sql.NullInt64
 	Position    int64
 }
 
@@ -28,6 +29,12 @@ func (q *Queries) AddPlaylistTrack(ctx context.Context, arg AddPlaylistTrackPara
 		&i.PlaylistID,
 		&i.AudioFileID,
 		&i.Position,
+		&i.PhantomTitle,
+		&i.PhantomArtist,
+		&i.PhantomAlbum,
+		&i.PhantomDurationMs,
+		&i.PhantomGenre,
+		&i.PhantomCoverArtPath,
 	)
 	return i, err
 }
@@ -116,7 +123,7 @@ ORDER BY pt.playlist_id, pt.position
 type GetAllPlaylistTracksWithMetadataRow struct {
 	ID                 int64
 	PlaylistID         int64
-	AudioFileID        int64
+	AudioFileID        sql.NullInt64
 	Position           int64
 	FilePath           string
 	LengthMilliseconds int64
@@ -262,7 +269,7 @@ ORDER BY pt.position
 type GetPlaylistTracksRow struct {
 	ID          int64
 	PlaylistID  int64
-	AudioFileID int64
+	AudioFileID sql.NullInt64
 	Position    int64
 	FilePath    string
 }
@@ -326,7 +333,7 @@ ORDER BY pt.position
 type GetPlaylistTracksWithMetadataRow struct {
 	ID                 int64
 	PlaylistID         int64
-	AudioFileID        int64
+	AudioFileID        sql.NullInt64
 	Position           int64
 	FilePath           string
 	LengthMilliseconds int64

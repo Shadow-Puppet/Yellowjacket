@@ -1,0 +1,6 @@
+CREATE TABLE IF NOT EXISTS libraries (
+    id         INTEGER PRIMARY KEY,
+    name       TEXT NOT NULL,
+    path       TEXT NOT NULL UNIQUE,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

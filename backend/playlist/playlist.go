@@ -3,6 +3,7 @@ package playlist
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -867,7 +868,7 @@ func (s *Service) ImportPlaylist(
 			s.db.Ctx,
 			sqlcgen.AddPlaylistTrackParams{
 				PlaylistID:  created.ID,
-				AudioFileID: audioFile.ID,
+				AudioFileID: sql.NullInt64{Int64: audioFile.ID, Valid: true},
 				Position:    int64(position),
 			},
 		)
@@ -1065,7 +1066,7 @@ func (s *Service) restoreSinglePlaylist(
 			s.db.Ctx,
 			sqlcgen.AddPlaylistTrackParams{
 				PlaylistID:  playlistID,
-				AudioFileID: audioFile.ID,
+				AudioFileID: sql.NullInt64{Int64: audioFile.ID, Valid: true},
 				Position:    int64(position),
 			},
 		)
@@ -1125,7 +1126,7 @@ func (s *Service) addSingleTrack(
 		s.db.Ctx,
 		sqlcgen.AddPlaylistTrackParams{
 			PlaylistID:  playlistID,
-			AudioFileID: audioFile.ID,
+			AudioFileID: sql.NullInt64{Int64: audioFile.ID, Valid: true},
 			Position:    position,
 		},
 	)
@@ -1654,7 +1655,7 @@ func (s *Service) ResolvePhantomTracks(
 			s.db.Ctx,
 			sqlcgen.AddPlaylistTrackParams{
 				PlaylistID:  playlistID,
-				AudioFileID: audioFile.ID,
+				AudioFileID: sql.NullInt64{Int64: audioFile.ID, Valid: true},
 				Position:    nextPos + int64(resolved),
 			},
 		)
