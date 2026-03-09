@@ -19,5 +19,6 @@ CREATE TABLE IF NOT EXISTS audio_files (
 CREATE INDEX IF NOT EXISTS idx_audio_files_recording_id
     ON audio_files(recording_id);
 
-CREATE INDEX IF NOT EXISTS idx_audio_files_library_id
-    ON audio_files(library_id);
+-- idx_audio_files_library_id is created by migration 6 (not here) because
+-- on existing databases this schema file is a no-op (CREATE TABLE IF NOT EXISTS)
+-- and the library_id column doesn't exist until the migration adds it.
