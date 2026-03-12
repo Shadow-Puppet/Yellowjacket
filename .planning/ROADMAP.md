@@ -92,7 +92,10 @@ Plans:
   3. User can remove a library — its tracks are deleted, shared artists/albums/genres used only by that library are cleaned up, but entities shared with other libraries survive intact
   4. Removing a library cleans up FTS5 search index entries for that library's tracks (no stale search results)
   5. Queue tracks from a removed library are cascade-deleted; the queue continues playing from the next valid track
-**Plans:** TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 12-01-PLAN.md — Backend CRUD API + orphan cleanup + queue compaction + events
+- [ ] 12-02-PLAN.md — Frontend library management UI in settings + sidebar cleanup
 
 ### Phase 13: Library Views & Phantom Tracks
 **Goal:** Users experience a unified multi-library presentation with optional filtering and graceful playlist preservation
