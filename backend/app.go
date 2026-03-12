@@ -171,6 +171,14 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 		PostScan: yj.playlist.RestoreAllPlaylists,
 	})
 
+	// Wire removal hooks so the library can stop playback and
+	// compact the queue during library removal without depending
+	// on the player or queue packages directly.
+	yj.library.SetRemovalHooks(library.RemovalHooks{
+		StopPlayback: func() { yj.player.UnloadTrack() },
+		CompactQueue: yj.queue.CompactAfterLibraryRemoval,
+	})
+
 	// Register playback finished handler to drive queue auto-advance.
 	yj.player.SetPlaybackFinishedHandler(yj.queue.OnPlaybackFinished)
 
