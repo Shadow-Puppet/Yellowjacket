@@ -8,16 +8,21 @@ import {
     CancelCurrentScan,
     CancelAllScans,
     ScanAllLibraries,
+    ScanLibrary,
     PauseScan,
     ResumeScan,
+    AddLibrary,
+    RenameLibrary,
+    RemoveLibrary,
+    GetRemovalImpact,
+    GetAllLibrariesWithTrackCounts,
 } from '@go/library/Library';
 import {
-    GetLibraryDirectory,
-    SetLibraryDirectory,
     GetScanConcurrency,
     SetScanConcurrency,
 } from '@go/config/Config';
 import { DirectoryPicker } from '@go/frontendutil/FrontendUtil';
+import type { library } from '@go/models';
 import { ThemeController } from '@store/controllers/theme-controller';
 import { TrackListController } from '@store/controllers/tracklist-controller';
 import { FavoritesController } from '@store/controllers/favorites-controller';
@@ -337,8 +342,15 @@ export class ConfigPage extends LitElement {
     @state() private playlists: playlist.Summary[] = [];
 
     // --- Library state ---
-    @state() private libraryDirectory = '';
-    @state() private selectedDirectory = '';
+    @state() private libraries: library.Info[] = [];
+    @state() private editingLibraryId: number | null = null;
+    @state() private editingName = '';
+    @state() private removingLibraryId: number | null = null;
+    @state() private removalImpact: library.RemovalImpact | null = null;
+    @state() private isRemoving = false;
+    @state() private toastMessage = '';
+    @state() private toastVisible = false;
+    @state() private activeMenuId: number | null = null;
     @state() private scanning = false;
     @state() private statusMessage = '';
     @state() private scanProgress: ScanProgress | null = null;
@@ -357,6 +369,7 @@ export class ConfigPage extends LitElement {
         existingAction: string;
     } | null = null;
 
+    private toastTimer?: ReturnType<typeof setTimeout>;
     private cancelScanStarted?: () => void;
     private cancelScanProgress?: () => void;
     private cancelScanComplete?: () => void;
@@ -365,6 +378,9 @@ export class ConfigPage extends LitElement {
     private cancelScanCancelled?: () => void;
     private cancelScanQueued?: () => void;
     private cancelScanQueueDrained?: () => void;
+    private cancelLibraryAdded?: () => void;
+    private cancelLibraryRenamed?: () => void;
+    private cancelLibraryRemoved?: () => void;
 
     static override styles = css`
         :host {
@@ -812,6 +828,182 @@ export class ConfigPage extends LitElement {
             color: var(--yj-accent, #ffd43b);
         }
 
+        /* Library management */
+        .library-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0;
+        }
+
+        .library-row {
+            display: flex;
+            align-items: center;
+            gap: 0.75em;
+            padding: 0.6em 0.5em;
+            border-bottom: 1px solid var(--yj-border-subtle, #333);
+        }
+
+        .library-row:last-child {
+            border-bottom: none;
+        }
+
+        .library-row:hover {
+            background: var(--yj-bg-elevated, #343a40);
+            border-radius: 4px;
+        }
+
+        .library-name {
+            flex: 1;
+            cursor: pointer;
+            font-size: 0.9em;
+            font-weight: 500;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .library-name:hover {
+            color: var(--yj-accent, #ffd43b);
+        }
+
+        .library-path {
+            color: var(--yj-text-tertiary, #868e96);
+            font-size: var(--yj-text-sm, 13px);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            max-width: 300px;
+        }
+
+        .library-count {
+            color: var(--yj-text-tertiary, #868e96);
+            font-size: var(--yj-text-sm, 13px);
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+
+        .edit-input {
+            flex: 1;
+            padding: 0.3em 0.5em;
+            background: var(--yj-bg-elevated, #343a40);
+            border: 1px solid var(--yj-accent, #ffd43b);
+            border-radius: 4px;
+            color: var(--yj-text-primary, #fff);
+            font-size: 0.9em;
+            font-family: inherit;
+            outline: none;
+        }
+
+        .overflow-wrapper {
+            position: relative;
+            flex-shrink: 0;
+        }
+
+        .overflow-btn {
+            cursor: pointer;
+            border: none;
+            background: transparent;
+            color: var(--yj-text-tertiary, #868e96);
+            font-size: 1.1em;
+            padding: 0.2em 0.4em;
+            letter-spacing: 2px;
+            border-radius: 4px;
+        }
+
+        .overflow-btn:hover {
+            background: var(--yj-bg-overlay, #495057);
+            color: var(--yj-text-primary, #fff);
+        }
+
+        .overflow-menu {
+            position: absolute;
+            top: 100%;
+            right: 0;
+            background: var(--yj-bg-surface, #2a2a2a);
+            border: 1px solid var(--yj-border, #444);
+            border-radius: 6px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            z-index: 100;
+            min-width: 120px;
+            padding: 4px 0;
+        }
+
+        .overflow-item {
+            padding: 0.5em 1em;
+            font-size: var(--yj-text-sm, 13px);
+            cursor: pointer;
+            white-space: nowrap;
+        }
+
+        .overflow-item:hover {
+            background: var(--yj-bg-elevated, #343a40);
+        }
+
+        .overflow-item--danger {
+            color: var(--yj-error, #e03131);
+        }
+
+        .overflow-item--danger:hover {
+            background: color-mix(
+                in srgb,
+                var(--yj-error, #e03131) 10%,
+                var(--yj-bg-elevated, #343a40)
+            );
+        }
+
+        .add-library-btn {
+            margin-top: 0.75em;
+            margin-bottom: 1em;
+        }
+
+        .toast {
+            position: fixed;
+            bottom: 80px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--yj-bg-surface, #2a2a2a);
+            color: var(--yj-text-primary, #fff);
+            padding: 0.75em 1.5em;
+            border-radius: 8px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+            font-size: var(--yj-text-sm, 13px);
+            z-index: 2000;
+            border: 1px solid var(--yj-border, #444);
+            animation: toast-in 0.2s ease-out;
+        }
+
+        @keyframes toast-in {
+            from {
+                opacity: 0;
+                transform: translateX(-50%)
+                    translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(-50%)
+                    translateY(0);
+            }
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+            vertical-align: middle;
+            margin-right: 4px;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
         /* Keyboard shortcuts section */
         .shortcut-category {
             margin-bottom: 16px;
@@ -880,7 +1072,7 @@ export class ConfigPage extends LitElement {
 
     override connectedCallback(): void {
         super.connectedCallback();
-        this.loadLibraryConfig();
+        void this.loadLibraries();
         void this.loadPlaylists();
         this.scrollMode =
             localStorage.getItem(SCROLL_STORAGE_KEY) || 'hover';
@@ -917,6 +1109,20 @@ export class ConfigPage extends LitElement {
             Events.LibraryScanQueueDrained,
             this.handleScanQueueDrained,
         );
+        this.cancelLibraryAdded = EventsOn(
+            Events.LibraryAdded,
+            () => void this.loadLibraries(),
+        );
+        this.cancelLibraryRenamed = EventsOn(
+            Events.LibraryRenamed,
+            () => void this.loadLibraries(),
+        );
+        this.cancelLibraryRemoved = EventsOn(
+            Events.LibraryRemoved,
+            () => void this.loadLibraries(),
+        );
+
+        document.addEventListener('click', this.handleDocumentClick);
     }
 
     override disconnectedCallback(): void {
@@ -929,21 +1135,27 @@ export class ConfigPage extends LitElement {
         this.cancelScanCancelled?.();
         this.cancelScanQueued?.();
         this.cancelScanQueueDrained?.();
+        this.cancelLibraryAdded?.();
+        this.cancelLibraryRenamed?.();
+        this.cancelLibraryRemoved?.();
+
+        document.removeEventListener('click', this.handleDocumentClick);
+
+        if (this.toastTimer) clearTimeout(this.toastTimer);
     }
 
-    private async loadLibraryConfig(): Promise<void> {
+    private async loadLibraries(): Promise<void> {
         try {
-            const [dir, mode] = await Promise.all([
-                GetLibraryDirectory(),
+            const [libs, mode] = await Promise.all([
+                GetAllLibrariesWithTrackCounts(),
                 GetScanConcurrency(),
             ]);
 
-            this.libraryDirectory = dir;
-            this.selectedDirectory = dir;
+            this.libraries = libs ?? [];
             this.concurrencyMode = mode;
         } catch (err) {
             console.error(
-                'Failed to load library config:',
+                'Failed to load libraries:',
                 err,
             );
         }
@@ -1072,36 +1284,120 @@ export class ConfigPage extends LitElement {
         this.cancelMetrics = null;
     };
 
-    private handleDirectoryBrowse = async (): Promise<void> => {
+    private handleAddLibrary = async (): Promise<void> => {
         try {
             const dir = await DirectoryPicker();
 
             if (dir) {
-                this.selectedDirectory = dir;
+                await AddLibrary(dir);
             }
         } catch (err) {
             console.error(
-                'Directory picker failed:',
+                'Failed to add library:',
                 err,
             );
         }
     };
 
-    private handleSaveDirectory = async (): Promise<void> => {
-        if (!this.selectedDirectory) return;
+    private handleStartRename = (id: number, name: string): void => {
+        this.editingLibraryId = id;
+        this.editingName = name;
+        this.activeMenuId = null;
+    };
 
-        try {
-            await SetLibraryDirectory(
-                this.selectedDirectory,
-            );
-            this.libraryDirectory =
-                this.selectedDirectory;
-            this.statusMessage =
-                'Library directory saved. A scan will start automatically if the directory changed.';
-        } catch (err) {
-            this.statusMessage = `Failed to save directory: ${err}`;
+    private handleRenameKeyDown = async (e: KeyboardEvent): Promise<void> => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+
+            if (this.editingLibraryId !== null && this.editingName.trim()) {
+                try {
+                    await RenameLibrary(this.editingLibraryId, this.editingName.trim());
+                } catch (err) {
+                    console.error('Failed to rename library:', err);
+                }
+            }
+
+            this.editingLibraryId = null;
+            this.editingName = '';
+        } else if (e.key === 'Escape') {
+            this.editingLibraryId = null;
+            this.editingName = '';
         }
     };
+
+    private handleRenameInput = (e: InputEvent): void => {
+        this.editingName = (e.target as HTMLInputElement).value;
+    };
+
+    private handleRescanLibrary = (id: number): void => {
+        this.activeMenuId = null;
+        void ScanLibrary(id);
+    };
+
+    private handleRemoveClick = async (id: number): Promise<void> => {
+        this.activeMenuId = null;
+
+        try {
+            const impact = await GetRemovalImpact(id);
+
+            this.removalImpact = impact;
+            this.removingLibraryId = id;
+        } catch (err) {
+            console.error('Failed to get removal impact:', err);
+        }
+    };
+
+    private handleConfirmRemove = async (): Promise<void> => {
+        if (this.removingLibraryId === null) return;
+
+        const id = this.removingLibraryId;
+        const lib = this.libraries.find((l) => l.id === id);
+        const libName = lib?.name ?? 'Library';
+
+        this.isRemoving = true;
+
+        try {
+            const summary = await RemoveLibrary(id);
+
+            this.removingLibraryId = null;
+            this.removalImpact = null;
+            this.isRemoving = false;
+            this.showToast(
+                `Removed '${libName}' (${summary?.tracksDeleted ?? 0} tracks deleted)`,
+            );
+        } catch (err) {
+            this.isRemoving = false;
+            console.error('Failed to remove library:', err);
+        }
+    };
+
+    private handleCancelRemove = (): void => {
+        this.removingLibraryId = null;
+        this.removalImpact = null;
+        this.isRemoving = false;
+    };
+
+    private toggleOverflowMenu = (id: number, e: Event): void => {
+        e.stopPropagation();
+        this.activeMenuId = this.activeMenuId === id ? null : id;
+    };
+
+    private handleDocumentClick = (): void => {
+        if (this.activeMenuId !== null) {
+            this.activeMenuId = null;
+        }
+    };
+
+    private showToast(message: string): void {
+        this.toastMessage = message;
+        this.toastVisible = true;
+
+        if (this.toastTimer) clearTimeout(this.toastTimer);
+
+        this.toastTimer = setTimeout(() => {
+            this.toastVisible = false;
+        }, 4000);
+    }
 
     private handleConcurrencyChange = (
         e: CustomEvent<ConfigFieldChangeEvent>,
@@ -1455,13 +1751,6 @@ export class ConfigPage extends LitElement {
     // ===================================================================
     // COMPUTED
     // ===================================================================
-
-    private get directoryChanged(): boolean {
-        return (
-            this.selectedDirectory !==
-            this.libraryDirectory
-        );
-    }
 
     private get hasRescanPhases(): boolean {
         if (!this.metrics) return false;
@@ -1901,36 +2190,88 @@ export class ConfigPage extends LitElement {
     // --- Library section ---
 
     private renderLibrarySection() {
+        const removingLib = this.libraries.find(
+            (l) => l.id === this.removingLibraryId,
+        );
+
         return html`
             <config-section
-                heading="Library"
-                description="Configure your music library location and scanning behaviour."
+                heading="Libraries"
+                description="Manage your music library folders. Each library is scanned independently."
             >
-                <config-field
-                    .schema=${{
-                        key: 'libraryDirectory',
-                        label: 'Library Directory',
-                        description:
-                            'The root directory containing your music files.',
-                        type: 'directory' as const,
-                    }}
-                    .value=${this.selectedDirectory}
-                    @config-browse=${this.handleDirectoryBrowse}
-                ></config-field>
+                <div class="library-list">
+                    ${this.libraries.map(
+                        (lib) => html`
+                            <div class="library-row">
+                                ${this.editingLibraryId === lib.id
+                                    ? html`
+                                          <input
+                                              class="edit-input"
+                                              type="text"
+                                              .value=${this.editingName}
+                                              @input=${this.handleRenameInput}
+                                              @keydown=${this.handleRenameKeyDown}
+                                              @click=${(e: Event) => e.stopPropagation()}
+                                          />
+                                      `
+                                    : html`
+                                          <span
+                                              class="library-name"
+                                              @click=${() => this.handleStartRename(lib.id, lib.name)}
+                                          >
+                                              ${lib.name}
+                                          </span>
+                                      `}
+                                <span class="library-path">${lib.path}</span>
+                                <span class="library-count">
+                                    ${lib.trackCount} tracks
+                                </span>
+                                <div class="overflow-wrapper">
+                                    <button
+                                        class="overflow-btn"
+                                        @click=${(e: Event) => this.toggleOverflowMenu(lib.id, e)}
+                                    >
+                                        \u22EF
+                                    </button>
+                                    ${this.activeMenuId === lib.id
+                                        ? html`
+                                              <div
+                                                  class="overflow-menu"
+                                                  @click=${(e: Event) => e.stopPropagation()}
+                                              >
+                                                  <div
+                                                      class="overflow-item"
+                                                      @click=${() => this.handleStartRename(lib.id, lib.name)}
+                                                  >
+                                                      Rename
+                                                  </div>
+                                                  <div
+                                                      class="overflow-item"
+                                                      @click=${() => this.handleRescanLibrary(lib.id)}
+                                                  >
+                                                      Rescan
+                                                  </div>
+                                                  <div
+                                                      class="overflow-item overflow-item--danger"
+                                                      @click=${() => void this.handleRemoveClick(lib.id)}
+                                                  >
+                                                      Remove
+                                                  </div>
+                                              </div>
+                                          `
+                                        : nothing}
+                                </div>
+                            </div>
+                        `,
+                    )}
+                </div>
 
-                ${this.directoryChanged
-                    ? html`
-                          <div class="save-row">
-                              <button
-                                  class="btn-success"
-                                  ?disabled=${this.scanning}
-                                  @click=${this.handleSaveDirectory}
-                              >
-                                  Save Directory
-                              </button>
-                          </div>
-                      `
-                    : nothing}
+                <button
+                    class="btn-primary add-library-btn"
+                    @click=${this.handleAddLibrary}
+                >
+                    Add Library
+                </button>
 
                 <config-field
                     .schema=${{
@@ -2143,7 +2484,57 @@ export class ConfigPage extends LitElement {
                           </div>
                       `
                     : nothing}
+
+                ${this.removingLibraryId !== null && this.removalImpact
+                    ? html`
+                          <div
+                              class="cancel-dialog-overlay"
+                              @click=${this.handleCancelRemove}
+                          >
+                              <div
+                                  class="cancel-dialog"
+                                  @click=${(e: Event) => e.stopPropagation()}
+                              >
+                                  <div class="cancel-dialog-title">
+                                      Remove Library
+                                  </div>
+                                  <div class="cancel-dialog-message">
+                                      Remove '${removingLib?.name}'?
+                                      This will delete
+                                      ${this.removalImpact.trackCount}
+                                      tracks, affect
+                                      ${this.removalImpact.playlistsAffected}
+                                      playlists, and remove
+                                      ${this.removalImpact.queueItemCount}
+                                      queue items.
+                                  </div>
+                                  <div class="cancel-dialog-actions">
+                                      <button
+                                          class="btn-ghost"
+                                          ?disabled=${this.isRemoving}
+                                          @click=${this.handleCancelRemove}
+                                      >
+                                          Cancel
+                                      </button>
+                                      <button
+                                          class="btn-danger"
+                                          ?disabled=${this.isRemoving}
+                                          @click=${this.handleConfirmRemove}
+                                      >
+                                          ${this.isRemoving
+                                              ? html`<span class="spinner"></span> Removing\u2026`
+                                              : 'Remove'}
+                                      </button>
+                                  </div>
+                              </div>
+                          </div>
+                      `
+                    : nothing}
             </config-section>
+
+            ${this.toastVisible
+                ? html`<div class="toast">${this.toastMessage}</div>`
+                : nothing}
         `;
     }
 

@@ -40,6 +40,62 @@ export namespace library {
 	        this.Name = source["Name"];
 	    }
 	}
+	export class Info {
+	    id: number;
+	    name: string;
+	    path: string;
+	    trackCount: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Info(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.path = source["path"];
+	        this.trackCount = source["trackCount"];
+	    }
+	}
+	export class RemovalImpact {
+	    trackCount: number;
+	    playlistsAffected: number;
+	    queueItemCount: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new RemovalImpact(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.trackCount = source["trackCount"];
+	        this.playlistsAffected = source["playlistsAffected"];
+	        this.queueItemCount = source["queueItemCount"];
+	    }
+	}
+	export class RemovalSummary {
+	    tracksDeleted: number;
+	    artistsRemoved: number;
+	    albumsRemoved: number;
+	    genresRemoved: number;
+	    playlistsAffected: number;
+	    queueItemsRemoved: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new RemovalSummary(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.tracksDeleted = source["tracksDeleted"];
+	        this.artistsRemoved = source["artistsRemoved"];
+	        this.albumsRemoved = source["albumsRemoved"];
+	        this.genresRemoved = source["genresRemoved"];
+	        this.playlistsAffected = source["playlistsAffected"];
+	        this.queueItemsRemoved = source["queueItemsRemoved"];
+	    }
+	}
 	export class GenreWithCount {
 	    Name: string;
 	    TrackCount: number;

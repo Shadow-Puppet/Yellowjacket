@@ -443,3 +443,42 @@ func (l *Library) GetAllGenresWithCounts() (
 
 	return genres, nil
 }
+
+// Info contains library metadata enriched with track count
+// for the frontend settings UI.
+type Info struct {
+	ID         int64  `json:"id"`
+	Name       string `json:"name"`
+	Path       string `json:"path"`
+	TrackCount int64  `json:"trackCount"`
+}
+
+// GetAllLibrariesWithTrackCounts returns all libraries with their
+// audio file counts. Typically 1-5 libraries so the loop is trivial.
+func (l *Library) GetAllLibrariesWithTrackCounts() ([]Info, error) {
+	libs, err := l.db.Queries.GetAllLibraries(l.ctx)
+	if err != nil {
+		return nil, fmt.Errorf("could not get libraries: %w", err)
+	}
+
+	result := make([]Info, 0, len(libs))
+
+	for _, lib := range libs {
+		count, countErr := l.db.Queries.CountAudioFilesByLibrary(l.ctx, lib.ID)
+		if countErr != nil {
+			l.logger.Error("could not count tracks for library",
+				"libraryID", lib.ID, "error", countErr)
+
+			count = 0
+		}
+
+		result = append(result, Info{
+			ID:         lib.ID,
+			Name:       lib.Name,
+			Path:       lib.Path,
+			TrackCount: count,
+		})
+	}
+
+	return result, nil
+}

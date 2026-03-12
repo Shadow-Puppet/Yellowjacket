@@ -3,6 +3,8 @@
 import {library} from '../models';
 import {context} from '../models';
 
+export function AddLibrary(arg1:string):Promise<library.Info>;
+
 export function CancelAllScans():Promise<void>;
 
 export function CancelCurrentScan():Promise<void>;
@@ -12,6 +14,8 @@ export function CancelScan():Promise<void>;
 export function FullRescan():Promise<library.ScanMetrics>;
 
 export function GetAlbumTracks(arg1:number):Promise<Array<library.Track>>;
+
+export function GetAllLibrariesWithTrackCounts():Promise<Array<library.Info>>;
 
 export function GetAlbumsByArtist(arg1:number):Promise<Array<library.Album>>;
 
@@ -23,6 +27,8 @@ export function GetAllGenresWithCounts():Promise<Array<library.GenreWithCount>>;
 
 export function GetAllTracks():Promise<Array<library.Track>>;
 
+export function GetRemovalImpact(arg1:number):Promise<library.RemovalImpact>;
+
 export function GetScanQueueLength():Promise<number>;
 
 export function GetTracksByGenre(arg1:string):Promise<Array<library.Track>>;
@@ -32,6 +38,10 @@ export function IsScanActive():Promise<boolean>;
 export function IsScanPaused():Promise<boolean>;
 
 export function PauseScan():Promise<void>;
+
+export function RemoveLibrary(arg1:number):Promise<library.RemovalSummary>;
+
+export function RenameLibrary(arg1:number, arg2:string):Promise<void>;
 
 export function QueuedLibraryNames():Promise<Array<string>>;
 
