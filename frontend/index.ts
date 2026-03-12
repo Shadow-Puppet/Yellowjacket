@@ -5,7 +5,6 @@ import '@components/now-playing/now-playing.ts';
 import '@components/sidebar/app-sidebar.ts';
 import '@components/queue-panel/queue-panel.ts';
 import '@components/playlist-view/playlist-view.ts';
-import '@components/library-manager/library-manager.ts';
 import '@components/config-page/config-page.ts';
 import '@components/artists-view/artists-view.ts';
 import '@components/artist-details/artist-details.ts';
@@ -92,9 +91,6 @@ document.addEventListener('navigate', (e: Event) => {
             mainContent.appendChild(genreEl);
             break;
         }
-        case 'libraries':
-            mainContent.innerHTML = '<library-manager></library-manager>';
-            break;
         case 'settings':
             mainContent.innerHTML = '<config-page></config-page>';
             break;
