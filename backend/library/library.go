@@ -93,6 +93,10 @@ type Library struct {
 	scanQueue              []scanQueueEntry
 	currentScanLibraryID   int64
 	currentScanLibraryName string
+
+	// removalHooks holds callbacks for cross-cutting concerns during
+	// library removal (e.g. stopping playback, compacting queue).
+	removalHooks RemovalHooks
 }
 
 // SetRescanHooks provides optional hooks for cross-cutting

@@ -60,3 +60,10 @@ const (
 	LibraryScanQueued       = "LibraryScanQueued"
 	LibraryScanQueueDrained = "LibraryScanQueueDrained"
 )
+
+// Library CRUD events.
+const (
+	LibraryAdded   = "LibraryAdded"
+	LibraryRenamed = "LibraryRenamed"
+	LibraryRemoved = "LibraryRemoved"
+)
