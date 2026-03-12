@@ -23,9 +23,9 @@ Requirements for v1.1 Multi-Library Support milestone. Each maps to roadmap phas
 
 ### Library Management
 
-- [ ] **LIB-01**: User can add a new library directory via a folder picker dialog
-- [ ] **LIB-02**: User can rename a library (display name)
-- [ ] **LIB-03**: User can remove a library — tracks are deleted from DB, shared entities (artists, albums, genres) are cleaned up only if no other library references them
+- [x] **LIB-01**: User can add a new library directory via a folder picker dialog
+- [x] **LIB-02**: User can rename a library (display name)
+- [x] **LIB-03**: User can remove a library — tracks are deleted from DB, shared entities (artists, albums, genres) are cleaned up only if no other library references them
 - [x] **LIB-04**: Libraries are stored in SQLite (not TOML config) with CRUD through the UI
 - [x] **LIB-05**: Existing single-directory config is migrated seamlessly to the libraries table on first run after upgrade
 - [ ] **LIB-06**: Library list is displayed in a management UI (settings or sidebar section)
@@ -50,13 +50,13 @@ Requirements for v1.1 Multi-Library Support milestone. Each maps to roadmap phas
 - [ ] **PLAY-01**: Playlists can contain tracks from multiple libraries (cross-library playlists)
 - [ ] **PLAY-02**: When a library is removed, playlist entries for that library's tracks become phantom tracks (preserved with cached metadata, not cascade-deleted)
 - [ ] **PLAY-03**: Phantom tracks are visually distinguished in playlist views (e.g., greyed out, icon indicator)
-- [ ] **PLAY-04**: Queue tracks from a removed library are cascade-deleted (queue is ephemeral)
+- [x] **PLAY-04**: Queue tracks from a removed library are cascade-deleted (queue is ephemeral)
 
 ### Data Integrity
 
 - [x] **DATA-01**: Schema migration adds `libraries` table and `library_id` FK on `audio_files`
-- [ ] **DATA-02**: Orphan cleanup after library removal: reference-counting bottom-up deletes for artists, albums, genres only referenced by removed library's tracks
-- [ ] **DATA-03**: FTS5 index entries for removed tracks are cleaned up (handling contentless table limitations)
+- [x] **DATA-02**: Orphan cleanup after library removal: reference-counting bottom-up deletes for artists, albums, genres only referenced by removed library's tracks
+- [x] **DATA-03**: FTS5 index entries for removed tracks are cleaned up (handling contentless table limitations)
 - [x] **DATA-04**: All library operations are transactional — no partial state on failure
 
 ## Future Requirements
@@ -180,9 +180,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | KEY-03 | Phase 9 | Complete |
 | KEY-04 | Phase 9 | Complete |
 | KEY-05 | Phase 9 | Complete |
-| LIB-01 | Phase 12 | Pending |
-| LIB-02 | Phase 12 | Pending |
-| LIB-03 | Phase 12 | Pending |
+| LIB-01 | Phase 12 | Complete |
+| LIB-02 | Phase 12 | Complete |
+| LIB-03 | Phase 12 | Complete |
 | LIB-04 | Phase 10 | Complete |
 | LIB-05 | Phase 10 | Complete |
 | LIB-06 | Phase 12 | Pending |
@@ -198,15 +198,15 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PLAY-01 | Phase 13 | Pending |
 | PLAY-02 | Phase 13 | Pending |
 | PLAY-03 | Phase 13 | Pending |
-| PLAY-04 | Phase 12 | Pending |
+| PLAY-04 | Phase 12 | Complete |
 | DATA-01 | Phase 10 | Complete |
-| DATA-02 | Phase 12 | Pending |
-| DATA-03 | Phase 12 | Pending |
+| DATA-02 | Phase 12 | Complete |
+| DATA-03 | Phase 12 | Complete |
 | DATA-04 | Phase 10 | Complete |
 
 **Coverage:**
-- v1.1 requirements: 31 total (8 complete + 23 pending)
-- Mapped to phases: 31/31 ✓ (Phase 9: 8 complete, Phases 10-13: 23 pending)
+- v1.1 requirements: 31 total (19 complete + 12 pending)
+- Mapped to phases: 31/31 ✓ (Phase 9: 8, Phase 10: 5, Phase 11: 4, Phase 12: 6 of 7 — 12 pending in Phase 12-13)
 - No orphaned requirements
 
 ---

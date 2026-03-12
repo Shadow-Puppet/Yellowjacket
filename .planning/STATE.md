@@ -22,11 +22,11 @@ See: .planning/PROJECT.md (updated 2026-03-08)
 
 ## Current Position
 
-Phase: 11 — Per-Library Scan Pipeline
-Plan: 3 of 3 in Phase (Plan 03 complete)
-Status: Phase 11 complete — all plans done
-Progress: ████████████████░░░░ 3/5 phases complete (Phase 11 complete)
-Last activity: 2026-03-09 — Completed 11-03 wire auto-scan and legacy cleanup
+Phase: 12 — Library CRUD & Data Integrity
+Plan: 1 of 2 in Phase (Plan 01 complete)
+Status: Plan 12-01 complete — backend CRUD API implemented
+Progress: ████████████████░░░░ 3/5 phases complete (Phase 12 in progress)
+Last activity: 2026-03-12 — Completed 12-01 library CRUD backend API
 
 ### Phase Overview
 
@@ -35,7 +35,7 @@ Last activity: 2026-03-09 — Completed 11-03 wire auto-scan and legacy cleanup
 | 9. Scan Cancellation & Keyboard Shortcuts | Complete (5/5 plans) ✅ |
 | 10. Schema & Migration | Complete (2/2 plans) ✅ |
 | 11. Per-Library Scan Pipeline | Complete (3/3 plans) ✅ |
-| 12. Library CRUD & Data Integrity | Not started |
+| 12. Library CRUD & Data Integrity | In progress (1/2 plans) |
 | 13. Library Views & Phantom Tracks | Not started |
 
 ## Performance Metrics
@@ -55,6 +55,7 @@ Last activity: 2026-03-09 — Completed 11-03 wire auto-scan and legacy cleanup
 | Phase 11-01 P01 | 7 min | 2 tasks | 11 files |
 | Phase 11-03 P03 | 10 min | 1 task | 3 files |
 | Phase 11-02 P02 | 4 min | 2 tasks | 2 files |
+| Phase 12-01 P01 | 6 min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -108,6 +109,16 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 | LibraryConfigChanged handler removed entirely | Multi-library model uses CRUD API (Phase 12), not event-driven config updates |
 | Scan() wrapper deleted | Only callers were handleConfigUpdate (deleted) and FullRescan (updated to scanInternal) |
 
+### Phase 12 Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| Application-level name uniqueness check (iterate GetAllLibraries) | Avoids migration 7; rename is infrequent, check is simple |
+| RemovalHooks callback struct (StopPlayback + CompactQueue) | Mirrors RescanHooks pattern; breaks circular dependency between library, player, queue packages |
+| querySingleInt64 helper for hand-crafted SQL aggregates | DB type has QueryContext (returns *sql.Rows) but no QueryRowContext; helper wraps scan-close cycle |
+| Sentinel errors for all validation per err113 | errLibraryNameEmpty, errLibraryNameTooLong, errLibraryNameDuplicate, errLibraryPathNotExist |
+| Pre-populate phantom metadata BEFORE cascade delete | Avoids lost join data — playlist_tracks need track metadata after audio_files rows are gone |
+
 ### Warnings (carry forward)
 
 - Player lock ordering (`p.mu` before `speaker.Lock()`, goroutine dispatch in beep callback) — carry forward
@@ -129,10 +140,10 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 
 ### Last Session
 
-**Date:** 2026-03-09
-**What happened:** Executed Phase 11, Plan 03 — wired auto-scan on app launch via ScanAllLibraries goroutine in OnDomReady, removed legacy LibraryConfigChanged handler, handleConfigUpdate, and deprecated Scan() wrapper. Updated FullRescan to resolve library from DB via GetAllLibraries.
-**Where we stopped:** Completed 11-03-PLAN.md — Phase 11 complete
-**Next action:** Plan Phase 12 (Library CRUD & Data Integrity)
+**Date:** 2026-03-12
+**What happened:** Executed Phase 12, Plan 01 — implemented backend Library CRUD API (AddLibrary, RenameLibrary, RemoveLibrary, GetRemovalImpact) with full orphan cleanup pipeline, phantom track preservation, FTS5 rebuild, queue compaction via CompactAfterLibraryRemoval, and RemovalHooks wiring in app.go.
+**Where we stopped:** Completed 12-01-PLAN.md — Plan 01 of Phase 12 complete
+**Next action:** Execute Phase 12 Plan 02 (Frontend library management UI)
 
 ---
 *State initialized: 2026-02-27*
@@ -145,4 +156,4 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 | 18 | add multi-column metadata display to playlist-details | 2026-03-08 | ce23177 | [18-add-multi-column-metadata-display-to-pla](./quick/18-add-multi-column-metadata-display-to-pla/) |
 
 Last activity: 2026-03-08 - Completed quick task 18: add multi-column metadata display to playlist-details
-*Last updated: 2026-03-09 — Completed 11-03-PLAN.md (Phase 11 complete)*
+*Last updated: 2026-03-12 — Completed 12-01-PLAN.md (Phase 12 Plan 01 complete)*
