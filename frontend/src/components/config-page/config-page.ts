@@ -1385,6 +1385,11 @@ export class ConfigPage extends LitElement {
         if (this.activeMenuId !== null) {
             this.activeMenuId = null;
         }
+
+        if (this.editingLibraryId !== null) {
+            this.editingLibraryId = null;
+            this.editingName = '';
+        }
     };
 
     private showToast(message: string): void {
