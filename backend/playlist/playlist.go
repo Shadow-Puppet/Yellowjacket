@@ -1169,13 +1169,24 @@ func (s *Service) playlistsDir() (string, error) {
 	return dir, nil
 }
 
-// getLibraryRoot returns the configured library directory path.
+// getLibraryRoot returns the library root directory path.
+// It first checks the legacy config DirectoryPath; if that is
+// empty (removed during multi-library migration) it falls back
+// to the first library's path from the database.
 func (s *Service) getLibraryRoot() string {
-	if s.libraryDir == nil {
+	if s.libraryDir != nil {
+		if dir := s.libraryDir.GetLibraryDirectory(); dir != "" {
+			return dir
+		}
+	}
+
+	// Fallback: query the first library from the database.
+	libs, err := s.db.Queries.GetAllLibraries(s.db.Ctx)
+	if err != nil || len(libs) == 0 {
 		return ""
 	}
 
-	return s.libraryDir.GetLibraryDirectory()
+	return libs[0].Path
 }
 
 // savePlaylistFile saves the current state of a playlist to its
