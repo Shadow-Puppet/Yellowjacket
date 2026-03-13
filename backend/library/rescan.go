@@ -16,14 +16,13 @@ var errNoLibrariesConfigured = errors.New(
 
 // FullRescan clears the queue and player, wipes all library data
 // (database records and cover art files), and performs a fresh
-// scan of the first library from the database.  Per-library full
-// rescan will be added in Phase 12; for now this rescans the
-// first/only library.  The returned ScanMetrics includes timing
-// for the clear phases in addition to the normal scan metrics.
+// scan of every library in the database.  The returned ScanMetrics
+// reflects the last library scanned; clear-phase durations are
+// folded into its totals.
 func (l *Library) FullRescan() (*ScanMetrics, error) {
 	l.logger.Info("beginning full library rescan")
 
-	// Resolve the first library from the database.
+	// Resolve all libraries from the database.
 	libs, err := l.db.Queries.GetAllLibraries(l.ctx)
 	if err != nil {
 		return nil, fmt.Errorf(
@@ -34,8 +33,6 @@ func (l *Library) FullRescan() (*ScanMetrics, error) {
 	if len(libs) == 0 {
 		return nil, errNoLibrariesConfigured
 	}
-
-	lib := libs[0]
 
 	// Run the pre-clear hook (e.g. clear queue / stop playback)
 	// before wiping data so the player is not referencing
@@ -71,9 +68,17 @@ func (l *Library) FullRescan() (*ScanMetrics, error) {
 
 	l.logger.Info("library data cleared successfully")
 
-	// Scan the first library directly via scanInternal,
-	// bypassing the queue coordinator.
-	metrics := l.scanInternal(lib.ID, lib.Name, lib.Path)
+	// Scan the first library directly (bypassing the queue) so
+	// we get ScanMetrics back.  Queue remaining libraries so
+	// they run sequentially via the scan coordinator.
+	metrics := l.scanInternal(libs[0].ID, libs[0].Name, libs[0].Path)
+
+	for _, lib := range libs[1:] {
+		if scanErr := l.ScanLibrary(lib.ID); scanErr != nil {
+			l.logger.Error("could not queue library for rescan",
+				"libraryID", lib.ID, "err", scanErr)
+		}
+	}
 
 	if metrics != nil {
 		metrics.ClearQueue = clearQueueDur

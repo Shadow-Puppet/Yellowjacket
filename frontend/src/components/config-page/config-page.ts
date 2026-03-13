@@ -350,6 +350,7 @@ export class ConfigPage extends LitElement {
     @state() private toastMessage = '';
     @state() private toastVisible = false;
     @state() private activeMenuId: number | null = null;
+    @state() private selectedLibraryIds: Set<number> = new Set();
     @state() private scanning = false;
     @state() private statusMessage = '';
     @state() private scanProgress: ScanProgress | null = null;
@@ -834,6 +835,25 @@ export class ConfigPage extends LitElement {
             gap: 0;
         }
 
+        .library-header {
+            display: flex;
+            align-items: center;
+            gap: 0.75em;
+            padding: 0.4em 0.5em;
+            border-bottom: 1px solid var(--yj-border-subtle, #333);
+            font-size: var(--yj-text-sm, 0.8em);
+            color: var(--yj-text-muted, #999);
+        }
+
+        .library-header-label {
+            user-select: none;
+        }
+
+        .library-checkbox {
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+
         .library-row {
             display: flex;
             align-items: center;
@@ -1152,6 +1172,18 @@ export class ConfigPage extends LitElement {
 
             this.libraries = libs ?? [];
             this.concurrencyMode = mode;
+
+            // Auto-select all libraries on initial load so scan
+            // buttons default to operating on everything.
+            if (this.selectedLibraryIds.size === 0 && this.libraries.length > 0) {
+                this.selectedLibraryIds = new Set(this.libraries.map((l) => l.id));
+            } else {
+                // Prune selections for libraries that no longer exist.
+                const validIds = new Set(this.libraries.map((l) => l.id));
+                const pruned = new Set([...this.selectedLibraryIds].filter((id) => validIds.has(id)));
+
+                this.selectedLibraryIds = pruned;
+            }
         } catch (err) {
             console.error(
                 'Failed to load libraries:',
@@ -1381,6 +1413,26 @@ export class ConfigPage extends LitElement {
         this.activeMenuId = this.activeMenuId === id ? null : id;
     };
 
+    private toggleLibrarySelection = (id: number): void => {
+        const next = new Set(this.selectedLibraryIds);
+
+        if (next.has(id)) {
+            next.delete(id);
+        } else {
+            next.add(id);
+        }
+
+        this.selectedLibraryIds = next;
+    };
+
+    private toggleSelectAllLibraries = (): void => {
+        if (this.selectedLibraryIds.size === this.libraries.length) {
+            this.selectedLibraryIds = new Set();
+        } else {
+            this.selectedLibraryIds = new Set(this.libraries.map((l) => l.id));
+        }
+    };
+
     private handleDocumentClick = (): void => {
         if (this.activeMenuId !== null) {
             this.activeMenuId = null;
@@ -1419,19 +1471,19 @@ export class ConfigPage extends LitElement {
             });
     };
 
-    private handleScanAll = async (): Promise<void> => {
-        try {
-            await ScanAllLibraries();
-        } catch (err) {
-            this.statusMessage =
-                'Scan all libraries completed with errors.';
-            this.scanErrors = String(err);
-        }
-    };
-
     private handleSoftScan = async (): Promise<void> => {
         try {
-            await ScanAllLibraries();
+            if (this.selectedLibraryIds.size === 0) return;
+
+            // If all libraries selected, use the batch method.
+            if (this.selectedLibraryIds.size === this.libraries.length) {
+                await ScanAllLibraries();
+            } else {
+                // Queue each selected library individually.
+                for (const id of this.selectedLibraryIds) {
+                    await ScanLibrary(id);
+                }
+            }
         } catch (err) {
             this.statusMessage =
                 'Scan completed with errors.';
@@ -2198,77 +2250,107 @@ export class ConfigPage extends LitElement {
             (l) => l.id === this.removingLibraryId,
         );
 
+        const allSelected = this.libraries.length > 0
+            && this.selectedLibraryIds.size === this.libraries.length;
+        const someSelected = this.selectedLibraryIds.size > 0
+            && !allSelected;
+        const selectionCount = this.selectedLibraryIds.size;
+
         return html`
             <config-section
                 heading="Libraries"
-                description="Manage your music library folders. Each library is scanned independently."
+                description="Manage your music library folders. Select libraries to scan."
             >
-                <div class="library-list">
-                    ${this.libraries.map(
-                        (lib) => html`
-                            <div class="library-row">
-                                ${this.editingLibraryId === lib.id
-                                    ? html`
-                                          <input
-                                              class="edit-input"
-                                              type="text"
-                                              .value=${this.editingName}
-                                              @input=${this.handleRenameInput}
-                                              @keydown=${this.handleRenameKeyDown}
-                                              @click=${(e: Event) => e.stopPropagation()}
-                                          />
-                                      `
-                                    : html`
-                                          <span
-                                              class="library-name"
-                                              @click=${() => this.handleStartRename(lib.id, lib.name)}
-                                          >
-                                              ${lib.name}
-                                          </span>
-                                      `}
-                                <span class="library-path">${lib.path}</span>
-                                <span class="library-count">
-                                    ${lib.trackCount} tracks
+                ${this.libraries.length > 0
+                    ? html`
+                        <div class="library-list">
+                            <div class="library-header">
+                                <input
+                                    type="checkbox"
+                                    class="library-checkbox"
+                                    .checked=${allSelected}
+                                    .indeterminate=${someSelected}
+                                    @change=${this.toggleSelectAllLibraries}
+                                    @click=${(e: Event) => e.stopPropagation()}
+                                />
+                                <span class="library-header-label">
+                                    ${allSelected ? 'All' : someSelected ? `${selectionCount}` : 'None'} selected
                                 </span>
-                                <div class="overflow-wrapper">
-                                    <button
-                                        class="overflow-btn"
-                                        @click=${(e: Event) => this.toggleOverflowMenu(lib.id, e)}
-                                    >
-                                        \u22EF
-                                    </button>
-                                    ${this.activeMenuId === lib.id
-                                        ? html`
-                                              <div
-                                                  class="overflow-menu"
-                                                  @click=${(e: Event) => e.stopPropagation()}
-                                              >
-                                                  <div
-                                                      class="overflow-item"
+                            </div>
+                            ${this.libraries.map(
+                                (lib) => html`
+                                    <div class="library-row">
+                                        <input
+                                            type="checkbox"
+                                            class="library-checkbox"
+                                            .checked=${this.selectedLibraryIds.has(lib.id)}
+                                            @change=${() => this.toggleLibrarySelection(lib.id)}
+                                            @click=${(e: Event) => e.stopPropagation()}
+                                        />
+                                        ${this.editingLibraryId === lib.id
+                                            ? html`
+                                                  <input
+                                                      class="edit-input"
+                                                      type="text"
+                                                      .value=${this.editingName}
+                                                      @input=${this.handleRenameInput}
+                                                      @keydown=${this.handleRenameKeyDown}
+                                                      @click=${(e: Event) => e.stopPropagation()}
+                                                  />
+                                              `
+                                            : html`
+                                                  <span
+                                                      class="library-name"
                                                       @click=${() => this.handleStartRename(lib.id, lib.name)}
                                                   >
-                                                      Rename
-                                                  </div>
-                                                  <div
-                                                      class="overflow-item"
-                                                      @click=${() => this.handleRescanLibrary(lib.id)}
-                                                  >
-                                                      Rescan
-                                                  </div>
-                                                  <div
-                                                      class="overflow-item overflow-item--danger"
-                                                      @click=${() => void this.handleRemoveClick(lib.id)}
-                                                  >
-                                                      Remove
-                                                  </div>
-                                              </div>
-                                          `
-                                        : nothing}
-                                </div>
-                            </div>
-                        `,
-                    )}
-                </div>
+                                                      ${lib.name}
+                                                  </span>
+                                              `}
+                                        <span class="library-path">${lib.path}</span>
+                                        <span class="library-count">
+                                            ${lib.trackCount} tracks
+                                        </span>
+                                        <div class="overflow-wrapper">
+                                            <button
+                                                class="overflow-btn"
+                                                @click=${(e: Event) => this.toggleOverflowMenu(lib.id, e)}
+                                            >
+                                                \u22EF
+                                            </button>
+                                            ${this.activeMenuId === lib.id
+                                                ? html`
+                                                      <div
+                                                          class="overflow-menu"
+                                                          @click=${(e: Event) => e.stopPropagation()}
+                                                      >
+                                                          <div
+                                                              class="overflow-item"
+                                                              @click=${() => this.handleStartRename(lib.id, lib.name)}
+                                                          >
+                                                              Rename
+                                                          </div>
+                                                          <div
+                                                              class="overflow-item"
+                                                              @click=${() => this.handleRescanLibrary(lib.id)}
+                                                          >
+                                                              Rescan
+                                                          </div>
+                                                          <div
+                                                              class="overflow-item overflow-item--danger"
+                                                              @click=${() => void this.handleRemoveClick(lib.id)}
+                                                          >
+                                                              Remove
+                                                          </div>
+                                                      </div>
+                                                  `
+                                                : nothing}
+                                        </div>
+                                    </div>
+                                `,
+                            )}
+                        </div>
+                    `
+                    : nothing}
 
                 <button
                     class="btn-primary add-library-btn"
@@ -2328,22 +2410,19 @@ export class ConfigPage extends LitElement {
                           `
                         : html`
                               <button
-                                  class="btn-warning"
+                                  class="btn-primary"
                                   @click=${this.handleSoftScan}
+                                  ?disabled=${selectionCount === 0}
                               >
-                                  Soft Scan
+                                  Scan${selectionCount > 0 && selectionCount < this.libraries.length
+                                      ? ` (${selectionCount})`
+                                      : ''}
                               </button>
                               <button
                                   class="btn-danger"
                                   @click=${this.handleFullRescan}
                               >
                                   Full Rescan
-                              </button>
-                              <button
-                                  class="btn-primary"
-                                  @click=${this.handleScanAll}
-                              >
-                                  Scan All Libraries
                               </button>
                           `}
                 </div>
