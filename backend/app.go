@@ -275,12 +275,12 @@ func (yj *YellowJacketApp) OnDomReady(ctx context.Context) {
 		return
 	}
 
-	// Auto-scan all libraries on launch. Runs in a goroutine so
-	// it does not block the DOM-ready callback. Uses the same
-	// ScanAllLibraries codepath as the UI button.
+	// Soft scan: compare file counts on disk vs DB for each library.
+	// Only libraries with mismatched counts get a full scan — unchanged
+	// libraries are silently skipped (no progress bar, no UI noise).
 	go func() {
-		if err := yj.library.ScanAllLibraries(); err != nil {
-			yj.logger.Error("auto-scan failed", "err", err)
+		if err := yj.library.SoftScanAllLibraries(); err != nil {
+			yj.logger.Error("soft scan failed", "err", err)
 		}
 	}()
 }

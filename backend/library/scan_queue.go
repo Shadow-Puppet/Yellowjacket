@@ -90,6 +90,69 @@ func (l *Library) ScanAllLibraries() error {
 	return nil
 }
 
+// SoftScanAllLibraries performs a lightweight launch-time scan.
+// For each library it compares the number of audio files on disk
+// against the track count in the database. Only libraries where the
+// counts differ (files added or removed since last scan) are queued
+// for a full scan. Libraries that are unchanged are silently skipped,
+// producing no progress-bar UI noise.
+func (l *Library) SoftScanAllLibraries() error {
+	libs, err := l.db.Queries.GetAllLibraries(l.ctx)
+	if err != nil {
+		return fmt.Errorf("could not get all libraries: %w", err)
+	}
+
+	for _, lib := range libs {
+		dbCount, countErr := l.db.Queries.CountAudioFilesByLibrary(
+			l.ctx, lib.ID,
+		)
+		if countErr != nil {
+			l.logger.Warn(
+				"soft scan: could not count DB tracks, queueing full scan",
+				"libraryID", lib.ID,
+				"libraryName", lib.Name,
+				"err", countErr,
+			)
+
+			_ = l.ScanLibrary(lib.ID)
+
+			continue
+		}
+
+		diskCount := countAudioFiles(lib.Path)
+
+		if diskCount == dbCount {
+			l.logger.Info(
+				"soft scan: library unchanged, skipping",
+				"libraryID", lib.ID,
+				"libraryName", lib.Name,
+				"tracks", dbCount,
+			)
+
+			continue
+		}
+
+		l.logger.Info(
+			"soft scan: file count mismatch, queueing scan",
+			"libraryID", lib.ID,
+			"libraryName", lib.Name,
+			"diskFiles", diskCount,
+			"dbTracks", dbCount,
+		)
+
+		if err := l.ScanLibrary(lib.ID); err != nil {
+			l.logger.Warn(
+				"soft scan: could not queue library",
+				"libraryID", lib.ID,
+				"libraryName", lib.Name,
+				"err", err,
+			)
+		}
+	}
+
+	return nil
+}
+
 // CancelCurrentScan cancels only the currently scanning library.
 // The next queued library (if any) starts automatically when the
 // current scan's goroutine completes.
