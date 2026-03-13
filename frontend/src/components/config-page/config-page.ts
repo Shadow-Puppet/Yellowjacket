@@ -1396,9 +1396,13 @@ export class ConfigPage extends LitElement {
             this.showToast(
                 `Removed '${libName}' (${summary?.tracksDeleted ?? 0} tracks deleted)`,
             );
+            void this.loadLibraries();
         } catch (err) {
             this.isRemoving = false;
+            this.removingLibraryId = null;
+            this.removalImpact = null;
             console.error('Failed to remove library:', err);
+            this.showToast(`Failed to remove '${libName}': ${String(err)}`);
         }
     };
 

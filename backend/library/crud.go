@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
@@ -200,8 +201,9 @@ func (l *Library) GetRemovalImpact(libraryID int64) (*RemovalImpact, error) {
 // performing orphan cleanup, phantom metadata conversion, FTS5
 // rebuild, and queue compaction. Returns a summary of what was removed.
 func (l *Library) RemoveLibrary(id int64) (*RemovalSummary, error) {
-	// 1. Cancel active scan for this library.
+	// 1. Cancel active scan for this library and wait for it to stop.
 	l.cancelLibraryScan(id)
+	l.waitForScanIdle(id)
 
 	// 2. Stop playback if the currently-playing track belongs to this library.
 	if l.currentTrackBelongsToLibrary(id) {
@@ -463,6 +465,26 @@ func (l *Library) RemoveLibrary(id int64) (*RemovalSummary, error) {
 	})
 
 	return summary, nil
+}
+
+// waitForScanIdle polls until the specified library is no longer the
+// active scan target. Called after cancelLibraryScan to ensure the
+// scan goroutine has finished before proceeding with removal.
+func (l *Library) waitForScanIdle(id int64) {
+	for range 100 { // up to ~5 seconds
+		l.mu.Lock()
+		active := l.currentScanLibraryID == id
+		l.mu.Unlock()
+
+		if !active {
+			return
+		}
+
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	l.logger.Warn("timed out waiting for scan to stop",
+		"libraryID", id)
 }
 
 // cancelLibraryScan cancels an active scan for the specified library
