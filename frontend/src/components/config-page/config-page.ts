@@ -1456,7 +1456,7 @@ export class ConfigPage extends LitElement {
 
         this.toastTimer = setTimeout(() => {
             this.toastVisible = false;
-        }, 4000);
+        }, 8000);
     }
 
     private handleConcurrencyChange = (

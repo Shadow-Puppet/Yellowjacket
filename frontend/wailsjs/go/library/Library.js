@@ -26,10 +26,6 @@ export function GetAlbumTracks(arg1) {
   return window['go']['library']['Library']['GetAlbumTracks'](arg1);
 }
 
-export function GetAllLibrariesWithTrackCounts() {
-  return window['go']['library']['Library']['GetAllLibrariesWithTrackCounts']();
-}
-
 export function GetAlbumsByArtist(arg1) {
   return window['go']['library']['Library']['GetAlbumsByArtist'](arg1);
 }
@@ -44,6 +40,10 @@ export function GetAllArtists() {
 
 export function GetAllGenresWithCounts() {
   return window['go']['library']['Library']['GetAllGenresWithCounts']();
+}
+
+export function GetAllLibrariesWithTrackCounts() {
+  return window['go']['library']['Library']['GetAllLibrariesWithTrackCounts']();
 }
 
 export function GetAllTracks() {
@@ -74,6 +74,10 @@ export function PauseScan() {
   return window['go']['library']['Library']['PauseScan']();
 }
 
+export function QueuedLibraryNames() {
+  return window['go']['library']['Library']['QueuedLibraryNames']();
+}
+
 export function RemoveLibrary(arg1) {
   return window['go']['library']['Library']['RemoveLibrary'](arg1);
 }
@@ -82,16 +86,8 @@ export function RenameLibrary(arg1, arg2) {
   return window['go']['library']['Library']['RenameLibrary'](arg1, arg2);
 }
 
-export function QueuedLibraryNames() {
-  return window['go']['library']['Library']['QueuedLibraryNames']();
-}
-
 export function ResumeScan() {
   return window['go']['library']['Library']['ResumeScan']();
-}
-
-export function Scan() {
-  return window['go']['library']['Library']['Scan']();
 }
 
 export function ScanAllLibraries() {
@@ -108,6 +104,10 @@ export function SearchTracks(arg1) {
 
 export function SetContext(arg1) {
   return window['go']['library']['Library']['SetContext'](arg1);
+}
+
+export function SetRemovalHooks(arg1) {
+  return window['go']['library']['Library']['SetRemovalHooks'](arg1);
 }
 
 export function SetRescanHooks(arg1) {

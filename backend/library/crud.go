@@ -288,7 +288,28 @@ func (l *Library) RemoveLibrary(id int64) (*RemovalSummary, error) {
 
 	tracksDeleted, _ := result.RowsAffected()
 
-	// 7. Delete orphaned recordings.
+	// 7. Delete orphaned recording_genres (must run BEFORE recordings
+	// because recording_genres.recording_id references recordings.id).
+	// SAFETY: Hand-crafted orphan cleanup SQL. Parameterless.
+	if _, err := tx.ExecContext(l.ctx,
+		`DELETE FROM recording_genres WHERE recording_id NOT IN (
+			SELECT DISTINCT recording_id FROM audio_files
+		)`); err != nil {
+		return nil, fmt.Errorf("could not delete orphaned recording_genres: %w", err)
+	}
+
+	// 8. Delete orphaned release_group_recordings (must run BEFORE
+	// recordings because release_group_recordings.recording_id
+	// references recordings.id).
+	// SAFETY: Hand-crafted orphan cleanup SQL. Parameterless.
+	if _, err := tx.ExecContext(l.ctx,
+		`DELETE FROM release_group_recordings WHERE recording_id NOT IN (
+			SELECT DISTINCT recording_id FROM audio_files
+		)`); err != nil {
+		return nil, fmt.Errorf("could not delete orphaned release_group_recordings: %w", err)
+	}
+
+	// 9. Delete orphaned recordings (safe now that child tables are cleaned).
 	// SAFETY: Hand-crafted orphan cleanup SQL. Reference-counting delete
 	// with NOT IN subquery unsupported by sqlc. No user input.
 	if _, err := tx.ExecContext(l.ctx,
@@ -296,24 +317,6 @@ func (l *Library) RemoveLibrary(id int64) (*RemovalSummary, error) {
 			SELECT DISTINCT recording_id FROM audio_files
 		)`); err != nil {
 		return nil, fmt.Errorf("could not delete orphaned recordings: %w", err)
-	}
-
-	// 8. Delete orphaned recording_genres.
-	// SAFETY: Hand-crafted orphan cleanup SQL. Parameterless.
-	if _, err := tx.ExecContext(l.ctx,
-		`DELETE FROM recording_genres WHERE recording_id NOT IN (
-			SELECT id FROM recordings
-		)`); err != nil {
-		return nil, fmt.Errorf("could not delete orphaned recording_genres: %w", err)
-	}
-
-	// 9. Delete orphaned release_group_recordings.
-	// SAFETY: Hand-crafted orphan cleanup SQL. Parameterless.
-	if _, err := tx.ExecContext(l.ctx,
-		`DELETE FROM release_group_recordings WHERE recording_id NOT IN (
-			SELECT id FROM recordings
-		)`); err != nil {
-		return nil, fmt.Errorf("could not delete orphaned release_group_recordings: %w", err)
 	}
 
 	// 10. Delete orphaned release_groups.

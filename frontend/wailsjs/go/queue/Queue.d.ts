@@ -9,6 +9,8 @@ export function AddTracks(arg1:Array<string>):Promise<void>;
 
 export function Clear():Promise<void>;
 
+export function CompactAfterLibraryRemoval():Promise<void>;
+
 export function CycleRepeat():Promise<void>;
 
 export function EmitCurrentState():Promise<void>;
