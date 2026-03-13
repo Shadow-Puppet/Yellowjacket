@@ -690,6 +690,7 @@ func (l *Library) scanInternal(
 		"updated", metrics.Updated,
 		"removed", metrics.Removed,
 		"skipped", metrics.Skipped,
+		"warnings", len(metrics.Warnings),
 		"cancelled", cancelled,
 		"total", metrics.Total,
 	)
@@ -876,7 +877,7 @@ func (l *Library) commitBatch(
 		}
 
 		if saveErr != nil {
-			l.logger.Warn(
+			l.logger.Debug(
 				"failed to save audio file",
 				"path", result.absolutePath,
 				"err", saveErr,
