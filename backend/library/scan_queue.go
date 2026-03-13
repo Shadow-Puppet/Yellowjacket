@@ -91,15 +91,37 @@ func (l *Library) ScanAllLibraries() error {
 }
 
 // SoftScanAllLibraries performs a lightweight launch-time scan.
-// For each library it compares the number of audio files on disk
-// against the track count in the database. Only libraries where the
-// counts differ (files added or removed since last scan) are queued
-// for a full scan. Libraries that are unchanged are silently skipped,
-// producing no progress-bar UI noise.
+// First it claims any orphaned tracks (library_id=0) left over from
+// the pre-multi-library schema. Then for each library it compares
+// the number of audio files on disk against the track count in the
+// database. Only libraries where the counts differ (files added or
+// removed since last scan) are queued for a full scan. Libraries
+// that are unchanged are silently skipped — no progress bar, no
+// scan events.
 func (l *Library) SoftScanAllLibraries() error {
 	libs, err := l.db.Queries.GetAllLibraries(l.ctx)
 	if err != nil {
 		return fmt.Errorf("could not get all libraries: %w", err)
+	}
+
+	// Claim orphaned tracks from the pre-multi-library schema.
+	// Tracks with library_id=0 exist from before the migration and
+	// need to be assigned to the library whose path matches.
+	// SAFETY: Hand-crafted UPDATE — path-prefix LIKE matching with
+	// dynamic library_id unsupported by sqlc. No user input.
+	for _, lib := range libs {
+		result, claimErr := l.db.ExecContext(
+			`UPDATE audio_files SET library_id = ? WHERE library_id = 0 AND file_path LIKE ? || '%'`,
+			lib.ID, lib.Path+"/",
+		)
+		if claimErr != nil {
+			l.logger.Warn("soft scan: could not claim orphaned tracks",
+				"libraryID", lib.ID, "err", claimErr)
+		} else if claimed, _ := result.RowsAffected(); claimed > 0 {
+			l.logger.Info("soft scan: claimed orphaned tracks",
+				"libraryID", lib.ID, "libraryName", lib.Name,
+				"claimed", claimed)
+		}
 	}
 
 	for _, lib := range libs {
