@@ -3,7 +3,6 @@ import { customElement, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 import { EventsOn } from '@runtime/runtime';
 import {
-    Scan,
     FullRescan,
     CancelCurrentScan,
     CancelAllScans,
@@ -1427,7 +1426,7 @@ export class ConfigPage extends LitElement {
 
     private handleSoftScan = async (): Promise<void> => {
         try {
-            await Scan();
+            await ScanAllLibraries();
         } catch (err) {
             this.statusMessage =
                 'Scan completed with errors.';

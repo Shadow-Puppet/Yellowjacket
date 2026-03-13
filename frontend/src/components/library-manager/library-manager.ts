@@ -2,7 +2,6 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { EventsOn } from '@runtime/runtime';
 import {
-    Scan,
     FullRescan,
     ScanAllLibraries,
 } from '@go/library/Library';
@@ -812,7 +811,7 @@ export class LibraryManager extends LitElement {
 
     private handleSoftScan = async (): Promise<void> => {
         try {
-            await Scan();
+            await ScanAllLibraries();
         } catch (err) {
             this.statusMessage =
                 'Scan completed with errors.';
