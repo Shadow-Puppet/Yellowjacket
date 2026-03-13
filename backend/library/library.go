@@ -480,7 +480,7 @@ func (l *Library) scanInternal(
 
 			if batchErr := l.commitBatch(
 				batch, cache, metrics,
-				&added, &updated,
+				&added, &updated, &skipped,
 				thumbChan,
 			); batchErr != nil {
 				errMu.Lock()
@@ -843,7 +843,7 @@ func (l *Library) commitBatch(
 	batch []importResult,
 	cache *entityCache,
 	metrics *ScanMetrics,
-	added, updated *atomic.Int64,
+	added, updated, skipped *atomic.Int64,
 	thumbChan chan<- thumbnailWork,
 ) error {
 	tx, err := l.db.BeginTx()
@@ -886,6 +886,10 @@ func (l *Library) commitBatch(
 			metrics.addWarning(
 				result.absolutePath, "commit", saveErr,
 			)
+
+			// Count failed saves as skipped so the progress bar
+			// advances (e.g. UNIQUE constraint from pre-existing tracks).
+			skipped.Add(1)
 		}
 	}
 
