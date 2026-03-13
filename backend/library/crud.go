@@ -81,6 +81,25 @@ func (l *Library) AddLibrary(path string) (*sqlcgen.Library, error) {
 		return nil, fmt.Errorf("could not create library: %w", err)
 	}
 
+	// Claim orphaned tracks whose file_path falls under this library's
+	// directory and still have the default library_id (0).  This handles
+	// the case where tracks exist from a pre-multi-library schema.
+	// SAFETY: Hand-crafted UPDATE because sqlc cannot express path-prefix
+	// matching with LIKE and dynamic library_id in a single statement.
+	// The WHERE clause is safe: library_id=0 targets only unclaimed rows,
+	// and the path prefix is escaped by the query parameter.
+	claimResult, claimErr := l.db.ExecContext(
+		`UPDATE audio_files SET library_id = ? WHERE library_id = 0 AND file_path LIKE ? || '%'`,
+		lib.ID, path+"/",
+	)
+	if claimErr != nil {
+		l.logger.Warn("could not claim orphaned tracks",
+			"libraryID", lib.ID, "path", path, "err", claimErr)
+	} else if claimed, _ := claimResult.RowsAffected(); claimed > 0 {
+		l.logger.Info("claimed orphaned tracks for new library",
+			"libraryID", lib.ID, "claimed", claimed)
+	}
+
 	runtime.EventsEmit(l.ctx, events.LibraryAdded, lib)
 
 	go func() {
