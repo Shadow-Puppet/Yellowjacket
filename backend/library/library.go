@@ -29,7 +29,7 @@ import (
 // scanBatchSize controls how many files are committed in a single
 // database transaction during a scan.  Larger batches amortize
 // SQLite's fsync cost but increase the blast radius of a failed commit.
-const scanBatchSize = 50
+const scanBatchSize = 300
 
 // entityCache holds recently resolved database entities so that
 // repeated upserts for the same artist/album/cover art within a scan
