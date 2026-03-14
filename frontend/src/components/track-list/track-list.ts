@@ -1051,6 +1051,16 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
     }
 
     override disconnectedCallback() {
+        // Remove delegated event handlers from virtualizer.
+        const virt = this.virtualizer;
+        if (virt) {
+            virt.removeEventListener('click', this.onDelegatedClick);
+            virt.removeEventListener('dblclick', this.onDelegatedDblClick);
+            virt.removeEventListener('contextmenu', this.onDelegatedContextMenu);
+            virt.removeEventListener('dragstart', this.onDelegatedDragStart);
+            virt.removeEventListener('dragend', this.onTrackDragEnd);
+        }
+
         this.virtualizer?.removeEventListener(
             'visibilityChanged',
             this.onVisibilityChanged,
@@ -1087,6 +1097,17 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
 
     override firstUpdated() {
         this.initColumnWidths();
+
+        // Event delegation: attach stable handlers to the virtualizer
+        // so renderTrackRow creates zero per-item closures.
+        const virt = this.virtualizer;
+        if (virt) {
+            virt.addEventListener('click', this.onDelegatedClick);
+            virt.addEventListener('dblclick', this.onDelegatedDblClick);
+            virt.addEventListener('contextmenu', this.onDelegatedContextMenu);
+            virt.addEventListener('dragstart', this.onDelegatedDragStart);
+            virt.addEventListener('dragend', this.onTrackDragEnd);
+        }
     }
 
     override updated(changed: Map<string, unknown>) {
@@ -1208,6 +1229,75 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
 
         this.libraryCtrl.setScrollPosition('tracks', first);
     };
+
+    // =================================================================
+    // Delegated event handlers (stable references, zero per-item closures)
+    // =================================================================
+
+    /**
+     * Walk up from the event target to find the nearest
+     * `.track-row` and extract track + index via `data-index`.
+     */
+    private resolveTrackFromEvent(
+        e: Event,
+    ): { track: library.Track; index: number } | null {
+        const row = (e.target as HTMLElement).closest(
+            '.track-row',
+        ) as HTMLElement | null;
+
+        if (!row) return null;
+
+        const idx = Number(row.dataset.index);
+        const track = this.cachedSortedTracks[idx];
+
+        if (!track) return null;
+
+        return { track, index: idx };
+    }
+
+    private onDelegatedClick = (e: MouseEvent) => {
+        const hit = this.resolveTrackFromEvent(e);
+
+        if (!hit) return;
+
+        // Check if click was on fav-icon
+        const favEl = (e.target as HTMLElement).closest(
+            '.fav-icon',
+        );
+
+        if (favEl) {
+            e.stopPropagation();
+            void this.favCtrl.toggleFavorite(
+                hit.track.FilePath,
+            );
+
+            return;
+        }
+
+        this.onTrackRowClick(e, hit.track, hit.index);
+    };
+
+    private onDelegatedDblClick = (e: MouseEvent) => {
+        const hit = this.resolveTrackFromEvent(e);
+
+        if (hit) this.onTrackRowDblClick(hit.track);
+    };
+
+    private onDelegatedContextMenu = (e: MouseEvent) => {
+        const hit = this.resolveTrackFromEvent(e);
+
+        if (hit) this.onTrackContextMenu(e, hit.track);
+    };
+
+    private onDelegatedDragStart = (e: DragEvent) => {
+        const hit = this.resolveTrackFromEvent(e);
+
+        if (hit) this.onTrackDragStart(e, hit.track);
+    };
+
+    // =================================================================
+    // Original handlers (still used internally)
+    // =================================================================
 
     private onTrackRowClick(
         e: MouseEvent,
@@ -1548,6 +1638,8 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
             ? 'solid'
             : 'regular';
 
+        // No inline closures — all events delegated via data-index
+        // on the virtualizer element (see firstUpdated).
         return html`
       <div
         class=${classMap({
@@ -1556,27 +1648,13 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
             selected,
         })}
         draggable="true"
-        @click=${(e: MouseEvent) =>
-                this.onTrackRowClick(e, track, index)}
-        @dblclick=${() =>
-                this.onTrackRowDblClick(track)}
-        @contextmenu=${(e: MouseEvent) =>
-                this.onTrackContextMenu(e, track)}
-        @dragstart=${(e: DragEvent) =>
-                this.onTrackDragStart(e, track)}
-        @dragend=${this.onTrackDragEnd}
+        data-index=${index}
       >
         <div
           class=${classMap({
             'fav-icon': true,
             favorited: isFav,
         })}
-          @click=${(e: MouseEvent) => {
-                    e.stopPropagation();
-                    void this.favCtrl.toggleFavorite(
-                        track.FilePath,
-                    );
-                }}
         >
           <wa-icon
             name=${this.favCtrl.iconName}

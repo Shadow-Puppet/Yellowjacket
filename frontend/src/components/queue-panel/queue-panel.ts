@@ -1264,11 +1264,6 @@ export class QueuePanel
     // Other handlers
     // =================================================================
 
-    private handleRemoveTrack(e: Event, position: number) {
-        e.stopPropagation();
-        this.queue.removeFromQueue(position);
-    }
-
     private getDisplayTitle(track: {
         title: string;
         filePath: string;
@@ -1328,6 +1323,8 @@ export class QueuePanel
             dropIdx === trackCount &&
             index === trackCount - 1;
 
+        // No inline closures — all events delegated via data-index
+        // on the virtualizer element (see firstUpdated).
         return html`
             <div
                 class=${classMap({
@@ -1339,15 +1336,6 @@ export class QueuePanel
                 })}
                 data-index=${index}
                 draggable="true"
-                @click=${(e: MouseEvent) =>
-                    this.handleTrackClick(e, track, index)}
-                @dblclick=${() =>
-                    this.handleTrackDblClick(index)}
-                @contextmenu=${(e: MouseEvent) =>
-                    this.handleTrackContextMenu(e, index)}
-                @dragstart=${(e: DragEvent) =>
-                    this.onTrackDragStart(e, index)}
-                @dragend=${this.onTrackDragEnd}
             >
                 <span class="track-position">
                     ${index + 1}
@@ -1362,8 +1350,6 @@ export class QueuePanel
                 </div>
                 <button
                     class="remove-button"
-                    @click=${(e: Event) =>
-                        this.handleRemoveTrack(e, index)}
                     title="Remove from queue"
                 >
                     <wa-icon name="xmark"></wa-icon>
