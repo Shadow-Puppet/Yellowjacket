@@ -79,7 +79,7 @@ type ScanProgress struct {
 type ScanWarning struct {
 	FilePath string `json:"filePath"`
 	Phase    string `json:"phase"`
-	Err      error  `json:"err"`
+	Err      string `json:"err"`
 }
 
 func newScanMetrics() *ScanMetrics {
@@ -119,7 +119,7 @@ func (m *ScanMetrics) addWarning(filePath, phase string, err error) {
 	m.Warnings = append(m.Warnings, ScanWarning{
 		FilePath: filePath,
 		Phase:    phase,
-		Err:      err,
+		Err:      err.Error(),
 	})
 }
 
