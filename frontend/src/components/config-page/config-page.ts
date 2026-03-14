@@ -1236,6 +1236,9 @@ export class ConfigPage extends LitElement {
         if (metrics) {
             this.metrics = metrics;
         }
+
+        // Refresh track counts after scan finishes.
+        void this.loadLibraries();
     };
 
     private handleScanQueued = (): void => {
@@ -1246,6 +1249,9 @@ export class ConfigPage extends LitElement {
         this.scanQueuedCount = 0;
         this.scanning = false;
         this.scanPaused = false;
+
+        // Refresh track counts after all queued scans finish.
+        void this.loadLibraries();
     };
 
     private handleScanPaused = (): void => {
