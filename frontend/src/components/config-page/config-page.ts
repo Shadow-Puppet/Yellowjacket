@@ -1173,12 +1173,8 @@ export class ConfigPage extends LitElement {
             this.libraries = libs ?? [];
             this.concurrencyMode = mode;
 
-            // Auto-select all libraries on initial load so scan
-            // buttons default to operating on everything.
-            if (this.selectedLibraryIds.size === 0 && this.libraries.length > 0) {
-                this.selectedLibraryIds = new Set(this.libraries.map((l) => l.id));
-            } else {
-                // Prune selections for libraries that no longer exist.
+            // Prune selections for libraries that no longer exist.
+            if (this.selectedLibraryIds.size > 0) {
                 const validIds = new Set(this.libraries.map((l) => l.id));
                 const pruned = new Set([...this.selectedLibraryIds].filter((id) => validIds.has(id)));
 
@@ -2271,6 +2267,49 @@ export class ConfigPage extends LitElement {
                 heading="Libraries"
                 description="Manage your music library folders. Select libraries to scan."
             >
+                <div class="scan-actions">
+                    ${this.scanning
+                        ? html`
+                              ${this.scanPaused
+                                  ? html`<button
+                                        class="btn-warning"
+                                        @click=${this.handleResumeScan}
+                                    >
+                                        Resume
+                                    </button>`
+                                  : html`<button
+                                        class="btn-warning"
+                                        @click=${this.handlePauseScan}
+                                    >
+                                        Pause
+                                    </button>`}
+                              <button
+                                  class="btn-danger"
+                                  @click=${this.handleCancelScan}
+                              >
+                                  Cancel Scan
+                              </button>
+                          `
+                        : html`
+                              <button
+                                  class="btn-primary"
+                                  @click=${this.handleSoftScan}
+                                  ?disabled=${selectionCount === 0}
+                              >
+                                  Scan${selectionCount > 0 && selectionCount < this.libraries.length
+                                      ? ` (${selectionCount})`
+                                      : ''}
+                              </button>
+                              <button
+                                  class="btn-danger"
+                                  @click=${this.handleFullRescan}
+                                  ?disabled=${selectionCount === 0}
+                              >
+                                  Full Rescan
+                              </button>
+                          `}
+                </div>
+
                 ${this.libraries.length > 0
                     ? html`
                         <div class="library-list">
@@ -2394,48 +2433,6 @@ export class ConfigPage extends LitElement {
                     .value=${this.concurrencyMode}
                     @config-change=${this.handleConcurrencyChange}
                 ></config-field>
-
-                <div class="scan-actions">
-                    ${this.scanning
-                        ? html`
-                              ${this.scanPaused
-                                  ? html`<button
-                                        class="btn-warning"
-                                        @click=${this.handleResumeScan}
-                                    >
-                                        Resume
-                                    </button>`
-                                  : html`<button
-                                        class="btn-warning"
-                                        @click=${this.handlePauseScan}
-                                    >
-                                        Pause
-                                    </button>`}
-                              <button
-                                  class="btn-danger"
-                                  @click=${this.handleCancelScan}
-                              >
-                                  Cancel Scan
-                              </button>
-                          `
-                        : html`
-                              <button
-                                  class="btn-primary"
-                                  @click=${this.handleSoftScan}
-                                  ?disabled=${selectionCount === 0}
-                              >
-                                  Scan${selectionCount > 0 && selectionCount < this.libraries.length
-                                      ? ` (${selectionCount})`
-                                      : ''}
-                              </button>
-                              <button
-                                  class="btn-danger"
-                                  @click=${this.handleFullRescan}
-                              >
-                                  Full Rescan
-                              </button>
-                          `}
-                </div>
 
                 <div
                     class="status-bar ${this.scanning ? 'active' : ''} ${this.scanPaused ? 'paused' : ''}"
