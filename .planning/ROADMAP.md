@@ -8,6 +8,7 @@
 
 - ✅ **v1.0 Consolidation** — Phases 1-8 (shipped 2026-03-05) — [archive](milestones/v1.0-ROADMAP.md)
 - 🔄 **v1.1 Multi-Library Support** — Phase 9 complete, Phases 10-13 in progress
+- 🔄 **Performance Optimization** — Phase 14 (cross-cutting, parallel to v1.1)
 
 ## Phases
 
@@ -109,6 +110,23 @@ Plans:
   5. When a library is removed, its tracks in playlists become phantom entries — visually distinguished (greyed out / icon) with preserved title, artist, album metadata instead of disappearing
 **Plans:** TBD
 
+### Phase 14: Performance Optimization
+**Goal:** Scrolling, navigation, and rendering are as smooth and fast as possible — scrolling feels like a native animation, navigation is instant, no unnecessary re-renders
+**Depends on:** Nothing (cross-cutting, can execute in parallel with v1.1 phases)
+**Requirements:** PERF-SCROLL-01, PERF-SCROLL-02, PERF-SCROLL-03, PERF-NAV-01, PERF-NAV-02, PERF-RENDER-01, PERF-RENDER-02, PERF-DIAG-01
+**Success Criteria** (what must be TRUE):
+  1. Scrolling in all views (tracks, albums, artists, genres, queue, playlists) is smooth at 60fps — no jank, no stuttering, no blank areas
+  2. Navigating between primary views (tracks, albums, artists, genres, playlists, settings) is near-instant — no component destruction/recreation, scroll positions preserved
+  3. Render hot paths (renderTrackRow, renderTrackItem) create zero new closures per frame — all event handling uses delegation
+  4. Store notifications are batched (queueMicrotask) and components only re-render when their relevant data changes
+  5. A profiling guide documents how to diagnose performance issues using pprof (backend) and DevTools (frontend)
+**Plans:** 4 plans
+Plans:
+- [ ] 14-01-PLAN.md — CSS containment + GPU layer promotion on all scroll containers
+- [ ] 14-02-PLAN.md — View caching navigation system (replace innerHTML destruction)
+- [ ] 14-03-PLAN.md — Render hot-path optimization (closure elimination, store granularity)
+- [ ] 14-04-PLAN.md — Scroll event optimization, profiling guide, performance verification checkpoint
+
 ## Progress
 
 | Phase | Milestone | Plans Complete | Status | Completed |
@@ -126,7 +144,8 @@ Plans:
 | 11. Per-Library Scan Pipeline | 3/3 | Complete    | 2026-03-09 | - |
 | 12. Library CRUD & Data Integrity | v1.1 | 1/2 | In Progress | - |
 | 13. Library Views & Phantom Tracks | v1.1 | 0/? | Not started | - |
+| 14. Performance Optimization | v1.1 | 0/4 | Not started | - |
 
 ---
 *Roadmap created: 2026-02-27*
-*Last updated: 2026-03-08 — Multi-library phases 10-13 created from 23 requirements*
+*Last updated: 2026-03-14 — Phase 14 (Performance Optimization) added with 4 plans*
