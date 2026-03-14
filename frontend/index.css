@@ -145,7 +145,7 @@ body div.sidebar {
     padding: 0.25em;
     background-color: var(--yj-bg-surface, #212529);
     overflow: hidden;
-    contain: strict;
+    contain: layout style paint;
 }
 
 .main-panel > * {
