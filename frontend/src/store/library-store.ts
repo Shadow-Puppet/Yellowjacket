@@ -52,6 +52,9 @@ class LibraryStore {
         EventsOn(Events.LibraryScanComplete, () => {
             this.invalidate();
         });
+        EventsOn(Events.LibraryRemoved, () => {
+            this.invalidate();
+        });
 
         this.loadCoverSize();
         this.deferEagerFetch();
