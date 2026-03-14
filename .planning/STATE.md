@@ -23,10 +23,10 @@ See: .planning/PROJECT.md (updated 2026-03-08)
 ## Current Position
 
 Phase: 14 — Performance Optimization
-Plan: 1 of 4 in Phase (Plan 02 complete)
-Status: Plan 14-02 complete — view caching navigation system
-Progress: ████████████████░░░░ Phase 14 in progress (1/4 plans)
-Last activity: 2026-03-14 — Completed 14-02 view caching navigation
+Plan: 2 of 4 in Phase (Plans 01, 02 complete)
+Status: Plan 14-01 complete — CSS containment & GPU scroll promotion
+Progress: ████████████████░░░░ Phase 14 in progress (2/4 plans)
+Last activity: 2026-03-14 — Completed 14-01 CSS containment & GPU scroll promotion
 
 ### Phase Overview
 
@@ -37,7 +37,7 @@ Last activity: 2026-03-14 — Completed 14-02 view caching navigation
 | 11. Per-Library Scan Pipeline | Complete (3/3 plans) ✅ |
 | 12. Library CRUD & Data Integrity | In progress (1/2 plans) |
 | 13. Library Views & Phantom Tracks | Not started |
-| 14. Performance Optimization | In progress (1/4 plans) |
+| 14. Performance Optimization | In progress (2/4 plans) |
 
 ## Performance Metrics
 
@@ -58,6 +58,7 @@ Last activity: 2026-03-14 — Completed 14-02 view caching navigation
 | Phase 11-02 P02 | 4 min | 2 tasks | 2 files |
 | Phase 12-01 P01 | 6 min | 2 tasks | 6 files |
 | Phase 14-02 P02 | 1 min | 1 task | 1 file |
+| Phase 14-01 P01 | 3 min | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -128,6 +129,9 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 | Primary views cached, detail views ephemeral | Detail views depend on entity IDs that change; caching would show stale content |
 | Inline style.display toggle over CSS class | Simpler, no specificity issues, empty string restores natural display value |
 | viewCache bounded at 6 entries | One per primary view — negligible memory since data is already in store caches |
+| contain: strict only on .main-panel | Has explicit dimensions (flex: 1, overflow: hidden); elsewhere use layout style to not break flex |
+| will-change: transform only on scroll containers | Not on :host — avoids wasting GPU memory on non-scrolling elements |
+| content-visibility: auto on album cards with contain-intrinsic-size | Prevents layout shift during scroll while skipping off-screen rendering |
 
 ### Warnings (carry forward)
 
@@ -155,9 +159,9 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 ### Last Session
 
 **Date:** 2026-03-14
-**What happened:** Executed Phase 14, Plan 02 — replaced innerHTML navigation with view caching system. Primary views (tracks, albums, artists, genres, playlists, settings) are now created once and kept in DOM with display toggle instead of destruction/recreation.
-**Where we stopped:** Completed 14-02-PLAN.md — Plan 02 of Phase 14 complete
-**Next action:** Execute remaining Phase 14 plans (14-01 CSS containment, 14-03 store optimizations, 14-04 rendering optimizations)
+**What happened:** Executed Phase 14, Plan 01 — added CSS containment to app shell layout boundaries and GPU-composited scrolling to all 6 scroll-heavy components with content-visibility on album cards.
+**Where we stopped:** Completed 14-01-PLAN.md — Plan 01 of Phase 14 complete (Plans 01, 02 done)
+**Next action:** Execute remaining Phase 14 plans (14-03 store optimizations, 14-04 rendering optimizations)
 
 ---
 *State initialized: 2026-02-27*
@@ -170,4 +174,4 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 | 18 | add multi-column metadata display to playlist-details | 2026-03-08 | ce23177 | [18-add-multi-column-metadata-display-to-pla](./quick/18-add-multi-column-metadata-display-to-pla/) |
 
 Last activity: 2026-03-08 - Completed quick task 18: add multi-column metadata display to playlist-details
-*Last updated: 2026-03-14 — Completed 14-02-PLAN.md (Phase 14 Plan 02 complete)*
+*Last updated: 2026-03-14 — Completed 14-01-PLAN.md (Phase 14 Plan 01 complete)*
