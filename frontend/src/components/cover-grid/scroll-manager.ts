@@ -3,9 +3,6 @@ import type { LitVirtualizer } from '@lit-labs/virtualizer';
 import type { library } from '@go/models';
 import type { LibraryController } from '@store/controllers/library-controller';
 
-import {
-    SCROLL_DEBOUNCE_MS,
-} from './cover-grid-types.js';
 import type { GridEntry } from './cover-grid-types.js';
 
 /**
@@ -45,10 +42,8 @@ export class ScrollManager {
     private host: ScrollManagerHost;
     private gc: GridConstants;
 
-    // Scroll position debounce.
-    private scrollDebounceTimer: ReturnType<
-        typeof setTimeout
-    > | null = null;
+    // RAF-throttled scroll position saving.
+    private scrollRAFId: number | null = null;
 
     // Resize-aware scroll preservation.
     private resizeObserver: ResizeObserver | null = null;
@@ -157,8 +152,8 @@ export class ScrollManager {
 
     /** Clean up timers and observers. */
     teardown(): void {
-        if (this.scrollDebounceTimer !== null) {
-            clearTimeout(this.scrollDebounceTimer);
+        if (this.scrollRAFId !== null) {
+            cancelAnimationFrame(this.scrollRAFId);
         }
 
         if (this.resizeDebounceTimer !== null) {
@@ -202,6 +197,12 @@ export class ScrollManager {
      * Save scroll position from the first visible album.
      * In split mode we use the before-entries; in single
      * mode we use the full grid entries.
+     *
+     * Uses requestAnimationFrame throttling: saves at most
+     * once per frame (~16ms at 60fps). Unlike debouncing,
+     * this captures position continuously during scrolling
+     * (not just after it stops) and naturally aligns with
+     * the browser's paint cycle.
      */
     onVisibilityChanged(
         first: number,
@@ -209,21 +210,23 @@ export class ScrollManager {
     ): void {
         if (this.isResizing) return;
 
-        if (this.scrollDebounceTimer !== null) {
-            clearTimeout(this.scrollDebounceTimer);
-        }
+        if (this.scrollRAFId !== null) return;
 
-        this.scrollDebounceTimer = setTimeout(() => {
-            const entries = getEntries();
-            const entry = entries[first];
+        this.scrollRAFId = requestAnimationFrame(
+            () => {
+                this.scrollRAFId = null;
 
-            if (entry) {
-                this.host.libraryCtrl.setScrollPosition(
-                    'albums',
-                    entry.albumIndex,
-                );
-            }
-        }, SCROLL_DEBOUNCE_MS);
+                const entries = getEntries();
+                const entry = entries[first];
+
+                if (entry) {
+                    this.host.libraryCtrl.setScrollPosition(
+                        'albums',
+                        entry.albumIndex,
+                    );
+                }
+            },
+        );
     }
 
     // ================================================================

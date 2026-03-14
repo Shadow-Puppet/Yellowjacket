@@ -303,6 +303,7 @@ export class QueuePanel
             overflow-y: auto;
             contain: paint;
             will-change: transform;
+            overflow-anchor: none;
         }
 
         .track-item {
@@ -490,6 +491,12 @@ export class QueuePanel
         // scrollTo() to "correct" sub-pixel estimation errors, which fights the
         // browser's native scrollbar drag gesture and causes the thumb to
         // desync from the mouse on large lists (20k+ items).
+        //
+        // NOTE: CSS `overflow-anchor: none` (set on lit-virtualizer above)
+        // disables the *browser's* native scroll anchoring, but does NOT
+        // affect lit-virtualizer's own _correctScrollError() method which
+        // calls scrollTo() internally. This monkey-patch is still needed
+        // to suppress that internal correction during scrollbar drag.
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const virt = (this.virtualizer as any)?.[virtualizerRef];
         if (virt) {
@@ -509,6 +516,17 @@ export class QueuePanel
             'mousedown',
             this.onVirtualizerMouseDown,
         );
+
+        // Event delegation: attach stable handlers to the virtualizer
+        // so renderTrackItem creates zero per-item closures.
+        const virtEl = this.virtualizer;
+        if (virtEl) {
+            virtEl.addEventListener('click', this.onDelegatedClick);
+            virtEl.addEventListener('dblclick', this.onDelegatedDblClick);
+            virtEl.addEventListener('contextmenu', this.onDelegatedContextMenu);
+            virtEl.addEventListener('dragstart', this.onDelegatedDragStart);
+            virtEl.addEventListener('dragend', this.onTrackDragEnd);
+        }
     }
 
     override connectedCallback() {
@@ -581,6 +599,16 @@ export class QueuePanel
             'mousedown',
             this.onVirtualizerMouseDown,
         );
+
+        // Remove delegated event handlers from virtualizer.
+        const virtEl = this.virtualizer;
+        if (virtEl) {
+            virtEl.removeEventListener('click', this.onDelegatedClick);
+            virtEl.removeEventListener('dblclick', this.onDelegatedDblClick);
+            virtEl.removeEventListener('contextmenu', this.onDelegatedContextMenu);
+            virtEl.removeEventListener('dragstart', this.onDelegatedDragStart);
+            virtEl.removeEventListener('dragend', this.onTrackDragEnd);
+        }
     }
 
     override updated() {
@@ -653,6 +681,70 @@ export class QueuePanel
 
     private onPlaylistActionComplete = () => {
         this.closePlaylistPicker();
+    };
+
+    // =================================================================
+    // Delegated event handlers (stable references, zero per-item closures)
+    // =================================================================
+
+    /**
+     * Walk up from the event target to find the nearest
+     * `.track-item` and extract the index via `data-index`.
+     */
+    private resolveTrackIndexFromEvent(
+        e: Event,
+    ): number | null {
+        const row = (e.target as HTMLElement).closest(
+            '.track-item',
+        ) as HTMLElement | null;
+
+        if (!row) return null;
+
+        const idx = Number(row.dataset.index);
+
+        if (Number.isNaN(idx)) return null;
+
+        return idx;
+    }
+
+    private onDelegatedClick = (e: MouseEvent) => {
+        const idx = this.resolveTrackIndexFromEvent(e);
+
+        if (idx === null) return;
+
+        // Check if click was on the remove button
+        const removeBtn = (e.target as HTMLElement).closest(
+            '.remove-button',
+        );
+
+        if (removeBtn) {
+            e.stopPropagation();
+            this.queue.removeFromQueue(idx);
+
+            return;
+        }
+
+        const track = this.queue.tracks[idx];
+
+        if (track) this.handleTrackClick(e, track, idx);
+    };
+
+    private onDelegatedDblClick = (e: MouseEvent) => {
+        const idx = this.resolveTrackIndexFromEvent(e);
+
+        if (idx !== null) this.handleTrackDblClick(idx);
+    };
+
+    private onDelegatedContextMenu = (e: MouseEvent) => {
+        const idx = this.resolveTrackIndexFromEvent(e);
+
+        if (idx !== null) this.handleTrackContextMenu(e, idx);
+    };
+
+    private onDelegatedDragStart = (e: DragEvent) => {
+        const idx = this.resolveTrackIndexFromEvent(e);
+
+        if (idx !== null) this.onTrackDragStart(e, idx);
     };
 
     // =================================================================
