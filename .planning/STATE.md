@@ -132,6 +132,10 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 - Orphan cleanup must not delete shared entities across libraries (reference-counting bottom-up)
 - Existing user migration must be seamless (TOML DirectoryPath to DB libraries table)
 
+### Deferred Improvements
+
+- **Bulk phantom matching performance** — `FindPhantomMatches` runs 3 sequential DB queries per phantom track (basename search, FTS filename, FTS keywords). With hundreds of phantoms this is O(n×3) round trips. Could batch the basename query (WHERE basename IN (...)), pre-load FTS results, or parallelize with goroutines. Not urgent now that the false-phantom bug is fixed (tracks appeared phantom due to empty library root, not actual missing files). Revisit if users import large playlists from external sources with genuinely unresolved paths.
+
 ### Research Flags
 
 - **Multi-library research complete** — see `.planning/research/` (STACK.md, FEATURES.md, ARCHITECTURE.md, PITFALLS.md, SUMMARY.md)
