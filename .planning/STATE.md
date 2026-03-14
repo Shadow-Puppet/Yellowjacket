@@ -23,10 +23,10 @@ See: .planning/PROJECT.md (updated 2026-03-08)
 ## Current Position
 
 Phase: 14 — Performance Optimization
-Plan: 4 of 4 in Phase (Plans 01, 02, 03, 04 complete)
-Status: Plan 14-04 awaiting checkpoint — scroll optimization & profiling guide
-Progress: ████████████████████ Phase 14 in progress (4/4 plans, checkpoint pending)
-Last activity: 2026-03-14 — Completed 14-04 Tasks 1-2, awaiting human-verify checkpoint
+Plan: 4 of 4 in Phase (Plans 01, 02, 03 complete; 04 awaiting checkpoint)
+Status: Plan 14-03 complete — render & store optimization; 14-04 awaiting checkpoint
+Progress: ████████████████████ Phase 14 in progress (3/4 plans complete, 1 checkpoint pending)
+Last activity: 2026-03-14 — Completed 14-03 render & store optimization
 
 ### Phase Overview
 
@@ -58,6 +58,7 @@ Last activity: 2026-03-14 — Completed 14-04 Tasks 1-2, awaiting human-verify c
 | Phase 11-02 P02 | 4 min | 2 tasks | 2 files |
 | Phase 12-01 P01 | 6 min | 2 tasks | 6 files |
 | Phase 14-02 P02 | 1 min | 1 task | 1 file |
+| Phase 14-03 P03 | 4 min | 2 tasks | 5 files |
 | Phase 14-01 P01 | 3 min | 2 tasks | 7 files |
 | Phase 14-04 P04 | 2 min | 2 tasks | 3 files |
 
@@ -133,6 +134,8 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 | contain: strict only on .main-panel | Has explicit dimensions (flex: 1, overflow: hidden); elsewhere use layout style to not break flex |
 | will-change: transform only on scroll containers | Not on :host — avoids wasting GPU memory on non-scrolling elements |
 | content-visibility: auto on album cards with contain-intrinsic-size | Prevents layout shift during scroll while skipping off-screen rendering |
+| Event delegation via data-index + closest() for virtualizer items | Zero per-item closures in renderItem; all events delegated on virtualizer element |
+| changeGeneration counter in library store | Simpler than typed subscriptions; skips requestUpdate on loading-only transitions |
 | RAF throttle over debounce for scroll saves | Saves position once per frame during scrolling, not just after stop; prevents lost positions on quick navigation |
 | Keep monkey-patch alongside overflow-anchor CSS | CSS overflow-anchor disables browser anchoring but not lit-virtualizer's internal _correctScrollError |
 
@@ -162,9 +165,9 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 ### Last Session
 
 **Date:** 2026-03-14
-**What happened:** Executed Phase 14, Plan 04 — RAF-throttled scroll position saves, overflow-anchor on queue panel, performance profiling guide. Tasks 1-2 complete, Task 3 is a human-verify checkpoint.
-**Where we stopped:** Completed 14-04-PLAN.md Tasks 1-2 — awaiting human-verify checkpoint for scroll smoothness
-**Next action:** User verifies scroll smoothness and navigation speed across all views (Task 3 checkpoint)
+**What happened:** Executed Phase 14, Plan 03 — event delegation eliminates per-scroll-frame closures, queueMicrotask batching for queue store, changeGeneration counter for library store. Plan 04 Tasks 1-2 were completed earlier, awaiting checkpoint.
+**Where we stopped:** Completed 14-03-PLAN.md — Plans 01, 02, 03 complete; 14-04 awaiting human-verify checkpoint
+**Next action:** User verifies scroll smoothness and navigation speed across all views (14-04 Task 3 checkpoint)
 
 ---
 *State initialized: 2026-02-27*
@@ -177,4 +180,4 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 | 18 | add multi-column metadata display to playlist-details | 2026-03-08 | ce23177 | [18-add-multi-column-metadata-display-to-pla](./quick/18-add-multi-column-metadata-display-to-pla/) |
 
 Last activity: 2026-03-08 - Completed quick task 18: add multi-column metadata display to playlist-details
-*Last updated: 2026-03-14 — Completed 14-04-PLAN.md Tasks 1-2 (Phase 14 Plan 04 awaiting checkpoint)*
+*Last updated: 2026-03-14 — Completed 14-03-PLAN.md (Phase 14 Plan 03 complete)*
