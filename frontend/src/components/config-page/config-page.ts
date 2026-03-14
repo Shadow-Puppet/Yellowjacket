@@ -2280,6 +2280,12 @@ export class ConfigPage extends LitElement {
                 description="Manage your music library folders. Select libraries to scan."
             >
                 <div class="scan-actions">
+                    <button
+                        class="btn-primary"
+                        @click=${this.handleAddLibrary}
+                    >
+                        Add Library
+                    </button>
                     ${this.scanning
                         ? html`
                               ${this.scanPaused
@@ -2303,12 +2309,6 @@ export class ConfigPage extends LitElement {
                               </button>
                           `
                         : html`
-                              <button
-                                  class="btn-primary"
-                                  @click=${this.handleAddLibrary}
-                              >
-                                  Add Library
-                              </button>
                               <button
                                   class="btn-primary"
                                   @click=${this.handleSoftScan}
