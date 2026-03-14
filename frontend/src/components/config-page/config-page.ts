@@ -856,8 +856,9 @@ export class ConfigPage extends LitElement {
 
         .library-row {
             display: flex;
+            flex-wrap: wrap;
             align-items: center;
-            gap: 0.75em;
+            gap: 0.5em 0.75em;
             padding: 0.6em 0.5em;
             border-bottom: 1px solid var(--yj-border-subtle, #333);
         }
@@ -869,6 +870,22 @@ export class ConfigPage extends LitElement {
         .library-row:hover {
             background: var(--yj-bg-elevated, #343a40);
             border-radius: 4px;
+        }
+
+        .library-row .inline-progress {
+            flex-basis: 100%;
+            padding-left: 1.75em;
+        }
+
+        .library-row .inline-progress .progress-track {
+            margin-top: 0.25em;
+        }
+
+        .library-scan-status {
+            font-size: 0.75em;
+            font-weight: 400;
+            color: var(--yj-accent, #ffd43b);
+            white-space: nowrap;
         }
 
         .library-name {
@@ -2328,7 +2345,24 @@ export class ConfigPage extends LitElement {
                                 </span>
                             </div>
                             ${this.libraries.map(
-                                (lib) => html`
+                                (lib) => {
+                                    const isScanning = this.scanProgress?.libraryId === lib.id
+                                        && this.scanning;
+                                    const p = isScanning ? this.scanProgress : null;
+                                    const percent = p && p.total > 0
+                                        ? Math.min(100, Math.round((p.processed / p.total) * 100))
+                                        : 0;
+                                    const phaseLabels: Record<string, string> = {
+                                        counting: 'Counting\u2026',
+                                        scanning: `Scanning\u2026 ${percent}%`,
+                                        orphans: 'Cleaning up\u2026',
+                                        thumbnails: 'Thumbnails\u2026',
+                                    };
+                                    const statusText = p
+                                        ? phaseLabels[p.phase] ?? 'Scanning\u2026'
+                                        : '';
+
+                                    return html`
                                     <div class="library-row">
                                         <input
                                             type="checkbox"
@@ -2355,6 +2389,9 @@ export class ConfigPage extends LitElement {
                                                   >
                                                       ${lib.name}
                                                   </span>
+                                                  ${statusText
+                                                      ? html`<span class="library-scan-status">${statusText}</span>`
+                                                      : nothing}
                                               `}
                                         <span class="library-path">${lib.path}</span>
                                         <span class="library-count">
@@ -2395,8 +2432,21 @@ export class ConfigPage extends LitElement {
                                                   `
                                                 : nothing}
                                         </div>
+                                        ${p && p.phase !== 'counting'
+                                            ? html`
+                                                <div class="inline-progress">
+                                                    <div class="progress-track">
+                                                        <div
+                                                            class="progress-fill"
+                                                            style="width: ${percent}%"
+                                                        ></div>
+                                                    </div>
+                                                </div>
+                                            `
+                                            : nothing}
                                     </div>
-                                `,
+                                `;
+                                },
                             )}
                         </div>
                     `
@@ -2433,9 +2483,7 @@ export class ConfigPage extends LitElement {
                 >
                     ${this.scanPaused
                         ? 'Scan paused.'
-                        : this.scanProgress
-                          ? this.renderScanProgress()
-                          : this.statusMessage || 'Ready.'}
+                        : this.statusMessage || 'Ready.'}
                 </div>
 
                 ${this.scanErrors
@@ -2637,105 +2685,6 @@ export class ConfigPage extends LitElement {
                     >${value}</span
                 >
             </div>
-        `;
-    }
-
-    private renderScanProgress() {
-        const p = this.scanProgress;
-
-        if (!p) return nothing;
-
-        const libraryPrefix = p.libraryName
-            ? `Scanning: ${p.libraryName}`
-            : '';
-
-        if (p.phase === 'counting') {
-            return html`
-                <div class="progress-phase">
-                    ${libraryPrefix
-                        ? html`<strong>${libraryPrefix}</strong> \u2014 `
-                        : ''}
-                    Counting files\u2026
-                </div>
-                ${p.queuedCount > 0
-                    ? html`<div class="progress-detail">
-                          ${p.queuedCount}
-                          ${p.queuedCount === 1 ? 'library' : 'libraries'}
-                          queued
-                      </div>`
-                    : nothing}
-            `;
-        }
-
-        const percent =
-            p.total > 0
-                ? Math.min(
-                      100,
-                      Math.round(
-                          (p.processed / p.total) * 100,
-                      ),
-                  )
-                : 0;
-
-        const phaseLabel: Record<string, string> = {
-            scanning: 'Scanning',
-            orphans: 'Cleaning up',
-            thumbnails: 'Generating thumbnails',
-        };
-
-        const baseLabel =
-            phaseLabel[p.phase] ?? 'Scanning';
-        const label = p.libraryName
-            ? `${baseLabel}: ${p.libraryName}`
-            : baseLabel;
-
-        // Build detail string: "1,247 / 2,013 files (891 new, 23 updated, 356 skipped)"
-        const parts: string[] = [];
-
-        if (p.added > 0)
-            parts.push(`${p.added.toLocaleString()} new`);
-        if (p.updated > 0)
-            parts.push(
-                `${p.updated.toLocaleString()} updated`,
-            );
-        if (p.skipped > 0)
-            parts.push(
-                `${p.skipped.toLocaleString()} skipped`,
-            );
-
-        const detail =
-            p.phase === 'scanning' && p.total > 0
-                ? html`<span class="progress-detail">
-                      ${p.processed.toLocaleString()} /
-                      ${p.total.toLocaleString()} files${parts.length
-                          ? ` (${parts.join(', ')})`
-                          : ''}
-                  </span>`
-                : nothing;
-
-        return html`
-            <div class="progress-info">
-                <span class="progress-label">
-                    ${label}\u2026
-                </span>
-                ${detail}
-                <span class="progress-percent">
-                    ${percent}%
-                </span>
-            </div>
-            <div class="progress-track">
-                <div
-                    class="progress-fill"
-                    style="width: ${percent}%"
-                ></div>
-            </div>
-            ${p.queuedCount > 0
-                ? html`<div class="progress-detail">
-                      ${p.queuedCount}
-                      ${p.queuedCount === 1 ? 'library' : 'libraries'}
-                      queued
-                  </div>`
-                : nothing}
         `;
     }
 
