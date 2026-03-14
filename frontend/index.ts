@@ -34,70 +34,127 @@ import type { DragActiveDetail } from '@utils/drag-controller';
 
 setBasePath('/dist/webawesome');
 
-// Navigation event listener for view switching
+// ---------------------------------------------------------------------------
+// View caching navigation system
+// ---------------------------------------------------------------------------
+// Primary views (tracks, albums, artists, genres, playlists, settings) are
+// created once and kept alive in the DOM.  Navigation toggles visibility
+// (display: none ↔ display: '') instead of destroying/recreating via
+// innerHTML.  Detail views (artist-details, playlist-details, genre-details)
+// are ephemeral — created fresh each navigation because they depend on
+// specific entity IDs that change.
+// ---------------------------------------------------------------------------
+
+const VIEW_TAGS: Record<string, string> = {
+    tracks: 'track-list',
+    albums: 'cover-grid',
+    artists: 'artists-view',
+    genres: 'genres-view',
+    playlists: 'playlist-view',
+    settings: 'config-page',
+};
+
+const viewCache = new Map<string, HTMLElement>();
+let currentViewEl: HTMLElement | null = null;
+let currentDetailEl: HTMLElement | null = null;
+
+// Seed the cache with the default track-list rendered in index.html.
+const mainContent = document.getElementById('main-content');
+
+if (mainContent) {
+    const initialTrackList = mainContent.querySelector('track-list');
+
+    if (initialTrackList) {
+        viewCache.set('tracks', initialTrackList as HTMLElement);
+        currentViewEl = initialTrackList as HTMLElement;
+    }
+}
+
 document.addEventListener('navigate', (e: Event) => {
-    const { view } = (e as CustomEvent).detail;
-    const mainContent = document.getElementById('main-content');
+    const detail = (e as CustomEvent).detail;
+    const view: string = detail.view;
 
     if (!mainContent) return;
 
     searchStore.setCurrentView(view);
 
+    // --- Primary (cacheable) views ----------------------------------------
+    if (view in VIEW_TAGS) {
+        // Remove any active detail view first
+        if (currentDetailEl) {
+            currentDetailEl.remove();
+            currentDetailEl = null;
+        }
+
+        let target = viewCache.get(view);
+
+        if (!target) {
+            target = document.createElement(VIEW_TAGS[view]);
+            viewCache.set(view, target);
+            // Start hidden — we'll un-hide below
+            target.style.display = 'none';
+            mainContent.appendChild(target);
+        }
+
+        // Hide current, show target
+        if (currentViewEl && currentViewEl !== target) {
+            currentViewEl.style.display = 'none';
+        }
+        target.style.display = '';
+        currentViewEl = target;
+        return;
+    }
+
+    // --- Detail (ephemeral) views -----------------------------------------
+    // Hide the current primary view
+    if (currentViewEl) {
+        currentViewEl.style.display = 'none';
+    }
+    // Remove any prior detail element
+    if (currentDetailEl) {
+        currentDetailEl.remove();
+        currentDetailEl = null;
+    }
+
     switch (view) {
-        case 'albums':
-            mainContent.innerHTML = '<cover-grid></cover-grid>';
-            break;
-        case 'tracks':
-            mainContent.innerHTML = '<track-list></track-list>';
-            break;
-        case 'playlists':
-            mainContent.innerHTML = '<playlist-view></playlist-view>';
-            break;
-        case 'artists':
-            mainContent.innerHTML = '<artists-view></artists-view>';
-            break;
         case 'artist-details': {
-            const { artistId, artistName } =
-                (e as CustomEvent).detail;
+            const { artistId, artistName } = detail;
             const el = document.createElement('artist-details');
 
             el.setAttribute('artist-id', String(artistId));
             el.setAttribute('artist-name', artistName);
-            mainContent.innerHTML = '';
             mainContent.appendChild(el);
+            currentDetailEl = el;
             break;
         }
         case 'playlist-details': {
-            const { playlistId, playlistName } =
-                (e as CustomEvent).detail;
+            const { playlistId, playlistName } = detail;
             const plEl = document.createElement('playlist-details');
 
             plEl.setAttribute('playlist-id', String(playlistId));
             plEl.setAttribute('playlist-name', playlistName);
-            mainContent.innerHTML = '';
             mainContent.appendChild(plEl);
+            currentDetailEl = plEl;
             break;
         }
-        case 'genres':
-            mainContent.innerHTML = '<genres-view></genres-view>';
-            break;
         case 'genre-details': {
-            const { genreName } =
-                (e as CustomEvent).detail;
+            const { genreName } = detail;
             const genreEl = document.createElement('genre-details');
 
             genreEl.setAttribute('genre-name', genreName);
-            mainContent.innerHTML = '';
             mainContent.appendChild(genreEl);
+            currentDetailEl = genreEl;
             break;
         }
-        case 'settings':
-            mainContent.innerHTML = '<config-page></config-page>';
-            break;
-        default:
-            mainContent.innerHTML = `<div style="padding: 1em; color: var(--yj-text-secondary, #b3b3b3);">
-                <p>Coming soon: ${view}</p>
-            </div>`;
+        default: {
+            const fallback = document.createElement('div');
+
+            fallback.style.padding = '1em';
+            fallback.style.color = 'var(--yj-text-secondary, #b3b3b3)';
+            fallback.innerHTML = `<p>Coming soon: ${view}</p>`;
+            mainContent.appendChild(fallback);
+            currentDetailEl = fallback;
+        }
     }
 });
 
