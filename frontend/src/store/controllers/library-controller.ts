@@ -29,9 +29,21 @@ export class LibraryController implements ReactiveController {
     // LIFECYCLE HOOKS
     // ===================================================================
 
+    /** Last observed changeGeneration from the store. */
+    private lastChangeGen = libraryStore.changeGeneration;
+
     hostConnected(): void {
+        this.lastChangeGen = libraryStore.changeGeneration;
+
         this.unsubscribe = libraryStore.subscribe(() => {
-            this.host.requestUpdate();
+            const gen = libraryStore.changeGeneration;
+
+            // Skip requestUpdate when only loading flags toggled
+            // (changeGeneration unchanged means no actual data changed).
+            if (gen !== this.lastChangeGen) {
+                this.lastChangeGen = gen;
+                this.host.requestUpdate();
+            }
         });
     }
 

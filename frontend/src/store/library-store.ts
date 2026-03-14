@@ -48,6 +48,13 @@ class LibraryStore {
     private subscribers = new Set<Subscriber>();
     private notifyScheduled = false;
 
+    /**
+     * Monotonic counter incremented only when actual data changes
+     * (not loading flag transitions). Subscribers can compare against
+     * a saved value to skip requestUpdate when only loading state toggled.
+     */
+    private changeGen = 0;
+
     constructor() {
         EventsOn(Events.LibraryScanComplete, () => {
             this.invalidate();
@@ -105,6 +112,7 @@ class LibraryStore {
         try {
             const tracks = await GetAllTracks();
             this.tracks = tracks;
+            this.changeGen++;
 
             return tracks;
         } finally {
@@ -128,6 +136,7 @@ class LibraryStore {
         try {
             const albums = await GetAllAlbums();
             this.albums = albums;
+            this.changeGen++;
 
             return albums;
         } finally {
@@ -151,6 +160,7 @@ class LibraryStore {
         try {
             const artists = await GetAllArtists();
             this.artists = artists;
+            this.changeGen++;
 
             return artists;
         } finally {
@@ -174,6 +184,7 @@ class LibraryStore {
         try {
             const genres = await GetAllGenresWithCounts();
             this.genres = genres;
+            this.changeGen++;
 
             return genres;
         } finally {
@@ -243,6 +254,17 @@ class LibraryStore {
         return this.genresLoading;
     }
 
+    /**
+     * Monotonic counter that increments only when cached data
+     * actually changes (tracks, albums, artists, genres, coverSize,
+     * or invalidation).  Loading flag transitions do NOT increment.
+     * Controllers can compare against a saved value to skip
+     * unnecessary requestUpdate() calls.
+     */
+    get changeGeneration(): number {
+        return this.changeGen;
+    }
+
     // ===================================================================
     // SCROLL POSITION
     // ===================================================================
@@ -271,6 +293,7 @@ class LibraryStore {
         if (clamped === this.coverSizeValue) return;
 
         this.coverSizeValue = clamped;
+        this.changeGen++;
         this.saveCoverSize();
         this.notify();
     }
@@ -314,6 +337,7 @@ class LibraryStore {
         this.albums = null;
         this.artists = null;
         this.genres = null;
+        this.changeGen++;
         this.scrollPositions = { tracks: 0, albums: 0, artists: 0, genres: 0 };
         this.notify();
         this.eagerFetch();
