@@ -211,6 +211,7 @@ export class QueuePanel
             background-color: var(--yj-bg-surface, #212529);
             display: flex;
             flex-direction: row;
+            contain: layout style paint;
         }
 
         :host([open]) {
@@ -300,6 +301,8 @@ export class QueuePanel
         lit-virtualizer {
             flex: 1;
             overflow-y: auto;
+            contain: paint;
+            will-change: transform;
         }
 
         .track-item {

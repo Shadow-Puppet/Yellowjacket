@@ -175,6 +175,7 @@ export class PlaylistView extends LitElement {
             flex-direction: column;
             overflow: hidden;
             position: relative;
+            contain: layout style;
         }
 
         .header {
@@ -306,6 +307,8 @@ export class PlaylistView extends LitElement {
             list-style: none;
             display: flex;
             flex-direction: column;
+            contain: paint;
+            will-change: transform;
         }
 
         .playlist-item {

@@ -722,6 +722,7 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
       display: flex;
       flex-direction: column;
       overflow: hidden;
+      contain: layout style;
     }
 
     .table-container {
@@ -931,6 +932,8 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
       overflow-x: hidden;
       overflow-y: auto;
       user-select: none;
+      contain: paint;
+      will-change: transform;
     }
 
     .track-row {

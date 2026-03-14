@@ -223,12 +223,15 @@ export class ArtistsView
                 flex-direction: column;
                 overflow: hidden;
                 position: relative;
+                contain: layout style;
             }
 
             .grid-scroll-container {
                 flex: 1;
                 overflow-y: auto;
                 overflow-x: hidden;
+                contain: paint;
+                will-change: transform;
             }
 
             lit-virtualizer {
