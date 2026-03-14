@@ -195,8 +195,15 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
     private resizeObserver: ResizeObserver | null =
         null;
 
-    private flowLayout = flow();
+    // _itemSize matches the fixed .track-row height (33px) so lit-virtualizer
+    // doesn't need to measure items. Without this hint, the default 100px
+    // estimate causes constant scroll error correction (scrollTo() calls)
+    // that produce visible jumping/skipping during scroll.
+    private flowLayout = flow({
+        _itemSize: { width: 100, height: 33 },
+    } as Parameters<typeof flow>[0]);
     private hasRestoredScroll = false;
+    private scrollSaveRAFId: number | null = null;
 
     // =================================================================
     // Filtered / sorted tracks (memoised)
@@ -933,7 +940,7 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
       overflow-y: auto;
       user-select: none;
       contain: paint;
-      will-change: transform;
+      overflow-anchor: none;
     }
 
     .track-row {
@@ -947,6 +954,8 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
       cursor: default;
       user-select: none;
       overflow: hidden;
+      height: 33px;
+      box-sizing: border-box;
     }
 
     .track-row > * {
@@ -1227,7 +1236,16 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
             }
         }
 
-        this.libraryCtrl.setScrollPosition('tracks', first);
+        // RAF-throttle scroll position saves — at most once per frame.
+        // Without this, every visibilityChanged (fired per-item during
+        // scroll) writes to the store synchronously, adding main-thread
+        // work during the scroll hot path.
+        if (this.scrollSaveRAFId === null) {
+            this.scrollSaveRAFId = requestAnimationFrame(() => {
+                this.scrollSaveRAFId = null;
+                this.libraryCtrl.setScrollPosition('tracks', first);
+            });
+        }
     };
 
     // =================================================================
@@ -1640,6 +1658,7 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
 
         // No inline closures — all events delegated via data-index
         // on the virtualizer element (see firstUpdated).
+        const term = this.searchCtrl.term;
         return html`
       <div
         class=${classMap({
@@ -1661,26 +1680,23 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
             variant=${favVariant}
           ></wa-icon>
         </div>
-        ${(() => {
-                const term = this.searchCtrl.term;
-                return cols.map((col) => {
-                    const val = col.accessor(track);
-                    const centered = val === '\u2014';
-                    const display = term
-                        ? highlightText(val, term)
-                        : val;
+        ${cols.map((col) => {
+                const val = col.accessor(track);
+                const centered = val === '\u2014';
+                const display = term
+                    ? highlightText(val, term)
+                    : val;
 
-                    return html`
-                        <div class=${classMap({
-                            cell: true,
-                            'cell-center': centered,
-                            'cell-right': !centered && col.align === 'right',
-                        })}>
-                            ${display}
-                        </div>
-                    `;
-                });
-            })()}
+                return html`
+                    <div class=${classMap({
+                        cell: true,
+                        'cell-center': centered,
+                        'cell-right': !centered && col.align === 'right',
+                    })}>
+                        ${display}
+                    </div>
+                `;
+            })}
       </div>
     `;
     };

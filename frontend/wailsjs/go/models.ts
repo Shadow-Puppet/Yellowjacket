@@ -137,7 +137,7 @@ export namespace library {
 	export class ScanWarning {
 	    filePath: string;
 	    phase: string;
-	    err: any;
+	    err: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ScanWarning(source);

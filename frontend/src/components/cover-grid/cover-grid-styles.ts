@@ -131,7 +131,6 @@ const gridStyles = css`
         position: relative;
         overflow-y: auto;
         contain: paint;
-        will-change: transform;
     }
 
     /* ========================================
@@ -149,8 +148,6 @@ const gridStyles = css`
             transform 0.15s ease;
         box-sizing: border-box;
         width: var(--card-width, 176px);
-        content-visibility: auto;
-        contain-intrinsic-size: auto var(--card-width, 176px) auto calc(var(--card-width, 176px) + 40px);
     }
 
     .album-card:hover {

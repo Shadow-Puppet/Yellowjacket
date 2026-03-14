@@ -235,7 +235,6 @@ export class GenresView
             overflow-y: auto;
             overflow-x: hidden;
             contain: paint;
-            will-change: transform;
         }
 
         lit-virtualizer {

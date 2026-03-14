@@ -308,7 +308,6 @@ export class PlaylistView extends LitElement {
             display: flex;
             flex-direction: column;
             contain: paint;
-            will-change: transform;
         }
 
         .playlist-item {

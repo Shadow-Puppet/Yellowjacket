@@ -302,7 +302,6 @@ export class QueuePanel
             flex: 1;
             overflow-y: auto;
             contain: paint;
-            will-change: transform;
             overflow-anchor: none;
         }
 

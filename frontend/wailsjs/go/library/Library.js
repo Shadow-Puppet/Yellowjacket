@@ -113,3 +113,7 @@ export function SetRemovalHooks(arg1) {
 export function SetRescanHooks(arg1) {
   return window['go']['library']['Library']['SetRescanHooks'](arg1);
 }
+
+export function SoftScanAllLibraries() {
+  return window['go']['library']['Library']['SoftScanAllLibraries']();
+}
