@@ -437,10 +437,12 @@ func (l *Library) RemoveLibrary(id int64) (*RemovalSummary, error) {
 
 	committed = true
 
-	// 19. Post-commit: Rebuild FTS5 (cannot run inside transaction).
-	if err := l.db.RebuildSearchIndex(); err != nil {
-		l.logger.Error("could not rebuild search index after removal", "err", err)
-	}
+	// 19. FTS5 rebuild skipped — contentless FTS5 (content='') cannot
+	// delete individual rows, but stale entries are harmless: search
+	// queries JOIN against track_metadata which filters out deleted
+	// rows. The index is rebuilt on the next full rescan. Skipping
+	// avoids a costly full re-index of all remaining tracks (~10s for
+	// 25K tracks).
 
 	// 20. Post-commit: Delete orphaned cover art files.
 	for _, coverPath := range orphanedCoverArtPaths {
