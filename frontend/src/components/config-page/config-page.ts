@@ -971,11 +971,6 @@ export class ConfigPage extends LitElement {
             );
         }
 
-        .add-library-btn {
-            margin-top: 0.75em;
-            margin-bottom: 1em;
-        }
-
         .toast {
             position: fixed;
             bottom: 80px;
@@ -2293,6 +2288,12 @@ export class ConfigPage extends LitElement {
                         : html`
                               <button
                                   class="btn-primary"
+                                  @click=${this.handleAddLibrary}
+                              >
+                                  Add Library
+                              </button>
+                              <button
+                                  class="btn-primary"
                                   @click=${this.handleSoftScan}
                                   ?disabled=${selectionCount === 0}
                               >
@@ -2400,13 +2401,6 @@ export class ConfigPage extends LitElement {
                         </div>
                     `
                     : nothing}
-
-                <button
-                    class="btn-primary add-library-btn"
-                    @click=${this.handleAddLibrary}
-                >
-                    Add Library
-                </button>
 
                 <config-field
                     .schema=${{
