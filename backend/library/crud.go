@@ -331,7 +331,21 @@ func (l *Library) RemoveLibrary(id int64) (*RemovalSummary, error) {
 
 	albumsRemoved, _ := result.RowsAffected()
 
-	// 11. Delete orphaned artist_credits — CRITICAL: check BOTH recordings AND release_groups.
+	// 11. Delete orphaned artist_credit_artists (must run BEFORE
+	// artist_credit because artist_credit_artist.credit_id references
+	// artist_credit.id).
+	// SAFETY: Hand-crafted orphan cleanup SQL. Parameterless.
+	if _, err := tx.ExecContext(l.ctx,
+		`DELETE FROM artist_credit_artist WHERE credit_id NOT IN (
+			SELECT DISTINCT artist_credit_id FROM recordings
+		) AND credit_id NOT IN (
+			SELECT DISTINCT album_artist_credit_id FROM release_groups
+			WHERE album_artist_credit_id IS NOT NULL
+		)`); err != nil {
+		return nil, fmt.Errorf("could not delete orphaned artist_credit_artists: %w", err)
+	}
+
+	// 12. Delete orphaned artist_credits (safe now that child table is cleaned).
 	// SAFETY: Hand-crafted orphan cleanup SQL. Dual-FK reference counting
 	// (recordings.artist_credit_id + release_groups.album_artist_credit_id)
 	// unsupported by sqlc. Parameterless.
@@ -343,15 +357,6 @@ func (l *Library) RemoveLibrary(id int64) (*RemovalSummary, error) {
 			WHERE album_artist_credit_id IS NOT NULL
 		)`); err != nil {
 		return nil, fmt.Errorf("could not delete orphaned artist_credits: %w", err)
-	}
-
-	// 12. Delete orphaned artist_credit_artists.
-	// SAFETY: Hand-crafted orphan cleanup SQL. Parameterless.
-	if _, err := tx.ExecContext(l.ctx,
-		`DELETE FROM artist_credit_artist WHERE credit_id NOT IN (
-			SELECT id FROM artist_credit
-		)`); err != nil {
-		return nil, fmt.Errorf("could not delete orphaned artist_credit_artists: %w", err)
 	}
 
 	// 13. Delete orphaned artists.
