@@ -28,7 +28,7 @@ Requirements for v1.1 Multi-Library Support milestone. Each maps to roadmap phas
 - [x] **LIB-03**: User can remove a library — tracks are deleted from DB, shared entities (artists, albums, genres) are cleaned up only if no other library references them
 - [x] **LIB-04**: Libraries are stored in SQLite (not TOML config) with CRUD through the UI
 - [x] **LIB-05**: Existing single-directory config is migrated seamlessly to the libraries table on first run after upgrade
-- [ ] **LIB-06**: Library list is displayed in a management UI (settings or sidebar section)
+- [x] **LIB-06**: Library list is displayed in a management UI (settings or sidebar section)
 
 ### Library Scanning
 
@@ -185,7 +185,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | LIB-03 | Phase 12 | Complete |
 | LIB-04 | Phase 10 | Complete |
 | LIB-05 | Phase 10 | Complete |
-| LIB-06 | Phase 12 | Pending |
+| LIB-06 | Phase 12 | Complete |
 | LSCAN-01 | Phase 11 | Complete |
 | LSCAN-02 | Phase 11 | Complete |
 | LSCAN-03 | Phase 11 | Complete |
@@ -205,8 +205,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | DATA-04 | Phase 10 | Complete |
 
 **Coverage:**
-- v1.1 requirements: 31 total (19 complete + 12 pending)
-- Mapped to phases: 31/31 ✓ (Phase 9: 8, Phase 10: 5, Phase 11: 4, Phase 12: 6 of 7 — 12 pending in Phase 12-13)
+- v1.1 requirements: 31 total (20 complete + 11 pending)
+- Mapped to phases: 31/31 ✓ (Phase 9: 8, Phase 10: 5, Phase 11: 4, Phase 12: 7 of 7 — 11 pending in Phase 13)
 - No orphaned requirements
 
 ---

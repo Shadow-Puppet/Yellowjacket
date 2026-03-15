@@ -31,7 +31,7 @@
 - [x] **Phase 9: Scan Cancellation & Keyboard Shortcuts** — Cancellable library scans and configurable keyboard shortcuts
 - [x] **Phase 10: Schema & Migration** — Libraries table, library_id FK, playlist_tracks phantom rebuild, config migration (completed 2026-03-09)
 - [x] **Phase 11: Per-Library Scan Pipeline** — Scan pipeline refactored for per-library scanning with sequential coordination (completed 2026-03-09)
-- [ ] **Phase 12: Library CRUD & Data Integrity** — Library management API, orphan cleanup, queue/playlist lifecycle, library manager UI
+- [x] **Phase 12: Library CRUD & Data Integrity** — Library management API, orphan cleanup, queue/playlist lifecycle, library manager UI (completed 2026-03-15)
 - [ ] **Phase 13: Library Views & Phantom Tracks** — Filtered presentation across all views, search, browse, and phantom track display
 
 ## Phase Details
@@ -96,7 +96,7 @@ Plans:
 **Plans:** 2 plans
 Plans:
 - [x] 12-01-PLAN.md — Backend CRUD API + orphan cleanup + queue compaction + events
-- [ ] 12-02-PLAN.md — Frontend library management UI in settings + sidebar cleanup
+- [x] 12-02-PLAN.md — Frontend library management UI in settings + sidebar cleanup
 
 ### Phase 13: Library Views & Phantom Tracks
 **Goal:** Users experience a unified multi-library presentation with optional filtering and graceful playlist preservation
@@ -142,7 +142,7 @@ Plans:
 | 9. Scan Cancellation & Keyboard Shortcuts | v1.1 | 5/5 | Complete | 2026-03-07 |
 | 10. Schema & Migration | 2/2 | Complete    | 2026-03-09 | - |
 | 11. Per-Library Scan Pipeline | 3/3 | Complete    | 2026-03-09 | - |
-| 12. Library CRUD & Data Integrity | v1.1 | 1/2 | In Progress | - |
+| 12. Library CRUD & Data Integrity | v1.1 | 2/2 | Complete | 2026-03-15 |
 | 13. Library Views & Phantom Tracks | v1.1 | 0/? | Not started | - |
 | 14. Performance Optimization | 4/4 | Complete    | 2026-03-15 | - |
 

@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Multi-Library Support
-status: unknown
-last_updated: "2026-03-15T12:11:53.757Z"
+status: in-progress
+last_updated: "2026-03-15T14:21:35Z"
 progress:
   total_phases: 5
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 16
-  completed_plans: 15
+  completed_plans: 16
 ---
 
 # YellowJacket — Project State
@@ -22,11 +22,11 @@ See: .planning/PROJECT.md (updated 2026-03-08)
 
 ## Current Position
 
-Phase: 14 — Performance Optimization
-Plan: 4 of 4 in Phase (Plans 01, 02, 03 complete; 04 awaiting checkpoint)
-Status: Plan 14-03 complete — render & store optimization; 14-04 awaiting checkpoint
-Progress: ████████████████████ Phase 14 in progress (3/4 plans complete, 1 checkpoint pending)
-Last activity: 2026-03-14 — Completed 14-03 render & store optimization
+Phase: 12 — Library CRUD & Data Integrity (completed), 13 next
+Plan: 2 of 2 in Phase 12 (complete)
+Status: Plan 12-02 complete — frontend library management UI verified
+Progress: ████████████████████ Phase 12 complete (2/2 plans), Phase 14 complete (4/4 plans)
+Last activity: 2026-03-15 — Completed 12-02 frontend library management UI
 
 ### Phase Overview
 
@@ -35,9 +35,9 @@ Last activity: 2026-03-14 — Completed 14-03 render & store optimization
 | 9. Scan Cancellation & Keyboard Shortcuts | Complete (5/5 plans) ✅ |
 | 10. Schema & Migration | Complete (2/2 plans) ✅ |
 | 11. Per-Library Scan Pipeline | Complete (3/3 plans) ✅ |
-| 12. Library CRUD & Data Integrity | In progress (1/2 plans) |
+| 12. Library CRUD & Data Integrity | Complete (2/2 plans) ✅ |
 | 13. Library Views & Phantom Tracks | Not started |
-| 14. Performance Optimization | In progress (4/4 plans, checkpoint pending) |
+| 14. Performance Optimization | Complete (4/4 plans) ✅ |
 
 ## Performance Metrics
 
@@ -61,6 +61,7 @@ Last activity: 2026-03-14 — Completed 14-03 render & store optimization
 | Phase 14-03 P03 | 4 min | 2 tasks | 5 files |
 | Phase 14-01 P01 | 3 min | 2 tasks | 7 files |
 | Phase 14-04 P04 | 2 min | 2 tasks | 3 files |
+| Phase 12-02 P02 | 38 min | 3 tasks | 19 files |
 
 ## Accumulated Context
 
@@ -123,6 +124,10 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 | querySingleInt64 helper for hand-crafted SQL aggregates | DB type has QueryContext (returns *sql.Rows) but no QueryRowContext; helper wraps scan-close cycle |
 | Sentinel errors for all validation per err113 | errLibraryNameEmpty, errLibraryNameTooLong, errLibraryNameDuplicate, errLibraryPathNotExist |
 | Pre-populate phantom metadata BEFORE cascade delete | Avoids lost join data — playlist_tracks need track metadata after audio_files rows are gone |
+| Selectable library checkboxes for scan targeting | User selects which libraries to scan instead of scan-all-or-nothing; Set<number> model with select-all/indeterminate |
+| Inline progress bar per library row | Each library row shows scan phase and percentage, replacing global-only indicator |
+| Collapsible config sections with chevron dropdown | Keeps settings page organized as it grows; new config-section component |
+| Library store invalidation on LibraryRemoved event | Ensures all data views refresh after library removal |
 
 ### Phase 14 Decisions
 
@@ -164,10 +169,10 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 
 ### Last Session
 
-**Date:** 2026-03-14
-**What happened:** Executed Phase 14, Plan 03 — event delegation eliminates per-scroll-frame closures, queueMicrotask batching for queue store, changeGeneration counter for library store. Plan 04 Tasks 1-2 were completed earlier, awaiting checkpoint.
-**Where we stopped:** Completed 14-03-PLAN.md — Plans 01, 02, 03 complete; 14-04 awaiting human-verify checkpoint
-**Next action:** User verifies scroll smoothness and navigation speed across all views (14-04 Task 3 checkpoint)
+**Date:** 2026-03-15
+**What happened:** Finalized Plan 12-02 — frontend library management UI. Code was implemented across 25 commits in previous sessions; this session created SUMMARY.md after human verification checkpoint passed (all 9 checks approved).
+**Where we stopped:** Completed 12-02-PLAN.md — Phase 12 complete (2/2 plans)
+**Next action:** Plan Phase 13: Library Views & Phantom Tracks
 
 ---
 *State initialized: 2026-02-27*
@@ -180,4 +185,4 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 | 18 | add multi-column metadata display to playlist-details | 2026-03-08 | ce23177 | [18-add-multi-column-metadata-display-to-pla](./quick/18-add-multi-column-metadata-display-to-pla/) |
 
 Last activity: 2026-03-08 - Completed quick task 18: add multi-column metadata display to playlist-details
-*Last updated: 2026-03-14 — Completed 14-03-PLAN.md (Phase 14 Plan 03 complete)*
+*Last updated: 2026-03-15 — Completed 12-02-PLAN.md (Phase 12 complete)*
