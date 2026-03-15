@@ -319,6 +319,7 @@ export class QueuePanel
             box-sizing: border-box;
             height: 49px;
             overflow: hidden;
+            contain: strict;
         }
 
         .track-item:hover {
@@ -384,12 +385,11 @@ export class QueuePanel
             padding: 4px;
             display: flex;
             align-items: center;
-            opacity: 0;
-            transition: opacity 0.15s;
+            visibility: hidden;
         }
 
         .track-item:hover .remove-button {
-            opacity: 1;
+            visibility: visible;
         }
 
         .remove-button:hover {

@@ -47,6 +47,18 @@ export class NowPlaying extends LitElement {
     @state()
     private artistHovered = false;
 
+    /** Whether each field is actively mid-scroll (class toggle). */
+    @state()
+    private titleScrolling = false;
+
+    @state()
+    private artistScrolling = false;
+
+    private scrollTimers: Record<string, ReturnType<typeof setTimeout> | null> = {
+        title: null,
+        artist: null,
+    };
+
     private resizeObserver?: ResizeObserver;
 
     static override styles = [designTokens, css`
@@ -185,35 +197,17 @@ export class NowPlaying extends LitElement {
       white-space: nowrap;
     }
 
-    /* Fade-out masks on both edges when scrolling */
-    .track-title.will-scroll,
-    .track-artist.will-scroll {
-      mask-image: linear-gradient(
-        to right,
-        transparent 0%,
-        black 8%,
-        black 92%,
-        transparent 100%
-      );
-      -webkit-mask-image: linear-gradient(
-        to right,
-        transparent 0%,
-        black 8%,
-        black 92%,
-        transparent 100%
-      );
-    }
-
+    /* Scrolling text: use a single transition instead of an infinite
+       CSS animation.  The infinite animation + mask-image was repainting
+       every frame in software rendering mode (no DMABuf).  A transition
+       only repaints during the active scroll, and pauses are free. */
     .will-scroll .scroll-content {
-      animation: scroll-text var(--scroll-duration, 5s) linear infinite;
-      padding-right: 2em; /* gap before the text repeats visually */
+      transition: transform var(--scroll-duration, 5s) linear;
+      padding-right: 2em;
     }
 
-    @keyframes scroll-text {
-      0%   { transform: translateX(0); }
-      5%   { transform: translateX(0); }
-      95%  { transform: translateX(var(--scroll-distance, -100%)); }
-      100% { transform: translateX(var(--scroll-distance, -100%)); }
+    .will-scroll.scrolling .scroll-content {
+      transform: translateX(var(--scroll-distance, -100%));
     }
 
     .resize-handle {
@@ -253,12 +247,15 @@ export class NowPlaying extends LitElement {
         document.removeEventListener('mouseup', this.handleMouseUp);
         window.removeEventListener(SCROLL_CHANGE_EVENT, this.handleScrollModeEvent);
         this.resizeObserver?.disconnect();
+        this.stopScrollCycle('title');
+        this.stopScrollCycle('artist');
     }
 
     protected override updated(): void {
         this.checkOverflows();
         this.observeTextContainers();
         this.applyScrollDistances();
+        this.syncScrollCycles();
     }
 
     override render() {
@@ -298,6 +295,7 @@ export class NowPlaying extends LitElement {
               ? html`<img
                   src="${track.coverArtSmall || track.coverArt}"
                   alt="Album cover"
+                  decoding="async"
                   @error=${(e: Event) => {
                       const img = e.target as HTMLImageElement;
                       if (
@@ -325,6 +323,7 @@ export class NowPlaying extends LitElement {
                     <img
                       src="${track.coverArt}"
                       alt="Album cover full size"
+                      decoding="async"
                     />
                   </div>
                 `
@@ -334,16 +333,18 @@ export class NowPlaying extends LitElement {
         <div class="track-info-wrapper">
           <div class="track-info">
             <span
-              class="track-title ${titleScrolling ? 'will-scroll' : ''}"
+              class="track-title ${titleScrolling ? 'will-scroll' : ''} ${this.titleScrolling ? 'scrolling' : ''}"
               @mouseenter=${this.handleTitleMouseEnter}
               @mouseleave=${this.handleTitleMouseLeave}
+              @transitionend=${() => this.onScrollCycleEnd('title')}
             >
               <span class="scroll-content">${track.title}</span>
             </span>
             <span
-              class="track-artist ${artistScrolling ? 'will-scroll' : ''}"
+              class="track-artist ${artistScrolling ? 'will-scroll' : ''} ${this.artistScrolling ? 'scrolling' : ''}"
               @mouseenter=${this.handleArtistMouseEnter}
               @mouseleave=${this.handleArtistMouseLeave}
+              @transitionend=${() => this.onScrollCycleEnd('artist')}
             >
               <span class="scroll-content">${track.artist || 'Unknown Artist'}</span>
             </span>
@@ -452,6 +453,62 @@ export class NowPlaying extends LitElement {
                 const duration = Math.min(MAX_DURATION, Math.max(MIN_DURATION, overflow / SCROLL_SPEED));
                 el.style.setProperty('--scroll-distance', `-${overflow}px`);
                 el.style.setProperty('--scroll-duration', `${duration.toFixed(1)}s`);
+            }
+        }
+    }
+
+    // ===================================================================
+    // TRANSITION-BASED SCROLL CYCLE
+    // ===================================================================
+
+    /**
+     * Start a scroll cycle for a field.  Adds the `scrolling` class which
+     * triggers a CSS transition.  When the transition ends, we pause then
+     * snap back and repeat.  This replaces the old infinite CSS animation
+     * which repainted every frame even during the pause phases.
+     */
+    private startScrollCycle(field: 'title' | 'artist'): void {
+        if (!this.shouldScroll(field)) return;
+
+        // Small delay before starting the scroll
+        this.scrollTimers[field] = setTimeout(() => {
+            if (field === 'title') this.titleScrolling = true;
+            else this.artistScrolling = true;
+        }, 1500);
+    }
+
+    private stopScrollCycle(field: 'title' | 'artist'): void {
+        if (this.scrollTimers[field] !== null) {
+            clearTimeout(this.scrollTimers[field]!);
+            this.scrollTimers[field] = null;
+        }
+
+        if (field === 'title') this.titleScrolling = false;
+        else this.artistScrolling = false;
+    }
+
+    private onScrollCycleEnd(field: 'title' | 'artist'): void {
+        // Transition finished → snap back after a pause, then repeat
+        if (field === 'title') this.titleScrolling = false;
+        else this.artistScrolling = false;
+
+        // Restart after a pause (2s at the scrolled-to position)
+        this.scrollTimers[field] = setTimeout(() => {
+            this.startScrollCycle(field);
+        }, 2000);
+    }
+
+    /** Called from updated() when shouldScroll state changes. */
+    private syncScrollCycles(): void {
+        for (const field of ['title', 'artist'] as const) {
+            const should = this.shouldScroll(field);
+            const active = this.scrollTimers[field] !== null ||
+                (field === 'title' ? this.titleScrolling : this.artistScrolling);
+
+            if (should && !active) {
+                this.startScrollCycle(field);
+            } else if (!should && active) {
+                this.stopScrollCycle(field);
             }
         }
     }

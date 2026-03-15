@@ -143,9 +143,7 @@ const gridStyles = css`
         cursor: pointer;
         border-radius: 8px;
         padding: 5px;
-        transition:
-            background-color 0.2s ease,
-            transform 0.15s ease;
+        /* transitions removed — software rendering repaints per frame */
         box-sizing: border-box;
         width: var(--card-width, 176px);
     }

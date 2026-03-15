@@ -245,9 +245,7 @@ export class ArtistsView
                 padding: 5px;
                 border-radius: 8px;
                 cursor: pointer;
-                transition:
-                    background-color 0.15s ease,
-                    transform 0.15s ease;
+                /* transitions removed — software rendering repaints per frame */
                 overflow: hidden;
             }
 
