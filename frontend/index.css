@@ -152,3 +152,14 @@ body div.sidebar {
     height: 100%;
     contain: layout style paint;
 }
+
+/* Hidden cached views: use visibility+size collapse instead of
+   display:none so scroll containers preserve their scrollTop.
+   display:none discards scroll state in WebKitGTK. */
+.main-panel > .view-hidden {
+    visibility: hidden !important;
+    height: 0 !important;
+    overflow: hidden !important;
+    pointer-events: none !important;
+    contain: strict !important;
+}

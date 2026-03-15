@@ -92,15 +92,16 @@ document.addEventListener('navigate', (e: Event) => {
             target = document.createElement(VIEW_TAGS[view]);
             viewCache.set(view, target);
             // Start hidden — we'll un-hide below
-            target.style.display = 'none';
+            target.classList.add('view-hidden');
             mainContent.appendChild(target);
         }
 
-        // Hide current, show target
+        // Hide current, show target.  Uses CSS class instead of
+        // display:none so scroll containers preserve scrollTop.
         if (currentViewEl && currentViewEl !== target) {
-            currentViewEl.style.display = 'none';
+            currentViewEl.classList.add('view-hidden');
         }
-        target.style.display = '';
+        target.classList.remove('view-hidden');
         currentViewEl = target;
         return;
     }
@@ -108,7 +109,7 @@ document.addEventListener('navigate', (e: Event) => {
     // --- Detail (ephemeral) views -----------------------------------------
     // Hide the current primary view
     if (currentViewEl) {
-        currentViewEl.style.display = 'none';
+        currentViewEl.classList.add('view-hidden');
     }
     // Remove any prior detail element
     if (currentDetailEl) {
