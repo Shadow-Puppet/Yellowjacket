@@ -41,6 +41,7 @@ class PlayerStore {
   };
 
   private subscribers = new Set<Subscriber>();
+  private notifyScheduled = false;
 
   constructor() {
     this.initializeEventListeners();
@@ -115,7 +116,14 @@ class PlayerStore {
   }
 
   private notify(): void {
-    this.subscribers.forEach((callback) => callback());
+    if (this.notifyScheduled) return;
+    this.notifyScheduled = true;
+    queueMicrotask(() => {
+      this.notifyScheduled = false;
+      for (const sub of this.subscribers) {
+        sub();
+      }
+    });
   }
 }
 

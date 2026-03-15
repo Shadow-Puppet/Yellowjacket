@@ -253,6 +253,13 @@ export class CoverGrid
     private gridEntriesCache: GridEntry[] = [];
     private gridEntriesCacheKey: library.Album[] = [];
 
+    // getBeforeEntries/getAfterEntries memoization — prevents .slice()
+    // from creating new array refs that trigger virtualizer relayout.
+    private beforeEntriesCache: GridEntry[] = [];
+    private afterEntriesCache: GridEntry[] = [];
+    private splitEntriesCacheKey: GridEntry[] | null = null;
+    private splitEntriesCacheIndex = -1;
+
     static override styles = coverGridStyles;
 
     /* ====================================================================
@@ -909,19 +916,31 @@ export class CoverGrid
         return entries;
     }
 
-    /** Entries for the "before" virtualizer. */
-    private getBeforeEntries(): GridEntry[] {
-        return this.buildGridEntries().slice(
-            0,
-            this.splitIndex,
-        );
+    /** Rebuild before/after caches if the entries or splitIndex changed. */
+    private ensureSplitCache(): void {
+        const entries = this.buildGridEntries();
+        if (
+            entries === this.splitEntriesCacheKey &&
+            this.splitIndex === this.splitEntriesCacheIndex
+        ) {
+            return;
+        }
+        this.splitEntriesCacheKey = entries;
+        this.splitEntriesCacheIndex = this.splitIndex;
+        this.beforeEntriesCache = entries.slice(0, this.splitIndex);
+        this.afterEntriesCache = entries.slice(this.splitIndex);
     }
 
-    /** Entries for the "after" virtualizer. */
+    /** Entries for the "before" virtualizer (memoized). */
+    private getBeforeEntries(): GridEntry[] {
+        this.ensureSplitCache();
+        return this.beforeEntriesCache;
+    }
+
+    /** Entries for the "after" virtualizer (memoized). */
     private getAfterEntries(): GridEntry[] {
-        return this.buildGridEntries().slice(
-            this.splitIndex,
-        );
+        this.ensureSplitCache();
+        return this.afterEntriesCache;
     }
 
     /* ====================================================================
