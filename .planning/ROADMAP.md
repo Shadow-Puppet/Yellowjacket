@@ -93,7 +93,7 @@ Plans:
   3. User can remove a library — its tracks are deleted, shared artists/albums/genres used only by that library are cleaned up, but entities shared with other libraries survive intact
   4. Removing a library cleans up FTS5 search index entries for that library's tracks (no stale search results)
   5. Queue tracks from a removed library are cascade-deleted; the queue continues playing from the next valid track
-**Plans:** 2 plans
+**Plans:** 2/2 plans complete
 Plans:
 - [x] 12-01-PLAN.md — Backend CRUD API + orphan cleanup + queue compaction + events
 - [x] 12-02-PLAN.md — Frontend library management UI in settings + sidebar cleanup
@@ -142,7 +142,7 @@ Plans:
 | 9. Scan Cancellation & Keyboard Shortcuts | v1.1 | 5/5 | Complete | 2026-03-07 |
 | 10. Schema & Migration | 2/2 | Complete    | 2026-03-09 | - |
 | 11. Per-Library Scan Pipeline | 3/3 | Complete    | 2026-03-09 | - |
-| 12. Library CRUD & Data Integrity | v1.1 | 2/2 | Complete | 2026-03-15 |
+| 12. Library CRUD & Data Integrity | v1.1 | Complete    | 2026-03-15 | 2026-03-15 |
 | 13. Library Views & Phantom Tracks | v1.1 | 0/? | Not started | - |
 | 14. Performance Optimization | 4/4 | Complete    | 2026-03-15 | - |
 
