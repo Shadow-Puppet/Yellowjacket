@@ -146,7 +146,7 @@ Plans:
 | 10. Schema & Migration | v1.1 | 2/2 | Complete | 2026-03-09 |
 | 11. Per-Library Scan Pipeline | v1.1 | 3/3 | Complete | 2026-03-09 |
 | 12. Library CRUD & Data Integrity | v1.1 | 2/2 | Complete | 2026-03-15 |
-| 13. Library Views & Phantom Tracks | v1.1 | 2/2 | Complete | 2026-03-16 |
+| 13. Library Views & Phantom Tracks | v1.1 | Complete    | 2026-03-16 | 2026-03-16 |
 | 14. Performance Optimization | Perf | 4/4 | Complete | 2026-03-15 |
 
 ---
