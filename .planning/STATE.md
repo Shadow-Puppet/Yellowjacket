@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Multi-Library Support
-status: unknown
+status: complete
 last_updated: "2026-03-16T13:30:46.193Z"
 progress:
   total_phases: 6
-  completed_phases: 5
+  completed_phases: 6
   total_plans: 18
-  completed_plans: 17
+  completed_plans: 18
 ---
 
 # YellowJacket — Project State
@@ -22,11 +22,11 @@ See: .planning/PROJECT.md (updated 2026-03-08)
 
 ## Current Position
 
-Phase: 13 — Library Views & Phantom Tracks (in progress)
-Plan: 1 of 2 in Phase 13 (complete)
-Status: Plan 13-01 complete — library-filtered backend queries
-Progress: ██████████░░░░░░░░░░ Phase 13 in progress (1/2 plans)
-Last activity: 2026-03-16 — Completed 13-01: library-filtered backend queries
+Phase: 13 — Library Views & Phantom Tracks (complete)
+Plan: 2 of 2 in Phase 13 (complete)
+Status: Plan 13-02 complete — library filter UI + all views wired
+Progress: ████████████████████ Phase 13 complete (2/2 plans)
+Last activity: 2026-03-16 — Completed 13-02: library filter dropdown + view wiring
 
 ### Phase Overview
 
@@ -36,7 +36,7 @@ Last activity: 2026-03-16 — Completed 13-01: library-filtered backend queries
 | 10. Schema & Migration | Complete (2/2 plans) ✅ |
 | 11. Per-Library Scan Pipeline | Complete (3/3 plans) ✅ |
 | 12. Library CRUD & Data Integrity | Complete (2/2 plans) ✅ |
-| 13. Library Views & Phantom Tracks | In Progress (1/2 plans) |
+| 13. Library Views & Phantom Tracks | Complete (2/2 plans) ✅ |
 | 14. Performance Optimization | Complete (4/4 plans) ✅ |
 
 ## Performance Metrics
@@ -63,6 +63,7 @@ Last activity: 2026-03-16 — Completed 13-01: library-filtered backend queries
 | Phase 14-04 P04 | 2 min | 2 tasks | 3 files |
 | Phase 12-02 P02 | 38 min | 3 tasks | 19 files |
 | Phase 13 P01 | 5 min | 2 tasks | 10 files |
+| Phase 13 P02 | 9 min | 1 task | 12 files |
 
 ## Accumulated Context
 
@@ -151,6 +152,9 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 |----------|-----------|
 | IN-subquery pattern for album/artist/genre library filtering | Entities are global, tracks belong to libraries; subquery filters entity IDs by library membership |
 | Empty slice return (not error) for library with no tracks | Empty library is valid state, not error condition; callers handle empty UI |
+| Client-side search with filtered data source | rankTracks filters already-loaded tracks; no backend SearchTracksByLibrary call needed |
+| Native select for library filter dropdown | Compact, accessible, matches top bar height; no custom component overhead |
+| getAlbumsByArtistNameCached returns null when filter active | Avoids stale cross-library data; forces backend query for consistency |
 
 ### Warnings (carry forward)
 
@@ -178,9 +182,9 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 ### Last Session
 
 **Date:** 2026-03-16
-**What happened:** Executed Plan 13-01 — added library-filtered backend queries (7 sqlc queries, 8 Go methods, 1 FTS search method). Two tasks, 10 files modified.
-**Where we stopped:** Completed 13-01-PLAN.md — Phase 13 in progress (1/2 plans)
-**Next action:** Execute Plan 13-02: frontend library selector UI and phantom track handling
+**What happened:** Executed Plan 13-02 — added library filter dropdown to top bar, wired all browse/detail views to respect library filter via ByLibrary conditional queries. 1 task (auto), 12 files modified. Checkpoint pending for human verification.
+**Where we stopped:** Completed 13-02-PLAN.md — Phase 13 complete (2/2 plans), awaiting human verification
+**Next action:** Human verification of library filter, cross-library playlists, and phantom tracks
 
 ---
 *State initialized: 2026-02-27*

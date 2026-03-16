@@ -47,9 +47,9 @@ Requirements for v1.1 Multi-Library Support milestone. Each maps to roadmap phas
 
 ### Playlists & Queue
 
-- [ ] **PLAY-01**: Playlists can contain tracks from multiple libraries (cross-library playlists)
-- [ ] **PLAY-02**: When a library is removed, playlist entries for that library's tracks become phantom tracks (preserved with cached metadata, not cascade-deleted)
-- [ ] **PLAY-03**: Phantom tracks are visually distinguished in playlist views (e.g., greyed out, icon indicator)
+- [x] **PLAY-01**: Playlists can contain tracks from multiple libraries (cross-library playlists)
+- [x] **PLAY-02**: When a library is removed, playlist entries for that library's tracks become phantom tracks (preserved with cached metadata, not cascade-deleted)
+- [x] **PLAY-03**: Phantom tracks are visually distinguished in playlist views (e.g., greyed out, icon indicator)
 - [x] **PLAY-04**: Queue tracks from a removed library are cascade-deleted (queue is ephemeral)
 
 ### Data Integrity
@@ -195,9 +195,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | VIEW-02 | Phase 13 | Complete |
 | VIEW-03 | Phase 13 | Complete |
 | VIEW-04 | Phase 13 | Complete |
-| PLAY-01 | Phase 13 | Pending |
-| PLAY-02 | Phase 13 | Pending |
-| PLAY-03 | Phase 13 | Pending |
+| PLAY-01 | Phase 13 | Complete |
+| PLAY-02 | Phase 13 | Complete |
+| PLAY-03 | Phase 13 | Complete |
 | PLAY-04 | Phase 12 | Complete |
 | DATA-01 | Phase 10 | Complete |
 | DATA-02 | Phase 12 | Complete |
