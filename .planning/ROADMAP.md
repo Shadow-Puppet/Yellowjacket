@@ -1,14 +1,14 @@
 # Roadmap: YellowJacket
 
 **Created:** 2026-02-27
-**Last updated:** 2026-03-08
-**Current milestone:** v1.1 Multi-Library Support
+**Last updated:** 2026-03-16
+**Current milestone:** v1.2 Tag Editing
 
 ## Milestones
 
 - ✅ **v1.0 Consolidation** — Phases 1-8 (shipped 2026-03-05) — [archive](milestones/v1.0-ROADMAP.md)
-- ✅ **v1.1 Multi-Library Support** — Phases 9-13 complete (shipped 2026-03-16)
-- ✅ **Performance Optimization** — Phase 14 complete (shipped 2026-03-15)
+- ✅ **v1.1 Multi-Library Support** — Phases 9-14 (shipped 2026-03-16) — [archive](milestones/v1.1-ROADMAP.md)
+- 🔨 **v1.2 Tag Editing** — Phases 15-19
 
 ## Phases
 
@@ -26,109 +26,82 @@
 
 </details>
 
-### v1.1 Multi-Library Support (Phases 9-13)
+<details>
+<summary>✅ v1.1 Multi-Library Support (Phases 9-14) — SHIPPED 2026-03-16</summary>
 
-- [x] **Phase 9: Scan Cancellation & Keyboard Shortcuts** — Cancellable library scans and configurable keyboard shortcuts
-- [x] **Phase 10: Schema & Migration** — Libraries table, library_id FK, playlist_tracks phantom rebuild, config migration (completed 2026-03-09)
-- [x] **Phase 11: Per-Library Scan Pipeline** — Scan pipeline refactored for per-library scanning with sequential coordination (completed 2026-03-09)
-- [x] **Phase 12: Library CRUD & Data Integrity** — Library management API, orphan cleanup, queue/playlist lifecycle, library manager UI (completed 2026-03-15)
-- [x] **Phase 13: Library Views & Phantom Tracks** — Filtered presentation across all views, search, browse, and phantom track display (completed 2026-03-16)
+- [x] Phase 9: Scan Cancellation & Keyboard Shortcuts (5/5 plans) — completed 2026-03-07
+- [x] Phase 10: Schema & Migration (2/2 plans) — completed 2026-03-09
+- [x] Phase 11: Per-Library Scan Pipeline (3/3 plans) — completed 2026-03-09
+- [x] Phase 12: Library CRUD & Data Integrity (2/2 plans) — completed 2026-03-15
+- [x] Phase 13: Library Views & Phantom Tracks (2/2 plans) — completed 2026-03-16
+- [x] Phase 14: Performance Optimization (4/4 plans) — completed 2026-03-15
+
+</details>
+
+### v1.2 Tag Editing (Phases 15-19)
+
+- [ ] **Phase 15: Schema Migration & Write Safety** — FTS5 contentless_delete migration and atomic file write utility
+- [ ] **Phase 16: Tag Writing & Database Sync** — Format-specific tag writers (MP3, FLAC, cover art) with inline DB + FTS5 update pipeline
+- [ ] **Phase 17: Single Track Edit** — End-to-end single track editing: UI → file write → DB sync → view refresh
+- [ ] **Phase 18: Batch Edit** — Multi-select batch editing with three-state field model, progress, and batch cover art
+- [ ] **Phase 19: OGG Vorbis Tag Writing** — Custom OGG page rewriter for Vorbis Comment tag writing (stretch)
 
 ## Phase Details
 
-### Phase 9: Scan Cancellation & Keyboard Shortcuts
-**Goal:** Users can control library scans (cancel/pause/resume) and operate the entire app via keyboard
-**Depends on:** Nothing (builds on v1.0 foundation)
-**Requirements:** SCAN-01, SCAN-02, SCAN-03, KEY-01, KEY-02, KEY-03, KEY-04, KEY-05
+### Phase 15: Schema Migration & Write Safety
+**Goal:** The database and file system infrastructure supports safe, reversible tag editing — FTS5 rows can be deleted/updated and file writes never corrupt audio files
+**Depends on:** Nothing (builds on v1.1 foundation)
+**Requirements:** SCHEMA-01, SCHEMA-02, WRITE-05
 **Success Criteria** (what must be TRUE):
-  1. User can click a cancel button during a library scan and the scan stops within seconds — no database corruption, no orphaned tracks
-  2. User can pause a running scan and resume it later without re-processing files that were already scanned
-  3. Default keyboard shortcuts work immediately after install — play/pause, next/prev, volume up/down, search focus, queue toggle, shuffle, repeat all respond to keys
-  4. User can open a settings UI, rebind any shortcut to a different key, and the new binding takes effect immediately — conflicts are warned about before saving
-  5. Keyboard shortcuts are context-aware — typing in a search box doesn't trigger player shortcuts (except Escape to blur)
-**Plans:** 5 plans
-Plans:
-- [x] 09-01-PLAN.md — Backend scan control (cancel/pause/resume methods, events, metrics)
-- [x] 09-02-PLAN.md — Backend shortcuts config + frontend keyboard shortcut service
-- [x] 09-03-PLAN.md — Frontend scan control UI (buttons, cancel dialog)
-- [x] 09-04-PLAN.md — Frontend shortcut settings UI (record-style capture, conflict detection)
-- [x] 09-05-PLAN.md — Integration verification checkpoint
+  1. FTS5 search_index uses `contentless_delete=1` — deleting or updating a track's metadata in the DB correctly removes the old FTS5 entry without stale ghost results appearing in search
+  2. Existing search functionality is unaffected — all current queries, ranking, and library-filtered search continue to work identically after migration
+  3. The atomic write utility writes to a temp file in the same directory as the target, then renames — if the process crashes mid-write, the original file is intact and the temp file is cleaned up on next startup
+  4. Unit tests verify atomic write behavior: successful write, crash simulation (temp file left behind), and cross-directory rejection
+**Plans:** TBD
 
-### Phase 10: Schema & Migration
-**Goal:** The database supports multiple libraries and phantom tracks — existing users upgrade seamlessly
-**Depends on:** Phase 9 (builds on existing schema and scan infrastructure)
-**Requirements:** DATA-01, DATA-04, LIB-04, LIB-05, LSCAN-05
+### Phase 16: Tag Writing & Database Sync
+**Goal:** The backend can write metadata tags and cover art to MP3 and FLAC files, then synchronize all changes to the database and search index in a single atomic operation
+**Depends on:** Phase 15 (requires atomic write utility and FTS5 contentless_delete)
+**Requirements:** WRITE-01, WRITE-02, WRITE-04, WRITE-06, SYNC-01, SYNC-02, SYNC-03, SYNC-04
 **Success Criteria** (what must be TRUE):
-  1. A fresh install creates a `libraries` table and `audio_files.library_id` FK — new audio files are always associated with a library
-  2. An existing user's database is migrated on first launch: their single directory becomes a named library, all existing audio_files get that library_id, and everything works without any user action
-  3. The `playlist_tracks` table supports nullable `audio_file_id` with phantom metadata columns — the schema is ready for phantom track preservation
-  4. All migration operations complete atomically — a crash mid-migration leaves the database unchanged (not half-migrated)
-**Plans:** 2/2 plans complete
-Plans:
-- [x] 10-01-PLAN.md — Schema definitions + Migration 6 (libraries table, library_id FK, phantom columns, track_metadata VIEW, backup, TOML migration)
-- [x] 10-02-PLAN.md — sqlc queries for libraries + updated playlist phantom queries + migration integration tests
+  1. A Go function can accept a track ID and a set of changed metadata fields, write those tags to an MP3 file (ID3v2), and the tags are readable back by the existing metadata reader — round-trip correctness verified by unit tests with real audio files
+  2. The same function works for FLAC files (Vorbis Comments) — including files with existing padding blocks and multiple metadata blocks
+  3. Cover art images (JPEG/PNG) can be embedded in both MP3 and FLAC files — the embedded image is readable back and the existing cover art pipeline (extraction, thumbnails) works with the newly embedded art
+  4. After a tag write, the database reflects the new metadata within the same operation: artist/album/genre entities are created or relinked (never mutated in-place), orphaned entities with zero remaining references are cleaned up, and the FTS5 index is updated — no library rescan needed
+  5. If the currently-playing track is being edited, playback is stopped before the file write begins — the user does not experience a crash or corrupted audio stream
+**Plans:** TBD
 
-### Phase 11: Per-Library Scan Pipeline
-**Goal:** Users can scan individual libraries independently with proper sequential coordination
-**Depends on:** Phase 10 (requires libraries table and library_id FK)
-**Requirements:** LSCAN-01, LSCAN-02, LSCAN-03, LSCAN-04
+### Phase 17: Single Track Edit
+**Goal:** Users can edit any track's metadata and cover art from within the app and see changes reflected everywhere immediately
+**Depends on:** Phase 16 (requires tag writers and DB sync pipeline)
+**Requirements:** EDIT-01, EDIT-02, EDIT-03, EDIT-04
 **Success Criteria** (what must be TRUE):
-  1. User can trigger a scan for a specific library and only that library's directory is scanned — other libraries are untouched
-  2. Only one library scans at a time — requesting a second scan while one is running either queues it or is rejected with clear feedback
-  3. Scan progress UI identifies which library is currently being scanned (library name visible in progress indicator)
-  4. Existing cancel and pause/resume controls work correctly for per-library scans — cancelling one library's scan doesn't affect others
-**Plans:** 3/3 plans complete
-Plans:
-- [x] 11-01-PLAN.md — Backend scan queue coordinator, per-library scan methods, CreateAudioFile with library_id
-- [x] 11-02-PLAN.md — Frontend progress UI with library name, cancel scope modal, Scan All button
-- [x] 11-03-PLAN.md — App startup auto-scan wiring, legacy single-directory cleanup
+  1. User can right-click any track (in track list, album detail, queue, or playlist) and open a tag editor dialog — the editor is accessible from every place tracks appear
+  2. The editor displays all 8 editable fields (title, artist, album, genre, year, track number, disc number, composer) pre-populated with the track's current values — empty fields show as empty, not "Unknown"
+  3. The editor displays the track's current cover art (or a placeholder if none) with a button to select a replacement image file from disk
+  4. Clicking "Save" writes the changes to the audio file, updates the database and search index, and refreshes all visible views (track list, album view, artist view, genre view, queue, now-playing bar) — the user sees the new metadata everywhere without restarting or rescanning
+**Plans:** TBD
 
-### Phase 12: Library CRUD & Data Integrity
-**Goal:** Users can add, rename, and remove libraries through the UI with correct data lifecycle management
-**Depends on:** Phase 11 (requires per-library scanning for add-then-scan workflow)
-**Requirements:** LIB-01, LIB-02, LIB-03, LIB-06, DATA-02, DATA-03, PLAY-04
+### Phase 18: Batch Edit
+**Goal:** Users can efficiently edit shared metadata across multiple tracks at once with clear visual feedback and safe defaults
+**Depends on:** Phase 17 (requires single-track edit pipeline as foundation)
+**Requirements:** BATCH-01, BATCH-02, BATCH-03, BATCH-04
 **Success Criteria** (what must be TRUE):
-  1. User can add a new library via folder picker, give it a name, and trigger a scan — new tracks appear in the library
-  2. User can rename a library's display name and the change reflects everywhere immediately
-  3. User can remove a library — its tracks are deleted, shared artists/albums/genres used only by that library are cleaned up, but entities shared with other libraries survive intact
-  4. Removing a library cleans up FTS5 search index entries for that library's tracks (no stale search results)
-  5. Queue tracks from a removed library are cascade-deleted; the queue continues playing from the next valid track
-**Plans:** 2/2 plans complete
-Plans:
-- [x] 12-01-PLAN.md — Backend CRUD API + orphan cleanup + queue compaction + events
-- [x] 12-02-PLAN.md — Frontend library management UI in settings + sidebar cleanup
+  1. User can select multiple tracks (via multi-select in track list or album detail) and open a batch editor — the batch editor is accessible from the same context menu as single-track edit
+  2. Each field in the batch editor shows one of three states: "keep original" (mixed values, no change), "set to value" (apply this value to all selected tracks), or "clear field" (remove this value from all) — the user can see which fields differ across the selection and choose per-field what to do
+  3. For batch operations on 10+ tracks, a progress indicator shows how many tracks have been processed — the user is never left staring at a frozen UI wondering if the operation is working
+  4. User can set cover art for all selected tracks at once — the same image is embedded in every selected file
+**Plans:** TBD
 
-### Phase 13: Library Views & Phantom Tracks
-**Goal:** Users experience a unified multi-library presentation with optional filtering and graceful playlist preservation
-**Depends on:** Phase 12 (requires library CRUD and data integrity for full integration)
-**Requirements:** VIEW-01, VIEW-02, VIEW-03, VIEW-04, PLAY-01, PLAY-02, PLAY-03
+### Phase 19: OGG Vorbis Tag Writing
+**Goal:** Users can edit tags on OGG Vorbis files with the same experience as MP3 and FLAC — completing full format coverage
+**Depends on:** Phase 16 (requires tag writer interface and DB sync pipeline)
+**Requirements:** WRITE-03
 **Success Criteria** (what must be TRUE):
-  1. The default track list shows tracks from all libraries merged — the user sees their complete collection as one unified view
-  2. User can select a specific library from a filter control and all views (tracks, albums, artists, genres) show only that library's content
-  3. Search results respect the active library filter — searching with a library selected returns only matches from that library; with "All Libraries" selected, searches everything
-  4. Playlists can contain tracks from multiple libraries — adding tracks from different libraries to the same playlist works naturally
-  5. When a library is removed, its tracks in playlists become phantom entries — visually distinguished (greyed out / icon) with preserved title, artist, album metadata instead of disappearing
-**Plans:** 2/2 plans complete
-Plans:
-- [x] 13-01-PLAN.md — Backend library-filtered sqlc queries + Go methods + FTS search
-- [x] 13-02-PLAN.md — Frontend library filter store + dropdown UI + all view/search wiring + verification
-
-### Phase 14: Performance Optimization
-**Goal:** Scrolling, navigation, and rendering are as smooth and fast as possible — scrolling feels like a native animation, navigation is instant, no unnecessary re-renders
-**Depends on:** Nothing (cross-cutting, can execute in parallel with v1.1 phases)
-**Requirements:** PERF-SCROLL-01, PERF-SCROLL-02, PERF-SCROLL-03, PERF-NAV-01, PERF-NAV-02, PERF-RENDER-01, PERF-RENDER-02, PERF-DIAG-01
-**Success Criteria** (what must be TRUE):
-  1. Scrolling in all views (tracks, albums, artists, genres, queue, playlists) is smooth at 60fps — no jank, no stuttering, no blank areas
-  2. Navigating between primary views (tracks, albums, artists, genres, playlists, settings) is near-instant — no component destruction/recreation, scroll positions preserved
-  3. Render hot paths (renderTrackRow, renderTrackItem) create zero new closures per frame — all event handling uses delegation
-  4. Store notifications are batched (queueMicrotask) and components only re-render when their relevant data changes
-  5. A profiling guide documents how to diagnose performance issues using pprof (backend) and DevTools (frontend)
-**Plans:** 4/4 plans complete
-Plans:
-- [x] 14-01-PLAN.md — CSS containment + GPU layer promotion on all scroll containers
-- [x] 14-02-PLAN.md — View caching navigation system (replace innerHTML destruction)
-- [x] 14-03-PLAN.md — Render hot-path optimization (closure elimination, store granularity)
-- [x] 14-04-PLAN.md — Scroll event optimization, profiling guide, performance verification checkpoint
+  1. A Go function can write Vorbis Comment metadata tags to OGG Vorbis files using a custom OGG page rewriter — the file remains a valid OGG stream after writing (playable by the existing player and by external players)
+  2. Tag writes to OGG files use the same atomic write-to-temp-then-rename pattern as MP3/FLAC — no corruption risk
+  3. OGG tag editing is seamlessly integrated into the single-track and batch edit UIs — the user doesn't need to know or care what format a file is; the editor just works
+**Plans:** TBD
 
 ## Progress
 
@@ -146,9 +119,14 @@ Plans:
 | 10. Schema & Migration | v1.1 | 2/2 | Complete | 2026-03-09 |
 | 11. Per-Library Scan Pipeline | v1.1 | 3/3 | Complete | 2026-03-09 |
 | 12. Library CRUD & Data Integrity | v1.1 | 2/2 | Complete | 2026-03-15 |
-| 13. Library Views & Phantom Tracks | v1.1 | Complete    | 2026-03-16 | 2026-03-16 |
-| 14. Performance Optimization | Perf | 4/4 | Complete | 2026-03-15 |
+| 13. Library Views & Phantom Tracks | v1.1 | 2/2 | Complete | 2026-03-16 |
+| 14. Performance Optimization | v1.1 | 4/4 | Complete | 2026-03-15 |
+| 15. Schema Migration & Write Safety | v1.2 | 0/? | Not started | - |
+| 16. Tag Writing & Database Sync | v1.2 | 0/? | Not started | - |
+| 17. Single Track Edit | v1.2 | 0/? | Not started | - |
+| 18. Batch Edit | v1.2 | 0/? | Not started | - |
+| 19. OGG Vorbis Tag Writing | v1.2 | 0/? | Not started | - |
 
 ---
 *Roadmap created: 2026-02-27*
-*Last updated: 2026-03-16 — v1.1 milestone complete (Phases 9-14 all done)*
+*Last updated: 2026-03-16 — v1.2 Tag Editing milestone roadmap created (Phases 15-19)*

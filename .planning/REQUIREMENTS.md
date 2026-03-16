@@ -91,32 +91,32 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SCHEMA-01 | — | Pending |
-| SCHEMA-02 | — | Pending |
-| WRITE-01 | — | Pending |
-| WRITE-02 | — | Pending |
-| WRITE-03 | — | Pending |
-| WRITE-04 | — | Pending |
-| WRITE-05 | — | Pending |
-| WRITE-06 | — | Pending |
-| SYNC-01 | — | Pending |
-| SYNC-02 | — | Pending |
-| SYNC-03 | — | Pending |
-| SYNC-04 | — | Pending |
-| EDIT-01 | — | Pending |
-| EDIT-02 | — | Pending |
-| EDIT-03 | — | Pending |
-| EDIT-04 | — | Pending |
-| BATCH-01 | — | Pending |
-| BATCH-02 | — | Pending |
-| BATCH-03 | — | Pending |
-| BATCH-04 | — | Pending |
+| SCHEMA-01 | Phase 15 | Pending |
+| SCHEMA-02 | Phase 15 | Pending |
+| WRITE-01 | Phase 16 | Pending |
+| WRITE-02 | Phase 16 | Pending |
+| WRITE-03 | Phase 19 | Pending |
+| WRITE-04 | Phase 16 | Pending |
+| WRITE-05 | Phase 15 | Pending |
+| WRITE-06 | Phase 16 | Pending |
+| SYNC-01 | Phase 16 | Pending |
+| SYNC-02 | Phase 16 | Pending |
+| SYNC-03 | Phase 16 | Pending |
+| SYNC-04 | Phase 16 | Pending |
+| EDIT-01 | Phase 17 | Pending |
+| EDIT-02 | Phase 17 | Pending |
+| EDIT-03 | Phase 17 | Pending |
+| EDIT-04 | Phase 17 | Pending |
+| BATCH-01 | Phase 18 | Pending |
+| BATCH-02 | Phase 18 | Pending |
+| BATCH-03 | Phase 18 | Pending |
+| BATCH-04 | Phase 18 | Pending |
 
 **Coverage:**
 - v1.2 requirements: 20 total
-- Mapped to phases: 0
-- Unmapped: 20
+- Mapped to phases: 20
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-03-16*
-*Last updated: 2026-03-16 after initial definition*
+*Last updated: 2026-03-16 — traceability updated with phase mappings (Phases 15-19)*
