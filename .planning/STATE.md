@@ -1,8 +1,8 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.1
-milestone_name: Multi-Library Support
-status: milestone_complete
+milestone: v1.2
+milestone_name: Tag Editing
+status: defining_requirements
 last_updated: "2026-03-16T20:03:38.282Z"
 progress:
   total_phases: 6
@@ -18,14 +18,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-16)
 
 **Core value:** The music player works reliably and feels solid — every interaction is correct, responsive, and trustworthy.
-**Current focus:** Planning next milestone
+**Current focus:** v1.2 Tag Editing
 
 ## Current Position
 
-Milestone: v1.1 Multi-Library Support — COMPLETE (shipped 2026-03-16)
-All phases: 6/6 complete, 18/18 plans executed, 31/31 requirements fulfilled
-Next: Run `/gsd-new-milestone` to plan next milestone
-Last activity: 2026-03-16 — Completed v1.1 milestone archival
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements for v1.2 Tag Editing
+Last activity: 2026-03-16 — Milestone v1.2 started
 
 ### Phase Overview
 

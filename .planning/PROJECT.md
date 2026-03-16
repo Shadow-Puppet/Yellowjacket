@@ -51,7 +51,12 @@ The music player works reliably and feels solid. Every interaction is correct, r
 
 ### Active
 
-(No active requirements — next milestone not yet defined)
+- [ ] Single track metadata editing (title, artist, album, genre, year, track number, disc number, composer)
+- [ ] Batch editing shared fields across multiple selected tracks
+- [ ] Cover art set/replace from image file
+- [ ] Write-to-temp-then-rename for file safety during tag writes
+- [ ] Inline DB + FTS5 update after tag writes (no rescan needed)
+- [ ] Tag writing for MP3 (ID3v2), FLAC (Vorbis Comments), OGG (Vorbis Comments)
 
 ### Deferred (Future Milestones)
 
@@ -79,9 +84,19 @@ The music player works reliably and feels solid. Every interaction is correct, r
 - **v1.0 Consolidation** (2026-03-05) — Foundation: races fixed, tests added, SQL consolidated, performance optimized
 - **v1.1 Multi-Library Support** (2026-03-16) — Multi-library: CRUD, per-library scanning, filtered views, cross-library playlists, phantom tracks
 
-## Next Milestone
+## Current Milestone: v1.2 Tag Editing
 
-Not yet defined. Run `/gsd-new-milestone` to plan the next milestone.
+**Goal:** Enable users to edit track metadata and cover art directly within YellowJacket, with safe file writes and instant database synchronization.
+
+**Target features:**
+- Single track tag editing (title, artist, album, genre, year, track/disc number, composer)
+- Batch tag editing across multiple selected tracks
+- Cover art set/replace from image file (embedded in audio file)
+- Write-to-temp-then-rename for corruption-safe file writes
+- Inline DB + FTS5 index update (no rescan needed after edits)
+- Format support: MP3 (ID3v2), FLAC (Vorbis Comments), OGG (Vorbis Comments)
+
+**"Done" criteria:** Users can select tracks, edit metadata fields, set cover art, save changes to the actual audio files, and see updates reflected immediately in all views and search — without requiring a library rescan.
 
 ## Context
 
@@ -137,4 +152,4 @@ Not yet defined. Run `/gsd-new-milestone` to plan the next milestone.
 | Event delegation on virtualizer | Zero per-item closures; data-index + closest() pattern | ✓ Good — eliminated GC pressure on large lists |
 
 ---
-*Last updated: 2026-03-16 after v1.1 Multi-Library Support milestone*
+*Last updated: 2026-03-16 after v1.2 Tag Editing milestone started*
