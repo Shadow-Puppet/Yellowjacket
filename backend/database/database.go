@@ -322,6 +322,16 @@ func runMigrations(
 		}
 	}
 
+	// Migration 8: rebuild FTS5 search_index with
+	// contentless_delete=1 so individual rows can be deleted.
+	if version < 8 {
+		if err := migration8ContentlessDelete(
+			ctx, db, logger,
+		); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -1074,6 +1084,72 @@ func migration7PhantomFilePath(
 	}
 
 	logger.Info("migration 7 complete")
+
+	return nil
+}
+
+// migration8ContentlessDelete rebuilds the FTS5 search_index with
+// contentless_delete=1 so that individual rows can be deleted.
+// This is a prerequisite for inline tag edit → DB sync in Phase 16.
+//
+// SAFETY: Hand-crafted SQL for FTS5 schema migration.
+func migration8ContentlessDelete(
+	ctx context.Context,
+	db *sql.DB,
+	logger *slog.Logger,
+) error {
+	logger.Info(
+		"applying migration 8: rebuilding FTS5 search_index with contentless_delete=1",
+	)
+
+	// Drop the old contentless FTS5 table (content='' only).
+	if _, err := db.ExecContext(
+		ctx, `DROP TABLE IF EXISTS search_index`,
+	); err != nil {
+		return fmt.Errorf(
+			"migration 8: could not drop search_index: %w", err,
+		)
+	}
+
+	// Recreate with contentless_delete=1 added.
+	// SAFETY: Must match backend/database/sql/schemas/search_index.sql exactly.
+	if _, err := db.ExecContext(ctx, `
+		CREATE VIRTUAL TABLE IF NOT EXISTS search_index USING fts5(
+			file_path,
+			title,
+			artist,
+			album,
+			content='',
+			contentless_delete=1,
+			tokenize='unicode61 remove_diacritics 2'
+		)
+	`); err != nil {
+		return fmt.Errorf(
+			"migration 8: could not recreate search_index: %w", err,
+		)
+	}
+
+	// Repopulate from track_metadata VIEW.
+	// SAFETY: FTS5 INSERT from VIEW; no user input.
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO search_index(rowid, file_path, title, artist, album)
+		SELECT id, file_path, title, artist_name, album
+		FROM track_metadata
+	`); err != nil {
+		return fmt.Errorf(
+			"migration 8: could not repopulate search_index: %w", err,
+		)
+	}
+
+	if _, err := db.ExecContext(
+		ctx, "PRAGMA user_version = 8",
+	); err != nil {
+		return fmt.Errorf(
+			"migration 8: could not set user_version: %w", err,
+		)
+	}
+
+	logger.Info("migration 8 complete")
 
 	return nil
 }

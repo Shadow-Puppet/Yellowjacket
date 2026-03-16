@@ -117,21 +117,25 @@ func (d *DB) InsertSearchIndex(
 	return err
 }
 
-// DeleteSearchIndex is a no-op for contentless FTS5 tables.
-// Contentless FTS5 (content=”) does not support DELETE.
-// Stale entries are harmless: they point to rowids that no longer
-// match in track_metadata, so JOINs in search queries filter them
-// out.  The index is fully rebuilt during FullRescan.
-func (d *DB) DeleteSearchIndex(_ int64) error {
+// DeleteSearchIndex removes a single row from the FTS5 search_index
+// by rowid.  This is supported because the table uses
+// contentless_delete=1.  Phase 16 uses this for inline tag edits
+// (delete old entry, reinsert with updated metadata).
+func (d *DB) DeleteSearchIndex(rowid int64) error {
+	_, err := d.db.ExecContext(d.Ctx,
+		`DELETE FROM search_index WHERE rowid = ?`, rowid,
+	)
+	if err != nil {
+		return fmt.Errorf("could not delete search index entry: %w", err)
+	}
+
 	return nil
 }
 
 // ClearSearchIndex removes all rows from the FTS5 search_index.
-// The search_index is a contentless FTS5 table (content=”), which
-// does not support DELETE.  We drop and recreate it instead.
+// We drop and recreate it to ensure a clean slate for full rebuilds.
 func (d *DB) ClearSearchIndex() error {
-	// SAFETY: FTS5 contentless table cannot be DELETEd from.
-	// Drop + recreate is the only way to clear it.  No parameters.
+	// SAFETY: Drop + recreate for full rebuild.  No parameters.
 	if _, err := d.db.ExecContext(d.Ctx,
 		`DROP TABLE IF EXISTS search_index`,
 	); err != nil {
@@ -145,6 +149,7 @@ func (d *DB) ClearSearchIndex() error {
 			artist,
 			album,
 			content='',
+			contentless_delete=1,
 			tokenize='unicode61 remove_diacritics 2'
 		)
 	`); err != nil {

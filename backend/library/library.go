@@ -1077,11 +1077,10 @@ func (l *Library) updateAudioFileMetadata(
 	}
 
 	// Re-index in FTS5 search_index.
-	// Contentless FTS5 (content='') does not support DELETE, so we
-	// cannot remove the old entry.  Inserting a new row with the
-	// same rowid is accepted by FTS5 — the old entry becomes stale
-	// but harmless (search JOINs against track_metadata filter it).
-	// The index is fully rebuilt during FullRescan.
+	// With contentless_delete=1 (migration 8), DeleteSearchIndex
+	// now works for individual row removal.  For scan updates we
+	// still do delete + reinsert; Phase 16 will use the same
+	// pattern for inline tag edits.
 	tags := result.tags
 	if tags == nil {
 		tags = &metadata.TrackMetadata{}
