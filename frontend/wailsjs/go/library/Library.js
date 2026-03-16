@@ -26,20 +26,40 @@ export function GetAlbumTracks(arg1) {
   return window['go']['library']['Library']['GetAlbumTracks'](arg1);
 }
 
+export function GetAlbumTracksByLibrary(arg1, arg2) {
+  return window['go']['library']['Library']['GetAlbumTracksByLibrary'](arg1, arg2);
+}
+
 export function GetAlbumsByArtist(arg1) {
   return window['go']['library']['Library']['GetAlbumsByArtist'](arg1);
+}
+
+export function GetAlbumsByArtistByLibrary(arg1, arg2) {
+  return window['go']['library']['Library']['GetAlbumsByArtistByLibrary'](arg1, arg2);
 }
 
 export function GetAllAlbums() {
   return window['go']['library']['Library']['GetAllAlbums']();
 }
 
+export function GetAllAlbumsByLibrary(arg1) {
+  return window['go']['library']['Library']['GetAllAlbumsByLibrary'](arg1);
+}
+
 export function GetAllArtists() {
   return window['go']['library']['Library']['GetAllArtists']();
 }
 
+export function GetAllArtistsByLibrary(arg1) {
+  return window['go']['library']['Library']['GetAllArtistsByLibrary'](arg1);
+}
+
 export function GetAllGenresWithCounts() {
   return window['go']['library']['Library']['GetAllGenresWithCounts']();
+}
+
+export function GetAllGenresWithCountsByLibrary(arg1) {
+  return window['go']['library']['Library']['GetAllGenresWithCountsByLibrary'](arg1);
 }
 
 export function GetAllLibrariesWithTrackCounts() {
@@ -48,6 +68,10 @@ export function GetAllLibrariesWithTrackCounts() {
 
 export function GetAllTracks() {
   return window['go']['library']['Library']['GetAllTracks']();
+}
+
+export function GetAllTracksByLibrary(arg1) {
+  return window['go']['library']['Library']['GetAllTracksByLibrary'](arg1);
 }
 
 export function GetRemovalImpact(arg1) {
@@ -60,6 +84,10 @@ export function GetScanQueueLength() {
 
 export function GetTracksByGenre(arg1) {
   return window['go']['library']['Library']['GetTracksByGenre'](arg1);
+}
+
+export function GetTracksByGenreByLibrary(arg1, arg2) {
+  return window['go']['library']['Library']['GetTracksByGenreByLibrary'](arg1, arg2);
 }
 
 export function IsScanActive() {
@@ -100,6 +128,10 @@ export function ScanLibrary(arg1) {
 
 export function SearchTracks(arg1) {
   return window['go']['library']['Library']['SearchTracks'](arg1);
+}
+
+export function SearchTracksByLibrary(arg1, arg2) {
+  return window['go']['library']['Library']['SearchTracksByLibrary'](arg1, arg2);
 }
 
 export function SetContext(arg1) {

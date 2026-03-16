@@ -11,7 +11,10 @@ import type {
     VisibilityChangedEvent,
 } from '@lit-labs/virtualizer';
 import { grid } from '@lit-labs/virtualizer/layouts/grid.js';
-import { GetAlbumTracks } from '@go/library/Library';
+import {
+    GetAlbumTracks,
+    GetAlbumTracksByLibrary,
+} from '@go/library/Library';
 import { library } from '@go/models';
 import { LibraryController } from '@store/controllers/library-controller';
 import { SearchController } from '@store/controllers/search-controller';
@@ -973,9 +976,15 @@ export class CoverGrid
         this.lastSelectedTrackIndex = null;
 
         try {
-            const tracks = await GetAlbumTracks(
-                album.ID,
-            );
+            const libId =
+                this.libraryCtrl.selectedLibraryId;
+
+            const tracks = libId !== null
+                ? await GetAlbumTracksByLibrary(
+                      album.ID,
+                      libId,
+                  )
+                : await GetAlbumTracks(album.ID);
 
             if (this.expandedAlbumId === album.ID) {
                 this.expandedTracks = tracks;

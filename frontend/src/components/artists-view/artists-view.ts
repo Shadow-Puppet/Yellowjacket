@@ -13,6 +13,8 @@ import { grid } from '@lit-labs/virtualizer/layouts/grid.js';
 import {
     GetAlbumsByArtist,
     GetAlbumTracks,
+    GetAlbumsByArtistByLibrary,
+    GetAlbumTracksByLibrary,
 } from '@go/library/Library';
 import { library } from '@go/models';
 import { LibraryController } from '@store/controllers/library-controller';
@@ -927,20 +929,31 @@ export class ArtistsView
     /**
      * Fetches all file paths for an artist by
      * loading their albums, then each album's
-     * tracks.
+     * tracks.  Respects the active library filter.
      */
     private async getArtistFilePaths(
         artist: library.Artist,
     ): Promise<string[]> {
         try {
-            const albums =
-                await GetAlbumsByArtist(artist.ID);
+            const libId =
+                this.libraryCtrl.selectedLibraryId;
+
+            const albums = libId !== null
+                ? await GetAlbumsByArtistByLibrary(
+                      artist.ID,
+                      libId,
+                  )
+                : await GetAlbumsByArtist(artist.ID);
 
             const allPaths: string[] = [];
 
             for (const album of albums) {
-                const tracks =
-                    await GetAlbumTracks(album.ID);
+                const tracks = libId !== null
+                    ? await GetAlbumTracksByLibrary(
+                          album.ID,
+                          libId,
+                      )
+                    : await GetAlbumTracks(album.ID);
 
                 for (const t of tracks) {
                     allPaths.push(t.FilePath);

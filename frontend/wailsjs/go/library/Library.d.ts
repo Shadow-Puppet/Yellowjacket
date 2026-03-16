@@ -16,23 +16,37 @@ export function FullRescan():Promise<library.ScanMetrics>;
 
 export function GetAlbumTracks(arg1:number):Promise<Array<library.Track>>;
 
+export function GetAlbumTracksByLibrary(arg1:number,arg2:number):Promise<Array<library.Track>>;
+
 export function GetAlbumsByArtist(arg1:number):Promise<Array<library.Album>>;
+
+export function GetAlbumsByArtistByLibrary(arg1:number,arg2:number):Promise<Array<library.Album>>;
 
 export function GetAllAlbums():Promise<Array<library.Album>>;
 
+export function GetAllAlbumsByLibrary(arg1:number):Promise<Array<library.Album>>;
+
 export function GetAllArtists():Promise<Array<library.Artist>>;
 
+export function GetAllArtistsByLibrary(arg1:number):Promise<Array<library.Artist>>;
+
 export function GetAllGenresWithCounts():Promise<Array<library.GenreWithCount>>;
+
+export function GetAllGenresWithCountsByLibrary(arg1:number):Promise<Array<library.GenreWithCount>>;
 
 export function GetAllLibrariesWithTrackCounts():Promise<Array<library.Info>>;
 
 export function GetAllTracks():Promise<Array<library.Track>>;
+
+export function GetAllTracksByLibrary(arg1:number):Promise<Array<library.Track>>;
 
 export function GetRemovalImpact(arg1:number):Promise<library.RemovalImpact>;
 
 export function GetScanQueueLength():Promise<number>;
 
 export function GetTracksByGenre(arg1:string):Promise<Array<library.Track>>;
+
+export function GetTracksByGenreByLibrary(arg1:string,arg2:number):Promise<Array<library.Track>>;
 
 export function IsScanActive():Promise<boolean>;
 
@@ -53,6 +67,8 @@ export function ScanAllLibraries():Promise<void>;
 export function ScanLibrary(arg1:number):Promise<void>;
 
 export function SearchTracks(arg1:string):Promise<Array<library.Track>>;
+
+export function SearchTracksByLibrary(arg1:string,arg2:number):Promise<Array<library.Track>>;
 
 export function SetContext(arg1:context.Context):Promise<void>;
 

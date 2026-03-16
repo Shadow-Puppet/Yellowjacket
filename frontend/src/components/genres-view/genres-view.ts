@@ -10,7 +10,10 @@ import type {
     VisibilityChangedEvent,
 } from '@lit-labs/virtualizer';
 import { grid } from '@lit-labs/virtualizer/layouts/grid.js';
-import { GetTracksByGenre } from '@go/library/Library';
+import {
+    GetTracksByGenre,
+    GetTracksByGenreByLibrary,
+} from '@go/library/Library';
 import type { library } from '@go/models';
 import { LibraryController } from '@store/controllers/library-controller';
 import { SearchController } from '@store/controllers/search-controller';
@@ -723,16 +726,25 @@ export class GenresView
     /**
      * Fetch file paths for a set of genre names by
      * querying the backend for each genre.
+     * Respects the active library filter.
      */
     private async getFilePathsForGenres(
         genreNames: Iterable<string>,
     ): Promise<string[]> {
         const seen = new Set<string>();
         const allPaths: string[] = [];
+        const libId =
+            this.libraryCtrl.selectedLibraryId;
 
         const promises = Array.from(
             genreNames,
-            (name) => GetTracksByGenre(name),
+            (name) =>
+                libId !== null
+                    ? GetTracksByGenreByLibrary(
+                          name,
+                          libId,
+                      )
+                    : GetTracksByGenre(name),
         );
 
         const results = await Promise.all(promises);

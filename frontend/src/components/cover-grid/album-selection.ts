@@ -1,4 +1,8 @@
-import { GetAlbumTracks } from '@go/library/Library';
+import {
+    GetAlbumTracks,
+    GetAlbumTracksByLibrary,
+} from '@go/library/Library';
+import { libraryStore } from '@store/library-store';
 import type { library } from '@go/models';
 import type { CoverArtUrls } from '@components/track-details/track-details.js';
 
@@ -41,6 +45,21 @@ export class AlbumSelectionManager {
             albums.map((a) => [a.ID, a]),
         );
         this.albumFilePathCache.clear();
+    }
+
+    /**
+     * Fetch album tracks respecting the active
+     * library filter.
+     */
+    private fetchAlbumTracks(
+        albumId: number,
+    ): Promise<library.Track[]> {
+        const libId =
+            libraryStore.getSelectedLibraryId();
+
+        return libId !== null
+            ? GetAlbumTracksByLibrary(albumId, libId)
+            : GetAlbumTracks(albumId);
     }
 
     // ================================================================
@@ -134,9 +153,8 @@ export class AlbumSelectionManager {
         album: library.Album,
     ): Promise<string[]> {
         try {
-            const tracks = await GetAlbumTracks(
-                album.ID,
-            );
+            const tracks =
+                await this.fetchAlbumTracks(album.ID);
 
             return tracks.map((t) => t.FilePath);
         } catch (error) {
@@ -174,9 +192,10 @@ export class AlbumSelectionManager {
             if (!album) continue;
 
             try {
-                const tracks = await GetAlbumTracks(
-                    album.ID,
-                );
+                const tracks =
+                    await this.fetchAlbumTracks(
+                        album.ID,
+                    );
 
                 // Only store if still selected.
                 if (selectedAlbums.has(album.ID)) {

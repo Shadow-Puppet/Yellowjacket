@@ -12,6 +12,7 @@ import '@components/genres-view/genres-view.ts';
 import '@components/genre-details/genre-details.ts';
 import '@components/playlist-details/playlist-details.ts';
 import '@components/search-bar/search-bar.ts';
+import '@components/library-filter/library-filter.ts';
 import '@components/track-details/track-details.ts';
 import '@awesome.me/webawesome/dist/styles/themes/default.css';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';

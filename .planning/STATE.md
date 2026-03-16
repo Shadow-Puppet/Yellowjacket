@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Multi-Library Support
 status: unknown
-last_updated: "2026-03-15T14:29:07.641Z"
+last_updated: "2026-03-16T13:30:46.193Z"
 progress:
-  total_phases: 5
+  total_phases: 6
   completed_phases: 5
-  total_plans: 16
-  completed_plans: 16
+  total_plans: 18
+  completed_plans: 17
 ---
 
 # YellowJacket — Project State
@@ -22,11 +22,11 @@ See: .planning/PROJECT.md (updated 2026-03-08)
 
 ## Current Position
 
-Phase: 12 — Library CRUD & Data Integrity (completed), 13 next
-Plan: 2 of 2 in Phase 12 (complete)
-Status: Plan 12-02 complete — frontend library management UI verified
-Progress: ████████████████████ Phase 12 complete (2/2 plans), Phase 14 complete (4/4 plans)
-Last activity: 2026-03-16 — Completed quick task 19: fix phantom playlist tracks
+Phase: 13 — Library Views & Phantom Tracks (in progress)
+Plan: 1 of 2 in Phase 13 (complete)
+Status: Plan 13-01 complete — library-filtered backend queries
+Progress: ██████████░░░░░░░░░░ Phase 13 in progress (1/2 plans)
+Last activity: 2026-03-16 — Completed 13-01: library-filtered backend queries
 
 ### Phase Overview
 
@@ -36,7 +36,7 @@ Last activity: 2026-03-16 — Completed quick task 19: fix phantom playlist trac
 | 10. Schema & Migration | Complete (2/2 plans) ✅ |
 | 11. Per-Library Scan Pipeline | Complete (3/3 plans) ✅ |
 | 12. Library CRUD & Data Integrity | Complete (2/2 plans) ✅ |
-| 13. Library Views & Phantom Tracks | Not started |
+| 13. Library Views & Phantom Tracks | In Progress (1/2 plans) |
 | 14. Performance Optimization | Complete (4/4 plans) ✅ |
 
 ## Performance Metrics
@@ -62,6 +62,7 @@ Last activity: 2026-03-16 — Completed quick task 19: fix phantom playlist trac
 | Phase 14-01 P01 | 3 min | 2 tasks | 7 files |
 | Phase 14-04 P04 | 2 min | 2 tasks | 3 files |
 | Phase 12-02 P02 | 38 min | 3 tasks | 19 files |
+| Phase 13 P01 | 5 min | 2 tasks | 10 files |
 
 ## Accumulated Context
 
@@ -144,6 +145,13 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 | RAF throttle over debounce for scroll saves | Saves position once per frame during scrolling, not just after stop; prevents lost positions on quick navigation |
 | Keep monkey-patch alongside overflow-anchor CSS | CSS overflow-anchor disables browser anchoring but not lit-virtualizer's internal _correctScrollError |
 
+### Phase 13 Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| IN-subquery pattern for album/artist/genre library filtering | Entities are global, tracks belong to libraries; subquery filters entity IDs by library membership |
+| Empty slice return (not error) for library with no tracks | Empty library is valid state, not error condition; callers handle empty UI |
+
 ### Warnings (carry forward)
 
 - Player lock ordering (`p.mu` before `speaker.Lock()`, goroutine dispatch in beep callback) — carry forward
@@ -169,10 +177,10 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 
 ### Last Session
 
-**Date:** 2026-03-15
-**What happened:** Finalized Plan 12-02 — frontend library management UI. Code was implemented across 25 commits in previous sessions; this session created SUMMARY.md after human verification checkpoint passed (all 9 checks approved).
-**Where we stopped:** Completed 12-02-PLAN.md — Phase 12 complete (2/2 plans)
-**Next action:** Plan Phase 13: Library Views & Phantom Tracks
+**Date:** 2026-03-16
+**What happened:** Executed Plan 13-01 — added library-filtered backend queries (7 sqlc queries, 8 Go methods, 1 FTS search method). Two tasks, 10 files modified.
+**Where we stopped:** Completed 13-01-PLAN.md — Phase 13 in progress (1/2 plans)
+**Next action:** Execute Plan 13-02: frontend library selector UI and phantom track handling
 
 ---
 *State initialized: 2026-02-27*

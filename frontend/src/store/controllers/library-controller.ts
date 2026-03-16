@@ -130,6 +130,22 @@ export class LibraryController implements ReactiveController {
     }
 
     // ===================================================================
+    // LIBRARY FILTER
+    // ===================================================================
+
+    get selectedLibraryId(): number | null {
+        return libraryStore.getSelectedLibraryId();
+    }
+
+    setSelectedLibrary(id: number | null): void {
+        libraryStore.setSelectedLibrary(id);
+    }
+
+    async getLibraries(): Promise<library.Info[]> {
+        return libraryStore.getLibraries();
+    }
+
+    // ===================================================================
     // COVER SIZE
     // ===================================================================
 

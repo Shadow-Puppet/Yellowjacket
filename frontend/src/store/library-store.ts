@@ -5,6 +5,12 @@ import {
     GetAllArtists,
     GetAllGenresWithCounts,
     GetAlbumsByArtist,
+    GetAllTracksByLibrary,
+    GetAllAlbumsByLibrary,
+    GetAllArtistsByLibrary,
+    GetAllGenresWithCountsByLibrary,
+    GetAlbumsByArtistByLibrary,
+    GetAllLibrariesWithTrackCounts,
 } from '@go/library/Library';
 import type { library } from '@go/models';
 import { Events } from '../events';
@@ -30,6 +36,9 @@ class LibraryStore {
     private albums: library.Album[] | null = null;
     private artists: library.Artist[] | null = null;
     private genres: library.GenreWithCount[] | null = null;
+    private libraries: library.Info[] | null = null;
+
+    private selectedLibraryIdValue: number | null = null;
 
     private tracksLoading = false;
     private albumsLoading = false;
@@ -60,7 +69,18 @@ class LibraryStore {
             this.invalidate();
         });
         EventsOn(Events.LibraryRemoved, () => {
+            this.libraries = null;
             this.invalidate();
+        });
+        EventsOn(Events.LibraryAdded, () => {
+            this.libraries = null;
+            this.changeGen++;
+            this.notify();
+        });
+        EventsOn(Events.LibraryRenamed, () => {
+            this.libraries = null;
+            this.changeGen++;
+            this.notify();
         });
 
         this.loadCoverSize();
@@ -110,7 +130,11 @@ class LibraryStore {
         this.notify();
 
         try {
-            const tracks = await GetAllTracks();
+            const id = this.selectedLibraryIdValue;
+            const tracks = id !== null
+                ? await GetAllTracksByLibrary(id)
+                : await GetAllTracks();
+
             this.tracks = tracks;
             this.changeGen++;
 
@@ -134,7 +158,11 @@ class LibraryStore {
         this.notify();
 
         try {
-            const albums = await GetAllAlbums();
+            const id = this.selectedLibraryIdValue;
+            const albums = id !== null
+                ? await GetAllAlbumsByLibrary(id)
+                : await GetAllAlbums();
+
             this.albums = albums;
             this.changeGen++;
 
@@ -158,7 +186,11 @@ class LibraryStore {
         this.notify();
 
         try {
-            const artists = await GetAllArtists();
+            const id = this.selectedLibraryIdValue;
+            const artists = id !== null
+                ? await GetAllArtistsByLibrary(id)
+                : await GetAllArtists();
+
             this.artists = artists;
             this.changeGen++;
 
@@ -182,7 +214,11 @@ class LibraryStore {
         this.notify();
 
         try {
-            const genres = await GetAllGenresWithCounts();
+            const id = this.selectedLibraryIdValue;
+            const genres = id !== null
+                ? await GetAllGenresWithCountsByLibrary(id)
+                : await GetAllGenresWithCounts();
+
             this.genres = genres;
             this.changeGen++;
 
@@ -196,7 +232,11 @@ class LibraryStore {
     async getAlbumsByArtist(
         artistID: number,
     ): Promise<library.Album[]> {
-        return GetAlbumsByArtist(artistID);
+        const id = this.selectedLibraryIdValue;
+
+        return id !== null
+            ? GetAlbumsByArtistByLibrary(artistID, id)
+            : GetAlbumsByArtist(artistID);
     }
 
     /**
@@ -206,10 +246,20 @@ class LibraryStore {
      * result when the all-albums list has already
      * been loaded (e.g. the user visited the albums
      * view first).
+     *
+     * Returns null when a library filter is active
+     * because the cached albums are already filtered
+     * by library — the client-side ArtistName match
+     * is correct but forcing a backend query ensures
+     * consistency.
      */
     getAlbumsByArtistNameCached(
         artistName: string,
     ): library.Album[] | null {
+        if (this.selectedLibraryIdValue !== null) {
+            return null;
+        }
+
         if (this.albums === null) return null;
 
         return this.albums.filter(
@@ -263,6 +313,34 @@ class LibraryStore {
      */
     get changeGeneration(): number {
         return this.changeGen;
+    }
+
+    // ===================================================================
+    // LIBRARY FILTER
+    // ===================================================================
+
+    getSelectedLibraryId(): number | null {
+        return this.selectedLibraryIdValue;
+    }
+
+    setSelectedLibrary(id: number | null): void {
+        if (id === this.selectedLibraryIdValue) return;
+
+        this.selectedLibraryIdValue = id;
+        this.invalidate();
+    }
+
+    async getLibraries(): Promise<library.Info[]> {
+        if (this.libraries !== null) {
+            return this.libraries;
+        }
+
+        const libs =
+            await GetAllLibrariesWithTrackCounts();
+
+        this.libraries = libs;
+
+        return libs;
     }
 
     // ===================================================================

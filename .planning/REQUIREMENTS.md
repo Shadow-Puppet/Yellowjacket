@@ -40,10 +40,10 @@ Requirements for v1.1 Multi-Library Support milestone. Each maps to roadmap phas
 
 ### Unified Presentation
 
-- [ ] **VIEW-01**: Default view shows tracks from all libraries merged (unified presentation)
-- [ ] **VIEW-02**: User can filter the track list to show only tracks from a specific library
-- [ ] **VIEW-03**: Browse views (albums, artists, genres) work across all libraries or filtered to one
-- [ ] **VIEW-04**: Search (FTS5) searches across all libraries or respects the active library filter
+- [x] **VIEW-01**: Default view shows tracks from all libraries merged (unified presentation)
+- [x] **VIEW-02**: User can filter the track list to show only tracks from a specific library
+- [x] **VIEW-03**: Browse views (albums, artists, genres) work across all libraries or filtered to one
+- [x] **VIEW-04**: Search (FTS5) searches across all libraries or respects the active library filter
 
 ### Playlists & Queue
 
@@ -191,10 +191,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | LSCAN-03 | Phase 11 | Complete |
 | LSCAN-04 | Phase 11 | Complete |
 | LSCAN-05 | Phase 10 | Complete |
-| VIEW-01 | Phase 13 | Pending |
-| VIEW-02 | Phase 13 | Pending |
-| VIEW-03 | Phase 13 | Pending |
-| VIEW-04 | Phase 13 | Pending |
+| VIEW-01 | Phase 13 | Complete |
+| VIEW-02 | Phase 13 | Complete |
+| VIEW-03 | Phase 13 | Complete |
+| VIEW-04 | Phase 13 | Complete |
 | PLAY-01 | Phase 13 | Pending |
 | PLAY-02 | Phase 13 | Pending |
 | PLAY-03 | Phase 13 | Pending |
