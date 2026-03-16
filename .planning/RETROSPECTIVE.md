@@ -55,6 +55,59 @@
 
 ---
 
+## Milestone: v1.1 — Multi-Library Support
+
+**Shipped:** 2026-03-16
+**Phases:** 6 | **Plans:** 18
+**Timeline:** 10 days (2026-03-06 → 2026-03-16)
+
+### What Was Built
+- Cancellable/pausable library scans with per-scan context cancellation and sequential queue coordination
+- Configurable keyboard shortcuts with record-style capture UI, scope-aware dispatch, and conflict detection
+- Multi-library database schema (migration 6) with seamless single-directory migration
+- Per-library scan pipeline with scan queue, per-library progress UI, and cancel scope
+- Full library CRUD API with 17-step atomic removal (orphan cleanup, phantom metadata, FTS5, cover art, queue compaction)
+- Library filter dropdown — all views (tracks, albums, artists, genres, search) respect active filter
+- Cross-library playlists with phantom track auto-resolution via ScanHooks + M3U8 path matching
+- Performance: CSS containment, view caching, event delegation, content-visibility, scroll polish
+
+### What Worked
+- **4-phase multi-library progression (schema → scan → CRUD → views):** Each phase had clear boundaries and verifiable outputs. Schema first meant scan pipeline had stable types; scan pipeline meant CRUD had working add-then-scan; CRUD meant views could demonstrate the full lifecycle.
+- **Locked decisions from /gsd-discuss-phase:** "Backend filtering, not frontend" and "SET NULL for playlist_tracks FK" were decided once and never revisited — eliminated mid-execution design debates.
+- **Performance phase running in parallel:** Phase 14 (performance) was independent of the multi-library phases (10-13), allowing it to execute when multi-library phases were blocked on human verification.
+- **Checkpoint-driven bugfinding:** The human-verify checkpoint in Phase 13 found 3 bugs (virtualizer event delegation race, missing phantom auto-resolution, M3U8-based resolution needed) that wouldn't have been caught by automated verification alone.
+- **Hook patterns for cross-package communication:** ScanHooks, RemovalHooks, and RescanHooks cleanly broke circular dependencies between library, playlist, and queue packages without coupling.
+
+### What Was Inefficient
+- **Phantom resolution required 3 iterations:** First attempt (pure SQL with phantom_file_path) missed pre-existing phantoms. Second attempt (backfill) was fragile. Third attempt (M3U8-based ScanHooks) was the right approach from the start. Should have analyzed the M3U8 data flow before designing the resolution.
+- **Phase 14 virtualizer bug surfaced late:** The event delegation race condition from Phase 14-03 wasn't caught until Phase 13's checkpoint. The Phase 14 verification should have included testing with empty-then-loaded data states.
+- **Quick task 19 (phantom path resolution) overlapped with Phase 13:** The fix for multi-root path resolution in playlists was done as a quick task but directly related to Phase 13's phantom track work. Could have been folded into Phase 13 planning.
+
+### Patterns Established
+- **ScanHooks callback pattern:** Post-scan processing without circular imports — library calls hook, playlist implements
+- **ByLibrary query variants:** Parallel filtered/unfiltered sqlc queries with conditional dispatch in store layer
+- **phantom_file_path column:** Preserves original file path at removal time for future re-linking
+- **M3U8 as source of truth for phantom matching:** Position-based + path-based dual matching strategy
+- **View caching with display:none toggle:** Keeps DOM alive for instant navigation, bounded cache (6 entries)
+- **Event delegation via data-index + closest():** Zero per-item closures in virtualizer renderItem functions
+- **attachDelegation guard pattern:** Retry event delegation in updated() for conditionally-rendered elements
+- **changeGeneration counter:** Simple monotonic counter replaces typed subscription system for store change detection
+
+### Key Lessons
+1. **Analyze data flow before designing resolution strategies:** The phantom track resolution should have started with "what data do we have?" (M3U8 files have the paths) rather than "where can we store new data?" (phantom_file_path column). The M3U8 approach was simpler and more robust.
+2. **Human checkpoints catch integration bugs that automated tests miss:** The virtualizer race condition and phantom auto-resolution gap were both found during manual testing, not by build/lint/verify. Budget for checkpoint time.
+3. **Hook patterns scale well for cross-cutting concerns:** ScanHooks, RemovalHooks, and RescanHooks all follow the same pattern — define struct with function fields, set via method, call at lifecycle points. This pattern can be reused for future cross-package coordination.
+4. **Conditional rendering + lifecycle hooks need careful testing:** Components that conditionally render children (lit-virtualizer appears only when data loads) must handle the case where firstUpdated fires before the child exists. Test with both fast and slow data loading.
+5. **Performance optimization and feature work can truly run in parallel:** Phase 14 had zero file conflicts with Phases 10-13 and was executed out of order. Independent subsystem identification at planning time enables this parallelism.
+
+### Cost Observations
+- Model mix: Primarily opus for planning + execution, sonnet for verification
+- Total commits: ~85 across 10 days
+- Notable: Most plans completed in 2-10 minutes. Phase 12-02 (frontend library management UI) was the longest at 38 minutes due to complexity (19 files, 3 tasks, new components)
+- Efficiency: 18 plans across 6 phases with 4 quick tasks interleaved
+
+---
+
 ## Cross-Milestone Trends
 
 ### Process Evolution
@@ -62,15 +115,19 @@
 | Milestone | Days | Phases | Plans | Key Change |
 |-----------|------|--------|-------|------------|
 | v1.0 | 6 | 8 | 17 | First milestone — established GSD workflow, research-before-plan pattern |
+| v1.1 | 10 | 6 | 18 | Locked decisions, parallel phase execution, hook patterns for cross-package coordination |
 
 ### Cumulative Quality
 
 | Milestone | Tests Added | Total Tests | Key Quality Win |
 |-----------|-------------|-------------|-----------------|
 | v1.0 | 84 | 84 | From 0 backend tests to comprehensive coverage of queue, config, player, database, library |
+| v1.1 | ~5 | ~89 | Migration tests, multi-root path resolution tests; human checkpoint caught 3 integration bugs |
 
 ### Top Lessons (Verified Across Milestones)
 
-1. Dependency-ordered phases (fix → test → refactor → optimize) prevent rework and ensure each phase builds on a stable foundation
+1. Dependency-ordered phases (fix → test → refactor → optimize; schema → scan → CRUD → views) prevent rework and ensure each phase builds on a stable foundation
 2. Small plans (2-3 tasks, <10 min) maintain consistent quality — no context degradation
 3. Research phases for unfamiliar domains (sqlc + VIEW, lit-virtualizer API) prevent mid-execution surprises
+4. Human checkpoints catch integration bugs that automated verification misses — budget time for them
+5. Analyze existing data flows before designing new storage — the simplest solution often uses data that already exists
