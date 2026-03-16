@@ -321,6 +321,98 @@ func (q *Queries) GetAllTracksWithFullMetadata(ctx context.Context) ([]GetAllTra
 	return items, nil
 }
 
+const getAllTracksWithFullMetadataByLibrary = `-- name: GetAllTracksWithFullMetadataByLibrary :many
+SELECT
+    af.file_path,
+    af.length_milliseconds,
+    COALESCE(r.name, '') AS title,
+    COALESCE(ac.text, '') AS artist_name,
+    r.track_number,
+    r.disc_number,
+    COALESCE(rg.name, '') AS album,
+    CAST(COALESCE(
+        (SELECT GROUP_CONCAT(g.name, '||')
+         FROM recording_genres rg_sub
+         JOIN genres g ON rg_sub.genre_id = g.id
+         WHERE rg_sub.recording_id = r.id),
+        ''
+    ) AS TEXT) AS genre,
+    COALESCE(r.year, 0) AS year,
+    COALESCE(r.composer, '') AS composer,
+    COALESCE(ft.extension, '') AS file_type,
+    af.sample_rate,
+    af.bit_depth,
+    af.channels,
+    af.bitrate,
+    af.file_size
+FROM audio_files af
+JOIN recordings r ON af.recording_id = r.id
+JOIN artist_credit ac ON r.artist_credit_id = ac.id
+LEFT JOIN release_group_recordings rgr ON r.id = rgr.recording_id
+LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
+LEFT JOIN file_types ft ON af.file_type_id = ft.id
+WHERE af.library_id = ?
+`
+
+type GetAllTracksWithFullMetadataByLibraryRow struct {
+	FilePath           string
+	LengthMilliseconds int64
+	Title              string
+	ArtistName         string
+	TrackNumber        sql.NullInt64
+	DiscNumber         sql.NullInt64
+	Album              string
+	Genre              string
+	Year               int64
+	Composer           string
+	FileType           string
+	SampleRate         int64
+	BitDepth           int64
+	Channels           int64
+	Bitrate            int64
+	FileSize           int64
+}
+
+func (q *Queries) GetAllTracksWithFullMetadataByLibrary(ctx context.Context, libraryID int64) ([]GetAllTracksWithFullMetadataByLibraryRow, error) {
+	rows, err := q.db.QueryContext(ctx, getAllTracksWithFullMetadataByLibrary, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetAllTracksWithFullMetadataByLibraryRow
+	for rows.Next() {
+		var i GetAllTracksWithFullMetadataByLibraryRow
+		if err := rows.Scan(
+			&i.FilePath,
+			&i.LengthMilliseconds,
+			&i.Title,
+			&i.ArtistName,
+			&i.TrackNumber,
+			&i.DiscNumber,
+			&i.Album,
+			&i.Genre,
+			&i.Year,
+			&i.Composer,
+			&i.FileType,
+			&i.SampleRate,
+			&i.BitDepth,
+			&i.Channels,
+			&i.Bitrate,
+			&i.FileSize,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getAudioFile = `-- name: GetAudioFile :one
 SELECT id, file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size, basename, library_id FROM audio_files 
 WHERE id = ? LIMIT 1
@@ -473,6 +565,104 @@ func (q *Queries) GetAudioFilesByReleaseGroup(ctx context.Context, releaseGroupI
 	var items []GetAudioFilesByReleaseGroupRow
 	for rows.Next() {
 		var i GetAudioFilesByReleaseGroupRow
+		if err := rows.Scan(
+			&i.FilePath,
+			&i.LengthMilliseconds,
+			&i.Title,
+			&i.ArtistName,
+			&i.TrackNumber,
+			&i.DiscNumber,
+			&i.Album,
+			&i.Genre,
+			&i.Year,
+			&i.Composer,
+			&i.FileType,
+			&i.SampleRate,
+			&i.BitDepth,
+			&i.Channels,
+			&i.Bitrate,
+			&i.FileSize,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getAudioFilesByReleaseGroupByLibrary = `-- name: GetAudioFilesByReleaseGroupByLibrary :many
+SELECT
+    af.file_path,
+    af.length_milliseconds,
+    COALESCE(r.name, '') AS title,
+    COALESCE(ac.text, '') AS artist_name,
+    rgr.track_number,
+    rgr.disc_number,
+    COALESCE(rg.name, '') AS album,
+    CAST(COALESCE(
+        (SELECT GROUP_CONCAT(g.name, '||')
+         FROM recording_genres rg_sub
+         JOIN genres g ON rg_sub.genre_id = g.id
+         WHERE rg_sub.recording_id = r.id),
+        ''
+    ) AS TEXT) AS genre,
+    COALESCE(r.year, 0) AS year,
+    COALESCE(r.composer, '') AS composer,
+    COALESCE(ft.extension, '') AS file_type,
+    af.sample_rate,
+    af.bit_depth,
+    af.channels,
+    af.bitrate,
+    af.file_size
+FROM release_group_recordings rgr
+JOIN recordings r ON rgr.recording_id = r.id
+JOIN audio_files af ON af.recording_id = r.id
+LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
+LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
+LEFT JOIN file_types ft ON af.file_type_id = ft.id
+WHERE rgr.release_group_id = ? AND af.library_id = ?
+ORDER BY rgr.disc_number, rgr.track_number
+`
+
+type GetAudioFilesByReleaseGroupByLibraryParams struct {
+	ReleaseGroupID int64
+	LibraryID      int64
+}
+
+type GetAudioFilesByReleaseGroupByLibraryRow struct {
+	FilePath           string
+	LengthMilliseconds int64
+	Title              string
+	ArtistName         string
+	TrackNumber        sql.NullInt64
+	DiscNumber         sql.NullInt64
+	Album              string
+	Genre              string
+	Year               int64
+	Composer           string
+	FileType           string
+	SampleRate         int64
+	BitDepth           int64
+	Channels           int64
+	Bitrate            int64
+	FileSize           int64
+}
+
+func (q *Queries) GetAudioFilesByReleaseGroupByLibrary(ctx context.Context, arg GetAudioFilesByReleaseGroupByLibraryParams) ([]GetAudioFilesByReleaseGroupByLibraryRow, error) {
+	rows, err := q.db.QueryContext(ctx, getAudioFilesByReleaseGroupByLibrary, arg.ReleaseGroupID, arg.LibraryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetAudioFilesByReleaseGroupByLibraryRow
+	for rows.Next() {
+		var i GetAudioFilesByReleaseGroupByLibraryRow
 		if err := rows.Scan(
 			&i.FilePath,
 			&i.LengthMilliseconds,

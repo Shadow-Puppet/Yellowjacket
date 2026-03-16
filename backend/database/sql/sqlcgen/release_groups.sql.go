@@ -146,6 +146,77 @@ func (q *Queries) GetAlbumsByArtist(ctx context.Context, artistID int64) ([]GetA
 	return items, nil
 }
 
+const getAlbumsByArtistByLibrary = `-- name: GetAlbumsByArtistByLibrary :many
+SELECT
+    rg.id,
+    rg.name,
+    rg.year,
+    COALESCE(ac.text, fallback_ac.text, '') as artist_name,
+    COALESCE(ca.file_path, '') as cover_art_path
+FROM release_groups rg
+JOIN artist_credit ac ON rg.album_artist_credit_id = ac.id
+JOIN artist_credit_artist aca ON aca.credit_id = ac.id
+LEFT JOIN cover_art ca ON rg.cover_art_id = ca.id
+LEFT JOIN (
+    SELECT rgr.release_group_id, ac2.text
+    FROM release_group_recordings rgr
+    JOIN recordings rec ON rec.id = rgr.recording_id
+    JOIN artist_credit ac2 ON ac2.id = rec.artist_credit_id
+    GROUP BY rgr.release_group_id
+) fallback_ac ON fallback_ac.release_group_id = rg.id
+WHERE aca.artist_id = ?
+  AND rg.id IN (
+    SELECT DISTINCT rgr2.release_group_id
+    FROM release_group_recordings rgr2
+    JOIN recordings r2 ON r2.id = rgr2.recording_id
+    JOIN audio_files af2 ON af2.recording_id = r2.id
+    WHERE af2.library_id = ?
+)
+ORDER BY rg.name
+`
+
+type GetAlbumsByArtistByLibraryParams struct {
+	ArtistID  int64
+	LibraryID int64
+}
+
+type GetAlbumsByArtistByLibraryRow struct {
+	ID           int64
+	Name         string
+	Year         sql.NullInt64
+	ArtistName   string
+	CoverArtPath string
+}
+
+func (q *Queries) GetAlbumsByArtistByLibrary(ctx context.Context, arg GetAlbumsByArtistByLibraryParams) ([]GetAlbumsByArtistByLibraryRow, error) {
+	rows, err := q.db.QueryContext(ctx, getAlbumsByArtistByLibrary, arg.ArtistID, arg.LibraryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetAlbumsByArtistByLibraryRow
+	for rows.Next() {
+		var i GetAlbumsByArtistByLibraryRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Year,
+			&i.ArtistName,
+			&i.CoverArtPath,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getAllAlbumsWithDetails = `-- name: GetAllAlbumsWithDetails :many
 SELECT
     rg.id,
@@ -183,6 +254,70 @@ func (q *Queries) GetAllAlbumsWithDetails(ctx context.Context) ([]GetAllAlbumsWi
 	var items []GetAllAlbumsWithDetailsRow
 	for rows.Next() {
 		var i GetAllAlbumsWithDetailsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Year,
+			&i.ArtistName,
+			&i.CoverArtPath,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getAllAlbumsWithDetailsByLibrary = `-- name: GetAllAlbumsWithDetailsByLibrary :many
+SELECT
+    rg.id,
+    rg.name,
+    rg.year,
+    COALESCE(ac.text, fallback_ac.text, '') as artist_name,
+    COALESCE(ca.file_path, '') as cover_art_path
+FROM release_groups rg
+LEFT JOIN artist_credit ac ON rg.album_artist_credit_id = ac.id
+LEFT JOIN cover_art ca ON rg.cover_art_id = ca.id
+LEFT JOIN (
+    SELECT rgr.release_group_id, ac2.text
+    FROM release_group_recordings rgr
+    JOIN recordings rec ON rec.id = rgr.recording_id
+    JOIN artist_credit ac2 ON ac2.id = rec.artist_credit_id
+    GROUP BY rgr.release_group_id
+) fallback_ac ON fallback_ac.release_group_id = rg.id
+WHERE rg.id IN (
+    SELECT DISTINCT rgr2.release_group_id
+    FROM release_group_recordings rgr2
+    JOIN recordings r2 ON r2.id = rgr2.recording_id
+    JOIN audio_files af2 ON af2.recording_id = r2.id
+    WHERE af2.library_id = ?
+)
+ORDER BY rg.name
+`
+
+type GetAllAlbumsWithDetailsByLibraryRow struct {
+	ID           int64
+	Name         string
+	Year         sql.NullInt64
+	ArtistName   string
+	CoverArtPath string
+}
+
+func (q *Queries) GetAllAlbumsWithDetailsByLibrary(ctx context.Context, libraryID int64) ([]GetAllAlbumsWithDetailsByLibraryRow, error) {
+	rows, err := q.db.QueryContext(ctx, getAllAlbumsWithDetailsByLibrary, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetAllAlbumsWithDetailsByLibraryRow
+	for rows.Next() {
+		var i GetAllAlbumsWithDetailsByLibraryRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.Name,
