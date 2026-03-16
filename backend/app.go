@@ -171,6 +171,12 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 		PostScan: yj.playlist.RestoreAllPlaylists,
 	})
 
+	// Wire scan hooks so the playlist service can resolve
+	// phantom tracks after each library scan completes.
+	yj.library.SetScanHooks(library.ScanHooks{
+		ResolvePhantoms: yj.playlist.ResolvePhantomTracksAfterScan,
+	})
+
 	// Wire removal hooks so the library can stop playback and
 	// compact the queue during library removal without depending
 	// on the player or queue packages directly.

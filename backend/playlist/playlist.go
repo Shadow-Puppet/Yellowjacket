@@ -1494,6 +1494,305 @@ func (s *Service) migrateExistingPlaylists() {
 // Phantom track resolution
 // =================================================================
 
+// ResolvePhantomTracksAfterScan re-links phantom playlist tracks
+// whose files now exist in the library.  It iterates each playlist
+// that has phantoms, reads its M3U8 file, resolves each entry
+// against the current audio_files table using multi-root path
+// resolution, and updates matching phantom playlist_tracks.  This
+// handles both pre-existing phantoms (created before migration 7,
+// with NULL phantom_file_path) and new ones.
+func (s *Service) ResolvePhantomTracksAfterScan() {
+	// 1. Get distinct playlist IDs that have phantom tracks.
+	// SAFETY: Hand-crafted SELECT for phantom playlist IDs.
+	// No user input — reads only system state.
+	rows, err := s.db.QueryContext(
+		`SELECT DISTINCT playlist_id
+		 FROM playlist_tracks
+		 WHERE audio_file_id IS NULL`,
+	)
+	if err != nil {
+		s.logger.Warn(
+			"could not query phantom playlists",
+			"err", err,
+		)
+
+		return
+	}
+
+	var phantomPlaylistIDs []int64
+
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			s.logger.Warn(
+				"could not scan phantom playlist ID",
+				"err", err,
+			)
+
+			continue
+		}
+
+		phantomPlaylistIDs = append(phantomPlaylistIDs, id)
+	}
+
+	if err := rows.Close(); err != nil {
+		s.logger.Warn(
+			"could not close phantom playlist rows",
+			"err", err,
+		)
+	}
+
+	if len(phantomPlaylistIDs) == 0 {
+		return
+	}
+
+	// 2. Build audio file path→ID map for resolution.
+	// SAFETY: Hand-crafted SELECT for full audio file path map.
+	// No user input — reads only system state.
+	afRows, err := s.db.QueryContext(
+		`SELECT id, file_path FROM audio_files`,
+	)
+	if err != nil {
+		s.logger.Warn(
+			"could not query audio files for phantom resolution",
+			"err", err,
+		)
+
+		return
+	}
+
+	audioFileByPath := make(map[string]int64)
+
+	for afRows.Next() {
+		var id int64
+
+		var fp string
+		if err := afRows.Scan(&id, &fp); err != nil {
+			continue
+		}
+
+		audioFileByPath[fp] = id
+	}
+
+	if err := afRows.Close(); err != nil {
+		s.logger.Warn(
+			"could not close audio file rows",
+			"err", err,
+		)
+	}
+
+	if len(audioFileByPath) == 0 {
+		return
+	}
+
+	// 3. Build knownPaths set for resolveM3UPath.
+	knownPaths := make(
+		map[string]struct{}, len(audioFileByPath),
+	)
+	for k := range audioFileByPath {
+		knownPaths[k] = struct{}{}
+	}
+
+	libraryRoots := s.getAllLibraryRoots()
+
+	dir, err := s.playlistsDir()
+	if err != nil {
+		s.logger.Warn(
+			"could not get playlists dir for phantom resolution",
+			"err", err,
+		)
+
+		return
+	}
+
+	var totalResolved int
+
+	// 4. For each playlist with phantoms, resolve via M3U8.
+	for _, playlistID := range phantomPlaylistIDs {
+		resolved := s.resolvePlaylistPhantoms(
+			playlistID, dir, libraryRoots,
+			knownPaths, audioFileByPath,
+		)
+		totalResolved += resolved
+	}
+
+	if totalResolved > 0 {
+		s.logger.Info(
+			"resolved phantom playlist tracks after scan",
+			"count", totalResolved,
+		)
+
+		s.emitEvent(events.PlaylistTracksChanged, nil)
+	}
+}
+
+// phantomTrackRow holds the minimal fields needed to match a
+// phantom playlist_track against an M3U8 entry.
+type phantomTrackRow struct {
+	id              int64
+	position        int64
+	phantomFilePath string
+}
+
+// resolvePlaylistPhantoms resolves phantom tracks for a single
+// playlist by reading its M3U8 file and matching entries against
+// the audio_files table.  Returns the number of resolved tracks.
+func (s *Service) resolvePlaylistPhantoms(
+	playlistID int64,
+	dir string,
+	libraryRoots []string,
+	knownPaths map[string]struct{},
+	audioFileByPath map[string]int64,
+) int {
+	m3uPath, err := findPlaylistFile(dir, playlistID)
+	if err != nil || m3uPath == "" {
+		return 0
+	}
+
+	parsed, err := parseM3U8(m3uPath)
+	if err != nil {
+		s.logger.Warn(
+			"could not parse M3U8 for phantom resolution",
+			"playlistId", playlistID,
+			"path", m3uPath,
+			"err", err,
+		)
+
+		return 0
+	}
+
+	// Load phantom tracks for this playlist.
+	// SAFETY: Hand-crafted SELECT for phantom tracks with
+	// position and phantom_file_path. No user input.
+	ptRows, err := s.db.QueryContext(
+		`SELECT id, position, COALESCE(phantom_file_path, '')
+		 FROM playlist_tracks
+		 WHERE playlist_id = ? AND audio_file_id IS NULL`,
+		playlistID,
+	)
+	if err != nil {
+		s.logger.Warn(
+			"could not query phantom tracks",
+			"playlistId", playlistID,
+			"err", err,
+		)
+
+		return 0
+	}
+
+	var phantoms []phantomTrackRow
+
+	for ptRows.Next() {
+		var pt phantomTrackRow
+		if err := ptRows.Scan(
+			&pt.id, &pt.position, &pt.phantomFilePath,
+		); err != nil {
+			continue
+		}
+
+		phantoms = append(phantoms, pt)
+	}
+
+	if err := ptRows.Close(); err != nil {
+		s.logger.Warn(
+			"could not close phantom track rows",
+			"err", err,
+		)
+	}
+
+	if len(phantoms) == 0 {
+		return 0
+	}
+
+	// Build a set of already-resolved phantom IDs to avoid
+	// double-matching.
+	resolvedIDs := make(map[int64]struct{})
+
+	var resolved int
+
+	// For each M3U8 entry, resolve its path and try to match
+	// a phantom track.
+	for i, entry := range parsed.Entries {
+		absPath := resolveM3UPath(
+			entry.RelativePath, libraryRoots, knownPaths,
+		)
+
+		audioFileID, exists := audioFileByPath[absPath]
+		if !exists {
+			continue
+		}
+
+		// Find the phantom that corresponds to this entry.
+		// Priority 1: match by phantom_file_path (exact).
+		// Priority 2: match by position (M3U8 index).
+		matchIdx := -1
+
+		for j, pt := range phantoms {
+			if _, done := resolvedIDs[pt.id]; done {
+				continue
+			}
+
+			if pt.phantomFilePath != "" &&
+				pt.phantomFilePath == absPath {
+				matchIdx = j
+
+				break
+			}
+		}
+
+		if matchIdx == -1 {
+			for j, pt := range phantoms {
+				if _, done := resolvedIDs[pt.id]; done {
+					continue
+				}
+
+				if pt.position == int64(i) {
+					matchIdx = j
+
+					break
+				}
+			}
+		}
+
+		if matchIdx == -1 {
+			continue
+		}
+
+		pt := phantoms[matchIdx]
+
+		// SAFETY: Hand-crafted UPDATE to resolve a phantom
+		// playlist track. Sets audio_file_id and clears all
+		// phantom metadata columns. Parameterized by ID.
+		if _, err := s.db.ExecContext(
+			`UPDATE playlist_tracks SET
+				audio_file_id = ?,
+				phantom_title = NULL,
+				phantom_artist = NULL,
+				phantom_album = NULL,
+				phantom_duration_ms = NULL,
+				phantom_genre = NULL,
+				phantom_cover_art_path = NULL,
+				phantom_file_path = NULL
+			WHERE id = ?`,
+			audioFileID, pt.id,
+		); err != nil {
+			s.logger.Warn(
+				"could not resolve phantom track",
+				"playlistTrackId", pt.id,
+				"audioFileId", audioFileID,
+				"err", err,
+			)
+
+			continue
+		}
+
+		resolvedIDs[pt.id] = struct{}{}
+		resolved++
+	}
+
+	return resolved
+}
+
 // FindPhantomMatches searches the library for matches for the
 // given phantom file paths. High-confidence matches are returned
 // as auto-matched pairs; the rest remain in the unmatched list.

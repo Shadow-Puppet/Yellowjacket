@@ -86,6 +86,10 @@ export function ResolvePhantomTracks(arg1, arg2) {
   return window['go']['playlist']['Service']['ResolvePhantomTracks'](arg1, arg2);
 }
 
+export function ResolvePhantomTracksAfterScan() {
+  return window['go']['playlist']['Service']['ResolvePhantomTracksAfterScan']();
+}
+
 export function RestoreAllPlaylists() {
   return window['go']['playlist']['Service']['RestoreAllPlaylists']();
 }

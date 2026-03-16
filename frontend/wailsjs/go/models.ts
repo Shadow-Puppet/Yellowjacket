@@ -134,6 +134,18 @@ export namespace library {
 	
 	    }
 	}
+	export class ScanHooks {
+	
+	
+	    static createFrom(source: any = {}) {
+	        return new ScanHooks(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	
+	    }
+	}
 	export class ScanWarning {
 	    filePath: string;
 	    phase: string;

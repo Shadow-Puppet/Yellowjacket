@@ -76,4 +76,6 @@ export function SetRemovalHooks(arg1:library.RemovalHooks):Promise<void>;
 
 export function SetRescanHooks(arg1:library.RescanHooks):Promise<void>;
 
+export function SetScanHooks(arg1:library.ScanHooks):Promise<void>;
+
 export function SoftScanAllLibraries():Promise<void>;

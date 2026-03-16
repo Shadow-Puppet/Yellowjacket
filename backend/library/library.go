@@ -72,6 +72,15 @@ type RescanHooks struct {
 	PostScan func()
 }
 
+// ScanHooks contains callbacks invoked after a library scan
+// completes.  The app layer wires these so the library package
+// does not depend on the playlist package directly.
+type ScanHooks struct {
+	// ResolvePhantoms re-links phantom playlist tracks whose
+	// files now exist in the library after scanning.
+	ResolvePhantoms func()
+}
+
 // Library manages scanning and querying the music collection.
 type Library struct {
 	// mu protects ctx, conf, and rescanHooks from concurrent
@@ -97,6 +106,10 @@ type Library struct {
 	// removalHooks holds callbacks for cross-cutting concerns during
 	// library removal (e.g. stopping playback, compacting queue).
 	removalHooks RemovalHooks
+
+	// scanHooks holds callbacks for post-scan processing
+	// (e.g. resolving phantom playlist tracks).
+	scanHooks ScanHooks
 }
 
 // SetRescanHooks provides optional hooks for cross-cutting
@@ -106,6 +119,15 @@ func (l *Library) SetRescanHooks(h RescanHooks) {
 	defer l.mu.Unlock()
 
 	l.rescanHooks = h
+}
+
+// SetScanHooks provides optional hooks for cross-cutting
+// orchestration after each library scan.
+func (l *Library) SetScanHooks(h ScanHooks) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	l.scanHooks = h
 }
 
 // NewLibrary creates a new library with the given configuration.
@@ -653,12 +675,11 @@ func (l *Library) scanInternal(
 	}
 
 	// --- Phase 6: resolve phantom playlist tracks ---
-	// Phantom tracks (audio_file_id IS NULL) that have a stored
-	// phantom_file_path matching a newly-scanned audio file are
-	// automatically re-linked.  This handles the case where a
-	// library directory is removed and later re-added.
-	if !cancelled {
-		l.resolvePhantomTracks()
+	// Delegated to the playlist service via ScanHooks so that
+	// M3U8-based path resolution can handle both pre-existing
+	// phantoms (no phantom_file_path) and new ones.
+	if !cancelled && l.scanHooks.ResolvePhantoms != nil {
+		l.scanHooks.ResolvePhantoms()
 	}
 
 	// --- Phase 7: post-scan variant generation ---
@@ -715,53 +736,6 @@ func (l *Library) scanInternal(
 	}
 
 	return metrics
-}
-
-// resolvePhantomTracks re-links phantom playlist_tracks entries
-// whose phantom_file_path now matches an audio_files row.  This
-// runs after every successful scan so that re-adding a previously
-// removed library automatically restores playlist references.
-func (l *Library) resolvePhantomTracks() {
-	// SAFETY: Hand-crafted UPDATE for phantom track resolution.
-	// Matches phantom playlist_tracks (audio_file_id IS NULL,
-	// phantom_file_path IS NOT NULL) against audio_files by
-	// file_path. Clears phantom metadata on resolved rows.
-	// No user input — all values come from the database.
-	result, err := l.db.ExecContext(`
-		UPDATE playlist_tracks SET
-			audio_file_id = (
-				SELECT af.id FROM audio_files af
-				WHERE af.file_path = playlist_tracks.phantom_file_path
-			),
-			phantom_title = NULL,
-			phantom_artist = NULL,
-			phantom_album = NULL,
-			phantom_duration_ms = NULL,
-			phantom_genre = NULL,
-			phantom_cover_art_path = NULL,
-			phantom_file_path = NULL
-		WHERE audio_file_id IS NULL
-			AND phantom_file_path IS NOT NULL
-			AND EXISTS (
-				SELECT 1 FROM audio_files af
-				WHERE af.file_path = playlist_tracks.phantom_file_path
-			)`)
-	if err != nil {
-		l.logger.Warn(
-			"could not resolve phantom playlist tracks",
-			"err", err,
-		)
-
-		return
-	}
-
-	resolved, _ := result.RowsAffected()
-	if resolved > 0 {
-		l.logger.Info(
-			"resolved phantom playlist tracks",
-			"count", resolved,
-		)
-	}
 }
 
 // progressInterval controls how often scan progress events are

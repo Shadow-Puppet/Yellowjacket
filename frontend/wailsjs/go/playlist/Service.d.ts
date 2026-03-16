@@ -45,6 +45,8 @@ export function RenamePlaylist(arg1:number,arg2:string):Promise<void>;
 
 export function ResolvePhantomTracks(arg1:number,arg2:Record<string, string>):Promise<void>;
 
+export function ResolvePhantomTracksAfterScan():Promise<void>;
+
 export function RestoreAllPlaylists():Promise<void>;
 
 export function SearchLibrary(arg1:string):Promise<Array<playlist.CandidateTrack>>;
