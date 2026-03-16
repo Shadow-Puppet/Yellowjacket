@@ -204,6 +204,9 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
     @query('#sort-dropdown')
     private sortDropdownPopup!: WaPopup;
 
+    /** Whether delegated event handlers have been attached to the virtualizer. */
+    private delegationAttached = false;
+
     private resizingColumn: number | null = null;
     private resizeStartX = 0;
     private resizeStartWidths: number[] = [];
@@ -1084,6 +1087,7 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
             virt.removeEventListener('dragstart', this.onDelegatedDragStart);
             virt.removeEventListener('dragend', this.onTrackDragEnd);
         }
+        this.delegationAttached = false;
 
         this.virtualizer?.removeEventListener(
             'visibilityChanged',
@@ -1121,20 +1125,35 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
 
     override firstUpdated() {
         this.initColumnWidths();
+        this.attachDelegation();
+    }
 
-        // Event delegation: attach stable handlers to the virtualizer
-        // so renderTrackRow creates zero per-item closures.
+    /**
+     * Attach delegated event handlers to the virtualizer.
+     * The virtualizer may not exist on first render (tracks
+     * still loading), so this is called from both
+     * firstUpdated() and updated() — guarded by a flag.
+     */
+    private attachDelegation() {
+        if (this.delegationAttached) return;
+
         const virt = this.virtualizer;
-        if (virt) {
-            virt.addEventListener('click', this.onDelegatedClick);
-            virt.addEventListener('dblclick', this.onDelegatedDblClick);
-            virt.addEventListener('contextmenu', this.onDelegatedContextMenu);
-            virt.addEventListener('dragstart', this.onDelegatedDragStart);
-            virt.addEventListener('dragend', this.onTrackDragEnd);
-        }
+
+        if (!virt) return;
+
+        virt.addEventListener('click', this.onDelegatedClick);
+        virt.addEventListener('dblclick', this.onDelegatedDblClick);
+        virt.addEventListener('contextmenu', this.onDelegatedContextMenu);
+        virt.addEventListener('dragstart', this.onDelegatedDragStart);
+        virt.addEventListener('dragend', this.onTrackDragEnd);
+        this.delegationAttached = true;
     }
 
     override updated(changed: Map<string, unknown>) {
+        // The virtualizer may not exist on first render
+        // (tracks still loading). Retry delegation here.
+        this.attachDelegation();
+
         // Recompute widths when the column config changes.
         const colKey = this.trackListCtrl.columnIds.join(
             ',',

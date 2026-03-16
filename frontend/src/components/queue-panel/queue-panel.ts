@@ -78,6 +78,9 @@ export class QueuePanel
 
     private dragImageEl: HTMLElement | null = null;
 
+    /** Whether delegated event handlers have been attached to the virtualizer. */
+    private delegationAttached = false;
+
     @query('#add-to-playlist-popup')
     private addToPlaylistPopup!: WaPopup;
 
@@ -485,6 +488,23 @@ export class QueuePanel
     `];
 
     override firstUpdated() {
+        this.attachVirtualizerHooks();
+    }
+
+    /**
+     * Attach scroll-error monkey-patch, mousedown listener,
+     * and delegated event handlers to the virtualizer.
+     * The virtualizer may not exist on first render (queue
+     * empty), so this is called from both firstUpdated()
+     * and updated() — guarded by a flag.
+     */
+    private attachVirtualizerHooks() {
+        if (this.delegationAttached) return;
+
+        const virtEl = this.virtualizer;
+
+        if (!virtEl) return;
+
         // Monkey-patch lit-virtualizer's scroll error correction to suppress it
         // during native scrollbar drag. Without this, the virtualizer calls
         // scrollTo() to "correct" sub-pixel estimation errors, which fights the
@@ -497,7 +517,7 @@ export class QueuePanel
         // calls scrollTo() internally. This monkey-patch is still needed
         // to suppress that internal correction during scrollbar drag.
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const virt = (this.virtualizer as any)?.[virtualizerRef];
+        const virt = (virtEl as any)?.[virtualizerRef];
         if (virt) {
             const origCorrect = virt._correctScrollError.bind(virt);
             virt._correctScrollError = () => {
@@ -511,21 +531,19 @@ export class QueuePanel
                 origCorrect();
             };
         }
-        this.virtualizer?.addEventListener(
+        virtEl.addEventListener(
             'mousedown',
             this.onVirtualizerMouseDown,
         );
 
         // Event delegation: attach stable handlers to the virtualizer
         // so renderTrackItem creates zero per-item closures.
-        const virtEl = this.virtualizer;
-        if (virtEl) {
-            virtEl.addEventListener('click', this.onDelegatedClick);
-            virtEl.addEventListener('dblclick', this.onDelegatedDblClick);
-            virtEl.addEventListener('contextmenu', this.onDelegatedContextMenu);
-            virtEl.addEventListener('dragstart', this.onDelegatedDragStart);
-            virtEl.addEventListener('dragend', this.onTrackDragEnd);
-        }
+        virtEl.addEventListener('click', this.onDelegatedClick);
+        virtEl.addEventListener('dblclick', this.onDelegatedDblClick);
+        virtEl.addEventListener('contextmenu', this.onDelegatedContextMenu);
+        virtEl.addEventListener('dragstart', this.onDelegatedDragStart);
+        virtEl.addEventListener('dragend', this.onTrackDragEnd);
+        this.delegationAttached = true;
     }
 
     override connectedCallback() {
@@ -608,9 +626,14 @@ export class QueuePanel
             virtEl.removeEventListener('dragstart', this.onDelegatedDragStart);
             virtEl.removeEventListener('dragend', this.onTrackDragEnd);
         }
+        this.delegationAttached = false;
     }
 
     override updated() {
+        // The virtualizer may not exist on first render
+        // (queue empty). Retry hooks here when it appears.
+        this.attachVirtualizerHooks();
+
         const currentIndex = this.queue.currentIndex;
 
         // Force virtualizer to re-render visible items when the
