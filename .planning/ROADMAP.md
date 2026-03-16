@@ -108,7 +108,10 @@ Plans:
   3. Search results respect the active library filter — searching with a library selected returns only matches from that library; with "All Libraries" selected, searches everything
   4. Playlists can contain tracks from multiple libraries — adding tracks from different libraries to the same playlist works naturally
   5. When a library is removed, its tracks in playlists become phantom entries — visually distinguished (greyed out / icon) with preserved title, artist, album metadata instead of disappearing
-**Plans:** TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 13-01-PLAN.md — Backend library-filtered sqlc queries + Go methods + FTS search
+- [ ] 13-02-PLAN.md — Frontend library filter store + dropdown UI + all view/search wiring + verification
 
 ### Phase 14: Performance Optimization
 **Goal:** Scrolling, navigation, and rendering are as smooth and fast as possible — scrolling feels like a native animation, navigation is instant, no unnecessary re-renders
@@ -143,7 +146,7 @@ Plans:
 | 10. Schema & Migration | 2/2 | Complete    | 2026-03-09 | - |
 | 11. Per-Library Scan Pipeline | 3/3 | Complete    | 2026-03-09 | - |
 | 12. Library CRUD & Data Integrity | v1.1 | Complete    | 2026-03-15 | 2026-03-15 |
-| 13. Library Views & Phantom Tracks | v1.1 | 0/? | Not started | - |
+| 13. Library Views & Phantom Tracks | v1.1 | 0/2 | Planned | - |
 | 14. Performance Optimization | 4/4 | Complete    | 2026-03-15 | - |
 
 ---
