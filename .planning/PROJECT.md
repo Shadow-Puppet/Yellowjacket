@@ -2,7 +2,7 @@
 
 ## What This Is
 
-YellowJacket is a cross-platform desktop music player built with Go (Wails v2) and TypeScript (Lit Web Components). It plays local music files (MP3, FLAC, OGG, WAV), manages a music library via SQLite, and provides queue management, playlists, cover art, and MPRIS media controls on Linux. The v1.0 Consolidation milestone strengthened the foundation — all known concurrency races are fixed, error handling is honest, SQL patterns are consolidated, performance bottlenecks are resolved, the frontend follows a consistent design language, and 84 unit tests provide a safety net for future work.
+YellowJacket is a cross-platform desktop music player built with Go (Wails v2) and TypeScript (Lit Web Components). It plays local music files (MP3, FLAC, OGG, WAV), manages multiple music library directories via SQLite, and provides queue management, playlists with cross-library support, cover art, configurable keyboard shortcuts, and MPRIS media controls on Linux. The v1.1 Multi-Library Support milestone added full library lifecycle management — users can add, rename, and remove library directories, scan them independently, filter all views by library, and playlists gracefully survive library removal with phantom track preservation and auto-resolution.
 
 ## Core Value
 
@@ -23,7 +23,6 @@ The music player works reliably and feels solid. Every interaction is correct, r
 - ✓ MPRIS2 media controls on Linux — existing
 - ✓ Theme configuration (accent color, background shade) — existing
 - ✓ Track list column configuration — existing
-- ✓ Multiple library directory support — existing
 - ✓ Adaptive scan concurrency based on disk type (SSD vs HDD) — existing
 - ✓ Two-phase queue initialization for instant UI response — existing
 - ✓ Event-driven frontend/backend synchronization — existing
@@ -41,13 +40,18 @@ The music player works reliably and feels solid. Every interaction is correct, r
 - ✓ Frontend repeat() with stable keys, queueMicrotask coalescing, classMap directives — v1.0
 - ✓ Design token system and visual consistency across all 15 components — v1.0
 - ✓ 84 unit tests: queue (29), config/player (10+), FTS5 search (15), library scan (13), entity cache (13+) — v1.0
+- ✓ Cancellable/pausable library scans with per-scan context cancellation — v1.1
+- ✓ Configurable keyboard shortcuts with record-style capture, scope-aware dispatch, conflict detection — v1.1
+- ✓ Multi-library schema (libraries table, library_id FK, phantom columns) with seamless migration — v1.1
+- ✓ Per-library scan pipeline with sequential queue coordination and per-library progress UI — v1.1
+- ✓ Library CRUD (add/rename/remove) with atomic orphan cleanup and phantom metadata preservation — v1.1
+- ✓ Library filter dropdown with all views (tracks, albums, artists, genres, search) respecting active filter — v1.1
+- ✓ Cross-library playlists with phantom track auto-resolution via ScanHooks + M3U8 matching — v1.1
+- ✓ Performance: CSS containment, view caching, event delegation, content-visibility, scroll polish — v1.1
 
 ### Active
 
-- [ ] Multi-library support — manage multiple library directories with per-library scanning and unified presentation
-- [ ] Library filtering — view tracks from all libraries or filter to a specific library
-- [ ] Cross-library playlists — playlists can reference tracks from any library
-- [ ] Phantom tracks — playlist entries preserved with metadata when a library is removed
+(No active requirements — next milestone not yet defined)
 
 ### Deferred (Future Milestones)
 
@@ -70,33 +74,28 @@ The music player works reliably and feels solid. Every interaction is correct, r
 - ORM or query builder — would fight existing sqlc architecture
 - Connection pooling for SQLite — meaningless with SetMaxOpenConns(1)
 
-## Current Milestone: v1.1 Multi-Library Support
+## Shipped Milestones
 
-**Goal:** Transform YellowJacket from a single-directory player into a multi-library music manager with unified presentation, per-library scanning, and graceful library lifecycle management.
+- **v1.0 Consolidation** (2026-03-05) — Foundation: races fixed, tests added, SQL consolidated, performance optimized
+- **v1.1 Multi-Library Support** (2026-03-16) — Multi-library: CRUD, per-library scanning, filtered views, cross-library playlists, phantom tracks
 
-**Target features:**
-- Library CRUD (add/rename/remove library directories via UI)
-- Per-library scanning (scan individual libraries, sequential coordination)
-- Unified presentation (merged "All Libraries" view, optional per-library filtering)
-- Cross-library playlists (playlists reference tracks from any library)
-- Phantom tracks (playlist entries preserved when library removed)
-- Config migration (TOML DirectoryPath -> DB libraries table)
+## Next Milestone
 
-**"Done" criteria:** Users can manage multiple library directories, scan them independently, view tracks from all or one library, and playlists survive library removal with phantom entries.
+Not yet defined. Run `/gsd-new-milestone` to plan the next milestone.
 
 ## Context
 
-**Current state (v1.0 shipped 2026-03-05):**
+**Current state (v1.1 shipped 2026-03-16):**
 - Go 1.25, Wails v2.10.2, Lit 3.2.1, SQLite via modernc.org/sqlite
-- ~22,450 Go LOC + ~28,600 TypeScript LOC + ~5,200 Go test LOC
-- ~15 backend packages, ~20 frontend components
+- ~27,700 Go LOC + ~28,800 TypeScript LOC + ~1,200 SQL LOC
+- ~15 backend packages, ~22 frontend components, 7 DB migrations
 - Strict linting (golangci-lint v2) and TypeScript strict mode
-- 84 unit tests covering queue, config, player, database, library packages
-- All concurrency races fixed, app runs clean under `-race`
-- SQL consolidated: track_metadata VIEW, sqlc.slice(), SAFETY comments
-- Frontend: design token system, virtual scrolling with stable keys, debounced store notifications
+- 84+ unit tests covering queue, config, player, database, library, migration packages
+- Multi-library architecture: libraries table, library_id FK, ScanHooks/RemovalHooks/RescanHooks callback patterns
+- SQL: track_metadata VIEW, sqlc-generated + hand-crafted with SAFETY comments, ByLibrary query variants
+- Frontend: design token system, virtual scrolling, view caching, event delegation, library filter state
 - Player tests still require hardware (skipped in CI)
-- No frontend unit tests (deferred to v2)
+- No frontend unit tests (deferred to future milestone)
 
 **Codebase analysis available in:**
 - `.planning/codebase/ARCHITECTURE.md`
@@ -127,6 +126,15 @@ The music player works reliably and feels solid. Every interaction is correct, r
 | AST-based event codegen | Deterministic declaration-order output, no regex fragility | ✓ Good — found LibraryConfigChanged gap automatically |
 | queueMicrotask over setTimeout | Synchronous microtask batching is more predictable than macrotask scheduling | ✓ Good — coalesces 8+ notifications per scan |
 | Design tokens via :host scope | Component-level token scope matches Lit's shadow DOM encapsulation | ✓ Good — consistent visual language achieved |
+| Hybrid model (library_id on audio_files only) | Physical files belong to libraries; logical entities shared | ✓ Good — clean separation, efficient orphan cleanup |
+| Libraries in DB, not TOML | CRUD through UI shouldn't require TOML manipulation | ✓ Good — seamless migration path |
+| SET NULL for playlist_tracks FK | Phantom tracks preserve playlist structure when library removed | ✓ Good — cross-library playlists work naturally |
+| Backend filtering, not frontend | Don't load 150K tracks when viewing one library | ✓ Good — ByLibrary SQL variants keep UI responsive |
+| Sequential scanning (scan queue) | SQLite single-writer makes parallel scans pointless | ✓ Good — simple, correct, no contention |
+| ScanHooks callback pattern | Breaks circular dep between library→playlist for phantom resolution | ✓ Good — follows RemovalHooks precedent |
+| M3U8-based phantom resolution | M3U8 files are source of truth for playlist file paths | ✓ Good — works for pre-existing and new phantoms |
+| View caching with display toggle | Instant navigation by keeping DOM alive, hiding with display:none | ✓ Good — zero-cost navigation between primary views |
+| Event delegation on virtualizer | Zero per-item closures; data-index + closest() pattern | ✓ Good — eliminated GC pressure on large lists |
 
 ---
-*Last updated: 2026-03-08 after v1.1 restructure for multi-library support*
+*Last updated: 2026-03-16 after v1.1 Multi-Library Support milestone*
