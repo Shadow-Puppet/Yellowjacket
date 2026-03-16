@@ -671,14 +671,23 @@ func TestInsertAndDeleteSearchIndex(t *testing.T) {
 		t.Fatal("SearchFTS after insert: got 0 results")
 	}
 
-	// DeleteSearchIndex on contentless FTS5 table (content='') is
-	// expected to error. The production orphan cleanup code in
-	// library.go logs this as a warning — stale index entries are
-	// harmless because JOINs on non-existent audio_file IDs return
-	// no results. RebuildSearchIndex handles bulk cleanup.
+	// DeleteSearchIndex now works with contentless_delete=1.
 	err = db.DeleteSearchIndex(1)
-	if err == nil {
-		t.Log("DeleteSearchIndex succeeded (unexpected for contentless FTS5)")
+	if err != nil {
+		t.Fatalf("DeleteSearchIndex: %v", err)
+	}
+
+	// Verify the deleted row is no longer findable.
+	results, err = db.SearchFTS("Test Track", 10)
+	if err != nil {
+		t.Fatalf("SearchFTS after delete: %v", err)
+	}
+
+	if len(results) != 0 {
+		t.Fatalf(
+			"SearchFTS after delete: got %d results, want 0",
+			len(results),
+		)
 	}
 }
 
@@ -794,6 +803,259 @@ func TestClearSearchIndex(t *testing.T) {
 
 	if len(results) != 0 {
 		t.Fatalf("SearchFTS after clear: got %d results, want 0", len(results))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// FTS5 row deletion and update cycle tests
+// ---------------------------------------------------------------------------
+
+func TestDeleteSearchIndex(t *testing.T) {
+	t.Parallel()
+
+	db := NewTestDB(t)
+	seedSearchData(t, db) // 7 tracks
+
+	tests := []struct {
+		name        string
+		rowid       int64
+		searchTerm  string
+		expectEmpty bool // true = search should return 0 results after delete
+	}{
+		{
+			name:        "delete existing rowid removes it from search",
+			rowid:       1, // "Bohemian Rhapsody"
+			searchTerm:  "Bohemian Rhapsody",
+			expectEmpty: true,
+		},
+		{
+			name:        "delete non-existent rowid is a no-op",
+			rowid:       9999,
+			searchTerm:  "queen",
+			expectEmpty: false, // other Queen tracks still present
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := db.DeleteSearchIndex(tt.rowid)
+			if err != nil {
+				t.Fatalf(
+					"DeleteSearchIndex(%d): %v",
+					tt.rowid, err,
+				)
+			}
+
+			results, err := db.SearchFTS(tt.searchTerm, 10)
+			if err != nil {
+				t.Fatalf("SearchFTS(%q): %v", tt.searchTerm, err)
+			}
+
+			if tt.expectEmpty && len(results) != 0 {
+				t.Errorf(
+					"SearchFTS(%q) after delete: got %d results, want 0",
+					tt.searchTerm, len(results),
+				)
+			}
+
+			if !tt.expectEmpty && len(results) == 0 {
+				t.Errorf(
+					"SearchFTS(%q) after delete: got 0 results, want > 0",
+					tt.searchTerm,
+				)
+			}
+		})
+	}
+
+	// Verify other tracks are unaffected — "Thunderstruck" should
+	// still be searchable after deleting rowid 1.
+	results, err := db.SearchFTS("Thunderstruck", 10)
+	if err != nil {
+		t.Fatalf("SearchFTS(Thunderstruck): %v", err)
+	}
+
+	if len(results) == 0 {
+		t.Error("SearchFTS(Thunderstruck): expected results, got 0")
+	}
+}
+
+func TestSearchIndexUpdateCycle(t *testing.T) {
+	t.Parallel()
+
+	db := NewTestDB(t)
+
+	// Set up minimal FK chain for a single track at rowid 100.
+	_, err := db.ExecContext(
+		"INSERT INTO artist_credit (id, text) VALUES (100, 'Old Artist')",
+	)
+	if err != nil {
+		t.Fatalf("insert artist_credit: %v", err)
+	}
+
+	_, err = db.ExecContext(
+		"INSERT INTO recordings (id, name, artist_credit_id) VALUES (100, 'Old Title', 100)",
+	)
+	if err != nil {
+		t.Fatalf("insert recording: %v", err)
+	}
+
+	_, err = db.ExecContext(
+		"INSERT INTO audio_files (id, file_path, length_milliseconds, file_type_id, recording_id) " +
+			"VALUES (100, '/test/update_cycle.mp3', 200000, 0, 100)",
+	)
+	if err != nil {
+		t.Fatalf("insert audio_file: %v", err)
+	}
+
+	// 1. Insert with old metadata.
+	if err := db.InsertSearchIndex(
+		100, "/test/update_cycle.mp3", "Old Title", "Old Artist", "Old Album",
+	); err != nil {
+		t.Fatalf("InsertSearchIndex (old): %v", err)
+	}
+
+	// Verify search for "Old Title" returns rowid 100.
+	results, err := db.SearchFTS("Old Title", 10)
+	if err != nil {
+		t.Fatalf("SearchFTS(Old Title): %v", err)
+	}
+
+	if len(results) == 0 {
+		t.Fatal("SearchFTS(Old Title): got 0 results after insert")
+	}
+
+	// 2. Delete rowid 100.
+	if err := db.DeleteSearchIndex(100); err != nil {
+		t.Fatalf("DeleteSearchIndex(100): %v", err)
+	}
+
+	// Verify "Old Title" no longer found.
+	results, err = db.SearchFTS("Old Title", 10)
+	if err != nil {
+		t.Fatalf("SearchFTS(Old Title) after delete: %v", err)
+	}
+
+	if len(results) != 0 {
+		t.Fatalf(
+			"SearchFTS(Old Title) after delete: got %d results, want 0",
+			len(results),
+		)
+	}
+
+	// 3. Update the recording name in the DB to simulate tag edit.
+	_, err = db.ExecContext(
+		"UPDATE recordings SET name = 'New Title' WHERE id = 100",
+	)
+	if err != nil {
+		t.Fatalf("update recording: %v", err)
+	}
+
+	// Also add a new artist_credit for the new artist.
+	_, err = db.ExecContext(
+		"INSERT INTO artist_credit (id, text) VALUES (101, 'New Artist')",
+	)
+	if err != nil {
+		t.Fatalf("insert new artist_credit: %v", err)
+	}
+
+	// 4. Re-insert rowid 100 with new metadata.
+	if err := db.InsertSearchIndex(
+		100, "/test/update_cycle.mp3", "New Title", "New Artist", "New Album",
+	); err != nil {
+		t.Fatalf("InsertSearchIndex (new): %v", err)
+	}
+
+	// 5. Verify "New Title" is now findable.
+	results, err = db.SearchFTS("New Title", 10)
+	if err != nil {
+		t.Fatalf("SearchFTS(New Title): %v", err)
+	}
+
+	if len(results) == 0 {
+		t.Fatal("SearchFTS(New Title): got 0 results after reinsert")
+	}
+
+	// 6. Verify "Old Title" still returns no results (no ghost entries).
+	results, err = db.SearchFTS("Old Title", 10)
+	if err != nil {
+		t.Fatalf("SearchFTS(Old Title) after reinsert: %v", err)
+	}
+
+	if len(results) != 0 {
+		t.Fatalf(
+			"SearchFTS(Old Title) after reinsert: got %d results, want 0 (ghost entry)",
+			len(results),
+		)
+	}
+}
+
+func TestClearSearchIndexPreservesSchema(t *testing.T) {
+	t.Parallel()
+
+	db := NewTestDB(t)
+	seedSearchData(t, db) // 7 tracks
+
+	// Verify data exists before clear.
+	results, err := db.SearchFTS("queen", 10)
+	if err != nil {
+		t.Fatalf("SearchFTS before clear: %v", err)
+	}
+
+	if len(results) == 0 {
+		t.Fatal("SearchFTS before clear: got 0 results")
+	}
+
+	// Clear the search index.
+	if err := db.ClearSearchIndex(); err != nil {
+		t.Fatalf("ClearSearchIndex: %v", err)
+	}
+
+	// Verify all data is gone.
+	results, err = db.SearchFTS("queen", 10)
+	if err != nil {
+		t.Fatalf("SearchFTS after clear: %v", err)
+	}
+
+	if len(results) != 0 {
+		t.Fatalf(
+			"SearchFTS after clear: got %d results, want 0",
+			len(results),
+		)
+	}
+
+	// Re-insert data and verify the recreated table supports
+	// both insert and delete (contentless_delete=1 preserved).
+	if err := db.InsertSearchIndex(
+		1, "/music/queen/bohemian_rhapsody.mp3",
+		"Bohemian Rhapsody", "Queen", "A Night at the Opera",
+	); err != nil {
+		t.Fatalf("InsertSearchIndex after clear: %v", err)
+	}
+
+	results, err = db.SearchFTS("Bohemian", 10)
+	if err != nil {
+		t.Fatalf("SearchFTS after reinsert: %v", err)
+	}
+
+	if len(results) == 0 {
+		t.Fatal("SearchFTS after reinsert: got 0 results")
+	}
+
+	// Verify delete still works on the recreated table.
+	if err := db.DeleteSearchIndex(1); err != nil {
+		t.Fatalf("DeleteSearchIndex after clear+reinsert: %v", err)
+	}
+
+	results, err = db.SearchFTS("Bohemian", 10)
+	if err != nil {
+		t.Fatalf("SearchFTS after clear+reinsert+delete: %v", err)
+	}
+
+	if len(results) != 0 {
+		t.Fatalf(
+			"SearchFTS after clear+reinsert+delete: got %d results, want 0",
+			len(results),
+		)
 	}
 }
 
