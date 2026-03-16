@@ -7,8 +7,8 @@
 ## Milestones
 
 - ✅ **v1.0 Consolidation** — Phases 1-8 (shipped 2026-03-05) — [archive](milestones/v1.0-ROADMAP.md)
-- 🔄 **v1.1 Multi-Library Support** — Phase 9 complete, Phases 10-13 in progress
-- 🔄 **Performance Optimization** — Phase 14 (cross-cutting, parallel to v1.1)
+- ✅ **v1.1 Multi-Library Support** — Phases 9-13 complete (shipped 2026-03-16)
+- ✅ **Performance Optimization** — Phase 14 complete (shipped 2026-03-15)
 
 ## Phases
 
@@ -110,8 +110,8 @@ Plans:
   5. When a library is removed, its tracks in playlists become phantom entries — visually distinguished (greyed out / icon) with preserved title, artist, album metadata instead of disappearing
 **Plans:** 2/2 plans complete
 Plans:
-- [ ] 13-01-PLAN.md — Backend library-filtered sqlc queries + Go methods + FTS search
-- [ ] 13-02-PLAN.md — Frontend library filter store + dropdown UI + all view/search wiring + verification
+- [x] 13-01-PLAN.md — Backend library-filtered sqlc queries + Go methods + FTS search
+- [x] 13-02-PLAN.md — Frontend library filter store + dropdown UI + all view/search wiring + verification
 
 ### Phase 14: Performance Optimization
 **Goal:** Scrolling, navigation, and rendering are as smooth and fast as possible — scrolling feels like a native animation, navigation is instant, no unnecessary re-renders
@@ -125,10 +125,10 @@ Plans:
   5. A profiling guide documents how to diagnose performance issues using pprof (backend) and DevTools (frontend)
 **Plans:** 4/4 plans complete
 Plans:
-- [ ] 14-01-PLAN.md — CSS containment + GPU layer promotion on all scroll containers
-- [ ] 14-02-PLAN.md — View caching navigation system (replace innerHTML destruction)
-- [ ] 14-03-PLAN.md — Render hot-path optimization (closure elimination, store granularity)
-- [ ] 14-04-PLAN.md — Scroll event optimization, profiling guide, performance verification checkpoint
+- [x] 14-01-PLAN.md — CSS containment + GPU layer promotion on all scroll containers
+- [x] 14-02-PLAN.md — View caching navigation system (replace innerHTML destruction)
+- [x] 14-03-PLAN.md — Render hot-path optimization (closure elimination, store granularity)
+- [x] 14-04-PLAN.md — Scroll event optimization, profiling guide, performance verification checkpoint
 
 ## Progress
 
@@ -143,12 +143,12 @@ Plans:
 | 7. Backend Performance | v1.0 | 2/2 | Complete | 2026-03-05 |
 | 8. Frontend Performance & UX | v1.0 | 4/4 | Complete | 2026-03-05 |
 | 9. Scan Cancellation & Keyboard Shortcuts | v1.1 | 5/5 | Complete | 2026-03-07 |
-| 10. Schema & Migration | 2/2 | Complete    | 2026-03-09 | - |
-| 11. Per-Library Scan Pipeline | 3/3 | Complete    | 2026-03-09 | - |
-| 12. Library CRUD & Data Integrity | v1.1 | Complete    | 2026-03-15 | 2026-03-15 |
-| 13. Library Views & Phantom Tracks | 2/2 | Complete   | 2026-03-16 | - |
-| 14. Performance Optimization | 4/4 | Complete    | 2026-03-15 | - |
+| 10. Schema & Migration | v1.1 | 2/2 | Complete | 2026-03-09 |
+| 11. Per-Library Scan Pipeline | v1.1 | 3/3 | Complete | 2026-03-09 |
+| 12. Library CRUD & Data Integrity | v1.1 | 2/2 | Complete | 2026-03-15 |
+| 13. Library Views & Phantom Tracks | v1.1 | 2/2 | Complete | 2026-03-16 |
+| 14. Performance Optimization | Perf | 4/4 | Complete | 2026-03-15 |
 
 ---
 *Roadmap created: 2026-02-27*
-*Last updated: 2026-03-14 — Phase 14 (Performance Optimization) added with 4 plans*
+*Last updated: 2026-03-16 — v1.1 milestone complete (Phases 9-14 all done)*

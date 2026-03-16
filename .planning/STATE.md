@@ -155,6 +155,9 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 | Client-side search with filtered data source | rankTracks filters already-loaded tracks; no backend SearchTracksByLibrary call needed |
 | Native select for library filter dropdown | Compact, accessible, matches top bar height; no custom component overhead |
 | getAlbumsByArtistNameCached returns null when filter active | Avoids stale cross-library data; forces backend query for consistency |
+| ScanHooks callback for phantom resolution | Mirrors RemovalHooks/RescanHooks pattern; avoids circular dependency between library and playlist packages |
+| phantom_file_path column on playlist_tracks | Stored at removal time for post-scan matching; enables automatic phantom resolution |
+| M3U8-based phantom resolution over SQL-only | Reads playlist files to match by position and file path; handles both pre-existing and new phantoms |
 
 ### Warnings (carry forward)
 
@@ -182,9 +185,9 @@ Decisions from v1.0 are archived in PROJECT.md Key Decisions table. Key patterns
 ### Last Session
 
 **Date:** 2026-03-16
-**What happened:** Executed Plan 13-02 — added library filter dropdown to top bar, wired all browse/detail views to respect library filter via ByLibrary conditional queries. 1 task (auto), 12 files modified. Checkpoint pending for human verification.
-**Where we stopped:** Completed 13-02-PLAN.md — Phase 13 complete (2/2 plans), awaiting human verification
-**Next action:** Human verification of library filter, cross-library playlists, and phantom tracks
+**What happened:** Completed Plan 13-02 — library filter dropdown in top bar, all views wired to ByLibrary queries, phantom track auto-resolution via ScanHooks. Checkpoint APPROVED — all 7 requirements verified (VIEW-01–04, PLAY-01–03). Additional bugfixes: virtualizer event delegation race condition, phantom auto-resolution after re-scan.
+**Where we stopped:** Completed 13-02-PLAN.md — Phase 13 complete (2/2 plans), v1.1 milestone complete
+**Next action:** v1.1 milestone shipped — all phases (9-14) complete
 
 ---
 *State initialized: 2026-02-27*
