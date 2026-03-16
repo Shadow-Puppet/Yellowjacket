@@ -370,6 +370,65 @@ func toRelativePath(absolutePath, libraryRoot string) string {
 	return rel
 }
 
+// resolveM3UPath resolves a relative M3U path against multiple
+// library roots, returning the first absolute path that exists in
+// the knownPaths set. If the path is already absolute and known,
+// it is returned as-is. Falls back to the first root if no match
+// is found, preserving current behavior for phantom tracks.
+func resolveM3UPath(
+	relativePath string,
+	libraryRoots []string,
+	knownPaths map[string]struct{},
+) string {
+	if filepath.IsAbs(relativePath) {
+		if _, ok := knownPaths[relativePath]; ok {
+			return relativePath
+		}
+
+		return relativePath
+	}
+
+	for _, root := range libraryRoots {
+		absPath := filepath.Join(root, relativePath)
+		if _, ok := knownPaths[absPath]; ok {
+			return absPath
+		}
+	}
+
+	// Fallback: use first root (preserves current behavior
+	// for phantom tracks).
+	if len(libraryRoots) > 0 {
+		return filepath.Join(libraryRoots[0], relativePath)
+	}
+
+	return relativePath
+}
+
+// toRelativePathMultiRoot converts an absolute path to a relative
+// path using the first library root that contains the path.
+// If no root matches, the absolute path is returned unchanged.
+func toRelativePathMultiRoot(
+	absolutePath string,
+	libraryRoots []string,
+) string {
+	for _, root := range libraryRoots {
+		if root == "" {
+			continue
+		}
+
+		rel, err := filepath.Rel(root, absolutePath)
+		if err != nil {
+			continue
+		}
+
+		if !strings.HasPrefix(rel, "..") {
+			return rel
+		}
+	}
+
+	return absolutePath
+}
+
 // isValidM3UExtension checks whether a file extension is a
 // recognized M3U variant.
 func isValidM3UExtension(ext string) bool {
@@ -414,17 +473,18 @@ func extractPlaylistID(filePath string) int64 {
 }
 
 // removeM3UEntries removes entries from a slice whose resolved
-// absolute paths appear in the target set.
+// absolute paths appear in the target set. Each entry is resolved
+// against all library roots.
 func removeM3UEntries(
 	entries []m3uEntry,
 	targetAbsPaths map[string]struct{},
-	libraryRoot string,
+	libraryRoots []string,
 ) []m3uEntry {
 	result := make([]m3uEntry, 0, len(entries))
 
 	for _, e := range entries {
-		absPath := toAbsolutePath(
-			e.RelativePath, libraryRoot,
+		absPath := resolveM3UPath(
+			e.RelativePath, libraryRoots, targetAbsPaths,
 		)
 		if _, remove := targetAbsPaths[absPath]; remove {
 			continue
@@ -438,19 +498,26 @@ func removeM3UEntries(
 
 // replaceM3UEntryPaths replaces the relative paths of entries
 // whose resolved absolute paths match keys in the replacements
-// map. Values are new relative paths.
+// map. Values are new relative paths. Each entry is resolved
+// against all library roots.
 func replaceM3UEntryPaths(
 	entries []m3uEntry,
 	replacements map[string]string,
-	libraryRoot string,
+	libraryRoots []string,
 ) []m3uEntry {
+	// Build a set of replacement keys for resolveM3UPath lookup.
+	keySet := make(map[string]struct{}, len(replacements))
+	for k := range replacements {
+		keySet[k] = struct{}{}
+	}
+
 	result := make([]m3uEntry, len(entries))
 
 	for i, e := range entries {
 		result[i] = e
 
-		absPath := toAbsolutePath(
-			e.RelativePath, libraryRoot,
+		absPath := resolveM3UPath(
+			e.RelativePath, libraryRoots, keySet,
 		)
 
 		if newRel, ok := replacements[absPath]; ok {
@@ -462,16 +529,21 @@ func replaceM3UEntryPaths(
 }
 
 // findM3UEntry finds the M3U entry whose resolved absolute path
-// matches the given target path. Returns the entry and its index,
-// or -1 if not found.
+// matches the given target path. Each entry is resolved against
+// all library roots. Returns the entry and its index, or -1 if
+// not found.
 func findM3UEntry(
 	entries []m3uEntry,
 	targetAbsPath string,
-	libraryRoot string,
+	libraryRoots []string,
 ) (m3uEntry, int) {
+	targetSet := map[string]struct{}{
+		targetAbsPath: {},
+	}
+
 	for i, e := range entries {
-		absPath := toAbsolutePath(
-			e.RelativePath, libraryRoot,
+		absPath := resolveM3UPath(
+			e.RelativePath, libraryRoots, targetSet,
 		)
 		if absPath == targetAbsPath {
 			return e, i

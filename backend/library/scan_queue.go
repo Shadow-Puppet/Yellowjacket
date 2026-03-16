@@ -111,7 +111,9 @@ func (l *Library) SoftScanAllLibraries() error {
 	// dynamic library_id unsupported by sqlc. No user input.
 	for _, lib := range libs {
 		result, claimErr := l.db.ExecContext(
-			`UPDATE audio_files SET library_id = ? WHERE library_id = 0 AND file_path LIKE ? || '%'`,
+			`UPDATE audio_files SET library_id = ?`+
+				` WHERE library_id = 0`+
+				` AND file_path LIKE ? || '%'`,
 			lib.ID, lib.Path+"/",
 		)
 		if claimErr != nil {

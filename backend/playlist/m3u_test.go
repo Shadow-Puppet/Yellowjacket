@@ -731,7 +731,9 @@ func TestRemoveM3UEntries(t *testing.T) {
 		"/music/Artist/Song2.flac": {},
 	}
 
-	result := removeM3UEntries(entries, targets, "/music")
+	result := removeM3UEntries(
+		entries, targets, []string{"/music"},
+	)
 
 	if len(result) != 2 {
 		t.Fatalf("expected 2 entries, got %d", len(result))
@@ -765,7 +767,9 @@ func TestRemoveM3UEntriesAll(t *testing.T) {
 		"/music/Song.flac": {},
 	}
 
-	result := removeM3UEntries(entries, targets, "/music")
+	result := removeM3UEntries(
+		entries, targets, []string{"/music"},
+	)
 
 	if len(result) != 0 {
 		t.Errorf("expected 0 entries, got %d", len(result))
@@ -793,7 +797,7 @@ func TestReplaceM3UEntryPaths(t *testing.T) {
 	}
 
 	result := replaceM3UEntryPaths(
-		entries, replacements, "/music",
+		entries, replacements, []string{"/music"},
 	)
 
 	if len(result) != 2 {
@@ -836,7 +840,8 @@ func TestFindM3UEntry(t *testing.T) {
 	}
 
 	entry, idx := findM3UEntry(
-		entries, "/music/Artist/Song2.flac", "/music",
+		entries, "/music/Artist/Song2.flac",
+		[]string{"/music"},
 	)
 
 	if idx != 1 {
@@ -853,7 +858,8 @@ func TestFindM3UEntry(t *testing.T) {
 
 	// Not found.
 	_, idx = findM3UEntry(
-		entries, "/music/Artist/Missing.flac", "/music",
+		entries, "/music/Artist/Missing.flac",
+		[]string{"/music"},
 	)
 
 	if idx != -1 {
