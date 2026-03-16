@@ -31,7 +31,7 @@ Last activity: 2026-03-16 — Completed 15-02 (AtomicWrite utility)
 
 | Phase | Status |
 |-------|--------|
-| 15. Schema Migration & Write Safety | In progress (1/2 plans) |
+| 15. Schema Migration & Write Safety | Complete (2/2 plans) |
 | 16. Tag Writing & Database Sync | Not started |
 | 17. Single Track Edit | Not started |
 | 18. Batch Edit | Not started |
@@ -58,6 +58,7 @@ Last activity: 2026-03-16 — Completed 15-02 (AtomicWrite utility)
 | Phase | Plan | Duration | Tasks | Files |
 |-------|------|----------|-------|-------|
 | 15 | 01 | 15min | 2 | 5 |
+| 15 | 02 | 16min | 2 | 2 |
 
 ## Accumulated Context
 
@@ -79,6 +80,8 @@ Decisions from v1.0 and v1.1 are archived in PROJECT.md Key Decisions table. Key
 | Decision | Rationale |
 |----------|-----------|
 | Inlined migration 8 SQL rather than calling DB struct methods | `runMigrations` receives raw `*sql.DB`, not `*DB` — cannot call receiver methods |
+| Deterministic `.yj-tmp` suffix for temp files | Enables reliable orphan cleanup without directory scanning |
+| `*slog.Logger` as first param for AtomicWrite | Matches codebase convention — all packages accept logger as first arg |
 
 ### v1.2 Roadmap Decisions
 
@@ -119,9 +122,9 @@ Decisions from v1.0 and v1.1 are archived in PROJECT.md Key Decisions table. Key
 ### Last Session
 
 **Date:** 2026-03-16
-**What happened:** Executed Phase 15 Plan 01 — migrated FTS5 search_index to contentless_delete=1, implemented real DeleteSearchIndex, added migration 8, added 3 new tests.
-**Where we stopped:** Completed 15-01-PLAN.md
-**Next action:** Execute 15-02-PLAN.md (atomic write utility)
+**What happened:** Executed Phase 15 Plan 02 — created backend/fileutil package with AtomicWrite function (callback API, .yj-tmp suffix, permission preservation, orphan cleanup, cross-device rejection) and 7 comprehensive tests.
+**Where we stopped:** Completed 15-02-PLAN.md — Phase 15 complete
+**Next action:** `/gsd-plan-phase 16` — Tag Writing & Database Sync
 
 ---
 *State initialized: 2026-02-27*
@@ -135,4 +138,4 @@ Decisions from v1.0 and v1.1 are archived in PROJECT.md Key Decisions table. Key
 | 19 | fix phantom playlist tracks with multi-root path resolution | 2026-03-16 | 9144ded | [19-fix-phantom-playlist-tracks](./quick/19-fix-phantom-playlist-tracks/) |
 
 Last activity: 2026-03-16 - Completed quick task 19: fix phantom playlist tracks with multi-root path resolution
-*Last updated: 2026-03-16 — Completed 15-01 (FTS5 migration + delete support)*
+*Last updated: 2026-03-16 — Completed 15-02 (AtomicWrite utility) — Phase 15 complete*

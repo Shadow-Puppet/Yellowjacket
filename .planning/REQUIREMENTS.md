@@ -10,7 +10,7 @@ Requirements for v1.2 Tag Editing milestone. Each maps to roadmap phases.
 ### Schema & Safety
 
 - [x] **SCHEMA-01**: FTS5 search_index migrated to `contentless_delete=1` for safe row-level updates
-- [ ] **SCHEMA-02**: Atomic file write utility (write-to-temp-then-rename in same directory)
+- [x] **SCHEMA-02**: Atomic file write utility (write-to-temp-then-rename in same directory)
 
 ### Tag Writing
 
@@ -18,7 +18,7 @@ Requirements for v1.2 Tag Editing milestone. Each maps to roadmap phases.
 - [ ] **WRITE-02**: Write metadata tags to FLAC files via Vorbis Comments
 - [ ] **WRITE-03**: Write metadata tags to OGG Vorbis files via custom page rewriter
 - [ ] **WRITE-04**: Embed cover art image (JPEG/PNG) in MP3 and FLAC files
-- [ ] **WRITE-05**: All file writes use atomic write-to-temp-then-rename to prevent corruption
+- [x] **WRITE-05**: All file writes use atomic write-to-temp-then-rename to prevent corruption
 - [ ] **WRITE-06**: Currently-playing file is stopped before writing (player safety)
 
 ### Database Sync
@@ -92,12 +92,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | SCHEMA-01 | Phase 15 | Complete |
-| SCHEMA-02 | Phase 15 | Pending |
+| SCHEMA-02 | Phase 15 | Complete |
 | WRITE-01 | Phase 16 | Pending |
 | WRITE-02 | Phase 16 | Pending |
 | WRITE-03 | Phase 19 | Pending |
 | WRITE-04 | Phase 16 | Pending |
-| WRITE-05 | Phase 15 | Pending |
+| WRITE-05 | Phase 15 | Complete |
 | WRITE-06 | Phase 16 | Pending |
 | SYNC-01 | Phase 16 | Pending |
 | SYNC-02 | Phase 16 | Pending |
