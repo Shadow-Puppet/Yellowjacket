@@ -312,6 +312,16 @@ func runMigrations(
 		}
 	}
 
+	// Migration 7: add phantom_file_path to playlist_tracks
+	// for automatic phantom resolution after library re-scans.
+	if version < 7 {
+		if err := migration7PhantomFilePath(
+			ctx, db, logger,
+		); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -1026,6 +1036,44 @@ func migration6MultiLibrary(
 	}
 
 	logger.Info("migration 6 complete")
+
+	return nil
+}
+
+// migration7PhantomFilePath adds the phantom_file_path column to
+// playlist_tracks so that phantom entries can be automatically
+// re-linked to audio_files after a library scan.
+func migration7PhantomFilePath(
+	ctx context.Context,
+	db *sql.DB,
+	logger *slog.Logger,
+) error {
+	logger.Info(
+		"applying migration 7: phantom_file_path column",
+	)
+
+	// SAFETY: ALTER TABLE ADD COLUMN for new nullable column.
+	if _, err := db.ExecContext(ctx,
+		`ALTER TABLE playlist_tracks
+		 ADD COLUMN phantom_file_path TEXT`,
+	); err != nil {
+		if !isDuplicateColumnErr(err) {
+			return fmt.Errorf(
+				"migration 7: could not add column: %w",
+				err,
+			)
+		}
+	}
+
+	if _, err := db.ExecContext(
+		ctx, "PRAGMA user_version = 7",
+	); err != nil {
+		return fmt.Errorf(
+			"could not set user_version to 7: %w", err,
+		)
+	}
+
+	logger.Info("migration 7 complete")
 
 	return nil
 }

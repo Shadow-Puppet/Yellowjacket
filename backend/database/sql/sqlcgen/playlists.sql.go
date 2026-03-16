@@ -16,7 +16,7 @@ INSERT INTO playlist_tracks (
     phantom_title, phantom_artist, phantom_album,
     phantom_duration_ms, phantom_genre, phantom_cover_art_path
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, playlist_id, audio_file_id, position, phantom_title, phantom_artist, phantom_album, phantom_duration_ms, phantom_genre, phantom_cover_art_path
+RETURNING id, playlist_id, audio_file_id, position, phantom_title, phantom_artist, phantom_album, phantom_duration_ms, phantom_genre, phantom_cover_art_path, phantom_file_path
 `
 
 type AddPlaylistTrackParams struct {
@@ -55,6 +55,7 @@ func (q *Queries) AddPlaylistTrack(ctx context.Context, arg AddPlaylistTrackPara
 		&i.PhantomDurationMs,
 		&i.PhantomGenre,
 		&i.PhantomCoverArtPath,
+		&i.PhantomFilePath,
 	)
 	return i, err
 }

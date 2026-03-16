@@ -244,10 +244,12 @@ func (l *Library) RemoveLibrary(id int64) (*RemovalSummary, error) {
 			phantom_album = sub.album,
 			phantom_duration_ms = sub.duration,
 			phantom_genre = sub.genre,
-			phantom_cover_art_path = sub.cover_art_path
+			phantom_cover_art_path = sub.cover_art_path,
+			phantom_file_path = sub.file_path
 		FROM (
 			SELECT
 				pt.id AS pt_id,
+				af.file_path AS file_path,
 				COALESCE(r.name, '') AS title,
 				COALESCE(ac.text, '') AS artist,
 				COALESCE(rg.name, '') AS album,

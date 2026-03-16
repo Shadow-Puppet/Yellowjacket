@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS playlist_tracks (
     phantom_duration_ms INTEGER,
     phantom_genre TEXT,
     phantom_cover_art_path TEXT,
+    phantom_file_path TEXT,
     FOREIGN KEY(playlist_id) REFERENCES playlists(id) ON DELETE CASCADE,
     FOREIGN KEY(audio_file_id) REFERENCES audio_files(id) ON DELETE SET NULL
 );

@@ -91,6 +91,7 @@ func TestMigration6FreshDB(t *testing.T) {
 		"phantom_duration_ms":    false,
 		"phantom_genre":          false,
 		"phantom_cover_art_path": false,
+		"phantom_file_path":      false,
 	}
 
 	audioFileIDNullable := false
@@ -171,7 +172,7 @@ func TestMigration6FreshDB(t *testing.T) {
 		t.Error("track_metadata VIEW does not contain library_id")
 	}
 
-	// Verify user_version >= 6.
+	// Verify user_version >= 7.
 	var version int
 
 	verRows, err := db.QueryContext("PRAGMA user_version")
@@ -193,8 +194,8 @@ func TestMigration6FreshDB(t *testing.T) {
 
 	_ = verRows.Close()
 
-	if version < 6 {
-		t.Errorf("user_version = %d, want >= 6", version)
+	if version < 7 {
+		t.Errorf("user_version = %d, want >= 7", version)
 	}
 
 	// Verify libraries table has only the sentinel row on fresh DB.

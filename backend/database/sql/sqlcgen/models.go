@@ -90,6 +90,7 @@ type PlaylistTrack struct {
 	PhantomDurationMs   sql.NullInt64
 	PhantomGenre        sql.NullString
 	PhantomCoverArtPath sql.NullString
+	PhantomFilePath     sql.NullString
 }
 
 type Queue struct {
