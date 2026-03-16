@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Tag Editing
-status: roadmap_created
-last_updated: "2026-03-16T21:00:00.000Z"
+status: executing
+last_updated: "2026-03-16T22:13:45.000Z"
 progress:
   total_phases: 5
-  completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
+  completed_phases: 1
+  total_plans: 2
+  completed_plans: 2
 ---
 
 # YellowJacket — Project State
@@ -22,16 +22,16 @@ See: .planning/PROJECT.md (updated 2026-03-16)
 
 ## Current Position
 
-Phase: Phase 15 — Schema Migration & Write Safety (not started)
-Plan: —
-Status: Roadmap created, ready for phase planning
-Last activity: 2026-03-16 — v1.2 roadmap created (5 phases, 20 requirements mapped)
+Phase: Phase 15 — Schema Migration & Write Safety (complete)
+Plan: 2 of 2 complete
+Status: Phase 15 complete — ready for Phase 16 planning
+Last activity: 2026-03-16 — Completed 15-02 (AtomicWrite utility)
 
 ### Phase Overview
 
 | Phase | Status |
 |-------|--------|
-| 15. Schema Migration & Write Safety | Not started |
+| 15. Schema Migration & Write Safety | In progress (1/2 plans) |
 | 16. Tag Writing & Database Sync | Not started |
 | 17. Single Track Edit | Not started |
 | 18. Batch Edit | Not started |
@@ -57,7 +57,7 @@ Last activity: 2026-03-16 — v1.2 roadmap created (5 phases, 20 requirements ma
 
 | Phase | Plan | Duration | Tasks | Files |
 |-------|------|----------|-------|-------|
-| (v1.2 plans not yet started) | | | | |
+| 15 | 01 | 15min | 2 | 5 |
 
 ## Accumulated Context
 
@@ -73,6 +73,12 @@ Decisions from v1.0 and v1.1 are archived in PROJECT.md Key Decisions table. Key
 - `.renderItem` + `.keyFunction` (not `repeat()` children) for lit-virtualizer
 - Upsert-and-relink for shared entities (never mutate shared artist/album/genre rows)
 - ScanHooks/RemovalHooks/RescanHooks callback patterns for cross-package coordination
+
+### v1.2 Execution Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| Inlined migration 8 SQL rather than calling DB struct methods | `runMigrations` receives raw `*sql.DB`, not `*DB` — cannot call receiver methods |
 
 ### v1.2 Roadmap Decisions
 
@@ -92,7 +98,7 @@ Decisions from v1.0 and v1.1 are archived in PROJECT.md Key Decisions table. Key
 - Player lock ordering (`p.mu` before `speaker.Lock()`, goroutine dispatch in beep callback)
 - modernc.org/libc version must match exactly when updating modernc.org/sqlite
 - `@lit-labs/signals` is experimental (v0.2.0) — not blocking but noted
-- FTS5 contentless can't DELETE rows — **SCHEMA-01 fixes this** with contentless_delete migration
+- ~~FTS5 contentless can't DELETE rows~~ — **RESOLVED: SCHEMA-01 completed** — contentless_delete=1 migration applied
 - Orphan cleanup must not delete shared entities across libraries (reference-counting bottom-up)
 - FLAC files require full rewrite for tag changes — atomic write-to-temp-then-rename mandatory
 - Currently-playing file must be stopped before writing (WRITE-06) — Windows file locking is especially strict
@@ -113,9 +119,9 @@ Decisions from v1.0 and v1.1 are archived in PROJECT.md Key Decisions table. Key
 ### Last Session
 
 **Date:** 2026-03-16
-**What happened:** Created v1.2 Tag Editing roadmap — 5 phases (15-19) covering all 20 requirements. Derived phases from requirement clustering: schema foundation → tag writers + DB sync → single-track UI → batch UI → OGG stretch.
-**Where we stopped:** Roadmap created, ready for phase planning
-**Next action:** `/gsd-plan-phase 15` — Schema Migration & Write Safety
+**What happened:** Executed Phase 15 Plan 01 — migrated FTS5 search_index to contentless_delete=1, implemented real DeleteSearchIndex, added migration 8, added 3 new tests.
+**Where we stopped:** Completed 15-01-PLAN.md
+**Next action:** Execute 15-02-PLAN.md (atomic write utility)
 
 ---
 *State initialized: 2026-02-27*
@@ -129,4 +135,4 @@ Decisions from v1.0 and v1.1 are archived in PROJECT.md Key Decisions table. Key
 | 19 | fix phantom playlist tracks with multi-root path resolution | 2026-03-16 | 9144ded | [19-fix-phantom-playlist-tracks](./quick/19-fix-phantom-playlist-tracks/) |
 
 Last activity: 2026-03-16 - Completed quick task 19: fix phantom playlist tracks with multi-root path resolution
-*Last updated: 2026-03-16 — v1.2 roadmap created*
+*Last updated: 2026-03-16 — Completed 15-01 (FTS5 migration + delete support)*

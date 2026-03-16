@@ -9,7 +9,7 @@ Requirements for v1.2 Tag Editing milestone. Each maps to roadmap phases.
 
 ### Schema & Safety
 
-- [ ] **SCHEMA-01**: FTS5 search_index migrated to `contentless_delete=1` for safe row-level updates
+- [x] **SCHEMA-01**: FTS5 search_index migrated to `contentless_delete=1` for safe row-level updates
 - [ ] **SCHEMA-02**: Atomic file write utility (write-to-temp-then-rename in same directory)
 
 ### Tag Writing
@@ -91,7 +91,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SCHEMA-01 | Phase 15 | Pending |
+| SCHEMA-01 | Phase 15 | Complete |
 | SCHEMA-02 | Phase 15 | Pending |
 | WRITE-01 | Phase 16 | Pending |
 | WRITE-02 | Phase 16 | Pending |

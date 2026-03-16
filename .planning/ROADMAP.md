@@ -40,7 +40,7 @@
 
 ### v1.2 Tag Editing (Phases 15-19)
 
-- [ ] **Phase 15: Schema Migration & Write Safety** — FTS5 contentless_delete migration and atomic file write utility
+- [x] **Phase 15: Schema Migration & Write Safety** — FTS5 contentless_delete migration and atomic file write utility (completed 2026-03-16)
 - [ ] **Phase 16: Tag Writing & Database Sync** — Format-specific tag writers (MP3, FLAC, cover art) with inline DB + FTS5 update pipeline
 - [ ] **Phase 17: Single Track Edit** — End-to-end single track editing: UI → file write → DB sync → view refresh
 - [ ] **Phase 18: Batch Edit** — Multi-select batch editing with three-state field model, progress, and batch cover art
@@ -57,7 +57,10 @@
   2. Existing search functionality is unaffected — all current queries, ranking, and library-filtered search continue to work identically after migration
   3. The atomic write utility writes to a temp file in the same directory as the target, then renames — if the process crashes mid-write, the original file is intact and the temp file is cleaned up on next startup
   4. Unit tests verify atomic write behavior: successful write, crash simulation (temp file left behind), and cross-directory rejection
-**Plans:** TBD
+**Plans:** 2/2 plans complete
+Plans:
+- [ ] 15-01-PLAN.md — FTS5 contentless_delete migration and row-level DELETE support
+- [ ] 15-02-PLAN.md — Atomic file write utility (backend/fileutil package)
 
 ### Phase 16: Tag Writing & Database Sync
 **Goal:** The backend can write metadata tags and cover art to MP3 and FLAC files, then synchronize all changes to the database and search index in a single atomic operation
@@ -121,7 +124,7 @@
 | 12. Library CRUD & Data Integrity | v1.1 | 2/2 | Complete | 2026-03-15 |
 | 13. Library Views & Phantom Tracks | v1.1 | 2/2 | Complete | 2026-03-16 |
 | 14. Performance Optimization | v1.1 | 4/4 | Complete | 2026-03-15 |
-| 15. Schema Migration & Write Safety | v1.2 | 0/? | Not started | - |
+| 15. Schema Migration & Write Safety | 2/2 | Complete   | 2026-03-16 | - |
 | 16. Tag Writing & Database Sync | v1.2 | 0/? | Not started | - |
 | 17. Single Track Edit | v1.2 | 0/? | Not started | - |
 | 18. Batch Edit | v1.2 | 0/? | Not started | - |
