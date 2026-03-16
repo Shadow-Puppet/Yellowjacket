@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"yellowjacket/backend/coverart"
+	"yellowjacket/backend/database/sql/sqlcgen"
 )
 
 // Sentinel errors for library queries.
@@ -442,6 +443,387 @@ func (l *Library) GetAllGenresWithCounts() (
 	}
 
 	return genres, nil
+}
+
+// GetAllTracksByLibrary returns tracks scoped to a specific library.
+func (l *Library) GetAllTracksByLibrary(
+	libraryID int64,
+) ([]Track, error) {
+	rows, err := l.db.Queries.GetAllTracksWithFullMetadataByLibrary(
+		l.ctx, libraryID,
+	)
+	if err != nil {
+		l.logger.Error(
+			"could not retrieve tracks for library",
+			"libraryID", libraryID,
+			"error", err,
+		)
+
+		return nil, fmt.Errorf(
+			"could not get tracks for library: %w", err,
+		)
+	}
+
+	l.logger.Info(
+		"tracks for library",
+		"libraryID", libraryID,
+		"count", len(rows),
+	)
+
+	tracks := make([]Track, 0, len(rows))
+
+	for _, row := range rows {
+		tracks = append(tracks, mapTrackRow(
+			row.FilePath,
+			row.LengthMilliseconds,
+			row.Title,
+			row.ArtistName,
+			row.TrackNumber,
+			row.DiscNumber,
+			row.Album,
+			row.Genre,
+			row.Year,
+			row.Composer,
+			row.FileType,
+			row.SampleRate,
+			row.BitDepth,
+			row.Channels,
+			row.Bitrate,
+			row.FileSize,
+		))
+	}
+
+	return tracks, nil
+}
+
+// GetAllAlbumsByLibrary returns albums that have tracks in the given library.
+func (l *Library) GetAllAlbumsByLibrary(
+	libraryID int64,
+) ([]Album, error) {
+	rows, err := l.db.Queries.GetAllAlbumsWithDetailsByLibrary(
+		l.ctx, libraryID,
+	)
+	if err != nil {
+		l.logger.Error(
+			"could not retrieve albums for library",
+			"libraryID", libraryID,
+			"error", err,
+		)
+
+		return nil, fmt.Errorf(
+			"could not get albums for library: %w", err,
+		)
+	}
+
+	l.logger.Info(
+		"albums for library",
+		"libraryID", libraryID,
+		"count", len(rows),
+	)
+
+	albums := make([]Album, 0, len(rows))
+
+	for _, row := range rows {
+		album := Album{
+			ID:         row.ID,
+			Name:       row.Name,
+			ArtistName: row.ArtistName,
+		}
+
+		if row.Year.Valid {
+			album.Year = row.Year.Int64
+		}
+
+		if row.CoverArtPath != "" {
+			urls := coverart.ResolveURLs(row.CoverArtPath)
+			album.CoverArtPath = urls.Original
+			album.CoverArtSmall = urls.Small
+			album.CoverArtMedium = urls.Medium
+			album.CoverArtLarge = urls.Large
+		}
+
+		albums = append(albums, album)
+	}
+
+	return albums, nil
+}
+
+// GetAllArtistsByLibrary returns artists that have albums with tracks
+// in the given library.
+func (l *Library) GetAllArtistsByLibrary(
+	libraryID int64,
+) ([]Artist, error) {
+	rows, err := l.db.Queries.GetAlbumArtistsByLibrary(
+		l.ctx, libraryID,
+	)
+	if err != nil {
+		l.logger.Error(
+			"could not retrieve artists for library",
+			"libraryID", libraryID,
+			"error", err,
+		)
+
+		return nil, fmt.Errorf(
+			"could not get artists for library: %w", err,
+		)
+	}
+
+	l.logger.Info(
+		"artists for library",
+		"libraryID", libraryID,
+		"count", len(rows),
+	)
+
+	artists := make([]Artist, 0, len(rows))
+
+	for _, row := range rows {
+		artists = append(artists, Artist{
+			ID:   row.ID,
+			Name: row.Name,
+		})
+	}
+
+	return artists, nil
+}
+
+// GetAlbumsByArtistByLibrary returns albums for the given artist
+// that have tracks in the given library.
+func (l *Library) GetAlbumsByArtistByLibrary(
+	artistID, libraryID int64,
+) ([]Album, error) {
+	rows, err := l.db.Queries.GetAlbumsByArtistByLibrary(
+		l.ctx, sqlcgen.GetAlbumsByArtistByLibraryParams{
+			ArtistID:  artistID,
+			LibraryID: libraryID,
+		},
+	)
+	if err != nil {
+		l.logger.Error(
+			"could not retrieve albums for artist in library",
+			"artistID", artistID,
+			"libraryID", libraryID,
+			"error", err,
+		)
+
+		return nil, fmt.Errorf(
+			"could not get albums for artist in library: %w",
+			err,
+		)
+	}
+
+	l.logger.Info(
+		"albums for artist in library",
+		"artistID", artistID,
+		"libraryID", libraryID,
+		"count", len(rows),
+	)
+
+	albums := make([]Album, 0, len(rows))
+
+	for _, row := range rows {
+		album := Album{
+			ID:         row.ID,
+			Name:       row.Name,
+			ArtistName: row.ArtistName,
+		}
+
+		if row.Year.Valid {
+			album.Year = row.Year.Int64
+		}
+
+		if row.CoverArtPath != "" {
+			urls := coverart.ResolveURLs(row.CoverArtPath)
+			album.CoverArtPath = urls.Original
+			album.CoverArtSmall = urls.Small
+			album.CoverArtMedium = urls.Medium
+			album.CoverArtLarge = urls.Large
+		}
+
+		albums = append(albums, album)
+	}
+
+	return albums, nil
+}
+
+// GetAllGenresWithCountsByLibrary returns genres with track counts
+// scoped to the given library.
+func (l *Library) GetAllGenresWithCountsByLibrary(
+	libraryID int64,
+) ([]GenreWithCount, error) {
+	rows, err := l.db.Queries.GetAllGenresWithCountsByLibrary(
+		l.ctx, libraryID,
+	)
+	if err != nil {
+		l.logger.Error(
+			"could not retrieve genres for library",
+			"libraryID", libraryID,
+			"error", err,
+		)
+
+		return nil, fmt.Errorf(
+			"could not get genres for library: %w", err,
+		)
+	}
+
+	genres := make([]GenreWithCount, 0, len(rows))
+
+	for _, row := range rows {
+		genres = append(genres, GenreWithCount{
+			Name:       row.Name,
+			TrackCount: row.TrackCount,
+		})
+	}
+
+	return genres, nil
+}
+
+// GetTracksByGenreByLibrary returns tracks tagged with the given
+// genre, scoped to the given library.
+func (l *Library) GetTracksByGenreByLibrary(
+	genreName string, libraryID int64,
+) ([]Track, error) {
+	rows, err := l.db.Queries.GetTracksByGenreByLibrary(
+		l.ctx, sqlcgen.GetTracksByGenreByLibraryParams{
+			Name:      genreName,
+			LibraryID: libraryID,
+		},
+	)
+	if err != nil {
+		l.logger.Error(
+			"could not retrieve tracks for genre in library",
+			"genre", genreName,
+			"libraryID", libraryID,
+			"error", err,
+		)
+
+		return nil, fmt.Errorf(
+			"could not get tracks for genre in library: %w",
+			err,
+		)
+	}
+
+	tracks := make([]Track, 0, len(rows))
+
+	for _, row := range rows {
+		tracks = append(tracks, mapTrackRow(
+			row.FilePath,
+			row.LengthMilliseconds,
+			row.Title,
+			row.ArtistName,
+			row.TrackNumber,
+			row.DiscNumber,
+			row.Album,
+			row.Genre,
+			row.Year,
+			row.Composer,
+			row.FileType,
+			row.SampleRate,
+			row.BitDepth,
+			row.Channels,
+			row.Bitrate,
+			row.FileSize,
+		))
+	}
+
+	return tracks, nil
+}
+
+// GetAlbumTracksByLibrary returns tracks for the given album,
+// scoped to the given library.
+func (l *Library) GetAlbumTracksByLibrary(
+	albumID, libraryID int64,
+) ([]Track, error) {
+	rows, err := l.db.Queries.GetAudioFilesByReleaseGroupByLibrary(
+		l.ctx, sqlcgen.GetAudioFilesByReleaseGroupByLibraryParams{
+			ReleaseGroupID: albumID,
+			LibraryID:      libraryID,
+		},
+	)
+	if err != nil {
+		l.logger.Error(
+			"could not retrieve album tracks for library",
+			"albumID", albumID,
+			"libraryID", libraryID,
+			"error", err,
+		)
+
+		return nil, fmt.Errorf(
+			"could not get album tracks for library: %w",
+			err,
+		)
+	}
+
+	tracks := make([]Track, 0, len(rows))
+
+	for _, row := range rows {
+		tracks = append(tracks, mapTrackRow(
+			row.FilePath,
+			row.LengthMilliseconds,
+			row.Title,
+			row.ArtistName,
+			row.TrackNumber,
+			row.DiscNumber,
+			row.Album,
+			row.Genre,
+			row.Year,
+			row.Composer,
+			row.FileType,
+			row.SampleRate,
+			row.BitDepth,
+			row.Channels,
+			row.Bitrate,
+			row.FileSize,
+		))
+	}
+
+	return tracks, nil
+}
+
+// SearchTracksByLibrary performs an FTS5 search scoped to a specific
+// library and returns matching tracks with full metadata.
+func (l *Library) SearchTracksByLibrary(
+	query string, libraryID int64,
+) ([]Track, error) {
+	rows, err := l.db.SearchFTSTracksByLibrary(
+		query, searchTrackLimit, libraryID,
+	)
+	if err != nil {
+		l.logger.Error(
+			"FTS library track search failed",
+			"query", query,
+			"libraryID", libraryID,
+			"error", err,
+		)
+
+		return nil, fmt.Errorf(
+			"search tracks by library failed: %w", err,
+		)
+	}
+
+	tracks := make([]Track, 0, len(rows))
+
+	for _, row := range rows {
+		tracks = append(tracks, mapTrackRow(
+			row.FilePath,
+			row.LengthMilliseconds,
+			row.Title,
+			row.ArtistName,
+			row.TrackNumber,
+			row.DiscNumber,
+			row.Album,
+			row.Genre,
+			row.Year,
+			row.Composer,
+			row.FileType,
+			row.SampleRate,
+			row.BitDepth,
+			row.Channels,
+			row.Bitrate,
+			row.FileSize,
+		))
+	}
+
+	return tracks, nil
 }
 
 // Info contains library metadata enriched with track count

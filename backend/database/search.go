@@ -287,6 +287,93 @@ func (d *DB) SearchFTSTracks(
 	return results, nil
 }
 
+// SearchFTSTracksByLibrary performs a full-text search scoped to a
+// specific library and returns full track metadata for each match.
+func (d *DB) SearchFTSTracksByLibrary(
+	query string, limit int, libraryID int64,
+) ([]SearchTrackRow, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, nil
+	}
+
+	ftsQuery := buildFTSQuery(query)
+
+	// SAFETY: FTS5 MATCH syntax unsupported by sqlc. Query is parameterized; no string interpolation.
+	rows, err := d.db.QueryContext(d.Ctx, `
+		SELECT
+			tm.file_path,
+			tm.length_milliseconds,
+			tm.title,
+			tm.artist_name,
+			tm.track_number,
+			tm.disc_number,
+			tm.album,
+			tm.genre,
+			tm.year,
+			tm.composer,
+			tm.file_type,
+			tm.sample_rate,
+			tm.bit_depth,
+			tm.channels,
+			tm.bitrate,
+			tm.file_size
+		FROM search_index si
+		JOIN track_metadata tm ON tm.id = si.rowid
+		WHERE search_index MATCH ? AND tm.library_id = ?
+		ORDER BY rank
+		LIMIT ?
+	`, ftsQuery, libraryID, limit)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"FTS library track search failed: %w", err,
+		)
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	var results []SearchTrackRow
+
+	for rows.Next() {
+		var r SearchTrackRow
+
+		if err := rows.Scan(
+			&r.FilePath,
+			&r.LengthMilliseconds,
+			&r.Title,
+			&r.ArtistName,
+			&r.TrackNumber,
+			&r.DiscNumber,
+			&r.Album,
+			&r.Genre,
+			&r.Year,
+			&r.Composer,
+			&r.FileType,
+			&r.SampleRate,
+			&r.BitDepth,
+			&r.Channels,
+			&r.Bitrate,
+			&r.FileSize,
+		); err != nil {
+			return nil, fmt.Errorf(
+				"could not scan library search track row: %w",
+				err,
+			)
+		}
+
+		results = append(results, r)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf(
+			"library search track row iteration error: %w",
+			err,
+		)
+	}
+
+	return results, nil
+}
+
 // scanSearchRows reads all rows from a query result into a slice.
 func scanSearchRows(
 	rows interface {
