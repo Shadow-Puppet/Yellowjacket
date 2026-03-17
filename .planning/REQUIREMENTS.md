@@ -19,14 +19,14 @@ Requirements for v1.2 Tag Editing milestone. Each maps to roadmap phases.
 - [ ] **WRITE-03**: Write metadata tags to OGG Vorbis files via custom page rewriter
 - [x] **WRITE-04**: Embed cover art image (JPEG/PNG) in MP3 and FLAC files
 - [x] **WRITE-05**: All file writes use atomic write-to-temp-then-rename to prevent corruption
-- [ ] **WRITE-06**: Currently-playing file is stopped before writing (player safety)
+- [x] **WRITE-06**: Currently-playing file is stopped before writing (player safety)
 
 ### Database Sync
 
-- [ ] **SYNC-01**: After tag write, update DB entities inline (upsert-and-relink for artist, album, genre)
-- [ ] **SYNC-02**: After tag write, update FTS5 search index for affected tracks
-- [ ] **SYNC-03**: Orphaned entities (artists, albums, genres no longer referenced) cleaned up
-- [ ] **SYNC-04**: Scan pipeline paused during tag writes to prevent race conditions
+- [x] **SYNC-01**: After tag write, update DB entities inline (upsert-and-relink for artist, album, genre)
+- [x] **SYNC-02**: After tag write, update FTS5 search index for affected tracks
+- [x] **SYNC-03**: Orphaned entities (artists, albums, genres no longer referenced) cleaned up
+- [x] **SYNC-04**: Scan pipeline paused during tag writes to prevent race conditions
 
 ### Single Track Edit
 
@@ -98,11 +98,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | WRITE-03 | Phase 19 | Pending |
 | WRITE-04 | Phase 16 | Complete |
 | WRITE-05 | Phase 15 | Complete |
-| WRITE-06 | Phase 16 | Pending |
-| SYNC-01 | Phase 16 | Pending |
-| SYNC-02 | Phase 16 | Pending |
-| SYNC-03 | Phase 16 | Pending |
-| SYNC-04 | Phase 16 | Pending |
+| WRITE-06 | Phase 16 | Complete |
+| SYNC-01 | Phase 16 | Complete |
+| SYNC-02 | Phase 16 | Complete |
+| SYNC-03 | Phase 16 | Complete |
+| SYNC-04 | Phase 16 | Complete |
 | EDIT-01 | Phase 17 | Pending |
 | EDIT-02 | Phase 17 | Pending |
 | EDIT-03 | Phase 17 | Pending |

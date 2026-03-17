@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Tag Editing
-status: unknown
-last_updated: "2026-03-17T14:42:46.662Z"
+status: in-progress
+last_updated: "2026-03-17T14:55:31Z"
 progress:
   total_phases: 2
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 5
-  completed_plans: 4
+  completed_plans: 5
 ---
 
 # YellowJacket — Project State
@@ -22,17 +22,17 @@ See: .planning/PROJECT.md (updated 2026-03-16)
 
 ## Current Position
 
-Phase: Phase 16 — Tag Writing & Database Sync (in progress)
-Plan: 2 of 3 complete
-Status: Executing Phase 16 plans — Plans 01 (MP3 writer + sqlc) and 02 (FLAC writer) complete
-Last activity: 2026-03-17 — Completed 16-01 (MP3 writer + orphan queries)
+Phase: Phase 16 — Tag Writing & Database Sync (complete)
+Plan: 3 of 3 complete
+Status: Phase 16 complete — all 3 plans done (MP3 writer, FLAC writer, WriteTrackTags pipeline)
+Last activity: 2026-03-17 — Completed 16-03 (WriteTrackTags pipeline + DB sync)
 
 ### Phase Overview
 
 | Phase | Status |
 |-------|--------|
 | 15. Schema Migration & Write Safety | Complete (2/2 plans) |
-| 16. Tag Writing & Database Sync | In Progress (2/3 plans) |
+| 16. Tag Writing & Database Sync | Complete (3/3 plans) |
 | 17. Single Track Edit | Not started |
 | 18. Batch Edit | Not started |
 | 19. OGG Vorbis Tag Writing | Not started |
@@ -61,6 +61,7 @@ Last activity: 2026-03-17 — Completed 16-01 (MP3 writer + orphan queries)
 | 15 | 02 | 16min | 2 | 2 |
 | 16 | 01 | 28min | 2 | 14 |
 | 16 | 02 | 20min | 2 | 6 |
+| 16 | 03 | 9min | 2 | 7 |
 
 ## Accumulated Context
 
@@ -88,6 +89,10 @@ Decisions from v1.0 and v1.1 are archived in PROJECT.md Key Decisions table. Key
 | `replaceVorbisComment` as filter+add pattern | flacvorbis has no Set/Replace — must remove existing entries then Add new value |
 | id3v2 WriteTo + manual audio copy for AtomicWrite | `tag.Save()` writes to original file; use `WriteTo(tmp)` + seek past tag + `io.Copy` audio data |
 | Snapshot tag size before `id3v2.Open()` | `originalSize` is unexported; read 10-byte ID3v2 header and decode synchsafe size ourselves |
+| PlayerStopper interface for tagwriter→player decoupling | Breaks import cycle; playerAdapter in app.go wraps *player.Player |
+| pipelineMu sync.Mutex for scan/write mutual exclusion | Simple mutex on Library; both scan and write pipelines acquire at start, release at end |
+| FTS5 delete+insert within DB transaction | Execute directly on *sql.Tx for atomicity with entity relink |
+| Global genre orphan cleanup via DELETE WHERE id NOT IN | Simpler than tracking old genre IDs; safe because genres only referenced via recording_genres |
 
 ### v1.2 Roadmap Decisions
 
@@ -117,7 +122,7 @@ Decisions from v1.0 and v1.1 are archived in PROJECT.md Key Decisions table. Key
 
 - ~~**Phase 16:** go-flac libraries (44 stars) — verify round-trip with edge-case FLAC files early~~ — **RESOLVED: 16-02 completed** — 7 round-trip tests pass, dhowden/tag reads what go-flac writes
 - **Phase 19:** Custom OGG page rewriter — prototype before committing; consider dropping if too complex
-- **Phase 16:** Album artist storage — not currently a separate entity; resolve during planning
+- ~~**Phase 16:** Album artist storage — not currently a separate entity; resolve during planning~~ — **RESOLVED: 16-CONTEXT.md** — Album artist stays as text field on audio_files, no new entity table
 
 ### Deferred Improvements
 
@@ -128,9 +133,9 @@ Decisions from v1.0 and v1.1 are archived in PROJECT.md Key Decisions table. Key
 ### Last Session
 
 **Date:** 2026-03-17
-**What happened:** Executed Phase 16 Plan 01 — MP3 tag writer with n10v/id3v2, orphan-counting sqlc queries, and 5 round-trip tests. Plans 01 and 02 now both complete.
-**Where we stopped:** Completed 16-01-PLAN.md — Plan 03 remaining
-**Next action:** Execute 16-03-PLAN.md (WriteTrackTags entry point + DB sync)
+**What happened:** Executed Phase 16 Plan 03 — WriteTrackTags pipeline with DB sync, player safety, scan/write mutex, events, and app wiring. Phase 16 now complete (3/3 plans).
+**Where we stopped:** Completed 16-03-PLAN.md — Phase 16 complete
+**Next action:** Plan Phase 17 (Single Track Edit UI)
 
 ---
 *State initialized: 2026-02-27*
@@ -144,4 +149,4 @@ Decisions from v1.0 and v1.1 are archived in PROJECT.md Key Decisions table. Key
 | 19 | fix phantom playlist tracks with multi-root path resolution | 2026-03-16 | 9144ded | [19-fix-phantom-playlist-tracks](./quick/19-fix-phantom-playlist-tracks/) |
 
 Last activity: 2026-03-16 - Completed quick task 19: fix phantom playlist tracks with multi-root path resolution
-*Last updated: 2026-03-17 — Completed 16-01 (MP3 writer + orphan queries) — Phase 16 in progress (2/3)*
+*Last updated: 2026-03-17 — Completed 16-03 (WriteTrackTags pipeline + DB sync) — Phase 16 complete (3/3)*
