@@ -87,7 +87,10 @@ Plans:
   2. The editor displays all 8 editable fields (title, artist, album, genre, year, track number, disc number, composer) pre-populated with the track's current values — empty fields show as empty, not "Unknown"
   3. The editor displays the track's current cover art (or a placeholder if none) with a button to select a replacement image file from disk
   4. Clicking "Save" writes the changes to the audio file, updates the database and search index, and refreshes all visible views (track list, album view, artist view, genre view, queue, now-playing bar) — the user sees the new metadata everywhere without restarting or rescanning
-**Plans:** TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 17-01-PLAN.md — Backend wiring (WriteTrackTagsByPath, ImageFilePicker) + library store event handler + context menu fix
+- [ ] 17-02-PLAN.md — Track details dialog save flow, cover art editing, error handling, human verification
 
 ### Phase 18: Batch Edit
 **Goal:** Users can efficiently edit shared metadata across multiple tracks at once with clear visual feedback and safe defaults
