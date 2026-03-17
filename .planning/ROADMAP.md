@@ -41,7 +41,7 @@
 ### v1.2 Tag Editing (Phases 15-19)
 
 - [x] **Phase 15: Schema Migration & Write Safety** — FTS5 contentless_delete migration and atomic file write utility (completed 2026-03-16)
-- [ ] **Phase 16: Tag Writing & Database Sync** — Format-specific tag writers (MP3, FLAC, cover art) with inline DB + FTS5 update pipeline
+- [ ] **Phase 16: Tag Writing & Database Sync** — Format-specific tag writers (MP3, FLAC, cover art) with inline DB + FTS5 update pipeline (3 plans)
 - [ ] **Phase 17: Single Track Edit** — End-to-end single track editing: UI → file write → DB sync → view refresh
 - [ ] **Phase 18: Batch Edit** — Multi-select batch editing with three-state field model, progress, and batch cover art
 - [ ] **Phase 19: OGG Vorbis Tag Writing** — Custom OGG page rewriter for Vorbis Comment tag writing (stretch)
@@ -72,7 +72,11 @@ Plans:
   3. Cover art images (JPEG/PNG) can be embedded in both MP3 and FLAC files — the embedded image is readable back and the existing cover art pipeline (extraction, thumbnails) works with the newly embedded art
   4. After a tag write, the database reflects the new metadata within the same operation: artist/album/genre entities are created or relinked (never mutated in-place), orphaned entities with zero remaining references are cleaned up, and the FTS5 index is updated — no library rescan needed
   5. If the currently-playing track is being edited, playback is stopped before the file write begins — the user does not experience a crash or corrupted audio stream
-**Plans:** TBD
+**Plans:** 3 plans
+Plans:
+- [ ] 16-01-PLAN.md — Tagwriter foundation + sqlc queries + MP3 writer (Wave 1)
+- [ ] 16-02-PLAN.md — FLAC writer with go-flac ecosystem (Wave 1)
+- [ ] 16-03-PLAN.md — DB sync pipeline + player/scan safety + events + app wiring (Wave 2)
 
 ### Phase 17: Single Track Edit
 **Goal:** Users can edit any track's metadata and cover art from within the app and see changes reflected everywhere immediately
@@ -125,7 +129,7 @@ Plans:
 | 13. Library Views & Phantom Tracks | v1.1 | 2/2 | Complete | 2026-03-16 |
 | 14. Performance Optimization | v1.1 | 4/4 | Complete | 2026-03-15 |
 | 15. Schema Migration & Write Safety | 2/2 | Complete    | 2026-03-16 | - |
-| 16. Tag Writing & Database Sync | v1.2 | 0/? | Not started | - |
+| 16. Tag Writing & Database Sync | v1.2 | 0/3 | Not started | - |
 | 17. Single Track Edit | v1.2 | 0/? | Not started | - |
 | 18. Batch Edit | v1.2 | 0/? | Not started | - |
 | 19. OGG Vorbis Tag Writing | v1.2 | 0/? | Not started | - |
