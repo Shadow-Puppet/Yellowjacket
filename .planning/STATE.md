@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Tag Editing
 status: unknown
-last_updated: "2026-03-16T22:21:06.448Z"
+last_updated: "2026-03-17T14:42:46.662Z"
 progress:
-  total_phases: 1
+  total_phases: 2
   completed_phases: 1
-  total_plans: 2
-  completed_plans: 2
+  total_plans: 5
+  completed_plans: 4
 ---
 
 # YellowJacket — Project State
@@ -23,9 +23,9 @@ See: .planning/PROJECT.md (updated 2026-03-16)
 ## Current Position
 
 Phase: Phase 16 — Tag Writing & Database Sync (in progress)
-Plan: 2 of 3 in progress
-Status: Executing Phase 16 plans — Plan 02 (FLAC writer) complete
-Last activity: 2026-03-17 — Completed 16-02 (FLAC tag writer)
+Plan: 2 of 3 complete
+Status: Executing Phase 16 plans — Plans 01 (MP3 writer + sqlc) and 02 (FLAC writer) complete
+Last activity: 2026-03-17 — Completed 16-01 (MP3 writer + orphan queries)
 
 ### Phase Overview
 
@@ -59,6 +59,7 @@ Last activity: 2026-03-17 — Completed 16-02 (FLAC tag writer)
 |-------|------|----------|-------|-------|
 | 15 | 01 | 15min | 2 | 5 |
 | 15 | 02 | 16min | 2 | 2 |
+| 16 | 01 | 28min | 2 | 14 |
 | 16 | 02 | 20min | 2 | 6 |
 
 ## Accumulated Context
@@ -85,6 +86,8 @@ Decisions from v1.0 and v1.1 are archived in PROJECT.md Key Decisions table. Key
 | `*slog.Logger` as first param for AtomicWrite | Matches codebase convention — all packages accept logger as first arg |
 | go-flac `WriteTo(io.Writer)` for AtomicWrite integration | Pipes directly into temp file callback; avoids `Save(path)` file path conflicts |
 | `replaceVorbisComment` as filter+add pattern | flacvorbis has no Set/Replace — must remove existing entries then Add new value |
+| id3v2 WriteTo + manual audio copy for AtomicWrite | `tag.Save()` writes to original file; use `WriteTo(tmp)` + seek past tag + `io.Copy` audio data |
+| Snapshot tag size before `id3v2.Open()` | `originalSize` is unexported; read 10-byte ID3v2 header and decode synchsafe size ourselves |
 
 ### v1.2 Roadmap Decisions
 
@@ -125,8 +128,8 @@ Decisions from v1.0 and v1.1 are archived in PROJECT.md Key Decisions table. Key
 ### Last Session
 
 **Date:** 2026-03-17
-**What happened:** Executed Phase 16 Plan 02 — FLAC tag writer using go-flac ecosystem with Vorbis Comments, PICTURE blocks, AtomicWrite integration, and 7 round-trip tests.
-**Where we stopped:** Completed 16-02-PLAN.md — Plan 03 remaining
+**What happened:** Executed Phase 16 Plan 01 — MP3 tag writer with n10v/id3v2, orphan-counting sqlc queries, and 5 round-trip tests. Plans 01 and 02 now both complete.
+**Where we stopped:** Completed 16-01-PLAN.md — Plan 03 remaining
 **Next action:** Execute 16-03-PLAN.md (WriteTrackTags entry point + DB sync)
 
 ---
@@ -141,4 +144,4 @@ Decisions from v1.0 and v1.1 are archived in PROJECT.md Key Decisions table. Key
 | 19 | fix phantom playlist tracks with multi-root path resolution | 2026-03-16 | 9144ded | [19-fix-phantom-playlist-tracks](./quick/19-fix-phantom-playlist-tracks/) |
 
 Last activity: 2026-03-16 - Completed quick task 19: fix phantom playlist tracks with multi-root path resolution
-*Last updated: 2026-03-17 — Completed 16-02 (FLAC tag writer) — Phase 16 in progress*
+*Last updated: 2026-03-17 — Completed 16-01 (MP3 writer + orphan queries) — Phase 16 in progress (2/3)*
