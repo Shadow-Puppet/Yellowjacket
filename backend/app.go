@@ -22,6 +22,7 @@ import (
 	"yellowjacket/backend/playlist"
 	"yellowjacket/backend/profiling"
 	"yellowjacket/backend/queue"
+	"yellowjacket/backend/tagwriter"
 )
 
 // YellowJacketApp is the main application struct for Wails.
@@ -37,6 +38,7 @@ type YellowJacketApp struct {
 	playlist      *playlist.Service
 	queue         *queue.Queue
 	mediaControls mediacontrols.Handler
+	tagWriter     *tagwriter.TagWriter
 	appContext    context.Context
 	appConfig     *config.Config
 	startupErr    error
@@ -115,6 +117,14 @@ func NewYellowJacketApp(
 		yjApp.logger.WithGroup("player"), yjApp.database,
 	)
 
+	// create tag writer
+	yjApp.tagWriter = tagwriter.NewTagWriter(
+		yjApp.logger,
+		yjApp.database,
+		&playerAdapter{p: yjApp.player},
+		yjApp.library,
+	)
+
 	yjApp.FEBindings = []any{
 		yjApp.FrontendUtil,
 		yjApp.appConfig,
@@ -122,10 +132,21 @@ func NewYellowJacketApp(
 		yjApp.playlist,
 		yjApp.queue,
 		yjApp.player,
+		yjApp.tagWriter,
 	}
 
 	return yjApp, nil
 }
+
+// playerAdapter wraps *player.Player to satisfy the tagwriter.PlayerStopper
+// interface, breaking the import cycle between tagwriter and player.
+type playerAdapter struct{ p *player.Player }
+
+func (a *playerAdapter) CurrentFilePath() string {
+	return a.p.GetCurrentTrackInfo().FilePath
+}
+
+func (a *playerAdapter) StopAndRelease() { a.p.UnloadTrack() }
 
 // WindowConfig returns the window configuration for use by the host.
 func (yj *YellowJacketApp) WindowConfig() *config.WindowConfig {
@@ -157,6 +178,7 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 	}
 
 	yj.player.SetContext(ctx)
+	yj.tagWriter.SetContext(ctx)
 
 	// Wire queue (created in NewYellowJacketApp for Wails binding)
 	yj.queue.SetContext(ctx)

@@ -47,6 +47,9 @@ export const Events = {
     LibraryAdded: "LibraryAdded",
     LibraryRenamed: "LibraryRenamed",
     LibraryRemoved: "LibraryRemoved",
+
+    // Tag writing events
+    TrackMetadataChanged: "TrackMetadataChanged",
 } as const;
 
 export type EventName = (typeof Events)[keyof typeof Events];

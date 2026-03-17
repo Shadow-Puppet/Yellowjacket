@@ -110,6 +110,11 @@ type Library struct {
 	// scanHooks holds callbacks for post-scan processing
 	// (e.g. resolving phantom playlist tracks).
 	scanHooks ScanHooks
+
+	// pipelineMu provides mutual exclusion between the scan
+	// pipeline and the tag write pipeline.  Acquired at the
+	// start of each pipeline, released at the end.
+	pipelineMu sync.Mutex
 }
 
 // SetRescanHooks provides optional hooks for cross-cutting
@@ -157,6 +162,15 @@ func NewLibrary(
 	return library, nil
 }
 
+// AcquirePipelineLock acquires the pipeline mutex for a tag write
+// operation.  The caller must call ReleasePipelineLock when done.
+// If a scan is currently in progress, AcquirePipelineLock blocks
+// until it completes (and vice versa).
+func (l *Library) AcquirePipelineLock() { l.pipelineMu.Lock() }
+
+// ReleasePipelineLock releases the pipeline mutex after a tag write.
+func (l *Library) ReleasePipelineLock() { l.pipelineMu.Unlock() }
+
 // SetContext sets the Wails runtime context and registers event handlers.
 func (l *Library) SetContext(ctx context.Context) {
 	l.mu.Lock()
@@ -187,6 +201,10 @@ func (l *Library) scanInternal(
 	libraryName string,
 	libraryPath string,
 ) *ScanMetrics {
+	// Acquire pipeline lock for scan/write mutual exclusion.
+	l.pipelineMu.Lock()
+	defer l.pipelineMu.Unlock()
+
 	metrics := newScanMetrics()
 	metrics.LibraryID = libraryID
 	metrics.LibraryName = libraryName

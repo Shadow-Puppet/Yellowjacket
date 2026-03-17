@@ -259,8 +259,10 @@ func syncDatabase(
 	// 6. Update FTS5 search index (within the transaction).
 	// ------------------------------------------------------------------
 	newTitle := newName
+
 	newArtist := params.changes[FieldArtist]
 	artistStr := ""
+
 	if newArtist != nil {
 		artistStr, _ = newArtist.(string)
 	}
@@ -277,13 +279,11 @@ func syncDatabase(
 	newAlbum := ""
 	if v, ok := params.changes[FieldAlbum].(string); ok {
 		newAlbum = v
-	} else {
+	} else if len(params.oldRGLinks) > 0 {
 		// Look up current album from release groups if unchanged.
-		if len(params.oldRGLinks) > 0 {
-			rg, rgErr := txq.GetReleaseGroup(ctx, params.oldRGLinks[0].ReleaseGroupID)
-			if rgErr == nil {
-				newAlbum = rg.Name
-			}
+		rg, rgErr := txq.GetReleaseGroup(ctx, params.oldRGLinks[0].ReleaseGroupID)
+		if rgErr == nil {
+			newAlbum = rg.Name
 		}
 	}
 

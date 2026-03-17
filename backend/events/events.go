@@ -67,3 +67,8 @@ const (
 	LibraryRenamed = "LibraryRenamed"
 	LibraryRemoved = "LibraryRemoved"
 )
+
+// Tag writing events.
+const (
+	TrackMetadataChanged = "TrackMetadataChanged"
+)
