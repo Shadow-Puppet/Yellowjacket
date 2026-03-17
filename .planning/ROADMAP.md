@@ -129,7 +129,7 @@ Plans:
 | 13. Library Views & Phantom Tracks | v1.1 | 2/2 | Complete | 2026-03-16 |
 | 14. Performance Optimization | v1.1 | 4/4 | Complete | 2026-03-15 |
 | 15. Schema Migration & Write Safety | 2/2 | Complete    | 2026-03-16 | - |
-| 16. Tag Writing & Database Sync | 3/3 | Complete   | 2026-03-17 | - |
+| 16. Tag Writing & Database Sync | 3/3 | Complete    | 2026-03-17 | - |
 | 17. Single Track Edit | v1.2 | 0/? | Not started | - |
 | 18. Batch Edit | v1.2 | 0/? | Not started | - |
 | 19. OGG Vorbis Tag Writing | v1.2 | 0/? | Not started | - |
