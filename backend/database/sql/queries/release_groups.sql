@@ -111,6 +111,9 @@ LEFT JOIN (
 WHERE aca.artist_id = ?
 ORDER BY rg.name;
 
+-- name: CountReleaseGroupRecordings :one
+SELECT COUNT(*) FROM release_group_recordings WHERE release_group_id = ?;
+
 -- name: GetAlbumsByArtistByLibrary :many
 SELECT
     rg.id,

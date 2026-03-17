@@ -9,6 +9,20 @@ import (
 	"context"
 )
 
+const countArtistCreditReferences = `-- name: CountArtistCreditReferences :one
+SELECT
+  (SELECT COUNT(*) FROM recordings WHERE artist_credit_id = ?1) +
+  (SELECT COUNT(*) FROM release_groups WHERE album_artist_credit_id = ?1)
+AS total
+`
+
+func (q *Queries) CountArtistCreditReferences(ctx context.Context, artistCreditID int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countArtistCreditReferences, artistCreditID)
+	var total int64
+	err := row.Scan(&total)
+	return total, err
+}
+
 const createArtistCredit = `-- name: CreateArtistCredit :one
 INSERT INTO artist_credit (text) VALUES (?)
 RETURNING id, text

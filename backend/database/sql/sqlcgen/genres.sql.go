@@ -10,6 +10,17 @@ import (
 	"database/sql"
 )
 
+const countGenreReferences = `-- name: CountGenreReferences :one
+SELECT COUNT(*) FROM recording_genres WHERE genre_id = ?
+`
+
+func (q *Queries) CountGenreReferences(ctx context.Context, genreID int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countGenreReferences, genreID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createRecordingGenre = `-- name: CreateRecordingGenre :exec
 INSERT OR IGNORE INTO recording_genres (recording_id, genre_id)
 VALUES (?, ?)
@@ -40,6 +51,15 @@ DELETE FROM recording_genres
 
 func (q *Queries) DeleteAllRecordingGenres(ctx context.Context) error {
 	_, err := q.db.ExecContext(ctx, deleteAllRecordingGenres)
+	return err
+}
+
+const deleteGenre = `-- name: DeleteGenre :exec
+DELETE FROM genres WHERE id = ?
+`
+
+func (q *Queries) DeleteGenre(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, deleteGenre, id)
 	return err
 }
 

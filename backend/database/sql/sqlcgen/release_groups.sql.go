@@ -10,6 +10,17 @@ import (
 	"database/sql"
 )
 
+const countReleaseGroupRecordings = `-- name: CountReleaseGroupRecordings :one
+SELECT COUNT(*) FROM release_group_recordings WHERE release_group_id = ?
+`
+
+func (q *Queries) CountReleaseGroupRecordings(ctx context.Context, releaseGroupID int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countReleaseGroupRecordings, releaseGroupID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createReleaseGroup = `-- name: CreateReleaseGroup :one
 INSERT INTO release_groups (name) VALUES (?)
 RETURNING id, name, cover_art_id, album_artist_credit_id, year, total_tracks, total_discs

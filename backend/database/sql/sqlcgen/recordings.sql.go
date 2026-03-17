@@ -10,6 +10,17 @@ import (
 	"database/sql"
 )
 
+const countRecordingsByArtistCredit = `-- name: CountRecordingsByArtistCredit :one
+SELECT COUNT(*) FROM recordings WHERE artist_credit_id = ?
+`
+
+func (q *Queries) CountRecordingsByArtistCredit(ctx context.Context, artistCreditID int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countRecordingsByArtistCredit, artistCreditID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createRecording = `-- name: CreateRecording :one
 INSERT INTO recordings (name, artist_credit_id) VALUES (?, ?)
 RETURNING id, name, artist_credit_id, track_number, disc_number, year, genre, composer, lyrics, comment

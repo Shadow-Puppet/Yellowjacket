@@ -103,6 +103,12 @@ LEFT JOIN file_types ft ON af.file_type_id = ft.id
 WHERE g.name = ? AND af.library_id = ?
 ORDER BY r.name;
 
+-- name: CountGenreReferences :one
+SELECT COUNT(*) FROM recording_genres WHERE genre_id = ?;
+
+-- name: DeleteGenre :exec
+DELETE FROM genres WHERE id = ?;
+
 -- name: GetAllGenresWithCounts :many
 SELECT g.name, COUNT(rg.recording_id) AS track_count
 FROM genres g
