@@ -15,9 +15,9 @@ Requirements for v1.2 Tag Editing milestone. Each maps to roadmap phases.
 ### Tag Writing
 
 - [ ] **WRITE-01**: Write metadata tags to MP3 files via ID3v2 (title, artist, album, genre, year, track#, disc#, composer)
-- [ ] **WRITE-02**: Write metadata tags to FLAC files via Vorbis Comments
+- [x] **WRITE-02**: Write metadata tags to FLAC files via Vorbis Comments
 - [ ] **WRITE-03**: Write metadata tags to OGG Vorbis files via custom page rewriter
-- [ ] **WRITE-04**: Embed cover art image (JPEG/PNG) in MP3 and FLAC files
+- [x] **WRITE-04**: Embed cover art image (JPEG/PNG) in MP3 and FLAC files
 - [x] **WRITE-05**: All file writes use atomic write-to-temp-then-rename to prevent corruption
 - [ ] **WRITE-06**: Currently-playing file is stopped before writing (player safety)
 
@@ -94,9 +94,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SCHEMA-01 | Phase 15 | Complete |
 | SCHEMA-02 | Phase 15 | Complete |
 | WRITE-01 | Phase 16 | Pending |
-| WRITE-02 | Phase 16 | Pending |
+| WRITE-02 | Phase 16 | Complete |
 | WRITE-03 | Phase 19 | Pending |
-| WRITE-04 | Phase 16 | Pending |
+| WRITE-04 | Phase 16 | Complete |
 | WRITE-05 | Phase 15 | Complete |
 | WRITE-06 | Phase 16 | Pending |
 | SYNC-01 | Phase 16 | Pending |

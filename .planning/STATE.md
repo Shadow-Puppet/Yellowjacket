@@ -22,17 +22,17 @@ See: .planning/PROJECT.md (updated 2026-03-16)
 
 ## Current Position
 
-Phase: Phase 15 — Schema Migration & Write Safety (complete)
-Plan: 2 of 2 complete
-Status: Phase 15 complete — ready for Phase 16 planning
-Last activity: 2026-03-16 — Completed 15-02 (AtomicWrite utility)
+Phase: Phase 16 — Tag Writing & Database Sync (in progress)
+Plan: 2 of 3 in progress
+Status: Executing Phase 16 plans — Plan 02 (FLAC writer) complete
+Last activity: 2026-03-17 — Completed 16-02 (FLAC tag writer)
 
 ### Phase Overview
 
 | Phase | Status |
 |-------|--------|
 | 15. Schema Migration & Write Safety | Complete (2/2 plans) |
-| 16. Tag Writing & Database Sync | Not started |
+| 16. Tag Writing & Database Sync | In Progress (2/3 plans) |
 | 17. Single Track Edit | Not started |
 | 18. Batch Edit | Not started |
 | 19. OGG Vorbis Tag Writing | Not started |
@@ -59,6 +59,7 @@ Last activity: 2026-03-16 — Completed 15-02 (AtomicWrite utility)
 |-------|------|----------|-------|-------|
 | 15 | 01 | 15min | 2 | 5 |
 | 15 | 02 | 16min | 2 | 2 |
+| 16 | 02 | 20min | 2 | 6 |
 
 ## Accumulated Context
 
@@ -82,6 +83,8 @@ Decisions from v1.0 and v1.1 are archived in PROJECT.md Key Decisions table. Key
 | Inlined migration 8 SQL rather than calling DB struct methods | `runMigrations` receives raw `*sql.DB`, not `*DB` — cannot call receiver methods |
 | Deterministic `.yj-tmp` suffix for temp files | Enables reliable orphan cleanup without directory scanning |
 | `*slog.Logger` as first param for AtomicWrite | Matches codebase convention — all packages accept logger as first arg |
+| go-flac `WriteTo(io.Writer)` for AtomicWrite integration | Pipes directly into temp file callback; avoids `Save(path)` file path conflicts |
+| `replaceVorbisComment` as filter+add pattern | flacvorbis has no Set/Replace — must remove existing entries then Add new value |
 
 ### v1.2 Roadmap Decisions
 
@@ -109,7 +112,7 @@ Decisions from v1.0 and v1.1 are archived in PROJECT.md Key Decisions table. Key
 
 ### Research Flags
 
-- **Phase 16:** go-flac libraries (44 stars) — verify round-trip with edge-case FLAC files early
+- ~~**Phase 16:** go-flac libraries (44 stars) — verify round-trip with edge-case FLAC files early~~ — **RESOLVED: 16-02 completed** — 7 round-trip tests pass, dhowden/tag reads what go-flac writes
 - **Phase 19:** Custom OGG page rewriter — prototype before committing; consider dropping if too complex
 - **Phase 16:** Album artist storage — not currently a separate entity; resolve during planning
 
@@ -121,10 +124,10 @@ Decisions from v1.0 and v1.1 are archived in PROJECT.md Key Decisions table. Key
 
 ### Last Session
 
-**Date:** 2026-03-16
-**What happened:** Executed Phase 15 Plan 02 — created backend/fileutil package with AtomicWrite function (callback API, .yj-tmp suffix, permission preservation, orphan cleanup, cross-device rejection) and 7 comprehensive tests.
-**Where we stopped:** Completed 15-02-PLAN.md — Phase 15 complete
-**Next action:** `/gsd-plan-phase 16` — Tag Writing & Database Sync
+**Date:** 2026-03-17
+**What happened:** Executed Phase 16 Plan 02 — FLAC tag writer using go-flac ecosystem with Vorbis Comments, PICTURE blocks, AtomicWrite integration, and 7 round-trip tests.
+**Where we stopped:** Completed 16-02-PLAN.md — Plan 03 remaining
+**Next action:** Execute 16-03-PLAN.md (WriteTrackTags entry point + DB sync)
 
 ---
 *State initialized: 2026-02-27*
@@ -138,4 +141,4 @@ Decisions from v1.0 and v1.1 are archived in PROJECT.md Key Decisions table. Key
 | 19 | fix phantom playlist tracks with multi-root path resolution | 2026-03-16 | 9144ded | [19-fix-phantom-playlist-tracks](./quick/19-fix-phantom-playlist-tracks/) |
 
 Last activity: 2026-03-16 - Completed quick task 19: fix phantom playlist tracks with multi-root path resolution
-*Last updated: 2026-03-16 — Completed 15-02 (AtomicWrite utility) — Phase 15 complete*
+*Last updated: 2026-03-17 — Completed 16-02 (FLAC tag writer) — Phase 16 in progress*
