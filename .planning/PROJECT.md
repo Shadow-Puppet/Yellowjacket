@@ -2,7 +2,7 @@
 
 ## What This Is
 
-YellowJacket is a cross-platform desktop music player built with Go (Wails v2) and TypeScript (Lit Web Components). It plays local music files (MP3, FLAC, OGG, WAV), manages multiple music library directories via SQLite, and provides queue management, playlists with cross-library support, cover art, configurable keyboard shortcuts, and MPRIS media controls on Linux. The v1.1 Multi-Library Support milestone added full library lifecycle management — users can add, rename, and remove library directories, scan them independently, filter all views by library, and playlists gracefully survive library removal with phantom track preservation and auto-resolution.
+YellowJacket is a cross-platform desktop music player built with Go (Wails v2) and TypeScript (Lit Web Components). It plays local music files (MP3, FLAC, OGG, WAV), manages multiple music library directories via SQLite, and provides queue management, playlists with cross-library support, cover art, configurable keyboard shortcuts, and MPRIS media controls on Linux. The v1.2 Tag Editing milestone added full metadata editing — users can edit any track's tags and cover art (single or batch) with crash-safe file writes and instant database synchronization, no rescan needed.
 
 ## Core Value
 
@@ -48,19 +48,25 @@ The music player works reliably and feels solid. Every interaction is correct, r
 - ✓ Library filter dropdown with all views (tracks, albums, artists, genres, search) respecting active filter — v1.1
 - ✓ Cross-library playlists with phantom track auto-resolution via ScanHooks + M3U8 matching — v1.1
 - ✓ Performance: CSS containment, view caching, event delegation, content-visibility, scroll polish — v1.1
+- ✓ FTS5 contentless_delete migration for safe row-level tag edit sync — v1.2
+- ✓ Atomic file write utility (write-to-temp-then-rename) for corruption-safe tag writes — v1.2
+- ✓ MP3 tag writing via ID3v2 (title, artist, album, genre, year, track#, disc#, composer, cover art) — v1.2
+- ✓ FLAC tag writing via Vorbis Comments + PICTURE blocks with 7 round-trip tests — v1.2
+- ✓ Cover art embedding in MP3 and FLAC files — v1.2
+- ✓ WriteTrackTags pipeline: file write → transactional DB sync (entity relink + FTS5 + orphan cleanup) → event emission — v1.2
+- ✓ Player safety: currently-playing file stopped before tag write — v1.2
+- ✓ Scan/write mutual exclusion via pipelineMu — v1.2
+- ✓ Single-track editor with 8 editable fields, cover art pick/replace/remove, diff-only saves — v1.2
+- ✓ Batch editor with three-state field model, confirmation guard, progress bar, cancellation, partial failure reporting — v1.2
+- ✓ Batch cover art set/clear across all selected tracks — v1.2
 
 ### Active
 
-- [ ] Single track metadata editing (title, artist, album, genre, year, track number, disc number, composer)
-- [ ] Batch editing shared fields across multiple selected tracks
-- [ ] Cover art set/replace from image file
-- [ ] Write-to-temp-then-rename for file safety during tag writes
-- [ ] Inline DB + FTS5 update after tag writes (no rescan needed)
-- [ ] Tag writing for MP3 (ID3v2), FLAC (Vorbis Comments), OGG (Vorbis Comments)
+(No active milestone — run `/gsd-new-milestone` to plan the next one)
 
 ### Deferred (Future Milestones)
 
-- [ ] Tag editing — edit track metadata (title, artist, album, etc.) from within the app
+- [ ] OGG Vorbis tag writing — custom OGG page rewriter for Vorbis Comment writing (deferred stretch goal from v1.2)
 - [ ] Smart playlists — auto-generated playlists with simple filter rules (genre, year, play count, etc.)
 - [ ] Gapless playback + crossfade — seamless track transitions with optional crossfade setting
 - [ ] MusicBrainz browser — read-only catalog browsing (artists, discographies, album editions, track listings)
@@ -73,6 +79,7 @@ The music player works reliably and feels solid. Every interaction is correct, r
 - Auto-dedup across libraries — complex matching logic, not table stakes
 - User access control per library — desktop app, single user
 - Parallel library scanning — SQLite single-writer makes it pointless
+- OGG Vorbis tag writing (for now) — custom OGG page rewriter assessed as medium-high risk; MP3+FLAC covers vast majority; revisit when pure-Go OGG library matures
 - Cross-platform media controls (macOS/Windows) — feature work
 - Database health checking / reconnection — low priority, desktop app context
 - File decomposition for its own sake — only extract when it enables reuse or fixes problems
@@ -83,32 +90,24 @@ The music player works reliably and feels solid. Every interaction is correct, r
 
 - **v1.0 Consolidation** (2026-03-05) — Foundation: races fixed, tests added, SQL consolidated, performance optimized
 - **v1.1 Multi-Library Support** (2026-03-16) — Multi-library: CRUD, per-library scanning, filtered views, cross-library playlists, phantom tracks
+- **v1.2 Tag Editing** (2026-03-18) — Tag editing: single + batch metadata editing, cover art embed, crash-safe writes, instant DB sync (MP3 + FLAC)
 
-## Current Milestone: v1.2 Tag Editing
+## Current Milestone
 
-**Goal:** Enable users to edit track metadata and cover art directly within YellowJacket, with safe file writes and instant database synchronization.
-
-**Target features:**
-- Single track tag editing (title, artist, album, genre, year, track/disc number, composer)
-- Batch tag editing across multiple selected tracks
-- Cover art set/replace from image file (embedded in audio file)
-- Write-to-temp-then-rename for corruption-safe file writes
-- Inline DB + FTS5 index update (no rescan needed after edits)
-- Format support: MP3 (ID3v2), FLAC (Vorbis Comments), OGG (Vorbis Comments)
-
-**"Done" criteria:** Users can select tracks, edit metadata fields, set cover art, save changes to the actual audio files, and see updates reflected immediately in all views and search — without requiring a library rescan.
+No active milestone. Run `/gsd-new-milestone` to plan the next one.
 
 ## Context
 
-**Current state (v1.1 shipped 2026-03-16):**
+**Current state (v1.2 shipped 2026-03-18):**
 - Go 1.25, Wails v2.10.2, Lit 3.2.1, SQLite via modernc.org/sqlite
-- ~27,700 Go LOC + ~28,800 TypeScript LOC + ~1,200 SQL LOC
-- ~15 backend packages, ~22 frontend components, 7 DB migrations
+- ~31,200 Go LOC + ~30,400 TypeScript LOC + ~1,200 SQL LOC
+- ~16 backend packages (added tagwriter, fileutil), ~22 frontend components, 8 DB migrations
 - Strict linting (golangci-lint v2) and TypeScript strict mode
-- 84+ unit tests covering queue, config, player, database, library, migration packages
+- 84+ unit tests covering queue, config, player, database, library, migration packages + 7 FLAC round-trip tests
 - Multi-library architecture: libraries table, library_id FK, ScanHooks/RemovalHooks/RescanHooks callback patterns
+- Tag writing pipeline: format-specific writers (MP3/FLAC) → AtomicWrite → DB sync (entity relink + FTS5 + orphan cleanup)
 - SQL: track_metadata VIEW, sqlc-generated + hand-crafted with SAFETY comments, ByLibrary query variants
-- Frontend: design token system, virtual scrolling, view caching, event delegation, library filter state
+- Frontend: design token system, virtual scrolling, view caching, event delegation, library filter state, track-details dialog with single/batch edit modes
 - Player tests still require hardware (skipped in CI)
 - No frontend unit tests (deferred to future milestone)
 
@@ -150,6 +149,12 @@ The music player works reliably and feels solid. Every interaction is correct, r
 | M3U8-based phantom resolution | M3U8 files are source of truth for playlist file paths | ✓ Good — works for pre-existing and new phantoms |
 | View caching with display toggle | Instant navigation by keeping DOM alive, hiding with display:none | ✓ Good — zero-cost navigation between primary views |
 | Event delegation on virtualizer | Zero per-item closures; data-index + closest() pattern | ✓ Good — eliminated GC pressure on large lists |
+| AtomicWrite with `.yj-tmp` suffix | Deterministic temp file naming enables orphan cleanup; same-directory rename avoids cross-device issues | ✓ Good — zero corruption risk |
+| go-flac ecosystem for FLAC writing | Small library (44 stars) but only option for pure-Go FLAC; 7 round-trip tests validated | ✓ Good — dhowden/tag reads what go-flac writes |
+| Upsert-and-relink for tag edit DB sync | Never mutate shared entities; create new or relink existing | ✓ Good — follows v1.1 precedent, safe for concurrent views |
+| suppressEvents flag for batch coalescing | Single TrackMetadataChanged after batch, not N individual events | ✓ Good — avoids N full library store invalidations |
+| Three-state field model via dirty tracking | Implicit keep/set/clear without explicit state enum; `editValues` presence is the signal | ✓ Good — simple, no extra state management |
+| PlayerStopper interface for tagwriter→player | Breaks import cycle; playerAdapter in app.go wraps *player.Player | ✓ Good — clean decoupling |
 
 ---
-*Last updated: 2026-03-16 after v1.2 Tag Editing milestone started*
+*Last updated: 2026-03-18 after v1.2 Tag Editing milestone shipped*

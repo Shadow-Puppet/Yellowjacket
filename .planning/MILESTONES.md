@@ -43,3 +43,27 @@
 
 ---
 
+
+## v1.2 Tag Editing (Shipped: 2026-03-18)
+
+**Phases completed:** 4 phases, 9 plans, 17 tasks
+**Timeline:** 3 days (2026-03-16 → 2026-03-18)
+**Stats:** ~40 commits, ~61,600 LOC (31.2K Go + 30.4K TS), 19/20 requirements fulfilled
+
+**Delivered:** Added full metadata tag editing to YellowJacket — users can edit any track's metadata and cover art from within the app (single or batch), with crash-safe file writes, instant database synchronization, and live progress feedback for batch operations. Supports MP3 (ID3v2) and FLAC (Vorbis Comments); OGG deferred as stretch goal.
+
+**Key accomplishments:**
+- FTS5 contentless_delete migration enabling row-level DELETE/UPDATE for tag edit sync without search index corruption
+- General-purpose AtomicWrite utility (write-to-temp-then-rename) preventing audio file corruption during tag writes
+- Format-specific tag writers for MP3 (ID3v2 via n10v/id3v2) and FLAC (Vorbis Comments + PICTURE blocks via go-flac) with 7 round-trip tests
+- WriteTrackTags pipeline: format detection → file write → transactional DB sync (entity upsert-and-relink + FTS5 + orphan cleanup) → event emission, with player safety and scan/write mutual exclusion
+- Single-track editor dialog with all 8 editable fields, cover art pick/replace/remove, diff-only saves, and automatic view refresh
+- Batch editing: three-state field model (keep/set/clear), merged value display, confirmation guard, live progress bar with cancellation, partial failure reporting, batch cover art — accessible from all 4 view context menus
+
+**Known Gaps:**
+- WRITE-03: OGG Vorbis tag writing deferred (stretch goal — custom OGG page rewriter assessed as medium-high risk, MP3+FLAC covers vast majority of libraries)
+
+**Archive:** [v1.2-ROADMAP.md](milestones/v1.2-ROADMAP.md) | [v1.2-REQUIREMENTS.md](milestones/v1.2-REQUIREMENTS.md)
+
+---
+

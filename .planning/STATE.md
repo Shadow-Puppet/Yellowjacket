@@ -1,77 +1,43 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.2
-milestone_name: Tag Editing
-status: unknown
-last_updated: "2026-03-18T17:56:56.447Z"
+milestone: null
+milestone_name: null
+status: between_milestones
+last_updated: "2026-03-18T18:30:00.000Z"
 progress:
-  total_phases: 4
-  completed_phases: 4
-  total_plans: 9
-  completed_plans: 9
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
 ---
 
 # YellowJacket — Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-03-16)
+See: .planning/PROJECT.md (updated 2026-03-18)
 
 **Core value:** The music player works reliably and feels solid — every interaction is correct, responsive, and trustworthy.
-**Current focus:** v1.2 Tag Editing
+**Current focus:** Planning next milestone
 
 ## Current Position
 
-Phase: Phase 18 — Batch Edit (complete)
-Plan: 18-02 complete (all tasks done, human verification approved)
-Status: Phase 18 complete — all batch edit requirements fulfilled (BATCH-01 through BATCH-04)
-Last activity: 2026-03-18 — 18-02 completed with batch edit UI verified and approved
-
-### Phase Overview
-
-| Phase | Status |
-|-------|--------|
-| 15. Schema Migration & Write Safety | Complete (2/2 plans) |
-| 16. Tag Writing & Database Sync | Complete (3/3 plans) |
-| 17. Single Track Edit | Complete (2/2 plans) |
-| 18. Batch Edit | Complete (2/2 plans) |
-| 19. OGG Vorbis Tag Writing | Not started |
-
-### v1.2 Requirement Coverage
-
-| Category | Requirements | Phase(s) |
-|----------|-------------|----------|
-| Schema & Safety | SCHEMA-01, SCHEMA-02 | Phase 15 |
-| Tag Writing | WRITE-01, WRITE-02 | Phase 16 |
-| Tag Writing | WRITE-03 | Phase 19 |
-| Tag Writing | WRITE-04, WRITE-05, WRITE-06 | Phase 15, 16 |
-| Database Sync | SYNC-01, SYNC-02, SYNC-03, SYNC-04 | Phase 16 |
-| Single Track Edit | EDIT-01, EDIT-02, EDIT-03, EDIT-04 | Phase 17 |
-| Batch Edit | BATCH-01, BATCH-02, BATCH-03, BATCH-04 | Phase 18 |
+Phase: No active phase
+Plan: No active plan
+Status: v1.2 Tag Editing milestone shipped 2026-03-18
+Last activity: 2026-03-18 — v1.2 milestone archived
 
 ## Performance Metrics
 
 **v1.0 baseline:** 8 phases, 17 plans, 34 tasks in 6 days (107 commits)
 **v1.1 baseline:** 6 phases, 18 plans in 10 days (~85 commits)
-**v1.2 scope:** 5 phases, 20 requirements
-
-| Phase | Plan | Duration | Tasks | Files |
-|-------|------|----------|-------|-------|
-| 15 | 01 | 15min | 2 | 5 |
-| 15 | 02 | 16min | 2 | 2 |
-| 16 | 01 | 28min | 2 | 14 |
-| 16 | 02 | 20min | 2 | 6 |
-| 16 | 03 | 9min | 2 | 7 |
-| 17 | 01 | 11min | 2 | 11 |
-| 17 | 02 | 25min | 2 | 8 |
-| 18 | 01 | 6min | 2 | 6 |
-| 18 | 02 | ~30min | 3 | 5 |
+**v1.2 baseline:** 4 phases, 9 plans, 17 tasks in 3 days (~40 commits)
 
 ## Accumulated Context
 
 ### Key Decisions
 
-Decisions from v1.0 and v1.1 are archived in PROJECT.md Key Decisions table. Key patterns to carry forward:
+All decisions archived in PROJECT.md Key Decisions table and RETROSPECTIVE.md. Key patterns to carry forward:
 
 - Mutex-protected setter pattern (lock → write → release → callbacks)
 - SAFETY comment convention for hand-crafted SQL
@@ -81,75 +47,35 @@ Decisions from v1.0 and v1.1 are archived in PROJECT.md Key Decisions table. Key
 - `.renderItem` + `.keyFunction` (not `repeat()` children) for lit-virtualizer
 - Upsert-and-relink for shared entities (never mutate shared artist/album/genre rows)
 - ScanHooks/RemovalHooks/RescanHooks callback patterns for cross-package coordination
-
-### v1.2 Execution Decisions
-
-| Decision | Rationale |
-|----------|-----------|
-| Inlined migration 8 SQL rather than calling DB struct methods | `runMigrations` receives raw `*sql.DB`, not `*DB` — cannot call receiver methods |
-| Deterministic `.yj-tmp` suffix for temp files | Enables reliable orphan cleanup without directory scanning |
-| `*slog.Logger` as first param for AtomicWrite | Matches codebase convention — all packages accept logger as first arg |
-| go-flac `WriteTo(io.Writer)` for AtomicWrite integration | Pipes directly into temp file callback; avoids `Save(path)` file path conflicts |
-| `replaceVorbisComment` as filter+add pattern | flacvorbis has no Set/Replace — must remove existing entries then Add new value |
-| id3v2 WriteTo + manual audio copy for AtomicWrite | `tag.Save()` writes to original file; use `WriteTo(tmp)` + seek past tag + `io.Copy` audio data |
-| Snapshot tag size before `id3v2.Open()` | `originalSize` is unexported; read 10-byte ID3v2 header and decode synchsafe size ourselves |
-| PlayerStopper interface for tagwriter→player decoupling | Breaks import cycle; playerAdapter in app.go wraps *player.Player |
-| pipelineMu sync.Mutex for scan/write mutual exclusion | Simple mutex on Library; both scan and write pipelines acquire at start, release at end |
-| FTS5 delete+insert within DB transaction | Execute directly on *sql.Tx for atomicity with entity relink |
-| Global genre orphan cleanup via DELETE WHERE id NOT IN | Simpler than tracking old genre IDs; safe because genres only referenced via recording_genres |
-| Manually added Wails TypeScript bindings for new Go methods | Wails binding generator runs at `wails dev`/`wails build` time, not via `go generate`; manual addition matches existing pattern exactly |
-| Track Details opens for first selected track in multi-select | `filePaths[0]` is consistent across all 4 views; avoids blocking the menu item unnecessarily |
-| ReadFile Go method on FrontendUtil for cover art bytes | Native file dialog returns path; frontend needs bytes for blob preview + save payload |
-| asInt/asBytes helpers for Wails JSON deserialization | Wails sends JS numbers as float64 and []byte as base64; direct type assertions silently fail |
-| Cover art DB sync with content-hash dedup + thumbnail generation | Saves to covers cache dir, upserts cover_art row, updates release_groups.cover_art_id |
-| suppressEvents flag for batch event coalescing | Prevents N TrackMetadataChanged events during batch; single emission after completion |
-| Per-track pipeline lock (not batch-wide) | Avoids blocking scan for entire batch duration; each track acquires/releases independently |
-| BatchResult struct return (not error) | Partial success always communicated; Wails serializes as JSON for frontend |
-| Three-state field model via implicit editValues dirty tracking | Untouched = keep, typed = set, cleared = clear — no explicit state enum needed |
-| Confirmation overlay within dialog (not separate dialog) | Simpler DOM management, consistent visual context for batch save guard |
-
-### v1.2 Roadmap Decisions
-
-| Decision | Rationale |
-|----------|-----------|
-| 5 phases (15-19) for 20 requirements | Natural clustering: foundation → writers → single edit → batch edit → stretch OGG |
-| WRITE-05 in Phase 15 (not 16) | Atomic write utility is foundational infrastructure, not format-specific |
-| Cover art embed (WRITE-04) in Phase 16 | Cover art embedding is format-specific writer work, shares test infrastructure with tag writing |
-| Cover art UI (EDIT-03) in Phase 17 | Cover art selection UX is part of the single-track edit dialog |
-| OGG as separate Phase 19 (stretch) | Custom OGG page rewriter is MEDIUM-HIGH risk; MP3+FLAC covers vast majority of libraries |
-| SYNC-04 (scan pause during edits) in Phase 16 | Scan/edit mutual exclusion is part of the write pipeline, not the UI layer |
-| Phase 18 depends on Phase 17 | Batch editing is N × single with UI complexity on top; pipeline must be solid first |
-| Phase 19 depends on Phase 16 (not 17) | OGG writing is a backend writer addition; UI integration is format-transparent |
+- AtomicWrite with `.yj-tmp` suffix for crash-safe file operations
+- suppressEvents flag for batch event coalescing
+- Three-state field model via implicit dirty tracking (editValues map presence)
 
 ### Warnings (carry forward)
 
 - Player lock ordering (`p.mu` before `speaker.Lock()`, goroutine dispatch in beep callback)
 - modernc.org/libc version must match exactly when updating modernc.org/sqlite
 - `@lit-labs/signals` is experimental (v0.2.0) — not blocking but noted
-- ~~FTS5 contentless can't DELETE rows~~ — **RESOLVED: SCHEMA-01 completed** — contentless_delete=1 migration applied
 - Orphan cleanup must not delete shared entities across libraries (reference-counting bottom-up)
 - FLAC files require full rewrite for tag changes — atomic write-to-temp-then-rename mandatory
 - Currently-playing file must be stopped before writing (WRITE-06) — Windows file locking is especially strict
 - Shared entity fan-out — editing one track's artist must NOT mutate the shared artist_credit row
-
-### Research Flags
-
-- ~~**Phase 16:** go-flac libraries (44 stars) — verify round-trip with edge-case FLAC files early~~ — **RESOLVED: 16-02 completed** — 7 round-trip tests pass, dhowden/tag reads what go-flac writes
 - **Phase 19:** Custom OGG page rewriter — prototype before committing; consider dropping if too complex
-- ~~**Phase 16:** Album artist storage — not currently a separate entity; resolve during planning~~ — **RESOLVED: 16-CONTEXT.md** — Album artist stays as text field on audio_files, no new entity table
 
 ### Deferred Improvements
 
 - **Bulk phantom matching performance** — O(n×3) round trips per phantom. Revisit if large external playlist imports occur.
+- **OGG Vorbis tag writing** — Stretch goal deferred from v1.2. Custom OGG page rewriter is medium-high risk.
+- **Pre-existing lint warnings** — nlreturn/wsl warnings in dbsync.go and tagwriter.go. Clean up in a future quick task.
 
 ## Session Continuity
 
 ### Last Session
 
 **Date:** 2026-03-18
-**What happened:** Phase 18 complete — Plan 02 batch edit UI verified and approved. All batch edit requirements (BATCH-01 through BATCH-04) fulfilled. Field labels added to all track-details states during verification.
-**Where we stopped:** Phase 18 complete. Phase 19 (OGG Vorbis Tag Writing) not yet started.
-**Next action:** Plan Phase 19 or complete v1.2 milestone if OGG is deferred
+**What happened:** Completed v1.2 Tag Editing milestone. All 4 phases (15-18) shipped. 19/20 requirements fulfilled (WRITE-03 OGG deferred as stretch goal). Milestone archived to .planning/milestones/.
+**Where we stopped:** Milestone v1.2 complete and archived.
+**Next action:** `/gsd-new-milestone` to plan next milestone
 
 ---
 *State initialized: 2026-02-27*
@@ -162,5 +88,5 @@ Decisions from v1.0 and v1.1 are archived in PROJECT.md Key Decisions table. Key
 | 18 | add multi-column metadata display to playlist-details | 2026-03-08 | ce23177 | [18-add-multi-column-metadata-display-to-pla](./quick/18-add-multi-column-metadata-display-to-pla/) |
 | 19 | fix phantom playlist tracks with multi-root path resolution | 2026-03-16 | 9144ded | [19-fix-phantom-playlist-tracks](./quick/19-fix-phantom-playlist-tracks/) |
 
-Last activity: 2026-03-16 - Completed quick task 19: fix phantom playlist tracks with multi-root path resolution
-*Last updated: 2026-03-18 — Phase 18 complete (batch edit: backend + frontend UI, all BATCH requirements fulfilled)*
+Last activity: 2026-03-18 - v1.2 Tag Editing milestone shipped
+*Last updated: 2026-03-18 — v1.2 milestone complete and archived*
