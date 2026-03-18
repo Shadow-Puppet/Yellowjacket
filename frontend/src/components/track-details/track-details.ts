@@ -14,8 +14,14 @@ import {
 } from '@utils/format';
 import { formatMilliseconds } from '@utils/time';
 import { WriteTrackTagsByPath } from '@go/tagwriter/TagWriter';
+import {
+    BatchWriteTrackTags,
+    CancelBatchWrite,
+} from '@go/tagwriter/TagWriter';
 import { ImageFilePicker, ReadFile } from '@go/frontendutil/FrontendUtil';
 import { libraryStore } from '../../store/library-store';
+import { EventsOn, EventsOff } from '@runtime/runtime';
+import { Events } from '../../events';
 
 import '@awesome.me/webawesome/dist/components/dialog/dialog.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
@@ -36,18 +42,36 @@ interface MetadataField {
     value: string;
     editable: boolean;
     type: 'text' | 'number';
+    mixed?: boolean;
 }
 
+/** Human-readable label map for fields shown in confirmations. */
+const FIELD_LABELS: Record<string, string> = {
+    title: 'Title',
+    artist: 'Artist',
+    album: 'Album',
+    genre: 'Genre',
+    year: 'Year',
+    composer: 'Composer',
+    trackNumber: 'Track #',
+    discNumber: 'Disc #',
+};
+
 /**
- * Modal dialog displaying detailed metadata for a single track.
+ * Modal dialog displaying detailed metadata for a single track
+ * or a batch of selected tracks.
  *
- * Call `show(track, coverArt?)` to open and `close()` to dismiss.
- * Includes an edit toggle for future tag-writing support.
+ * Call `show(track, coverArt?)` for single-track mode.
+ * Call `showBatch(tracks, coverArt, coverArtMixed)` for batch mode.
+ * Call `close()` to dismiss.
  */
 @customElement('track-details')
 export class TrackDetails extends LitElement {
+    // -- Single-track state --
     @state() private track: library.Track | null = null;
     @state() private coverArt: CoverArtUrls | null = null;
+
+    // -- Shared edit state --
     @state() private editing = false;
     @state() private editValues: Record<string, string> = {};
     @state() private saving = false;
@@ -58,6 +82,23 @@ export class TrackDetails extends LitElement {
     } | null = null;
     @state() private clearCoverArt = false;
 
+    // -- Batch-specific state --
+    @state() private batchMode = false;
+    @state() private batchTracks: library.Track[] = [];
+    @state() private batchFilePaths: string[] = [];
+    @state() private batchCoverArtMixed = false;
+    @state() private batchProgress: {
+        current: number;
+        total: number;
+    } | null = null;
+    @state() private batchResult: {
+        succeeded: number;
+        failed: number;
+        cancelled: boolean;
+        failures: Array<{ filePath: string; error: string }>;
+    } | null = null;
+    @state() private showConfirmation = false;
+
     @query('wa-dialog')
     private dialog!: HTMLElement & { open: boolean };
 
@@ -65,16 +106,49 @@ export class TrackDetails extends LitElement {
     // PUBLIC API
     // =================================================================
 
-    /** Open the dialog for the given track. */
+    /** Open the dialog for a single track. */
     show(
         track: library.Track,
         coverArt?: CoverArtUrls,
     ): void {
         this.track = track;
         this.coverArt = coverArt ?? null;
+        this.batchMode = false;
         this.editing = false;
         this.editValues = {};
         this.errorMessage = '';
+        this.cleanupPendingCoverArt();
+        this.resetBatchState();
+
+        this.updateComplete.then(() => {
+            if (this.dialog) this.dialog.open = true;
+        });
+    }
+
+    /** Open the dialog for batch editing multiple tracks. */
+    showBatch(
+        tracks: library.Track[],
+        coverArt: CoverArtUrls | null,
+        coverArtMixed: boolean,
+    ): void {
+        this.batchMode = true;
+        this.batchTracks = tracks;
+        this.batchFilePaths = tracks.map(
+            (t) => t.FilePath,
+        );
+        this.batchCoverArtMixed = coverArtMixed;
+        this.coverArt = coverArt;
+
+        // Clear single-track state.
+        this.track = null;
+
+        // Reset edit state.
+        this.editing = false;
+        this.editValues = {};
+        this.errorMessage = '';
+        this.batchProgress = null;
+        this.batchResult = null;
+        this.showConfirmation = false;
         this.cleanupPendingCoverArt();
 
         this.updateComplete.then(() => {
@@ -84,11 +158,17 @@ export class TrackDetails extends LitElement {
 
     /** Close the dialog. */
     close(): void {
+        // Cancel in-flight batch write if active.
+        if (this.batchProgress) {
+            void CancelBatchWrite();
+        }
+
         if (this.dialog) this.dialog.open = false;
         this.editing = false;
         this.editValues = {};
         this.errorMessage = '';
         this.cleanupPendingCoverArt();
+        this.resetBatchState();
     }
 
     // =================================================================
@@ -255,6 +335,11 @@ export class TrackDetails extends LitElement {
             border-color: var(--yj-accent, #ffd43b);
         }
 
+        .meta-input::placeholder {
+            color: var(--yj-text-tertiary, #888);
+            font-style: italic;
+        }
+
         .main-input {
             background: var(--yj-bg-elevated, #343a40);
             border: 1px solid
@@ -270,6 +355,11 @@ export class TrackDetails extends LitElement {
         .main-input:focus {
             outline: none;
             border-color: var(--yj-accent, #ffd43b);
+        }
+
+        .main-input::placeholder {
+            color: var(--yj-text-tertiary, #888);
+            font-style: italic;
         }
 
         .main-input.title-input {
@@ -334,6 +424,16 @@ export class TrackDetails extends LitElement {
             cursor: not-allowed;
         }
 
+        .btn-danger {
+            color: var(--yj-error, #e03131);
+            border-color: var(--yj-error, #e03131);
+        }
+
+        .btn-danger:hover {
+            background: var(--yj-error, #e03131);
+            color: #fff;
+        }
+
         /* Cover art edit mode */
         .cover-art-edit {
             cursor: pointer;
@@ -396,6 +496,176 @@ export class TrackDetails extends LitElement {
             padding: 4px 0;
             word-break: break-word;
         }
+
+        /* ---- Batch mode styles ---- */
+
+        .batch-header {
+            font-size: 22px;
+            font-weight: 600;
+            color: var(--yj-text-primary, #fff);
+        }
+
+        .batch-subheader {
+            font-size: var(--yj-text-md);
+            color: var(--yj-text-tertiary, #888);
+        }
+
+        .mixed-value {
+            color: var(--yj-text-tertiary, #888);
+            font-style: italic;
+        }
+
+        .cover-art-mixed {
+            width: 100%;
+            height: 100%;
+            background-color: var(--yj-bg-elevated, #343a40);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .cover-art-mixed wa-icon {
+            color: var(--yj-text-tertiary, #888);
+            font-size: 48px;
+        }
+
+        .cover-art-mixed span {
+            color: var(--yj-text-tertiary, #888);
+            font-size: var(--yj-text-xs);
+            font-style: italic;
+        }
+
+        /* Confirmation overlay */
+        .confirmation-overlay {
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.6);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+            border-radius: 8px;
+        }
+
+        .confirmation-content {
+            background: var(--yj-bg-surface, #212529);
+            border: 1px solid var(--yj-border, #444);
+            border-radius: 8px;
+            padding: 20px;
+            max-width: 420px;
+            width: 90%;
+        }
+
+        .confirmation-content h3 {
+            margin: 0 0 16px;
+            font-size: var(--yj-text-lg);
+            color: var(--yj-text-primary, #fff);
+        }
+
+        .confirmation-summary {
+            margin-bottom: 16px;
+            font-size: var(--yj-text-md);
+            color: var(--yj-text-secondary, #b3b3b3);
+        }
+
+        .confirmation-summary .change-item {
+            padding: 4px 0;
+            border-bottom: 1px solid var(--yj-border-subtle, #333);
+        }
+
+        .confirmation-summary .change-item:last-child {
+            border-bottom: none;
+        }
+
+        .confirmation-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+        }
+
+        /* Progress bar */
+        .batch-progress {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 12px;
+            padding: 40px 20px;
+        }
+
+        .progress-text {
+            font-size: var(--yj-text-lg);
+            color: var(--yj-text-primary, #fff);
+            font-variant-numeric: tabular-nums;
+        }
+
+        .progress-bar-track {
+            width: 100%;
+            height: 8px;
+            background: var(--yj-bg-elevated, #343a40);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .progress-bar-fill {
+            height: 100%;
+            background: var(--yj-accent, #4a9eff);
+            border-radius: 4px;
+            transition: width 0.3s ease;
+        }
+
+        /* Batch results */
+        .batch-result {
+            padding: 20px 0;
+        }
+
+        .batch-result .result-title {
+            font-size: var(--yj-text-lg);
+            font-weight: 600;
+            color: var(--yj-text-primary, #fff);
+            margin-bottom: 12px;
+        }
+
+        .batch-result .result-success {
+            color: var(--yj-success, #40c057);
+        }
+
+        .batch-result .result-partial {
+            color: var(--yj-warning, #fab005);
+        }
+
+        .batch-result .result-cancelled {
+            color: var(--yj-text-tertiary, #888);
+        }
+
+        .failure-list {
+            margin-top: 12px;
+            font-size: var(--yj-text-sm);
+        }
+
+        .failure-list summary {
+            cursor: pointer;
+            color: var(--yj-error, #e03131);
+            font-weight: 500;
+            margin-bottom: 8px;
+        }
+
+        .failure-item {
+            padding: 4px 0;
+            color: var(--yj-text-secondary, #b3b3b3);
+            word-break: break-all;
+        }
+
+        .failure-item .failure-path {
+            font-weight: 500;
+            color: var(--yj-text-primary, #fff);
+        }
+
+        .failure-item .failure-error {
+            color: var(--yj-error, #e03131);
+            font-style: italic;
+        }
     `];
 
     // =================================================================
@@ -403,14 +673,22 @@ export class TrackDetails extends LitElement {
     // =================================================================
 
     override render() {
+        const label = this.batchMode
+            ? 'Batch Edit'
+            : 'Track Details';
+
         return html`
-            <wa-dialog label="Track Details">
-                ${this.track
-                    ? this.renderContent()
-                    : nothing}
+            <wa-dialog label="${label}">
+                ${this.batchMode
+                    ? this.renderBatchContent()
+                    : this.track
+                        ? this.renderContent()
+                        : nothing}
             </wa-dialog>
         `;
     }
+
+    // -- Single-track render (unchanged) --
 
     private renderContent() {
         const t = this.track!;
@@ -438,6 +716,389 @@ export class TrackDetails extends LitElement {
             </div>
         `;
     }
+
+    // -- Batch render --
+
+    private renderBatchContent() {
+        if (this.batchProgress) {
+            return this.renderBatchProgress();
+        }
+
+        if (this.batchResult) {
+            return this.renderBatchResult();
+        }
+
+        const fields = this.getMergedFields();
+
+        return html`
+            <div class="top-section">
+                ${this.renderBatchCoverArt()}
+                <div class="main-meta">
+                    ${this.renderBatchMainFields(fields)}
+                </div>
+            </div>
+            <div class="divider"></div>
+            <div class="metadata-grid">
+                ${this.renderBatchDetailFields(fields)}
+            </div>
+            <div class="action-bar">
+                ${this.renderBatchActions()}
+            </div>
+            ${this.showConfirmation
+                ? this.renderConfirmation()
+                : nothing}
+        `;
+    }
+
+    private renderBatchCoverArt() {
+        if (this.editing) {
+            return this.renderCoverArtEditable();
+        }
+
+        if (this.batchCoverArtMixed && !this.coverArt) {
+            return html`
+                <div class="cover-art">
+                    <div class="cover-art-mixed">
+                        <wa-icon name="images"></wa-icon>
+                        <span>Multiple cover arts</span>
+                    </div>
+                </div>
+            `;
+        }
+
+        const src =
+            this.coverArt?.coverArtLarge ??
+            this.coverArt?.coverArtMedium ??
+            this.coverArt?.coverArtPath;
+
+        if (!src) {
+            return html`
+                <div class="cover-art">
+                    <div class="cover-placeholder">
+                        <wa-icon
+                            name="music"
+                        ></wa-icon>
+                    </div>
+                </div>
+            `;
+        }
+
+        return html`
+            <div class="cover-art">
+                <img
+                    src="${src}"
+                    alt="Album cover"
+                    @error=${this.handleImageError}
+                />
+            </div>
+        `;
+    }
+
+    private renderBatchMainFields(
+        fields: MetadataField[],
+    ) {
+        const titleField = fields.find(
+            (f) => f.key === 'title',
+        );
+        const artistField = fields.find(
+            (f) => f.key === 'artist',
+        );
+        const albumField = fields.find(
+            (f) => f.key === 'album',
+        );
+
+        if (this.editing) {
+            return html`
+                <span class="batch-header">
+                    Editing ${this.batchTracks.length} tracks
+                </span>
+                <input
+                    class="main-input title-input"
+                    .value=${this.getEditValue(
+                        'title',
+                        titleField?.value ?? '',
+                    )}
+                    @input=${(e: Event) =>
+                        this.onEditInput('title', e)}
+                    placeholder=${titleField?.mixed
+                        ? 'Multiple values'
+                        : 'Title'}
+                />
+                <input
+                    class="main-input artist-input"
+                    .value=${this.getEditValue(
+                        'artist',
+                        artistField?.value ?? '',
+                    )}
+                    @input=${(e: Event) =>
+                        this.onEditInput('artist', e)}
+                    placeholder=${artistField?.mixed
+                        ? 'Multiple values'
+                        : 'Artist'}
+                />
+                <input
+                    class="main-input album-input"
+                    .value=${this.getEditValue(
+                        'album',
+                        albumField?.value ?? '',
+                    )}
+                    @input=${(e: Event) =>
+                        this.onEditInput('album', e)}
+                    placeholder=${albumField?.mixed
+                        ? 'Multiple values'
+                        : 'Album'}
+                />
+            `;
+        }
+
+        return html`
+            <span class="batch-header">
+                ${this.batchTracks.length} tracks selected
+            </span>
+            ${titleField?.mixed
+                ? html`<span class="mixed-value">
+                      ${this.countDistinctValues('title')} different titles
+                  </span>`
+                : titleField?.value
+                    ? html`<span class="title">
+                          ${titleField.value}
+                      </span>`
+                    : nothing}
+            ${artistField?.mixed
+                ? html`<span class="mixed-value">
+                      ${this.countDistinctValues('artist')} different artists
+                  </span>`
+                : artistField?.value
+                    ? html`<span class="artist">
+                          ${artistField.value}
+                      </span>`
+                    : nothing}
+            ${albumField?.mixed
+                ? html`<span class="mixed-value">
+                      ${this.countDistinctValues('album')} different albums
+                  </span>`
+                : albumField?.value
+                    ? html`<span class="album">
+                          ${albumField.value}
+                      </span>`
+                    : nothing}
+        `;
+    }
+
+    private renderBatchDetailFields(
+        fields: MetadataField[],
+    ) {
+        // Only show editable detail fields in batch mode
+        // (genre, year, composer, track#, disc#).
+        const detailFields = fields.filter(
+            (f) =>
+                f.editable &&
+                f.key !== 'title' &&
+                f.key !== 'artist' &&
+                f.key !== 'album',
+        );
+
+        return detailFields.map((f) =>
+            this.renderBatchField(f),
+        );
+    }
+
+    private renderBatchField(f: MetadataField) {
+        if (this.editing) {
+            return html`
+                <span class="meta-label">${f.label}</span>
+                <input
+                    class="meta-input"
+                    type=${f.type}
+                    .value=${this.getEditValue(
+                        f.key,
+                        f.value,
+                    )}
+                    @input=${(e: Event) =>
+                        this.onEditInput(f.key, e)}
+                    placeholder=${f.mixed
+                        ? 'Multiple values'
+                        : ''}
+                />
+            `;
+        }
+
+        if (f.mixed) {
+            return html`
+                <span class="meta-label">${f.label}</span>
+                <span class="meta-value mixed-value">
+                    ${this.countDistinctValues(f.key)} different values
+                </span>
+            `;
+        }
+
+        const display = f.value;
+
+        return html`
+            <span class="meta-label">${f.label}</span>
+            <span
+                class="meta-value ${display
+                    ? ''
+                    : 'empty'}"
+            >
+                ${display || 'None'}
+            </span>
+        `;
+    }
+
+    private renderBatchActions() {
+        if (this.editing) {
+            return html`
+                ${this.errorMessage
+                    ? html`<div class="error-message">
+                          ${this.errorMessage}
+                      </div>`
+                    : nothing}
+                <button
+                    class="btn"
+                    @click=${this.cancelEdit}
+                    ?disabled=${this.saving}
+                >
+                    Cancel
+                </button>
+                <button
+                    class="btn btn-primary"
+                    @click=${this.saveBatchEdit}
+                    ?disabled=${this.saving}
+                >
+                    ${this.saving ? 'Saving…' : 'Save'}
+                </button>
+            `;
+        }
+
+        return html`
+            <button
+                class="btn"
+                @click=${this.startEdit}
+            >
+                <wa-icon name="pen-to-square"></wa-icon>
+                Edit
+            </button>
+        `;
+    }
+
+    private renderConfirmation() {
+        const changes = this.getConfirmationSummary();
+
+        return html`
+            <div class="confirmation-overlay">
+                <div class="confirmation-content">
+                    <h3>Apply changes to ${this.batchTracks.length} tracks?</h3>
+                    <div class="confirmation-summary">
+                        ${changes.map(
+                            (c) => html`
+                                <div class="change-item">
+                                    ${c}
+                                </div>
+                            `,
+                        )}
+                    </div>
+                    <div class="confirmation-actions">
+                        <button
+                            class="btn"
+                            @click=${this.cancelConfirmation}
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            class="btn btn-primary"
+                            @click=${this.confirmSave}
+                        >
+                            Apply
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    private renderBatchProgress() {
+        const progress = this.batchProgress!;
+        const pct =
+            progress.total > 0
+                ? (progress.current / progress.total) * 100
+                : 0;
+
+        return html`
+            <div class="batch-progress">
+                <div class="progress-text">
+                    ${progress.current} of ${progress.total} tracks
+                </div>
+                <div class="progress-bar-track">
+                    <div
+                        class="progress-bar-fill"
+                        style="width: ${pct}%"
+                    ></div>
+                </div>
+                <button
+                    class="btn btn-danger"
+                    @click=${this.cancelBatchWrite}
+                >
+                    Cancel
+                </button>
+            </div>
+        `;
+    }
+
+    private renderBatchResult() {
+        const r = this.batchResult!;
+
+        let titleClass = 'result-success';
+        let titleText = `All ${r.succeeded} tracks updated successfully`;
+
+        if (r.cancelled) {
+            titleClass = 'result-cancelled';
+            titleText = `Batch cancelled \u2014 ${r.succeeded} of ${r.succeeded + r.failed + (this.batchFilePaths.length - r.succeeded - r.failed)} tracks updated`;
+        } else if (r.failed > 0) {
+            titleClass = 'result-partial';
+            titleText = `${r.succeeded} tracks updated, ${r.failed} failed`;
+        }
+
+        return html`
+            <div class="batch-result">
+                <div class="result-title ${titleClass}">
+                    ${titleText}
+                </div>
+                ${r.failures.length > 0
+                    ? html`
+                          <details class="failure-list">
+                              <summary>
+                                  ${r.failures.length} failure${r.failures.length > 1 ? 's' : ''}
+                              </summary>
+                              ${r.failures.map(
+                                  (f) => html`
+                                      <div class="failure-item">
+                                          <span class="failure-path">
+                                              ${this.fileNameFromPath(f.filePath)}
+                                          </span>
+                                          \u2014
+                                          <span class="failure-error">
+                                              ${f.error}
+                                          </span>
+                                      </div>
+                                  `,
+                              )}
+                          </details>
+                      `
+                    : nothing}
+                <div class="action-bar">
+                    <button
+                        class="btn"
+                        @click=${this.closeBatchResult}
+                    >
+                        Close
+                    </button>
+                </div>
+            </div>
+        `;
+    }
+
+    // -- Single-track render helpers (unchanged) --
 
     private renderCoverArt() {
         if (this.editing) {
@@ -798,7 +1459,15 @@ export class TrackDetails extends LitElement {
         this.exitEditMode();
     };
 
+    // -- Single-track save --
+
     private saveEdit = async () => {
+        if (this.batchMode) {
+            this.saveBatchEdit();
+
+            return;
+        }
+
         if (!this.track || this.saving) return;
 
         this.saving = true;
@@ -866,6 +1535,145 @@ export class TrackDetails extends LitElement {
             this.saving = false;
         }
     };
+
+    // -- Batch save --
+
+    private saveBatchEdit = () => {
+        if (!this.batchMode) return;
+
+        const changes = this.buildBatchChanges();
+
+        if (Object.keys(changes).length === 0) {
+            this.exitEditMode();
+
+            return;
+        }
+
+        // Show confirmation before executing.
+        this.showConfirmation = true;
+    };
+
+    private cancelConfirmation = () => {
+        this.showConfirmation = false;
+    };
+
+    private confirmSave = async () => {
+        this.showConfirmation = false;
+        this.batchProgress = {
+            current: 0,
+            total: this.batchFilePaths.length,
+        };
+        this.editing = false;
+
+        const changes = this.buildBatchChanges();
+
+        // Listen for progress events.
+        EventsOn(
+            Events.BatchWriteProgress,
+            (data: {
+                current: number;
+                total: number;
+            }) => {
+                this.batchProgress = {
+                    current: data.current,
+                    total: data.total,
+                };
+            },
+        );
+
+        try {
+            const result = await BatchWriteTrackTags(
+                this.batchFilePaths,
+                changes,
+            );
+
+            this.batchResult = {
+                succeeded: result.succeeded,
+                failed: result.failed,
+                cancelled: result.cancelled,
+                failures: (result.failures ?? []).map(
+                    (f) => ({
+                        filePath: f.filePath,
+                        error: f.error,
+                    }),
+                ),
+            };
+        } catch (err: unknown) {
+            const msg =
+                err instanceof Error
+                    ? err.message
+                    : String(err);
+            this.batchResult = {
+                succeeded: 0,
+                failed: this.batchFilePaths.length,
+                cancelled: false,
+                failures: [
+                    {
+                        filePath: '(batch)',
+                        error: msg,
+                    },
+                ],
+            };
+        } finally {
+            EventsOff(Events.BatchWriteProgress);
+            this.batchProgress = null;
+        }
+    };
+
+    private cancelBatchWrite = () => {
+        void CancelBatchWrite();
+    };
+
+    private closeBatchResult = async () => {
+        this.batchResult = null;
+        this.batchProgress = null;
+        this.editValues = {};
+        this.errorMessage = '';
+        this.cleanupPendingCoverArt();
+
+        // Refresh data from library store.
+        const [tracks, albums] = await Promise.all([
+            libraryStore.getTracks(),
+            libraryStore.getAlbums(),
+        ]);
+
+        // Re-resolve batch tracks.
+        const pathSet = new Set(this.batchFilePaths);
+        const refreshed = tracks.filter((t) =>
+            pathSet.has(t.FilePath),
+        );
+        this.batchTracks = refreshed;
+
+        // Re-resolve cover art state.
+        const albumNames = new Set(
+            refreshed.map((t) => t.Album),
+        );
+
+        if (albumNames.size === 1) {
+            const albumName = [...albumNames][0]!;
+            const album = albums.find(
+                (a) => a.Name === albumName,
+            );
+
+            if (album?.CoverArtPath) {
+                this.coverArt = {
+                    coverArtPath: album.CoverArtPath,
+                    coverArtSmall: album.CoverArtSmall,
+                    coverArtMedium: album.CoverArtMedium,
+                    coverArtLarge: album.CoverArtLarge,
+                };
+                this.batchCoverArtMixed = false;
+            } else {
+                this.coverArt = null;
+                this.batchCoverArtMixed = false;
+            }
+        } else {
+            this.coverArt = null;
+            this.batchCoverArtMixed = albumNames.size > 1;
+        }
+    };
+
+    // -- Shared edit logic --
 
     private buildChanges(): Record<string, unknown> {
         const t = this.track!;
@@ -962,10 +1770,72 @@ export class TrackDetails extends LitElement {
         return changes;
     }
 
+    private buildBatchChanges(): Record<string, unknown> {
+        const changes: Record<string, unknown> = {};
+
+        const fieldMap: Array<{
+            editKey: string;
+            backendKey: string;
+            transform?: (v: string) => unknown;
+        }> = [
+            { editKey: 'title', backendKey: 'title' },
+            { editKey: 'artist', backendKey: 'artist' },
+            { editKey: 'album', backendKey: 'album' },
+            { editKey: 'genre', backendKey: 'genre' },
+            {
+                editKey: 'year',
+                backendKey: 'year',
+                transform: (v) =>
+                    v ? parseInt(v, 10) : 0,
+            },
+            {
+                editKey: 'composer',
+                backendKey: 'composer',
+            },
+            {
+                editKey: 'trackNumber',
+                backendKey: 'track_number',
+                transform: (v) =>
+                    v ? parseInt(v, 10) : 0,
+            },
+            {
+                editKey: 'discNumber',
+                backendKey: 'disc_number',
+                transform: (v) =>
+                    v ? parseInt(v, 10) : 0,
+            },
+        ];
+
+        for (const {
+            editKey,
+            backendKey,
+            transform,
+        } of fieldMap) {
+            if (editKey in this.editValues) {
+                const val = this.editValues[editKey]!;
+                changes[backendKey] = transform
+                    ? transform(val)
+                    : val;
+            }
+        }
+
+        // Cover art.
+        if (this.pendingCoverArt) {
+            changes['cover_art'] = Array.from(
+                new Uint8Array(this.pendingCoverArt.data),
+            );
+        } else if (this.clearCoverArt) {
+            changes['cover_art'] = null;
+        }
+
+        return changes;
+    }
+
     private exitEditMode(): void {
         this.editing = false;
         this.editValues = {};
         this.errorMessage = '';
+        this.showConfirmation = false;
         this.cleanupPendingCoverArt();
     }
 
@@ -977,6 +1847,16 @@ export class TrackDetails extends LitElement {
         }
         this.pendingCoverArt = null;
         this.clearCoverArt = false;
+    }
+
+    private resetBatchState(): void {
+        this.batchMode = false;
+        this.batchTracks = [];
+        this.batchFilePaths = [];
+        this.batchCoverArtMixed = false;
+        this.batchProgress = null;
+        this.batchResult = null;
+        this.showConfirmation = false;
     }
 
     private selectCoverArt = async () => {
@@ -1061,6 +1941,159 @@ export class TrackDetails extends LitElement {
             ...this.editValues,
             [key]: input.value,
         };
+    }
+
+    // =================================================================
+    // BATCH HELPERS
+    // =================================================================
+
+    /** Compute merged field values across all batch tracks. */
+    private getMergedFields(): MetadataField[] {
+        const tracks = this.batchTracks;
+
+        const extractors: Array<{
+            key: string;
+            label: string;
+            type: 'text' | 'number';
+            extract: (t: library.Track) => string;
+        }> = [
+            {
+                key: 'title',
+                label: 'Title',
+                type: 'text',
+                extract: (t) => t.TrackName ?? '',
+            },
+            {
+                key: 'artist',
+                label: 'Artist',
+                type: 'text',
+                extract: (t) => t.ArtistName ?? '',
+            },
+            {
+                key: 'album',
+                label: 'Album',
+                type: 'text',
+                extract: (t) => t.Album ?? '',
+            },
+            {
+                key: 'genre',
+                label: 'Genre',
+                type: 'text',
+                extract: (t) =>
+                    (t.Genre ?? []).join(', '),
+            },
+            {
+                key: 'year',
+                label: 'Year',
+                type: 'number',
+                extract: (t) =>
+                    t.Year ? String(t.Year) : '',
+            },
+            {
+                key: 'composer',
+                label: 'Composer',
+                type: 'text',
+                extract: (t) => t.Composer ?? '',
+            },
+            {
+                key: 'trackNumber',
+                label: 'Track #',
+                type: 'number',
+                extract: (t) =>
+                    t.TrackNumber
+                        ? String(t.TrackNumber)
+                        : '',
+            },
+            {
+                key: 'discNumber',
+                label: 'Disc #',
+                type: 'number',
+                extract: (t) =>
+                    t.DiscNumber
+                        ? String(t.DiscNumber)
+                        : '',
+            },
+        ];
+
+        return extractors.map(
+            ({ key, label, type, extract }) => {
+                const values = tracks.map(extract);
+                const unique = new Set(values);
+                const allSame = unique.size <= 1;
+
+                return {
+                    key,
+                    label,
+                    value: allSame
+                        ? (values[0] ?? '')
+                        : '',
+                    editable: true,
+                    type,
+                    mixed: !allSame,
+                };
+            },
+        );
+    }
+
+    /** Count distinct values for a field across batch tracks. */
+    private countDistinctValues(key: string): number {
+        const extractMap: Record<
+            string,
+            (t: library.Track) => string
+        > = {
+            title: (t) => t.TrackName ?? '',
+            artist: (t) => t.ArtistName ?? '',
+            album: (t) => t.Album ?? '',
+            genre: (t) => (t.Genre ?? []).join(', '),
+            year: (t) =>
+                t.Year ? String(t.Year) : '',
+            composer: (t) => t.Composer ?? '',
+            trackNumber: (t) =>
+                t.TrackNumber
+                    ? String(t.TrackNumber)
+                    : '',
+            discNumber: (t) =>
+                t.DiscNumber
+                    ? String(t.DiscNumber)
+                    : '',
+        };
+
+        const extract = extractMap[key];
+
+        if (!extract) return 0;
+
+        const unique = new Set(
+            this.batchTracks.map(extract),
+        );
+
+        return unique.size;
+    }
+
+    /** Build human-readable list of changes for confirmation. */
+    private getConfirmationSummary(): string[] {
+        const summary: string[] = [];
+
+        for (const [key, value] of Object.entries(
+            this.editValues,
+        )) {
+            const label = FIELD_LABELS[key] ?? key;
+
+            if (value === '') {
+                summary.push(`Clear ${label}`);
+            } else {
+                summary.push(
+                    `Set ${label} to \u201c${value}\u201d`,
+                );
+            }
+        }
+
+        if (this.pendingCoverArt) {
+            summary.push('Set cover art');
+        } else if (this.clearCoverArt) {
+            summary.push('Remove cover art');
+        }
+
+        return summary;
     }
 
     // =================================================================
