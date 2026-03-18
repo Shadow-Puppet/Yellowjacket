@@ -114,7 +114,10 @@ Plans:
   1. A Go function can write Vorbis Comment metadata tags to OGG Vorbis files using a custom OGG page rewriter — the file remains a valid OGG stream after writing (playable by the existing player and by external players)
   2. Tag writes to OGG files use the same atomic write-to-temp-then-rename pattern as MP3/FLAC — no corruption risk
   3. OGG tag editing is seamlessly integrated into the single-track and batch edit UIs — the user doesn't need to know or care what format a file is; the editor just works
-**Plans:** TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 18-01-PLAN.md — Backend batch write endpoint with progress events, cancellation, and partial failure handling
+- [ ] 18-02-PLAN.md — Frontend batch mode: track-details adaptation, three-state editing, confirmation, progress UI, view wiring
 
 ## Progress
 
