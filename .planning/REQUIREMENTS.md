@@ -31,8 +31,8 @@ Requirements for v1.2 Tag Editing milestone. Each maps to roadmap phases.
 ### Single Track Edit
 
 - [x] **EDIT-01**: User can open tag editor for a single track from context menu or detail view
-- [ ] **EDIT-02**: Editor shows all 8 editable fields with current values pre-populated
-- [ ] **EDIT-03**: Editor shows current cover art with option to replace from image file
+- [x] **EDIT-02**: Editor shows all 8 editable fields with current values pre-populated
+- [x] **EDIT-03**: Editor shows current cover art with option to replace from image file
 - [x] **EDIT-04**: Saving writes tags to file, updates DB, updates FTS5, and refreshes all views immediately
 
 ### Batch Edit
@@ -104,8 +104,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SYNC-03 | Phase 16 | Complete |
 | SYNC-04 | Phase 16 | Complete |
 | EDIT-01 | Phase 17 | Complete |
-| EDIT-02 | Phase 17 | Pending |
-| EDIT-03 | Phase 17 | Pending |
+| EDIT-02 | Phase 17 | Complete |
+| EDIT-03 | Phase 17 | Complete |
 | EDIT-04 | Phase 17 | Complete |
 | BATCH-01 | Phase 18 | Pending |
 | BATCH-02 | Phase 18 | Pending |

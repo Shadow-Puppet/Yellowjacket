@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Tag Editing
 status: in-progress
-last_updated: "2026-03-18T01:05:17Z"
+last_updated: "2026-03-18T15:18:33Z"
 progress:
   total_phases: 5
-  completed_phases: 2
-  total_plans: 6
-  completed_plans: 6
+  completed_phases: 3
+  total_plans: 7
+  completed_plans: 7
 ---
 
 # YellowJacket — Project State
@@ -22,10 +22,10 @@ See: .planning/PROJECT.md (updated 2026-03-16)
 
 ## Current Position
 
-Phase: Phase 17 — Single Track Edit (in progress)
-Plan: 1 of 3 complete
-Status: Completed 17-01 (backend bridge & frontend plumbing)
-Last activity: 2026-03-18 — Completed 17-01 (WriteTrackTagsByPath, ImageFilePicker, TrackMetadataChanged handler, context menu fix)
+Phase: Phase 17 — Single Track Edit (complete)
+Plan: 2 of 2 complete
+Status: Phase 17 complete — all single-track edit requirements fulfilled
+Last activity: 2026-03-18 — Completed 17-02 (save flow, cover art editing, error handling, Wails deserialization fixes)
 
 ### Phase Overview
 
@@ -33,7 +33,7 @@ Last activity: 2026-03-18 — Completed 17-01 (WriteTrackTagsByPath, ImageFilePi
 |-------|--------|
 | 15. Schema Migration & Write Safety | Complete (2/2 plans) |
 | 16. Tag Writing & Database Sync | Complete (3/3 plans) |
-| 17. Single Track Edit | In Progress (1/3 plans) |
+| 17. Single Track Edit | Complete (2/2 plans) |
 | 18. Batch Edit | Not started |
 | 19. OGG Vorbis Tag Writing | Not started |
 
@@ -63,6 +63,7 @@ Last activity: 2026-03-18 — Completed 17-01 (WriteTrackTagsByPath, ImageFilePi
 | 16 | 02 | 20min | 2 | 6 |
 | 16 | 03 | 9min | 2 | 7 |
 | 17 | 01 | 11min | 2 | 11 |
+| 17 | 02 | 25min | 2 | 8 |
 
 ## Accumulated Context
 
@@ -96,6 +97,9 @@ Decisions from v1.0 and v1.1 are archived in PROJECT.md Key Decisions table. Key
 | Global genre orphan cleanup via DELETE WHERE id NOT IN | Simpler than tracking old genre IDs; safe because genres only referenced via recording_genres |
 | Manually added Wails TypeScript bindings for new Go methods | Wails binding generator runs at `wails dev`/`wails build` time, not via `go generate`; manual addition matches existing pattern exactly |
 | Track Details opens for first selected track in multi-select | `filePaths[0]` is consistent across all 4 views; avoids blocking the menu item unnecessarily |
+| ReadFile Go method on FrontendUtil for cover art bytes | Native file dialog returns path; frontend needs bytes for blob preview + save payload |
+| asInt/asBytes helpers for Wails JSON deserialization | Wails sends JS numbers as float64 and []byte as base64; direct type assertions silently fail |
+| Cover art DB sync with content-hash dedup + thumbnail generation | Saves to covers cache dir, upserts cover_art row, updates release_groups.cover_art_id |
 
 ### v1.2 Roadmap Decisions
 
@@ -136,9 +140,9 @@ Decisions from v1.0 and v1.1 are archived in PROJECT.md Key Decisions table. Key
 ### Last Session
 
 **Date:** 2026-03-18
-**What happened:** Executed Phase 17 Plan 01 — Backend bridge methods (WriteTrackTagsByPath, ImageFilePicker), TrackMetadataChanged handler in LibraryStore, removed selection gate on Track Details context menu in all 4 views.
-**Where we stopped:** Completed 17-01-PLAN.md
-**Next action:** Execute 17-02 (track-details dialog edit mode wiring)
+**What happened:** Completed Phase 17 Plan 02 — Save flow with diff-only TagChanges, cover art replace/remove via native file picker, inline error handling. Fixed 4 bugs during verification: stale dialog data, Wails float64 deserialization, cover art DB sync, cover art URL refresh.
+**Where we stopped:** Completed 17-02-PLAN.md — Phase 17 complete
+**Next action:** Plan or execute Phase 18 (Batch Edit)
 
 ---
 *State initialized: 2026-02-27*
@@ -152,4 +156,4 @@ Decisions from v1.0 and v1.1 are archived in PROJECT.md Key Decisions table. Key
 | 19 | fix phantom playlist tracks with multi-root path resolution | 2026-03-16 | 9144ded | [19-fix-phantom-playlist-tracks](./quick/19-fix-phantom-playlist-tracks/) |
 
 Last activity: 2026-03-16 - Completed quick task 19: fix phantom playlist tracks with multi-root path resolution
-*Last updated: 2026-03-18 — Completed 17-01 (backend bridge & frontend plumbing)*
+*Last updated: 2026-03-18 — Completed 17-02 (save flow, cover art editing, Phase 17 complete)*
