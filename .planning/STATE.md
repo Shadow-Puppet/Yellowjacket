@@ -23,9 +23,9 @@ See: .planning/PROJECT.md (updated 2026-03-16)
 ## Current Position
 
 Phase: Phase 18 — Batch Edit (in progress)
-Plan: 1 of ? complete
-Status: 18-01 complete — batch write backend with progress, cancellation, partial failure
-Last activity: 2026-03-18 — Completed 18-01 (BatchWriteTrackTags, BatchWriteProgress event, CancelBatchWrite)
+Plan: 18-02 in progress (tasks 1-2 complete, task 3 checkpoint:human-verify pending)
+Status: 18-02 batch edit UI — track-details batch mode and view context menus wired
+Last activity: 2026-03-18 — 18-02 tasks 1-2 committed, awaiting human verification of batch edit flow
 
 ### Phase Overview
 
@@ -144,9 +144,9 @@ Decisions from v1.0 and v1.1 are archived in PROJECT.md Key Decisions table. Key
 ### Last Session
 
 **Date:** 2026-03-18
-**What happened:** Completed Phase 18 Plan 01 — BatchWriteTrackTags backend method with sequential processing, per-track BatchWriteProgress events, CancelBatchWrite cancellation, suppressEvents pattern for event coalescing, BatchResult/BatchFailure return types.
-**Where we stopped:** Completed 18-01-PLAN.md
-**Next action:** Execute next Phase 18 plan (batch edit UI)
+**What happened:** Phase 18 Plan 02 tasks 1-2 complete — batch edit mode added to track-details component (showBatch API, merged fields, confirmation dialog, progress bar, results view, batch cover art) and all 4 view context menus wired to call showBatch for multi-select.
+**Where we stopped:** 18-02 task 3 checkpoint:human-verify pending — need to verify batch edit flow in running app
+**Next action:** Run `wails dev`, test batch edit flow, then continue 18-02 task 3 verification
 
 ---
 *State initialized: 2026-02-27*
