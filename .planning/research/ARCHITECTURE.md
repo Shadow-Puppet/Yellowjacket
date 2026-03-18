@@ -1,469 +1,538 @@
-# Architecture Patterns: Tag Editing Integration
+# Architecture Patterns: OGG Vorbis + WAV Tag Writer Integration
 
-**Domain:** Audio metadata editing in existing music player
-**Researched:** 2026-03-16
-**Confidence:** HIGH (based on full codebase analysis of existing architecture)
+**Domain:** Adding OGG Vorbis and WAV tag writing to existing music player tag editing pipeline
+**Researched:** 2026-03-18
+**Confidence:** HIGH (based on full codebase analysis of existing architecture + container format research)
 
 ## Recommended Architecture
 
-Tag editing is a **cross-cutting operation** that touches files, database entities, the FTS5 search index, the cover art pipeline, and the frontend cache — all from a single user action. The architecture adds a new `backend/tageditor/` package that orchestrates the full write pipeline, keeping the existing `library`, `metadata`, and `database` packages focused on their current responsibilities.
+OGG Vorbis and WAV tag writing integrate into the existing `tagwriter` package by implementing two new format-specific writer functions (`writeOggTags` and `writeWavTags`) that follow the exact pattern established by `writeMp3Tags` and `writeFlacTags`. The existing pipeline (`WriteTrackTags` → file write → DB sync → event emission) requires only a switch-case extension — no new interfaces, no refactoring.
 
-### High-Level Data Flow
+### High-Level Data Flow (Unchanged)
 
 ```
 UI: track-details "Save" click
-  → Wails binding: tageditor.EditTrack(filePath, changes)
-    → 1. Validate input + resolve audio_file by path
-    → 2. Write tags to temp file, rename over original (safe write)
-    → 3. Update DB entities in single transaction:
-         a. Upsert artist_credit + artist (if artist changed)
-         b. Upsert release_group (if album changed)
-         c. Update recording fields (title, year, track#, etc.)
-         d. Update genre links (delete old, insert new)
-         e. Update release_group_recordings link (if album changed)
-         f. Handle cover art (if image provided)
-    → 4. Update FTS5 search_index (re-insert with same rowid)
-    → 5. Emit TagsUpdated event with affected file paths
-  → Frontend: libraryStore receives event, patches cached tracks in-place
-  → All views re-render with updated metadata
+  → Wails binding: TagWriter.WriteTrackTagsByPath(filePath, changes)
+    → 1. Resolve audio_file by path
+    → 2. DetectFormat(filePath)  ← EXTEND: add .ogg, .wav cases
+    → 3. AcquirePipelineLock
+    → 4. PlayerStopper check
+    → 5. Format switch:
+         case FormatMP3:  writeMp3Tags(...)   ← existing
+         case FormatFLAC: writeFlacTags(...)  ← existing
+         case FormatOGG:  writeOggTags(...)   ← NEW
+         case FormatWAV:  writeWavTags(...)   ← NEW
+    → 6. syncDatabase(...)  ← NO CHANGES
+    → 7. EventsEmit(TrackMetadataChanged)  ← NO CHANGES
 ```
+
+**Key insight:** The existing architecture was designed for format extension. The `pipeline.go` switch statement is the single point of modification. Everything downstream (DB sync, FTS5, orphan cleanup, event emission, batch processing, cover art pipeline) is format-agnostic and works unchanged.
 
 ### Component Boundaries
 
-| Component | Responsibility | Communicates With |
-|-----------|---------------|-------------------|
-| `backend/tageditor/` (NEW) | Orchestrates tag write pipeline: file write + DB update + FTS5 + events | `metadata/`, `database/`, `events/`, `coverart/`, Wails runtime |
-| `backend/tageditor/writer.go` (NEW) | Format-specific tag writing (MP3/FLAC/OGG) via external libraries | File system, `bogem/id3v2`, `go-flac/go-flac` + `go-flac/flacvorbis` |
-| `backend/metadata/tags.go` (EXISTING) | Tag reading via `dhowden/tag` — **no changes needed** | File system |
-| `backend/library/library.go` (EXISTING) | Scan pipeline, entity upsert helpers — **reuse `processMetadata` pattern** | `database/`, `metadata/` |
-| `backend/database/search.go` (EXISTING) | FTS5 index operations — **add `UpdateSearchIndex` method** | SQLite |
-| `backend/events/events.go` (EXISTING) | Event constants — **add tag editing events** | Nothing |
-| `frontend/src/components/track-details/` (EXISTING) | Edit UI — **wire Save to backend, add batch mode** | `tageditor` Wails binding |
-| `frontend/src/store/library-store.ts` (EXISTING) | Track cache — **add event handler for in-place patch** | Wails events |
+| Component | Status | Changes |
+|-----------|--------|---------|
+| `backend/tagwriter/tagwriter.go` | MODIFY | Add `FormatOGG`, `FormatWAV` constants; extend `DetectFormat()` switch |
+| `backend/tagwriter/pipeline.go` | MODIFY | Add two cases to format switch in `WriteTrackTags()` |
+| `backend/tagwriter/ogg.go` | **NEW** | `writeOggTags()` — OGG container rewrite with Vorbis Comment manipulation |
+| `backend/tagwriter/wav.go` | **NEW** | `writeWavTags()` — RIFF/WAV chunk manipulation with ID3v2 or LIST-INFO |
+| `backend/tagwriter/ogg_test.go` | **NEW** | 7 round-trip tests following FLAC pattern |
+| `backend/tagwriter/wav_test.go` | **NEW** | 7 round-trip tests following FLAC pattern |
+| `backend/tagwriter/dbsync.go` | UNCHANGED | Format-agnostic entity sync |
+| `backend/tagwriter/helpers_test.go` | UNCHANGED | Shared test helpers (`tinyJPEG`, `assertEqual`, etc.) |
+| `backend/metadata/tags.go` | UNCHANGED | `dhowden/tag` already reads OGG and WAV tags |
+| `backend/fileutil/atomicwrite.go` | UNCHANGED | Used by both new writers |
+| `frontend/src/components/track-details/` | UNCHANGED | Format-agnostic edit UI |
 
-## New Package: `backend/tageditor/`
+## OGG Vorbis Writer: `writeOggTags()`
 
-### Why a Separate Package
+### Container Structure
 
-The tag editing flow does NOT fit cleanly into the existing `library` package because:
+An OGG Vorbis file consists of OGG pages containing three types of Vorbis packets:
+1. **Identification header** (page 0, BOS flag) — audio parameters, must not be modified
+2. **Comment header** (page 1) — Vorbis Comments (tags) + optional METADATA_BLOCK_PICTURE
+3. **Setup header** (page 1 or 2) — codebooks, must not be modified
+4. **Audio data** (remaining pages) — compressed audio, must not be modified
 
-1. **Different lifecycle**: Scans are bulk, batch-oriented operations. Tag edits are individual, user-initiated, synchronous operations.
-2. **Different entity update strategy**: Scans always CREATE new recordings. Tag edits must UPDATE existing recordings and handle shared entity reference changes.
-3. **Different file I/O pattern**: Scans read files. Tag edits write files with safety guarantees (temp + rename).
-4. **Wails binding boundary**: Tag editor needs its own binding registration for a clean API surface.
+Writing tags means **replacing only the comment header packet** while preserving everything else exactly.
 
-However, the tag editor REUSES logic from existing packages:
-- Entity upsert helpers from `library` (either extracted to shared code or duplicated with attribution)
-- FTS5 operations from `database/search.go`
-- Cover art pipeline from `library/coverart.go` and `coverart/`
+### Approach: Full-File Rewrite via AtomicWrite
 
-### Package Structure
+**Why full rewrite, not in-place:** Changing the comment header changes its size. OGG pages have fixed-size segment tables (max 255 segments × 255 bytes = ~64KB per page). A larger comment header may require different page segmentation. Every subsequent page has a page sequence number and CRC-32 checksum that must be recalculated. In-place editing is impossible — the file must be rewritten.
 
-```
-backend/tageditor/
-├── tageditor.go    # Service struct, EditTrack(), EditTracks(), SetCoverArt()
-├── writer.go       # Format-specific tag writing (MP3, FLAC, OGG)
-└── writer_test.go  # Tests for safe file write + tag round-trip
-```
+**This is fine:** AtomicWrite already does full-file rewrite for MP3 and FLAC. OGG Vorbis files are typically 3-10MB (compressed audio). Memory usage is bounded because we stream page-by-page, not load the entire file.
 
-### Service API (Wails-Bound)
+### Implementation Strategy
 
 ```go
-// Package tageditor provides audio file tag editing with safe
-// file writes and inline database synchronization.
-package tageditor
-
-// EditRequest describes changes to apply to a single track.
-type EditRequest struct {
-    FilePath    string   `json:"filePath"`
-    Title       *string  `json:"title,omitempty"`
-    Artist      *string  `json:"artist,omitempty"`
-    Album       *string  `json:"album,omitempty"`
-    Genre       *string  `json:"genre,omitempty"`
-    Year        *int     `json:"year,omitempty"`
-    TrackNumber *int     `json:"trackNumber,omitempty"`
-    DiscNumber  *int     `json:"discNumber,omitempty"`
-    Composer    *string  `json:"composer,omitempty"`
-    // CoverArt is set separately via SetCoverArt()
+func writeOggTags(logger *slog.Logger, filePath string, changes TagChanges) error {
+    // 1. Open and parse OGG file page-by-page
+    // 2. Read the three header packets (identification, comment, setup)
+    // 3. Parse existing Vorbis Comment from comment header packet
+    // 4. Apply changes to Vorbis Comment fields (same field mapping as FLAC)
+    // 5. If cover_art changed: encode METADATA_BLOCK_PICTURE and add/remove
+    //    from Vorbis Comment as base64 field
+    // 6. Re-serialize comment header packet
+    // 7. AtomicWrite: stream all pages to temp file
+    //    - Page 0 (BOS): rewrite with correct CRC (identification header unchanged)
+    //    - Page 1+: rewrite with new comment header + setup header, recalculate
+    //      segmentation and CRC
+    //    - Remaining pages: copy byte-for-byte (page sequence numbers and CRCs
+    //      only need recalculation if page boundaries shifted)
+    // 8. Rename over original
 }
-
-// EditResult reports the outcome of a tag edit operation.
-type EditResult struct {
-    FilePath string `json:"filePath"`
-    Success  bool   `json:"success"`
-    Error    string `json:"error,omitempty"`
-}
-
-// Service orchestrates tag editing operations.
-type Service struct {
-    ctx    context.Context
-    logger *slog.Logger
-    db     *database.DB
-}
-
-// EditTrack applies metadata changes to a single audio file.
-func (s *Service) EditTrack(req EditRequest) EditResult
-
-// EditTracks applies shared field changes to multiple files (batch).
-func (s *Service) EditTracks(reqs []EditRequest) []EditResult
-
-// SetCoverArt embeds an image file into one or more audio files.
-func (s *Service) SetCoverArt(filePaths []string, imagePath string) []EditResult
 ```
 
-Pointer fields (`*string`, `*int`) distinguish "not changed" (nil) from "set to empty/zero" (pointer to zero value). This is critical for batch editing where you only want to change shared fields.
+### OGG Page Structure (For Implementation)
 
-### Two-Phase Initialization
+```
+OGG Page Header (27 bytes + segment table):
+  - Capture pattern: "OggS" (4 bytes)
+  - Stream structure version: 0 (1 byte)
+  - Header type flag: BOS/EOS/continued (1 byte)
+  - Absolute granule position: int64 (8 bytes)
+  - Stream serial number: uint32 (4 bytes)
+  - Page sequence number: uint32 (4 bytes)
+  - CRC-32 checksum: uint32 (4 bytes)
+  - Number of page segments: uint8 (1 byte)
+  - Segment table: [num_segments]uint8
 
-Follows the existing `NewService()` + `SetContext()` pattern:
+OGG Page Body:
+  - Raw data (sum of segment table values bytes)
+```
+
+### Vorbis Comment Format (Shared with FLAC)
+
+The comment header packet uses the exact same Vorbis Comment format as FLAC's Vorbis Comment metadata block, with one difference:
+- **In FLAC:** Vorbis Comments are a metadata block (type 4), binary data
+- **In OGG:** Vorbis Comments are preceded by a 7-byte Vorbis packet header (`\x03vorbis`)
+
+The field mapping is identical to `applyFlacTextChanges()`:
+
+| Field | Vorbis Comment Key |
+|-------|-------------------|
+| title | TITLE |
+| artist | ARTIST |
+| album | ALBUM |
+| album_artist | ALBUMARTIST |
+| genre | GENRE |
+| year | DATE |
+| track_number | TRACKNUMBER |
+| disc_number | DISCNUMBER |
+| composer | COMPOSER |
+
+### Code Reuse Opportunity
+
+The `replaceVorbisComment()` function in `flac.go` operates on `*flacvorbis.MetaDataBlockVorbisComment` which is specific to the `go-flac/flacvorbis` library. However, the Vorbis Comment binary format is identical across FLAC and OGG. Two approaches:
+
+1. **Build a minimal Vorbis Comment parser/serializer** (~80 lines) directly in `ogg.go` that reads/writes the `vendor_string + comments[]` binary format. This avoids pulling in FLAC dependencies for OGG files. The existing `parseVorbisComment()` helper in `flac_test.go` already demonstrates the parsing logic — promote it to a shared implementation.
+
+2. **Reuse `go-flac/flacvorbis`** by constructing a fake `MetaDataBlock` from the OGG comment packet (strip the 7-byte `\x03vorbis` prefix). This is hacky and creates a false dependency.
+
+**Recommendation:** Approach 1. Write a self-contained `vorbisComment` type in `ogg.go` with `parse(data []byte)` and `marshal() []byte` methods. The format is simple (little-endian length-prefixed strings) and the test already has the parser. This is ~80 lines and avoids coupling.
+
+### Cover Art in OGG: METADATA_BLOCK_PICTURE
+
+OGG Vorbis stores cover art as a Vorbis Comment field named `METADATA_BLOCK_PICTURE`. The value is a base64-encoded binary blob using the same FLAC PICTURE block format:
+
+```
+METADATA_BLOCK_PICTURE binary format:
+  - Picture type: uint32 BE (3 = front cover)
+  - MIME string length: uint32 BE
+  - MIME string: UTF-8
+  - Description length: uint32 BE
+  - Description: UTF-8
+  - Width: uint32 BE
+  - Height: uint32 BE
+  - Color depth: uint32 BE
+  - Colors used: uint32 BE
+  - Data length: uint32 BE
+  - Data: raw image bytes
+```
+
+This is then base64-encoded and stored as: `METADATA_BLOCK_PICTURE=<base64 data>`
+
+**Implementation:** Encode using `encoding/base64` and the same `detectMIME()` helper. Width/height/depth can be set to 0 (players derive them from the image data). This adds ~30 lines to the cover art handling.
+
+**Read-back verification:** `dhowden/tag` already reads `METADATA_BLOCK_PICTURE` from OGG files and returns it via the `Picture()` method. Round-trip tests will work with `metadata.ExtractTags()` unchanged.
+
+### No Existing Go Library
+
+**Confirmed:** There is no pure-Go library for writing OGG Vorbis tags. The existing `jfreymuth/oggvorbis` library (already an indirect dependency via beep) is **read-only** — it provides `NewReader()`, `Read()`, `CommentHeader()`, and `GetCommentHeader()` but no write functionality. The `ogg.go` source reveals the page-level reading infrastructure (`page.read()`, `page.readHeader()`, `page.readContent()`) but no page writing.
+
+**Impact:** We must implement OGG page writing ourselves. This is ~200 lines of code for the page serializer + CRC calculation. The `jfreymuth/oggvorbis` package's `crc.go` provides the CRC-32 lookup table (`crcUpdate()`) we can reference for the polynomial (0x04C11DB7, same as in the OGG spec). However, since it's unexported, we must either vendor the CRC table or compute it at init time.
+
+### Risk Assessment
+
+| Risk | Severity | Mitigation |
+|------|----------|------------|
+| OGG page re-segmentation correctness | HIGH | Comprehensive round-trip tests; verify with `dhowden/tag` read-back |
+| CRC-32 calculation error | HIGH | Use the same polynomial as the OGG spec; test against known-good files |
+| METADATA_BLOCK_PICTURE encoding | LOW | Well-documented format; base64 encoding is trivial |
+| Large OGG files (>100MB) | LOW | OGG Vorbis files are typically <15MB; stream page-by-page |
+| Multi-stream OGG files | LOW | Music files are single-stream; reject multi-stream as unsupported |
+
+## WAV Writer: `writeWavTags()`
+
+### Container Structure
+
+WAV files use the RIFF (Resource Interchange File Format) container:
+
+```
+RIFF header:
+  "RIFF" (4 bytes)
+  File size - 8 (uint32 LE)
+  "WAVE" (4 bytes)
+
+Chunks (in any order):
+  "fmt " chunk — audio format parameters (required)
+  "data" chunk — raw PCM audio samples (required)
+  "LIST" chunk (subtype "INFO") — metadata as sub-chunks
+  "id3 " or "ID3 " chunk — embedded ID3v2 tag
+  other chunks (fact, cue, etc.)
+```
+
+### Metadata Approach: ID3v2 in RIFF Chunk
+
+WAV metadata can be stored in two ways:
+1. **LIST-INFO chunks:** Simple key-value pairs (`INAM`=title, `IART`=artist, `IPRD`=album, etc.). No cover art support. Limited charset (originally ASCII, some tools use UTF-8).
+2. **id3 chunk:** A full ID3v2 tag embedded in a RIFF chunk named `id3 ` or `ID3 `. Supports all fields including cover art. Most modern tools (foobar2000, MusicBee, TagLib) use this approach.
+
+**Recommendation:** Use the **id3 chunk** approach because:
+- Reuses the existing `bogem/id3v2` library already used by `writeMp3Tags()`
+- Supports cover art embedding (LIST-INFO does not)
+- `dhowden/tag` reads ID3v2 from WAV files, so round-trip tests work
+- Consistent field semantics with MP3 tag writing
+
+### Implementation Strategy
 
 ```go
-// In NewYellowJacketApp():
-yjApp.tagEditor = tageditor.NewService(logger, db)
-
-// In OnStartup():
-yj.tagEditor.SetContext(ctx)
-
-// In FEBindings:
-yjApp.FEBindings = []any{
-    // ... existing bindings ...
-    yjApp.tagEditor,
+func writeWavTags(logger *slog.Logger, filePath string, changes TagChanges) error {
+    // 1. Open WAV file, parse RIFF header
+    // 2. Enumerate chunks: find existing "id3 " chunk (if any),
+    //    locate "fmt " and "data" chunks
+    // 3. If existing id3 chunk found:
+    //    a. Parse existing ID3v2 tag
+    //    b. Apply changes using same applyTextChanges()/applyCoverArtChanges()
+    //       as MP3 writer
+    //    c. Serialize updated tag
+    // 4. If no existing id3 chunk:
+    //    a. Create new ID3v2 tag
+    //    b. Apply changes
+    //    c. Serialize
+    // 5. AtomicWrite: rebuild RIFF file
+    //    a. Write RIFF header with new total size
+    //    b. Copy all original chunks EXCEPT old id3 chunk
+    //    c. Append new id3 chunk (with proper RIFF chunk header)
+    //    d. Update RIFF file size in header
 }
 ```
 
-## File Writing Strategy
+### Code Reuse with MP3 Writer
 
-### Write-to-Temp-Then-Rename (Corruption Safety)
-
-```
-1. Write modified tags to temporary file in same directory:
-   /music/track.mp3 → /music/.track.mp3.yjtmp
-2. fsync the temp file
-3. os.Rename temp file over original (atomic on same filesystem)
-4. If any step fails, delete temp file and return error
-```
-
-Why same directory: `os.Rename` is atomic only within the same filesystem. Writing to a temp directory on a different mount would require a full copy.
-
-### Format-Specific Writers
-
-| Format | Library | Write Strategy |
-|--------|---------|----------------|
-| MP3 (ID3v2) | `github.com/bogem/id3v2/v2` (v2.1.4) | Open → parse existing → modify frames → Save() writes to same file. Use WriteTo() to write to temp file instead. |
-| FLAC (Vorbis Comments) | `github.com/go-flac/go-flac/v2` + `github.com/go-flac/flacvorbis/v2` | ParseFile → find/create VorbisComment metablock → set fields → Save() to temp file |
-| OGG (Vorbis Comments) | Custom or `dhowden/tag`-compatible approach | OGG Vorbis uses same comment format as FLAC. May need lower-level OGG page rewriting. **Needs deeper research at implementation time.** |
-
-**Confidence notes:**
-- MP3 via `bogem/id3v2`: HIGH — mature library (359 stars, v2.1.4, 57 importers), well-documented read+write API, supports ID3v2.3 and v2.4, picture frames, UTF-8 encoding.
-- FLAC via `go-flac/go-flac` + `go-flac/flacvorbis`: MEDIUM — smaller community (12 stars on flacvorbis), but clean API for metadata block manipulation. `flac.Save(filename)` writes back to disk.
-- OGG Vorbis: LOW — no well-established pure-Go OGG tag writing library. May need to shell out to a tool or implement custom OGG page rewriting. **Consider deferring OGG write support to a follow-up if complexity is high.**
-
-### Cover Art Embedding
-
-For cover art, the writer embeds the image data directly into the audio file:
-
-- **MP3**: `id3v2.PictureFrame` with `PTFrontCover` type
-- **FLAC**: `flac.MetaDataBlockPicture` (FLAC picture metadata block)
-
-After writing to the audio file, the cover art pipeline also:
-1. Saves the image to the covers directory (hash-based filename)
-2. Generates size variants (sm/md/lg)
-3. Upserts the `cover_art` DB record
-4. Updates `release_groups.cover_art_id` if needed
-
-## Database Update Strategy
-
-### The Shared Entity Problem
-
-The normalized schema means entities are shared across tracks:
-
-```
-artist_credit "The Beatles" ← referenced by 200 recordings
-release_group "Abbey Road"  ← referenced by 17 recordings
-genre "Rock"                ← referenced by 5000 recordings
-```
-
-When a user changes a track's artist from "The Beatles" to "The Beetles" (typo fix), we must NOT modify the existing `artist_credit` row — that would change the artist name for all 200 tracks.
-
-### Update Rules
-
-| Field Changed | DB Operation |
-|---------------|-------------|
-| Title | UPDATE `recordings.name` directly (recording is per-track) |
-| Track Number | UPDATE `recordings.track_number` directly |
-| Disc Number | UPDATE `recordings.disc_number` directly |
-| Year | UPDATE `recordings.year` directly |
-| Composer | UPDATE `recordings.composer` directly |
-| Artist | Upsert new `artist_credit` + `artist`, UPDATE `recordings.artist_credit_id` to point to new credit. Old credit is NOT deleted (may be used by other recordings). |
-| Album | Upsert new `release_group`, update `release_group_recordings` link. Old release group is NOT deleted. |
-| Genre | Delete existing `recording_genres` links for this recording, upsert new genres, create new links. Old genres NOT deleted (shared). |
-| Cover Art | Process through cover art pipeline, update `release_groups.cover_art_id` |
-
-### Orphan Cleanup Strategy
-
-After tag edits, orphaned entities (artist credits, release groups, genres with zero references) accumulate. Two options:
-
-**Option A: Lazy cleanup (RECOMMENDED)**
-- Orphans are harmless — they don't appear in queries because all views JOIN through `audio_files → recordings → ...`
-- Clean up during the next library rescan (existing orphan cleanup phase)
-- Zero additional complexity in the tag edit path
-
-**Option B: Eager cleanup**
-- After each edit, run reference-counting DELETE queries for affected entities
-- Adds complexity and transaction time to every edit
-- Only worthwhile if orphans cause visible problems (they don't)
-
-**Decision: Option A.** The existing rescan orphan cleanup handles this. Tag editing should be fast and simple.
-
-### Transaction Shape
-
-Single transaction per track edit:
-
-```sql
-BEGIN;
--- 1. Upsert artist_credit (if artist changed)
-INSERT INTO artist_credit(text) VALUES(?) ON CONFLICT(text) DO UPDATE SET text=text RETURNING *;
-INSERT INTO artists(name) VALUES(?) ON CONFLICT(name) DO UPDATE SET name=name RETURNING *;
-INSERT OR IGNORE INTO artist_credit_artist(artist_id, credit_id) VALUES(?, ?);
-
--- 2. Upsert release_group (if album changed)
-INSERT INTO release_groups(name, album_artist_credit_id) VALUES(?, ?)
-    ON CONFLICT(name, album_artist_credit_id) DO UPDATE SET name=name RETURNING *;
-
--- 3. Update recording
-UPDATE recordings SET name=?, artist_credit_id=?, track_number=?, disc_number=?,
-    year=?, genre=?, composer=? WHERE id=?;
-
--- 4. Update genre links (if genre changed)
-DELETE FROM recording_genres WHERE recording_id = ?;
-INSERT INTO genres(name) VALUES(?) ON CONFLICT(name) DO UPDATE SET name=name RETURNING *;
-INSERT INTO recording_genres(recording_id, genre_id) VALUES(?, ?);
-
--- 5. Update release_group_recordings (if album changed)
-DELETE FROM release_group_recordings WHERE recording_id = ?;
-INSERT INTO release_group_recordings(release_group_id, recording_id, track_number, disc_number) VALUES(?, ?, ?, ?);
-
--- 6. FTS5 update (re-insert with same rowid)
-INSERT INTO search_index(rowid, file_path, title, artist, album) VALUES(?, ?, ?, ?, ?);
-COMMIT;
-```
-
-### FTS5 Update Pattern
-
-The current `search_index` is contentless (`content=''`), which means:
-- DELETE is not supported
-- INSERT with an existing rowid adds a new entry; the old one becomes stale
-- Stale entries are filtered out by the JOIN against `track_metadata` in search queries
-
-This works correctly for tag editing: re-INSERT with the same `audio_files.id` as rowid. The stale entry for the old metadata is harmless and filtered by the VIEW JOIN.
-
-**No FTS5 schema changes needed.**
-
-## Events
-
-### New Events
+The MP3 writer's `applyTextChanges(tag, changes)` and `applyCoverArtChanges(tag, changes)` functions operate on `*id3v2.Tag` objects. These exact functions can be reused by the WAV writer since the ID3v2 tag format is identical:
 
 ```go
-// Tag editing events.
+// In wav.go — reuse existing functions from mp3.go:
+tag, err := id3v2.Open(...)  // or id3v2.ParseReader(...)
+applyTextChanges(tag, changes)    // ← same function from mp3.go
+applyCoverArtChanges(tag, changes) // ← same function from mp3.go
+```
+
+### RIFF Chunk Parser (~100 lines)
+
+A minimal RIFF parser needs to:
+1. Read 12-byte RIFF header (`"RIFF" + size + "WAVE"`)
+2. Iterate chunks: 8-byte chunk header (`id[4] + size[4]`), skip body
+3. Track positions and sizes of each chunk
+4. Handle padding bytes (RIFF chunks are word-aligned — if data size is odd, a pad byte follows)
+
+This is straightforward binary parsing. No external library needed.
+
+### AtomicWrite for Large WAV Files
+
+**Concern:** WAV files can be very large (uncompressed audio: a 60-minute CD-quality WAV is ~630MB). AtomicWrite creates a full copy in a temp file before renaming.
+
+**Assessment:** This is acceptable because:
+1. AtomicWrite already streams data via `io.Copy` — it doesn't load the file into memory
+2. The WAV writer copies chunks sequentially: read chunk from source → write to temp file
+3. Disk space for the temp file is the only cost (~2× file size temporarily)
+4. The alternative (in-place chunk modification) risks corruption if the process is interrupted mid-write
+5. The existing FLAC writer already handles large files this way (with a warning for >500MB)
+
+**Practical consideration:** WAV files >500MB are rare in music libraries (they're typically ripped CDs at ~30-50MB per track, or high-resolution at ~150MB). Add the same size warning as the FLAC writer.
+
+```go
+if info.Size() > largeSizeThreshold {
+    logger.Warn("large WAV file may take extra time/space for atomic write",
+        slog.String("path", filePath),
+        slog.Int64("size", info.Size()),
+    )
+}
+```
+
+### Cover Art in WAV
+
+Since we're using the id3 chunk approach, cover art embedding uses the exact same APIC frame mechanism as MP3. The `applyCoverArtChanges()` function handles this already.
+
+### Risk Assessment
+
+| Risk | Severity | Mitigation |
+|------|----------|------------|
+| Large file temp space | MEDIUM | Log warning for >500MB; streaming copy avoids memory issues |
+| RIFF chunk alignment (pad bytes) | MEDIUM | Follow spec: odd-sized chunks get 1 pad byte |
+| Existing LIST-INFO metadata | LOW | Preserve LIST-INFO chunks as-is; only modify/add id3 chunk |
+| `bogem/id3v2` reading from WAV | LOW | Library may need `ParseReader` instead of `Open` (investigate) |
+| WAV files without existing tags | LOW | Create new id3 chunk; all other chunks preserved |
+
+## Format Detection Extension
+
+### Current Implementation (`tagwriter.go`)
+
+```go
+func DetectFormat(filePath string) (AudioFormat, error) {
+    ext := strings.ToLower(filepath.Ext(filePath))
+    switch ext {
+    case ".mp3":
+        return FormatMP3, nil
+    case ".flac":
+        return FormatFLAC, nil
+    default:
+        return "", fmt.Errorf("%w: %s", errUnsupportedFormat, ext)
+    }
+}
+```
+
+### Required Changes
+
+```go
 const (
-    TagsUpdated   = "TagsUpdated"   // Single or batch edit complete
-    TagEditFailed = "TagEditFailed" // Edit failed (file write error, etc.)
+    FormatMP3  AudioFormat = "mp3"
+    FormatFLAC AudioFormat = "flac"
+    FormatOGG  AudioFormat = "ogg"   // NEW
+    FormatWAV  AudioFormat = "wav"   // NEW
 )
+
+func DetectFormat(filePath string) (AudioFormat, error) {
+    ext := strings.ToLower(filepath.Ext(filePath))
+    switch ext {
+    case ".mp3":
+        return FormatMP3, nil
+    case ".flac":
+        return FormatFLAC, nil
+    case ".ogg":              // NEW
+        return FormatOGG, nil // NEW
+    case ".wav":              // NEW
+        return FormatWAV, nil // NEW
+    default:
+        return "", fmt.Errorf("%w: %s", errUnsupportedFormat, ext)
+    }
+}
 ```
 
-### Event Payloads
+**Extension-based detection is sufficient.** The existing approach works because:
+1. The metadata package already uses extension-based routing for decoding (`metadata/decoder.go`)
+2. YellowJacket only indexes files with known extensions (`.mp3`, `.flac`, `.ogg`, `.wav`)
+3. File magic-byte detection is unnecessary — if a file is in the DB, it was already validated during scan
+
+### Pipeline Switch Extension
+
+In `pipeline.go`, the format switch becomes:
 
 ```go
-// TagsUpdated payload:
-type TagsUpdatedPayload struct {
-    FilePaths []string `json:"filePaths"` // All affected file paths
-}
-
-// TagEditFailed payload:
-type TagEditFailedPayload struct {
-    FilePath string `json:"filePath"`
-    Error    string `json:"error"`
+switch format {
+case FormatMP3:
+    err = writeMp3Tags(tw.logger, audioFile.FilePath, changes)
+case FormatFLAC:
+    err = writeFlacTags(tw.logger, audioFile.FilePath, changes)
+case FormatOGG:
+    err = writeOggTags(tw.logger, audioFile.FilePath, changes)
+case FormatWAV:
+    err = writeWavTags(tw.logger, audioFile.FilePath, changes)
+default:
+    err = fmt.Errorf("%w: %s", errUnsupportedFormat, format)
 }
 ```
 
-### Frontend Event Handling
+## Frontend Impact: None
 
-When `TagsUpdated` fires:
-1. `libraryStore` re-fetches all data (simplest approach for v1)
-2. OR `libraryStore` patches affected tracks in-place from the payload (more complex but avoids full reload)
+The track-details dialog component is **completely format-agnostic**. It:
+1. Shows the same 8 editable fields regardless of format
+2. Shows the same cover art pick/replace/remove UI
+3. Sends the same `TagChanges` diff map to `WriteTrackTagsByPath()`
+4. Receives the same `TrackMetadataChanged` event
+5. Uses the same three-state field model for batch editing
 
-**Recommendation:** Start with full re-fetch on `TagsUpdated`. Optimize to incremental patch later if performance is an issue. The existing `LibraryScanComplete` handler already does a full re-fetch, so this is consistent.
+The backend handles all format-specific logic. The frontend never sees or cares about the audio format.
 
-## Frontend Integration
+**Verified:** No frontend changes needed for OGG or WAV tag writing.
 
-### Existing `track-details` Component
+## Test Strategy
 
-The component already has:
-- Edit mode toggle with input fields for all editable metadata
-- `editValues` state tracking changes
-- `saveEdit()` method (currently a no-op TODO)
+### Follow FLAC Round-Trip Pattern (7 Tests per Format)
 
-Changes needed:
-1. Wire `saveEdit()` to call `tageditor.EditTrack()` via Wails binding
-2. Add loading/saving state for the save button
-3. Add error display if the edit fails
-4. Close dialog and emit refresh on success
-5. Add cover art upload: file picker → `tageditor.SetCoverArt()`
+The FLAC writer has 7 tests that verify the complete write→read cycle using `metadata.ExtractTags()` for read-back. The same test structure applies to OGG and WAV:
 
-### Batch Editing (Multi-Select)
+| Test | What It Verifies |
+|------|-----------------|
+| `TestWriteOggTags_TextFields` | All 9 text fields round-trip correctly |
+| `TestWriteOggTags_CoverArt` | METADATA_BLOCK_PICTURE embedded and readable |
+| `TestWriteOggTags_ClearCoverArt` | Cover art removal works |
+| `TestWriteOggTags_PartialUpdate` | Unchanged fields preserved |
+| `TestWriteOggTags_PreservesAudioData` | Audio stream intact after tag write |
+| `TestWriteOggTags_ReplaceComment` | No duplicate Vorbis Comment entries |
+| `TestWriteOggTags_AtomicSafety` | Failed write leaves file untouched |
 
-The track list already has multi-select via `SelectionController`. Batch editing needs:
+Same 7 tests for WAV (`TestWriteWavTags_*`).
 
-1. New context menu item: "Edit Tags" (when multiple tracks selected)
-2. A batch edit dialog variant of `track-details` that:
-   - Shows "Multiple Values" placeholder for fields that differ across selected tracks
-   - Only sends changed fields (using the `*string`/`*int` nil-means-no-change pattern)
-   - Calls `tageditor.EditTracks()` for all selected files
+### Test Fixture Helpers
 
-### Store Updates
+Each format needs a `makeMinimal*()` helper:
 
-`library-store.ts` needs:
-```typescript
-// In constructor, add event listener:
-EventsOn(Events.TagsUpdated, () => {
-    // Re-fetch all data to reflect changes
-    this.eagerFetch();
-});
-```
+- **`makeMinimalOGG(t, path)`** — Creates a minimal valid OGG Vorbis file containing: BOS page with identification header, comment header page (empty Vorbis Comment), EOS page with setup header + minimal audio frame. This is complex (~60 lines) but required for round-trip testing.
 
-This ensures all views (tracks, albums, artists, genres) reflect the updated metadata without manual cache invalidation.
+- **`makeMinimalWAV(t, path)`** — Creates a minimal valid WAV file containing: RIFF header, `fmt ` chunk (PCM, 44100Hz, 16-bit, mono), `data` chunk (brief silence). This is simple (~30 lines) — just binary header construction.
 
-## Integration Points Summary
+### Read-Back Verification
 
-| Existing Component | Change Type | What Changes |
-|-------------------|-------------|-------------|
-| `backend/app.go` | MODIFY | Add `tagEditor` field, wire in `NewYellowJacketApp`/`OnStartup`, add to `FEBindings` |
-| `backend/events/events.go` | MODIFY | Add `TagsUpdated`, `TagEditFailed` constants |
-| `frontend/src/events.ts` | MODIFY (auto-generated) | Mirror new event constants |
-| `backend/database/search.go` | MINOR MODIFY | No changes needed — existing `InsertSearchIndex` works for re-insert |
-| `backend/metadata/tags.go` | NO CHANGE | Read-only, continues to work as-is |
-| `backend/library/library.go` | MINOR MODIFY | Extract `processMetadata` helpers to be reusable, or duplicate in tageditor with attribution |
-| `backend/library/query.go` | NO CHANGE | Query methods work as-is |
-| `frontend/src/components/track-details/` | MODIFY | Wire save to backend, add loading states, error handling |
-| `frontend/src/store/library-store.ts` | MODIFY | Add `TagsUpdated` event listener for cache refresh |
-| `go.mod` | MODIFY | Add `bogem/id3v2/v2`, `go-flac/go-flac/v2`, `go-flac/flacvorbis/v2` |
+Both formats use `metadata.ExtractTags()` (which uses `dhowden/tag`) for read-back verification:
+- **OGG:** `dhowden/tag` reads Vorbis Comments from OGG files including `METADATA_BLOCK_PICTURE`. **Verified:** the library's `ogg.go` and `vorbis.go` handle this.
+- **WAV:** `dhowden/tag` reads ID3v2 tags from WAV files (it detects the `id3 ` chunk in the RIFF container). **Verified:** the library handles this per its README (MP3/MP4/OGG/FLAC metadata parsing).
+
+**Confidence:** HIGH — `dhowden/tag` is already the read-back library for MP3 and FLAC tests. It supports OGG and WAV reading.
+
+## Suggested Build Order
+
+Based on dependency analysis and risk levels:
+
+### Phase 1: WAV Writer (Lower Risk, Faster)
+
+**Rationale:** WAV writing reuses the existing `bogem/id3v2` library and the existing `applyTextChanges()`/`applyCoverArtChanges()` functions. The RIFF container is much simpler than OGG (no checksums, no page segmentation). This can be built and tested quickly, giving confidence in the pipeline extension pattern before tackling OGG.
+
+1. Add `FormatWAV` constant and extend `DetectFormat()`
+2. Write RIFF chunk parser (~100 lines in `wav.go`)
+3. Implement `writeWavTags()` using id3v2 tag in RIFF chunk
+4. Add pipeline switch case
+5. Write `makeMinimalWAV()` test fixture
+6. Write 7 round-trip tests
+7. Verify with `make lint`
+
+### Phase 2: OGG Vorbis Writer (Higher Risk, More Code)
+
+**Rationale:** OGG requires implementing the page-level write infrastructure (CRC-32, segmentation, page serialization) from scratch. This is the riskiest part of the milestone and benefits from having the WAV writer already proving the pipeline extension pattern works.
+
+1. Implement OGG CRC-32 calculation (~30 lines)
+2. Implement OGG page serializer (~80 lines)
+3. Implement Vorbis Comment parser/serializer (~80 lines)
+4. Implement METADATA_BLOCK_PICTURE encoding (~40 lines)
+5. Implement `writeOggTags()` orchestrator (~100 lines)
+6. Add `FormatOGG` constant and pipeline switch case
+7. Write `makeMinimalOGG()` test fixture (~60 lines)
+8. Write 7 round-trip tests
+9. Verify with `make lint`
+
+### Phase 3: Cleanup
+
+1. Remove OGG/WAV from "Out of Scope" in PROJECT.md
+2. Update milestone status
+3. Fix any lint warnings from v1.2
+
+### Total New Code Estimate
+
+| Component | Lines (approx) |
+|-----------|----------------|
+| `ogg.go` (writer + helpers) | ~350 |
+| `wav.go` (writer + RIFF parser) | ~200 |
+| `ogg_test.go` | ~350 |
+| `wav_test.go` | ~250 |
+| `tagwriter.go` changes | ~10 |
+| `pipeline.go` changes | ~5 |
+| **Total** | **~1,165** |
 
 ## Patterns to Follow
 
-### Pattern 1: Pointer Fields for Optional Updates
-**What:** Use `*string` and `*int` in `EditRequest` to distinguish "no change" from "set to empty/zero"
-**When:** Any API that partially updates a record
+### Pattern 1: Format Writer Function Signature
+
+**What:** All format writers follow the same signature: `func write*Tags(logger *slog.Logger, filePath string, changes TagChanges) error`
+
+**Why:** Keeps the pipeline switch clean and uniform. No interface needed — package-internal functions with consistent signatures are simpler.
+
 **Example:**
 ```go
-type EditRequest struct {
-    Title *string `json:"title,omitempty"`
-    Year  *int    `json:"year,omitempty"`
-}
-
-// nil = don't change, non-nil = set to this value
-if req.Title != nil {
-    recording.Name = *req.Title
-}
+func writeOggTags(logger *slog.Logger, filePath string, changes TagChanges) error { ... }
+func writeWavTags(logger *slog.Logger, filePath string, changes TagChanges) error { ... }
 ```
 
-### Pattern 2: Write-to-Temp-Then-Rename
-**What:** Write to a temporary file in the same directory, then atomically rename
-**When:** Any file modification that must not corrupt the original on failure
-**Example:**
+### Pattern 2: AtomicWrite Integration
+
+**What:** Every writer creates the complete output file inside the `AtomicWrite` callback, writing to `tmp *os.File`.
+
+**Example (from existing FLAC writer):**
 ```go
-tmpPath := filepath.Join(dir, "."+base+".yjtmp")
-// Write to tmpPath...
-if err := os.Rename(tmpPath, originalPath); err != nil {
-    os.Remove(tmpPath)
-    return err
-}
+return fileutil.AtomicWrite(logger, filePath, func(tmp *os.File) error {
+    _, writeErr := f.WriteTo(tmp)
+    return writeErr
+})
 ```
 
-### Pattern 3: Upsert-and-Relink for Shared Entities
-**What:** Create new shared entity (artist/album/genre) and update the FK reference, rather than modifying the shared entity in place
-**When:** Editing a field that maps to a shared/normalized entity
-**Why:** Modifying a shared row would change data for all tracks referencing it
+### Pattern 3: Test Fixture + Round-Trip Verification
+
+**What:** Each format has a `makeMinimal*()` helper that creates a valid file, and tests verify by writing tags then reading back with `metadata.ExtractTags()`.
+
+**Why:** Tests validate the complete pipeline without external tools. The same `metadata.ExtractTags()` function used in production reads back the tags, ensuring what we write is what gets read.
 
 ## Anti-Patterns to Avoid
 
-### Anti-Pattern 1: Modifying Shared Entity Rows In-Place
-**What:** `UPDATE artists SET name = ? WHERE id = ?` to change an artist name
-**Why bad:** Changes the name for ALL tracks by that artist, not just the edited track
-**Instead:** Upsert a new artist_credit, update the recording's FK to point to the new one
+### Anti-Pattern 1: FormatWriter Interface
 
-### Anti-Pattern 2: Full Library Rescan After Tag Edit
-**What:** Triggering a library scan to pick up tag changes
-**Why bad:** Scans take seconds to minutes. Creates new recordings instead of updating existing ones. Terrible UX.
-**Instead:** Inline DB update in the same transaction as the file write
+**What:** Creating a `FormatWriter` interface with `Write(path string, changes TagChanges) error`
 
-### Anti-Pattern 3: Frontend-Side Tag File Writing
-**What:** Reading/writing audio files from TypeScript via File API
-**Why bad:** Wails WebView doesn't have full filesystem access. Tag writing libraries are Go-native.
-**Instead:** All file I/O happens in Go backend; frontend sends edit requests via Wails bindings
+**Why bad:** The package has only 4 format writers, all internal. An interface adds abstraction without value. The switch statement is clearer and the functions share a signature by convention.
 
-### Anti-Pattern 4: Deleting and Recreating Recordings on Edit
-**What:** DELETE the old recording, CREATE a new one with updated metadata
-**Why bad:** Changes the recording ID, breaking all references (audio_files.recording_id, release_group_recordings, recording_genres, queue, playlists referencing file paths)
-**Instead:** UPDATE the existing recording row in place
+**Instead:** Keep format writers as package-internal functions with matching signatures.
+
+### Anti-Pattern 2: In-Place OGG Page Modification
+
+**What:** Attempting to modify OGG pages in-place to avoid full file rewrite.
+
+**Why bad:** OGG pages have checksums and sequence numbers. Changing the comment packet size shifts all subsequent page offsets. In-place modification requires recalculating every downstream page's CRC, which is effectively a full rewrite anyway — but without crash safety.
+
+**Instead:** Full-file rewrite via AtomicWrite.
+
+### Anti-Pattern 3: In-Place RIFF Chunk Insertion
+
+**What:** Attempting to insert or resize RIFF chunks in-place.
+
+**Why bad:** Inserting a new id3 chunk or resizing an existing one shifts all subsequent chunks. The RIFF header's total size must be updated. In-place modification risks corruption.
+
+**Instead:** Full-file rewrite via AtomicWrite.
+
+### Anti-Pattern 4: Shared Vorbis Comment Code via go-flac/flacvorbis
+
+**What:** Importing `go-flac/flacvorbis` in the OGG writer to reuse Vorbis Comment parsing.
+
+**Why bad:** Creates a dependency on a FLAC-specific library for OGG files. The `flacvorbis` types are coupled to FLAC `MetaDataBlock` structures. The binary format is simple enough to parse directly.
+
+**Instead:** Self-contained Vorbis Comment parser in `ogg.go` (~80 lines).
 
 ## Scalability Considerations
 
-| Concern | Single Track Edit | Batch Edit (100 tracks) | Batch Edit (1000 tracks) |
-|---------|-------------------|------------------------|--------------------------|
-| File I/O | ~50ms (one file read+write) | ~5s (sequential, safe) | ~50s (consider progress bar) |
-| DB Transaction | <10ms | <100ms (single transaction) | <500ms (batch in groups of 100) |
-| FTS5 Update | <1ms | <10ms | <50ms |
-| Frontend Refresh | Instant (single event) | Single event, full re-fetch | Single event, full re-fetch |
-| Memory | Negligible | ~100MB if all cover arts loaded | Consider streaming cover art |
-
-For batch edits of >50 tracks, the UI should show a progress indicator. The backend should emit progress events similar to scan progress.
-
-## Build Order (Dependency-Aware)
-
-1. **Tag writing library integration** (`backend/tageditor/writer.go`)
-   - Add dependencies to `go.mod`
-   - Implement format-specific writers (MP3, FLAC)
-   - Write-to-temp-then-rename safety wrapper
-   - Unit tests with real audio files
-
-2. **DB update logic** (`backend/tageditor/tageditor.go`)
-   - Shared entity upsert (reuse or extract from library package)
-   - Recording UPDATE query (existing `UpdateRecordingFull` in sqlc)
-   - Genre re-linking
-   - Release group re-linking
-   - FTS5 re-index (existing `InsertSearchIndex`)
-   - Transaction wrapper
-
-3. **Events** (`backend/events/events.go`)
-   - Add `TagsUpdated`, `TagEditFailed` constants
-   - Run codegen to update `frontend/src/events.ts`
-
-4. **Service wiring** (`backend/app.go`)
-   - Create and bind `tageditor.Service`
-   - Two-phase init (NewService + SetContext)
-
-5. **Frontend: single track edit** (`frontend/src/components/track-details/`)
-   - Wire `saveEdit()` to `tageditor.EditTrack()`
-   - Loading/error states
-   - `library-store` event handler for refresh
-
-6. **Frontend: batch edit** (new or extended component)
-   - Multi-select context menu action
-   - Batch edit dialog
-   - `tageditor.EditTracks()` call
-
-7. **Cover art editing** (builds on phases 1-5)
-   - File picker for image selection
-   - `tageditor.SetCoverArt()` implementation
-   - Cover art pipeline integration (save to disk, generate variants, update DB)
+| Concern | Typical Case | Edge Case | Approach |
+|---------|--------------|-----------|----------|
+| OGG file size | 3-10 MB | 50 MB live recording | Stream page-by-page, no full-file memory load |
+| WAV file size | 30-50 MB (CD track) | 2 GB (24-bit/96kHz long recording) | Streaming copy via `io.Copy`; warn for >500MB |
+| Temp disk space | 2× file size briefly | 2× 2GB = 4GB temp | Same concern as FLAC; document as known limitation |
+| Batch edit 100 WAV files | Sequential, 30-50 MB each | 100 × 50 MB = 5 GB total I/O | Existing batch pipeline with progress events |
 
 ## Sources
 
-- Codebase analysis: `backend/library/library.go` (scan pipeline, entity upsert pattern)
-- Codebase analysis: `backend/database/search.go` (FTS5 contentless behavior)
-- Codebase analysis: `backend/metadata/tags.go` (read-only tag extraction via dhowden/tag)
-- Codebase analysis: `frontend/src/components/track-details/track-details.ts` (existing edit UI stub)
-- `bogem/id3v2/v2`: https://pkg.go.dev/github.com/bogem/id3v2/v2 (v2.1.4, MIT, 359 stars, 57 importers)
-- `go-flac/go-flac`: https://github.com/go-flac/go-flac (FLAC metadata manipulation)
-- `go-flac/flacvorbis`: https://github.com/go-flac/flacvorbis (Vorbis comment read/write for FLAC)
-- SQLite FTS5 contentless tables: https://www.sqlite.org/fts5.html#contentless_tables
+- OGG container format specification: https://xiph.org/ogg/doc/rfc3533.txt (HIGH confidence)
+- Vorbis Comment specification: https://xiph.org/vorbis/doc/v-comment.html (HIGH confidence)
+- Vorbis I specification: https://xiph.org/vorbis/doc/Vorbis_I_spec.html (HIGH confidence)
+- METADATA_BLOCK_PICTURE in Vorbis Comments: https://xiph.org/flac/format.html#metadata_block_picture (HIGH confidence)
+- RIFF/WAV format: https://www.mmsp.ece.mcgill.ca/documents/AudioFormats/WAVE/WAVE.html (HIGH confidence)
+- `jfreymuth/oggvorbis` package API: https://pkg.go.dev/github.com/jfreymuth/oggvorbis (HIGH confidence — verified read-only)
+- `jfreymuth/vorbis` CommentHeader type: https://pkg.go.dev/github.com/jfreymuth/vorbis (HIGH confidence)
+- `dhowden/tag` OGG/WAV reading: https://github.com/dhowden/tag (HIGH confidence — used in existing tests)
+- `bogem/id3v2` for WAV id3 chunk: https://github.com/bogem/id3v2 (HIGH confidence — used in existing MP3 writer)
+- Existing codebase: `backend/tagwriter/` package (analyzed in full)

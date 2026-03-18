@@ -1,203 +1,512 @@
-# Technology Stack: Tag Editing
+# Technology Stack: OGG Vorbis + WAV Tag Writing
 
-**Project:** YellowJacket v1.2 Tag Editing
-**Researched:** 2026-03-16
+**Project:** YellowJacket v1.2.1 Format Parity
+**Researched:** 2026-03-18
+**Scope:** Stack additions/changes needed ONLY for OGG Vorbis and WAV tag writing
 
-## Recommended Stack
+> **Context:** MP3 writing (bogem/id3v2) and FLAC writing (go-flac ecosystem) are already
+> implemented and validated in v1.2. This document focuses exclusively on what's needed
+> for OGG Vorbis and WAV tag writing.
 
-### MP3 Tag Writing — `bogem/id3v2/v2`
+---
 
-| Technology | Version | Purpose | Why |
-|------------|---------|---------|-----|
-| `github.com/bogem/id3v2/v2` | v2.1.4 | ID3v2.3/v2.4 read + write for MP3 | Only mature pure-Go ID3v2 writing library. 359 stars, 57 importers, 579 commits. Supports SetTitle/SetArtist/SetAlbum/SetGenre/SetYear, AddAttachedPicture (cover art embedding), AddTextFrame (track/disc numbers, composer via TRCK/TPOS/TCOM), and tag.Save(). |
+## OGG Vorbis Tag Writing
 
-**Key capabilities verified (HIGH confidence — pkg.go.dev docs):**
-- `tag.SetArtist()`, `tag.SetTitle()`, `tag.SetAlbum()`, `tag.SetGenre()`, `tag.SetYear()` — direct setters
-- `tag.AddTextFrame("TRCK", id3v2.EncodingUTF8, "5/12")` — track number
-- `tag.AddTextFrame("TPOS", id3v2.EncodingUTF8, "1/2")` — disc number
-- `tag.AddTextFrame("TCOM", id3v2.EncodingUTF8, "Bach")` — composer
-- `tag.AddAttachedPicture(PictureFrame{...})` — cover art embedding with MIME type, picture type (front cover), and raw image bytes
-- `tag.Save()` — writes modified tag back to file
-- `tag.DeleteFrames(id)` — remove specific frame types (needed for replacing cover art)
-- ID3v2.3 and v2.4 version support with `tag.SetVersion()`
-- UTF-8 encoding default for v2.4, ISO-8859-1 for v2.3
-- `id3v2.Open(path, Options{Parse: true})` — open existing file, parse all frames, then modify and save
+### The Problem
 
-**Integration with existing dhowden/tag:**
-- dhowden/tag stays for READ operations (already integrated in `backend/metadata/tags.go`)
-- bogem/id3v2 used ONLY for WRITE operations
-- No conflict: dhowden/tag reads from `io.ReadSeeker`, bogem/id3v2 reads from file path and writes back
-- Read flow unchanged: `dhowden/tag.ReadFrom()` → `TrackMetadata` struct
-- Write flow new: `id3v2.Open()` → modify → `tag.Save()` → close
+OGG Vorbis stores metadata as Vorbis Comments in the second header packet of the OGG
+bitstream. Modifying these comments requires:
 
-**Dependency footprint:** Only dependency is `golang.org/x/text` (already in go.mod). Pure Go, no CGo.
+1. Parsing OGG pages to extract the three Vorbis header packets (identification, comment, setup)
+2. Decoding and modifying the Vorbis Comment packet
+3. Re-encoding the modified comment packet into new OGG pages (with correct segment tables, sequence numbers, and CRC32 checksums)
+4. Copying all audio data pages unchanged
+5. Writing the result atomically
 
-### FLAC Tag Writing — `go-flac/go-flac` + `go-flac/flacvorbis` + `go-flac/flacpicture`
+No pure-Go library exists that provides this end-to-end. The recommendation is a **custom OGG page rewriter** using existing building blocks.
 
-| Technology | Version | Purpose | Why |
-|------------|---------|---------|-----|
-| `github.com/go-flac/go-flac/v2` | v2.x | FLAC metadata block manipulation (parse + save) | Purpose-built for FLAC metadata manipulation. Parses metadata blocks separately from audio frames. `f.Save()` writes back metadata blocks + raw audio frames without re-encoding. 44 stars, clean API. |
-| `github.com/go-flac/flacvorbis/v2` | v2.x | Vorbis Comment read/write for FLAC metadata blocks | Companion to go-flac. Provides `ParseFromMetaDataBlock()`, `Add()`, `Marshal()` for Vorbis Comment manipulation. Has field constants (`FIELD_TITLE`, `FIELD_ARTIST`, etc.). |
-| `github.com/go-flac/flacpicture` | latest | PICTURE metadata block manipulation for FLAC | Companion to go-flac. `NewFromImageData()` creates PICTURE blocks, `Marshal()` serializes for embedding. |
+### Option Analysis
 
-**Why go-flac over mewkiz/flac for WRITING:**
-- `mewkiz/flac` is primarily a FLAC **codec** (encoder/decoder). Its `Encode()` API re-encodes audio data, which is unacceptably slow and potentially lossy for metadata-only edits.
-- `go-flac/go-flac` is specifically designed for **metadata manipulation**. It stores audio frames as raw bytes and copies them verbatim on save — no re-encoding.
-- `mewkiz/flac` stays as an indirect dependency (via beep) for FLAC **decoding** during playback and duration extraction. No conflict.
+#### Option 1: Custom OGG Page Rewriter (RECOMMENDED)
 
-**Key capabilities verified (HIGH confidence — GitHub README + examples):**
-- `flac.ParseFile(fileName)` — returns `File` with `Meta` (metadata blocks) and `Frames` (raw audio data)
-- `flacvorbis.ParseFromMetaDataBlock(*meta)` — parse existing Vorbis Comment block
-- `cmts.Add(flacvorbis.FIELD_TITLE, "New Title")` — add/modify comment fields
-- `cmts.Marshal()` — serialize back to MetaDataBlock
-- `f.Meta[idx] = &cmtsmeta` — replace metadata block in-place
-- `f.Save(fileName)` — write modified file (metadata blocks + raw audio frames, no re-encoding)
-- `flacpicture.NewFromImageData(PictureTypeFrontCover, "Front cover", imgData, "image/jpeg")` — create picture block
-- `picture.Marshal()` → append to `f.Meta` — embed cover art
+| Component | Source | Purpose |
+|-----------|--------|---------|
+| OGG page read/write | Custom (~300-400 LOC) | Parse OGG pages, rewrite with new comment packet |
+| Vorbis Comment encode/decode | Reuse `go-flac/flacvorbis` patterns | Same binary format as FLAC Vorbis Comments |
+| CRC32 computation | Custom (~30 LOC, lookup table) | OGG uses CRC32 with polynomial 0x04c11db7 |
+| METADATA_BLOCK_PICTURE | Reuse `go-flac/flacpicture` | Same binary format, base64-wrapped for OGG |
 
-**FLAC tag writing approach — metadata block replacement:**
-1. `flac.ParseFile(path)` — parses metadata blocks + stores audio frames as raw bytes
-2. Find existing VorbisComment block in `f.Meta` slice, or create new via `flacvorbis.New()`
-3. Modify/add comment fields via `cmts.Add()` (handles field replacement)
-4. Marshal back: `f.Meta[idx] = &cmts.Marshal()`
-5. For cover art: create via `flacpicture.NewFromImageData()`, append to `f.Meta`
-6. `f.Save(tmpPath)` — writes "fLaC" + metadata blocks + raw audio frames to temp file
-7. Atomic rename temp file over original
+**Why this is the right approach:**
 
-**Critical detail:** `go-flac/go-flac`'s `Save()` copies audio frames as raw bytes — no re-encoding. A metadata-only edit of a 50MB FLAC file takes ~50ms, not minutes.
+- The OGG container format is simple and well-documented (27-byte header + segment table + page data)
+- `jfreymuth/oggvorbis` already has a working OGG page reader in `ogg.go` (~255 LOC) that can serve as reference
+- The Vorbis Comment binary format is identical to what's used in FLAC — the existing `flacvorbis` library's comment manipulation code can be reused or adapted
+- Audio data pages are copied byte-for-byte — no audio re-encoding
+- Full control over the implementation with no external dependency risk
 
-### OGG Vorbis Tag Writing — Custom Implementation Required
+**Implementation complexity:** MEDIUM. The OGG page format has exactly one tricky aspect:
+packets can span multiple pages (via the continuation-of-packet flag and lacing values).
+The comment packet is typically small enough to fit in one page, but the implementation
+must handle the general case (especially when large cover art is embedded, inflating the
+comment packet well beyond one page's ~65KB limit).
 
-| Technology | Version | Purpose | Why |
-|------------|---------|---------|-----|
-| Custom OGG page rewriter | n/a | OGG Vorbis Comment + Picture writing | No pure-Go OGG tag writing library exists. `jfreymuth/oggvorbis` is decode-only. OGG tag writing requires parsing OGG pages, modifying the Vorbis Comment header packet, and rewriting pages. |
+**Estimated LOC:** ~500-600 for a complete `ogg.go` writer in the tagwriter package.
 
-**Why custom OGG writing is necessary:**
-- `jfreymuth/oggvorbis` (existing indirect dep) is a **decoder only** — no write API
-- No other pure-Go OGG Vorbis tag writer exists in the ecosystem
-- OGG Vorbis comments are stored in the second header packet (comment header), which is an OGG page
-- Modifying comments changes page sizes, requiring page-level rewriting
+#### Option 2: `mccoyst/ogg` for OGG Page Encoding
 
-**OGG tag writing approach:**
-1. Parse OGG pages to find the three Vorbis header packets (identification, comment, setup)
-2. Decode existing Vorbis Comment from the comment header packet
-3. Modify comment fields (same key=value format as FLAC Vorbis Comments)
-4. Re-encode comment packet into new OGG pages
-5. Copy identification and setup headers unchanged
-6. Copy all audio data pages unchanged
-7. Write to temp file, atomic rename
+| Technology | Version | Stars | Purpose |
+|------------|---------|-------|---------|
+| `github.com/mccoyst/ogg` | latest (no semver tags) | 37 | OGG page encode/decode |
 
-**Complexity assessment:** MEDIUM-HIGH. OGG page framing is well-documented but requires careful implementation. The Vorbis Comment format itself is simple (same as FLAC). The OGG page CRC and segment tables are the tricky parts.
+**What it provides:**
+- `ogg.Decoder` — reads OGG pages, extracts packets
+- `ogg.Encoder` — writes packets into OGG pages with correct framing, CRC, segment tables
+- `EncodeBOS()`, `Encode()`, `EncodeEOS()` — page-type-aware encoding
+- Handles packet splitting across pages automatically
+- 100% test coverage claimed, 52 commits, MIT license
 
-**Cover art in OGG:** Stored as `METADATA_BLOCK_PICTURE` Vorbis Comment tag (base64-encoded FLAC Picture block). Same encoding as FLAC Picture but base64-wrapped in a comment field.
+**Assessment:** This is the strongest external option. The Encoder handles the hardest parts
+(lacing values, page splitting, CRC). However:
 
-**Recommendation:** Implement OGG writing LAST. Start with MP3 and FLAC (libraries exist). OGG uses the same Vorbis Comment format as FLAC, so the comment serialization code is shared — only the OGG page framing is new work.
+- **No semver releases** — importing is `github.com/mccoyst/ogg` with no version guarantee
+- **37 stars, 1 open issue** — small community, low bus factor
+- **Still requires Vorbis-specific logic** — mccoyst/ogg handles OGG pages but knows nothing about Vorbis header packets. We'd still need to:
+  - Identify and extract the three Vorbis header packets
+  - Parse/modify the Vorbis Comment packet
+  - Handle the `\x03vorbis` packet type prefix
+  - Re-encode everything in the correct order
 
-### Atomic File Writing — No New Dependency
+**Verdict:** POSSIBLE but the marginal benefit over custom code is small. The OGG page format
+is well-specified; the Encoder's value is mainly in lacing value calculation and CRC, which
+are ~80 LOC total. Adding a dependency for ~80 LOC of saved work introduces a maintenance
+and stability risk for a library with no tagged releases.
 
-| Technology | Version | Purpose | Why |
-|------------|---------|---------|-----|
-| `os.CreateTemp` + `os.Rename` (stdlib) | Go 1.25 | Write-to-temp-then-rename pattern | The stdlib approach is simpler and sufficient. `natefinch/atomic` is already an indirect dep but provides `WriteFile(filename, io.Reader)` which doesn't match our use case (we need to write to temp first, THEN rename). The stdlib pattern gives more control over temp file location (same directory as target for same-filesystem rename). |
+**Recommendation: Custom implementation.** If OGG page writing proves harder than expected
+during implementation, `mccoyst/ogg` can be pulled in as a fallback.
 
-**Pattern:**
-```go
-// Create temp file in same directory as target (ensures same filesystem for atomic rename)
-dir := filepath.Dir(targetPath)
-tmp, err := os.CreateTemp(dir, ".yj-tag-*.tmp")
-// ... write tag data to tmp ...
-tmp.Close()
-// Atomic rename (POSIX guarantees atomicity for same-filesystem rename)
-os.Rename(tmp.Name(), targetPath)
+#### Option 3: `jfreymuth/oggvorbis` (Already a Dependency)
+
+| Technology | Version | Stars | Purpose |
+|------------|---------|-------|---------|
+| `github.com/jfreymuth/oggvorbis` | v1.0.5 | 75 | OGG Vorbis decoder |
+
+**Assessment:** Decode-only. No write API. The `ogg.go` internal reader is useful as
+**reference code** for understanding OGG page parsing, but the types are unexported
+and the package provides no page-level write capability.
+
+**Verdict:** NOT SUITABLE for writing. Useful as reference only.
+
+#### Option 4: `dhowden/tag` Write Support
+
+**Assessment:** dhowden/tag is read-only (642 stars, no write API). Its OGG parsing is
+minimal — it extracts Vorbis Comments for reading but does not provide any mechanism
+to modify or write back. Forking would require building the entire OGG page rewriter
+anyway, plus inheriting maintenance burden.
+
+**Verdict:** NOT SUITABLE.
+
+#### Option 5: External CLI Tools (vorbiscomment, ffmpeg)
+
+| Tool | What It Does | Issue |
+|------|-------------|-------|
+| `vorbiscomment` | CLI for reading/writing Vorbis Comments in OGG | Requires packaging/distributing a C binary |
+| `ffmpeg` | Swiss-army multimedia tool | Massive binary (~100MB), CGo-equivalent burden |
+| `opustags` | Opus metadata editor | Wrong codec (Opus, not Vorbis) |
+
+**Assessment:** Shelling out to external CLI tools would work but violates the pure-Go
+spirit of the project. It introduces:
+- Distribution complexity (packaging native binaries per platform)
+- Runtime dependency management (checking tool availability, version compat)
+- Error handling complexity (parsing CLI output)
+- No Windows/macOS availability guarantee without extra bundling
+
+**Verdict:** NOT RECOMMENDED. Only consider as absolute last resort if custom Go
+implementation proves infeasible (it won't — the format is well-understood).
+
+### OGG Vorbis Writing: Recommended Stack
+
+| Component | Approach | New Dependency? |
+|-----------|----------|-----------------|
+| OGG page parsing | Custom `oggRewriter` in tagwriter package | No |
+| OGG page writing | Custom (header + segment table + CRC32) | No |
+| Vorbis Comment manipulation | Reuse `flacvorbis` patterns + shared helpers | No (already a dep) |
+| Cover art (METADATA_BLOCK_PICTURE) | `go-flac/flacpicture` for binary encoding + base64 wrapper | No (already a dep) |
+| Atomic file write | Existing `fileutil.AtomicWrite` | No |
+
+**Total new dependencies: ZERO.** Everything needed is either already in the dep tree
+or implementable from well-documented specifications.
+
+### OGG Vorbis Cover Art
+
+**YES — OGG Vorbis can embed cover art.**
+
+Cover art in OGG Vorbis uses the `METADATA_BLOCK_PICTURE` Vorbis Comment field:
+
+1. Create a FLAC Picture binary block (same as used in FLAC files):
+   - Picture type (3 = front cover)
+   - MIME type string ("image/jpeg" or "image/png")
+   - Description string ("Front cover")
+   - Width, height, color depth, palette size (can be set to 0)
+   - Raw image data
+2. Base64-encode the entire binary block
+3. Add as Vorbis Comment: `METADATA_BLOCK_PICTURE=<base64 data>`
+
+**Integration with existing code:** The `go-flac/flacpicture` library already creates
+the binary FLAC Picture block. For FLAC files, this block goes into a metadata block.
+For OGG files, the same binary block gets base64-encoded and inserted as a Vorbis
+Comment string. We can reuse `flacpicture.NewFromImageData()` and add a base64 wrapper.
+
+**Confidence:** HIGH — This is the official Xiph.org recommendation per
+https://wiki.xiph.org/VorbisComment#METADATA_BLOCK_PICTURE
+
+### OGG Vorbis Format Details (Implementation Reference)
+
+**OGG Page Structure (27 bytes header):**
+```
+Bytes 0-3:   "OggS" capture pattern
+Byte 4:      Stream structure version (always 0)
+Byte 5:      Header type flag (0x01=continued, 0x02=BOS, 0x04=EOS)
+Bytes 6-13:  Absolute granule position (int64, little-endian)
+Bytes 14-17: Stream serial number (uint32, little-endian)
+Bytes 18-21: Page sequence number (uint32, little-endian)
+Bytes 22-25: CRC32 checksum (computed with this field zeroed)
+Byte 26:     Number of segments (0-255)
+Bytes 27+:   Segment table (one byte per segment, lacing values)
+             Page data follows immediately
 ```
 
-**Why NOT `natefinch/atomic`:** It's designed for `io.Reader` → file workflows. Our workflow is: read original → write modified to temp → rename. The stdlib `os.CreateTemp` + `os.Rename` is the right primitive. `natefinch/atomic` also uses `os.Rename` internally on Unix anyway.
+**Vorbis Header Packets in OGG:**
+- Packet 1: Identification header (starts with `\x01vorbis`)
+- Packet 2: Comment header (starts with `\x03vorbis`) ← THIS IS WHAT WE MODIFY
+- Packet 3: Setup header (starts with `\x05vorbis`)
+- Packets 4+: Audio data
 
-**Why same-directory temp file matters:** `os.Rename` is only atomic when source and destination are on the same filesystem. Music files could be on any mount point. Creating the temp file in the same directory guarantees this.
+**Vorbis Comment Binary Format (within packet 2, after `\x03vorbis` prefix):**
+```
+[vendor_length: uint32 LE] [vendor_string: bytes]
+[comment_count: uint32 LE]
+for each comment:
+  [length: uint32 LE] [comment: bytes]  // e.g. "ARTIST=Bob Dylan"
+[framing_bit: 1 bit, must be 1]
+```
 
-## Alternatives Considered
+**Algorithm for tag writing:**
+1. Read all OGG pages from source file
+2. Extract packets 1, 2, 3 from the first few pages (header pages)
+3. Parse Vorbis Comment from packet 2 (skip `\x03vorbis` prefix)
+4. Modify comments (add/replace/remove fields)
+5. Re-serialize Vorbis Comment packet (with `\x03vorbis` prefix)
+6. Write to temp file via AtomicWrite:
+   a. Write packet 1 (identification) as BOS page
+   b. Write modified packet 2 (comment) + packet 3 (setup) as continuation pages
+   c. Copy all remaining audio pages, re-sequencing page numbers
+7. Atomic rename over original
 
-| Category | Recommended | Alternative | Why Not |
-|----------|-------------|-------------|---------|
-| MP3 write | bogem/id3v2/v2 | dhowden/tag | dhowden/tag is read-only. No write API. Would require forking. |
-| MP3 write | bogem/id3v2/v2 | go-id3 (mikkyang) | Dead project, archived, no v2 module support, last commit 2015 |
-| FLAC write | go-flac/go-flac + flacvorbis | mewkiz/flac | mewkiz/flac is a codec (encoder/decoder); its Encode() re-encodes audio. go-flac is purpose-built for metadata manipulation — copies audio frames as raw bytes. |
-| FLAC write | go-flac/go-flac + flacvorbis | Custom FLAC writer | go-flac handles the format correctly with proven Save(); reinventing would be fragile |
-| OGG write | Custom | CGo (libvorbis) | Violates no-CGo constraint |
-| OGG write | Custom | dhowden/tag fork | dhowden/tag OGG parsing is minimal, not designed for writing |
-| Atomic write | stdlib os.CreateTemp+Rename | natefinch/atomic | Doesn't match our write pattern; stdlib is sufficient |
-| Atomic write | stdlib os.CreateTemp+Rename | renameio | Unnecessary dep for a 5-line pattern |
+---
+
+## WAV Tag Writing
+
+### The Problem
+
+WAV files use the RIFF container format. Metadata in WAV files can be stored in:
+
+1. **RIFF INFO chunks** (`LIST`/`INFO` sub-chunks like `IART`, `INAM`, `IPRD`) — the oldest and most widely supported mechanism
+2. **ID3v2 chunks** (`id3 ` RIFF chunk containing a full ID3v2 tag) — newer, more expressive, used by some modern tools
+3. **BEXT chunks** (Broadcast Wave Extension) — professional/broadcast use only
+
+The challenge is that no dominant pure-Go library exists for WAV metadata writing, and the ecosystem recently lost its most popular option.
+
+### Option Analysis
+
+#### Option 1: Custom RIFF Chunk Writer for LIST/INFO (RECOMMENDED)
+
+| Component | Source | Purpose |
+|-----------|--------|---------|
+| RIFF chunk reader | Custom (~200 LOC) | Parse WAV RIFF structure, find/modify LIST INFO chunk |
+| INFO field writing | Custom (~150 LOC) | Write INFO sub-chunks with metadata |
+| Atomic file write | Existing `fileutil.AtomicWrite` | Crash-safe file operations |
+
+**RIFF INFO Chunk Field Mapping:**
+
+| YellowJacket Field | INFO Chunk ID | Description |
+|--------------------|---------------|-------------|
+| Title | `INAM` | Name/title of the work |
+| Artist | `IART` | Artist name |
+| Album | `IPRD` | Product/album name |
+| Genre | `IGNR` | Genre |
+| Year | `ICRD` | Creation date |
+| Track Number | `ITRK` | Track number |
+| Composer | `IMUS` | Composer/music by |
+| Comment | `ICMT` | Comment |
+
+**Why RIFF INFO over ID3v2-in-WAV:**
+- RIFF INFO is the native WAV metadata format — it's part of the RIFF specification
+- Universal player support (Windows Media Player, VLC, foobar2000, etc.)
+- Simple format: 4-byte chunk ID + 4-byte size + null-terminated string
+- dhowden/tag already reads RIFF INFO chunks, so round-trip works
+- No additional dependencies needed
+
+**Why NOT ID3v2-in-WAV:**
+- The `id3 ` chunk is a de facto standard, not an official RIFF spec feature
+- Not all players/tools support it
+- dhowden/tag reads ID3v2 in WAV (it detects it), but our existing `bogem/id3v2` expects MP3 file structure (it calls `tag.Open()` which reads from position 0, expecting an ID3v2 header). Using bogem/id3v2 for WAV would require significant adaptation to handle the RIFF wrapper.
+- More complex: we'd need to create an ID3v2 tag, serialize it, then embed it as a RIFF chunk
+
+**Implementation approach:**
+1. Read entire WAV file (parse RIFF chunks: `RIFF`, `fmt `, `data`, `LIST`, etc.)
+2. Find or create `LIST`/`INFO` chunk
+3. Write/replace INFO sub-chunks with new metadata values
+4. Reassemble file: RIFF header → fmt chunk → data chunk → LIST/INFO chunk → other chunks
+5. Update RIFF header size
+6. Write via AtomicWrite
+
+**Estimated LOC:** ~300-400 for RIFF INFO reading/writing.
+
+#### Option 2: `go-audio/wav` + `go-audio/riff`
+
+| Technology | Status | Stars |
+|------------|--------|-------|
+| `github.com/go-audio/wav` | **ARCHIVED Feb 21, 2026** | 383 |
+| `github.com/go-audio/riff` | **ARCHIVED Feb 21, 2026** | 11 |
+
+**Assessment:** Both libraries were archived less than one month ago. They provided WAV
+encoding/decoding and RIFF chunk parsing, but:
+- `go-audio/wav` is focused on audio encoding/decoding, not metadata manipulation
+- `go-audio/riff` has only a parser (3 commits total), no writer
+- Neither supports writing RIFF INFO metadata
+- Both are now unmaintained/archived — using them would be a dead-end dependency
+
+**Verdict:** NOT SUITABLE. Archived, no metadata write support.
+
+#### Option 3: `bogem/id3v2` for ID3v2-in-WAV
+
+**Assessment:** bogem/id3v2's `Tag.WriteTo(w io.Writer)` writes raw ID3v2 tag bytes to
+any writer. In theory, we could:
+1. Create an ID3v2 tag with bogem/id3v2
+2. Serialize it to bytes via `WriteTo()`
+3. Wrap it in a RIFF `id3 ` chunk
+4. Insert the chunk into the WAV file
+
+This is technically feasible but:
+- Still requires custom RIFF chunk manipulation code
+- ID3v2-in-WAV has worse player compatibility than RIFF INFO
+- More complex than just writing RIFF INFO chunks directly
+- `tag.Open("file.wav")` and `tag.Save()` won't work — those expect MP3 file structure
+
+**Verdict:** NOT RECOMMENDED as primary approach. Could be added later as an enhancement
+for richer metadata (cover art via APIC), but RIFF INFO should be the primary mechanism.
+
+#### Option 4: External CLI Tools (ffmpeg, exiftool)
+
+Same issues as OGG: distribution complexity, runtime dependencies, error handling overhead.
+
+**Verdict:** NOT RECOMMENDED.
+
+### WAV Writing: Recommended Stack
+
+| Component | Approach | New Dependency? |
+|-----------|----------|-----------------|
+| RIFF container parsing | Custom RIFF reader in tagwriter package | No |
+| RIFF INFO chunk writing | Custom (4-byte IDs + null-terminated strings) | No |
+| Atomic file write | Existing `fileutil.AtomicWrite` | No |
+
+**Total new dependencies: ZERO.**
+
+### WAV Cover Art
+
+**RIFF INFO: NO — cannot embed cover art.**
+
+RIFF INFO chunks are limited to simple text key-value pairs. There is no standard
+INFO sub-chunk for binary image data.
+
+**ID3v2-in-WAV: YES — via APIC frame.**
+
+If an `id3 ` RIFF chunk is present (or added), it can contain a full ID3v2 tag with
+APIC (Attached Picture) frames, just like MP3 files.
+
+**Recommendation for v1.2.1:** Do NOT implement WAV cover art. The RIFF INFO approach
+gives us text tag support with zero dependencies, and WAV cover art support is rare
+in the wild. Cover art for WAV can be deferred to a future enhancement using the
+ID3v2-in-WAV approach if there's user demand.
+
+### WAV RIFF Format Details (Implementation Reference)
+
+**RIFF File Structure:**
+```
+"RIFF" [file_size: uint32 LE] "WAVE"
+  "fmt " [chunk_size: uint32 LE] [format data...]
+  "data" [chunk_size: uint32 LE] [audio samples...]
+  "LIST" [chunk_size: uint32 LE] "INFO"
+    "INAM" [size: uint32 LE] "Track Title\0"
+    "IART" [size: uint32 LE] "Artist Name\0"
+    ...
+```
+
+**Key implementation details:**
+- All integers are little-endian (unlike OGG which is a mix)
+- Chunk sizes must be even (pad with 0x00 byte if odd)
+- Strings in INFO chunks are null-terminated
+- The RIFF header size field = total file size - 8
+- LIST/INFO chunk can appear anywhere after `fmt ` and `data`
+- Multiple LIST chunks may exist; only `LIST`/`INFO` contains metadata
+
+**Algorithm for tag writing:**
+1. Parse RIFF chunks by reading 4-byte ID + 4-byte size pairs
+2. Collect all chunks, preserving order
+3. Find or create LIST/INFO chunk
+4. Replace/add INFO sub-chunks for changed fields
+5. Reassemble file via AtomicWrite:
+   a. Write RIFF header with updated total size
+   b. Write fmt chunk (unchanged)
+   c. Write data chunk (unchanged — just copy bytes)
+   d. Write LIST/INFO chunk with metadata
+   e. Write any other chunks (unchanged)
+6. Atomic rename
+
+---
+
+## Integration with Existing Pipeline
+
+### Format Detection Changes
+
+Current `tagwriter.DetectFormat()` supports MP3 and FLAC. Add OGG and WAV:
+
+```go
+const (
+    FormatMP3  AudioFormat = "mp3"
+    FormatFLAC AudioFormat = "flac"
+    FormatOGG  AudioFormat = "ogg"   // NEW
+    FormatWAV  AudioFormat = "wav"   // NEW
+)
+
+func DetectFormat(filePath string) (AudioFormat, error) {
+    switch strings.ToLower(filepath.Ext(filePath)) {
+    case ".mp3":  return FormatMP3, nil
+    case ".flac": return FormatFLAC, nil
+    case ".ogg":  return FormatOGG, nil     // NEW
+    case ".wav":  return FormatWAV, nil     // NEW
+    default:      return "", errUnsupportedFormat
+    }
+}
+```
+
+### Pipeline Dispatch Changes
+
+Current `WriteTrackTags()` switch in `pipeline.go`:
+
+```go
+switch format {
+case FormatMP3:  err = writeMp3Tags(tw.logger, audioFile.FilePath, changes)
+case FormatFLAC: err = writeFlacTags(tw.logger, audioFile.FilePath, changes)
+case FormatOGG:  err = writeOggTags(tw.logger, audioFile.FilePath, changes)  // NEW
+case FormatWAV:  err = writeWavTags(tw.logger, audioFile.FilePath, changes)  // NEW
+}
+```
+
+### Shared Code Reuse
+
+**Vorbis Comment helpers** (already exist in `flac.go`):
+- `replaceVorbisComment()` — remove existing field, add new value
+- `applyFlacTextChanges()` — map TagChanges to Vorbis Comment fields
+- Field mapping constants (`FIELD_TITLE`, `FIELD_ARTIST`, etc.)
+
+These should be **extracted to a shared file** (e.g., `vorbis_comments.go`) and reused
+by both `flac.go` and the new `ogg.go`. The logic is identical — both formats use Vorbis
+Comments with the same field names.
+
+**Cover art helpers** (already exist in `tagwriter.go`):
+- `detectMIME()` — determine image MIME type from magic bytes
+- `asBytes()` — extract byte slice from TagChanges value
+
+**AtomicWrite** (already exists in `fileutil/atomicwrite.go`):
+- Used identically for all formats: write to temp → sync → rename
+
+---
+
+## Dependency Summary
+
+### New Dependencies Required
+
+**NONE.** Both OGG Vorbis and WAV tag writing are implemented as custom code in the
+tagwriter package, using only:
+- Go standard library (`encoding/binary`, `encoding/base64`, `bytes`, `io`, `os`)
+- Existing dependencies (`go-flac/flacpicture` for METADATA_BLOCK_PICTURE binary format)
+- Existing utilities (`fileutil.AtomicWrite`)
+
+### Existing Dependencies Unchanged
+
+| Library | Current Use | Use in v1.2.1 |
+|---------|------------|---------------|
+| `dhowden/tag` v0.0.0-20240417 | Tag reading (all formats) | Unchanged — validates OGG/WAV round-trip |
+| `go-flac/flacvorbis/v2` v2.0.2 | FLAC Vorbis Comment manipulation | Shared patterns for OGG comment encoding |
+| `go-flac/flacpicture/v2` v2.0.2 | FLAC PICTURE block creation | Reused for OGG METADATA_BLOCK_PICTURE |
+| `go-flac/go-flac/v2` v2.0.4 | FLAC metadata block manipulation | Unchanged |
+| `bogem/id3v2/v2` v2.1.4 | MP3 ID3v2 tag writing | Unchanged |
+| `jfreymuth/oggvorbis` v1.0.5 | OGG Vorbis decoding (via beep) | Reference for OGG page structure |
+
+---
 
 ## What NOT To Add
 
-| Library | Why Avoid |
-|---------|-----------|
-| Any CGo-based tag library (taglib-go, etc.) | Violates pure-Go constraint from PROJECT.md |
-| go-id3 (mikkyang/id3-go) | Archived, unmaintained since 2015, no module support |
-| Any "universal tag writer" that wraps TagLib via CGo | Violates pure-Go constraint |
-| natefinch/atomic as direct dep | Already indirect; stdlib pattern is more appropriate for this use case |
-| goflac (CGo wrapper around libFLAC) | Violates pure-Go constraint |
+| Library / Approach | Why Avoid |
+|--------------------|-----------|
+| `mccoyst/ogg` | No semver releases, 37 stars. The OGG page format is simple enough to implement directly (~80 LOC for the encoding part). Avoids dependency risk for minimal gain. |
+| `go-audio/wav` or `go-audio/riff` | **Archived Feb 21, 2026.** Do not depend on abandoned libraries. |
+| Any CGo-based library (taglib-go, etc.) | Violates pure-Go constraint |
+| `bogem/id3v2` for WAV files | Its `Open()`/`Save()` API expects MP3 file structure. Would need significant wrapping for RIFF container. RIFF INFO is simpler and more compatible. |
+| ID3v2-in-WAV for v1.2.1 | Adds complexity for marginal benefit. RIFF INFO covers the primary use case. Defer ID3v2-in-WAV to a future milestone if cover art in WAV is needed. |
+| External CLI tools (vorbiscomment, ffmpeg) | Distribution complexity, runtime deps, violates pure-Go spirit |
 
-## Existing Dependencies Leveraged (No Version Changes)
+---
 
-| Library | Current Use | New Use in Tag Editing |
-|---------|------------|----------------------|
-| `dhowden/tag` v0.0.0-20240417 | Tag reading during library scan | Unchanged — still used for all READ operations |
-| `mewkiz/flac` v1.0.12 (indirect via beep) | FLAC audio decoding during playback + duration extraction | Unchanged — remains indirect for decoding only |
-| `golang.org/x/image` v0.12.0 | Cover art thumbnail generation | Image validation before embedding (ensure valid JPEG/PNG) |
-| `natefinch/atomic` v1.0.1 (indirect) | Not directly used | Remains indirect; not needed for our pattern |
+## Format Coverage Matrix (v1.2.1 Target)
 
-## Installation
+| Format | Text Tags | Cover Art | Approach | Complexity | Confidence |
+|--------|-----------|-----------|----------|------------|------------|
+| MP3 (ID3v2) | ✓ All fields | ✓ APIC frame | bogem/id3v2 (existing) | Done | HIGH |
+| FLAC | ✓ All fields | ✓ PICTURE block | go-flac ecosystem (existing) | Done | HIGH |
+| OGG Vorbis | ✓ All fields | ✓ METADATA_BLOCK_PICTURE | Custom OGG page rewriter | Medium | MEDIUM-HIGH |
+| WAV | ✓ Core fields | ✗ Not in v1.2.1 | Custom RIFF INFO writer | Low-Medium | MEDIUM-HIGH |
 
-```bash
-# New direct dependencies
-go get github.com/bogem/id3v2/v2@v2.1.4
-go get github.com/go-flac/go-flac/v2
-go get github.com/go-flac/flacvorbis/v2
-go get github.com/go-flac/flacpicture
-```
+**"Core fields" for WAV:** Title, Artist, Album, Genre, Year, Track Number, Composer.
+Album Artist and Disc Number have no standard RIFF INFO chunk IDs. They can be omitted
+or stored in non-standard INFO chunks if needed.
 
-## Format Coverage Matrix
+---
 
-| Format | Text Tags | Cover Art Embed | Library | Confidence |
-|--------|-----------|-----------------|---------|------------|
-| MP3 (ID3v2) | ✓ Full | ✓ APIC frame | bogem/id3v2/v2 | HIGH |
-| FLAC | ✓ Full | ✓ Picture block | go-flac/go-flac + flacvorbis + flacpicture | HIGH |
-| OGG Vorbis | ✓ Full | ✓ METADATA_BLOCK_PICTURE | Custom (built on Vorbis Comment format) | MEDIUM |
-| WAV | ✗ Not supported | ✗ Not supported | n/a — WAV has no standard tag format | n/a |
+## Risk Assessment
 
-**WAV exclusion rationale:** WAV files have no widely-adopted metadata standard. Some players use INFO chunks, some use ID3v2 headers prepended to WAV. The project already supports WAV playback but doesn't extract meaningful tags from WAV during scanning. Tag editing for WAV is out of scope.
+| Risk | Likelihood | Impact | Mitigation |
+|------|-----------|--------|------------|
+| OGG page splitting with large cover art | Medium | Medium | Test with cover art >64KB (forces multi-page comment packet) |
+| WAV files with unusual RIFF chunk ordering | Low | Low | Parse all chunks generically, preserve unknown chunks |
+| dhowden/tag can't read what we write (OGG) | Low | High | Round-trip tests: write with custom writer, read with dhowden/tag |
+| dhowden/tag can't read what we write (WAV) | Low | High | Round-trip tests for RIFF INFO chunks |
+| OGG CRC32 computation mismatch | Low | High | Use the exact polynomial from OGG spec (0x04c11db7), test against known files |
+| WAV INFO chunk padding errors | Medium | Low | RIFF spec requires even-aligned chunks; easy to forget padding byte |
 
-## Vorbis Comment Field Mapping
-
-Both FLAC and OGG use Vorbis Comments. Field names are standardized:
-
-| YellowJacket Field | Vorbis Comment Key | ID3v2 Frame ID |
-|--------------------|-------------------|----------------|
-| Title | TITLE | TIT2 |
-| Artist | ARTIST | TPE1 |
-| Album | ALBUM | TALB |
-| Album Artist | ALBUMARTIST | TPE2 |
-| Genre | GENRE | TCON |
-| Year | DATE | TDRC (v2.4) / TYER (v2.3) |
-| Track Number | TRACKNUMBER | TRCK |
-| Total Tracks | TRACKTOTAL | TRCK (as "N/Total") |
-| Disc Number | DISCNUMBER | TPOS |
-| Total Discs | DISCTOTAL | TPOS (as "N/Total") |
-| Composer | COMPOSER | TCOM |
-| Comment | COMMENT | COMM |
-| Lyrics | LYRICS | USLT |
+---
 
 ## Sources
 
-- bogem/id3v2: https://pkg.go.dev/github.com/bogem/id3v2/v2 (HIGH confidence — official docs)
-- bogem/id3v2 GitHub: https://github.com/n10v/id3v2 (HIGH confidence — 359 stars, v2.1.4 release Feb 2023)
-- go-flac/go-flac GitHub: https://github.com/go-flac/go-flac (HIGH confidence — 44 stars, metadata manipulation library with Save())
-- go-flac/flacvorbis GitHub: https://github.com/go-flac/flacvorbis (HIGH confidence — Vorbis Comment add/parse/marshal, v2 module)
-- go-flac/flacpicture GitHub: https://github.com/go-flac/flacpicture (HIGH confidence — PICTURE block creation from image data)
-- mewkiz/flac GitHub: https://github.com/mewkiz/flac (HIGH confidence — confirmed codec, not suitable for metadata-only writes)
-- dhowden/tag GitHub: https://github.com/dhowden/tag (HIGH confidence — confirmed read-only, no write API)
-- jfreymuth/oggvorbis GitHub: https://github.com/jfreymuth/oggvorbis (HIGH confidence — confirmed decode-only)
-- natefinch/atomic GitHub: https://github.com/natefinch/atomic (HIGH confidence — confirmed API mismatch for our use case)
-- Vorbis Comment spec: https://www.xiph.org/vorbis/doc/v-comment.html
-- FLAC format spec: https://www.xiph.org/flac/format.html
-- OGG framing spec: https://www.xiph.org/ogg/doc/framing.html
+### Official Specifications (HIGH confidence)
+- OGG framing: https://xiph.org/ogg/doc/framing.html
+- OGG RFC: https://xiph.org/ogg/doc/rfc3533.txt
+- Vorbis I Spec (Section 5 — comment field): https://xiph.org/vorbis/doc/Vorbis_I_spec.html
+- Vorbis Comment spec: https://xiph.org/vorbis/doc/v-comment.html
+- METADATA_BLOCK_PICTURE: https://wiki.xiph.org/VorbisComment#METADATA_BLOCK_PICTURE
+- FLAC Picture block format: https://xiph.org/flac/format.html#metadata_block_picture
+
+### Libraries Evaluated (HIGH confidence — GitHub repos)
+- jfreymuth/oggvorbis: https://github.com/jfreymuth/oggvorbis (75 stars, decode-only)
+- mccoyst/ogg: https://github.com/mccoyst/ogg (37 stars, encode+decode, no semver)
+- dhowden/tag: https://github.com/dhowden/tag (642 stars, read-only)
+- go-audio/wav: https://github.com/go-audio/wav (383 stars, **ARCHIVED 2026-02-21**)
+- go-audio/riff: https://github.com/go-audio/riff (11 stars, **ARCHIVED 2026-02-21**)
+- bogem/id3v2: https://github.com/n10v/id3v2 (359 stars, MP3-focused API)
+
+### Existing Codebase (HIGH confidence — already validated in v1.2)
+- `backend/tagwriter/flac.go` — Vorbis Comment manipulation patterns
+- `backend/tagwriter/mp3.go` — AtomicWrite integration pattern
+- `backend/tagwriter/tagwriter.go` — TagChanges, format detection, helper functions
+- `backend/fileutil/atomicwrite.go` — Crash-safe file write utility

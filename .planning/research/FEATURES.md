@@ -1,300 +1,366 @@
-# Feature Landscape: Tag Editing
+# Feature Landscape: OGG Vorbis + WAV Tag Writing
 
-**Domain:** Metadata tag editing in desktop music players
-**Researched:** 2026-03-16
-**Confidence:** HIGH (based on analysis of MusicBee, foobar2000, Kid3, Mp3tag, Picard patterns + Hydrogenaudio tag standards + existing YellowJacket codebase)
+**Domain:** Format-specific metadata tag writing for OGG Vorbis and WAV audio files
+**Researched:** 2026-03-18
+**Confidence:** HIGH (OGG Vorbis) / MEDIUM (WAV — fragmented standards require approach decision)
 
-## How Desktop Music Players Implement Tag Editing
+**Sources:**
+- Xiph.Org VorbisComment specification (https://xiph.org/vorbis/doc/v-comment.html) — HIGH confidence
+- Xiph.Org Wiki VorbisComment page (https://wiki.xiph.org/VorbisComment) — HIGH confidence
+- FLAC METADATA_BLOCK_PICTURE specification (http://flac.sourceforge.net/format.html#metadata_block_picture) — HIGH confidence
+- Wikipedia WAV article, Metadata section — MEDIUM confidence
+- go-flac/flacvorbis library (https://github.com/go-flac/flacvorbis) — already in use, HIGH confidence
+- dhowden/tag library (https://github.com/dhowden/tag) — already in use for reading, HIGH confidence
+- bogem/id3v2 library (https://github.com/bogem/id3v2) — already in use for MP3 writing, HIGH confidence
+- Existing YellowJacket codebase analysis — HIGH confidence
 
-### Reference Players Analyzed
+---
 
-| Player | Single Edit | Batch Edit | Cover Art Edit | Auto-Tag | Tag Format Handling |
-|--------|------------|------------|---------------|----------|-------------------|
-| foobar2000 | Properties dialog | Multi-select → Properties (shared fields) | Embed/remove from Properties | Via plugins | ID3v2, Vorbis, APEv2; configurable write format |
-| MusicBee | Inline + dialog | Multi-select → Edit panel (keep/clear/set) | Drag-drop + file picker + paste | Built-in | ID3v2.3/2.4, Vorbis; auto-convert on write |
-| Kid3 | Side panel + dialog | Multi-select → panel applies to all | File picker + paste + drag | MusicBrainz/Discogs | ID3v1/v2, Vorbis, APEv2; shows raw frames |
-| Mp3tag | List view + panel | Inherent (panel always applies to selection) | Drag-drop + file picker + clipboard | Tag Sources | All formats; extended tag view |
-| Picard | Panel per file/album | Album-level batch via MusicBrainz match | Automatic via MusicBrainz + manual | Core feature | All formats; submission to MusicBrainz |
+## OGG Vorbis Tag Writing
 
-### Common Patterns Across All Players
+### Field Mapping: Vorbis Comments → YellowJacket's 8 Fields
 
-**Single-track editing:**
-- Dialog/panel with labeled fields, plain text inputs
-- Title, artist, album shown prominently (larger/bolder)
-- Cover art displayed alongside fields (150-250px)
-- Numeric fields (year, track #, disc #) use number inputs or constrained text
-- Genre usually free-text (not dropdown — genre lists are opinionated and incomplete)
-- Non-editable properties shown separately (bitrate, sample rate, file path, file size)
-- Save button writes to file → updates database
-- Cancel discards all changes
+OGG Vorbis uses **Vorbis Comments** — the exact same metadata system used by FLAC. Field names are case-insensitive, stored as `FIELDNAME=value` pairs in UTF-8.
 
-**Batch editing (the critical UX challenge):**
-- Select multiple tracks → open editor
-- Fields show current value if identical across selection, blank/placeholder if mixed
-- A "keep" / "don't change" / "mixed" indicator distinguishes "empty because cleared" from "empty because mixed"
-- User types a value → it applies to ALL selected tracks on save
-- Fields left unchanged preserve each track's individual value
-- Common pattern: three-state per field — "keep original" (default), "set to value", "clear"
-- Track number is special: batch edit typically excludes it (each track needs unique number) OR offers auto-number (sequential from N)
+| YellowJacket Field | Vorbis Comment Field | Notes |
+|---|---|---|
+| `title` | `TITLE` | Standard recommended field |
+| `artist` | `ARTIST` | Standard recommended field |
+| `album` | `ALBUM` | Standard recommended field |
+| `album_artist` | `ALBUMARTIST` | De facto standard, not in original spec but universally supported |
+| `genre` | `GENRE` | Standard recommended field |
+| `year` | `DATE` | Standard recommended field; spec says ISO 8601, most apps store just the year |
+| `track_number` | `TRACKNUMBER` | Standard recommended field |
+| `disc_number` | `DISCNUMBER` | De facto standard, universally supported |
+| `composer` | `COMPOSER` | De facto standard, widely supported |
 
-**Cover art editing:**
-- Display current embedded art (or "no cover" placeholder)
-- Replace from file: file picker (JPEG, PNG)
-- Remove embedded art (less common, but available in Kid3/Mp3tag)
-- Cover art in batch edit: applies same image to all selected tracks (common for fixing an album)
-- No crop/resize UI — users prepare images externally
-- Players typically accept any size but recommend 500-1000px square
+**Key insight:** These are the *exact same* field names already used in YellowJacket's FLAC writer (`flac.go` → `applyFlacTextChanges`). The existing `flacvorbis` constants (`FIELD_TITLE`, `FIELD_ARTIST`, etc.) and the manual strings (`ALBUMARTIST`, `DISCNUMBER`, `COMPOSER`) map identically. The Vorbis Comment format is format-agnostic; FLAC and OGG Vorbis share the same comment structure. The difference is the container (FLAC metadata blocks vs. OGG page structure).
 
-**File safety:**
-- Write-to-temp-then-rename (atomic write) is universal best practice
-- Some players (foobar2000) create backups before writing
-- All players update their internal database after successful file write (no rescan)
+### OGG Vorbis Cover Art: METADATA_BLOCK_PICTURE
 
-### Universal Editable Fields (from Hydrogenaudio Tag Mapping + player analysis)
+Cover art in OGG Vorbis uses the `METADATA_BLOCK_PICTURE` Vorbis Comment field. The process:
 
-**Basic (ID3v1-level, universal compatibility):**
-- Title, Artist, Album, Year, Genre, Track Number, Comment
+1. Construct a binary FLAC picture block (same structure as FLAC's native PICTURE metadata block):
+   - Picture type (3 = Front Cover)
+   - MIME type string (e.g., `image/jpeg`)
+   - Description string (UTF-8)
+   - Width, height, color depth, number of colors (can all be 0 per spec)
+   - Image data
+2. Base64-encode the entire binary block
+3. Store as `METADATA_BLOCK_PICTURE=<base64 string>` in Vorbis Comments
 
-**Standard (ID3v2/Vorbis, widely supported):**
-- Album Artist, Composer, Disc Number, Track Total, Disc Total, Lyrics
+**Player compatibility for METADATA_BLOCK_PICTURE in OGG Vorbis:**
 
-**Extended (advanced users, format-dependent):**
-- BPM, Initial Key, Mood, Label, Catalog Number, ISRC, MusicBrainz IDs
+| Player | Reads | Writes | Notes |
+|---|---|---|---|
+| foobar2000 | YES | YES | Full support |
+| MusicBee | YES | YES | Full support |
+| Mp3tag | YES | YES | Full support (since 2.47b) |
+| VLC | YES | NO | Displays embedded art |
+| Audacious | YES | N/A | No issues |
+| MediaMonkey | YES | YES | Full support |
+| Windows Media Player | YES | N/A | No issues |
+| Picard (MusicBrainz) | YES | YES | Full support |
+
+**The deprecated `COVERART` field** (raw base64 without the FLAC picture block structure) should NOT be written. It lacks type/MIME info and may break some hardware players. If encountered when reading, it could optionally be migrated to `METADATA_BLOCK_PICTURE`, but that's beyond scope for this milestone.
+
+**Complexity:** LOW — The `go-flac/flacpicture` library already creates the binary FLAC picture block structure (used in `applyFlacCoverArt`). For OGG, the same binary block just needs base64 encoding before being stored as a Vorbis Comment string.
+
+### OGG Vorbis Writing: The Container Problem
+
+**This is where OGG differs from FLAC.** In FLAC, Vorbis Comments live in a separate metadata block that can be replaced independently of the audio data. In OGG Vorbis:
+
+- The Vorbis Comment packet is the **second header packet** in the OGG bitstream
+- Header packets are stored in the first few OGG pages
+- Audio data follows in subsequent OGG pages
+- OGG pages have CRC32 checksums and sequence numbers
+
+**To modify Vorbis Comments in an OGG file, the approach is:**
+1. Parse the OGG page structure
+2. Extract the three Vorbis header packets (identification, comment, setup)
+3. Modify the comment packet
+4. Re-serialize the header packets into OGG pages (with recalculated CRCs and sizes)
+5. Write new header pages + copy audio pages unchanged
+
+**There is no pure-Go OGG writing library.** The existing Go ecosystem for OGG:
+- `jfreymuth/oggvorbis` — **decoder only** (reads OGG Vorbis, no writing)
+- `jfreymuth/vorbis` — **raw Vorbis decoder** (no OGG container awareness)
+- `go-flac/flacvorbis` — **FLAC metadata blocks only** (not OGG pages)
+- `dhowden/tag` — **read-only** for all formats
+
+**The implementation must operate at the OGG container level:**
+- Parse OGG pages (each page: magic "OggS", version, header type, granule pos, serial, page seq, CRC, segments)
+- Extract Vorbis header packets from initial pages
+- Build new comment packet from modified Vorbis Comments
+- Re-paginate headers and write out with audio pages
+
+**Complexity: MEDIUM-HIGH.** The OGG page format is well-documented (https://xiph.org/ogg/doc/framing.html) and not complex per se, but implementing page parsing + repagination + CRC32 from scratch is non-trivial. However, only the header pages need to be re-written; audio pages can be copied byte-for-byte. This is the same pattern as the MP3 writer (new tag + copy audio data).
+
+**Risk mitigation:** The existing AtomicWrite pattern provides crash safety. Round-trip tests (write → read back via dhowden/tag) will validate correctness, following the FLAC precedent (7 round-trip tests).
+
+---
+
+## WAV Tag Writing
+
+WAV files have **no single dominant metadata standard**. There are three approaches, each with different tradeoffs.
+
+### Approach 1: ID3v2 Chunk in WAV (RECOMMENDED)
+
+An ID3v2 tag is stored as a RIFF chunk with FourCC `id3 ` (or `ID3 `) inside the WAV RIFF structure.
+
+**How it works:**
+1. Parse the WAV RIFF structure to find existing chunks
+2. Build/modify an ID3v2 tag (reusing the existing `bogem/id3v2` library)
+3. Write the RIFF header + fmt chunk + data chunk + id3 chunk (+ any other existing chunks to preserve)
+
+**Player compatibility:**
+
+| Player | Reads ID3v2 in WAV | Writes ID3v2 in WAV | Notes |
+|---|---|---|---|
+| foobar2000 | YES | YES | Primary WAV tag format |
+| MusicBee | YES | YES | Preferred format |
+| Mp3tag | YES | YES | Default for WAV |
+| VLC | YES | NO | Reads for display |
+| Picard | YES | YES | Default for WAV |
+| Windows Media Player | PARTIAL | NO | May read title/artist |
+| Audacity | YES | YES | Via metadata editor |
+
+**Pros:**
+- **Reuses existing `bogem/id3v2` library** — all 8 fields + cover art are already implemented in `mp3.go`
+- Full field support: all our 8 fields map perfectly (same as MP3)
+- Cover art works identically to MP3 (APIC frame)
+- The dominant standard among music library managers
+- UTF-8/UTF-16 support for international characters
+- Well-tested library with 359 GitHub stars
+
+**Cons:**
+- Not the "original" WAV metadata mechanism (RIFF INFO is the native one)
+- Some older/simpler players may not read it
+- Requires RIFF chunk-level parsing to place the ID3v2 data correctly
+
+**Cover art:** YES — same APIC frame mechanism as MP3, fully supported.
+
+### Approach 2: RIFF INFO Chunks
+
+The original RIFF metadata mechanism. Uses `LIST` chunk with type `INFO` containing sub-chunks with FourCC identifiers.
+
+**Field mapping:**
+
+| YellowJacket Field | RIFF INFO FourCC | Field Name | Notes |
+|---|---|---|---|
+| `title` | `INAM` | Name/Title | Supported |
+| `artist` | `IART` | Artist | Supported |
+| `album` | `IPRD` | Product (Album) | Supported |
+| `album_artist` | — | — | **NO STANDARD FIELD** |
+| `genre` | `IGNR` | Genre | Supported |
+| `year` | `ICRD` | Creation Date | Supported (full date string, not just year) |
+| `track_number` | `ITRK` | Track Number | Nonstandard/rare — some use `IPRT` |
+| `disc_number` | — | — | **NO STANDARD FIELD** |
+| `composer` | `IMUS` | Music By (Composer) | Rare, not universally read |
+
+**Problems:**
+- **Cannot represent album_artist or disc_number** — no RIFF INFO fields exist
+- Track number support is inconsistent across players
+- **ASCII/codepage encoding** — RIFF INFO predates Unicode; the `CSET` chunk exists but is rarely used; most implementations assume Windows codepage
+- **No cover art support** — RIFF INFO has no image field
+- Limited string length (some implementations cap at 255 bytes per field)
+
+**Verdict:** NOT RECOMMENDED as primary format. Cannot represent our full 8-field model + cover art.
+
+### Approach 3: BWF (Broadcast Wave Format)
+
+Extension of WAV with a `bext` chunk for broadcast metadata (originator, description, date, time reference, etc.).
+
+**Relevance to music tagging:** NONE. BWF metadata is about broadcast provenance (originator, coding history, loudness), not music metadata (artist, album, genre). No music player uses BWF fields for library management.
+
+**Verdict:** OUT OF SCOPE. Not relevant for music tagging.
+
+### WAV Approach Decision: ID3v2 Chunk
+
+**Use ID3v2 in WAV because:**
+1. Maps all 8 fields + cover art identically to MP3
+2. Reuses existing `bogem/id3v2` library code
+3. Is the approach used by foobar2000, MusicBee, Mp3tag, Picard — the dominant music library managers
+4. YellowJacket already reads WAV metadata via `dhowden/tag`, which reads ID3v2 chunks in WAV
+
+**Writing implementation:**
+1. Parse WAV RIFF structure: read chunk headers sequentially (each chunk: FourCC + uint32 size + data)
+2. Build ID3v2 tag using `bogem/id3v2` (same code path as MP3 minus the "copy audio data" step)
+3. Write atomically: RIFF header → all existing chunks (fmt, data, any others) → new `id3 ` chunk
+4. Any existing `id3 ` chunk is replaced; any existing `LIST INFO` chunk is preserved (don't destroy metadata we don't control)
+
+**Complexity:** MEDIUM. The RIFF chunk structure is simple (FourCC + 4-byte LE size), but requires:
+- Parsing all chunks to find/replace the `id3 ` chunk
+- Recalculating the top-level RIFF size header
+- Preserving chunk ordering and any padding (RIFF chunks must be word-aligned, i.e., even byte offsets)
+
+**Cover art in WAV:** YES — via ID3v2 APIC frame, identical to MP3.
+
+---
 
 ## Table Stakes
 
-Features users expect. Missing = product feels incomplete.
+Features users expect when a music player claims to edit metadata for a format.
 
-| Feature | Why Expected | Complexity | Dependencies | Notes |
-|---------|-------------|------------|--------------|-------|
-| Single track tag editing (title, artist, album, genre, year, track#, disc#, composer) | Every player with tag editing supports these 8 fields minimum | Medium | Tag writing library, DB update queries, FTS5 reindex | Existing `track-details` dialog has edit mode UI scaffolded (save is no-op TODO) |
-| Write tags to MP3 (ID3v2) | MP3 is the most common format; must-have | High | Need tag writing library (dhowden/tag is read-only) | Format-specific: must write ID3v2.3 or ID3v2.4 frames |
-| Write tags to FLAC (Vorbis Comments) | FLAC is the standard lossless format | High | Same writing library | Vorbis comments in FLAC metadata block |
-| Write tags to OGG (Vorbis Comments) | Already supported for reading | Medium | Same writing library | Same Vorbis comment format as FLAC |
-| Write-to-temp-then-rename | File corruption on crash/power loss = unacceptable data loss | Low | `os.Rename` after writing to temp file | Universal best practice; Go stdlib handles this well |
-| Inline DB + FTS5 update after tag write | Users expect immediate UI update; forcing rescan is unacceptable | Medium | UPDATE queries for recordings, artist_credit, release_groups, genres; FTS5 search_index rebuild for affected rows | Must update the `track_metadata` VIEW's source tables |
-| Batch editing shared fields across multiple selected tracks | Every tag editor supports this; multi-select already exists in track list | High | Batch editor UI component, backend batch write endpoint, progress tracking | The hard UX problem: mixed-value indicators, three-state fields |
-| Save confirmation / error feedback | User must know if write succeeded or failed | Low | Event emission, toast/notification UI | Especially important for read-only files or permission errors |
-| Cover art set/replace from image file | Fundamental tag editing feature; cover art is visually prominent | Medium | File picker (already have `FrontendUtil.OpenFileDialog`), image embedding in tag write, cover art cache update | Must update both embedded tag and cover art cache + thumbnails |
+| Feature | Why Expected | Complexity | Format | Notes |
+|---|---|---|---|---|
+| OGG: Write all 8 text fields | Parity with MP3/FLAC editing | Low | OGG | Same Vorbis Comment fields as FLAC |
+| OGG: Preserve existing non-edited comments | Users may have ReplayGain, lyrics, etc. | Low | OGG | Filter-and-keep pattern, same as FLAC |
+| OGG: Preserve audio data perfectly | Users expect lossless round-trip | Low | OGG | Audio pages copied byte-for-byte |
+| WAV: Write all 8 text fields | Parity with MP3/FLAC editing | Low-Med | WAV | Via ID3v2 chunk, reuse MP3 code |
+| WAV: Preserve audio data perfectly | Users expect lossless round-trip | Low | WAV | Copy data chunk unchanged |
+| Crash-safe writes (both formats) | Existing AtomicWrite pattern | Low | Both | Already implemented |
+| Batch editing works for OGG + WAV | Batch editor already handles all formats | Low | Both | Just need format dispatch in pipeline |
+| Single-track editing works for OGG + WAV | Track editor already handles all formats | Low | Both | Just need format dispatch in pipeline |
 
 ## Differentiators
 
-Features that set the product apart. Not expected, but valued.
+Features that set the product apart. Not expected but valued.
 
-| Feature | Value Proposition | Complexity | Dependencies | Notes |
-|---------|------------------|------------|--------------|-------|
-| Album artist field editing | Distinguishes VA compilations; power users expect it | Low | One additional field in edit form; already extracted by `dhowden/tag` | Not in PROJECT.md active list but low-hanging fruit |
-| Lyrics field editing | Multi-line text editing for embedded lyrics | Low | Textarea in dialog; lyrics field already in `recordings` schema… wait, it's in `TrackMetadata` struct but not shown in track-details UI | Would need multiline input; niche but straightforward |
-| Comment field editing | Standard tag field, some users store notes | Low | Already extracted, just needs UI input | Very low effort to include |
-| Auto-number tracks in batch edit | Select album tracks → auto-assign sequential track numbers | Low | Frontend logic to generate sequential numbers, apply in batch write | Huge time-saver when retagging an album |
-| Dirty indicator / unsaved changes warning | Prevent accidental dialog close with unsaved edits | Low | Track `editValues` diff vs original values | MusicBee and foobar2000 both do this |
-| Undo last tag write (restore from backup) | Safety net for mistakes; builds user trust | Medium | Write original tag values to a backup store before overwriting | Most players don't do this — would be a genuine differentiator |
-| Cover art remove (strip embedded art) | Some users want to remove bloated embedded art | Low | Write tags without picture data | Available in Kid3/Mp3tag but not most players |
-| Cover art paste from clipboard | Quick workflow: copy image from browser → paste into editor | Medium | Clipboard API in WebView, image data extraction | MusicBee supports this; convenient for web-sourced art |
-| Progress indicator for batch operations | Visual feedback during multi-file writes (batch of 20+ tracks) | Low | Progress event emission, progress bar in UI | Important when writing to many files (can take seconds per file for FLAC) |
-| Total Tracks / Total Discs fields | Part of standard tag spec; power users tag these | Low | Two additional number fields; already in `TrackMetadata` struct | Mp3tag and Kid3 expose these; foobar2000 uses "X/Y" format |
+| Feature | Value Proposition | Complexity | Format | Notes |
+|---|---|---|---|---|
+| OGG: Cover art embed/remove | Full parity with MP3/FLAC cover art | Medium | OGG | METADATA_BLOCK_PICTURE via base64; reuse flacpicture binary block |
+| WAV: Cover art embed/remove | Full parity with MP3/FLAC cover art | Low | WAV | ID3v2 APIC frame, identical to MP3 |
+| WAV: Preserve existing RIFF INFO chunks | Don't destroy metadata we didn't write | Low | WAV | Just copy LIST INFO chunk through |
+| OGG: Preserve non-Vorbis OGG streams | Multi-stream OGG files exist (rare) | Low | OGG | Only modify Vorbis stream headers |
+| Round-trip test coverage | Validates writes don't corrupt files | Medium | Both | dhowden/tag reads what we write, following FLAC precedent |
 
 ## Anti-Features
 
 Features to explicitly NOT build.
 
 | Anti-Feature | Why Avoid | What to Do Instead |
-|--------------|-----------|-------------------|
-| Inline editing in track list columns | Extremely complex (virtual scrolling + inline inputs + focus management + multi-select conflicts); fragile UX | Use the existing modal dialog approach — click to open editor. This is what foobar2000 does. |
-| MusicBrainz auto-tagging / lookup | Massive scope expansion (API integration, fuzzy matching, network dependency); separate milestone material | Defer to future "MusicBrainz browser" milestone already in PROJECT.md |
-| Genre dropdown with predefined list | Genre lists are subjective, never complete, frustrate users who use custom genres | Free-text input with optional suggestions from existing genres in DB (future enhancement) |
-| Tag format conversion (ID3v1→v2, strip APEv2) | Edge case tool feature; desktop tagger territory (Mp3tag) | Write the "correct" format for each file type; don't expose format internals to users |
-| Raw tag frame editing | Power-user-only feature; complex UI for marginal value | Edit semantic fields (title, artist, etc.); abstract away ID3 frames vs Vorbis comments |
-| Custom/arbitrary tag field editing | Requires extensible UI, arbitrary field names, format-specific storage concerns | Support the standard fields; users with custom tags use Mp3tag |
-| Filename renaming from tags | Common in dedicated taggers (Mp3tag, Kid3) but orthogonal to tag editing; adds file system mutation risk | Out of scope; would need separate file operations system |
-| ReplayGain scanning/writing | Separate audio analysis feature, not tag editing | Future milestone if ever; requires DSP analysis |
-| Drag-and-drop cover art from external apps | Complex browser/WebView drag interop; unreliable across platforms | File picker is the reliable universal approach |
-| Multi-value field editing (multiple artists/genres as separate entries) | ID3v2 and Vorbis support multiple values per field, but the UI complexity is enormous | Store as single string; genre already uses `||` separator internally |
+|---|---|---|
+| WAV: RIFF INFO as primary write target | Cannot represent album_artist, disc_number, or cover art | Use ID3v2 chunk; preserve existing RIFF INFO if present |
+| WAV: BWF bext chunk writing | Broadcast metadata, not music metadata | Ignore; preserve if present |
+| OGG: Write deprecated COVERART field | Deprecated, inconsistent support, may break hardware players | Write only METADATA_BLOCK_PICTURE |
+| OGG: Re-encode audio data | Must never touch the audio bitstream | Copy audio pages byte-for-byte |
+| WAV: Delete RIFF INFO when writing ID3v2 | Would destroy existing metadata user may rely on | Preserve RIFF INFO chunks as-is |
+| OGG: Custom OGG page library | Over-engineering for the scope needed | Minimal OGG page parser/writer sufficient for header rewrite |
+| WAV: Write both ID3v2 and RIFF INFO | Dual-write is complex and the RIFF INFO mapping is lossy | Write ID3v2 only; preserve existing RIFF INFO |
 
 ## Feature Dependencies
 
 ```
-Single Track Edit ──→ Tag Writing Library (MP3/FLAC/OGG)
-                  ──→ DB Update Queries (recordings, artist_credit, release_groups, genres)
-                  ──→ FTS5 Reindex (search_index)
-                  ──→ Event Emission (UI refresh)
-
-Batch Edit ────────→ Single Track Edit (batch = N × single with shared values)
-           ────────→ Mixed-value UI (three-state field indicators)
-           ────────→ Multi-select (already exists in track-list)
-
-Cover Art Edit ───→ Tag Writing Library (picture frame embedding)
-               ───→ Cover Art Cache Update (saveCoverArt + thumbnail generation)
-               ───→ File Picker Dialog (already exists: FrontendUtil.OpenFileDialog)
-
-Write Safety ─────→ Temp file + os.Rename (no dependencies on existing code)
-
-DB Update ────────→ Existing schema: recordings, artist_credit, artists,
-                    release_groups, release_group_recordings, genres, genre_recordings,
-                    cover_art, audio_files
-              ────→ FTS5 search_index rebuild for affected rows
-              ────→ track_metadata VIEW reflects changes automatically (it's a VIEW)
+Existing WriteTrackTags pipeline
+├── DetectFormat (extend: add .ogg and .wav)
+├── Format-specific writer dispatch (extend: add OGG and WAV cases)
+│   ├── writeOggVorbisTags (NEW)
+│   │   ├── OGG page parser (NEW)
+│   │   ├── Vorbis Comment serializer (reuse flacvorbis patterns)
+│   │   ├── METADATA_BLOCK_PICTURE builder (reuse flacpicture + base64)
+│   │   ├── OGG page writer with CRC32 (NEW)
+│   │   └── AtomicWrite (existing)
+│   └── writeWavTags (NEW)
+│       ├── RIFF chunk parser (NEW)
+│       ├── ID3v2 tag builder (reuse bogem/id3v2, same as MP3)
+│       ├── RIFF chunk writer with size recalculation (NEW)
+│       └── AtomicWrite (existing)
+├── DB sync (existing, unchanged)
+└── Event emission (existing, unchanged)
 ```
-
-### Critical Dependency Chain
-```
-Tag Writing Library → Single Track Edit → Batch Edit
-                   → Cover Art Edit
-```
-
-The tag writing library choice gates everything. Until a library can write ID3v2 and Vorbis comments, no editing features can ship.
-
-### Dependency on Existing Architecture
-
-| Existing Feature | How Tag Editing Uses It |
-|-----------------|----------------------|
-| `track-details` component | Already has edit mode scaffolded with input fields, edit/save/cancel buttons, and `editValues` state. Save handler is a TODO stub. |
-| Multi-select in track-list | Entry point for batch editing — selected file paths already accessible via `selection.getSelectedKeysOrdered()` |
-| Context menu system | "Edit Tags" menu item for single or multi-select (currently shows "Track Details" for single) |
-| `FrontendUtil.OpenFileDialog` | File picker for cover art image selection |
-| `Library.saveCoverArt` + thumbnail pipeline | Reusable for cover art embedding — same hash-based cache, same thumbnail generation |
-| Event system | New events needed: `TagsWritten`, `TagWriteProgress`, `TagWriteError` |
-| `backend/metadata/tags.go` | `TrackMetadata` struct defines all writable fields; `ExtractTags` used for reading |
-
-## Batch Editing UX Patterns (Deep Dive)
-
-The batch editor is the highest-complexity feature. Here's how mature players handle it:
-
-### Three-State Field Model
-
-For each editable field in batch mode:
-1. **Keep** (default): Shows "[Mixed]" or "[Various]" if values differ, shows the common value if all tracks share it. On save, each track retains its original value.
-2. **Set**: User has typed a new value. On save, all selected tracks get this value.
-3. **Clear**: User explicitly cleared the field. On save, all selected tracks have this field emptied.
-
-**Implementation approach:**
-```typescript
-type FieldState = 'keep' | 'set' | 'clear';
-
-interface BatchField {
-  state: FieldState;
-  value: string;           // The new value (only meaningful when state === 'set')
-  commonValue: string;     // Value shared across all tracks (empty if mixed)
-  isMixed: boolean;        // Whether tracks have different values
-}
-```
-
-### Backend Batch Write Contract
-
-```go
-// TagEdits contains the fields to write. nil = don't change, empty string = clear.
-type TagEdits struct {
-    Title       *string
-    Artist      *string
-    Album       *string
-    Genre       *string
-    Year        *int
-    TrackNumber *int
-    DiscNumber  *int
-    Composer    *string
-    CoverArt    *CoverArtEdit // nil = keep, non-nil = set/remove
-}
-
-type CoverArtEdit struct {
-    ImageData []byte // empty = remove cover art
-    MIMEType  string
-}
-```
-
-Using pointer fields: `nil` = keep original, non-nil = set to this value (empty string/zero = clear). This is the standard Go pattern for optional updates and maps directly to the three-state UI model.
-
-### Batch Write Ordering
-
-1. Validate all edits before writing any files (fail fast)
-2. Write files sequentially (not concurrently — avoids disk thrashing and simplifies error handling)
-3. For each file: read → modify → write-to-temp → rename
-4. After ALL files written successfully: batch-update DB + FTS5
-5. Emit success event with count
-6. On error: stop, report which file failed, files already written are committed (no rollback — file writes are atomic individually)
-
-## Cover Art Editing Workflow
-
-### Set/Replace Cover Art (Table Stakes)
-
-1. User clicks "Change Cover" in edit dialog
-2. File picker opens (filter: `*.jpg, *.jpeg, *.png`)
-3. User selects image file
-4. Preview shown in dialog (replacing current art)
-5. On save:
-   a. Read image bytes from selected file
-   b. Embed in audio file tag (APIC frame for ID3v2, METADATA_BLOCK_PICTURE for FLAC/OGG)
-   c. Save to cover art cache (via existing `saveCoverArt` pipeline → hash, dedupe, thumbnails)
-   d. Update `cover_art` table if hash changed
-   e. Update UI with new cover art URLs
-
-### Batch Cover Art (Same Image to All Selected Tracks)
-
-Common use case: fixing an album where some tracks have wrong/missing cover art.
-1. In batch editor, cover art section shows "[Mixed]" or common art
-2. User selects new image → applies to ALL selected tracks on save
-3. This is the same flow as single-track, just repeated N times
-
-### What NOT to Build for Cover Art
-
-- No crop/resize — users use external tools (GIMP, Preview, etc.)
-- No web search — would require API integration (future MusicBrainz milestone could add this)
-- No multiple picture types (front, back, booklet) — only front cover. ID3v2 supports picture types but the complexity isn't worth it for v1.
-
-## Field Mapping: Tag Format → Database Schema
-
-Understanding how edited fields map through the system:
-
-| Edit Field | Tag (ID3v2) | Tag (Vorbis) | DB Table | DB Column | Notes |
-|-----------|------------|-------------|----------|-----------|-------|
-| Title | TIT2 | TITLE | `recordings` | `name` | |
-| Artist | TPE1 | ARTIST | `artist_credit` → `artists` | `text` / `name` | May need to create new artist_credit + artist rows |
-| Album | TALB | ALBUM | `release_groups` | `name` | May need to create new release_group row |
-| Album Artist | TPE2 | ALBUMARTIST | (not currently stored separately) | — | Would need schema addition or use existing artist credit |
-| Genre | TCON | GENRE | `genres` + `genre_recordings` | `name` | Multiple genres: split on `;` or `,` |
-| Year | TYER/TDRC | DATE | `recordings` | `year` | |
-| Track # | TRCK | TRACKNUMBER | `recordings` | `track_number` | |
-| Disc # | TPOS | DISCNUMBER | `recordings` | `disc_number` | |
-| Composer | TCOM | COMPOSER | `recordings` | `composer` | |
-| Cover Art | APIC | METADATA_BLOCK_PICTURE | `cover_art` | `file_path` | Binary data; separate storage |
-| Comment | COMM | COMMENT | `recordings` | `comment` | |
-| Lyrics | USLT | LYRICS | `recordings` | `lyrics` | |
-
-### Schema Update Complexity
-
-Simple fields (title, year, track#, disc#, composer, comment, lyrics) → UPDATE `recordings` directly.
-
-Relational fields (artist, album, genre) → must handle entity lifecycle:
-- **Artist change:** Look up or create new `artists` + `artist_credit` rows, update `recordings.artist_credit_id`
-- **Album change:** Look up or create new `release_groups` row, update `release_group_recordings` link
-- **Genre change:** Parse genre string, look up or create `genres` rows, update `genre_recordings` links
-
-This entity lookup logic already exists in `library.go`'s `processMetadata` / `saveAudioFile` pipeline — it should be extracted and reused.
 
 ## MVP Recommendation
 
-**Prioritize (Phase 1 — Tag Editing Core):**
-1. Tag writing library integration (MP3 + FLAC + OGG)
-2. Single track editing (the 8 active fields from PROJECT.md)
-3. Write-to-temp-then-rename safety
-4. DB + FTS5 inline update
-5. Cover art set/replace from file
+**Phase 1 — OGG Vorbis (text fields only):**
+1. OGG page parser + writer (the core new infrastructure)
+2. Vorbis Comment extraction and modification (reuse flacvorbis patterns)
+3. Write modified headers + copy audio pages
+4. Round-trip tests via dhowden/tag
 
-**Prioritize (Phase 2 — Batch Editing):**
-6. Batch editing with three-state field model
-7. Progress feedback for batch operations
-8. Error handling and partial-success reporting
+**Phase 2 — WAV (text fields + cover art):**
+1. RIFF chunk parser
+2. ID3v2 tag writing via bogem/id3v2 (reuse MP3 code paths)
+3. RIFF reassembly with id3 chunk
+4. Round-trip tests
+
+**Phase 3 — OGG Vorbis cover art:**
+1. METADATA_BLOCK_PICTURE encoding (flacpicture binary block → base64)
+2. Cover art in Vorbis Comments alongside text fields
+3. Cover art round-trip tests
+
+**Rationale for this ordering:**
+- OGG text fields first because they're needed by more users (OGG is more common in music libraries than WAV)
+- WAV includes cover art from the start because it's trivial (same as MP3 APIC frame)
+- OGG cover art is separated because it requires additional work (base64 encoding of FLAC picture blocks) and is less critical than basic text editing
 
 **Defer:**
-- Album artist editing (schema question, low priority)
-- Lyrics/comment editing (easy to add later, niche)
-- Auto-numbering tracks (convenience, not core)
-- Undo/backup system (nice-to-have, not table stakes)
-- Cover art paste from clipboard (WebView clipboard API complexity)
+- RIFF INFO writing: Lossy mapping (can't represent all 8 fields), adds complexity for minimal user benefit
+- Migrating legacy COVERART → METADATA_BLOCK_PICTURE on read: Nice to have but not required for writing
+- WAV with both ID3v2 and RIFF INFO: Dual-write complexity not justified
+
+## Edge Cases and Size Considerations
+
+### OGG Vorbis: Large Cover Art
+
+**Problem:** Vorbis Comments in OGG are stored in the comment header packet, which is part of the OGG page structure. Large cover art (e.g., a 5MB PNG) becomes ~6.7MB after base64 encoding. This is stored as a single Vorbis Comment value.
+
+**Impact:** The Vorbis Comment packet may span multiple OGG pages. The OGG page writer must handle packets larger than a single page (max page size ~65KB). This is standard OGG behavior — pages have a segment table that spans packets across pages.
+
+**Mitigation:**
+- Xiph spec explicitly supports this
+- Major players handle it fine (tested with foobar2000, MediaMonkey, etc.)
+- YellowJacket could optionally warn on very large cover art (>2MB) but should not refuse
+- Consider downscaling in the UI before embedding (existing cover art flow already handles this)
+
+### WAV: Mixed ID3v2 and RIFF INFO
+
+**Problem:** A WAV file may have both an existing RIFF INFO `LIST` chunk and an `id3 ` chunk.
+
+**Solution:**
+- When writing: replace `id3 ` chunk with new one; preserve `LIST INFO` chunk unchanged
+- When reading: `dhowden/tag` already handles this (it reads ID3v2 from WAV if present, falls back to RIFF INFO)
+- Never delete the user's RIFF INFO data
+
+### WAV: RIFF Size Recalculation
+
+**Problem:** The top-level RIFF chunk has a 32-bit size field. When adding/resizing the `id3 ` chunk, this must be updated.
+
+**Mitigation:** Simple arithmetic: sum of all chunk sizes + headers. The 4GB RIFF limit is a WAV limitation in general, not specific to our tag writing.
+
+### WAV: Chunk Alignment
+
+**Problem:** RIFF chunks must start at even byte offsets. If a chunk has an odd data size, a padding byte must follow.
+
+**Mitigation:** Standard RIFF handling. The chunk parser/writer must account for this.
+
+### OGG: Multiple Logical Streams
+
+**Problem:** OGG files can contain multiple multiplexed streams (e.g., Vorbis audio + cover art stream + metadata stream). Each stream has a unique serial number.
+
+**Mitigation:** Identify the Vorbis stream by the "vorbis" identification header magic bytes. Only modify that stream's comment packet. Copy all other streams' pages unchanged. In practice, music OGG files almost always have a single Vorbis stream.
+
+### OGG: Page Sequence Numbers and Granule Positions
+
+**Problem:** Each OGG page has a sequence number and granule position. Rewriting header pages changes the page count.
+
+**Mitigation:** Header pages (BOS page, comment pages, setup pages) have their own sequence numbers starting from 0. Audio pages continue from after the headers. If the number of header pages changes (because the new comment is larger/smaller), the audio page sequence numbers and granule positions are *not* affected — they reference the audio stream, not the page stream. However, the continued-page flags and sequence numbers must be correct for the rewritten header pages.
+
+## Reuse Analysis
+
+| Component | Existing Code | Reuse Level | Notes |
+|---|---|---|---|
+| Vorbis Comment field mapping | `flac.go:applyFlacTextChanges` | HIGH — extract shared helper | Same field names, same logic |
+| FLAC picture block builder | `flacpicture.NewFromImageData` | HIGH — call directly | Same binary format for OGG |
+| ID3v2 tag building | `mp3.go:applyTextChanges`, `applyCoverArtChanges` | HIGH — extract shared helper | Same API for WAV ID3v2 |
+| Atomic file writing | `fileutil.AtomicWrite` | FULL — use as-is | No changes needed |
+| DB sync pipeline | `dbsync.go:syncDatabase` | FULL — use as-is | Format-independent |
+| Tag reader (round-trip tests) | `dhowden/tag` via metadata package | FULL — use as-is | Already reads OGG + WAV |
+| MIME detection | `tagwriter.detectMIME` | FULL — use as-is | Same image formats |
+| Type helpers (asInt, asBytes) | `tagwriter.go` | FULL — use as-is | Same TagChanges model |
+| OGG page parser/writer | — | NEW | Must implement |
+| RIFF chunk parser/writer | — | NEW | Must implement |
 
 ## Sources
 
-- Hydrogenaudio Knowledgebase: Tag Mapping (https://wiki.hydrogenaud.io/index.php/Tag_Mapping) — HIGH confidence, authoritative tag format reference
-- Hydrogenaudio Knowledgebase: foobar2000 Encouraged Tag Standards (https://wiki.hydrogenaud.io/index.php/Foobar2000:Encouraged_Tag_Standards) — HIGH confidence
-- Hydrogenaudio Knowledgebase: Tag (metadata) (https://wiki.hydrogenaud.io/index.php/Tag) — HIGH confidence, basic/advanced/personalized field categorization
-- YellowJacket codebase analysis: `track-details.ts`, `tags.go`, `coverart.go`, `library.go`, database schemas — PRIMARY source for dependency analysis
-- MusicBee, foobar2000, Kid3, Mp3tag, Picard — feature set analysis from training data (MEDIUM confidence on specific UI details)
+- **Vorbis Comment specification:** https://xiph.org/vorbis/doc/v-comment.html — Official Xiph.Org spec defining field names and encoding (HIGH confidence)
+- **VorbisComment wiki (cover art):** https://wiki.xiph.org/VorbisComment#Cover_art — METADATA_BLOCK_PICTURE standard, player compatibility tests (HIGH confidence)
+- **FLAC picture block format:** http://flac.sourceforge.net/format.html#metadata_block_picture — Binary structure reused in OGG (HIGH confidence)
+- **OGG framing specification:** https://xiph.org/ogg/doc/framing.html — Page structure, CRC, segmentation (HIGH confidence)
+- **WAV/RIFF specification:** IBM & Microsoft, "Multimedia Programming Interface and Data Specifications 1.0", 1991 — RIFF chunk format, INFO chunk (HIGH confidence)
+- **WAV metadata overview:** https://en.wikipedia.org/wiki/WAV#Metadata — ID3v2 in WAV, XMP in WAV (MEDIUM confidence)
+- **bogem/id3v2 library:** https://github.com/bogem/id3v2 — Used for MP3 writing, can generate ID3v2 tags for WAV (HIGH confidence)
+- **dhowden/tag library:** https://github.com/dhowden/tag — Used for reading all formats including OGG + WAV (HIGH confidence)
+- **go-flac/flacvorbis:** https://github.com/go-flac/flacvorbis — Vorbis Comment manipulation, used in FLAC writer (HIGH confidence)
+- **go-flac/flacpicture:** https://github.com/go-flac/flacpicture — FLAC picture block builder, usable for OGG METADATA_BLOCK_PICTURE (HIGH confidence)
+- **YellowJacket codebase:** `backend/tagwriter/*.go` — Existing writer pipeline, field model, atomic write pattern (HIGH confidence)
