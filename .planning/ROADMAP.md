@@ -140,7 +140,7 @@ Plans:
 | 15. Schema Migration & Write Safety | 2/2 | Complete    | 2026-03-16 | - |
 | 16. Tag Writing & Database Sync | 3/3 | Complete    | 2026-03-17 | - |
 | 17. Single Track Edit | 2/2 | Complete    | 2026-03-18 | - |
-| 18. Batch Edit | 2/2 | Complete   | 2026-03-18 | - |
+| 18. Batch Edit | 2/2 | Complete    | 2026-03-18 | - |
 | 19. OGG Vorbis Tag Writing | v1.2 | 0/? | Not started | - |
 
 ---
