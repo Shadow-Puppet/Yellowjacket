@@ -13,6 +13,8 @@ import {
     formatFileSize,
 } from '@utils/format';
 import { formatMilliseconds } from '@utils/time';
+import { WriteTrackTagsByPath } from '@go/tagwriter/TagWriter';
+import { ImageFilePicker, ReadFile } from '@go/frontendutil/FrontendUtil';
 
 import '@awesome.me/webawesome/dist/components/dialog/dialog.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
@@ -47,6 +49,13 @@ export class TrackDetails extends LitElement {
     @state() private coverArt: CoverArtUrls | null = null;
     @state() private editing = false;
     @state() private editValues: Record<string, string> = {};
+    @state() private saving = false;
+    @state() private errorMessage = '';
+    @state() private pendingCoverArt: {
+        data: ArrayBuffer;
+        previewUrl: string;
+    } | null = null;
+    @state() private clearCoverArt = false;
 
     @query('wa-dialog')
     private dialog!: HTMLElement & { open: boolean };
@@ -64,6 +73,8 @@ export class TrackDetails extends LitElement {
         this.coverArt = coverArt ?? null;
         this.editing = false;
         this.editValues = {};
+        this.errorMessage = '';
+        this.cleanupPendingCoverArt();
 
         this.updateComplete.then(() => {
             if (this.dialog) this.dialog.open = true;
@@ -75,6 +86,8 @@ export class TrackDetails extends LitElement {
         if (this.dialog) this.dialog.open = false;
         this.editing = false;
         this.editValues = {};
+        this.errorMessage = '';
+        this.cleanupPendingCoverArt();
     }
 
     // =================================================================
@@ -314,6 +327,74 @@ export class TrackDetails extends LitElement {
                 #ffe066
             );
         }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* Cover art edit mode */
+        .cover-art-edit {
+            cursor: pointer;
+            position: relative;
+        }
+
+        .cover-art-overlay {
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            transition: opacity 0.15s ease;
+            border-radius: 6px;
+        }
+
+        .cover-art-edit:hover .cover-art-overlay {
+            opacity: 1;
+        }
+
+        .cover-art-overlay wa-icon {
+            color: #fff;
+            font-size: 32px;
+        }
+
+        .cover-art-remove {
+            position: absolute;
+            top: 4px;
+            right: 4px;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            border: none;
+            background: rgba(0, 0, 0, 0.7);
+            color: #fff;
+            font-size: 14px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            transition: opacity 0.15s ease;
+        }
+
+        .cover-art-edit:hover .cover-art-remove {
+            opacity: 1;
+        }
+
+        .cover-art-remove:hover {
+            background: var(--yj-error, #e03131);
+        }
+
+        /* Error message */
+        .error-message {
+            flex: 1;
+            color: var(--yj-error, #e03131);
+            font-size: var(--yj-text-sm);
+            padding: 4px 0;
+            word-break: break-word;
+        }
     `];
 
     // =================================================================
@@ -358,6 +439,10 @@ export class TrackDetails extends LitElement {
     }
 
     private renderCoverArt() {
+        if (this.editing) {
+            return this.renderCoverArtEditable();
+        }
+
         const src =
             this.coverArt?.coverArtLarge ??
             this.coverArt?.coverArtMedium ??
@@ -382,6 +467,62 @@ export class TrackDetails extends LitElement {
                     alt="Album cover"
                     @error=${this.handleImageError}
                 />
+            </div>
+        `;
+    }
+
+    private renderCoverArtEditable() {
+        const showRemove =
+            !this.clearCoverArt &&
+            (this.pendingCoverArt || this.coverArt);
+
+        // Determine which image to show.
+        let src: string | undefined;
+
+        if (this.clearCoverArt) {
+            src = undefined; // Show placeholder.
+        } else if (this.pendingCoverArt) {
+            src = this.pendingCoverArt.previewUrl;
+        } else {
+            src =
+                this.coverArt?.coverArtLarge ??
+                this.coverArt?.coverArtMedium ??
+                this.coverArt?.coverArtPath;
+        }
+
+        return html`
+            <div
+                class="cover-art cover-art-edit"
+                @click=${this.selectCoverArt}
+            >
+                ${src
+                    ? html`<img
+                          src="${src}"
+                          alt="Album cover"
+                          @error=${this.handleImageError}
+                      />`
+                    : html`<div class="cover-placeholder">
+                          <wa-icon
+                              name="music"
+                          ></wa-icon>
+                      </div>`}
+                <div class="cover-art-overlay">
+                    <wa-icon
+                        name="pen-to-square"
+                    ></wa-icon>
+                </div>
+                ${showRemove
+                    ? html`<button
+                          class="cover-art-remove"
+                          @click=${(e: Event) => {
+                              e.stopPropagation();
+                              this.removeCoverArt();
+                          }}
+                          title="Remove cover art"
+                      >
+                          ×
+                      </button>`
+                    : nothing}
             </div>
         `;
     }
@@ -608,17 +749,24 @@ export class TrackDetails extends LitElement {
     private renderActions() {
         if (this.editing) {
             return html`
+                ${this.errorMessage
+                    ? html`<div class="error-message">
+                          ${this.errorMessage}
+                      </div>`
+                    : nothing}
                 <button
                     class="btn"
                     @click=${this.cancelEdit}
+                    ?disabled=${this.saving}
                 >
                     Cancel
                 </button>
                 <button
                     class="btn btn-primary"
                     @click=${this.saveEdit}
+                    ?disabled=${this.saving}
                 >
-                    Save
+                    ${this.saving ? 'Saving…' : 'Save'}
                 </button>
             `;
         }
@@ -641,18 +789,218 @@ export class TrackDetails extends LitElement {
     private startEdit = () => {
         this.editing = true;
         this.editValues = {};
+        this.errorMessage = '';
+        this.cleanupPendingCoverArt();
     };
 
     private cancelEdit = () => {
-        this.editing = false;
-        this.editValues = {};
+        this.exitEditMode();
     };
 
-    private saveEdit = () => {
-        // TODO: implement tag writing when backend support is added.
-        // For now, just exit edit mode.
+    private saveEdit = async () => {
+        if (!this.track || this.saving) return;
+
+        this.saving = true;
+        this.errorMessage = '';
+
+        try {
+            const changes = this.buildChanges();
+
+            if (Object.keys(changes).length === 0) {
+                // No actual changes — just exit edit mode.
+                this.exitEditMode();
+
+                return;
+            }
+
+            await WriteTrackTagsByPath(
+                this.track.FilePath,
+                changes,
+            );
+
+            // Success — switch to read-only view. The
+            // TrackMetadataChanged event triggers library store
+            // invalidation, which refreshes all other views.
+            this.exitEditMode();
+        } catch (err: unknown) {
+            const msg =
+                err instanceof Error
+                    ? err.message
+                    : String(err);
+            this.errorMessage = msg;
+        } finally {
+            this.saving = false;
+        }
+    };
+
+    private buildChanges(): Record<string, unknown> {
+        const t = this.track!;
+        const changes: Record<string, unknown> = {};
+
+        // Map frontend edit keys to backend field constants
+        // and original values.
+        const fieldMap: Array<{
+            editKey: string;
+            backendKey: string;
+            original: string;
+            transform?: (v: string) => unknown;
+        }> = [
+            {
+                editKey: 'title',
+                backendKey: 'title',
+                original: t.TrackName,
+            },
+            {
+                editKey: 'artist',
+                backendKey: 'artist',
+                original: t.ArtistName,
+            },
+            {
+                editKey: 'album',
+                backendKey: 'album',
+                original: t.Album,
+            },
+            {
+                editKey: 'genre',
+                backendKey: 'genre',
+                original: (t.Genre ?? []).join(', '),
+            },
+            {
+                editKey: 'year',
+                backendKey: 'year',
+                original: t.Year ? String(t.Year) : '',
+                transform: (v) =>
+                    v ? parseInt(v, 10) : 0,
+            },
+            {
+                editKey: 'composer',
+                backendKey: 'composer',
+                original: t.Composer ?? '',
+            },
+            {
+                editKey: 'trackNumber',
+                backendKey: 'track_number',
+                original: t.TrackNumber
+                    ? String(t.TrackNumber)
+                    : '',
+                transform: (v) =>
+                    v ? parseInt(v, 10) : 0,
+            },
+            {
+                editKey: 'discNumber',
+                backendKey: 'disc_number',
+                original: t.DiscNumber
+                    ? String(t.DiscNumber)
+                    : '',
+                transform: (v) =>
+                    v ? parseInt(v, 10) : 0,
+            },
+        ];
+
+        for (const {
+            editKey,
+            backendKey,
+            original,
+            transform,
+        } of fieldMap) {
+            if (editKey in this.editValues) {
+                const newVal = this.editValues[editKey]!;
+
+                if (newVal !== original) {
+                    changes[backendKey] = transform
+                        ? transform(newVal)
+                        : newVal;
+                }
+            }
+        }
+
+        // Cover art changes.
+        if (this.pendingCoverArt) {
+            // Convert ArrayBuffer to number[] for JSON
+            // serialization (Wails passes as []byte on Go side).
+            changes['cover_art'] = Array.from(
+                new Uint8Array(this.pendingCoverArt.data),
+            );
+        } else if (this.clearCoverArt) {
+            changes['cover_art'] = null;
+        }
+
+        return changes;
+    }
+
+    private exitEditMode(): void {
         this.editing = false;
         this.editValues = {};
+        this.errorMessage = '';
+        this.cleanupPendingCoverArt();
+    }
+
+    private cleanupPendingCoverArt(): void {
+        if (this.pendingCoverArt?.previewUrl) {
+            URL.revokeObjectURL(
+                this.pendingCoverArt.previewUrl,
+            );
+        }
+        this.pendingCoverArt = null;
+        this.clearCoverArt = false;
+    }
+
+    private selectCoverArt = async () => {
+        try {
+            const filePath = await ImageFilePicker();
+
+            if (!filePath) return; // User cancelled.
+
+            const bytes =
+                await this.readCoverArtFile(filePath);
+
+            if (!bytes) return;
+
+            // Create preview URL from bytes.
+            const buffer = (bytes.buffer as ArrayBuffer).slice(
+                bytes.byteOffset,
+                bytes.byteOffset + bytes.byteLength,
+            );
+            const blob = new Blob([buffer]);
+            const previewUrl =
+                URL.createObjectURL(blob);
+
+            this.cleanupPendingCoverArt();
+            this.pendingCoverArt = {
+                data: buffer,
+                previewUrl,
+            };
+            this.clearCoverArt = false;
+        } catch (err) {
+            console.error(
+                'Failed to select cover art:',
+                err,
+            );
+        }
+    };
+
+    private async readCoverArtFile(
+        filePath: string,
+    ): Promise<Uint8Array | null> {
+        try {
+            // ReadFile returns number[] (Go []byte serialized
+            // as JSON array).
+            const bytes = await ReadFile(filePath);
+
+            return new Uint8Array(bytes);
+        } catch (err) {
+            console.error(
+                'Failed to read cover art file:',
+                err,
+            );
+
+            return null;
+        }
+    }
+
+    private removeCoverArt = () => {
+        this.cleanupPendingCoverArt();
+        this.clearCoverArt = true;
     };
 
     private getEditValue(

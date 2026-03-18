@@ -14,6 +14,10 @@ export function PlaylistFilePicker() {
   return window['go']['frontendutil']['FrontendUtil']['PlaylistFilePicker']();
 }
 
+export function ReadFile(arg1) {
+  return window['go']['frontendutil']['FrontendUtil']['ReadFile'](arg1);
+}
+
 export function SetContext(arg1) {
   return window['go']['frontendutil']['FrontendUtil']['SetContext'](arg1);
 }

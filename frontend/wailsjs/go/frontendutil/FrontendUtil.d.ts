@@ -8,4 +8,6 @@ export function ImageFilePicker():Promise<string>;
 
 export function PlaylistFilePicker():Promise<Array<string>>;
 
+export function ReadFile(arg1:string):Promise<Array<number>>;
+
 export function SetContext(arg1:context.Context):Promise<void>;
