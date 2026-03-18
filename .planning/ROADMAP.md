@@ -8,6 +8,7 @@
 - ✅ **v1.0 Consolidation** — Phases 1-8 (shipped 2026-03-05) — [archive](milestones/v1.0-ROADMAP.md)
 - ✅ **v1.1 Multi-Library Support** — Phases 9-14 (shipped 2026-03-16) — [archive](milestones/v1.1-ROADMAP.md)
 - ✅ **v1.2 Tag Editing** — Phases 15-18 (shipped 2026-03-18) — [archive](milestones/v1.2-ROADMAP.md)
+- 🔄 **v1.2.1 Format Parity** — Phases 19-21 (in progress)
 
 ## Phases
 
@@ -45,9 +46,50 @@
 - [x] Phase 17: Single Track Edit (2/2 plans) — completed 2026-03-18
 - [x] Phase 18: Batch Edit (2/2 plans) — completed 2026-03-18
 
-**Deferred:** Phase 19 (OGG Vorbis Tag Writing) — stretch goal, deferred to future milestone
+**Deferred:** Phase 19 (OGG Vorbis Tag Writing) — stretch goal, deferred to v1.2.1
 
 </details>
+
+### v1.2.1 Format Parity (Phases 19-21)
+
+- [ ] **Phase 19: WAV Tag Writer** — Full metadata and cover art writing for WAV files via ID3v2-in-RIFF
+- [ ] **Phase 20: OGG Vorbis Tag Writer** — Full metadata and cover art writing for OGG Vorbis files via custom page rewriter
+- [ ] **Phase 21: Cleanup** — Fix lint warnings and small issues carried forward from v1.2
+
+## Phase Details
+
+### Phase 19: WAV Tag Writer
+**Goal**: Users can edit metadata and cover art on WAV files with the same experience as MP3/FLAC
+**Depends on**: Nothing (extends existing tag writing pipeline)
+**Requirements**: WAV-01, WAV-02, WAV-03, WAV-04, WAV-05, WAV-06
+**Success Criteria** (what must be TRUE):
+  1. User can open a WAV file in the single-track editor, change any of the 8 text fields, save, and see the changes persist after re-scanning the library
+  2. User can embed, replace, or remove cover art on a WAV file and see the updated artwork in the track list and player
+  3. Editing a WAV file's tags does not alter audio playback — the file sounds identical before and after
+  4. Existing metadata in the WAV file that wasn't edited (RIFF INFO chunks, bext, cue markers) survives the tag write unchanged
+  5. If the app crashes or loses power during a WAV tag write, the original file is intact (not corrupted or truncated)
+**Plans**: TBD
+
+### Phase 20: OGG Vorbis Tag Writer
+**Goal**: Users can edit metadata and cover art on OGG Vorbis files with the same experience as MP3/FLAC/WAV
+**Depends on**: Phase 19 (pipeline extension pattern proven)
+**Requirements**: OGG-01, OGG-02, OGG-03, OGG-04, OGG-05, OGG-06
+**Success Criteria** (what must be TRUE):
+  1. User can open an OGG Vorbis file in the single-track editor, change any of the 8 text fields, save, and see the changes persist after re-scanning the library
+  2. User can embed, replace, or remove cover art on an OGG Vorbis file via METADATA_BLOCK_PICTURE and see the updated artwork in the track list and player
+  3. Editing an OGG file's tags does not alter audio playback — the file sounds identical before and after
+  4. Existing Vorbis Comments that weren't edited (ReplayGain, lyrics, custom fields) survive the tag write unchanged
+  5. If the app crashes or loses power during an OGG tag write, the original file is intact (not corrupted or truncated)
+**Plans**: TBD
+
+### Phase 21: Cleanup
+**Goal**: Codebase is clean — no lint warnings or loose ends from tag editing work
+**Depends on**: Phase 20 (cleanup after all format work is done)
+**Requirements**: CLEAN-01, CLEAN-02
+**Success Criteria** (what must be TRUE):
+  1. `make lint` passes with zero warnings in dbsync.go and tagwriter.go (nlreturn/wsl violations resolved)
+  2. Any small issues discovered during v1.2 tag editing milestone are resolved
+**Plans**: TBD
 
 ## Progress
 
@@ -71,7 +113,10 @@
 | 16. Tag Writing & Database Sync | v1.2 | 3/3 | Complete | 2026-03-17 |
 | 17. Single Track Edit | v1.2 | 2/2 | Complete | 2026-03-18 |
 | 18. Batch Edit | v1.2 | 2/2 | Complete | 2026-03-18 |
+| 19. WAV Tag Writer | v1.2.1 | 0/? | Not started | - |
+| 20. OGG Vorbis Tag Writer | v1.2.1 | 0/? | Not started | - |
+| 21. Cleanup | v1.2.1 | 0/? | Not started | - |
 
 ---
 *Roadmap created: 2026-02-27*
-*Last updated: 2026-03-18 — v1.2 Tag Editing milestone shipped*
+*Last updated: 2026-03-18 — v1.2.1 Format Parity roadmap created*

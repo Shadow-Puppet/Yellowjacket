@@ -65,26 +65,26 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| OGG-01 | TBD | Pending |
-| OGG-02 | TBD | Pending |
-| OGG-03 | TBD | Pending |
-| OGG-04 | TBD | Pending |
-| OGG-05 | TBD | Pending |
-| OGG-06 | TBD | Pending |
-| WAV-01 | TBD | Pending |
-| WAV-02 | TBD | Pending |
-| WAV-03 | TBD | Pending |
-| WAV-04 | TBD | Pending |
-| WAV-05 | TBD | Pending |
-| WAV-06 | TBD | Pending |
-| CLEAN-01 | TBD | Pending |
-| CLEAN-02 | TBD | Pending |
+| WAV-01 | Phase 19 | Pending |
+| WAV-02 | Phase 19 | Pending |
+| WAV-03 | Phase 19 | Pending |
+| WAV-04 | Phase 19 | Pending |
+| WAV-05 | Phase 19 | Pending |
+| WAV-06 | Phase 19 | Pending |
+| OGG-01 | Phase 20 | Pending |
+| OGG-02 | Phase 20 | Pending |
+| OGG-03 | Phase 20 | Pending |
+| OGG-04 | Phase 20 | Pending |
+| OGG-05 | Phase 20 | Pending |
+| OGG-06 | Phase 20 | Pending |
+| CLEAN-01 | Phase 21 | Pending |
+| CLEAN-02 | Phase 21 | Pending |
 
 **Coverage:**
 - v1.2.1 requirements: 14 total
-- Mapped to phases: 0
-- Unmapped: 14
+- Mapped to phases: 14
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-03-18*
-*Last updated: 2026-03-18 after initial definition*
+*Last updated: 2026-03-18 — traceability updated with phase mappings*

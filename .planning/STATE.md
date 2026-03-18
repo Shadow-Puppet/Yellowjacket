@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: "v1.2.1"
 milestone_name: "Format Parity"
-status: defining_requirements
-last_updated: "2026-03-18T19:00:00.000Z"
+status: roadmap_complete
+last_updated: "2026-03-18T20:00:00.000Z"
 progress:
-  total_phases: 0
+  total_phases: 3
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -18,14 +18,19 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-18)
 
 **Core value:** The music player works reliably and feels solid — every interaction is correct, responsive, and trustworthy.
-**Current focus:** v1.2.1 Format Parity — defining requirements
+**Current focus:** v1.2.1 Format Parity — roadmap complete, ready for phase planning
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: 19 — WAV Tag Writer (not yet planned)
 Plan: —
-Status: Defining requirements
-Last activity: 2026-03-18 — Milestone v1.2.1 started
+Status: Roadmap complete, awaiting `/gsd-plan-phase 19`
+Last activity: 2026-03-18 — Roadmap created for v1.2.1
+
+```
+v1.2.1 Format Parity
+[░░░░░░░░░░░░░░░░░░░░] 0/3 phases
+```
 
 ## Performance Metrics
 
@@ -60,22 +65,22 @@ All decisions archived in PROJECT.md Key Decisions table and RETROSPECTIVE.md. K
 - FLAC files require full rewrite for tag changes — atomic write-to-temp-then-rename mandatory
 - Currently-playing file must be stopped before writing (WRITE-06) — Windows file locking is especially strict
 - Shared entity fan-out — editing one track's artist must NOT mutate the shared artist_credit row
-- **Phase 19:** Custom OGG page rewriter — prototype before committing; consider dropping if too complex
+- OGG CRC32 uses non-standard MSB-first bit ordering — Go's `hash/crc32` produces wrong checksums
+- OGG page sequence numbers must be renumbered when comment header page count changes
+- WAV RIFF chunks must start at even byte offsets — odd-length chunks need a padding byte
 
 ### Deferred Improvements
 
 - **Bulk phantom matching performance** — O(n×3) round trips per phantom. Revisit if large external playlist imports occur.
-- **OGG Vorbis tag writing** — Stretch goal deferred from v1.2. Custom OGG page rewriter is medium-high risk.
-- **Pre-existing lint warnings** — nlreturn/wsl warnings in dbsync.go and tagwriter.go. Clean up in a future quick task.
 
 ## Session Continuity
 
 ### Last Session
 
 **Date:** 2026-03-18
-**What happened:** Completed v1.2 Tag Editing milestone. All 4 phases (15-18) shipped. 19/20 requirements fulfilled (WRITE-03 OGG deferred as stretch goal). Milestone archived to .planning/milestones/.
-**Where we stopped:** Milestone v1.2 complete and archived.
-**Next action:** `/gsd-new-milestone` to plan next milestone
+**What happened:** Created v1.2.1 Format Parity roadmap. 3 phases (19-21): WAV Tag Writer → OGG Vorbis Tag Writer → Cleanup. All 14 requirements mapped.
+**Where we stopped:** Roadmap created, ready for phase planning.
+**Next action:** `/gsd-plan-phase 19` to plan WAV Tag Writer
 
 ---
 *State initialized: 2026-02-27*
@@ -88,5 +93,5 @@ All decisions archived in PROJECT.md Key Decisions table and RETROSPECTIVE.md. K
 | 18 | add multi-column metadata display to playlist-details | 2026-03-08 | ce23177 | [18-add-multi-column-metadata-display-to-pla](./quick/18-add-multi-column-metadata-display-to-pla/) |
 | 19 | fix phantom playlist tracks with multi-root path resolution | 2026-03-16 | 9144ded | [19-fix-phantom-playlist-tracks](./quick/19-fix-phantom-playlist-tracks/) |
 
-Last activity: 2026-03-18 - v1.2 Tag Editing milestone shipped
-*Last updated: 2026-03-18 — v1.2 milestone complete and archived*
+Last activity: 2026-03-18 - v1.2.1 roadmap created
+*Last updated: 2026-03-18 — v1.2.1 roadmap created*
