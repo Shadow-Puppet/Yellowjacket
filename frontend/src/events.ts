@@ -50,6 +50,7 @@ export const Events = {
 
     // Tag writing events
     TrackMetadataChanged: "TrackMetadataChanged",
+    BatchWriteProgress: "BatchWriteProgress",
 } as const;
 
 export type EventName = (typeof Events)[keyof typeof Events];

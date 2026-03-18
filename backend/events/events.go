@@ -71,4 +71,5 @@ const (
 // Tag writing events.
 const (
 	TrackMetadataChanged = "TrackMetadataChanged"
+	BatchWriteProgress   = "BatchWriteProgress"
 )
