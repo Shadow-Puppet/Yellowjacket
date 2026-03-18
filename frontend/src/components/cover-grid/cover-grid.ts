@@ -2049,9 +2049,7 @@ export class CoverGrid
                               </wa-dropdown-item>
                               ${this.contextMenuTarget
                                       .kind ===
-                                  'track' &&
-                              this.selectedTracks
-                                  .size === 1
+                                  'track'
                                   ? html`
                                         <wa-dropdown-item
                                             @click=${() =>

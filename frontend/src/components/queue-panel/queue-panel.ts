@@ -1549,26 +1549,21 @@ export class QueuePanel
                                    ></wa-icon>
                                   ${this.favCtrl.allFavorited(this.getSelectedFilePaths()) ? `Remove from ${this.favCtrl.playlistName}` : `Add to ${this.favCtrl.playlistName}`}
                               </wa-dropdown-item>
-                              ${this.selection
-                                  .selectionCount === 1
-                                  ? html`
-                                        <wa-dropdown-item
-                                            @click=${() =>
-                                                this.onContextMenuAction(
-                                                    'track-details',
-                                                )}
-                                            @mouseenter=${() =>
-                                                this.ctxMenu.closePlaylistSubmenu()}
-                                        >
-                                            <wa-icon
-                                                slot="icon"
-                                                name="circle-info"
-                                            ></wa-icon>
-                                            Track
-                                            Details
-                                        </wa-dropdown-item>
-                                    `
-                                  : nothing}
+                              <wa-dropdown-item
+                                  @click=${() =>
+                                      this.onContextMenuAction(
+                                          'track-details',
+                                      )}
+                                  @mouseenter=${() =>
+                                      this.ctxMenu.closePlaylistSubmenu()}
+                              >
+                                  <wa-icon
+                                      slot="icon"
+                                      name="circle-info"
+                                  ></wa-icon>
+                                  Track
+                                  Details
+                              </wa-dropdown-item>
                           </div>
                       `
                     : nothing}

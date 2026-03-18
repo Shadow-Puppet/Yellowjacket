@@ -82,6 +82,9 @@ class LibraryStore {
             this.changeGen++;
             this.notify();
         });
+        EventsOn(Events.TrackMetadataChanged, () => {
+            this.invalidate();
+        });
 
         this.loadCoverSize();
         this.deferEagerFetch();
