@@ -17,7 +17,7 @@ import {
     RemovePhantomTracks,
     FindDuplicateTracksInPlaylist,
 } from '@go/playlist/Service';
-import type { playlist } from '@go/models';
+import type { playlist, library } from '@go/models';
 import { EventsOn } from '@runtime/runtime';
 import { Events } from '../../events';
 import { queueStore } from '@store/queue-store';
@@ -350,7 +350,11 @@ export class PlaylistDetails
                 void this.removeSelectedTracks();
                 break;
             case 'track-details':
-                this.openTrackDetails(filePaths[0]!);
+                if (filePaths.length === 1) {
+                    this.openTrackDetails(filePaths[0]!);
+                } else {
+                    this.openBatchTrackDetails(filePaths);
+                }
                 break;
             case 'phantom-locate':
                 this.openPhantomResolver();
@@ -443,6 +447,50 @@ export class PlaylistDetails
         this.trackDetailsDialog?.show(
             track,
             coverArt ?? undefined,
+        );
+    }
+
+    private openBatchTrackDetails(
+        filePaths: string[],
+    ) {
+        const cachedTracks =
+            libraryStore.getCachedTracks();
+
+        if (!cachedTracks) return;
+
+        const tracks = filePaths
+            .map((fp) =>
+                cachedTracks.find(
+                    (t) => t.FilePath === fp,
+                ),
+            )
+            .filter(
+                (t): t is library.Track =>
+                    t != null,
+            );
+
+        if (tracks.length === 0) return;
+
+        const albumNames = new Set(
+            tracks.map((t) => t.Album),
+        );
+        let coverArt: CoverArtUrls | null = null;
+        let coverArtMixed = false;
+
+        if (albumNames.size === 1) {
+            const albumName = [...albumNames][0]!;
+            coverArt =
+                this.resolvePlaylistCoverArt(
+                    albumName,
+                );
+        } else {
+            coverArtMixed = true;
+        }
+
+        this.trackDetailsDialog?.showBatch(
+            tracks,
+            coverArt,
+            coverArtMixed,
         );
     }
 

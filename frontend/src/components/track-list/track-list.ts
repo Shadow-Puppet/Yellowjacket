@@ -1442,7 +1442,11 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
                 queueStore.playTracksNext(filePaths);
                 break;
             case 'track-details':
-                this.openTrackDetails(filePaths[0]!);
+                if (filePaths.length === 1) {
+                    this.openTrackDetails(filePaths[0]!);
+                } else {
+                    this.openBatchTrackDetails(filePaths);
+                }
                 break;
         }
 
@@ -1483,6 +1487,42 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
         this.trackDetailsDialog?.show(
             track,
             coverArt ?? undefined,
+        );
+    }
+
+    private openBatchTrackDetails(
+        filePaths: string[],
+    ) {
+        const tracks = filePaths
+            .map((fp) =>
+                this.tracks.find(
+                    (t) => t.FilePath === fp,
+                ),
+            )
+            .filter(
+                (t): t is library.Track => t != null,
+            );
+
+        if (tracks.length === 0) return;
+
+        const albumNames = new Set(
+            tracks.map((t) => t.Album),
+        );
+        let coverArt: CoverArtUrls | null = null;
+        let coverArtMixed = false;
+
+        if (albumNames.size === 1) {
+            const albumName = [...albumNames][0]!;
+            coverArt =
+                this.resolveCoverArt(albumName);
+        } else {
+            coverArtMixed = true;
+        }
+
+        this.trackDetailsDialog?.showBatch(
+            tracks,
+            coverArt,
+            coverArtMixed,
         );
     }
 

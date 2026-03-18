@@ -26,6 +26,7 @@ import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@components/playlist-picker/playlist-picker.js';
 import '@components/track-details/track-details.js';
 import type { TrackDetails } from '@components/track-details/track-details.js';
+import type { CoverArtUrls } from '@components/track-details/track-details.js';
 import { AlbumSelectionManager } from './album-selection.js';
 import { ScrollManager } from './scroll-manager.js';
 import type { ScrollManagerHost } from './scroll-manager.js';
@@ -1524,7 +1525,11 @@ export class CoverGrid
                 queueStore.playTracksNext(filePaths);
                 break;
             case 'track-details':
-                this.openTrackDetails(filePaths[0]!);
+                if (filePaths.length === 1) {
+                    this.openTrackDetails(filePaths[0]!);
+                } else {
+                    this.openBatchTrackDetails(filePaths);
+                }
                 break;
         }
 
@@ -1577,6 +1582,45 @@ export class CoverGrid
         this.trackDetailsDialog?.show(
             track,
             coverArt ?? undefined,
+        );
+    }
+
+    private openBatchTrackDetails(
+        filePaths: string[],
+    ) {
+        const tracks = filePaths
+            .map((fp) =>
+                this.expandedTracks.find(
+                    (t) => t.FilePath === fp,
+                ),
+            )
+            .filter(
+                (t): t is library.Track => t != null,
+            );
+
+        if (tracks.length === 0) return;
+
+        const albumNames = new Set(
+            tracks.map((t) => t.Album),
+        );
+        let coverArt: CoverArtUrls | null = null;
+        let coverArtMixed = false;
+
+        if (albumNames.size === 1) {
+            const albumName = [...albumNames][0]!;
+            coverArt =
+                this.selMgr.resolveTrackCoverArt(
+                    albumName,
+                    this.expandedAlbumId,
+                );
+        } else {
+            coverArtMixed = true;
+        }
+
+        this.trackDetailsDialog?.showBatch(
+            tracks,
+            coverArt,
+            coverArtMixed,
         );
     }
 
