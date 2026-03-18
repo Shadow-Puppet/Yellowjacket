@@ -87,7 +87,7 @@ Plans:
   2. The editor displays all 8 editable fields (title, artist, album, genre, year, track number, disc number, composer) pre-populated with the track's current values — empty fields show as empty, not "Unknown"
   3. The editor displays the track's current cover art (or a placeholder if none) with a button to select a replacement image file from disk
   4. Clicking "Save" writes the changes to the audio file, updates the database and search index, and refreshes all visible views (track list, album view, artist view, genre view, queue, now-playing bar) — the user sees the new metadata everywhere without restarting or rescanning
-**Plans:** 2 plans
+**Plans:** 1/2 plans executed
 Plans:
 - [ ] 17-01-PLAN.md — Backend wiring (WriteTrackTagsByPath, ImageFilePicker) + library store event handler + context menu fix
 - [ ] 17-02-PLAN.md — Track details dialog save flow, cover art editing, error handling, human verification
@@ -133,7 +133,7 @@ Plans:
 | 14. Performance Optimization | v1.1 | 4/4 | Complete | 2026-03-15 |
 | 15. Schema Migration & Write Safety | 2/2 | Complete    | 2026-03-16 | - |
 | 16. Tag Writing & Database Sync | 3/3 | Complete    | 2026-03-17 | - |
-| 17. Single Track Edit | v1.2 | 0/? | Not started | - |
+| 17. Single Track Edit | 1/2 | In Progress|  | - |
 | 18. Batch Edit | v1.2 | 0/? | Not started | - |
 | 19. OGG Vorbis Tag Writing | v1.2 | 0/? | Not started | - |
 

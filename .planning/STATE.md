@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Tag Editing
-status: unknown
-last_updated: "2026-03-17T15:02:43.059Z"
+status: in-progress
+last_updated: "2026-03-18T01:05:17Z"
 progress:
-  total_phases: 2
+  total_phases: 5
   completed_phases: 2
-  total_plans: 5
-  completed_plans: 5
+  total_plans: 6
+  completed_plans: 6
 ---
 
 # YellowJacket — Project State
@@ -22,10 +22,10 @@ See: .planning/PROJECT.md (updated 2026-03-16)
 
 ## Current Position
 
-Phase: Phase 16 — Tag Writing & Database Sync (complete)
-Plan: 3 of 3 complete
-Status: Phase 16 complete — all 3 plans done (MP3 writer, FLAC writer, WriteTrackTags pipeline)
-Last activity: 2026-03-17 — Completed 16-03 (WriteTrackTags pipeline + DB sync)
+Phase: Phase 17 — Single Track Edit (in progress)
+Plan: 1 of 3 complete
+Status: Completed 17-01 (backend bridge & frontend plumbing)
+Last activity: 2026-03-18 — Completed 17-01 (WriteTrackTagsByPath, ImageFilePicker, TrackMetadataChanged handler, context menu fix)
 
 ### Phase Overview
 
@@ -33,7 +33,7 @@ Last activity: 2026-03-17 — Completed 16-03 (WriteTrackTags pipeline + DB sync
 |-------|--------|
 | 15. Schema Migration & Write Safety | Complete (2/2 plans) |
 | 16. Tag Writing & Database Sync | Complete (3/3 plans) |
-| 17. Single Track Edit | Not started |
+| 17. Single Track Edit | In Progress (1/3 plans) |
 | 18. Batch Edit | Not started |
 | 19. OGG Vorbis Tag Writing | Not started |
 
@@ -62,6 +62,7 @@ Last activity: 2026-03-17 — Completed 16-03 (WriteTrackTags pipeline + DB sync
 | 16 | 01 | 28min | 2 | 14 |
 | 16 | 02 | 20min | 2 | 6 |
 | 16 | 03 | 9min | 2 | 7 |
+| 17 | 01 | 11min | 2 | 11 |
 
 ## Accumulated Context
 
@@ -93,6 +94,8 @@ Decisions from v1.0 and v1.1 are archived in PROJECT.md Key Decisions table. Key
 | pipelineMu sync.Mutex for scan/write mutual exclusion | Simple mutex on Library; both scan and write pipelines acquire at start, release at end |
 | FTS5 delete+insert within DB transaction | Execute directly on *sql.Tx for atomicity with entity relink |
 | Global genre orphan cleanup via DELETE WHERE id NOT IN | Simpler than tracking old genre IDs; safe because genres only referenced via recording_genres |
+| Manually added Wails TypeScript bindings for new Go methods | Wails binding generator runs at `wails dev`/`wails build` time, not via `go generate`; manual addition matches existing pattern exactly |
+| Track Details opens for first selected track in multi-select | `filePaths[0]` is consistent across all 4 views; avoids blocking the menu item unnecessarily |
 
 ### v1.2 Roadmap Decisions
 
@@ -132,10 +135,10 @@ Decisions from v1.0 and v1.1 are archived in PROJECT.md Key Decisions table. Key
 
 ### Last Session
 
-**Date:** 2026-03-17
-**What happened:** Executed Phase 16 Plan 03 — WriteTrackTags pipeline with DB sync, player safety, scan/write mutex, events, and app wiring. Phase 16 now complete (3/3 plans).
-**Where we stopped:** Completed 16-03-PLAN.md — Phase 16 complete
-**Next action:** Plan Phase 17 (Single Track Edit UI)
+**Date:** 2026-03-18
+**What happened:** Executed Phase 17 Plan 01 — Backend bridge methods (WriteTrackTagsByPath, ImageFilePicker), TrackMetadataChanged handler in LibraryStore, removed selection gate on Track Details context menu in all 4 views.
+**Where we stopped:** Completed 17-01-PLAN.md
+**Next action:** Execute 17-02 (track-details dialog edit mode wiring)
 
 ---
 *State initialized: 2026-02-27*
@@ -149,4 +152,4 @@ Decisions from v1.0 and v1.1 are archived in PROJECT.md Key Decisions table. Key
 | 19 | fix phantom playlist tracks with multi-root path resolution | 2026-03-16 | 9144ded | [19-fix-phantom-playlist-tracks](./quick/19-fix-phantom-playlist-tracks/) |
 
 Last activity: 2026-03-16 - Completed quick task 19: fix phantom playlist tracks with multi-root path resolution
-*Last updated: 2026-03-17 — Completed 16-03 (WriteTrackTags pipeline + DB sync) — Phase 16 complete (3/3)*
+*Last updated: 2026-03-18 — Completed 17-01 (backend bridge & frontend plumbing)*
