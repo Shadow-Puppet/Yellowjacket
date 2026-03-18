@@ -62,11 +62,13 @@ The music player works reliably and feels solid. Every interaction is correct, r
 
 ### Active
 
-(No active milestone — run `/gsd-new-milestone` to plan the next one)
+- [ ] OGG Vorbis tag writing — write Vorbis Comments to .ogg files (approach TBD after research)
+- [ ] WAV tag writing — write metadata to .wav files (ID3v2 vs RIFF INFO TBD after research)
+- [ ] Cover art embedding for OGG and WAV — feasibility TBD after research
+- [ ] General cleanup — lint warnings and small issues from v1.2
 
 ### Deferred (Future Milestones)
 
-- [ ] OGG Vorbis tag writing — custom OGG page rewriter for Vorbis Comment writing (deferred stretch goal from v1.2)
 - [ ] Smart playlists — auto-generated playlists with simple filter rules (genre, year, play count, etc.)
 - [ ] Gapless playback + crossfade — seamless track transitions with optional crossfade setting
 - [ ] MusicBrainz browser — read-only catalog browsing (artists, discographies, album editions, track listings)
@@ -79,7 +81,7 @@ The music player works reliably and feels solid. Every interaction is correct, r
 - Auto-dedup across libraries — complex matching logic, not table stakes
 - User access control per library — desktop app, single user
 - Parallel library scanning — SQLite single-writer makes it pointless
-- OGG Vorbis tag writing (for now) — custom OGG page rewriter assessed as medium-high risk; MP3+FLAC covers vast majority; revisit when pure-Go OGG library matures
+- OGG Vorbis tag writing (revisiting in v1.2.1) — previously assessed as medium-high risk; researching approaches now
 - Cross-platform media controls (macOS/Windows) — feature work
 - Database health checking / reconnection — low priority, desktop app context
 - File decomposition for its own sake — only extract when it enables reuse or fixes problems
@@ -92,9 +94,15 @@ The music player works reliably and feels solid. Every interaction is correct, r
 - **v1.1 Multi-Library Support** (2026-03-16) — Multi-library: CRUD, per-library scanning, filtered views, cross-library playlists, phantom tracks
 - **v1.2 Tag Editing** (2026-03-18) — Tag editing: single + batch metadata editing, cover art embed, crash-safe writes, instant DB sync (MP3 + FLAC)
 
-## Current Milestone
+## Current Milestone: v1.2.1 Format Parity
 
-No active milestone. Run `/gsd-new-milestone` to plan the next one.
+**Goal:** Complete tag writing support for all four audio formats — add OGG Vorbis and WAV tag writing so every file YellowJacket plays can also be edited.
+
+**Target features:**
+- OGG Vorbis tag writing (Vorbis Comments in OGG container)
+- WAV tag writing (metadata approach TBD after research)
+- Cover art embedding for OGG and WAV (feasibility TBD)
+- General cleanup from v1.2 (lint warnings, small issues)
 
 ## Context
 
@@ -157,4 +165,4 @@ No active milestone. Run `/gsd-new-milestone` to plan the next one.
 | PlayerStopper interface for tagwriter→player | Breaks import cycle; playerAdapter in app.go wraps *player.Player | ✓ Good — clean decoupling |
 
 ---
-*Last updated: 2026-03-18 after v1.2 Tag Editing milestone shipped*
+*Last updated: 2026-03-18 after v1.2.1 Format Parity milestone started*

@@ -1,9 +1,9 @@
 ---
 gsd_state_version: 1.0
-milestone: null
-milestone_name: null
-status: between_milestones
-last_updated: "2026-03-18T18:30:00.000Z"
+milestone: "v1.2.1"
+milestone_name: "Format Parity"
+status: defining_requirements
+last_updated: "2026-03-18T19:00:00.000Z"
 progress:
   total_phases: 0
   completed_phases: 0
@@ -18,14 +18,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-18)
 
 **Core value:** The music player works reliably and feels solid — every interaction is correct, responsive, and trustworthy.
-**Current focus:** Planning next milestone
+**Current focus:** v1.2.1 Format Parity — defining requirements
 
 ## Current Position
 
-Phase: No active phase
-Plan: No active plan
-Status: v1.2 Tag Editing milestone shipped 2026-03-18
-Last activity: 2026-03-18 — v1.2 milestone archived
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-03-18 — Milestone v1.2.1 started
 
 ## Performance Metrics
 
