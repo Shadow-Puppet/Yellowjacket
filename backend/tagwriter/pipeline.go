@@ -17,6 +17,21 @@ import (
 // empty TagChanges map.
 var errNoChanges = errors.New("tagwriter: no changes provided")
 
+// BatchFailure records a single track that failed during a batch write.
+type BatchFailure struct {
+	FilePath string `json:"filePath"`
+	Error    string `json:"error"`
+}
+
+// BatchResult summarises the outcome of a batch tag write.
+type BatchResult struct {
+	Total     int            `json:"total"`
+	Succeeded int            `json:"succeeded"`
+	Failed    int            `json:"failed"`
+	Cancelled bool           `json:"cancelled"`
+	Failures  []BatchFailure `json:"failures"`
+}
+
 // PlayerStopper checks whether a file is currently playing and
 // stops playback if needed.  Defined as an interface to break the
 // import cycle between tagwriter and player.
@@ -38,11 +53,13 @@ type PipelineLocker interface {
 // TagWriter orchestrates the complete tag writing pipeline:
 // file write → DB sync → event emission.
 type TagWriter struct {
-	logger  *slog.Logger
-	db      *database.DB
-	ctx     context.Context // Wails context for event emission
-	player  PlayerStopper
-	library PipelineLocker
+	logger         *slog.Logger
+	db             *database.DB
+	ctx            context.Context // Wails context for event emission
+	player         PlayerStopper
+	library        PipelineLocker
+	cancelBatch    chan struct{} // Signals batch cancellation.
+	suppressEvents bool          // Suppresses per-track events during batch.
 }
 
 // NewTagWriter creates a TagWriter with the given dependencies.
@@ -153,8 +170,8 @@ func (tw *TagWriter) WriteTrackTags(trackID int64, changes TagChanges) error {
 		return fmt.Errorf("sync database: %w", syncErr)
 	}
 
-	// 7. Emit event.
-	if tw.ctx != nil {
+	// 7. Emit event (suppressed during batch writes).
+	if tw.ctx != nil && !tw.suppressEvents {
 		wailsruntime.EventsEmit(tw.ctx, events.TrackMetadataChanged,
 			map[string]any{
 				"trackId":  trackID,
@@ -185,4 +202,119 @@ func (tw *TagWriter) WriteTrackTagsByPath(filePath string, changes TagChanges) e
 	}
 
 	return tw.WriteTrackTags(audioFile.ID, changes)
+}
+
+// CancelBatchWrite signals the in-progress batch write to stop after
+// the current track completes.
+func (tw *TagWriter) CancelBatchWrite() {
+	ch := tw.cancelBatch
+	if ch != nil {
+		select {
+		case <-ch:
+			// Already closed.
+		default:
+			close(ch)
+		}
+	}
+}
+
+// BatchWriteTrackTags applies the same TagChanges to every file in
+// filePaths.  It processes tracks sequentially, emits a
+// BatchWriteProgress event after each track, and continues past
+// individual failures.  Returns a BatchResult summarising outcomes.
+func (tw *TagWriter) BatchWriteTrackTags(
+	filePaths []string,
+	changes TagChanges,
+) BatchResult {
+	start := time.Now()
+	total := len(filePaths)
+
+	result := BatchResult{
+		Total:    total,
+		Failures: []BatchFailure{},
+	}
+
+	if total == 0 || len(changes) == 0 {
+		return result
+	}
+
+	// Set up cancellation channel.
+	tw.cancelBatch = make(chan struct{})
+	defer func() { tw.cancelBatch = nil }()
+
+	// Suppress per-track TrackMetadataChanged events — we emit one
+	// at the end instead.
+	tw.suppressEvents = true
+	defer func() { tw.suppressEvents = false }()
+
+	for i, filePath := range filePaths {
+		// Check for cancellation before each track.
+		select {
+		case <-tw.cancelBatch:
+			result.Cancelled = true
+			tw.logger.Info("batch write cancelled",
+				"at", i,
+				"total", total,
+			)
+
+			break
+		default:
+		}
+
+		if result.Cancelled {
+			break
+		}
+
+		err := tw.WriteTrackTagsByPath(filePath, changes)
+		if err != nil {
+			result.Failed++
+			result.Failures = append(result.Failures, BatchFailure{
+				FilePath: filePath,
+				Error:    err.Error(),
+			})
+			tw.logger.Warn("batch track failed",
+				"path", filePath,
+				"err", err,
+				"index", i+1,
+				"total", total,
+			)
+		} else {
+			result.Succeeded++
+		}
+
+		// Emit progress after each track (success or failure).
+		if tw.ctx != nil {
+			wailsruntime.EventsEmit(tw.ctx,
+				events.BatchWriteProgress,
+				map[string]any{
+					"current":   i + 1,
+					"total":     total,
+					"filePath":  filePath,
+					"succeeded": result.Succeeded,
+					"failed":    result.Failed,
+				},
+			)
+		}
+	}
+
+	// Emit a single TrackMetadataChanged after the batch completes
+	// so the library store invalidates once rather than per-track.
+	if tw.ctx != nil {
+		wailsruntime.EventsEmit(tw.ctx, events.TrackMetadataChanged,
+			map[string]any{
+				"batch": true,
+				"total": result.Succeeded,
+			},
+		)
+	}
+
+	tw.logger.Info("batch write complete",
+		"total", total,
+		"succeeded", result.Succeeded,
+		"failed", result.Failed,
+		"cancelled", result.Cancelled,
+		"duration", time.Since(start),
+	)
+
+	return result
 }
