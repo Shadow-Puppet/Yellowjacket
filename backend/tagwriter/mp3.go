@@ -96,7 +96,7 @@ func applyCoverArtChanges(tag *id3v2.Tag, changes TagChanges) {
 
 	apicID := tag.CommonID("Attached picture")
 
-	data, isBytes := val.([]byte)
+	data, isBytes := asBytes(val)
 	if isBytes && len(data) > 0 {
 		tag.DeleteFrames(apicID)
 		tag.AddAttachedPicture(id3v2.PictureFrame{

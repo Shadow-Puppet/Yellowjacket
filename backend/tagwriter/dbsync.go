@@ -1,11 +1,22 @@
 package tagwriter
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
+	"image"
+	"image/jpeg"
+	_ "image/png" // Register PNG decoder for cover art thumbnails.
 	"log/slog"
+	"os"
+	"path/filepath"
 
+	"golang.org/x/image/draw"
+
+	"yellowjacket/backend/coverart"
 	"yellowjacket/backend/database"
 	"yellowjacket/backend/database/sql/sqlcgen"
 	"yellowjacket/backend/metadata"
@@ -198,12 +209,50 @@ func syncDatabase(
 	}
 
 	// ------------------------------------------------------------------
-	// 4. Handle cover art change (skipped in this plan — cover art
-	//    save + thumbnail logic will be added when the UI sends
-	//    cover art data, but the DB plumbing is ready).
-	//    For now, cover art changes are a no-op in the DB sync.
-	//    The file-level embed/clear is handled by the format writers.
+	// 4. Handle cover art change — save image to covers cache,
+	//    upsert cover_art row, and update release_groups.cover_art_id.
 	// ------------------------------------------------------------------
+	if _, hasCoverArt := params.changes[FieldCoverArt]; hasCoverArt {
+		coverArtData, isBytes := asBytes(params.changes[FieldCoverArt])
+
+		if isBytes && len(coverArtData) > 0 {
+			// Save to covers dir and upsert DB row.
+			newCoverArtID, caErr := saveCoverArtAndSync(
+				ctx, logger, txq, coverArtData,
+			)
+			if caErr != nil {
+				logger.Warn("cover art sync failed", "err", caErr)
+			} else {
+				// Update all release groups linked to this recording.
+				for _, rgLink := range params.oldRGLinks {
+					if upErr := txq.UpdateReleaseGroupCoverArt(ctx,
+						sqlcgen.UpdateReleaseGroupCoverArtParams{
+							CoverArtID: sql.NullInt64{Int64: newCoverArtID, Valid: true},
+							ID:         rgLink.ReleaseGroupID,
+						},
+					); upErr != nil {
+						logger.Warn("update rg cover art failed",
+							"err", upErr,
+							"releaseGroupID", rgLink.ReleaseGroupID)
+					}
+				}
+			}
+		} else {
+			// Clear: set cover_art_id to NULL on all linked release groups.
+			for _, rgLink := range params.oldRGLinks {
+				if upErr := txq.UpdateReleaseGroupCoverArt(ctx,
+					sqlcgen.UpdateReleaseGroupCoverArtParams{
+						CoverArtID: sql.NullInt64{},
+						ID:         rgLink.ReleaseGroupID,
+					},
+				); upErr != nil {
+					logger.Warn("clear rg cover art failed",
+						"err", upErr,
+						"releaseGroupID", rgLink.ReleaseGroupID)
+				}
+			}
+		}
+	}
 
 	// ------------------------------------------------------------------
 	// 5. Update recording with all changed fields.
@@ -390,4 +439,126 @@ func toNullString(v string) sql.NullString {
 	}
 
 	return sql.NullString{String: v, Valid: true}
+}
+
+// saveCoverArtAndSync saves cover art bytes to the covers cache
+// directory (with content-hash deduplication), generates sized
+// thumbnails, upserts a cover_art DB row, and returns the row ID.
+func saveCoverArtAndSync(
+	ctx context.Context,
+	logger *slog.Logger,
+	txq *sqlcgen.Queries,
+	data []byte,
+) (int64, error) {
+	coverDir, err := coverart.CoversDir()
+	if err != nil {
+		return 0, fmt.Errorf("resolve covers dir: %w", err)
+	}
+
+	if err := os.MkdirAll(coverDir, 0o755); err != nil {
+		return 0, fmt.Errorf("create covers dir: %w", err)
+	}
+
+	// Content-hash filename (same scheme as library/coverart.go).
+	hash := sha256.Sum256(data)
+	hashStr := hex.EncodeToString(hash[:8])
+	mime := detectMIME(data)
+
+	ext := "jpg"
+	if mime == "image/png" {
+		ext = "png"
+	}
+
+	filename := fmt.Sprintf("%s.%s", hashStr, ext)
+	filePath := filepath.Join(coverDir, filename)
+
+	// Write original if not already present.
+	if _, statErr := os.Stat(filePath); statErr != nil {
+		if writeErr := os.WriteFile(filePath, data, 0o644); writeErr != nil {
+			return 0, fmt.Errorf("write cover art: %w", writeErr)
+		}
+	}
+
+	// Generate sized variants (thumbnails).
+	generateSizedVariants(logger, data, coverDir, hashStr)
+
+	// Upsert cover_art DB row.
+	ca, err := txq.UpsertCoverArt(ctx, sqlcgen.UpsertCoverArtParams{
+		IsEmbedded: true,
+		FilePath:   filePath,
+		MimeType:   mime,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("upsert cover art: %w", err)
+	}
+
+	return ca.ID, nil
+}
+
+// thumbnailTier defines a single size tier for generated thumbnails.
+type thumbnailTier struct {
+	suffix  string
+	maxSize int
+	quality int
+}
+
+// thumbnailTiers matches the tiers in library/coverart.go.
+var thumbnailTiers = []thumbnailTier{
+	{suffix: "_sm", maxSize: 100, quality: 75},
+	{suffix: "_md", maxSize: 200, quality: 80},
+	{suffix: "_lg", maxSize: 400, quality: 85},
+}
+
+// generateSizedVariants creates all thumbnail tiers for the given image.
+func generateSizedVariants(logger *slog.Logger, imgData []byte, dir, hashStr string) {
+	src, _, err := image.Decode(bytes.NewReader(imgData))
+	if err != nil {
+		logger.Warn("could not decode image for thumbnails", "err", err)
+		return
+	}
+
+	bounds := src.Bounds()
+	srcW := bounds.Dx()
+	srcH := bounds.Dy()
+
+	for _, tier := range thumbnailTiers {
+		tierPath := filepath.Join(dir, fmt.Sprintf("%s%s.jpg", hashStr, tier.suffix))
+
+		// Skip if already exists.
+		if _, statErr := os.Stat(tierPath); statErr == nil {
+			continue
+		}
+
+		w, h := fitDimensions(srcW, srcH, tier.maxSize)
+
+		dst := image.NewRGBA(image.Rect(0, 0, w, h))
+		draw.ApproxBiLinear.Scale(dst, dst.Bounds(), src, src.Bounds(), draw.Over, nil)
+
+		var buf bytes.Buffer
+		if encErr := jpeg.Encode(&buf, dst, &jpeg.Options{Quality: tier.quality}); encErr != nil {
+			logger.Warn("could not encode thumbnail", "tier", tier.suffix, "err", encErr)
+			continue
+		}
+
+		if writeErr := os.WriteFile(tierPath, buf.Bytes(), 0o644); writeErr != nil {
+			logger.Warn("could not write thumbnail", "tier", tier.suffix, "err", writeErr)
+		}
+	}
+}
+
+// fitDimensions calculates output dimensions that fit within maxSize
+// while preserving aspect ratio.
+func fitDimensions(srcW, srcH, maxSize int) (int, int) {
+	if srcW <= maxSize && srcH <= maxSize {
+		return srcW, srcH
+	}
+
+	w, h := maxSize, maxSize
+	if srcW > srcH {
+		h = srcH * maxSize / srcW
+	} else {
+		w = srcW * maxSize / srcH
+	}
+
+	return w, h
 }

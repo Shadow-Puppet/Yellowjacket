@@ -173,7 +173,7 @@ func applyFlacCoverArt(f *flac.File, changes TagChanges) error {
 	f.Meta = newMeta
 
 	// If value is nil or empty, we've cleared the art — done.
-	data, isBytes := v.([]byte)
+	data, isBytes := asBytes(v)
 	if !isBytes || len(data) == 0 {
 		return nil
 	}

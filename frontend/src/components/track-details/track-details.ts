@@ -996,11 +996,19 @@ export class TrackDetails extends LitElement {
         filePath: string,
     ): Promise<Uint8Array | null> {
         try {
-            // ReadFile returns number[] (Go []byte serialized
-            // as JSON array).
-            const bytes = await ReadFile(filePath);
+            // ReadFile returns Go []byte which Wails serializes
+            // as a base64-encoded string (standard encoding/json
+            // behaviour for []byte).
+            const result = await ReadFile(filePath);
+            const b64 = result as unknown as string;
+            const binary = atob(b64);
+            const bytes = new Uint8Array(binary.length);
 
-            return new Uint8Array(bytes);
+            for (let i = 0; i < binary.length; i++) {
+                bytes[i] = binary.charCodeAt(i);
+            }
+
+            return bytes;
         } catch (err) {
             console.error(
                 'Failed to read cover art file:',

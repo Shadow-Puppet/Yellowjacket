@@ -73,6 +73,36 @@ func asInt(v any) (int, bool) {
 	}
 }
 
+// asBytes extracts a byte slice from a TagChanges value.  JSON arrays
+// from Wails arrive as []interface{} of float64; Go callers may pass
+// []byte directly.  Returns (data, true) on success or (nil, false).
+func asBytes(v any) ([]byte, bool) {
+	if v == nil {
+		return nil, false
+	}
+
+	if b, ok := v.([]byte); ok {
+		return b, true
+	}
+
+	arr, ok := v.([]interface{})
+	if !ok {
+		return nil, false
+	}
+
+	out := make([]byte, len(arr))
+	for i, elem := range arr {
+		f, ok := elem.(float64)
+		if !ok {
+			return nil, false
+		}
+
+		out[i] = byte(f)
+	}
+
+	return out, true
+}
+
 // detectMIME returns the MIME type of image data by checking magic bytes.
 func detectMIME(data []byte) string {
 	if len(data) >= 2 && data[0] == 0xFF && data[1] == 0xD8 {
