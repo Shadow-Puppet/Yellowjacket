@@ -823,17 +823,38 @@ export class TrackDetails extends LitElement {
             // invalidation, which refreshes all other views.
             this.exitEditMode();
 
-            // Re-fetch the track data so the dialog shows
-            // updated values.  The store invalidation is
-            // already in-flight from the event; getTracks()
-            // will either await the pending fetch or start one.
-            const tracks = await libraryStore.getTracks();
+            // Re-fetch track and album data so the dialog
+            // shows updated values and cover art.  The store
+            // invalidation is already in-flight from the event;
+            // these calls await the pending fetch or start one.
+            const [tracks, albums] = await Promise.all([
+                libraryStore.getTracks(),
+                libraryStore.getAlbums(),
+            ]);
+
             const updated = tracks.find(
                 (t) => t.FilePath === filePath,
             );
 
             if (updated) {
                 this.track = updated;
+
+                // Re-resolve cover art from the refreshed
+                // album data (URLs change on new content hash).
+                const album = albums.find(
+                    (a) => a.Name === updated.Album,
+                );
+
+                if (album?.CoverArtPath) {
+                    this.coverArt = {
+                        coverArtPath: album.CoverArtPath,
+                        coverArtSmall: album.CoverArtSmall,
+                        coverArtMedium: album.CoverArtMedium,
+                        coverArtLarge: album.CoverArtLarge,
+                    };
+                } else {
+                    this.coverArt = null;
+                }
             }
         } catch (err: unknown) {
             const msg =
