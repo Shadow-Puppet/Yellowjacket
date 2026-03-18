@@ -101,7 +101,7 @@ Plans:
   2. Each field in the batch editor shows one of three states: "keep original" (mixed values, no change), "set to value" (apply this value to all selected tracks), or "clear field" (remove this value from all) — the user can see which fields differ across the selection and choose per-field what to do
   3. For batch operations on 10+ tracks, a progress indicator shows how many tracks have been processed — the user is never left staring at a frozen UI wondering if the operation is working
   4. User can set cover art for all selected tracks at once — the same image is embedded in every selected file
-**Plans:** 2 plans
+**Plans:** 1/2 plans executed
 Plans:
 - [ ] 18-01-PLAN.md — Backend batch write endpoint with progress events, cancellation, and partial failure
 - [ ] 18-02-PLAN.md — Frontend batch mode in track-details with three-state editing, confirmation, progress UI, and view wiring
@@ -140,7 +140,7 @@ Plans:
 | 15. Schema Migration & Write Safety | 2/2 | Complete    | 2026-03-16 | - |
 | 16. Tag Writing & Database Sync | 3/3 | Complete    | 2026-03-17 | - |
 | 17. Single Track Edit | 2/2 | Complete    | 2026-03-18 | - |
-| 18. Batch Edit | v1.2 | 0/2 | Not started | - |
+| 18. Batch Edit | 1/2 | In Progress|  | - |
 | 19. OGG Vorbis Tag Writing | v1.2 | 0/? | Not started | - |
 
 ---

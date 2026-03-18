@@ -37,9 +37,9 @@ Requirements for v1.2 Tag Editing milestone. Each maps to roadmap phases.
 
 ### Batch Edit
 
-- [ ] **BATCH-01**: User can select multiple tracks and open batch editor
+- [x] **BATCH-01**: User can select multiple tracks and open batch editor
 - [ ] **BATCH-02**: Batch editor uses three-state field model (keep original / set value / clear field)
-- [ ] **BATCH-03**: Batch editor shows progress indicator for large selections
+- [x] **BATCH-03**: Batch editor shows progress indicator for large selections
 - [ ] **BATCH-04**: User can set cover art for all selected tracks at once
 
 ## Future Requirements
@@ -107,9 +107,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | EDIT-02 | Phase 17 | Complete |
 | EDIT-03 | Phase 17 | Complete |
 | EDIT-04 | Phase 17 | Complete |
-| BATCH-01 | Phase 18 | Pending |
+| BATCH-01 | Phase 18 | Complete |
 | BATCH-02 | Phase 18 | Pending |
-| BATCH-03 | Phase 18 | Pending |
+| BATCH-03 | Phase 18 | Complete |
 | BATCH-04 | Phase 18 | Pending |
 
 **Coverage:**

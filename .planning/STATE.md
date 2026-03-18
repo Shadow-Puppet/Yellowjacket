@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Tag Editing
-status: unknown
-last_updated: "2026-03-18T15:25:27.023Z"
+status: in-progress
+last_updated: "2026-03-18T17:02:40Z"
 progress:
   total_phases: 3
   completed_phases: 3
-  total_plans: 7
-  completed_plans: 7
+  total_plans: 8
+  completed_plans: 8
 ---
 
 # YellowJacket — Project State
@@ -22,10 +22,10 @@ See: .planning/PROJECT.md (updated 2026-03-16)
 
 ## Current Position
 
-Phase: Phase 17 — Single Track Edit (complete)
-Plan: 2 of 2 complete
-Status: Phase 17 complete — all single-track edit requirements fulfilled
-Last activity: 2026-03-18 — Completed 17-02 (save flow, cover art editing, error handling, Wails deserialization fixes)
+Phase: Phase 18 — Batch Edit (in progress)
+Plan: 1 of ? complete
+Status: 18-01 complete — batch write backend with progress, cancellation, partial failure
+Last activity: 2026-03-18 — Completed 18-01 (BatchWriteTrackTags, BatchWriteProgress event, CancelBatchWrite)
 
 ### Phase Overview
 
@@ -34,7 +34,7 @@ Last activity: 2026-03-18 — Completed 17-02 (save flow, cover art editing, err
 | 15. Schema Migration & Write Safety | Complete (2/2 plans) |
 | 16. Tag Writing & Database Sync | Complete (3/3 plans) |
 | 17. Single Track Edit | Complete (2/2 plans) |
-| 18. Batch Edit | Not started |
+| 18. Batch Edit | In progress (1/? plans) |
 | 19. OGG Vorbis Tag Writing | Not started |
 
 ### v1.2 Requirement Coverage
@@ -64,6 +64,7 @@ Last activity: 2026-03-18 — Completed 17-02 (save flow, cover art editing, err
 | 16 | 03 | 9min | 2 | 7 |
 | 17 | 01 | 11min | 2 | 11 |
 | 17 | 02 | 25min | 2 | 8 |
+| 18 | 01 | 6min | 2 | 6 |
 
 ## Accumulated Context
 
@@ -100,6 +101,9 @@ Decisions from v1.0 and v1.1 are archived in PROJECT.md Key Decisions table. Key
 | ReadFile Go method on FrontendUtil for cover art bytes | Native file dialog returns path; frontend needs bytes for blob preview + save payload |
 | asInt/asBytes helpers for Wails JSON deserialization | Wails sends JS numbers as float64 and []byte as base64; direct type assertions silently fail |
 | Cover art DB sync with content-hash dedup + thumbnail generation | Saves to covers cache dir, upserts cover_art row, updates release_groups.cover_art_id |
+| suppressEvents flag for batch event coalescing | Prevents N TrackMetadataChanged events during batch; single emission after completion |
+| Per-track pipeline lock (not batch-wide) | Avoids blocking scan for entire batch duration; each track acquires/releases independently |
+| BatchResult struct return (not error) | Partial success always communicated; Wails serializes as JSON for frontend |
 
 ### v1.2 Roadmap Decisions
 
@@ -140,9 +144,9 @@ Decisions from v1.0 and v1.1 are archived in PROJECT.md Key Decisions table. Key
 ### Last Session
 
 **Date:** 2026-03-18
-**What happened:** Completed Phase 17 Plan 02 — Save flow with diff-only TagChanges, cover art replace/remove via native file picker, inline error handling. Fixed 4 bugs during verification: stale dialog data, Wails float64 deserialization, cover art DB sync, cover art URL refresh.
-**Where we stopped:** Completed 17-02-PLAN.md — Phase 17 complete
-**Next action:** Plan or execute Phase 18 (Batch Edit)
+**What happened:** Completed Phase 18 Plan 01 — BatchWriteTrackTags backend method with sequential processing, per-track BatchWriteProgress events, CancelBatchWrite cancellation, suppressEvents pattern for event coalescing, BatchResult/BatchFailure return types.
+**Where we stopped:** Completed 18-01-PLAN.md
+**Next action:** Execute next Phase 18 plan (batch edit UI)
 
 ---
 *State initialized: 2026-02-27*
@@ -156,4 +160,4 @@ Decisions from v1.0 and v1.1 are archived in PROJECT.md Key Decisions table. Key
 | 19 | fix phantom playlist tracks with multi-root path resolution | 2026-03-16 | 9144ded | [19-fix-phantom-playlist-tracks](./quick/19-fix-phantom-playlist-tracks/) |
 
 Last activity: 2026-03-16 - Completed quick task 19: fix phantom playlist tracks with multi-root path resolution
-*Last updated: 2026-03-18 — Completed 17-02 (save flow, cover art editing, Phase 17 complete)*
+*Last updated: 2026-03-18 — Completed 18-01 (batch write backend, progress events, cancellation)*
