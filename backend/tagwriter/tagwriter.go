@@ -55,6 +55,24 @@ func DetectFormat(filePath string) (AudioFormat, error) {
 	}
 }
 
+// asInt extracts an integer from a TagChanges value.  JSON numbers from
+// Wails arrive as float64; Go callers may pass int.  Returns (value, true)
+// on success or (0, false) if the value is not a recognised numeric type.
+func asInt(v any) (int, bool) {
+	switch n := v.(type) {
+	case int:
+		return n, true
+	case float64:
+		return int(n), true
+	case int64:
+		return int(n), true
+	case float32:
+		return int(n), true
+	default:
+		return 0, false
+	}
+}
+
 // detectMIME returns the MIME type of image data by checking magic bytes.
 func detectMIME(data []byte) string {
 	if len(data) >= 2 && data[0] == 0xFF && data[1] == 0xD8 {

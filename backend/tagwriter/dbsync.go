@@ -117,7 +117,7 @@ func syncDatabase(
 
 		// Determine year value.
 		yearVal := params.oldRecording.Year
-		if yv, yOK := params.changes[FieldYear].(int); yOK {
+		if yv, yOK := asInt(params.changes[FieldYear]); yOK {
 			yearVal = toNullInt64(yv)
 		}
 
@@ -147,12 +147,12 @@ func syncDatabase(
 
 		// Determine track/disc numbers.
 		trackNum := params.oldRecording.TrackNumber
-		if tn, tnOK := params.changes[FieldTrackNumber].(int); tnOK {
+		if tn, tnOK := asInt(params.changes[FieldTrackNumber]); tnOK {
 			trackNum = toNullInt64(tn)
 		}
 
 		discNum := params.oldRecording.DiscNumber
-		if dn, dnOK := params.changes[FieldDiscNumber].(int); dnOK {
+		if dn, dnOK := asInt(params.changes[FieldDiscNumber]); dnOK {
 			discNum = toNullInt64(dn)
 		}
 
@@ -216,17 +216,17 @@ func syncDatabase(
 	}
 
 	newYear := rec.Year
-	if v, ok := params.changes[FieldYear].(int); ok {
+	if v, ok := asInt(params.changes[FieldYear]); ok {
 		newYear = toNullInt64(v)
 	}
 
 	newTrackNum := rec.TrackNumber
-	if v, ok := params.changes[FieldTrackNumber].(int); ok {
+	if v, ok := asInt(params.changes[FieldTrackNumber]); ok {
 		newTrackNum = toNullInt64(v)
 	}
 
 	newDiscNum := rec.DiscNumber
-	if v, ok := params.changes[FieldDiscNumber].(int); ok {
+	if v, ok := asInt(params.changes[FieldDiscNumber]); ok {
 		newDiscNum = toNullInt64(v)
 	}
 

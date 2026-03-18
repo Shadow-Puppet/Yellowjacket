@@ -62,17 +62,17 @@ func applyTextChanges(tag *id3v2.Tag, changes TagChanges) {
 		tag.SetGenre(v)
 	}
 
-	if v, ok := changes[FieldYear].(int); ok {
+	if v, ok := asInt(changes[FieldYear]); ok {
 		tag.SetYear(strconv.Itoa(v))
 	}
 
-	if v, ok := changes[FieldTrackNumber].(int); ok {
+	if v, ok := asInt(changes[FieldTrackNumber]); ok {
 		trckID := tag.CommonID("Track number/Position in set")
 		tag.DeleteFrames(trckID)
 		tag.AddTextFrame(trckID, id3v2.EncodingUTF8, strconv.Itoa(v))
 	}
 
-	if v, ok := changes[FieldDiscNumber].(int); ok {
+	if v, ok := asInt(changes[FieldDiscNumber]); ok {
 		tposID := tag.CommonID("Part of a set")
 		tag.DeleteFrames(tposID)
 		tag.AddTextFrame(tposID, id3v2.EncodingUTF8, strconv.Itoa(v))

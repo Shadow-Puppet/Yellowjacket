@@ -111,10 +111,21 @@ func applyFlacTextChanges(cmt *flacvorbis.MetaDataBlockVorbisComment, changes Ta
 		}
 
 		var val string
+
 		if m.isInt {
-			val = strconv.Itoa(v.(int))
+			n, ok := asInt(v)
+			if !ok {
+				continue
+			}
+
+			val = strconv.Itoa(n)
 		} else {
-			val = v.(string)
+			s, ok := v.(string)
+			if !ok {
+				continue
+			}
+
+			val = s
 		}
 
 		replaceVorbisComment(cmt, m.vorbisID, val)
