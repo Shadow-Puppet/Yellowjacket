@@ -510,6 +510,20 @@ export class TrackDetails extends LitElement {
             color: var(--yj-text-tertiary, #888);
         }
 
+        .main-field-group {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .main-field-label {
+            font-size: var(--yj-text-xs);
+            font-weight: 500;
+            color: var(--yj-text-tertiary, #888);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
         .mixed-value {
             color: var(--yj-text-tertiary, #888);
             font-style: italic;
@@ -812,42 +826,51 @@ export class TrackDetails extends LitElement {
                 <span class="batch-header">
                     Editing ${this.batchTracks.length} tracks
                 </span>
-                <input
-                    class="main-input title-input"
-                    .value=${this.getEditValue(
-                        'title',
-                        titleField?.value ?? '',
-                    )}
-                    @input=${(e: Event) =>
-                        this.onEditInput('title', e)}
-                    placeholder=${titleField?.mixed
-                        ? 'Multiple values'
-                        : 'Title'}
-                />
-                <input
-                    class="main-input artist-input"
-                    .value=${this.getEditValue(
-                        'artist',
-                        artistField?.value ?? '',
-                    )}
-                    @input=${(e: Event) =>
-                        this.onEditInput('artist', e)}
-                    placeholder=${artistField?.mixed
-                        ? 'Multiple values'
-                        : 'Artist'}
-                />
-                <input
-                    class="main-input album-input"
-                    .value=${this.getEditValue(
-                        'album',
-                        albumField?.value ?? '',
-                    )}
-                    @input=${(e: Event) =>
-                        this.onEditInput('album', e)}
-                    placeholder=${albumField?.mixed
-                        ? 'Multiple values'
-                        : 'Album'}
-                />
+                <div class="main-field-group">
+                    <label class="main-field-label">Title</label>
+                    <input
+                        class="main-input title-input"
+                        .value=${this.getEditValue(
+                            'title',
+                            titleField?.value ?? '',
+                        )}
+                        @input=${(e: Event) =>
+                            this.onEditInput('title', e)}
+                        placeholder=${titleField?.mixed
+                            ? 'Multiple values'
+                            : 'Title'}
+                    />
+                </div>
+                <div class="main-field-group">
+                    <label class="main-field-label">Artist</label>
+                    <input
+                        class="main-input artist-input"
+                        .value=${this.getEditValue(
+                            'artist',
+                            artistField?.value ?? '',
+                        )}
+                        @input=${(e: Event) =>
+                            this.onEditInput('artist', e)}
+                        placeholder=${artistField?.mixed
+                            ? 'Multiple values'
+                            : 'Artist'}
+                    />
+                </div>
+                <div class="main-field-group">
+                    <label class="main-field-label">Album</label>
+                    <input
+                        class="main-input album-input"
+                        .value=${this.getEditValue(
+                            'album',
+                            albumField?.value ?? '',
+                        )}
+                        @input=${(e: Event) =>
+                            this.onEditInput('album', e)}
+                        placeholder=${albumField?.mixed
+                            ? 'Multiple values'
+                            : 'Album'}
+                    />
+                </div>
             `;
         }
 
