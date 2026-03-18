@@ -4,6 +4,8 @@ import {context} from '../models';
 
 export function DirectoryPicker():Promise<string>;
 
+export function ImageFilePicker():Promise<string>;
+
 export function PlaylistFilePicker():Promise<Array<string>>;
 
 export function SetContext(arg1:context.Context):Promise<void>;

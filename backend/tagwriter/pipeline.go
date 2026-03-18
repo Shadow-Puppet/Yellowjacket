@@ -172,3 +172,17 @@ func (tw *TagWriter) WriteTrackTags(trackID int64, changes TagChanges) error {
 
 	return nil
 }
+
+// WriteTrackTagsByPath resolves a file path to its audio_file.id and
+// delegates to WriteTrackTags.  This is the frontend-facing entry
+// point since the frontend identifies tracks by FilePath.
+func (tw *TagWriter) WriteTrackTagsByPath(filePath string, changes TagChanges) error {
+	ctx := context.Background()
+
+	audioFile, err := tw.db.Queries.GetAudioFileByPath(ctx, filePath)
+	if err != nil {
+		return fmt.Errorf("resolve track by path %q: %w", filePath, err)
+	}
+
+	return tw.WriteTrackTags(audioFile.ID, changes)
+}

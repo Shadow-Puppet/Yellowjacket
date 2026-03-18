@@ -67,3 +67,26 @@ func (fe *FrontendUtil) PlaylistFilePicker() (
 
 	return files, nil
 }
+
+// ImageFilePicker opens a file selection dialog filtered to image
+// files (JPEG, PNG).  Returns the selected file path, or empty
+// string if the user cancelled.
+func (fe *FrontendUtil) ImageFilePicker() (string, error) {
+	file, err := runtime.OpenFileDialog(
+		fe.ctx,
+		runtime.OpenDialogOptions{
+			Title: "Select Cover Art",
+			Filters: []runtime.FileFilter{
+				{
+					DisplayName: "Image Files (*.jpg, *.jpeg, *.png)",
+					Pattern:     "*.jpg;*.jpeg;*.png",
+				},
+			},
+		},
+	)
+	if err != nil {
+		return "", fmt.Errorf("could not open file dialog: %w", err)
+	}
+
+	return file, nil
+}

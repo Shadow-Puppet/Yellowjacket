@@ -6,6 +6,10 @@ export function DirectoryPicker() {
   return window['go']['frontendutil']['FrontendUtil']['DirectoryPicker']();
 }
 
+export function ImageFilePicker() {
+  return window['go']['frontendutil']['FrontendUtil']['ImageFilePicker']();
+}
+
 export function PlaylistFilePicker() {
   return window['go']['frontendutil']['FrontendUtil']['PlaylistFilePicker']();
 }
