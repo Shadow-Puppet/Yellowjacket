@@ -878,33 +878,36 @@ export class TrackDetails extends LitElement {
             <span class="batch-header">
                 ${this.batchTracks.length} tracks selected
             </span>
-            ${titleField?.mixed
-                ? html`<span class="mixed-value">
-                      ${this.countDistinctValues('title')} different titles
-                  </span>`
-                : titleField?.value
-                    ? html`<span class="title">
-                          ${titleField.value}
+            <div class="main-field-group">
+                <label class="main-field-label">Title</label>
+                ${titleField?.mixed
+                    ? html`<span class="mixed-value">
+                          ${this.countDistinctValues('title')} different titles
                       </span>`
-                    : nothing}
-            ${artistField?.mixed
-                ? html`<span class="mixed-value">
-                      ${this.countDistinctValues('artist')} different artists
-                  </span>`
-                : artistField?.value
-                    ? html`<span class="artist">
-                          ${artistField.value}
+                    : html`<span class="title">
+                          ${titleField?.value || 'None'}
+                      </span>`}
+            </div>
+            <div class="main-field-group">
+                <label class="main-field-label">Artist</label>
+                ${artistField?.mixed
+                    ? html`<span class="mixed-value">
+                          ${this.countDistinctValues('artist')} different artists
                       </span>`
-                    : nothing}
-            ${albumField?.mixed
-                ? html`<span class="mixed-value">
-                      ${this.countDistinctValues('album')} different albums
-                  </span>`
-                : albumField?.value
-                    ? html`<span class="album">
-                          ${albumField.value}
+                    : html`<span class="artist">
+                          ${artistField?.value || 'Unknown Artist'}
+                      </span>`}
+            </div>
+            <div class="main-field-group">
+                <label class="main-field-label">Album</label>
+                ${albumField?.mixed
+                    ? html`<span class="mixed-value">
+                          ${this.countDistinctValues('album')} different albums
                       </span>`
-                    : nothing}
+                    : html`<span class="album">
+                          ${albumField?.value || 'No album'}
+                      </span>`}
+            </div>
         `;
     }
 
@@ -1235,45 +1238,54 @@ export class TrackDetails extends LitElement {
     private renderMainFields(t: library.Track) {
         if (this.editing) {
             return html`
-                <input
-                    class="main-input title-input"
-                    .value=${this.getEditValue(
-                        'title',
-                        t.TrackName,
-                    )}
-                    @input=${(e: Event) =>
-                        this.onEditInput(
+                <div class="main-field-group">
+                    <label class="main-field-label">Title</label>
+                    <input
+                        class="main-input title-input"
+                        .value=${this.getEditValue(
                             'title',
-                            e,
+                            t.TrackName,
                         )}
-                    placeholder="Title"
-                />
-                <input
-                    class="main-input artist-input"
-                    .value=${this.getEditValue(
-                        'artist',
-                        t.ArtistName,
-                    )}
-                    @input=${(e: Event) =>
-                        this.onEditInput(
+                        @input=${(e: Event) =>
+                            this.onEditInput(
+                                'title',
+                                e,
+                            )}
+                        placeholder="Title"
+                    />
+                </div>
+                <div class="main-field-group">
+                    <label class="main-field-label">Artist</label>
+                    <input
+                        class="main-input artist-input"
+                        .value=${this.getEditValue(
                             'artist',
-                            e,
+                            t.ArtistName,
                         )}
-                    placeholder="Artist"
-                />
-                <input
-                    class="main-input album-input"
-                    .value=${this.getEditValue(
-                        'album',
-                        t.Album,
-                    )}
-                    @input=${(e: Event) =>
-                        this.onEditInput(
+                        @input=${(e: Event) =>
+                            this.onEditInput(
+                                'artist',
+                                e,
+                            )}
+                        placeholder="Artist"
+                    />
+                </div>
+                <div class="main-field-group">
+                    <label class="main-field-label">Album</label>
+                    <input
+                        class="main-input album-input"
+                        .value=${this.getEditValue(
                             'album',
-                            e,
+                            t.Album,
                         )}
-                    placeholder="Album"
-                />
+                        @input=${(e: Event) =>
+                            this.onEditInput(
+                                'album',
+                                e,
+                            )}
+                        placeholder="Album"
+                    />
+                </div>
                 <span class="duration">
                     ${formatMilliseconds(t.TrackLength)}
                 </span>
@@ -1281,17 +1293,28 @@ export class TrackDetails extends LitElement {
         }
 
         return html`
-            <span class="title">
-                ${t.TrackName || this.fileNameFromPath(t.FilePath)}
-            </span>
-            <span class="artist">
-                ${t.ArtistName || 'Unknown Artist'}
-            </span>
-            ${t.Album
-                ? html`<span class="album"
-                      >${t.Album}</span
-                  >`
-                : nothing}
+            <div class="main-field-group">
+                <label class="main-field-label">Title</label>
+                <span class="title">
+                    ${t.TrackName || this.fileNameFromPath(t.FilePath)}
+                </span>
+            </div>
+            <div class="main-field-group">
+                <label class="main-field-label">Artist</label>
+                <span class="artist">
+                    ${t.ArtistName || 'Unknown Artist'}
+                </span>
+            </div>
+            <div class="main-field-group">
+                <label class="main-field-label">Album</label>
+                ${t.Album
+                    ? html`<span class="album"
+                          >${t.Album}</span
+                      >`
+                    : html`<span class="album" style="font-style: italic"
+                          >No album</span
+                      >`}
+            </div>
             <span class="duration">
                 ${formatMilliseconds(t.TrackLength)}
             </span>
