@@ -15,6 +15,7 @@ import {
 import { formatMilliseconds } from '@utils/time';
 import { WriteTrackTagsByPath } from '@go/tagwriter/TagWriter';
 import { ImageFilePicker, ReadFile } from '@go/frontendutil/FrontendUtil';
+import { libraryStore } from '../../store/library-store';
 
 import '@awesome.me/webawesome/dist/components/dialog/dialog.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
@@ -813,15 +814,27 @@ export class TrackDetails extends LitElement {
                 return;
             }
 
-            await WriteTrackTagsByPath(
-                this.track.FilePath,
-                changes,
-            );
+            const filePath = this.track.FilePath;
+
+            await WriteTrackTagsByPath(filePath, changes);
 
             // Success — switch to read-only view. The
             // TrackMetadataChanged event triggers library store
             // invalidation, which refreshes all other views.
             this.exitEditMode();
+
+            // Re-fetch the track data so the dialog shows
+            // updated values.  The store invalidation is
+            // already in-flight from the event; getTracks()
+            // will either await the pending fetch or start one.
+            const tracks = await libraryStore.getTracks();
+            const updated = tracks.find(
+                (t) => t.FilePath === filePath,
+            );
+
+            if (updated) {
+                this.track = updated;
+            }
         } catch (err: unknown) {
             const msg =
                 err instanceof Error
