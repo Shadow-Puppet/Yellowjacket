@@ -144,6 +144,8 @@ func (tw *TagWriter) WriteTrackTags(trackID int64, changes TagChanges) error {
 		err = writeMp3Tags(tw.logger, audioFile.FilePath, changes)
 	case FormatFLAC:
 		err = writeFlacTags(tw.logger, audioFile.FilePath, changes)
+	case FormatWAV:
+		err = writeWavTags(tw.logger, audioFile.FilePath, changes)
 	default:
 		err = fmt.Errorf("%w: %s", errUnsupportedFormat, format)
 	}

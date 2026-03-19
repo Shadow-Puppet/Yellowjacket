@@ -36,6 +36,8 @@ const (
 	FormatMP3 AudioFormat = "mp3"
 	// FormatFLAC is the FLAC audio format.
 	FormatFLAC AudioFormat = "flac"
+	// FormatWAV is the WAV audio format.
+	FormatWAV AudioFormat = "wav"
 )
 
 // errUnsupportedFormat is returned when the audio format is not supported.
@@ -50,6 +52,8 @@ func DetectFormat(filePath string) (AudioFormat, error) {
 		return FormatMP3, nil
 	case ".flac":
 		return FormatFLAC, nil
+	case ".wav":
+		return FormatWAV, nil
 	default:
 		return "", fmt.Errorf("%w: %s", errUnsupportedFormat, ext)
 	}
