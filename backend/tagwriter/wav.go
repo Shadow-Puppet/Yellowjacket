@@ -169,6 +169,7 @@ func writeRIFF(w io.Writer, chunks []riffChunk, id3Data []byte) error {
 
 	// Write id3 chunk last.
 	var id3ID [4]byte
+
 	copy(id3ID[:], "id3 ")
 
 	return writeChunk(w, id3ID, id3Data)

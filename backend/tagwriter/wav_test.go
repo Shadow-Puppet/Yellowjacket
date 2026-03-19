@@ -76,6 +76,7 @@ func createTestWAV(
 	_ = binary.Write(
 		&buf, binary.LittleEndian, uint32(len(fmtData)),
 	)
+
 	buf.Write(fmtData)
 
 	// data chunk.
@@ -83,6 +84,7 @@ func createTestWAV(
 	_ = binary.Write(
 		&buf, binary.LittleEndian, uint32(silenceLen),
 	)
+
 	buf.Write(silence)
 
 	// id3 chunk (if any).
@@ -91,6 +93,7 @@ func createTestWAV(
 		_ = binary.Write(
 			&buf, binary.LittleEndian, uint32(len(id3Bytes)),
 		)
+
 		buf.Write(id3Bytes)
 
 		if len(id3Bytes)%2 != 0 {
@@ -314,6 +317,7 @@ func TestWriteWavTags_ChunkPreservation(t *testing.T) {
 
 	// Count non-id3 chunks in both.
 	origNonID3 := 0
+
 	for _, c := range origChunks {
 		if !isID3ChunkID(c.id) {
 			origNonID3++
@@ -321,6 +325,7 @@ func TestWriteWavTags_ChunkPreservation(t *testing.T) {
 	}
 
 	newNonID3 := 0
+
 	for _, c := range newChunks {
 		if !isID3ChunkID(c.id) {
 			newNonID3++
@@ -576,10 +581,12 @@ func createTestWAVWithExtraChunks(
 
 	// INAM sub-chunk.
 	inamValue := []byte("Test Track Name")
+
 	listBuf.WriteString("INAM")
 	_ = binary.Write(
 		&listBuf, binary.LittleEndian, uint32(len(inamValue)),
 	)
+
 	listBuf.Write(inamValue)
 
 	// Pad INAM if odd length.
@@ -621,6 +628,7 @@ func createTestWAVWithExtraChunks(
 	_ = binary.Write(
 		&buf, binary.LittleEndian, uint32(len(fmtData)),
 	)
+
 	buf.Write(fmtData)
 
 	// LIST chunk.
@@ -628,6 +636,7 @@ func createTestWAVWithExtraChunks(
 	_ = binary.Write(
 		&buf, binary.LittleEndian, uint32(len(listData)),
 	)
+
 	buf.Write(listData)
 
 	// bext chunk.
@@ -635,6 +644,7 @@ func createTestWAVWithExtraChunks(
 	_ = binary.Write(
 		&buf, binary.LittleEndian, uint32(len(bextData)),
 	)
+
 	buf.Write(bextData)
 
 	// data chunk.
@@ -642,6 +652,7 @@ func createTestWAVWithExtraChunks(
 	_ = binary.Write(
 		&buf, binary.LittleEndian, uint32(silenceLen),
 	)
+
 	buf.Write(silence)
 
 	path := filepath.Join(dir, name)
