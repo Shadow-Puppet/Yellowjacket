@@ -122,7 +122,7 @@ Plans:
 | 17. Single Track Edit | v1.2 | 2/2 | Complete | 2026-03-18 |
 | 18. Batch Edit | v1.2 | 2/2 | Complete | 2026-03-18 |
 | 19. WAV Tag Writer | 2/2 | Complete    | 2026-03-19 | - |
-| 20. OGG Vorbis Tag Writer | 2/2 | Complete   | 2026-03-19 | - |
+| 20. OGG Vorbis Tag Writer | 2/2 | Complete    | 2026-03-19 | - |
 | 21. Cleanup | v1.2.1 | 0/? | Not started | - |
 
 ---
