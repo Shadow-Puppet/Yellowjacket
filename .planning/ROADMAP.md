@@ -68,7 +68,11 @@
   3. Editing a WAV file's tags does not alter audio playback — the file sounds identical before and after
   4. Existing metadata in the WAV file that wasn't edited (RIFF INFO chunks, bext, cue markers) survives the tag write unchanged
   5. If the app crashes or loses power during a WAV tag write, the original file is intact (not corrupted or truncated)
-**Plans**: TBD
+**Plans:** 2 plans
+
+Plans:
+- [ ] 19-01-PLAN.md — WAV RIFF parser/writer and writeWavTags function
+- [ ] 19-02-PLAN.md — WAV tag writer round-trip tests
 
 ### Phase 20: OGG Vorbis Tag Writer
 **Goal**: Users can edit metadata and cover art on OGG Vorbis files with the same experience as MP3/FLAC/WAV
@@ -113,7 +117,7 @@
 | 16. Tag Writing & Database Sync | v1.2 | 3/3 | Complete | 2026-03-17 |
 | 17. Single Track Edit | v1.2 | 2/2 | Complete | 2026-03-18 |
 | 18. Batch Edit | v1.2 | 2/2 | Complete | 2026-03-18 |
-| 19. WAV Tag Writer | v1.2.1 | 0/? | Not started | - |
+| 19. WAV Tag Writer | v1.2.1 | 0/2 | Not started | - |
 | 20. OGG Vorbis Tag Writer | v1.2.1 | 0/? | Not started | - |
 | 21. Cleanup | v1.2.1 | 0/? | Not started | - |
 
