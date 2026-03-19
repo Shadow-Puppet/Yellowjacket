@@ -82,6 +82,12 @@ func applyTextChanges(tag *id3v2.Tag, changes TagChanges) {
 		tag.DeleteFrames("TCOM")
 		tag.AddTextFrame("TCOM", id3v2.EncodingUTF8, v)
 	}
+
+	if v, ok := changes[FieldAlbumArtist].(string); ok {
+		tpe2ID := tag.CommonID("Band/Orchestra/Accompaniment")
+		tag.DeleteFrames(tpe2ID)
+		tag.AddTextFrame(tpe2ID, id3v2.EncodingUTF8, v)
+	}
 }
 
 // applyCoverArtChanges handles the FieldCoverArt entry in the diff map.
