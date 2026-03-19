@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: "v1.2.1"
 milestone_name: "Format Parity"
 status: executing
-last_updated: "2026-03-19T12:45:01.000Z"
+last_updated: "2026-03-19T12:58:09.000Z"
 progress:
   total_phases: 3
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 2
-  completed_plans: 1
+  completed_plans: 2
 ---
 
 # YellowJacket — Project State
@@ -18,18 +18,18 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-18)
 
 **Core value:** The music player works reliably and feels solid — every interaction is correct, responsive, and trustworthy.
-**Current focus:** v1.2.1 Format Parity — executing Phase 19 (WAV Tag Writer)
+**Current focus:** v1.2.1 Format Parity — Phase 19 complete, ready for next phase
 
 ## Current Position
 
-Phase: 19 — WAV Tag Writer
-Plan: 2 of 2
-Status: Executing — completed 19-01, next 19-02
-Last activity: 2026-03-19 — Completed 19-01-PLAN.md (WAV tag writer implementation)
+Phase: 19 — WAV Tag Writer (COMPLETE)
+Plan: 2 of 2 (all complete)
+Status: Phase complete — all WAV requirements (WAV-01 through WAV-06) verified
+Last activity: 2026-03-19 — Completed 19-02-PLAN.md (WAV tag writer tests)
 
 ```
 v1.2.1 Format Parity
-[███░░░░░░░░░░░░░░░░░] 1/3 phases (in progress)
+[███████░░░░░░░░░░░░░] 1/3 phases complete
 ```
 
 ## Performance Metrics
@@ -41,6 +41,7 @@ v1.2.1 Format Parity
 | Phase | Plan | Duration | Tasks | Files |
 |-------|------|----------|-------|-------|
 | 19-01 | WAV tag writer impl | 5 min | 2 | 4 |
+| 19-02 | WAV tag writer tests | 9 min | 3 | 2 |
 
 ## Accumulated Context
 
@@ -61,6 +62,7 @@ All decisions archived in PROJECT.md Key Decisions table and RETROSPECTIVE.md. K
 - Three-state field model via implicit dirty tracking (editValues map presence)
 - Custom RIFF parser for WAV: lenient-read/strict-write, ID3v2 chunk at end of file
 - WAV writer reuses MP3's applyTextChanges/applyCoverArtChanges for ID3v2 tag manipulation
+- WAV test read-back uses bogem/id3v2.ParseReader (dhowden/tag ReadFrom does not support WAV)
 
 ### Warnings (carry forward)
 
@@ -84,9 +86,9 @@ All decisions archived in PROJECT.md Key Decisions table and RETROSPECTIVE.md. K
 ### Last Session
 
 **Date:** 2026-03-19
-**What happened:** Executed 19-01-PLAN.md — WAV tag writer implementation. Created RIFF parser/writer, writeWavTags function, FormatWAV constant, pipeline dispatch. Fixed album_artist TPE2 mapping.
-**Where we stopped:** Completed 19-01-PLAN.md
-**Next action:** `/gsd-execute-phase 19` to execute 19-02-PLAN.md (WAV tag writer tests)
+**What happened:** Executed 19-02-PLAN.md — WAV tag writer tests. Created 7 round-trip tests verifying all WAV requirements (WAV-01 through WAV-06). Used bogem/id3v2 ParseReader for read-back.
+**Where we stopped:** Completed 19-02-PLAN.md — Phase 19 complete
+**Next action:** `/gsd-plan-phase` for next phase (OGG Vorbis or next milestone phase)
 
 ---
 *State initialized: 2026-02-27*
@@ -99,5 +101,5 @@ All decisions archived in PROJECT.md Key Decisions table and RETROSPECTIVE.md. K
 | 18 | add multi-column metadata display to playlist-details | 2026-03-08 | ce23177 | [18-add-multi-column-metadata-display-to-pla](./quick/18-add-multi-column-metadata-display-to-pla/) |
 | 19 | fix phantom playlist tracks with multi-root path resolution | 2026-03-16 | 9144ded | [19-fix-phantom-playlist-tracks](./quick/19-fix-phantom-playlist-tracks/) |
 
-Last activity: 2026-03-19 - completed 19-01-PLAN.md
-*Last updated: 2026-03-19 — completed 19-01-PLAN.md (WAV tag writer implementation)*
+Last activity: 2026-03-19 - completed 19-02-PLAN.md
+*Last updated: 2026-03-19 — completed 19-02-PLAN.md (WAV tag writer tests — Phase 19 complete)*

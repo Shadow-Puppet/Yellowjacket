@@ -23,7 +23,7 @@ Requirements for Format Parity milestone. Each maps to roadmap phases.
 - [x] **WAV-03**: WAV tag writes preserve audio data identically (lossless round-trip)
 - [x] **WAV-04**: User can embed, replace, and remove cover art in WAV files via ID3v2 APIC frame
 - [x] **WAV-05**: WAV tag writing uses crash-safe atomic writes (write-to-temp-then-rename)
-- [ ] **WAV-06**: WAV writer round-trip tests verify all fields via dhowden/tag read-back
+- [x] **WAV-06**: WAV writer round-trip tests verify all fields via dhowden/tag read-back
 
 ### Cleanup
 
@@ -70,7 +70,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | WAV-03 | Phase 19 | Complete |
 | WAV-04 | Phase 19 | Complete |
 | WAV-05 | Phase 19 | Complete |
-| WAV-06 | Phase 19 | Pending |
+| WAV-06 | Phase 19 | Complete |
 | OGG-01 | Phase 20 | Pending |
 | OGG-02 | Phase 20 | Pending |
 | OGG-03 | Phase 20 | Pending |

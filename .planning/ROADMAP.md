@@ -52,7 +52,7 @@
 
 ### v1.2.1 Format Parity (Phases 19-21)
 
-- [ ] **Phase 19: WAV Tag Writer** — Full metadata and cover art writing for WAV files via ID3v2-in-RIFF
+- [x] **Phase 19: WAV Tag Writer** — Full metadata and cover art writing for WAV files via ID3v2-in-RIFF (completed 2026-03-19)
 - [ ] **Phase 20: OGG Vorbis Tag Writer** — Full metadata and cover art writing for OGG Vorbis files via custom page rewriter
 - [ ] **Phase 21: Cleanup** — Fix lint warnings and small issues carried forward from v1.2
 
@@ -68,7 +68,7 @@
   3. Editing a WAV file's tags does not alter audio playback — the file sounds identical before and after
   4. Existing metadata in the WAV file that wasn't edited (RIFF INFO chunks, bext, cue markers) survives the tag write unchanged
   5. If the app crashes or loses power during a WAV tag write, the original file is intact (not corrupted or truncated)
-**Plans:** 1/2 plans executed
+**Plans:** 2/2 plans complete
 
 Plans:
 - [ ] 19-01-PLAN.md — WAV RIFF parser/writer and writeWavTags function
@@ -117,7 +117,7 @@ Plans:
 | 16. Tag Writing & Database Sync | v1.2 | 3/3 | Complete | 2026-03-17 |
 | 17. Single Track Edit | v1.2 | 2/2 | Complete | 2026-03-18 |
 | 18. Batch Edit | v1.2 | 2/2 | Complete | 2026-03-18 |
-| 19. WAV Tag Writer | 1/2 | In Progress|  | - |
+| 19. WAV Tag Writer | 2/2 | Complete   | 2026-03-19 | - |
 | 20. OGG Vorbis Tag Writer | v1.2.1 | 0/? | Not started | - |
 | 21. Cleanup | v1.2.1 | 0/? | Not started | - |
 
