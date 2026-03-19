@@ -9,11 +9,11 @@ Requirements for Format Parity milestone. Each maps to roadmap phases.
 
 ### OGG Vorbis Tag Writing
 
-- [ ] **OGG-01**: User can edit all 8 text metadata fields (title, artist, album, album_artist, genre, year, track#, disc#, composer) on OGG Vorbis files
-- [ ] **OGG-02**: OGG tag writes preserve existing non-edited Vorbis Comment fields (ReplayGain, lyrics, etc.)
-- [ ] **OGG-03**: OGG tag writes preserve audio data identically (lossless round-trip)
-- [ ] **OGG-04**: User can embed, replace, and remove cover art in OGG Vorbis files via METADATA_BLOCK_PICTURE
-- [ ] **OGG-05**: OGG tag writing uses crash-safe atomic writes (write-to-temp-then-rename)
+- [x] **OGG-01**: User can edit all 8 text metadata fields (title, artist, album, album_artist, genre, year, track#, disc#, composer) on OGG Vorbis files
+- [x] **OGG-02**: OGG tag writes preserve existing non-edited Vorbis Comment fields (ReplayGain, lyrics, etc.)
+- [x] **OGG-03**: OGG tag writes preserve audio data identically (lossless round-trip)
+- [x] **OGG-04**: User can embed, replace, and remove cover art in OGG Vorbis files via METADATA_BLOCK_PICTURE
+- [x] **OGG-05**: OGG tag writing uses crash-safe atomic writes (write-to-temp-then-rename)
 - [ ] **OGG-06**: OGG writer round-trip tests verify all fields via dhowden/tag read-back
 
 ### WAV Tag Writing
@@ -71,11 +71,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | WAV-04 | Phase 19 | Complete |
 | WAV-05 | Phase 19 | Complete |
 | WAV-06 | Phase 19 | Complete |
-| OGG-01 | Phase 20 | Pending |
-| OGG-02 | Phase 20 | Pending |
-| OGG-03 | Phase 20 | Pending |
-| OGG-04 | Phase 20 | Pending |
-| OGG-05 | Phase 20 | Pending |
+| OGG-01 | Phase 20 | Complete |
+| OGG-02 | Phase 20 | Complete |
+| OGG-03 | Phase 20 | Complete |
+| OGG-04 | Phase 20 | Complete |
+| OGG-05 | Phase 20 | Complete |
 | OGG-06 | Phase 20 | Pending |
 | CLEAN-01 | Phase 21 | Pending |
 | CLEAN-02 | Phase 21 | Pending |
