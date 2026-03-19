@@ -38,6 +38,8 @@ const (
 	FormatFLAC AudioFormat = "flac"
 	// FormatWAV is the WAV audio format.
 	FormatWAV AudioFormat = "wav"
+	// FormatOGG is the OGG Vorbis audio format.
+	FormatOGG AudioFormat = "ogg"
 )
 
 // errUnsupportedFormat is returned when the audio format is not supported.
@@ -54,6 +56,8 @@ func DetectFormat(filePath string) (AudioFormat, error) {
 		return FormatFLAC, nil
 	case ".wav":
 		return FormatWAV, nil
+	case ".ogg":
+		return FormatOGG, nil
 	default:
 		return "", fmt.Errorf("%w: %s", errUnsupportedFormat, ext)
 	}
