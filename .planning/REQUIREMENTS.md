@@ -18,11 +18,11 @@ Requirements for Format Parity milestone. Each maps to roadmap phases.
 
 ### WAV Tag Writing
 
-- [ ] **WAV-01**: User can edit all 8 text metadata fields on WAV files via ID3v2 chunk in RIFF container
-- [ ] **WAV-02**: WAV tag writes preserve existing RIFF INFO and other chunks (bext, cue, smpl, etc.) unchanged
-- [ ] **WAV-03**: WAV tag writes preserve audio data identically (lossless round-trip)
-- [ ] **WAV-04**: User can embed, replace, and remove cover art in WAV files via ID3v2 APIC frame
-- [ ] **WAV-05**: WAV tag writing uses crash-safe atomic writes (write-to-temp-then-rename)
+- [x] **WAV-01**: User can edit all 8 text metadata fields on WAV files via ID3v2 chunk in RIFF container
+- [x] **WAV-02**: WAV tag writes preserve existing RIFF INFO and other chunks (bext, cue, smpl, etc.) unchanged
+- [x] **WAV-03**: WAV tag writes preserve audio data identically (lossless round-trip)
+- [x] **WAV-04**: User can embed, replace, and remove cover art in WAV files via ID3v2 APIC frame
+- [x] **WAV-05**: WAV tag writing uses crash-safe atomic writes (write-to-temp-then-rename)
 - [ ] **WAV-06**: WAV writer round-trip tests verify all fields via dhowden/tag read-back
 
 ### Cleanup
@@ -65,11 +65,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| WAV-01 | Phase 19 | Pending |
-| WAV-02 | Phase 19 | Pending |
-| WAV-03 | Phase 19 | Pending |
-| WAV-04 | Phase 19 | Pending |
-| WAV-05 | Phase 19 | Pending |
+| WAV-01 | Phase 19 | Complete |
+| WAV-02 | Phase 19 | Complete |
+| WAV-03 | Phase 19 | Complete |
+| WAV-04 | Phase 19 | Complete |
+| WAV-05 | Phase 19 | Complete |
 | WAV-06 | Phase 19 | Pending |
 | OGG-01 | Phase 20 | Pending |
 | OGG-02 | Phase 20 | Pending |

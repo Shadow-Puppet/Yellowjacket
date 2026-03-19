@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: "v1.2.1"
 milestone_name: "Format Parity"
-status: roadmap_complete
-last_updated: "2026-03-18T20:00:00.000Z"
+status: executing
+last_updated: "2026-03-19T12:45:01.000Z"
 progress:
   total_phases: 3
   completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
+  total_plans: 2
+  completed_plans: 1
 ---
 
 # YellowJacket — Project State
@@ -18,18 +18,18 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-18)
 
 **Core value:** The music player works reliably and feels solid — every interaction is correct, responsive, and trustworthy.
-**Current focus:** v1.2.1 Format Parity — roadmap complete, ready for phase planning
+**Current focus:** v1.2.1 Format Parity — executing Phase 19 (WAV Tag Writer)
 
 ## Current Position
 
-Phase: 19 — WAV Tag Writer (not yet planned)
-Plan: —
-Status: Roadmap complete, awaiting `/gsd-plan-phase 19`
-Last activity: 2026-03-18 — Roadmap created for v1.2.1
+Phase: 19 — WAV Tag Writer
+Plan: 2 of 2
+Status: Executing — completed 19-01, next 19-02
+Last activity: 2026-03-19 — Completed 19-01-PLAN.md (WAV tag writer implementation)
 
 ```
 v1.2.1 Format Parity
-[░░░░░░░░░░░░░░░░░░░░] 0/3 phases
+[███░░░░░░░░░░░░░░░░░] 1/3 phases (in progress)
 ```
 
 ## Performance Metrics
@@ -37,6 +37,10 @@ v1.2.1 Format Parity
 **v1.0 baseline:** 8 phases, 17 plans, 34 tasks in 6 days (107 commits)
 **v1.1 baseline:** 6 phases, 18 plans in 10 days (~85 commits)
 **v1.2 baseline:** 4 phases, 9 plans, 17 tasks in 3 days (~40 commits)
+
+| Phase | Plan | Duration | Tasks | Files |
+|-------|------|----------|-------|-------|
+| 19-01 | WAV tag writer impl | 5 min | 2 | 4 |
 
 ## Accumulated Context
 
@@ -55,6 +59,8 @@ All decisions archived in PROJECT.md Key Decisions table and RETROSPECTIVE.md. K
 - AtomicWrite with `.yj-tmp` suffix for crash-safe file operations
 - suppressEvents flag for batch event coalescing
 - Three-state field model via implicit dirty tracking (editValues map presence)
+- Custom RIFF parser for WAV: lenient-read/strict-write, ID3v2 chunk at end of file
+- WAV writer reuses MP3's applyTextChanges/applyCoverArtChanges for ID3v2 tag manipulation
 
 ### Warnings (carry forward)
 
@@ -77,10 +83,10 @@ All decisions archived in PROJECT.md Key Decisions table and RETROSPECTIVE.md. K
 
 ### Last Session
 
-**Date:** 2026-03-18
-**What happened:** Created v1.2.1 Format Parity roadmap. 3 phases (19-21): WAV Tag Writer → OGG Vorbis Tag Writer → Cleanup. All 14 requirements mapped.
-**Where we stopped:** Roadmap created, ready for phase planning.
-**Next action:** `/gsd-plan-phase 19` to plan WAV Tag Writer
+**Date:** 2026-03-19
+**What happened:** Executed 19-01-PLAN.md — WAV tag writer implementation. Created RIFF parser/writer, writeWavTags function, FormatWAV constant, pipeline dispatch. Fixed album_artist TPE2 mapping.
+**Where we stopped:** Completed 19-01-PLAN.md
+**Next action:** `/gsd-execute-phase 19` to execute 19-02-PLAN.md (WAV tag writer tests)
 
 ---
 *State initialized: 2026-02-27*
@@ -93,5 +99,5 @@ All decisions archived in PROJECT.md Key Decisions table and RETROSPECTIVE.md. K
 | 18 | add multi-column metadata display to playlist-details | 2026-03-08 | ce23177 | [18-add-multi-column-metadata-display-to-pla](./quick/18-add-multi-column-metadata-display-to-pla/) |
 | 19 | fix phantom playlist tracks with multi-root path resolution | 2026-03-16 | 9144ded | [19-fix-phantom-playlist-tracks](./quick/19-fix-phantom-playlist-tracks/) |
 
-Last activity: 2026-03-18 - v1.2.1 roadmap created
-*Last updated: 2026-03-18 — v1.2.1 roadmap created*
+Last activity: 2026-03-19 - completed 19-01-PLAN.md
+*Last updated: 2026-03-19 — completed 19-01-PLAN.md (WAV tag writer implementation)*
