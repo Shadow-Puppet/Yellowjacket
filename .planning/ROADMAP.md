@@ -84,7 +84,11 @@ Plans:
   3. Editing an OGG file's tags does not alter audio playback — the file sounds identical before and after
   4. Existing Vorbis Comments that weren't edited (ReplayGain, lyrics, custom fields) survive the tag write unchanged
   5. If the app crashes or loses power during an OGG tag write, the original file is intact (not corrupted or truncated)
-**Plans**: TBD
+**Plans:** 2 plans
+
+Plans:
+- [ ] 20-01-PLAN.md — OGG page parser/writer, Vorbis Comment serializer, writeOggTags, pipeline integration
+- [ ] 20-02-PLAN.md — OGG tag writer round-trip tests
 
 ### Phase 21: Cleanup
 **Goal**: Codebase is clean — no lint warnings or loose ends from tag editing work
@@ -118,7 +122,7 @@ Plans:
 | 17. Single Track Edit | v1.2 | 2/2 | Complete | 2026-03-18 |
 | 18. Batch Edit | v1.2 | 2/2 | Complete | 2026-03-18 |
 | 19. WAV Tag Writer | 2/2 | Complete    | 2026-03-19 | - |
-| 20. OGG Vorbis Tag Writer | v1.2.1 | 0/? | Not started | - |
+| 20. OGG Vorbis Tag Writer | v1.2.1 | 0/2 | Planned | - |
 | 21. Cleanup | v1.2.1 | 0/? | Not started | - |
 
 ---
