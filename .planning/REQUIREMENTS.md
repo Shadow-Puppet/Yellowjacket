@@ -14,7 +14,7 @@ Requirements for Format Parity milestone. Each maps to roadmap phases.
 - [x] **OGG-03**: OGG tag writes preserve audio data identically (lossless round-trip)
 - [x] **OGG-04**: User can embed, replace, and remove cover art in OGG Vorbis files via METADATA_BLOCK_PICTURE
 - [x] **OGG-05**: OGG tag writing uses crash-safe atomic writes (write-to-temp-then-rename)
-- [ ] **OGG-06**: OGG writer round-trip tests verify all fields via dhowden/tag read-back
+- [x] **OGG-06**: OGG writer round-trip tests verify all fields via dhowden/tag read-back
 
 ### WAV Tag Writing
 
@@ -76,7 +76,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | OGG-03 | Phase 20 | Complete |
 | OGG-04 | Phase 20 | Complete |
 | OGG-05 | Phase 20 | Complete |
-| OGG-06 | Phase 20 | Pending |
+| OGG-06 | Phase 20 | Complete |
 | CLEAN-01 | Phase 21 | Pending |
 | CLEAN-02 | Phase 21 | Pending |
 

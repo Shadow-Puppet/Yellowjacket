@@ -53,7 +53,7 @@
 ### v1.2.1 Format Parity (Phases 19-21)
 
 - [x] **Phase 19: WAV Tag Writer** — Full metadata and cover art writing for WAV files via ID3v2-in-RIFF (completed 2026-03-19)
-- [ ] **Phase 20: OGG Vorbis Tag Writer** — Full metadata and cover art writing for OGG Vorbis files via custom page rewriter
+- [x] **Phase 20: OGG Vorbis Tag Writer** — Full metadata and cover art writing for OGG Vorbis files via custom page rewriter (completed 2026-03-19)
 - [ ] **Phase 21: Cleanup** — Fix lint warnings and small issues carried forward from v1.2
 
 ## Phase Details
@@ -84,7 +84,7 @@ Plans:
   3. Editing an OGG file's tags does not alter audio playback — the file sounds identical before and after
   4. Existing Vorbis Comments that weren't edited (ReplayGain, lyrics, custom fields) survive the tag write unchanged
   5. If the app crashes or loses power during an OGG tag write, the original file is intact (not corrupted or truncated)
-**Plans:** 1/2 plans executed
+**Plans:** 2/2 plans complete
 
 Plans:
 - [ ] 20-01-PLAN.md — OGG page parser/writer, Vorbis Comment serializer, writeOggTags, pipeline integration
@@ -122,7 +122,7 @@ Plans:
 | 17. Single Track Edit | v1.2 | 2/2 | Complete | 2026-03-18 |
 | 18. Batch Edit | v1.2 | 2/2 | Complete | 2026-03-18 |
 | 19. WAV Tag Writer | 2/2 | Complete    | 2026-03-19 | - |
-| 20. OGG Vorbis Tag Writer | 1/2 | In Progress|  | - |
+| 20. OGG Vorbis Tag Writer | 2/2 | Complete   | 2026-03-19 | - |
 | 21. Cleanup | v1.2.1 | 0/? | Not started | - |
 
 ---
