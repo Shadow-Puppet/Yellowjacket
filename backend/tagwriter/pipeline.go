@@ -244,11 +244,13 @@ func (tw *TagWriter) BatchWriteTrackTags(
 
 	// Set up cancellation channel.
 	tw.cancelBatch = make(chan struct{})
+
 	defer func() { tw.cancelBatch = nil }()
 
 	// Suppress per-track TrackMetadataChanged events — we emit one
 	// at the end instead.
 	tw.suppressEvents = true
+
 	defer func() { tw.suppressEvents = false }()
 
 	for i, filePath := range filePaths {
@@ -256,12 +258,11 @@ func (tw *TagWriter) BatchWriteTrackTags(
 		select {
 		case <-tw.cancelBatch:
 			result.Cancelled = true
+
 			tw.logger.Info("batch write cancelled",
 				"at", i,
 				"total", total,
 			)
-
-			break
 		default:
 		}
 
@@ -276,6 +277,7 @@ func (tw *TagWriter) BatchWriteTrackTags(
 				FilePath: filePath,
 				Error:    err.Error(),
 			})
+
 			tw.logger.Warn("batch track failed",
 				"path", filePath,
 				"err", err,

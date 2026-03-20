@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"yellowjacket/backend/metadata"
@@ -601,6 +602,7 @@ func TestWriteOggTags_RejectMultiStream(t *testing.T) {
 	identSegs := splitPacketIntoSegments(identPacket)
 
 	const serial1 uint32 = 0x11111111
+
 	const serial2 uint32 = 0x22222222
 
 	page1 := oggPage{
@@ -652,8 +654,5 @@ func errorContains(err error, substr string) bool {
 		return false
 	}
 
-	return bytes.Contains(
-		[]byte(err.Error()),
-		[]byte(substr),
-	)
+	return strings.Contains(err.Error(), substr)
 }

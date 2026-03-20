@@ -514,6 +514,7 @@ func generateSizedVariants(logger *slog.Logger, imgData []byte, dir, hashStr str
 	src, _, err := image.Decode(bytes.NewReader(imgData))
 	if err != nil {
 		logger.Warn("could not decode image for thumbnails", "err", err)
+
 		return
 	}
 
@@ -537,6 +538,7 @@ func generateSizedVariants(logger *slog.Logger, imgData []byte, dir, hashStr str
 		var buf bytes.Buffer
 		if encErr := jpeg.Encode(&buf, dst, &jpeg.Options{Quality: tier.quality}); encErr != nil {
 			logger.Warn("could not encode thumbnail", "tier", tier.suffix, "err", encErr)
+
 			continue
 		}
 

@@ -261,6 +261,7 @@ func TestAtomicWrite_SyncAndClose(t *testing.T) {
 
 	// Write 1 MiB of data.
 	const size = 1 << 20 //nolint:mnd
+
 	data := bytes.Repeat([]byte("x"), size)
 
 	err := AtomicWrite(slog.Default(), target, func(tmp *os.File) error {

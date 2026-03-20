@@ -32,6 +32,7 @@ func createTestWAV(
 
 	// --- data chunk: 200 bytes of silence ---
 	const silenceLen = 200 //nolint:mnd
+
 	silence := make([]byte, silenceLen)
 
 	// --- optional id3 chunk ---
@@ -401,7 +402,6 @@ func TestWriteWavTags_AtomicSafety(t *testing.T) {
 	writeErr := writeWavTags(testLogger(), badPath, TagChanges{
 		FieldTitle: "After",
 	})
-
 	if writeErr == nil {
 		t.Fatal("expected error for non-existent path, got nil")
 	}
@@ -443,7 +443,6 @@ func TestWriteWavTags_RejectsRF64(t *testing.T) {
 	err := writeWavTags(testLogger(), path, TagChanges{
 		FieldTitle: "Should Fail",
 	})
-
 	if err == nil {
 		t.Fatal("expected error for RF64 file, got nil")
 	}
@@ -601,6 +600,7 @@ func createTestWAVWithExtraChunks(
 
 	// 200 bytes of silence for data chunk.
 	const silenceLen = 200 //nolint:mnd
+
 	silence := make([]byte, silenceLen)
 
 	// Calculate RIFF payload.

@@ -802,7 +802,6 @@ func (p *Player) seekLocked(targetSeconds int) error {
 
 		return p.seeker.Seek(samples)
 	}()
-
 	if seekErr != nil {
 		speaker.Unlock()
 

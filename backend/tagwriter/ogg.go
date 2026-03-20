@@ -14,14 +14,14 @@ import (
 
 // Sentinel errors for OGG operations.
 var (
-	errNotOgg          = errors.New("not an OGG file")
-	errNotVorbis       = errors.New("not an OGG Vorbis file")
-	errOggMultiStream  = errors.New("this OGG file contains multiple streams and cannot be edited")
-	errOggTruncated    = errors.New("OGG file is truncated")
-	errOggInvalidPage  = errors.New("invalid OGG page")
-	errOggBadVersion   = errors.New("unsupported OGG version")
-	errOggNoPages      = errors.New("OGG file contains no pages")
-	errOggMissingSetup = errors.New("OGG file is missing the setup header packet")
+	errNotOgg           = errors.New("not an OGG file")
+	errNotVorbis        = errors.New("not an OGG Vorbis file")
+	errOggMultiStream   = errors.New("this OGG file contains multiple streams and cannot be edited")
+	errOggTruncated     = errors.New("OGG file is truncated")
+	errOggBadVersion    = errors.New("unsupported OGG version")
+	errOggTooFewPackets = errors.New("ogg vorbis: expected at least 3 header packets")
+	errOggNoPages       = errors.New("OGG file contains no pages")
+	errOggMissingSetup  = errors.New("OGG file is missing the setup header packet")
 )
 
 // oggCRCTable is the pre-computed 256-entry CRC32 lookup table for OGG.
@@ -117,7 +117,11 @@ func parseOggPages(logger *slog.Logger, filePath string) ([]oggPage, error) {
 		segEnd := segStart + numSegments
 
 		if segEnd > len(raw) {
-			return nil, fmt.Errorf("%w: segment table truncated at offset %d", errOggTruncated, offset)
+			return nil, fmt.Errorf(
+				"%w: segment table truncated at offset %d",
+				errOggTruncated,
+				offset,
+			)
 		}
 
 		segmentTable := make([]byte, numSegments)
@@ -192,7 +196,8 @@ func parseOggPages(logger *slog.Logger, filePath string) ([]oggPage, error) {
 
 	// Validate: first page is Vorbis identification header.
 	firstPacketData := pages[0].data
-	if len(firstPacketData) < 7 || firstPacketData[0] != 0x01 || //nolint:mnd // Vorbis ID header magic
+	if len(firstPacketData) < 7 ||
+		firstPacketData[0] != 0x01 || //nolint:mnd // Vorbis ID header magic
 		string(firstPacketData[1:7]) != "vorbis" {
 		return nil, errNotVorbis
 	}
@@ -249,6 +254,7 @@ func writeOggPage(w io.Writer, page oggPage) error {
 // a value <255 terminates it.
 func extractPackets(pages []oggPage) [][]byte {
 	var packets [][]byte
+
 	var current []byte
 
 	for _, page := range pages {
@@ -299,7 +305,12 @@ func splitPacketIntoSegments(packet []byte) []byte {
 // respecting the 255-segment-per-page limit.  The first page gets the
 // headerType as-is; continuation pages get the continued flag (0x01)
 // ORed in.  All pages share the same serialNo and granulePos.
-func buildPagesFromSegments(segments []byte, packetData []byte, serialNo uint32, granulePos int64) []oggPage {
+func buildPagesFromSegments(
+	segments []byte,
+	packetData []byte,
+	serialNo uint32,
+	granulePos int64,
+) []oggPage {
 	const maxSegmentsPerPage = 255
 
 	var pages []oggPage
@@ -400,7 +411,7 @@ func writeOggTags(logger *slog.Logger, filePath string, changes TagChanges) erro
 	const minHeaderPackets = 3
 
 	if len(packets) < minHeaderPackets {
-		return fmt.Errorf("ogg vorbis: expected at least 3 header packets, got %d", len(packets))
+		return fmt.Errorf("%w: got %d", errOggTooFewPackets, len(packets))
 	}
 
 	_ = packets[0] // identification packet — preserved as page 0 unchanged
@@ -503,72 +514,10 @@ func findAudioPageStart(pages []oggPage) int {
 	return len(pages)
 }
 
-// serializePacketsToPages is a helper that builds pages from multiple
-// packets concatenated into the same page stream.  This is used for
-// the comment + setup header packets which share pages per Vorbis spec.
-func serializePacketsToPages(packets [][]byte, serialNo uint32, granulePos int64) []oggPage {
-	var allSegs []byte
-	var allData []byte
-
-	for _, pkt := range packets {
-		segs := splitPacketIntoSegments(pkt)
-		allSegs = append(allSegs, segs...)
-		allData = append(allData, pkt...)
-	}
-
-	return buildPagesFromSegments(allSegs, allData, serialNo, granulePos)
-}
-
-// computePacketBoundaryInPages determines how many complete packets
-// exist starting from the beginning of a sequence of pages, using
-// lacing values.  It returns the number of complete packets and
-// whether the reading ended mid-packet (a continued packet).
-func computePacketBoundaryInPages(pages []oggPage) (completedPackets int, midPacket bool) {
-	inPacket := false
-
-	for _, page := range pages {
-		for _, lacing := range page.segmentTable {
-			if lacing > 0 {
-				inPacket = true
-			}
-
-			if lacing < 255 { //nolint:mnd // OGG lacing terminates packet
-				if inPacket || lacing == 0 {
-					completedPackets++
-					inPacket = false
-				}
-			}
-		}
-	}
-
-	return completedPackets, inPacket
-}
-
-// oggPagesCopy creates a deep copy of a slice of oggPage.
-func oggPagesCopy(pages []oggPage) []oggPage {
-	cp := make([]oggPage, len(pages))
-
-	for i, p := range pages {
-		cp[i] = oggPage{
-			headerType: p.headerType,
-			granulePos: p.granulePos,
-			serialNo:   p.serialNo,
-			seqNo:      p.seqNo,
-		}
-
-		cp[i].segmentTable = make([]byte, len(p.segmentTable))
-		copy(cp[i].segmentTable, p.segmentTable)
-
-		cp[i].data = make([]byte, len(p.data))
-		copy(cp[i].data, p.data)
-	}
-
-	return cp
-}
-
 // pageBytes serializes an OGG page to raw bytes (for CRC verification etc.).
 func pageBytes(page oggPage) []byte {
 	var buf bytes.Buffer
+
 	_ = writeOggPage(&buf, page)
 
 	return buf.Bytes()

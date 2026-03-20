@@ -227,10 +227,10 @@ func TestWriteMp3Tags_AtomicSafety(t *testing.T) {
 	// Attempt to write to a non-existent directory to force AtomicWrite
 	// to fail (the temp file creation will fail).
 	badPath := filepath.Join(dir, "nonexistent", "subdir", "file.mp3")
+
 	writeErr := writeMp3Tags(testLogger(), badPath, TagChanges{
 		FieldTitle: "After",
 	})
-
 	if writeErr == nil {
 		t.Fatal("expected error for non-existent path, got nil")
 	}

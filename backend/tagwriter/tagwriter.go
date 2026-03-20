@@ -99,6 +99,7 @@ func asBytes(v any) ([]byte, bool) {
 	}
 
 	out := make([]byte, len(arr))
+
 	for i, elem := range arr {
 		f, ok := elem.(float64)
 		if !ok {

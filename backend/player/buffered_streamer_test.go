@@ -54,6 +54,7 @@ func finiteStreamer(n int) beep.Streamer {
 
 func TestBufferedStreamer_BasicStream(t *testing.T) {
 	const total = 1000
+
 	src := finiteStreamer(total)
 	bs := NewBufferedStreamer(src, 2048)
 
@@ -120,6 +121,7 @@ func TestBufferedStreamer_BasicStream(t *testing.T) {
 
 func TestBufferedStreamer_SmallReads(t *testing.T) {
 	const total = 200
+
 	src := finiteStreamer(total)
 	bs := NewBufferedStreamer(src, 512)
 
@@ -185,6 +187,7 @@ func TestBufferedStreamer_SmallReads(t *testing.T) {
 
 func TestBufferedStreamer_SourceDrained(t *testing.T) {
 	const total = 100
+
 	src := finiteStreamer(total)
 	bs := NewBufferedStreamer(src, 256)
 

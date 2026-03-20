@@ -420,7 +420,6 @@ func (l *Library) scanInternal(
 				return nil
 			},
 		)
-
 		if walkErr != nil {
 			metrics.addWarning(
 				"", "walk",

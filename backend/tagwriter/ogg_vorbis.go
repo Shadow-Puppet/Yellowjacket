@@ -4,9 +4,16 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
+)
+
+// Sentinel errors for Vorbis Comment operations.
+var (
+	errVorbisPacketShort  = errors.New("vorbis comment packet too short")
+	errVorbisInvalidMagic = errors.New("invalid vorbis comment header magic")
 )
 
 // oggVorbisComment holds a parsed Vorbis Comment structure with raw
@@ -24,11 +31,12 @@ func parseVorbisCommentPacket(packet []byte) (*oggVorbisComment, error) {
 	const prefixLen = 7 // \x03 + "vorbis"
 
 	if len(packet) < prefixLen {
-		return nil, fmt.Errorf("vorbis comment packet too short: %d bytes", len(packet))
+		return nil, fmt.Errorf("%w: %d bytes", errVorbisPacketShort, len(packet))
 	}
 
-	if packet[0] != 0x03 || string(packet[1:7]) != "vorbis" { //nolint:mnd // Vorbis comment header magic
-		return nil, fmt.Errorf("invalid vorbis comment header magic")
+	if packet[0] != 0x03 ||
+		string(packet[1:7]) != "vorbis" { //nolint:mnd // Vorbis comment header magic
+		return nil, errVorbisInvalidMagic
 	}
 
 	r := bytes.NewReader(packet[prefixLen:])
@@ -200,7 +208,13 @@ func buildMetadataBlockPicture(imageData []byte) []byte {
 
 	// Calculate size: type(4) + mimeLen(4) + mime + descLen(4) + desc
 	//   + width(4) + height(4) + depth(4) + colors(4) + dataLen(4) + data
-	size := 4 + 4 + len(mime) + 4 + len(desc) + 4*4 + 4 + len(imageData) //nolint:mnd // FLAC PICTURE block fields
+	size := 4 + 4 + len(
+		mime,
+	) + 4 + len(
+		desc,
+	) + 4*4 + 4 + len(
+		imageData,
+	) //nolint:mnd // FLAC PICTURE block fields
 
 	buf := make([]byte, 0, size)
 
