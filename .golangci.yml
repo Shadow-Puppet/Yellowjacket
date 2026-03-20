@@ -28,7 +28,7 @@ linters:
     - usestdlibvars
     - usetesting
     - whitespace
-    - wsl
+    - wsl_v5
 formatters:
   enable:
     - gci

@@ -26,3 +26,9 @@ WHERE id = ?;
 
 -- name: DeleteAllArtistCredits :exec
 DELETE FROM artist_credit;
+
+-- name: CountArtistCreditReferences :one
+SELECT
+  (SELECT COUNT(*) FROM recordings WHERE artist_credit_id = ?1) +
+  (SELECT COUNT(*) FROM release_groups WHERE album_artist_credit_id = ?1)
+AS total;

@@ -1,189 +1,188 @@
 # Project Research Summary
 
-**Project:** YellowJacket — Desktop Music Player Consolidation
-**Domain:** Go/Wails/Lit desktop application — codebase quality & reliability improvement
-**Researched:** 2026-02-27
+**Project:** YellowJacket v1.2.1 Format Parity
+**Domain:** Audio metadata tag writing — OGG Vorbis and WAV format support
+**Researched:** 2026-03-18
 **Confidence:** HIGH
 
 ## Executive Summary
 
-YellowJacket is a Go/Wails/Lit desktop music player with a functional feature set but known correctness issues: three data races in `SetContext` patterns, swallowed errors throughout the backend, zero test coverage on critical paths (queue, library, database, config), and O(n) queue persistence for single-track mutations. The consolidation milestone is not about new features — it's about making the existing codebase reliable, testable, and performant. The existing stack (Go 1.25, modernc.org/sqlite, beep/v2, Lit 3, sqlc) is correct and should not change. The work is purely internal quality improvement.
+YellowJacket v1.2.1 adds OGG Vorbis and WAV tag writing to achieve full format parity across all four supported audio formats. The existing `tagwriter` pipeline was designed for format extension — a switch-case in `pipeline.go` dispatches to format-specific writer functions, and everything downstream (DB sync, events, UI) is format-agnostic. Adding OGG and WAV requires two new writer functions, zero new dependencies, and no frontend changes.
 
-The recommended approach is **tests-first, then refactoring**. The research consistently shows that every optimization and consolidation change (FTS5 query deduplication, queue incremental persistence, lazy library loading) is risky without tests to verify behavior is preserved. The critical dependency chain is: fix concurrency bugs → build test infrastructure → write tests → refactor safely. This ordering emerges independently from all four research files — STACK recommends in-memory SQLite testing, FEATURES shows test infrastructure as the top enabler, ARCHITECTURE proposes the same phase ordering, and PITFALLS warns that every refactoring without tests creates invisible regressions.
+The recommended approach is **custom implementations for both formats**: a custom OGG page rewriter (~350 LOC) for OGG Vorbis, and a custom RIFF chunk parser (~200 LOC) wrapping the existing `bogem/id3v2` library for WAV. No pure-Go library exists for OGG Vorbis tag writing, and the Go WAV ecosystem recently lost its most popular library (`go-audio/wav` archived Feb 2026). The OGG container format and RIFF chunk format are both well-documented and simple enough to implement directly. Vorbis Comments (used by OGG) are the exact same metadata format already used in FLAC — field names, encoding, and comment structure are identical, enabling significant code reuse.
 
-The key risks are: (1) deadlock from player mutex + speaker lock ordering violations during refactoring, (2) FTS5 query consolidation silently changing search ranking, and (3) queue persistence migration losing queue state on restart. All three are mitigated by the same strategy: write characterization tests before changing the code. The player's lock ordering (`p.mu` before `speaker.Lock()`, goroutine dispatch in beep callback) is the one area requiring extreme caution — the recommendation is to extract pure testable logic and leave lock-sensitive paths alone unless absolutely necessary.
+The primary risk is the OGG page infrastructure: CRC32 checksums use a non-standard bit ordering (MSB-first, not the Go standard library's reflected CRC32), page sequence numbers must be strictly sequential, and granule positions must be preserved exactly. These are well-understood constraints with clear specifications, but incorrect implementation produces silently corrupted files. Round-trip testing (write → read back via `dhowden/tag`) is the primary mitigation, following the pattern established by the existing MP3 and FLAC writers.
 
 ## Key Findings
 
 ### Recommended Stack
 
-The existing stack is correct. No changes needed. See [STACK.md](./STACK.md) for full details.
+Zero new dependencies. Both formats are implemented using Go standard library primitives (`encoding/binary`, `encoding/base64`, `bytes`, `io`) plus existing dependencies for shared functionality.
 
-**Core technologies (all already in use):**
-- **Go 1.25 + modernc.org/sqlite v1.45**: Pure-Go SQLite driver with WAL mode, `SetMaxOpenConns(1)` — correct setup, needs missing PRAGMAs (`synchronous=NORMAL`, `cache_size=-8000`, `mmap_size=67108864`)
-- **beep/v2 + ebitengine/oto**: Audio playback with streamer composition — lock ordering documented, goroutine dispatch pattern critical
-- **Lit 3 + @lit-labs/virtualizer**: Web components with virtual scrolling — already handles large lists, needs lazy loading instead of eager fetch
-- **sqlc v1.30**: Type-safe SQL code generation — works well for standard queries, FTS5 queries must remain hand-crafted
-- **golangci-lint v2, lefthook, govulncheck**: Already configured, no changes needed
-
-**Critical version note:** Match modernc.org/libc version exactly per upstream warning when updating modernc.org/sqlite.
+**Core technologies:**
+- **Custom OGG page rewriter:** Parse/write OGG pages with CRC32 and segmentation — no pure-Go OGG writing library exists; `mccoyst/ogg` (37 stars, no semver) saves ~80 LOC but adds dependency risk
+- **Custom RIFF chunk parser/writer:** Read/write WAV RIFF structure — `go-audio/wav` and `go-audio/riff` were archived Feb 2026; RIFF is simple enough for custom code
+- **`bogem/id3v2` (existing):** Generate ID3v2 tags for WAV `id3 ` chunks — same library already used for MP3 writing, all 8 fields + cover art work identically
+- **`go-flac/flacpicture` (existing):** Build METADATA_BLOCK_PICTURE binary blocks for OGG cover art — same binary format, just base64-wrapped for OGG
+- **`fileutil.AtomicWrite` (existing):** Crash-safe file writes for both formats — proven pattern from MP3/FLAC writers
 
 ### Expected Features
 
-This is a consolidation milestone — "features" are quality improvements, not user-facing functionality. See [FEATURES.md](./FEATURES.md) for full details.
+**Must have (table stakes):**
+- Write all 8 text fields for OGG Vorbis (same Vorbis Comment field names as FLAC)
+- Write all 8 text fields for WAV (via ID3v2 in RIFF chunk)
+- Preserve existing non-edited metadata (ReplayGain, lyrics, etc.)
+- Preserve audio data byte-for-byte (no re-encoding)
+- Crash-safe writes via AtomicWrite
+- Batch and single-track editing work for both formats
 
-**Must fix (table stakes — codebase is unreliable without these):**
-- Fix 3 SetContext data races (Queue, Library, Playlist) — textbook race, LOW effort
-- Fix package-level `startupErr` → struct field — LOW effort
-- Fix config file permissions (0o666 → 0o644) — one-line fix
-- Fix swallowed errors in MPRIS callbacks and artist credit links — LOW effort
-- Separate scan warnings from fatal errors in Library.Scan — MEDIUM effort
-- Create in-memory SQLite test infrastructure (`database.NewTestDB()`) — MEDIUM effort, enables everything else
-- Write unit tests for queue, library, database, config — HIGH effort, critical safety net
+**Should have (differentiators):**
+- OGG cover art via METADATA_BLOCK_PICTURE (base64-encoded FLAC picture block)
+- WAV cover art via ID3v2 APIC frame (identical to MP3)
+- Preserve existing RIFF INFO chunks when writing ID3v2 to WAV
+- Round-trip test coverage (7 tests per format, following FLAC precedent)
 
-**Should do (significant quality improvement):**
-- Consolidate duplicated FTS5 JOIN pattern (5+ copies → SQLite VIEW) — MEDIUM effort
-- Optimize queue persistence to incremental updates — MEDIUM effort
-- Remove `eagerFetch()` from library store constructor (lazy loading infrastructure already exists) — LOW effort
-- Fix SetQueue Phase 2 redundant metadata lookups — LOW effort
-- Add event name parity validation (Go ↔ TypeScript) — LOW effort
-- Extract testable pure logic from Player (volume math, state serialization) — LOW effort
-
-**Defer (not this milestone):**
-- Frontend component testing (expensive setup, backend is source of truth)
-- Paginated data providers for 100k+ libraries (measure first)
-- Full UI polish / transitions (CSS-only, independent)
-- Rewriting the event system (works fine, just needs codegen parity check)
+**Defer (v2+):**
+- RIFF INFO writing (lossy — can't represent album_artist, disc_number, or cover art)
+- Dual-write ID3v2 + RIFF INFO in WAV
+- Migrating deprecated OGG `COVERART` field to `METADATA_BLOCK_PICTURE`
+- RF64 (>4GB WAV) support
+- OGG Opus tag writing (different header structure from Vorbis)
 
 ### Architecture Approach
 
-The architecture is sound and shouldn't change structurally. The consolidation work is about fixing correctness issues within the existing patterns and adding test infrastructure. See [ARCHITECTURE.md](./ARCHITECTURE.md) for full details.
+Both writers integrate into the existing pipeline with minimal modification: add two format constants, extend the `DetectFormat()` switch, and add two cases to the `WriteTrackTags()` format dispatch. No new interfaces, no refactoring. The frontend is completely format-agnostic and requires zero changes.
 
-**Six issues identified, in dependency order:**
-1. **SetContext race fixes** — Add mutex guards to Queue, Library, Playlist `SetContext()`. Combine Player's double-lock into single acquisition. Move `startupErr` to struct field.
-2. **Event name codegen** — Generate `frontend/src/events.ts` from `backend/events/events.go` using `go/ast`. Wire into `go generate` + pre-commit hook.
-3. **Library store lazy loading** — Remove `eagerFetch()` from constructor. Lazy infrastructure already exists. Optional: paginated data providers for 100k+ libraries.
-4. **Queue incremental persistence** — Use existing sqlc queries (`InsertQueueTrack`, `RemoveQueueTrackByPosition`, etc.) for single-track operations. Keep full rewrite for `SetQueue`/`Clear`.
-5. **FTS5 query consolidation** — Create SQLite VIEW `track_metadata` encapsulating the 5-table JOIN. Migrate search queries to use VIEW. Keep inline JOINs in migrations.
-6. **Test architecture** — `database.NewTestDB()` for in-memory SQLite. `internal/testdb` helper package. Mock only narrow interfaces (`TrackLoader`). Use `context.Background()` for Wails context in tests.
+**Major components:**
+1. **`ogg.go`** (~350 LOC) — OGG page parser/writer, Vorbis Comment serializer, CRC32, METADATA_BLOCK_PICTURE encoding, `writeOggTags()` orchestrator
+2. **`wav.go`** (~200 LOC) — RIFF chunk parser/writer, ID3v2 tag in `id3 ` chunk via `bogem/id3v2`, `writeWavTags()` orchestrator
+3. **`tagwriter.go` + `pipeline.go`** (~15 LOC changes) — Format constants, detection, dispatch
+4. **`ogg_test.go` + `wav_test.go`** (~600 LOC) — 7 round-trip tests each, following FLAC pattern
+
+**Key code reuse:**
+- Vorbis Comment field mapping: identical to FLAC (extract shared helpers from `flac.go`)
+- ID3v2 tag building for WAV: identical to MP3 (`applyTextChanges()`, `applyCoverArtChanges()`)
+- AtomicWrite: used as-is by both writers
+- `dhowden/tag` for read-back verification in tests
 
 ### Critical Pitfalls
 
-Top 5 from [PITFALLS.md](./PITFALLS.md), ordered by severity:
+1. **OGG CRC32 non-standard bit ordering (P1)** — OGG uses MSB-first CRC32 with polynomial 0x04c11db7. Go's `hash/crc32` uses reflected (LSB-first) ordering and produces wrong checksums. Must implement custom CRC or port from `jfreymuth/oggvorbis/crc.go`.
 
-1. **Refactoring concurrency without tests creates invisible regressions** — Write characterization tests BEFORE fixing races. Fix `SetContext` first (lowest risk), Player last (most complex). The race detector is the oracle.
-2. **Player deadlock from mutex + speaker lock ordering violation** — NEVER remove the `go p.onPlaybackFinished()` goroutine dispatch. NEVER refactor player lock code without drawing the full lock acquisition graph. Extract pure logic; leave lock-sensitive paths alone.
-3. **FTS5 query consolidation breaks search ranking** — Write search tests BEFORE consolidating. Consolidate the JOIN clause only, not full queries. Verify `COALESCE` behavior is identical across all copies.
-4. **Queue persistence migration loses queue state** — New persistence code must read old format. Test old-write → new-read compatibility. Keep full rewrite as fallback for complex operations.
-5. **SQLite in-memory tests behave differently from file-based production** — Test helper must mirror production `NewDB()` exactly: same PRAGMAs, same migration sequence, `PRAGMA foreign_keys = ON`. Use `t.TempDir()` for file-based tests when WAL behavior matters.
+2. **OGG page sequence number continuity (P2)** — Rewriting comment header may change the number of header pages, requiring all subsequent page sequence numbers to be renumbered. Use full-stream rewrite approach (correct by construction).
+
+3. **OGG granule position preservation (P3)** — Header pages must have granule position 0; audio pages must preserve original granule positions exactly. Corruption here breaks seeking and duration reporting.
+
+4. **WAV RIFF chunk size updates (P6)** — Adding or resizing the `id3 ` chunk requires updating the outer RIFF header size field. Wrong size makes the file appear truncated to some players.
+
+5. **WAV chunk word alignment (P10)** — RIFF chunks must start at even byte offsets. Odd-length chunks need a padding byte that's NOT included in the chunk's size field but IS part of the physical file.
+
+### WAV Metadata Approach Decision
+
+Research revealed a tension between two approaches:
+- **RIFF INFO:** Native WAV format, simple, but can't represent album_artist, disc_number, or cover art
+- **ID3v2-in-WAV:** Reuses existing `bogem/id3v2`, full field + cover art support, read by `dhowden/tag`
+
+**Decision: ID3v2-in-WAV.** This gives full field parity with MP3, enables cover art, reuses existing code, and round-trips through `dhowden/tag` (our reader). RIFF INFO is preserved when present but not written to.
 
 ## Implications for Roadmap
 
-Based on dependency analysis across all four research files, with convergent recommendations:
+Based on research, suggested phase structure:
 
-### Phase 1: Correctness Fixes & Test Foundation
+### Phase 1: WAV Tag Writer
+**Rationale:** Lower risk, faster to implement. Reuses existing `bogem/id3v2` library and `applyTextChanges()`/`applyCoverArtChanges()` from MP3 writer. RIFF container is simpler than OGG (no checksums, no page segmentation). Building this first proves the pipeline extension pattern works before tackling the harder OGG format.
+**Delivers:** WAV text tag writing (all 8 fields) + cover art + round-trip tests
+**Addresses:** WAV table stakes + WAV cover art (differentiator, but trivial since it reuses MP3 APIC code)
+**Avoids:** P5 (use ID3v2, not RIFF INFO), P6 (careful RIFF size bookkeeping), P10 (chunk alignment padding)
+**New code:** ~200 LOC `wav.go` + ~250 LOC `wav_test.go` + ~15 LOC pipeline changes
+**Estimated effort:** Small — RIFF parsing is straightforward binary parsing
 
-**Rationale:** Every other phase depends on either the concurrency fixes (to unblock `-race`-clean tests) or the test infrastructure (to safely refactor). This is the critical enabler. All four research files independently recommend this as the first step.
+### Phase 2: OGG Vorbis Text Tag Writer
+**Rationale:** OGG requires the most new infrastructure (page parser, CRC32, segmentation). Text-only tag writing exercises all the hard parts (page rewrite, CRC, sequence numbers) without the added complexity of multi-page comment packets from large cover art. This is the riskiest phase and benefits from Phase 1 having proven the pipeline extension works.
+**Delivers:** OGG Vorbis text tag writing (all 8 fields) + round-trip tests
+**Addresses:** OGG text field table stakes, audio data preservation, existing comment preservation
+**Avoids:** P1 (CRC32), P2 (sequence numbers), P3 (granule positions), P4 (three-header structure), P7 (framing bit), P8 (packet prefix)
+**New code:** ~300 LOC `ogg.go` (page infra + text writer) + ~300 LOC `ogg_test.go`
+**Estimated effort:** Medium — OGG page infrastructure is the hardest new code in this milestone
 
-**Delivers:** Race-free `SetContext` in all packages, `startupErr` moved to struct, config permissions fixed, swallowed errors surfaced, in-memory SQLite test helper, event name codegen, extracted testable player logic.
+### Phase 3: OGG Vorbis Cover Art
+**Rationale:** Separated from Phase 2 because it adds multi-page packet complexity (large base64-encoded images can exceed the ~64KB OGG page limit). Text fields exercise the page infrastructure with small comment packets; cover art stress-tests it with large ones. Can be deferred if Phase 2 runs long without blocking the milestone.
+**Delivers:** OGG Vorbis cover art embed/remove via METADATA_BLOCK_PICTURE
+**Addresses:** OGG cover art differentiator
+**Avoids:** P9 (METADATA_BLOCK_PICTURE format), P15 (multi-page segmentation for large payloads)
+**New code:** ~50 LOC additions to `ogg.go` + ~50 LOC additions to `ogg_test.go`
+**Estimated effort:** Small if Phase 2's page infrastructure is solid; medium if multi-page edge cases surface
 
-**Features addressed:** All "Must fix" table stakes items + test infrastructure.
-
-**Pitfalls avoided:** Pitfall 1 (concurrency without tests), Pitfall 2 (in-memory test divergence), Pitfall 5 (config migration failures via roundtrip test).
-
-**Estimated items:** ~10 discrete changes, all LOW-MEDIUM effort individually.
-
-### Phase 2: Core Test Suite
-
-**Rationale:** With concurrency fixed and test infrastructure in place, write the safety net that protects all subsequent refactoring. Tests target the code AS IT IS (characterization tests), not as it will be after optimization.
-
-**Delivers:** Queue unit tests (~15-20), database/search tests (~10-15), config roundtrip tests (~8-10), player pure logic tests (~5-8), event parity test (1). Approximately 40-55 tests total.
-
-**Features addressed:** All test coverage items from FEATURES.md.
-
-**Pitfalls avoided:** Pitfall 1 (provides the safety net), Pitfall 4 (search tests before consolidation), Pitfall 6 (queue persistence tests before optimization).
-
-**Estimated effort:** HIGH — this is the largest phase by work volume, but it's the foundation for everything else.
-
-### Phase 3: SQL & Performance Optimization
-
-**Rationale:** With tests as a safety net, refactor the SQL layer and persistence. Schema changes (VIEW creation) should precede query pattern changes. Queue persistence optimization uses existing but unwired sqlc queries.
-
-**Delivers:** Deduplicated FTS5 queries via SQLite VIEW, incremental queue persistence for add/remove operations, SetQueue Phase 2 redundant lookup fix, scan warnings separated from fatal errors.
-
-**Features addressed:** FTS5 consolidation, queue persistence optimization, SetQueue Phase 2 fix, scan error separation.
-
-**Pitfalls avoided:** Pitfall 3 (FTS5 consolidation verified by Phase 2 tests), Pitfall 6 (queue persistence verified by Phase 2 tests).
-
-**Estimated effort:** MEDIUM — changes are well-scoped and verified by existing tests.
-
-### Phase 4: Frontend Performance & Polish
-
-**Rationale:** Frontend changes are independent of backend refactoring and lowest risk. The library store lazy loading is nearly zero-effort (removing code, not adding it). UI polish is last because it's the lowest priority for a consolidation milestone.
-
-**Delivers:** Lazy library loading (remove `eagerFetch()`), optimized re-renders with `repeat()` directive and stable keys, documentation of intentional exceptions (hand-crafted SQL, singleton store lifecycle).
-
-**Features addressed:** Library store lazy loading, frontend rendering optimization, documentation.
-
-**Pitfalls avoided:** Pitfall 5 (eager-to-lazy UX regression — mitigate by keeping eager for default view, audit all `getCached*` call sites).
-
-**Estimated effort:** LOW-MEDIUM — mostly removing code and CSS changes.
+### Phase 4: Edge Cases and Cleanup
+**Rationale:** Validation and hardening after core functionality works. Adds detection/rejection of unsupported edge cases, size warnings, and documentation updates.
+**Delivers:** RF64 detection, multi-stream OGG detection, large file warnings, PROJECT.md updates
+**Addresses:** P13 (multi-stream OGG), P16 (RF64 WAV), P12 (disk space for large files)
+**New code:** ~30 LOC validation checks + documentation updates
+**Estimated effort:** Small
 
 ### Phase Ordering Rationale
 
-- **Phase 1 → Phase 2:** You cannot write `-race`-clean tests without fixing the SetContext races first. Test infrastructure (`NewTestDB`) must exist before any DB-dependent tests.
-- **Phase 2 → Phase 3:** Refactoring SQL and persistence without tests is the #1 pitfall identified by research. The tests characterize current behavior, then the refactoring is verified against them.
-- **Phase 3 → Phase 4:** Frontend changes don't depend on backend refactoring, but doing them last means the backend API is stable. The SQLite VIEW from Phase 3 doesn't affect the frontend.
-- **Within Phase 1:** SetContext fixes → test helper → event codegen (independent items, can be parallelized).
-- **Within Phase 3:** SQL VIEW creation → query migration → queue persistence (schema before queries before consumers).
+- **WAV before OGG:** WAV is lower risk (reuses existing ID3v2 library, simpler container) and proves the pipeline extension pattern. OGG requires all-new page infrastructure with correctness-critical CRC and sequencing.
+- **OGG text before OGG cover art:** Text fields exercise the page rewrite with small comment packets. Cover art adds multi-page complexity that should only be attempted once the core page infrastructure is validated by round-trip tests.
+- **Edge cases last:** Detection/rejection of unusual files (RF64, multi-stream) is low risk and low effort — just validation guards at file-open time.
 
 ### Research Flags
 
 Phases likely needing deeper research during planning:
-- **Phase 2 (Core Test Suite):** The queue test architecture needs careful design — mock player interface, test data seeding patterns, event verification strategy. `/gsd-research-phase` recommended for the queue test design.
-- **Phase 3 (SQL Optimization):** sqlc's handling of SQLite VIEWs with FTS5 virtual tables needs validation. The VIEW concept is sound but edge cases in sqlc's SQLite parser are unknown. Quick validation needed before committing to VIEW approach.
+- **Phase 2 (OGG text writer):** The OGG page re-segmentation and CRC implementation is the most complex new code. The spec is clear, but implementation details (lacing values, continuation flags, packet splitting across pages) benefit from studying `jfreymuth/oggvorbis` source as reference. Phase-level research recommended.
 
 Phases with standard patterns (skip research-phase):
-- **Phase 1 (Correctness Fixes):** All fixes are mechanical (add lock, move field, fix permissions). Well-documented Go patterns.
-- **Phase 4 (Frontend):** Removing `eagerFetch()` is a one-line change. Lit `repeat()` directive is well-documented.
+- **Phase 1 (WAV writer):** RIFF parsing is trivial; ID3v2 tag generation reuses existing code. Well-documented, no unknowns.
+- **Phase 3 (OGG cover art):** METADATA_BLOCK_PICTURE format is well-specified; base64 encoding is trivial. Only depends on Phase 2's page infrastructure being correct.
+- **Phase 4 (edge cases):** Simple validation checks with clear specifications.
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH | All recommendations come from official docs (SQLite, Go stdlib, Lit, beep). Existing stack is correct; only PRAGMAs need addition. |
-| Features | HIGH | All improvements grounded in direct codebase analysis + CONCERNS.md. Priority ordering validated by dependency analysis across all research files. |
-| Architecture | HIGH | Patterns from Go stdlib, sqlc official docs. One MEDIUM area: sqlc VIEW support for SQLite needs validation. |
-| Pitfalls | HIGH | All pitfalls derived from actual code paths (lock ordering, FTS5 duplication, persistence pattern). Recovery strategies are concrete. |
+| Stack | HIGH | Zero new dependencies; all recommendations based on official specs and existing codebase analysis |
+| Features | HIGH | Feature set derived from official format specs (Xiph.org, RIFF) and existing codebase field model |
+| Architecture | HIGH | Full codebase analysis confirms pipeline was designed for format extension; minimal changes needed |
+| Pitfalls | HIGH | Pitfalls sourced from official OGG/RIFF specs, cross-referenced with existing library implementations |
 
 **Overall confidence:** HIGH
 
 ### Gaps to Address
 
-- **sqlc + SQLite VIEW + FTS5 compatibility:** MEDIUM confidence that sqlc correctly parses queries against VIEWs that JOIN with FTS5 virtual tables. Validate during Phase 3 planning — if it doesn't work, fall back to Go string constant for the JOIN clause.
-- **`@lit-labs/signals` stability:** Used for signal-based reactivity in the frontend. Experimental API (v0.2.0) may change. Not blocking for consolidation but worth noting for future milestones.
-- **Library scan test fixtures:** Testing the library scan requires audio file fixtures or a mock filesystem. `testing/fstest.MapFS` may not be sufficient for the metadata parsing paths. May need real (tiny) audio files as test fixtures. Validate during Phase 2 planning.
-- **Lazy loading measurement:** The recommendation to remove `eagerFetch()` is based on architecture analysis, not profiling data. Before Phase 4, measure actual startup time with a large library to confirm lazy loading is beneficial.
+- **`bogem/id3v2` WAV compatibility:** The library's `Open()`/`Save()` API expects MP3 file structure. For WAV, we'll need to use `ParseReader()` to read existing ID3v2 tags from a byte slice, and `WriteTo()` to serialize the tag to bytes for embedding in the RIFF chunk. This needs validation during Phase 1 implementation — if `ParseReader` doesn't work for standalone tag parsing, we may need to create tags from scratch (losing existing ID3v2 data in the WAV).
+- **OGG test fixture creation:** Cannot programmatically generate a valid OGG Vorbis file (requires Vorbis codebook data in setup header). Need to embed a minimal OGG fixture via `//go:embed`. Can be created once with ffmpeg during Phase 2 setup.
+- **Multi-stream OGG prevalence:** Research confirms multi-stream OGG music files are extremely rare, but we should detect and reject them rather than silently corrupting. Validation during Phase 2.
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- SQLite WAL documentation: https://www.sqlite.org/wal.html
-- SQLite PRAGMA documentation: https://www.sqlite.org/pragma.html
-- modernc.org/sqlite API: https://pkg.go.dev/modernc.org/sqlite@v1.46.1
-- Go race detector: https://go.dev/doc/articles/race_detector
-- gopxl/beep wiki: https://github.com/gopxl/beep/wiki/Composing-and-controlling
-- Lit rendering docs: https://lit.dev/docs/components/rendering/
-- Lit repeat directive: https://lit.dev/docs/templates/lists/#the-repeat-directive
-- sqlc official docs: https://docs.sqlc.dev/en/stable/
-- Codebase analysis: `.planning/codebase/CONCERNS.md`, `.planning/codebase/STACK.md`
-- Direct code inspection of all backend and frontend source files
+- OGG framing specification: https://xiph.org/ogg/doc/framing.html
+- OGG RFC 3533: https://xiph.org/ogg/doc/rfc3533.txt
+- Vorbis I Specification (comment field): https://xiph.org/vorbis/doc/Vorbis_I_spec.html
+- Vorbis Comment specification: https://xiph.org/vorbis/doc/v-comment.html
+- METADATA_BLOCK_PICTURE: https://wiki.xiph.org/VorbisComment#METADATA_BLOCK_PICTURE
+- FLAC Picture block format: https://xiph.org/flac/format.html#metadata_block_picture
+- RIFF/WAV format: https://www.mmsp.ece.mcgill.ca/documents/AudioFormats/WAVE/WAVE.html
 
 ### Secondary (MEDIUM confidence)
-- beep speaker.Lock() behavior — inferred from beep wiki + codebase lock ordering comments
-- sqlc VIEW support for SQLite — documented for PostgreSQL, inferred for SQLite
-- Wails v2 binding generation and event system limitations — based on codebase patterns
+- WAV metadata overview: https://en.wikipedia.org/wiki/WAV#Metadata
+- RIFF tag reference: https://exiftool.org/TagNames/RIFF.html
+
+### Libraries (HIGH confidence — direct code review)
+- `jfreymuth/oggvorbis` v1.0.5: OGG page reader reference, CRC32 lookup table
+- `dhowden/tag`: Reads OGG + WAV tags; validates round-trip correctness
+- `bogem/id3v2` v2.1.4: ID3v2 tag generation for WAV `id3 ` chunks
+- `go-flac/flacpicture` v2.0.2: FLAC picture block builder, reused for OGG METADATA_BLOCK_PICTURE
+- `go-audio/wav` (ARCHIVED 2026-02-21): Evaluated and rejected
+- `mccoyst/ogg` (37 stars, no semver): Evaluated and rejected — marginal benefit vs dependency risk
+
+### Codebase (HIGH confidence — validated in v1.2)
+- `backend/tagwriter/flac.go` — Vorbis Comment manipulation patterns to reuse
+- `backend/tagwriter/mp3.go` — ID3v2 + AtomicWrite patterns to reuse for WAV
+- `backend/tagwriter/pipeline.go` — Format dispatch switch to extend
+- `backend/tagwriter/tagwriter.go` — TagChanges model, format detection, helpers
+- `backend/fileutil/atomicwrite.go` — Crash-safe file write utility
 
 ---
-*Research completed: 2026-02-27*
+*Research completed: 2026-03-18*
 *Ready for roadmap: yes*

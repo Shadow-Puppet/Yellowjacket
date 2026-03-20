@@ -2,14 +2,26 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 import { EventsOn } from '@runtime/runtime';
-import { Scan, FullRescan } from '@go/library/Library';
 import {
-    GetLibraryDirectory,
-    SetLibraryDirectory,
+    FullRescan,
+    CancelCurrentScan,
+    CancelAllScans,
+    ScanAllLibraries,
+    ScanLibrary,
+    PauseScan,
+    ResumeScan,
+    AddLibrary,
+    RenameLibrary,
+    RemoveLibrary,
+    GetRemovalImpact,
+    GetAllLibrariesWithTrackCounts,
+} from '@go/library/Library';
+import {
     GetScanConcurrency,
     SetScanConcurrency,
 } from '@go/config/Config';
 import { DirectoryPicker } from '@go/frontendutil/FrontendUtil';
+import type { library } from '@go/models';
 import { ThemeController } from '@store/controllers/theme-controller';
 import { TrackListController } from '@store/controllers/tracklist-controller';
 import { FavoritesController } from '@store/controllers/favorites-controller';
@@ -26,6 +38,12 @@ import {
 
 import './config-field';
 import './config-section';
+import './shortcut-capture';
+import { shortcutsStore } from '../../store/shortcuts-store';
+import { ShortcutsController } from '../../store/controllers/shortcuts-controller';
+
+const SCROLL_STORAGE_KEY = 'yj-now-playing-scroll-mode';
+const SCROLL_CHANGE_EVENT = 'yj-scroll-mode-changed';
 
 // ===================================================================
 // Scan metrics types and helpers (carried over from library-manager)
@@ -40,6 +58,9 @@ interface ScanProgress {
     added: number;
     skipped: number;
     updated: number;
+    libraryId: number;
+    libraryName: string;
+    queuedCount: number;
 }
 
 interface ScanMetrics {
@@ -68,6 +89,7 @@ interface ScanMetrics {
     updated: number;
     skipped: number;
     removed: number;
+    cancelled: boolean;
 }
 
 function fmtNs(ns: number): string {
@@ -201,12 +223,134 @@ export class ConfigPage extends LitElement {
     // --- Favorites controller ---
     private favCtrl = new FavoritesController(this);
 
+    // --- Shortcuts controller ---
+    private shortcutsCtrl = new ShortcutsController(this);
+
+    // --- Shortcut metadata for UI grouping ---
+    private static readonly SHORTCUT_META: Record<
+        string,
+        {
+            label: string;
+            category: string;
+            scope: string;
+            defaultKey: string;
+        }
+    > = {
+        'player.playPause': {
+            label: 'Play / Pause',
+            category: 'Player',
+            scope: 'global',
+            defaultKey: 'Space',
+        },
+        'player.next': {
+            label: 'Next Track',
+            category: 'Player',
+            scope: 'global',
+            defaultKey: 'N',
+        },
+        'player.previous': {
+            label: 'Previous Track',
+            category: 'Player',
+            scope: 'global',
+            defaultKey: 'P',
+        },
+        'player.volumeUp': {
+            label: 'Volume Up',
+            category: 'Player',
+            scope: 'global',
+            defaultKey: 'Up',
+        },
+        'player.volumeDown': {
+            label: 'Volume Down',
+            category: 'Player',
+            scope: 'global',
+            defaultKey: 'Down',
+        },
+        'player.seekForward': {
+            label: 'Seek Forward',
+            category: 'Player',
+            scope: 'global',
+            defaultKey: 'Right',
+        },
+        'player.seekBack': {
+            label: 'Seek Back',
+            category: 'Player',
+            scope: 'global',
+            defaultKey: 'Left',
+        },
+        'player.shuffle': {
+            label: 'Toggle Shuffle',
+            category: 'Player',
+            scope: 'global',
+            defaultKey: 'S',
+        },
+        'player.repeat': {
+            label: 'Cycle Repeat',
+            category: 'Player',
+            scope: 'global',
+            defaultKey: 'R',
+        },
+        'player.mute': {
+            label: 'Toggle Mute',
+            category: 'Player',
+            scope: 'global',
+            defaultKey: 'M',
+        },
+        'nav.search': {
+            label: 'Focus Search',
+            category: 'Navigation',
+            scope: 'global',
+            defaultKey: '/',
+        },
+        'nav.searchAlt': {
+            label: 'Focus Search (Alt)',
+            category: 'Navigation',
+            scope: 'global',
+            defaultKey: 'Ctrl+F',
+        },
+        'nav.queue': {
+            label: 'Toggle Queue',
+            category: 'Navigation',
+            scope: 'global',
+            defaultKey: 'Q',
+        },
+        'app.selectAll': {
+            label: 'Select All',
+            category: 'App',
+            scope: 'global',
+            defaultKey: 'Ctrl+A',
+        },
+        'tracklist.play': {
+            label: 'Play Selected',
+            category: 'Navigation',
+            scope: 'panel:track-list',
+            defaultKey: 'Enter',
+        },
+        'tracklist.delete': {
+            label: 'Remove Selected',
+            category: 'Navigation',
+            scope: 'panel:track-list',
+            defaultKey: 'Delete',
+        },
+    };
+
+    // --- Now Playing state ---
+    @state() private scrollMode = 'hover';
+
     // --- Favorites state ---
     @state() private playlists: playlist.Summary[] = [];
 
     // --- Library state ---
-    @state() private libraryDirectory = '';
-    @state() private selectedDirectory = '';
+    @state() private libraries: library.Info[] = [];
+    @state() private editingLibraryId: number | null = null;
+    @state() private editingName = '';
+    @state() private removingLibraryId: number | null = null;
+    @state() private removalImpact: library.RemovalImpact | null = null;
+    @state() private isRemoving = false;
+    @state() private toastMessage = '';
+    @state() private toastVisible = false;
+    @state() private activeMenuId: number | null = null;
+    @state() private selectedLibraryIds: Set<number> = new Set();
     @state() private scanning = false;
     @state() private statusMessage = '';
     @state() private scanProgress: ScanProgress | null = null;
@@ -215,10 +359,28 @@ export class ConfigPage extends LitElement {
     @state() private errorsCopied = false;
     @state() private scanErrors = '';
     @state() private concurrencyMode = 'auto';
+    @state() private scanPaused = false;
+    @state() private showCancelDialog = false;
+    @state() private cancelMetrics: { added: number } | null = null;
+    @state() private scanQueuedCount = 0;
+    @state() private shortcutConflict: {
+        newAction: string;
+        newKey: string;
+        existingAction: string;
+    } | null = null;
 
+    private toastTimer?: ReturnType<typeof setTimeout>;
     private cancelScanStarted?: () => void;
     private cancelScanProgress?: () => void;
     private cancelScanComplete?: () => void;
+    private cancelScanPaused?: () => void;
+    private cancelScanResumed?: () => void;
+    private cancelScanCancelled?: () => void;
+    private cancelScanQueued?: () => void;
+    private cancelScanQueueDrained?: () => void;
+    private cancelLibraryAdded?: () => void;
+    private cancelLibraryRenamed?: () => void;
+    private cancelLibraryRemoved?: () => void;
 
     static override styles = css`
         :host {
@@ -604,6 +766,335 @@ export class ConfigPage extends LitElement {
             );
         }
 
+        /* Cancel confirmation dialog */
+        .cancel-dialog-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.6);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .cancel-dialog {
+            background: var(
+                --yj-bg-surface,
+                #2a2a2a
+            );
+            border: 1px solid
+                var(--yj-border, #444);
+            border-radius: 8px;
+            padding: 24px;
+            max-width: 420px;
+            width: 90%;
+        }
+
+        .cancel-dialog-title {
+            font-size: var(--yj-text-lg, 18px);
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+
+        .cancel-dialog-message {
+            font-size: var(--yj-text-sm, 14px);
+            color: var(
+                --yj-text-secondary,
+                #aaa
+            );
+            margin-bottom: 20px;
+        }
+
+        .cancel-dialog-actions {
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+        }
+
+        .btn-primary {
+            background: var(
+                --yj-accent,
+                #ffd43b
+            );
+            color: var(--yj-bg-base, #1a1b1e);
+            font-weight: 600;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            filter: brightness(1.1);
+        }
+
+        .status-bar.paused {
+            color: var(--yj-accent, #ffd43b);
+        }
+
+        /* Library management */
+        .library-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0;
+        }
+
+        .library-header {
+            display: flex;
+            align-items: center;
+            gap: 0.75em;
+            padding: 0.4em 0.5em;
+            border-bottom: 1px solid var(--yj-border-subtle, #333);
+            font-size: var(--yj-text-sm, 0.8em);
+            color: var(--yj-text-muted, #999);
+        }
+
+        .library-header-label {
+            user-select: none;
+        }
+
+        .library-checkbox {
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+
+        .library-row {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 0.5em 0.75em;
+            padding: 0.6em 0.5em;
+            border-bottom: 1px solid var(--yj-border-subtle, #333);
+        }
+
+        .library-row:last-child {
+            border-bottom: none;
+        }
+
+        .library-row:hover {
+            background: var(--yj-bg-elevated, #343a40);
+            border-radius: 4px;
+        }
+
+        .library-row .inline-progress {
+            flex-basis: 100%;
+            padding-left: 1.75em;
+        }
+
+        .library-row .inline-progress .progress-track {
+            margin-top: 0.25em;
+        }
+
+        .library-scan-status {
+            font-size: 0.75em;
+            font-weight: 400;
+            color: var(--yj-accent, #ffd43b);
+            white-space: nowrap;
+        }
+
+        .library-name {
+            flex: 1;
+            cursor: pointer;
+            font-size: 0.9em;
+            font-weight: 500;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .library-name:hover {
+            color: var(--yj-accent, #ffd43b);
+        }
+
+        .library-path {
+            color: var(--yj-text-tertiary, #868e96);
+            font-size: var(--yj-text-sm, 13px);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            max-width: 300px;
+        }
+
+        .library-count {
+            color: var(--yj-text-tertiary, #868e96);
+            font-size: var(--yj-text-sm, 13px);
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+
+        .edit-input {
+            flex: 1;
+            padding: 0.3em 0.5em;
+            background: var(--yj-bg-elevated, #343a40);
+            border: 1px solid var(--yj-accent, #ffd43b);
+            border-radius: 4px;
+            color: var(--yj-text-primary, #fff);
+            font-size: 0.9em;
+            font-family: inherit;
+            outline: none;
+        }
+
+        .overflow-wrapper {
+            position: relative;
+            flex-shrink: 0;
+        }
+
+        .overflow-btn {
+            cursor: pointer;
+            border: none;
+            background: transparent;
+            color: var(--yj-text-tertiary, #868e96);
+            font-size: 1.1em;
+            padding: 0.2em 0.4em;
+            letter-spacing: 2px;
+            border-radius: 4px;
+        }
+
+        .overflow-btn:hover {
+            background: var(--yj-bg-overlay, #495057);
+            color: var(--yj-text-primary, #fff);
+        }
+
+        .overflow-menu {
+            position: absolute;
+            top: 100%;
+            right: 0;
+            background: var(--yj-bg-surface, #2a2a2a);
+            border: 1px solid var(--yj-border, #444);
+            border-radius: 6px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            z-index: 100;
+            min-width: 120px;
+            padding: 4px 0;
+        }
+
+        .overflow-item {
+            padding: 0.5em 1em;
+            font-size: var(--yj-text-sm, 13px);
+            cursor: pointer;
+            white-space: nowrap;
+        }
+
+        .overflow-item:hover {
+            background: var(--yj-bg-elevated, #343a40);
+        }
+
+        .overflow-item--danger {
+            color: var(--yj-error, #e03131);
+        }
+
+        .overflow-item--danger:hover {
+            background: color-mix(
+                in srgb,
+                var(--yj-error, #e03131) 10%,
+                var(--yj-bg-elevated, #343a40)
+            );
+        }
+
+        .toast {
+            position: fixed;
+            bottom: 80px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--yj-bg-surface, #2a2a2a);
+            color: var(--yj-text-primary, #fff);
+            padding: 0.75em 1.5em;
+            border-radius: 8px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+            font-size: var(--yj-text-sm, 13px);
+            z-index: 2000;
+            border: 1px solid var(--yj-border, #444);
+            animation: toast-in 0.2s ease-out;
+        }
+
+        @keyframes toast-in {
+            from {
+                opacity: 0;
+                transform: translateX(-50%)
+                    translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(-50%)
+                    translateY(0);
+            }
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+            vertical-align: middle;
+            margin-right: 4px;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* Keyboard shortcuts section */
+        .shortcut-category {
+            margin-bottom: 16px;
+        }
+        .shortcut-category-header {
+            font-size: var(--yj-text-sm, 13px);
+            font-weight: 600;
+            color: var(--yj-text-secondary, #aaa);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+            padding-bottom: 4px;
+            border-bottom: 1px solid
+                var(--yj-border, #444);
+        }
+        .shortcut-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 6px 0;
+            gap: 16px;
+        }
+        .shortcut-label {
+            font-size: var(--yj-text-sm, 13px);
+            color: var(--yj-text-primary, #eee);
+        }
+        .shortcut-scope {
+            font-size: var(--yj-text-xs, 11px);
+            color: var(
+                --yj-text-tertiary,
+                #888
+            );
+            margin-left: 4px;
+        }
+        .shortcut-actions {
+            margin-top: 16px;
+            display: flex;
+            justify-content: flex-end;
+        }
+        .conflict-banner {
+            margin-top: 12px;
+            padding: 12px;
+            background: rgba(255, 165, 0, 0.1);
+            border: 1px solid
+                rgba(255, 165, 0, 0.4);
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+        .conflict-text {
+            font-size: var(--yj-text-sm, 13px);
+        }
+        .conflict-actions {
+            display: flex;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+
     `;
 
     // ===================================================================
@@ -612,8 +1103,10 @@ export class ConfigPage extends LitElement {
 
     override connectedCallback(): void {
         super.connectedCallback();
-        this.loadLibraryConfig();
+        void this.loadLibraries();
         void this.loadPlaylists();
+        this.scrollMode =
+            localStorage.getItem(SCROLL_STORAGE_KEY) || 'hover';
 
         this.cancelScanStarted = EventsOn(
             Events.LibraryScanStarted,
@@ -627,6 +1120,40 @@ export class ConfigPage extends LitElement {
             Events.LibraryScanComplete,
             this.handleScanComplete,
         );
+        this.cancelScanPaused = EventsOn(
+            Events.LibraryScanPaused,
+            this.handleScanPaused,
+        );
+        this.cancelScanResumed = EventsOn(
+            Events.LibraryScanResumed,
+            this.handleScanResumed,
+        );
+        this.cancelScanCancelled = EventsOn(
+            Events.LibraryScanCancelled,
+            this.handleScanCancelled,
+        );
+        this.cancelScanQueued = EventsOn(
+            Events.LibraryScanQueued,
+            this.handleScanQueued,
+        );
+        this.cancelScanQueueDrained = EventsOn(
+            Events.LibraryScanQueueDrained,
+            this.handleScanQueueDrained,
+        );
+        this.cancelLibraryAdded = EventsOn(
+            Events.LibraryAdded,
+            () => void this.loadLibraries(),
+        );
+        this.cancelLibraryRenamed = EventsOn(
+            Events.LibraryRenamed,
+            () => void this.loadLibraries(),
+        );
+        this.cancelLibraryRemoved = EventsOn(
+            Events.LibraryRemoved,
+            () => void this.loadLibraries(),
+        );
+
+        document.addEventListener('click', this.handleDocumentClick);
     }
 
     override disconnectedCallback(): void {
@@ -634,21 +1161,40 @@ export class ConfigPage extends LitElement {
         this.cancelScanStarted?.();
         this.cancelScanProgress?.();
         this.cancelScanComplete?.();
+        this.cancelScanPaused?.();
+        this.cancelScanResumed?.();
+        this.cancelScanCancelled?.();
+        this.cancelScanQueued?.();
+        this.cancelScanQueueDrained?.();
+        this.cancelLibraryAdded?.();
+        this.cancelLibraryRenamed?.();
+        this.cancelLibraryRemoved?.();
+
+        document.removeEventListener('click', this.handleDocumentClick);
+
+        if (this.toastTimer) clearTimeout(this.toastTimer);
     }
 
-    private async loadLibraryConfig(): Promise<void> {
+    private async loadLibraries(): Promise<void> {
         try {
-            const [dir, mode] = await Promise.all([
-                GetLibraryDirectory(),
+            const [libs, mode] = await Promise.all([
+                GetAllLibrariesWithTrackCounts(),
                 GetScanConcurrency(),
             ]);
 
-            this.libraryDirectory = dir;
-            this.selectedDirectory = dir;
+            this.libraries = libs ?? [];
             this.concurrencyMode = mode;
+
+            // Prune selections for libraries that no longer exist.
+            if (this.selectedLibraryIds.size > 0) {
+                const validIds = new Set(this.libraries.map((l) => l.id));
+                const pruned = new Set([...this.selectedLibraryIds].filter((id) => validIds.has(id)));
+
+                this.selectedLibraryIds = pruned;
+            }
         } catch (err) {
             console.error(
-                'Failed to load library config:',
+                'Failed to load libraries:',
                 err,
             );
         }
@@ -673,51 +1219,259 @@ export class ConfigPage extends LitElement {
     ): void => {
         if (progress) {
             this.scanProgress = progress;
+            this.scanQueuedCount =
+                progress.queuedCount ?? 0;
         }
     };
 
     private handleScanComplete = (
         metrics?: ScanMetrics,
     ): void => {
-        this.scanning = false;
         this.scanProgress = null;
+
+        // If queue still has entries, don't fully reset — next scan will fire ScanStarted
+        if (this.scanQueuedCount > 0) {
+            if (metrics) {
+                this.metrics = metrics;
+            }
+            return;
+        }
+
+        this.scanning = false;
+        this.scanPaused = false;
         this.statusMessage = 'Scan complete.';
 
         if (metrics) {
             this.metrics = metrics;
         }
+
+        // Refresh track counts after scan finishes.
+        void this.loadLibraries();
     };
 
-    private handleDirectoryBrowse = async (): Promise<void> => {
+    private handleScanQueued = (): void => {
+        this.scanQueuedCount++;
+    };
+
+    private handleScanQueueDrained = (): void => {
+        this.scanQueuedCount = 0;
+        this.scanning = false;
+        this.scanPaused = false;
+
+        // Refresh track counts after all queued scans finish.
+        void this.loadLibraries();
+    };
+
+    private handleScanPaused = (): void => {
+        this.scanPaused = true;
+    };
+
+    private handleScanResumed = (): void => {
+        this.scanPaused = false;
+    };
+
+    private handleScanCancelled = (
+        metrics?: ScanMetrics,
+    ): void => {
+        this.scanning = false;
+        this.scanPaused = false;
+        this.scanProgress = null;
+
+        if (metrics) {
+            this.metrics = metrics;
+            this.statusMessage =
+                metrics.cancelled
+                    ? 'Scan cancelled.'
+                    : 'Scan complete.';
+        } else {
+            this.statusMessage = 'Scan cancelled.';
+        }
+    };
+
+    private handlePauseScan = (): void => {
+        PauseScan();
+    };
+
+    private handleResumeScan = (): void => {
+        ResumeScan();
+    };
+
+    private handleCancelScan = (): void => {
+        const added =
+            this.scanProgress?.added ?? 0;
+        this.cancelMetrics = { added };
+        this.showCancelDialog = true;
+    };
+
+    private handleCancelKeep = (): void => {
+        this.showCancelDialog = false;
+        this.cancelMetrics = null;
+        CancelCurrentScan();
+    };
+
+    private handleCancelDiscard = (): void => {
+        this.showCancelDialog = false;
+        this.cancelMetrics = null;
+        CancelCurrentScan();
+        this.statusMessage =
+            'Scan cancelled. Partial results discarded \u2014 run Full Rescan for a clean library.';
+    };
+
+    private handleCancelAll = (): void => {
+        this.showCancelDialog = false;
+        this.cancelMetrics = null;
+        CancelAllScans();
+        this.statusMessage = 'All scanning cancelled.';
+    };
+
+    private handleCancelDialogDismiss = (): void => {
+        this.showCancelDialog = false;
+        this.cancelMetrics = null;
+    };
+
+    private handleAddLibrary = async (): Promise<void> => {
         try {
             const dir = await DirectoryPicker();
 
             if (dir) {
-                this.selectedDirectory = dir;
+                await AddLibrary(dir);
             }
         } catch (err) {
             console.error(
-                'Directory picker failed:',
+                'Failed to add library:',
                 err,
             );
         }
     };
 
-    private handleSaveDirectory = async (): Promise<void> => {
-        if (!this.selectedDirectory) return;
+    private handleStartRename = (id: number, name: string): void => {
+        this.editingLibraryId = id;
+        this.editingName = name;
+        this.activeMenuId = null;
+    };
 
-        try {
-            await SetLibraryDirectory(
-                this.selectedDirectory,
-            );
-            this.libraryDirectory =
-                this.selectedDirectory;
-            this.statusMessage =
-                'Library directory saved. A scan will start automatically if the directory changed.';
-        } catch (err) {
-            this.statusMessage = `Failed to save directory: ${err}`;
+    private handleRenameKeyDown = async (e: KeyboardEvent): Promise<void> => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+
+            if (this.editingLibraryId !== null && this.editingName.trim()) {
+                try {
+                    await RenameLibrary(this.editingLibraryId, this.editingName.trim());
+                } catch (err) {
+                    console.error('Failed to rename library:', err);
+                }
+            }
+
+            this.editingLibraryId = null;
+            this.editingName = '';
+        } else if (e.key === 'Escape') {
+            this.editingLibraryId = null;
+            this.editingName = '';
         }
     };
+
+    private handleRenameInput = (e: InputEvent): void => {
+        this.editingName = (e.target as HTMLInputElement).value;
+    };
+
+    private handleRescanLibrary = (id: number): void => {
+        this.activeMenuId = null;
+        void ScanLibrary(id);
+    };
+
+    private handleRemoveClick = async (id: number): Promise<void> => {
+        this.activeMenuId = null;
+
+        try {
+            const impact = await GetRemovalImpact(id);
+
+            this.removalImpact = impact;
+            this.removingLibraryId = id;
+        } catch (err) {
+            console.error('Failed to get removal impact:', err);
+        }
+    };
+
+    private handleConfirmRemove = async (): Promise<void> => {
+        if (this.removingLibraryId === null) return;
+
+        const id = this.removingLibraryId;
+        const lib = this.libraries.find((l) => l.id === id);
+        const libName = lib?.name ?? 'Library';
+
+        this.isRemoving = true;
+
+        try {
+            const summary = await RemoveLibrary(id);
+
+            this.removingLibraryId = null;
+            this.removalImpact = null;
+            this.isRemoving = false;
+            this.showToast(
+                `Removed '${libName}' (${summary?.tracksDeleted ?? 0} tracks deleted)`,
+            );
+            void this.loadLibraries();
+        } catch (err) {
+            this.isRemoving = false;
+            this.removingLibraryId = null;
+            this.removalImpact = null;
+            console.error('Failed to remove library:', err);
+            this.showToast(`Failed to remove '${libName}': ${String(err)}`);
+        }
+    };
+
+    private handleCancelRemove = (): void => {
+        this.removingLibraryId = null;
+        this.removalImpact = null;
+        this.isRemoving = false;
+    };
+
+    private toggleOverflowMenu = (id: number, e: Event): void => {
+        e.stopPropagation();
+        this.activeMenuId = this.activeMenuId === id ? null : id;
+    };
+
+    private toggleLibrarySelection = (id: number): void => {
+        const next = new Set(this.selectedLibraryIds);
+
+        if (next.has(id)) {
+            next.delete(id);
+        } else {
+            next.add(id);
+        }
+
+        this.selectedLibraryIds = next;
+    };
+
+    private toggleSelectAllLibraries = (): void => {
+        if (this.selectedLibraryIds.size === this.libraries.length) {
+            this.selectedLibraryIds = new Set();
+        } else {
+            this.selectedLibraryIds = new Set(this.libraries.map((l) => l.id));
+        }
+    };
+
+    private handleDocumentClick = (): void => {
+        if (this.activeMenuId !== null) {
+            this.activeMenuId = null;
+        }
+
+        if (this.editingLibraryId !== null) {
+            this.editingLibraryId = null;
+            this.editingName = '';
+        }
+    };
+
+    private showToast(message: string): void {
+        this.toastMessage = message;
+        this.toastVisible = true;
+
+        if (this.toastTimer) clearTimeout(this.toastTimer);
+
+        this.toastTimer = setTimeout(() => {
+            this.toastVisible = false;
+        }, 8000);
+    }
 
     private handleConcurrencyChange = (
         e: CustomEvent<ConfigFieldChangeEvent>,
@@ -737,7 +1491,17 @@ export class ConfigPage extends LitElement {
 
     private handleSoftScan = async (): Promise<void> => {
         try {
-            await Scan();
+            if (this.selectedLibraryIds.size === 0) return;
+
+            // If all libraries selected, use the batch method.
+            if (this.selectedLibraryIds.size === this.libraries.length) {
+                await ScanAllLibraries();
+            } else {
+                // Queue each selected library individually.
+                for (const id of this.selectedLibraryIds) {
+                    await ScanLibrary(id);
+                }
+            }
         } catch (err) {
             this.statusMessage =
                 'Scan completed with errors.';
@@ -901,6 +1665,77 @@ export class ConfigPage extends LitElement {
     };
 
     // ===================================================================
+    // KEYBOARD SHORTCUTS HANDLERS
+    // ===================================================================
+
+    private async handleShortcutChange(
+        e: CustomEvent<{ action: string; key: string }>,
+    ) {
+        const { action, key } = e.detail;
+
+        // Check for conflict — find any other action with the same key in the same or overlapping scope
+        const meta = ConfigPage.SHORTCUT_META[action];
+        const conflict = shortcutsStore.findConflict(
+            key,
+            meta?.scope ?? 'global',
+            action,
+        );
+
+        if (conflict) {
+            // Show conflict warning
+            this.shortcutConflict = {
+                newAction: action,
+                newKey: key,
+                existingAction: conflict.action,
+            };
+            return;
+        }
+
+        // No conflict — save directly
+        await shortcutsStore.updateBinding(action, key);
+    }
+
+    private async handleConflictOverwrite() {
+        if (!this.shortcutConflict) return;
+        const { newAction, newKey, existingAction } =
+            this.shortcutConflict;
+        // Unbind the existing action
+        await shortcutsStore.updateBinding(
+            existingAction,
+            '',
+        );
+        // Set the new binding
+        await shortcutsStore.updateBinding(
+            newAction,
+            newKey,
+        );
+        this.shortcutConflict = null;
+    }
+
+    private handleConflictCancel() {
+        this.shortcutConflict = null;
+    }
+
+    private async handleResetAllShortcuts() {
+        await shortcutsStore.resetAll();
+    }
+
+    // ===================================================================
+    // NOW PLAYING HANDLERS
+    // ===================================================================
+
+    private handleScrollModeChange = (
+        e: CustomEvent<ConfigFieldChangeEvent>,
+    ): void => {
+        const mode = String(e.detail.value);
+        this.scrollMode = mode;
+        localStorage.setItem(SCROLL_STORAGE_KEY, mode);
+        window.dispatchEvent(
+            new CustomEvent(SCROLL_CHANGE_EVENT),
+        );
+    };
+
+    // ===================================================================
     // TRACK LIST COLUMN HANDLERS
     // ===================================================================
 
@@ -991,13 +1826,6 @@ export class ConfigPage extends LitElement {
     // COMPUTED
     // ===================================================================
 
-    private get directoryChanged(): boolean {
-        return (
-            this.selectedDirectory !==
-            this.libraryDirectory
-        );
-    }
-
     private get hasRescanPhases(): boolean {
         if (!this.metrics) return false;
 
@@ -1018,10 +1846,49 @@ export class ConfigPage extends LitElement {
         return html`
             <h2>Settings</h2>
 
+            ${this.renderNowPlayingSection()}
             ${this.renderThemeSection()}
             ${this.renderFavoritesSection()}
             ${this.renderTrackListSection()}
+            ${this.renderShortcutsSection()}
             ${this.renderLibrarySection()}
+        `;
+    }
+
+    // --- Now Playing section ---
+
+    private renderNowPlayingSection() {
+        return html`
+            <config-section
+                heading="Now Playing"
+                description="Configure the now-playing display in the bottom bar."
+            >
+                <config-field
+                    .schema=${{
+                        key: 'scrollMode',
+                        label: 'Text Scroll Behaviour',
+                        description:
+                            'How overflowing track title and artist text is handled when it exceeds the available width.',
+                        type: 'select' as const,
+                        options: [
+                            {
+                                value: 'hover',
+                                label: 'Scroll on Hover (Default)',
+                            },
+                            {
+                                value: 'always',
+                                label: 'Always Scroll',
+                            },
+                            {
+                                value: 'never',
+                                label: 'Never (Ellipsis)',
+                            },
+                        ],
+                    }}
+                    .value=${this.scrollMode}
+                    @config-change=${this.handleScrollModeChange}
+                ></config-field>
+            </config-section>
         `;
     }
 
@@ -1264,38 +2131,325 @@ export class ConfigPage extends LitElement {
         `;
     }
 
+    // --- Keyboard Shortcuts section ---
+
+    private renderShortcutsSection() {
+        const bindings =
+            this.shortcutsCtrl.state.bindings;
+        const categories = [
+            'Player',
+            'Navigation',
+            'App',
+        ];
+
+        return html`
+            <config-section
+                heading="Keyboard Shortcuts"
+                description="Customise key bindings for player controls, navigation, and app actions."
+            >
+                ${categories.map((cat) => {
+                    const actions = Object.entries(
+                        ConfigPage.SHORTCUT_META,
+                    ).filter(
+                        ([, meta]) =>
+                            meta.category === cat,
+                    );
+
+                    if (actions.length === 0) return '';
+
+                    return html`
+                        <div class="shortcut-category">
+                            <div
+                                class="shortcut-category-header"
+                            >
+                                ${cat}
+                            </div>
+                            ${actions.map(
+                                ([action, meta]) => html`
+                                    <div
+                                        class="shortcut-row"
+                                    >
+                                        <span
+                                            class="shortcut-label"
+                                        >
+                                            ${meta.label}
+                                            ${meta.scope !==
+                                            'global'
+                                                ? html`
+                                                      <span
+                                                          class="shortcut-scope"
+                                                          >(${meta.scope.replace(
+                                                              'panel:',
+                                                              '',
+                                                          )})</span
+                                                      >
+                                                  `
+                                                : ''}
+                                        </span>
+                                        <shortcut-capture
+                                            .action=${action}
+                                            .currentKey=${bindings.get(
+                                                action,
+                                            ) ?? ''}
+                                            .defaultKey=${meta.defaultKey}
+                                            @shortcut-change=${this
+                                                .handleShortcutChange}
+                                        ></shortcut-capture>
+                                    </div>
+                                `,
+                            )}
+                        </div>
+                    `;
+                })}
+
+                <div class="shortcut-actions">
+                    <button
+                        class="btn-ghost"
+                        @click=${this
+                            .handleResetAllShortcuts}
+                    >
+                        Reset All to Defaults
+                    </button>
+                </div>
+
+                ${this.shortcutConflict
+                    ? html`
+                          <div class="conflict-banner">
+                              <span
+                                  class="conflict-text"
+                              >
+                                  <strong
+                                      >${this
+                                          .shortcutConflict
+                                          .newKey}</strong
+                                  >
+                                  is already bound to
+                                  <strong
+                                      >${ConfigPage
+                                          .SHORTCUT_META[
+                                          this
+                                              .shortcutConflict
+                                              .existingAction
+                                      ]?.label ??
+                                      this
+                                          .shortcutConflict
+                                          .existingAction}</strong
+                                  >.
+                              </span>
+                              <div
+                                  class="conflict-actions"
+                              >
+                                  <button
+                                      class="btn-warning"
+                                      @click=${this
+                                          .handleConflictOverwrite}
+                                  >
+                                      Overwrite
+                                  </button>
+                                  <button
+                                      class="btn-ghost"
+                                      @click=${this
+                                          .handleConflictCancel}
+                                  >
+                                      Cancel
+                                  </button>
+                              </div>
+                          </div>
+                      `
+                    : ''}
+            </config-section>
+        `;
+    }
+
     // --- Library section ---
 
     private renderLibrarySection() {
+        const removingLib = this.libraries.find(
+            (l) => l.id === this.removingLibraryId,
+        );
+
+        const allSelected = this.libraries.length > 0
+            && this.selectedLibraryIds.size === this.libraries.length;
+        const someSelected = this.selectedLibraryIds.size > 0
+            && !allSelected;
+        const selectionCount = this.selectedLibraryIds.size;
+
         return html`
             <config-section
-                heading="Library"
-                description="Configure your music library location and scanning behaviour."
+                heading="Libraries"
+                description="Manage your music library folders. Select libraries to scan."
             >
-                <config-field
-                    .schema=${{
-                        key: 'libraryDirectory',
-                        label: 'Library Directory',
-                        description:
-                            'The root directory containing your music files.',
-                        type: 'directory' as const,
-                    }}
-                    .value=${this.selectedDirectory}
-                    @config-browse=${this.handleDirectoryBrowse}
-                ></config-field>
-
-                ${this.directoryChanged
-                    ? html`
-                          <div class="save-row">
+                <div class="scan-actions">
+                    <button
+                        class="btn-primary"
+                        @click=${this.handleAddLibrary}
+                    >
+                        Add Library
+                    </button>
+                    ${this.scanning
+                        ? html`
+                              ${this.scanPaused
+                                  ? html`<button
+                                        class="btn-warning"
+                                        @click=${this.handleResumeScan}
+                                    >
+                                        Resume
+                                    </button>`
+                                  : html`<button
+                                        class="btn-warning"
+                                        @click=${this.handlePauseScan}
+                                    >
+                                        Pause
+                                    </button>`}
                               <button
-                                  class="btn-success"
-                                  ?disabled=${this.scanning}
-                                  @click=${this.handleSaveDirectory}
+                                  class="btn-danger"
+                                  @click=${this.handleCancelScan}
                               >
-                                  Save Directory
+                                  Cancel Scan
                               </button>
-                          </div>
-                      `
+                          `
+                        : html`
+                              <button
+                                  class="btn-primary"
+                                  @click=${this.handleSoftScan}
+                                  ?disabled=${selectionCount === 0}
+                              >
+                                  Scan${selectionCount > 0 && selectionCount < this.libraries.length
+                                      ? ` (${selectionCount})`
+                                      : ''}
+                              </button>
+                              <button
+                                  class="btn-danger"
+                                  @click=${this.handleFullRescan}
+                                  ?disabled=${selectionCount === 0}
+                              >
+                                  Full Rescan
+                              </button>
+                          `}
+                </div>
+
+                ${this.libraries.length > 0
+                    ? html`
+                        <div class="library-list">
+                            <div class="library-header">
+                                <input
+                                    type="checkbox"
+                                    class="library-checkbox"
+                                    .checked=${allSelected}
+                                    .indeterminate=${someSelected}
+                                    @change=${this.toggleSelectAllLibraries}
+                                    @click=${(e: Event) => e.stopPropagation()}
+                                />
+                                <span class="library-header-label">
+                                    ${allSelected ? 'All' : someSelected ? `${selectionCount}` : 'None'} selected
+                                </span>
+                            </div>
+                            ${this.libraries.map(
+                                (lib) => {
+                                    const isScanning = this.scanProgress?.libraryId === lib.id
+                                        && this.scanning;
+                                    const p = isScanning ? this.scanProgress : null;
+                                    const percent = p && p.total > 0
+                                        ? Math.min(100, Math.round((p.processed / p.total) * 100))
+                                        : 0;
+                                    const phaseLabels: Record<string, string> = {
+                                        counting: 'Counting\u2026',
+                                        scanning: `Scanning\u2026 ${percent}%`,
+                                        orphans: 'Cleaning up\u2026',
+                                        thumbnails: 'Thumbnails\u2026',
+                                    };
+                                    const statusText = p
+                                        ? phaseLabels[p.phase] ?? 'Scanning\u2026'
+                                        : '';
+
+                                    return html`
+                                    <div class="library-row">
+                                        <input
+                                            type="checkbox"
+                                            class="library-checkbox"
+                                            .checked=${this.selectedLibraryIds.has(lib.id)}
+                                            @change=${() => this.toggleLibrarySelection(lib.id)}
+                                            @click=${(e: Event) => e.stopPropagation()}
+                                        />
+                                        ${this.editingLibraryId === lib.id
+                                            ? html`
+                                                  <input
+                                                      class="edit-input"
+                                                      type="text"
+                                                      .value=${this.editingName}
+                                                      @input=${this.handleRenameInput}
+                                                      @keydown=${this.handleRenameKeyDown}
+                                                      @click=${(e: Event) => e.stopPropagation()}
+                                                  />
+                                              `
+                                            : html`
+                                                  <span
+                                                      class="library-name"
+                                                      @click=${() => this.handleStartRename(lib.id, lib.name)}
+                                                  >
+                                                      ${lib.name}
+                                                  </span>
+                                                  ${statusText
+                                                      ? html`<span class="library-scan-status">${statusText}</span>`
+                                                      : nothing}
+                                              `}
+                                        <span class="library-path">${lib.path}</span>
+                                        <span class="library-count">
+                                            ${lib.trackCount} tracks
+                                        </span>
+                                        <div class="overflow-wrapper">
+                                            <button
+                                                class="overflow-btn"
+                                                @click=${(e: Event) => this.toggleOverflowMenu(lib.id, e)}
+                                            >
+                                                \u22EF
+                                            </button>
+                                            ${this.activeMenuId === lib.id
+                                                ? html`
+                                                      <div
+                                                          class="overflow-menu"
+                                                          @click=${(e: Event) => e.stopPropagation()}
+                                                      >
+                                                          <div
+                                                              class="overflow-item"
+                                                              @click=${() => this.handleStartRename(lib.id, lib.name)}
+                                                          >
+                                                              Rename
+                                                          </div>
+                                                          <div
+                                                              class="overflow-item"
+                                                              @click=${() => this.handleRescanLibrary(lib.id)}
+                                                          >
+                                                              Rescan
+                                                          </div>
+                                                          <div
+                                                              class="overflow-item overflow-item--danger"
+                                                              @click=${() => void this.handleRemoveClick(lib.id)}
+                                                          >
+                                                              Remove
+                                                          </div>
+                                                      </div>
+                                                  `
+                                                : nothing}
+                                        </div>
+                                        ${p && p.phase !== 'counting'
+                                            ? html`
+                                                <div class="inline-progress">
+                                                    <div class="progress-track">
+                                                        <div
+                                                            class="progress-fill"
+                                                            style="width: ${percent}%"
+                                                        ></div>
+                                                    </div>
+                                                </div>
+                                            `
+                                            : nothing}
+                                    </div>
+                                `;
+                                },
+                            )}
+                        </div>
+                    `
                     : nothing}
 
                 <config-field
@@ -1324,32 +2478,11 @@ export class ConfigPage extends LitElement {
                     @config-change=${this.handleConcurrencyChange}
                 ></config-field>
 
-                <div class="scan-actions">
-                    <button
-                        class="btn-warning"
-                        ?disabled=${this.scanning}
-                        @click=${this.handleSoftScan}
-                    >
-                        ${this.scanning
-                            ? 'Scanning...'
-                            : 'Soft Scan'}
-                    </button>
-                    <button
-                        class="btn-danger"
-                        ?disabled=${this.scanning}
-                        @click=${this.handleFullRescan}
-                    >
-                        ${this.scanning
-                            ? 'Scanning...'
-                            : 'Full Rescan'}
-                    </button>
-                </div>
-
                 <div
-                    class="status-bar ${this.scanning ? 'active' : ''}"
+                    class="status-bar ${this.scanning ? 'active' : ''} ${this.scanPaused ? 'paused' : ''}"
                 >
-                    ${this.scanProgress
-                        ? this.renderScanProgress()
+                    ${this.scanPaused
+                        ? 'Scan paused.'
                         : this.statusMessage || 'Ready.'}
                 </div>
 
@@ -1377,7 +2510,163 @@ export class ConfigPage extends LitElement {
                     : ''}
 
                 ${this.renderMetrics()}
+                ${this.showCancelDialog
+                    ? html`
+                          <div
+                              class="cancel-dialog-overlay"
+                              @click=${this.handleCancelDialogDismiss}
+                          >
+                              <div
+                                  class="cancel-dialog"
+                                  @click=${(e: Event) => e.stopPropagation()}
+                              >
+                                  ${this.scanQueuedCount > 0
+                                      ? html`
+                                            <div
+                                                class="cancel-dialog-title"
+                                            >
+                                                Cancel Scanning
+                                            </div>
+                                            <div
+                                                class="cancel-dialog-message"
+                                            >
+                                                A scan is in
+                                                progress with
+                                                ${this
+                                                    .scanQueuedCount}
+                                                ${this
+                                                    .scanQueuedCount ===
+                                                1
+                                                    ? 'library'
+                                                    : 'libraries'}
+                                                still queued.
+                                            </div>
+                                            <div
+                                                class="cancel-dialog-actions"
+                                            >
+                                                <button
+                                                    class="btn-warning"
+                                                    @click=${this.handleCancelKeep}
+                                                >
+                                                    Cancel
+                                                    This
+                                                    Library
+                                                </button>
+                                                <button
+                                                    class="btn-danger"
+                                                    @click=${this.handleCancelAll}
+                                                >
+                                                    Cancel
+                                                    All
+                                                    Scanning
+                                                </button>
+                                                <button
+                                                    class="btn-ghost"
+                                                    @click=${this.handleCancelDialogDismiss}
+                                                >
+                                                    Continue
+                                                    Scanning
+                                                </button>
+                                            </div>
+                                        `
+                                      : html`
+                                            <div
+                                                class="cancel-dialog-title"
+                                            >
+                                                Cancel Scan
+                                            </div>
+                                            <div
+                                                class="cancel-dialog-message"
+                                            >
+                                                ${this
+                                                    .cancelMetrics
+                                                    ?.added
+                                                    ? `Keep ${this.cancelMetrics.added} tracks found so far, or discard?`
+                                                    : 'Cancel the current scan?'}
+                                            </div>
+                                            <div
+                                                class="cancel-dialog-actions"
+                                            >
+                                                <button
+                                                    class="btn-primary"
+                                                    @click=${this.handleCancelKeep}
+                                                >
+                                                    ${this
+                                                        .cancelMetrics
+                                                        ?.added
+                                                        ? `Keep ${this.cancelMetrics.added} tracks`
+                                                        : 'Cancel Scan'}
+                                                </button>
+                                                <button
+                                                    class="btn-danger"
+                                                    @click=${this.handleCancelDiscard}
+                                                >
+                                                    Discard
+                                                </button>
+                                                <button
+                                                    class="btn-ghost"
+                                                    @click=${this.handleCancelDialogDismiss}
+                                                >
+                                                    Continue
+                                                    Scanning
+                                                </button>
+                                            </div>
+                                        `}
+                              </div>
+                          </div>
+                      `
+                    : nothing}
+
+                ${this.removingLibraryId !== null && this.removalImpact
+                    ? html`
+                          <div
+                              class="cancel-dialog-overlay"
+                              @click=${this.handleCancelRemove}
+                          >
+                              <div
+                                  class="cancel-dialog"
+                                  @click=${(e: Event) => e.stopPropagation()}
+                              >
+                                  <div class="cancel-dialog-title">
+                                      Remove Library
+                                  </div>
+                                  <div class="cancel-dialog-message">
+                                      Remove '${removingLib?.name}'?
+                                      This will delete
+                                      ${this.removalImpact.trackCount}
+                                      tracks, affect
+                                      ${this.removalImpact.playlistsAffected}
+                                      playlists, and remove
+                                      ${this.removalImpact.queueItemCount}
+                                      queue items.
+                                  </div>
+                                  <div class="cancel-dialog-actions">
+                                      <button
+                                          class="btn-ghost"
+                                          ?disabled=${this.isRemoving}
+                                          @click=${this.handleCancelRemove}
+                                      >
+                                          Cancel
+                                      </button>
+                                      <button
+                                          class="btn-danger"
+                                          ?disabled=${this.isRemoving}
+                                          @click=${this.handleConfirmRemove}
+                                      >
+                                          ${this.isRemoving
+                                              ? html`<span class="spinner"></span> Removing\u2026`
+                                              : 'Remove'}
+                                      </button>
+                                  </div>
+                              </div>
+                          </div>
+                      `
+                    : nothing}
             </config-section>
+
+            ${this.toastVisible
+                ? html`<div class="toast">${this.toastMessage}</div>`
+                : nothing}
         `;
     }
 
@@ -1395,80 +2684,6 @@ export class ConfigPage extends LitElement {
                     class="metric-value ${highlight ? 'highlight' : ''}"
                     >${value}</span
                 >
-            </div>
-        `;
-    }
-
-    private renderScanProgress() {
-        const p = this.scanProgress;
-
-        if (!p) return nothing;
-
-        if (p.phase === 'counting') {
-            return html`
-                <div class="progress-phase">
-                    Counting files\u2026
-                </div>
-            `;
-        }
-
-        const percent =
-            p.total > 0
-                ? Math.min(
-                      100,
-                      Math.round(
-                          (p.processed / p.total) * 100,
-                      ),
-                  )
-                : 0;
-
-        const phaseLabel: Record<string, string> = {
-            scanning: 'Scanning',
-            orphans: 'Cleaning up',
-            thumbnails: 'Generating thumbnails',
-        };
-
-        const label = phaseLabel[p.phase] ?? 'Scanning';
-
-        // Build detail string: "1,247 / 2,013 files (891 new, 23 updated, 356 skipped)"
-        const parts: string[] = [];
-
-        if (p.added > 0)
-            parts.push(`${p.added.toLocaleString()} new`);
-        if (p.updated > 0)
-            parts.push(
-                `${p.updated.toLocaleString()} updated`,
-            );
-        if (p.skipped > 0)
-            parts.push(
-                `${p.skipped.toLocaleString()} skipped`,
-            );
-
-        const detail =
-            p.phase === 'scanning' && p.total > 0
-                ? html`<span class="progress-detail">
-                      ${p.processed.toLocaleString()} /
-                      ${p.total.toLocaleString()} files${parts.length
-                          ? ` (${parts.join(', ')})`
-                          : ''}
-                  </span>`
-                : nothing;
-
-        return html`
-            <div class="progress-info">
-                <span class="progress-label">
-                    ${label}\u2026
-                </span>
-                ${detail}
-                <span class="progress-percent">
-                    ${percent}%
-                </span>
-            </div>
-            <div class="progress-track">
-                <div
-                    class="progress-fill"
-                    style="width: ${percent}%"
-                ></div>
             </div>
         `;
     }

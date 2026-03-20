@@ -10,7 +10,10 @@ import type {
     VisibilityChangedEvent,
 } from '@lit-labs/virtualizer';
 import { grid } from '@lit-labs/virtualizer/layouts/grid.js';
-import { GetTracksByGenre } from '@go/library/Library';
+import {
+    GetTracksByGenre,
+    GetTracksByGenreByLibrary,
+} from '@go/library/Library';
 import type { library } from '@go/models';
 import { LibraryController } from '@store/controllers/library-controller';
 import { SearchController } from '@store/controllers/search-controller';
@@ -227,12 +230,14 @@ export class GenresView
             flex-direction: column;
             overflow: hidden;
             position: relative;
+            contain: layout style;
         }
 
         .grid-scroll-container {
             flex: 1;
             overflow-y: auto;
             overflow-x: hidden;
+            contain: paint;
         }
 
         lit-virtualizer {
@@ -247,9 +252,7 @@ export class GenresView
             padding: 5px;
             border-radius: 8px;
             cursor: pointer;
-            transition:
-                background-color 0.15s ease,
-                transform 0.15s ease;
+            /* transitions removed — software rendering repaints per frame */
             overflow: hidden;
         }
 
@@ -723,16 +726,25 @@ export class GenresView
     /**
      * Fetch file paths for a set of genre names by
      * querying the backend for each genre.
+     * Respects the active library filter.
      */
     private async getFilePathsForGenres(
         genreNames: Iterable<string>,
     ): Promise<string[]> {
         const seen = new Set<string>();
         const allPaths: string[] = [];
+        const libId =
+            this.libraryCtrl.selectedLibraryId;
 
         const promises = Array.from(
             genreNames,
-            (name) => GetTracksByGenre(name),
+            (name) =>
+                libId !== null
+                    ? GetTracksByGenreByLibrary(
+                          name,
+                          libId,
+                      )
+                    : GetTracksByGenre(name),
         );
 
         const results = await Promise.all(promises);

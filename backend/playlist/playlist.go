@@ -3,6 +3,7 @@ package playlist
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -366,12 +367,21 @@ func (s *Service) mergeTracksForPlaylist(
 		return dbTracksToSlice(dbTracks)
 	}
 
-	libraryRoot := s.getLibraryRoot()
+	libraryRoots := s.getAllLibraryRoots()
+
+	// Build a set of known DB paths for multi-root resolution.
+	knownPaths := make(
+		map[string]struct{}, len(dbTracks),
+	)
+	for k := range dbTracks {
+		knownPaths[k] = struct{}{}
+	}
+
 	tracks := make([]Track, 0, len(parsed.Entries))
 
 	for i, entry := range parsed.Entries {
-		absPath := toAbsolutePath(
-			entry.RelativePath, libraryRoot,
+		absPath := resolveM3UPath(
+			entry.RelativePath, libraryRoots, knownPaths,
 		)
 
 		if dbTrack, ok := dbTracks[absPath]; ok {
@@ -840,7 +850,7 @@ func (s *Service) ImportPlaylist(
 		)
 	}
 
-	libraryRoot := s.getLibraryRoot()
+	libraryRoots := s.getAllLibraryRoots()
 
 	var (
 		resolved   int
@@ -849,14 +859,37 @@ func (s *Service) ImportPlaylist(
 	)
 
 	for _, entry := range parsed.Entries {
-		absPath := toAbsolutePath(
-			entry.RelativePath, libraryRoot,
-		)
+		var audioFile sqlcgen.AudioFile
 
-		audioFile, lookupErr := s.db.Queries.GetAudioFileByPath(
-			s.db.Ctx, absPath,
-		)
-		if lookupErr != nil {
+		found := false
+
+		if filepath.IsAbs(entry.RelativePath) {
+			af, err := s.db.Queries.GetAudioFileByPath(
+				s.db.Ctx, entry.RelativePath,
+			)
+			if err == nil {
+				audioFile = af
+				found = true
+			}
+		} else {
+			for _, root := range libraryRoots {
+				absPath := toAbsolutePath(
+					entry.RelativePath, root,
+				)
+
+				af, err := s.db.Queries.GetAudioFileByPath(
+					s.db.Ctx, absPath,
+				)
+				if err == nil {
+					audioFile = af
+					found = true
+
+					break
+				}
+			}
+		}
+
+		if !found {
 			// Track not in library — will appear as phantom.
 			unresolved++
 
@@ -867,7 +900,7 @@ func (s *Service) ImportPlaylist(
 			s.db.Ctx,
 			sqlcgen.AddPlaylistTrackParams{
 				PlaylistID:  created.ID,
-				AudioFileID: audioFile.ID,
+				AudioFileID: sql.NullInt64{Int64: audioFile.ID, Valid: true},
 				Position:    int64(position),
 			},
 		)
@@ -875,7 +908,7 @@ func (s *Service) ImportPlaylist(
 			s.logger.Warn(
 				"Could not add imported track",
 				"playlistId", created.ID,
-				"path", absPath,
+				"path", audioFile.FilePath,
 				"err", addErr,
 			)
 
@@ -889,7 +922,7 @@ func (s *Service) ImportPlaylist(
 	// Save the M3U8 file with entries (preserves unresolved
 	// paths for phantom display).
 	s.saveImportedPlaylistFile(
-		created.ID, playlistName, parsed.Entries, libraryRoot,
+		created.ID, playlistName, parsed.Entries, libraryRoots,
 	)
 
 	s.logger.Info(
@@ -980,7 +1013,7 @@ func (s *Service) RestoreAllPlaylists() {
 		return
 	}
 
-	libraryRoot := s.getLibraryRoot()
+	libraryRoots := s.getAllLibraryRoots()
 
 	var totalRestored, totalUnresolved int
 
@@ -996,7 +1029,7 @@ func (s *Service) RestoreAllPlaylists() {
 		}
 
 		restored, unresolved := s.restoreSinglePlaylist(
-			playlistID, file, libraryRoot,
+			playlistID, file, libraryRoots,
 		)
 
 		totalRestored += restored
@@ -1013,11 +1046,12 @@ func (s *Service) RestoreAllPlaylists() {
 }
 
 // restoreSinglePlaylist restores tracks for a single playlist
-// from its M3U8 file.
+// from its M3U8 file. Each M3U8 entry is resolved against all
+// library roots.
 func (s *Service) restoreSinglePlaylist(
 	playlistID int64,
 	m3uPath string,
-	libraryRoot string,
+	libraryRoots []string,
 ) (restored, unresolved int) {
 	parsed, err := parseM3U8(m3uPath)
 	if err != nil {
@@ -1048,14 +1082,37 @@ func (s *Service) restoreSinglePlaylist(
 	var position int
 
 	for _, entry := range parsed.Entries {
-		absPath := toAbsolutePath(
-			entry.RelativePath, libraryRoot,
-		)
+		var audioFile sqlcgen.AudioFile
 
-		audioFile, lookupErr := s.db.Queries.GetAudioFileByPath(
-			s.db.Ctx, absPath,
-		)
-		if lookupErr != nil {
+		found := false
+
+		if filepath.IsAbs(entry.RelativePath) {
+			af, lookupErr := s.db.Queries.GetAudioFileByPath(
+				s.db.Ctx, entry.RelativePath,
+			)
+			if lookupErr == nil {
+				audioFile = af
+				found = true
+			}
+		} else {
+			for _, root := range libraryRoots {
+				absPath := toAbsolutePath(
+					entry.RelativePath, root,
+				)
+
+				af, lookupErr := s.db.Queries.GetAudioFileByPath(
+					s.db.Ctx, absPath,
+				)
+				if lookupErr == nil {
+					audioFile = af
+					found = true
+
+					break
+				}
+			}
+		}
+
+		if !found {
 			unresolved++
 
 			continue
@@ -1065,7 +1122,7 @@ func (s *Service) restoreSinglePlaylist(
 			s.db.Ctx,
 			sqlcgen.AddPlaylistTrackParams{
 				PlaylistID:  playlistID,
-				AudioFileID: audioFile.ID,
+				AudioFileID: sql.NullInt64{Int64: audioFile.ID, Valid: true},
 				Position:    int64(position),
 			},
 		)
@@ -1073,7 +1130,7 @@ func (s *Service) restoreSinglePlaylist(
 			s.logger.Warn(
 				"Could not restore track",
 				"playlistId", playlistID,
-				"path", absPath,
+				"path", audioFile.FilePath,
 				"err", addErr,
 			)
 
@@ -1125,7 +1182,7 @@ func (s *Service) addSingleTrack(
 		s.db.Ctx,
 		sqlcgen.AddPlaylistTrackParams{
 			PlaylistID:  playlistID,
-			AudioFileID: audioFile.ID,
+			AudioFileID: sql.NullInt64{Int64: audioFile.ID, Valid: true},
 			Position:    position,
 		},
 	)
@@ -1168,13 +1225,29 @@ func (s *Service) playlistsDir() (string, error) {
 	return dir, nil
 }
 
-// getLibraryRoot returns the configured library directory path.
-func (s *Service) getLibraryRoot() string {
-	if s.libraryDir == nil {
-		return ""
+// getAllLibraryRoots returns the root directory paths of all
+// configured libraries. It first checks the legacy config
+// DirectoryPath; if that is set, it returns a single-element
+// slice. Otherwise it queries all libraries from the database.
+func (s *Service) getAllLibraryRoots() []string {
+	// Legacy config fallback.
+	if s.libraryDir != nil {
+		if dir := s.libraryDir.GetLibraryDirectory(); dir != "" {
+			return []string{dir}
+		}
 	}
 
-	return s.libraryDir.GetLibraryDirectory()
+	libs, err := s.db.Queries.GetAllLibraries(s.db.Ctx)
+	if err != nil || len(libs) == 0 {
+		return nil
+	}
+
+	roots := make([]string, len(libs))
+	for i, lib := range libs {
+		roots[i] = lib.Path
+	}
+
+	return roots
 }
 
 // savePlaylistFile saves the current state of a playlist to its
@@ -1231,7 +1304,7 @@ func (s *Service) saveImportedPlaylistFile(
 	playlistID int64,
 	name string,
 	entries []m3uEntry,
-	libraryRoot string,
+	libraryRoots []string,
 ) {
 	dir, err := s.playlistsDir()
 	if err != nil {
@@ -1243,16 +1316,22 @@ func (s *Service) saveImportedPlaylistFile(
 		return
 	}
 
-	// Convert any absolute paths in entries to relative.
+	// Convert any absolute paths in entries to relative
+	// using the correct library root for each track.
 	converted := make([]m3uEntry, len(entries))
 
 	for i, entry := range entries {
+		// Resolve against all roots to get the absolute path,
+		// then convert back to relative using the matching root.
+		absPath := resolveM3UPath(
+			entry.RelativePath,
+			libraryRoots,
+			nil,
+		)
+
 		converted[i] = m3uEntry{
-			RelativePath: toRelativePath(
-				toAbsolutePath(
-					entry.RelativePath, libraryRoot,
-				),
-				libraryRoot,
+			RelativePath: toRelativePathMultiRoot(
+				absPath, libraryRoots,
 			),
 			DurationSec:  entry.DurationSec,
 			DisplayTitle: entry.DisplayTitle,
@@ -1289,7 +1368,7 @@ func (s *Service) buildM3UEntries(
 		return nil
 	}
 
-	libraryRoot := s.getLibraryRoot()
+	libraryRoots := s.getAllLibraryRoots()
 	entries := make([]m3uEntry, 0, len(rows))
 
 	for _, row := range rows {
@@ -1298,8 +1377,8 @@ func (s *Service) buildM3UEntries(
 		)
 
 		entries = append(entries, m3uEntry{
-			RelativePath: toRelativePath(
-				row.FilePath, libraryRoot,
+			RelativePath: toRelativePathMultiRoot(
+				row.FilePath, libraryRoots,
 			),
 			DurationSec: durationSec,
 			DisplayTitle: displayTitle(
@@ -1415,6 +1494,305 @@ func (s *Service) migrateExistingPlaylists() {
 // Phantom track resolution
 // =================================================================
 
+// ResolvePhantomTracksAfterScan re-links phantom playlist tracks
+// whose files now exist in the library.  It iterates each playlist
+// that has phantoms, reads its M3U8 file, resolves each entry
+// against the current audio_files table using multi-root path
+// resolution, and updates matching phantom playlist_tracks.  This
+// handles both pre-existing phantoms (created before migration 7,
+// with NULL phantom_file_path) and new ones.
+func (s *Service) ResolvePhantomTracksAfterScan() {
+	// 1. Get distinct playlist IDs that have phantom tracks.
+	// SAFETY: Hand-crafted SELECT for phantom playlist IDs.
+	// No user input — reads only system state.
+	rows, err := s.db.QueryContext(
+		`SELECT DISTINCT playlist_id
+		 FROM playlist_tracks
+		 WHERE audio_file_id IS NULL`,
+	)
+	if err != nil {
+		s.logger.Warn(
+			"could not query phantom playlists",
+			"err", err,
+		)
+
+		return
+	}
+
+	var phantomPlaylistIDs []int64
+
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			s.logger.Warn(
+				"could not scan phantom playlist ID",
+				"err", err,
+			)
+
+			continue
+		}
+
+		phantomPlaylistIDs = append(phantomPlaylistIDs, id)
+	}
+
+	if err := rows.Close(); err != nil {
+		s.logger.Warn(
+			"could not close phantom playlist rows",
+			"err", err,
+		)
+	}
+
+	if len(phantomPlaylistIDs) == 0 {
+		return
+	}
+
+	// 2. Build audio file path→ID map for resolution.
+	// SAFETY: Hand-crafted SELECT for full audio file path map.
+	// No user input — reads only system state.
+	afRows, err := s.db.QueryContext(
+		`SELECT id, file_path FROM audio_files`,
+	)
+	if err != nil {
+		s.logger.Warn(
+			"could not query audio files for phantom resolution",
+			"err", err,
+		)
+
+		return
+	}
+
+	audioFileByPath := make(map[string]int64)
+
+	for afRows.Next() {
+		var id int64
+
+		var fp string
+		if err := afRows.Scan(&id, &fp); err != nil {
+			continue
+		}
+
+		audioFileByPath[fp] = id
+	}
+
+	if err := afRows.Close(); err != nil {
+		s.logger.Warn(
+			"could not close audio file rows",
+			"err", err,
+		)
+	}
+
+	if len(audioFileByPath) == 0 {
+		return
+	}
+
+	// 3. Build knownPaths set for resolveM3UPath.
+	knownPaths := make(
+		map[string]struct{}, len(audioFileByPath),
+	)
+	for k := range audioFileByPath {
+		knownPaths[k] = struct{}{}
+	}
+
+	libraryRoots := s.getAllLibraryRoots()
+
+	dir, err := s.playlistsDir()
+	if err != nil {
+		s.logger.Warn(
+			"could not get playlists dir for phantom resolution",
+			"err", err,
+		)
+
+		return
+	}
+
+	var totalResolved int
+
+	// 4. For each playlist with phantoms, resolve via M3U8.
+	for _, playlistID := range phantomPlaylistIDs {
+		resolved := s.resolvePlaylistPhantoms(
+			playlistID, dir, libraryRoots,
+			knownPaths, audioFileByPath,
+		)
+		totalResolved += resolved
+	}
+
+	if totalResolved > 0 {
+		s.logger.Info(
+			"resolved phantom playlist tracks after scan",
+			"count", totalResolved,
+		)
+
+		s.emitEvent(events.PlaylistTracksChanged, nil)
+	}
+}
+
+// phantomTrackRow holds the minimal fields needed to match a
+// phantom playlist_track against an M3U8 entry.
+type phantomTrackRow struct {
+	id              int64
+	position        int64
+	phantomFilePath string
+}
+
+// resolvePlaylistPhantoms resolves phantom tracks for a single
+// playlist by reading its M3U8 file and matching entries against
+// the audio_files table.  Returns the number of resolved tracks.
+func (s *Service) resolvePlaylistPhantoms(
+	playlistID int64,
+	dir string,
+	libraryRoots []string,
+	knownPaths map[string]struct{},
+	audioFileByPath map[string]int64,
+) int {
+	m3uPath, err := findPlaylistFile(dir, playlistID)
+	if err != nil || m3uPath == "" {
+		return 0
+	}
+
+	parsed, err := parseM3U8(m3uPath)
+	if err != nil {
+		s.logger.Warn(
+			"could not parse M3U8 for phantom resolution",
+			"playlistId", playlistID,
+			"path", m3uPath,
+			"err", err,
+		)
+
+		return 0
+	}
+
+	// Load phantom tracks for this playlist.
+	// SAFETY: Hand-crafted SELECT for phantom tracks with
+	// position and phantom_file_path. No user input.
+	ptRows, err := s.db.QueryContext(
+		`SELECT id, position, COALESCE(phantom_file_path, '')
+		 FROM playlist_tracks
+		 WHERE playlist_id = ? AND audio_file_id IS NULL`,
+		playlistID,
+	)
+	if err != nil {
+		s.logger.Warn(
+			"could not query phantom tracks",
+			"playlistId", playlistID,
+			"err", err,
+		)
+
+		return 0
+	}
+
+	var phantoms []phantomTrackRow
+
+	for ptRows.Next() {
+		var pt phantomTrackRow
+		if err := ptRows.Scan(
+			&pt.id, &pt.position, &pt.phantomFilePath,
+		); err != nil {
+			continue
+		}
+
+		phantoms = append(phantoms, pt)
+	}
+
+	if err := ptRows.Close(); err != nil {
+		s.logger.Warn(
+			"could not close phantom track rows",
+			"err", err,
+		)
+	}
+
+	if len(phantoms) == 0 {
+		return 0
+	}
+
+	// Build a set of already-resolved phantom IDs to avoid
+	// double-matching.
+	resolvedIDs := make(map[int64]struct{})
+
+	var resolved int
+
+	// For each M3U8 entry, resolve its path and try to match
+	// a phantom track.
+	for i, entry := range parsed.Entries {
+		absPath := resolveM3UPath(
+			entry.RelativePath, libraryRoots, knownPaths,
+		)
+
+		audioFileID, exists := audioFileByPath[absPath]
+		if !exists {
+			continue
+		}
+
+		// Find the phantom that corresponds to this entry.
+		// Priority 1: match by phantom_file_path (exact).
+		// Priority 2: match by position (M3U8 index).
+		matchIdx := -1
+
+		for j, pt := range phantoms {
+			if _, done := resolvedIDs[pt.id]; done {
+				continue
+			}
+
+			if pt.phantomFilePath != "" &&
+				pt.phantomFilePath == absPath {
+				matchIdx = j
+
+				break
+			}
+		}
+
+		if matchIdx == -1 {
+			for j, pt := range phantoms {
+				if _, done := resolvedIDs[pt.id]; done {
+					continue
+				}
+
+				if pt.position == int64(i) {
+					matchIdx = j
+
+					break
+				}
+			}
+		}
+
+		if matchIdx == -1 {
+			continue
+		}
+
+		pt := phantoms[matchIdx]
+
+		// SAFETY: Hand-crafted UPDATE to resolve a phantom
+		// playlist track. Sets audio_file_id and clears all
+		// phantom metadata columns. Parameterized by ID.
+		if _, err := s.db.ExecContext(
+			`UPDATE playlist_tracks SET
+				audio_file_id = ?,
+				phantom_title = NULL,
+				phantom_artist = NULL,
+				phantom_album = NULL,
+				phantom_duration_ms = NULL,
+				phantom_genre = NULL,
+				phantom_cover_art_path = NULL,
+				phantom_file_path = NULL
+			WHERE id = ?`,
+			audioFileID, pt.id,
+		); err != nil {
+			s.logger.Warn(
+				"could not resolve phantom track",
+				"playlistTrackId", pt.id,
+				"audioFileId", audioFileID,
+				"err", err,
+			)
+
+			continue
+		}
+
+		resolvedIDs[pt.id] = struct{}{}
+		resolved++
+	}
+
+	return resolved
+}
+
 // FindPhantomMatches searches the library for matches for the
 // given phantom file paths. High-confidence matches are returned
 // as auto-matched pairs; the rest remain in the unmatched list.
@@ -1433,7 +1811,7 @@ func (s *Service) FindPhantomMatches(
 		)
 	}
 
-	libraryRoot := s.getLibraryRoot()
+	libraryRoots := s.getAllLibraryRoots()
 
 	// Load M3U8 entries for display title / duration data.
 	m3uPath, err := findPlaylistFile(dir, playlistID)
@@ -1453,11 +1831,13 @@ func (s *Service) FindPhantomMatches(
 	}
 
 	// Build a lookup from absolute path to M3U entry.
+	// Use resolveM3UPath with a nil knownPaths to get the
+	// first-root fallback for each entry.
 	entryByPath := make(map[string]m3uEntry, len(entries))
 
 	for _, e := range entries {
-		absPath := toAbsolutePath(
-			e.RelativePath, libraryRoot,
+		absPath := resolveM3UPath(
+			e.RelativePath, libraryRoots, nil,
 		)
 		entryByPath[absPath] = e
 	}
@@ -1521,7 +1901,7 @@ func (s *Service) GetPhantomCandidates(
 		)
 	}
 
-	libraryRoot := s.getLibraryRoot()
+	libraryRoots := s.getAllLibraryRoots()
 
 	// Find the M3U entry for this phantom.
 	m3uPath, err := findPlaylistFile(dir, playlistID)
@@ -1537,7 +1917,7 @@ func (s *Service) GetPhantomCandidates(
 		parsed, parseErr := parseM3U8(m3uPath)
 		if parseErr == nil {
 			entry, _ = findM3UEntry(
-				parsed.Entries, phantomPath, libraryRoot,
+				parsed.Entries, phantomPath, libraryRoots,
 			)
 		}
 	}
@@ -1601,7 +1981,7 @@ func (s *Service) ResolvePhantomTracks(
 		)
 	}
 
-	libraryRoot := s.getLibraryRoot()
+	libraryRoots := s.getAllLibraryRoots()
 
 	m3uPath, err := findPlaylistFile(dir, playlistID)
 	if err != nil || m3uPath == "" {
@@ -1654,7 +2034,7 @@ func (s *Service) ResolvePhantomTracks(
 			s.db.Ctx,
 			sqlcgen.AddPlaylistTrackParams{
 				PlaylistID:  playlistID,
-				AudioFileID: audioFile.ID,
+				AudioFileID: sql.NullInt64{Int64: audioFile.ID, Valid: true},
 				Position:    nextPos + int64(resolved),
 			},
 		)
@@ -1669,7 +2049,9 @@ func (s *Service) ResolvePhantomTracks(
 			continue
 		}
 
-		newRel := toRelativePath(resolvedAbs, libraryRoot)
+		newRel := toRelativePathMultiRoot(
+			resolvedAbs, libraryRoots,
+		)
 		pathReplacements[phantomAbs] = newRel
 		resolved++
 	}
@@ -1677,7 +2059,7 @@ func (s *Service) ResolvePhantomTracks(
 	// Rewrite the M3U8 with updated paths.
 	if resolved > 0 {
 		updated := replaceM3UEntryPaths(
-			parsed.Entries, pathReplacements, libraryRoot,
+			parsed.Entries, pathReplacements, libraryRoots,
 		)
 
 		playlist, nameErr := s.db.Queries.GetPlaylist(
@@ -1728,7 +2110,7 @@ func (s *Service) RemovePhantomTracks(
 		)
 	}
 
-	libraryRoot := s.getLibraryRoot()
+	libraryRoots := s.getAllLibraryRoots()
 
 	m3uPath, err := findPlaylistFile(dir, playlistID)
 	if err != nil || m3uPath == "" {
@@ -1754,7 +2136,7 @@ func (s *Service) RemovePhantomTracks(
 	}
 
 	updated := removeM3UEntries(
-		parsed.Entries, targetSet, libraryRoot,
+		parsed.Entries, targetSet, libraryRoots,
 	)
 
 	playlist, err := s.db.Queries.GetPlaylist(

@@ -34,6 +34,7 @@ class FavoritesStore {
     private pinDefault = true;
     private favoritedPaths = new Set<string>();
     private subscribers = new Set<Subscriber>();
+    private notifyScheduled = false;
     private loading = false;
 
     constructor() {
@@ -232,7 +233,14 @@ class FavoritesStore {
     }
 
     private notify(): void {
-        this.subscribers.forEach((cb) => cb());
+        if (this.notifyScheduled) return;
+        this.notifyScheduled = true;
+        queueMicrotask(() => {
+            this.notifyScheduled = false;
+            for (const cb of this.subscribers) {
+                cb();
+            }
+        });
     }
 
     // ===============================================================

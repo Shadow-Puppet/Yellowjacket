@@ -1,657 +1,512 @@
-# Stack Research: Consolidation Patterns & Tools
+# Technology Stack: OGG Vorbis + WAV Tag Writing
 
-**Domain:** Desktop music player consolidation — correctness, performance, testing, code quality
-**Researched:** 2026-02-27
-**Confidence:** HIGH (core Go/SQLite patterns) / MEDIUM (beep-specific, Lit optimization)
+**Project:** YellowJacket v1.2.1 Format Parity
+**Researched:** 2026-03-18
+**Scope:** Stack additions/changes needed ONLY for OGG Vorbis and WAV tag writing
 
-This document covers tools, patterns, and specific techniques for improving the quality of the existing YellowJacket codebase. It is organized by the five research questions, prioritized by impact.
-
----
-
-## 1. Go Concurrency Safety — Priority: CRITICAL
-
-**Confidence:** HIGH — based on Go standard library docs, race detector behavior, and codebase analysis.
-
-### The Core Problem
-
-YellowJacket has three documented data races, all following the same anti-pattern: a `SetContext()` method writes a struct field without holding the struct's mutex, while other methods read that field under the mutex. This is a textbook data race even if "it works in practice."
-
-### Pattern: Fix SetContext Races
-
-The `Queue.SetContext()`, `Library.SetContext()`, and `playlist.Service.SetContext()` all share the same bug. The fix is the same for all three:
-
-```go
-// BEFORE (race):
-func (q *Queue) SetContext(ctx context.Context) {
-    q.ctx = ctx  // ← no lock, but q.ctx is read under q.mu elsewhere
-}
-
-// AFTER (correct):
-func (q *Queue) SetContext(ctx context.Context) {
-    q.mu.Lock()
-    defer q.mu.Unlock()
-    q.ctx = ctx
-}
-```
-
-**Why this matters:** The Go race detector (`-race` flag) will flag this in tests. Since `make test` already runs with `-race`, any test that exercises `SetContext` alongside event emission will fail. Fixing these races unblocks writing tests for queue, library, and playlist packages.
-
-**Why not use `sync/atomic`:** `context.Context` is an interface (two words: type pointer + data pointer). `sync/atomic` only works on single-word types. Use the existing mutex.
-
-### Pattern: Player Double-Lock Fix
-
-The player's `SetContext` acquires and releases the mutex twice in succession:
-
-```go
-// BEFORE (window between locks):
-func (p *Player) SetContext(ctx context.Context) {
-    p.mu.Lock()
-    p.ctx = ctx
-    p.mu.Unlock()
-    
-    p.mu.Lock()
-    p.restoreStateLocked()
-    p.mu.Unlock()
-}
-
-// AFTER (single acquisition):
-func (p *Player) SetContext(ctx context.Context) {
-    p.mu.Lock()
-    defer p.mu.Unlock()
-    p.ctx = ctx
-    p.restoreStateLocked()
-}
-```
-
-**Why:** Between the two lock acquisitions, another goroutine can modify state. The combined lock makes the set-context-and-restore atomic.
-
-### Pattern: Lock Ordering Documentation
-
-The player already documents its lock ordering rule: "acquire `p.mu` BEFORE `speaker.Lock()`." This is correct and critical. The `go p.onPlaybackFinished()` dispatch from the beep callback is essential — removing the goroutine dispatch would deadlock because the beep callback holds `speaker.Lock()` and `onPlaybackFinished` acquires `p.mu`.
-
-**Recommendation:** Add a `// Lock ordering:` comment block to the Queue and Library structs as well, even though they only have one lock each. Document what operations must NOT hold the lock (event emission, player callbacks).
-
-```go
-// Queue manages an ordered list of tracks for playback.
-//
-// Concurrency: q.mu protects all mutable fields. Event emission
-// (emitQueueChanged, etc.) is called WITH q.mu held because the
-// Wails EventsEmit is non-blocking. The playbackFinishedHandler
-// (auto-advance) re-enters the queue via AddTrack/Next, so it
-// must NOT be called while holding q.mu.
-type Queue struct {
-    mu sync.Mutex
-    // ...
-}
-```
-
-### Testing Pattern: Race Detector as Test Oracle
-
-```bash
-# Already in Makefile — verify this is the exact command:
-make test  # → go test -tags webkit2_41 -race -count=1 -timeout 120s ./...
-```
-
-The race detector is the most valuable tool here. Every new test implicitly checks for races when run with `-race`. No additional tooling needed — just write tests that exercise concurrent paths:
-
-```go
-func TestQueueSetContextRace(t *testing.T) {
-    q := NewQueue(slog.Default(), testDB)
-    
-    // Simulate Wails calling SetContext while queue operations run.
-    var wg sync.WaitGroup
-    wg.Add(2)
-    go func() {
-        defer wg.Done()
-        q.SetContext(context.Background())
-    }()
-    go func() {
-        defer wg.Done()
-        q.GetState() // reads under lock
-    }()
-    wg.Wait()
-}
-```
-
-### What NOT to Do
-
-| Anti-Pattern | Why It's Wrong | Instead |
-|---|---|---|
-| `sync.RWMutex` for Queue/Player | These structs have frequent writes AND reads from multiple goroutines on the same timeline. RWMutex only helps when reads vastly outnumber writes and are long-running. Desktop event-driven access patterns don't benefit. | Keep `sync.Mutex`. Simpler, fewer bugs. |
-| Channel-based state management | Replacing mutexes with channels for Queue state would require rewriting all methods. The current mutex pattern is correct, just under-applied. | Fix the races by adding lock acquisitions to SetContext methods. |
-| `sync.Map` for entityCache | `sync.Map` is optimized for concurrent reads from many goroutines. The entityCache is accessed from a single DB-writer goroutine. It would add overhead with zero benefit. | Keep plain maps (already correct). |
-| Package-level mutex for startupErr | A package-level mutex is worse than the disease. | Move `startupErr` to a field on `YellowJacketApp` struct. |
+> **Context:** MP3 writing (bogem/id3v2) and FLAC writing (go-flac ecosystem) are already
+> implemented and validated in v1.2. This document focuses exclusively on what's needed
+> for OGG Vorbis and WAV tag writing.
 
 ---
 
-## 2. SQLite WAL Mode Optimization — Priority: HIGH
+## OGG Vorbis Tag Writing
 
-**Confidence:** HIGH — based on SQLite official docs (sqlite.org/wal.html), modernc.org/sqlite driver docs, and codebase analysis.
+### The Problem
 
-### Current Setup Analysis
+OGG Vorbis stores metadata as Vorbis Comments in the second header packet of the OGG
+bitstream. Modifying these comments requires:
 
-The database initialization is solid:
-- WAL mode via `?_journal_mode=WAL` in DSN (**correct**)
-- `_busy_timeout=5000` — 5 second busy wait (**correct**, prevents SQLITE_BUSY in most cases)
-- `SetMaxOpenConns(1)` — single writer (**correct**, required for pure-Go driver)
-- `PRAGMA foreign_keys = ON` (**correct**)
+1. Parsing OGG pages to extract the three Vorbis header packets (identification, comment, setup)
+2. Decoding and modifying the Vorbis Comment packet
+3. Re-encoding the modified comment packet into new OGG pages (with correct segment tables, sequence numbers, and CRC32 checksums)
+4. Copying all audio data pages unchanged
+5. Writing the result atomically
 
-### Missing PRAGMAs to Add
+No pure-Go library exists that provides this end-to-end. The recommendation is a **custom OGG page rewriter** using existing building blocks.
 
-```go
-// Add after foreign_keys pragma in NewDB():
-pragmas := []string{
-    "PRAGMA foreign_keys = ON",
-    "PRAGMA synchronous = NORMAL",       // WAL-safe, much faster
-    "PRAGMA cache_size = -8000",          // 8MB page cache (default is -2000 = 2MB)
-    "PRAGMA mmap_size = 67108864",        // 64MB memory-mapped I/O
-    "PRAGMA temp_store = MEMORY",         // Temp tables in memory
-    "PRAGMA optimize",                    // Run at connection open
-}
+### Option Analysis
+
+#### Option 1: Custom OGG Page Rewriter (RECOMMENDED)
+
+| Component | Source | Purpose |
+|-----------|--------|---------|
+| OGG page read/write | Custom (~300-400 LOC) | Parse OGG pages, rewrite with new comment packet |
+| Vorbis Comment encode/decode | Reuse `go-flac/flacvorbis` patterns | Same binary format as FLAC Vorbis Comments |
+| CRC32 computation | Custom (~30 LOC, lookup table) | OGG uses CRC32 with polynomial 0x04c11db7 |
+| METADATA_BLOCK_PICTURE | Reuse `go-flac/flacpicture` | Same binary format, base64-wrapped for OGG |
+
+**Why this is the right approach:**
+
+- The OGG container format is simple and well-documented (27-byte header + segment table + page data)
+- `jfreymuth/oggvorbis` already has a working OGG page reader in `ogg.go` (~255 LOC) that can serve as reference
+- The Vorbis Comment binary format is identical to what's used in FLAC — the existing `flacvorbis` library's comment manipulation code can be reused or adapted
+- Audio data pages are copied byte-for-byte — no audio re-encoding
+- Full control over the implementation with no external dependency risk
+
+**Implementation complexity:** MEDIUM. The OGG page format has exactly one tricky aspect:
+packets can span multiple pages (via the continuation-of-packet flag and lacing values).
+The comment packet is typically small enough to fit in one page, but the implementation
+must handle the general case (especially when large cover art is embedded, inflating the
+comment packet well beyond one page's ~65KB limit).
+
+**Estimated LOC:** ~500-600 for a complete `ogg.go` writer in the tagwriter package.
+
+#### Option 2: `mccoyst/ogg` for OGG Page Encoding
+
+| Technology | Version | Stars | Purpose |
+|------------|---------|-------|---------|
+| `github.com/mccoyst/ogg` | latest (no semver tags) | 37 | OGG page encode/decode |
+
+**What it provides:**
+- `ogg.Decoder` — reads OGG pages, extracts packets
+- `ogg.Encoder` — writes packets into OGG pages with correct framing, CRC, segment tables
+- `EncodeBOS()`, `Encode()`, `EncodeEOS()` — page-type-aware encoding
+- Handles packet splitting across pages automatically
+- 100% test coverage claimed, 52 commits, MIT license
+
+**Assessment:** This is the strongest external option. The Encoder handles the hardest parts
+(lacing values, page splitting, CRC). However:
+
+- **No semver releases** — importing is `github.com/mccoyst/ogg` with no version guarantee
+- **37 stars, 1 open issue** — small community, low bus factor
+- **Still requires Vorbis-specific logic** — mccoyst/ogg handles OGG pages but knows nothing about Vorbis header packets. We'd still need to:
+  - Identify and extract the three Vorbis header packets
+  - Parse/modify the Vorbis Comment packet
+  - Handle the `\x03vorbis` packet type prefix
+  - Re-encode everything in the correct order
+
+**Verdict:** POSSIBLE but the marginal benefit over custom code is small. The OGG page format
+is well-specified; the Encoder's value is mainly in lacing value calculation and CRC, which
+are ~80 LOC total. Adding a dependency for ~80 LOC of saved work introduces a maintenance
+and stability risk for a library with no tagged releases.
+
+**Recommendation: Custom implementation.** If OGG page writing proves harder than expected
+during implementation, `mccoyst/ogg` can be pulled in as a fallback.
+
+#### Option 3: `jfreymuth/oggvorbis` (Already a Dependency)
+
+| Technology | Version | Stars | Purpose |
+|------------|---------|-------|---------|
+| `github.com/jfreymuth/oggvorbis` | v1.0.5 | 75 | OGG Vorbis decoder |
+
+**Assessment:** Decode-only. No write API. The `ogg.go` internal reader is useful as
+**reference code** for understanding OGG page parsing, but the types are unexported
+and the package provides no page-level write capability.
+
+**Verdict:** NOT SUITABLE for writing. Useful as reference only.
+
+#### Option 4: `dhowden/tag` Write Support
+
+**Assessment:** dhowden/tag is read-only (642 stars, no write API). Its OGG parsing is
+minimal — it extracts Vorbis Comments for reading but does not provide any mechanism
+to modify or write back. Forking would require building the entire OGG page rewriter
+anyway, plus inheriting maintenance burden.
+
+**Verdict:** NOT SUITABLE.
+
+#### Option 5: External CLI Tools (vorbiscomment, ffmpeg)
+
+| Tool | What It Does | Issue |
+|------|-------------|-------|
+| `vorbiscomment` | CLI for reading/writing Vorbis Comments in OGG | Requires packaging/distributing a C binary |
+| `ffmpeg` | Swiss-army multimedia tool | Massive binary (~100MB), CGo-equivalent burden |
+| `opustags` | Opus metadata editor | Wrong codec (Opus, not Vorbis) |
+
+**Assessment:** Shelling out to external CLI tools would work but violates the pure-Go
+spirit of the project. It introduces:
+- Distribution complexity (packaging native binaries per platform)
+- Runtime dependency management (checking tool availability, version compat)
+- Error handling complexity (parsing CLI output)
+- No Windows/macOS availability guarantee without extra bundling
+
+**Verdict:** NOT RECOMMENDED. Only consider as absolute last resort if custom Go
+implementation proves infeasible (it won't — the format is well-understood).
+
+### OGG Vorbis Writing: Recommended Stack
+
+| Component | Approach | New Dependency? |
+|-----------|----------|-----------------|
+| OGG page parsing | Custom `oggRewriter` in tagwriter package | No |
+| OGG page writing | Custom (header + segment table + CRC32) | No |
+| Vorbis Comment manipulation | Reuse `flacvorbis` patterns + shared helpers | No (already a dep) |
+| Cover art (METADATA_BLOCK_PICTURE) | `go-flac/flacpicture` for binary encoding + base64 wrapper | No (already a dep) |
+| Atomic file write | Existing `fileutil.AtomicWrite` | No |
+
+**Total new dependencies: ZERO.** Everything needed is either already in the dep tree
+or implementable from well-documented specifications.
+
+### OGG Vorbis Cover Art
+
+**YES — OGG Vorbis can embed cover art.**
+
+Cover art in OGG Vorbis uses the `METADATA_BLOCK_PICTURE` Vorbis Comment field:
+
+1. Create a FLAC Picture binary block (same as used in FLAC files):
+   - Picture type (3 = front cover)
+   - MIME type string ("image/jpeg" or "image/png")
+   - Description string ("Front cover")
+   - Width, height, color depth, palette size (can be set to 0)
+   - Raw image data
+2. Base64-encode the entire binary block
+3. Add as Vorbis Comment: `METADATA_BLOCK_PICTURE=<base64 data>`
+
+**Integration with existing code:** The `go-flac/flacpicture` library already creates
+the binary FLAC Picture block. For FLAC files, this block goes into a metadata block.
+For OGG files, the same binary block gets base64-encoded and inserted as a Vorbis
+Comment string. We can reuse `flacpicture.NewFromImageData()` and add a base64 wrapper.
+
+**Confidence:** HIGH — This is the official Xiph.org recommendation per
+https://wiki.xiph.org/VorbisComment#METADATA_BLOCK_PICTURE
+
+### OGG Vorbis Format Details (Implementation Reference)
+
+**OGG Page Structure (27 bytes header):**
+```
+Bytes 0-3:   "OggS" capture pattern
+Byte 4:      Stream structure version (always 0)
+Byte 5:      Header type flag (0x01=continued, 0x02=BOS, 0x04=EOS)
+Bytes 6-13:  Absolute granule position (int64, little-endian)
+Bytes 14-17: Stream serial number (uint32, little-endian)
+Bytes 18-21: Page sequence number (uint32, little-endian)
+Bytes 22-25: CRC32 checksum (computed with this field zeroed)
+Byte 26:     Number of segments (0-255)
+Bytes 27+:   Segment table (one byte per segment, lacing values)
+             Page data follows immediately
 ```
 
-**Why `synchronous = NORMAL`:** In WAL mode, NORMAL provides durability against process crashes (only power loss can cause data loss of the last transaction). FULL is the default and fsyncs the WAL on every commit, which is unnecessary for a desktop music player where the data can be rescanned from disk.
+**Vorbis Header Packets in OGG:**
+- Packet 1: Identification header (starts with `\x01vorbis`)
+- Packet 2: Comment header (starts with `\x03vorbis`) ← THIS IS WHAT WE MODIFY
+- Packet 3: Setup header (starts with `\x05vorbis`)
+- Packets 4+: Audio data
 
-**Why `cache_size = -8000`:** The negative value means 8000 KiB (8MB). The default 2MB is fine for small databases but YellowJacket libraries can have 50k+ tracks. Larger cache reduces disk I/O for repeated queries (all-tracks, search, queue operations).
-
-**Why `mmap_size`:** Memory-mapped I/O lets SQLite read pages directly from the OS page cache. 64MB covers most music library databases entirely. With modernc.org/sqlite (pure Go), mmap is handled by the underlying C translation and works on Linux/macOS/Windows.
-
-**Why `PRAGMA optimize` at open:** Runs `ANALYZE` on tables where the optimizer thinks statistics are stale. Zero cost if stats are fresh.
-
-### Add `PRAGMA optimize` at Shutdown
-
-```go
-// In app.go OnShutdown:
-func (a *YellowJacketApp) OnShutdown(ctx context.Context) {
-    // ... existing cleanup ...
-    _, _ = a.db.ExecContext("PRAGMA optimize")  // Update query planner stats
-}
+**Vorbis Comment Binary Format (within packet 2, after `\x03vorbis` prefix):**
+```
+[vendor_length: uint32 LE] [vendor_string: bytes]
+[comment_count: uint32 LE]
+for each comment:
+  [length: uint32 LE] [comment: bytes]  // e.g. "ARTIST=Bob Dylan"
+[framing_bit: 1 bit, must be 1]
 ```
 
-SQLite docs recommend running `PRAGMA optimize` at close to ensure statistics are written for the next session.
-
-### Query Consolidation: FTS5 JOIN Deduplication
-
-The codebase has 5 copies of the same FTS5 JOIN pattern. Extract it:
-
-```go
-// backend/database/search.go
-
-// ftsMetadataJoin is the common JOIN clause for resolving audio file
-// metadata through the recording → artist_credit → release_group chain.
-// Use with "FROM search_index si" or "FROM audio_files af" as the base.
-const ftsMetadataJoin = `
-    JOIN audio_files af ON af.id = si.rowid
-    LEFT JOIN recordings r ON af.recording_id = r.id
-    LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
-    LEFT JOIN (
-        SELECT recording_id,
-            MIN(release_group_id) AS release_group_id
-        FROM release_group_recordings
-        GROUP BY recording_id
-    ) rgr ON r.id = rgr.recording_id
-    LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
-`
-```
-
-Then each search function references the constant instead of duplicating the SQL. This ensures schema changes only need one update.
-
-**Alternative:** Move these to sqlc queries where possible. The `SearchFTS` and `SearchFTSByFilename` functions can't easily use sqlc because the FTS5 `MATCH` syntax isn't well-supported by sqlc's parser. Keep them as hand-crafted SQL with the shared constant. Document why with a comment.
-
-### Queue Persistence: Incremental Updates
-
-The current `persistTracks()` does `DELETE ALL + INSERT ALL` on every mutation. For a queue with 1000 tracks, every add/remove/move rewrites all 1000 rows.
-
-**Pattern: Differential persistence for single-track operations:**
-
-```go
-// For AddTrack — single INSERT instead of full rewrite:
-func (q *Queue) persistAddTrack(track Track) {
-    err := q.db.Queries.InsertQueueTrack(q.db.Ctx, sqlcgen.InsertQueueTrackParams{
-        AudioFileID: track.AudioFileID,
-        Position:    track.Position,
-    })
-    if err != nil {
-        q.logger.Error("Failed to persist added track", "err", err)
-    }
-}
-
-// For RemoveTrack — single DELETE:
-func (q *Queue) persistRemoveTrack(position int64) {
-    err := q.db.Queries.DeleteQueueTrackByPosition(q.db.Ctx, position)
-    if err != nil {
-        q.logger.Error("Failed to persist removed track", "err", err)
-    }
-}
-```
-
-**Keep full rewrite for:** `SetQueue`, `RestoreState`, shuffle reordering — cases where the entire queue changes at once.
-
-**Estimated impact:** Reduces O(n) per-mutation writes to O(1) for the common case (add/remove single track). For a 5000-track queue, this eliminates ~10,000 unnecessary row writes per track operation.
-
-### What NOT to Do
-
-| Anti-Pattern | Why It's Wrong | Instead |
-|---|---|---|
-| Connection pooling (`SetMaxOpenConns > 1`) | modernc.org/sqlite is a single-writer database. Multiple connections cause SQLITE_BUSY errors. The current `SetMaxOpenConns(1)` is correct. | Keep `SetMaxOpenConns(1)`. |
-| `_txlock=immediate` on all transactions | Immediate locking blocks all readers during writes. The default deferred locking only acquires a write lock when needed. For a desktop app with infrequent writes, deferred is fine. | Use immediate locking ONLY for critical write transactions (queue persistence) where you want to fail fast on contention. |
-| Switching to `mattn/go-sqlite3` (CGo) | Adds CGo dependency, complicates cross-compilation, and the project constraint explicitly prohibits it. modernc.org/sqlite v1.45+ performance is within 10-20% of CGo for most workloads. | Stay on modernc.org/sqlite. |
-| WAL2 mode | WAL2 is experimental in SQLite. Not available through any Go driver. | Stay on standard WAL. |
+**Algorithm for tag writing:**
+1. Read all OGG pages from source file
+2. Extract packets 1, 2, 3 from the first few pages (header pages)
+3. Parse Vorbis Comment from packet 2 (skip `\x03vorbis` prefix)
+4. Modify comments (add/replace/remove fields)
+5. Re-serialize Vorbis Comment packet (with `\x03vorbis` prefix)
+6. Write to temp file via AtomicWrite:
+   a. Write packet 1 (identification) as BOS page
+   b. Write modified packet 2 (comment) + packet 3 (setup) as continuation pages
+   c. Copy all remaining audio pages, re-sequencing page numbers
+7. Atomic rename over original
 
 ---
 
-## 3. Lit Web Component Performance — Priority: MEDIUM
+## WAV Tag Writing
 
-**Confidence:** MEDIUM — based on Lit official docs and @lit-labs/virtualizer usage in the codebase.
+### The Problem
 
-### Current State
+WAV files use the RIFF container format. Metadata in WAV files can be stored in:
 
-The codebase already uses `@lit-labs/virtualizer` v2.1.1 in all list views (track-list, cover-grid, artists-view, genres-view, queue-panel). The virtualizer handles DOM recycling for large datasets. The main performance concerns are:
+1. **RIFF INFO chunks** (`LIST`/`INFO` sub-chunks like `IART`, `INAM`, `IPRD`) — the oldest and most widely supported mechanism
+2. **ID3v2 chunks** (`id3 ` RIFF chunk containing a full ID3v2 tag) — newer, more expressive, used by some modern tools
+3. **BEXT chunks** (Broadcast Wave Extension) — professional/broadcast use only
 
-1. **Eager full-library fetch on startup** — `libraryStore.eagerFetch()` loads all tracks, albums, artists, genres simultaneously
-2. **Large component files** — 1400-2600 lines mixing concerns (though this is a code quality issue, not a performance issue per se)
-3. **Rendering cost of metadata-heavy rows** — each track row has 16+ fields
+The challenge is that no dominant pure-Go library exists for WAV metadata writing, and the ecosystem recently lost its most popular option.
 
-### Pattern: Lazy Loading Per View
+### Option Analysis
 
-Replace `eagerFetch()` with on-demand loading:
+#### Option 1: Custom RIFF Chunk Writer for LIST/INFO (RECOMMENDED)
 
-```typescript
-class LibraryStore {
-    // Instead of fetching all four collections at construction:
-    constructor() {
-        EventsOn(Events.LibraryScanComplete, () => {
-            this.invalidate();
-        });
-        this.loadCoverSize();
-        // Remove: this.eagerFetch();
-    }
-    
-    // The existing getTracks/getAlbums already support lazy loading —
-    // they check for null and fetch if needed. The only change needed
-    // is removing eagerFetch() from the constructor.
-}
+| Component | Source | Purpose |
+|-----------|--------|---------|
+| RIFF chunk reader | Custom (~200 LOC) | Parse WAV RIFF structure, find/modify LIST INFO chunk |
+| INFO field writing | Custom (~150 LOC) | Write INFO sub-chunks with metadata |
+| Atomic file write | Existing `fileutil.AtomicWrite` | Crash-safe file operations |
+
+**RIFF INFO Chunk Field Mapping:**
+
+| YellowJacket Field | INFO Chunk ID | Description |
+|--------------------|---------------|-------------|
+| Title | `INAM` | Name/title of the work |
+| Artist | `IART` | Artist name |
+| Album | `IPRD` | Product/album name |
+| Genre | `IGNR` | Genre |
+| Year | `ICRD` | Creation date |
+| Track Number | `ITRK` | Track number |
+| Composer | `IMUS` | Composer/music by |
+| Comment | `ICMT` | Comment |
+
+**Why RIFF INFO over ID3v2-in-WAV:**
+- RIFF INFO is the native WAV metadata format — it's part of the RIFF specification
+- Universal player support (Windows Media Player, VLC, foobar2000, etc.)
+- Simple format: 4-byte chunk ID + 4-byte size + null-terminated string
+- dhowden/tag already reads RIFF INFO chunks, so round-trip works
+- No additional dependencies needed
+
+**Why NOT ID3v2-in-WAV:**
+- The `id3 ` chunk is a de facto standard, not an official RIFF spec feature
+- Not all players/tools support it
+- dhowden/tag reads ID3v2 in WAV (it detects it), but our existing `bogem/id3v2` expects MP3 file structure (it calls `tag.Open()` which reads from position 0, expecting an ID3v2 header). Using bogem/id3v2 for WAV would require significant adaptation to handle the RIFF wrapper.
+- More complex: we'd need to create an ID3v2 tag, serialize it, then embed it as a RIFF chunk
+
+**Implementation approach:**
+1. Read entire WAV file (parse RIFF chunks: `RIFF`, `fmt `, `data`, `LIST`, etc.)
+2. Find or create `LIST`/`INFO` chunk
+3. Write/replace INFO sub-chunks with new metadata values
+4. Reassemble file: RIFF header → fmt chunk → data chunk → LIST/INFO chunk → other chunks
+5. Update RIFF header size
+6. Write via AtomicWrite
+
+**Estimated LOC:** ~300-400 for RIFF INFO reading/writing.
+
+#### Option 2: `go-audio/wav` + `go-audio/riff`
+
+| Technology | Status | Stars |
+|------------|--------|-------|
+| `github.com/go-audio/wav` | **ARCHIVED Feb 21, 2026** | 383 |
+| `github.com/go-audio/riff` | **ARCHIVED Feb 21, 2026** | 11 |
+
+**Assessment:** Both libraries were archived less than one month ago. They provided WAV
+encoding/decoding and RIFF chunk parsing, but:
+- `go-audio/wav` is focused on audio encoding/decoding, not metadata manipulation
+- `go-audio/riff` has only a parser (3 commits total), no writer
+- Neither supports writing RIFF INFO metadata
+- Both are now unmaintained/archived — using them would be a dead-end dependency
+
+**Verdict:** NOT SUITABLE. Archived, no metadata write support.
+
+#### Option 3: `bogem/id3v2` for ID3v2-in-WAV
+
+**Assessment:** bogem/id3v2's `Tag.WriteTo(w io.Writer)` writes raw ID3v2 tag bytes to
+any writer. In theory, we could:
+1. Create an ID3v2 tag with bogem/id3v2
+2. Serialize it to bytes via `WriteTo()`
+3. Wrap it in a RIFF `id3 ` chunk
+4. Insert the chunk into the WAV file
+
+This is technically feasible but:
+- Still requires custom RIFF chunk manipulation code
+- ID3v2-in-WAV has worse player compatibility than RIFF INFO
+- More complex than just writing RIFF INFO chunks directly
+- `tag.Open("file.wav")` and `tag.Save()` won't work — those expect MP3 file structure
+
+**Verdict:** NOT RECOMMENDED as primary approach. Could be added later as an enhancement
+for richer metadata (cover art via APIC), but RIFF INFO should be the primary mechanism.
+
+#### Option 4: External CLI Tools (ffmpeg, exiftool)
+
+Same issues as OGG: distribution complexity, runtime dependencies, error handling overhead.
+
+**Verdict:** NOT RECOMMENDED.
+
+### WAV Writing: Recommended Stack
+
+| Component | Approach | New Dependency? |
+|-----------|----------|-----------------|
+| RIFF container parsing | Custom RIFF reader in tagwriter package | No |
+| RIFF INFO chunk writing | Custom (4-byte IDs + null-terminated strings) | No |
+| Atomic file write | Existing `fileutil.AtomicWrite` | No |
+
+**Total new dependencies: ZERO.**
+
+### WAV Cover Art
+
+**RIFF INFO: NO — cannot embed cover art.**
+
+RIFF INFO chunks are limited to simple text key-value pairs. There is no standard
+INFO sub-chunk for binary image data.
+
+**ID3v2-in-WAV: YES — via APIC frame.**
+
+If an `id3 ` RIFF chunk is present (or added), it can contain a full ID3v2 tag with
+APIC (Attached Picture) frames, just like MP3 files.
+
+**Recommendation for v1.2.1:** Do NOT implement WAV cover art. The RIFF INFO approach
+gives us text tag support with zero dependencies, and WAV cover art support is rare
+in the wild. Cover art for WAV can be deferred to a future enhancement using the
+ID3v2-in-WAV approach if there's user demand.
+
+### WAV RIFF Format Details (Implementation Reference)
+
+**RIFF File Structure:**
+```
+"RIFF" [file_size: uint32 LE] "WAVE"
+  "fmt " [chunk_size: uint32 LE] [format data...]
+  "data" [chunk_size: uint32 LE] [audio samples...]
+  "LIST" [chunk_size: uint32 LE] "INFO"
+    "INAM" [size: uint32 LE] "Track Title\0"
+    "IART" [size: uint32 LE] "Artist Name\0"
+    ...
 ```
 
-**Why:** The existing `getTracks()`, `getAlbums()`, etc. already have null-check-and-fetch logic. The `eagerFetch()` in the constructor defeats this by loading everything upfront. Removing it means only the active view's data is fetched when first navigated to.
+**Key implementation details:**
+- All integers are little-endian (unlike OGG which is a mix)
+- Chunk sizes must be even (pad with 0x00 byte if odd)
+- Strings in INFO chunks are null-terminated
+- The RIFF header size field = total file size - 8
+- LIST/INFO chunk can appear anywhere after `fmt ` and `data`
+- Multiple LIST chunks may exist; only `LIST`/`INFO` contains metadata
 
-**Risk:** First navigation to each view will have a brief loading delay. Mitigate with loading indicators (the `tracksLoading`/`albumsLoading` flags already exist).
-
-### Pattern: Minimize Re-renders with `guard` Directive
-
-For expensive computed values in templates (like filtered/sorted track lists), use Lit's `guard` directive to avoid recomputation:
-
-```typescript
-import { guard } from 'lit/directives/guard.js';
-
-// In render():
-${guard([this.tracks, this.sortColumn, this.sortDirection], () => 
-    this.sortedTracks()
-)}
-```
-
-**When to use:** For any computed property that depends on reactive properties but is expensive to compute (sorting 50k tracks, filtering, etc.).
-
-### Pattern: keyed Rendering for Virtualizer Lists
-
-Ensure virtualizer items have stable keys so DOM nodes are reused correctly when the list changes:
-
-```typescript
-// The virtualizer uses index-based identity by default.
-// For track lists that can be reordered (queue, playlists),
-// provide a keyFunction:
-<lit-virtualizer
-    .items=${this.tracks}
-    .keyFunction=${(track: Track) => track.filePath}
-    .renderItem=${(track: Track) => html`...`}
-></lit-virtualizer>
-```
-
-**Why:** Without stable keys, reordering a list causes the virtualizer to re-render every visible row. With keys, it reuses existing DOM nodes for rows that moved position.
-
-### What NOT to Do
-
-| Anti-Pattern | Why It's Wrong | Instead |
-|---|---|---|
-| Moving to React/Preact | The project uses Lit Web Components with Wails' WebView. Switching frameworks is explicitly out of scope and would require rewriting all 20+ components. | Stay on Lit 3.x. |
-| Pre-rendering / SSR | Desktop app. No server. No need. | N/A |
-| Replacing `@lit-labs/virtualizer` with a custom solution | The virtualizer is battle-tested and integrates with Lit's update lifecycle. A custom solution would need to handle the same edge cases (resize, scroll restoration, dynamic heights). | Keep `@lit-labs/virtualizer`. File bugs if issues are found. |
-| `requestAnimationFrame` batching for store updates | Lit already batches updates at microtask timing. Adding rAF batching would add latency without benefit. | Let Lit handle batching. |
+**Algorithm for tag writing:**
+1. Parse RIFF chunks by reading 4-byte ID + 4-byte size pairs
+2. Collect all chunks, preserving order
+3. Find or create LIST/INFO chunk
+4. Replace/add INFO sub-chunks for changed fields
+5. Reassemble file via AtomicWrite:
+   a. Write RIFF header with updated total size
+   b. Write fmt chunk (unchanged)
+   c. Write data chunk (unchanged — just copy bytes)
+   d. Write LIST/INFO chunk with metadata
+   e. Write any other chunks (unchanged)
+6. Atomic rename
 
 ---
 
-## 4. Go Testing Strategies — Priority: HIGH
+## Integration with Existing Pipeline
 
-**Confidence:** HIGH — based on Go standard library patterns and codebase-specific analysis.
+### Format Detection Changes
 
-### Strategy: In-Memory SQLite for Database Tests
-
-modernc.org/sqlite supports in-memory databases. Use them for fast, isolated tests:
+Current `tagwriter.DetectFormat()` supports MP3 and FLAC. Add OGG and WAV:
 
 ```go
-// backend/database/testhelper_test.go (shared across test files in the package)
+const (
+    FormatMP3  AudioFormat = "mp3"
+    FormatFLAC AudioFormat = "flac"
+    FormatOGG  AudioFormat = "ogg"   // NEW
+    FormatWAV  AudioFormat = "wav"   // NEW
+)
 
-func newTestDB(t *testing.T) *database.DB {
-    t.Helper()
-    // Use ":memory:" with shared cache so the connection sees the same DB.
-    // The query string params mirror production config.
-    db, err := database.NewTestDB(":memory:?_journal_mode=WAL&_busy_timeout=5000")
-    if err != nil {
-        t.Fatal(err)
-    }
-    t.Cleanup(func() { db.Close() })
-    return db
-}
-```
-
-**For this to work, add a `NewTestDB` constructor to the database package** that accepts a custom DSN instead of computing one from the user data directory:
-
-```go
-// backend/database/database.go
-
-// NewTestDB creates a database connection with a caller-provided DSN.
-// Intended for unit tests that use in-memory databases.
-func NewTestDB(dsn string) (*DB, error) {
-    // Same initialization logic as NewDB but with custom DSN.
-    // Runs migrations, sets pragmas, etc.
-}
-```
-
-**Why in-memory:** Tests run in ~1ms instead of ~50ms. No filesystem cleanup. No conflict between parallel tests. Each test gets a fresh database.
-
-**Important:** SQLite in-memory databases with `SetMaxOpenConns(1)` work correctly — the single connection sees a consistent view. No need for shared cache mode with a single connection.
-
-### Strategy: Extract Pure Functions from Player
-
-The player has testable logic that doesn't need audio hardware:
-
-```go
-// Volume math — currently inline in player methods:
-func userVolumeToBeep(userVolume int) (volume float64, silent bool) {
-    if userVolume <= 0 {
-        return 0, true
-    }
-    // Convert 0-100 linear user volume to beep's logarithmic Volume field.
-    // Base is 2, so Volume = log2(userVolume/MaxUserVol * range) 
-    // This is the math currently embedded in Set/GetVolume methods.
-    return math.Log2(float64(userVolume) / float64(MaxUserVol)), false
-}
-
-// State serialization — currently inline in persist/restore:
-func serializePlayerState(state State, volume int, filePath string) PlayerStateRow { ... }
-func deserializePlayerState(row PlayerStateRow) (State, int, string) { ... }
-```
-
-**Why:** These pure functions can be tested exhaustively (edge cases: volume 0, volume 100, max uint64 trackChangeID, empty filepath) without any speaker initialization or Wails context.
-
-### Strategy: Interface-Based Mocking for Queue Tests
-
-The `Queue` depends on `TrackLoader` (player) and `*database.DB`. The `TrackLoader` is already an interface — perfect for testing:
-
-```go
-// backend/queue/queue_test.go
-
-type mockPlayer struct {
-    loaded    []string
-    playing   bool
-    position  int
-}
-
-func (m *mockPlayer) LoadFile(path string) error {
-    m.loaded = append(m.loaded, path)
-    return nil
-}
-func (m *mockPlayer) Play() error            { m.playing = true; return nil }
-func (m *mockPlayer) IsPlaying() bool         { return m.playing }
-func (m *mockPlayer) CurrentPositionSeconds() (int, error) { return m.position, nil }
-func (m *mockPlayer) UnloadTrack()            { m.playing = false }
-
-func TestSetQueuePlaysFirstTrack(t *testing.T) {
-    db := newTestDB(t)
-    // Seed test tracks into db...
-    
-    q := queue.NewQueue(slog.Default(), db)
-    player := &mockPlayer{}
-    q.SetPlayer(player)
-    q.SetContext(context.Background())
-    
-    q.SetQueue([]string{"/music/a.mp3", "/music/b.mp3"}, 0, false)
-    
-    if len(player.loaded) == 0 {
-        t.Fatal("expected player to load a file")
-    }
-    if player.loaded[0] != "/music/a.mp3" {
-        t.Errorf("expected first track, got %s", player.loaded[0])
+func DetectFormat(filePath string) (AudioFormat, error) {
+    switch strings.ToLower(filepath.Ext(filePath)) {
+    case ".mp3":  return FormatMP3, nil
+    case ".flac": return FormatFLAC, nil
+    case ".ogg":  return FormatOGG, nil     // NEW
+    case ".wav":  return FormatWAV, nil     // NEW
+    default:      return "", errUnsupportedFormat
     }
 }
 ```
 
-### Strategy: Config Round-Trip Testing
+### Pipeline Dispatch Changes
+
+Current `WriteTrackTags()` switch in `pipeline.go`:
 
 ```go
-func TestConfigRoundTrip(t *testing.T) {
-    dir := t.TempDir()
-    path := filepath.Join(dir, "config.toml")
-    
-    original := config.DefaultConfig()
-    original.Theme.AccentColor = "#ff0000"
-    
-    err := config.Save(path, original)
-    if err != nil {
-        t.Fatal(err)
-    }
-    
-    loaded, err := config.Load(path)
-    if err != nil {
-        t.Fatal(err)
-    }
-    
-    if loaded.Theme.AccentColor != "#ff0000" {
-        t.Errorf("accent color not preserved: got %s", loaded.Theme.AccentColor)
-    }
+switch format {
+case FormatMP3:  err = writeMp3Tags(tw.logger, audioFile.FilePath, changes)
+case FormatFLAC: err = writeFlacTags(tw.logger, audioFile.FilePath, changes)
+case FormatOGG:  err = writeOggTags(tw.logger, audioFile.FilePath, changes)  // NEW
+case FormatWAV:  err = writeWavTags(tw.logger, audioFile.FilePath, changes)  // NEW
 }
 ```
 
-### Strategy: Event Name Parity Validation
+### Shared Code Reuse
 
-Build-time check that Go and TypeScript event names match:
+**Vorbis Comment helpers** (already exist in `flac.go`):
+- `replaceVorbisComment()` — remove existing field, add new value
+- `applyFlacTextChanges()` — map TagChanges to Vorbis Comment fields
+- Field mapping constants (`FIELD_TITLE`, `FIELD_ARTIST`, etc.)
 
-```go
-// backend/events/events_test.go
+These should be **extracted to a shared file** (e.g., `vorbis_comments.go`) and reused
+by both `flac.go` and the new `ogg.go`. The logic is identical — both formats use Vorbis
+Comments with the same field names.
 
-func TestEventNameParity(t *testing.T) {
-    // Read the Go events constants via reflection or by parsing the source.
-    // Read frontend/src/events.ts.
-    // Compare the sets.
-    
-    goEvents := extractGoEventNames(t)     // parse events.go
-    tsEvents := extractTSEventNames(t)     // parse events.ts
-    
-    for name := range goEvents {
-        if _, ok := tsEvents[name]; !ok {
-            t.Errorf("Go event %q not found in TypeScript events.ts", name)
-        }
-    }
-    for name := range tsEvents {
-        if _, ok := goEvents[name]; !ok {
-            t.Errorf("TypeScript event %q not found in Go events.go", name)
-        }
-    }
-}
-```
+**Cover art helpers** (already exist in `tagwriter.go`):
+- `detectMIME()` — determine image MIME type from magic bytes
+- `asBytes()` — extract byte slice from TagChanges value
 
-**Implementation note:** Parse events.go for `const ( ... )` block string values. Parse events.ts for the `Events` object literal values. This is a ~50-line test that prevents silent event name drift forever.
-
-### Test Priority Order
-
-| Package | Why First | Test Count Estimate |
-|---|---|---|
-| `queue` | Central to playback, most concurrency issues, persistence bugs | ~15-20 tests |
-| `database` | FTS5 edge cases, migration correctness, search behavior | ~10-15 tests |
-| `config` | Round-trip fidelity, defaults, validation, permissions | ~8-10 tests |
-| `player` (pure logic only) | Volume math, state serialization | ~5-8 tests |
-| `events` | Parity check | 1 test |
-| `library` | Scan logic is complex but depends on filesystem fixtures | ~10 tests (lower priority) |
-
-### What NOT to Do
-
-| Anti-Pattern | Why It's Wrong | Instead |
-|---|---|---|
-| Test doubles for SQLite (full mock DB layer) | In-memory SQLite IS the test double. It runs the same SQL engine with the same behavior. Mocking at the `*sql.DB` level loses all SQL correctness checking. | Use `:memory:` SQLite databases. |
-| `testify` or other assertion libraries | The project uses standard `testing` only. Adding assertion libraries creates style inconsistency and dependency bloat. | Use `t.Errorf`, `t.Fatal`, and `if` checks. |
-| Integration tests in CI for player | The player requires an audio output device. CI runners don't have one. The existing skip mechanism (`YELLOWJACKET_INTEGRATION`) is correct. | Extract pure functions from player; leave hardware tests as opt-in integration tests. |
-| Coverage targets | The PROJECT.md explicitly says "Tests support refactoring, not standalone goal." Coverage targets incentivize low-value tests. | Test critical paths: queue operations, search, config round-trip, event parity. |
+**AtomicWrite** (already exists in `fileutil/atomicwrite.go`):
+- Used identically for all formats: write to temp → sync → rename
 
 ---
 
-## 5. beep/v2 Audio Library Patterns — Priority: MEDIUM
+## Dependency Summary
 
-**Confidence:** MEDIUM — based on beep wiki docs, gopxl/beep v2 API, and codebase lock ordering analysis.
+### New Dependencies Required
 
-### Lock Ordering: The One Rule
+**NONE.** Both OGG Vorbis and WAV tag writing are implemented as custom code in the
+tagwriter package, using only:
+- Go standard library (`encoding/binary`, `encoding/base64`, `bytes`, `io`, `os`)
+- Existing dependencies (`go-flac/flacpicture` for METADATA_BLOCK_PICTURE binary format)
+- Existing utilities (`fileutil.AtomicWrite`)
 
-beep/v2 has a global speaker lock (`speaker.Lock()/speaker.Unlock()`). The player has its own `sync.Mutex`. The existing documented rule is correct:
+### Existing Dependencies Unchanged
 
-> **Always acquire `p.mu` BEFORE `speaker.Lock()`.**
-
-The critical implementation detail: the beep callback (end-of-track) runs with `speaker.Lock()` held. The player dispatches to a goroutine (`go p.onPlaybackFinished()`) so that it can safely acquire `p.mu`. **This goroutine dispatch MUST NOT be removed.** Removing it causes deadlock:
-
-```
-Deadlock scenario without goroutine dispatch:
-1. beep callback fires (speaker lock HELD)
-2. onPlaybackFinished tries to acquire p.mu → blocks if another goroutine holds p.mu
-3. That other goroutine calls speaker.Lock() → blocks because speaker lock is held by beep
-4. DEADLOCK
-```
-
-### Pattern: Speaker Lock Scope Minimization
-
-The current code correctly locks the speaker only when mutating streamer state:
-
-```go
-func (p *Player) startPaused() {
-    speaker.Lock()
-    p.control.Paused = true
-    speaker.Unlock()
-    // speaker.Play registers streamers — does its own locking.
-    speaker.Play(beep.Seq(p.speakerStreamer, beep.Callback(func() {
-        go p.onPlaybackFinished()
-    })))
-    p.state = Paused
-}
-```
-
-**Keep speaker.Lock() regions as small as possible.** Never do I/O, logging, or event emission while holding the speaker lock.
-
-### Pattern: Streamer Chain Lifecycle
-
-The current `updateStreamers()` method correctly rebuilds the entire chain (base → resample → ctrl → volume) on each track load. This is the right pattern for beep — streamer chains are cheap to construct and shouldn't be reused across tracks.
-
-**One improvement:** The `updateStreamers` method preserves volume state across track changes, which is correct. But it could also preserve the paused state:
-
-```go
-func (p *Player) updateStreamers(newBaseStreamer beep.StreamSeeker, sr beep.SampleRate) error {
-    // ...existing code...
-    
-    // Preserve existing pause state across track changes.
-    prevPaused := false
-    if p.control != nil {
-        prevPaused = p.control.Paused
-    }
-    
-    p.control = &beep.Ctrl{Streamer: p.resampled, Paused: prevPaused}
-    // ...
-}
-```
-
-### Extractable Pure Logic from Player
-
-These functions can be extracted and tested without audio hardware:
-
-| Function | Current Location | Pure? | Test Value |
-|---|---|---|---|
-| Volume conversion (user 0-100 ↔ beep logarithmic) | Inline in `SetVolume`/`GetVolume` | Yes | Edge cases: 0, 1, 50, 100 |
-| Display position calculation | `displayPositionSecsLocked()` | Yes (math only) | Seek position rounding, track length boundary |
-| Track info construction | `getCurrentTrackInfoLocked()` | Mostly (reads state) | Null file, missing metadata |
-| Resample quality mapping | Currently hardcoded `4` | Yes (when made configurable) | Quality 1-6 range validation |
-
-### What NOT to Do
-
-| Anti-Pattern | Why It's Wrong | Instead |
-|---|---|---|
-| Replacing beep with a lower-level audio library (oto, portaudio) | beep provides the streamer composition model (Seq, Ctrl, Volume, Resample) that the player relies on. Dropping to oto means reimplementing all of this. | Stay on beep/v2. File issues for bugs. |
-| Multiple speaker.Init calls | `speaker.Init` can only be called once (or after `speaker.Close()`). Calling it again is undefined behavior. The current "init once on startup" is correct. | Keep single Init on startup. If sample rate needs to change, the entire speaker must be closed and reinitialized. |
-| Holding p.mu during speaker.Play() | `speaker.Play()` does its own internal locking. Holding p.mu during the call is safe but unnecessary — and if beep ever calls back synchronously (which it currently doesn't for `Play()`), could cause issues. | Release p.mu before speaker.Play() if possible, or document why it's held. |
+| Library | Current Use | Use in v1.2.1 |
+|---------|------------|---------------|
+| `dhowden/tag` v0.0.0-20240417 | Tag reading (all formats) | Unchanged — validates OGG/WAV round-trip |
+| `go-flac/flacvorbis/v2` v2.0.2 | FLAC Vorbis Comment manipulation | Shared patterns for OGG comment encoding |
+| `go-flac/flacpicture/v2` v2.0.2 | FLAC PICTURE block creation | Reused for OGG METADATA_BLOCK_PICTURE |
+| `go-flac/go-flac/v2` v2.0.4 | FLAC metadata block manipulation | Unchanged |
+| `bogem/id3v2/v2` v2.1.4 | MP3 ID3v2 tag writing | Unchanged |
+| `jfreymuth/oggvorbis` v1.0.5 | OGG Vorbis decoding (via beep) | Reference for OGG page structure |
 
 ---
 
-## Development Tools: Existing Stack Assessment
+## What NOT To Add
 
-### Already Correct — No Changes Needed
-
-| Tool | Version | Assessment |
-|---|---|---|
-| golangci-lint v2 | v2.9.0 | Strict config already in place. Catches most issues. |
-| Race detector | Go 1.25 | Already enabled in `make test`. |
-| lefthook | v1.13.6 | Pre-commit hooks run vet, lint, codegen-check, typecheck. |
-| govulncheck | v1.1.4 | Vulnerability scanning for Go dependencies. |
-| sqlc | v1.30.0 | SQL-to-Go code generation for type-safe queries. |
-| pprof profiling | Built-in | Dev-only pprof server on localhost:6060, block/mutex profiling enabled. |
-| Vite + HMR | v7.0.0 | Fast frontend rebuilds during development. |
-
-### Recommended Addition: `t.TempDir()` for Test Isolation
-
-Go 1.15+ provides `t.TempDir()` which auto-cleans. Use for config tests and any test that needs filesystem:
-
-```go
-func TestConfigSave(t *testing.T) {
-    dir := t.TempDir()  // cleaned up automatically
-    path := filepath.Join(dir, "config.toml")
-    // ...
-}
-```
-
-### Recommended Addition: `t.Parallel()` for Independent Tests
-
-Mark tests that don't share state as parallel to speed up the test suite:
-
-```go
-func TestQueueAddTrack(t *testing.T) {
-    t.Parallel()  // runs concurrently with other parallel tests
-    db := newTestDB(t)  // each test gets its own in-memory DB
-    // ...
-}
-```
-
-**Important:** Only use `t.Parallel()` when each test creates its own database and mock player. Tests that share state (global variables, singleton stores) cannot be parallel.
+| Library / Approach | Why Avoid |
+|--------------------|-----------|
+| `mccoyst/ogg` | No semver releases, 37 stars. The OGG page format is simple enough to implement directly (~80 LOC for the encoding part). Avoids dependency risk for minimal gain. |
+| `go-audio/wav` or `go-audio/riff` | **Archived Feb 21, 2026.** Do not depend on abandoned libraries. |
+| Any CGo-based library (taglib-go, etc.) | Violates pure-Go constraint |
+| `bogem/id3v2` for WAV files | Its `Open()`/`Save()` API expects MP3 file structure. Would need significant wrapping for RIFF container. RIFF INFO is simpler and more compatible. |
+| ID3v2-in-WAV for v1.2.1 | Adds complexity for marginal benefit. RIFF INFO covers the primary use case. Defer ID3v2-in-WAV to a future milestone if cover art in WAV is needed. |
+| External CLI tools (vorbiscomment, ffmpeg) | Distribution complexity, runtime deps, violates pure-Go spirit |
 
 ---
 
-## Version Compatibility
+## Format Coverage Matrix (v1.2.1 Target)
 
-| Package | Current Version | Compatible With | Notes |
-|---|---|---|---|
-| Go | 1.25.0 | All dependencies | Go 1.25 introduced `t.Context()`, tool directive in go.mod |
-| modernc.org/sqlite | v1.45.0 | SQLite 3.51.x | Match modernc.org/libc version exactly per upstream warning |
-| beep/v2 | v2.1.1 | ebitengine/oto v3.3.3 | oto is the audio backend; version locked through go.mod |
-| Lit | ^3.2.1 | @lit-labs/virtualizer ^2.1.1 | Labs packages are experimental but stable for virtualizer |
-| @lit-labs/signals | ^0.2.0 | Lit ^3.2.1 | Used for signal-based reactivity; experimental API may change |
-| sqlc | v1.30.0 | modernc.org/sqlite | sqlc generates code for `database/sql` interface; driver-agnostic |
+| Format | Text Tags | Cover Art | Approach | Complexity | Confidence |
+|--------|-----------|-----------|----------|------------|------------|
+| MP3 (ID3v2) | ✓ All fields | ✓ APIC frame | bogem/id3v2 (existing) | Done | HIGH |
+| FLAC | ✓ All fields | ✓ PICTURE block | go-flac ecosystem (existing) | Done | HIGH |
+| OGG Vorbis | ✓ All fields | ✓ METADATA_BLOCK_PICTURE | Custom OGG page rewriter | Medium | MEDIUM-HIGH |
+| WAV | ✓ Core fields | ✗ Not in v1.2.1 | Custom RIFF INFO writer | Low-Medium | MEDIUM-HIGH |
+
+**"Core fields" for WAV:** Title, Artist, Album, Genre, Year, Track Number, Composer.
+Album Artist and Disc Number have no standard RIFF INFO chunk IDs. They can be omitted
+or stored in non-standard INFO chunks if needed.
+
+---
+
+## Risk Assessment
+
+| Risk | Likelihood | Impact | Mitigation |
+|------|-----------|--------|------------|
+| OGG page splitting with large cover art | Medium | Medium | Test with cover art >64KB (forces multi-page comment packet) |
+| WAV files with unusual RIFF chunk ordering | Low | Low | Parse all chunks generically, preserve unknown chunks |
+| dhowden/tag can't read what we write (OGG) | Low | High | Round-trip tests: write with custom writer, read with dhowden/tag |
+| dhowden/tag can't read what we write (WAV) | Low | High | Round-trip tests for RIFF INFO chunks |
+| OGG CRC32 computation mismatch | Low | High | Use the exact polynomial from OGG spec (0x04c11db7), test against known files |
+| WAV INFO chunk padding errors | Medium | Low | RIFF spec requires even-aligned chunks; easy to forget padding byte |
 
 ---
 
 ## Sources
 
-- SQLite WAL documentation: https://www.sqlite.org/wal.html — **HIGH confidence** (official docs, updated 2025-05-31)
-- SQLite PRAGMA documentation: https://www.sqlite.org/pragma.html — **HIGH confidence** (official docs)
-- modernc.org/sqlite API: https://pkg.go.dev/modernc.org/sqlite@v1.46.1 — **HIGH confidence** (official Go package docs)
-- gopxl/beep wiki — Composing and controlling: https://github.com/gopxl/beep/wiki/Composing-and-controlling — **HIGH confidence** (official beep docs)
-- Lit rendering docs: https://lit.dev/docs/components/rendering/ — **HIGH confidence** (official Lit docs)
-- Go race detector: https://go.dev/doc/articles/race_detector — **HIGH confidence** (official Go docs)
-- Codebase analysis: `.planning/codebase/CONCERNS.md`, `.planning/codebase/STACK.md` — **HIGH confidence** (direct code inspection)
-- beep speaker.Lock() behavior: inferred from beep wiki and codebase lock ordering comments — **MEDIUM confidence** (documented in code but not in beep's API docs)
+### Official Specifications (HIGH confidence)
+- OGG framing: https://xiph.org/ogg/doc/framing.html
+- OGG RFC: https://xiph.org/ogg/doc/rfc3533.txt
+- Vorbis I Spec (Section 5 — comment field): https://xiph.org/vorbis/doc/Vorbis_I_spec.html
+- Vorbis Comment spec: https://xiph.org/vorbis/doc/v-comment.html
+- METADATA_BLOCK_PICTURE: https://wiki.xiph.org/VorbisComment#METADATA_BLOCK_PICTURE
+- FLAC Picture block format: https://xiph.org/flac/format.html#metadata_block_picture
 
----
+### Libraries Evaluated (HIGH confidence — GitHub repos)
+- jfreymuth/oggvorbis: https://github.com/jfreymuth/oggvorbis (75 stars, decode-only)
+- mccoyst/ogg: https://github.com/mccoyst/ogg (37 stars, encode+decode, no semver)
+- dhowden/tag: https://github.com/dhowden/tag (642 stars, read-only)
+- go-audio/wav: https://github.com/go-audio/wav (383 stars, **ARCHIVED 2026-02-21**)
+- go-audio/riff: https://github.com/go-audio/riff (11 stars, **ARCHIVED 2026-02-21**)
+- bogem/id3v2: https://github.com/n10v/id3v2 (359 stars, MP3-focused API)
 
-*Stack research for: YellowJacket consolidation milestone*
-*Researched: 2026-02-27*
+### Existing Codebase (HIGH confidence — already validated in v1.2)
+- `backend/tagwriter/flac.go` — Vorbis Comment manipulation patterns
+- `backend/tagwriter/mp3.go` — AtomicWrite integration pattern
+- `backend/tagwriter/tagwriter.go` — TagChanges, format detection, helper functions
+- `backend/fileutil/atomicwrite.go` — Crash-safe file write utility

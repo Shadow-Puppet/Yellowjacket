@@ -14,6 +14,10 @@ export function Clear() {
   return window['go']['queue']['Queue']['Clear']();
 }
 
+export function CompactAfterLibraryRemoval() {
+  return window['go']['queue']['Queue']['CompactAfterLibraryRemoval']();
+}
+
 export function CycleRepeat() {
   return window['go']['queue']['Queue']['CycleRepeat']();
 }

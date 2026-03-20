@@ -7,27 +7,55 @@ package sqlcgen
 
 import (
 	"context"
+	"database/sql"
 )
 
 const addPlaylistTrack = `-- name: AddPlaylistTrack :one
-INSERT INTO playlist_tracks (playlist_id, audio_file_id, position) VALUES (?, ?, ?)
-RETURNING id, playlist_id, audio_file_id, position
+INSERT INTO playlist_tracks (
+    playlist_id, audio_file_id, position,
+    phantom_title, phantom_artist, phantom_album,
+    phantom_duration_ms, phantom_genre, phantom_cover_art_path
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, playlist_id, audio_file_id, position, phantom_title, phantom_artist, phantom_album, phantom_duration_ms, phantom_genre, phantom_cover_art_path, phantom_file_path
 `
 
 type AddPlaylistTrackParams struct {
-	PlaylistID  int64
-	AudioFileID int64
-	Position    int64
+	PlaylistID          int64
+	AudioFileID         sql.NullInt64
+	Position            int64
+	PhantomTitle        sql.NullString
+	PhantomArtist       sql.NullString
+	PhantomAlbum        sql.NullString
+	PhantomDurationMs   sql.NullInt64
+	PhantomGenre        sql.NullString
+	PhantomCoverArtPath sql.NullString
 }
 
 func (q *Queries) AddPlaylistTrack(ctx context.Context, arg AddPlaylistTrackParams) (PlaylistTrack, error) {
-	row := q.db.QueryRowContext(ctx, addPlaylistTrack, arg.PlaylistID, arg.AudioFileID, arg.Position)
+	row := q.db.QueryRowContext(ctx, addPlaylistTrack,
+		arg.PlaylistID,
+		arg.AudioFileID,
+		arg.Position,
+		arg.PhantomTitle,
+		arg.PhantomArtist,
+		arg.PhantomAlbum,
+		arg.PhantomDurationMs,
+		arg.PhantomGenre,
+		arg.PhantomCoverArtPath,
+	)
 	var i PlaylistTrack
 	err := row.Scan(
 		&i.ID,
 		&i.PlaylistID,
 		&i.AudioFileID,
 		&i.Position,
+		&i.PhantomTitle,
+		&i.PhantomArtist,
+		&i.PhantomAlbum,
+		&i.PhantomDurationMs,
+		&i.PhantomGenre,
+		&i.PhantomCoverArtPath,
+		&i.PhantomFilePath,
 	)
 	return i, err
 }
@@ -93,14 +121,15 @@ SELECT
     pt.playlist_id,
     pt.audio_file_id,
     pt.position,
-    af.file_path,
-    af.length_milliseconds,
-    COALESCE(r.name, '') AS title,
-    COALESCE(ac.text, '') AS artist,
-    COALESCE(rg.name, '') AS album,
-    COALESCE(ca.file_path, '') AS cover_art_path
+    COALESCE(af.file_path, '') AS file_path,
+    COALESCE(af.length_milliseconds, 0) AS length_milliseconds,
+    COALESCE(r.name, pt.phantom_title, '') AS title,
+    COALESCE(ac.text, pt.phantom_artist, '') AS artist,
+    COALESCE(rg.name, pt.phantom_album, '') AS album,
+    COALESCE(ca.file_path, pt.phantom_cover_art_path, '') AS cover_art_path,
+    CASE WHEN pt.audio_file_id IS NULL THEN 1 ELSE 0 END AS is_phantom
 FROM playlist_tracks pt
-JOIN audio_files af ON pt.audio_file_id = af.id
+LEFT JOIN audio_files af ON pt.audio_file_id = af.id
 LEFT JOIN recordings r ON af.recording_id = r.id
 LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
 LEFT JOIN (
@@ -116,7 +145,7 @@ ORDER BY pt.playlist_id, pt.position
 type GetAllPlaylistTracksWithMetadataRow struct {
 	ID                 int64
 	PlaylistID         int64
-	AudioFileID        int64
+	AudioFileID        sql.NullInt64
 	Position           int64
 	FilePath           string
 	LengthMilliseconds int64
@@ -124,6 +153,7 @@ type GetAllPlaylistTracksWithMetadataRow struct {
 	Artist             string
 	Album              string
 	CoverArtPath       string
+	IsPhantom          int64
 }
 
 func (q *Queries) GetAllPlaylistTracksWithMetadata(ctx context.Context) ([]GetAllPlaylistTracksWithMetadataRow, error) {
@@ -146,6 +176,7 @@ func (q *Queries) GetAllPlaylistTracksWithMetadata(ctx context.Context) ([]GetAl
 			&i.Artist,
 			&i.Album,
 			&i.CoverArtPath,
+			&i.IsPhantom,
 		); err != nil {
 			return nil, err
 		}
@@ -221,10 +252,10 @@ func (q *Queries) GetPlaylist(ctx context.Context, id int64) (Playlist, error) {
 }
 
 const getPlaylistTrackFilePaths = `-- name: GetPlaylistTrackFilePaths :many
-SELECT af.file_path
+SELECT COALESCE(af.file_path, '') AS file_path
 FROM playlist_tracks pt
-JOIN audio_files af ON pt.audio_file_id = af.id
-WHERE pt.playlist_id = ?
+LEFT JOIN audio_files af ON pt.audio_file_id = af.id
+WHERE pt.playlist_id = ? AND pt.audio_file_id IS NOT NULL
 ORDER BY pt.position
 `
 
@@ -252,19 +283,28 @@ func (q *Queries) GetPlaylistTrackFilePaths(ctx context.Context, playlistID int6
 }
 
 const getPlaylistTracks = `-- name: GetPlaylistTracks :many
-SELECT pt.id, pt.playlist_id, pt.audio_file_id, pt.position, af.file_path
+SELECT pt.id, pt.playlist_id, pt.audio_file_id, pt.position,
+    COALESCE(af.file_path, '') AS file_path,
+    pt.phantom_title, pt.phantom_artist, pt.phantom_album,
+    pt.phantom_duration_ms, pt.phantom_genre, pt.phantom_cover_art_path
 FROM playlist_tracks pt
-JOIN audio_files af ON pt.audio_file_id = af.id
+LEFT JOIN audio_files af ON pt.audio_file_id = af.id
 WHERE pt.playlist_id = ?
 ORDER BY pt.position
 `
 
 type GetPlaylistTracksRow struct {
-	ID          int64
-	PlaylistID  int64
-	AudioFileID int64
-	Position    int64
-	FilePath    string
+	ID                  int64
+	PlaylistID          int64
+	AudioFileID         sql.NullInt64
+	Position            int64
+	FilePath            string
+	PhantomTitle        sql.NullString
+	PhantomArtist       sql.NullString
+	PhantomAlbum        sql.NullString
+	PhantomDurationMs   sql.NullInt64
+	PhantomGenre        sql.NullString
+	PhantomCoverArtPath sql.NullString
 }
 
 func (q *Queries) GetPlaylistTracks(ctx context.Context, playlistID int64) ([]GetPlaylistTracksRow, error) {
@@ -282,6 +322,12 @@ func (q *Queries) GetPlaylistTracks(ctx context.Context, playlistID int64) ([]Ge
 			&i.AudioFileID,
 			&i.Position,
 			&i.FilePath,
+			&i.PhantomTitle,
+			&i.PhantomArtist,
+			&i.PhantomAlbum,
+			&i.PhantomDurationMs,
+			&i.PhantomGenre,
+			&i.PhantomCoverArtPath,
 		); err != nil {
 			return nil, err
 		}
@@ -302,14 +348,15 @@ SELECT
     pt.playlist_id,
     pt.audio_file_id,
     pt.position,
-    af.file_path,
-    af.length_milliseconds,
-    COALESCE(r.name, '') AS title,
-    COALESCE(ac.text, '') AS artist,
-    COALESCE(rg.name, '') AS album,
-    COALESCE(ca.file_path, '') AS cover_art_path
+    COALESCE(af.file_path, '') AS file_path,
+    COALESCE(af.length_milliseconds, 0) AS length_milliseconds,
+    COALESCE(r.name, pt.phantom_title, '') AS title,
+    COALESCE(ac.text, pt.phantom_artist, '') AS artist,
+    COALESCE(rg.name, pt.phantom_album, '') AS album,
+    COALESCE(ca.file_path, pt.phantom_cover_art_path, '') AS cover_art_path,
+    CASE WHEN pt.audio_file_id IS NULL THEN 1 ELSE 0 END AS is_phantom
 FROM playlist_tracks pt
-JOIN audio_files af ON pt.audio_file_id = af.id
+LEFT JOIN audio_files af ON pt.audio_file_id = af.id
 LEFT JOIN recordings r ON af.recording_id = r.id
 LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
 LEFT JOIN (
@@ -326,7 +373,7 @@ ORDER BY pt.position
 type GetPlaylistTracksWithMetadataRow struct {
 	ID                 int64
 	PlaylistID         int64
-	AudioFileID        int64
+	AudioFileID        sql.NullInt64
 	Position           int64
 	FilePath           string
 	LengthMilliseconds int64
@@ -334,6 +381,7 @@ type GetPlaylistTracksWithMetadataRow struct {
 	Artist             string
 	Album              string
 	CoverArtPath       string
+	IsPhantom          int64
 }
 
 func (q *Queries) GetPlaylistTracksWithMetadata(ctx context.Context, playlistID int64) ([]GetPlaylistTracksWithMetadataRow, error) {
@@ -356,6 +404,7 @@ func (q *Queries) GetPlaylistTracksWithMetadata(ctx context.Context, playlistID 
 			&i.Artist,
 			&i.Album,
 			&i.CoverArtPath,
+			&i.IsPhantom,
 		); err != nil {
 			return nil, err
 		}
@@ -370,10 +419,60 @@ func (q *Queries) GetPlaylistTracksWithMetadata(ctx context.Context, playlistID 
 	return items, nil
 }
 
+const getTrackPhantomMetadata = `-- name: GetTrackPhantomMetadata :one
+SELECT
+    COALESCE(r.name, '') AS title,
+    COALESCE(ac.text, '') AS artist,
+    COALESCE(rg.name, '') AS album,
+    af.length_milliseconds AS duration_ms,
+    CAST(COALESCE(
+        (SELECT GROUP_CONCAT(g.name, '||')
+         FROM recording_genres rg_sub
+         JOIN genres g ON rg_sub.genre_id = g.id
+         WHERE rg_sub.recording_id = r.id),
+        ''
+    ) AS TEXT) AS genre,
+    COALESCE(ca.file_path, '') AS cover_art_path
+FROM audio_files af
+LEFT JOIN recordings r ON af.recording_id = r.id
+LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
+LEFT JOIN (
+    SELECT recording_id, MIN(release_group_id) AS release_group_id
+    FROM release_group_recordings
+    GROUP BY recording_id
+) rgr ON r.id = rgr.recording_id
+LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
+LEFT JOIN cover_art ca ON rg.cover_art_id = ca.id
+WHERE af.id = ?
+`
+
+type GetTrackPhantomMetadataRow struct {
+	Title        string
+	Artist       string
+	Album        string
+	DurationMs   int64
+	Genre        string
+	CoverArtPath string
+}
+
+func (q *Queries) GetTrackPhantomMetadata(ctx context.Context, id int64) (GetTrackPhantomMetadataRow, error) {
+	row := q.db.QueryRowContext(ctx, getTrackPhantomMetadata, id)
+	var i GetTrackPhantomMetadataRow
+	err := row.Scan(
+		&i.Title,
+		&i.Artist,
+		&i.Album,
+		&i.DurationMs,
+		&i.Genre,
+		&i.CoverArtPath,
+	)
+	return i, err
+}
+
 const isTrackInPlaylist = `-- name: IsTrackInPlaylist :one
 SELECT EXISTS(
     SELECT 1 FROM playlist_tracks pt
-    JOIN audio_files af ON pt.audio_file_id = af.id
+    LEFT JOIN audio_files af ON pt.audio_file_id = af.id
     WHERE pt.playlist_id = ? AND af.file_path = ?
 ) AS in_playlist
 `

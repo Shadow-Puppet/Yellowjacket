@@ -1,5 +1,5 @@
 import { library } from '@go/models';
-import { LitElement, html, css, nothing } from 'lit';
+import { LitElement, html, svg, css, nothing } from 'lit';
 import { designTokens } from '../../styles/tokens.css';
 import {
     customElement,
@@ -60,6 +60,21 @@ const SORT_FIELD_KEY = 'track-list-sort-field';
 const SORT_DIR_KEY = 'track-list-sort-direction';
 const MIN_COLUMN_WIDTH = 50;
 const DEFAULT_FIXED_WIDTH = 80;
+
+// Inline SVG paths for favorite icons — eliminates wa-icon shadow DOM
+// overhead (30-50 shadow roots during scroll).  Font Awesome 6 paths.
+const FAV_ICONS = {
+    heart: {
+        viewBox: '0 0 512 512',
+        regular: 'M225.8 468.2l-2.5-2.3L48.1 303.2C17.4 274.7 0 234.7 0 192.8v-3.3c0-70.4 50-130.8 119.2-144C158.6 37.9 198.9 47 231 69.6c9 6.3 17.3 13.5 25 21.5c7.7-8 16-15.2 25-21.5c32.1-22.6 72.4-31.7 111.8-24.2C461.5 59.6 512 124.2 512 192.8v3.3c0 41.9-17.4 81.9-48.1 110.4L288.7 465.9l-2.5 2.3c-8.2 7.6-19 11.9-30.2 11.9s-22-4.2-30.2-11.9z',
+        solid: 'M47.6 300.4L228.3 469.1c7.5 7 17.4 10.9 27.7 10.9s20.2-3.9 27.7-10.9L464.4 300.4c30.4-28.3 47.6-68 47.6-109.5v-5.8c0-69.9-50.5-129.5-119.4-141C347 36.5 300.6 51.4 268 84L256 96 244 84c-32.6-32.6-79-47.5-124.6-39.9C50.5 55.6 0 115.2 0 185.1v5.8c0 41.5 17.2 81.2 47.6 109.5z',
+    },
+    star: {
+        viewBox: '0 0 576 512',
+        regular: 'M287.9 0c9.2 0 17.6 5.2 21.6 13.5l68.6 141.3 153.2 22.6c9 1.3 16.5 7.6 19.3 16.3s.5 18.1-5.9 24.5L434.8 326.7l26.2 155.6c1.5 9-2.2 18.1-9.7 23.5s-17.3 6-25.3 1.7L288 439.6 149.7 507.5c-8 4.3-17.8 3.7-25.3-1.7s-11.2-14.5-9.7-23.5l26.2-155.6L31.1 218.2c-6.5-6.4-8.7-15.9-5.9-24.5s10.3-14.9 19.3-16.3l153.2-22.6L266.3 13.5C270.4 5.2 278.7 0 287.9 0z',
+        solid: 'M316.9 18C311.6 7 300.4 0 288.1 0s-23.4 7-28.8 18L195 150.3 51.4 171.5c-12 1.8-22 10.2-25.7 21.7s-.7 24.2 7.9 32.7L137.8 329 108.4 474.7c-2 12 3 24.2 12.9 31.3s23 8 33.8 2.3L288.1 439.8 420.9 508.3c10.8 5.7 23.9 4.9 33.8-2.3s14.9-19.3 12.9-31.3L437.7 329 542 225.9c8.6-8.4 11.7-21.2 7.9-32.7s-13.7-19.9-25.7-21.7L380.7 150.3 316.9 18z',
+    },
+} as const;
 
 type SortDirection = 'asc' | 'desc';
 
@@ -151,6 +166,10 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
     private prevSortField: string | null = null;
     private prevSortDir: SortDirection = 'asc';
 
+    private handleSelectAll = (): void => {
+        this.selection.selectAll();
+    };
+
     private clearSelectionHandler = (e: MouseEvent) => {
         const path = e.composedPath();
         const isTrackClick = path.some(
@@ -185,14 +204,24 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
     @query('#sort-dropdown')
     private sortDropdownPopup!: WaPopup;
 
+    /** Whether delegated event handlers have been attached to the virtualizer. */
+    private delegationAttached = false;
+
     private resizingColumn: number | null = null;
     private resizeStartX = 0;
     private resizeStartWidths: number[] = [];
     private resizeObserver: ResizeObserver | null =
         null;
 
-    private flowLayout = flow();
+    // _itemSize matches the fixed .track-row height (33px) so lit-virtualizer
+    // doesn't need to measure items. Without this hint, the default 100px
+    // estimate causes constant scroll error correction (scrollTo() calls)
+    // that produce visible jumping/skipping during scroll.
+    private flowLayout = flow({
+        _itemSize: { width: 100, height: 33 },
+    } as Parameters<typeof flow>[0]);
     private hasRestoredScroll = false;
+    private scrollSaveRAFId: number | null = null;
 
     // =================================================================
     // Filtered / sorted tracks (memoised)
@@ -718,6 +747,7 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
       display: flex;
       flex-direction: column;
       overflow: hidden;
+      contain: layout style;
     }
 
     .table-container {
@@ -927,6 +957,8 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
       overflow-x: hidden;
       overflow-y: auto;
       user-select: none;
+      contain: paint;
+      overflow-anchor: none;
     }
 
     .track-row {
@@ -940,6 +972,9 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
       cursor: default;
       user-select: none;
       overflow: hidden;
+      height: 33px;
+      box-sizing: border-box;
+      contain: strict;
     }
 
     .track-row > * {
@@ -996,7 +1031,6 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
       cursor: pointer;
       color: var(--yj-text-tertiary, #666);
       font-size: var(--yj-text-sm);
-      transition: color 0.1s ease;
     }
 
     .fav-icon:hover {
@@ -1030,6 +1064,7 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
         }
         document.addEventListener('mousedown', this.sortDropdownCloseHandler);
         document.addEventListener('click', this.clearSelectionHandler);
+        document.addEventListener('shortcut:select-all', this.handleSelectAll);
         document.addEventListener('mousemove', this.onColResizeMove);
         document.addEventListener('mouseup', this.onColResizeEnd);
 
@@ -1043,6 +1078,17 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
     }
 
     override disconnectedCallback() {
+        // Remove delegated event handlers from virtualizer.
+        const virt = this.virtualizer;
+        if (virt) {
+            virt.removeEventListener('click', this.onDelegatedClick);
+            virt.removeEventListener('dblclick', this.onDelegatedDblClick);
+            virt.removeEventListener('contextmenu', this.onDelegatedContextMenu);
+            virt.removeEventListener('dragstart', this.onDelegatedDragStart);
+            virt.removeEventListener('dragend', this.onTrackDragEnd);
+        }
+        this.delegationAttached = false;
+
         this.virtualizer?.removeEventListener(
             'visibilityChanged',
             this.onVisibilityChanged,
@@ -1051,6 +1097,7 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
         super.disconnectedCallback();
         document.removeEventListener('mousedown', this.sortDropdownCloseHandler);
         document.removeEventListener('click', this.clearSelectionHandler);
+        document.removeEventListener('shortcut:select-all', this.handleSelectAll);
         document.removeEventListener('mousemove', this.onColResizeMove);
         document.removeEventListener('mouseup', this.onColResizeEnd);
 
@@ -1078,9 +1125,35 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
 
     override firstUpdated() {
         this.initColumnWidths();
+        this.attachDelegation();
+    }
+
+    /**
+     * Attach delegated event handlers to the virtualizer.
+     * The virtualizer may not exist on first render (tracks
+     * still loading), so this is called from both
+     * firstUpdated() and updated() — guarded by a flag.
+     */
+    private attachDelegation() {
+        if (this.delegationAttached) return;
+
+        const virt = this.virtualizer;
+
+        if (!virt) return;
+
+        virt.addEventListener('click', this.onDelegatedClick);
+        virt.addEventListener('dblclick', this.onDelegatedDblClick);
+        virt.addEventListener('contextmenu', this.onDelegatedContextMenu);
+        virt.addEventListener('dragstart', this.onDelegatedDragStart);
+        virt.addEventListener('dragend', this.onTrackDragEnd);
+        this.delegationAttached = true;
     }
 
     override updated(changed: Map<string, unknown>) {
+        // The virtualizer may not exist on first render
+        // (tracks still loading). Retry delegation here.
+        this.attachDelegation();
+
         // Recompute widths when the column config changes.
         const colKey = this.trackListCtrl.columnIds.join(
             ',',
@@ -1197,8 +1270,86 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
             }
         }
 
-        this.libraryCtrl.setScrollPosition('tracks', first);
+        // RAF-throttle scroll position saves — at most once per frame.
+        // Without this, every visibilityChanged (fired per-item during
+        // scroll) writes to the store synchronously, adding main-thread
+        // work during the scroll hot path.
+        if (this.scrollSaveRAFId === null) {
+            this.scrollSaveRAFId = requestAnimationFrame(() => {
+                this.scrollSaveRAFId = null;
+                this.libraryCtrl.setScrollPosition('tracks', first);
+            });
+        }
     };
+
+    // =================================================================
+    // Delegated event handlers (stable references, zero per-item closures)
+    // =================================================================
+
+    /**
+     * Walk up from the event target to find the nearest
+     * `.track-row` and extract track + index via `data-index`.
+     */
+    private resolveTrackFromEvent(
+        e: Event,
+    ): { track: library.Track; index: number } | null {
+        const row = (e.target as HTMLElement).closest(
+            '.track-row',
+        ) as HTMLElement | null;
+
+        if (!row) return null;
+
+        const idx = Number(row.dataset.index);
+        const track = this.cachedSortedTracks[idx];
+
+        if (!track) return null;
+
+        return { track, index: idx };
+    }
+
+    private onDelegatedClick = (e: MouseEvent) => {
+        const hit = this.resolveTrackFromEvent(e);
+
+        if (!hit) return;
+
+        // Check if click was on fav-icon
+        const favEl = (e.target as HTMLElement).closest(
+            '.fav-icon',
+        );
+
+        if (favEl) {
+            e.stopPropagation();
+            void this.favCtrl.toggleFavorite(
+                hit.track.FilePath,
+            );
+
+            return;
+        }
+
+        this.onTrackRowClick(e, hit.track, hit.index);
+    };
+
+    private onDelegatedDblClick = (e: MouseEvent) => {
+        const hit = this.resolveTrackFromEvent(e);
+
+        if (hit) this.onTrackRowDblClick(hit.track);
+    };
+
+    private onDelegatedContextMenu = (e: MouseEvent) => {
+        const hit = this.resolveTrackFromEvent(e);
+
+        if (hit) this.onTrackContextMenu(e, hit.track);
+    };
+
+    private onDelegatedDragStart = (e: DragEvent) => {
+        const hit = this.resolveTrackFromEvent(e);
+
+        if (hit) this.onTrackDragStart(e, hit.track);
+    };
+
+    // =================================================================
+    // Original handlers (still used internally)
+    // =================================================================
 
     private onTrackRowClick(
         e: MouseEvent,
@@ -1291,7 +1442,11 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
                 queueStore.playTracksNext(filePaths);
                 break;
             case 'track-details':
-                this.openTrackDetails(filePaths[0]!);
+                if (filePaths.length === 1) {
+                    this.openTrackDetails(filePaths[0]!);
+                } else {
+                    this.openBatchTrackDetails(filePaths);
+                }
                 break;
         }
 
@@ -1332,6 +1487,42 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
         this.trackDetailsDialog?.show(
             track,
             coverArt ?? undefined,
+        );
+    }
+
+    private openBatchTrackDetails(
+        filePaths: string[],
+    ) {
+        const tracks = filePaths
+            .map((fp) =>
+                this.tracks.find(
+                    (t) => t.FilePath === fp,
+                ),
+            )
+            .filter(
+                (t): t is library.Track => t != null,
+            );
+
+        if (tracks.length === 0) return;
+
+        const albumNames = new Set(
+            tracks.map((t) => t.Album),
+        );
+        let coverArt: CoverArtUrls | null = null;
+        let coverArtMixed = false;
+
+        if (albumNames.size === 1) {
+            const albumName = [...albumNames][0]!;
+            coverArt =
+                this.resolveCoverArt(albumName);
+        } else {
+            coverArtMixed = true;
+        }
+
+        this.trackDetailsDialog?.showBatch(
+            tracks,
+            coverArt,
+            coverArtMixed,
         );
     }
 
@@ -1535,10 +1726,15 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
         const isFav = this.favCtrl.isFavorited(
             track.FilePath,
         );
-        const favVariant = isFav
-            ? 'solid'
-            : 'regular';
 
+        // Inline SVG instead of wa-icon — eliminates a shadow DOM tree
+        // per visible row (~30-50 during scroll).
+        const iconDef = FAV_ICONS[this.favCtrl.iconStyle === 'star' ? 'star' : 'heart'];
+        const iconPath = isFav ? iconDef.solid : iconDef.regular;
+
+        // No inline closures — all events delegated via data-index
+        // on the virtualizer element (see firstUpdated).
+        const term = this.searchCtrl.term;
         return html`
       <div
         class=${classMap({
@@ -1547,53 +1743,35 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
             selected,
         })}
         draggable="true"
-        @click=${(e: MouseEvent) =>
-                this.onTrackRowClick(e, track, index)}
-        @dblclick=${() =>
-                this.onTrackRowDblClick(track)}
-        @contextmenu=${(e: MouseEvent) =>
-                this.onTrackContextMenu(e, track)}
-        @dragstart=${(e: DragEvent) =>
-                this.onTrackDragStart(e, track)}
-        @dragend=${this.onTrackDragEnd}
+        data-index=${index}
       >
         <div
           class=${classMap({
             'fav-icon': true,
             favorited: isFav,
         })}
-          @click=${(e: MouseEvent) => {
-                    e.stopPropagation();
-                    void this.favCtrl.toggleFavorite(
-                        track.FilePath,
-                    );
-                }}
         >
-          <wa-icon
-            name=${this.favCtrl.iconName}
-            variant=${favVariant}
-          ></wa-icon>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${iconDef.viewBox.split(' ').slice(2).join(' ')}" width="14" height="14">
+            ${svg`<path fill="currentColor" d="${iconPath}"/>`}
+          </svg>
         </div>
-        ${(() => {
-                const term = this.searchCtrl.term;
-                return cols.map((col) => {
-                    const val = col.accessor(track);
-                    const centered = val === '\u2014';
-                    const display = term
-                        ? highlightText(val, term)
-                        : val;
+        ${cols.map((col) => {
+                const val = col.accessor(track);
+                const centered = val === '\u2014';
+                const display = term
+                    ? highlightText(val, term)
+                    : val;
 
-                    return html`
-                        <div class=${classMap({
-                            cell: true,
-                            'cell-center': centered,
-                            'cell-right': !centered && col.align === 'right',
-                        })}>
-                            ${display}
-                        </div>
-                    `;
-                });
-            })()}
+                return html`
+                    <div class=${classMap({
+                        cell: true,
+                        'cell-center': centered,
+                        'cell-right': !centered && col.align === 'right',
+                    })}>
+                        ${display}
+                    </div>
+                `;
+            })}
       </div>
     `;
     };
@@ -1825,24 +2003,20 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
                   ></wa-icon>
                   ${this.favCtrl.allFavorited(this.selection.getSelectedKeysOrdered()) ? `Remove from ${this.favCtrl.playlistName}` : `Add to ${this.favCtrl.playlistName}`}
                 </wa-dropdown-item>
-                ${this.selection.selectionCount === 1
-                    ? html`
-                          <wa-dropdown-item
-                              @click=${() =>
-                                  this.onContextMenuAction(
-                                      'track-details',
-                                  )}
-                               @mouseenter=${() =>
-                                   this.ctxMenu.closePlaylistSubmenu()}
-                          >
-                              <wa-icon
-                                  slot="icon"
-                                  name="circle-info"
-                              ></wa-icon>
-                              Track Details
-                          </wa-dropdown-item>
-                      `
-                    : nothing}
+                <wa-dropdown-item
+                    @click=${() =>
+                        this.onContextMenuAction(
+                            'track-details',
+                        )}
+                     @mouseenter=${() =>
+                         this.ctxMenu.closePlaylistSubmenu()}
+                >
+                    <wa-icon
+                        slot="icon"
+                        name="circle-info"
+                    ></wa-icon>
+                    Track Details
+                </wa-dropdown-item>
               </div>
             `
                 : nothing}

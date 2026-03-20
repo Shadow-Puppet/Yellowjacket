@@ -57,8 +57,17 @@ func NewTestDB(t *testing.T) *DB {
 		}
 	}
 
-	if err := runMigrations(ctx, db, slog.Default()); err != nil {
+	if err := runMigrations(ctx, db, slog.Default(), ":memory:"); err != nil {
 		t.Fatalf("could not run migrations: %v", err)
+	}
+
+	// Insert a sentinel library row at id=0 so audio_files inserts
+	// using the DEFAULT library_id=0 satisfy the FK constraint.
+	if _, err := db.ExecContext(
+		ctx,
+		"INSERT INTO libraries (id, name, path) VALUES (0, 'Test', '/test')",
+	); err != nil {
+		t.Fatalf("could not insert test library: %v", err)
 	}
 
 	queries := sqlcgen.New(db)
@@ -71,4 +80,28 @@ func NewTestDB(t *testing.T) *DB {
 		Queries: queries,
 		logger:  slog.Default(),
 	}
+}
+
+// NewTestDBWithLibrary returns a test DB with a library row
+// pre-inserted. Returns the DB and the library ID.
+func NewTestDBWithLibrary(
+	t *testing.T,
+	name, libPath string,
+) (*DB, int64) {
+	t.Helper()
+
+	db := NewTestDB(t)
+
+	lib, err := db.Queries.CreateLibrary(
+		db.Ctx,
+		sqlcgen.CreateLibraryParams{
+			Name: name,
+			Path: libPath,
+		},
+	)
+	if err != nil {
+		t.Fatalf("could not create test library: %v", err)
+	}
+
+	return db, lib.ID
 }

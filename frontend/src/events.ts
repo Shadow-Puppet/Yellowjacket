@@ -19,6 +19,7 @@ export const Events = {
     ThemeConfigChanged: "ThemeConfigChanged",
     TrackListConfigChanged: "TrackListConfigChanged",
     FavoritesConfigChanged: "FavoritesConfigChanged",
+    ShortcutsConfigChanged: "ShortcutsConfigChanged",
 
     // Playlist events
     PlaylistCreated: "PlaylistCreated",
@@ -32,6 +33,24 @@ export const Events = {
     LibraryScanStarted: "LibraryScanStarted",
     LibraryScanProgress: "LibraryScanProgress",
     LibraryScanComplete: "LibraryScanComplete",
+
+    // Scan control events
+    LibraryScanCancelled: "LibraryScanCancelled",
+    LibraryScanPaused: "LibraryScanPaused",
+    LibraryScanResumed: "LibraryScanResumed",
+
+    // Scan queue events
+    LibraryScanQueued: "LibraryScanQueued",
+    LibraryScanQueueDrained: "LibraryScanQueueDrained",
+
+    // Library CRUD events
+    LibraryAdded: "LibraryAdded",
+    LibraryRenamed: "LibraryRenamed",
+    LibraryRemoved: "LibraryRemoved",
+
+    // Tag writing events
+    TrackMetadataChanged: "TrackMetadataChanged",
+    BatchWriteProgress: "BatchWriteProgress",
 } as const;
 
 export type EventName = (typeof Events)[keyof typeof Events];

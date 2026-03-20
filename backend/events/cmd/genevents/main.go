@@ -20,6 +20,7 @@ import (
 func main() {
 	source := flag.String("source", "events.go", "path to Go events source file")
 	output := flag.String("output", "", "path to TypeScript output file (stdout if empty)")
+
 	flag.Parse()
 
 	consts, err := parseEvents(*source)

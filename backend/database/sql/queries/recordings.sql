@@ -34,3 +34,6 @@ DELETE FROM recordings;
 -- name: GetAllRecordings :many
 SELECT * FROM recordings
 ORDER BY name;
+
+-- name: CountRecordingsByArtistCredit :one
+SELECT COUNT(*) FROM recordings WHERE artist_credit_id = ?;

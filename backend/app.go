@@ -22,6 +22,7 @@ import (
 	"yellowjacket/backend/playlist"
 	"yellowjacket/backend/profiling"
 	"yellowjacket/backend/queue"
+	"yellowjacket/backend/tagwriter"
 )
 
 // YellowJacketApp is the main application struct for Wails.
@@ -37,6 +38,7 @@ type YellowJacketApp struct {
 	playlist      *playlist.Service
 	queue         *queue.Queue
 	mediaControls mediacontrols.Handler
+	tagWriter     *tagwriter.TagWriter
 	appContext    context.Context
 	appConfig     *config.Config
 	startupErr    error
@@ -115,6 +117,14 @@ func NewYellowJacketApp(
 		yjApp.logger.WithGroup("player"), yjApp.database,
 	)
 
+	// create tag writer
+	yjApp.tagWriter = tagwriter.NewTagWriter(
+		yjApp.logger,
+		yjApp.database,
+		&playerAdapter{p: yjApp.player},
+		yjApp.library,
+	)
+
 	yjApp.FEBindings = []any{
 		yjApp.FrontendUtil,
 		yjApp.appConfig,
@@ -122,10 +132,21 @@ func NewYellowJacketApp(
 		yjApp.playlist,
 		yjApp.queue,
 		yjApp.player,
+		yjApp.tagWriter,
 	}
 
 	return yjApp, nil
 }
+
+// playerAdapter wraps *player.Player to satisfy the tagwriter.PlayerStopper
+// interface, breaking the import cycle between tagwriter and player.
+type playerAdapter struct{ p *player.Player }
+
+func (a *playerAdapter) CurrentFilePath() string {
+	return a.p.GetCurrentTrackInfo().FilePath
+}
+
+func (a *playerAdapter) StopAndRelease() { a.p.UnloadTrack() }
 
 // WindowConfig returns the window configuration for use by the host.
 func (yj *YellowJacketApp) WindowConfig() *config.WindowConfig {
@@ -157,6 +178,7 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 	}
 
 	yj.player.SetContext(ctx)
+	yj.tagWriter.SetContext(ctx)
 
 	// Wire queue (created in NewYellowJacketApp for Wails binding)
 	yj.queue.SetContext(ctx)
@@ -169,6 +191,20 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 	yj.library.SetRescanHooks(library.RescanHooks{
 		PreClear: yj.queue.Clear,
 		PostScan: yj.playlist.RestoreAllPlaylists,
+	})
+
+	// Wire scan hooks so the playlist service can resolve
+	// phantom tracks after each library scan completes.
+	yj.library.SetScanHooks(library.ScanHooks{
+		ResolvePhantoms: yj.playlist.ResolvePhantomTracksAfterScan,
+	})
+
+	// Wire removal hooks so the library can stop playback and
+	// compact the queue during library removal without depending
+	// on the player or queue packages directly.
+	yj.library.SetRemovalHooks(library.RemovalHooks{
+		StopPlayback: func() { yj.player.UnloadTrack() },
+		CompactQueue: yj.queue.CompactAfterLibraryRemoval,
 	})
 
 	// Register playback finished handler to drive queue auto-advance.
@@ -263,5 +299,16 @@ func (yj *YellowJacketApp) OnDomReady(ctx context.Context) {
 	if yj.startupErr != nil {
 		yj.logger.Error("startup error", "err", yj.startupErr.Error())
 		wailsruntime.Quit(ctx)
+
+		return
 	}
+
+	// Soft scan: compare file counts on disk vs DB for each library.
+	// Only libraries with mismatched counts get a full scan — unchanged
+	// libraries are silently skipped (no progress bar, no UI noise).
+	go func() {
+		if err := yj.library.SoftScanAllLibraries(); err != nil {
+			yj.logger.Error("soft scan failed", "err", err)
+		}
+	}()
 }

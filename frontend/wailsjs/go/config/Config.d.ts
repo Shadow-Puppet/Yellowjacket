@@ -13,6 +13,8 @@ export function GetPinDefaultPlaylist():Promise<boolean>;
 
 export function GetScanConcurrency():Promise<string>;
 
+export function GetShortcuts():Promise<Record<string, string>>;
+
 export function GetThemeAccentColor():Promise<string>;
 
 export function GetThemeBackgroundShade():Promise<string>;
@@ -20,6 +22,8 @@ export function GetThemeBackgroundShade():Promise<string>;
 export function GetTrackListColumns():Promise<Array<tracklist.Column>>;
 
 export function Load():Promise<void>;
+
+export function ResetShortcuts():Promise<void>;
 
 export function Save():Promise<void>;
 
@@ -34,6 +38,10 @@ export function SetLibraryDirectory(arg1:string):Promise<void>;
 export function SetPinDefaultPlaylist(arg1:boolean):Promise<void>;
 
 export function SetScanConcurrency(arg1:string):Promise<void>;
+
+export function SetShortcut(arg1:string,arg2:string):Promise<void>;
+
+export function SetShortcuts(arg1:Record<string, string>):Promise<void>;
 
 export function SetThemeAccentColor(arg1:string):Promise<void>;
 

@@ -682,6 +682,8 @@ func (p *Player) ChangeVolume(deltaVolume int) error {
 	defer p.mu.Unlock()
 
 	p.setVolumeLocked(p.getUserVolume() + UserVolume(deltaVolume))
+	p.emitVolumeChanged()
+	p.saveState()
 
 	return nil
 }
@@ -696,6 +698,7 @@ func (p *Player) MuteToggle() error {
 	defer p.mu.Unlock()
 
 	p.volume.Silent = !p.volume.Silent
+	p.emitVolumeChanged()
 	p.saveState()
 
 	return nil
@@ -799,7 +802,6 @@ func (p *Player) seekLocked(targetSeconds int) error {
 
 		return p.seeker.Seek(samples)
 	}()
-
 	if seekErr != nil {
 		speaker.Unlock()
 

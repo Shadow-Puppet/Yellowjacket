@@ -37,6 +37,7 @@ type AudioFile struct {
 	Bitrate            int64
 	FileSize           int64
 	Basename           string
+	LibraryID          int64
 }
 
 type CoverArt struct {
@@ -56,6 +57,13 @@ type Genre struct {
 	Name string
 }
 
+type Library struct {
+	ID        int64
+	Name      string
+	Path      string
+	CreatedAt time.Time
+}
+
 type PlayerState struct {
 	ID                  int64
 	Volume              int64
@@ -72,10 +80,17 @@ type Playlist struct {
 }
 
 type PlaylistTrack struct {
-	ID          int64
-	PlaylistID  int64
-	AudioFileID int64
-	Position    int64
+	ID                  int64
+	PlaylistID          int64
+	AudioFileID         sql.NullInt64
+	Position            int64
+	PhantomTitle        sql.NullString
+	PhantomArtist       sql.NullString
+	PhantomAlbum        sql.NullString
+	PhantomDurationMs   sql.NullInt64
+	PhantomGenre        sql.NullString
+	PhantomCoverArtPath sql.NullString
+	PhantomFilePath     sql.NullString
 }
 
 type Queue struct {
@@ -155,4 +170,5 @@ type TrackMetadatum struct {
 	Channels           int64
 	Bitrate            int64
 	FileSize           int64
+	LibraryID          int64
 }

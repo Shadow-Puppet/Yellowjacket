@@ -26,12 +26,10 @@ import (
 	"yellowjacket/backend/system"
 )
 
-var errLibraryDirNotConfigured = errors.New("library directory not configured")
-
 // scanBatchSize controls how many files are committed in a single
 // database transaction during a scan.  Larger batches amortize
 // SQLite's fsync cost but increase the blast radius of a failed commit.
-const scanBatchSize = 50
+const scanBatchSize = 300
 
 // entityCache holds recently resolved database entities so that
 // repeated upserts for the same artist/album/cover art within a scan
@@ -74,6 +72,15 @@ type RescanHooks struct {
 	PostScan func()
 }
 
+// ScanHooks contains callbacks invoked after a library scan
+// completes.  The app layer wires these so the library package
+// does not depend on the playlist package directly.
+type ScanHooks struct {
+	// ResolvePhantoms re-links phantom playlist tracks whose
+	// files now exist in the library after scanning.
+	ResolvePhantoms func()
+}
+
 // Library manages scanning and querying the music collection.
 type Library struct {
 	// mu protects ctx, conf, and rescanHooks from concurrent
@@ -84,6 +91,30 @@ type Library struct {
 	conf        *Config
 	db          *database.DB
 	rescanHooks RescanHooks
+
+	// Scan control fields — protected by mu.
+	scanActive  bool
+	scanCancel  context.CancelFunc
+	scanPaused  bool
+	scanPauseCh chan struct{}
+
+	// Scan queue fields — protected by mu.
+	scanQueue              []scanQueueEntry
+	currentScanLibraryID   int64
+	currentScanLibraryName string
+
+	// removalHooks holds callbacks for cross-cutting concerns during
+	// library removal (e.g. stopping playback, compacting queue).
+	removalHooks RemovalHooks
+
+	// scanHooks holds callbacks for post-scan processing
+	// (e.g. resolving phantom playlist tracks).
+	scanHooks ScanHooks
+
+	// pipelineMu provides mutual exclusion between the scan
+	// pipeline and the tag write pipeline.  Acquired at the
+	// start of each pipeline, released at the end.
+	pipelineMu sync.Mutex
 }
 
 // SetRescanHooks provides optional hooks for cross-cutting
@@ -95,9 +126,18 @@ func (l *Library) SetRescanHooks(h RescanHooks) {
 	l.rescanHooks = h
 }
 
+// SetScanHooks provides optional hooks for cross-cutting
+// orchestration after each library scan.
+func (l *Library) SetScanHooks(h ScanHooks) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	l.scanHooks = h
+}
+
 // NewLibrary creates a new library with the given configuration.
-// A nil config is permitted; the library will be inert until a valid
-// configuration is supplied via the LibraryConfigChanged event.
+// A nil config is permitted; scan paths come from the database
+// rather than from the config's DirectoryPath.
 func NewLibrary(
 	ctx context.Context,
 	logger *slog.Logger,
@@ -122,6 +162,15 @@ func NewLibrary(
 	return library, nil
 }
 
+// AcquirePipelineLock acquires the pipeline mutex for a tag write
+// operation.  The caller must call ReleasePipelineLock when done.
+// If a scan is currently in progress, AcquirePipelineLock blocks
+// until it completes (and vice versa).
+func (l *Library) AcquirePipelineLock() { l.pipelineMu.Lock() }
+
+// ReleasePipelineLock releases the pipeline mutex after a tag write.
+func (l *Library) ReleasePipelineLock() { l.pipelineMu.Unlock() }
+
 // SetContext sets the Wails runtime context and registers event handlers.
 func (l *Library) SetContext(ctx context.Context) {
 	l.mu.Lock()
@@ -131,73 +180,109 @@ func (l *Library) SetContext(ctx context.Context) {
 	l.registerEventHandlers()
 }
 
+// registerEventHandlers sets up Wails runtime event listeners.
+// The legacy LibraryConfigChanged handler was removed — in the
+// multi-library model, libraries are managed through the CRUD
+// API (Phase 12) and scanned via ScanLibrary/ScanAllLibraries.
 func (l *Library) registerEventHandlers() {
 	if l.ctx == nil {
-		l.logger.Error("Context is nil, cannot register event handlers")
-
-		return
+		l.logger.Error(
+			"Context is nil, cannot register event handlers",
+		)
 	}
-
-	runtime.EventsOn(l.ctx, events.LibraryConfigChanged, func(data ...any) {
-		l.logger.Info("Received LibraryConfigChanged event")
-
-		if len(data) == 0 {
-			l.logger.Error("LibraryConfigChanged event received with no data")
-
-			return
-		}
-
-		configMap, ok := data[0].(map[string]any)
-		if !ok {
-			l.logger.Error("LibraryConfigChanged event data is not a map", "data", data[0])
-
-			return
-		}
-
-		dir, ok := configMap["DirectoryPath"].(string)
-		if !ok {
-			l.logger.Error("DirectoryPath not found or not a string in config event")
-
-			return
-		}
-
-		updatedConfig := Config{DirectoryPath: Directory(dir)}
-		if err := l.handleConfigUpdate(updatedConfig); err != nil {
-			l.logger.Error("Failed to handle config update", "err", err)
-		}
-	})
 }
 
-// Scan syncs the library by adding new files and removing deleted ones.
-// Files that exist but have incomplete metadata (recording_id = 0)
-// will be updated.  The returned ScanMetrics contains timing and
-// count data for every phase of the scan.
-func (l *Library) Scan() (*ScanMetrics, error) {
+// scanInternal performs the full scan pipeline for a single library.
+// It is called from the scan queue coordinator (startScan) or the
+// legacy Scan() wrapper. The caller is responsible for goroutine
+// management; this method blocks until the scan completes.
+func (l *Library) scanInternal(
+	libraryID int64,
+	libraryName string,
+	libraryPath string,
+) *ScanMetrics {
+	// Acquire pipeline lock for scan/write mutual exclusion.
+	l.pipelineMu.Lock()
+	defer l.pipelineMu.Unlock()
+
 	metrics := newScanMetrics()
+	metrics.LibraryID = libraryID
+	metrics.LibraryName = libraryName
 	scanStart := time.Now()
 
-	if len(l.conf.DirectoryPath) == 0 {
-		return metrics, errLibraryDirNotConfigured
-	}
+	scanCtx, scanCancel := context.WithCancel(l.ctx)
+	defer scanCancel()
+
+	l.mu.Lock()
+	l.scanCancel = scanCancel
+	l.scanActive = true
+	l.scanPaused = false
+	l.scanPauseCh = nil
+	l.mu.Unlock()
+
+	defer func() {
+		l.mu.Lock()
+		l.scanCancel = nil
+		// If still paused, unpause so no dangling channel.
+		if l.scanPaused {
+			l.scanPaused = false
+			if l.scanPauseCh != nil {
+				close(l.scanPauseCh)
+			}
+		}
+
+		l.scanPauseCh = nil
+		l.mu.Unlock()
+	}()
 
 	workerCount := resolveScanWorkerCount(
-		l.conf.ScanConcurrency,
-		string(l.conf.DirectoryPath),
+		ScanConcurrencyAuto,
+		libraryPath,
 	)
 
 	l.logger.Info(
 		"beginning library scan",
+		"libraryID", libraryID,
+		"libraryName", libraryName,
+		"libraryPath", libraryPath,
 		"workers", workerCount,
-		"concurrencyMode", l.conf.ScanConcurrency,
 	)
 
-	runtime.EventsEmit(l.ctx, events.LibraryScanStarted)
+	// Helper to build a ScanProgress with library identification.
+	queuedCount := func() int {
+		l.mu.Lock()
+		defer l.mu.Unlock()
 
-	basePath := string(l.conf.DirectoryPath)
+		return len(l.scanQueue)
+	}
+
+	mkProgress := func(
+		phase string,
+		total, processed, a, s, u int64,
+	) ScanProgress {
+		return ScanProgress{
+			Phase:       phase,
+			Total:       total,
+			Processed:   processed,
+			Added:       a,
+			Skipped:     s,
+			Updated:     u,
+			LibraryID:   libraryID,
+			LibraryName: libraryName,
+			QueuedCount: queuedCount(),
+		}
+	}
+
+	runtime.EventsEmit(l.ctx, events.LibraryScanStarted, map[string]any{
+		"libraryId":   libraryID,
+		"libraryName": libraryName,
+	})
+
+	basePath := libraryPath
 
 	// --- Pre-walk: count audio files for progress reporting ---
 	runtime.EventsEmit(l.ctx, events.LibraryScanProgress,
-		ScanProgress{Phase: "counting"},
+		mkProgress("counting", 0, 0, 0, 0, 0),
 	)
 
 	totalFiles := countAudioFiles(basePath)
@@ -207,14 +292,20 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 		"total", totalFiles,
 	)
 
-	// --- Phase 1: load existing files from DB ---
+	// --- Phase 1: load existing files from DB (per-library) ---
 	loadStart := time.Now()
 
-	existingFiles, err := l.db.Queries.GetAllAudioFiles(l.ctx)
+	existingFiles, err := l.db.Queries.GetAudioFilesByLibrary(
+		l.ctx, libraryID,
+	)
 	if err != nil {
-		return metrics, fmt.Errorf(
-			"could not load existing audio files: %w", err,
+		l.logger.Error(
+			"could not load existing audio files",
+			"libraryID", libraryID,
+			"err", err,
 		)
+
+		return metrics
 	}
 
 	existingPaths := &sync.Map{}
@@ -227,7 +318,8 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 	l.logger.Debug(
 		"loaded existing files from database",
 		"count", len(existingFiles),
-		"library-directory", l.conf.DirectoryPath,
+		"libraryID", libraryID,
+		"libraryPath", libraryPath,
 	)
 
 	workChan := make(chan scanWork, 100)
@@ -294,8 +386,8 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 							needsUpdate:    true,
 							existingLength: audioFile.LengthMilliseconds,
 						}:
-						case <-l.ctx.Done():
-							return l.ctx.Err()
+						case <-scanCtx.Done():
+							return scanCtx.Err()
 						}
 
 						return nil
@@ -321,14 +413,13 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 					absolutePath: absoluteFilePath,
 					fileType:     fileType,
 				}:
-				case <-l.ctx.Done():
-					return l.ctx.Err()
+				case <-scanCtx.Done():
+					return scanCtx.Err()
 				}
 
 				return nil
 			},
 		)
-
 		if walkErr != nil {
 			metrics.addWarning(
 				"", "walk",
@@ -392,14 +483,10 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 				runtime.EventsEmit(
 					l.ctx,
 					events.LibraryScanProgress,
-					ScanProgress{
-						Phase:     "scanning",
-						Total:     totalFiles,
-						Processed: a + s + u,
-						Added:     a,
-						Skipped:   s,
-						Updated:   u,
-					},
+					mkProgress(
+						"scanning", totalFiles,
+						a+s+u, a, s, u,
+					),
 				)
 			case <-stopProgress:
 				return
@@ -432,7 +519,7 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 
 			if batchErr := l.commitBatch(
 				batch, cache, metrics,
-				&added, &updated,
+				&added, &updated, &skipped,
 				thumbChan,
 			); batchErr != nil {
 				errMu.Lock()
@@ -445,6 +532,9 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 		}
 
 		for result := range resultChan {
+			// Thread library ID into each result for saveAudioFile.
+			result.libraryID = libraryID
+
 			if !dbStarted {
 				dbStartVal = time.Now()
 				dbStarted = true
@@ -473,6 +563,10 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 
 	for work := range workChan {
 		g.Go(func() error {
+			if err := l.waitIfPaused(scanCtx); err != nil {
+				return err
+			}
+
 			result, err := l.extractAudioMetadata(
 				work, metrics,
 			)
@@ -493,8 +587,8 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 
 			select {
 			case resultChan <- result:
-			case <-l.ctx.Done():
-				return l.ctx.Err()
+			case <-scanCtx.Done():
+				return scanCtx.Err()
 			}
 
 			return nil
@@ -517,14 +611,7 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 	u := updated.Load()
 
 	runtime.EventsEmit(l.ctx, events.LibraryScanProgress,
-		ScanProgress{
-			Phase:     "scanning",
-			Total:     totalFiles,
-			Processed: a + s + u,
-			Added:     a,
-			Skipped:   s,
-			Updated:   u,
-		},
+		mkProgress("scanning", totalFiles, a+s+u, a, s, u),
 	)
 
 	// Close thumbnail channel and wait for all thumbnail workers
@@ -532,87 +619,101 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 	// point so it is safe to close.
 	thumbStart := time.Now()
 
-	runtime.EventsEmit(l.ctx, events.LibraryScanProgress, ScanProgress{
-		Phase:     "thumbnails",
-		Total:     totalFiles,
-		Processed: a + s + u,
-		Added:     a,
-		Skipped:   s,
-		Updated:   u,
-	})
+	runtime.EventsEmit(l.ctx, events.LibraryScanProgress,
+		mkProgress("thumbnails", totalFiles, a+s+u, a, s, u),
+	)
 
 	close(thumbChan)
 	thumbWg.Wait()
 
 	metrics.ThumbnailWallClock = time.Since(thumbStart)
 
-	// --- Phase 5: orphan cleanup ---
-	runtime.EventsEmit(l.ctx, events.LibraryScanProgress, ScanProgress{
-		Phase: "orphans", Total: totalFiles,
-		Processed: a + s + u, Added: a, Skipped: s, Updated: u,
-	})
-
-	orphanStart := time.Now()
+	// Skip orphan cleanup if the scan was cancelled — existingPaths
+	// still contains unvisited files that would be incorrectly deleted.
+	cancelled := scanCtx.Err() != nil
 
 	var removed atomic.Int64
 
-	existingPaths.Range(func(key, value any) bool {
-		path := key.(string)
-		audioFile := value.(sqlcgen.AudioFile)
+	if cancelled {
+		metrics.Cancelled = true
 
-		l.logger.Debug(
-			"removing orphaned database entry",
-			"path", path, "id", audioFile.ID,
+		l.logger.Info("scan cancelled, skipping orphan cleanup")
+	} else {
+		// --- Phase 5: orphan cleanup ---
+		runtime.EventsEmit(l.ctx, events.LibraryScanProgress,
+			mkProgress("orphans", totalFiles, a+s+u, a, s, u),
 		)
 
-		if err := l.db.Queries.DeleteAudioFile(
-			l.ctx, audioFile.ID,
-		); err != nil {
-			l.logger.Warn(
-				"failed to delete orphaned audio file",
-				"path", path,
-				"id", audioFile.ID,
-				"err", err,
+		orphanStart := time.Now()
+
+		existingPaths.Range(func(key, value any) bool {
+			path := key.(string)
+			audioFile := value.(sqlcgen.AudioFile)
+
+			l.logger.Debug(
+				"removing orphaned database entry",
+				"path", path, "id", audioFile.ID,
 			)
 
-			metrics.addWarning(path, "orphan", err)
+			if err := l.db.Queries.DeleteAudioFile(
+				l.ctx, audioFile.ID,
+			); err != nil {
+				l.logger.Warn(
+					"failed to delete orphaned audio file",
+					"path", path,
+					"id", audioFile.ID,
+					"err", err,
+				)
+
+				metrics.addWarning(path, "orphan", err)
+
+				return true
+			}
+
+			// Remove from FTS5 search index.
+			if err := l.db.DeleteSearchIndex(
+				audioFile.ID,
+			); err != nil {
+				l.logger.Warn(
+					"failed to delete FTS entry for orphan",
+					"id", audioFile.ID,
+					"err", err,
+				)
+
+				metrics.addWarning(path, "orphan", err)
+			}
+
+			removed.Add(1)
 
 			return true
-		}
+		})
 
-		// Remove from FTS5 search index.
-		if err := l.db.DeleteSearchIndex(
-			audioFile.ID,
-		); err != nil {
+		metrics.OrphanCleanup = time.Since(orphanStart)
+	}
+
+	// --- Phase 6: resolve phantom playlist tracks ---
+	// Delegated to the playlist service via ScanHooks so that
+	// M3U8-based path resolution can handle both pre-existing
+	// phantoms (no phantom_file_path) and new ones.
+	if !cancelled && l.scanHooks.ResolvePhantoms != nil {
+		l.scanHooks.ResolvePhantoms()
+	}
+
+	// --- Phase 7: post-scan variant generation ---
+	if !cancelled {
+		variantStart := time.Now()
+
+		if err := l.generateMissingSizedVariants(); err != nil {
 			l.logger.Warn(
-				"failed to delete FTS entry for orphan",
-				"id", audioFile.ID,
+				"could not generate missing sized variants",
 				"err", err,
 			)
 
-			metrics.addWarning(path, "orphan", err)
+			metrics.addWarning("", "variant", err)
 		}
 
-		removed.Add(1)
-
-		return true
-	})
-
-	metrics.OrphanCleanup = time.Since(orphanStart)
-
-	// --- Phase 6: post-scan variant generation ---
-	variantStart := time.Now()
-
-	if err := l.generateMissingSizedVariants(); err != nil {
-		l.logger.Warn(
-			"could not generate missing sized variants",
-			"err", err,
-		)
-
-		metrics.addWarning("", "variant", err)
+		metrics.PostScanVariants = time.Since(variantStart)
 	}
-
-	metrics.PostScanVariants = time.Since(variantStart)
 
 	// --- Finalize ---
 	metrics.Added = added.Load()
@@ -621,21 +722,37 @@ func (l *Library) Scan() (*ScanMetrics, error) {
 	metrics.Removed = removed.Load()
 	metrics.Total = time.Since(scanStart)
 
+	if scanErr != nil {
+		l.logger.Warn(
+			"scan completed with errors",
+			"err", scanErr,
+		)
+	}
+
 	l.logger.Info(
 		"library scan complete",
+		"libraryID", libraryID,
+		"libraryName", libraryName,
 		"added", metrics.Added,
 		"updated", metrics.Updated,
 		"removed", metrics.Removed,
 		"skipped", metrics.Skipped,
+		"warnings", len(metrics.Warnings),
+		"cancelled", cancelled,
 		"total", metrics.Total,
-		"library", l.conf.DirectoryPath,
 	)
 
-	runtime.EventsEmit(
-		l.ctx, events.LibraryScanComplete, metrics,
-	)
+	if cancelled {
+		runtime.EventsEmit(
+			l.ctx, events.LibraryScanCancelled, metrics,
+		)
+	} else {
+		runtime.EventsEmit(
+			l.ctx, events.LibraryScanComplete, metrics,
+		)
+	}
 
-	return metrics, scanErr
+	return metrics
 }
 
 // progressInterval controls how often scan progress events are
@@ -712,6 +829,7 @@ type importResult struct {
 	audioProps     *metadata.AudioProperties
 	existingFileID int64 // non-zero if this is an update
 	needsUpdate    bool
+	libraryID      int64 // library this file belongs to
 }
 
 // extractAudioMetadata reads and extracts metadata from an audio file.
@@ -772,7 +890,7 @@ func (l *Library) commitBatch(
 	batch []importResult,
 	cache *entityCache,
 	metrics *ScanMetrics,
-	added, updated *atomic.Int64,
+	added, updated, skipped *atomic.Int64,
 	thumbChan chan<- thumbnailWork,
 ) error {
 	tx, err := l.db.BeginTx()
@@ -806,7 +924,7 @@ func (l *Library) commitBatch(
 		}
 
 		if saveErr != nil {
-			l.logger.Warn(
+			l.logger.Debug(
 				"failed to save audio file",
 				"path", result.absolutePath,
 				"err", saveErr,
@@ -815,6 +933,10 @@ func (l *Library) commitBatch(
 			metrics.addWarning(
 				result.absolutePath, "commit", saveErr,
 			)
+
+			// Count failed saves as skipped so the progress bar
+			// advances (e.g. UNIQUE constraint from pre-existing tracks).
+			skipped.Add(1)
 		}
 	}
 
@@ -886,6 +1008,7 @@ func (l *Library) saveAudioFile(
 			Bitrate:     int64(props.Bitrate),
 			FileSize:    props.FileSize,
 			Basename:    basename,
+			LibraryID:   result.libraryID,
 		})
 	if err != nil {
 		return fmt.Errorf(
@@ -971,11 +1094,10 @@ func (l *Library) updateAudioFileMetadata(
 	}
 
 	// Re-index in FTS5 search_index.
-	// Contentless FTS5 (content='') does not support DELETE, so we
-	// cannot remove the old entry.  Inserting a new row with the
-	// same rowid is accepted by FTS5 — the old entry becomes stale
-	// but harmless (search JOINs against track_metadata filter it).
-	// The index is fully rebuilt during FullRescan.
+	// With contentless_delete=1 (migration 8), DeleteSearchIndex
+	// now works for individual row removal.  For scan updates we
+	// still do delete + reinsert; Phase 16 will use the same
+	// pattern for inline tag edits.
 	tags := result.tags
 	if tags == nil {
 		tags = &metadata.TrackMetadata{}
@@ -1463,33 +1585,4 @@ func toNullString(v string) sql.NullString {
 	}
 
 	return sql.NullString{String: v, Valid: true}
-}
-
-func (l *Library) handleConfigUpdate(updatedConfigValues Config) error {
-	l.logger.Info("handling config update", "updated", updatedConfigValues)
-
-	var updateErr error
-
-	if l.conf.DirectoryPath != updatedConfigValues.DirectoryPath {
-		l.logger.Info("new library, scanning")
-
-		l.conf.DirectoryPath = updatedConfigValues.DirectoryPath
-
-		if scanMetrics, err := l.Scan(); err != nil {
-			updateErr = errors.Join(
-				updateErr,
-				fmt.Errorf(
-					"problem scanning library on config update: %w",
-					err,
-				),
-			)
-		} else if len(scanMetrics.Warnings) > 0 {
-			l.logger.Warn(
-				"library scan completed with warnings",
-				"warningCount", len(scanMetrics.Warnings),
-			)
-		}
-	}
-
-	return updateErr
 }

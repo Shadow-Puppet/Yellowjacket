@@ -1,5 +1,5 @@
 -- name: CreateAudioFile :one
-INSERT INTO audio_files (file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size, basename) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO audio_files (file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size, basename, library_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: GetAudioFile :one
@@ -127,8 +127,46 @@ SELECT id, file_path, title, artist_name
 FROM track_metadata
 WHERE file_path IN (sqlc.slice('paths'));
 
+-- name: GetAudioFilesByLibrary :many
+SELECT * FROM audio_files WHERE library_id = ?;
+
+-- name: CountAudioFilesByLibrary :one
+SELECT COUNT(*) AS count FROM audio_files WHERE library_id = ?;
+
 -- name: DeleteAllAudioFiles :exec
 DELETE FROM audio_files;
+
+-- name: GetAllTracksWithFullMetadataByLibrary :many
+SELECT
+    af.file_path,
+    af.length_milliseconds,
+    COALESCE(r.name, '') AS title,
+    COALESCE(ac.text, '') AS artist_name,
+    r.track_number,
+    r.disc_number,
+    COALESCE(rg.name, '') AS album,
+    CAST(COALESCE(
+        (SELECT GROUP_CONCAT(g.name, '||')
+         FROM recording_genres rg_sub
+         JOIN genres g ON rg_sub.genre_id = g.id
+         WHERE rg_sub.recording_id = r.id),
+        ''
+    ) AS TEXT) AS genre,
+    COALESCE(r.year, 0) AS year,
+    COALESCE(r.composer, '') AS composer,
+    COALESCE(ft.extension, '') AS file_type,
+    af.sample_rate,
+    af.bit_depth,
+    af.channels,
+    af.bitrate,
+    af.file_size
+FROM audio_files af
+JOIN recordings r ON af.recording_id = r.id
+JOIN artist_credit ac ON r.artist_credit_id = ac.id
+LEFT JOIN release_group_recordings rgr ON r.id = rgr.recording_id
+LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
+LEFT JOIN file_types ft ON af.file_type_id = ft.id
+WHERE af.library_id = ?;
 
 -- name: GetAudioFilesByReleaseGroup :many
 SELECT
@@ -161,4 +199,37 @@ LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
 LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
 LEFT JOIN file_types ft ON af.file_type_id = ft.id
 WHERE rgr.release_group_id = ?
+ORDER BY rgr.disc_number, rgr.track_number;
+
+-- name: GetAudioFilesByReleaseGroupByLibrary :many
+SELECT
+    af.file_path,
+    af.length_milliseconds,
+    COALESCE(r.name, '') AS title,
+    COALESCE(ac.text, '') AS artist_name,
+    rgr.track_number,
+    rgr.disc_number,
+    COALESCE(rg.name, '') AS album,
+    CAST(COALESCE(
+        (SELECT GROUP_CONCAT(g.name, '||')
+         FROM recording_genres rg_sub
+         JOIN genres g ON rg_sub.genre_id = g.id
+         WHERE rg_sub.recording_id = r.id),
+        ''
+    ) AS TEXT) AS genre,
+    COALESCE(r.year, 0) AS year,
+    COALESCE(r.composer, '') AS composer,
+    COALESCE(ft.extension, '') AS file_type,
+    af.sample_rate,
+    af.bit_depth,
+    af.channels,
+    af.bitrate,
+    af.file_size
+FROM release_group_recordings rgr
+JOIN recordings r ON rgr.recording_id = r.id
+JOIN audio_files af ON af.recording_id = r.id
+LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
+LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
+LEFT JOIN file_types ft ON af.file_type_id = ft.id
+WHERE rgr.release_group_id = ? AND af.library_id = ?
 ORDER BY rgr.disc_number, rgr.track_number;

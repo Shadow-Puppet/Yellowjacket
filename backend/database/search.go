@@ -117,21 +117,25 @@ func (d *DB) InsertSearchIndex(
 	return err
 }
 
-// DeleteSearchIndex is a no-op for contentless FTS5 tables.
-// Contentless FTS5 (content=”) does not support DELETE.
-// Stale entries are harmless: they point to rowids that no longer
-// match in track_metadata, so JOINs in search queries filter them
-// out.  The index is fully rebuilt during FullRescan.
-func (d *DB) DeleteSearchIndex(_ int64) error {
+// DeleteSearchIndex removes a single row from the FTS5 search_index
+// by rowid.  This is supported because the table uses
+// contentless_delete=1.  Phase 16 uses this for inline tag edits
+// (delete old entry, reinsert with updated metadata).
+func (d *DB) DeleteSearchIndex(rowid int64) error {
+	_, err := d.db.ExecContext(d.Ctx,
+		`DELETE FROM search_index WHERE rowid = ?`, rowid,
+	)
+	if err != nil {
+		return fmt.Errorf("could not delete search index entry: %w", err)
+	}
+
 	return nil
 }
 
 // ClearSearchIndex removes all rows from the FTS5 search_index.
-// The search_index is a contentless FTS5 table (content=”), which
-// does not support DELETE.  We drop and recreate it instead.
+// We drop and recreate it to ensure a clean slate for full rebuilds.
 func (d *DB) ClearSearchIndex() error {
-	// SAFETY: FTS5 contentless table cannot be DELETEd from.
-	// Drop + recreate is the only way to clear it.  No parameters.
+	// SAFETY: Drop + recreate for full rebuild.  No parameters.
 	if _, err := d.db.ExecContext(d.Ctx,
 		`DROP TABLE IF EXISTS search_index`,
 	); err != nil {
@@ -145,6 +149,7 @@ func (d *DB) ClearSearchIndex() error {
 			artist,
 			album,
 			content='',
+			contentless_delete=1,
 			tokenize='unicode61 remove_diacritics 2'
 		)
 	`); err != nil {
@@ -280,6 +285,93 @@ func (d *DB) SearchFTSTracks(
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf(
 			"search track row iteration error: %w",
+			err,
+		)
+	}
+
+	return results, nil
+}
+
+// SearchFTSTracksByLibrary performs a full-text search scoped to a
+// specific library and returns full track metadata for each match.
+func (d *DB) SearchFTSTracksByLibrary(
+	query string, limit int, libraryID int64,
+) ([]SearchTrackRow, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, nil
+	}
+
+	ftsQuery := buildFTSQuery(query)
+
+	// SAFETY: FTS5 MATCH syntax unsupported by sqlc. Query is parameterized; no string interpolation.
+	rows, err := d.db.QueryContext(d.Ctx, `
+		SELECT
+			tm.file_path,
+			tm.length_milliseconds,
+			tm.title,
+			tm.artist_name,
+			tm.track_number,
+			tm.disc_number,
+			tm.album,
+			tm.genre,
+			tm.year,
+			tm.composer,
+			tm.file_type,
+			tm.sample_rate,
+			tm.bit_depth,
+			tm.channels,
+			tm.bitrate,
+			tm.file_size
+		FROM search_index si
+		JOIN track_metadata tm ON tm.id = si.rowid
+		WHERE search_index MATCH ? AND tm.library_id = ?
+		ORDER BY rank
+		LIMIT ?
+	`, ftsQuery, libraryID, limit)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"FTS library track search failed: %w", err,
+		)
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	var results []SearchTrackRow
+
+	for rows.Next() {
+		var r SearchTrackRow
+
+		if err := rows.Scan(
+			&r.FilePath,
+			&r.LengthMilliseconds,
+			&r.Title,
+			&r.ArtistName,
+			&r.TrackNumber,
+			&r.DiscNumber,
+			&r.Album,
+			&r.Genre,
+			&r.Year,
+			&r.Composer,
+			&r.FileType,
+			&r.SampleRate,
+			&r.BitDepth,
+			&r.Channels,
+			&r.Bitrate,
+			&r.FileSize,
+		); err != nil {
+			return nil, fmt.Errorf(
+				"could not scan library search track row: %w",
+				err,
+			)
+		}
+
+		results = append(results, r)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf(
+			"library search track row iteration error: %w",
 			err,
 		)
 	}

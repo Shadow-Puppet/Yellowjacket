@@ -29,9 +29,21 @@ export class LibraryController implements ReactiveController {
     // LIFECYCLE HOOKS
     // ===================================================================
 
+    /** Last observed changeGeneration from the store. */
+    private lastChangeGen = libraryStore.changeGeneration;
+
     hostConnected(): void {
+        this.lastChangeGen = libraryStore.changeGeneration;
+
         this.unsubscribe = libraryStore.subscribe(() => {
-            this.host.requestUpdate();
+            const gen = libraryStore.changeGeneration;
+
+            // Skip requestUpdate when only loading flags toggled
+            // (changeGeneration unchanged means no actual data changed).
+            if (gen !== this.lastChangeGen) {
+                this.lastChangeGen = gen;
+                this.host.requestUpdate();
+            }
         });
     }
 
@@ -115,6 +127,22 @@ export class LibraryController implements ReactiveController {
 
     setScrollPosition(view: ViewName, offset: number): void {
         libraryStore.setScrollPosition(view, offset);
+    }
+
+    // ===================================================================
+    // LIBRARY FILTER
+    // ===================================================================
+
+    get selectedLibraryId(): number | null {
+        return libraryStore.getSelectedLibraryId();
+    }
+
+    setSelectedLibrary(id: number | null): void {
+        libraryStore.setSelectedLibrary(id);
+    }
+
+    async getLibraries(): Promise<library.Info[]> {
+        return libraryStore.getLibraries();
     }
 
     // ===================================================================

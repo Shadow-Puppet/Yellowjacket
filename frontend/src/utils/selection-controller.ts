@@ -135,6 +135,24 @@ export class SelectionController implements ReactiveController {
         this.host.onSelectionChanged?.();
     }
 
+    /** Select all items. */
+    selectAll(): void {
+        const count = this.host.getItemCount();
+        const next = new Set<string>();
+
+        for (let i = 0; i < count; i++) {
+            const key = this.host.getItemKey(i);
+            if (key !== undefined) next.add(key);
+        }
+
+        if (next.size === this._selectedItems.size) return;
+
+        this._selectedItems = next;
+        this.lastSelectedIndex = count > 0 ? count - 1 : null;
+        this.host.requestUpdate();
+        this.host.onSelectionChanged?.();
+    }
+
     /**
      * Return the selected keys in the order they appear in the host's
      * item list. This preserves positional ordering for queue operations.

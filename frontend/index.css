@@ -58,6 +58,7 @@ body div.sidebar {
     grid-area: sidebar;
     background-color: var(--yj-bg-surface, #212529);
     overflow: hidden;
+    contain: layout style paint;
 }
 
 .bottom-bar {
@@ -67,6 +68,7 @@ body div.sidebar {
     display: grid;
     grid-template-columns: var(--now-playing-width, 200px) 1fr auto;
     align-items: center;
+    contain: layout style;
 
     #now-playing-info {
         justify-self: start;
@@ -134,6 +136,7 @@ body div.sidebar {
     grid-area: main-panel;
     display: flex;
     overflow: hidden;
+    contain: layout style;
 }
 
 .main-panel {
@@ -142,8 +145,21 @@ body div.sidebar {
     padding: 0.25em;
     background-color: var(--yj-bg-surface, #212529);
     overflow: hidden;
+    contain: layout style paint;
 }
 
 .main-panel > * {
     height: 100%;
+    contain: layout style paint;
+}
+
+/* Hidden cached views: use visibility+size collapse instead of
+   display:none so scroll containers preserve their scrollTop.
+   display:none discards scroll state in WebKitGTK. */
+.main-panel > .view-hidden {
+    visibility: hidden !important;
+    height: 0 !important;
+    overflow: hidden !important;
+    pointer-events: none !important;
+    contain: strict !important;
 }

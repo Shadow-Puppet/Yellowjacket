@@ -5,9 +5,13 @@ import {
     state,
 } from 'lit/decorators.js';
 import { library } from '@go/models';
-import { GetTracksByGenre } from '@go/library/Library';
+import {
+    GetTracksByGenre,
+    GetTracksByGenreByLibrary,
+} from '@go/library/Library';
 import { EventsOn } from '@runtime/runtime';
 import { Events } from '../../events';
+import { libraryStore } from '@store/library-store';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@components/track-list/track-list.js';
 import { designTokens } from '../../styles/tokens.css';
@@ -176,9 +180,17 @@ export class GenreDetails extends LitElement {
         if (!this.genreName) return;
 
         try {
-            this.tracks = await GetTracksByGenre(
-                this.genreName,
-            );
+            const libId =
+                libraryStore.getSelectedLibraryId();
+
+            this.tracks = libId !== null
+                ? await GetTracksByGenreByLibrary(
+                      this.genreName,
+                      libId,
+                  )
+                : await GetTracksByGenre(
+                      this.genreName,
+                  );
         } catch (error) {
             console.error(
                 'Error loading genre tracks:',

@@ -11,7 +11,10 @@ import type {
     VisibilityChangedEvent,
 } from '@lit-labs/virtualizer';
 import { grid } from '@lit-labs/virtualizer/layouts/grid.js';
-import { GetAlbumTracks } from '@go/library/Library';
+import {
+    GetAlbumTracks,
+    GetAlbumTracksByLibrary,
+} from '@go/library/Library';
 import { library } from '@go/models';
 import { LibraryController } from '@store/controllers/library-controller';
 import { SearchController } from '@store/controllers/search-controller';
@@ -23,6 +26,7 @@ import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@components/playlist-picker/playlist-picker.js';
 import '@components/track-details/track-details.js';
 import type { TrackDetails } from '@components/track-details/track-details.js';
+import type { CoverArtUrls } from '@components/track-details/track-details.js';
 import { AlbumSelectionManager } from './album-selection.js';
 import { ScrollManager } from './scroll-manager.js';
 import type { ScrollManagerHost } from './scroll-manager.js';
@@ -252,6 +256,13 @@ export class CoverGrid
     // buildGridEntries() memoization cache.
     private gridEntriesCache: GridEntry[] = [];
     private gridEntriesCacheKey: library.Album[] = [];
+
+    // getBeforeEntries/getAfterEntries memoization — prevents .slice()
+    // from creating new array refs that trigger virtualizer relayout.
+    private beforeEntriesCache: GridEntry[] = [];
+    private afterEntriesCache: GridEntry[] = [];
+    private splitEntriesCacheKey: GridEntry[] | null = null;
+    private splitEntriesCacheIndex = -1;
 
     static override styles = coverGridStyles;
 
@@ -909,19 +920,31 @@ export class CoverGrid
         return entries;
     }
 
-    /** Entries for the "before" virtualizer. */
-    private getBeforeEntries(): GridEntry[] {
-        return this.buildGridEntries().slice(
-            0,
-            this.splitIndex,
-        );
+    /** Rebuild before/after caches if the entries or splitIndex changed. */
+    private ensureSplitCache(): void {
+        const entries = this.buildGridEntries();
+        if (
+            entries === this.splitEntriesCacheKey &&
+            this.splitIndex === this.splitEntriesCacheIndex
+        ) {
+            return;
+        }
+        this.splitEntriesCacheKey = entries;
+        this.splitEntriesCacheIndex = this.splitIndex;
+        this.beforeEntriesCache = entries.slice(0, this.splitIndex);
+        this.afterEntriesCache = entries.slice(this.splitIndex);
     }
 
-    /** Entries for the "after" virtualizer. */
+    /** Entries for the "before" virtualizer (memoized). */
+    private getBeforeEntries(): GridEntry[] {
+        this.ensureSplitCache();
+        return this.beforeEntriesCache;
+    }
+
+    /** Entries for the "after" virtualizer (memoized). */
     private getAfterEntries(): GridEntry[] {
-        return this.buildGridEntries().slice(
-            this.splitIndex,
-        );
+        this.ensureSplitCache();
+        return this.afterEntriesCache;
     }
 
     /* ====================================================================
@@ -954,9 +977,15 @@ export class CoverGrid
         this.lastSelectedTrackIndex = null;
 
         try {
-            const tracks = await GetAlbumTracks(
-                album.ID,
-            );
+            const libId =
+                this.libraryCtrl.selectedLibraryId;
+
+            const tracks = libId !== null
+                ? await GetAlbumTracksByLibrary(
+                      album.ID,
+                      libId,
+                  )
+                : await GetAlbumTracks(album.ID);
 
             if (this.expandedAlbumId === album.ID) {
                 this.expandedTracks = tracks;
@@ -1496,7 +1525,11 @@ export class CoverGrid
                 queueStore.playTracksNext(filePaths);
                 break;
             case 'track-details':
-                this.openTrackDetails(filePaths[0]!);
+                if (filePaths.length === 1) {
+                    this.openTrackDetails(filePaths[0]!);
+                } else {
+                    this.openBatchTrackDetails(filePaths);
+                }
                 break;
         }
 
@@ -1549,6 +1582,45 @@ export class CoverGrid
         this.trackDetailsDialog?.show(
             track,
             coverArt ?? undefined,
+        );
+    }
+
+    private openBatchTrackDetails(
+        filePaths: string[],
+    ) {
+        const tracks = filePaths
+            .map((fp) =>
+                this.expandedTracks.find(
+                    (t) => t.FilePath === fp,
+                ),
+            )
+            .filter(
+                (t): t is library.Track => t != null,
+            );
+
+        if (tracks.length === 0) return;
+
+        const albumNames = new Set(
+            tracks.map((t) => t.Album),
+        );
+        let coverArt: CoverArtUrls | null = null;
+        let coverArtMixed = false;
+
+        if (albumNames.size === 1) {
+            const albumName = [...albumNames][0]!;
+            coverArt =
+                this.selMgr.resolveTrackCoverArt(
+                    albumName,
+                    this.expandedAlbumId,
+                );
+        } else {
+            coverArtMixed = true;
+        }
+
+        this.trackDetailsDialog?.showBatch(
+            tracks,
+            coverArt,
+            coverArtMixed,
         );
     }
 
@@ -2021,9 +2093,7 @@ export class CoverGrid
                               </wa-dropdown-item>
                               ${this.contextMenuTarget
                                       .kind ===
-                                  'track' &&
-                              this.selectedTracks
-                                  .size === 1
+                                  'track'
                                   ? html`
                                         <wa-dropdown-item
                                             @click=${() =>

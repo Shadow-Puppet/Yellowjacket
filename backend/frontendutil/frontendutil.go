@@ -4,6 +4,7 @@ package frontendutil
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -66,4 +67,39 @@ func (fe *FrontendUtil) PlaylistFilePicker() (
 	}
 
 	return files, nil
+}
+
+// ImageFilePicker opens a file selection dialog filtered to image
+// files (JPEG, PNG).  Returns the selected file path, or empty
+// string if the user cancelled.
+func (fe *FrontendUtil) ImageFilePicker() (string, error) {
+	file, err := runtime.OpenFileDialog(
+		fe.ctx,
+		runtime.OpenDialogOptions{
+			Title: "Select Cover Art",
+			Filters: []runtime.FileFilter{
+				{
+					DisplayName: "Image Files (*.jpg, *.jpeg, *.png)",
+					Pattern:     "*.jpg;*.jpeg;*.png",
+				},
+			},
+		},
+	)
+	if err != nil {
+		return "", fmt.Errorf("could not open file dialog: %w", err)
+	}
+
+	return file, nil
+}
+
+// ReadFile reads a file from disk and returns its contents.
+// Used by the frontend to read cover art image files selected
+// via ImageFilePicker.
+func (fe *FrontendUtil) ReadFile(path string) ([]byte, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read file %q: %w", path, err)
+	}
+
+	return data, nil
 }

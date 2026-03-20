@@ -28,6 +28,7 @@ const (
 	ThemeConfigChanged     = "ThemeConfigChanged"
 	TrackListConfigChanged = "TrackListConfigChanged"
 	FavoritesConfigChanged = "FavoritesConfigChanged"
+	ShortcutsConfigChanged = "ShortcutsConfigChanged"
 )
 
 // Playlist events.
@@ -45,4 +46,30 @@ const (
 	LibraryScanStarted  = "LibraryScanStarted"
 	LibraryScanProgress = "LibraryScanProgress"
 	LibraryScanComplete = "LibraryScanComplete"
+)
+
+// Scan control events.
+const (
+	LibraryScanCancelled = "LibraryScanCancelled"
+	LibraryScanPaused    = "LibraryScanPaused"
+	LibraryScanResumed   = "LibraryScanResumed"
+)
+
+// Scan queue events.
+const (
+	LibraryScanQueued       = "LibraryScanQueued"
+	LibraryScanQueueDrained = "LibraryScanQueueDrained"
+)
+
+// Library CRUD events.
+const (
+	LibraryAdded   = "LibraryAdded"
+	LibraryRenamed = "LibraryRenamed"
+	LibraryRemoved = "LibraryRemoved"
+)
+
+// Tag writing events.
+const (
+	TrackMetadataChanged = "TrackMetadataChanged"
+	BatchWriteProgress   = "BatchWriteProgress"
 )

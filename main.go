@@ -29,9 +29,11 @@ var (
 var frontendDistAssets embed.FS
 
 func main() {
-	// Work around WebKitGTK DMABuf rendering crashes on certain
-	// Wayland compositor / GPU-driver combinations.
-	if os.Getenv("WEBKIT_DISABLE_DMABUF_RENDERER") == "" {
+	// WebKitGTK's DMABuf renderer crashes on NVIDIA GPUs under Wayland.
+	// Only disable it for that specific combo so AMD/Intel and X11 users
+	// keep full hardware-accelerated buffer sharing.  Users can also
+	// force the workaround with WEBKIT_DISABLE_DMABUF_RENDERER=1.
+	if os.Getenv("WEBKIT_DISABLE_DMABUF_RENDERER") == "" && isNVIDIAWayland() {
 		_ = os.Setenv("WEBKIT_DISABLE_DMABUF_RENDERER", "1")
 	}
 
@@ -89,7 +91,7 @@ func main() {
 		MaxWidth:         0,
 		MaxHeight:        0,
 		Linux: &linux.Options{
-			WebviewGpuPolicy: linux.WebviewGpuPolicyOnDemand,
+			WebviewGpuPolicy: linux.WebviewGpuPolicyAlways,
 		},
 	})
 
@@ -123,4 +125,30 @@ func resolveLogLevel(_ bool) slog.Level {
 
 	// Default: Info for both dev and prod.
 	return slog.LevelInfo
+}
+
+// isNVIDIAWayland returns true when running under a Wayland session with
+// an NVIDIA GPU.  This combination triggers DMABuf rendering crashes in
+// WebKitGTK, so we need to disable the DMABuf renderer for it.
+func isNVIDIAWayland() bool {
+	// Not Wayland → safe.
+	if os.Getenv("WAYLAND_DISPLAY") == "" && os.Getenv("XDG_SESSION_TYPE") != "wayland" {
+		return false
+	}
+
+	// Check for NVIDIA kernel modules (works even without nvidia-smi).
+	if data, err := os.ReadFile("/proc/driver/nvidia/version"); err == nil {
+		_ = data
+
+		return true
+	}
+
+	// Fallback: check if the nvidia module is loaded.
+	if data, err := os.ReadFile("/proc/modules"); err == nil {
+		if strings.Contains(string(data), "nvidia") {
+			return true
+		}
+	}
+
+	return false
 }

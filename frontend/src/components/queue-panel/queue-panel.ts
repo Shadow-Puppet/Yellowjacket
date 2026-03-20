@@ -1,4 +1,4 @@
-import { LitElement, html, css, nothing, unsafeCSS } from 'lit';
+import { LitElement, html, svg, css, nothing, unsafeCSS } from 'lit';
 import { designTokens } from '../../styles/tokens.css';
 import {
     customElement,
@@ -15,6 +15,7 @@ import '@components/playlist-picker/playlist-picker.js';
 import type { PlaylistPicker } from '@components/playlist-picker/playlist-picker.js';
 import '@lit-labs/virtualizer';
 import type { LitVirtualizer } from '@lit-labs/virtualizer';
+import { virtualizerRef } from '@lit-labs/virtualizer/virtualize.js';
 import { flow } from '@lit-labs/virtualizer/layouts/flow.js';
 import { classMap } from 'lit/directives/class-map.js';
 import type { QueueTrack } from '@store/queue-store';
@@ -39,6 +40,7 @@ import {
     removeDragImage,
 } from '@utils/drag-image';
 import { libraryStore } from '@store/library-store';
+import type { library } from '@go/models';
 import '@components/track-details/track-details.js';
 import type { TrackDetails } from '@components/track-details/track-details.js';
 import type { CoverArtUrls } from '@components/track-details/track-details.js';
@@ -77,6 +79,9 @@ export class QueuePanel
 
     private dragImageEl: HTMLElement | null = null;
 
+    /** Whether delegated event handlers have been attached to the virtualizer. */
+    private delegationAttached = false;
+
     @query('#add-to-playlist-popup')
     private addToPlaylistPopup!: WaPopup;
 
@@ -91,6 +96,27 @@ export class QueuePanel
 
     @query('track-details')
     private trackDetailsDialog!: TrackDetails;
+
+    private handleSelectAll = (): void => {
+        this.selection.selectAll();
+    };
+
+    // Detect native scrollbar thumb drag to suppress lit-virtualizer's
+    // scroll error corrections that fight the browser's drag gesture.
+    private onVirtualizerMouseDown = (e: MouseEvent) => {
+        const el = this.virtualizer;
+        if (!el) return;
+        const rect = el.getBoundingClientRect();
+        // Click is in the scrollbar gutter if it's beyond the content area.
+        // clientWidth excludes scrollbar; offsetWidth includes it.
+        if (e.clientX > rect.left + el.clientWidth) {
+            this.scrollbarDragging = true;
+        }
+    };
+
+    private onScrollbarDragEnd = () => {
+        this.scrollbarDragging = false;
+    };
 
     private closePickerHandler = (e: MouseEvent) => {
         const path = e.composedPath();
@@ -123,7 +149,17 @@ export class QueuePanel
     };
 
     private panelWidth = DEFAULT_WIDTH;
-    private flowLayout = flow();
+    private scrollbarDragging = false;
+
+    // _itemSize is an internal property applied via Object.assign in BaseLayout's
+    // config setter. Setting it to match the actual fixed .track-item height (49px)
+    // prevents lit-virtualizer's scroll error correction from fighting the native
+    // scrollbar during drag on large lists (20k+ items). Without this, the default
+    // estimate of 100px causes massive scroll height recalculation as items get
+    // measured, which calls scrollTo() and desynchronizes the scrollbar thumb.
+    private flowLayout = flow({
+        _itemSize: { width: 100, height: 49 },
+    } as Parameters<typeof flow>[0]);
 
     /**
      * Track the last currentIndex so we only auto-scroll
@@ -179,6 +215,7 @@ export class QueuePanel
             background-color: var(--yj-bg-surface, #212529);
             display: flex;
             flex-direction: row;
+            contain: layout style paint;
         }
 
         :host([open]) {
@@ -268,6 +305,8 @@ export class QueuePanel
         lit-virtualizer {
             flex: 1;
             overflow-y: auto;
+            contain: paint;
+            overflow-anchor: none;
         }
 
         .track-item {
@@ -284,6 +323,7 @@ export class QueuePanel
             box-sizing: border-box;
             height: 49px;
             overflow: hidden;
+            contain: strict;
         }
 
         .track-item:hover {
@@ -349,12 +389,11 @@ export class QueuePanel
             padding: 4px;
             display: flex;
             align-items: center;
-            opacity: 0;
-            transition: opacity 0.15s;
+            visibility: hidden;
         }
 
         .track-item:hover .remove-button {
-            opacity: 1;
+            visibility: visible;
         }
 
         .remove-button:hover {
@@ -449,6 +488,65 @@ export class QueuePanel
 
     `];
 
+    override firstUpdated() {
+        this.attachVirtualizerHooks();
+    }
+
+    /**
+     * Attach scroll-error monkey-patch, mousedown listener,
+     * and delegated event handlers to the virtualizer.
+     * The virtualizer may not exist on first render (queue
+     * empty), so this is called from both firstUpdated()
+     * and updated() — guarded by a flag.
+     */
+    private attachVirtualizerHooks() {
+        if (this.delegationAttached) return;
+
+        const virtEl = this.virtualizer;
+
+        if (!virtEl) return;
+
+        // Monkey-patch lit-virtualizer's scroll error correction to suppress it
+        // during native scrollbar drag. Without this, the virtualizer calls
+        // scrollTo() to "correct" sub-pixel estimation errors, which fights the
+        // browser's native scrollbar drag gesture and causes the thumb to
+        // desync from the mouse on large lists (20k+ items).
+        //
+        // NOTE: CSS `overflow-anchor: none` (set on lit-virtualizer above)
+        // disables the *browser's* native scroll anchoring, but does NOT
+        // affect lit-virtualizer's own _correctScrollError() method which
+        // calls scrollTo() internally. This monkey-patch is still needed
+        // to suppress that internal correction during scrollbar drag.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const virt = (virtEl as any)?.[virtualizerRef];
+        if (virt) {
+            const origCorrect = virt._correctScrollError.bind(virt);
+            virt._correctScrollError = () => {
+                if (this.scrollbarDragging) {
+                    // Discard the error instead of applying it via scrollTo().
+                    // This prevents stale corrections from accumulating and
+                    // being applied in a burst when the drag ends.
+                    virt._scrollError = null;
+                    return;
+                }
+                origCorrect();
+            };
+        }
+        virtEl.addEventListener(
+            'mousedown',
+            this.onVirtualizerMouseDown,
+        );
+
+        // Event delegation: attach stable handlers to the virtualizer
+        // so renderTrackItem creates zero per-item closures.
+        virtEl.addEventListener('click', this.onDelegatedClick);
+        virtEl.addEventListener('dblclick', this.onDelegatedDblClick);
+        virtEl.addEventListener('contextmenu', this.onDelegatedContextMenu);
+        virtEl.addEventListener('dragstart', this.onDelegatedDragStart);
+        virtEl.addEventListener('dragend', this.onTrackDragEnd);
+        this.delegationAttached = true;
+    }
+
     override connectedCallback() {
         super.connectedCallback();
         this.style.setProperty(
@@ -475,6 +573,14 @@ export class QueuePanel
             'dragend',
             this.onDocumentDragEnd,
         );
+        document.addEventListener(
+            'shortcut:select-all',
+            this.handleSelectAll,
+        );
+        document.addEventListener(
+            'mouseup',
+            this.onScrollbarDragEnd,
+        );
     }
 
     override disconnectedCallback() {
@@ -499,9 +605,36 @@ export class QueuePanel
             'dragend',
             this.onDocumentDragEnd,
         );
+        document.removeEventListener(
+            'shortcut:select-all',
+            this.handleSelectAll,
+        );
+        document.removeEventListener(
+            'mouseup',
+            this.onScrollbarDragEnd,
+        );
+        this.virtualizer?.removeEventListener(
+            'mousedown',
+            this.onVirtualizerMouseDown,
+        );
+
+        // Remove delegated event handlers from virtualizer.
+        const virtEl = this.virtualizer;
+        if (virtEl) {
+            virtEl.removeEventListener('click', this.onDelegatedClick);
+            virtEl.removeEventListener('dblclick', this.onDelegatedDblClick);
+            virtEl.removeEventListener('contextmenu', this.onDelegatedContextMenu);
+            virtEl.removeEventListener('dragstart', this.onDelegatedDragStart);
+            virtEl.removeEventListener('dragend', this.onTrackDragEnd);
+        }
+        this.delegationAttached = false;
     }
 
     override updated() {
+        // The virtualizer may not exist on first render
+        // (queue empty). Retry hooks here when it appears.
+        this.attachVirtualizerHooks();
+
         const currentIndex = this.queue.currentIndex;
 
         // Force virtualizer to re-render visible items when the
@@ -574,6 +707,70 @@ export class QueuePanel
     };
 
     // =================================================================
+    // Delegated event handlers (stable references, zero per-item closures)
+    // =================================================================
+
+    /**
+     * Walk up from the event target to find the nearest
+     * `.track-item` and extract the index via `data-index`.
+     */
+    private resolveTrackIndexFromEvent(
+        e: Event,
+    ): number | null {
+        const row = (e.target as HTMLElement).closest(
+            '.track-item',
+        ) as HTMLElement | null;
+
+        if (!row) return null;
+
+        const idx = Number(row.dataset.index);
+
+        if (Number.isNaN(idx)) return null;
+
+        return idx;
+    }
+
+    private onDelegatedClick = (e: MouseEvent) => {
+        const idx = this.resolveTrackIndexFromEvent(e);
+
+        if (idx === null) return;
+
+        // Check if click was on the remove button
+        const removeBtn = (e.target as HTMLElement).closest(
+            '.remove-button',
+        );
+
+        if (removeBtn) {
+            e.stopPropagation();
+            this.queue.removeFromQueue(idx);
+
+            return;
+        }
+
+        const track = this.queue.tracks[idx];
+
+        if (track) this.handleTrackClick(e, track, idx);
+    };
+
+    private onDelegatedDblClick = (e: MouseEvent) => {
+        const idx = this.resolveTrackIndexFromEvent(e);
+
+        if (idx !== null) this.handleTrackDblClick(idx);
+    };
+
+    private onDelegatedContextMenu = (e: MouseEvent) => {
+        const idx = this.resolveTrackIndexFromEvent(e);
+
+        if (idx !== null) this.handleTrackContextMenu(e, idx);
+    };
+
+    private onDelegatedDragStart = (e: DragEvent) => {
+        const idx = this.resolveTrackIndexFromEvent(e);
+
+        if (idx !== null) this.onTrackDragStart(e, idx);
+    };
+
+    // =================================================================
     // Selection & click handlers
     // =================================================================
 
@@ -621,7 +818,11 @@ export class QueuePanel
                 );
                 break;
             case 'track-details':
-                this.openTrackDetails(indices[0]!);
+                if (indices.length === 1) {
+                    this.openTrackDetails(indices[0]!);
+                } else {
+                    this.openBatchTrackDetails(indices);
+                }
                 break;
         }
 
@@ -670,6 +871,52 @@ export class QueuePanel
         this.trackDetailsDialog?.show(
             track,
             coverArt ?? undefined,
+        );
+    }
+
+    private openBatchTrackDetails(
+        indices: number[],
+    ) {
+        const queueTracks = this.queue.tracks;
+        const cachedTracks =
+            libraryStore.getCachedTracks();
+
+        if (!cachedTracks) return;
+
+        const tracks = indices
+            .map((i) => queueTracks[i])
+            .filter((qt) => qt != null)
+            .map((qt) =>
+                cachedTracks.find(
+                    (t) =>
+                        t.FilePath === qt.filePath,
+                ),
+            )
+            .filter(
+                (t): t is library.Track =>
+                    t != null,
+            );
+
+        if (tracks.length === 0) return;
+
+        const albumNames = new Set(
+            tracks.map((t) => t.Album),
+        );
+        let coverArt: CoverArtUrls | null = null;
+        let coverArtMixed = false;
+
+        if (albumNames.size === 1) {
+            const albumName = [...albumNames][0]!;
+            coverArt =
+                this.resolveQueueCoverArt(albumName);
+        } else {
+            coverArtMixed = true;
+        }
+
+        this.trackDetailsDialog?.showBatch(
+            tracks,
+            coverArt,
+            coverArtMixed,
         );
     }
 
@@ -1090,11 +1337,6 @@ export class QueuePanel
     // Other handlers
     // =================================================================
 
-    private handleRemoveTrack(e: Event, position: number) {
-        e.stopPropagation();
-        this.queue.removeFromQueue(position);
-    }
-
     private getDisplayTitle(track: {
         title: string;
         filePath: string;
@@ -1154,6 +1396,8 @@ export class QueuePanel
             dropIdx === trackCount &&
             index === trackCount - 1;
 
+        // No inline closures — all events delegated via data-index
+        // on the virtualizer element (see firstUpdated).
         return html`
             <div
                 class=${classMap({
@@ -1165,15 +1409,6 @@ export class QueuePanel
                 })}
                 data-index=${index}
                 draggable="true"
-                @click=${(e: MouseEvent) =>
-                    this.handleTrackClick(e, track, index)}
-                @dblclick=${() =>
-                    this.handleTrackDblClick(index)}
-                @contextmenu=${(e: MouseEvent) =>
-                    this.handleTrackContextMenu(e, index)}
-                @dragstart=${(e: DragEvent) =>
-                    this.onTrackDragStart(e, index)}
-                @dragend=${this.onTrackDragEnd}
             >
                 <span class="track-position">
                     ${index + 1}
@@ -1188,11 +1423,11 @@ export class QueuePanel
                 </div>
                 <button
                     class="remove-button"
-                    @click=${(e: Event) =>
-                        this.handleRemoveTrack(e, index)}
                     title="Remove from queue"
                 >
-                    <wa-icon name="xmark"></wa-icon>
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512" width="14" height="14">
+                        ${svg`<path fill="currentColor" d="M342.6 150.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0L192 210.7 86.6 105.4c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3L146.7 256 41.4 361.4c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0L192 301.3 297.4 406.6c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L237.3 256 342.6 150.6z"/>`}
+                    </svg>
                 </button>
             </div>
         `;
@@ -1365,26 +1600,21 @@ export class QueuePanel
                                    ></wa-icon>
                                   ${this.favCtrl.allFavorited(this.getSelectedFilePaths()) ? `Remove from ${this.favCtrl.playlistName}` : `Add to ${this.favCtrl.playlistName}`}
                               </wa-dropdown-item>
-                              ${this.selection
-                                  .selectionCount === 1
-                                  ? html`
-                                        <wa-dropdown-item
-                                            @click=${() =>
-                                                this.onContextMenuAction(
-                                                    'track-details',
-                                                )}
-                                            @mouseenter=${() =>
-                                                this.ctxMenu.closePlaylistSubmenu()}
-                                        >
-                                            <wa-icon
-                                                slot="icon"
-                                                name="circle-info"
-                                            ></wa-icon>
-                                            Track
-                                            Details
-                                        </wa-dropdown-item>
-                                    `
-                                  : nothing}
+                              <wa-dropdown-item
+                                  @click=${() =>
+                                      this.onContextMenuAction(
+                                          'track-details',
+                                      )}
+                                  @mouseenter=${() =>
+                                      this.ctxMenu.closePlaylistSubmenu()}
+                              >
+                                  <wa-icon
+                                      slot="icon"
+                                      name="circle-info"
+                                  ></wa-icon>
+                                  Track
+                                  Details
+                              </wa-dropdown-item>
                           </div>
                       `
                     : nothing}

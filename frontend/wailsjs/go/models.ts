@@ -54,6 +54,74 @@ export namespace library {
 	        this.TrackCount = source["TrackCount"];
 	    }
 	}
+	export class Info {
+	    id: number;
+	    name: string;
+	    path: string;
+	    trackCount: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Info(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.path = source["path"];
+	        this.trackCount = source["trackCount"];
+	    }
+	}
+	export class RemovalHooks {
+	
+	
+	    static createFrom(source: any = {}) {
+	        return new RemovalHooks(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	
+	    }
+	}
+	export class RemovalImpact {
+	    trackCount: number;
+	    playlistsAffected: number;
+	    queueItemCount: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new RemovalImpact(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.trackCount = source["trackCount"];
+	        this.playlistsAffected = source["playlistsAffected"];
+	        this.queueItemCount = source["queueItemCount"];
+	    }
+	}
+	export class RemovalSummary {
+	    tracksDeleted: number;
+	    artistsRemoved: number;
+	    albumsRemoved: number;
+	    genresRemoved: number;
+	    playlistsAffected: number;
+	    queueItemsRemoved: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new RemovalSummary(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.tracksDeleted = source["tracksDeleted"];
+	        this.artistsRemoved = source["artistsRemoved"];
+	        this.albumsRemoved = source["albumsRemoved"];
+	        this.genresRemoved = source["genresRemoved"];
+	        this.playlistsAffected = source["playlistsAffected"];
+	        this.queueItemsRemoved = source["queueItemsRemoved"];
+	    }
+	}
 	export class RescanHooks {
 	
 	
@@ -66,10 +134,22 @@ export namespace library {
 	
 	    }
 	}
+	export class ScanHooks {
+	
+	
+	    static createFrom(source: any = {}) {
+	        return new ScanHooks(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	
+	    }
+	}
 	export class ScanWarning {
 	    filePath: string;
 	    phase: string;
-	    err: any;
+	    err: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ScanWarning(source);
@@ -108,6 +188,9 @@ export namespace library {
 	    updated: number;
 	    skipped: number;
 	    removed: number;
+	    cancelled: boolean;
+	    libraryId: number;
+	    libraryName: string;
 	    warnings: ScanWarning[];
 	
 	    static createFrom(source: any = {}) {
@@ -141,6 +224,9 @@ export namespace library {
 	        this.updated = source["updated"];
 	        this.skipped = source["skipped"];
 	        this.removed = source["removed"];
+	        this.cancelled = source["cancelled"];
+	        this.libraryId = source["libraryId"];
+	        this.libraryName = source["libraryName"];
 	        this.warnings = this.convertValues(source["warnings"], ScanWarning);
 	    }
 	
@@ -521,6 +607,105 @@ export namespace queue {
 	        this.shuffleMode = source["shuffleMode"];
 	        this.repeatMode = source["repeatMode"];
 	        this.sourcePlaylistId = source["sourcePlaylistId"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
+export namespace sqlcgen {
+	
+	export class Library {
+	    ID: number;
+	    Name: string;
+	    Path: string;
+	    // Go type: time
+	    CreatedAt: any;
+	
+	    static createFrom(source: any = {}) {
+	        return new Library(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ID = source["ID"];
+	        this.Name = source["Name"];
+	        this.Path = source["Path"];
+	        this.CreatedAt = this.convertValues(source["CreatedAt"], null);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
+export namespace tagwriter {
+	
+	export class BatchFailure {
+	    filePath: string;
+	    error: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new BatchFailure(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.filePath = source["filePath"];
+	        this.error = source["error"];
+	    }
+	}
+	export class BatchResult {
+	    total: number;
+	    succeeded: number;
+	    failed: number;
+	    cancelled: boolean;
+	    failures: BatchFailure[];
+	
+	    static createFrom(source: any = {}) {
+	        return new BatchResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.total = source["total"];
+	        this.succeeded = source["succeeded"];
+	        this.failed = source["failed"];
+	        this.cancelled = source["cancelled"];
+	        this.failures = this.convertValues(source["failures"], BatchFailure);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

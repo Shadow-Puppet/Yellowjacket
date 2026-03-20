@@ -50,6 +50,13 @@ type ScanMetrics struct {
 	Skipped int64 `json:"skipped"`
 	Removed int64 `json:"removed"`
 
+	// Cancelled is true when the scan was stopped via CancelScan.
+	Cancelled bool `json:"cancelled"`
+
+	// Library identification.
+	LibraryID   int64  `json:"libraryId"`   // library that was scanned
+	LibraryName string `json:"libraryName"` // display name of scanned library
+
 	// Non-fatal issues encountered during scanning.
 	Warnings []ScanWarning `json:"warnings"`
 }
@@ -57,19 +64,22 @@ type ScanMetrics struct {
 // ScanProgress is the payload emitted periodically during a scan to
 // report live progress to the frontend.
 type ScanProgress struct {
-	Phase     string `json:"phase"`     // "counting", "scanning", "orphans", "thumbnails"
-	Total     int64  `json:"total"`     // total audio files from pre-walk count
-	Processed int64  `json:"processed"` // added + skipped + updated so far
-	Added     int64  `json:"added"`
-	Skipped   int64  `json:"skipped"`
-	Updated   int64  `json:"updated"`
+	Phase       string `json:"phase"`     // "counting", "scanning", "orphans", "thumbnails"
+	Total       int64  `json:"total"`     // total audio files from pre-walk count
+	Processed   int64  `json:"processed"` // added + skipped + updated so far
+	Added       int64  `json:"added"`
+	Skipped     int64  `json:"skipped"`
+	Updated     int64  `json:"updated"`
+	LibraryID   int64  `json:"libraryId"`   // library being scanned
+	LibraryName string `json:"libraryName"` // display name of library being scanned
+	QueuedCount int    `json:"queuedCount"` // number of libraries still queued after this one
 }
 
 // ScanWarning represents a non-fatal issue encountered during scanning.
 type ScanWarning struct {
 	FilePath string `json:"filePath"`
 	Phase    string `json:"phase"`
-	Err      error  `json:"err"`
+	Err      string `json:"err"`
 }
 
 func newScanMetrics() *ScanMetrics {
@@ -109,7 +119,7 @@ func (m *ScanMetrics) addWarning(filePath, phase string, err error) {
 	m.Warnings = append(m.Warnings, ScanWarning{
 		FilePath: filePath,
 		Phase:    phase,
-		Err:      err,
+		Err:      err.Error(),
 	})
 }
 

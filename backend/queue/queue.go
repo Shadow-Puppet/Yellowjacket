@@ -1246,6 +1246,86 @@ func (q *Queue) onQueueExhausted() {
 	q.persistState()
 }
 
+// CompactAfterLibraryRemoval reloads queue state from the database
+// after a library removal has cascade-deleted queue_tracks rows.
+// It resets currentIndex to 0 (or -1 if empty), clears shuffleOrder,
+// unloads the current track if it was removed, and emits QueueChanged.
+func (q *Queue) CompactAfterLibraryRemoval() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	// Remember the current track's file path so we can detect if it survived.
+	var previousFilePath string
+
+	if q.currentIndex >= 0 && q.currentIndex < len(q.tracks) {
+		previousFilePath = q.tracks[q.currentIndex].FilePath
+	}
+
+	// Reload surviving tracks from the database. The CASCADE delete
+	// already removed the rows from queue_tracks — we just need to
+	// reload and reindex.
+	rows, err := q.db.Queries.GetQueueTracks(q.db.Ctx)
+	if err != nil {
+		q.logger.Error("could not reload queue tracks after library removal", "err", err)
+
+		return
+	}
+
+	q.tracks = make([]Track, 0, len(rows))
+
+	for _, row := range rows {
+		q.tracks = append(q.tracks, Track{
+			ID:          row.ID,
+			AudioFileID: row.AudioFileID,
+			FilePath:    row.FilePath,
+			Position:    row.Position,
+			Title:       row.Title,
+			Artist:      row.Artist,
+		})
+	}
+
+	// Check if the previously-playing track survived.
+	found := false
+
+	if previousFilePath != "" {
+		for i, t := range q.tracks {
+			if t.FilePath == previousFilePath {
+				q.currentIndex = i
+				found = true
+
+				break
+			}
+		}
+	}
+
+	if !found {
+		if len(q.tracks) > 0 {
+			q.currentIndex = 0
+		} else {
+			q.currentIndex = -1
+		}
+
+		// The current track was removed — unload it from the player.
+		if q.player != nil {
+			q.player.UnloadTrack()
+		}
+	}
+
+	// Clear shuffle order — it will be regenerated on next shuffle toggle.
+	q.shuffleOrder = nil
+
+	// Reindex positions and persist the compacted state.
+	q.reindexPositions()
+	q.persistTracks()
+	q.persistState()
+	q.emitQueueChanged()
+
+	q.logger.Info("queue compacted after library removal",
+		"survivingTracks", len(q.tracks),
+		"currentIndex", q.currentIndex,
+	)
+}
+
 // reindexPositions updates the Position field of all tracks to match slice index.
 func (q *Queue) reindexPositions() {
 	for i := range q.tracks {

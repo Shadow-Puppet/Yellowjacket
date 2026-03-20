@@ -731,7 +731,9 @@ func TestRemoveM3UEntries(t *testing.T) {
 		"/music/Artist/Song2.flac": {},
 	}
 
-	result := removeM3UEntries(entries, targets, "/music")
+	result := removeM3UEntries(
+		entries, targets, []string{"/music"},
+	)
 
 	if len(result) != 2 {
 		t.Fatalf("expected 2 entries, got %d", len(result))
@@ -765,7 +767,9 @@ func TestRemoveM3UEntriesAll(t *testing.T) {
 		"/music/Song.flac": {},
 	}
 
-	result := removeM3UEntries(entries, targets, "/music")
+	result := removeM3UEntries(
+		entries, targets, []string{"/music"},
+	)
 
 	if len(result) != 0 {
 		t.Errorf("expected 0 entries, got %d", len(result))
@@ -793,7 +797,7 @@ func TestReplaceM3UEntryPaths(t *testing.T) {
 	}
 
 	result := replaceM3UEntryPaths(
-		entries, replacements, "/music",
+		entries, replacements, []string{"/music"},
 	)
 
 	if len(result) != 2 {
@@ -836,7 +840,8 @@ func TestFindM3UEntry(t *testing.T) {
 	}
 
 	entry, idx := findM3UEntry(
-		entries, "/music/Artist/Song2.flac", "/music",
+		entries, "/music/Artist/Song2.flac",
+		[]string{"/music"},
 	)
 
 	if idx != 1 {
@@ -853,10 +858,283 @@ func TestFindM3UEntry(t *testing.T) {
 
 	// Not found.
 	_, idx = findM3UEntry(
-		entries, "/music/Artist/Missing.flac", "/music",
+		entries, "/music/Artist/Missing.flac",
+		[]string{"/music"},
 	)
 
 	if idx != -1 {
 		t.Errorf("expected index -1, got %d", idx)
+	}
+}
+
+func TestResolveM3UPath(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		relativePath string
+		libraryRoots []string
+		knownPaths   map[string]struct{}
+		expected     string
+	}{
+		{
+			name:         "absolute path returned as-is",
+			relativePath: "/music/song.flac",
+			libraryRoots: []string{"/other"},
+			knownPaths:   nil,
+			expected:     "/music/song.flac",
+		},
+		{
+			name:         "relative path resolves against first root",
+			relativePath: "Artist/song.flac",
+			libraryRoots: []string{"/music", "/archive"},
+			knownPaths: map[string]struct{}{
+				"/music/Artist/song.flac": {},
+			},
+			expected: "/music/Artist/song.flac",
+		},
+		{
+			name:         "relative path resolves against second root",
+			relativePath: "Artist/song.flac",
+			libraryRoots: []string{"/music", "/archive"},
+			knownPaths: map[string]struct{}{
+				"/archive/Artist/song.flac": {},
+			},
+			expected: "/archive/Artist/song.flac",
+		},
+		{
+			name:         "no match falls back to first root",
+			relativePath: "Artist/song.flac",
+			libraryRoots: []string{"/music", "/archive"},
+			knownPaths:   map[string]struct{}{},
+			expected:     "/music/Artist/song.flac",
+		},
+		{
+			name:         "empty roots returns path unchanged",
+			relativePath: "Artist/song.flac",
+			libraryRoots: nil,
+			knownPaths:   nil,
+			expected:     "Artist/song.flac",
+		},
+		{
+			name:         "nil knownPaths falls back to first root",
+			relativePath: "Artist/song.flac",
+			libraryRoots: []string{"/music"},
+			knownPaths:   nil,
+			expected:     "/music/Artist/song.flac",
+		},
+		{
+			name:         "absolute path in knownPaths returned",
+			relativePath: "/music/Artist/song.flac",
+			libraryRoots: []string{"/other"},
+			knownPaths: map[string]struct{}{
+				"/music/Artist/song.flac": {},
+			},
+			expected: "/music/Artist/song.flac",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			result := resolveM3UPath(
+				tt.relativePath,
+				tt.libraryRoots,
+				tt.knownPaths,
+			)
+			if result != tt.expected {
+				t.Errorf(
+					"resolveM3UPath(%q, %v, ...) = %q, want %q",
+					tt.relativePath,
+					tt.libraryRoots,
+					result, tt.expected,
+				)
+			}
+		})
+	}
+}
+
+func TestToRelativePathMultiRoot(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		absolutePath string
+		libraryRoots []string
+		expected     string
+	}{
+		{
+			name:         "path under first root",
+			absolutePath: "/music/Artist/song.flac",
+			libraryRoots: []string{"/music", "/archive"},
+			expected:     "Artist/song.flac",
+		},
+		{
+			name:         "path under second root",
+			absolutePath: "/archive/Artist/song.flac",
+			libraryRoots: []string{"/music", "/archive"},
+			expected:     "Artist/song.flac",
+		},
+		{
+			name:         "path under no root returns absolute",
+			absolutePath: "/other/song.flac",
+			libraryRoots: []string{"/music", "/archive"},
+			expected:     "/other/song.flac",
+		},
+		{
+			name:         "empty roots returns absolute",
+			absolutePath: "/music/song.flac",
+			libraryRoots: nil,
+			expected:     "/music/song.flac",
+		},
+		{
+			name:         "empty root string skipped",
+			absolutePath: "/music/song.flac",
+			libraryRoots: []string{"", "/music"},
+			expected:     "song.flac",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			result := toRelativePathMultiRoot(
+				tt.absolutePath, tt.libraryRoots,
+			)
+			if result != tt.expected {
+				t.Errorf(
+					"toRelativePathMultiRoot(%q, %v) = %q, want %q",
+					tt.absolutePath,
+					tt.libraryRoots,
+					result, tt.expected,
+				)
+			}
+		})
+	}
+}
+
+func TestRemoveM3UEntriesMultiRoot(t *testing.T) {
+	t.Parallel()
+
+	entries := []m3uEntry{
+		{RelativePath: "Artist/Song1.flac"},
+		{RelativePath: "Band/Song2.flac"},
+		{RelativePath: "Artist/Song3.flac"},
+	}
+
+	// Song1 is under /music, Song2 is under /archive.
+	// Both should be found and removed.
+	targets := map[string]struct{}{
+		"/music/Artist/Song1.flac": {},
+		"/archive/Band/Song2.flac": {},
+	}
+
+	result := removeM3UEntries(
+		entries, targets, []string{"/music", "/archive"},
+	)
+
+	if len(result) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(result))
+	}
+
+	if result[0].RelativePath != "Artist/Song3.flac" {
+		t.Errorf(
+			"entry[0] = %q, want %q",
+			result[0].RelativePath,
+			"Artist/Song3.flac",
+		)
+	}
+}
+
+func TestFindM3UEntryMultiRoot(t *testing.T) {
+	t.Parallel()
+
+	entries := []m3uEntry{
+		{RelativePath: "Artist/Song1.flac"},
+		{RelativePath: "Band/Song2.flac"},
+	}
+
+	// Song2 is under the second root /archive.
+	entry, idx := findM3UEntry(
+		entries, "/archive/Band/Song2.flac",
+		[]string{"/music", "/archive"},
+	)
+
+	if idx != 1 {
+		t.Errorf("expected index 1, got %d", idx)
+	}
+
+	if entry.RelativePath != "Band/Song2.flac" {
+		t.Errorf(
+			"entry.RelativePath = %q, want %q",
+			entry.RelativePath,
+			"Band/Song2.flac",
+		)
+	}
+
+	// Not found in any root.
+	_, idx = findM3UEntry(
+		entries, "/other/Missing.flac",
+		[]string{"/music", "/archive"},
+	)
+
+	if idx != -1 {
+		t.Errorf("expected index -1, got %d", idx)
+	}
+}
+
+func TestReplaceM3UEntryPathsMultiRoot(t *testing.T) {
+	t.Parallel()
+
+	entries := []m3uEntry{
+		{
+			RelativePath: "old/path/song.flac",
+			DurationSec:  180,
+			DisplayTitle: "Song",
+		},
+		{
+			RelativePath: "other/track.mp3",
+			DurationSec:  240,
+			DisplayTitle: "Track",
+		},
+	}
+
+	// The old path resolves under /archive, not /music.
+	replacements := map[string]string{
+		"/archive/old/path/song.flac": "new/path/song.flac",
+	}
+
+	result := replaceM3UEntryPaths(
+		entries, replacements,
+		[]string{"/music", "/archive"},
+	)
+
+	if len(result) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(result))
+	}
+
+	if result[0].RelativePath != "new/path/song.flac" {
+		t.Errorf(
+			"entry[0].RelativePath = %q, want %q",
+			result[0].RelativePath,
+			"new/path/song.flac",
+		)
+	}
+
+	if result[0].DurationSec != 180 {
+		t.Errorf(
+			"entry[0].DurationSec = %d, want 180",
+			result[0].DurationSec,
+		)
+	}
+
+	if result[1].RelativePath != "other/track.mp3" {
+		t.Errorf(
+			"entry[1].RelativePath = %q, want %q",
+			result[1].RelativePath,
+			"other/track.mp3",
+		)
 	}
 }

@@ -10,6 +10,17 @@ import (
 	"database/sql"
 )
 
+const countGenreReferences = `-- name: CountGenreReferences :one
+SELECT COUNT(*) FROM recording_genres WHERE genre_id = ?
+`
+
+func (q *Queries) CountGenreReferences(ctx context.Context, genreID int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countGenreReferences, genreID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createRecordingGenre = `-- name: CreateRecordingGenre :exec
 INSERT OR IGNORE INTO recording_genres (recording_id, genre_id)
 VALUES (?, ?)
@@ -40,6 +51,15 @@ DELETE FROM recording_genres
 
 func (q *Queries) DeleteAllRecordingGenres(ctx context.Context) error {
 	_, err := q.db.ExecContext(ctx, deleteAllRecordingGenres)
+	return err
+}
+
+const deleteGenre = `-- name: DeleteGenre :exec
+DELETE FROM genres WHERE id = ?
+`
+
+func (q *Queries) DeleteGenre(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, deleteGenre, id)
 	return err
 }
 
@@ -75,6 +95,45 @@ func (q *Queries) GetAllGenresWithCounts(ctx context.Context) ([]GetAllGenresWit
 	var items []GetAllGenresWithCountsRow
 	for rows.Next() {
 		var i GetAllGenresWithCountsRow
+		if err := rows.Scan(&i.Name, &i.TrackCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getAllGenresWithCountsByLibrary = `-- name: GetAllGenresWithCountsByLibrary :many
+SELECT g.name, COUNT(rg.recording_id) AS track_count
+FROM genres g
+JOIN recording_genres rg ON g.id = rg.genre_id
+JOIN recordings r ON rg.recording_id = r.id
+JOIN audio_files af ON af.recording_id = r.id
+WHERE af.library_id = ?
+GROUP BY g.id, g.name
+ORDER BY g.name
+`
+
+type GetAllGenresWithCountsByLibraryRow struct {
+	Name       string
+	TrackCount int64
+}
+
+func (q *Queries) GetAllGenresWithCountsByLibrary(ctx context.Context, libraryID int64) ([]GetAllGenresWithCountsByLibraryRow, error) {
+	rows, err := q.db.QueryContext(ctx, getAllGenresWithCountsByLibrary, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetAllGenresWithCountsByLibraryRow
+	for rows.Next() {
+		var i GetAllGenresWithCountsByLibraryRow
 		if err := rows.Scan(&i.Name, &i.TrackCount); err != nil {
 			return nil, err
 		}
@@ -188,6 +247,111 @@ func (q *Queries) GetTracksByGenre(ctx context.Context, name string) ([]GetTrack
 	var items []GetTracksByGenreRow
 	for rows.Next() {
 		var i GetTracksByGenreRow
+		if err := rows.Scan(
+			&i.FilePath,
+			&i.LengthMilliseconds,
+			&i.Title,
+			&i.ArtistName,
+			&i.TrackNumber,
+			&i.DiscNumber,
+			&i.Album,
+			&i.Genre,
+			&i.Year,
+			&i.Composer,
+			&i.FileType,
+			&i.SampleRate,
+			&i.BitDepth,
+			&i.Channels,
+			&i.Bitrate,
+			&i.FileSize,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getTracksByGenreByLibrary = `-- name: GetTracksByGenreByLibrary :many
+SELECT
+    af.file_path,
+    af.length_milliseconds,
+    COALESCE(r.name, '') AS title,
+    COALESCE(ac.text, '') AS artist_name,
+    r.track_number,
+    r.disc_number,
+    COALESCE(rlg.name, '') AS album,
+    CAST(COALESCE(
+        (SELECT GROUP_CONCAT(g2.name, '||')
+         FROM recording_genres rg2
+         JOIN genres g2 ON rg2.genre_id = g2.id
+         WHERE rg2.recording_id = r.id),
+        ''
+    ) AS TEXT) AS genre,
+    COALESCE(r.year, 0) AS year,
+    COALESCE(r.composer, '') AS composer,
+    COALESCE(ft.extension, '') AS file_type,
+    af.sample_rate,
+    af.bit_depth,
+    af.channels,
+    af.bitrate,
+    af.file_size
+FROM genres g
+JOIN recording_genres rg ON g.id = rg.genre_id
+JOIN recordings r ON rg.recording_id = r.id
+JOIN audio_files af ON af.recording_id = r.id
+JOIN artist_credit ac ON r.artist_credit_id = ac.id
+LEFT JOIN (
+    SELECT recording_id,
+        MIN(release_group_id) AS release_group_id
+    FROM release_group_recordings
+    GROUP BY recording_id
+) rgr ON r.id = rgr.recording_id
+LEFT JOIN release_groups rlg ON rgr.release_group_id = rlg.id
+LEFT JOIN file_types ft ON af.file_type_id = ft.id
+WHERE g.name = ? AND af.library_id = ?
+ORDER BY r.name
+`
+
+type GetTracksByGenreByLibraryParams struct {
+	Name      string
+	LibraryID int64
+}
+
+type GetTracksByGenreByLibraryRow struct {
+	FilePath           string
+	LengthMilliseconds int64
+	Title              string
+	ArtistName         string
+	TrackNumber        sql.NullInt64
+	DiscNumber         sql.NullInt64
+	Album              string
+	Genre              string
+	Year               int64
+	Composer           string
+	FileType           string
+	SampleRate         int64
+	BitDepth           int64
+	Channels           int64
+	Bitrate            int64
+	FileSize           int64
+}
+
+func (q *Queries) GetTracksByGenreByLibrary(ctx context.Context, arg GetTracksByGenreByLibraryParams) ([]GetTracksByGenreByLibraryRow, error) {
+	rows, err := q.db.QueryContext(ctx, getTracksByGenreByLibrary, arg.Name, arg.LibraryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetTracksByGenreByLibraryRow
+	for rows.Next() {
+		var i GetTracksByGenreByLibraryRow
 		if err := rows.Scan(
 			&i.FilePath,
 			&i.LengthMilliseconds,

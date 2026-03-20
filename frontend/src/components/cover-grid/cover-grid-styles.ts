@@ -9,6 +9,7 @@ const gridStyles = css`
         flex-direction: column;
         overflow: hidden;
         position: relative;
+        contain: layout style;
     }
 
     /* ========================================
@@ -129,6 +130,7 @@ const gridStyles = css`
         flex: 1;
         position: relative;
         overflow-y: auto;
+        contain: paint;
     }
 
     /* ========================================
@@ -139,11 +141,10 @@ const gridStyles = css`
         display: flex;
         flex-direction: column;
         cursor: pointer;
-        border-radius: 8px;
         padding: 5px;
-        transition:
-            background-color 0.2s ease,
-            transform 0.15s ease;
+        /* border-radius removed — forces anti-aliased path clipping on
+           every paint of every visible card; cover image retains its own
+           4px radius via .cover-container */
         box-sizing: border-box;
         width: var(--card-width, 176px);
     }
@@ -169,7 +170,7 @@ const gridStyles = css`
         border-radius: 4px;
         overflow: hidden;
         background-color: var(--yj-bg-surface, #282828);
-        transition: scale 0.15s ease;
+        /* transition removed — software rendering repaints per frame */
     }
 
     .album-card.selected .cover-container {
@@ -202,7 +203,7 @@ const gridStyles = css`
         margin-top: 4px;
         min-width: 0;
         text-align: center;
-        transition: scale 0.15s ease;
+        /* transition removed — software rendering repaints per frame */
     }
 
     .album-card.selected .album-info {
