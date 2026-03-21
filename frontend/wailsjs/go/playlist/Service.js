@@ -18,12 +18,20 @@ export function CreatePlaylistWithTracks(arg1, arg2) {
   return window['go']['playlist']['Service']['CreatePlaylistWithTracks'](arg1, arg2);
 }
 
+export function CreateSmartPlaylist(arg1, arg2) {
+  return window['go']['playlist']['Service']['CreateSmartPlaylist'](arg1, arg2);
+}
+
 export function DeletePlaylist(arg1) {
   return window['go']['playlist']['Service']['DeletePlaylist'](arg1);
 }
 
 export function EnsureDefaultPlaylist() {
   return window['go']['playlist']['Service']['EnsureDefaultPlaylist']();
+}
+
+export function EvaluateSmartPlaylist(arg1) {
+  return window['go']['playlist']['Service']['EvaluateSmartPlaylist'](arg1);
 }
 
 export function FindDuplicateTracksInPlaylist(arg1, arg2) {
@@ -108,4 +116,16 @@ export function SetFavoritesConfig(arg1) {
 
 export function ToggleDefaultPlaylistTrack(arg1) {
   return window['go']['playlist']['Service']['ToggleDefaultPlaylistTrack'](arg1);
+}
+
+export function UpdateSmartPlaylistRules(arg1, arg2) {
+  return window['go']['playlist']['Service']['UpdateSmartPlaylistRules'](arg1, arg2);
+}
+
+export function GetSmartPlaylistRules(arg1) {
+  return window['go']['playlist']['Service']['GetSmartPlaylistRules'](arg1);
+}
+
+export function PreviewSmartPlaylist(arg1) {
+  return window['go']['playlist']['Service']['PreviewSmartPlaylist'](arg1);
 }

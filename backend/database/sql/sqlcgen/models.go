@@ -73,10 +73,12 @@ type PlayerState struct {
 }
 
 type Playlist struct {
-	ID        int64
-	Name      string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID         int64
+	Name       string
+	IsSmart    int64
+	SmartRules sql.NullString
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 type PlaylistTrack struct {

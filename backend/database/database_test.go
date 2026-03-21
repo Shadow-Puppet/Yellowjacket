@@ -587,3 +587,185 @@ func TestMigration6TrackMetadataViewHasLibraryID(t *testing.T) {
 		)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Migration 9 integration tests
+// ---------------------------------------------------------------------------
+
+func TestMigration9SmartPlaylistColumns(t *testing.T) {
+	t.Parallel()
+
+	db := NewTestDB(t)
+
+	// Verify user_version >= 9.
+	var version int
+
+	verRows, err := db.QueryContext("PRAGMA user_version")
+	if err != nil {
+		t.Fatalf("PRAGMA user_version: %v", err)
+	}
+
+	if !verRows.Next() {
+		_ = verRows.Close()
+
+		t.Fatal("PRAGMA user_version: no row returned")
+	}
+
+	if err := verRows.Scan(&version); err != nil {
+		_ = verRows.Close()
+
+		t.Fatalf("scan user_version: %v", err)
+	}
+
+	_ = verRows.Close()
+
+	if version < 9 {
+		t.Errorf("user_version = %d, want >= 9", version)
+	}
+
+	// Verify playlists table has is_smart and smart_rules columns.
+	hasSmart := false
+	hasRules := false
+
+	ptRows, err := db.QueryContext(
+		"PRAGMA table_info(playlists)",
+	)
+	if err != nil {
+		t.Fatalf("PRAGMA table_info(playlists): %v", err)
+	}
+
+	for ptRows.Next() {
+		var (
+			cid       int64
+			name      string
+			colType   string
+			notNull   int64
+			dfltValue sql.NullString
+			pk        int64
+		)
+
+		if err := ptRows.Scan(
+			&cid, &name, &colType, &notNull, &dfltValue, &pk,
+		); err != nil {
+			_ = ptRows.Close()
+
+			t.Fatalf("scan playlists table_info: %v", err)
+		}
+
+		if name == "is_smart" {
+			hasSmart = true
+		}
+
+		if name == "smart_rules" {
+			hasRules = true
+		}
+	}
+
+	_ = ptRows.Close()
+
+	if !hasSmart {
+		t.Error("playlists missing is_smart column")
+	}
+
+	if !hasRules {
+		t.Error("playlists missing smart_rules column")
+	}
+
+	// Insert a smart playlist with rules.
+	rulesJSON := `{"rules":[{"field":"genre","operator":"is","value":"Rock"}]}`
+
+	_, err = db.ExecContext(
+		"INSERT INTO playlists (name, is_smart, smart_rules) VALUES (?, 1, ?)",
+		"Rock Songs", rulesJSON,
+	)
+	if err != nil {
+		t.Fatalf("insert smart playlist: %v", err)
+	}
+
+	// Read it back and verify.
+	rows, err := db.QueryContext(
+		"SELECT is_smart, smart_rules FROM playlists WHERE name = ?",
+		"Rock Songs",
+	)
+	if err != nil {
+		t.Fatalf("query smart playlist: %v", err)
+	}
+
+	if !rows.Next() {
+		_ = rows.Close()
+
+		t.Fatal("smart playlist not found")
+	}
+
+	var (
+		isSmart    int64
+		smartRules sql.NullString
+	)
+
+	if err := rows.Scan(&isSmart, &smartRules); err != nil {
+		_ = rows.Close()
+
+		t.Fatalf("scan smart playlist: %v", err)
+	}
+
+	_ = rows.Close()
+
+	if isSmart != 1 {
+		t.Errorf("is_smart = %d, want 1", isSmart)
+	}
+
+	if !smartRules.Valid || smartRules.String != rulesJSON {
+		t.Errorf(
+			"smart_rules = %q, want %q",
+			smartRules.String, rulesJSON,
+		)
+	}
+
+	// Insert a regular playlist (default is_smart) and verify
+	// it defaults to 0.
+	_, err = db.ExecContext(
+		"INSERT INTO playlists (name) VALUES (?)",
+		"Regular Playlist",
+	)
+	if err != nil {
+		t.Fatalf("insert regular playlist: %v", err)
+	}
+
+	regRows, err := db.QueryContext(
+		"SELECT is_smart, smart_rules FROM playlists WHERE name = ?",
+		"Regular Playlist",
+	)
+	if err != nil {
+		t.Fatalf("query regular playlist: %v", err)
+	}
+
+	if !regRows.Next() {
+		_ = regRows.Close()
+
+		t.Fatal("regular playlist not found")
+	}
+
+	var (
+		regSmart int64
+		regRules sql.NullString
+	)
+
+	if err := regRows.Scan(&regSmart, &regRules); err != nil {
+		_ = regRows.Close()
+
+		t.Fatalf("scan regular playlist: %v", err)
+	}
+
+	_ = regRows.Close()
+
+	if regSmart != 0 {
+		t.Errorf("regular playlist is_smart = %d, want 0", regSmart)
+	}
+
+	if regRules.Valid {
+		t.Errorf(
+			"regular playlist smart_rules should be NULL, got %q",
+			regRules.String,
+		)
+	}
+}

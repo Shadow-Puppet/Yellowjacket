@@ -8,6 +8,7 @@ import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 import {
     CreatePlaylist,
     CreatePlaylistWithTracks,
+    CreateSmartPlaylist,
     AddTracksToPlaylist,
     DeletePlaylist,
     RenamePlaylist,
@@ -86,6 +87,7 @@ export class PlaylistView extends LitElement {
     @state() private loading = true;
     @state() private refreshing = false;
     @state() private creating = false;
+    @state() private creatingSmart = false;
     @state() private newPlaylistName = '';
     @state() private playlistContextMenuOpen = false;
     @state() private playlistContextMenuIndex = -1;
@@ -1003,7 +1005,9 @@ export class PlaylistView extends LitElement {
                 bubbles: true,
                 composed: true,
                 detail: {
-                    view: 'playlist-details',
+                    view: entry.summary.IsSmart
+                        ? 'smart-playlist-details'
+                        : 'playlist-details',
                     playlistId: entry.summary.ID,
                     playlistName: entry.summary.Name,
                 },
@@ -1021,10 +1025,14 @@ export class PlaylistView extends LitElement {
     ) => {
         if (!hasTrackPayload(e)) return;
 
-        // Don't allow dropping tracks back onto
-        // the same playlist.
+        // Don't allow dropping tracks onto smart
+        // playlists — they have no playlist_tracks rows.
         const entry = this.entries[index];
 
+        if (entry?.summary.IsSmart) return;
+
+        // Don't allow dropping tracks back onto
+        // the same playlist.
         if (
             entry &&
             getActiveDragSource() === 'playlist' &&
@@ -1473,6 +1481,22 @@ export class PlaylistView extends LitElement {
 
     private handleNewPlaylistClick = () => {
         this.creating = true;
+        this.creatingSmart = false;
+        this.newPlaylistName = '';
+
+        void this.updateComplete.then(() => {
+            const input =
+                this.shadowRoot?.querySelector<HTMLInputElement>(
+                    '.create-form input',
+                );
+
+            input?.focus();
+        });
+    };
+
+    private handleNewSmartPlaylistClick = () => {
+        this.creatingSmart = true;
+        this.creating = false;
         this.newPlaylistName = '';
 
         void this.updateComplete.then(() => {
@@ -1487,6 +1511,7 @@ export class PlaylistView extends LitElement {
 
     private handleCancelCreate = () => {
         this.creating = false;
+        this.creatingSmart = false;
         this.newPlaylistName = '';
         this.pendingDropPaths = [];
     };
@@ -1494,6 +1519,36 @@ export class PlaylistView extends LitElement {
     private handleCreatePlaylist = async () => {
         const name = this.newPlaylistName.trim();
         if (!name) return;
+
+        if (this.creatingSmart) {
+            try {
+                const summary = await CreateSmartPlaylist(
+                    name,
+                    '{"rules":[],"limit":0,"sort_field":"","sort_dir":""}',
+                );
+
+                this.creatingSmart = false;
+                this.newPlaylistName = '';
+                this.dispatchEvent(
+                    new CustomEvent('navigate', {
+                        bubbles: true,
+                        composed: true,
+                        detail: {
+                            view: 'smart-playlist-details',
+                            playlistId: summary.ID,
+                            playlistName: summary.Name,
+                            autoEdit: true,
+                        },
+                    }),
+                );
+            } catch (err) {
+                console.error(
+                    'Failed to create smart playlist:',
+                    err,
+                );
+            }
+            return;
+        }
 
         const paths = this.pendingDropPaths;
 
@@ -1656,6 +1711,16 @@ export class PlaylistView extends LitElement {
                         ></wa-icon>
                         New Playlist
                     </button>
+                    <button
+                        class="new-playlist-button"
+                        @click=${this
+                            .handleNewSmartPlaylistClick}
+                    >
+                        <wa-icon
+                            name="filter"
+                        ></wa-icon>
+                        New Smart Playlist
+                    </button>
                 </div>
             </div>
 
@@ -1667,7 +1732,7 @@ export class PlaylistView extends LitElement {
 
             ${this.renderSortToolbar()}
 
-            ${this.creating
+            ${this.creating || this.creatingSmart
                 ? this.renderCreateForm()
                 : nothing}
             ${this.loading &&
@@ -1704,18 +1769,22 @@ export class PlaylistView extends LitElement {
                                             ></wa-icon>
                                             Rename
                                         </wa-dropdown-item>
-                                        <wa-dropdown-item
-                                            @click=${() =>
-                                                void this.onPlaylistContextAction(
-                                                    'set-default',
-                                                )}
-                                        >
-                                            <wa-icon
-                                                slot="icon"
-                                                name="star"
-                                            ></wa-icon>
-                                            Set as Default Playlist
-                                        </wa-dropdown-item>
+                                        ${this.entries[this.playlistContextMenuIndex]?.summary.IsSmart
+                                            ? nothing
+                                            : html`
+                                                <wa-dropdown-item
+                                                    @click=${() =>
+                                                        void this.onPlaylistContextAction(
+                                                            'set-default',
+                                                        )}
+                                                >
+                                                    <wa-icon
+                                                        slot="icon"
+                                                        name="star"
+                                                    ></wa-icon>
+                                                    Set as Default Playlist
+                                                </wa-dropdown-item>
+                                            `}
                                     `
                                   : nothing}
                               <wa-dropdown-item
@@ -1747,12 +1816,15 @@ export class PlaylistView extends LitElement {
     private renderCreateForm() {
         const canCreate =
             this.newPlaylistName.trim().length > 0;
+        const placeholder = this.creatingSmart
+            ? 'Smart playlist name'
+            : 'Playlist name';
 
         return html`
             <div class="create-form">
                 <input
                     type="text"
-                    placeholder="Playlist name"
+                    placeholder=${placeholder}
                     .value=${this.newPlaylistName}
                     @input=${this.handleInputChange}
                     @keydown=${this.handleInputKeydown}
@@ -1857,7 +1929,9 @@ export class PlaylistView extends LitElement {
         index: number,
     ) {
         const trackCount = entry.tracks.length;
-        const countLabel = `${trackCount} track${trackCount !== 1 ? 's' : ''}`;
+        const countLabel = entry.summary.IsSmart
+            ? 'Smart'
+            : `${trackCount} track${trackCount !== 1 ? 's' : ''}`;
         const isDragOver =
             this.dragOverPlaylistIndex === index;
 
@@ -1891,7 +1965,12 @@ export class PlaylistView extends LitElement {
                               class="playlist-icon"
                               name=${this.favCtrl.iconName}
                           ></wa-icon>`
-                        : nothing}
+                        : entry.summary.IsSmart
+                          ? html`<wa-icon
+                                class="playlist-icon"
+                                name="filter"
+                            ></wa-icon>`
+                          : nothing}
                     ${isRenaming
                         ? html`
                               <input

@@ -82,7 +82,7 @@ func (q *Queries) CountPlaylistsByName(ctx context.Context, name string) (int64,
 
 const createPlaylist = `-- name: CreatePlaylist :one
 INSERT INTO playlists (name) VALUES (?)
-RETURNING id, name, created_at, updated_at
+RETURNING id, name, is_smart, smart_rules, created_at, updated_at
 `
 
 func (q *Queries) CreatePlaylist(ctx context.Context, name string) (Playlist, error) {
@@ -91,6 +91,8 @@ func (q *Queries) CreatePlaylist(ctx context.Context, name string) (Playlist, er
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
+		&i.IsSmart,
+		&i.SmartRules,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -192,7 +194,7 @@ func (q *Queries) GetAllPlaylistTracksWithMetadata(ctx context.Context) ([]GetAl
 }
 
 const getAllPlaylists = `-- name: GetAllPlaylists :many
-SELECT id, name, created_at, updated_at FROM playlists ORDER BY updated_at DESC
+SELECT id, name, is_smart, smart_rules, created_at, updated_at FROM playlists ORDER BY updated_at DESC
 `
 
 func (q *Queries) GetAllPlaylists(ctx context.Context) ([]Playlist, error) {
@@ -207,6 +209,8 @@ func (q *Queries) GetAllPlaylists(ctx context.Context) ([]Playlist, error) {
 		if err := rows.Scan(
 			&i.ID,
 			&i.Name,
+			&i.IsSmart,
+			&i.SmartRules,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -236,7 +240,7 @@ func (q *Queries) GetNextPlaylistTrackPosition(ctx context.Context, playlistID i
 }
 
 const getPlaylist = `-- name: GetPlaylist :one
-SELECT id, name, created_at, updated_at FROM playlists WHERE id = ? LIMIT 1
+SELECT id, name, is_smart, smart_rules, created_at, updated_at FROM playlists WHERE id = ? LIMIT 1
 `
 
 func (q *Queries) GetPlaylist(ctx context.Context, id int64) (Playlist, error) {
@@ -245,6 +249,8 @@ func (q *Queries) GetPlaylist(ctx context.Context, id int64) (Playlist, error) {
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
+		&i.IsSmart,
+		&i.SmartRules,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

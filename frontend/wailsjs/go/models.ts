@@ -483,6 +483,7 @@ export namespace playlist {
 	    Name: string;
 	    CreatedAt: string;
 	    UpdatedAt: string;
+	    IsSmart: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new Summary(source);
@@ -494,6 +495,7 @@ export namespace playlist {
 	        this.Name = source["Name"];
 	        this.CreatedAt = source["CreatedAt"];
 	        this.UpdatedAt = source["UpdatedAt"];
+	        this.IsSmart = source["IsSmart"];
 	    }
 	}
 	export class Track {

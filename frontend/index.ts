@@ -11,6 +11,8 @@ import '@components/artist-details/artist-details.ts';
 import '@components/genres-view/genres-view.ts';
 import '@components/genre-details/genre-details.ts';
 import '@components/playlist-details/playlist-details.ts';
+import '@components/smart-playlist-details/smart-playlist-details.ts';
+import '@components/smart-playlist-editor/smart-playlist-editor.ts';
 import '@components/search-bar/search-bar.ts';
 import '@components/library-filter/library-filter.ts';
 import '@components/track-details/track-details.ts';
@@ -137,6 +139,19 @@ document.addEventListener('navigate', (e: Event) => {
             plEl.setAttribute('playlist-name', playlistName);
             mainContent.appendChild(plEl);
             currentDetailEl = plEl;
+            break;
+        }
+        case 'smart-playlist-details': {
+            const { playlistId, playlistName } = detail;
+            const spEl = document.createElement('smart-playlist-details');
+
+            spEl.setAttribute('playlist-id', String(playlistId));
+            spEl.setAttribute('playlist-name', playlistName);
+            if (detail.autoEdit) {
+                spEl.setAttribute('auto-edit', '');
+            }
+            mainContent.appendChild(spEl);
+            currentDetailEl = spEl;
             break;
         }
         case 'genre-details': {

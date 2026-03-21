@@ -332,6 +332,15 @@ func runMigrations(
 		}
 	}
 
+	// Migration 9: add smart playlist columns to playlists.
+	if version < 9 {
+		if err := migration9SmartPlaylists(
+			ctx, db, logger,
+		); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -1150,6 +1159,54 @@ func migration8ContentlessDelete(
 	}
 
 	logger.Info("migration 8 complete")
+
+	return nil
+}
+
+// migration9SmartPlaylists adds the is_smart and smart_rules
+// columns to the playlists table for smart playlist support.
+func migration9SmartPlaylists(
+	ctx context.Context,
+	db *sql.DB,
+	logger *slog.Logger,
+) error {
+	logger.Info(
+		"applying migration 9: smart playlist columns",
+	)
+
+	if _, err := db.ExecContext(ctx,
+		`ALTER TABLE playlists
+		 ADD COLUMN is_smart INTEGER NOT NULL DEFAULT 0`,
+	); err != nil {
+		if !isDuplicateColumnErr(err) {
+			return fmt.Errorf(
+				"migration 9: could not add is_smart column: %w",
+				err,
+			)
+		}
+	}
+
+	if _, err := db.ExecContext(ctx,
+		`ALTER TABLE playlists
+		 ADD COLUMN smart_rules TEXT`,
+	); err != nil {
+		if !isDuplicateColumnErr(err) {
+			return fmt.Errorf(
+				"migration 9: could not add smart_rules column: %w",
+				err,
+			)
+		}
+	}
+
+	if _, err := db.ExecContext(
+		ctx, "PRAGMA user_version = 9",
+	); err != nil {
+		return fmt.Errorf(
+			"could not set user_version to 9: %w", err,
+		)
+	}
+
+	logger.Info("migration 9 complete")
 
 	return nil
 }

@@ -21,6 +21,8 @@ import (
 	"yellowjacket/backend/database"
 	"yellowjacket/backend/database/sql/sqlcgen"
 	"yellowjacket/backend/events"
+	"yellowjacket/backend/library"
+	"yellowjacket/backend/smartplaylist"
 	"yellowjacket/backend/system"
 )
 
@@ -48,6 +50,7 @@ type Summary struct {
 	Name      string `json:"Name"`
 	CreatedAt string `json:"CreatedAt"`
 	UpdatedAt string `json:"UpdatedAt"`
+	IsSmart   bool   `json:"IsSmart"`
 }
 
 // Track represents a track within a playlist, including its
@@ -185,6 +188,7 @@ func (s *Service) GetAllPlaylists() ([]Summary, error) {
 			Name:      p.Name,
 			CreatedAt: p.CreatedAt.Format(time.RFC3339),
 			UpdatedAt: p.UpdatedAt.Format(time.RFC3339),
+			IsSmart:   p.IsSmart != 0,
 		})
 	}
 
@@ -264,6 +268,7 @@ func (s *Service) GetAllPlaylistsWithTracks() (
 				Name:      p.Name,
 				CreatedAt: p.CreatedAt.Format(time.RFC3339),
 				UpdatedAt: p.UpdatedAt.Format(time.RFC3339),
+				IsSmart:   p.IsSmart != 0,
 			},
 			Tracks: tracks,
 		})
@@ -480,6 +485,7 @@ func (s *Service) CreatePlaylist(
 		Name:      created.Name,
 		CreatedAt: created.CreatedAt.Format(time.RFC3339),
 		UpdatedAt: created.UpdatedAt.Format(time.RFC3339),
+		IsSmart:   created.IsSmart != 0,
 	})
 
 	return Summary{
@@ -487,6 +493,7 @@ func (s *Service) CreatePlaylist(
 		Name:      created.Name,
 		CreatedAt: created.CreatedAt.Format(time.RFC3339),
 		UpdatedAt: created.UpdatedAt.Format(time.RFC3339),
+		IsSmart:   created.IsSmart != 0,
 	}, nil
 }
 
@@ -648,6 +655,7 @@ func (s *Service) CreatePlaylistWithTracks(
 		Name:      created.Name,
 		CreatedAt: created.CreatedAt.Format(time.RFC3339),
 		UpdatedAt: created.UpdatedAt.Format(time.RFC3339),
+		IsSmart:   created.IsSmart != 0,
 	}
 
 	s.logger.Info(
@@ -938,6 +946,7 @@ func (s *Service) ImportPlaylist(
 		Name:      playlistName,
 		CreatedAt: created.CreatedAt.Format(time.RFC3339),
 		UpdatedAt: created.UpdatedAt.Format(time.RFC3339),
+		IsSmart:   created.IsSmart != 0,
 	}
 
 	s.emitEvent(events.PlaylistCreated, summary)
@@ -2326,4 +2335,289 @@ func sortCandidatesByScore(candidates []CandidateTrack) {
 			return 0
 		},
 	)
+}
+
+// =================================================================
+// Smart playlist methods
+// =================================================================
+
+// errNotSmartPlaylist is returned when an operation that requires
+// a smart playlist is performed on a regular playlist or a
+// non-existent playlist.
+var errNotSmartPlaylist = errors.New(
+	"playlist not found or is not a smart playlist",
+)
+
+// errNoRowReturned is returned when an INSERT ... RETURNING
+// query does not return the expected row.
+var errNoRowReturned = errors.New(
+	"no row returned from insert",
+)
+
+// CreateSmartPlaylist creates a new smart playlist with the given
+// name and JSON rule set. The rules are validated before storage.
+func (s *Service) CreateSmartPlaylist(
+	name, rulesJSON string,
+) (Summary, error) {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return Summary{}, errEmptyName
+	}
+
+	// Validate rules JSON before storing.
+	if _, err := smartplaylist.ParseRuleSet(rulesJSON); err != nil {
+		return Summary{}, fmt.Errorf(
+			"invalid smart playlist rules: %w", err,
+		)
+	}
+
+	// SAFETY: Hand-crafted INSERT for smart playlist with
+	// is_smart and smart_rules columns not yet in sqlc schema.
+	// All values are parameterized.
+	rows, err := s.db.QueryContext(
+		`INSERT INTO playlists (name, is_smart, smart_rules)
+		 VALUES (?, 1, ?)
+		 RETURNING id, name, created_at, updated_at`,
+		trimmed, rulesJSON,
+	)
+	if err != nil {
+		s.logger.Error(
+			"Failed to create smart playlist",
+			"name", trimmed, "err", err,
+		)
+
+		return Summary{}, fmt.Errorf(
+			"failed to create smart playlist: %w", err,
+		)
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	if !rows.Next() {
+		return Summary{}, fmt.Errorf(
+			"failed to create smart playlist: %w",
+			errNoRowReturned,
+		)
+	}
+
+	var (
+		id        int64
+		retName   string
+		createdAt string
+		updatedAt string
+	)
+
+	if err := rows.Scan(
+		&id, &retName, &createdAt, &updatedAt,
+	); err != nil {
+		s.logger.Error(
+			"Failed to create smart playlist",
+			"name", trimmed, "err", err,
+		)
+
+		return Summary{}, fmt.Errorf(
+			"failed to create smart playlist: %w", err,
+		)
+	}
+
+	s.logger.Info(
+		"Smart playlist created",
+		"id", id, "name", retName,
+	)
+
+	summary := Summary{
+		ID:        id,
+		Name:      retName,
+		CreatedAt: createdAt,
+		UpdatedAt: updatedAt,
+		IsSmart:   true,
+	}
+
+	s.emitEvent(events.PlaylistCreated, summary)
+
+	return summary, nil
+}
+
+// UpdateSmartPlaylistRules updates the rule set for an existing
+// smart playlist. Returns an error if the playlist does not exist
+// or is not a smart playlist.
+func (s *Service) UpdateSmartPlaylistRules(
+	playlistID int64,
+	rulesJSON string,
+) error {
+	// Validate rules JSON before storing.
+	if _, err := smartplaylist.ParseRuleSet(rulesJSON); err != nil {
+		return fmt.Errorf(
+			"invalid smart playlist rules: %w", err,
+		)
+	}
+
+	// SAFETY: Hand-crafted UPDATE for smart_rules column not
+	// yet in sqlc schema. All values are parameterized.
+	// Only updates rows where is_smart = 1.
+	result, err := s.db.ExecContext(
+		`UPDATE playlists
+		 SET smart_rules = ?, updated_at = CURRENT_TIMESTAMP
+		 WHERE id = ? AND is_smart = 1`,
+		rulesJSON, playlistID,
+	)
+	if err != nil {
+		s.logger.Error(
+			"Failed to update smart playlist rules",
+			"playlistId", playlistID, "err", err,
+		)
+
+		return fmt.Errorf(
+			"failed to update smart playlist rules: %w", err,
+		)
+	}
+
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf(
+			"could not check rows affected: %w", err,
+		)
+	}
+
+	if affected == 0 {
+		return errNotSmartPlaylist
+	}
+
+	s.logger.Info(
+		"Smart playlist rules updated",
+		"playlistId", playlistID,
+	)
+
+	s.emitEvent(events.PlaylistTracksChanged, playlistID)
+
+	return nil
+}
+
+// EvaluateSmartPlaylist loads the rule set for a smart playlist
+// from the database and evaluates it against the track library,
+// returning the matching tracks.
+func (s *Service) EvaluateSmartPlaylist(
+	playlistID int64,
+) ([]library.Track, error) {
+	// SAFETY: Hand-crafted SELECT for smart_rules column not
+	// yet in sqlc schema. Parameterized by playlist ID.
+	rows, err := s.db.QueryContext(
+		`SELECT smart_rules FROM playlists
+		 WHERE id = ? AND is_smart = 1`,
+		playlistID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to load smart playlist rules: %w", err,
+		)
+	}
+
+	if !rows.Next() {
+		_ = rows.Close()
+
+		return nil, errNotSmartPlaylist
+	}
+
+	var rulesJSON string
+
+	if err := rows.Scan(&rulesJSON); err != nil {
+		_ = rows.Close()
+
+		return nil, fmt.Errorf(
+			"failed to load smart playlist rules: %w", err,
+		)
+	}
+
+	// Close rows before calling Evaluate, which opens its own
+	// query. With MaxOpenConns=1 (test DBs), a deferred close
+	// would deadlock.
+	_ = rows.Close()
+
+	ruleSet, err := smartplaylist.ParseRuleSet(rulesJSON)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"corrupt smart playlist rules for id %d: %w",
+			playlistID, err,
+		)
+	}
+
+	tracks, err := smartplaylist.Evaluate(s.db, ruleSet)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"smart playlist evaluation failed for id %d: %w",
+			playlistID, err,
+		)
+	}
+
+	return tracks, nil
+}
+
+// PreviewSmartPlaylist evaluates a rule set from raw JSON without
+// requiring a saved playlist. This powers live preview in the rule
+// editor — the frontend sends rules as they are being edited and
+// receives matching tracks immediately.
+func (s *Service) PreviewSmartPlaylist(
+	rulesJSON string,
+) ([]library.Track, error) {
+	ruleSet, err := smartplaylist.ParseRuleSet(rulesJSON)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"invalid smart playlist rules: %w", err,
+		)
+	}
+
+	tracks, err := smartplaylist.Evaluate(s.db, ruleSet)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"smart playlist preview failed: %w", err,
+		)
+	}
+
+	s.logger.Info(
+		"Smart playlist preview evaluated",
+		"trackCount", len(tracks),
+	)
+
+	return tracks, nil
+}
+
+// GetSmartPlaylistRules returns the raw JSON rule string for an
+// existing smart playlist. This is used when the user opens the
+// rule editor for an existing smart playlist.
+func (s *Service) GetSmartPlaylistRules(
+	playlistID int64,
+) (string, error) {
+	// SAFETY: Hand-crafted SELECT for smart_rules column not
+	// yet in sqlc schema. Parameterized by playlist ID.
+	rows, err := s.db.QueryContext(
+		`SELECT smart_rules FROM playlists
+		 WHERE id = ? AND is_smart = 1`,
+		playlistID,
+	)
+	if err != nil {
+		return "", fmt.Errorf(
+			"failed to load smart playlist rules: %w", err,
+		)
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	if !rows.Next() {
+		return "", errNotSmartPlaylist
+	}
+
+	var rulesJSON string
+
+	if err := rows.Scan(&rulesJSON); err != nil {
+		return "", fmt.Errorf(
+			"failed to scan smart playlist rules: %w", err,
+		)
+	}
+
+	s.logger.Info(
+		"Smart playlist rules loaded",
+		"playlistId", playlistID,
+	)
+
+	return rulesJSON, nil
 }
