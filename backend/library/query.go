@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"yellowjacket/backend/coverart"
 	"yellowjacket/backend/database/sql/sqlcgen"
@@ -66,8 +67,13 @@ func mapTrackRow(
 	composer, fileType string,
 	sampleRate, bitDepth, channels, bitrate, fileSize int64,
 	playCount int64,
-	lastPlayed string,
+	lastPlayed time.Time,
 ) Track {
+	var lastPlayedStr string
+	if !lastPlayed.IsZero() {
+		lastPlayedStr = lastPlayed.Format(time.DateTime)
+	}
+
 	return Track{
 		TrackName:   title,
 		ArtistName:  artistName,
@@ -86,7 +92,7 @@ func mapTrackRow(
 		Bitrate:     bitrate,
 		FileSize:    fileSize,
 		PlayCount:   playCount,
-		LastPlayed:  lastPlayed,
+		LastPlayed:  lastPlayedStr,
 	}
 }
 
@@ -204,7 +210,7 @@ func (l *Library) SearchTracks(
 			row.Channels,
 			row.Bitrate,
 			row.FileSize,
-			0, "",
+			0, time.Time{},
 		))
 	}
 
@@ -244,7 +250,7 @@ func (l *Library) GetAlbumTracks(albumID int64) ([]Track, error) {
 			row.Channels,
 			row.Bitrate,
 			row.FileSize,
-			0, "",
+			0, time.Time{},
 		))
 	}
 
@@ -419,7 +425,7 @@ func (l *Library) GetTracksByGenre(
 			row.Channels,
 			row.Bitrate,
 			row.FileSize,
-			0, "",
+			0, time.Time{},
 		))
 	}
 
@@ -735,7 +741,7 @@ func (l *Library) GetTracksByGenreByLibrary(
 			row.Channels,
 			row.Bitrate,
 			row.FileSize,
-			0, "",
+			0, time.Time{},
 		))
 	}
 
@@ -787,7 +793,7 @@ func (l *Library) GetAlbumTracksByLibrary(
 			row.Channels,
 			row.Bitrate,
 			row.FileSize,
-			0, "",
+			0, time.Time{},
 		))
 	}
 
@@ -835,7 +841,7 @@ func (l *Library) SearchTracksByLibrary(
 			row.Channels,
 			row.Bitrate,
 			row.FileSize,
-			0, "",
+			0, time.Time{},
 		))
 	}
 
