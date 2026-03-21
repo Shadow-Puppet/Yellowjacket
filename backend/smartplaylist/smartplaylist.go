@@ -194,13 +194,13 @@ func buildGenreSubquery(rule Rule) (string, []any, error) {
 
 	switch rule.Operator {
 	case "is":
-		return subquery + "g.name = ?)", []any{rule.Value}, nil
+		return subquery + "g.name = ? COLLATE NOCASE)", []any{rule.Value}, nil
 
 	case "is_not":
 		return `af.id NOT IN (
   SELECT rg_sub.recording_id FROM recording_genres rg_sub
   JOIN genres g ON rg_sub.genre_id = g.id
-  WHERE g.name = ?)`, []any{rule.Value}, nil
+  WHERE g.name = ? COLLATE NOCASE)`, []any{rule.Value}, nil
 
 	case "is_any_of":
 		var values []string
@@ -225,7 +225,7 @@ func buildGenreSubquery(rule Rule) (string, []any, error) {
 		condArgs := make([]any, len(values))
 
 		for i, v := range values {
-			placeholders[i] = "?"
+			placeholders[i] = "? COLLATE NOCASE"
 			condArgs[i] = v
 		}
 
@@ -255,7 +255,7 @@ func buildCondition(
 			return col + " = ?", []any{v}, nil
 		}
 
-		return col + " = ?", []any{rule.Value}, nil
+		return col + " = ? COLLATE NOCASE", []any{rule.Value}, nil
 
 	case "is_not":
 		if isNumeric {
@@ -267,7 +267,7 @@ func buildCondition(
 			return col + " != ?", []any{v}, nil
 		}
 
-		return col + " != ?", []any{rule.Value}, nil
+		return col + " != ? COLLATE NOCASE", []any{rule.Value}, nil
 
 	case "contains":
 		return col + " LIKE ?",
@@ -308,7 +308,7 @@ func buildCondition(
 		condArgs := make([]any, len(values))
 
 		for i, v := range values {
-			placeholders[i] = "?"
+			placeholders[i] = "? COLLATE NOCASE"
 			condArgs[i] = v
 		}
 

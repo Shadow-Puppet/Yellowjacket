@@ -174,8 +174,24 @@ export class YjCombobox extends LitElement {
         // fire first.
         requestAnimationFrame(() => {
             this.open = false;
-            // Restore display text to the confirmed value.
-            this.filterText = this.value;
+
+            // Commit free-form text: if the user typed something that
+            // isn't in the option list, accept it as the value anyway.
+            const typed = this.filterText.trim();
+            if (typed && typed !== this.value) {
+                this.value = typed;
+                this.filterText = typed;
+                this.dispatchEvent(
+                    new CustomEvent('combobox-change', {
+                        bubbles: true,
+                        composed: true,
+                        detail: { value: typed },
+                    }),
+                );
+            } else {
+                // Restore display text to the confirmed value.
+                this.filterText = this.value;
+            }
         });
     }
 
@@ -211,6 +227,11 @@ export class YjCombobox extends LitElement {
                 ) {
                     e.preventDefault();
                     this.selectOption(opts[this.highlightedIndex]!);
+                } else if (this.filterText.trim()) {
+                    // Commit free-form text on Enter even without a
+                    // highlighted option.
+                    e.preventDefault();
+                    this.selectOption(this.filterText.trim());
                 }
                 break;
 

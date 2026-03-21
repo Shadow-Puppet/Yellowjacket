@@ -264,8 +264,8 @@ func TestBuildWhereClause_TextIs(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if clause != "artist_name = ?" {
-		t.Errorf("clause = %q, want %q", clause, "artist_name = ?")
+	if clause != "artist_name = ? COLLATE NOCASE" {
+		t.Errorf("clause = %q, want %q", clause, "artist_name = ? COLLATE NOCASE")
 	}
 
 	if len(args) != 1 || args[0] != "Queen" {
@@ -283,9 +283,9 @@ func TestBuildWhereClause_TextIsNot(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if clause != "artist_name != ?" {
+	if clause != "artist_name != ? COLLATE NOCASE" {
 		t.Errorf("clause = %q, want %q",
-			clause, "artist_name != ?")
+			clause, "artist_name != ? COLLATE NOCASE")
 	}
 
 	if len(args) != 1 || args[0] != "Queen" {
@@ -386,9 +386,9 @@ func TestBuildWhereClause_TextIsAnyOf(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if clause != "artist_name IN (?, ?)" {
+	if clause != "artist_name IN (? COLLATE NOCASE, ? COLLATE NOCASE)" {
 		t.Errorf("clause = %q, want %q",
-			clause, "artist_name IN (?, ?)")
+			clause, "artist_name IN (? COLLATE NOCASE, ? COLLATE NOCASE)")
 	}
 
 	if len(args) != 2 || args[0] != "Queen" || args[1] != "AC/DC" {
@@ -541,8 +541,8 @@ func TestBuildWhereClause_GenreIsProducesSubquery(t *testing.T) {
 			clause)
 	}
 
-	if !strings.Contains(clause, "g.name = ?") {
-		t.Errorf("genre 'is' should have g.name = ?: %q", clause)
+	if !strings.Contains(clause, "g.name = ? COLLATE NOCASE") {
+		t.Errorf("genre 'is' should have g.name = ? COLLATE NOCASE: %q", clause)
 	}
 
 	if len(args) != 1 || args[0] != "Rock" {
@@ -596,9 +596,9 @@ func TestBuildWhereClause_GenreIsAnyOfProducesSubquery(t *testing.T) {
 		)
 	}
 
-	if !strings.Contains(clause, "g.name IN (?, ?)") {
+	if !strings.Contains(clause, "g.name IN (? COLLATE NOCASE, ? COLLATE NOCASE)") {
 		t.Errorf(
-			"genre 'is_any_of' should have g.name IN (?, ?): %q",
+			"genre 'is_any_of' should have g.name IN (? COLLATE NOCASE, ? COLLATE NOCASE): %q",
 			clause,
 		)
 	}
@@ -647,9 +647,9 @@ func TestBuildWhereClause_MultipleRulesAND(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if clause != "artist_name = ? AND year > ?" {
+	if clause != "artist_name = ? COLLATE NOCASE AND year > ?" {
 		t.Errorf("clause = %q, want %q",
-			clause, "artist_name = ? AND year > ?")
+			clause, "artist_name = ? COLLATE NOCASE AND year > ?")
 	}
 
 	if len(args) != 2 || args[0] != "Queen" || args[1] != int64(1975) {

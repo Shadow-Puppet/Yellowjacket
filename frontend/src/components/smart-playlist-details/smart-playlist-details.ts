@@ -261,8 +261,11 @@ export class SmartPlaylistDetails extends LitElement {
 
         .editor-container {
             flex: 1;
-            overflow: auto;
+            overflow: hidden;
             padding: 0 20px 20px;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
         }
     `];
 
@@ -270,13 +273,17 @@ export class SmartPlaylistDetails extends LitElement {
     // Lifecycle
     // =================================================================
 
-    override async connectedCallback() {
+    override connectedCallback() {
         super.connectedCallback();
-        await this.loadTracks();
 
         if (this.autoEdit) {
+            // Skip evaluation for new playlists — go straight to editor.
             this.autoEdit = false;
+            this.loading = false;
+            this.tracks = [];
             this.handleEditRules();
+        } else {
+            void this.loadTracks();
         }
 
         this.playlistDeletedCleanup = EventsOn(

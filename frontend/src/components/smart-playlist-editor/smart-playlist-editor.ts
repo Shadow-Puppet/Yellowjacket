@@ -160,7 +160,7 @@ export class SmartPlaylistEditor extends LitElement {
 
     @state() private ruleRows: RuleRow[] = [emptyRule()];
     @state() private limit = 0;
-    @state() private sortField = '';
+    @state() private sortField = 'random';
     @state() private sortDir = '';
     @state() private previewTracks: library.Track[] = [];
     @state() private previewLoading = false;
@@ -174,7 +174,10 @@ export class SmartPlaylistEditor extends LitElement {
         designTokens,
         css`
             :host {
-                display: block;
+                display: flex;
+                flex-direction: column;
+                overflow: hidden;
+                height: 100%;
             }
 
             /* ── Rule rows ────────────────────────── */
@@ -184,17 +187,18 @@ export class SmartPlaylistEditor extends LitElement {
                 flex-direction: column;
                 gap: 6px;
                 padding: 12px 0 8px;
+                flex-shrink: 0;
             }
 
             .rule-row {
                 display: grid;
-                grid-template-columns: 1fr 140px 1fr 28px;
+                grid-template-columns: 160px 140px 1fr 28px;
                 gap: 6px;
                 align-items: start;
             }
 
             .rule-row.between-row {
-                grid-template-columns: 1fr 140px 1fr 1fr 28px;
+                grid-template-columns: 160px 140px 1fr 1fr 28px;
             }
 
             /* ── Form controls ────────────────────── */
@@ -289,6 +293,7 @@ export class SmartPlaylistEditor extends LitElement {
                     var(--yj-border-subtle, rgba(255, 255, 255, 0.06));
                 margin-top: 4px;
                 flex-wrap: wrap;
+                flex-shrink: 0;
             }
 
             .option-group {
@@ -337,6 +342,11 @@ export class SmartPlaylistEditor extends LitElement {
                     var(--yj-border-subtle, rgba(255, 255, 255, 0.06));
                 margin-top: 8px;
                 padding-top: 10px;
+                flex: 1;
+                display: flex;
+                flex-direction: column;
+                overflow: hidden;
+                min-height: 0;
             }
 
             .preview-header {
@@ -372,10 +382,11 @@ export class SmartPlaylistEditor extends LitElement {
             }
 
             .preview-list {
-                max-height: 200px;
+                flex: 1;
                 overflow-y: auto;
                 display: flex;
                 flex-direction: column;
+                min-height: 0;
             }
 
             .preview-track {
@@ -467,7 +478,7 @@ export class SmartPlaylistEditor extends LitElement {
 
             this.ruleRows = rows.length > 0 ? rows : [emptyRule()];
             this.limit = parsed.limit ?? 0;
-            this.sortField = parsed.sort_field ?? '';
+            this.sortField = parsed.sort_field || 'random';
             this.sortDir = parsed.sort_dir ?? '';
         } catch {
             this.ruleRows = [emptyRule()];
@@ -819,9 +830,6 @@ export class SmartPlaylistEditor extends LitElement {
                                 (e.target as HTMLSelectElement).value,
                             )}
                     >
-                        <option value="" ?selected=${!this.sortField}>
-                            None
-                        </option>
                         ${SORT_FIELDS.map(
                             (f) => html`
                                 <option
@@ -833,7 +841,7 @@ export class SmartPlaylistEditor extends LitElement {
                             `,
                         )}
                     </select>
-                    ${this.sortField
+                    ${this.sortField && this.sortField !== 'random'
                         ? html`
                               <button
                                   class="sort-dir-btn"
