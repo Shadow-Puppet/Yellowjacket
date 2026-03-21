@@ -81,6 +81,7 @@ export class YjCombobox extends LitElement {
                 font-family: inherit;
                 width: 100%;
                 box-sizing: border-box;
+                height: 26px;
             }
 
             input:focus {
