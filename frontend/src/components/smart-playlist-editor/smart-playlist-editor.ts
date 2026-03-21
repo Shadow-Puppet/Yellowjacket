@@ -26,6 +26,8 @@ const FIELDS: string[] = [
     'library',
     'track_number',
     'disc_number',
+    'play_count',
+    'days_since_played',
 ];
 
 const NUMERIC_FIELDS = new Set([
@@ -39,6 +41,8 @@ const NUMERIC_FIELDS = new Set([
     'library',
     'track_number',
     'disc_number',
+    'play_count',
+    'days_since_played',
 ]);
 
 const TEXT_OPERATORS = [
@@ -59,7 +63,7 @@ const NUMERIC_OPERATORS = [
     'between',
 ];
 
-const SORT_FIELDS = ['title', 'artist', 'album', 'year', 'duration', 'random'];
+const SORT_FIELDS = ['title', 'artist', 'album', 'year', 'duration', 'play_count', 'random'];
 
 // ── Helpers ─────────────────────────────────────────────────────────
 

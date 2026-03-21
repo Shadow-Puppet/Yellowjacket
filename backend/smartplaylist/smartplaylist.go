@@ -63,6 +63,8 @@ var fieldMap = map[string]string{
 	"library":      "library_id",
 	"track_number": "track_number",
 	"disc_number":  "disc_number",
+	"play_count":      "play_count",
+	"days_since_played": "days_since_played",
 }
 
 // numericFields identifies fields that accept numeric operators.
@@ -77,6 +79,8 @@ var numericFields = map[string]bool{
 	"library":      true,
 	"track_number": true,
 	"disc_number":  true,
+	"play_count":        true,
+	"days_since_played": true,
 }
 
 // textOperators are valid operators for text fields.
@@ -142,6 +146,19 @@ func BuildWhereClause(rules []Rule) (string, []any, error) {
 		// Genre exact-match operators use a subquery.
 		if rule.Field == "genre" && genreExactOps[rule.Operator] {
 			cond, condArgs, err := buildGenreSubquery(rule)
+			if err != nil {
+				return "", nil, err
+			}
+
+			conditions = append(conditions, cond)
+			args = append(args, condArgs...)
+
+			continue
+		}
+
+		// days_since_played uses a computed expression, not a column.
+		if rule.Field == "days_since_played" {
+			cond, condArgs, err := buildDaysSincePlayedCondition(rule)
 			if err != nil {
 				return "", nil, err
 			}
@@ -231,6 +248,68 @@ func buildGenreSubquery(rule Rule) (string, []any, error) {
 
 		return subquery + "g.name IN (" +
 			strings.Join(placeholders, ", ") + "))", condArgs, nil
+
+	default:
+		return "", nil, fmt.Errorf(
+			"%w: %q", errUnsupportedOp, rule.Operator,
+		)
+	}
+}
+
+// buildDaysSincePlayedCondition generates a condition for the
+// days_since_played computed field. Uses julianday() to compute
+// the number of days between last_played and now. Tracks that
+// have never been played (last_played IS NULL) are treated as
+// having infinite days since played — they match "greater_than"
+// any value but not "less_than".
+func buildDaysSincePlayedCondition(rule Rule) (string, []any, error) {
+	// The expression: days since last played.
+	// NULL handling: COALESCE to a very old date so never-played
+	// tracks always have a large days_since_played value.
+	expr := "CAST(julianday('now') - julianday(COALESCE(last_played, '2000-01-01')) AS INTEGER)"
+
+	switch rule.Operator {
+	case "is":
+		v, err := parseNumericValue(rule.Field, rule.Operator, rule.Value)
+		if err != nil {
+			return "", nil, err
+		}
+
+		return expr + " = ?", []any{v}, nil
+
+	case "is_not":
+		v, err := parseNumericValue(rule.Field, rule.Operator, rule.Value)
+		if err != nil {
+			return "", nil, err
+		}
+
+		return expr + " != ?", []any{v}, nil
+
+	case "greater_than":
+		v, err := parseNumericValue(rule.Field, rule.Operator, rule.Value)
+		if err != nil {
+			return "", nil, err
+		}
+
+		return expr + " > ?", []any{v}, nil
+
+	case "less_than":
+		v, err := parseNumericValue(rule.Field, rule.Operator, rule.Value)
+		if err != nil {
+			return "", nil, err
+		}
+
+		// Never-played tracks (NULL last_played) should NOT match
+		// "less than N days" — they haven't been played recently.
+		return "last_played IS NOT NULL AND " + expr + " < ?", []any{v}, nil
+
+	case "between":
+		min, max, err := parseBetweenValue(rule.Field, rule.Value)
+		if err != nil {
+			return "", nil, err
+		}
+
+		return expr + " BETWEEN ? AND ?", []any{min, max}, nil
 
 	default:
 		return "", nil, fmt.Errorf(
@@ -458,7 +537,9 @@ func Evaluate(
 		bit_depth,
 		channels,
 		bitrate,
-		file_size
+		file_size,
+		play_count,
+		COALESCE(last_played, '') AS last_played
 	FROM track_metadata af`
 
 	if where != "" {
@@ -528,6 +609,8 @@ func scanTracks(rows *sql.Rows) ([]library.Track, error) {
 			channels    int64
 			bitrate     int64
 			fileSize    int64
+			playCount   int64
+			lastPlayed  string
 		)
 
 		if err := rows.Scan(
@@ -536,6 +619,7 @@ func scanTracks(rows *sql.Rows) ([]library.Track, error) {
 			&album, &genre, &year, &composer, &fileType,
 			&sampleRate, &bitDepth, &channels,
 			&bitrate, &fileSize,
+			&playCount, &lastPlayed,
 		); err != nil {
 			return nil, fmt.Errorf(
 				"could not scan smart playlist row: %w", err,
@@ -559,6 +643,8 @@ func scanTracks(rows *sql.Rows) ([]library.Track, error) {
 			Channels:    channels,
 			Bitrate:     bitrate,
 			FileSize:    fileSize,
+			PlayCount:   playCount,
+			LastPlayed:  lastPlayed,
 		})
 	}
 

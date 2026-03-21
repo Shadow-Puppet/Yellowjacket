@@ -35,6 +35,8 @@ type Track struct {
 	Channels    int64
 	Bitrate     int64
 	FileSize    int64
+	PlayCount   int64
+	LastPlayed  string
 }
 
 // genreDelimiter is the separator used by GROUP_CONCAT in the
