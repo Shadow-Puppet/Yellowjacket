@@ -67,11 +67,11 @@ func mapTrackRow(
 	composer, fileType string,
 	sampleRate, bitDepth, channels, bitrate, fileSize int64,
 	playCount int64,
-	lastPlayed time.Time,
+	lastPlayed sql.NullTime,
 ) Track {
 	var lastPlayedStr string
-	if !lastPlayed.IsZero() {
-		lastPlayedStr = lastPlayed.Format(time.DateTime)
+	if lastPlayed.Valid {
+		lastPlayedStr = lastPlayed.Time.Format(time.DateTime)
 	}
 
 	return Track{
@@ -210,7 +210,7 @@ func (l *Library) SearchTracks(
 			row.Channels,
 			row.Bitrate,
 			row.FileSize,
-			0, time.Time{},
+			0, sql.NullTime{},
 		))
 	}
 
@@ -250,7 +250,7 @@ func (l *Library) GetAlbumTracks(albumID int64) ([]Track, error) {
 			row.Channels,
 			row.Bitrate,
 			row.FileSize,
-			0, time.Time{},
+			0, sql.NullTime{},
 		))
 	}
 
@@ -425,7 +425,7 @@ func (l *Library) GetTracksByGenre(
 			row.Channels,
 			row.Bitrate,
 			row.FileSize,
-			0, time.Time{},
+			0, sql.NullTime{},
 		))
 	}
 
@@ -741,7 +741,7 @@ func (l *Library) GetTracksByGenreByLibrary(
 			row.Channels,
 			row.Bitrate,
 			row.FileSize,
-			0, time.Time{},
+			0, sql.NullTime{},
 		))
 	}
 
@@ -793,7 +793,7 @@ func (l *Library) GetAlbumTracksByLibrary(
 			row.Channels,
 			row.Bitrate,
 			row.FileSize,
-			0, time.Time{},
+			0, sql.NullTime{},
 		))
 	}
 
@@ -841,7 +841,7 @@ func (l *Library) SearchTracksByLibrary(
 			row.Channels,
 			row.Bitrate,
 			row.FileSize,
-			0, time.Time{},
+			0, sql.NullTime{},
 		))
 	}
 
