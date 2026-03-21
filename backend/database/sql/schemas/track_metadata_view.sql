@@ -23,7 +23,9 @@ SELECT
     af.channels,
     af.bitrate,
     af.file_size,
-    af.library_id
+    af.library_id,
+    af.play_count,
+    af.last_played
 FROM audio_files af
 LEFT JOIN recordings r ON af.recording_id = r.id
 LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id

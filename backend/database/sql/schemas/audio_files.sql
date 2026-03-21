@@ -11,6 +11,8 @@ CREATE TABLE IF NOT EXISTS audio_files (
   file_size int NOT NULL DEFAULT 0,
   basename text NOT NULL DEFAULT '',
   library_id int NOT NULL DEFAULT 0,
+  play_count int NOT NULL DEFAULT 0,
+  last_played datetime,
   FOREIGN KEY(file_type_id) REFERENCES file_types(id),
   FOREIGN KEY(recording_id) REFERENCES recordings(id),
   FOREIGN KEY(library_id) REFERENCES libraries(id)
