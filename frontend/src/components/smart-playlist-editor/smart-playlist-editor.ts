@@ -194,7 +194,7 @@ export class SmartPlaylistEditor extends LitElement {
                 display: grid;
                 grid-template-columns: 160px 140px 1fr 28px;
                 gap: 6px;
-                align-items: start;
+                align-items: stretch;
             }
 
             .rule-row.between-row {
@@ -239,6 +239,7 @@ export class SmartPlaylistEditor extends LitElement {
                 display: flex;
                 align-items: center;
                 justify-content: center;
+                align-self: center;
                 width: 24px;
                 height: 24px;
                 border: none;
@@ -248,7 +249,6 @@ export class SmartPlaylistEditor extends LitElement {
                 cursor: pointer;
                 font-size: 14px;
                 padding: 0;
-                margin-top: 2px;
                 transition: color 0.15s ease, background-color 0.15s ease;
             }
 

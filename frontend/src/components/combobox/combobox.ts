@@ -63,12 +63,14 @@ export class YjCombobox extends LitElement {
             :host {
                 display: inline-block;
                 width: 100%;
+                height: 100%;
             }
 
             .combobox-wrapper {
                 position: relative;
                 display: inline-block;
                 width: 100%;
+                height: 100%;
             }
 
             input {
@@ -80,8 +82,8 @@ export class YjCombobox extends LitElement {
                 font-size: var(--yj-text-md);
                 font-family: inherit;
                 width: 100%;
+                height: 100%;
                 box-sizing: border-box;
-                height: 26px;
             }
 
             input:focus {
