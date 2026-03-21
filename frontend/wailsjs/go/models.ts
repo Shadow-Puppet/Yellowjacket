@@ -266,6 +266,8 @@ export namespace library {
 	    Channels: number;
 	    Bitrate: number;
 	    FileSize: number;
+	    PlayCount: number;
+	    LastPlayed: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Track(source);
@@ -289,6 +291,8 @@ export namespace library {
 	        this.Channels = source["Channels"];
 	        this.Bitrate = source["Bitrate"];
 	        this.FileSize = source["FileSize"];
+	        this.PlayCount = source["PlayCount"];
+	        this.LastPlayed = source["LastPlayed"];
 	    }
 	}
 

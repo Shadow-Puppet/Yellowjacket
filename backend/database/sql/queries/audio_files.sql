@@ -95,7 +95,9 @@ SELECT
     af.bit_depth,
     af.channels,
     af.bitrate,
-    af.file_size
+    af.file_size,
+    af.play_count,
+    COALESCE(af.last_played, '') AS last_played
 FROM audio_files af
 JOIN recordings r ON af.recording_id = r.id
 JOIN artist_credit ac ON r.artist_credit_id = ac.id
@@ -159,7 +161,9 @@ SELECT
     af.bit_depth,
     af.channels,
     af.bitrate,
-    af.file_size
+    af.file_size,
+    af.play_count,
+    COALESCE(af.last_played, '') AS last_played
 FROM audio_files af
 JOIN recordings r ON af.recording_id = r.id
 JOIN artist_credit ac ON r.artist_credit_id = ac.id

@@ -253,7 +253,9 @@ SELECT
     af.bit_depth,
     af.channels,
     af.bitrate,
-    af.file_size
+    af.file_size,
+    af.play_count,
+    COALESCE(af.last_played, '') AS last_played
 FROM audio_files af
 JOIN recordings r ON af.recording_id = r.id
 JOIN artist_credit ac ON r.artist_credit_id = ac.id
@@ -279,6 +281,8 @@ type GetAllTracksWithFullMetadataRow struct {
 	Channels           int64
 	Bitrate            int64
 	FileSize           int64
+	PlayCount          int64
+	LastPlayed         string
 }
 
 func (q *Queries) GetAllTracksWithFullMetadata(ctx context.Context) ([]GetAllTracksWithFullMetadataRow, error) {
@@ -307,6 +311,8 @@ func (q *Queries) GetAllTracksWithFullMetadata(ctx context.Context) ([]GetAllTra
 			&i.Channels,
 			&i.Bitrate,
 			&i.FileSize,
+			&i.PlayCount,
+			&i.LastPlayed,
 		); err != nil {
 			return nil, err
 		}
@@ -344,7 +350,9 @@ SELECT
     af.bit_depth,
     af.channels,
     af.bitrate,
-    af.file_size
+    af.file_size,
+    af.play_count,
+    COALESCE(af.last_played, '') AS last_played
 FROM audio_files af
 JOIN recordings r ON af.recording_id = r.id
 JOIN artist_credit ac ON r.artist_credit_id = ac.id
@@ -371,6 +379,8 @@ type GetAllTracksWithFullMetadataByLibraryRow struct {
 	Channels           int64
 	Bitrate            int64
 	FileSize           int64
+	PlayCount          int64
+	LastPlayed         string
 }
 
 func (q *Queries) GetAllTracksWithFullMetadataByLibrary(ctx context.Context, libraryID int64) ([]GetAllTracksWithFullMetadataByLibraryRow, error) {
@@ -399,6 +409,8 @@ func (q *Queries) GetAllTracksWithFullMetadataByLibrary(ctx context.Context, lib
 			&i.Channels,
 			&i.Bitrate,
 			&i.FileSize,
+			&i.PlayCount,
+			&i.LastPlayed,
 		); err != nil {
 			return nil, err
 		}

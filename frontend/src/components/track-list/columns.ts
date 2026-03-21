@@ -186,6 +186,16 @@ export const COLUMN_DEFS: Record<string, ColumnDef> = {
         comparator: (a, b) =>
             compareNum(a.FileSize, b.FileSize),
     },
+    playCount: {
+        id: 'playCount',
+        label: 'Plays',
+        accessor: (t) =>
+            t.PlayCount ? String(t.PlayCount) : '',
+        defaultWidth: '60px',
+        align: 'right',
+        comparator: (a, b) =>
+            compareNum(a.PlayCount, b.PlayCount),
+    },
 };
 
 /**

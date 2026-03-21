@@ -65,6 +65,8 @@ func mapTrackRow(
 	year int64,
 	composer, fileType string,
 	sampleRate, bitDepth, channels, bitrate, fileSize int64,
+	playCount int64,
+	lastPlayed string,
 ) Track {
 	return Track{
 		TrackName:   title,
@@ -83,6 +85,8 @@ func mapTrackRow(
 		Channels:    channels,
 		Bitrate:     bitrate,
 		FileSize:    fileSize,
+		PlayCount:   playCount,
+		LastPlayed:  lastPlayed,
 	}
 }
 
@@ -146,6 +150,8 @@ func (l *Library) GetAllTracks() ([]Track, error) {
 			row.Channels,
 			row.Bitrate,
 			row.FileSize,
+			row.PlayCount,
+			row.LastPlayed,
 		))
 	}
 
@@ -198,6 +204,7 @@ func (l *Library) SearchTracks(
 			row.Channels,
 			row.Bitrate,
 			row.FileSize,
+			0, "",
 		))
 	}
 
@@ -237,6 +244,7 @@ func (l *Library) GetAlbumTracks(albumID int64) ([]Track, error) {
 			row.Channels,
 			row.Bitrate,
 			row.FileSize,
+			0, "",
 		))
 	}
 
@@ -411,6 +419,7 @@ func (l *Library) GetTracksByGenre(
 			row.Channels,
 			row.Bitrate,
 			row.FileSize,
+			0, "",
 		))
 	}
 
@@ -492,6 +501,8 @@ func (l *Library) GetAllTracksByLibrary(
 			row.Channels,
 			row.Bitrate,
 			row.FileSize,
+			row.PlayCount,
+			row.LastPlayed,
 		))
 	}
 
@@ -724,6 +735,7 @@ func (l *Library) GetTracksByGenreByLibrary(
 			row.Channels,
 			row.Bitrate,
 			row.FileSize,
+			0, "",
 		))
 	}
 
@@ -775,6 +787,7 @@ func (l *Library) GetAlbumTracksByLibrary(
 			row.Channels,
 			row.Bitrate,
 			row.FileSize,
+			0, "",
 		))
 	}
 
@@ -822,6 +835,7 @@ func (l *Library) SearchTracksByLibrary(
 			row.Channels,
 			row.Bitrate,
 			row.FileSize,
+			0, "",
 		))
 	}
 
