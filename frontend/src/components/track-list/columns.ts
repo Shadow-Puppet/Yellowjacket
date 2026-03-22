@@ -188,10 +188,10 @@ export const COLUMN_DEFS: Record<string, ColumnDef> = {
     },
     playCount: {
         id: 'playCount',
-        label: 'Plays',
+        label: 'Play Count',
         accessor: (t) =>
             t.PlayCount ? String(t.PlayCount) : '',
-        defaultWidth: '60px',
+        defaultWidth: '80px',
         align: 'right',
         comparator: (a, b) =>
             compareNum(a.PlayCount, b.PlayCount),
