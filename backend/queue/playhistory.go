@@ -1,6 +1,12 @@
 package queue
 
-import "time"
+import (
+	"time"
+
+	"github.com/wailsapp/wails/v2/pkg/runtime"
+
+	"yellowjacket/backend/events"
+)
 
 // recordPlay inserts a play_history row and updates the denormalized
 // play_count / last_played columns on audio_files. Called from
@@ -54,4 +60,11 @@ func (q *Queue) recordPlay(audioFileID int64) {
 		"Play recorded",
 		"audioFileId", audioFileID,
 	)
+
+	// Notify frontend so the track list refreshes play count.
+	if q.ctx != nil {
+		runtime.EventsEmit(
+			q.ctx, events.TrackMetadataChanged,
+		)
+	}
 }
