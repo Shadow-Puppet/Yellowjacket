@@ -38,6 +38,8 @@ type AudioFile struct {
 	FileSize           int64
 	Basename           string
 	LibraryID          int64
+	PlayCount          int64
+	LastPlayed         sql.NullTime
 }
 
 type CoverArt struct {
@@ -62,6 +64,12 @@ type Library struct {
 	Name      string
 	Path      string
 	CreatedAt time.Time
+}
+
+type PlayHistory struct {
+	ID          int64
+	AudioFileID int64
+	PlayedAt    time.Time
 }
 
 type PlayerState struct {
@@ -173,4 +181,6 @@ type TrackMetadatum struct {
 	Bitrate            int64
 	FileSize           int64
 	LibraryID          int64
+	PlayCount          int64
+	LastPlayed         sql.NullTime
 }
