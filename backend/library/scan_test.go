@@ -207,6 +207,8 @@ func TestMapTrackRow(t *testing.T) {
 		2,                                    // channels
 		1411,                                 // bitrate
 		35000000,                             // fileSize
+		0,                                    // playCount
+		sql.NullTime{},                       // lastPlayed
 	)
 
 	// Verify all 16 fields.
@@ -287,6 +289,8 @@ func TestMapTrackRow(t *testing.T) {
 		"/music/unknown.mp3", 0, "Test", "Artist",
 		sql.NullInt64{}, sql.NullInt64{}, // invalid (null)
 		"", "", 0, "", "", 0, 0, 0, 0, 0,
+		0,              // playCount
+		sql.NullTime{}, // lastPlayed
 	)
 
 	if trackNull.TrackNumber != 0 {
