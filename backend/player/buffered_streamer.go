@@ -177,6 +177,19 @@ func (bs *BufferedStreamer) Err() error {
 	return bs.err
 }
 
+// Flush discards all buffered samples so the next Stream call
+// returns freshly-read data from the source. This must be called
+// after seeking the underlying source to prevent stale pre-seek
+// audio from being played back.
+func (bs *BufferedStreamer) Flush() {
+	bs.mu.Lock()
+	defer bs.mu.Unlock()
+
+	bs.readPos = 0
+	bs.writPos = 0
+	bs.count = 0
+}
+
 // Close signals the read-ahead goroutine to stop. It is safe to
 // call multiple times.
 func (bs *BufferedStreamer) Close() {

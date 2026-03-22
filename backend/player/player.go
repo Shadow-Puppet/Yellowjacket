@@ -818,6 +818,13 @@ func (p *Player) seekLocked(targetSeconds int) error {
 
 	speaker.Unlock()
 
+	// Flush the read-ahead buffer so the speaker immediately
+	// plays audio from the new position instead of draining
+	// up to 2 seconds of stale pre-seek samples.
+	if p.buffered != nil {
+		p.buffered.Flush()
+	}
+
 	if p.mediaControls != nil {
 		p.mediaControls.NotifySeek(targetSeconds)
 	}

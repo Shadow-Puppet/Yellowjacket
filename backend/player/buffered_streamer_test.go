@@ -260,6 +260,100 @@ func TestBufferedStreamer_EmptyBufferReturnsSilence(t *testing.T) {
 	}
 }
 
+func TestBufferedStreamer_Flush(t *testing.T) {
+	// Use a slow source so the read-ahead goroutine cannot fully
+	// drain it before we flush. Each chunk sleeps 5ms, giving us
+	// time to flush while data is still being produced.
+	src := &slowStreamer{
+		inner: finiteStreamer(5000),
+		delay: 5 * time.Millisecond,
+	}
+	bs := NewBufferedStreamer(src, 2048)
+
+	defer bs.Close()
+
+	// Let read-ahead fill some data.
+	time.Sleep(50 * time.Millisecond)
+
+	// Read a few samples to confirm data is buffered.
+	buf := make([][2]float64, 32)
+	n, ok := bs.Stream(buf)
+
+	if !ok || n == 0 {
+		t.Fatal("expected buffered data before flush")
+	}
+
+	// Record the last sample value we saw.
+	lastBefore := buf[n-1][0]
+
+	// Verify the buffer had more data than we consumed (i.e.
+	// there's stale data in the ring that Flush should discard).
+	bs.mu.Lock()
+	countBeforeFlush := bs.count
+	bs.mu.Unlock()
+
+	if countBeforeFlush == 0 {
+		t.Fatal("expected non-empty ring buffer before flush")
+	}
+
+	// Flush discards all buffered data.
+	bs.Flush()
+
+	// Verify the ring buffer is empty after flush.
+	bs.mu.Lock()
+	countAfterFlush := bs.count
+	bs.mu.Unlock()
+
+	if countAfterFlush != 0 {
+		t.Fatalf(
+			"expected 0 samples after flush, got %d",
+			countAfterFlush,
+		)
+	}
+
+	// Wait for read-ahead to refill with fresh data.
+	time.Sleep(100 * time.Millisecond)
+
+	// The next non-zero sample must come from AFTER the
+	// pre-flush position in the source (i.e. its value must be
+	// greater than lastBefore + countBeforeFlush, since those
+	// samples were discarded).
+	foundNonZero := false
+
+	for range 200 {
+		n, ok = bs.Stream(buf)
+
+		for i := range n {
+			if buf[i][0] != 0 {
+				// The sample must be strictly greater than what
+				// was buffered before flush.
+				if buf[i][0] <= lastBefore {
+					t.Fatalf(
+						"after flush, got sample value %f "+
+							"which is <= pre-flush value %f "+
+							"(stale data not discarded)",
+						buf[i][0], lastBefore,
+					)
+				}
+
+				foundNonZero = true
+
+				break
+			}
+		}
+
+		if foundNonZero || !ok {
+			break
+		}
+
+		time.Sleep(1 * time.Millisecond)
+	}
+
+	if !foundNonZero {
+		t.Fatal("expected non-zero samples after flush")
+	}
+}
+
 func TestBufferedStreamer_Close(t *testing.T) {
 	// Use a source that never drains.
 	infinite := beep.StreamerFunc(func(samples [][2]float64) (int, bool) {
