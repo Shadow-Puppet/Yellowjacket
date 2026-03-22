@@ -4,6 +4,8 @@ import {sqlcgen} from '../models';
 import {library} from '../models';
 import {context} from '../models';
 
+export function AcquirePipelineLock():Promise<void>;
+
 export function AddLibrary(arg1:string):Promise<sqlcgen.Library>;
 
 export function CancelAllScans():Promise<void>;
@@ -55,6 +57,8 @@ export function IsScanPaused():Promise<boolean>;
 export function PauseScan():Promise<void>;
 
 export function QueuedLibraryNames():Promise<Array<string>>;
+
+export function ReleasePipelineLock():Promise<void>;
 
 export function RemoveLibrary(arg1:number):Promise<library.RemovalSummary>;
 

@@ -66,12 +66,20 @@ export function GetPlaylistTracks(arg1) {
   return window['go']['playlist']['Service']['GetPlaylistTracks'](arg1);
 }
 
+export function GetSmartPlaylistRules(arg1) {
+  return window['go']['playlist']['Service']['GetSmartPlaylistRules'](arg1);
+}
+
 export function ImportPlaylist(arg1) {
   return window['go']['playlist']['Service']['ImportPlaylist'](arg1);
 }
 
 export function ImportPlaylists(arg1) {
   return window['go']['playlist']['Service']['ImportPlaylists'](arg1);
+}
+
+export function PreviewSmartPlaylist(arg1) {
+  return window['go']['playlist']['Service']['PreviewSmartPlaylist'](arg1);
 }
 
 export function RemoveFromDefaultPlaylist(arg1) {
@@ -120,12 +128,4 @@ export function ToggleDefaultPlaylistTrack(arg1) {
 
 export function UpdateSmartPlaylistRules(arg1, arg2) {
   return window['go']['playlist']['Service']['UpdateSmartPlaylistRules'](arg1, arg2);
-}
-
-export function GetSmartPlaylistRules(arg1) {
-  return window['go']['playlist']['Service']['GetSmartPlaylistRules'](arg1);
-}
-
-export function PreviewSmartPlaylist(arg1) {
-  return window['go']['playlist']['Service']['PreviewSmartPlaylist'](arg1);
 }
