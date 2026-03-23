@@ -15,6 +15,7 @@ import (
 	"yellowjacket/backend/config"
 	"yellowjacket/backend/coverart"
 	"yellowjacket/backend/database"
+	"yellowjacket/backend/explore"
 	"yellowjacket/backend/frontendutil"
 	"yellowjacket/backend/library"
 	"yellowjacket/backend/mediacontrols"
@@ -37,6 +38,7 @@ type YellowJacketApp struct {
 	player        *player.Player
 	playlist      *playlist.Service
 	queue         *queue.Queue
+	explore       *explore.Service
 	mediaControls mediacontrols.Handler
 	tagWriter     *tagwriter.TagWriter
 	appContext    context.Context
@@ -125,6 +127,11 @@ func NewYellowJacketApp(
 		yjApp.library,
 	)
 
+	// create explore service
+	yjApp.explore = explore.NewExploreService(
+		yjApp.logger.WithGroup("explore"), yjApp.database,
+	)
+
 	yjApp.FEBindings = []any{
 		yjApp.FrontendUtil,
 		yjApp.appConfig,
@@ -133,6 +140,7 @@ func NewYellowJacketApp(
 		yjApp.queue,
 		yjApp.player,
 		yjApp.tagWriter,
+		yjApp.explore,
 	}
 
 	return yjApp, nil
@@ -179,6 +187,7 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 
 	yj.player.SetContext(ctx)
 	yj.tagWriter.SetContext(ctx)
+	yj.explore.SetContext(ctx)
 
 	// Wire queue (created in NewYellowJacketApp for Wails binding)
 	yj.queue.SetContext(ctx)

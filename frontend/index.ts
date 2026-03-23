@@ -16,6 +16,7 @@ import '@components/smart-playlist-editor/smart-playlist-editor.ts';
 import '@components/search-bar/search-bar.ts';
 import '@components/library-filter/library-filter.ts';
 import '@components/track-details/track-details.ts';
+import '@components/explore-view/explore-view.ts';
 import '@awesome.me/webawesome/dist/styles/themes/default.css';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import { setBasePath } from '@awesome.me/webawesome/dist/webawesome.js';
@@ -54,6 +55,7 @@ const VIEW_TAGS: Record<string, string> = {
     artists: 'artists-view',
     genres: 'genres-view',
     playlists: 'playlist-view',
+    explore: 'explore-view',
     settings: 'config-page',
 };
 
