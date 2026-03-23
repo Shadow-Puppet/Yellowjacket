@@ -349,6 +349,16 @@ func runMigrations(
 		}
 	}
 
+	// Migration 11: explore_cache table for MusicBrainz/ListenBrainz
+	// API response caching with TTL expiry and MBID lookups.
+	if version < 11 {
+		if err := migration11ExploreCache(
+			ctx, db, logger,
+		); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -1222,7 +1232,7 @@ func migration9SmartPlaylists(
 // migration10PlayHistory adds play history tracking:
 // - play_history table for timestamped play log
 // - play_count and last_played columns on audio_files
-// - Recreates track_metadata VIEW to expose the new columns
+// - Recreates track_metadata VIEW to expose the new columns.
 func migration10PlayHistory(
 	ctx context.Context,
 	db *sql.DB,
@@ -1348,6 +1358,68 @@ func migration10PlayHistory(
 	}
 
 	logger.Info("migration 10 complete")
+
+	return nil
+}
+
+// migration11ExploreCache creates the explore_cache table for
+// MusicBrainz and ListenBrainz API response caching. The table
+// stores raw JSON keyed by URL with TTL-based expiry and optional
+// MBID columns for future autotagging lookups.
+func migration11ExploreCache(
+	ctx context.Context,
+	db *sql.DB,
+	logger *slog.Logger,
+) error {
+	logger.Info(
+		"applying migration 11: explore_cache table",
+	)
+
+	if _, err := db.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS explore_cache (
+			url_key     TEXT PRIMARY KEY,
+			response    TEXT NOT NULL,
+			mbid        TEXT,
+			entity_type TEXT,
+			expires_at  DATETIME NOT NULL,
+			created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)
+	`); err != nil {
+		return fmt.Errorf(
+			"migration 11: could not create explore_cache table: %w",
+			err,
+		)
+	}
+
+	if _, err := db.ExecContext(ctx, `
+		CREATE INDEX IF NOT EXISTS idx_explore_cache_expires
+		ON explore_cache(expires_at)
+	`); err != nil {
+		return fmt.Errorf(
+			"migration 11: could not create expires index: %w",
+			err,
+		)
+	}
+
+	if _, err := db.ExecContext(ctx, `
+		CREATE INDEX IF NOT EXISTS idx_explore_cache_mbid
+		ON explore_cache(mbid)
+	`); err != nil {
+		return fmt.Errorf(
+			"migration 11: could not create mbid index: %w",
+			err,
+		)
+	}
+
+	if _, err := db.ExecContext(
+		ctx, "PRAGMA user_version = 11",
+	); err != nil {
+		return fmt.Errorf(
+			"could not set user_version to 11: %w", err,
+		)
+	}
+
+	logger.Info("migration 11 complete")
 
 	return nil
 }
