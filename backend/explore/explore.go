@@ -3,6 +3,7 @@ package explore
 import (
 	"context"
 	"log/slog"
+	"sync"
 
 	"yellowjacket/backend/database"
 )
@@ -115,4 +116,112 @@ func (e *Service) SimilarArtists(artistMBID string) ([]LBSimilarArtist, error) {
 // front cover at the default 250px size.
 func (e *Service) CoverArtURL(releaseMBID string) string {
 	return CoverArtURL(releaseMBID)
+}
+
+// CoverArtGroupURL returns the Cover Art Archive URL for a release
+// group's front cover at the default 250px size.  This is the
+// correct endpoint for search results, which return release group
+// MBIDs rather than individual release MBIDs.
+func (e *Service) CoverArtGroupURL(releaseGroupMBID string) string {
+	return CoverArtGroupURL(releaseGroupMBID)
+}
+
+// Search concurrently queries MusicBrainz for artists, release
+// groups, and recordings matching the query, returning aggregated
+// results in a single round-trip.  If any sub-search fails the
+// error is logged and the remaining results are still returned.
+func (e *Service) Search(query string) (*MBSearchResult, error) {
+	e.logger.Info("search started", "query", query)
+
+	var (
+		result MBSearchResult
+		mu     sync.Mutex
+		wg     sync.WaitGroup
+	)
+
+	type searchFunc struct {
+		name string
+		fn   func()
+	}
+
+	searches := []searchFunc{
+		{
+			name: "artists",
+			fn: func() {
+				artists, err := e.mb.SearchArtists(e.ctx, query, 0)
+				if err != nil {
+					e.logger.Warn("search sub-call failed",
+						"entity", "artists",
+						"query", query,
+						"error", err,
+					)
+
+					return
+				}
+
+				mu.Lock()
+				result.Artists = artists
+				mu.Unlock()
+			},
+		},
+		{
+			name: "releaseGroups",
+			fn: func() {
+				rgs, err := e.mb.SearchReleaseGroups(e.ctx, query, 0)
+				if err != nil {
+					e.logger.Warn("search sub-call failed",
+						"entity", "releaseGroups",
+						"query", query,
+						"error", err,
+					)
+
+					return
+				}
+
+				mu.Lock()
+				result.ReleaseGroups = rgs
+				mu.Unlock()
+			},
+		},
+		{
+			name: "recordings",
+			fn: func() {
+				recs, err := e.mb.SearchRecordings(e.ctx, query, 0)
+				if err != nil {
+					e.logger.Warn("search sub-call failed",
+						"entity", "recordings",
+						"query", query,
+						"error", err,
+					)
+
+					return
+				}
+
+				mu.Lock()
+				result.Recordings = recs
+				mu.Unlock()
+			},
+		},
+	}
+
+	wg.Add(len(searches))
+
+	for _, s := range searches {
+		go func() {
+			defer wg.Done()
+
+			s.fn()
+		}()
+	}
+
+	wg.Wait()
+
+	e.logger.Info("search completed",
+		"query", query,
+		"artists", len(result.Artists),
+		"releaseGroups", len(result.ReleaseGroups),
+		"recordings", len(result.Recordings),
+	)
+
+	return &result, nil
 }
