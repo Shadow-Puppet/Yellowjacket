@@ -5,11 +5,13 @@ import {
     LookupArtist,
     BrowseReleaseGroups,
     TopRecordingsForArtist,
+    SimilarArtists,
 } from '@go/explore/Service';
 import type {
     MBArtist,
     MBReleaseGroup,
     LBTopRecording,
+    LBSimilarArtist,
 } from '@go/explore/Service';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 
@@ -67,6 +69,8 @@ export class ExploreArtistDetails extends LitElement {
     @state() private errorArtist = '';
     @state() private errorTracks = '';
     @state() private errorReleases = '';
+    @state() private similarArtists: LBSimilarArtist[] = [];
+    @state() private loadingSimilar = true;
 
     /* ── Styles ── */
 
@@ -370,6 +374,70 @@ export class ExploreArtistDetails extends LitElement {
                 color: var(--yj-text-tertiary, #888);
                 font-size: var(--yj-text-xs);
             }
+
+            /* ── Similar artists ── */
+            .horizontal-row {
+                display: flex;
+                gap: 12px;
+                overflow-x: auto;
+                padding-bottom: 4px;
+                scrollbar-width: none;
+            }
+
+            .horizontal-row::-webkit-scrollbar {
+                display: none;
+            }
+
+            .similar-artist-card {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                gap: 8px;
+                padding: 10px;
+                border-radius: 8px;
+                cursor: pointer;
+                min-width: 100px;
+                max-width: 120px;
+                flex-shrink: 0;
+                text-align: center;
+                transition: background 0.15s ease;
+            }
+
+            .similar-artist-card:hover {
+                background: var(
+                    --yj-bg-overlay,
+                    rgba(255, 255, 255, 0.06)
+                );
+            }
+
+            .similar-artist-card:active {
+                transform: scale(0.97);
+            }
+
+            .similar-avatar {
+                width: 48px;
+                height: 48px;
+                border-radius: 50%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                color: #fff;
+                font-weight: 600;
+                font-size: 20px;
+                text-transform: uppercase;
+                user-select: none;
+                flex-shrink: 0;
+            }
+
+            .similar-name {
+                font-weight: 500;
+                color: var(--yj-text-primary, #fff);
+                font-size: var(--yj-text-sm);
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                width: 100%;
+            }
         `,
     ];
 
@@ -387,23 +455,27 @@ export class ExploreArtistDetails extends LitElement {
     private async loadAllData() {
         const mbid = this.artistMBID;
         console.log(
-            `[explore-artist] loading artist page: "${this.artistName}" (${mbid})`,
+            `[explore-artist] loading: "${this.artistName}" (${mbid})`,
         );
 
-        // Fire all three requests in parallel — each section is independent.
-        const [artistResult, tracksResult, releasesResult] =
+        // Fire all four requests in parallel — each section is independent.
+        const [artistResult, tracksResult, releasesResult, similarResult] =
             await Promise.allSettled([
                 this.fetchArtist(mbid),
                 this.fetchTopTracks(mbid),
                 this.fetchReleaseGroups(mbid),
+                this.fetchSimilarArtists(mbid),
             ]);
 
         const summary = [
             `artist=${artistResult.status}`,
             `tracks=${tracksResult.status}`,
             `releases=${releasesResult.status}`,
+            `similar=${similarResult.status}`,
         ].join(', ');
-        console.log(`[explore-artist] load complete: ${summary}`);
+        console.log(
+            `[explore-artist] loaded: "${this.artistName}" (${summary})`,
+        );
     }
 
     private async fetchArtist(mbid: string) {
@@ -412,7 +484,7 @@ export class ExploreArtistDetails extends LitElement {
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             this.errorArtist = msg;
-            console.error(`[explore-artist] LookupArtist failed: ${msg}`);
+            console.error(`[explore-artist] LookupArtist error: ${msg}`);
         } finally {
             this.loadingArtist = false;
         }
@@ -426,7 +498,7 @@ export class ExploreArtistDetails extends LitElement {
             const msg = err instanceof Error ? err.message : String(err);
             this.errorTracks = msg;
             console.error(
-                `[explore-artist] TopRecordingsForArtist failed: ${msg}`,
+                `[explore-artist] TopRecordingsForArtist error: ${msg}`,
             );
         } finally {
             this.loadingTracks = false;
@@ -441,10 +513,26 @@ export class ExploreArtistDetails extends LitElement {
             const msg = err instanceof Error ? err.message : String(err);
             this.errorReleases = msg;
             console.error(
-                `[explore-artist] BrowseReleaseGroups failed: ${msg}`,
+                `[explore-artist] BrowseReleaseGroups error: ${msg}`,
             );
         } finally {
             this.loadingReleases = false;
+        }
+    }
+
+    private async fetchSimilarArtists(mbid: string) {
+        try {
+            const artists = await SimilarArtists(mbid);
+            this.similarArtists = artists ?? [];
+        } catch (err) {
+            // D024: graceful degradation — silently omit similar artists on failure.
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error(
+                `[explore-artist] SimilarArtists error: ${msg}`,
+            );
+            this.similarArtists = [];
+        } finally {
+            this.loadingSimilar = false;
         }
     }
 
@@ -469,6 +557,20 @@ export class ExploreArtistDetails extends LitElement {
                     view: 'explore-album-details',
                     releaseGroupMBID: rg.mbid,
                     albumName: rg.title,
+                },
+            }),
+        );
+    }
+
+    private navigateToSimilarArtist(artist: LBSimilarArtist) {
+        this.dispatchEvent(
+            new CustomEvent('navigate', {
+                bubbles: true,
+                composed: true,
+                detail: {
+                    view: 'explore-artist-details',
+                    artistMBID: artist.artistMbid,
+                    artistName: artist.name,
                 },
             }),
         );
@@ -574,7 +676,7 @@ export class ExploreArtistDetails extends LitElement {
             </div>
             <div class="content">
                 ${this.renderTopTracks()} ${this.renderDiscography()}
-                <!-- similar artists section added in T02 -->
+                ${this.renderSimilarArtists()}
             </div>
         `;
     }
@@ -741,6 +843,56 @@ export class ExploreArtistDetails extends LitElement {
                     ${year ? html`<span>${year}</span>` : nothing}
                 </div>
             </div>
+        `;
+    }
+
+    /* ── Similar Artists Section ── */
+
+    private renderSimilarArtists() {
+        // D024: when loading or empty/null, simply omit the section.
+        if (this.loadingSimilar || this.similarArtists.length === 0) {
+            return nothing;
+        }
+
+        return html`
+            <section>
+                <h3 class="section-header">Similar Artists</h3>
+                <div class="horizontal-row">
+                    ${this.similarArtists.map((a) => {
+                        const hue = nameToHue(a.name);
+                        return html`
+                            <div
+                                class="similar-artist-card"
+                                @click=${() => this.navigateToSimilarArtist(a)}
+                                role="button"
+                                tabindex="0"
+                                @keydown=${(e: KeyboardEvent) => {
+                                    if (
+                                        e.key === 'Enter' ||
+                                        e.key === ' '
+                                    ) {
+                                        e.preventDefault();
+                                        this.navigateToSimilarArtist(a);
+                                    }
+                                }}
+                            >
+                                <div
+                                    class="similar-avatar"
+                                    style="background: hsl(${hue}, 45%, 35%)"
+                                >
+                                    ${a.name.charAt(0).toUpperCase()}
+                                </div>
+                                <div
+                                    class="similar-name"
+                                    title="${a.name}"
+                                >
+                                    ${a.name}
+                                </div>
+                            </div>
+                        `;
+                    })}
+                </div>
+            </section>
         `;
     }
 }
