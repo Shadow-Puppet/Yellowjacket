@@ -17,6 +17,7 @@ import '@components/search-bar/search-bar.ts';
 import '@components/library-filter/library-filter.ts';
 import '@components/track-details/track-details.ts';
 import '@components/explore-view/explore-view.ts';
+import '@components/explore-artist-details/explore-artist-details.js';
 import '@awesome.me/webawesome/dist/styles/themes/default.css';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import { setBasePath } from '@awesome.me/webawesome/dist/webawesome.js';
@@ -163,6 +164,16 @@ document.addEventListener('navigate', (e: Event) => {
             genreEl.setAttribute('genre-name', genreName);
             mainContent.appendChild(genreEl);
             currentDetailEl = genreEl;
+            break;
+        }
+        case 'explore-artist-details': {
+            const { artistMBID, artistName } = detail;
+            const el = document.createElement('explore-artist-details');
+
+            el.setAttribute('artist-mbid', artistMBID);
+            el.setAttribute('artist-name', artistName);
+            mainContent.appendChild(el);
+            currentDetailEl = el;
             break;
         }
         default: {
