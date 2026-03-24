@@ -388,10 +388,11 @@ func convertRelease(r musicbrainzws2.Release) MBRelease {
 	for _, m := range r.Media {
 		for _, t := range m.Tracks {
 			rel.Tracks = append(rel.Tracks, MBTrack{
-				Position: t.Position,
-				Title:    t.Title,
-				Length:   int(t.Length.Milliseconds()),
-				MBID:     string(t.ID),
+				Position:   t.Position,
+				DiscNumber: m.Position,
+				Title:      t.Title,
+				Length:     int(t.Length.Milliseconds()),
+				MBID:       string(t.ID),
 			})
 		}
 	}

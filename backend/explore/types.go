@@ -59,10 +59,11 @@ type MBRecording struct {
 
 // MBTrack is a Wails-friendly projection of a MusicBrainz track.
 type MBTrack struct {
-	Position int    `json:"position"`
-	Title    string `json:"title"`
-	Length   int    `json:"length"`
-	MBID     string `json:"mbid"`
+	Position   int    `json:"position"`
+	DiscNumber int    `json:"discNumber"`
+	Title      string `json:"title"`
+	Length     int    `json:"length"`
+	MBID       string `json:"mbid"`
 }
 
 // LBTopRecording represents a popular recording from the

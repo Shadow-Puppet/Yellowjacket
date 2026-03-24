@@ -41,6 +41,7 @@ export interface MBRelease {
 
 export interface MBTrack {
   position: number;
+  discNumber: number;
   title: string;
   length: number;
   mbid: string;

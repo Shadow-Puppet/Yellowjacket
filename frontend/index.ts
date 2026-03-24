@@ -18,6 +18,7 @@ import '@components/library-filter/library-filter.ts';
 import '@components/track-details/track-details.ts';
 import '@components/explore-view/explore-view.ts';
 import '@components/explore-artist-details/explore-artist-details.js';
+import '@components/explore-album-details/explore-album-details.js';
 import '@awesome.me/webawesome/dist/styles/themes/default.css';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import { setBasePath } from '@awesome.me/webawesome/dist/webawesome.js';
@@ -172,6 +173,16 @@ document.addEventListener('navigate', (e: Event) => {
 
             el.setAttribute('artist-mbid', artistMBID);
             el.setAttribute('artist-name', artistName);
+            mainContent.appendChild(el);
+            currentDetailEl = el;
+            break;
+        }
+        case 'explore-album-details': {
+            const { releaseGroupMBID, albumName } = detail;
+            const el = document.createElement('explore-album-details');
+
+            el.setAttribute('release-group-mbid', releaseGroupMBID);
+            el.setAttribute('album-name', albumName);
             mainContent.appendChild(el);
             currentDetailEl = el;
             break;
