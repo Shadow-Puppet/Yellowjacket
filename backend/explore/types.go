@@ -68,11 +68,34 @@ type MBTrack struct {
 
 // LBTopRecording represents a popular recording from the
 // ListenBrainz popularity API.
+//
+// JSON tags use camelCase for Wails→frontend serialization.
+// The API response uses snake_case, so we unmarshal into
+// lbTopRecordingWire first, then convert.
 type LBTopRecording struct {
 	RecordingMBID    string `json:"recordingMbid"`
 	ArtistName       string `json:"artistName"`
 	TrackName        string `json:"trackName"`
 	TotalListenCount int    `json:"totalListenCount"`
+}
+
+// lbTopRecordingWire matches the ListenBrainz API's snake_case
+// JSON response for the popularity/top-recordings-for-artist
+// endpoint.
+type lbTopRecordingWire struct {
+	RecordingMBID    string `json:"recording_mbid"`
+	ArtistName       string `json:"artist_name"`
+	RecordingName    string `json:"recording_name"`
+	TotalListenCount int    `json:"total_listen_count"`
+}
+
+func (w lbTopRecordingWire) toPublic() LBTopRecording {
+	return LBTopRecording{
+		RecordingMBID:    w.RecordingMBID,
+		ArtistName:       w.ArtistName,
+		TrackName:        w.RecordingName,
+		TotalListenCount: w.TotalListenCount,
+	}
 }
 
 // LBSimilarArtist represents a similar artist from the

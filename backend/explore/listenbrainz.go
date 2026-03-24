@@ -68,10 +68,23 @@ func (c *ListenBrainzClient) TopRecordingsForArtist(
 		return nil, fmt.Errorf("listenbrainz top recordings: %w", err)
 	}
 
-	// The API returns an array directly.
-	var out []LBTopRecording
-	if err := json.Unmarshal(body, &out); err != nil {
+	// The API returns snake_case JSON — unmarshal into wire type,
+	// then convert to the camelCase Wails type.
+	var wire []lbTopRecordingWire
+	if err := json.Unmarshal(body, &wire); err != nil {
 		return nil, fmt.Errorf("listenbrainz top recordings unmarshal: %w", err)
+	}
+
+	const maxTopRecordings = 10
+
+	limit := len(wire)
+	if limit > maxTopRecordings {
+		limit = maxTopRecordings
+	}
+
+	out := make([]LBTopRecording, limit)
+	for i := range limit {
+		out[i] = wire[i].toPublic()
 	}
 
 	c.cacheJSON(cacheKey, out, cacheTTLSearch, artistMBID, "artist")
