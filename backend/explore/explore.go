@@ -93,8 +93,26 @@ func (e *Service) LookupReleaseGroup(mbid string) (*MBReleaseGroup, error) {
 // ---------------------------------------------------------------------------
 
 // BrowseReleaseGroups fetches release groups for a given artist MBID.
+// Also adds results to the search index (Tier 5: organic growth).
 func (e *Service) BrowseReleaseGroups(artistMBID string) ([]MBReleaseGroup, error) {
-	return e.mb.BrowseReleaseGroups(e.ctx, artistMBID)
+	rgs, err := e.mb.BrowseReleaseGroups(e.ctx, artistMBID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Tier 5: organic growth — index this discography.
+	// Look up the artist name from the first result's credit, or
+	// fall back to the MBID.
+	artistName := artistMBID
+
+	artist, lookupErr := e.mb.LookupArtist(e.ctx, artistMBID)
+	if lookupErr == nil && artist != nil {
+		artistName = artist.Name
+	}
+
+	go e.index.AddFromCache(artistName, artistMBID, rgs)
+
+	return rgs, nil
 }
 
 // BrowseReleases fetches releases for a given release group MBID.
