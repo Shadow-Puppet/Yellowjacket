@@ -19,7 +19,24 @@ import '@awesome.me/webawesome/dist/components/icon/icon.js';
 const CAA_GROUP_BASE = 'https://coverartarchive.org/release-group';
 
 /** Desired section order for grouping release types. */
-const TYPE_ORDER = ['Album', 'EP', 'Single', 'Compilation'];
+const TYPE_ORDER = ['Albums', 'EP', 'Single', 'Other Albums'];
+
+/**
+ * Secondary types that move an "Album" out of the studio albums
+ * bucket and into "Other Albums".
+ */
+const NON_STUDIO_SECONDARY_TYPES = new Set([
+    'Compilation',
+    'Soundtrack',
+    'Live',
+    'Remix',
+    'Spokenword',
+    'Interview',
+    'DJ-mix',
+    'Mixtape/Street',
+    'Demo',
+    'Audio drama',
+]);
 
 /* ── Utility functions (duplicated from explore-view per design decision) ── */
 
@@ -595,14 +612,27 @@ export class ExploreArtistDetails extends LitElement {
     }
 
     /**
-     * Group release groups by primaryType, returning entries in the
-     * canonical order: Album → EP → Single → Compilation → Other.
+     * Group release groups by type, returning entries in the
+     * canonical order: Albums → EP → Single → Other Albums → ...rest.
+     *
+     * "Albums" contains release groups with primaryType "Album" and
+     * no non-studio secondary types.  "Other Albums" collects
+     * compilations, soundtracks, live albums, etc.
      */
     private groupByType(): Array<{ type: string; items: MBReleaseGroup[] }> {
         const map = new Map<string, MBReleaseGroup[]>();
 
         for (const rg of this.releaseGroups) {
-            const key = rg.primaryType || 'Other';
+            let key = rg.primaryType || 'Other';
+
+            // Split "Album" into studio vs other based on secondary types.
+            if (key === 'Album') {
+                const hasNonStudio = rg.secondaryTypes?.some((t) =>
+                    NON_STUDIO_SECONDARY_TYPES.has(t),
+                );
+                key = hasNonStudio ? 'Other Albums' : 'Albums';
+            }
+
             let bucket = map.get(key);
             if (!bucket) {
                 bucket = [];
