@@ -2,6 +2,7 @@ package explore
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"math"
 	"sort"
@@ -20,6 +21,7 @@ type Service struct {
 	mb     *MusicBrainzClient
 	lb     *ListenBrainzClient
 	cache  *Cache
+	index  *SearchIndex
 	logger *slog.Logger
 	ctx    context.Context
 }
@@ -32,6 +34,7 @@ func NewExploreService(logger *slog.Logger, db *database.DB) *Service {
 	limiter := NewRateLimiter()
 	mb := NewMusicBrainzClient(cache, logger.WithGroup("musicbrainz"))
 	lb := NewListenBrainzClient(limiter, cache, logger.WithGroup("listenbrainz"))
+	index := NewSearchIndex(db, lb, logger.WithGroup("search-index"))
 
 	logger.Info("explore service created")
 
@@ -39,6 +42,7 @@ func NewExploreService(logger *slog.Logger, db *database.DB) *Service {
 		mb:     mb,
 		lb:     lb,
 		cache:  cache,
+		index:  index,
 		logger: logger,
 		ctx:    context.Background(),
 	}
@@ -48,6 +52,7 @@ func NewExploreService(logger *slog.Logger, db *database.DB) *Service {
 // OnStartup after the Wails runtime is initialised.
 func (e *Service) SetContext(ctx context.Context) {
 	e.ctx = ctx
+	e.index.StartBuild(ctx)
 }
 
 // ---------------------------------------------------------------------------
@@ -139,6 +144,9 @@ func (e *Service) CoverArtGroupURL(releaseGroupMBID string) string {
 // failures degrade to MB-only ordering.
 func (e *Service) Search(query string) (*MBSearchResult, error) {
 	e.logger.Info("search started", "query", query)
+
+	// Phase 0: query local popularity index (instant, no API calls).
+	indexHits := e.index.Search(query, 30) //nolint:mnd
 
 	// Phase 1: concurrent MB search (3 goroutines, library-limited).
 	var (
@@ -241,7 +249,10 @@ func (e *Service) Search(query string) (*MBSearchResult, error) {
 	// missed (e.g. "for you tatsuro" → FOR YOU by 山下達郎).
 	e.crossReferenceAlbums(query, &result)
 
-	// Phase 4: filter low-scoring results and cap counts.
+	// Phase 4: merge local index hits into results, dedup by MBID.
+	mergeIndexHits(&result, indexHits)
+
+	// Phase 5: filter low-scoring results and cap counts.
 	filterAndCap(&result)
 
 	e.logger.Info("search completed",
@@ -431,6 +442,122 @@ func fuzzyMatchRatio(query, title string) float64 {
 	}
 
 	return float64(hits) / float64(len(queryWords))
+}
+
+// ---------------------------------------------------------------------------
+// Index result merging
+// ---------------------------------------------------------------------------
+
+// mergeIndexHits injects local popularity index results into the
+// MBSearchResult.  Index hits for entity types not already present
+// (by MBID) are prepended so they appear first — they come from
+// the most popular albums/tracks globally and deserve prominence.
+func mergeIndexHits(result *MBSearchResult, hits []SearchIndexResult) {
+	if len(hits) == 0 {
+		return
+	}
+
+	// Build MBID sets for existing results.
+	artistMBIDs := make(map[string]bool, len(result.Artists))
+	for _, a := range result.Artists {
+		artistMBIDs[a.MBID] = true
+	}
+
+	rgMBIDs := make(map[string]bool, len(result.ReleaseGroups))
+	for _, rg := range result.ReleaseGroups {
+		rgMBIDs[rg.MBID] = true
+	}
+
+	recMBIDs := make(map[string]bool, len(result.Recordings))
+	for _, r := range result.Recordings {
+		recMBIDs[r.MBID] = true
+	}
+
+	// Collect new entries from index.
+	var newArtists []MBArtist
+
+	var newRGs []MBReleaseGroup
+
+	var newRecs []MBRecording
+
+	for _, h := range hits {
+		switch h.EntityType {
+		case "artist":
+			if !artistMBIDs[h.MBID] {
+				newArtists = append(newArtists, MBArtist{
+					MBID:  h.MBID,
+					Name:  h.Title,
+					Score: scalePopularity(h.Popularity),
+				})
+
+				artistMBIDs[h.MBID] = true
+			}
+
+		case "release_group":
+			if !rgMBIDs[h.MBID] {
+				rg := MBReleaseGroup{
+					MBID:         h.MBID,
+					Title:        h.Title,
+					ArtistCredit: h.ArtistName,
+				}
+
+				// Extract type from extra_json if available.
+				if h.ExtraJSON != "" {
+					var extra map[string]string
+					if err := json.Unmarshal([]byte(h.ExtraJSON), &extra); err == nil {
+						rg.PrimaryType = extra["type"]
+					}
+				}
+
+				newRGs = append(newRGs, rg)
+
+				rgMBIDs[h.MBID] = true
+			}
+
+		case "recording":
+			if !recMBIDs[h.MBID] {
+				newRecs = append(newRecs, MBRecording{
+					MBID:         h.MBID,
+					Title:        h.Title,
+					ArtistCredit: h.ArtistName,
+					Score:        scalePopularity(h.Popularity),
+				})
+
+				recMBIDs[h.MBID] = true
+			}
+		}
+	}
+
+	// Prepend index hits so they appear first.
+	if len(newArtists) > 0 {
+		result.Artists = append(newArtists, result.Artists...)
+	}
+
+	if len(newRGs) > 0 {
+		result.ReleaseGroups = append(newRGs, result.ReleaseGroups...)
+	}
+
+	if len(newRecs) > 0 {
+		result.Recordings = append(newRecs, result.Recordings...)
+	}
+}
+
+// scalePopularity maps a raw LB listen count to a 0–100 score
+// comparable with MB/blended scores.  Uses log scaling.
+func scalePopularity(listens int) int {
+	if listens <= 0 {
+		return 0
+	}
+
+	// log10(1M) ≈ 6, log10(10M) ≈ 7.  Scale so 1M+ listens → ~80-100.
+	const scale = 15.0 // tuned so ~100K listens → ~75, ~1M → ~90
+
+	score := int(math.Log10(float64(listens)) * scale)
+	if score > 100 { //nolint:mnd
+		score = 100
+	}
+
+	return score
 }
 
 // ---------------------------------------------------------------------------
