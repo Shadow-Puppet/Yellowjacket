@@ -303,6 +303,16 @@ export class ExploreView extends LitElement {
                 width: 100%;
             }
 
+            .artist-native-name {
+                color: var(--yj-text-secondary, #aaa);
+                font-size: var(--yj-text-xs);
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                width: 100%;
+                margin-top: -4px;
+            }
+
             .artist-disambiguation {
                 color: var(--yj-text-tertiary, #888);
                 font-size: var(--yj-text-xs);
@@ -769,7 +779,7 @@ export class ExploreView extends LitElement {
                         class="artist-avatar"
                         style="background: hsl(${hue}, 45%, 35%)"
                     >
-                        ${a.name.charAt(0).toUpperCase()}
+                        ${(a.englishName || a.name).charAt(0).toUpperCase()}
                     </div>
                     <div class="top-card-info">
                         <div class="top-card-name">${a.name}</div>
@@ -826,11 +836,14 @@ export class ExploreView extends LitElement {
                                     class="artist-avatar"
                                     style="background: hsl(${hue}, 45%, 35%)"
                                 >
-                                    ${a.name.charAt(0).toUpperCase()}
+                                    ${(a.englishName || a.name).charAt(0).toUpperCase()}
                                 </div>
-                                <div class="artist-name" title="${a.name}">
-                                    ${a.name}
+                                <div class="artist-name" title="${a.englishName || a.name}">
+                                    ${a.englishName || a.name}
                                 </div>
+                                ${a.englishName
+                                    ? html`<div class="artist-native-name">${a.name}</div>`
+                                    : nothing}
                                 ${a.disambiguation
                                     ? html`<div class="artist-disambiguation">
                                           ${a.disambiguation}

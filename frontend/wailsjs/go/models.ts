@@ -1,3 +1,204 @@
+export namespace explore {
+	
+	export class LBSimilarArtist {
+	    artistMbid: string;
+	    name: string;
+	    score: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new LBSimilarArtist(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.artistMbid = source["artistMbid"];
+	        this.name = source["name"];
+	        this.score = source["score"];
+	    }
+	}
+	export class LBTopRecording {
+	    recordingMbid: string;
+	    artistName: string;
+	    trackName: string;
+	    totalListenCount: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new LBTopRecording(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.recordingMbid = source["recordingMbid"];
+	        this.artistName = source["artistName"];
+	        this.trackName = source["trackName"];
+	        this.totalListenCount = source["totalListenCount"];
+	    }
+	}
+	export class MBArtist {
+	    mbid: string;
+	    name: string;
+	    sortName: string;
+	    englishName?: string;
+	    type: string;
+	    country: string;
+	    disambiguation: string;
+	    score: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new MBArtist(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.mbid = source["mbid"];
+	        this.name = source["name"];
+	        this.sortName = source["sortName"];
+	        this.englishName = source["englishName"];
+	        this.type = source["type"];
+	        this.country = source["country"];
+	        this.disambiguation = source["disambiguation"];
+	        this.score = source["score"];
+	    }
+	}
+	export class MBRecording {
+	    mbid: string;
+	    title: string;
+	    length: number;
+	    artistCredit: string;
+	    score: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new MBRecording(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.mbid = source["mbid"];
+	        this.title = source["title"];
+	        this.length = source["length"];
+	        this.artistCredit = source["artistCredit"];
+	        this.score = source["score"];
+	    }
+	}
+	export class MBTrack {
+	    position: number;
+	    discNumber: number;
+	    title: string;
+	    length: number;
+	    mbid: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new MBTrack(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.position = source["position"];
+	        this.discNumber = source["discNumber"];
+	        this.title = source["title"];
+	        this.length = source["length"];
+	        this.mbid = source["mbid"];
+	    }
+	}
+	export class MBRelease {
+	    mbid: string;
+	    title: string;
+	    date: string;
+	    country: string;
+	    status: string;
+	    tracks?: MBTrack[];
+	
+	    static createFrom(source: any = {}) {
+	        return new MBRelease(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.mbid = source["mbid"];
+	        this.title = source["title"];
+	        this.date = source["date"];
+	        this.country = source["country"];
+	        this.status = source["status"];
+	        this.tracks = this.convertValues(source["tracks"], MBTrack);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class MBReleaseGroup {
+	    mbid: string;
+	    title: string;
+	    primaryType: string;
+	    secondaryTypes?: string[];
+	    firstReleaseDate: string;
+	    artistCredit: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new MBReleaseGroup(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.mbid = source["mbid"];
+	        this.title = source["title"];
+	        this.primaryType = source["primaryType"];
+	        this.secondaryTypes = source["secondaryTypes"];
+	        this.firstReleaseDate = source["firstReleaseDate"];
+	        this.artistCredit = source["artistCredit"];
+	    }
+	}
+	export class MBSearchResult {
+	    artists?: MBArtist[];
+	    releaseGroups?: MBReleaseGroup[];
+	    recordings?: MBRecording[];
+	
+	    static createFrom(source: any = {}) {
+	        return new MBSearchResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.artists = this.convertValues(source["artists"], MBArtist);
+	        this.releaseGroups = this.convertValues(source["releaseGroups"], MBReleaseGroup);
+	        this.recordings = this.convertValues(source["recordings"], MBRecording);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
 export namespace library {
 	
 	export class Album {

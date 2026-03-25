@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"time"
+	"unicode"
 
 	"go.uploadedlobster.com/mbtypes"
 	"go.uploadedlobster.com/musicbrainzws2"
@@ -336,7 +337,7 @@ func clampLimit(limit int) int {
 // ---------------------------------------------------------------------------
 
 func convertArtist(a musicbrainzws2.Artist) MBArtist {
-	return MBArtist{
+	out := MBArtist{
 		MBID:           string(a.ID),
 		Name:           a.Name,
 		SortName:       a.SortName,
@@ -345,6 +346,15 @@ func convertArtist(a musicbrainzws2.Artist) MBArtist {
 		Disambiguation: a.Disambiguation,
 		Score:          a.Score,
 	}
+
+	// Extract the primary English alias when the canonical name
+	// is non-Latin (CJK, Cyrillic, etc.).  This lets the frontend
+	// show "Tatsuro Yamashita" alongside "山下達郎".
+	if !isLatinScript(a.Name) {
+		out.EnglishName = primaryEnglishAlias(a.Aliases)
+	}
+
+	return out
 }
 
 func convertArtists(artists []musicbrainzws2.Artist) []MBArtist {
@@ -354,6 +364,39 @@ func convertArtists(artists []musicbrainzws2.Artist) []MBArtist {
 	}
 
 	return out
+}
+
+// primaryEnglishAlias returns the primary English alias name from
+// a slice of aliases, or "" if none exists.
+func primaryEnglishAlias(aliases []musicbrainzws2.Alias) string {
+	// Prefer primary English alias.
+	for _, a := range aliases {
+		if a.Locale == "en" && a.IsPrimary {
+			return a.Name
+		}
+	}
+
+	// Fall back to any English alias.
+	for _, a := range aliases {
+		if a.Locale == "en" {
+			return a.Name
+		}
+	}
+
+	return ""
+}
+
+// isLatinScript returns true if the string consists primarily of
+// Latin characters, digits, and common punctuation.  Returns false
+// for CJK, Cyrillic, Arabic, etc.
+func isLatinScript(s string) bool {
+	for _, r := range s {
+		if unicode.IsLetter(r) && !unicode.In(r, unicode.Latin) {
+			return false
+		}
+	}
+
+	return true
 }
 
 func convertReleaseGroup(rg musicbrainzws2.ReleaseGroup) MBReleaseGroup {

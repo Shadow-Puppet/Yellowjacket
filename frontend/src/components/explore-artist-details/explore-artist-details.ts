@@ -169,6 +169,15 @@ export class ExploreArtistDetails extends LitElement {
                 line-height: 1.2;
             }
 
+            .artist-native-name {
+                font-size: var(--yj-text-md);
+                color: var(--yj-text-secondary, #b3b3b3);
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                margin-top: 2px;
+            }
+
             .artist-meta {
                 font-size: var(--yj-text-md);
                 color: var(--yj-text-secondary, #b3b3b3);
@@ -611,6 +620,11 @@ export class ExploreArtistDetails extends LitElement {
         return name.charAt(0).toUpperCase();
     }
 
+    /** English name if available, otherwise the native name. */
+    private get displayName(): string {
+        return this.artist?.englishName || this.artistName;
+    }
+
     /**
      * Group release groups by type, returning entries in the
      * canonical order: Albums → EP → Single → Other Albums → ...rest.
@@ -695,12 +709,15 @@ export class ExploreArtistDetails extends LitElement {
                     class="artist-avatar"
                     style="background: hsl(${hue}, 45%, 35%)"
                 >
-                    ${this.getInitial(this.artistName)}
+                    ${this.getInitial(this.displayName)}
                 </div>
                 <div class="artist-info">
-                    <h1 class="artist-title" title="${this.artistName}">
-                        ${this.artistName}
+                    <h1 class="artist-title" title="${this.displayName}">
+                        ${this.displayName}
                     </h1>
+                    ${this.artist?.englishName
+                        ? html`<div class="artist-native-name">${this.artist.name}</div>`
+                        : nothing}
                     ${this.renderArtistMeta()}
                 </div>
             </div>

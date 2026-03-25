@@ -20,6 +20,7 @@ type MBArtist struct {
 	MBID           string `json:"mbid"`
 	Name           string `json:"name"`
 	SortName       string `json:"sortName"`
+	EnglishName    string `json:"englishName,omitempty"`
 	Type           string `json:"type"`
 	Country        string `json:"country"`
 	Disambiguation string `json:"disambiguation"`
