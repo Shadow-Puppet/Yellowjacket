@@ -163,6 +163,28 @@ func (e *Service) GetThumbnail(releaseGroupMBID, albumName, artistName string) s
 	return e.artProxy.GetThumbnail(releaseGroupMBID, albumName, artistName)
 }
 
+// ThumbnailRequest is a single item in a batch thumbnail request.
+type ThumbnailRequest struct {
+	MBID       string `json:"mbid"`
+	AlbumName  string `json:"albumName"`
+	ArtistName string `json:"artistName"`
+}
+
+// GetThumbnails fetches multiple thumbnails in one call and returns
+// a map of MBID → base64 data URL.  Entries with no art are omitted.
+func (e *Service) GetThumbnails(requests []ThumbnailRequest) map[string]string {
+	result := make(map[string]string, len(requests))
+
+	for _, req := range requests {
+		dataURL := e.artProxy.GetThumbnail(req.MBID, req.AlbumName, req.ArtistName)
+		if dataURL != "" {
+			result[req.MBID] = dataURL
+		}
+	}
+
+	return result
+}
+
 // Search concurrently queries MusicBrainz for artists, release
 // groups, and recordings matching the query, then boosts results
 // using ListenBrainz popularity data.  The final score blends

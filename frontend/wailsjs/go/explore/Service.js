@@ -22,6 +22,10 @@ export function GetThumbnail(arg1, arg2, arg3) {
   return window['go']['explore']['Service']['GetThumbnail'](arg1, arg2, arg3);
 }
 
+export function GetThumbnails(arg1) {
+  return window['go']['explore']['Service']['GetThumbnails'](arg1);
+}
+
 export function LookupArtist(arg1) {
   return window['go']['explore']['Service']['LookupArtist'](arg1);
 }

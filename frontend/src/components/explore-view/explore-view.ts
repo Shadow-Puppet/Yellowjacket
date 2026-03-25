@@ -1,7 +1,8 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state, query as litQuery } from 'lit/decorators.js';
 import { designTokens } from '../../styles/tokens.css';
-import { Search, GetThumbnail } from '@go/explore/Service';
+import { Search, GetThumbnails } from '@go/explore/Service';
+import type { ThumbnailRequest } from '@go/explore/Service';
 import type {
     MBSearchResult,
     MBArtist,
@@ -566,6 +567,8 @@ export class ExploreView extends LitElement {
             }
 
             this.results = result;
+            this.loadThumbnails();
+
             const elapsed = (performance.now() - startTime).toFixed(0);
             console.log(
                 `[explore] search completed: "${query}" in ${elapsed}ms — ` +
@@ -587,21 +590,67 @@ export class ExploreView extends LitElement {
 
     /* ── Thumbnail Loading ── */
 
-    private loadThumbnail(mbid: string, albumName: string, artistName: string) {
-        // Don't re-fetch if already loading or cached.
-        if (this.thumbnailCache.has(mbid)) return;
+    private thumbnailBatchPending = false;
 
-        // Mark as loading to prevent duplicate requests.
-        this.thumbnailCache.set(mbid, '');
+    /**
+     * Load thumbnails for all visible album cards in one batched
+     * Wails call.  Called after search results are set.
+     */
+    private loadThumbnails() {
+        if (this.thumbnailBatchPending || !this.results?.releaseGroups?.length) {
+            return;
+        }
 
-        GetThumbnail(mbid, albumName || '', artistName || '').then((dataUrl) => {
-            if (dataUrl) {
-                this.thumbnailCache.set(mbid, dataUrl);
-                this.requestUpdate();
+        // Collect MBIDs that need fetching.
+        const requests: ThumbnailRequest[] = [];
+
+        for (const rg of this.results.releaseGroups) {
+            if (!this.thumbnailCache.has(rg.mbid)) {
+                requests.push({
+                    mbid: rg.mbid,
+                    albumName: rg.title || '',
+                    artistName: rg.artistCredit || '',
+                });
             }
-        }).catch(() => {
-            // Leave empty string in cache — fallback will show.
-        });
+        }
+
+        if (requests.length === 0) return;
+
+        this.thumbnailBatchPending = true;
+
+        GetThumbnails(requests)
+            .then((results) => {
+                let updated = false;
+
+                for (const [mbid, dataUrl] of Object.entries(results)) {
+                    if (dataUrl) {
+                        this.thumbnailCache.set(mbid, dataUrl);
+                        updated = true;
+                    }
+                }
+
+                // Mark MBIDs with no art so we don't re-request.
+                for (const req of requests) {
+                    if (!this.thumbnailCache.has(req.mbid)) {
+                        this.thumbnailCache.set(req.mbid, '');
+                    }
+                }
+
+                if (updated) {
+                    this.requestUpdate();
+                }
+            })
+            .catch(() => {
+                // Batch failed — mark all as attempted.
+                for (const req of requests) {
+                    if (!this.thumbnailCache.has(req.mbid)) {
+                        this.thumbnailCache.set(req.mbid, '');
+                    }
+                }
+            })
+            .finally(() => {
+                this.thumbnailBatchPending = false;
+            });
     }
 
     /* ── Top Results ── */
@@ -891,11 +940,6 @@ export class ExploreView extends LitElement {
                         const cachedArt = this.thumbnailCache.get(rg.mbid);
                         const artURL = cachedArt || CoverArtGroupURL(rg.mbid);
                         const year = extractYear(rg.firstReleaseDate);
-
-                        // Kick off async thumbnail fetch if not cached.
-                        if (!cachedArt) {
-                            this.loadThumbnail(rg.mbid, rg.title, rg.artistCredit);
-                        }
 
                         return html`
                             <div
