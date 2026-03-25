@@ -29,6 +29,15 @@ func NewRateLimiter() *RateLimiter {
 	}
 }
 
+// NewRateLimiterN returns a rate limiter that allows n requests
+// per second with a burst of n.  Used for background tasks like
+// index building where a higher rate is acceptable.
+func NewRateLimiterN(n int) *RateLimiter {
+	return &RateLimiter{
+		limiter: rate.NewLimiter(rate.Limit(n), n),
+	}
+}
+
 // Wait blocks until the rate limiter allows the caller to proceed
 // or the context is cancelled. Returns ctx.Err() if the context
 // expires before a token becomes available.
