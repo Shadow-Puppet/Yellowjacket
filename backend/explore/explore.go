@@ -55,17 +55,17 @@ func (e *Service) SetContext(ctx context.Context) {
 
 // SearchArtists queries MusicBrainz for artists matching the query.
 func (e *Service) SearchArtists(query string) ([]MBArtist, error) {
-	return e.mb.SearchArtists(e.ctx, query, 0)
+	return e.mb.SearchArtists(e.ctx, query, mbSearchLimit)
 }
 
 // SearchReleaseGroups queries MusicBrainz for release groups matching the query.
 func (e *Service) SearchReleaseGroups(query string) ([]MBReleaseGroup, error) {
-	return e.mb.SearchReleaseGroups(e.ctx, query, 0)
+	return e.mb.SearchReleaseGroups(e.ctx, query, mbSearchLimit)
 }
 
 // SearchRecordings queries MusicBrainz for recordings matching the query.
 func (e *Service) SearchRecordings(query string) ([]MBRecording, error) {
-	return e.mb.SearchRecordings(e.ctx, query, 0)
+	return e.mb.SearchRecordings(e.ctx, query, mbSearchLimit)
 }
 
 // ---------------------------------------------------------------------------
@@ -155,7 +155,7 @@ func (e *Service) Search(query string) (*MBSearchResult, error) {
 		{
 			name: "artists",
 			fn: func() {
-				artists, err := e.mb.SearchArtists(e.ctx, query, 0)
+				artists, err := e.mb.SearchArtists(e.ctx, query, mbSearchLimit)
 				if err != nil {
 					e.logger.Warn("search sub-call failed",
 						"entity", "artists",
@@ -174,7 +174,7 @@ func (e *Service) Search(query string) (*MBSearchResult, error) {
 		{
 			name: "releaseGroups",
 			fn: func() {
-				rgs, err := e.mb.SearchReleaseGroups(e.ctx, query, 0)
+				rgs, err := e.mb.SearchReleaseGroups(e.ctx, query, mbSearchLimit)
 				if err != nil {
 					e.logger.Warn("search sub-call failed",
 						"entity", "releaseGroups",
@@ -193,7 +193,7 @@ func (e *Service) Search(query string) (*MBSearchResult, error) {
 		{
 			name: "recordings",
 			fn: func() {
-				recs, err := e.mb.SearchRecordings(e.ctx, query, 0)
+				recs, err := e.mb.SearchRecordings(e.ctx, query, mbSearchLimit)
 				if err != nil {
 					e.logger.Warn("search sub-call failed",
 						"entity", "recordings",
@@ -235,6 +235,9 @@ func (e *Service) Search(query string) (*MBSearchResult, error) {
 	// overlap on different rate-limiter tokens.
 	e.boostWithPopularity(&result)
 
+	// Phase 3: filter low-scoring results and cap counts.
+	filterAndCap(&result)
+
 	e.logger.Info("search completed",
 		"query", query,
 		"artists", len(result.Artists),
@@ -246,6 +249,53 @@ func (e *Service) Search(query string) (*MBSearchResult, error) {
 }
 
 // ---------------------------------------------------------------------------
+// Filtering and capping
+// ---------------------------------------------------------------------------
+
+// filterAndCap removes low-scoring results and limits each entity
+// slice to maxResults entries.
+func filterAndCap(result *MBSearchResult) {
+	// Filter artists by minimum blended score.
+	if len(result.Artists) > 0 {
+		filtered := result.Artists[:0]
+
+		for _, a := range result.Artists {
+			if a.Score >= minBlendedScore {
+				filtered = append(filtered, a)
+			}
+		}
+
+		result.Artists = filtered
+	}
+
+	// Filter recordings by minimum blended score.
+	if len(result.Recordings) > 0 {
+		filtered := result.Recordings[:0]
+
+		for _, r := range result.Recordings {
+			if r.Score >= minBlendedScore {
+				filtered = append(filtered, r)
+			}
+		}
+
+		result.Recordings = filtered
+	}
+
+	// Cap each slice.
+	if len(result.Artists) > maxResults {
+		result.Artists = result.Artists[:maxResults]
+	}
+
+	if len(result.ReleaseGroups) > maxResults {
+		result.ReleaseGroups = result.ReleaseGroups[:maxResults]
+	}
+
+	if len(result.Recordings) > maxResults {
+		result.Recordings = result.Recordings[:maxResults]
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Popularity-boosted reranking
 // ---------------------------------------------------------------------------
 
@@ -253,6 +303,17 @@ const (
 	// Blending weights for final score.
 	relevanceWeight  = 0.6
 	popularityWeight = 0.4
+
+	// mbSearchLimit is passed to each MB search call.  Slightly
+	// larger than maxResults to allow headroom for filtering.
+	mbSearchLimit = 20
+
+	// maxResults caps each entity slice after filtering.
+	maxResults = 15
+
+	// minBlendedScore is the floor for artists and recordings
+	// after popularity reranking (0–100 scale).
+	minBlendedScore = 25
 )
 
 // boostWithPopularity fetches ListenBrainz listen counts for all
