@@ -18,12 +18,13 @@ import (
 // response cache.  Its exported methods form the binding surface
 // that the frontend calls via generated TypeScript stubs.
 type Service struct {
-	mb     *MusicBrainzClient
-	lb     *ListenBrainzClient
-	cache  *Cache
-	index  *SearchIndex
-	logger *slog.Logger
-	ctx    context.Context
+	mb       *MusicBrainzClient
+	lb       *ListenBrainzClient
+	cache    *Cache
+	index    *SearchIndex
+	artProxy *CoverArtProxy
+	logger   *slog.Logger
+	ctx      context.Context
 }
 
 // NewExploreService creates a Service backed by the given
@@ -35,16 +36,18 @@ func NewExploreService(logger *slog.Logger, db *database.DB) *Service {
 	mb := NewMusicBrainzClient(cache, logger.WithGroup("musicbrainz"))
 	lb := NewListenBrainzClient(limiter, cache, logger.WithGroup("listenbrainz"))
 	index := NewSearchIndex(db, lb, logger.WithGroup("search-index"))
+	artProxy := NewCoverArtProxy(limiter)
 
 	logger.Info("explore service created")
 
 	return &Service{
-		mb:     mb,
-		lb:     lb,
-		cache:  cache,
-		index:  index,
-		logger: logger,
-		ctx:    context.Background(),
+		mb:       mb,
+		lb:       lb,
+		cache:    cache,
+		index:    index,
+		artProxy: artProxy,
+		logger:   logger,
+		ctx:      context.Background(),
 	}
 }
 
@@ -150,6 +153,14 @@ func (e *Service) CoverArtURL(releaseMBID string) string {
 // MBIDs rather than individual release MBIDs.
 func (e *Service) CoverArtGroupURL(releaseGroupMBID string) string {
 	return CoverArtGroupURL(releaseGroupMBID)
+}
+
+// GetThumbnail returns a base64 data URL for the release group's
+// cover art.  Cached locally on disk — first call fetches from
+// the Cover Art Archive, subsequent calls are instant.
+// Returns "" if no cover art is available.
+func (e *Service) GetThumbnail(releaseGroupMBID string) string {
+	return e.artProxy.GetThumbnail(releaseGroupMBID)
 }
 
 // Search concurrently queries MusicBrainz for artists, release

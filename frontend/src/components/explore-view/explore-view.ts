@@ -1,7 +1,7 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state, query as litQuery } from 'lit/decorators.js';
 import { designTokens } from '../../styles/tokens.css';
-import { Search } from '@go/explore/Service';
+import { Search, GetThumbnail } from '@go/explore/Service';
 import type {
     MBSearchResult,
     MBArtist,
@@ -74,6 +74,7 @@ export class ExploreView extends LitElement {
     /** Monotonic counter to discard stale responses. */
     private searchVersion = 0;
     private debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    private thumbnailCache = new Map<string, string>();
 
     @litQuery('input') private inputEl!: HTMLInputElement;
 
@@ -584,6 +585,25 @@ export class ExploreView extends LitElement {
         }
     }
 
+    /* ── Thumbnail Loading ── */
+
+    private loadThumbnail(mbid: string) {
+        // Don't re-fetch if already loading or cached.
+        if (this.thumbnailCache.has(mbid)) return;
+
+        // Mark as loading to prevent duplicate requests.
+        this.thumbnailCache.set(mbid, '');
+
+        GetThumbnail(mbid).then((dataUrl) => {
+            if (dataUrl) {
+                this.thumbnailCache.set(mbid, dataUrl);
+                this.requestUpdate();
+            }
+        }).catch(() => {
+            // Leave empty string in cache — fallback will show.
+        });
+    }
+
     /* ── Top Results ── */
 
     private getTopResults(): ScoredItem[] {
@@ -868,8 +888,15 @@ export class ExploreView extends LitElement {
                 <h3 class="section-header">Albums</h3>
                 <div class="horizontal-row">
                     ${releaseGroups.map((rg) => {
-                        const artURL = CoverArtGroupURL(rg.mbid);
+                        const cachedArt = this.thumbnailCache.get(rg.mbid);
+                        const artURL = cachedArt || CoverArtGroupURL(rg.mbid);
                         const year = extractYear(rg.firstReleaseDate);
+
+                        // Kick off async thumbnail fetch if not cached.
+                        if (!cachedArt) {
+                            this.loadThumbnail(rg.mbid);
+                        }
+
                         return html`
                             <div
                                 class="album-card"

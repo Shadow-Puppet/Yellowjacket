@@ -971,9 +971,11 @@ func (si *SearchIndex) fetchTopReleaseGroups(
 	}
 
 	var raw []struct {
-		ReleaseGroupMBID string `json:"release_group_mbid"`
-		TotalListenCount int    `json:"total_listen_count"`
-		ReleaseGroup     struct {
+		ReleaseGroupMBID    string `json:"release_group_mbid"`
+		TotalListenCount    int    `json:"total_listen_count"`
+		CAAId               *int64 `json:"caa_id"`
+		CAAReleaseGroupMBID string `json:"caa_release_mbid"`
+		ReleaseGroup        struct {
 			Name string `json:"name"`
 			Type string `json:"type"`
 		} `json:"release_group"`
@@ -1009,7 +1011,16 @@ func (si *SearchIndex) fetchTopReleaseGroups(
 			artistMBID = r.Artist.Artists[0].ArtistMBID
 		}
 
-		extra, _ := json.Marshal(map[string]string{"type": r.ReleaseGroup.Type})
+		extraMap := map[string]any{"type": r.ReleaseGroup.Type}
+		if r.CAAId != nil {
+			extraMap["caaId"] = *r.CAAId
+		}
+
+		if r.CAAReleaseGroupMBID != "" {
+			extraMap["caaReleaseMbid"] = r.CAAReleaseGroupMBID
+		}
+
+		extra, _ := json.Marshal(extraMap)
 
 		results = append(results, SearchIndexResult{
 			EntityType: "release_group",
