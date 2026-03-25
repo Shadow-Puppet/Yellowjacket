@@ -36,7 +36,7 @@ func NewExploreService(logger *slog.Logger, db *database.DB) *Service {
 	mb := NewMusicBrainzClient(cache, logger.WithGroup("musicbrainz"))
 	lb := NewListenBrainzClient(limiter, cache, logger.WithGroup("listenbrainz"))
 	index := NewSearchIndex(db, lb, logger.WithGroup("search-index"))
-	artProxy := NewCoverArtProxy(limiter)
+	artProxy := NewCoverArtProxy(db, limiter)
 
 	logger.Info("explore service created")
 
@@ -156,11 +156,11 @@ func (e *Service) CoverArtGroupURL(releaseGroupMBID string) string {
 }
 
 // GetThumbnail returns a base64 data URL for the release group's
-// cover art.  Cached locally on disk — first call fetches from
-// the Cover Art Archive, subsequent calls are instant.
+// cover art.  Checks local library art first (by album+artist
+// name), then disk cache, then Cover Art Archive.
 // Returns "" if no cover art is available.
-func (e *Service) GetThumbnail(releaseGroupMBID string) string {
-	return e.artProxy.GetThumbnail(releaseGroupMBID)
+func (e *Service) GetThumbnail(releaseGroupMBID, albumName, artistName string) string {
+	return e.artProxy.GetThumbnail(releaseGroupMBID, albumName, artistName)
 }
 
 // Search concurrently queries MusicBrainz for artists, release

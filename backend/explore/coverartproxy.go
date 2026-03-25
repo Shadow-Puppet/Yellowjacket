@@ -9,9 +9,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
+	"yellowjacket/backend/database"
 	"yellowjacket/backend/system"
 )
 
@@ -32,19 +34,24 @@ const (
 )
 
 // CoverArtProxy fetches and caches cover art thumbnails locally.
-// Wails-bound methods return base64-encoded image data for display
-// in <img src="data:..."> tags, eliminating browser HTTP requests
-// to the slow Cover Art Archive.
+// It checks three sources in order:
+//  1. Local library cover art (instant, matched by album+artist name)
+//  2. Disk cache from a previous CAA fetch (instant)
+//  3. Cover Art Archive network fetch (slow, cached to disk)
 type CoverArtProxy struct {
+	db       *database.DB
 	cacheDir string
 	client   *http.Client
 	limiter  *RateLimiter
+
 	mu       sync.Mutex // serializes disk writes
+	libOnce  sync.Once
+	libIndex map[string]string // "album\x00artist" → cover art file path
 }
 
-// NewCoverArtProxy creates a proxy that caches thumbnails under
-// the user data directory.
-func NewCoverArtProxy(limiter *RateLimiter) *CoverArtProxy {
+// NewCoverArtProxy creates a proxy that checks the local library
+// first and caches CAA thumbnails under the user data directory.
+func NewCoverArtProxy(db *database.DB, limiter *RateLimiter) *CoverArtProxy {
 	dir := ""
 
 	dataDir, err := system.GetUserDataDirPath()
@@ -54,6 +61,7 @@ func NewCoverArtProxy(limiter *RateLimiter) *CoverArtProxy {
 	}
 
 	return &CoverArtProxy{
+		db:       db,
 		cacheDir: dir,
 		client:   &http.Client{Timeout: thumbnailTimeout},
 		limiter:  limiter,
@@ -61,26 +69,32 @@ func NewCoverArtProxy(limiter *RateLimiter) *CoverArtProxy {
 }
 
 // GetThumbnail returns a base64-encoded JPEG data URL for the given
-// release group MBID.  Returns from local cache if available,
-// otherwise fetches from the Cover Art Archive.  Returns "" on
-// failure (no cover art, network error, etc.).
-func (p *CoverArtProxy) GetThumbnail(releaseGroupMBID string) string {
+// release group.  Checks local library art first (by name match),
+// then disk cache, then fetches from CAA.  Returns "" on failure.
+func (p *CoverArtProxy) GetThumbnail(
+	releaseGroupMBID, albumName, artistName string,
+) string {
+	// Source 1: local library cover art (instant).
+	if albumName != "" {
+		if dataURL := p.libraryArt(albumName, artistName); dataURL != "" {
+			return dataURL
+		}
+	}
+
 	if p.cacheDir == "" || releaseGroupMBID == "" {
 		return ""
 	}
 
-	// Check disk cache.
-	cached := p.readCache(releaseGroupMBID)
-	if cached != "" {
+	// Source 2: disk cache from previous CAA fetch (instant).
+	if cached := p.readCache(releaseGroupMBID); cached != "" {
 		return cached
 	}
 
-	// Fetch from CAA.
+	// Source 3: fetch from Cover Art Archive (slow, cached to disk).
 	url := CoverArtGroupURL(releaseGroupMBID)
 	data, cacheable, err := p.fetch(url)
 
 	if err != nil || len(data) == 0 {
-		// Only cache permanent misses (404), not transient errors.
 		if cacheable {
 			p.writeCache(releaseGroupMBID, nil)
 		}
@@ -93,8 +107,76 @@ func (p *CoverArtProxy) GetThumbnail(releaseGroupMBID string) string {
 	return "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(data)
 }
 
+// ---------------------------------------------------------------------------
+// Source 1: local library art
+// ---------------------------------------------------------------------------
+
+// libraryArt returns a base64 data URL for the album if it exists
+// in the local music library.  Matched by lowercased album name +
+// artist name.
+func (p *CoverArtProxy) libraryArt(albumName, artistName string) string {
+	p.libOnce.Do(p.buildLibraryIndex)
+
+	key := libraryArtKey(albumName, artistName)
+
+	path, ok := p.libIndex[key]
+	if !ok || path == "" {
+		return ""
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil || len(data) == 0 {
+		return ""
+	}
+
+	mime := "image/jpeg"
+	if strings.HasSuffix(strings.ToLower(path), ".png") {
+		mime = "image/png"
+	}
+
+	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data)
+}
+
+func (p *CoverArtProxy) buildLibraryIndex() {
+	p.libIndex = make(map[string]string)
+
+	if p.db == nil {
+		return
+	}
+
+	rows, err := p.db.QueryContext(`
+		SELECT rg.name, a.name, ca.file_path
+		FROM release_groups rg
+		JOIN artist_credit ac ON ac.id = rg.album_artist_credit_id
+		JOIN artist_credit_artist aca ON aca.credit_id = ac.id
+		JOIN artists a ON a.id = aca.artist_id
+		LEFT JOIN cover_art ca ON ca.id = rg.cover_art_id
+		WHERE ca.file_path IS NOT NULL AND ca.file_path != ''
+	`)
+	if err != nil {
+		return
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var album, artist, path string
+		if err := rows.Scan(&album, &artist, &path); err == nil {
+			key := libraryArtKey(album, artist)
+			p.libIndex[key] = path
+		}
+	}
+}
+
+func libraryArtKey(album, artist string) string {
+	return strings.ToLower(album) + "\x00" + strings.ToLower(artist)
+}
+
+// ---------------------------------------------------------------------------
+// Source 2+3: CAA disk cache and network fetch
+// ---------------------------------------------------------------------------
+
 func (p *CoverArtProxy) fetch(url string) ([]byte, bool, error) {
-	// Rate-limit CAA requests.
 	ctx := context.Background()
 	if err := p.limiter.Wait(ctx); err != nil {
 		return nil, false, err
@@ -114,12 +196,10 @@ func (p *CoverArtProxy) fetch(url string) ([]byte, bool, error) {
 
 	defer func() { _ = resp.Body.Close() }()
 
-	// 404 = no cover art exists — permanent, safe to cache as miss.
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, true, nil
 	}
 
-	// Other non-200 = transient error — don't cache.
 	if resp.StatusCode != http.StatusOK {
 		return nil, false, fmt.Errorf("%w: %d", ErrCoverArt, resp.StatusCode)
 	}
@@ -144,7 +224,6 @@ func (p *CoverArtProxy) readCache(mbid string) string {
 		return ""
 	}
 
-	// Empty file = cached miss.
 	if len(data) == 0 {
 		return ""
 	}
@@ -159,7 +238,7 @@ func (p *CoverArtProxy) writeCache(mbid string, data []byte) {
 	path := p.cachePath(mbid)
 
 	if data == nil {
-		data = []byte{} // empty file = miss marker
+		data = []byte{}
 	}
 
 	_ = os.WriteFile(path, data, 0o644)

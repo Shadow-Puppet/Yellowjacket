@@ -587,14 +587,14 @@ export class ExploreView extends LitElement {
 
     /* ── Thumbnail Loading ── */
 
-    private loadThumbnail(mbid: string) {
+    private loadThumbnail(mbid: string, albumName: string, artistName: string) {
         // Don't re-fetch if already loading or cached.
         if (this.thumbnailCache.has(mbid)) return;
 
         // Mark as loading to prevent duplicate requests.
         this.thumbnailCache.set(mbid, '');
 
-        GetThumbnail(mbid).then((dataUrl) => {
+        GetThumbnail(mbid, albumName || '', artistName || '').then((dataUrl) => {
             if (dataUrl) {
                 this.thumbnailCache.set(mbid, dataUrl);
                 this.requestUpdate();
@@ -894,7 +894,7 @@ export class ExploreView extends LitElement {
 
                         // Kick off async thumbnail fetch if not cached.
                         if (!cachedArt) {
-                            this.loadThumbnail(rg.mbid);
+                            this.loadThumbnail(rg.mbid, rg.title, rg.artistCredit);
                         }
 
                         return html`

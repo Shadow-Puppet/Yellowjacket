@@ -11,6 +11,8 @@ export function CoverArtGroupURL(arg1:string):Promise<string>;
 
 export function CoverArtURL(arg1:string):Promise<string>;
 
+export function GetThumbnail(arg1:string, arg2:string, arg3:string):Promise<string>;
+
 export function LookupArtist(arg1:string):Promise<explore.MBArtist>;
 
 export function LookupReleaseGroup(arg1:string):Promise<explore.MBReleaseGroup>;
@@ -28,5 +30,3 @@ export function SetContext(arg1:context.Context):Promise<void>;
 export function SimilarArtists(arg1:string):Promise<Array<explore.LBSimilarArtist>>;
 
 export function TopRecordingsForArtist(arg1:string):Promise<Array<explore.LBTopRecording>>;
-
-export function GetThumbnail(arg1:string):Promise<string>;
