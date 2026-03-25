@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"math"
 	"sort"
+	"strings"
 	"sync"
 
 	"yellowjacket/backend/database"
@@ -235,7 +236,12 @@ func (e *Service) Search(query string) (*MBSearchResult, error) {
 	// overlap on different rate-limiter tokens.
 	e.boostWithPopularity(&result)
 
-	// Phase 3: filter low-scoring results and cap counts.
+	// Phase 3: cross-reference search — match query against top
+	// artists' discographies to find albums that MB's text search
+	// missed (e.g. "for you tatsuro" → FOR YOU by 山下達郎).
+	e.crossReferenceAlbums(query, &result)
+
+	// Phase 4: filter low-scoring results and cap counts.
 	filterAndCap(&result)
 
 	e.logger.Info("search completed",
@@ -246,6 +252,185 @@ func (e *Service) Search(query string) (*MBSearchResult, error) {
 	)
 
 	return &result, nil
+}
+
+// ---------------------------------------------------------------------------
+// Cross-reference search
+// ---------------------------------------------------------------------------
+
+const (
+	// crossRefArtists is the number of top artists whose
+	// discographies are searched for matching albums.
+	crossRefArtists = 3
+
+	// crossRefMinRatio is the minimum fuzzy match ratio (0–1)
+	// for an album title to be considered a match.
+	crossRefMinRatio = 0.4
+)
+
+// crossReferenceAlbums browses the discographies of the top N
+// artists and fuzzy-matches the query against album titles.
+// Matched albums not already in result.ReleaseGroups are injected
+// at the front.  This handles queries like "for you tatsuro"
+// where MB text search can't associate the title with the artist.
+func (e *Service) crossReferenceAlbums(query string, result *MBSearchResult) {
+	if len(result.Artists) == 0 {
+		return
+	}
+
+	limit := crossRefArtists
+	if limit > len(result.Artists) {
+		limit = len(result.Artists)
+	}
+
+	topArtists := result.Artists[:limit]
+	queryLower := strings.ToLower(strings.TrimSpace(query))
+
+	// Build a set of release group MBIDs already in results.
+	existing := make(map[string]bool, len(result.ReleaseGroups))
+	for _, rg := range result.ReleaseGroups {
+		existing[rg.MBID] = true
+	}
+
+	// Browse discographies concurrently.
+	type match struct {
+		rg    MBReleaseGroup
+		ratio float64
+	}
+
+	var (
+		matches []match
+		mu      sync.Mutex
+		wg      sync.WaitGroup
+	)
+
+	wg.Add(limit)
+
+	for _, artist := range topArtists {
+		go func(a MBArtist) {
+			defer wg.Done()
+
+			rgs, err := e.mb.BrowseReleaseGroups(e.ctx, a.MBID)
+			if err != nil {
+				e.logger.Warn("cross-reference browse failed",
+					"artist", a.Name,
+					"mbid", a.MBID,
+					"error", err,
+				)
+
+				return
+			}
+
+			for _, rg := range rgs {
+				if existing[rg.MBID] {
+					continue
+				}
+
+				ratio := fuzzyMatchRatio(queryLower, strings.ToLower(rg.Title))
+				if ratio >= crossRefMinRatio {
+					mu.Lock()
+
+					matches = append(matches, match{rg: rg, ratio: ratio})
+
+					mu.Unlock()
+				}
+			}
+		}(artist)
+	}
+
+	wg.Wait()
+
+	if len(matches) == 0 {
+		return
+	}
+
+	// Sort by match ratio descending.
+	sort.SliceStable(matches, func(i, j int) bool {
+		return matches[i].ratio > matches[j].ratio
+	})
+
+	// Inject at the front of release groups.
+	injected := make([]MBReleaseGroup, 0, len(matches))
+
+	for _, m := range matches {
+		if !existing[m.rg.MBID] {
+			injected = append(injected, m.rg)
+			existing[m.rg.MBID] = true
+		}
+	}
+
+	if len(injected) > 0 {
+		result.ReleaseGroups = append(injected, result.ReleaseGroups...)
+
+		e.logger.Info("cross-reference injected albums",
+			"count", len(injected),
+			"topMatch", injected[0].Title,
+		)
+	}
+}
+
+// fuzzyMatchRatio computes a similarity score between query and
+// title.  It checks:
+//  1. Whether the title appears as a substring of the query (or
+//     vice versa) — handles "for you tatsuro" containing "for you"
+//  2. Word overlap ratio as a fallback
+//
+// Returns 0–1 where 1 is a perfect match.
+func fuzzyMatchRatio(query, title string) float64 {
+	if query == title {
+		return 1.0
+	}
+
+	// Substring containment: "for you tatsuro" contains "for you".
+	// Use both character ratio and word ratio, take the higher one.
+	if strings.Contains(query, title) || strings.Contains(title, query) {
+		shorter := len(title)
+		longer := len(query)
+
+		if shorter > longer {
+			shorter, longer = longer, shorter
+		}
+
+		charRatio := float64(shorter) / float64(longer)
+
+		// Also check word-level ratio for short titles in long queries.
+		titleWords := strings.Fields(title)
+		queryWords := strings.Fields(query)
+
+		wordRatio := float64(len(titleWords)) / float64(len(queryWords))
+		if len(titleWords) > len(queryWords) {
+			wordRatio = float64(len(queryWords)) / float64(len(titleWords))
+		}
+
+		if wordRatio > charRatio {
+			return wordRatio
+		}
+
+		return charRatio
+	}
+
+	// Word overlap: count how many query words appear in the title.
+	queryWords := strings.Fields(query)
+	titleWords := strings.Fields(title)
+
+	if len(queryWords) == 0 || len(titleWords) == 0 {
+		return 0
+	}
+
+	titleSet := make(map[string]bool, len(titleWords))
+	for _, w := range titleWords {
+		titleSet[w] = true
+	}
+
+	hits := 0
+
+	for _, w := range queryWords {
+		if titleSet[w] {
+			hits++
+		}
+	}
+
+	return float64(hits) / float64(len(queryWords))
 }
 
 // ---------------------------------------------------------------------------
