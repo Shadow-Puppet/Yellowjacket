@@ -77,11 +77,13 @@ func (p *CoverArtProxy) GetThumbnail(releaseGroupMBID string) string {
 
 	// Fetch from CAA.
 	url := CoverArtGroupURL(releaseGroupMBID)
-	data, err := p.fetch(url)
+	data, cacheable, err := p.fetch(url)
 
 	if err != nil || len(data) == 0 {
-		// Cache the miss as an empty file so we don't retry.
-		p.writeCache(releaseGroupMBID, nil)
+		// Only cache permanent misses (404), not transient errors.
+		if cacheable {
+			p.writeCache(releaseGroupMBID, nil)
+		}
 
 		return ""
 	}
@@ -91,37 +93,43 @@ func (p *CoverArtProxy) GetThumbnail(releaseGroupMBID string) string {
 	return "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(data)
 }
 
-func (p *CoverArtProxy) fetch(url string) ([]byte, error) {
+func (p *CoverArtProxy) fetch(url string) ([]byte, bool, error) {
 	// Rate-limit CAA requests.
 	ctx := context.Background()
 	if err := p.limiter.Wait(ctx); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	req.Header.Set("User-Agent", lbUserAgent)
 
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	defer func() { _ = resp.Body.Close() }()
 
+	// 404 = no cover art exists — permanent, safe to cache as miss.
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, true, nil
+	}
+
+	// Other non-200 = transient error — don't cache.
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%w: %d", ErrCoverArt, resp.StatusCode)
+		return nil, false, fmt.Errorf("%w: %d", ErrCoverArt, resp.StatusCode)
 	}
 
 	data, err := io.ReadAll(io.LimitReader(resp.Body, thumbnailMaxSize))
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
-	return data, nil
+	return data, true, nil
 }
 
 func (p *CoverArtProxy) cachePath(mbid string) string {
