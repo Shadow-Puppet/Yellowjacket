@@ -359,6 +359,17 @@ func runMigrations(
 		}
 	}
 
+	// Migration 12: explore_index + FTS5 for the popularity search
+	// index.  Stores the top albums and tracks from the most popular
+	// ListenBrainz artists for instant local search.
+	if version < 12 { //nolint:mnd
+		if err := migration12ExploreSearchIndex(
+			ctx, db, logger,
+		); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -1420,6 +1431,101 @@ func migration11ExploreCache(
 	}
 
 	logger.Info("migration 11 complete")
+
+	return nil
+}
+
+// migration12ExploreSearchIndex creates the explore_index table,
+// the FTS5 virtual table for full-text search, sync triggers, and
+// the explore_index_meta table for build tracking.
+func migration12ExploreSearchIndex(
+	ctx context.Context,
+	db *sql.DB,
+	logger *slog.Logger,
+) error {
+	logger.Info("applying migration 12: explore search index")
+
+	// Content table — slim denormalized rows for search.
+	if _, err := db.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS explore_index (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			entity_type TEXT NOT NULL,
+			mbid        TEXT NOT NULL,
+			title       TEXT NOT NULL,
+			artist_name TEXT NOT NULL,
+			artist_mbid TEXT NOT NULL,
+			popularity  INTEGER NOT NULL DEFAULT 0,
+			extra_json  TEXT
+		)
+	`); err != nil {
+		return fmt.Errorf("migration 12: create explore_index: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx, `
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_explore_index_mbid
+		ON explore_index(entity_type, mbid)
+	`); err != nil {
+		return fmt.Errorf("migration 12: create mbid index: %w", err)
+	}
+
+	// FTS5 virtual table backed by the content table.
+	if _, err := db.ExecContext(ctx, `
+		CREATE VIRTUAL TABLE IF NOT EXISTS explore_index_fts USING fts5(
+			title, artist_name,
+			content='explore_index',
+			content_rowid='id'
+		)
+	`); err != nil {
+		return fmt.Errorf("migration 12: create FTS5 table: %w", err)
+	}
+
+	// Triggers to keep FTS in sync.
+	if _, err := db.ExecContext(ctx, `
+		CREATE TRIGGER IF NOT EXISTS explore_index_ai AFTER INSERT ON explore_index BEGIN
+			INSERT INTO explore_index_fts(rowid, title, artist_name)
+			VALUES (new.id, new.title, new.artist_name);
+		END
+	`); err != nil {
+		return fmt.Errorf("migration 12: create insert trigger: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx, `
+		CREATE TRIGGER IF NOT EXISTS explore_index_ad AFTER DELETE ON explore_index BEGIN
+			INSERT INTO explore_index_fts(explore_index_fts, rowid, title, artist_name)
+			VALUES ('delete', old.id, old.title, old.artist_name);
+		END
+	`); err != nil {
+		return fmt.Errorf("migration 12: create delete trigger: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx, `
+		CREATE TRIGGER IF NOT EXISTS explore_index_au AFTER UPDATE ON explore_index BEGIN
+			INSERT INTO explore_index_fts(explore_index_fts, rowid, title, artist_name)
+			VALUES ('delete', old.id, old.title, old.artist_name);
+			INSERT INTO explore_index_fts(rowid, title, artist_name)
+			VALUES (new.id, new.title, new.artist_name);
+		END
+	`); err != nil {
+		return fmt.Errorf("migration 12: create update trigger: %w", err)
+	}
+
+	// Metadata table for build tracking.
+	if _, err := db.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS explore_index_meta (
+			key   TEXT PRIMARY KEY,
+			value TEXT NOT NULL
+		)
+	`); err != nil {
+		return fmt.Errorf("migration 12: create meta table: %w", err)
+	}
+
+	if _, err := db.ExecContext(
+		ctx, "PRAGMA user_version = 12",
+	); err != nil {
+		return fmt.Errorf("could not set user_version to 12: %w", err)
+	}
+
+	logger.Info("migration 12 complete")
 
 	return nil
 }
