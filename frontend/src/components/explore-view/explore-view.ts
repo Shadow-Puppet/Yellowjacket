@@ -1,7 +1,7 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state, query as litQuery } from 'lit/decorators.js';
 import { designTokens } from '../../styles/tokens.css';
-import { Search, GetThumbnails } from '@go/explore/Service';
+import { Search, GetThumbnails, GetArtistImageURL } from '@go/explore/Service';
 import type { ThumbnailRequest } from '@go/explore/Service';
 import type {
     MBSearchResult,
@@ -76,6 +76,7 @@ export class ExploreView extends LitElement {
     private searchVersion = 0;
     private debounceTimer: ReturnType<typeof setTimeout> | null = null;
     private thumbnailCache = new Map<string, string>();
+    private artistImageCache = new Map<string, string>();
 
     @litQuery('input') private inputEl!: HTMLInputElement;
 
@@ -293,6 +294,13 @@ export class ExploreView extends LitElement {
                 text-transform: uppercase;
                 user-select: none;
                 flex-shrink: 0;
+                overflow: hidden;
+            }
+
+            .artist-avatar img {
+                width: 100%;
+                height: 100%;
+                object-fit: cover;
             }
 
             .artist-name {
@@ -568,6 +576,7 @@ export class ExploreView extends LitElement {
 
             this.results = result;
             this.loadThumbnails();
+            this.loadArtistImages();
 
             const elapsed = (performance.now() - startTime).toFixed(0);
             console.log(
@@ -651,6 +660,32 @@ export class ExploreView extends LitElement {
             .finally(() => {
                 this.thumbnailBatchPending = false;
             });
+    }
+
+    /**
+     * Load artist images for all visible artist cards.  Each call
+     * is async and updates the cache + re-renders on success.
+     */
+    private loadArtistImages() {
+        if (!this.results?.artists?.length) return;
+
+        for (const a of this.results.artists) {
+            if (this.artistImageCache.has(a.mbid)) continue;
+
+            // Mark as loading.
+            this.artistImageCache.set(a.mbid, '');
+
+            GetArtistImageURL(a.mbid)
+                .then((url) => {
+                    if (url) {
+                        this.artistImageCache.set(a.mbid, url);
+                        this.requestUpdate();
+                    }
+                })
+                .catch(() => {
+                    // No image — leave empty string.
+                });
+        }
     }
 
     /* ── Top Results ── */
@@ -905,7 +940,12 @@ export class ExploreView extends LitElement {
                                     class="artist-avatar"
                                     style="background: hsl(${hue}, 45%, 35%)"
                                 >
-                                    ${(a.englishName || a.name).charAt(0).toUpperCase()}
+                                    ${this.artistImageCache.get(a.mbid)
+                                        ? html`<img
+                                              src="${this.artistImageCache.get(a.mbid)}"
+                                              alt="${a.englishName || a.name}"
+                                          />`
+                                        : (a.englishName || a.name).charAt(0).toUpperCase()}
                                 </div>
                                 <div class="artist-name" title="${a.englishName || a.name}">
                                     ${a.englishName || a.name}

@@ -18,6 +18,10 @@ export function CoverArtURL(arg1) {
   return window['go']['explore']['Service']['CoverArtURL'](arg1);
 }
 
+export function GetArtistImageURL(arg1) {
+  return window['go']['explore']['Service']['GetArtistImageURL'](arg1);
+}
+
 export function GetThumbnail(arg1, arg2, arg3) {
   return window['go']['explore']['Service']['GetThumbnail'](arg1, arg2, arg3);
 }

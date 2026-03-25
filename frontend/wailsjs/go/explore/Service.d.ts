@@ -11,15 +11,11 @@ export function CoverArtGroupURL(arg1:string):Promise<string>;
 
 export function CoverArtURL(arg1:string):Promise<string>;
 
-export function GetThumbnail(arg1:string, arg2:string, arg3:string):Promise<string>;
+export function GetArtistImageURL(arg1:string):Promise<string>;
 
-export interface ThumbnailRequest {
-  mbid: string;
-  albumName: string;
-  artistName: string;
-}
+export function GetThumbnail(arg1:string,arg2:string,arg3:string):Promise<string>;
 
-export function GetThumbnails(arg1:ThumbnailRequest[]):Promise<Record<string, string>>;
+export function GetThumbnails(arg1:Array<explore.ThumbnailRequest>):Promise<Record<string, string>>;
 
 export function LookupArtist(arg1:string):Promise<explore.MBArtist>;
 
@@ -38,3 +34,4 @@ export function SetContext(arg1:context.Context):Promise<void>;
 export function SimilarArtists(arg1:string):Promise<Array<explore.LBSimilarArtist>>;
 
 export function TopRecordingsForArtist(arg1:string):Promise<Array<explore.LBTopRecording>>;
+

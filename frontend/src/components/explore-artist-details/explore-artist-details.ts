@@ -6,6 +6,7 @@ import {
     BrowseReleaseGroups,
     TopRecordingsForArtist,
     SimilarArtists,
+    GetArtistImageURL,
 } from '@go/explore/Service';
 import type {
     MBArtist,
@@ -88,6 +89,7 @@ export class ExploreArtistDetails extends LitElement {
     @state() private errorReleases = '';
     @state() private similarArtists: LBSimilarArtist[] = [];
     @state() private loadingSimilar = true;
+    @state() private artistImageURL = '';
 
     /* ── Styles ── */
 
@@ -149,6 +151,13 @@ export class ExploreArtistDetails extends LitElement {
                 user-select: none;
                 flex-shrink: 0;
                 line-height: 1;
+                overflow: hidden;
+            }
+
+            .artist-avatar img {
+                width: 100%;
+                height: 100%;
+                object-fit: cover;
             }
 
             .artist-info {
@@ -484,7 +493,7 @@ export class ExploreArtistDetails extends LitElement {
             `[explore-artist] loading: "${this.artistName}" (${mbid})`,
         );
 
-        // Fire all four requests in parallel — each section is independent.
+        // Fire all five requests in parallel — each section is independent.
         const [artistResult, tracksResult, releasesResult, similarResult] =
             await Promise.allSettled([
                 this.fetchArtist(mbid),
@@ -492,6 +501,9 @@ export class ExploreArtistDetails extends LitElement {
                 this.fetchReleaseGroups(mbid),
                 this.fetchSimilarArtists(mbid),
             ]);
+
+        // Artist image is fire-and-forget — doesn't block the page.
+        this.fetchArtistImage(mbid);
 
         const summary = [
             `artist=${artistResult.status}`,
@@ -559,6 +571,17 @@ export class ExploreArtistDetails extends LitElement {
             this.similarArtists = [];
         } finally {
             this.loadingSimilar = false;
+        }
+    }
+
+    private async fetchArtistImage(mbid: string) {
+        try {
+            const url = await GetArtistImageURL(mbid);
+            if (url) {
+                this.artistImageURL = url;
+            }
+        } catch {
+            // No image available — avatar stays as initial letter.
         }
     }
 
@@ -709,7 +732,12 @@ export class ExploreArtistDetails extends LitElement {
                     class="artist-avatar"
                     style="background: hsl(${hue}, 45%, 35%)"
                 >
-                    ${this.getInitial(this.displayName)}
+                    ${this.artistImageURL
+                        ? html`<img
+                              src="${this.artistImageURL}"
+                              alt="${this.displayName}"
+                          />`
+                        : this.getInitial(this.displayName)}
                 </div>
                 <div class="artist-info">
                     <h1 class="artist-title" title="${this.displayName}">

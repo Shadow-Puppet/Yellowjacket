@@ -18,13 +18,14 @@ import (
 // response cache.  Its exported methods form the binding surface
 // that the frontend calls via generated TypeScript stubs.
 type Service struct {
-	mb       *MusicBrainzClient
-	lb       *ListenBrainzClient
-	cache    *Cache
-	index    *SearchIndex
-	artProxy *CoverArtProxy
-	logger   *slog.Logger
-	ctx      context.Context
+	mb        *MusicBrainzClient
+	lb        *ListenBrainzClient
+	cache     *Cache
+	index     *SearchIndex
+	artProxy  *CoverArtProxy
+	artistImg *ArtistImageProvider
+	logger    *slog.Logger
+	ctx       context.Context
 }
 
 // NewExploreService creates a Service backed by the given
@@ -37,17 +38,19 @@ func NewExploreService(logger *slog.Logger, db *database.DB) *Service {
 	lb := NewListenBrainzClient(limiter, cache, logger.WithGroup("listenbrainz"))
 	index := NewSearchIndex(db, lb, logger.WithGroup("search-index"))
 	artProxy := NewCoverArtProxy(db, limiter)
+	artistImg := NewArtistImageProvider(mb, cache, logger.WithGroup("artist-image"))
 
 	logger.Info("explore service created")
 
 	return &Service{
-		mb:       mb,
-		lb:       lb,
-		cache:    cache,
-		index:    index,
-		artProxy: artProxy,
-		logger:   logger,
-		ctx:      context.Background(),
+		mb:        mb,
+		lb:        lb,
+		cache:     cache,
+		index:     index,
+		artProxy:  artProxy,
+		artistImg: artistImg,
+		logger:    logger,
+		ctx:       context.Background(),
 	}
 }
 
@@ -183,6 +186,14 @@ func (e *Service) GetThumbnails(requests []ThumbnailRequest) map[string]string {
 	}
 
 	return result
+}
+
+// GetArtistImageURL returns a Wikimedia Commons thumbnail URL for
+// the given artist MBID.  Resolved via MB url-rels → Wikidata P18
+// → Commons thumb URL.  Cached for 30 days.  Returns "" if no
+// image is available.
+func (e *Service) GetArtistImageURL(artistMBID string) string {
+	return e.artistImg.GetArtistImageURL(artistMBID)
 }
 
 // Search concurrently queries MusicBrainz for artists, release
