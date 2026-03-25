@@ -12,6 +12,8 @@ import '@awesome.me/webawesome/dist/components/icon/icon.js';
 
 /* ── Constants ── */
 const DEBOUNCE_MS = 300;
+const MIN_QUERY_LENGTH = 2;
+const MAX_SECTION_RESULTS = 10;
 const CAA_GROUP_BASE = 'https://coverartarchive.org/release-group';
 const TOP_RESULTS_COUNT = 3;
 
@@ -67,6 +69,7 @@ export class ExploreView extends LitElement {
     @state() private results: MBSearchResult | null = null;
     @state() private loading = false;
     @state() private error = '';
+    @state() private queryTooShort = false;
 
     /** Monotonic counter to discard stale responses. */
     private searchVersion = 0;
@@ -481,12 +484,25 @@ export class ExploreView extends LitElement {
             this.debounceTimer = null;
         }
 
-        if (!this.searchQuery.trim()) {
+        const trimmed = this.searchQuery.trim();
+
+        if (!trimmed) {
             this.results = null;
             this.error = '';
             this.loading = false;
+            this.queryTooShort = false;
             return;
         }
+
+        if (trimmed.length < MIN_QUERY_LENGTH) {
+            this.results = null;
+            this.error = '';
+            this.loading = false;
+            this.queryTooShort = true;
+            return;
+        }
+
+        this.queryTooShort = false;
 
         this.debounceTimer = setTimeout(() => {
             this.debounceTimer = null;
@@ -499,6 +515,7 @@ export class ExploreView extends LitElement {
         this.results = null;
         this.error = '';
         this.loading = false;
+        this.queryTooShort = false;
         if (this.debounceTimer !== null) {
             clearTimeout(this.debounceTimer);
             this.debounceTimer = null;
@@ -666,6 +683,13 @@ export class ExploreView extends LitElement {
     }
 
     private renderBody() {
+        // Query too short
+        if (this.queryTooShort) {
+            return html`<div class="status-message">
+                Keep typing\u2026
+            </div>`;
+        }
+
         // No query entered yet
         if (!this.searchQuery.trim() && !this.results) {
             return html`<div class="status-message">
@@ -696,13 +720,13 @@ export class ExploreView extends LitElement {
                         ? this.renderTopResults(topResults)
                         : nothing}
                     ${hasArtists
-                        ? this.renderArtistsSection(this.results.artists!)
+                        ? this.renderArtistsSection(this.results.artists!.slice(0, MAX_SECTION_RESULTS))
                         : nothing}
                     ${hasAlbums
-                        ? this.renderAlbumsSection(this.results.releaseGroups!)
+                        ? this.renderAlbumsSection(this.results.releaseGroups!.slice(0, MAX_SECTION_RESULTS))
                         : nothing}
                     ${hasTracks
-                        ? this.renderTracksSection(this.results.recordings!)
+                        ? this.renderTracksSection(this.results.recordings!.slice(0, MAX_SECTION_RESULTS))
                         : nothing}
                 </div>
             `;
