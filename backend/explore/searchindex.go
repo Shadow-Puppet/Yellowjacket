@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"strings"
 	"sync"
@@ -23,13 +24,17 @@ const (
 	// from the LB sitewide endpoint.
 	indexTopArtists = 1000
 
-	// indexRGsPerArtist is the number of top release groups to
-	// store per artist.
-	indexRGsPerArtist = 20
+	// indexMaxRGs is the ceiling for release groups per artist.
+	indexMaxRGs = 20
 
-	// indexRecsPerArtist is the number of top recordings to store
-	// per artist.
-	indexRecsPerArtist = 100
+	// indexMinRGs is the floor for release groups per artist.
+	indexMinRGs = 5
+
+	// indexMaxRecs is the ceiling for recordings per artist.
+	indexMaxRecs = 100
+
+	// indexMinRecs is the floor for recordings per artist.
+	indexMinRecs = 10
 
 	// indexMinPopularity is the minimum listen count for an entry
 	// to be indexed.  Cuts noise from long-tail entries.
@@ -48,6 +53,12 @@ const (
 	// indexSimilarPerArtist is how many similar artists to consider
 	// per library artist for Tier 4 expansion.
 	indexSimilarPerArtist = 50
+
+	// indexPopularityExponent controls how steeply the per-artist
+	// budget scales with popularity.  Lower = steeper curve.
+	// 0.3 means an artist with 1/10th the listens of the max gets
+	// ~50% of the budget, not 10%.
+	indexPopularityExponent = 0.3
 
 	// labsBaseURL is the base URL for the ListenBrainz labs API.
 	labsBaseURL = "https://labs.api.listenbrainz.org"
@@ -93,8 +104,9 @@ type SearchIndex struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 
-	mu    sync.RWMutex
-	ready bool
+	mu         sync.RWMutex
+	ready      bool
+	maxListens int // highest artist listen count seen, for scaling
 }
 
 // NewSearchIndex creates a search index backed by the given
@@ -411,12 +423,22 @@ func (si *SearchIndex) buildTier1Sitewide(
 		si.upsertSearchResults(rgs)
 	}
 
-	// Insert all artists.
+	// Insert all artists and track max popularity.
 	artists := make([]lbSitewideArtist, 0, len(artistMap))
+
+	maxL := 0
 
 	for _, a := range artistMap {
 		artists = append(artists, a)
+
+		if a.ListenCount > maxL {
+			maxL = a.ListenCount
+		}
 	}
+
+	si.mu.Lock()
+	si.maxListens = maxL
+	si.mu.Unlock()
 
 	si.upsertArtists(artists)
 
@@ -891,8 +913,9 @@ func (si *SearchIndex) indexOneArtist(
 		return
 	}
 
-	rgs := si.fetchTopReleaseGroups(ctx, lb, artist)
-	recs := si.fetchTopRecordings(ctx, lb, artist)
+	rgLimit, recLimit := si.scaledLimits(artist.ListenCount)
+	rgs := si.fetchTopReleaseGroups(ctx, lb, artist, rgLimit)
+	recs := si.fetchTopRecordings(ctx, lb, artist, recLimit)
 
 	all := make([]SearchIndexResult, 0, len(rgs)+len(recs))
 	all = append(all, rgs...)
@@ -912,6 +935,7 @@ func (si *SearchIndex) fetchTopReleaseGroups(
 	ctx context.Context,
 	lb *ListenBrainzClient,
 	artist lbSitewideArtist,
+	maxCount int,
 ) []SearchIndexResult {
 	url := fmt.Sprintf(
 		"%s/1/popularity/top-release-groups-for-artist/%s",
@@ -947,7 +971,7 @@ func (si *SearchIndex) fetchTopReleaseGroups(
 		return nil
 	}
 
-	limit := indexRGsPerArtist
+	limit := maxCount
 	if limit > len(raw) {
 		limit = len(raw)
 	}
@@ -987,6 +1011,7 @@ func (si *SearchIndex) fetchTopRecordings(
 	ctx context.Context,
 	lb *ListenBrainzClient,
 	artist lbSitewideArtist,
+	maxCount int,
 ) []SearchIndexResult {
 	url := fmt.Sprintf(
 		"%s/1/popularity/top-recordings-for-artist/%s",
@@ -1003,7 +1028,7 @@ func (si *SearchIndex) fetchTopRecordings(
 		return nil
 	}
 
-	limit := indexRecsPerArtist
+	limit := maxCount
 	if limit > len(raw) {
 		limit = len(raw)
 	}
@@ -1178,6 +1203,29 @@ func (si *SearchIndex) markReadyIfPopulated() {
 			si.logger.Info("search index: using existing index", "entries", count)
 		}
 	}
+}
+
+// scaledLimits returns the number of release groups and recordings
+// to index for an artist with the given listen count, scaled by
+// popularity relative to the most popular artist in the index.
+func (si *SearchIndex) scaledLimits(listenCount int) (rgs, recs int) {
+	si.mu.RLock()
+	maxL := si.maxListens
+	si.mu.RUnlock()
+
+	if maxL <= 0 || listenCount <= 0 {
+		return indexMinRGs, indexMinRecs
+	}
+
+	ratio := math.Pow(float64(listenCount)/float64(maxL), indexPopularityExponent)
+
+	rgs = int(float64(indexMinRGs) + ratio*float64(indexMaxRGs-indexMinRGs))
+	recs = int(float64(indexMinRecs) + ratio*float64(indexMaxRecs-indexMinRecs))
+
+	rgs = max(indexMinRGs, min(indexMaxRGs, rgs))
+	recs = max(indexMinRecs, min(indexMaxRecs, recs))
+
+	return rgs, recs
 }
 
 // newLBRequest creates an HTTP GET request with the LB User-Agent.
