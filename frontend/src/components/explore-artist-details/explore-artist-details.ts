@@ -828,7 +828,7 @@ export class ExploreArtistDetails extends LitElement {
                     (g) => html`
                         <div class="disco-group">
                             <h4 class="disco-type-header">
-                                ${g.type === 'Other' ? 'Other Releases' : `${g.type}s`}
+                                ${g.type === 'Other' ? 'Other Releases' : g.type.endsWith('s') ? g.type : `${g.type}s`}
                             </h4>
                             <div class="album-grid">
                                 ${g.items.map((rg) => this.renderAlbumCard(rg))}
