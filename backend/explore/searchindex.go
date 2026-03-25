@@ -17,8 +17,13 @@ import (
 
 // Index build parameters.
 const (
-	// indexRebuildInterval is the minimum time between full rebuilds.
-	indexRebuildInterval = 7 * 24 * time.Hour
+	// indexTier1Interval is the minimum time between Tier 1
+	// (sitewide top lists) refreshes.  Cheap — 12 API calls.
+	indexTier1Interval = 7 * 24 * time.Hour
+
+	// indexTier2Interval is the minimum time between Tier 2/4
+	// (discography) refreshes.  Incremental — only new artists.
+	indexTier2Interval = 30 * 24 * time.Hour
 
 	// indexTopArtists is the number of artists to fetch per range
 	// from the LB sitewide endpoint.
@@ -318,16 +323,6 @@ func isWordChar(r rune) bool {
 func (si *SearchIndex) build(ctx context.Context) {
 	start := time.Now()
 
-	if si.isFresh() {
-		si.logger.Info("search index is fresh, skipping rebuild")
-
-		si.mu.Lock()
-		si.ready = true
-		si.mu.Unlock()
-
-		return
-	}
-
 	si.logger.Info("search index build starting")
 
 	// Mark ready from existing rows so search works during the build.
@@ -336,11 +331,23 @@ func (si *SearchIndex) build(ctx context.Context) {
 	indexLimiter := NewRateLimiterN(indexerRate)
 	indexLB := NewListenBrainzClient(indexLimiter, si.lb.cache, si.logger.WithGroup("indexer"))
 
-	// Tier 1: sitewide instant — top lists across all time ranges.
-	sitewideArtists := si.buildTier1Sitewide(ctx, indexLB)
+	// Tier 1: sitewide instant — refresh weekly (12 calls, <5s).
+	tier1Fresh := si.isMetaFresh("tier1_built", indexTier1Interval)
 
-	if ctx.Err() != nil {
-		return
+	var sitewideArtists []lbSitewideArtist
+
+	if tier1Fresh {
+		si.logger.Info("search index: Tier 1 fresh, loading cached artists")
+
+		sitewideArtists = si.loadCachedSitewideArtists()
+	} else {
+		sitewideArtists = si.buildTier1Sitewide(ctx, indexLB)
+
+		if ctx.Err() != nil {
+			return
+		}
+
+		si.setMeta("tier1_built", time.Now().UTC().Format(time.RFC3339))
 	}
 
 	si.mu.Lock()
@@ -349,34 +356,55 @@ func (si *SearchIndex) build(ctx context.Context) {
 
 	si.logger.Info("search index: Tier 1 complete (sitewide instant)")
 
-	// Tier 2: full discographies of sitewide artists.
-	si.buildTier2Discographies(ctx, indexLB, sitewideArtists)
+	// Tiers 2-4: discographies — refresh monthly, incremental.
+	// Only fetch discographies for artists not already indexed.
+	discogFresh := si.isMetaFresh("discog_built", indexTier2Interval)
 
-	if ctx.Err() != nil {
-		return
+	if discogFresh {
+		si.logger.Info("search index: discographies fresh, skipping Tiers 2-4")
+	} else {
+		indexed := si.indexedArtistMBIDs()
+
+		// Tier 2: sitewide artists' discographies (incremental).
+		newSitewide := filterUnindexed(sitewideArtists, indexed)
+
+		si.logger.Info("search index: Tier 2 starting",
+			"total", len(sitewideArtists),
+			"alreadyIndexed", len(sitewideArtists)-len(newSitewide),
+			"new", len(newSitewide),
+		)
+
+		si.indexArtistDiscographies(ctx, indexLB, newSitewide, "Tier 2")
+
+		if ctx.Err() != nil {
+			return
+		}
+
+		si.logger.Info("search index: Tier 2 complete (sitewide discographies)")
+
+		// Tier 3: library artists' discographies (incremental).
+		// Re-read indexed set since Tier 2 added entries.
+		indexed = si.indexedArtistMBIDs()
+		libraryMBIDs := si.buildTier3Library(ctx, indexLB, sitewideArtists, indexed)
+
+		if ctx.Err() != nil {
+			return
+		}
+
+		si.logger.Info("search index: Tier 3 complete (library discographies)")
+
+		// Tier 4: similar artists (incremental).
+		indexed = si.indexedArtistMBIDs()
+		si.buildTier4Similar(ctx, indexLB, libraryMBIDs, indexed)
+
+		if ctx.Err() != nil {
+			return
+		}
+
+		si.logger.Info("search index: Tier 4 complete (similar artists)")
+
+		si.setMeta("discog_built", time.Now().UTC().Format(time.RFC3339))
 	}
-
-	si.logger.Info("search index: Tier 2 complete (sitewide discographies)")
-
-	// Tier 3: library artists' full discographies.
-	libraryMBIDs := si.buildTier3Library(ctx, indexLB, sitewideArtists)
-
-	if ctx.Err() != nil {
-		return
-	}
-
-	si.logger.Info("search index: Tier 3 complete (library discographies)")
-
-	// Tier 4: similar artists to library artists.
-	si.buildTier4Similar(ctx, indexLB, libraryMBIDs)
-
-	if ctx.Err() != nil {
-		return
-	}
-
-	si.logger.Info("search index: Tier 4 complete (similar artists)")
-
-	si.setMeta("last_built", time.Now().UTC().Format(time.RFC3339))
 
 	si.logger.Info("search index build complete", "elapsed", time.Since(start).Round(time.Second))
 }
@@ -610,14 +638,6 @@ func (si *SearchIndex) fetchSitewideReleaseGroups(
 // Tier 2: sitewide artists' full discographies
 // ---------------------------------------------------------------------------
 
-func (si *SearchIndex) buildTier2Discographies(
-	ctx context.Context,
-	lb *ListenBrainzClient,
-	artists []lbSitewideArtist,
-) {
-	si.indexArtistDiscographies(ctx, lb, artists, "Tier 2")
-}
-
 // ---------------------------------------------------------------------------
 // Tier 3: library artists' full discographies
 // ---------------------------------------------------------------------------
@@ -629,6 +649,7 @@ func (si *SearchIndex) buildTier3Library(
 	ctx context.Context,
 	lb *ListenBrainzClient,
 	sitewideArtists []lbSitewideArtist,
+	indexed map[string]bool,
 ) []string {
 	// Build a name→artist map from sitewide (lowercased).
 	nameMap := make(map[string]lbSitewideArtist, len(sitewideArtists))
@@ -670,8 +691,6 @@ func (si *SearchIndex) buildTier3Library(
 	defer func() { _ = libRows.Close() }()
 
 	// Collect MBIDs for matched library artists.
-	indexedMBIDs := si.indexedArtistMBIDs()
-
 	var matched []lbSitewideArtist
 
 	var resolvedMBIDs []string
@@ -698,7 +717,7 @@ func (si *SearchIndex) buildTier3Library(
 			resolvedMBIDs = append(resolvedMBIDs, a.ArtistMBID)
 
 			// Only index if not already in the index from Tier 2.
-			if !indexedMBIDs[a.ArtistMBID] {
+			if !indexed[a.ArtistMBID] {
 				matched = append(matched, a)
 			}
 		}
@@ -724,12 +743,11 @@ func (si *SearchIndex) buildTier4Similar(
 	ctx context.Context,
 	lb *ListenBrainzClient,
 	libraryMBIDs []string,
+	indexed map[string]bool,
 ) {
 	if len(libraryMBIDs) == 0 {
 		return
 	}
-
-	indexedMBIDs := si.indexedArtistMBIDs()
 
 	// Fetch similar artists for each library artist.
 	newArtistMap := make(map[string]lbSitewideArtist)
@@ -762,7 +780,7 @@ func (si *SearchIndex) buildTier4Similar(
 			mu.Lock()
 
 			for _, s := range similar {
-				if !indexedMBIDs[s.ArtistMBID] {
+				if !indexed[s.ArtistMBID] {
 					if _, exists := newArtistMap[s.ArtistMBID]; !exists {
 						newArtistMap[s.ArtistMBID] = lbSitewideArtist{
 							ArtistMBID: s.ArtistMBID,
@@ -1149,9 +1167,9 @@ func (si *SearchIndex) indexedArtistMBIDs() map[string]bool {
 	return result
 }
 
-func (si *SearchIndex) isFresh() bool {
+func (si *SearchIndex) isMetaFresh(key string, maxAge time.Duration) bool {
 	rows, err := si.db.QueryContext(
-		"SELECT value FROM explore_index_meta WHERE key = 'last_built'",
+		"SELECT value FROM explore_index_meta WHERE key = ?", key,
 	)
 	if err != nil {
 		return false
@@ -1173,7 +1191,58 @@ func (si *SearchIndex) isFresh() bool {
 		return false
 	}
 
-	return time.Since(t) < indexRebuildInterval
+	return time.Since(t) < maxAge
+}
+
+// loadCachedSitewideArtists reads artist entries from the existing
+// index when Tier 1 is fresh and doesn't need re-fetching.
+func (si *SearchIndex) loadCachedSitewideArtists() []lbSitewideArtist {
+	rows, err := si.db.QueryContext(`
+		SELECT mbid, title, popularity
+		FROM explore_index
+		WHERE entity_type = 'artist'
+		ORDER BY popularity DESC
+	`)
+	if err != nil {
+		return nil
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	var artists []lbSitewideArtist
+
+	maxL := 0
+
+	for rows.Next() {
+		var a lbSitewideArtist
+		if err := rows.Scan(&a.ArtistMBID, &a.ArtistName, &a.ListenCount); err == nil {
+			artists = append(artists, a)
+
+			if a.ListenCount > maxL {
+				maxL = a.ListenCount
+			}
+		}
+	}
+
+	si.mu.Lock()
+	si.maxListens = maxL
+	si.mu.Unlock()
+
+	return artists
+}
+
+// filterUnindexed returns artists whose MBIDs are not in the
+// indexed set.
+func filterUnindexed(artists []lbSitewideArtist, indexed map[string]bool) []lbSitewideArtist {
+	var out []lbSitewideArtist
+
+	for _, a := range artists {
+		if !indexed[a.ArtistMBID] {
+			out = append(out, a)
+		}
+	}
+
+	return out
 }
 
 func (si *SearchIndex) setMeta(key, value string) {
