@@ -257,15 +257,18 @@ func (e *Service) Search(query string) (*MBSearchResult, error) {
 		"recordings", len(result.Recordings),
 	)
 
-	// Phase 2: concurrent LB popularity lookups (3 goroutines,
-	// rate-limited).  Each hits a different endpoint so they can
-	// overlap on different rate-limiter tokens.
-	e.boostWithPopularity(&result)
+	// Phases 2+3 are expensive (3+ LB API calls through the rate
+	// limiter).  Skip them when the local index is ready — it
+	// already carries popularity data and covers the cross-reference
+	// use case.  Only run as fallback during first launch before
+	// the index is built.
+	if !e.index.IsReady() {
+		// Phase 2: LB popularity lookups (3 POST calls, rate-limited).
+		e.boostWithPopularity(&result)
 
-	// Phase 3: cross-reference search — match query against top
-	// artists' discographies to find albums that MB's text search
-	// missed (e.g. "for you tatsuro" → FOR YOU by 山下達郎).
-	e.crossReferenceAlbums(query, &result)
+		// Phase 3: cross-reference artist discographies.
+		e.crossReferenceAlbums(query, &result)
+	}
 
 	// Phase 4: merge local index hits into results, dedup by MBID.
 	mergeIndexHits(&result, indexHits)
