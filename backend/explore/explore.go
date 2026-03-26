@@ -36,11 +36,11 @@ func NewExploreService(logger *slog.Logger, db *database.DB) *Service {
 	limiter := NewRateLimiter()
 	mb := NewMusicBrainzClient(cache, logger.WithGroup("musicbrainz"))
 	lb := NewListenBrainzClient(limiter, cache, logger.WithGroup("listenbrainz"))
-	index := NewSearchIndex(db, lb, logger.WithGroup("search-index"))
 	artProxy := NewCoverArtProxy(db, limiter)
 	artistImg := NewArtistImageProvider(
 		db, cache, NewRateLimiter(), logger.WithGroup("artist-image"),
 	)
+	index := NewSearchIndex(db, lb, artistImg, logger.WithGroup("search-index"))
 
 	logger.Info("explore service created")
 

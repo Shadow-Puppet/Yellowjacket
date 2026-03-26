@@ -102,9 +102,10 @@ type lbSitewideArtist struct {
 //   - Tier 4: similar artists to library artists (background, ~24min)
 //   - Tier 5: organic growth from user browsing (ongoing, free)
 type SearchIndex struct {
-	db     *database.DB
-	lb     *ListenBrainzClient
-	logger *slog.Logger
+	db        *database.DB
+	lb        *ListenBrainzClient
+	artistImg *ArtistImageProvider
+	logger    *slog.Logger
 
 	cancel context.CancelFunc
 	done   chan struct{}
@@ -119,13 +120,15 @@ type SearchIndex struct {
 func NewSearchIndex(
 	db *database.DB,
 	lb *ListenBrainzClient,
+	artistImg *ArtistImageProvider,
 	logger *slog.Logger,
 ) *SearchIndex {
 	return &SearchIndex{
-		db:     db,
-		lb:     lb,
-		logger: logger,
-		done:   make(chan struct{}),
+		db:        db,
+		lb:        lb,
+		artistImg: artistImg,
+		logger:    logger,
+		done:      make(chan struct{}),
 	}
 }
 
@@ -932,9 +935,40 @@ func (si *SearchIndex) indexOneArtist(
 	}
 
 	rgLimit, recLimit := si.scaledLimits(artist.ListenCount)
-	rgs := si.fetchTopReleaseGroups(ctx, lb, artist, rgLimit)
-	recs := si.fetchTopRecordings(ctx, lb, artist, recLimit)
 
+	// Run LB discography fetches and MB artist image resolution
+	// concurrently — they use different rate limiters so they
+	// don't block each other.
+	var (
+		rgs  []SearchIndexResult
+		recs []SearchIndexResult
+		wg   sync.WaitGroup
+	)
+
+	// LB pipeline: top release groups + top recordings.
+	wg.Add(1)
+
+	go func() {
+		defer wg.Done()
+
+		rgs = si.fetchTopReleaseGroups(ctx, lb, artist, rgLimit)
+		recs = si.fetchTopRecordings(ctx, lb, artist, recLimit)
+	}()
+
+	// MB pipeline: resolve + cache artist image (uses MB rate limiter).
+	wg.Add(1)
+
+	go func() {
+		defer wg.Done()
+
+		if si.artistImg != nil {
+			si.artistImg.GetArtistImage(artist.ArtistMBID)
+		}
+	}()
+
+	wg.Wait()
+
+	// Batch write discography results.
 	all := make([]SearchIndexResult, 0, len(rgs)+len(recs))
 	all = append(all, rgs...)
 	all = append(all, recs...)
