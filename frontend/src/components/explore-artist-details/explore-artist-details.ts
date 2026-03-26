@@ -7,6 +7,7 @@ import {
     TopRecordingsForArtist,
     SimilarArtists,
     GetArtistImageURL,
+    CheckLibraryMBIDs,
 } from '@go/explore/Service';
 import type {
     MBArtist,
@@ -90,6 +91,7 @@ export class ExploreArtistDetails extends LitElement {
     @state() private similarArtists: LBSimilarArtist[] = [];
     @state() private loadingSimilar = true;
     @state() private artistImageURL = '';
+    private libraryMBIDs = new Set<string>();
 
     /* ── Styles ── */
 
@@ -410,6 +412,16 @@ export class ExploreArtistDetails extends LitElement {
                 font-size: var(--yj-text-xs);
             }
 
+            .library-badge {
+                background: var(--yj-accent, #1db954);
+                color: #000;
+                padding: 1px 6px;
+                border-radius: 3px;
+                font-size: 10px;
+                font-weight: 600;
+                white-space: nowrap;
+            }
+
             /* ── Similar artists ── */
             .horizontal-row {
                 display: flex;
@@ -505,6 +517,9 @@ export class ExploreArtistDetails extends LitElement {
         // Artist image is fire-and-forget — doesn't block the page.
         this.fetchArtistImage(mbid);
 
+        // Check which release groups are in the local library.
+        this.checkLibrary();
+
         const summary = [
             `artist=${artistResult.status}`,
             `tracks=${tracksResult.status}`,
@@ -582,6 +597,30 @@ export class ExploreArtistDetails extends LitElement {
             }
         } catch {
             // No image available — avatar stays as initial letter.
+        }
+    }
+
+    private async checkLibrary() {
+        const mbids: string[] = [];
+
+        for (const rg of this.releaseGroups) {
+            if (rg.mbid) mbids.push(rg.mbid);
+        }
+
+        if (mbids.length === 0) return;
+
+        try {
+            const found = await CheckLibraryMBIDs(mbids);
+
+            if (found && Object.keys(found).length > 0) {
+                for (const mbid of Object.keys(found)) {
+                    this.libraryMBIDs.add(mbid);
+                }
+
+                this.requestUpdate();
+            }
+        } catch {
+            // Non-critical.
         }
     }
 
@@ -915,6 +954,9 @@ export class ExploreArtistDetails extends LitElement {
                 </div>
                 <div class="album-title" title="${rg.title}">${rg.title}</div>
                 <div class="album-meta">
+                    ${this.libraryMBIDs.has(rg.mbid)
+                        ? html`<span class="library-badge">In Library</span>`
+                        : nothing}
                     ${year ? html`<span>${year}</span>` : nothing}
                 </div>
             </div>
