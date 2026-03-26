@@ -29,14 +29,17 @@ const (
 
 	// artistImageTimeout is the HTTP timeout for image URL lookups.
 	artistImageTimeout = 10 * time.Second
+
+	// artistImageCacheTTL is how long resolved image URLs are cached.
+	artistImageCacheTTL = 30 * 24 * time.Hour
 )
 
 // ArtistImageProvider resolves artist MBIDs to image URLs.  It
-// checks multiple sources in priority order and caches results in
-// the explore_cache.  Designed to be extended with additional
-// sources (fanart.tv, etc.) by adding to the providers slice.
+// fetches the artist's MB url-rels (once, cached 30 days), extracts
+// image sources from them, and returns a Wikimedia Commons thumbnail
+// URL.  Designed to be extended with additional sources (fanart.tv,
+// etc.) by adding to the resolve chain.
 type ArtistImageProvider struct {
-	mb     *MusicBrainzClient
 	cache  *Cache
 	client *http.Client
 	logger *slog.Logger
@@ -45,12 +48,10 @@ type ArtistImageProvider struct {
 // NewArtistImageProvider creates a provider that resolves artist
 // images via MusicBrainz relationships and Wikidata.
 func NewArtistImageProvider(
-	mb *MusicBrainzClient,
 	cache *Cache,
 	logger *slog.Logger,
 ) *ArtistImageProvider {
 	return &ArtistImageProvider{
-		mb:     mb,
 		cache:  cache,
 		client: &http.Client{Timeout: artistImageTimeout},
 		logger: logger,
@@ -59,111 +60,114 @@ func NewArtistImageProvider(
 
 // GetArtistImageURL returns a Wikimedia Commons thumbnail URL for
 // the given artist MBID, or "" if no image is available.  Results
-// are cached in explore_cache with a 30-day TTL.
+// are cached for 30 days.
 func (p *ArtistImageProvider) GetArtistImageURL(artistMBID string) string {
 	if artistMBID == "" {
 		return ""
 	}
 
+	// Check resolved URL cache first.
 	cacheKey := "artist-image:" + artistMBID
 
-	// Check cache.
 	if data, ok := p.cache.Get(cacheKey); ok {
 		return string(data)
 	}
 
-	// Resolve image URL.
-	imageURL := p.resolve(artistMBID)
+	// Fetch MB url-rels (cached separately, shared with other uses).
+	rels := p.fetchMBRels(artistMBID)
+	if rels == nil {
+		p.cache.Set(cacheKey, []byte(""), artistImageCacheTTL, artistMBID, "artist")
 
-	// Cache the result (even empty string = no image found).
-	cacheTTL := 30 * 24 * time.Hour
-	p.cache.Set(cacheKey, []byte(imageURL), cacheTTL, artistMBID, "artist")
+		return ""
+	}
+
+	// Try each source in priority order.
+	imageURL := p.fromDirectImageRel(rels)
+
+	if imageURL == "" {
+		imageURL = p.fromWikidataRel(rels)
+	}
+
+	// Cache the result (even "" = no image).
+	p.cache.Set(cacheKey, []byte(imageURL), artistImageCacheTTL, artistMBID, "artist")
+
+	if imageURL != "" {
+		p.logger.Debug("artist image resolved",
+			"mbid", artistMBID,
+			"url", imageURL,
+		)
+	}
 
 	return imageURL
 }
 
-// resolve tries each source in order and returns the first image
-// URL found.
-func (p *ArtistImageProvider) resolve(artistMBID string) string {
-	// Source 1: MB direct image relation (Commons wiki page link).
-	if url := p.fromMBImageRelation(artistMBID); url != "" {
-		return url
-	}
+// ---------------------------------------------------------------------------
+// MB url-rels fetching (shared by all sources)
+// ---------------------------------------------------------------------------
 
-	// Source 2: MB wikidata relation → Wikidata P18 → Commons thumb.
-	if url := p.fromWikidata(artistMBID); url != "" {
-		return url
-	}
-
-	// No image found from any source.
-	return ""
+type mbRelation struct {
+	Type string `json:"type"`
+	URL  struct {
+		Resource string `json:"resource"`
+	} `json:"url"`
 }
 
-// ---------------------------------------------------------------------------
-// Source 1: MB direct image relation
-// ---------------------------------------------------------------------------
-
-// fromMBImageRelation checks the artist's MB url-rels for a direct
-// "image" type pointing to Wikimedia Commons.
-func (p *ArtistImageProvider) fromMBImageRelation(artistMBID string) string {
-	ctx := context.Background()
-
-	artist, err := p.mb.LookupArtist(ctx, artistMBID)
-	if err != nil || artist == nil {
-		return ""
-	}
-
-	// The LookupArtist doesn't include rels in our current wrapper.
-	// We need the raw MB data with url-rels. Check if there's a
-	// cached response that includes relations.
+func (p *ArtistImageProvider) fetchMBRels(artistMBID string) []mbRelation {
 	cacheKey := "mb:artist-rels:" + artistMBID
 
 	if data, ok := p.cache.Get(cacheKey); ok {
-		return p.parseImageFromRels(data)
+		var envelope struct {
+			Relations []mbRelation `json:"relations"`
+		}
+
+		if err := json.Unmarshal(data, &envelope); err == nil {
+			return envelope.Relations
+		}
 	}
 
-	// Fetch with url-rels included.
 	url := fmt.Sprintf(
 		"https://musicbrainz.org/ws/2/artist/%s?fmt=json&inc=url-rels",
 		artistMBID,
 	)
 
-	body, err := p.fetchURL(ctx, url)
+	body, err := p.fetchURL(url)
 	if err != nil {
-		return ""
+		p.logger.Debug("artist image: MB rels fetch failed",
+			"mbid", artistMBID,
+			"error", err,
+		)
+
+		return nil
 	}
 
-	// Cache the response.
-	cacheTTL := 30 * 24 * time.Hour
-	p.cache.Set(cacheKey, body, cacheTTL, artistMBID, "artist")
+	p.cache.Set(cacheKey, body, artistImageCacheTTL, artistMBID, "artist")
 
-	return p.parseImageFromRels(body)
+	var envelope struct {
+		Relations []mbRelation `json:"relations"`
+	}
+
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return nil
+	}
+
+	return envelope.Relations
 }
 
-func (p *ArtistImageProvider) parseImageFromRels(data []byte) string {
-	var mb struct {
-		Relations []struct {
-			Type string `json:"type"`
-			URL  struct {
-				Resource string `json:"resource"`
-			} `json:"url"`
-		} `json:"relations"`
-	}
+// ---------------------------------------------------------------------------
+// Source 1: direct image relation (Commons wiki page link)
+// ---------------------------------------------------------------------------
 
-	if err := json.Unmarshal(data, &mb); err != nil {
-		return ""
-	}
-
-	for _, rel := range mb.Relations {
+func (p *ArtistImageProvider) fromDirectImageRel(rels []mbRelation) string {
+	for _, rel := range rels {
 		if rel.Type != "image" {
 			continue
 		}
 
 		resource := rel.URL.Resource
 
-		// Direct Commons file link: "https://commons.wikimedia.org/wiki/File:Name.jpg"
-		if strings.Contains(resource, "commons.wikimedia.org/wiki/File:") {
-			filename := resource[strings.LastIndex(resource, "File:")+5:]
+		// "https://commons.wikimedia.org/wiki/File:Name.jpg"
+		if idx := strings.LastIndex(resource, "File:"); idx >= 0 {
+			filename := resource[idx+5:]
 
 			return wikimediaThumbURL(filename)
 		}
@@ -173,33 +177,40 @@ func (p *ArtistImageProvider) parseImageFromRels(data []byte) string {
 }
 
 // ---------------------------------------------------------------------------
-// Source 2: Wikidata P18
+// Source 2: Wikidata P18 property
 // ---------------------------------------------------------------------------
 
-// fromWikidata looks up the artist's Wikidata Q-ID from MB rels,
-// then fetches the P18 (image) property from Wikidata.
-func (p *ArtistImageProvider) fromWikidata(artistMBID string) string {
-	// Get the wikidata Q-ID from cached MB rels.
-	qid := p.getWikidataQID(artistMBID)
+func (p *ArtistImageProvider) fromWikidataRel(rels []mbRelation) string {
+	// Find the wikidata Q-ID.
+	qid := ""
+
+	for _, rel := range rels {
+		if rel.Type == "wikidata" {
+			parts := strings.Split(rel.URL.Resource, "/")
+			qid = parts[len(parts)-1]
+
+			break
+		}
+	}
+
 	if qid == "" {
 		return ""
 	}
 
-	// Check cache for Wikidata image.
-	cacheKey := "wikidata-image:" + qid
+	// Check cache for this Wikidata entity.
+	cacheKey := "wikidata-p18:" + qid
 
 	if data, ok := p.cache.Get(cacheKey); ok {
 		return string(data)
 	}
 
-	// Fetch P18 from Wikidata API.
-	ctx := context.Background()
+	// Fetch P18 from Wikidata.
 	url := fmt.Sprintf(
 		"%s?action=wbgetclaims&entity=%s&property=P18&format=json",
 		wikidataAPIBase, qid,
 	)
 
-	body, err := p.fetchURL(ctx, url)
+	body, err := p.fetchURL(url)
 	if err != nil {
 		return ""
 	}
@@ -216,69 +227,16 @@ func (p *ArtistImageProvider) fromWikidata(artistMBID string) string {
 		} `json:"claims"`
 	}
 
-	if err := json.Unmarshal(body, &wd); err != nil || len(wd.Claims.P18) == 0 {
-		// Cache empty result.
-		cacheTTL := 30 * 24 * time.Hour
-		p.cache.Set(cacheKey, []byte(""), cacheTTL, "", "")
+	thumbURL := ""
 
-		return ""
+	if err := json.Unmarshal(body, &wd); err == nil && len(wd.Claims.P18) > 0 {
+		filename := strings.ReplaceAll(wd.Claims.P18[0].Mainsnak.Datavalue.Value, " ", "_")
+		thumbURL = wikimediaThumbURL(filename)
 	}
 
-	filename := strings.ReplaceAll(wd.Claims.P18[0].Mainsnak.Datavalue.Value, " ", "_")
-	thumbURL := wikimediaThumbURL(filename)
-
-	cacheTTL := 30 * 24 * time.Hour
-	p.cache.Set(cacheKey, []byte(thumbURL), cacheTTL, "", "")
+	p.cache.Set(cacheKey, []byte(thumbURL), artistImageCacheTTL, "", "")
 
 	return thumbURL
-}
-
-func (p *ArtistImageProvider) getWikidataQID(artistMBID string) string {
-	cacheKey := "mb:artist-rels:" + artistMBID
-
-	data, ok := p.cache.Get(cacheKey)
-	if !ok {
-		// Need to fetch rels — fromMBImageRelation should have
-		// populated this, but if not, fetch now.
-		ctx := context.Background()
-		url := fmt.Sprintf(
-			"https://musicbrainz.org/ws/2/artist/%s?fmt=json&inc=url-rels",
-			artistMBID,
-		)
-
-		var err error
-
-		data, err = p.fetchURL(ctx, url)
-		if err != nil {
-			return ""
-		}
-
-		cacheTTL := 30 * 24 * time.Hour
-		p.cache.Set(cacheKey, data, cacheTTL, artistMBID, "artist")
-	}
-
-	var mb struct {
-		Relations []struct {
-			Type string `json:"type"`
-			URL  struct {
-				Resource string `json:"resource"`
-			} `json:"url"`
-		} `json:"relations"`
-	}
-
-	if err := json.Unmarshal(data, &mb); err != nil {
-		return ""
-	}
-
-	for _, rel := range mb.Relations {
-		if rel.Type == "wikidata" {
-			parts := strings.Split(rel.URL.Resource, "/")
-
-			return parts[len(parts)-1]
-		}
-	}
-
-	return ""
 }
 
 // ---------------------------------------------------------------------------
@@ -286,8 +244,7 @@ func (p *ArtistImageProvider) getWikidataQID(artistMBID string) string {
 // ---------------------------------------------------------------------------
 
 // wikimediaThumbURL constructs a Wikimedia Commons thumbnail URL
-// from a filename.  The URL scheme uses MD5 hashing of the filename
-// for directory bucketing.
+// from a filename using the MD5 directory bucketing scheme.
 func wikimediaThumbURL(filename string) string {
 	if filename == "" {
 		return ""
@@ -304,7 +261,10 @@ func wikimediaThumbURL(filename string) string {
 	)
 }
 
-func (p *ArtistImageProvider) fetchURL(ctx context.Context, url string) ([]byte, error) {
+func (p *ArtistImageProvider) fetchURL(url string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), artistImageTimeout)
+	defer cancel()
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
