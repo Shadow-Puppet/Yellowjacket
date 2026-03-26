@@ -40,21 +40,24 @@ const (
 // URL.  Designed to be extended with additional sources (fanart.tv,
 // etc.) by adding to the resolve chain.
 type ArtistImageProvider struct {
-	cache  *Cache
-	client *http.Client
-	logger *slog.Logger
+	cache     *Cache
+	mbLimiter *RateLimiter
+	client    *http.Client
+	logger    *slog.Logger
 }
 
 // NewArtistImageProvider creates a provider that resolves artist
 // images via MusicBrainz relationships and Wikidata.
 func NewArtistImageProvider(
 	cache *Cache,
+	mbLimiter *RateLimiter,
 	logger *slog.Logger,
 ) *ArtistImageProvider {
 	return &ArtistImageProvider{
-		cache:  cache,
-		client: &http.Client{Timeout: artistImageTimeout},
-		logger: logger,
+		cache:     cache,
+		mbLimiter: mbLimiter,
+		client:    &http.Client{Timeout: artistImageTimeout},
+		logger:    logger,
 	}
 }
 
@@ -129,6 +132,11 @@ func (p *ArtistImageProvider) fetchMBRels(artistMBID string) []mbRelation {
 		"https://musicbrainz.org/ws/2/artist/%s?fmt=json&inc=url-rels",
 		artistMBID,
 	)
+
+	// Rate-limit the MB API call.
+	if err := p.mbLimiter.Wait(context.Background()); err != nil {
+		return nil
+	}
 
 	body, err := p.fetchURL(url)
 	if err != nil {

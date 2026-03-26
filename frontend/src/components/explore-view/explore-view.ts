@@ -666,25 +666,25 @@ export class ExploreView extends LitElement {
      * Load artist images for all visible artist cards.  Each call
      * is async and updates the cache + re-renders on success.
      */
-    private loadArtistImages() {
+    private async loadArtistImages() {
         if (!this.results?.artists?.length) return;
 
+        // Load sequentially to avoid hammering the MB rate limiter.
         for (const a of this.results.artists) {
             if (this.artistImageCache.has(a.mbid)) continue;
 
-            // Mark as loading.
             this.artistImageCache.set(a.mbid, '');
 
-            GetArtistImageURL(a.mbid)
-                .then((url) => {
-                    if (url) {
-                        this.artistImageCache.set(a.mbid, url);
-                        this.requestUpdate();
-                    }
-                })
-                .catch(() => {
-                    // No image — leave empty string.
-                });
+            try {
+                const url = await GetArtistImageURL(a.mbid);
+
+                if (url) {
+                    this.artistImageCache.set(a.mbid, url);
+                    this.requestUpdate();
+                }
+            } catch {
+                // No image — leave empty string.
+            }
         }
     }
 
