@@ -148,13 +148,14 @@ func extractMBIDs(raw map[string]interface{}, meta *TrackMetadata) {
 		case *tag.Comm:
 			// ID3v2 TXXX frames — Description is the tag name.
 			if val != nil && val.Description != "" {
-				normalized[strings.ToLower(val.Description)] = strings.TrimSpace(val.Text)
+				text := strings.TrimRight(val.Text, "\x00 \t\n\r")
+				normalized[strings.ToLower(val.Description)] = text
 			}
 
 		case *tag.UFID:
 			// ID3v2 UFID frame — MusicBrainz recording ID.
 			if val != nil && val.Provider == "http://musicbrainz.org" {
-				meta.RecordingMBID = strings.TrimSpace(string(val.Identifier))
+				meta.RecordingMBID = strings.TrimRight(string(val.Identifier), "\x00 \t\n\r")
 			}
 		}
 	}
