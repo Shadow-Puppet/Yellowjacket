@@ -866,6 +866,7 @@ export class ExploreView extends LitElement {
         if (item.type === 'artist' && item.artist) {
             const a = item.artist;
             const hue = nameToHue(a.name);
+            const imgURL = this.artistImageCache.get(a.mbid);
             return html`
                 <div
                     class="top-card"
@@ -883,10 +884,12 @@ export class ExploreView extends LitElement {
                         class="artist-avatar"
                         style="background: hsl(${hue}, 45%, 35%)"
                     >
-                        ${(a.englishName || a.name).charAt(0).toUpperCase()}
+                        ${imgURL
+                            ? html`<img src="${imgURL}" alt="${a.englishName || a.name}" />`
+                            : (a.englishName || a.name).charAt(0).toUpperCase()}
                     </div>
                     <div class="top-card-info">
-                        <div class="top-card-name">${a.name}</div>
+                        <div class="top-card-name">${a.englishName || a.name}</div>
                         <div class="top-card-meta">Artist${a.country ? ` · ${a.country}` : ''}</div>
                     </div>
                 </div>

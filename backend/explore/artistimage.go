@@ -3,80 +3,128 @@ package explore
 import (
 	"context"
 	"crypto/md5" //nolint:gosec // MD5 used for Wikimedia URL hashing, not security
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"time"
+
+	"yellowjacket/backend/database"
+	"yellowjacket/backend/system"
 )
 
 // ErrArtistImage is returned when an artist image HTTP fetch fails.
 var ErrArtistImage = errors.New("artist image fetch failed")
 
 const (
-	// wikimediaThumbBase is the base URL for Wikimedia Commons
-	// thumbnail generation.
-	wikimediaThumbBase = "https://upload.wikimedia.org/wikipedia/commons/thumb"
-
-	// wikidataAPIBase is the base URL for the Wikidata API.
-	wikidataAPIBase = "https://www.wikidata.org/w/api.php"
-
-	// artistImageSize is the default thumbnail width in pixels.
-	artistImageSize = 250
-
-	// artistImageTimeout is the HTTP timeout for image URL lookups.
-	artistImageTimeout = 10 * time.Second
-
-	// artistImageCacheTTL is how long resolved image URLs are cached.
+	wikimediaThumbBase  = "https://upload.wikimedia.org/wikipedia/commons/thumb"
+	wikidataAPIBase     = "https://www.wikidata.org/w/api.php"
+	artistImageSize     = 250
+	artistImageTimeout  = 10 * time.Second
 	artistImageCacheTTL = 30 * 24 * time.Hour
+	artistImageDir      = "artist-image-cache"
+	artistImageMaxBytes = 2 * 1024 * 1024 // 2 MB max per image
 )
 
-// ArtistImageProvider resolves artist MBIDs to image URLs.  It
-// fetches the artist's MB url-rels (once, cached 30 days), extracts
-// image sources from them, and returns a Wikimedia Commons thumbnail
-// URL.  Designed to be extended with additional sources (fanart.tv,
-// etc.) by adding to the resolve chain.
+// ArtistImageProvider resolves artist MBIDs to images.  It checks
+// three sources in order:
+//  1. Local disk cache (instant, from previous fetch)
+//  2. MB url-rels → Wikimedia Commons thumb URL → fetch + cache
+//  3. Wikidata P18 → Wikimedia Commons thumb URL → fetch + cache
+//
+// Returns base64 data URLs for display in <img src="data:...">.
 type ArtistImageProvider struct {
+	db        *database.DB
 	cache     *Cache
 	mbLimiter *RateLimiter
 	client    *http.Client
 	logger    *slog.Logger
+	imageDir  string
+	mu        sync.Mutex // serializes disk writes
 }
 
-// NewArtistImageProvider creates a provider that resolves artist
-// images via MusicBrainz relationships and Wikidata.
+// NewArtistImageProvider creates a provider that resolves and caches
+// artist images.
 func NewArtistImageProvider(
+	db *database.DB,
 	cache *Cache,
 	mbLimiter *RateLimiter,
 	logger *slog.Logger,
 ) *ArtistImageProvider {
+	dir := ""
+
+	dataDir, err := system.GetUserDataDirPath()
+	if err == nil {
+		dir = filepath.Join(dataDir, artistImageDir)
+		_ = os.MkdirAll(dir, 0o755)
+	}
+
 	return &ArtistImageProvider{
+		db:        db,
 		cache:     cache,
 		mbLimiter: mbLimiter,
 		client:    &http.Client{Timeout: artistImageTimeout},
 		logger:    logger,
+		imageDir:  dir,
 	}
 }
 
-// GetArtistImageURL returns a Wikimedia Commons thumbnail URL for
-// the given artist MBID, or "" if no image is available.  Results
-// are cached for 30 days.
-func (p *ArtistImageProvider) GetArtistImageURL(artistMBID string) string {
-	if artistMBID == "" {
+// GetArtistImage returns a base64 data URL for the artist's photo.
+// Checks disk cache first, then resolves via MB/Wikidata and fetches
+// the image from Wikimedia Commons.  Returns "" if no image.
+func (p *ArtistImageProvider) GetArtistImage(artistMBID string) string {
+	if artistMBID == "" || p.imageDir == "" {
 		return ""
 	}
 
-	// Check resolved URL cache first.
-	cacheKey := "artist-image:" + artistMBID
+	// Source 1: disk cache (instant).
+	if dataURL := p.readDiskCache(artistMBID); dataURL != "" {
+		return dataURL
+	}
+
+	// Check if we already know there's no image (cached miss marker).
+	if p.isDiskCacheMiss(artistMBID) {
+		return ""
+	}
+
+	// Source 2+3: resolve URL then fetch image.
+	imageURL := p.resolveURL(artistMBID)
+	if imageURL == "" {
+		p.writeDiskCache(artistMBID, nil) // miss marker
+
+		return ""
+	}
+
+	// Fetch the actual image bytes.
+	data, err := p.fetchImageBytes(imageURL)
+	if err != nil || len(data) == 0 {
+		p.writeDiskCache(artistMBID, nil)
+
+		return ""
+	}
+
+	p.writeDiskCache(artistMBID, data)
+
+	return toDataURL(data, artistMBID)
+}
+
+// resolveURL finds the Wikimedia Commons thumbnail URL for an
+// artist via MB url-rels and Wikidata.  The URL itself (not image
+// bytes) is cached in explore_cache for 30 days.
+func (p *ArtistImageProvider) resolveURL(artistMBID string) string {
+	cacheKey := "artist-image-url:" + artistMBID
 
 	if data, ok := p.cache.Get(cacheKey); ok {
 		return string(data)
 	}
 
-	// Fetch MB url-rels (cached separately, shared with other uses).
 	rels := p.fetchMBRels(artistMBID)
 	if rels == nil {
 		p.cache.Set(cacheKey, []byte(""), artistImageCacheTTL, artistMBID, "artist")
@@ -84,28 +132,19 @@ func (p *ArtistImageProvider) GetArtistImageURL(artistMBID string) string {
 		return ""
 	}
 
-	// Try each source in priority order.
 	imageURL := p.fromDirectImageRel(rels)
 
 	if imageURL == "" {
 		imageURL = p.fromWikidataRel(rels)
 	}
 
-	// Cache the result (even "" = no image).
 	p.cache.Set(cacheKey, []byte(imageURL), artistImageCacheTTL, artistMBID, "artist")
-
-	if imageURL != "" {
-		p.logger.Debug("artist image resolved",
-			"mbid", artistMBID,
-			"url", imageURL,
-		)
-	}
 
 	return imageURL
 }
 
 // ---------------------------------------------------------------------------
-// MB url-rels fetching (shared by all sources)
+// MB url-rels
 // ---------------------------------------------------------------------------
 
 type mbRelation struct {
@@ -133,7 +172,6 @@ func (p *ArtistImageProvider) fetchMBRels(artistMBID string) []mbRelation {
 		artistMBID,
 	)
 
-	// Rate-limit the MB API call.
 	if err := p.mbLimiter.Wait(context.Background()); err != nil {
 		return nil
 	}
@@ -162,7 +200,7 @@ func (p *ArtistImageProvider) fetchMBRels(artistMBID string) []mbRelation {
 }
 
 // ---------------------------------------------------------------------------
-// Source 1: direct image relation (Commons wiki page link)
+// Source 1: direct image relation
 // ---------------------------------------------------------------------------
 
 func (p *ArtistImageProvider) fromDirectImageRel(rels []mbRelation) string {
@@ -173,7 +211,6 @@ func (p *ArtistImageProvider) fromDirectImageRel(rels []mbRelation) string {
 
 		resource := rel.URL.Resource
 
-		// "https://commons.wikimedia.org/wiki/File:Name.jpg"
 		if idx := strings.LastIndex(resource, "File:"); idx >= 0 {
 			filename := resource[idx+5:]
 
@@ -185,11 +222,10 @@ func (p *ArtistImageProvider) fromDirectImageRel(rels []mbRelation) string {
 }
 
 // ---------------------------------------------------------------------------
-// Source 2: Wikidata P18 property
+// Source 2: Wikidata P18
 // ---------------------------------------------------------------------------
 
 func (p *ArtistImageProvider) fromWikidataRel(rels []mbRelation) string {
-	// Find the wikidata Q-ID.
 	qid := ""
 
 	for _, rel := range rels {
@@ -205,14 +241,12 @@ func (p *ArtistImageProvider) fromWikidataRel(rels []mbRelation) string {
 		return ""
 	}
 
-	// Check cache for this Wikidata entity.
 	cacheKey := "wikidata-p18:" + qid
 
 	if data, ok := p.cache.Get(cacheKey); ok {
 		return string(data)
 	}
 
-	// Fetch P18 from Wikidata.
 	url := fmt.Sprintf(
 		"%s?action=wbgetclaims&entity=%s&property=P18&format=json",
 		wikidataAPIBase, qid,
@@ -248,11 +282,76 @@ func (p *ArtistImageProvider) fromWikidataRel(rels []mbRelation) string {
 }
 
 // ---------------------------------------------------------------------------
+// Disk cache
+// ---------------------------------------------------------------------------
+
+func (p *ArtistImageProvider) diskCachePath(mbid string) string {
+	return filepath.Join(p.imageDir, mbid+".jpg")
+}
+
+func (p *ArtistImageProvider) readDiskCache(mbid string) string {
+	data, err := os.ReadFile(p.diskCachePath(mbid))
+	if err != nil {
+		return ""
+	}
+
+	if len(data) == 0 {
+		return "" // miss marker
+	}
+
+	return toDataURL(data, mbid)
+}
+
+func (p *ArtistImageProvider) isDiskCacheMiss(mbid string) bool {
+	info, err := os.Stat(p.diskCachePath(mbid))
+
+	return err == nil && info.Size() == 0
+}
+
+func (p *ArtistImageProvider) writeDiskCache(mbid string, data []byte) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if data == nil {
+		data = []byte{} // miss marker
+	}
+
+	_ = os.WriteFile(p.diskCachePath(mbid), data, 0o644)
+}
+
+// ---------------------------------------------------------------------------
+// Image fetching
+// ---------------------------------------------------------------------------
+
+func (p *ArtistImageProvider) fetchImageBytes(imageURL string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), artistImageTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, imageURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("User-Agent", lbUserAgent)
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("%w: HTTP %d", ErrArtistImage, resp.StatusCode)
+	}
+
+	return io.ReadAll(io.LimitReader(resp.Body, artistImageMaxBytes))
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-// wikimediaThumbURL constructs a Wikimedia Commons thumbnail URL
-// from a filename using the MD5 directory bucketing scheme.
 func wikimediaThumbURL(filename string) string {
 	if filename == "" {
 		return ""
@@ -292,4 +391,13 @@ func (p *ArtistImageProvider) fetchURL(url string) ([]byte, error) {
 	}
 
 	return io.ReadAll(resp.Body)
+}
+
+func toDataURL(data []byte, _ string) string {
+	mime := "image/jpeg"
+	if len(data) > 1 && data[0] == 0x89 && data[1] == 0x50 {
+		mime = "image/png"
+	}
+
+	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data)
 }

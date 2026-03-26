@@ -38,7 +38,9 @@ func NewExploreService(logger *slog.Logger, db *database.DB) *Service {
 	lb := NewListenBrainzClient(limiter, cache, logger.WithGroup("listenbrainz"))
 	index := NewSearchIndex(db, lb, logger.WithGroup("search-index"))
 	artProxy := NewCoverArtProxy(db, limiter)
-	artistImg := NewArtistImageProvider(cache, NewRateLimiter(), logger.WithGroup("artist-image"))
+	artistImg := NewArtistImageProvider(
+		db, cache, NewRateLimiter(), logger.WithGroup("artist-image"),
+	)
 
 	logger.Info("explore service created")
 
@@ -188,12 +190,12 @@ func (e *Service) GetThumbnails(requests []ThumbnailRequest) map[string]string {
 	return result
 }
 
-// GetArtistImageURL returns a Wikimedia Commons thumbnail URL for
-// the given artist MBID.  Resolved via MB url-rels → Wikidata P18
-// → Commons thumb URL.  Cached for 30 days.  Returns "" if no
-// image is available.
+// GetArtistImageURL returns a base64 data URL for the artist's
+// photo.  Cached on disk — first call resolves via MB/Wikidata and
+// fetches from Wikimedia Commons, subsequent calls are instant.
+// Returns "" if no image is available.
 func (e *Service) GetArtistImageURL(artistMBID string) string {
-	return e.artistImg.GetArtistImageURL(artistMBID)
+	return e.artistImg.GetArtistImage(artistMBID)
 }
 
 // Search concurrently queries MusicBrainz for artists, release
