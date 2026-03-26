@@ -24,6 +24,7 @@ type Service struct {
 	index     *SearchIndex
 	artProxy  *CoverArtProxy
 	artistImg *ArtistImageProvider
+	libMBID   *LibraryMBIDIndex
 	logger    *slog.Logger
 	ctx       context.Context
 }
@@ -41,6 +42,7 @@ func NewExploreService(logger *slog.Logger, db *database.DB) *Service {
 		db, cache, NewRateLimiter(), logger.WithGroup("artist-image"),
 	)
 	index := NewSearchIndex(db, lb, artistImg, logger.WithGroup("search-index"))
+	libMBID := NewLibraryMBIDIndex(db)
 
 	logger.Info("explore service created")
 
@@ -51,6 +53,7 @@ func NewExploreService(logger *slog.Logger, db *database.DB) *Service {
 		index:     index,
 		artProxy:  artProxy,
 		artistImg: artistImg,
+		libMBID:   libMBID,
 		logger:    logger,
 		ctx:       context.Background(),
 	}
@@ -196,6 +199,19 @@ func (e *Service) GetThumbnails(requests []ThumbnailRequest) map[string]string {
 // Returns "" if no image is available.
 func (e *Service) GetArtistImageURL(artistMBID string) string {
 	return e.artistImg.GetArtistImage(artistMBID)
+}
+
+// CheckLibraryMBIDs returns which of the given MBIDs exist in the
+// local music library.  Returns a map of MBID → entity type
+// ("artist", "release_group", "recording").
+func (e *Service) CheckLibraryMBIDs(mbids []string) map[string]string {
+	return e.libMBID.CheckMBIDs(mbids)
+}
+
+// GetArtistMBID returns the MusicBrainz ID for a local library
+// artist by name, or "" if not found or no MBID tagged.
+func (e *Service) GetArtistMBID(artistName string) string {
+	return e.libMBID.GetArtistMBID(artistName)
 }
 
 // Search concurrently queries MusicBrainz for artists, release

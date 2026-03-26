@@ -683,8 +683,11 @@ func (si *SearchIndex) buildTier3Library(
 		}
 	}
 
-	// Read local library artist names.
-	libRows, err := si.db.QueryContext("SELECT DISTINCT name FROM artists")
+	// Read local library artists — prefer direct MBIDs from tags,
+	// fall back to name matching against the sitewide/index map.
+	libRows, err := si.db.QueryContext(
+		"SELECT DISTINCT name, mbid FROM artists",
+	)
 	if err != nil {
 		si.logger.Warn("search index: library artists query failed", "error", err)
 
@@ -693,18 +696,35 @@ func (si *SearchIndex) buildTier3Library(
 
 	defer func() { _ = libRows.Close() }()
 
-	// Collect MBIDs for matched library artists.
 	var matched []lbSitewideArtist
 
 	var resolvedMBIDs []string
 
 	for libRows.Next() {
 		var name string
-		if err := libRows.Scan(&name); err != nil {
+
+		var mbidPtr *string
+
+		if err := libRows.Scan(&name, &mbidPtr); err != nil {
 			continue
 		}
 
-		// Normalize: strip "feat." suffixes.
+		// Direct MBID from tags — most reliable.
+		if mbidPtr != nil && *mbidPtr != "" {
+			mbid := *mbidPtr
+			resolvedMBIDs = append(resolvedMBIDs, mbid)
+
+			if !indexed[mbid] {
+				matched = append(matched, lbSitewideArtist{
+					ArtistMBID: mbid,
+					ArtistName: name,
+				})
+			}
+
+			continue
+		}
+
+		// Fall back to name matching.
 		normalized := strings.ToLower(name)
 		if idx := strings.Index(normalized, " feat."); idx >= 0 {
 			normalized = normalized[:idx]
@@ -719,7 +739,6 @@ func (si *SearchIndex) buildTier3Library(
 		if a, ok := nameMap[normalized]; ok {
 			resolvedMBIDs = append(resolvedMBIDs, a.ArtistMBID)
 
-			// Only index if not already in the index from Tier 2.
 			if !indexed[a.ArtistMBID] {
 				matched = append(matched, a)
 			}

@@ -196,6 +196,23 @@ export namespace explore {
 		    return a;
 		}
 	}
+	
+	export class ThumbnailRequest {
+	    mbid: string;
+	    albumName: string;
+	    artistName: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ThumbnailRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.mbid = source["mbid"];
+	        this.albumName = source["albumName"];
+	        this.artistName = source["artistName"];
+	    }
+	}
 
 }
 

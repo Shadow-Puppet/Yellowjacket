@@ -1,7 +1,7 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state, query as litQuery } from 'lit/decorators.js';
 import { designTokens } from '../../styles/tokens.css';
-import { Search, GetThumbnails, GetArtistImageURL } from '@go/explore/Service';
+import { Search, GetThumbnails, GetArtistImageURL, CheckLibraryMBIDs } from '@go/explore/Service';
 import type { ThumbnailRequest } from '@go/explore/Service';
 import type {
     MBSearchResult,
@@ -77,6 +77,7 @@ export class ExploreView extends LitElement {
     private debounceTimer: ReturnType<typeof setTimeout> | null = null;
     private thumbnailCache = new Map<string, string>();
     private artistImageCache = new Map<string, string>();
+    private libraryMBIDs = new Set<string>();
 
     @litQuery('input') private inputEl!: HTMLInputElement;
 
@@ -432,6 +433,16 @@ export class ExploreView extends LitElement {
                 white-space: nowrap;
             }
 
+            .library-badge {
+                background: var(--yj-accent, #1db954);
+                color: #000;
+                padding: 1px 6px;
+                border-radius: 3px;
+                font-size: 10px;
+                font-weight: 600;
+                white-space: nowrap;
+            }
+
             /* ── Track list ── */
             .track-list {
                 display: flex;
@@ -577,6 +588,7 @@ export class ExploreView extends LitElement {
             this.results = result;
             this.loadThumbnails();
             this.loadArtistImages();
+            this.checkLibrary();
 
             const elapsed = (performance.now() - startTime).toFixed(0);
             console.log(
@@ -685,6 +697,39 @@ export class ExploreView extends LitElement {
             } catch {
                 // No image — leave empty string.
             }
+        }
+    }
+
+    /**
+     * Check which result MBIDs exist in the local library.
+     */
+    private async checkLibrary() {
+        if (!this.results) return;
+
+        const mbids: string[] = [];
+
+        for (const a of this.results.artists ?? []) {
+            if (a.mbid) mbids.push(a.mbid);
+        }
+
+        for (const rg of this.results.releaseGroups ?? []) {
+            if (rg.mbid) mbids.push(rg.mbid);
+        }
+
+        if (mbids.length === 0) return;
+
+        try {
+            const found = await CheckLibraryMBIDs(mbids);
+
+            if (found && Object.keys(found).length > 0) {
+                for (const mbid of Object.keys(found)) {
+                    this.libraryMBIDs.add(mbid);
+                }
+
+                this.requestUpdate();
+            }
+        } catch {
+            // Library check is non-critical.
         }
     }
 
@@ -966,6 +1011,9 @@ export class ExploreView extends LitElement {
                                           ${a.country}
                                       </div>`
                                     : nothing}
+                                ${this.libraryMBIDs.has(a.mbid)
+                                    ? html`<div class="library-badge">In Library</div>`
+                                    : nothing}
                             </div>
                         `;
                     })}
@@ -1016,6 +1064,9 @@ export class ExploreView extends LitElement {
                                 </div>
                                 <div class="album-artist">${rg.artistCredit}</div>
                                 <div class="album-meta">
+                                    ${this.libraryMBIDs.has(rg.mbid)
+                                        ? html`<span class="library-badge">In Library</span>`
+                                        : nothing}
                                     ${rg.primaryType
                                         ? html`<span class="type-badge"
                                               >${rg.primaryType}</span

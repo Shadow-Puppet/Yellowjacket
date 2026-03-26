@@ -35,3 +35,6 @@ export function SimilarArtists(arg1:string):Promise<Array<explore.LBSimilarArtis
 
 export function TopRecordingsForArtist(arg1:string):Promise<Array<explore.LBTopRecording>>;
 
+export function CheckLibraryMBIDs(arg1:string[]):Promise<Record<string, string>>;
+
+export function GetArtistMBID(arg1:string):Promise<string>;

@@ -49,6 +49,15 @@ type CoverArt struct {
 	MimeType   string
 }
 
+type ExploreCache struct {
+	UrlKey     string
+	Response   string
+	Mbid       sql.NullString
+	EntityType sql.NullString
+	ExpiresAt  time.Time
+	CreatedAt  time.Time
+}
+
 type FileType struct {
 	ID        int64
 	Extension string

@@ -65,3 +65,11 @@ export function SimilarArtists(arg1) {
 export function TopRecordingsForArtist(arg1) {
   return window['go']['explore']['Service']['TopRecordingsForArtist'](arg1);
 }
+
+export function CheckLibraryMBIDs(arg1) {
+  return window['go']['explore']['Service']['CheckLibraryMBIDs'](arg1);
+}
+
+export function GetArtistMBID(arg1) {
+  return window['go']['explore']['Service']['GetArtistMBID'](arg1);
+}
