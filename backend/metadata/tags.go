@@ -125,18 +125,37 @@ var mbidTagKeys = map[string][]string{
 }
 
 // extractMBIDs populates the MBID fields of meta from the raw tag
-// map.  Handles varying key names across ID3v2, Vorbis, and MP4.
+// map.  Handles both Vorbis comments (plain string values with
+// lowercase keys) and ID3v2 TXXX frames (*tag.Comm values with
+// TXXX_N keys and the tag name in the Description field).
 func extractMBIDs(raw map[string]interface{}, meta *TrackMetadata) {
 	if len(raw) == 0 {
 		return
 	}
 
-	// Build a lowercased key → value map for case-insensitive lookup.
+	// Build a lowercased description → value map that works for
+	// both formats:
+	//   Vorbis: key="musicbrainz_artistid", value="uuid" (string)
+	//   ID3v2:  key="TXXX_13", value=*tag.Comm{Description:"MusicBrainz Artist Id", Text:"uuid"}
 	normalized := make(map[string]string, len(raw))
 
 	for k, v := range raw {
-		if s, ok := v.(string); ok {
-			normalized[strings.ToLower(k)] = s
+		switch val := v.(type) {
+		case string:
+			// Vorbis comments — key is the tag name.
+			normalized[strings.ToLower(k)] = val
+
+		case *tag.Comm:
+			// ID3v2 TXXX frames — Description is the tag name.
+			if val != nil && val.Description != "" {
+				normalized[strings.ToLower(val.Description)] = strings.TrimSpace(val.Text)
+			}
+
+		case *tag.UFID:
+			// ID3v2 UFID frame — MusicBrainz recording ID.
+			if val != nil && val.Provider == "http://musicbrainz.org" {
+				meta.RecordingMBID = strings.TrimSpace(string(val.Identifier))
+			}
 		}
 	}
 
