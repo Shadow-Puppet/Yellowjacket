@@ -370,6 +370,16 @@ func runMigrations(
 		}
 	}
 
+	// Migration 13: add MusicBrainz ID columns to artists,
+	// release_groups, and recordings for library↔explore linking.
+	if version < 13 { //nolint:mnd
+		if err := migration13MBIDColumns(
+			ctx, db, logger,
+		); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -1526,6 +1536,62 @@ func migration12ExploreSearchIndex(
 	}
 
 	logger.Info("migration 12 complete")
+
+	return nil
+}
+
+// migration13MBIDColumns adds MusicBrainz ID columns to artists,
+// release_groups, and recordings for linking local library entities
+// to MusicBrainz/ListenBrainz explore data.
+func migration13MBIDColumns(
+	ctx context.Context,
+	db *sql.DB,
+	logger *slog.Logger,
+) error {
+	logger.Info("applying migration 13: MusicBrainz ID columns")
+
+	alterStmts := []struct {
+		table  string
+		column string
+	}{
+		{"artists", "mbid"},
+		{"release_groups", "mbid"},
+		{"recordings", "mbid"},
+	}
+
+	for _, s := range alterStmts {
+		stmt := fmt.Sprintf(
+			"ALTER TABLE %s ADD COLUMN %s TEXT", s.table, s.column,
+		)
+
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			// Column may already exist from a partial migration.
+			if !strings.Contains(err.Error(), "duplicate column") {
+				return fmt.Errorf("migration 13: alter %s: %w", s.table, err)
+			}
+		}
+	}
+
+	// Partial indexes for MBID lookups (only index non-NULL rows).
+	indexes := []string{
+		"CREATE INDEX IF NOT EXISTS idx_artists_mbid ON artists(mbid) WHERE mbid IS NOT NULL",
+		"CREATE INDEX IF NOT EXISTS idx_release_groups_mbid ON release_groups(mbid) WHERE mbid IS NOT NULL",
+		"CREATE INDEX IF NOT EXISTS idx_recordings_mbid ON recordings(mbid) WHERE mbid IS NOT NULL",
+	}
+
+	for _, stmt := range indexes {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("migration 13: create index: %w", err)
+		}
+	}
+
+	if _, err := db.ExecContext(
+		ctx, "PRAGMA user_version = 13",
+	); err != nil {
+		return fmt.Errorf("could not set user_version to 13: %w", err)
+	}
+
+	logger.Info("migration 13 complete")
 
 	return nil
 }
