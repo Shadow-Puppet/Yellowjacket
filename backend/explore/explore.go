@@ -63,7 +63,19 @@ func NewExploreService(logger *slog.Logger, db *database.DB) *Service {
 // OnStartup after the Wails runtime is initialised.
 func (e *Service) SetContext(ctx context.Context) {
 	e.ctx = ctx
-	e.index.StartBuild(ctx)
+}
+
+// StartIndexBuild kicks off the background search index build.
+// Call this after the library scan completes so the indexer doesn't
+// starve the scan for DB access.
+func (e *Service) StartIndexBuild() {
+	e.index.StartBuild(e.ctx)
+}
+
+// StopIndexBuild cancels the background search index build.
+// Call before a full rescan to free the DB for the scan.
+func (e *Service) StopIndexBuild() {
+	e.index.StopBuild()
 }
 
 // ---------------------------------------------------------------------------

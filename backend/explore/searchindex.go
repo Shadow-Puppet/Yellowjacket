@@ -128,30 +128,57 @@ func NewSearchIndex(
 		lb:        lb,
 		artistImg: artistImg,
 		logger:    logger,
-		done:      make(chan struct{}),
 	}
 }
 
 // StartBuild launches the background index build goroutine.
 // Returns immediately.
 func (si *SearchIndex) StartBuild(ctx context.Context) {
+	si.mu.Lock()
+	// Don't start if already running.
+	if si.cancel != nil {
+		si.mu.Unlock()
+
+		return
+	}
+
+	si.done = make(chan struct{})
+	si.mu.Unlock()
+
 	buildCtx, cancel := context.WithCancel(ctx)
+
+	si.mu.Lock()
 	si.cancel = cancel
+	si.mu.Unlock()
 
 	go func() {
-		defer close(si.done)
+		defer func() {
+			si.mu.Lock()
+			si.cancel = nil
+			si.mu.Unlock()
+
+			close(si.done)
+		}()
 
 		si.build(buildCtx)
 	}()
 }
 
 // StopBuild cancels an in-flight build and waits for it to finish.
+// Safe to call even if no build is running.
 func (si *SearchIndex) StopBuild() {
-	if si.cancel != nil {
-		si.cancel()
+	si.mu.RLock()
+	cancel := si.cancel
+	done := si.done
+	si.mu.RUnlock()
+
+	if cancel != nil {
+		cancel()
 	}
 
-	<-si.done
+	if done != nil {
+		<-done
+	}
 }
 
 // IsReady returns true once the index has been built at least once.

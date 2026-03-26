@@ -198,8 +198,17 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 	// orchestrate queue clearing and playlist restoration
 	// without depending on those packages directly.
 	yj.library.SetRescanHooks(library.RescanHooks{
-		PreClear: yj.queue.Clear,
-		PostScan: yj.playlist.RestoreAllPlaylists,
+		PreClear: func() {
+			yj.queue.Clear()
+			// Stop the search index build so it doesn't fight
+			// with the rescan for DB access.
+			yj.explore.StopIndexBuild()
+		},
+		PostScan: func() {
+			yj.playlist.RestoreAllPlaylists()
+			// Restart the index build now that the scan is done.
+			yj.explore.StartIndexBuild()
+		},
 	})
 
 	// Wire scan hooks so the playlist service can resolve
@@ -319,5 +328,9 @@ func (yj *YellowJacketApp) OnDomReady(ctx context.Context) {
 		if err := yj.library.SoftScanAllLibraries(); err != nil {
 			yj.logger.Error("soft scan failed", "err", err)
 		}
+
+		// Start the explore search index build AFTER the library
+		// scan completes so they don't fight for DB access.
+		yj.explore.StartIndexBuild()
 	}()
 }
