@@ -973,7 +973,7 @@ func (l *Library) saveAudioFile(
 
 	// Process metadata and create related records.
 	recordingID, err := l.processMetadata(
-		q, cache, metrics, result, thumbChan,
+		q, tx, cache, metrics, result, thumbChan,
 	)
 	if err != nil {
 		return fmt.Errorf("could not process metadata: %w", err)
@@ -1067,7 +1067,7 @@ func (l *Library) updateAudioFileMetadata(
 
 	// Process metadata and create related records.
 	recordingID, err := l.processMetadata(
-		q, cache, metrics, result, thumbChan,
+		q, tx, cache, metrics, result, thumbChan,
 	)
 	if err != nil {
 		return fmt.Errorf("could not process metadata: %w", err)
@@ -1148,6 +1148,7 @@ func (l *Library) updateAudioFileMetadata(
 // asynchronously.
 func (l *Library) processMetadata(
 	q *sqlcgen.Queries,
+	tx *sql.Tx,
 	cache *entityCache,
 	metrics *ScanMetrics,
 	result importResult,
@@ -1236,9 +1237,9 @@ func (l *Library) processMetadata(
 
 	// 7. Update MusicBrainz IDs (if present in tags).
 	if releaseGroupID.Valid {
-		l.updateMBIDs(cache, tags, artistName, releaseGroupID.Int64, recording.ID)
+		l.updateMBIDs(tx, cache, tags, artistName, releaseGroupID.Int64, recording.ID)
 	} else {
-		l.updateMBIDs(cache, tags, artistName, 0, recording.ID)
+		l.updateMBIDs(tx, cache, tags, artistName, 0, recording.ID)
 	}
 
 	return recording.ID, nil
@@ -1249,6 +1250,7 @@ func (l *Library) processMetadata(
 // queries predate the mbid columns.  Skips silently if tags have
 // no MBIDs.
 func (l *Library) updateMBIDs(
+	tx *sql.Tx,
 	cache *entityCache,
 	tags *metadata.TrackMetadata,
 	artistName string,
@@ -1263,7 +1265,7 @@ func (l *Library) updateMBIDs(
 
 	if artistMBID != "" {
 		if artist, ok := cache.artists[artistName]; ok {
-			_, _ = l.db.ExecContext(
+			_, _ = tx.ExecContext(l.ctx,
 				"UPDATE artists SET mbid = ? WHERE id = ? AND (mbid IS NULL OR mbid = '')",
 				artistMBID, artist.ID,
 			)
@@ -1272,7 +1274,7 @@ func (l *Library) updateMBIDs(
 
 	// Release group MBID.
 	if tags.ReleaseGroupMBID != "" && releaseGroupID > 0 {
-		_, _ = l.db.ExecContext(
+		_, _ = tx.ExecContext(l.ctx,
 			"UPDATE release_groups SET mbid = ? WHERE id = ? AND (mbid IS NULL OR mbid = '')",
 			tags.ReleaseGroupMBID, releaseGroupID,
 		)
@@ -1280,7 +1282,7 @@ func (l *Library) updateMBIDs(
 
 	// Recording MBID.
 	if tags.RecordingMBID != "" && recordingID > 0 {
-		_, _ = l.db.ExecContext(
+		_, _ = tx.ExecContext(l.ctx,
 			"UPDATE recordings SET mbid = ? WHERE id = ? AND (mbid IS NULL OR mbid = '')",
 			tags.RecordingMBID, recordingID,
 		)
