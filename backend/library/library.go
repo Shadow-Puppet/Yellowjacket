@@ -1234,7 +1234,57 @@ func (l *Library) processMetadata(
 		}
 	}
 
+	// 7. Update MusicBrainz IDs (if present in tags).
+	if releaseGroupID.Valid {
+		l.updateMBIDs(cache, tags, artistName, releaseGroupID.Int64, recording.ID)
+	} else {
+		l.updateMBIDs(cache, tags, artistName, 0, recording.ID)
+	}
+
 	return recording.ID, nil
+}
+
+// updateMBIDs writes MusicBrainz IDs from audio file tags to the
+// corresponding database entities.  Uses raw SQL since the sqlc
+// queries predate the mbid columns.  Skips silently if tags have
+// no MBIDs.
+func (l *Library) updateMBIDs(
+	cache *entityCache,
+	tags *metadata.TrackMetadata,
+	artistName string,
+	releaseGroupID int64,
+	recordingID int64,
+) {
+	// Artist MBID — prefer album artist, fall back to track artist.
+	artistMBID := tags.AlbumArtistMBID
+	if artistMBID == "" {
+		artistMBID = tags.ArtistMBID
+	}
+
+	if artistMBID != "" {
+		if artist, ok := cache.artists[artistName]; ok {
+			_, _ = l.db.ExecContext(
+				"UPDATE artists SET mbid = ? WHERE id = ? AND (mbid IS NULL OR mbid = '')",
+				artistMBID, artist.ID,
+			)
+		}
+	}
+
+	// Release group MBID.
+	if tags.ReleaseGroupMBID != "" && releaseGroupID > 0 {
+		_, _ = l.db.ExecContext(
+			"UPDATE release_groups SET mbid = ? WHERE id = ? AND (mbid IS NULL OR mbid = '')",
+			tags.ReleaseGroupMBID, releaseGroupID,
+		)
+	}
+
+	// Recording MBID.
+	if tags.RecordingMBID != "" && recordingID > 0 {
+		_, _ = l.db.ExecContext(
+			"UPDATE recordings SET mbid = ? WHERE id = ? AND (mbid IS NULL OR mbid = '')",
+			tags.RecordingMBID, recordingID,
+		)
+	}
 }
 
 // processCoverArt saves cover art to disk and upserts the DB record,

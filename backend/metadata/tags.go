@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/dhowden/tag"
 )
@@ -29,6 +30,13 @@ type TrackMetadata struct {
 	// Extended
 	Lyrics  string
 	Comment string
+
+	// MusicBrainz IDs (from tags, may be empty)
+	ArtistMBID       string
+	AlbumArtistMBID  string
+	ReleaseGroupMBID string
+	ReleaseMBID      string
+	RecordingMBID    string
 
 	// Cover art (if present)
 	Picture *PictureData
@@ -90,6 +98,9 @@ func ExtractTagsFromReader(r io.ReadSeeker) (*TrackMetadata, error) {
 		FileFormat:  string(m.FileType()),
 	}
 
+	// Extract MusicBrainz IDs from raw tags.
+	extractMBIDs(m.Raw(), meta)
+
 	// Extract picture if present
 	if pic := m.Picture(); pic != nil {
 		meta.Picture = &PictureData{
@@ -100,4 +111,53 @@ func ExtractTagsFromReader(r io.ReadSeeker) (*TrackMetadata, error) {
 	}
 
 	return meta, nil
+}
+
+// mbidTagKeys maps TrackMetadata field names to the possible raw
+// tag keys across formats (ID3v2 TXXX, Vorbis, MP4).  All keys
+// are lowercased for case-insensitive matching.
+var mbidTagKeys = map[string][]string{
+	"ArtistMBID":       {"musicbrainz_artistid", "musicbrainz artist id"},
+	"AlbumArtistMBID":  {"musicbrainz_albumartistid", "musicbrainz album artist id"},
+	"ReleaseGroupMBID": {"musicbrainz_releasegroupid", "musicbrainz release group id"},
+	"ReleaseMBID":      {"musicbrainz_albumid", "musicbrainz album id"},
+	"RecordingMBID":    {"musicbrainz_trackid", "musicbrainz recording id"},
+}
+
+// extractMBIDs populates the MBID fields of meta from the raw tag
+// map.  Handles varying key names across ID3v2, Vorbis, and MP4.
+func extractMBIDs(raw map[string]interface{}, meta *TrackMetadata) {
+	if len(raw) == 0 {
+		return
+	}
+
+	// Build a lowercased key → value map for case-insensitive lookup.
+	normalized := make(map[string]string, len(raw))
+
+	for k, v := range raw {
+		if s, ok := v.(string); ok {
+			normalized[strings.ToLower(k)] = s
+		}
+	}
+
+	for field, keys := range mbidTagKeys {
+		for _, key := range keys {
+			if val, ok := normalized[key]; ok && val != "" {
+				switch field {
+				case "ArtistMBID":
+					meta.ArtistMBID = val
+				case "AlbumArtistMBID":
+					meta.AlbumArtistMBID = val
+				case "ReleaseGroupMBID":
+					meta.ReleaseGroupMBID = val
+				case "ReleaseMBID":
+					meta.ReleaseMBID = val
+				case "RecordingMBID":
+					meta.RecordingMBID = val
+				}
+
+				break
+			}
+		}
+	}
 }
