@@ -80,6 +80,11 @@ func (l *Library) FullRescan() (*ScanMetrics, error) {
 		}
 	}
 
+	// Drain the queue in a goroutine so any queued libraries
+	// scan sequentially.  scanInternal was called directly (not
+	// via startScan), so drainQueue hasn't been invoked yet.
+	go l.drainQueue()
+
 	if metrics != nil {
 		metrics.ClearQueue = clearQueueDur
 		metrics.ClearDatabase = clearDBDur
