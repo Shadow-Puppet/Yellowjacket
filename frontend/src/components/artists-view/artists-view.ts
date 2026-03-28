@@ -16,6 +16,7 @@ import {
     GetAlbumsByArtistByLibrary,
     GetAlbumTracksByLibrary,
 } from '@go/library/Library';
+import { GetArtistImageURL, GetArtistMBID } from '@go/explore/Service';
 import { library } from '@go/models';
 import { LibraryController } from '@store/controllers/library-controller';
 import { SearchController } from '@store/controllers/search-controller';
@@ -176,6 +177,8 @@ export class ArtistsView
     private cachedGridEntries: ArtistEntry[] = [];
     private prevFilterArtists: library.Artist[] = [];
     private prevFilterTerm = '';
+    private artistImageCache = new Map<string, string>();
+    private artistImageLoading = new Set<string>();
 
     /**
      * Recompute the filtered-artists and grid-entries
@@ -292,6 +295,13 @@ export class ArtistsView
                 align-items: center;
                 justify-content: center;
                 flex-shrink: 0;
+            }
+
+            .avatar-image {
+                width: 100%;
+                height: 100%;
+                object-fit: cover;
+                border-radius: 50%;
             }
 
             .avatar-placeholder {
@@ -975,6 +985,60 @@ export class ArtistsView
      * Helpers
      * ================================================================ */
 
+    private renderArtistAvatar(name: string) {
+        const imageURL = this.artistImageCache.get(name);
+
+        // Kick off async image load if not cached.
+        if (!this.artistImageCache.has(name)) {
+            this.loadArtistImage(name);
+        }
+
+        if (imageURL) {
+            return html`<img
+                class="avatar-image"
+                src="${imageURL}"
+                alt="${name}"
+            />`;
+        }
+
+        return html`<span class="avatar-placeholder">
+            ${this.getArtistInitial(name)}
+        </span>`;
+    }
+
+    /**
+     * Load artist image for a single artist. Resolves MBID by name,
+     * then fetches the cached image. Sequential to avoid rate limit.
+     */
+    private loadArtistImage(name: string) {
+        if (this.artistImageCache.has(name) || this.artistImageLoading.has(name)) {
+            return;
+        }
+
+        this.artistImageLoading.add(name);
+
+        GetArtistMBID(name)
+            .then((mbid) => {
+                if (!mbid) return Promise.resolve('');
+
+                return GetArtistImageURL(mbid);
+            })
+            .then((url) => {
+                if (url) {
+                    this.artistImageCache.set(name, url);
+                    this.requestUpdate();
+                } else {
+                    this.artistImageCache.set(name, '');
+                }
+            })
+            .catch(() => {
+                this.artistImageCache.set(name, '');
+            })
+            .finally(() => {
+                this.artistImageLoading.delete(name);
+            });
+    }
+
     private getArtistInitial(
         name: string,
     ): string {
@@ -1047,11 +1111,7 @@ export class ArtistsView
                 }}
             >
                 <div class="avatar-container">
-                    <span class="avatar-placeholder">
-                        ${this.getArtistInitial(
-                            artist.Name,
-                        )}
-                    </span>
+                    ${this.renderArtistAvatar(artist.Name)}
                 </div>
                 <div
                     class="artist-name"
