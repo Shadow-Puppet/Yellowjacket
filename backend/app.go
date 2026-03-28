@@ -206,8 +206,10 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 		},
 		PostScan: func() {
 			yj.playlist.RestoreAllPlaylists()
-			// Restart the index build now that the scan is done.
-			yj.explore.StartIndexBuild()
+			// DON'T restart the index build here — queued
+			// library scans may still be running.  The index
+			// build starts after ALL scans complete (via the
+			// scan hooks below).
 		},
 	})
 
@@ -215,6 +217,9 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 	// phantom tracks after each library scan completes.
 	yj.library.SetScanHooks(library.ScanHooks{
 		ResolvePhantoms: yj.playlist.ResolvePhantomTracksAfterScan,
+		OnAllScansComplete: func() {
+			yj.explore.StartIndexBuild()
+		},
 	})
 
 	// Wire removal hooks so the library can stop playback and
@@ -329,8 +334,11 @@ func (yj *YellowJacketApp) OnDomReady(ctx context.Context) {
 			yj.logger.Error("soft scan failed", "err", err)
 		}
 
-		// Start the explore search index build AFTER the library
-		// scan completes so they don't fight for DB access.
-		yj.explore.StartIndexBuild()
+		// If no scans were queued (library unchanged), start the
+		// index build directly.  If scans WERE queued, the
+		// OnAllScansComplete hook starts it after they finish.
+		if yj.library.GetScanQueueLength() == 0 && !yj.library.IsScanActive() {
+			yj.explore.StartIndexBuild()
+		}
 	}()
 }

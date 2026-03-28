@@ -79,6 +79,9 @@ type ScanHooks struct {
 	// ResolvePhantoms re-links phantom playlist tracks whose
 	// files now exist in the library after scanning.
 	ResolvePhantoms func()
+	// OnAllScansComplete runs after ALL queued scans finish
+	// (queue drained).
+	OnAllScansComplete func()
 }
 
 // Library manages scanning and querying the music collection.
