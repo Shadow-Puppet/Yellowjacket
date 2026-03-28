@@ -82,6 +82,7 @@ type SearchIndexResult struct {
 	ArtistMBID string `json:"artistMbid"`
 	Popularity int    `json:"popularity"`
 	ExtraJSON  string `json:"extraJson,omitempty"`
+	Aliases    string `json:"aliases,omitempty"`
 }
 
 // lbSitewideArtist is the response shape from the LB sitewide
@@ -253,7 +254,7 @@ func (si *SearchIndex) Search(query string, limit int) []SearchIndexResult {
 		FROM explore_index i
 		JOIN explore_index_fts f ON f.rowid = i.id
 		WHERE explore_index_fts MATCH ?
-		ORDER BY i.popularity DESC
+		ORDER BY bm25(explore_index_fts, 3.0, 1.0, 0.5) - (ln(i.popularity + 1) * 0.5)
 		LIMIT ?
 	`, ftsQuery, limit)
 	if err != nil {
@@ -1014,6 +1015,23 @@ func (si *SearchIndex) indexOneArtist(
 
 	wg.Wait()
 
+	// Extract aliases from the now-cached MB rels (populated by
+	// the image resolution above) and update the artist's index entry.
+	if si.artistImg != nil {
+		aliases := si.artistImg.GetAliases(artist.ArtistMBID)
+		if aliases != "" {
+			si.writeBatch([]SearchIndexResult{{
+				EntityType: "artist",
+				MBID:       artist.ArtistMBID,
+				Title:      artist.ArtistName,
+				ArtistName: artist.ArtistName,
+				ArtistMBID: artist.ArtistMBID,
+				Popularity: artist.ListenCount,
+				Aliases:    aliases,
+			}})
+		}
+	}
+
 	// Batch write discography results.
 	all := make([]SearchIndexResult, 0, len(rgs)+len(recs))
 	all = append(all, rgs...)
@@ -1216,9 +1234,9 @@ func (si *SearchIndex) writeBatch(entries []SearchIndexResult) {
 	for _, e := range entries {
 		if _, err := tx.Exec(`
 			INSERT OR REPLACE INTO explore_index
-				(entity_type, mbid, title, artist_name, artist_mbid, popularity, extra_json)
-			VALUES (?, ?, ?, ?, ?, ?, NULLIF(?, ''))
-		`, e.EntityType, e.MBID, e.Title, e.ArtistName, e.ArtistMBID, e.Popularity, e.ExtraJSON,
+				(entity_type, mbid, title, artist_name, artist_mbid, popularity, extra_json, aliases)
+			VALUES (?, ?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''))
+		`, e.EntityType, e.MBID, e.Title, e.ArtistName, e.ArtistMBID, e.Popularity, e.ExtraJSON, e.Aliases,
 		); err != nil {
 			si.logger.Warn("search index: insert error",
 				"mbid", e.MBID,

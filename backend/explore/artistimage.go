@@ -168,7 +168,7 @@ func (p *ArtistImageProvider) fetchMBRels(artistMBID string) []mbRelation {
 	}
 
 	url := fmt.Sprintf(
-		"https://musicbrainz.org/ws/2/artist/%s?fmt=json&inc=url-rels",
+		"https://musicbrainz.org/ws/2/artist/%s?fmt=json&inc=url-rels+aliases",
 		artistMBID,
 	)
 
@@ -366,6 +366,38 @@ func wikimediaThumbURL(filename string) string {
 	return fmt.Sprintf("%s/%s/%s/%s/%dpx-%s",
 		wikimediaThumbBase, h1, h2, filename, artistImageSize, filename,
 	)
+}
+
+// GetAliases returns the artist's aliases as a space-separated
+// string, extracted from the cached MB rels response.  Returns ""
+// if no aliases are cached.
+func (p *ArtistImageProvider) GetAliases(artistMBID string) string {
+	cacheKey := "mb:artist-rels:" + artistMBID
+
+	data, ok := p.cache.Get(cacheKey)
+	if !ok {
+		return ""
+	}
+
+	var envelope struct {
+		Aliases []struct {
+			Name string `json:"name"`
+		} `json:"aliases"`
+	}
+
+	if err := json.Unmarshal(data, &envelope); err != nil || len(envelope.Aliases) == 0 {
+		return ""
+	}
+
+	names := make([]string, 0, len(envelope.Aliases))
+
+	for _, a := range envelope.Aliases {
+		if a.Name != "" {
+			names = append(names, a.Name)
+		}
+	}
+
+	return strings.Join(names, " ")
 }
 
 func (p *ArtistImageProvider) fetchURL(url string) ([]byte, error) {

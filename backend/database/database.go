@@ -380,6 +380,16 @@ func runMigrations(
 		}
 	}
 
+	// Migration 14: add aliases column to explore_index and rebuild
+	// the FTS5 virtual table with 3 searchable columns.
+	if version < 14 { //nolint:mnd
+		if err := migration14ExploreAliases(
+			ctx, db, logger,
+		); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -1592,6 +1602,106 @@ func migration13MBIDColumns(
 	}
 
 	logger.Info("migration 13 complete")
+
+	return nil
+}
+
+// migration14ExploreAliases adds an aliases column to explore_index
+// and rebuilds the FTS5 virtual table with three searchable columns
+// (title, artist_name, aliases) for alias-aware search.
+func migration14ExploreAliases(
+	ctx context.Context,
+	db *sql.DB,
+	logger *slog.Logger,
+) error {
+	logger.Info("applying migration 14: explore index aliases + FTS5 rebuild")
+
+	// Add aliases column to content table.
+	if _, err := db.ExecContext(ctx,
+		"ALTER TABLE explore_index ADD COLUMN aliases TEXT DEFAULT ''",
+	); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column") {
+			return fmt.Errorf("migration 14: alter explore_index: %w", err)
+		}
+	}
+
+	// Drop old triggers.
+	for _, name := range []string{
+		"explore_index_ai", "explore_index_ad", "explore_index_au",
+	} {
+		if _, err := db.ExecContext(ctx,
+			"DROP TRIGGER IF EXISTS "+name,
+		); err != nil {
+			return fmt.Errorf("migration 14: drop trigger %s: %w", name, err)
+		}
+	}
+
+	// Drop and recreate FTS5 with 3 columns.
+	if _, err := db.ExecContext(ctx,
+		"DROP TABLE IF EXISTS explore_index_fts",
+	); err != nil {
+		return fmt.Errorf("migration 14: drop FTS5: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx, `
+		CREATE VIRTUAL TABLE explore_index_fts USING fts5(
+			title, artist_name, aliases,
+			content='explore_index',
+			content_rowid='id'
+		)
+	`); err != nil {
+		return fmt.Errorf("migration 14: create FTS5: %w", err)
+	}
+
+	// Recreate triggers with 3 columns.
+	if _, err := db.ExecContext(ctx, `
+		CREATE TRIGGER explore_index_ai AFTER INSERT ON explore_index BEGIN
+			INSERT INTO explore_index_fts(rowid, title, artist_name, aliases)
+			VALUES (new.id, new.title, new.artist_name, new.aliases);
+		END
+	`); err != nil {
+		return fmt.Errorf("migration 14: create insert trigger: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx, `
+		CREATE TRIGGER explore_index_ad AFTER DELETE ON explore_index BEGIN
+			INSERT INTO explore_index_fts(explore_index_fts, rowid, title, artist_name, aliases)
+			VALUES ('delete', old.id, old.title, old.artist_name, old.aliases);
+		END
+	`); err != nil {
+		return fmt.Errorf("migration 14: create delete trigger: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx, `
+		CREATE TRIGGER explore_index_au AFTER UPDATE ON explore_index BEGIN
+			INSERT INTO explore_index_fts(explore_index_fts, rowid, title, artist_name, aliases)
+			VALUES ('delete', old.id, old.title, old.artist_name, old.aliases);
+			INSERT INTO explore_index_fts(rowid, title, artist_name, aliases)
+			VALUES (new.id, new.title, new.artist_name, new.aliases);
+		END
+	`); err != nil {
+		return fmt.Errorf("migration 14: create update trigger: %w", err)
+	}
+
+	// Rebuild FTS5 index from existing content table rows.
+	if _, err := db.ExecContext(ctx,
+		"INSERT INTO explore_index_fts(explore_index_fts) VALUES ('rebuild')",
+	); err != nil {
+		return fmt.Errorf("migration 14: rebuild FTS5: %w", err)
+	}
+
+	if _, err := db.ExecContext(
+		ctx, "PRAGMA user_version = 14",
+	); err != nil {
+		return fmt.Errorf("could not set user_version to 14: %w", err)
+	}
+
+	// Clear the index build timestamp so the next build populates aliases.
+	_, _ = db.ExecContext(ctx,
+		"DELETE FROM explore_index_meta WHERE key IN ('tier1_built', 'discog_built')",
+	)
+
+	logger.Info("migration 14 complete")
 
 	return nil
 }
