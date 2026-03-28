@@ -161,3 +161,7 @@ export function SetScanHooks(arg1) {
 export function SoftScanAllLibraries() {
   return window['go']['library']['Library']['SoftScanAllLibraries']();
 }
+
+export function GetTrackMBIDs(arg1) {
+  return window['go']['library']['Library']['GetTrackMBIDs'](arg1);
+}

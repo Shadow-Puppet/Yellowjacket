@@ -20,24 +20,27 @@ var (
 
 // Track represents a playable audio file in the library.
 type Track struct {
-	TrackName   string
-	ArtistName  string
-	TrackLength string
-	FilePath    string
-	TrackNumber int64
-	DiscNumber  int64
-	Album       string
-	Genre       []string
-	Year        int64
-	Composer    string
-	FileType    string
-	SampleRate  int64
-	BitDepth    int64
-	Channels    int64
-	Bitrate     int64
-	FileSize    int64
-	PlayCount   int64
-	LastPlayed  string
+	TrackName        string
+	ArtistName       string
+	TrackLength      string
+	FilePath         string
+	TrackNumber      int64
+	DiscNumber       int64
+	Album            string
+	Genre            []string
+	Year             int64
+	Composer         string
+	FileType         string
+	SampleRate       int64
+	BitDepth         int64
+	Channels         int64
+	Bitrate          int64
+	FileSize         int64
+	PlayCount        int64
+	LastPlayed       string
+	RecordingMBID    string
+	ArtistMBID       string
+	ReleaseGroupMBID string
 }
 
 // genreDelimiter is the separator used by GROUP_CONCAT in the
@@ -94,6 +97,47 @@ func mapTrackRow(
 		PlayCount:   playCount,
 		LastPlayed:  lastPlayedStr,
 	}
+}
+
+// TrackMBIDs holds MusicBrainz identifiers for a track, resolved
+// from the recording, release group, and artist tables.
+type TrackMBIDs struct {
+	RecordingMBID    string `json:"recordingMbid"`
+	ReleaseGroupMBID string `json:"releaseGroupMbid"`
+	ArtistMBID       string `json:"artistMbid"`
+}
+
+// GetTrackMBIDs returns the MusicBrainz IDs for the track at the
+// given file path.  Returns empty strings for entities without MBIDs.
+func (l *Library) GetTrackMBIDs(filePath string) TrackMBIDs {
+	rows, err := l.db.QueryContext(`
+		SELECT
+			COALESCE(r.mbid, '') AS recording_mbid,
+			COALESCE(rg.mbid, '') AS release_group_mbid,
+			COALESCE(a.mbid, '') AS artist_mbid
+		FROM audio_files af
+		JOIN recordings r ON af.recording_id = r.id
+		JOIN artist_credit ac ON r.artist_credit_id = ac.id
+		JOIN artist_credit_artist aca ON aca.credit_id = ac.id
+		JOIN artists a ON a.id = aca.artist_id
+		LEFT JOIN release_group_recordings rgr ON r.id = rgr.recording_id
+		LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
+		WHERE af.file_path = ?
+		LIMIT 1
+	`, filePath)
+	if err != nil {
+		return TrackMBIDs{}
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	var result TrackMBIDs
+
+	if rows.Next() {
+		_ = rows.Scan(&result.RecordingMBID, &result.ReleaseGroupMBID, &result.ArtistMBID)
+	}
+
+	return result
 }
 
 // Artist represents an artist in the library.

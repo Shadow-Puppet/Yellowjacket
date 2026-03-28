@@ -83,3 +83,11 @@ export function SetRescanHooks(arg1:library.RescanHooks):Promise<void>;
 export function SetScanHooks(arg1:library.ScanHooks):Promise<void>;
 
 export function SoftScanAllLibraries():Promise<void>;
+
+export interface TrackMBIDs {
+  recordingMbid: string;
+  releaseGroupMbid: string;
+  artistMbid: string;
+}
+
+export function GetTrackMBIDs(arg1:string):Promise<TrackMBIDs>;
