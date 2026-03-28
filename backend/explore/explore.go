@@ -737,10 +737,18 @@ const (
 // is ready.
 func (e *Service) boostWithIndexPopularity(result *MBSearchResult) {
 	// Look up popularity for all artist MBIDs.
+	// Give a large bonus to library artists so they rank first.
 	artistPop := make(map[string]int, len(result.Artists))
 
 	for _, a := range result.Artists {
-		if pop := e.index.GetPopularity(a.MBID); pop > 0 {
+		pop := e.index.GetPopularity(a.MBID)
+
+		// Library artists get a massive popularity bonus.
+		if e.index.IsInLibrary(a.MBID) {
+			pop += 10_000_000 //nolint:mnd
+		}
+
+		if pop > 0 {
 			artistPop[a.MBID] = pop
 		}
 	}
@@ -751,7 +759,13 @@ func (e *Service) boostWithIndexPopularity(result *MBSearchResult) {
 	rgPop := make(map[string]int, len(result.ReleaseGroups))
 
 	for _, rg := range result.ReleaseGroups {
-		if pop := e.index.GetPopularity(rg.MBID); pop > 0 {
+		pop := e.index.GetPopularity(rg.MBID)
+
+		if e.index.IsInLibrary(rg.MBID) {
+			pop += 10_000_000 //nolint:mnd
+		}
+
+		if pop > 0 {
 			rgPop[rg.MBID] = pop
 		}
 	}

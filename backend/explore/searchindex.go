@@ -83,6 +83,8 @@ type SearchIndexResult struct {
 	Popularity int    `json:"popularity"`
 	ExtraJSON  string `json:"extraJson,omitempty"`
 	Aliases    string `json:"aliases,omitempty"`
+	InLibrary  bool   `json:"inLibrary"`
+	IsSimilar  bool   `json:"isSimilar"`
 }
 
 // lbSitewideArtist is the response shape from the LB sitewide
@@ -217,6 +219,26 @@ func (si *SearchIndex) GetPopularity(mbid string) int {
 	return 0
 }
 
+// IsInLibrary returns whether the given MBID is marked as in the
+// user's local library in the search index.
+func (si *SearchIndex) IsInLibrary(mbid string) bool {
+	if mbid == "" {
+		return false
+	}
+
+	rows, err := si.db.QueryContext(
+		"SELECT in_library FROM explore_index WHERE mbid = ? AND in_library = 1 LIMIT 1",
+		mbid,
+	)
+	if err != nil {
+		return false
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	return rows.Next()
+}
+
 // AddFromCache inserts entries from a cached discography browse
 // into the search index (Tier 5: organic growth).  Called when a
 // user views an artist page and the discography is fetched.
@@ -277,11 +299,15 @@ func (si *SearchIndex) Search(query string, limit int) []SearchIndexResult {
 
 	rows, err := si.db.QueryContext(`
 		SELECT i.entity_type, i.mbid, i.title, i.artist_name,
-		       i.artist_mbid, i.popularity, i.extra_json
+		       i.artist_mbid, i.popularity, i.extra_json,
+		       i.in_library, i.is_similar
 		FROM explore_index i
 		JOIN explore_index_fts f ON f.rowid = i.id
 		WHERE explore_index_fts MATCH ?
-		ORDER BY bm25(explore_index_fts, 3.0, 1.0, 0.5) - (ln(i.popularity + 1) * 1.5)
+		ORDER BY bm25(explore_index_fts, 3.0, 1.0, 0.5)
+		         - (ln(i.popularity + 1) * 1.5)
+		         - (i.in_library * 3.0)
+		         - (i.is_similar * 1.5)
 		LIMIT ?
 	`, ftsQuery, limit)
 	if err != nil {
@@ -306,6 +332,7 @@ func (si *SearchIndex) Search(query string, limit int) []SearchIndexResult {
 		if err := rows.Scan(
 			&r.EntityType, &r.MBID, &r.Title, &r.ArtistName,
 			&r.ArtistMBID, &r.Popularity, &extraJSON,
+			&r.InLibrary, &r.IsSimilar,
 		); err != nil {
 			si.logger.Warn("search index scan error", "error", err)
 
@@ -802,6 +829,9 @@ func (si *SearchIndex) buildTier3Library(
 
 	if len(matched) > 0 {
 		si.indexArtistDiscographies(ctx, lb, matched, "Tier 3")
+
+		// Mark all Tier 3 entries as in_library.
+		si.markInLibrary(matched)
 	}
 
 	si.logger.Info("search index: Tier 3 matched",
@@ -895,6 +925,9 @@ func (si *SearchIndex) buildTier4Similar(
 	)
 
 	si.indexArtistDiscographies(ctx, lb, newArtists, "Tier 4")
+
+	// Mark all Tier 4 entries as similar.
+	si.markSimilar(newArtists)
 }
 
 type lbSimilarArtistWire struct {
@@ -1259,11 +1292,23 @@ func (si *SearchIndex) writeBatch(entries []SearchIndexResult) {
 	}
 
 	for _, e := range entries {
+		inLib := 0
+		if e.InLibrary {
+			inLib = 1
+		}
+
+		isSim := 0
+		if e.IsSimilar {
+			isSim = 1
+		}
+
 		if _, err := tx.Exec(`
 			INSERT OR REPLACE INTO explore_index
-				(entity_type, mbid, title, artist_name, artist_mbid, popularity, extra_json, aliases)
-			VALUES (?, ?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''))
-		`, e.EntityType, e.MBID, e.Title, e.ArtistName, e.ArtistMBID, e.Popularity, e.ExtraJSON, e.Aliases,
+				(entity_type, mbid, title, artist_name, artist_mbid,
+				 popularity, extra_json, aliases, in_library, is_similar)
+			VALUES (?, ?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?)
+		`, e.EntityType, e.MBID, e.Title, e.ArtistName, e.ArtistMBID,
+			e.Popularity, e.ExtraJSON, e.Aliases, inLib, isSim,
 		); err != nil {
 			si.logger.Warn("search index: insert error",
 				"mbid", e.MBID,
@@ -1379,6 +1424,28 @@ func filterUnindexed(artists []lbSitewideArtist, indexed map[string]bool) []lbSi
 	}
 
 	return out
+}
+
+// markInLibrary sets in_library=1 for all index entries whose
+// artist_mbid matches one of the given artists.
+func (si *SearchIndex) markInLibrary(artists []lbSitewideArtist) {
+	for _, a := range artists {
+		_, _ = si.db.ExecContext(
+			"UPDATE explore_index SET in_library = 1 WHERE artist_mbid = ?",
+			a.ArtistMBID,
+		)
+	}
+}
+
+// markSimilar sets is_similar=1 for all index entries whose
+// artist_mbid matches one of the given artists.
+func (si *SearchIndex) markSimilar(artists []lbSitewideArtist) {
+	for _, a := range artists {
+		_, _ = si.db.ExecContext(
+			"UPDATE explore_index SET is_similar = 1 WHERE artist_mbid = ?",
+			a.ArtistMBID,
+		)
+	}
 }
 
 // InvalidateDiscographies clears the discography build timestamp

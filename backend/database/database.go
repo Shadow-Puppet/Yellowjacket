@@ -390,6 +390,16 @@ func runMigrations(
 		}
 	}
 
+	// Migration 15: add in_library and is_similar columns to
+	// explore_index for personalized search ranking.
+	if version < 15 { //nolint:mnd
+		if err := migration15PersonalizationColumns(
+			ctx, db, logger,
+		); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -1702,6 +1712,61 @@ func migration14ExploreAliases(
 	)
 
 	logger.Info("migration 14 complete")
+
+	return nil
+}
+
+// migration15PersonalizationColumns adds in_library and is_similar
+// columns to explore_index for personalized search ranking.
+func migration15PersonalizationColumns(
+	ctx context.Context,
+	db *sql.DB,
+	logger *slog.Logger,
+) error {
+	logger.Info("applying migration 15: personalization columns")
+
+	for _, col := range []string{"in_library", "is_similar"} {
+		stmt := fmt.Sprintf(
+			"ALTER TABLE explore_index ADD COLUMN %s INTEGER NOT NULL DEFAULT 0", col,
+		)
+
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			if !strings.Contains(err.Error(), "duplicate column") {
+				return fmt.Errorf("migration 15: alter explore_index: %w", err)
+			}
+		}
+	}
+
+	// Backfill in_library for artists already in the library.
+	if _, err := db.ExecContext(ctx, `
+		UPDATE explore_index SET in_library = 1
+		WHERE entity_type = 'artist'
+		AND mbid IN (SELECT mbid FROM artists WHERE mbid IS NOT NULL AND mbid != '')
+	`); err != nil {
+		logger.Warn("migration 15: backfill in_library artists", "error", err)
+	}
+
+	// Backfill in_library for release groups already in the library.
+	if _, err := db.ExecContext(ctx, `
+		UPDATE explore_index SET in_library = 1
+		WHERE entity_type = 'release_group'
+		AND mbid IN (SELECT mbid FROM release_groups WHERE mbid IS NOT NULL AND mbid != '')
+	`); err != nil {
+		logger.Warn("migration 15: backfill in_library release_groups", "error", err)
+	}
+
+	// Clear discog_built so the next index build populates these flags.
+	_, _ = db.ExecContext(ctx,
+		"DELETE FROM explore_index_meta WHERE key = 'discog_built'",
+	)
+
+	if _, err := db.ExecContext(
+		ctx, "PRAGMA user_version = 15",
+	); err != nil {
+		return fmt.Errorf("could not set user_version to 15: %w", err)
+	}
+
+	logger.Info("migration 15 complete")
 
 	return nil
 }
