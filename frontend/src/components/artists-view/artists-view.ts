@@ -16,7 +16,7 @@ import {
     GetAlbumsByArtistByLibrary,
     GetAlbumTracksByLibrary,
 } from '@go/library/Library';
-import { GetArtistImageURL, GetArtistMBID } from '@go/explore/Service';
+import { GetArtistImageURL, GetArtistMBID, GetArtistImages } from '@go/explore/Service';
 import { library } from '@go/models';
 import { LibraryController } from '@store/controllers/library-controller';
 import { SearchController } from '@store/controllers/search-controller';
@@ -439,6 +439,8 @@ export class ArtistsView
         ) {
             this.lastArtistsRef = cached;
             this.loadArtists();
+            this.imagesBatchLoaded = false;
+            void this.loadArtistImagesBatch();
         }
     }
 
@@ -454,6 +456,9 @@ export class ArtistsView
                 await this.libraryCtrl.getArtists();
 
             this.artists = artists ?? [];
+
+            // Batch load artist images after artists are loaded.
+            void this.loadArtistImagesBatch();
         } catch (error) {
             console.error(
                 'Error loading artists:',
@@ -988,11 +993,6 @@ export class ArtistsView
     private renderArtistAvatar(name: string) {
         const imageURL = this.artistImageCache.get(name);
 
-        // Kick off async image load if not cached.
-        if (!this.artistImageCache.has(name)) {
-            this.loadArtistImage(name);
-        }
-
         if (imageURL) {
             return html`<img
                 class="avatar-image"
@@ -1006,9 +1006,45 @@ export class ArtistsView
         </span>`;
     }
 
+    private imagesBatchLoaded = false;
+
     /**
-     * Load artist image for a single artist. Resolves MBID by name,
-     * then fetches the cached image. Sequential to avoid rate limit.
+     * Batch load all artist images in one Wails call.
+     * Only returns already-cached images (from the disk cache
+     * populated by the index build). Uncached artists fall back
+     * to the initial letter.
+     */
+    private async loadArtistImagesBatch() {
+        if (this.imagesBatchLoaded) return;
+
+        this.imagesBatchLoaded = true;
+
+        const artists = this.libraryCtrl.cachedArtists;
+
+        if (!artists || artists.length === 0) return;
+
+        const names = artists.map((a) => a.Name);
+
+        try {
+            const images = await GetArtistImages(names);
+
+            if (images && Object.keys(images).length > 0) {
+                for (const [name, url] of Object.entries(images)) {
+                    if (url) {
+                        this.artistImageCache.set(name, url);
+                    }
+                }
+
+                this.requestUpdate();
+            }
+        } catch {
+            // Non-critical.
+        }
+    }
+
+    /**
+     * Load artist image for a single artist on-demand (fallback
+     * for artists not resolved by the batch call).
      */
     private loadArtistImage(name: string) {
         if (this.artistImageCache.has(name) || this.artistImageLoading.has(name)) {

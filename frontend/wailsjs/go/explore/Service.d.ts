@@ -7,15 +7,21 @@ export function BrowseReleaseGroups(arg1:string):Promise<Array<explore.MBRelease
 
 export function BrowseReleases(arg1:string):Promise<Array<explore.MBRelease>>;
 
+export function CheckLibraryMBIDs(arg1:Array<string>):Promise<Record<string, string>>;
+
 export function CoverArtGroupURL(arg1:string):Promise<string>;
 
 export function CoverArtURL(arg1:string):Promise<string>;
 
 export function GetArtistImageURL(arg1:string):Promise<string>;
 
+export function GetArtistMBID(arg1:string):Promise<string>;
+
 export function GetThumbnail(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function GetThumbnails(arg1:Array<explore.ThumbnailRequest>):Promise<Record<string, string>>;
+
+export function InvalidateIndexDiscographies():Promise<void>;
 
 export function LookupArtist(arg1:string):Promise<explore.MBArtist>;
 
@@ -33,8 +39,10 @@ export function SetContext(arg1:context.Context):Promise<void>;
 
 export function SimilarArtists(arg1:string):Promise<Array<explore.LBSimilarArtist>>;
 
+export function StartIndexBuild():Promise<void>;
+
+export function StopIndexBuild():Promise<void>;
+
 export function TopRecordingsForArtist(arg1:string):Promise<Array<explore.LBTopRecording>>;
 
-export function CheckLibraryMBIDs(arg1:string[]):Promise<Record<string, string>>;
-
-export function GetArtistMBID(arg1:string):Promise<string>;
+export function GetArtistImages(arg1:string[]):Promise<Record<string, string>>;

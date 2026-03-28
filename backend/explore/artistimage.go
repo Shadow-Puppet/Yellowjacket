@@ -76,6 +76,16 @@ func NewArtistImageProvider(
 	}
 }
 
+// GetCachedImage returns a base64 data URL from the disk cache
+// only — no network fetches.  Returns "" if not cached.
+func (p *ArtistImageProvider) GetCachedImage(artistMBID string) string {
+	if artistMBID == "" || p.imageDir == "" {
+		return ""
+	}
+
+	return p.readDiskCache(artistMBID)
+}
+
 // GetArtistImage returns a base64 data URL for the artist's photo.
 // Checks disk cache first, then resolves via MB/Wikidata and fetches
 // the image from Wikimedia Commons.  Returns "" if no image.

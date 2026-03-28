@@ -10,6 +10,10 @@ export function BrowseReleases(arg1) {
   return window['go']['explore']['Service']['BrowseReleases'](arg1);
 }
 
+export function CheckLibraryMBIDs(arg1) {
+  return window['go']['explore']['Service']['CheckLibraryMBIDs'](arg1);
+}
+
 export function CoverArtGroupURL(arg1) {
   return window['go']['explore']['Service']['CoverArtGroupURL'](arg1);
 }
@@ -22,12 +26,20 @@ export function GetArtistImageURL(arg1) {
   return window['go']['explore']['Service']['GetArtistImageURL'](arg1);
 }
 
+export function GetArtistMBID(arg1) {
+  return window['go']['explore']['Service']['GetArtistMBID'](arg1);
+}
+
 export function GetThumbnail(arg1, arg2, arg3) {
   return window['go']['explore']['Service']['GetThumbnail'](arg1, arg2, arg3);
 }
 
 export function GetThumbnails(arg1) {
   return window['go']['explore']['Service']['GetThumbnails'](arg1);
+}
+
+export function InvalidateIndexDiscographies() {
+  return window['go']['explore']['Service']['InvalidateIndexDiscographies']();
 }
 
 export function LookupArtist(arg1) {
@@ -62,14 +74,18 @@ export function SimilarArtists(arg1) {
   return window['go']['explore']['Service']['SimilarArtists'](arg1);
 }
 
+export function StartIndexBuild() {
+  return window['go']['explore']['Service']['StartIndexBuild']();
+}
+
+export function StopIndexBuild() {
+  return window['go']['explore']['Service']['StopIndexBuild']();
+}
+
 export function TopRecordingsForArtist(arg1) {
   return window['go']['explore']['Service']['TopRecordingsForArtist'](arg1);
 }
 
-export function CheckLibraryMBIDs(arg1) {
-  return window['go']['explore']['Service']['CheckLibraryMBIDs'](arg1);
-}
-
-export function GetArtistMBID(arg1) {
-  return window['go']['explore']['Service']['GetArtistMBID'](arg1);
+export function GetArtistImages(arg1) {
+  return window['go']['explore']['Service']['GetArtistImages'](arg1);
 }

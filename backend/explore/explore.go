@@ -233,6 +233,32 @@ func (e *Service) GetArtistMBID(artistName string) string {
 	return e.libMBID.GetArtistMBID(artistName)
 }
 
+// GetArtistImages resolves artist images for multiple artists by
+// name in one call.  Returns a map of artist name → base64 data
+// URL.  Only artists with cached images are returned — no network
+// fetches are triggered (use GetArtistImageURL for on-demand fetch).
+func (e *Service) GetArtistImages(names []string) map[string]string {
+	result := make(map[string]string, len(names))
+
+	// Batch resolve all names → MBIDs from the library DB.
+	allMBIDs := e.libMBID.AllArtistMBIDs()
+
+	for _, name := range names {
+		mbid, ok := allMBIDs[name]
+		if !ok || mbid == "" {
+			continue
+		}
+
+		// Only return already-cached images — don't trigger fetches.
+		img := e.artistImg.GetCachedImage(mbid)
+		if img != "" {
+			result[name] = img
+		}
+	}
+
+	return result
+}
+
 // Search concurrently queries MusicBrainz for artists, release
 // groups, and recordings matching the query, then boosts results
 // using ListenBrainz popularity data.  The final score blends
