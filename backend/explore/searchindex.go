@@ -190,6 +190,33 @@ func (si *SearchIndex) IsReady() bool {
 	return si.ready
 }
 
+// GetPopularity returns the cached popularity (listen count) for
+// the given MBID from the local index.  Returns 0 if not found.
+func (si *SearchIndex) GetPopularity(mbid string) int {
+	if mbid == "" {
+		return 0
+	}
+
+	rows, err := si.db.QueryContext(
+		"SELECT popularity FROM explore_index WHERE mbid = ? LIMIT 1",
+		mbid,
+	)
+	if err != nil {
+		return 0
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	if rows.Next() {
+		var pop int
+		if err := rows.Scan(&pop); err == nil {
+			return pop
+		}
+	}
+
+	return 0
+}
+
 // AddFromCache inserts entries from a cached discography browse
 // into the search index (Tier 5: organic growth).  Called when a
 // user views an artist page and the discography is fetched.
@@ -254,7 +281,7 @@ func (si *SearchIndex) Search(query string, limit int) []SearchIndexResult {
 		FROM explore_index i
 		JOIN explore_index_fts f ON f.rowid = i.id
 		WHERE explore_index_fts MATCH ?
-		ORDER BY bm25(explore_index_fts, 3.0, 1.0, 0.5) - (ln(i.popularity + 1) * 0.5)
+		ORDER BY bm25(explore_index_fts, 3.0, 1.0, 0.5) - (ln(i.popularity + 1) * 1.5)
 		LIMIT ?
 	`, ftsQuery, limit)
 	if err != nil {

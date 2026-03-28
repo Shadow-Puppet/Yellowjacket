@@ -331,12 +331,13 @@ func (e *Service) Search(query string) (*MBSearchResult, error) {
 		"recordings", len(result.Recordings),
 	)
 
-	// Phases 2+3 are expensive (3+ LB API calls through the rate
-	// limiter).  Skip them when the local index is ready — it
-	// already carries popularity data and covers the cross-reference
-	// use case.  Only run as fallback during first launch before
-	// the index is built.
-	if !e.index.IsReady() {
+	// Phases 2+3: when the index is ready, use cached popularity
+	// from the index to rerank MB results (no API calls).
+	// When the index isn't ready, fall back to live LB API calls.
+	if e.index.IsReady() {
+		// Phase 2 (lite): rerank MB results using index popularity.
+		e.boostWithIndexPopularity(&result)
+	} else {
 		// Phase 2: LB popularity lookups (3 POST calls, rate-limited).
 		e.boostWithPopularity(&result)
 
@@ -708,8 +709,8 @@ func filterAndCap(result *MBSearchResult) {
 
 const (
 	// Blending weights for final score.
-	relevanceWeight  = 0.6
-	popularityWeight = 0.4
+	relevanceWeight  = 0.4
+	popularityWeight = 0.6
 
 	// mbSearchLimit is passed to each MB search call.  Slightly
 	// larger than maxResults to allow headroom for filtering.
@@ -722,6 +723,45 @@ const (
 	// after popularity reranking (0–100 scale).
 	minBlendedScore = 25
 )
+
+// boostWithIndexPopularity reranks MB search results using
+// popularity data from the local search index.  No API calls —
+// just SQLite lookups.  This is the fast path used when the index
+// is ready.
+func (e *Service) boostWithIndexPopularity(result *MBSearchResult) {
+	// Look up popularity for all artist MBIDs.
+	artistPop := make(map[string]int, len(result.Artists))
+
+	for _, a := range result.Artists {
+		if pop := e.index.GetPopularity(a.MBID); pop > 0 {
+			artistPop[a.MBID] = pop
+		}
+	}
+
+	rerankArtists(result.Artists, artistPop)
+
+	// Look up popularity for release groups.
+	rgPop := make(map[string]int, len(result.ReleaseGroups))
+
+	for _, rg := range result.ReleaseGroups {
+		if pop := e.index.GetPopularity(rg.MBID); pop > 0 {
+			rgPop[rg.MBID] = pop
+		}
+	}
+
+	rerankReleaseGroups(result.ReleaseGroups, rgPop)
+
+	// Look up popularity for recordings.
+	recPop := make(map[string]int, len(result.Recordings))
+
+	for _, r := range result.Recordings {
+		if pop := e.index.GetPopularity(r.MBID); pop > 0 {
+			recPop[r.MBID] = pop
+		}
+	}
+
+	rerankRecordings(result.Recordings, recPop)
+}
 
 // boostWithPopularity fetches ListenBrainz listen counts for all
 // entities in result and re-sorts each slice using a blended score
