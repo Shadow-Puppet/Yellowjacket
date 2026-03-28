@@ -1381,6 +1381,14 @@ func filterUnindexed(artists []lbSitewideArtist, indexed map[string]bool) []lbSi
 	return out
 }
 
+// InvalidateDiscographies clears the discography build timestamp
+// so the next build re-runs Tiers 2-4.
+func (si *SearchIndex) InvalidateDiscographies() {
+	_, _ = si.db.ExecContext(
+		"DELETE FROM explore_index_meta WHERE key = 'discog_built'",
+	)
+}
+
 func (si *SearchIndex) setMeta(key, value string) {
 	if _, err := si.db.ExecContext(
 		"INSERT OR REPLACE INTO explore_index_meta (key, value) VALUES (?, ?)",

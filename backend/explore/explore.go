@@ -78,6 +78,13 @@ func (e *Service) StopIndexBuild() {
 	e.index.StopBuild()
 }
 
+// InvalidateIndexDiscographies clears the discography build
+// timestamp so the next index build re-runs Tiers 2-4.  Call
+// after a library rescan that may have populated new MBIDs.
+func (e *Service) InvalidateIndexDiscographies() {
+	e.index.InvalidateDiscographies()
+}
+
 // ---------------------------------------------------------------------------
 // MusicBrainz search
 // ---------------------------------------------------------------------------
