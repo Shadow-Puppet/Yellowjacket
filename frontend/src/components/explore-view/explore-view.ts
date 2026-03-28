@@ -16,7 +16,6 @@ const DEBOUNCE_MS = 300;
 const MIN_QUERY_LENGTH = 2;
 const MAX_SECTION_RESULTS = 10;
 const CAA_GROUP_BASE = 'https://coverartarchive.org/release-group';
-const TOP_RESULTS_COUNT = 3;
 
 /**
  * Build a Cover Art Archive URL for a release-group front cover.
@@ -49,17 +48,6 @@ function formatDuration(ms: number): string {
 function extractYear(dateStr: string): string {
     if (!dateStr) return '';
     return dateStr.substring(0, 4);
-}
-
-/**
- * Union type for top-results ranking. We can only rank items with
- * a score field — MBReleaseGroup lacks one in the Go struct.
- */
-interface ScoredItem {
-    type: 'artist' | 'recording';
-    score: number;
-    artist?: MBArtist;
-    recording?: MBRecording;
 }
 
 @customElement('explore-view')
@@ -216,48 +204,6 @@ export class ExploreView extends LitElement {
             }
 
             /* ── Top result cards ── */
-            .top-card {
-                display: flex;
-                align-items: center;
-                gap: 12px;
-                padding: 10px 14px;
-                background: var(--yj-bg-surface, #212529);
-                border-radius: 8px;
-                cursor: pointer;
-                min-width: 200px;
-                max-width: 280px;
-                flex-shrink: 0;
-                transition: background 0.15s ease;
-            }
-
-            .top-card:hover {
-                background: var(--yj-bg-overlay, rgba(255, 255, 255, 0.06));
-            }
-
-            .top-card:active {
-                transform: scale(0.98);
-            }
-
-            .top-card-info {
-                flex: 1;
-                min-width: 0;
-            }
-
-            .top-card-name {
-                font-weight: 500;
-                color: var(--yj-text-primary, #fff);
-                font-size: var(--yj-text-md);
-                white-space: nowrap;
-                overflow: hidden;
-                text-overflow: ellipsis;
-            }
-
-            .top-card-meta {
-                color: var(--yj-text-tertiary, #888);
-                font-size: var(--yj-text-sm);
-                margin-top: 2px;
-            }
-
             /* ── Artist cards ── */
             .artist-card {
                 display: flex;
@@ -733,29 +679,6 @@ export class ExploreView extends LitElement {
         }
     }
 
-    /* ── Top Results ── */
-
-    private getTopResults(): ScoredItem[] {
-        if (!this.results) return [];
-
-        const items: ScoredItem[] = [];
-
-        if (this.results.artists) {
-            for (const a of this.results.artists) {
-                items.push({ type: 'artist', score: a.score, artist: a });
-            }
-        }
-
-        if (this.results.recordings) {
-            for (const r of this.results.recordings) {
-                items.push({ type: 'recording', score: r.score, recording: r });
-            }
-        }
-
-        items.sort((a, b) => b.score - a.score);
-        return items.slice(0, TOP_RESULTS_COUNT);
-    }
-
     /* ── Navigation ── */
 
     private navigateToArtist(artist: MBArtist) {
@@ -871,13 +794,8 @@ export class ExploreView extends LitElement {
                 </div>`;
             }
 
-            const topResults = this.getTopResults();
-
             return html`
                 <div class="results-container">
-                    ${topResults.length > 0
-                        ? this.renderTopResults(topResults)
-                        : nothing}
                     ${hasArtists
                         ? this.renderArtistsSection(this.results.artists!.slice(0, MAX_SECTION_RESULTS))
                         : nothing}
@@ -895,74 +813,6 @@ export class ExploreView extends LitElement {
     }
 
     /* ── Section Renderers ── */
-
-    private renderTopResults(items: ScoredItem[]) {
-        return html`
-            <section>
-                <h3 class="section-header">Top Results</h3>
-                <div class="horizontal-row">
-                    ${items.map((item) => this.renderTopCard(item))}
-                </div>
-            </section>
-        `;
-    }
-
-    private renderTopCard(item: ScoredItem) {
-        if (item.type === 'artist' && item.artist) {
-            const a = item.artist;
-            const hue = nameToHue(a.name);
-            const imgURL = this.artistImageCache.get(a.mbid);
-            return html`
-                <div
-                    class="top-card"
-                    @click=${() => this.navigateToArtist(a)}
-                    role="button"
-                    tabindex="0"
-                    @keydown=${(e: KeyboardEvent) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault();
-                            this.navigateToArtist(a);
-                        }
-                    }}
-                >
-                    <div
-                        class="artist-avatar"
-                        style="background: hsl(${hue}, 45%, 35%)"
-                    >
-                        ${imgURL
-                            ? html`<img src="${imgURL}" alt="${a.englishName || a.name}" />`
-                            : (a.englishName || a.name).charAt(0).toUpperCase()}
-                    </div>
-                    <div class="top-card-info">
-                        <div class="top-card-name">${a.englishName || a.name}</div>
-                        <div class="top-card-meta">Artist${a.country ? ` · ${a.country}` : ''}</div>
-                    </div>
-                </div>
-            `;
-        }
-
-        if (item.type === 'recording' && item.recording) {
-            const r = item.recording;
-            return html`
-                <div class="top-card" role="listitem">
-                    <wa-icon
-                        style="color: var(--yj-text-tertiary, #888); font-size: 18px; flex-shrink: 0;"
-                        name="music"
-                    ></wa-icon>
-                    <div class="top-card-info">
-                        <div class="top-card-name">${r.title}</div>
-                        <div class="top-card-meta">
-                            ${r.artistCredit}${r.length
-                                ? ` · ${formatDuration(r.length)}`
-                                : ''}
-                        </div>
-                    </div>
-                </div>
-            `;
-        }
-
-        return nothing;
-    }
 
     private renderArtistsSection(artists: MBArtist[]) {
         return html`
