@@ -443,52 +443,75 @@ func (si *SearchIndex) build(ctx context.Context) {
 
 	// Tiers 2-4: discographies — refresh monthly, incremental.
 	// Only fetch discographies for artists not already indexed.
-	discogFresh := si.isMetaFresh("discog_built", indexTier2Interval)
+	// Each tier's timestamp is tracked independently so progress
+	// survives app restarts mid-build.
+	tier2Fresh := si.isMetaFresh("tier2_built", indexTier2Interval)
+	tier3Fresh := si.isMetaFresh("tier3_built", indexTier2Interval)
+	tier4Fresh := si.isMetaFresh("tier4_built", indexTier2Interval)
 
-	if discogFresh {
+	if tier2Fresh && tier3Fresh && tier4Fresh {
 		si.logger.Info("search index: discographies fresh, skipping Tiers 2-4")
 	} else {
 		indexed := si.indexedArtistMBIDs()
 
+		var libraryMBIDs []string
+
 		// Tier 2: sitewide artists' discographies (incremental).
-		newSitewide := filterUnindexed(sitewideArtists, indexed)
+		if tier2Fresh {
+			si.logger.Info("search index: Tier 2 fresh, skipping")
+		} else {
+			newSitewide := filterUnindexed(sitewideArtists, indexed)
 
-		si.logger.Info("search index: Tier 2 starting",
-			"total", len(sitewideArtists),
-			"alreadyIndexed", len(sitewideArtists)-len(newSitewide),
-			"new", len(newSitewide),
-		)
+			si.logger.Info("search index: Tier 2 starting",
+				"total", len(sitewideArtists),
+				"alreadyIndexed", len(sitewideArtists)-len(newSitewide),
+				"new", len(newSitewide),
+			)
 
-		si.indexArtistDiscographies(ctx, indexLB, newSitewide, "Tier 2")
+			si.indexArtistDiscographies(ctx, indexLB, newSitewide, "Tier 2")
 
-		if ctx.Err() != nil {
-			return
+			if ctx.Err() != nil {
+				return
+			}
+
+			si.setMeta("tier2_built", time.Now().UTC().Format(time.RFC3339))
+			si.logger.Info("search index: Tier 2 complete (sitewide discographies)")
 		}
-
-		si.logger.Info("search index: Tier 2 complete (sitewide discographies)")
 
 		// Tier 3: library artists' discographies (incremental).
-		// Re-read indexed set since Tier 2 added entries.
-		indexed = si.indexedArtistMBIDs()
-		libraryMBIDs := si.buildTier3Library(ctx, indexLB, sitewideArtists, indexed)
+		if tier3Fresh {
+			si.logger.Info("search index: Tier 3 fresh, skipping")
+		} else {
+			indexed = si.indexedArtistMBIDs()
+			libraryMBIDs = si.buildTier3Library(ctx, indexLB, sitewideArtists, indexed)
 
-		if ctx.Err() != nil {
-			return
+			if ctx.Err() != nil {
+				return
+			}
+
+			si.setMeta("tier3_built", time.Now().UTC().Format(time.RFC3339))
+			si.logger.Info("search index: Tier 3 complete (library discographies)")
 		}
-
-		si.logger.Info("search index: Tier 3 complete (library discographies)")
 
 		// Tier 4: similar artists (incremental).
-		indexed = si.indexedArtistMBIDs()
-		si.buildTier4Similar(ctx, indexLB, libraryMBIDs, indexed)
+		if tier4Fresh {
+			si.logger.Info("search index: Tier 4 fresh, skipping")
+		} else {
+			if libraryMBIDs == nil {
+				// Tier 3 was skipped, load library MBIDs for Tier 4.
+				libraryMBIDs = si.getLibraryArtistMBIDs()
+			}
 
-		if ctx.Err() != nil {
-			return
+			indexed = si.indexedArtistMBIDs()
+			si.buildTier4Similar(ctx, indexLB, libraryMBIDs, indexed)
+
+			if ctx.Err() != nil {
+				return
+			}
+
+			si.setMeta("tier4_built", time.Now().UTC().Format(time.RFC3339))
+			si.logger.Info("search index: Tier 4 complete (similar artists)")
 		}
-
-		si.logger.Info("search index: Tier 4 complete (similar artists)")
-
-		si.setMeta("discog_built", time.Now().UTC().Format(time.RFC3339))
 	}
 
 	si.logger.Info("search index build complete", "elapsed", time.Since(start).Round(time.Second))
@@ -1348,6 +1371,30 @@ func (si *SearchIndex) indexedArtistMBIDs() map[string]bool {
 	return result
 }
 
+// getLibraryArtistMBIDs returns MBIDs for all library artists that have one.
+// Used when Tier 3 was skipped but Tier 4 needs the library MBID list.
+func (si *SearchIndex) getLibraryArtistMBIDs() []string {
+	rows, err := si.db.QueryContext(
+		"SELECT DISTINCT mbid FROM artists WHERE mbid IS NOT NULL AND mbid != ''",
+	)
+	if err != nil {
+		return nil
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	var mbids []string
+
+	for rows.Next() {
+		var mbid string
+		if err := rows.Scan(&mbid); err == nil {
+			mbids = append(mbids, mbid)
+		}
+	}
+
+	return mbids
+}
+
 func (si *SearchIndex) isMetaFresh(key string, maxAge time.Duration) bool {
 	rows, err := si.db.QueryContext(
 		"SELECT value FROM explore_index_meta WHERE key = ?", key,
@@ -1448,11 +1495,11 @@ func (si *SearchIndex) markSimilar(artists []lbSitewideArtist) {
 	}
 }
 
-// InvalidateDiscographies clears the discography build timestamp
+// InvalidateDiscographies clears the discography build timestamps
 // so the next build re-runs Tiers 2-4.
 func (si *SearchIndex) InvalidateDiscographies() {
 	_, _ = si.db.ExecContext(
-		"DELETE FROM explore_index_meta WHERE key = 'discog_built'",
+		"DELETE FROM explore_index_meta WHERE key IN ('discog_built', 'tier2_built', 'tier3_built', 'tier4_built')",
 	)
 }
 
