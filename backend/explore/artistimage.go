@@ -32,6 +32,7 @@ const (
 	wikidataAPIBase     = "https://www.wikidata.org/w/api.php"
 	wikipediaAPIBase    = "https://en.wikipedia.org/w/api.php"
 	fanartTVAPIBase     = "https://webservice.fanart.tv/v3/music"
+	audioDBAPIBase      = "https://www.theaudiodb.com/api/v1/json/2"
 	artistImageTimeout  = 10 * time.Second
 	artistImageCacheTTL = 30 * 24 * time.Hour
 	artistImageBaseDir  = "artist-images"
@@ -251,9 +252,16 @@ func (p *ArtistImageProvider) resolveAllSources(artistMBID string) {
 		}
 	}
 
+	// Source 1: TheAudioDB artist thumb.
+	if audioDBURLs := p.fetchAudioDB(artistMBID); len(audioDBURLs) > 0 {
+		for _, u := range audioDBURLs {
+			urls = append(urls, imageSource{source: "audiodb", url: u})
+		}
+	}
+
 	rels := p.fetchMBRels(artistMBID)
 
-	// Source 1: MB direct image relations (Wikimedia Commons).
+	// Source 2: MB direct image relations (Wikimedia Commons).
 	for _, rel := range rels {
 		if rel.Type != "image" {
 			continue
@@ -489,7 +497,64 @@ func (p *ArtistImageProvider) fetchFanartTV(artistMBID string) []string {
 }
 
 // ---------------------------------------------------------------------------
-// Source 1-3: MB rels + Wikidata + Wikipedia
+// Source 1: TheAudioDB
+// ---------------------------------------------------------------------------
+
+// fetchAudioDB returns artist thumb URLs from TheAudioDB.
+// Uses the free API key (2) for MBID-based lookups.
+func (p *ArtistImageProvider) fetchAudioDB(artistMBID string) []string {
+	cacheKey := "audiodb:" + artistMBID
+
+	if data, ok := p.cache.Get(cacheKey); ok {
+		var cached []string
+		if err := json.Unmarshal(data, &cached); err == nil {
+			return cached
+		}
+	}
+
+	url := fmt.Sprintf("%s/artist-mb.php?i=%s", audioDBAPIBase, artistMBID)
+
+	body, err := p.fetchURL(url)
+	if err != nil {
+		p.cache.Set(cacheKey, []byte("[]"), artistImageCacheTTL, artistMBID, "artist")
+
+		return nil
+	}
+
+	var response struct {
+		Artists []struct {
+			Thumb   *string `json:"strArtistThumb"`
+			Fanart  *string `json:"strArtistFanart"`
+			Fanart2 *string `json:"strArtistFanart2"`
+			Fanart3 *string `json:"strArtistFanart3"`
+		} `json:"artists"`
+	}
+
+	if err := json.Unmarshal(body, &response); err != nil || len(response.Artists) == 0 {
+		p.cache.Set(cacheKey, []byte("[]"), artistImageCacheTTL, artistMBID, "artist")
+
+		return nil
+	}
+
+	artist := response.Artists[0]
+
+	var urls []string
+
+	// Thumb is the primary portrait photo; fanart images are wider/background shots.
+	for _, u := range []*string{artist.Thumb, artist.Fanart, artist.Fanart2, artist.Fanart3} {
+		if u != nil && *u != "" {
+			urls = append(urls, *u)
+		}
+	}
+
+	data, _ := json.Marshal(urls)
+	p.cache.Set(cacheKey, data, artistImageCacheTTL, artistMBID, "artist")
+
+	return urls
+}
+
+// ---------------------------------------------------------------------------
+// Source 2-4: MB rels + Wikidata + Wikipedia
 // ---------------------------------------------------------------------------
 
 func (p *ArtistImageProvider) fetchMBRels(artistMBID string) []mbRelation {
