@@ -543,6 +543,11 @@ export class ExploreView extends LitElement {
         }
 
         // Phase 2: full pipeline (MB + LB + reranking).
+        // Fire-and-forget so the local results render immediately.
+        void this.executeFullSearch(version, query, startTime);
+    }
+
+    private async executeFullSearch(version: number, query: string, startTime: number) {
         try {
             const result = await Search(query);
 
