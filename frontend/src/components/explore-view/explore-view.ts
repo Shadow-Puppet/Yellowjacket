@@ -10,6 +10,7 @@ import type {
     MBRecording,
 } from '@go/explore/Service';
 import { libraryStore } from '../../store/library-store';
+import { exploreCache } from '../../store/explore-cache';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 
 /* ── Constants ── */
@@ -525,6 +526,10 @@ export class ExploreView extends LitElement {
         const localResults = this.searchLibraryCache(query);
         if (localResults && (localResults.artists?.length || localResults.releaseGroups?.length)) {
             this.results = localResults;
+            exploreCache.populateFromSearch(
+                localResults.artists || [],
+                localResults.releaseGroups || [],
+            );
             this.loadThumbnails();
             this.loadArtistImages();
             const elapsed = (performance.now() - startTime).toFixed(0);
@@ -541,7 +546,8 @@ export class ExploreView extends LitElement {
 
     /**
      * Search the frontend library cache for matching artists and albums.
-     * Pure JS — no Go calls, guaranteed instant.
+     * Pure JS — no Go calls, guaranteed instant.  Returns results with
+     * MBIDs and local cover art so they can navigate to explore pages.
      */
     private searchLibraryCache(query: string): MBSearchResult | null {
         const q = query.toLowerCase();
@@ -552,14 +558,17 @@ export class ExploreView extends LitElement {
             for (const a of cachedArtists) {
                 if (a.Name.toLowerCase().includes(q)) {
                     artists.push({
-                        mbid: '',
+                        mbid: a.MBID || '',
                         name: a.Name,
                         sortName: '',
-                        type: 'Group',
+                        type: '',
                         country: '',
                         disambiguation: '',
                         score: 100,
-                    } as MBArtist);
+                        _imageSmall: a.ImageSmall || '',
+                        _imageMedium: a.ImageMedium || '',
+                        _inLibrary: true,
+                    } as MBArtist & { _imageSmall: string; _imageMedium: string; _inLibrary: boolean });
                     if (artists.length >= 5) break;
                 }
             }
@@ -571,12 +580,14 @@ export class ExploreView extends LitElement {
             for (const a of cachedAlbums) {
                 if (a.Name.toLowerCase().includes(q) || a.ArtistName.toLowerCase().includes(q)) {
                     releaseGroups.push({
-                        mbid: '',
+                        mbid: a.MBID || '',
                         title: a.Name,
                         primaryType: 'Album',
                         artistCredit: a.ArtistName,
                         firstReleaseDate: a.Year ? String(a.Year) : '',
-                    } as MBReleaseGroup);
+                        _coverArt: a.CoverArtMedium || a.CoverArtSmall || '',
+                        _inLibrary: true,
+                    } as MBReleaseGroup & { _coverArt: string; _inLibrary: boolean });
                     if (releaseGroups.length >= 5) break;
                 }
             }
@@ -587,6 +598,61 @@ export class ExploreView extends LitElement {
         }
 
         return { artists, releaseGroups, recordings: [] } as MBSearchResult;
+    }
+
+    /**
+     * Merge full search results with library data: library entries
+     * take priority (local art, "In Library" badge).  MB-only results
+     * are appended after library matches.
+     */
+    private mergeWithLibrary(result: MBSearchResult): MBSearchResult {
+        const cachedArtists = libraryStore.cachedArtists;
+        const cachedAlbums = libraryStore.cachedAlbums;
+
+        // Build MBID→library lookups.
+        const libArtistsByMBID = new Map<string, typeof cachedArtists extends (infer T)[] | null ? T : never>();
+        const libArtistsByName = new Map<string, typeof cachedArtists extends (infer T)[] | null ? T : never>();
+        if (cachedArtists) {
+            for (const a of cachedArtists) {
+                if (a.MBID) libArtistsByMBID.set(a.MBID, a);
+                libArtistsByName.set(a.Name.toLowerCase(), a);
+            }
+        }
+
+        const libAlbumsByMBID = new Map<string, typeof cachedAlbums extends (infer T)[] | null ? T : never>();
+        if (cachedAlbums) {
+            for (const a of cachedAlbums) {
+                if (a.MBID) libAlbumsByMBID.set(a.MBID, a);
+            }
+        }
+
+        // Enrich artists: if MB result matches a library artist, add local images.
+        if (result.artists) {
+            for (let i = 0; i < result.artists.length; i++) {
+                const a = result.artists[i];
+                const lib = (a.mbid && libArtistsByMBID.get(a.mbid)) ||
+                    libArtistsByName.get(a.name.toLowerCase());
+                if (lib) {
+                    (a as any)._imageSmall = lib.ImageSmall || '';
+                    (a as any)._imageMedium = lib.ImageMedium || '';
+                    (a as any)._inLibrary = true;
+                }
+            }
+        }
+
+        // Enrich release groups: if MB result matches a library album, use local art.
+        if (result.releaseGroups) {
+            for (let i = 0; i < result.releaseGroups.length; i++) {
+                const rg = result.releaseGroups[i];
+                const lib = rg.mbid ? libAlbumsByMBID.get(rg.mbid) : undefined;
+                if (lib) {
+                    (rg as any)._coverArt = lib.CoverArtMedium || lib.CoverArtSmall || '';
+                    (rg as any)._inLibrary = true;
+                }
+            }
+        }
+
+        return result;
     }
 
     private async executeFullSearch(version: number, query: string, startTime: number) {
@@ -601,7 +667,11 @@ export class ExploreView extends LitElement {
                 return;
             }
 
-            this.results = result;
+            this.results = this.mergeWithLibrary(result);
+            exploreCache.populateFromSearch(
+                this.results.artists || [],
+                this.results.releaseGroups || [],
+            );
             this.loadThumbnails();
             this.loadArtistImages();
             this.checkLibrary();

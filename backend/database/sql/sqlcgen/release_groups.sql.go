@@ -23,7 +23,7 @@ func (q *Queries) CountReleaseGroupRecordings(ctx context.Context, releaseGroupI
 
 const createReleaseGroup = `-- name: CreateReleaseGroup :one
 INSERT INTO release_groups (name) VALUES (?)
-RETURNING id, name, cover_art_id, album_artist_credit_id, year, total_tracks, total_discs
+RETURNING id, name, cover_art_id, album_artist_credit_id, year, total_tracks, total_discs, mbid
 `
 
 func (q *Queries) CreateReleaseGroup(ctx context.Context, name string) (ReleaseGroup, error) {
@@ -37,6 +37,7 @@ func (q *Queries) CreateReleaseGroup(ctx context.Context, name string) (ReleaseG
 		&i.Year,
 		&i.TotalTracks,
 		&i.TotalDiscs,
+		&i.Mbid,
 	)
 	return i, err
 }
@@ -45,7 +46,7 @@ const createReleaseGroupFull = `-- name: CreateReleaseGroupFull :one
 INSERT INTO release_groups (
   name, cover_art_id, album_artist_credit_id, year, total_tracks, total_discs
 ) VALUES (?, ?, ?, ?, ?, ?)
-RETURNING id, name, cover_art_id, album_artist_credit_id, year, total_tracks, total_discs
+RETURNING id, name, cover_art_id, album_artist_credit_id, year, total_tracks, total_discs, mbid
 `
 
 type CreateReleaseGroupFullParams struct {
@@ -75,6 +76,7 @@ func (q *Queries) CreateReleaseGroupFull(ctx context.Context, arg CreateReleaseG
 		&i.Year,
 		&i.TotalTracks,
 		&i.TotalDiscs,
+		&i.Mbid,
 	)
 	return i, err
 }
@@ -233,6 +235,7 @@ SELECT
     rg.id,
     rg.name,
     rg.year,
+    rg.mbid,
     COALESCE(ac.text, fallback_ac.text, '') as artist_name,
     COALESCE(ca.file_path, '') as cover_art_path
 FROM release_groups rg
@@ -252,6 +255,7 @@ type GetAllAlbumsWithDetailsRow struct {
 	ID           int64
 	Name         string
 	Year         sql.NullInt64
+	Mbid         sql.NullString
 	ArtistName   string
 	CoverArtPath string
 }
@@ -269,6 +273,7 @@ func (q *Queries) GetAllAlbumsWithDetails(ctx context.Context) ([]GetAllAlbumsWi
 			&i.ID,
 			&i.Name,
 			&i.Year,
+			&i.Mbid,
 			&i.ArtistName,
 			&i.CoverArtPath,
 		); err != nil {
@@ -290,6 +295,7 @@ SELECT
     rg.id,
     rg.name,
     rg.year,
+    rg.mbid,
     COALESCE(ac.text, fallback_ac.text, '') as artist_name,
     COALESCE(ca.file_path, '') as cover_art_path
 FROM release_groups rg
@@ -316,6 +322,7 @@ type GetAllAlbumsWithDetailsByLibraryRow struct {
 	ID           int64
 	Name         string
 	Year         sql.NullInt64
+	Mbid         sql.NullString
 	ArtistName   string
 	CoverArtPath string
 }
@@ -333,6 +340,7 @@ func (q *Queries) GetAllAlbumsWithDetailsByLibrary(ctx context.Context, libraryI
 			&i.ID,
 			&i.Name,
 			&i.Year,
+			&i.Mbid,
 			&i.ArtistName,
 			&i.CoverArtPath,
 		); err != nil {
@@ -350,7 +358,7 @@ func (q *Queries) GetAllAlbumsWithDetailsByLibrary(ctx context.Context, libraryI
 }
 
 const getAllReleaseGroups = `-- name: GetAllReleaseGroups :many
-SELECT id, name, cover_art_id, album_artist_credit_id, year, total_tracks, total_discs FROM release_groups
+SELECT id, name, cover_art_id, album_artist_credit_id, year, total_tracks, total_discs, mbid FROM release_groups
 ORDER BY name
 `
 
@@ -371,6 +379,7 @@ func (q *Queries) GetAllReleaseGroups(ctx context.Context) ([]ReleaseGroup, erro
 			&i.Year,
 			&i.TotalTracks,
 			&i.TotalDiscs,
+			&i.Mbid,
 		); err != nil {
 			return nil, err
 		}
@@ -386,7 +395,7 @@ func (q *Queries) GetAllReleaseGroups(ctx context.Context) ([]ReleaseGroup, erro
 }
 
 const getReleaseGroup = `-- name: GetReleaseGroup :one
-SELECT id, name, cover_art_id, album_artist_credit_id, year, total_tracks, total_discs FROM release_groups 
+SELECT id, name, cover_art_id, album_artist_credit_id, year, total_tracks, total_discs, mbid FROM release_groups 
 WHERE id = ? LIMIT 1
 `
 
@@ -401,12 +410,13 @@ func (q *Queries) GetReleaseGroup(ctx context.Context, id int64) (ReleaseGroup, 
 		&i.Year,
 		&i.TotalTracks,
 		&i.TotalDiscs,
+		&i.Mbid,
 	)
 	return i, err
 }
 
 const getReleaseGroupByNameAndArtist = `-- name: GetReleaseGroupByNameAndArtist :one
-SELECT id, name, cover_art_id, album_artist_credit_id, year, total_tracks, total_discs FROM release_groups
+SELECT id, name, cover_art_id, album_artist_credit_id, year, total_tracks, total_discs, mbid FROM release_groups
 WHERE name = ? AND album_artist_credit_id = ? LIMIT 1
 `
 
@@ -426,6 +436,7 @@ func (q *Queries) GetReleaseGroupByNameAndArtist(ctx context.Context, arg GetRel
 		&i.Year,
 		&i.TotalTracks,
 		&i.TotalDiscs,
+		&i.Mbid,
 	)
 	return i, err
 }
@@ -468,7 +479,7 @@ VALUES (?, ?, ?)
 ON CONFLICT(name, album_artist_credit_id) DO UPDATE SET
   album_artist_credit_id = COALESCE(excluded.album_artist_credit_id, release_groups.album_artist_credit_id),
   year = COALESCE(excluded.year, release_groups.year)
-RETURNING id, name, cover_art_id, album_artist_credit_id, year, total_tracks, total_discs
+RETURNING id, name, cover_art_id, album_artist_credit_id, year, total_tracks, total_discs, mbid
 `
 
 type UpsertReleaseGroupParams struct {
@@ -488,6 +499,7 @@ func (q *Queries) UpsertReleaseGroup(ctx context.Context, arg UpsertReleaseGroup
 		&i.Year,
 		&i.TotalTracks,
 		&i.TotalDiscs,
+		&i.Mbid,
 	)
 	return i, err
 }

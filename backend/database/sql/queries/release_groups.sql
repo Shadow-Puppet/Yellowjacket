@@ -50,6 +50,7 @@ SELECT
     rg.id,
     rg.name,
     rg.year,
+    rg.mbid,
     COALESCE(ac.text, fallback_ac.text, '') as artist_name,
     COALESCE(ca.file_path, '') as cover_art_path
 FROM release_groups rg
@@ -69,6 +70,7 @@ SELECT
     rg.id,
     rg.name,
     rg.year,
+    rg.mbid,
     COALESCE(ac.text, fallback_ac.text, '') as artist_name,
     COALESCE(ca.file_path, '') as cover_art_path
 FROM release_groups rg

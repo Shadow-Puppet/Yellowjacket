@@ -70,10 +70,6 @@ export function SearchLocal(arg1) {
   return window['go']['explore']['Service']['SearchLocal'](arg1);
 }
 
-export function SearchLocalHandler() {
-  return window['go']['explore']['Service']['SearchLocalHandler']();
-}
-
 export function SearchRecordings(arg1) {
   return window['go']['explore']['Service']['SearchRecordings'](arg1);
 }

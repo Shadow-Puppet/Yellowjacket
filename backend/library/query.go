@@ -147,6 +147,7 @@ func (l *Library) GetTrackMBIDs(filePath string) TrackMBIDs {
 type Artist struct {
 	ID          int64
 	Name        string
+	MBID        string
 	ImageSmall  string
 	ImageMedium string
 	ImageLarge  string
@@ -157,6 +158,7 @@ type Album struct {
 	ID             int64
 	Name           string
 	ArtistName     string
+	MBID           string
 	CoverArtPath   string
 	CoverArtSmall  string
 	CoverArtMedium string
@@ -331,6 +333,10 @@ func (l *Library) GetAllAlbums() ([]Album, error) {
 			album.Year = row.Year.Int64
 		}
 
+		if row.Mbid.Valid {
+			album.MBID = row.Mbid.String
+		}
+
 		// Convert filesystem path to URL path for the asset handler.
 		if row.CoverArtPath != "" {
 			urls := coverart.ResolveURLs(row.CoverArtPath)
@@ -366,10 +372,16 @@ func (l *Library) GetAllArtists() ([]Artist, error) {
 	artists := make([]Artist, 0, len(rows))
 
 	for _, row := range rows {
-		artists = append(artists, Artist{
+		a := Artist{
 			ID:   row.ID,
 			Name: row.Name,
-		})
+		}
+
+		if row.Mbid.Valid {
+			a.MBID = row.Mbid.String
+		}
+
+		artists = append(artists, a)
 	}
 
 	// Resolve artist image URLs from the disk cache.
@@ -663,6 +675,10 @@ func (l *Library) GetAllAlbumsByLibrary(
 			album.Year = row.Year.Int64
 		}
 
+		if row.Mbid.Valid {
+			album.MBID = row.Mbid.String
+		}
+
 		if row.CoverArtPath != "" {
 			urls := coverart.ResolveURLs(row.CoverArtPath)
 			album.CoverArtPath = urls.Original
@@ -706,10 +722,16 @@ func (l *Library) GetAllArtistsByLibrary(
 	artists := make([]Artist, 0, len(rows))
 
 	for _, row := range rows {
-		artists = append(artists, Artist{
+		a := Artist{
 			ID:   row.ID,
 			Name: row.Name,
-		})
+		}
+
+		if row.Mbid.Valid {
+			a.MBID = row.Mbid.String
+		}
+
+		artists = append(artists, a)
 	}
 
 	l.resolveArtistImages(artists)

@@ -12,6 +12,7 @@ import (
 type Artist struct {
 	ID   int64
 	Name string
+	Mbid sql.NullString
 }
 
 type ArtistCredit struct {
@@ -154,6 +155,7 @@ type ReleaseGroup struct {
 	Year                sql.NullInt64
 	TotalTracks         sql.NullInt64
 	TotalDiscs          sql.NullInt64
+	Mbid                sql.NullString
 }
 
 type ReleaseGroupRecording struct {

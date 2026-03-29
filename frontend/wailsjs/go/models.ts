@@ -242,6 +242,7 @@ export namespace library {
 	    ID: number;
 	    Name: string;
 	    ArtistName: string;
+	    MBID: string;
 	    CoverArtPath: string;
 	    CoverArtSmall: string;
 	    CoverArtMedium: string;
@@ -257,6 +258,7 @@ export namespace library {
 	        this.ID = source["ID"];
 	        this.Name = source["Name"];
 	        this.ArtistName = source["ArtistName"];
+	        this.MBID = source["MBID"];
 	        this.CoverArtPath = source["CoverArtPath"];
 	        this.CoverArtSmall = source["CoverArtSmall"];
 	        this.CoverArtMedium = source["CoverArtMedium"];
@@ -267,6 +269,7 @@ export namespace library {
 	export class Artist {
 	    ID: number;
 	    Name: string;
+	    MBID: string;
 	    ImageSmall: string;
 	    ImageMedium: string;
 	    ImageLarge: string;
@@ -279,6 +282,7 @@ export namespace library {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.ID = source["ID"];
 	        this.Name = source["Name"];
+	        this.MBID = source["MBID"];
 	        this.ImageSmall = source["ImageSmall"];
 	        this.ImageMedium = source["ImageMedium"];
 	        this.ImageLarge = source["ImageLarge"];

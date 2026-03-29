@@ -11,13 +11,13 @@ import (
 
 const createArtist = `-- name: CreateArtist :one
 INSERT INTO artists (name) VALUES (?)
-RETURNING id, name
+RETURNING id, name, mbid
 `
 
 func (q *Queries) CreateArtist(ctx context.Context, name string) (Artist, error) {
 	row := q.db.QueryRowContext(ctx, createArtist, name)
 	var i Artist
-	err := row.Scan(&i.ID, &i.Name)
+	err := row.Scan(&i.ID, &i.Name, &i.Mbid)
 	return i, err
 }
 
@@ -41,7 +41,7 @@ func (q *Queries) DeleteArtist(ctx context.Context, id int64) error {
 }
 
 const getAlbumArtists = `-- name: GetAlbumArtists :many
-SELECT DISTINCT a.id, a.name
+SELECT DISTINCT a.id, a.name, a.mbid
 FROM artists a
 JOIN artist_credit_artist aca ON aca.artist_id = a.id
 JOIN artist_credit ac ON ac.id = aca.credit_id
@@ -58,7 +58,7 @@ func (q *Queries) GetAlbumArtists(ctx context.Context) ([]Artist, error) {
 	var items []Artist
 	for rows.Next() {
 		var i Artist
-		if err := rows.Scan(&i.ID, &i.Name); err != nil {
+		if err := rows.Scan(&i.ID, &i.Name, &i.Mbid); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -73,7 +73,7 @@ func (q *Queries) GetAlbumArtists(ctx context.Context) ([]Artist, error) {
 }
 
 const getAlbumArtistsByLibrary = `-- name: GetAlbumArtistsByLibrary :many
-SELECT DISTINCT a.id, a.name
+SELECT DISTINCT a.id, a.name, a.mbid
 FROM artists a
 JOIN artist_credit_artist aca ON aca.artist_id = a.id
 JOIN artist_credit ac ON ac.id = aca.credit_id
@@ -100,7 +100,7 @@ func (q *Queries) GetAlbumArtistsByLibrary(ctx context.Context, libraryID int64)
 	var items []Artist
 	for rows.Next() {
 		var i Artist
-		if err := rows.Scan(&i.ID, &i.Name); err != nil {
+		if err := rows.Scan(&i.ID, &i.Name, &i.Mbid); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -115,7 +115,7 @@ func (q *Queries) GetAlbumArtistsByLibrary(ctx context.Context, libraryID int64)
 }
 
 const getAllArtists = `-- name: GetAllArtists :many
-SELECT id, name FROM artists
+SELECT id, name, mbid FROM artists
 ORDER BY name
 `
 
@@ -128,7 +128,7 @@ func (q *Queries) GetAllArtists(ctx context.Context) ([]Artist, error) {
 	var items []Artist
 	for rows.Next() {
 		var i Artist
-		if err := rows.Scan(&i.ID, &i.Name); err != nil {
+		if err := rows.Scan(&i.ID, &i.Name, &i.Mbid); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -143,26 +143,26 @@ func (q *Queries) GetAllArtists(ctx context.Context) ([]Artist, error) {
 }
 
 const getArtist = `-- name: GetArtist :one
-SELECT id, name FROM artists 
+SELECT id, name, mbid FROM artists 
 WHERE id = ? LIMIT 1
 `
 
 func (q *Queries) GetArtist(ctx context.Context, id int64) (Artist, error) {
 	row := q.db.QueryRowContext(ctx, getArtist, id)
 	var i Artist
-	err := row.Scan(&i.ID, &i.Name)
+	err := row.Scan(&i.ID, &i.Name, &i.Mbid)
 	return i, err
 }
 
 const getArtistByName = `-- name: GetArtistByName :one
-SELECT id, name FROM artists
+SELECT id, name, mbid FROM artists
 WHERE name = ? LIMIT 1
 `
 
 func (q *Queries) GetArtistByName(ctx context.Context, name string) (Artist, error) {
 	row := q.db.QueryRowContext(ctx, getArtistByName, name)
 	var i Artist
-	err := row.Scan(&i.ID, &i.Name)
+	err := row.Scan(&i.ID, &i.Name, &i.Mbid)
 	return i, err
 }
 
@@ -185,12 +185,12 @@ func (q *Queries) UpdateArtist(ctx context.Context, arg UpdateArtistParams) erro
 const upsertArtist = `-- name: UpsertArtist :one
 INSERT INTO artists (name) VALUES (?)
 ON CONFLICT(name) DO UPDATE SET name = excluded.name
-RETURNING id, name
+RETURNING id, name, mbid
 `
 
 func (q *Queries) UpsertArtist(ctx context.Context, name string) (Artist, error) {
 	row := q.db.QueryRowContext(ctx, upsertArtist, name)
 	var i Artist
-	err := row.Scan(&i.ID, &i.Name)
+	err := row.Scan(&i.ID, &i.Name, &i.Mbid)
 	return i, err
 }
