@@ -424,14 +424,23 @@ func (e *Service) Search(query string) (*MBSearchResult, error) {
 		e.boostWithIndexPopularity(&result)
 	} else {
 		// Phase 2: LB popularity lookups (3 POST calls, rate-limited).
+		// Use a tight deadline so a slow LB/MB doesn't stall the search.
+		slowCtx, slowCancel := context.WithTimeout(e.ctx, searchSlowPathTimeout)
+
 		lbStart := time.Now()
 		e.boostWithPopularity(&result)
 		lbDur := time.Since(lbStart)
 
 		// Phase 3: cross-reference artist discographies.
+		// Skip if the slow-path budget is already exhausted.
 		xrefStart := time.Now()
-		e.crossReferenceAlbums(query, &result)
+
+		if slowCtx.Err() == nil {
+			e.crossReferenceAlbums(slowCtx, query, &result)
+		}
+
 		xrefDur := time.Since(xrefStart)
+		slowCancel()
 
 		e.logger.Info("search slow path breakdown",
 			"query", query,
@@ -489,7 +498,7 @@ const (
 // Matched albums not already in result.ReleaseGroups are injected
 // at the front.  This handles queries like "for you tatsuro"
 // where MB text search can't associate the title with the artist.
-func (e *Service) crossReferenceAlbums(query string, result *MBSearchResult) {
+func (e *Service) crossReferenceAlbums(ctx context.Context, query string, result *MBSearchResult) {
 	if len(result.Artists) == 0 {
 		return
 	}
@@ -526,7 +535,7 @@ func (e *Service) crossReferenceAlbums(query string, result *MBSearchResult) {
 		go func(a MBArtist) {
 			defer wg.Done()
 
-			rgs, err := e.mb.BrowseReleaseGroups(e.ctx, a.MBID)
+			rgs, err := e.mb.BrowseReleaseGroups(ctx, a.MBID)
 			if err != nil {
 				e.logger.Warn("cross-reference browse failed",
 					"artist", a.Name,
@@ -829,6 +838,14 @@ const (
 	// API responses during interactive search.  If MB is slow,
 	// results degrade to index-only rather than blocking the user.
 	searchMBTimeout = 4 * time.Second
+
+	// searchSlowPathTimeout caps the total time spent on the slow
+	// path (LB popularity + cross-referencing).  When the index
+	// isn't ready, these API calls can stack up — especially
+	// cross-referencing, which browses 3 artist discographies via
+	// MB and can hit 429 retries.  The timeout ensures search
+	// returns within a reasonable window.
+	searchSlowPathTimeout = 3 * time.Second
 
 	// maxResults caps each entity slice after filtering.
 	maxResults = 15
