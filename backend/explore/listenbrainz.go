@@ -104,9 +104,10 @@ func (c *ListenBrainzClient) SimilarArtists(
 	ctx context.Context, artistMBID string,
 ) ([]LBSimilarArtist, error) {
 	url := fmt.Sprintf(
-		"%s/1/explore/similar-artists/%s",
-		listenBrainzBaseURL,
+		"%s/similar-artists/json?artist_mbids=%s&algorithm=%s",
+		labsBaseURL,
 		artistMBID,
+		labsSimilarAlgorithm,
 	)
 	cacheKey := "lb:similar-artists:" + artistMBID
 
@@ -128,9 +129,20 @@ func (c *ListenBrainzClient) SimilarArtists(
 		return nil, nil //nolint:nilnil // graceful degradation for unstable endpoint
 	}
 
-	var out []LBSimilarArtist
-	if err := json.Unmarshal(body, &out); err != nil {
+	// Labs API returns snake_case — unmarshal into wire type,
+	// then convert to camelCase Wails type.
+	var wire []lbSimilarArtistWire
+	if err := json.Unmarshal(body, &wire); err != nil {
 		return nil, fmt.Errorf("listenbrainz similar artists unmarshal: %w", err)
+	}
+
+	out := make([]LBSimilarArtist, len(wire))
+	for i, w := range wire {
+		out[i] = LBSimilarArtist{
+			ArtistMBID: w.ArtistMBID,
+			Name:       w.Name,
+			Score:      float64(w.Score),
+		}
 	}
 
 	c.cacheJSON(cacheKey, out, cacheTTLEntity, artistMBID, "artist")
