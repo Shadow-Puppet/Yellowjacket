@@ -232,9 +232,12 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 	yj.library.SetScanHooks(library.ScanHooks{
 		ResolvePhantoms: yj.playlist.ResolvePhantomTracksAfterScan,
 		OnAllScansComplete: func() {
-			// Force index Tiers 2-4 to re-check for new library
-			// artists whose MBIDs were just populated by the scan.
-			yj.explore.InvalidateIndexDiscographies()
+			// Start the index build after scans finish.
+			// Tiers 2-4 are incremental — filterUnindexed
+			// already skips artists that are already indexed,
+			// so new library artists with freshly-populated
+			// MBIDs get picked up without invalidating the
+			// entire discography cache.
 			yj.explore.StartIndexBuild()
 		},
 	})
