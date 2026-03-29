@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"log/slog"
 	"math"
-	"net/http"
 	"sort"
 	"strings"
 	"sync"
@@ -153,38 +152,6 @@ func (e *Service) SearchLocal(query string) *MBSearchResult {
 	}
 
 	return &result
-}
-
-// SearchLocalHandler returns an http.Handler that serves local
-// index search results as JSON.  This bypasses the Wails RPC
-// serialization queue, ensuring sub-millisecond response times.
-func (e *Service) SearchLocalHandler() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer func() {
-			if rv := recover(); rv != nil {
-				e.logger.Error("search-local handler panic", "recover", rv)
-				http.Error(w, "internal error", http.StatusInternalServerError)
-			}
-		}()
-
-		query := r.URL.Query().Get("q")
-		if query == "" {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte("null"))
-			return
-		}
-
-		result := e.SearchLocal(query)
-
-		w.Header().Set("Content-Type", "application/json")
-
-		if result == nil {
-			_, _ = w.Write([]byte("null"))
-			return
-		}
-
-		_ = json.NewEncoder(w).Encode(result)
-	})
 }
 
 // ---------------------------------------------------------------------------

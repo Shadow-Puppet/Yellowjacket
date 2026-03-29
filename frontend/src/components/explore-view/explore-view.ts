@@ -9,6 +9,7 @@ import type {
     MBReleaseGroup,
     MBRecording,
 } from '@go/explore/Service';
+import { libraryStore } from '../../store/library-store';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 
 /* ── Constants ── */
@@ -520,33 +521,72 @@ export class ExploreView extends LitElement {
         const startTime = performance.now();
         console.log(`[explore] search started: "${query}"`);
 
-        // Phase 1: fetch local index results via HTTP (bypasses Wails
-        // RPC serialization — guaranteed instant).
-        try {
-            const resp = await fetch(`/api/search-local?q=${encodeURIComponent(query)}`);
-            if (version !== this.searchVersion) return;
-            if (resp.ok) {
-                const local = await resp.json() as MBSearchResult | null;
-                if (local && (local.artists?.length || local.releaseGroups?.length || local.recordings?.length)) {
-                    this.results = local;
-                    this.loadThumbnails();
-                    this.loadArtistImages();
-                    this.checkLibrary();
-                    const elapsed = (performance.now() - startTime).toFixed(0);
-                    console.log(
-                        `[explore] local results: "${query}" in ${elapsed}ms — ` +
-                            `artists=${local.artists?.length ?? 0}, ` +
-                            `albums=${local.releaseGroups?.length ?? 0}, ` +
-                            `tracks=${local.recordings?.length ?? 0}`,
-                    );
-                }
-            }
-        } catch {
-            // Local search failed — continue to full search.
+        // Phase 1: instant library search — pure frontend, no Go calls.
+        const localResults = this.searchLibraryCache(query);
+        if (localResults && (localResults.artists?.length || localResults.releaseGroups?.length)) {
+            this.results = localResults;
+            this.loadThumbnails();
+            this.loadArtistImages();
+            const elapsed = (performance.now() - startTime).toFixed(0);
+            console.log(
+                `[explore] library results: "${query}" in ${elapsed}ms — ` +
+                    `artists=${localResults.artists?.length ?? 0}, ` +
+                    `albums=${localResults.releaseGroups?.length ?? 0}`,
+            );
         }
 
         // Phase 2: full pipeline (MB + LB + reranking) via Wails RPC.
         void this.executeFullSearch(version, query, startTime);
+    }
+
+    /**
+     * Search the frontend library cache for matching artists and albums.
+     * Pure JS — no Go calls, guaranteed instant.
+     */
+    private searchLibraryCache(query: string): MBSearchResult | null {
+        const q = query.toLowerCase();
+
+        const artists: MBArtist[] = [];
+        const cachedArtists = libraryStore.cachedArtists;
+        if (cachedArtists) {
+            for (const a of cachedArtists) {
+                if (a.Name.toLowerCase().includes(q)) {
+                    artists.push({
+                        mbid: '',
+                        name: a.Name,
+                        sortName: '',
+                        type: 'Group',
+                        country: '',
+                        disambiguation: '',
+                        score: 100,
+                    } as MBArtist);
+                    if (artists.length >= 5) break;
+                }
+            }
+        }
+
+        const releaseGroups: MBReleaseGroup[] = [];
+        const cachedAlbums = libraryStore.cachedAlbums;
+        if (cachedAlbums) {
+            for (const a of cachedAlbums) {
+                if (a.Name.toLowerCase().includes(q) || a.ArtistName.toLowerCase().includes(q)) {
+                    releaseGroups.push({
+                        mbid: '',
+                        title: a.Name,
+                        primaryType: 'Album',
+                        artistCredit: a.ArtistName,
+                        firstReleaseDate: a.Year ? String(a.Year) : '',
+                    } as MBReleaseGroup);
+                    if (releaseGroups.length >= 5) break;
+                }
+            }
+        }
+
+        if (artists.length === 0 && releaseGroups.length === 0) {
+            return null;
+        }
+
+        return { artists, releaseGroups, recordings: [] } as MBSearchResult;
     }
 
     private async executeFullSearch(version: number, query: string, startTime: number) {

@@ -118,9 +118,6 @@ func NewYellowJacketApp(
 		yjApp.assetHandler.RegisterHandler("/artist-images/", artistImgHandler)
 	}
 
-	// Register local search endpoint — bypasses Wails RPC serialization.
-	yjApp.assetHandler.RegisterHandler("/api/search-local", yjApp.explore.SearchLocalHandler())
-
 	// create playlist service
 	yjApp.playlist = playlist.NewService(
 		yjApp.logger, yjApp.database, yjApp.appConfig,
