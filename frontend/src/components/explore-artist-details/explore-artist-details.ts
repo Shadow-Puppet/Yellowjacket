@@ -92,6 +92,7 @@ export class ExploreArtistDetails extends LitElement {
     @state() private loadingSimilar = true;
     @state() private artistImageURL = '';
     @state() private similarImageURLs = new Map<string, string>();
+    @state() private topSectionExpanded = false;
     private libraryMBIDs = new Set<string>();
 
     /* ── Styles ── */
@@ -314,6 +315,54 @@ export class ExploreArtistDetails extends LitElement {
                 flex-shrink: 0;
                 font-variant-numeric: tabular-nums;
                 white-space: nowrap;
+            }
+
+            /* ── Top section (tracks + releases side-by-side) ── */
+            .top-section-columns {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 24px;
+            }
+
+            .top-section-column {
+                min-width: 0;
+            }
+
+            .top-releases-grid {
+                display: grid;
+                grid-template-columns: repeat(2, 1fr);
+                gap: 12px;
+            }
+
+            .top-section-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 6px;
+                padding: 6px 12px;
+                margin-top: 12px;
+                border: none;
+                border-radius: 6px;
+                background: var(--yj-bg-overlay, rgba(255, 255, 255, 0.06));
+                color: var(--yj-text-secondary, #b3b3b3);
+                font-size: var(--yj-text-sm);
+                cursor: pointer;
+                transition: background 0.15s ease, color 0.15s ease;
+                width: 100%;
+            }
+
+            .top-section-toggle:hover {
+                background: var(--yj-bg-hover, rgba(255, 255, 255, 0.1));
+                color: var(--yj-text-primary, #fff);
+            }
+
+            .top-section-toggle wa-icon {
+                font-size: 12px;
+                transition: transform 0.2s ease;
+            }
+
+            .top-section-toggle[aria-expanded='true'] wa-icon {
+                transform: rotate(180deg);
             }
 
             /* ── Discography grid ── */
@@ -828,7 +877,7 @@ export class ExploreArtistDetails extends LitElement {
                 </div>
             </div>
             <div class="content">
-                ${this.renderTopTracks()} ${this.renderDiscography()}
+                ${this.renderTopSection()} ${this.renderDiscography()}
                 ${this.renderSimilarArtists()}
             </div>
         `;
@@ -866,54 +915,113 @@ export class ExploreArtistDetails extends LitElement {
         `;
     }
 
-    /* ── Top Tracks Section ── */
+    /* ── Top Section (tracks + releases side-by-side) ── */
 
-    private renderTopTracks() {
-        if (this.loadingTracks) {
+    private toggleTopSection() {
+        this.topSectionExpanded = !this.topSectionExpanded;
+    }
+
+    /** Top releases = all release groups sorted newest-first. */
+    private get topReleases(): MBReleaseGroup[] {
+        return [...this.releaseGroups].sort((a, b) => {
+            const da = a.firstReleaseDate || '';
+            const db = b.firstReleaseDate || '';
+            return db.localeCompare(da);
+        });
+    }
+
+    private renderTopSection() {
+        const hasTracks = !this.loadingTracks && this.topTracks.length > 0;
+        const hasReleases = !this.loadingReleases && this.releaseGroups.length > 0;
+        const isLoading = this.loadingTracks || this.loadingReleases;
+
+        if (isLoading) {
             return html`
                 <section>
-                    <h3 class="section-header">Top Tracks</h3>
+                    <h3 class="section-header">Popular</h3>
                     <div class="section-loading">Loading\u2026</div>
                 </section>
             `;
         }
-        if (this.errorTracks) {
-            return html`
-                <section>
-                    <h3 class="section-header">Top Tracks</h3>
-                    <div class="section-error">
-                        <wa-icon name="triangle-exclamation"></wa-icon>
-                        ${this.errorTracks}
-                    </div>
-                </section>
-            `;
-        }
-        if (this.topTracks.length === 0) return nothing;
+
+        if (!hasTracks && !hasReleases) return nothing;
+
+        const expanded = this.topSectionExpanded;
+        const trackLimit = expanded ? 10 : 5;
+        const releaseLimit = expanded ? 8 : 4;
+
+        const tracks = this.topTracks.slice(0, trackLimit);
+        const releases = this.topReleases.slice(0, releaseLimit);
+
+        const canExpand =
+            this.topTracks.length > 5 || this.releaseGroups.length > 4;
 
         return html`
             <section>
-                <h3 class="section-header">Top Tracks</h3>
-                <div class="track-list">
-                    ${this.topTracks.map(
-                        (t, i) => html`
-                            <div class="track-item">
-                                <span class="track-rank">${i + 1}</span>
-                                <div class="track-info">
-                                    <div class="track-title">
-                                        ${t.trackName}
-                                    </div>
-                                    <div class="track-artist">
-                                        ${t.artistName}
-                                    </div>
-                                </div>
-                                <span class="track-listens">
-                                    ${formatListenCount(t.totalListenCount)}
-                                    plays
-                                </span>
-                            </div>
-                        `,
-                    )}
+                <div class="top-section-columns">
+                    ${hasTracks
+                        ? html`
+                              <div class="top-section-column">
+                                  <h3 class="section-header">Top Tracks</h3>
+                                  <div class="track-list">
+                                      ${tracks.map(
+                                          (t, i) => html`
+                                              <div class="track-item">
+                                                  <span class="track-rank"
+                                                      >${i + 1}</span
+                                                  >
+                                                  <div class="track-info">
+                                                      <div
+                                                          class="track-title"
+                                                      >
+                                                          ${t.trackName}
+                                                      </div>
+                                                      <div
+                                                          class="track-artist"
+                                                      >
+                                                          ${t.artistName}
+                                                      </div>
+                                                  </div>
+                                                  <span class="track-listens">
+                                                      ${formatListenCount(
+                                                          t.totalListenCount,
+                                                      )}
+                                                      plays
+                                                  </span>
+                                              </div>
+                                          `,
+                                      )}
+                                  </div>
+                              </div>
+                          `
+                        : nothing}
+                    ${hasReleases
+                        ? html`
+                              <div class="top-section-column">
+                                  <h3 class="section-header">Top Releases</h3>
+                                  <div class="top-releases-grid">
+                                      ${releases.map((rg) =>
+                                          this.renderAlbumCard(rg),
+                                      )}
+                                  </div>
+                              </div>
+                          `
+                        : nothing}
                 </div>
+                ${canExpand
+                    ? html`
+                          <button
+                              class="top-section-toggle"
+                              @click=${this.toggleTopSection}
+                              aria-expanded="${expanded}"
+                          >
+                              ${expanded ? 'Show less' : 'Show more'}
+                              <wa-icon
+                                  name="chevron-down"
+                              ></wa-icon>
+                          </button>
+                      `
+                    : nothing}
             </section>
         `;
     }
