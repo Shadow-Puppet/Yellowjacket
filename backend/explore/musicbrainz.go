@@ -23,18 +23,22 @@ const (
 // response cache.  Every API call checks the cache first and stores
 // successful responses for future hits.
 //
-// The underlying musicbrainzws2.Client handles MusicBrainz-specific
-// rate limiting via retries on HTTP 429, so we do not use the
-// RateLimiter from this package (that is reserved for ListenBrainz).
+// A proactive rate limiter gates all outgoing requests at 1 req/sec
+// to avoid triggering MusicBrainz 429 responses.  The underlying
+// musicbrainzws2.Client still retries on 429 as a safety net, but
+// the limiter should prevent most rate-limit hits.
 type MusicBrainzClient struct {
-	mb     *musicbrainzws2.Client
-	cache  *Cache
-	logger *slog.Logger
+	mb      *musicbrainzws2.Client
+	cache   *Cache
+	limiter *RateLimiter
+	logger  *slog.Logger
 }
 
 // NewMusicBrainzClient creates a MusicBrainz API client that caches
-// responses in the given Cache.
-func NewMusicBrainzClient(cache *Cache, logger *slog.Logger) *MusicBrainzClient {
+// responses in the given Cache.  The provided rate limiter is shared
+// with all other MB consumers (e.g. artist image resolution) to
+// prevent concurrent bursts from triggering 429s.
+func NewMusicBrainzClient(cache *Cache, limiter *RateLimiter, logger *slog.Logger) *MusicBrainzClient {
 	mb := musicbrainzws2.NewClient(musicbrainzws2.AppInfo{
 		Name:    "YellowJacket",
 		Version: "dev",
@@ -42,9 +46,10 @@ func NewMusicBrainzClient(cache *Cache, logger *slog.Logger) *MusicBrainzClient 
 	})
 
 	return &MusicBrainzClient{
-		mb:     mb,
-		cache:  cache,
-		logger: logger,
+		mb:      mb,
+		cache:   cache,
+		limiter: limiter,
+		logger:  logger,
 	}
 }
 
@@ -69,6 +74,10 @@ func (c *MusicBrainzClient) SearchArtists(
 		if err := json.Unmarshal(data, &out); err == nil {
 			return out, nil
 		}
+	}
+
+	if err := c.limiter.Wait(ctx); err != nil {
+		return nil, err
 	}
 
 	c.logger.Info("musicbrainz search artists",
@@ -105,6 +114,10 @@ func (c *MusicBrainzClient) SearchReleaseGroups(
 		}
 	}
 
+	if err := c.limiter.Wait(ctx); err != nil {
+		return nil, err
+	}
+
 	c.logger.Info("musicbrainz search release groups",
 		"query", query,
 		"limit", limit,
@@ -137,6 +150,10 @@ func (c *MusicBrainzClient) SearchRecordings(
 		if err := json.Unmarshal(data, &out); err == nil {
 			return out, nil
 		}
+	}
+
+	if err := c.limiter.Wait(ctx); err != nil {
+		return nil, err
 	}
 
 	c.logger.Info("musicbrainz search recordings",
@@ -176,6 +193,10 @@ func (c *MusicBrainzClient) LookupArtist(
 		}
 	}
 
+	if err := c.limiter.Wait(ctx); err != nil {
+		return nil, err
+	}
+
 	c.logger.Info("musicbrainz lookup artist", "mbid", mbid)
 
 	a, err := c.mb.LookupArtist(ctx,
@@ -204,6 +225,10 @@ func (c *MusicBrainzClient) LookupReleaseGroup(
 		if err := json.Unmarshal(data, &out); err == nil {
 			return &out, nil
 		}
+	}
+
+	if err := c.limiter.Wait(ctx); err != nil {
+		return nil, err
 	}
 
 	c.logger.Info("musicbrainz lookup release group", "mbid", mbid)
@@ -241,6 +266,10 @@ func (c *MusicBrainzClient) BrowseReleaseGroups(
 		}
 	}
 
+	if err := c.limiter.Wait(ctx); err != nil {
+		return nil, err
+	}
+
 	c.logger.Info("musicbrainz browse release groups",
 		"artistMBID", artistMBID,
 	)
@@ -274,6 +303,10 @@ func (c *MusicBrainzClient) BrowseReleases(
 		if err := json.Unmarshal(data, &out); err == nil {
 			return out, nil
 		}
+	}
+
+	if err := c.limiter.Wait(ctx); err != nil {
+		return nil, err
 	}
 
 	c.logger.Info("musicbrainz browse releases",

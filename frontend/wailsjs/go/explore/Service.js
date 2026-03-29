@@ -42,6 +42,10 @@ export function GetThumbnails(arg1) {
   return window['go']['explore']['Service']['GetThumbnails'](arg1);
 }
 
+export function IndexNewArtists() {
+  return window['go']['explore']['Service']['IndexNewArtists']();
+}
+
 export function InvalidateIndexDiscographies() {
   return window['go']['explore']['Service']['InvalidateIndexDiscographies']();
 }

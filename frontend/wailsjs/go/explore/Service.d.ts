@@ -23,6 +23,8 @@ export function GetThumbnail(arg1:string,arg2:string,arg3:string):Promise<string
 
 export function GetThumbnails(arg1:Array<explore.ThumbnailRequest>):Promise<Record<string, string>>;
 
+export function IndexNewArtists():Promise<void>;
+
 export function InvalidateIndexDiscographies():Promise<void>;
 
 export function LookupArtist(arg1:string):Promise<explore.MBArtist>;

@@ -35,12 +35,13 @@ type Service struct {
 // client, and ListenBrainz client internally.
 func NewExploreService(logger *slog.Logger, db *database.DB) *Service {
 	cache := NewCache(db, logger.WithGroup("cache"))
-	limiter := NewRateLimiter()
-	mb := NewMusicBrainzClient(cache, logger.WithGroup("musicbrainz"))
-	lb := NewListenBrainzClient(limiter, cache, logger.WithGroup("listenbrainz"))
-	artProxy := NewCoverArtProxy(db, limiter)
+	lbLimiter := NewRateLimiter()
+	mbLimiter := NewRateLimiter() // 1 req/sec, shared across all MB consumers
+	mb := NewMusicBrainzClient(cache, mbLimiter, logger.WithGroup("musicbrainz"))
+	lb := NewListenBrainzClient(lbLimiter, cache, logger.WithGroup("listenbrainz"))
+	artProxy := NewCoverArtProxy(db, lbLimiter)
 	artistImg := NewArtistImageProvider(
-		db, cache, NewRateLimiterF(1.5), logger.WithGroup("artist-image"),
+		db, cache, mbLimiter, logger.WithGroup("artist-image"),
 	)
 	index := NewSearchIndex(db, lb, artistImg, logger.WithGroup("search-index"))
 	libMBID := NewLibraryMBIDIndex(db)
