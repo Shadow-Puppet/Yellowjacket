@@ -10,6 +10,7 @@ import type {
     MBRelease,
     MBTrack,
 } from '@go/explore/Service';
+import { exploreCache } from '../../store/explore-cache';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 
 /* ── Constants ── */
@@ -398,6 +399,21 @@ export class ExploreAlbumDetails extends LitElement {
             `[explore-album] loading: "${this.albumName}" (${mbid})`,
         );
 
+        // Phase 0: hydrate from explore cache (instant).
+        const cached = exploreCache.getAlbum(mbid);
+        if (cached) {
+            this.releaseGroup = {
+                mbid: cached.mbid,
+                title: cached.title,
+                artistCredit: cached.artistName,
+                firstReleaseDate: cached.year || '',
+                primaryType: 'Album',
+            } as MBReleaseGroup;
+            this.loadingInfo = false;
+            console.log(`[explore-album] hydrated from cache: "${cached.title}"`);
+        }
+
+        // Phase 1: API calls for full data.
         const [infoResult, releasesResult] = await Promise.allSettled([
             this.fetchReleaseGroup(mbid),
             this.fetchReleases(mbid),

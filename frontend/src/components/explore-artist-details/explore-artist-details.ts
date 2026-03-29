@@ -17,6 +17,8 @@ import type {
     LBTopReleaseGroup,
     LBSimilarArtist,
 } from '@go/explore/Service';
+import { exploreCache } from '../../store/explore-cache';
+import { libraryStore } from '../../store/library-store';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 
 /* ── Constants ── */
@@ -646,7 +648,10 @@ export class ExploreArtistDetails extends LitElement {
             `[explore-artist] loading: "${this.artistName}" (${mbid})`,
         );
 
-        // Fire all requests in parallel — each section is independent.
+        // Phase 0: hydrate from caches (instant, no Go calls).
+        this.hydrateFromCache(mbid);
+
+        // Phase 1: fire all API requests in parallel.
         const [artistResult, tracksResult, topReleasesResult, releasesResult, similarResult] =
             await Promise.allSettled([
                 this.fetchArtist(mbid),
@@ -657,7 +662,9 @@ export class ExploreArtistDetails extends LitElement {
             ]);
 
         // Artist image is fire-and-forget — doesn't block the page.
-        this.fetchArtistImage(mbid);
+        if (!this.artistImageURL) {
+            this.fetchArtistImage(mbid);
+        }
 
         // Check which release groups are in the local library.
         this.checkLibrary();
@@ -672,6 +679,47 @@ export class ExploreArtistDetails extends LitElement {
         console.log(
             `[explore-artist] loaded: "${this.artistName}" (${summary})`,
         );
+    }
+
+    /**
+     * Hydrate state from the explore cache and library store.
+     * Shows cached data instantly before API calls complete.
+     */
+    private hydrateFromCache(mbid: string) {
+        // Artist image from explore cache (populated by search results).
+        const cachedArtist = exploreCache.getArtist(mbid);
+        if (cachedArtist) {
+            if (cachedArtist.imageURL) {
+                this.artistImageURL = cachedArtist.imageURL;
+            } else if (cachedArtist.imageMedium) {
+                this.artistImageURL = cachedArtist.imageMedium;
+            } else if (cachedArtist.imageSmall) {
+                this.artistImageURL = cachedArtist.imageSmall;
+            }
+        }
+
+        // Library albums by this artist — show as discography instantly.
+        const cachedAlbums = libraryStore.cachedAlbums;
+        if (cachedAlbums) {
+            const artistName = this.artistName.toLowerCase();
+            const libraryAlbums: MBReleaseGroup[] = [];
+            for (const a of cachedAlbums) {
+                if (a.ArtistName.toLowerCase() === artistName) {
+                    libraryAlbums.push({
+                        mbid: a.MBID || '',
+                        title: a.Name,
+                        primaryType: 'Album',
+                        artistCredit: a.ArtistName,
+                        firstReleaseDate: a.Year ? String(a.Year) : '',
+                    } as MBReleaseGroup);
+                }
+            }
+
+            if (libraryAlbums.length > 0) {
+                this.releaseGroups = libraryAlbums;
+                this.loadingReleases = false;
+            }
+        }
     }
 
     private async fetchArtist(mbid: string) {
