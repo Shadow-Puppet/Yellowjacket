@@ -424,10 +424,20 @@ func (e *Service) Search(query string) (*MBSearchResult, error) {
 		e.boostWithIndexPopularity(&result)
 	} else {
 		// Phase 2: LB popularity lookups (3 POST calls, rate-limited).
+		lbStart := time.Now()
 		e.boostWithPopularity(&result)
+		lbDur := time.Since(lbStart)
 
 		// Phase 3: cross-reference artist discographies.
+		xrefStart := time.Now()
 		e.crossReferenceAlbums(query, &result)
+		xrefDur := time.Since(xrefStart)
+
+		e.logger.Info("search slow path breakdown",
+			"query", query,
+			"lbPopularity", lbDur.Round(time.Millisecond),
+			"crossRef", xrefDur.Round(time.Millisecond),
+		)
 	}
 
 	p2Dur := time.Since(p2Start)
