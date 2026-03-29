@@ -125,6 +125,17 @@ func (e *Service) SearchLocal(query string) *MBSearchResult {
 	var result MBSearchResult
 	mergeIndexHits(&result, indexHits)
 
+	// Remove special-purpose artists from local results too.
+	if len(result.Artists) > 0 {
+		filtered := result.Artists[:0]
+		for _, a := range result.Artists {
+			if !mbSpecialPurposeArtists[a.MBID] {
+				filtered = append(filtered, a)
+			}
+		}
+		result.Artists = filtered
+	}
+
 	// Cap counts but skip the minBlendedScore filter — index hits
 	// use scalePopularity scores that shouldn't be compared to
 	// blended MB+LB scores.
@@ -815,15 +826,15 @@ func scalePopularity(listens int) int {
 // Filtering and capping
 // ---------------------------------------------------------------------------
 
-// filterAndCap removes low-scoring results and limits each entity
-// slice to maxResults entries.
+// filterAndCap removes low-scoring results, special-purpose
+// MusicBrainz artists, and limits each entity slice to maxResults.
 func filterAndCap(result *MBSearchResult) {
-	// Filter artists by minimum blended score.
+	// Filter artists by minimum blended score and remove SPAs.
 	if len(result.Artists) > 0 {
 		filtered := result.Artists[:0]
 
 		for _, a := range result.Artists {
-			if a.Score >= minBlendedScore {
+			if a.Score >= minBlendedScore && !mbSpecialPurposeArtists[a.MBID] {
 				filtered = append(filtered, a)
 			}
 		}
@@ -891,6 +902,26 @@ const (
 	// after popularity reranking (0–100 scale).
 	minBlendedScore = 25
 )
+
+// mbSpecialPurposeArtists is a set of MusicBrainz Special Purpose
+// Artist MBIDs that should be excluded from search results.  These
+// are placeholder entries (e.g. [unknown], [anonymous]) that
+// accumulate thousands of recordings and artificially high
+// popularity, polluting search results.
+//
+// See: https://musicbrainz.org/doc/Style/Unknown_and_untitled/Special_purpose_artist
+//
+//nolint:gochecknoglobals
+var mbSpecialPurposeArtists = map[string]bool{
+	"125ec42a-7229-4250-afc5-e057484327fe": true, // [unknown]
+	"f731ccc4-e22a-43af-a747-64213f8768e7": true, // [anonymous]
+	"33cf029c-63b0-41a0-9855-be2a3665fb3b": true, // [data]
+	"314e1c25-dde7-4e4d-b2f4-0a7b9f7c56dc": true, // [dialogue]
+	"eec63d3c-3b81-4ad4-b1e4-7c147c4d2b61": true, // [no artist]
+	"9be7f096-97ec-4615-8957-8c3b659f51b4": true, // [traditional]
+	"80a8851f-444c-4539-892b-ad2a49f7f0d0": true, // [Church bells]
+	"ae636985-40e8-4fe2-80cb-9c1a21c6e30a": true, // Various Artists (not an SPA but often pollutes artist results)
+}
 
 // boostWithIndexPopularity reranks MB search results using
 // popularity data from the local search index.  No API calls —
