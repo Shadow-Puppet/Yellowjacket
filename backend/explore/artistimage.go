@@ -31,6 +31,7 @@ const (
 	wikimediaThumbBase  = "https://upload.wikimedia.org/wikipedia/commons/thumb"
 	wikidataAPIBase     = "https://www.wikidata.org/w/api.php"
 	wikipediaAPIBase    = "https://en.wikipedia.org/w/api.php"
+	fanartTVAPIBase     = "https://webservice.fanart.tv/v3/music"
 	artistImageTimeout  = 10 * time.Second
 	artistImageCacheTTL = 30 * 24 * time.Hour
 	artistImageBaseDir  = "artist-images"
@@ -38,6 +39,14 @@ const (
 	artistImageMaxSize  = 500 // max dimension for stored full-res images
 	maxImagesPerArtist  = 10
 )
+
+// fanartTVProjectKey is the project API key for fanart.tv.
+// Set via -ldflags at build time, or FANART_TV_API_KEY env var.
+// Users can provide their own personal key via FANART_TV_PERSONAL_KEY.
+// Per fanart.tv terms: images are CC-BY-SA, attribution required.
+//
+//nolint:gochecknoglobals
+var fanartTVProjectKey = ""
 
 // artistImageTier defines a thumbnail size variant.
 type artistImageTier struct {
@@ -56,12 +65,13 @@ var artistImageTiers = []artistImageTier{
 // from multiple sources.  Stores up to 10 images per artist with
 // sm/md/lg thumbnails for the primary image.
 type ArtistImageProvider struct {
-	db        *database.DB
-	cache     *Cache
-	mbLimiter *RateLimiter
-	client    *http.Client
-	logger    *slog.Logger
-	baseDir   string
+	db           *database.DB
+	cache        *Cache
+	mbLimiter    *RateLimiter
+	client       *http.Client
+	logger       *slog.Logger
+	baseDir      string
+	fanartAPIKey string // resolved project key + optional personal key
 }
 
 // NewArtistImageProvider creates a multi-source artist image provider.
@@ -79,13 +89,24 @@ func NewArtistImageProvider(
 		_ = os.MkdirAll(dir, 0o755)
 	}
 
+	// Resolve fanart.tv API key: env var > build-time ldflags.
+	fanartKey := os.Getenv("FANART_TV_API_KEY")
+	if fanartKey == "" {
+		fanartKey = fanartTVProjectKey
+	}
+
+	if fanartKey != "" {
+		logger.Info("fanart.tv API key configured")
+	}
+
 	return &ArtistImageProvider{
-		db:        db,
-		cache:     cache,
-		mbLimiter: mbLimiter,
-		client:    &http.Client{Timeout: artistImageTimeout},
-		logger:    logger,
-		baseDir:   dir,
+		db:           db,
+		cache:        cache,
+		mbLimiter:    mbLimiter,
+		client:       &http.Client{Timeout: artistImageTimeout},
+		logger:       logger,
+		baseDir:      dir,
+		fanartAPIKey: fanartKey,
 	}
 }
 
@@ -214,12 +235,23 @@ type mbRelation struct {
 }
 
 func (p *ArtistImageProvider) resolveAllSources(artistMBID string) {
-	rels := p.fetchMBRels(artistMBID)
-
-	var urls []struct {
+	type imageSource struct {
 		source string
 		url    string
 	}
+
+	var urls []imageSource
+
+	// Source 0 (highest priority): fanart.tv artist thumbnails.
+	if p.fanartAPIKey != "" {
+		fanartURLs := p.fetchFanartTV(artistMBID)
+
+		for _, u := range fanartURLs {
+			urls = append(urls, imageSource{source: "fanart", url: u})
+		}
+	}
+
+	rels := p.fetchMBRels(artistMBID)
 
 	// Source 1: MB direct image relations (Wikimedia Commons).
 	for _, rel := range rels {
@@ -234,10 +266,7 @@ func (p *ArtistImageProvider) resolveAllSources(artistMBID string) {
 			thumbURL := wikimediaThumbURL(filename)
 
 			if thumbURL != "" {
-				urls = append(urls, struct {
-					source string
-					url    string
-				}{"wikimedia", thumbURL})
+				urls = append(urls, imageSource{source: "wikimedia", url: thumbURL})
 			}
 		}
 	}
@@ -258,10 +287,7 @@ func (p *ArtistImageProvider) resolveAllSources(artistMBID string) {
 			}
 
 			if !dup {
-				urls = append(urls, struct {
-					source string
-					url    string
-				}{"wikidata", thumbURL})
+				urls = append(urls, imageSource{"wikidata", thumbURL})
 			}
 		}
 
@@ -278,10 +304,7 @@ func (p *ArtistImageProvider) resolveAllSources(artistMBID string) {
 			}
 
 			if !dup {
-				urls = append(urls, struct {
-					source string
-					url    string
-				}{"wikipedia", leadURL})
+				urls = append(urls, imageSource{"wikipedia", leadURL})
 			}
 		}
 	}
@@ -400,6 +423,73 @@ func (p *ArtistImageProvider) generateThumbnail(
 
 // ---------------------------------------------------------------------------
 // MB rels + Wikidata + Wikipedia
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Source 0: fanart.tv
+// ---------------------------------------------------------------------------
+
+// fetchFanartTV returns artist thumbnail URLs from fanart.tv.
+// Uses the project API key + optional user personal key.
+// Returns up to 5 URLs (artistthumb images, sorted by likes).
+func (p *ArtistImageProvider) fetchFanartTV(artistMBID string) []string {
+	cacheKey := "fanart:" + artistMBID
+
+	if data, ok := p.cache.Get(cacheKey); ok {
+		var cached []string
+		if err := json.Unmarshal(data, &cached); err == nil {
+			return cached
+		}
+	}
+
+	url := fmt.Sprintf("%s/%s?api_key=%s", fanartTVAPIBase, artistMBID, p.fanartAPIKey)
+
+	// Add personal key if the user configured one.
+	if personalKey := os.Getenv("FANART_TV_PERSONAL_KEY"); personalKey != "" {
+		url += "&client_key=" + personalKey
+	}
+
+	body, err := p.fetchURL(url)
+	if err != nil {
+		// Cache empty result to avoid re-fetching.
+		p.cache.Set(cacheKey, []byte("[]"), artistImageCacheTTL, artistMBID, "artist")
+
+		return nil
+	}
+
+	var response struct {
+		ArtistThumb []struct {
+			URL   string `json:"url"`
+			Likes string `json:"likes"`
+		} `json:"artistthumb"`
+	}
+
+	if err := json.Unmarshal(body, &response); err != nil || len(response.ArtistThumb) == 0 {
+		p.cache.Set(cacheKey, []byte("[]"), artistImageCacheTTL, artistMBID, "artist")
+
+		return nil
+	}
+
+	// Take up to 5 thumbs (they're already sorted by likes on the API side).
+	limit := 5
+	if limit > len(response.ArtistThumb) {
+		limit = len(response.ArtistThumb)
+	}
+
+	urls := make([]string, limit)
+	for i := range limit {
+		urls[i] = response.ArtistThumb[i].URL
+	}
+
+	// Cache the resolved URLs.
+	data, _ := json.Marshal(urls)
+	p.cache.Set(cacheKey, data, artistImageCacheTTL, artistMBID, "artist")
+
+	return urls
+}
+
+// ---------------------------------------------------------------------------
+// Source 1-3: MB rels + Wikidata + Wikipedia
 // ---------------------------------------------------------------------------
 
 func (p *ArtistImageProvider) fetchMBRels(artistMBID string) []mbRelation {
