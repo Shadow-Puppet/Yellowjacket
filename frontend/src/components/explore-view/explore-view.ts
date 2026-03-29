@@ -1,7 +1,8 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state, query as litQuery } from 'lit/decorators.js';
 import { designTokens } from '../../styles/tokens.css';
-import { Search, SearchLocal, GetThumbnails, GetArtistImageURL, CheckLibraryMBIDs } from '@go/explore/Service';
+import { Search, GetThumbnails, GetArtistImageURL, CheckLibraryMBIDs } from '@go/explore/Service';
+import { EventsOn } from '@runtime/runtime';
 import type { ThumbnailRequest } from '@go/explore/Service';
 import type {
     MBSearchResult,
@@ -68,6 +69,28 @@ export class ExploreView extends LitElement {
     private libraryMBIDs = new Set<string>();
 
     @litQuery('input') private inputEl!: HTMLInputElement;
+
+    /* ── Lifecycle ── */
+
+    override connectedCallback() {
+        super.connectedCallback();
+        EventsOn('search:local-results', (local: MBSearchResult) => {
+            // Only apply if we're actively loading (a search is in flight).
+            if (!this.loading) return;
+            if (local.artists?.length || local.releaseGroups?.length || local.recordings?.length) {
+                this.results = local;
+                this.loadThumbnails();
+                this.loadArtistImages();
+                this.checkLibrary();
+                console.log(
+                    `[explore] local results via event — ` +
+                        `artists=${local.artists?.length ?? 0}, ` +
+                        `albums=${local.releaseGroups?.length ?? 0}, ` +
+                        `tracks=${local.recordings?.length ?? 0}`,
+                );
+            }
+        });
+    }
 
     /* ── Styles ── */
 
@@ -520,30 +543,11 @@ export class ExploreView extends LitElement {
         const startTime = performance.now();
         console.log(`[explore] search started: "${query}"`);
 
-        // Phase 1: show local index hits instantly (no network).
-        try {
-            const local = await SearchLocal(query);
-            if (version !== this.searchVersion) return;
-            if (local && (local.artists?.length || local.releaseGroups?.length || local.recordings?.length)) {
-                this.results = local;
-                this.loading = false;
-                this.loadThumbnails();
-                this.loadArtistImages();
-                this.checkLibrary();
-                const elapsed = (performance.now() - startTime).toFixed(0);
-                console.log(
-                    `[explore] local results: "${query}" in ${elapsed}ms — ` +
-                        `artists=${local.artists?.length ?? 0}, ` +
-                        `albums=${local.releaseGroups?.length ?? 0}, ` +
-                        `tracks=${local.recordings?.length ?? 0}`,
-                );
-            }
-        } catch {
-            // Local search failed — continue to full search.
-        }
+        // Local index results arrive via the 'search:local-results' event
+        // emitted by the backend at the start of Search(), before the
+        // slow MB/LB pipeline runs.  No separate RPC call needed.
 
-        // Phase 2: full pipeline (MB + LB + reranking).
-        // Fire-and-forget so the local results render immediately.
+        // Full pipeline (MB + LB + reranking).
         void this.executeFullSearch(version, query, startTime);
     }
 
