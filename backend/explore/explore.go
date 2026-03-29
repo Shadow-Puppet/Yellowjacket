@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"yellowjacket/backend/database"
 )
@@ -274,12 +275,27 @@ func (e *Service) GetArtistImages(names []string) map[string]string {
 // and the remaining results are still returned — popularity
 // failures degrade to MB-only ordering.
 func (e *Service) Search(query string) (*MBSearchResult, error) {
+	searchStart := time.Now()
 	e.logger.Info("search started", "query", query)
 
 	// Phase 0: query local popularity index (instant, no API calls).
+	p0Start := time.Now()
 	indexHits := e.index.Search(query, 30) //nolint:mnd
+	p0Dur := time.Since(p0Start)
 
-	// Phase 1: concurrent MB search (3 goroutines, library-limited).
+	e.logger.Info("search phase 0 complete (index)",
+		"query", query,
+		"hits", len(indexHits),
+		"elapsed", p0Dur.Round(time.Millisecond),
+	)
+
+	// Phase 1: concurrent MB search (3 goroutines) with a deadline
+	// so a slow MusicBrainz server doesn't hold up the whole search.
+	p1Start := time.Now()
+
+	mbCtx, mbCancel := context.WithTimeout(e.ctx, searchMBTimeout)
+	defer mbCancel()
+
 	var (
 		result MBSearchResult
 		mu     sync.Mutex
@@ -295,7 +311,15 @@ func (e *Service) Search(query string) (*MBSearchResult, error) {
 		{
 			name: "artists",
 			fn: func() {
-				artists, err := e.mb.SearchArtists(e.ctx, query, mbSearchLimit)
+				t := time.Now()
+				artists, err := e.mb.SearchArtists(mbCtx, query, mbSearchLimit)
+
+				e.logger.Info("search MB sub-call",
+					"entity", "artists",
+					"elapsed", time.Since(t).Round(time.Millisecond),
+					"cached", err == nil && time.Since(t) < 5*time.Millisecond,
+				)
+
 				if err != nil {
 					e.logger.Warn("search sub-call failed",
 						"entity", "artists",
@@ -314,7 +338,15 @@ func (e *Service) Search(query string) (*MBSearchResult, error) {
 		{
 			name: "releaseGroups",
 			fn: func() {
-				rgs, err := e.mb.SearchReleaseGroups(e.ctx, query, mbSearchLimit)
+				t := time.Now()
+				rgs, err := e.mb.SearchReleaseGroups(mbCtx, query, mbSearchLimit)
+
+				e.logger.Info("search MB sub-call",
+					"entity", "releaseGroups",
+					"elapsed", time.Since(t).Round(time.Millisecond),
+					"cached", err == nil && time.Since(t) < 5*time.Millisecond,
+				)
+
 				if err != nil {
 					e.logger.Warn("search sub-call failed",
 						"entity", "releaseGroups",
@@ -333,7 +365,15 @@ func (e *Service) Search(query string) (*MBSearchResult, error) {
 		{
 			name: "recordings",
 			fn: func() {
-				recs, err := e.mb.SearchRecordings(e.ctx, query, mbSearchLimit)
+				t := time.Now()
+				recs, err := e.mb.SearchRecordings(mbCtx, query, mbSearchLimit)
+
+				e.logger.Info("search MB sub-call",
+					"entity", "recordings",
+					"elapsed", time.Since(t).Round(time.Millisecond),
+					"cached", err == nil && time.Since(t) < 5*time.Millisecond,
+				)
+
 				if err != nil {
 					e.logger.Warn("search sub-call failed",
 						"entity", "recordings",
@@ -363,17 +403,23 @@ func (e *Service) Search(query string) (*MBSearchResult, error) {
 
 	wg.Wait()
 
-	e.logger.Info("search MB complete",
+	p1Dur := time.Since(p1Start)
+
+	e.logger.Info("search phase 1 complete (MB)",
 		"query", query,
 		"artists", len(result.Artists),
 		"releaseGroups", len(result.ReleaseGroups),
 		"recordings", len(result.Recordings),
+		"elapsed", p1Dur.Round(time.Millisecond),
 	)
 
 	// Phases 2+3: when the index is ready, use cached popularity
 	// from the index to rerank MB results (no API calls).
 	// When the index isn't ready, fall back to live LB API calls.
-	if e.index.IsReady() {
+	p2Start := time.Now()
+	indexReady := e.index.IsReady()
+
+	if indexReady {
 		// Phase 2 (lite): rerank MB results using index popularity.
 		e.boostWithIndexPopularity(&result)
 	} else {
@@ -384,17 +430,31 @@ func (e *Service) Search(query string) (*MBSearchResult, error) {
 		e.crossReferenceAlbums(query, &result)
 	}
 
+	p2Dur := time.Since(p2Start)
+
+	e.logger.Info("search phase 2-3 complete (rerank)",
+		"query", query,
+		"indexReady", indexReady,
+		"elapsed", p2Dur.Round(time.Millisecond),
+	)
+
 	// Phase 4: merge local index hits into results, dedup by MBID.
 	mergeIndexHits(&result, indexHits)
 
 	// Phase 5: filter low-scoring results and cap counts.
 	filterAndCap(&result)
 
+	totalDur := time.Since(searchStart)
+
 	e.logger.Info("search completed",
 		"query", query,
 		"artists", len(result.Artists),
 		"releaseGroups", len(result.ReleaseGroups),
 		"recordings", len(result.Recordings),
+		"total", totalDur.Round(time.Millisecond),
+		"phase0", p0Dur.Round(time.Millisecond),
+		"phase1_mb", p1Dur.Round(time.Millisecond),
+		"phase2_rerank", p2Dur.Round(time.Millisecond),
 	)
 
 	return &result, nil
@@ -754,6 +814,11 @@ const (
 	// mbSearchLimit is passed to each MB search call.  Slightly
 	// larger than maxResults to allow headroom for filtering.
 	mbSearchLimit = 20
+
+	// searchMBTimeout is the maximum time to wait for MusicBrainz
+	// API responses during interactive search.  If MB is slow,
+	// results degrade to index-only rather than blocking the user.
+	searchMBTimeout = 4 * time.Second
 
 	// maxResults caps each entity slice after filtering.
 	maxResults = 15
