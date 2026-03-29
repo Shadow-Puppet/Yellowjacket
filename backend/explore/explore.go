@@ -72,6 +72,12 @@ func (e *Service) StartIndexBuild() {
 	e.index.StartBuild(e.ctx)
 }
 
+// IndexNewArtists indexes only library artists not yet in the search
+// index. Lightweight post-scan path — skips the full tier machinery.
+func (e *Service) IndexNewArtists() {
+	e.index.IndexNewArtists(e.ctx)
+}
+
 // StopIndexBuild cancels the background search index build.
 // Call before a full rescan to free the DB for the scan.
 func (e *Service) StopIndexBuild() {

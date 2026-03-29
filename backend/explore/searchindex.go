@@ -134,6 +134,103 @@ func NewSearchIndex(
 	}
 }
 
+// IndexNewArtists indexes only library artists that are not yet in the
+// search index. This is the lightweight post-scan path — no tier
+// machinery, no freshness checks, no sitewide/similar artist logic.
+// Just finds library artists with MBIDs missing from the index and
+// fetches their discographies + images.
+func (si *SearchIndex) IndexNewArtists(ctx context.Context) {
+	si.mu.Lock()
+	if si.cancel != nil {
+		// Full build already running — it will pick up new artists.
+		si.mu.Unlock()
+
+		return
+	}
+
+	si.done = make(chan struct{})
+	si.mu.Unlock()
+
+	buildCtx, cancel := context.WithCancel(ctx)
+
+	si.mu.Lock()
+	si.cancel = cancel
+	si.mu.Unlock()
+
+	go func() {
+		defer func() {
+			si.mu.Lock()
+			si.cancel = nil
+			si.mu.Unlock()
+
+			close(si.done)
+		}()
+
+		si.indexNewLibraryArtists(buildCtx)
+	}()
+}
+
+// indexNewLibraryArtists finds library artists with MBIDs that are not
+// in the index and fetches their discographies.
+func (si *SearchIndex) indexNewLibraryArtists(ctx context.Context) {
+	indexed := si.indexedArtistMBIDs()
+	libraryMBIDs := si.getLibraryArtistMBIDs()
+
+	var newArtists []lbSitewideArtist
+
+	for _, mbid := range libraryMBIDs {
+		if !indexed[mbid] {
+			// Look up the artist name from the DB.
+			var name string
+
+			rows, err := si.db.QueryContext(
+				"SELECT name FROM artists WHERE mbid = ? LIMIT 1", mbid,
+			)
+			if err != nil {
+				continue
+			}
+
+			if !rows.Next() {
+				_ = rows.Close()
+
+				continue
+			}
+
+			if err := rows.Scan(&name); err != nil {
+				_ = rows.Close()
+
+				continue
+			}
+
+			_ = rows.Close()
+
+			newArtists = append(newArtists, lbSitewideArtist{
+				ArtistMBID: mbid,
+				ArtistName: name,
+			})
+		}
+	}
+
+	if len(newArtists) == 0 {
+		si.logger.Info("search index: no new library artists to index")
+
+		return
+	}
+
+	si.logger.Info("search index: indexing new library artists",
+		"count", len(newArtists),
+	)
+
+	indexLimiter := NewRateLimiterN(indexerRate)
+	indexLB := NewListenBrainzClient(indexLimiter, si.lb.cache, si.logger.WithGroup("indexer"))
+
+	si.indexArtistDiscographies(ctx, indexLB, newArtists, "new-artists")
+
+	si.logger.Info("search index: new library artists indexed",
+		"count", len(newArtists),
+	)
+}
+
 // StartBuild launches the background index build goroutine.
 // Returns immediately.
 func (si *SearchIndex) StartBuild(ctx context.Context) {
