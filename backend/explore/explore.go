@@ -11,8 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
-
 	"yellowjacket/backend/database"
 )
 
@@ -162,20 +160,29 @@ func (e *Service) SearchLocal(query string) *MBSearchResult {
 // serialization queue, ensuring sub-millisecond response times.
 func (e *Service) SearchLocalHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rv := recover(); rv != nil {
+				e.logger.Error("search-local handler panic", "recover", rv)
+				http.Error(w, "internal error", http.StatusInternalServerError)
+			}
+		}()
+
 		query := r.URL.Query().Get("q")
 		if query == "" {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-
-		result := e.SearchLocal(query)
-		if result == nil {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte("null"))
 			return
 		}
 
+		result := e.SearchLocal(query)
+
 		w.Header().Set("Content-Type", "application/json")
+
+		if result == nil {
+			_, _ = w.Write([]byte("null"))
+			return
+		}
+
 		_ = json.NewEncoder(w).Encode(result)
 	})
 }
@@ -362,40 +369,6 @@ func (e *Service) Search(query string) (*MBSearchResult, error) {
 		"hits", len(indexHits),
 		"elapsed", p0Dur.Round(time.Millisecond),
 	)
-
-	// Emit local results immediately via event so the frontend can
-	// render them while the full pipeline runs.  This avoids the
-	// Wails RPC serialization bottleneck that blocks SearchLocal.
-	if len(indexHits) > 0 {
-		var localResult MBSearchResult
-		mergeIndexHits(&localResult, indexHits)
-
-		// Remove SPAs from local results.
-		if len(localResult.Artists) > 0 {
-			filtered := localResult.Artists[:0]
-			for _, a := range localResult.Artists {
-				if !mbSpecialPurposeArtists[a.MBID] {
-					filtered = append(filtered, a)
-				}
-			}
-
-			localResult.Artists = filtered
-		}
-
-		if len(localResult.Artists) > maxResults {
-			localResult.Artists = localResult.Artists[:maxResults]
-		}
-
-		if len(localResult.ReleaseGroups) > maxResults {
-			localResult.ReleaseGroups = localResult.ReleaseGroups[:maxResults]
-		}
-
-		if len(localResult.Recordings) > maxResults {
-			localResult.Recordings = localResult.Recordings[:maxResults]
-		}
-
-		runtime.EventsEmit(e.ctx, "search:local-results", localResult)
-	}
 
 	// Phase 1: concurrent MB search (3 goroutines) with a deadline
 	// so a slow MusicBrainz server doesn't hold up the whole search.
