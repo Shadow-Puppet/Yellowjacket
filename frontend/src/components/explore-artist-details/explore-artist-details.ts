@@ -1025,9 +1025,11 @@ export class ExploreArtistDetails extends LitElement {
     private renderTopSection() {
         const hasTracks = !this.loadingTracks && this.topTracks.length > 0;
         const hasReleases = !this.loadingTopReleases && this.topReleaseGroups.length > 0;
-        const isLoading = this.loadingTracks || this.loadingTopReleases;
+        const tracksLoading = this.loadingTracks;
+        const releasesLoading = this.loadingTopReleases;
 
-        if (isLoading) {
+        // Both still loading — show single loading state.
+        if (tracksLoading && releasesLoading) {
             return html`
                 <section>
                     <h3 class="section-header">Popular</h3>
@@ -1036,7 +1038,10 @@ export class ExploreArtistDetails extends LitElement {
             `;
         }
 
-        if (!hasTracks && !hasReleases) return nothing;
+        // Both done, neither has data.
+        if (!tracksLoading && !releasesLoading && !hasTracks && !hasReleases) {
+            return nothing;
+        }
 
         const expanded = this.topSectionExpanded;
         const trackLimit = expanded ? 10 : 5;
@@ -1098,7 +1103,14 @@ export class ExploreArtistDetails extends LitElement {
                                   </div>
                               </div>
                           `
-                        : nothing}
+                        : releasesLoading
+                          ? html`
+                                <div class="top-section-column">
+                                    <h3 class="section-header">Top Releases</h3>
+                                    <div class="section-loading">Loading\u2026</div>
+                                </div>
+                            `
+                          : nothing}
                 </div>
                 ${canExpand
                     ? html`

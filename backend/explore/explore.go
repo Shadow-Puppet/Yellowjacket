@@ -124,7 +124,21 @@ func (e *Service) SearchLocal(query string) *MBSearchResult {
 
 	var result MBSearchResult
 	mergeIndexHits(&result, indexHits)
-	filterAndCap(&result)
+
+	// Cap counts but skip the minBlendedScore filter — index hits
+	// use scalePopularity scores that shouldn't be compared to
+	// blended MB+LB scores.
+	if len(result.Artists) > maxResults {
+		result.Artists = result.Artists[:maxResults]
+	}
+
+	if len(result.ReleaseGroups) > maxResults {
+		result.ReleaseGroups = result.ReleaseGroups[:maxResults]
+	}
+
+	if len(result.Recordings) > maxResults {
+		result.Recordings = result.Recordings[:maxResults]
+	}
 
 	return &result
 }
