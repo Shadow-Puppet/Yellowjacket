@@ -2,19 +2,23 @@ package explore
 
 import (
 	"context"
-	"crypto/md5" //nolint:gosec // MD5 used for Wikimedia URL hashing, not security
+	"crypto/md5" //nolint:gosec // MD5 for Wikimedia URL hashing
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	"image/jpeg"
+	_ "image/png" // register PNG decoder
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
+
+	"golang.org/x/image/draw"
 
 	"yellowjacket/backend/database"
 	"yellowjacket/backend/system"
@@ -26,32 +30,41 @@ var ErrArtistImage = errors.New("artist image fetch failed")
 const (
 	wikimediaThumbBase  = "https://upload.wikimedia.org/wikipedia/commons/thumb"
 	wikidataAPIBase     = "https://www.wikidata.org/w/api.php"
-	artistImageSize     = 250
+	wikipediaAPIBase    = "https://en.wikipedia.org/w/api.php"
 	artistImageTimeout  = 10 * time.Second
 	artistImageCacheTTL = 30 * 24 * time.Hour
-	artistImageDir      = "artist-image-cache"
-	artistImageMaxBytes = 2 * 1024 * 1024 // 2 MB max per image
+	artistImageBaseDir  = "artist-images"
+	artistImageMaxBytes = 2 * 1024 * 1024
+	artistImageMaxSize  = 500 // max dimension for stored full-res images
+	maxImagesPerArtist  = 10
 )
 
-// ArtistImageProvider resolves artist MBIDs to images.  It checks
-// three sources in order:
-//  1. Local disk cache (instant, from previous fetch)
-//  2. MB url-rels → Wikimedia Commons thumb URL → fetch + cache
-//  3. Wikidata P18 → Wikimedia Commons thumb URL → fetch + cache
-//
-// Returns base64 data URLs for display in <img src="data:...">.
+// artistImageTier defines a thumbnail size variant.
+type artistImageTier struct {
+	Suffix  string
+	MaxSize int
+	Quality int
+}
+
+var artistImageTiers = []artistImageTier{
+	{Suffix: "_sm", MaxSize: 100, Quality: 75},
+	{Suffix: "_md", MaxSize: 200, Quality: 80},
+	{Suffix: "_lg", MaxSize: 400, Quality: 85},
+}
+
+// ArtistImageProvider resolves, fetches, and caches artist images
+// from multiple sources.  Stores up to 10 images per artist with
+// sm/md/lg thumbnails for the primary image.
 type ArtistImageProvider struct {
 	db        *database.DB
 	cache     *Cache
 	mbLimiter *RateLimiter
 	client    *http.Client
 	logger    *slog.Logger
-	imageDir  string
-	mu        sync.Mutex // serializes disk writes
+	baseDir   string
 }
 
-// NewArtistImageProvider creates a provider that resolves and caches
-// artist images.
+// NewArtistImageProvider creates a multi-source artist image provider.
 func NewArtistImageProvider(
 	db *database.DB,
 	cache *Cache,
@@ -62,7 +75,7 @@ func NewArtistImageProvider(
 
 	dataDir, err := system.GetUserDataDirPath()
 	if err == nil {
-		dir = filepath.Join(dataDir, artistImageDir)
+		dir = filepath.Join(dataDir, artistImageBaseDir)
 		_ = os.MkdirAll(dir, 0o755)
 	}
 
@@ -72,89 +85,125 @@ func NewArtistImageProvider(
 		mbLimiter: mbLimiter,
 		client:    &http.Client{Timeout: artistImageTimeout},
 		logger:    logger,
-		imageDir:  dir,
+		baseDir:   dir,
 	}
-}
-
-// GetCachedImage returns a base64 data URL from the disk cache
-// only — no network fetches.  Returns "" if not cached.
-func (p *ArtistImageProvider) GetCachedImage(artistMBID string) string {
-	if artistMBID == "" || p.imageDir == "" {
-		return ""
-	}
-
-	return p.readDiskCache(artistMBID)
-}
-
-// GetArtistImage returns a base64 data URL for the artist's photo.
-// Checks disk cache first, then resolves via MB/Wikidata and fetches
-// the image from Wikimedia Commons.  Returns "" if no image.
-func (p *ArtistImageProvider) GetArtistImage(artistMBID string) string {
-	if artistMBID == "" || p.imageDir == "" {
-		return ""
-	}
-
-	// Source 1: disk cache (instant).
-	if dataURL := p.readDiskCache(artistMBID); dataURL != "" {
-		return dataURL
-	}
-
-	// Check if we already know there's no image (cached miss marker).
-	if p.isDiskCacheMiss(artistMBID) {
-		return ""
-	}
-
-	// Source 2+3: resolve URL then fetch image.
-	imageURL := p.resolveURL(artistMBID)
-	if imageURL == "" {
-		p.writeDiskCache(artistMBID, nil) // miss marker
-
-		return ""
-	}
-
-	// Fetch the actual image bytes.
-	data, err := p.fetchImageBytes(imageURL)
-	if err != nil || len(data) == 0 {
-		p.writeDiskCache(artistMBID, nil)
-
-		return ""
-	}
-
-	p.writeDiskCache(artistMBID, data)
-
-	return toDataURL(data, artistMBID)
-}
-
-// resolveURL finds the Wikimedia Commons thumbnail URL for an
-// artist via MB url-rels and Wikidata.  The URL itself (not image
-// bytes) is cached in explore_cache for 30 days.
-func (p *ArtistImageProvider) resolveURL(artistMBID string) string {
-	cacheKey := "artist-image-url:" + artistMBID
-
-	if data, ok := p.cache.Get(cacheKey); ok {
-		return string(data)
-	}
-
-	rels := p.fetchMBRels(artistMBID)
-	if rels == nil {
-		p.cache.Set(cacheKey, []byte(""), artistImageCacheTTL, artistMBID, "artist")
-
-		return ""
-	}
-
-	imageURL := p.fromDirectImageRel(rels)
-
-	if imageURL == "" {
-		imageURL = p.fromWikidataRel(rels)
-	}
-
-	p.cache.Set(cacheKey, []byte(imageURL), artistImageCacheTTL, artistMBID, "artist")
-
-	return imageURL
 }
 
 // ---------------------------------------------------------------------------
-// MB url-rels
+// Public API
+// ---------------------------------------------------------------------------
+
+// GetArtistImage returns the primary image as a base64 data URL.
+// Resolves from all sources if not yet cached.
+func (p *ArtistImageProvider) GetArtistImage(artistMBID string) string {
+	if artistMBID == "" || p.baseDir == "" {
+		return ""
+	}
+
+	// Check for existing primary image on disk.
+	primaryPath := p.primaryPath(artistMBID)
+	if data := readFileData(primaryPath); data != "" {
+		return data
+	}
+
+	// Check if we already know there's no image.
+	if p.isMiss(artistMBID) {
+		return ""
+	}
+
+	// Resolve from all sources and select primary.
+	p.resolveAllSources(artistMBID)
+
+	// Try again after resolution.
+	if data := readFileData(primaryPath); data != "" {
+		return data
+	}
+
+	// Mark as miss.
+	p.writeMiss(artistMBID)
+
+	return ""
+}
+
+// GetCachedImage returns the primary image from disk cache only.
+// No network fetches.
+func (p *ArtistImageProvider) GetCachedImage(artistMBID string) string {
+	if artistMBID == "" || p.baseDir == "" {
+		return ""
+	}
+
+	return readFileData(p.primaryPath(artistMBID))
+}
+
+// GetImageURLs returns the asset-handler URLs for the primary image
+// at all size tiers.  Returns empty strings if no image.
+func (p *ArtistImageProvider) GetImageURLs(artistMBID string) (string, string, string, string) {
+	if artistMBID == "" || p.baseDir == "" {
+		return "", "", "", ""
+	}
+
+	dir := p.artistDir(artistMBID)
+	prefix := "/artist-images/" + artistMBID[:2] + "/" + artistMBID + "/"
+
+	if _, err := os.Stat(filepath.Join(dir, "primary.jpg")); err != nil {
+		return "", "", "", ""
+	}
+
+	var small, medium, large string
+
+	full := prefix + "primary.jpg"
+
+	for _, tier := range artistImageTiers {
+		path := filepath.Join(dir, "primary"+tier.Suffix+".jpg")
+		if _, err := os.Stat(path); err == nil {
+			url := prefix + "primary" + tier.Suffix + ".jpg"
+
+			switch tier.Suffix {
+			case "_sm":
+				small = url
+			case "_md":
+				medium = url
+			case "_lg":
+				large = url
+			}
+		}
+	}
+
+	return small, medium, large, full
+}
+
+// GetAliases returns artist aliases from cached MB rels.
+func (p *ArtistImageProvider) GetAliases(artistMBID string) string {
+	cacheKey := "mb:artist-rels:" + artistMBID
+
+	data, ok := p.cache.Get(cacheKey)
+	if !ok {
+		return ""
+	}
+
+	var envelope struct {
+		Aliases []struct {
+			Name string `json:"name"`
+		} `json:"aliases"`
+	}
+
+	if err := json.Unmarshal(data, &envelope); err != nil || len(envelope.Aliases) == 0 {
+		return ""
+	}
+
+	names := make([]string, 0, len(envelope.Aliases))
+
+	for _, a := range envelope.Aliases {
+		if a.Name != "" {
+			names = append(names, a.Name)
+		}
+	}
+
+	return strings.Join(names, " ")
+}
+
+// ---------------------------------------------------------------------------
+// Source resolution
 // ---------------------------------------------------------------------------
 
 type mbRelation struct {
@@ -163,6 +212,195 @@ type mbRelation struct {
 		Resource string `json:"resource"`
 	} `json:"url"`
 }
+
+func (p *ArtistImageProvider) resolveAllSources(artistMBID string) {
+	rels := p.fetchMBRels(artistMBID)
+
+	var urls []struct {
+		source string
+		url    string
+	}
+
+	// Source 1: MB direct image relations (Wikimedia Commons).
+	for _, rel := range rels {
+		if rel.Type != "image" {
+			continue
+		}
+
+		resource := rel.URL.Resource
+
+		if idx := strings.LastIndex(resource, "File:"); idx >= 0 {
+			filename := resource[idx+5:]
+			thumbURL := wikimediaThumbURL(filename)
+
+			if thumbURL != "" {
+				urls = append(urls, struct {
+					source string
+					url    string
+				}{"wikimedia", thumbURL})
+			}
+		}
+	}
+
+	// Source 2: Wikidata P18.
+	qid := p.getWikidataQID(rels)
+	if qid != "" {
+		if thumbURL := p.fetchWikidataP18(qid); thumbURL != "" {
+			// Avoid duplicates with source 1.
+			dup := false
+
+			for _, u := range urls {
+				if u.url == thumbURL {
+					dup = true
+
+					break
+				}
+			}
+
+			if !dup {
+				urls = append(urls, struct {
+					source string
+					url    string
+				}{"wikidata", thumbURL})
+			}
+		}
+
+		// Source 3: Wikipedia lead image.
+		if leadURL := p.fetchWikipediaLeadImage(qid); leadURL != "" {
+			dup := false
+
+			for _, u := range urls {
+				if u.url == leadURL {
+					dup = true
+
+					break
+				}
+			}
+
+			if !dup {
+				urls = append(urls, struct {
+					source string
+					url    string
+				}{"wikipedia", leadURL})
+			}
+		}
+	}
+
+	if len(urls) == 0 {
+		return
+	}
+
+	// Cap at maxImagesPerArtist.
+	if len(urls) > maxImagesPerArtist {
+		urls = urls[:maxImagesPerArtist]
+	}
+
+	// Fetch and store each image.
+	dir := p.artistDir(artistMBID)
+	_ = os.MkdirAll(dir, 0o755)
+
+	for i, u := range urls {
+		imgData, err := p.fetchImageBytes(u.url)
+		if err != nil || len(imgData) == 0 {
+			continue
+		}
+
+		filename := fmt.Sprintf("%s_%d.jpg", u.source, i)
+		path := filepath.Join(dir, filename)
+		_ = os.WriteFile(path, imgData, 0o644)
+
+		// Store in DB.
+		isPrimary := 0
+		if i == 0 {
+			isPrimary = 1
+		}
+
+		_, _ = p.db.ExecContext(`
+			INSERT OR REPLACE INTO artist_images
+				(artist_mbid, source, source_url, file_path, is_primary, sort_order, file_size)
+			VALUES (?, ?, ?, ?, ?, ?, ?)
+		`, artistMBID, u.source, u.url, path, isPrimary, i, len(imgData))
+
+		// Generate thumbnails for the primary image.
+		if i == 0 {
+			p.setPrimary(artistMBID, dir, imgData)
+		}
+	}
+}
+
+// setPrimary copies image data to primary.jpg and generates thumbnails.
+func (p *ArtistImageProvider) setPrimary(artistMBID, dir string, imgData []byte) {
+	primaryPath := filepath.Join(dir, "primary.jpg")
+	_ = os.WriteFile(primaryPath, imgData, 0o644)
+
+	// Decode and generate thumbnails.
+	img, _, err := image.Decode(strings.NewReader(string(imgData)))
+	if err != nil {
+		// Try as bytes reader.
+		reader := strings.NewReader(string(imgData))
+
+		img, _, err = image.Decode(reader)
+		if err != nil {
+			p.logger.Debug("artist image: could not decode for thumbnails",
+				"mbid", artistMBID, "error", err)
+
+			return
+		}
+	}
+
+	for _, tier := range artistImageTiers {
+		thumbPath := filepath.Join(dir, "primary"+tier.Suffix+".jpg")
+		p.generateThumbnail(img, thumbPath, tier.MaxSize, tier.Quality)
+	}
+}
+
+func (p *ArtistImageProvider) generateThumbnail(
+	src image.Image, path string, maxSize, quality int,
+) {
+	bounds := src.Bounds()
+	w := bounds.Dx()
+	h := bounds.Dy()
+
+	if w <= maxSize && h <= maxSize {
+		// Image already small enough — just encode as JPEG.
+		f, err := os.Create(path)
+		if err != nil {
+			return
+		}
+
+		defer func() { _ = f.Close() }()
+
+		_ = jpeg.Encode(f, src, &jpeg.Options{Quality: quality})
+
+		return
+	}
+
+	// Scale down maintaining aspect ratio.
+	var newW, newH int
+	if w > h {
+		newW = maxSize
+		newH = maxSize * h / w
+	} else {
+		newH = maxSize
+		newW = maxSize * w / h
+	}
+
+	dst := image.NewRGBA(image.Rect(0, 0, newW, newH))
+	draw.BiLinear.Scale(dst, dst.Bounds(), src, bounds, draw.Over, nil)
+
+	f, err := os.Create(path)
+	if err != nil {
+		return
+	}
+
+	defer func() { _ = f.Close() }()
+
+	_ = jpeg.Encode(f, dst, &jpeg.Options{Quality: quality})
+}
+
+// ---------------------------------------------------------------------------
+// MB rels + Wikidata + Wikipedia
+// ---------------------------------------------------------------------------
 
 func (p *ArtistImageProvider) fetchMBRels(artistMBID string) []mbRelation {
 	cacheKey := "mb:artist-rels:" + artistMBID
@@ -188,11 +426,6 @@ func (p *ArtistImageProvider) fetchMBRels(artistMBID string) []mbRelation {
 
 	body, err := p.fetchURL(url)
 	if err != nil {
-		p.logger.Debug("artist image: MB rels fetch failed",
-			"mbid", artistMBID,
-			"error", err,
-		)
-
 		return nil
 	}
 
@@ -209,48 +442,19 @@ func (p *ArtistImageProvider) fetchMBRels(artistMBID string) []mbRelation {
 	return envelope.Relations
 }
 
-// ---------------------------------------------------------------------------
-// Source 1: direct image relation
-// ---------------------------------------------------------------------------
-
-func (p *ArtistImageProvider) fromDirectImageRel(rels []mbRelation) string {
+func (p *ArtistImageProvider) getWikidataQID(rels []mbRelation) string {
 	for _, rel := range rels {
-		if rel.Type != "image" {
-			continue
-		}
+		if rel.Type == "wikidata" {
+			parts := strings.Split(rel.URL.Resource, "/")
 
-		resource := rel.URL.Resource
-
-		if idx := strings.LastIndex(resource, "File:"); idx >= 0 {
-			filename := resource[idx+5:]
-
-			return wikimediaThumbURL(filename)
+			return parts[len(parts)-1]
 		}
 	}
 
 	return ""
 }
 
-// ---------------------------------------------------------------------------
-// Source 2: Wikidata P18
-// ---------------------------------------------------------------------------
-
-func (p *ArtistImageProvider) fromWikidataRel(rels []mbRelation) string {
-	qid := ""
-
-	for _, rel := range rels {
-		if rel.Type == "wikidata" {
-			parts := strings.Split(rel.URL.Resource, "/")
-			qid = parts[len(parts)-1]
-
-			break
-		}
-	}
-
-	if qid == "" {
-		return ""
-	}
-
+func (p *ArtistImageProvider) fetchWikidataP18(qid string) string {
 	cacheKey := "wikidata-p18:" + qid
 
 	if data, ok := p.cache.Get(cacheKey); ok {
@@ -291,46 +495,121 @@ func (p *ArtistImageProvider) fromWikidataRel(rels []mbRelation) string {
 	return thumbURL
 }
 
-// ---------------------------------------------------------------------------
-// Disk cache
-// ---------------------------------------------------------------------------
+func (p *ArtistImageProvider) fetchWikipediaLeadImage(qid string) string {
+	cacheKey := "wikipedia-lead:" + qid
 
-func (p *ArtistImageProvider) diskCachePath(mbid string) string {
-	return filepath.Join(p.imageDir, mbid+".jpg")
-}
+	if data, ok := p.cache.Get(cacheKey); ok {
+		return string(data)
+	}
 
-func (p *ArtistImageProvider) readDiskCache(mbid string) string {
-	data, err := os.ReadFile(p.diskCachePath(mbid))
+	// Get the English Wikipedia article title from Wikidata sitelinks.
+	titleURL := fmt.Sprintf(
+		"%s?action=wbgetentities&ids=%s&props=sitelinks&sitefilter=enwiki&format=json",
+		wikidataAPIBase, qid,
+	)
+
+	titleBody, err := p.fetchURL(titleURL)
 	if err != nil {
 		return ""
 	}
 
-	if len(data) == 0 {
-		return "" // miss marker
+	var sitelinks struct {
+		Entities map[string]struct {
+			Sitelinks map[string]struct {
+				Title string `json:"title"`
+			} `json:"sitelinks"`
+		} `json:"entities"`
 	}
 
-	return toDataURL(data, mbid)
-}
-
-func (p *ArtistImageProvider) isDiskCacheMiss(mbid string) bool {
-	info, err := os.Stat(p.diskCachePath(mbid))
-
-	return err == nil && info.Size() == 0
-}
-
-func (p *ArtistImageProvider) writeDiskCache(mbid string, data []byte) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if data == nil {
-		data = []byte{} // miss marker
+	if err := json.Unmarshal(titleBody, &sitelinks); err != nil {
+		return ""
 	}
 
-	_ = os.WriteFile(p.diskCachePath(mbid), data, 0o644)
+	entity, ok := sitelinks.Entities[qid]
+	if !ok {
+		return ""
+	}
+
+	enwiki, ok := entity.Sitelinks["enwiki"]
+	if !ok || enwiki.Title == "" {
+		p.cache.Set(cacheKey, []byte(""), artistImageCacheTTL, "", "")
+
+		return ""
+	}
+
+	// Fetch the lead image from Wikipedia.
+	imgURL := fmt.Sprintf(
+		"%s?action=query&titles=%s&prop=pageimages&format=json&pithumbsize=%d",
+		wikipediaAPIBase,
+		strings.ReplaceAll(enwiki.Title, " ", "_"),
+		artistImageMaxSize,
+	)
+
+	imgBody, err := p.fetchURL(imgURL)
+	if err != nil {
+		return ""
+	}
+
+	var wp struct {
+		Query struct {
+			Pages map[string]struct {
+				Thumbnail struct {
+					Source string `json:"source"`
+				} `json:"thumbnail"`
+			} `json:"pages"`
+		} `json:"query"`
+	}
+
+	if err := json.Unmarshal(imgBody, &wp); err != nil {
+		return ""
+	}
+
+	leadURL := ""
+
+	for _, page := range wp.Query.Pages {
+		if page.Thumbnail.Source != "" {
+			leadURL = page.Thumbnail.Source
+
+			break
+		}
+	}
+
+	p.cache.Set(cacheKey, []byte(leadURL), artistImageCacheTTL, "", "")
+
+	return leadURL
 }
 
 // ---------------------------------------------------------------------------
-// Image fetching
+// Disk paths
+// ---------------------------------------------------------------------------
+
+func (p *ArtistImageProvider) artistDir(mbid string) string {
+	if len(mbid) < 2 {
+		return filepath.Join(p.baseDir, "xx", mbid)
+	}
+
+	return filepath.Join(p.baseDir, mbid[:2], mbid)
+}
+
+func (p *ArtistImageProvider) primaryPath(mbid string) string {
+	return filepath.Join(p.artistDir(mbid), "primary.jpg")
+}
+
+func (p *ArtistImageProvider) isMiss(mbid string) bool {
+	missPath := filepath.Join(p.artistDir(mbid), ".miss")
+	_, err := os.Stat(missPath)
+
+	return err == nil
+}
+
+func (p *ArtistImageProvider) writeMiss(mbid string) {
+	dir := p.artistDir(mbid)
+	_ = os.MkdirAll(dir, 0o755)
+	_ = os.WriteFile(filepath.Join(dir, ".miss"), []byte{}, 0o644)
+}
+
+// ---------------------------------------------------------------------------
+// HTTP helpers
 // ---------------------------------------------------------------------------
 
 func (p *ArtistImageProvider) fetchImageBytes(imageURL string) ([]byte, error) {
@@ -358,58 +637,6 @@ func (p *ArtistImageProvider) fetchImageBytes(imageURL string) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(resp.Body, artistImageMaxBytes))
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-func wikimediaThumbURL(filename string) string {
-	if filename == "" {
-		return ""
-	}
-
-	filename = strings.ReplaceAll(filename, " ", "_")
-
-	hash := fmt.Sprintf("%x", md5.Sum([]byte(filename))) //nolint:gosec
-	h1 := string(hash[0])
-	h2 := hash[:2]
-
-	return fmt.Sprintf("%s/%s/%s/%s/%dpx-%s",
-		wikimediaThumbBase, h1, h2, filename, artistImageSize, filename,
-	)
-}
-
-// GetAliases returns the artist's aliases as a space-separated
-// string, extracted from the cached MB rels response.  Returns ""
-// if no aliases are cached.
-func (p *ArtistImageProvider) GetAliases(artistMBID string) string {
-	cacheKey := "mb:artist-rels:" + artistMBID
-
-	data, ok := p.cache.Get(cacheKey)
-	if !ok {
-		return ""
-	}
-
-	var envelope struct {
-		Aliases []struct {
-			Name string `json:"name"`
-		} `json:"aliases"`
-	}
-
-	if err := json.Unmarshal(data, &envelope); err != nil || len(envelope.Aliases) == 0 {
-		return ""
-	}
-
-	names := make([]string, 0, len(envelope.Aliases))
-
-	for _, a := range envelope.Aliases {
-		if a.Name != "" {
-			names = append(names, a.Name)
-		}
-	}
-
-	return strings.Join(names, " ")
-}
-
 func (p *ArtistImageProvider) fetchURL(url string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), artistImageTimeout)
 	defer cancel()
@@ -435,7 +662,32 @@ func (p *ArtistImageProvider) fetchURL(url string) ([]byte, error) {
 	return io.ReadAll(resp.Body)
 }
 
-func toDataURL(data []byte, _ string) string {
+// ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
+
+func wikimediaThumbURL(filename string) string {
+	if filename == "" {
+		return ""
+	}
+
+	filename = strings.ReplaceAll(filename, " ", "_")
+
+	hash := fmt.Sprintf("%x", md5.Sum([]byte(filename))) //nolint:gosec
+	h1 := string(hash[0])
+	h2 := hash[:2]
+
+	return fmt.Sprintf("%s/%s/%s/%s/%dpx-%s",
+		wikimediaThumbBase, h1, h2, filename, artistImageMaxSize, filename,
+	)
+}
+
+func readFileData(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil || len(data) == 0 {
+		return ""
+	}
+
 	mime := "image/jpeg"
 	if len(data) > 1 && data[0] == 0x89 && data[1] == 0x50 {
 		mime = "image/png"

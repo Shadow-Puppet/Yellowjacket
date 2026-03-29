@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"path/filepath"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
@@ -23,6 +25,7 @@ import (
 	"yellowjacket/backend/playlist"
 	"yellowjacket/backend/profiling"
 	"yellowjacket/backend/queue"
+	"yellowjacket/backend/system"
 	"yellowjacket/backend/tagwriter"
 )
 
@@ -103,6 +106,17 @@ func NewYellowJacketApp(
 	}
 
 	yjApp.assetHandler.RegisterHandler(coverart.PathPrefix, coverHandler)
+
+	// Register artist image handler for serving cached artist photos.
+	artistImgDir, err := system.GetUserDataDirPath()
+	if err == nil {
+		artistImgHandler := http.StripPrefix(
+			"/artist-images/",
+			http.FileServer(http.Dir(filepath.Join(artistImgDir, "artist-images"))),
+		)
+
+		yjApp.assetHandler.RegisterHandler("/artist-images/", artistImgHandler)
+	}
 
 	// create playlist service
 	yjApp.playlist = playlist.NewService(

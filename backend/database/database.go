@@ -400,6 +400,15 @@ func runMigrations(
 		}
 	}
 
+	// Migration 16: artist_images table for multi-source artist photos.
+	if version < 16 { //nolint:mnd
+		if err := migration16ArtistImages(
+			ctx, db, logger,
+		); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -1767,6 +1776,59 @@ func migration15PersonalizationColumns(
 	}
 
 	logger.Info("migration 15 complete")
+
+	return nil
+}
+
+// migration16ArtistImages creates the artist_images table for
+// storing multiple artist photos from multiple sources, with
+// thumbnail generation for the primary image.
+func migration16ArtistImages(
+	ctx context.Context,
+	db *sql.DB,
+	logger *slog.Logger,
+) error {
+	logger.Info("applying migration 16: artist_images table")
+
+	if _, err := db.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS artist_images (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			artist_mbid TEXT NOT NULL,
+			source      TEXT NOT NULL,
+			source_url  TEXT NOT NULL,
+			file_path   TEXT NOT NULL,
+			is_primary  INTEGER NOT NULL DEFAULT 0,
+			sort_order  INTEGER NOT NULL DEFAULT 0,
+			width       INTEGER,
+			height      INTEGER,
+			file_size   INTEGER,
+			created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)
+	`); err != nil {
+		return fmt.Errorf("migration 16: create artist_images: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx, `
+		CREATE INDEX IF NOT EXISTS idx_artist_images_mbid
+		ON artist_images(artist_mbid)
+	`); err != nil {
+		return fmt.Errorf("migration 16: create mbid index: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx, `
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_artist_images_source
+		ON artist_images(artist_mbid, source, source_url)
+	`); err != nil {
+		return fmt.Errorf("migration 16: create source index: %w", err)
+	}
+
+	if _, err := db.ExecContext(
+		ctx, "PRAGMA user_version = 16",
+	); err != nil {
+		return fmt.Errorf("could not set user_version to 16: %w", err)
+	}
+
+	logger.Info("migration 16 complete")
 
 	return nil
 }

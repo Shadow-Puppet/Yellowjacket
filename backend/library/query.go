@@ -4,12 +4,15 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"yellowjacket/backend/coverart"
 	"yellowjacket/backend/database/sql/sqlcgen"
+	"yellowjacket/backend/system"
 )
 
 // Sentinel errors for library queries.
@@ -142,8 +145,11 @@ func (l *Library) GetTrackMBIDs(filePath string) TrackMBIDs {
 
 // Artist represents an artist in the library.
 type Artist struct {
-	ID   int64
-	Name string
+	ID          int64
+	Name        string
+	ImageSmall  string
+	ImageMedium string
+	ImageLarge  string
 }
 
 // Album represents an album for the cover grid display.
@@ -366,7 +372,67 @@ func (l *Library) GetAllArtists() ([]Artist, error) {
 		})
 	}
 
+	// Resolve artist image URLs from the disk cache.
+	l.resolveArtistImages(artists)
+
 	return artists, nil
+}
+
+// resolveArtistImages populates ImageSmall/Medium/Large for artists
+// that have cached images on disk.  Does a bulk MBID lookup from the
+// artists table, then checks the artist-images directory for each.
+func (l *Library) resolveArtistImages(artists []Artist) {
+	if len(artists) == 0 {
+		return
+	}
+
+	dataDir, err := system.GetUserDataDirPath()
+	if err != nil {
+		return
+	}
+
+	baseDir := filepath.Join(dataDir, "artist-images")
+
+	// Bulk load name→mbid from the artists table.
+	rows, err := l.db.QueryContext(
+		"SELECT name, mbid FROM artists WHERE mbid IS NOT NULL AND mbid != ''",
+	)
+	if err != nil {
+		return
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	mbidMap := make(map[string]string)
+
+	for rows.Next() {
+		var name, mbid string
+		if err := rows.Scan(&name, &mbid); err == nil {
+			mbidMap[name] = mbid
+		}
+	}
+
+	for i := range artists {
+		mbid, ok := mbidMap[artists[i].Name]
+		if !ok || len(mbid) < 2 {
+			continue
+		}
+
+		dir := filepath.Join(baseDir, mbid[:2], mbid)
+		prefix := "/artist-images/" + mbid[:2] + "/" + mbid + "/"
+
+		if _, err := os.Stat(filepath.Join(dir, "primary_sm.jpg")); err == nil {
+			artists[i].ImageSmall = prefix + "primary_sm.jpg"
+		}
+
+		if _, err := os.Stat(filepath.Join(dir, "primary_md.jpg")); err == nil {
+			artists[i].ImageMedium = prefix + "primary_md.jpg"
+		}
+
+		if _, err := os.Stat(filepath.Join(dir, "primary_lg.jpg")); err == nil {
+			artists[i].ImageLarge = prefix + "primary_lg.jpg"
+		}
+	}
 }
 
 // GetAlbumsByArtist returns all albums where the given artist is the album artist.
@@ -645,6 +711,8 @@ func (l *Library) GetAllArtistsByLibrary(
 			Name: row.Name,
 		})
 	}
+
+	l.resolveArtistImages(artists)
 
 	return artists, nil
 }

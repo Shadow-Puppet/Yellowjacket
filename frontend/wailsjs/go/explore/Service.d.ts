@@ -15,6 +15,8 @@ export function CoverArtURL(arg1:string):Promise<string>;
 
 export function GetArtistImageURL(arg1:string):Promise<string>;
 
+export function GetArtistImages(arg1:Array<string>):Promise<Record<string, string>>;
+
 export function GetArtistMBID(arg1:string):Promise<string>;
 
 export function GetThumbnail(arg1:string,arg2:string,arg3:string):Promise<string>;
@@ -44,5 +46,3 @@ export function StartIndexBuild():Promise<void>;
 export function StopIndexBuild():Promise<void>;
 
 export function TopRecordingsForArtist(arg1:string):Promise<Array<explore.LBTopRecording>>;
-
-export function GetArtistImages(arg1:string[]):Promise<Record<string, string>>;

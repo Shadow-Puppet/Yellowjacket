@@ -16,7 +16,6 @@ import {
     GetAlbumsByArtistByLibrary,
     GetAlbumTracksByLibrary,
 } from '@go/library/Library';
-import { GetArtistImageURL, GetArtistMBID, GetArtistImages } from '@go/explore/Service';
 import { library } from '@go/models';
 import { LibraryController } from '@store/controllers/library-controller';
 import { SearchController } from '@store/controllers/search-controller';
@@ -177,8 +176,6 @@ export class ArtistsView
     private cachedGridEntries: ArtistEntry[] = [];
     private prevFilterArtists: library.Artist[] = [];
     private prevFilterTerm = '';
-    private artistImageCache = new Map<string, string>();
-    private artistImageLoading = new Set<string>();
 
     /**
      * Recompute the filtered-artists and grid-entries
@@ -439,8 +436,6 @@ export class ArtistsView
         ) {
             this.lastArtistsRef = cached;
             this.loadArtists();
-            this.imagesBatchLoaded = false;
-            void this.loadArtistImagesBatch();
         }
     }
 
@@ -456,9 +451,6 @@ export class ArtistsView
                 await this.libraryCtrl.getArtists();
 
             this.artists = artists ?? [];
-
-            // Batch load artist images after artists are loaded.
-            void this.loadArtistImagesBatch();
         } catch (error) {
             console.error(
                 'Error loading artists:',
@@ -990,89 +982,30 @@ export class ArtistsView
      * Helpers
      * ================================================================ */
 
-    private renderArtistAvatar(name: string) {
-        const imageURL = this.artistImageCache.get(name);
+    private renderArtistAvatar(artist: library.Artist) {
+        const needed = (this.imageSize ?? 176) * window.devicePixelRatio;
+        let imageURL = '';
+
+        if (needed <= 100) {
+            imageURL = artist.ImageSmall || artist.ImageMedium || artist.ImageLarge || '';
+        } else if (needed <= 200) {
+            imageURL = artist.ImageMedium || artist.ImageLarge || '';
+        } else {
+            imageURL = artist.ImageLarge || '';
+        }
 
         if (imageURL) {
             return html`<img
                 class="avatar-image"
                 src="${imageURL}"
-                alt="${name}"
+                alt="${artist.Name}"
+                loading="lazy"
             />`;
         }
 
         return html`<span class="avatar-placeholder">
-            ${this.getArtistInitial(name)}
+            ${this.getArtistInitial(artist.Name)}
         </span>`;
-    }
-
-    private imagesBatchLoaded = false;
-
-    /**
-     * Batch load all artist images in one Wails call.
-     * Only returns already-cached images (from the disk cache
-     * populated by the index build). Uncached artists fall back
-     * to the initial letter.
-     */
-    private async loadArtistImagesBatch() {
-        if (this.imagesBatchLoaded) return;
-
-        this.imagesBatchLoaded = true;
-
-        const artists = this.libraryCtrl.cachedArtists;
-
-        if (!artists || artists.length === 0) return;
-
-        const names = artists.map((a) => a.Name);
-
-        try {
-            const images = await GetArtistImages(names);
-
-            if (images && Object.keys(images).length > 0) {
-                for (const [name, url] of Object.entries(images)) {
-                    if (url) {
-                        this.artistImageCache.set(name, url);
-                    }
-                }
-
-                this.requestUpdate();
-            }
-        } catch {
-            // Non-critical.
-        }
-    }
-
-    /**
-     * Load artist image for a single artist on-demand (fallback
-     * for artists not resolved by the batch call).
-     */
-    private loadArtistImage(name: string) {
-        if (this.artistImageCache.has(name) || this.artistImageLoading.has(name)) {
-            return;
-        }
-
-        this.artistImageLoading.add(name);
-
-        GetArtistMBID(name)
-            .then((mbid) => {
-                if (!mbid) return Promise.resolve('');
-
-                return GetArtistImageURL(mbid);
-            })
-            .then((url) => {
-                if (url) {
-                    this.artistImageCache.set(name, url);
-                    this.requestUpdate();
-                } else {
-                    this.artistImageCache.set(name, '');
-                }
-            })
-            .catch(() => {
-                this.artistImageCache.set(name, '');
-            })
-            .finally(() => {
-                this.artistImageLoading.delete(name);
-            });
     }
 
     private getArtistInitial(
@@ -1147,7 +1080,7 @@ export class ArtistsView
                 }}
             >
                 <div class="avatar-container">
-                    ${this.renderArtistAvatar(artist.Name)}
+                    ${this.renderArtistAvatar(artist)}
                 </div>
                 <div
                     class="artist-name"

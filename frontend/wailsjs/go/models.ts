@@ -247,6 +247,9 @@ export namespace library {
 	export class Artist {
 	    ID: number;
 	    Name: string;
+	    ImageSmall: string;
+	    ImageMedium: string;
+	    ImageLarge: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Artist(source);
@@ -256,6 +259,9 @@ export namespace library {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.ID = source["ID"];
 	        this.Name = source["Name"];
+	        this.ImageSmall = source["ImageSmall"];
+	        this.ImageMedium = source["ImageMedium"];
+	        this.ImageLarge = source["ImageLarge"];
 	    }
 	}
 	export class GenreWithCount {
@@ -486,6 +492,9 @@ export namespace library {
 	    FileSize: number;
 	    PlayCount: number;
 	    LastPlayed: string;
+	    RecordingMBID: string;
+	    ArtistMBID: string;
+	    ReleaseGroupMBID: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Track(source);
@@ -511,6 +520,25 @@ export namespace library {
 	        this.FileSize = source["FileSize"];
 	        this.PlayCount = source["PlayCount"];
 	        this.LastPlayed = source["LastPlayed"];
+	        this.RecordingMBID = source["RecordingMBID"];
+	        this.ArtistMBID = source["ArtistMBID"];
+	        this.ReleaseGroupMBID = source["ReleaseGroupMBID"];
+	    }
+	}
+	export class TrackMBIDs {
+	    recordingMbid: string;
+	    releaseGroupMbid: string;
+	    artistMbid: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new TrackMBIDs(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.recordingMbid = source["recordingMbid"];
+	        this.releaseGroupMbid = source["releaseGroupMbid"];
+	        this.artistMbid = source["artistMbid"];
 	    }
 	}
 

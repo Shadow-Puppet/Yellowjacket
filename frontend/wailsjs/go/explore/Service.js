@@ -26,6 +26,10 @@ export function GetArtistImageURL(arg1) {
   return window['go']['explore']['Service']['GetArtistImageURL'](arg1);
 }
 
+export function GetArtistImages(arg1) {
+  return window['go']['explore']['Service']['GetArtistImages'](arg1);
+}
+
 export function GetArtistMBID(arg1) {
   return window['go']['explore']['Service']['GetArtistMBID'](arg1);
 }
@@ -84,8 +88,4 @@ export function StopIndexBuild() {
 
 export function TopRecordingsForArtist(arg1) {
   return window['go']['explore']['Service']['TopRecordingsForArtist'](arg1);
-}
-
-export function GetArtistImages(arg1) {
-  return window['go']['explore']['Service']['GetArtistImages'](arg1);
 }
