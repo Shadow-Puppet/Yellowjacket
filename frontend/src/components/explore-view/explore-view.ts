@@ -1,7 +1,7 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state, query as litQuery } from 'lit/decorators.js';
 import { designTokens } from '../../styles/tokens.css';
-import { Search, GetThumbnails, GetArtistImageURL, CheckLibraryMBIDs } from '@go/explore/Service';
+import { Search, SearchLocal, GetThumbnails, GetArtistImageURL, CheckLibraryMBIDs } from '@go/explore/Service';
 import type { ThumbnailRequest } from '@go/explore/Service';
 import type {
     MBSearchResult,
@@ -520,6 +520,29 @@ export class ExploreView extends LitElement {
         const startTime = performance.now();
         console.log(`[explore] search started: "${query}"`);
 
+        // Phase 1: show local index hits instantly (no network).
+        try {
+            const local = await SearchLocal(query);
+            if (version !== this.searchVersion) return;
+            if (local && (local.artists?.length || local.releaseGroups?.length || local.recordings?.length)) {
+                this.results = local;
+                this.loading = false;
+                this.loadThumbnails();
+                this.loadArtistImages();
+                this.checkLibrary();
+                const elapsed = (performance.now() - startTime).toFixed(0);
+                console.log(
+                    `[explore] local results: "${query}" in ${elapsed}ms — ` +
+                        `artists=${local.artists?.length ?? 0}, ` +
+                        `albums=${local.releaseGroups?.length ?? 0}, ` +
+                        `tracks=${local.recordings?.length ?? 0}`,
+                );
+            }
+        } catch {
+            // Local search failed — continue to full search.
+        }
+
+        // Phase 2: full pipeline (MB + LB + reranking).
         try {
             const result = await Search(query);
 

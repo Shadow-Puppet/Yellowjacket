@@ -35,6 +35,8 @@ export function Search(arg1:string):Promise<explore.MBSearchResult>;
 
 export function SearchArtists(arg1:string):Promise<Array<explore.MBArtist>>;
 
+export function SearchLocal(arg1:string):Promise<explore.MBSearchResult>;
+
 export function SearchRecordings(arg1:string):Promise<Array<explore.MBRecording>>;
 
 export function SearchReleaseGroups(arg1:string):Promise<Array<explore.MBReleaseGroup>>;

@@ -112,6 +112,23 @@ func (e *Service) SearchRecordings(query string) ([]MBRecording, error) {
 	return e.mb.SearchRecordings(e.ctx, query, mbSearchLimit)
 }
 
+// SearchLocal queries only the local FTS5 index and returns results
+// instantly with no network calls.  Returns nil if the index isn't
+// ready.  The frontend calls this in parallel with Search() to show
+// instant results while the full pipeline runs.
+func (e *Service) SearchLocal(query string) *MBSearchResult {
+	indexHits := e.index.Search(query, 30) //nolint:mnd
+	if len(indexHits) == 0 {
+		return nil
+	}
+
+	var result MBSearchResult
+	mergeIndexHits(&result, indexHits)
+	filterAndCap(&result)
+
+	return &result
+}
+
 // ---------------------------------------------------------------------------
 // MusicBrainz lookup
 // ---------------------------------------------------------------------------

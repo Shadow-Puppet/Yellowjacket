@@ -66,6 +66,10 @@ export function SearchArtists(arg1) {
   return window['go']['explore']['Service']['SearchArtists'](arg1);
 }
 
+export function SearchLocal(arg1) {
+  return window['go']['explore']['Service']['SearchLocal'](arg1);
+}
+
 export function SearchRecordings(arg1) {
   return window['go']['explore']['Service']['SearchRecordings'](arg1);
 }
