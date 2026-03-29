@@ -91,6 +91,7 @@ export class ExploreArtistDetails extends LitElement {
     @state() private similarArtists: LBSimilarArtist[] = [];
     @state() private loadingSimilar = true;
     @state() private artistImageURL = '';
+    @state() private similarImageURLs = new Map<string, string>();
     private libraryMBIDs = new Set<string>();
 
     /* ── Styles ── */
@@ -474,6 +475,13 @@ export class ExploreArtistDetails extends LitElement {
                 text-transform: uppercase;
                 user-select: none;
                 flex-shrink: 0;
+                overflow: hidden;
+            }
+
+            .similar-avatar img {
+                width: 100%;
+                height: 100%;
+                object-fit: cover;
             }
 
             .similar-name {
@@ -587,6 +595,31 @@ export class ExploreArtistDetails extends LitElement {
         } finally {
             this.loadingSimilar = false;
         }
+
+        // Fire-and-forget: resolve images for similar artists in parallel.
+        if (this.similarArtists.length > 0) {
+            void this.fetchSimilarArtistImages();
+        }
+    }
+
+    private async fetchSimilarArtistImages() {
+        const artists = this.similarArtists;
+        // Fetch in parallel — each call is cached after first resolution.
+        await Promise.allSettled(
+            artists.map(async (a) => {
+                try {
+                    const url = await GetArtistImageURL(a.artistMbid);
+                    if (url) {
+                        this.similarImageURLs = new Map(this.similarImageURLs).set(
+                            a.artistMbid,
+                            url,
+                        );
+                    }
+                } catch {
+                    // No image — letter avatar stays.
+                }
+            }),
+        );
     }
 
     private async fetchArtistImage(mbid: string) {
@@ -673,6 +706,12 @@ export class ExploreArtistDetails extends LitElement {
         if (fallback) {
             fallback.style.display = 'flex';
         }
+    }
+
+    /** On similar-artist image error, remove the img so the letter initial shows. */
+    private handleSimilarImageError(e: Event) {
+        const img = e.target as HTMLImageElement;
+        img.remove();
     }
 
     /* ── Helpers ── */
@@ -977,6 +1016,7 @@ export class ExploreArtistDetails extends LitElement {
                 <div class="horizontal-row">
                     ${this.similarArtists.map((a) => {
                         const hue = nameToHue(a.name);
+                        const imgURL = this.similarImageURLs.get(a.artistMbid);
                         return html`
                             <div
                                 class="similar-artist-card"
@@ -997,7 +1037,13 @@ export class ExploreArtistDetails extends LitElement {
                                     class="similar-avatar"
                                     style="background: hsl(${hue}, 45%, 35%)"
                                 >
-                                    ${a.name.charAt(0).toUpperCase()}
+                                    ${imgURL
+                                        ? html`<img
+                                              src="${imgURL}"
+                                              alt="${a.name}"
+                                              @error=${this.handleSimilarImageError}
+                                          />`
+                                        : a.name.charAt(0).toUpperCase()}
                                 </div>
                                 <div
                                     class="similar-name"
