@@ -28,17 +28,18 @@ import (
 var ErrArtistImage = errors.New("artist image fetch failed")
 
 const (
-	wikimediaThumbBase  = "https://upload.wikimedia.org/wikipedia/commons/thumb"
-	wikidataAPIBase     = "https://www.wikidata.org/w/api.php"
-	wikipediaAPIBase    = "https://en.wikipedia.org/w/api.php"
-	fanartTVAPIBase     = "https://webservice.fanart.tv/v3/music"
-	audioDBAPIBase      = "https://www.theaudiodb.com/api/v1/json/2"
-	artistImageTimeout  = 10 * time.Second
-	artistImageCacheTTL = 30 * 24 * time.Hour
-	artistImageBaseDir  = "artist-images"
-	artistImageMaxBytes = 2 * 1024 * 1024
-	artistImageMaxSize  = 500 // max dimension for stored full-res images
-	maxImagesPerArtist  = 10
+	wikimediaThumbBase      = "https://upload.wikimedia.org/wikipedia/commons/thumb"
+	wikidataAPIBase         = "https://www.wikidata.org/w/api.php"
+	wikipediaAPIBase        = "https://en.wikipedia.org/w/api.php"
+	fanartTVAPIBase         = "https://webservice.fanart.tv/v3/music"
+	audioDBAPIBase          = "https://www.theaudiodb.com/api/v1/json/2"
+	artistImageTimeout      = 10 * time.Second
+	artistImageCacheTTL     = 365 * 24 * time.Hour // positive results: ~permanent
+	artistImageMissCacheTTL = 30 * 24 * time.Hour  // negative results: retry monthly
+	artistImageBaseDir      = "artist-images"
+	artistImageMaxBytes     = 2 * 1024 * 1024
+	artistImageMaxSize      = 500 // max dimension for stored full-res images
+	maxImagesPerArtist      = 10
 )
 
 // fanartTVProjectKey is the project API key for fanart.tv.
@@ -460,7 +461,7 @@ func (p *ArtistImageProvider) fetchFanartTV(artistMBID string) []string {
 	body, err := p.fetchURL(url)
 	if err != nil {
 		// Cache empty result to avoid re-fetching.
-		p.cache.Set(cacheKey, []byte("[]"), artistImageCacheTTL, artistMBID, "artist")
+		p.cache.Set(cacheKey, []byte("[]"), artistImageMissCacheTTL, artistMBID, "artist")
 
 		return nil
 	}
@@ -473,7 +474,7 @@ func (p *ArtistImageProvider) fetchFanartTV(artistMBID string) []string {
 	}
 
 	if err := json.Unmarshal(body, &response); err != nil || len(response.ArtistThumb) == 0 {
-		p.cache.Set(cacheKey, []byte("[]"), artistImageCacheTTL, artistMBID, "artist")
+		p.cache.Set(cacheKey, []byte("[]"), artistImageMissCacheTTL, artistMBID, "artist")
 
 		return nil
 	}
@@ -516,7 +517,7 @@ func (p *ArtistImageProvider) fetchAudioDB(artistMBID string) []string {
 
 	body, err := p.fetchURL(url)
 	if err != nil {
-		p.cache.Set(cacheKey, []byte("[]"), artistImageCacheTTL, artistMBID, "artist")
+		p.cache.Set(cacheKey, []byte("[]"), artistImageMissCacheTTL, artistMBID, "artist")
 
 		return nil
 	}
@@ -531,7 +532,7 @@ func (p *ArtistImageProvider) fetchAudioDB(artistMBID string) []string {
 	}
 
 	if err := json.Unmarshal(body, &response); err != nil || len(response.Artists) == 0 {
-		p.cache.Set(cacheKey, []byte("[]"), artistImageCacheTTL, artistMBID, "artist")
+		p.cache.Set(cacheKey, []byte("[]"), artistImageMissCacheTTL, artistMBID, "artist")
 
 		return nil
 	}
@@ -581,6 +582,9 @@ func (p *ArtistImageProvider) fetchMBRels(artistMBID string) []mbRelation {
 
 	body, err := p.fetchURL(url)
 	if err != nil {
+		// Cache the miss so we don't re-request on every build.
+		p.cache.Set(cacheKey, []byte("{}"), artistImageMissCacheTTL, artistMBID, "artist")
+
 		return nil
 	}
 
@@ -687,7 +691,7 @@ func (p *ArtistImageProvider) fetchWikipediaLeadImage(qid string) string {
 
 	enwiki, ok := entity.Sitelinks["enwiki"]
 	if !ok || enwiki.Title == "" {
-		p.cache.Set(cacheKey, []byte(""), artistImageCacheTTL, "", "")
+		p.cache.Set(cacheKey, []byte(""), artistImageMissCacheTTL, "", "")
 
 		return ""
 	}

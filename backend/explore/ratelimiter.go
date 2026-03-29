@@ -38,6 +38,14 @@ func NewRateLimiterN(n int) *RateLimiter {
 	}
 }
 
+// NewRateLimiterF returns a rate limiter that allows f requests
+// per second with a burst of 1.
+func NewRateLimiterF(f float64) *RateLimiter {
+	return &RateLimiter{
+		limiter: rate.NewLimiter(rate.Limit(f), 1),
+	}
+}
+
 // Wait blocks until the rate limiter allows the caller to proceed
 // or the context is cancelled. Returns ctx.Err() if the context
 // expires before a token becomes available.

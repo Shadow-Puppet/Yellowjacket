@@ -39,7 +39,7 @@ func NewExploreService(logger *slog.Logger, db *database.DB) *Service {
 	lb := NewListenBrainzClient(limiter, cache, logger.WithGroup("listenbrainz"))
 	artProxy := NewCoverArtProxy(db, limiter)
 	artistImg := NewArtistImageProvider(
-		db, cache, NewRateLimiter(), logger.WithGroup("artist-image"),
+		db, cache, NewRateLimiterF(1.5), logger.WithGroup("artist-image"),
 	)
 	index := NewSearchIndex(db, lb, artistImg, logger.WithGroup("search-index"))
 	libMBID := NewLibraryMBIDIndex(db)
