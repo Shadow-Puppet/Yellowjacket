@@ -330,8 +330,88 @@ export class ExploreArtistDetails extends LitElement {
 
             .top-releases-grid {
                 display: grid;
-                grid-template-columns: repeat(2, 1fr);
-                gap: 12px;
+                grid-template-columns: 1fr 1fr;
+                gap: 8px;
+            }
+
+            .top-release-card {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                padding: 6px 8px;
+                border-radius: 6px;
+                cursor: pointer;
+                transition: background 0.15s ease;
+                min-width: 0;
+            }
+
+            .top-release-card:hover {
+                background: var(
+                    --yj-bg-overlay,
+                    rgba(255, 255, 255, 0.06)
+                );
+            }
+
+            .top-release-card:active {
+                transform: scale(0.98);
+            }
+
+            .top-release-art {
+                width: 44px;
+                height: 44px;
+                border-radius: 4px;
+                overflow: hidden;
+                background: linear-gradient(
+                    135deg,
+                    var(--yj-bg-overlay, #404040) 0%,
+                    var(--yj-bg-surface, #282828) 100%
+                );
+                flex-shrink: 0;
+                position: relative;
+            }
+
+            .top-release-art img {
+                width: 100%;
+                height: 100%;
+                object-fit: cover;
+                display: block;
+            }
+
+            .top-release-art .album-art-fallback {
+                position: absolute;
+                inset: 0;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+
+            .top-release-art .album-art-fallback wa-icon {
+                font-size: 16px;
+            }
+
+            .top-release-text {
+                flex: 1;
+                min-width: 0;
+                display: flex;
+                flex-direction: column;
+                gap: 1px;
+            }
+
+            .top-release-title {
+                font-weight: 500;
+                color: var(--yj-text-primary, #fff);
+                font-size: var(--yj-text-sm);
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+
+            .top-release-meta {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                color: var(--yj-text-tertiary, #888);
+                font-size: var(--yj-text-xs);
             }
 
             .top-section-toggle {
@@ -1001,7 +1081,7 @@ export class ExploreArtistDetails extends LitElement {
                                   <h3 class="section-header">Top Releases</h3>
                                   <div class="top-releases-grid">
                                       ${releases.map((rg) =>
-                                          this.renderAlbumCard(rg),
+                                          this.renderTopReleaseCard(rg),
                                       )}
                                   </div>
                               </div>
@@ -1023,6 +1103,49 @@ export class ExploreArtistDetails extends LitElement {
                       `
                     : nothing}
             </section>
+        `;
+    }
+
+    private renderTopReleaseCard(rg: MBReleaseGroup) {
+        const artURL = CoverArtGroupURL(rg.mbid);
+        const year = extractYear(rg.firstReleaseDate);
+
+        return html`
+            <div
+                class="top-release-card"
+                @click=${() => this.navigateToAlbum(rg)}
+                role="button"
+                tabindex="0"
+                @keydown=${(e: KeyboardEvent) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        this.navigateToAlbum(rg);
+                    }
+                }}
+            >
+                <div class="top-release-art">
+                    <img
+                        src="${artURL}"
+                        alt="${rg.title}"
+                        loading="lazy"
+                        @error=${this.handleImageError}
+                    />
+                    <div class="album-art-fallback" style="display: none">
+                        <wa-icon name="compact-disc"></wa-icon>
+                    </div>
+                </div>
+                <div class="top-release-text">
+                    <div class="top-release-title" title="${rg.title}">
+                        ${rg.title}
+                    </div>
+                    <div class="top-release-meta">
+                        ${this.libraryMBIDs.has(rg.mbid)
+                            ? html`<span class="library-badge">In Library</span>`
+                            : nothing}
+                        ${year ? html`<span>${year}</span>` : nothing}
+                    </div>
+                </div>
+            </div>
         `;
     }
 
