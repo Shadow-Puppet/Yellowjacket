@@ -106,3 +106,45 @@ type LBSimilarArtist struct {
 	Name       string  `json:"name"`
 	Score      float64 `json:"score"`
 }
+
+// LBTopReleaseGroup represents a popular release group from the
+// ListenBrainz popularity API.
+type LBTopReleaseGroup struct {
+	ReleaseGroupMBID string `json:"releaseGroupMbid"`
+	Title            string `json:"title"`
+	ArtistName       string `json:"artistName"`
+	Type             string `json:"type"`
+	TotalListenCount int    `json:"totalListenCount"`
+}
+
+// lbTopReleaseGroupWire matches the ListenBrainz API's snake_case
+// JSON response for the popularity/top-release-groups-for-artist
+// endpoint.
+type lbTopReleaseGroupWire struct {
+	ReleaseGroupMBID string `json:"release_group_mbid"`
+	TotalListenCount int    `json:"total_listen_count"`
+	ReleaseGroup     struct {
+		Name string `json:"name"`
+		Type string `json:"type"`
+	} `json:"release_group"`
+	Artist struct {
+		Artists []struct {
+			Name string `json:"name"`
+		} `json:"artists"`
+	} `json:"artist"`
+}
+
+func (w lbTopReleaseGroupWire) toPublic() LBTopReleaseGroup {
+	artistName := ""
+	if len(w.Artist.Artists) > 0 {
+		artistName = w.Artist.Artists[0].Name
+	}
+
+	return LBTopReleaseGroup{
+		ReleaseGroupMBID: w.ReleaseGroupMBID,
+		Title:            w.ReleaseGroup.Name,
+		ArtistName:       artistName,
+		Type:             w.ReleaseGroup.Type,
+		TotalListenCount: w.TotalListenCount,
+	}
+}

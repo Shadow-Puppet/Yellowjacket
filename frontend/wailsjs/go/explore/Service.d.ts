@@ -50,3 +50,5 @@ export function StartIndexBuild():Promise<void>;
 export function StopIndexBuild():Promise<void>;
 
 export function TopRecordingsForArtist(arg1:string):Promise<Array<explore.LBTopRecording>>;
+
+export function TopReleaseGroupsForArtist(arg1:string):Promise<Array<explore.LBTopReleaseGroup>>;

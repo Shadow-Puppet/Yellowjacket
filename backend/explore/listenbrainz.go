@@ -97,6 +97,52 @@ func (c *ListenBrainzClient) TopRecordingsForArtist(
 	return out, nil
 }
 
+// TopReleaseGroupsForArtist returns the most-listened release groups
+// for the artist identified by artistMBID.
+func (c *ListenBrainzClient) TopReleaseGroupsForArtist(
+	ctx context.Context, artistMBID string,
+) ([]LBTopReleaseGroup, error) {
+	url := fmt.Sprintf(
+		"%s/1/popularity/top-release-groups-for-artist/%s",
+		listenBrainzBaseURL,
+		artistMBID,
+	)
+	cacheKey := "lb:top-release-groups:" + artistMBID
+
+	if data, ok := c.cache.Get(cacheKey); ok {
+		var out []LBTopReleaseGroup
+		if err := json.Unmarshal(data, &out); err == nil {
+			return out, nil
+		}
+	}
+
+	body, err := c.doGet(ctx, url)
+	if err != nil {
+		return nil, fmt.Errorf("listenbrainz top release groups: %w", err)
+	}
+
+	var wire []lbTopReleaseGroupWire
+	if err := json.Unmarshal(body, &wire); err != nil {
+		return nil, fmt.Errorf("listenbrainz top release groups unmarshal: %w", err)
+	}
+
+	const maxTopReleaseGroups = 10
+
+	limit := len(wire)
+	if limit > maxTopReleaseGroups {
+		limit = maxTopReleaseGroups
+	}
+
+	out := make([]LBTopReleaseGroup, limit)
+	for i := range limit {
+		out[i] = wire[i].toPublic()
+	}
+
+	c.cacheJSON(cacheKey, out, cacheTTLSearch, artistMBID, "artist")
+
+	return out, nil
+}
+
 // SimilarArtists returns artists similar to the one identified by
 // artistMBID, using the ListenBrainz labs API.  Returns nil, nil
 // if the endpoint is unavailable (labs API may be unstable).

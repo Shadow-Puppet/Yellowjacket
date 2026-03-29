@@ -97,3 +97,7 @@ export function StopIndexBuild() {
 export function TopRecordingsForArtist(arg1) {
   return window['go']['explore']['Service']['TopRecordingsForArtist'](arg1);
 }
+
+export function TopReleaseGroupsForArtist(arg1) {
+  return window['go']['explore']['Service']['TopReleaseGroupsForArtist'](arg1);
+}

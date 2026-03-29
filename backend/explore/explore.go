@@ -184,6 +184,11 @@ func (e *Service) TopRecordingsForArtist(artistMBID string) ([]LBTopRecording, e
 	return e.lb.TopRecordingsForArtist(e.ctx, artistMBID)
 }
 
+// TopReleaseGroupsForArtist returns the most-listened release groups for an artist.
+func (e *Service) TopReleaseGroupsForArtist(artistMBID string) ([]LBTopReleaseGroup, error) {
+	return e.lb.TopReleaseGroupsForArtist(e.ctx, artistMBID)
+}
+
 // SimilarArtists returns artists similar to the given artist MBID.
 func (e *Service) SimilarArtists(artistMBID string) ([]LBSimilarArtist, error) {
 	return e.lb.SimilarArtists(e.ctx, artistMBID)

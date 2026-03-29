@@ -5,6 +5,7 @@ import {
     LookupArtist,
     BrowseReleaseGroups,
     TopRecordingsForArtist,
+    TopReleaseGroupsForArtist,
     SimilarArtists,
     GetArtistImageURL,
     CheckLibraryMBIDs,
@@ -13,6 +14,7 @@ import type {
     MBArtist,
     MBReleaseGroup,
     LBTopRecording,
+    LBTopReleaseGroup,
     LBSimilarArtist,
 } from '@go/explore/Service';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
@@ -81,9 +83,11 @@ export class ExploreArtistDetails extends LitElement {
 
     @state() private artist: MBArtist | null = null;
     @state() private topTracks: LBTopRecording[] = [];
+    @state() private topReleaseGroups: LBTopReleaseGroup[] = [];
     @state() private releaseGroups: MBReleaseGroup[] = [];
     @state() private loadingArtist = true;
     @state() private loadingTracks = true;
+    @state() private loadingTopReleases = true;
     @state() private loadingReleases = true;
     @state() private errorArtist = '';
     @state() private errorTracks = '';
@@ -330,18 +334,19 @@ export class ExploreArtistDetails extends LitElement {
 
             .top-releases-grid {
                 display: grid;
-                grid-template-columns: 1fr 1fr;
-                gap: 8px;
+                grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+                gap: 10px;
+                align-content: start;
             }
 
             .top-release-card {
                 display: flex;
-                align-items: center;
-                gap: 10px;
-                padding: 6px 8px;
-                border-radius: 6px;
+                flex-direction: column;
+                gap: 4px;
                 cursor: pointer;
                 transition: background 0.15s ease;
+                padding: 4px;
+                border-radius: 6px;
                 min-width: 0;
             }
 
@@ -353,12 +358,12 @@ export class ExploreArtistDetails extends LitElement {
             }
 
             .top-release-card:active {
-                transform: scale(0.98);
+                transform: scale(0.97);
             }
 
             .top-release-art {
-                width: 44px;
-                height: 44px;
+                width: 100%;
+                aspect-ratio: 1;
                 border-radius: 4px;
                 overflow: hidden;
                 background: linear-gradient(
@@ -366,7 +371,6 @@ export class ExploreArtistDetails extends LitElement {
                     var(--yj-bg-overlay, #404040) 0%,
                     var(--yj-bg-surface, #282828) 100%
                 );
-                flex-shrink: 0;
                 position: relative;
             }
 
@@ -386,15 +390,14 @@ export class ExploreArtistDetails extends LitElement {
             }
 
             .top-release-art .album-art-fallback wa-icon {
-                font-size: 16px;
+                font-size: 20px;
+                color: var(--yj-text-tertiary, #888);
+                opacity: 0.5;
             }
 
             .top-release-text {
-                flex: 1;
                 min-width: 0;
-                display: flex;
-                flex-direction: column;
-                gap: 1px;
+                text-align: center;
             }
 
             .top-release-title {
@@ -409,6 +412,7 @@ export class ExploreArtistDetails extends LitElement {
             .top-release-meta {
                 display: flex;
                 align-items: center;
+                justify-content: center;
                 gap: 6px;
                 color: var(--yj-text-tertiary, #888);
                 font-size: var(--yj-text-xs);
@@ -642,11 +646,12 @@ export class ExploreArtistDetails extends LitElement {
             `[explore-artist] loading: "${this.artistName}" (${mbid})`,
         );
 
-        // Fire all five requests in parallel — each section is independent.
-        const [artistResult, tracksResult, releasesResult, similarResult] =
+        // Fire all requests in parallel — each section is independent.
+        const [artistResult, tracksResult, topReleasesResult, releasesResult, similarResult] =
             await Promise.allSettled([
                 this.fetchArtist(mbid),
                 this.fetchTopTracks(mbid),
+                this.fetchTopReleaseGroups(mbid),
                 this.fetchReleaseGroups(mbid),
                 this.fetchSimilarArtists(mbid),
             ]);
@@ -660,6 +665,7 @@ export class ExploreArtistDetails extends LitElement {
         const summary = [
             `artist=${artistResult.status}`,
             `tracks=${tracksResult.status}`,
+            `topReleases=${topReleasesResult.status}`,
             `releases=${releasesResult.status}`,
             `similar=${similarResult.status}`,
         ].join(', ');
@@ -692,6 +698,21 @@ export class ExploreArtistDetails extends LitElement {
             );
         } finally {
             this.loadingTracks = false;
+        }
+    }
+
+    private async fetchTopReleaseGroups(mbid: string) {
+        try {
+            const rgs = await TopReleaseGroupsForArtist(mbid);
+            this.topReleaseGroups = rgs ?? [];
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error(
+                `[explore-artist] TopReleaseGroupsForArtist error: ${msg}`,
+            );
+            this.topReleaseGroups = [];
+        } finally {
+            this.loadingTopReleases = false;
         }
     }
 
@@ -1001,19 +1022,10 @@ export class ExploreArtistDetails extends LitElement {
         this.topSectionExpanded = !this.topSectionExpanded;
     }
 
-    /** Top releases = all release groups sorted newest-first. */
-    private get topReleases(): MBReleaseGroup[] {
-        return [...this.releaseGroups].sort((a, b) => {
-            const da = a.firstReleaseDate || '';
-            const db = b.firstReleaseDate || '';
-            return db.localeCompare(da);
-        });
-    }
-
     private renderTopSection() {
         const hasTracks = !this.loadingTracks && this.topTracks.length > 0;
-        const hasReleases = !this.loadingReleases && this.releaseGroups.length > 0;
-        const isLoading = this.loadingTracks || this.loadingReleases;
+        const hasReleases = !this.loadingTopReleases && this.topReleaseGroups.length > 0;
+        const isLoading = this.loadingTracks || this.loadingTopReleases;
 
         if (isLoading) {
             return html`
@@ -1031,10 +1043,10 @@ export class ExploreArtistDetails extends LitElement {
         const releaseLimit = expanded ? 8 : 4;
 
         const tracks = this.topTracks.slice(0, trackLimit);
-        const releases = this.topReleases.slice(0, releaseLimit);
+        const releases = this.topReleaseGroups.slice(0, releaseLimit);
 
         const canExpand =
-            this.topTracks.length > 5 || this.releaseGroups.length > 4;
+            this.topTracks.length > 5 || this.topReleaseGroups.length > 4;
 
         return html`
             <section>
@@ -1106,20 +1118,19 @@ export class ExploreArtistDetails extends LitElement {
         `;
     }
 
-    private renderTopReleaseCard(rg: MBReleaseGroup) {
-        const artURL = CoverArtGroupURL(rg.mbid);
-        const year = extractYear(rg.firstReleaseDate);
+    private renderTopReleaseCard(rg: LBTopReleaseGroup) {
+        const artURL = CoverArtGroupURL(rg.releaseGroupMbid);
 
         return html`
             <div
                 class="top-release-card"
-                @click=${() => this.navigateToAlbum(rg)}
+                @click=${() => this.navigateToTopRelease(rg)}
                 role="button"
                 tabindex="0"
                 @keydown=${(e: KeyboardEvent) => {
                     if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault();
-                        this.navigateToAlbum(rg);
+                        this.navigateToTopRelease(rg);
                     }
                 }}
             >
@@ -1139,14 +1150,25 @@ export class ExploreArtistDetails extends LitElement {
                         ${rg.title}
                     </div>
                     <div class="top-release-meta">
-                        ${this.libraryMBIDs.has(rg.mbid)
-                            ? html`<span class="library-badge">In Library</span>`
-                            : nothing}
-                        ${year ? html`<span>${year}</span>` : nothing}
+                        ${rg.type ? html`<span>${rg.type}</span>` : nothing}
                     </div>
                 </div>
             </div>
         `;
+    }
+
+    private navigateToTopRelease(rg: LBTopReleaseGroup) {
+        this.dispatchEvent(
+            new CustomEvent('navigate', {
+                bubbles: true,
+                composed: true,
+                detail: {
+                    view: 'explore-album-details',
+                    releaseGroupMBID: rg.releaseGroupMbid,
+                    albumName: rg.title,
+                },
+            }),
+        );
     }
 
     /* ── Discography Section ── */

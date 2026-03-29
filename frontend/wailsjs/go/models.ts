@@ -34,6 +34,26 @@ export namespace explore {
 	        this.totalListenCount = source["totalListenCount"];
 	    }
 	}
+	export class LBTopReleaseGroup {
+	    releaseGroupMbid: string;
+	    title: string;
+	    artistName: string;
+	    type: string;
+	    totalListenCount: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new LBTopReleaseGroup(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.releaseGroupMbid = source["releaseGroupMbid"];
+	        this.title = source["title"];
+	        this.artistName = source["artistName"];
+	        this.type = source["type"];
+	        this.totalListenCount = source["totalListenCount"];
+	    }
+	}
 	export class MBArtist {
 	    mbid: string;
 	    name: string;
