@@ -1195,21 +1195,21 @@ func (si *SearchIndex) indexOneArtist(
 
 	wg.Wait()
 
-	// Extract aliases from the now-cached MB rels (populated by
-	// the image resolution above) and update the artist's index entry.
+	// Write the artist entry into the index so indexedArtistMBIDs()
+	// recognises this artist as processed on subsequent builds.
+	// Also stores aliases from the now-cached MB rels (populated
+	// by the image resolution above) for FTS search.
 	if si.artistImg != nil {
 		aliases := si.artistImg.GetAliases(artist.ArtistMBID)
-		if aliases != "" {
-			si.writeBatch([]SearchIndexResult{{
-				EntityType: "artist",
-				MBID:       artist.ArtistMBID,
-				Title:      artist.ArtistName,
-				ArtistName: artist.ArtistName,
-				ArtistMBID: artist.ArtistMBID,
-				Popularity: artist.ListenCount,
-				Aliases:    aliases,
-			}})
-		}
+		si.writeBatch([]SearchIndexResult{{
+			EntityType: "artist",
+			MBID:       artist.ArtistMBID,
+			Title:      artist.ArtistName,
+			ArtistName: artist.ArtistName,
+			ArtistMBID: artist.ArtistMBID,
+			Popularity: artist.ListenCount,
+			Aliases:    aliases,
+		}})
 	}
 
 	// Batch write discography results.
