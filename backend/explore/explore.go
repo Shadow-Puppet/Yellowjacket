@@ -824,60 +824,8 @@ func scalePopularity(listens int) int {
 // Filtering and capping
 // ---------------------------------------------------------------------------
 
-// filterAndCap removes low-scoring results, special-purpose
-// MusicBrainz artists, and limits each entity slice to maxResults.
-// minScoreForArtist returns the minimum score threshold for an
-// artist based on their popularity.  The threshold slides from
-// minScoreZeroPop (60, for zero-listen artists) down to
-// minBlendedScore (15, for popular artists).
-//
-// Uses log scaling: the threshold drops quickly for even modest
-// popularity (1K listens → ~35) and flattens toward the floor
-// for high popularity (100K+ → ~18).
-//
-//	0 listens     → threshold 60  (need strong name match)
-//	100 listens   → threshold 50
-//	1K listens    → threshold 42
-//	10K listens   → threshold 33
-//	100K listens  → threshold 24
-//	1M+ listens   → threshold 15  (almost anything passes)
-func minScoreForArtist(a MBArtist) int {
-	// Unknown popularity (not in index, no LB lookup yet) —
-	// use lenient threshold since we can't judge.
-	if !a.HasPopularity {
-		return minBlendedScore
-	}
-
-	// Known zero popularity — strict threshold.
-	if a.Popularity <= 0 {
-		return minScoreZeroPop
-	}
-
-	// Known popularity — threshold slides down with listen count.
-	const logCeiling = 6.0 // log10(1,000,000)
-
-	logPop := math.Log10(float64(a.Popularity))
-	ratio := logPop / logCeiling
-
-	if ratio > 1.0 {
-		ratio = 1.0
-	}
-
-	spread := float64(minScoreZeroPop - minBlendedScore)
-	threshold := minScoreZeroPop - int(ratio*spread)
-
-	if threshold < minBlendedScore {
-		threshold = minBlendedScore
-	}
-
-	return threshold
-}
-
 func filterAndCap(result *MBSearchResult) {
-	// Filter artists: remove SPAs and apply popularity-scaled threshold.
-	// The minimum score to survive scales with popularity — artists
-	// with zero listens need a very high score (near-exact match),
-	// while popular artists pass with any reasonable score.
+	// Filter artists: remove SPAs and low-scoring results.
 	if len(result.Artists) > 0 {
 		filtered := result.Artists[:0]
 
@@ -886,7 +834,7 @@ func filterAndCap(result *MBSearchResult) {
 				continue
 			}
 
-			if a.Score < minScoreForArtist(a) {
+			if a.Score < minBlendedScore {
 				continue
 			}
 
@@ -956,11 +904,6 @@ const (
 	// minBlendedScore is the absolute floor — no result survives
 	// below this regardless of popularity.
 	minBlendedScore = 15
-
-	// minScoreZeroPop is the threshold for artists with zero
-	// popularity.  The threshold slides between this and
-	// minBlendedScore based on listen count.
-	minScoreZeroPop = 60
 
 	// libraryScoreBonus is added to library artists' blended scores
 	// after normalization.  Applied post-blending so it doesn't
