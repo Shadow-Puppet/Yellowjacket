@@ -62,8 +62,8 @@ function fuzzyMatch(query: string, name: string): boolean {
         nWords.some(
             (nw) =>
                 nw.includes(qw) ||
-                qw.includes(nw) ||
-                (qw.length >= 4 && editDistance(qw, nw) <= FUZZY_MAX_DISTANCE),
+                (nw.length >= 3 && qw.includes(nw)) ||
+                (qw.length >= 4 && nw.length >= 4 && editDistance(qw, nw) <= FUZZY_MAX_DISTANCE),
         ),
     );
 }
