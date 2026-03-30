@@ -338,7 +338,7 @@ func (e *Service) Search(query string) (*MBSearchResult, error) {
 	e.logger.Info("search phase 0 complete (index)",
 		"query", query,
 		"hits", len(indexHits),
-		"elapsed", p0Dur.Round(time.Millisecond),
+		"elapsed", p0Dur,
 	)
 
 	// Phase 1: concurrent MB search (3 goroutines) with a deadline
