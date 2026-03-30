@@ -513,7 +513,12 @@ func (e *Service) Search(query string) (*MBSearchResult, error) {
 	// Phase 4: merge local index hits into results, dedup by MBID.
 	mergeIndexHits(&result, indexHits)
 
-	// Phase 5: filter low-scoring results and cap counts.
+	// Phase 5: boost exact/substring name matches so a search for
+	// "the teenagers" ranks "The Teenagers" above "The Beatles"
+	// even when The Beatles have vastly more listens.
+	boostNameMatches(query, &result)
+
+	// Phase 6: filter low-scoring results and cap counts.
 	filterAndCap(&result)
 
 	totalDur := time.Since(searchStart)
@@ -925,7 +930,8 @@ var mbSpecialPurposeArtists = map[string]bool{
 	"eec63d3c-3b81-4ad4-b1e4-7c147c4d2b61": true, // [no artist]
 	"9be7f096-97ec-4615-8957-8c3b659f51b4": true, // [traditional]
 	"80a8851f-444c-4539-892b-ad2a49f7f0d0": true, // [Church bells]
-	"ae636985-40e8-4fe2-80cb-9c1a21c6e30a": true, // Various Artists (not an SPA but often pollutes artist results)
+	"ae636985-40e8-4fe2-80cb-9c1a21c6e30a": true, // Various Artists (SPA, accumulates bogus popularity)
+	"89ad4ac3-39f7-470e-963a-56509c546377": true, // Various Artists (regular MBID, same issue)
 }
 
 // boostWithIndexPopularity reranks MB search results using
@@ -1066,6 +1072,73 @@ func (e *Service) boostWithPopularity(result *MBSearchResult) {
 	rerankArtists(result.Artists, artistPop)
 	rerankRecordings(result.Recordings, recordingPop)
 	rerankReleaseGroups(result.ReleaseGroups, rgPop)
+}
+
+// boostNameMatches re-sorts artists and release groups so that
+// exact or substring name matches rank above results that only
+// matched on common words like "the".  Without this, a search
+// for "the teenagers" would rank The Beatles above The Teenagers
+// because The Beatles' massive popularity compensates for their
+// weak text relevance on the word "the".
+//
+// The boost is applied after popularity reranking so it acts as
+// a final tiebreaker that respects user intent.
+func boostNameMatches(query string, result *MBSearchResult) {
+	q := strings.ToLower(strings.TrimSpace(query))
+	if q == "" {
+		return
+	}
+
+	// Boost artists whose name contains the full query.
+	if len(result.Artists) > 1 {
+		sort.SliceStable(result.Artists, func(i, j int) bool {
+			iMatch := nameMatchTier(q, strings.ToLower(result.Artists[i].Name))
+			jMatch := nameMatchTier(q, strings.ToLower(result.Artists[j].Name))
+
+			if iMatch != jMatch {
+				return iMatch < jMatch // lower tier = better match
+			}
+
+			return false // preserve existing order within same tier
+		})
+	}
+
+	// Boost release groups whose title contains the full query.
+	if len(result.ReleaseGroups) > 1 {
+		sort.SliceStable(result.ReleaseGroups, func(i, j int) bool {
+			iMatch := nameMatchTier(q, strings.ToLower(result.ReleaseGroups[i].Title))
+			jMatch := nameMatchTier(q, strings.ToLower(result.ReleaseGroups[j].Title))
+
+			if iMatch != jMatch {
+				return iMatch < jMatch
+			}
+
+			return false
+		})
+	}
+}
+
+// nameMatchTier returns a tier value for how well a name matches
+// the query.  Lower is better:
+//
+//	0 = exact match ("the teenagers" == "the teenagers")
+//	1 = name starts with query ("the teenagers" in "the teenagers feat. X")
+//	2 = query is a substring ("the teenagers" in "al supersonic & the teenagers")
+//	3 = no substring match (only individual words matched)
+func nameMatchTier(query, name string) int {
+	if name == query {
+		return 0
+	}
+
+	if strings.HasPrefix(name, query) {
+		return 1
+	}
+
+	if strings.Contains(name, query) {
+		return 2
+	}
+
+	return 3
 }
 
 // rerankArtists sorts artists by blended score and updates their
