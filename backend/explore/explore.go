@@ -842,12 +842,18 @@ func scalePopularity(listens int) int {
 //	100K listens  → threshold 24
 //	1M+ listens   → threshold 15  (almost anything passes)
 func minScoreForArtist(a MBArtist) int {
+	// Unknown popularity (not in index, no LB lookup yet) —
+	// use lenient threshold since we can't judge.
+	if !a.HasPopularity {
+		return minBlendedScore
+	}
+
+	// Known zero popularity — strict threshold.
 	if a.Popularity <= 0 {
 		return minScoreZeroPop
 	}
 
-	// log10(pop) ranges from ~2 (100 listens) to ~6+ (1M+).
-	// Scale to 0-1 range using 6.0 as the reference ceiling.
+	// Known popularity — threshold slides down with listen count.
 	const logCeiling = 6.0 // log10(1,000,000)
 
 	logPop := math.Log10(float64(a.Popularity))
