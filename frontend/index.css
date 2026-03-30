@@ -161,8 +161,13 @@ body div.sidebar {
    display:none discards scroll state in WebKitGTK. */
 .main-panel > .view-hidden {
     visibility: hidden !important;
-    flex: 0 !important;
+    flex: 0 0 0px !important;
+    min-height: 0 !important;
+    max-height: 0 !important;
     height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: none !important;
     overflow: hidden !important;
     pointer-events: none !important;
     contain: strict !important;
