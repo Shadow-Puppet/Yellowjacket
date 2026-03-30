@@ -329,7 +329,11 @@ func (e *Service) GetArtistImages(names []string) map[string]string {
 // failures degrade to MB-only ordering.
 func (e *Service) Search(query string) (*MBSearchResult, error) {
 	searchStart := time.Now()
-	e.logger.Info("search started", "query", query)
+
+	// Build the Lucene query: AND terms with wildcard on last.
+	luceneQuery := buildLuceneQuery(query)
+
+	e.logger.Info("search started", "query", query, "lucene", luceneQuery)
 
 	// Phase 0: query local popularity index (instant, no API calls).
 	p0Start := time.Now()
@@ -365,7 +369,7 @@ func (e *Service) Search(query string) (*MBSearchResult, error) {
 			name: "artists",
 			fn: func() {
 				t := time.Now()
-				artists, err := e.mb.SearchArtists(mbCtx, query, mbSearchLimit)
+				artists, err := e.mb.SearchArtists(mbCtx, luceneQuery, mbSearchLimit)
 
 				e.logger.Info("search MB sub-call",
 					"entity", "artists",
@@ -392,7 +396,7 @@ func (e *Service) Search(query string) (*MBSearchResult, error) {
 			name: "releaseGroups",
 			fn: func() {
 				t := time.Now()
-				rgs, err := e.mb.SearchReleaseGroups(mbCtx, query, mbSearchLimit)
+				rgs, err := e.mb.SearchReleaseGroups(mbCtx, luceneQuery, mbSearchLimit)
 
 				e.logger.Info("search MB sub-call",
 					"entity", "releaseGroups",
@@ -419,7 +423,7 @@ func (e *Service) Search(query string) (*MBSearchResult, error) {
 			name: "recordings",
 			fn: func() {
 				t := time.Now()
-				recs, err := e.mb.SearchRecordings(mbCtx, query, mbSearchLimit)
+				recs, err := e.mb.SearchRecordings(mbCtx, luceneQuery, mbSearchLimit)
 
 				e.logger.Info("search MB sub-call",
 					"entity", "recordings",
@@ -872,9 +876,10 @@ const (
 	relevanceWeight  = 0.4
 	popularityWeight = 0.6
 
-	// mbSearchLimit is passed to each MB search call.  Slightly
-	// larger than maxResults to allow headroom for filtering.
-	mbSearchLimit = 20
+	// mbSearchLimit is passed to each MB search call.  Larger than
+	// maxResults to give the ranking pipeline more raw material.
+	// Noise is filtered out by name-match tiers and score cutoffs.
+	mbSearchLimit = 50
 
 	// searchMBTimeout is the maximum time to wait for MusicBrainz
 	// API responses during interactive search.  If MB is slow,
@@ -1307,4 +1312,76 @@ func maxListenCount(pop map[string]int) int {
 	}
 
 	return maxVal
+}
+
+// ---------------------------------------------------------------------------
+// Lucene query building
+// ---------------------------------------------------------------------------
+
+// luceneSpecialChars are characters that have special meaning in
+// Lucene query syntax and must be escaped in user input.
+var luceneSpecialChars = strings.NewReplacer( //nolint:gochecknoglobals
+	`\`, `\\`,
+	`+`, `\+`,
+	`-`, `\-`,
+	`!`, `\!`,
+	`(`, `\(`,
+	`)`, `\)`,
+	`{`, `\{`,
+	`}`, `\}`,
+	`[`, `\[`,
+	`]`, `\]`,
+	`^`, `\^`,
+	`"`, `\"`,
+	`~`, `\~`,
+	`*`, `\*`,
+	`?`, `\?`,
+	`:`, `\:`,
+	`/`, `\/`,
+)
+
+// buildLuceneQuery converts a user's search input into a Lucene
+// AND query with a wildcard on the last term for type-ahead.
+//
+// Examples:
+//
+//	"radiohead"       → "radiohead*"
+//	"the teenagers"   → "the AND teenagers*"
+//	"florence machine" → "florence AND machine*"
+//	"ac/dc"           → "ac\/dc*"
+//
+// This eliminates the common-word pollution problem: "the teenagers"
+// no longer matches "The Beatles" (which only contains "the").
+// The trailing wildcard enables prefix matching as the user types.
+func buildLuceneQuery(input string) string {
+	words := strings.Fields(strings.TrimSpace(input))
+	if len(words) == 0 {
+		return ""
+	}
+
+	// Escape special Lucene characters in each word.
+	for i, w := range words {
+		words[i] = luceneSpecialChars.Replace(w)
+	}
+
+	if len(words) == 1 {
+		return words[0] + "*"
+	}
+
+	// AND all terms, wildcard on the last (type-ahead).
+	var b strings.Builder
+
+	for i, w := range words {
+		if i > 0 {
+			b.WriteString(" AND ")
+		}
+
+		b.WriteString(w)
+
+		if i == len(words)-1 {
+			b.WriteByte('*')
+		}
+	}
+
+	return b.String()
 }

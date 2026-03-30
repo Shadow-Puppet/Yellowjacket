@@ -16,6 +16,57 @@ import '@awesome.me/webawesome/dist/components/icon/icon.js';
 /* ── Constants ── */
 const DEBOUNCE_MS = 300;
 const MIN_QUERY_LENGTH = 2;
+const FUZZY_MAX_DISTANCE = 2;
+
+/* ── Fuzzy matching ── */
+
+/** Levenshtein edit distance between two strings. */
+function editDistance(a: string, b: string): number {
+    if (a.length === 0) return b.length;
+    if (b.length === 0) return a.length;
+
+    const matrix: number[][] = [];
+
+    for (let i = 0; i <= a.length; i++) matrix[i] = [i];
+    for (let j = 0; j <= b.length; j++) matrix[0][j] = j;
+
+    for (let i = 1; i <= a.length; i++) {
+        for (let j = 1; j <= b.length; j++) {
+            const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+            matrix[i][j] = Math.min(
+                matrix[i - 1][j] + 1,
+                matrix[i][j - 1] + 1,
+                matrix[i - 1][j - 1] + cost,
+            );
+        }
+    }
+
+    return matrix[a.length][b.length];
+}
+
+/**
+ * Check if a name fuzzy-matches a query.  Returns true if:
+ * - the name contains the query as a substring (exact), OR
+ * - any word-aligned segment of the name is within edit distance
+ *   FUZZY_MAX_DISTANCE of the query
+ */
+function fuzzyMatch(query: string, name: string): boolean {
+    if (name.includes(query)) return true;
+
+    // Split both into words and check if all query words match
+    // a name word within edit distance (handles per-word typos).
+    const qWords = query.split(/\s+/);
+    const nWords = name.split(/\s+/);
+
+    return qWords.every((qw) =>
+        nWords.some(
+            (nw) =>
+                nw.includes(qw) ||
+                qw.includes(nw) ||
+                (qw.length >= 4 && editDistance(qw, nw) <= FUZZY_MAX_DISTANCE),
+        ),
+    );
+}
 const MAX_SECTION_RESULTS = 10;
 const CAA_GROUP_BASE = 'https://coverartarchive.org/release-group';
 
@@ -556,7 +607,7 @@ export class ExploreView extends LitElement {
         const cachedArtists = libraryStore.cachedArtists;
         if (cachedArtists) {
             for (const a of cachedArtists) {
-                if (a.Name.toLowerCase().includes(q)) {
+                if (fuzzyMatch(q, a.Name.toLowerCase())) {
                     artists.push({
                         mbid: a.MBID || '',
                         name: a.Name,
@@ -578,7 +629,7 @@ export class ExploreView extends LitElement {
         const cachedAlbums = libraryStore.cachedAlbums;
         if (cachedAlbums) {
             for (const a of cachedAlbums) {
-                if (a.Name.toLowerCase().includes(q) || a.ArtistName.toLowerCase().includes(q)) {
+                if (fuzzyMatch(q, a.Name.toLowerCase()) || fuzzyMatch(q, a.ArtistName.toLowerCase())) {
                     releaseGroups.push({
                         mbid: a.MBID || '',
                         title: a.Name,
