@@ -1072,35 +1072,40 @@ func (e *Service) backfillArtistPopularity(result *MBSearchResult) {
 		return
 	}
 
-	// Build library set for the re-sort.
-	libCheck := e.libMBID.CheckMBIDs(missing)
-	libMBIDs := make(map[string]bool)
+	// Find the maxPop across ALL artists (both index and backfilled)
+	// so normalization is consistent.
+	maxPop := 0
 
-	for mbid, entityType := range libCheck {
-		if entityType == "artist" {
-			libMBIDs[mbid] = true
+	for _, a := range result.Artists {
+		if a.Popularity > maxPop {
+			maxPop = a.Popularity
 		}
 	}
 
-	// Merge into a combined pop map (index + backfill).
+	for _, p := range pop {
+		if p > maxPop {
+			maxPop = p
+		}
+	}
+
+	// Update scores only for artists that got backfilled.
+	// Preserve scores of artists that already had index data.
 	for i := range result.Artists {
 		a := &result.Artists[i]
 		if p, ok := pop[a.MBID]; ok {
 			a.HasPopularity = true
 			a.Popularity = p
+
+			rel := float64(a.OriginalScore) / 100.0
+			s := blendedScore(rel, p, maxPop)
+			a.Score = int(s * 100)
 		}
 	}
 
-	// Re-derive scores with the new popularity data.
-	allPop := make(map[string]int, len(result.Artists))
-
-	for _, a := range result.Artists {
-		if a.Popularity > 0 {
-			allPop[a.MBID] = a.Popularity
-		}
-	}
-
-	rerankArtists(result.Artists, allPop, libMBIDs)
+	// Re-sort all artists by score (index-scored + backfill-scored).
+	sort.SliceStable(result.Artists, func(i, j int) bool {
+		return result.Artists[i].Score > result.Artists[j].Score
+	})
 }
 
 func (e *Service) boostWithPopularity(result *MBSearchResult) {
