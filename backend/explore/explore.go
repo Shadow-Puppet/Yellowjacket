@@ -898,8 +898,10 @@ const (
 	maxResults = 15
 
 	// minBlendedScore is the floor for artists and recordings
-	// after popularity reranking (0–100 scale).
-	minBlendedScore = 25
+	// after popularity reranking and tier adjustment (0–100 scale).
+	// At 50, artists with zero LB popularity and partial name
+	// matches are filtered out.
+	minBlendedScore = 50
 )
 
 // tierBonus maps artist name-match tiers to percentage score multipliers.
