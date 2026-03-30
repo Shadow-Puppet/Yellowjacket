@@ -1090,6 +1090,9 @@ func boostNameMatches(query string, result *MBSearchResult) {
 	}
 
 	// Boost artists whose name contains the full query.
+	// Within the same tier, sort by original MB relevance score
+	// (not the library-boosted blended score) so the most globally
+	// relevant exact match ranks first.
 	if len(result.Artists) > 1 {
 		sort.SliceStable(result.Artists, func(i, j int) bool {
 			iMatch := nameMatchTier(q, strings.ToLower(result.Artists[i].Name))
@@ -1099,7 +1102,12 @@ func boostNameMatches(query string, result *MBSearchResult) {
 				return iMatch < jMatch // lower tier = better match
 			}
 
-			return false // preserve existing order within same tier
+			// Within same tier, prefer higher blended score.
+			if result.Artists[i].Score != result.Artists[j].Score {
+				return result.Artists[i].Score > result.Artists[j].Score
+			}
+
+			return false // preserve existing order as last resort
 		})
 	}
 

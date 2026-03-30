@@ -378,6 +378,7 @@ func convertArtist(a musicbrainzws2.Artist) MBArtist {
 		Country:        string(a.CountryCode),
 		Disambiguation: a.Disambiguation,
 		Score:          a.Score,
+		OriginalScore:  a.Score,
 	}
 
 	// Extract the primary English alias when the canonical name

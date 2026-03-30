@@ -25,6 +25,7 @@ type MBArtist struct {
 	Country        string `json:"country"`
 	Disambiguation string `json:"disambiguation"`
 	Score          int    `json:"score"`
+	OriginalScore  int    `json:"-"` // MB search relevance, preserved across reranking
 }
 
 // MBReleaseGroup is a Wails-friendly projection of a MusicBrainz
