@@ -18,6 +18,7 @@ import {
 } from '@go/library/Library';
 import { library } from '@go/models';
 import { LibraryController } from '@store/controllers/library-controller';
+import { libraryStore } from '@store/library-store';
 import { SearchController } from '@store/controllers/search-controller';
 import { queueStore } from '@store/queue-store';
 import {
@@ -993,6 +994,26 @@ export class ArtistsView
             imageURL = artist.ImageMedium || artist.ImageLarge || '';
         } else {
             imageURL = artist.ImageLarge || '';
+        }
+
+        // Fallback: use album cover art if no artist image.
+        if (!imageURL) {
+            const cachedAlbums = libraryStore.cachedAlbums;
+            if (cachedAlbums) {
+                const name = artist.Name.toLowerCase();
+
+                for (const a of cachedAlbums) {
+                    if (a.ArtistName.toLowerCase() === name) {
+                        if (needed <= 100) {
+                            imageURL = a.CoverArtSmall || a.CoverArtMedium || '';
+                        } else {
+                            imageURL = a.CoverArtMedium || a.CoverArtLarge || '';
+                        }
+
+                        if (imageURL) break;
+                    }
+                }
+            }
         }
 
         if (imageURL) {
