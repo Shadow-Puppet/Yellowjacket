@@ -747,6 +747,7 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
       display: flex;
       flex-direction: column;
       overflow: hidden;
+      height: 100%;
       contain: layout style;
     }
 

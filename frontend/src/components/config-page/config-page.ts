@@ -386,6 +386,8 @@ export class ConfigPage extends LitElement {
         :host {
             display: block;
             padding: 1.5em;
+            height: 100%;
+            box-sizing: border-box;
             color: var(--yj-text-primary, #fff);
             font-family: system-ui, -apple-system, sans-serif;
             overflow-y: auto;
