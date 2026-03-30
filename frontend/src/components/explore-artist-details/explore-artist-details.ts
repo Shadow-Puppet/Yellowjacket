@@ -111,6 +111,7 @@ export class ExploreArtistDetails extends LitElement {
                 flex-direction: column;
                 overflow: hidden;
                 height: 100%;
+                box-sizing: border-box;
             }
 
             /* ── Header ── */

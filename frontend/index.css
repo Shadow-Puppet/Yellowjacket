@@ -142,13 +142,16 @@ body div.sidebar {
 .main-panel {
     flex: 1;
     min-width: 0;
+    display: flex;
+    flex-direction: column;
     background-color: var(--yj-bg-surface, #212529);
     overflow: hidden;
     contain: layout style paint;
 }
 
 .main-panel > * {
-    height: 100%;
+    flex: 1;
+    min-height: 0;
     box-sizing: border-box;
     contain: layout style paint;
 }
@@ -158,6 +161,7 @@ body div.sidebar {
    display:none discards scroll state in WebKitGTK. */
 .main-panel > .view-hidden {
     visibility: hidden !important;
+    flex: 0 !important;
     height: 0 !important;
     overflow: hidden !important;
     pointer-events: none !important;
