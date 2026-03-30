@@ -101,6 +101,7 @@ export class ExploreArtistDetails extends LitElement {
     @state() private similarImageURLs = new Map<string, string>();
     @state() private topSectionExpanded = false;
     @state() private artistPlayCount = 0;
+    @state() private expandedDiscoGroups = new Set<string>();
     private libraryMBIDs = new Set<string>();
 
     /* ── Styles ── */
@@ -474,6 +475,42 @@ export class ExploreArtistDetails extends LitElement {
                 display: grid;
                 grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
                 gap: 16px;
+            }
+
+            .album-grid.collapsed {
+                grid-template-rows: 1fr;
+                overflow: hidden;
+            }
+
+            .disco-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 6px;
+                padding: 4px 10px;
+                margin-top: 4px;
+                border: none;
+                border-radius: 6px;
+                background: var(--yj-bg-overlay, rgba(255, 255, 255, 0.06));
+                color: var(--yj-text-secondary, #b3b3b3);
+                font-size: var(--yj-text-xs);
+                cursor: pointer;
+                transition: background 0.15s ease, color 0.15s ease;
+                width: 100%;
+            }
+
+            .disco-toggle:hover {
+                background: var(--yj-bg-hover, rgba(255, 255, 255, 0.1));
+                color: var(--yj-text-primary, #fff);
+            }
+
+            .disco-toggle wa-icon {
+                font-size: 11px;
+                transition: transform 0.2s ease;
+            }
+
+            .disco-toggle[aria-expanded='true'] wa-icon {
+                transform: rotate(180deg);
             }
 
             .album-card {
@@ -1092,6 +1129,16 @@ export class ExploreArtistDetails extends LitElement {
         this.topSectionExpanded = !this.topSectionExpanded;
     }
 
+    private toggleDiscoGroup(type: string) {
+        const next = new Set(this.expandedDiscoGroups);
+        if (next.has(type)) {
+            next.delete(type);
+        } else {
+            next.add(type);
+        }
+        this.expandedDiscoGroups = next;
+    }
+
     private renderTopSection() {
         const hasTracks = !this.loadingTracks && this.topTracks.length > 0;
         const hasReleases = !this.loadingTopReleases && this.topReleaseGroups.length > 0;
@@ -1283,16 +1330,37 @@ export class ExploreArtistDetails extends LitElement {
             <section>
                 <h3 class="section-header">Discography</h3>
                 ${groups.map(
-                    (g) => html`
-                        <div class="disco-group">
-                            <h4 class="disco-type-header">
-                                ${g.type === 'Other' ? 'Other Releases' : g.type.endsWith('s') ? g.type : `${g.type}s`}
-                            </h4>
-                            <div class="album-grid">
-                                ${g.items.map((rg) => this.renderAlbumCard(rg))}
+                    (g) => {
+                        const isExpanded = this.expandedDiscoGroups.has(g.type);
+                        const rowSize = 5;
+                        const showToggle = g.items.length > rowSize;
+                        const visibleItems = isExpanded ? g.items : g.items.slice(0, rowSize);
+
+                        return html`
+                            <div class="disco-group">
+                                <h4 class="disco-type-header">
+                                    ${g.type === 'Other' ? 'Other Releases' : g.type.endsWith('s') ? g.type : `${g.type}s`}
+                                </h4>
+                                <div class="album-grid">
+                                    ${visibleItems.map((rg) => this.renderAlbumCard(rg))}
+                                </div>
+                                ${showToggle
+                                    ? html`
+                                          <button
+                                              class="disco-toggle"
+                                              aria-expanded="${isExpanded}"
+                                              @click=${() => this.toggleDiscoGroup(g.type)}
+                                          >
+                                              ${isExpanded
+                                                  ? 'Show less'
+                                                  : `Show all ${g.items.length}`}
+                                              <wa-icon name="chevron-down"></wa-icon>
+                                          </button>
+                                      `
+                                    : nothing}
                             </div>
-                        </div>
-                    `,
+                        `;
+                    },
                 )}
             </section>
         `;
