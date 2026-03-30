@@ -655,6 +655,45 @@ export class ExploreView extends LitElement {
         return result;
     }
 
+    /**
+     * Merge library-only results from this.results into the full
+     * search result.  Adds local artists/albums that the MB search
+     * didn't find (by name dedup) so they aren't lost.
+     */
+    private mergeLocalIntoFull(full: MBSearchResult) {
+        const prev = this.results;
+        if (!prev) return;
+
+        // Dedup artists by name (case-insensitive).
+        if (prev.artists?.length) {
+            const existing = new Set(
+                (full.artists || []).map((a) => a.name.toLowerCase()),
+            );
+            for (const a of prev.artists) {
+                if (!existing.has(a.name.toLowerCase())) {
+                    full.artists = full.artists || [];
+                    full.artists.push(a);
+                }
+            }
+        }
+
+        // Dedup albums by title + artist (case-insensitive).
+        if (prev.releaseGroups?.length) {
+            const existing = new Set(
+                (full.releaseGroups || []).map(
+                    (rg) => `${rg.title}|${rg.artistCredit}`.toLowerCase(),
+                ),
+            );
+            for (const rg of prev.releaseGroups) {
+                const key = `${rg.title}|${rg.artistCredit}`.toLowerCase();
+                if (!existing.has(key)) {
+                    full.releaseGroups = full.releaseGroups || [];
+                    full.releaseGroups.push(rg);
+                }
+            }
+        }
+    }
+
     private async executeFullSearch(version: number, query: string, startTime: number) {
         try {
             const result = await Search(query);
@@ -667,10 +706,36 @@ export class ExploreView extends LitElement {
                 return;
             }
 
-            this.results = this.mergeWithLibrary(result);
+            const merged = this.mergeWithLibrary(result);
+
+            // If the full search returned results, use them.
+            // If it returned nothing but we had local results, keep those.
+            const hasFullResults =
+                (merged.artists?.length ?? 0) > 0 ||
+                (merged.releaseGroups?.length ?? 0) > 0 ||
+                (merged.recordings?.length ?? 0) > 0;
+            const hadLocalResults = this.results &&
+                ((this.results.artists?.length ?? 0) > 0 ||
+                 (this.results.releaseGroups?.length ?? 0) > 0 ||
+                 (this.results.recordings?.length ?? 0) > 0);
+
+            if (hasFullResults) {
+                // Preserve any library-only artists/albums that the MB
+                // search didn't find (no MBID, or MB didn't match).
+                if (hadLocalResults) {
+                    this.mergeLocalIntoFull(merged);
+                }
+
+                this.results = merged;
+            } else if (!hadLocalResults) {
+                // Both local and full are empty — show empty state.
+                this.results = merged;
+            }
+            // else: keep existing local results as-is.
+
             exploreCache.populateFromSearch(
-                this.results.artists || [],
-                this.results.releaseGroups || [],
+                this.results?.artists || [],
+                this.results?.releaseGroups || [],
             );
             this.loadThumbnails();
             this.loadArtistImages();
