@@ -114,6 +114,7 @@ type LBTopReleaseGroup struct {
 	Title            string `json:"title"`
 	ArtistName       string `json:"artistName"`
 	Type             string `json:"type"`
+	Date             string `json:"date"`
 	TotalListenCount int    `json:"totalListenCount"`
 }
 
@@ -126,6 +127,7 @@ type lbTopReleaseGroupWire struct {
 	ReleaseGroup     struct {
 		Name string `json:"name"`
 		Type string `json:"type"`
+		Date string `json:"date"`
 	} `json:"release_group"`
 	Artist struct {
 		Artists []struct {
@@ -145,6 +147,7 @@ func (w lbTopReleaseGroupWire) toPublic() LBTopReleaseGroup {
 		Title:            w.ReleaseGroup.Name,
 		ArtistName:       artistName,
 		Type:             w.ReleaseGroup.Type,
+		Date:             w.ReleaseGroup.Date,
 		TotalListenCount: w.TotalListenCount,
 	}
 }

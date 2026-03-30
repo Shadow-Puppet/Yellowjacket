@@ -1212,7 +1212,7 @@ export class ExploreArtistDetails extends LitElement {
                         ${rg.title}
                     </div>
                     <div class="top-release-meta">
-                        ${rg.type ? html`<span>${rg.type}</span>` : nothing}
+                        ${rg.date ? html`<span>${extractYear(rg.date)}</span>` : nothing}
                     </div>
                 </div>
             </div>

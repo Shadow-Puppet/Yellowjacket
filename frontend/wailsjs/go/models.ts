@@ -39,6 +39,7 @@ export namespace explore {
 	    title: string;
 	    artistName: string;
 	    type: string;
+	    date: string;
 	    totalListenCount: number;
 	
 	    static createFrom(source: any = {}) {
@@ -51,6 +52,7 @@ export namespace explore {
 	        this.title = source["title"];
 	        this.artistName = source["artistName"];
 	        this.type = source["type"];
+	        this.date = source["date"];
 	        this.totalListenCount = source["totalListenCount"];
 	    }
 	}
