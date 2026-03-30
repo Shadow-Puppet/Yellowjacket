@@ -37,6 +37,7 @@ type MBReleaseGroup struct {
 	SecondaryTypes   []string `json:"secondaryTypes,omitempty"`
 	FirstReleaseDate string   `json:"firstReleaseDate"`
 	ArtistCredit     string   `json:"artistCredit"`
+	Score            int      `json:"-"` // MB search relevance, used for reranking
 }
 
 // MBRelease is a Wails-friendly projection of a MusicBrainz release.

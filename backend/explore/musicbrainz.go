@@ -441,6 +441,7 @@ func convertReleaseGroup(rg musicbrainzws2.ReleaseGroup) MBReleaseGroup {
 		SecondaryTypes:   rg.SecondaryTypes,
 		FirstReleaseDate: rg.FirstReleaseDate.String(),
 		ArtistCredit:     rg.ArtistCredit.String(),
+		Score:            rg.Score,
 	}
 }
 

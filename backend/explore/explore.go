@@ -1089,14 +1089,23 @@ func (e *Service) boostNameMatches(query string, result *MBSearchResult) {
 		e.disambiguateSameNameArtists(q, result.Artists)
 	}
 
-	// Boost release groups whose title contains the full query.
+	// Boost release groups whose title or artist credit contains the query.
 	if len(result.ReleaseGroups) > 1 {
 		sort.SliceStable(result.ReleaseGroups, func(i, j int) bool {
-			iMatch := nameMatchTier(q, strings.ToLower(result.ReleaseGroups[i].Title))
-			jMatch := nameMatchTier(q, strings.ToLower(result.ReleaseGroups[j].Title))
+			iMatch := rgMatchTier(q,
+				strings.ToLower(result.ReleaseGroups[i].Title),
+				strings.ToLower(result.ReleaseGroups[i].ArtistCredit))
+			jMatch := rgMatchTier(q,
+				strings.ToLower(result.ReleaseGroups[j].Title),
+				strings.ToLower(result.ReleaseGroups[j].ArtistCredit))
 
 			if iMatch != jMatch {
 				return iMatch < jMatch
+			}
+
+			// Within same tier, prefer higher blended score.
+			if result.ReleaseGroups[i].Score != result.ReleaseGroups[j].Score {
+				return result.ReleaseGroups[i].Score > result.ReleaseGroups[j].Score
 			}
 
 			return false
@@ -1171,6 +1180,39 @@ func nameMatchTier(query, name string) int {
 	return 3
 }
 
+// rgMatchTier returns a tier for release groups considering both
+// the title and artist credit.  An album by "Hop Along" called
+// "Painted Shut" should rank above a tribute album called
+// "A Hop Along Tribute" by Various Artists.
+//
+//	0 = artist credit matches query exactly ("hop along" == "hop along")
+//	1 = artist credit starts with or contains query
+//	2 = title matches query exactly
+//	3 = title starts with or contains query
+//	4 = no match in either field
+func rgMatchTier(query, title, artistCredit string) int {
+	// Artist credit match is stronger — it means the album is BY
+	// the searched artist, not just mentioning them in the title.
+	if artistCredit == query {
+		return 0
+	}
+
+	if strings.Contains(artistCredit, query) {
+		return 1
+	}
+
+	// Title match — the album name contains the query.
+	if title == query {
+		return 2
+	}
+
+	if strings.Contains(title, query) {
+		return 3
+	}
+
+	return 4
+}
+
 // rerankArtists sorts artists by blended score and updates their
 // Score field to the new value (0–100 scale).
 func rerankArtists(artists []MBArtist, pop map[string]int) {
@@ -1219,16 +1261,26 @@ func rerankRecordings(recordings []MBRecording, pop map[string]int) {
 	}
 }
 
-// rerankReleaseGroups sorts release groups by popularity only
-// (they have no MB score field).
+// rerankReleaseGroups sorts release groups by blended score
+// (text relevance + popularity) and updates their Score field.
 func rerankReleaseGroups(rgs []MBReleaseGroup, pop map[string]int) {
-	if len(rgs) == 0 || len(pop) == 0 {
+	if len(rgs) == 0 {
 		return
 	}
 
+	maxPop := maxListenCount(pop)
+
 	sort.SliceStable(rgs, func(i, j int) bool {
-		return pop[rgs[i].MBID] > pop[rgs[j].MBID]
+		si := blendedScore(float64(rgs[i].Score)/100.0, pop[rgs[i].MBID], maxPop)
+		sj := blendedScore(float64(rgs[j].Score)/100.0, pop[rgs[j].MBID], maxPop)
+
+		return si > sj
 	})
+
+	for i := range rgs {
+		s := blendedScore(float64(rgs[i].Score)/100.0, pop[rgs[i].MBID], maxPop)
+		rgs[i].Score = int(s * 100)
+	}
 }
 
 // blendedScore computes relevanceWeight*relevance + popularityWeight*logPop.
