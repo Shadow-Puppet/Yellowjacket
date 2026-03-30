@@ -1123,8 +1123,8 @@ func (e *Service) boostNameMatches(query string, result *MBSearchResult) {
 // disambiguateSameNameArtists resolves ordering among artists
 // that share the exact same name as the query by fetching their
 // LB popularity.  This is a targeted micro-lookup (typically 2-6
-// MBIDs) that only fires when the index fast path left same-named
-// artists with zero popularity.
+// MBIDs) that only fires when the index fast path couldn't
+// meaningfully differentiate same-named artists.
 func (e *Service) disambiguateSameNameArtists(query string, artists []MBArtist) {
 	// Find the contiguous block of tier-0 same-name artists at the front.
 	var sameNameEnd int
@@ -1139,23 +1139,6 @@ func (e *Service) disambiguateSameNameArtists(query string, artists []MBArtist) 
 
 	if sameNameEnd < 2 {
 		return // 0 or 1 same-name artists — nothing to disambiguate
-	}
-
-	// Check if they already have differentiated scores.
-	allSameScore := true
-
-	firstScore := artists[0].Score
-
-	for i := 1; i < sameNameEnd; i++ {
-		if artists[i].Score != firstScore {
-			allSameScore = false
-
-			break
-		}
-	}
-
-	if !allSameScore {
-		return // scores already differ — reranking handled it
 	}
 
 	// Collect MBIDs for the targeted LB lookup.
