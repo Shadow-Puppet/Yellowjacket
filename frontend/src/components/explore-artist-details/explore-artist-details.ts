@@ -1095,13 +1095,13 @@ export class ExploreArtistDetails extends LitElement {
 
         const expanded = this.topSectionExpanded;
         const trackLimit = expanded ? 10 : 5;
-        const releaseLimit = expanded ? 8 : 4;
+        const releaseLimit = expanded ? 4 : 2;
 
         const tracks = this.topTracks.slice(0, trackLimit);
         const releases = this.topReleaseGroups.slice(0, releaseLimit);
 
         const canExpand =
-            this.topTracks.length > 5 || this.topReleaseGroups.length > 4;
+            this.topTracks.length > 5 || this.topReleaseGroups.length > 2;
 
         return html`
             <section>
