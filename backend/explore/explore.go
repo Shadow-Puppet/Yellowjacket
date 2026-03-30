@@ -1372,11 +1372,15 @@ func rerankReleaseGroups(rgs []MBReleaseGroup, pop map[string]int) {
 // relevance is 0–1. listenCount is raw; maxListenCount is the
 // maximum in the result set (for normalization).
 func blendedScore(relevance float64, listenCount, maxListenCount int) float64 {
-	if maxListenCount <= 0 {
-		return relevance
+	// Use a floor for maxListenCount so that zero-popularity artists
+	// don't get a free pass when no result has popularity data.
+	// 100K is a reasonable "average popular artist" reference point.
+	effectiveMax := maxListenCount
+	if effectiveMax < 100_000 { //nolint:mnd
+		effectiveMax = 100_000
 	}
 
-	logPop := math.Log10(float64(listenCount)+1) / math.Log10(float64(maxListenCount)+1)
+	logPop := math.Log10(float64(listenCount)+1) / math.Log10(float64(effectiveMax)+1)
 
 	return relevanceWeight*relevance + popularityWeight*logPop
 }
