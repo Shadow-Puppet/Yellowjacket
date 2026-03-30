@@ -496,8 +496,23 @@ export class ExploreView extends LitElement {
 
     /* ── Lifecycle ── */
 
+    private unsubSettings?: () => void;
+
+    override connectedCallback() {
+        super.connectedCallback();
+        // Re-render and re-search when library-only mode toggles.
+        this.unsubSettings = exploreSettings.subscribe(() => {
+            this.requestUpdate();
+            // Re-run the current search with the new mode.
+            if (this.searchQuery.trim().length >= MIN_QUERY_LENGTH) {
+                void this.executeSearch();
+            }
+        });
+    }
+
     override disconnectedCallback() {
         super.disconnectedCallback();
+        this.unsubSettings?.();
         if (this.debounceTimer !== null) {
             clearTimeout(this.debounceTimer);
             this.debounceTimer = null;

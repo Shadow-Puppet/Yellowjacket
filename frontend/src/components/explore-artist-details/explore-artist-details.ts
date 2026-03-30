@@ -677,11 +677,26 @@ export class ExploreArtistDetails extends LitElement {
 
     /* ── Lifecycle ── */
 
+    private unsubSettings?: () => void;
+
     override connectedCallback() {
         super.connectedCallback();
         if (this.artistMBID) {
             void this.loadAllData();
         }
+
+        // Re-render when library-only mode toggles.
+        this.unsubSettings = exploreSettings.subscribe(() => {
+            this.requestUpdate();
+            if (this.artistMBID) {
+                void this.loadAllData();
+            }
+        });
+    }
+
+    override disconnectedCallback() {
+        super.disconnectedCallback();
+        this.unsubSettings?.();
     }
 
     /* ── Data Loading ── */

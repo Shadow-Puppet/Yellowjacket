@@ -11,6 +11,7 @@ import type {
     MBTrack,
 } from '@go/explore/Service';
 import { exploreCache } from '../../store/explore-cache';
+import { exploreSettings } from '../../store/explore-settings';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 
 /* ── Constants ── */
@@ -385,11 +386,22 @@ export class ExploreAlbumDetails extends LitElement {
 
     /* ── Lifecycle ── */
 
+    private unsubSettings?: () => void;
+
     override connectedCallback() {
         super.connectedCallback();
         if (this.releaseGroupMBID) {
             void this.loadAllData();
         }
+
+        this.unsubSettings = exploreSettings.subscribe(() => {
+            this.requestUpdate();
+        });
+    }
+
+    override disconnectedCallback() {
+        super.disconnectedCallback();
+        this.unsubSettings?.();
     }
 
     /* ── Data Loading ── */
