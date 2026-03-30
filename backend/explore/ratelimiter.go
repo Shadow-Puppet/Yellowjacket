@@ -46,6 +46,16 @@ func NewRateLimiterF(f float64) *RateLimiter {
 	}
 }
 
+// NewRateLimiterBurst returns a rate limiter that allows n requests
+// per second with a burst size of b.  The burst allows short spikes
+// (e.g. 3 concurrent search calls) without queueing, while still
+// limiting sustained throughput.
+func NewRateLimiterBurst(n, b int) *RateLimiter {
+	return &RateLimiter{
+		limiter: rate.NewLimiter(rate.Limit(n), b),
+	}
+}
+
 // Wait blocks until the rate limiter allows the caller to proceed
 // or the context is cancelled. Returns ctx.Err() if the context
 // expires before a token becomes available.

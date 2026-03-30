@@ -36,12 +36,16 @@ type Service struct {
 func NewExploreService(logger *slog.Logger, db *database.DB) *Service {
 	cache := NewCache(db, logger.WithGroup("cache"))
 	lbLimiter := NewRateLimiter()
-	mbLimiter := NewRateLimiter() // 1 req/sec, shared across all MB consumers
-	mb := NewMusicBrainzClient(cache, mbLimiter, logger.WithGroup("musicbrainz"))
+	// MB search limiter: burst of 3 (covers one search's 3 concurrent calls)
+	// then 1/sec refill.  The musicbrainzws2 library retries on 429 as backup.
+	mbSearchLimiter := NewRateLimiterBurst(1, 3)
+	// MB background limiter: strict 1/sec for sustained image resolution calls.
+	mbBackgroundLimiter := NewRateLimiter()
+	mb := NewMusicBrainzClient(cache, mbSearchLimiter, logger.WithGroup("musicbrainz"))
 	lb := NewListenBrainzClient(lbLimiter, cache, logger.WithGroup("listenbrainz"))
 	artProxy := NewCoverArtProxy(db, lbLimiter)
 	artistImg := NewArtistImageProvider(
-		db, cache, mbLimiter, logger.WithGroup("artist-image"),
+		db, cache, mbBackgroundLimiter, logger.WithGroup("artist-image"),
 	)
 	index := NewSearchIndex(db, lb, artistImg, logger.WithGroup("search-index"))
 	libMBID := NewLibraryMBIDIndex(db)
