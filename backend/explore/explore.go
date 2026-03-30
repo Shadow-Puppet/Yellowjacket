@@ -910,7 +910,7 @@ const (
 //nolint:gochecknoglobals
 var tierBonus = map[int]float64{
 	0: 0.15,  // exact match: +15%
-	1: 0.08,  // starts with: +8%
+	1: 0.12,  // starts with: +12%
 	2: -0.05, // substring (query buried in name): -5%
 	3: -0.15, // no substring match: -15%
 }
