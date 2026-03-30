@@ -11,6 +11,7 @@ import type {
 } from '@go/explore/Service';
 import { libraryStore } from '../../store/library-store';
 import { exploreCache } from '../../store/explore-cache';
+import { exploreSettings } from '../../store/explore-settings';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 
 /* ── Constants ── */
@@ -592,7 +593,12 @@ export class ExploreView extends LitElement {
         }
 
         // Phase 2: full pipeline (MB + LB + reranking) via Wails RPC.
-        void this.executeFullSearch(version, query, startTime);
+        // Skip entirely in library-only mode — local results are final.
+        if (!exploreSettings.libraryOnly) {
+            void this.executeFullSearch(version, query, startTime);
+        } else {
+            this.loading = false;
+        }
     }
 
     /**

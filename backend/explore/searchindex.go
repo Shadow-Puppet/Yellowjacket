@@ -1060,6 +1060,9 @@ func (si *SearchIndex) buildTier4Similar(
 
 			similar := si.fetchSimilarArtists(ctx, artistMBID)
 
+			// Persist the similar artist relationships.
+			si.storeSimilarArtists(artistMBID, similar)
+
 			mu.Lock()
 
 			for _, s := range similar {
@@ -1635,6 +1638,37 @@ func (si *SearchIndex) markInLibrary(artists []lbSitewideArtist) {
 			a.ArtistMBID,
 		)
 	}
+}
+
+// storeSimilarArtists persists the similar artist relationships
+// for a source artist into the similar_artist_map table.
+func (si *SearchIndex) storeSimilarArtists(sourceMBID string, similar []lbSimilarArtistWire) {
+	if len(similar) == 0 {
+		return
+	}
+
+	tx, err := si.db.BeginTx()
+	if err != nil {
+		return
+	}
+
+	defer func() { _ = tx.Rollback() }()
+
+	// Clear existing entries for this source to avoid stale data.
+	_, _ = tx.Exec(
+		"DELETE FROM similar_artist_map WHERE source_artist_mbid = ?",
+		sourceMBID,
+	)
+
+	for _, s := range similar {
+		_, _ = tx.Exec(`
+			INSERT OR IGNORE INTO similar_artist_map
+				(source_artist_mbid, similar_artist_mbid, similar_artist_name, score)
+			VALUES (?, ?, ?, ?)
+		`, sourceMBID, s.ArtistMBID, s.Name, s.Score)
+	}
+
+	_ = tx.Commit()
 }
 
 // markSimilar sets is_similar=1 for all index entries whose

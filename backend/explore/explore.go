@@ -26,6 +26,7 @@ type Service struct {
 	artProxy  *CoverArtProxy
 	artistImg *ArtistImageProvider
 	libMBID   *LibraryMBIDIndex
+	db        *database.DB
 	logger    *slog.Logger
 	ctx       context.Context
 }
@@ -61,6 +62,7 @@ func NewExploreService(logger *slog.Logger, db *database.DB) *Service {
 		artProxy:  artProxy,
 		artistImg: artistImg,
 		libMBID:   libMBID,
+		db:        db,
 		logger:    logger,
 		ctx:       context.Background(),
 	}
@@ -233,6 +235,37 @@ func (e *Service) GetArtistPlayCount(artistMBID string) int {
 	}
 
 	return pop[artistMBID]
+}
+
+// GetLibrarySimilarArtists returns similar artists to the given
+// MBID that are also in the user's local library.  Uses the
+// pre-computed similar_artist_map table (populated during Tier 4
+// index build) joined with the artists table.  No API calls.
+func (e *Service) GetLibrarySimilarArtists(artistMBID string) []LBSimilarArtist {
+	rows, err := e.db.QueryContext(`
+		SELECT s.similar_artist_mbid, s.similar_artist_name, s.score
+		FROM similar_artist_map s
+		JOIN artists a ON a.mbid = s.similar_artist_mbid
+		WHERE s.source_artist_mbid = ?
+		ORDER BY s.score DESC
+	`, artistMBID)
+	if err != nil {
+		return nil
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	var result []LBSimilarArtist
+
+	for rows.Next() {
+		var a LBSimilarArtist
+
+		if err := rows.Scan(&a.ArtistMBID, &a.Name, &a.Score); err == nil {
+			result = append(result, a)
+		}
+	}
+
+	return result
 }
 
 // ---------------------------------------------------------------------------
@@ -581,20 +614,6 @@ func (e *Service) Search(query string) (*MBSearchResult, error) {
 	// "the teenagers" ranks "The Teenagers" above "The Beatles"
 	// even when The Beatles have vastly more listens.
 	e.boostNameMatches(query, &result)
-
-	// Debug: log artist scores before filtering.
-	if len(result.Artists) > 0 {
-		for i, a := range result.Artists {
-			if i < 20 {
-				e.logger.Info("search artist ranking",
-					"pos", i+1,
-					"name", a.Name,
-					"score", a.Score,
-					"mbid", a.MBID[:8],
-				)
-			}
-		}
-	}
 
 	// Phase 6: filter low-scoring results and cap counts.
 	filterAndCap(&result)

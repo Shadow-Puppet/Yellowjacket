@@ -40,6 +40,37 @@ p {
     flex: 0 1 320px;
 }
 
+.library-only-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border: 1px solid var(--yj-border-subtle, rgba(255, 255, 255, 0.12));
+    border-radius: 6px;
+    background: transparent;
+    color: var(--yj-text-secondary, #b3b3b3);
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.library-only-toggle:hover {
+    background: var(--yj-bg-overlay, rgba(255, 255, 255, 0.06));
+    color: var(--yj-text-primary, #fff);
+}
+
+.library-only-toggle.active {
+    background: var(--yj-accent, #ffd43b);
+    color: #000;
+    border-color: var(--yj-accent, #ffd43b);
+}
+
+.library-only-toggle wa-icon {
+    font-size: 14px;
+}
+
 ul {
     list-style-type: none;
 }

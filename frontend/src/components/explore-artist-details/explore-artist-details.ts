@@ -9,6 +9,7 @@ import {
     SimilarArtists,
     GetArtistImageURL,
     GetArtistPlayCount,
+    GetLibrarySimilarArtists,
     CheckLibraryMBIDs,
 } from '@go/explore/Service';
 import type {
@@ -19,6 +20,7 @@ import type {
     LBSimilarArtist,
 } from '@go/explore/Service';
 import { exploreCache } from '../../store/explore-cache';
+import { exploreSettings } from '../../store/explore-settings';
 import { libraryStore } from '../../store/library-store';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 
@@ -102,6 +104,7 @@ export class ExploreArtistDetails extends LitElement {
     @state() private topSectionExpanded = false;
     @state() private artistPlayCount = 0;
     @state() private expandedDiscoGroups = new Set<string>();
+    @state() private similarExpanded = false;
     private libraryMBIDs = new Set<string>();
 
     /* ── Styles ── */
@@ -601,16 +604,15 @@ export class ExploreArtistDetails extends LitElement {
             }
 
             /* ── Similar artists ── */
-            .horizontal-row {
+            .similar-row {
                 display: flex;
+                flex-wrap: wrap;
                 gap: 12px;
-                overflow-x: auto;
-                padding-bottom: 4px;
-                scrollbar-width: none;
+                overflow: hidden;
             }
 
-            .horizontal-row::-webkit-scrollbar {
-                display: none;
+            .similar-row.collapsed {
+                max-height: 130px;
             }
 
             .similar-artist-card {
@@ -692,6 +694,31 @@ export class ExploreArtistDetails extends LitElement {
 
         // Phase 0: hydrate from caches (instant, no Go calls).
         this.hydrateFromCache(mbid);
+
+        if (exploreSettings.libraryOnly) {
+            // Library-only mode: no external API calls.
+            // Discography comes from library store (already hydrated).
+            // Similar artists from pre-computed DB table.
+            this.loadingArtist = false;
+            this.loadingTracks = false;
+            this.loadingTopReleases = false;
+            this.loadingReleases = false;
+            this.loadingSimilar = false;
+
+            // Fetch library-only similar artists (single Go call, no external API).
+            try {
+                const similar = await GetLibrarySimilarArtists(mbid);
+                this.similarArtists = similar ?? [];
+            } catch {
+                this.similarArtists = [];
+            }
+
+            console.log(
+                `[explore-artist] loaded (library-only): "${this.artistName}"`,
+            );
+
+            return;
+        }
 
         // Phase 1: fire all API requests in parallel.
         const [artistResult, tracksResult, topReleasesResult, releasesResult, similarResult] =
@@ -1079,7 +1106,7 @@ export class ExploreArtistDetails extends LitElement {
                         ? html`<div class="artist-native-name">${this.artist.name}</div>`
                         : nothing}
                     ${this.renderArtistMeta()}
-                    ${this.artistPlayCount > 0
+                    ${this.artistPlayCount > 0 && !exploreSettings.libraryOnly
                         ? html`<span class="artist-meta">${formatListenCount(this.artistPlayCount)} plays on ListenBrainz</span>`
                         : nothing}
                 </div>
@@ -1140,6 +1167,9 @@ export class ExploreArtistDetails extends LitElement {
     }
 
     private renderTopSection() {
+        // Library-only mode: no top tracks/releases from LB.
+        if (exploreSettings.libraryOnly) return nothing;
+
         const hasTracks = !this.loadingTracks && this.topTracks.length > 0;
         const hasReleases = !this.loadingTopReleases && this.topReleaseGroups.length > 0;
         const tracksLoading = this.loadingTracks;
@@ -1408,15 +1438,17 @@ export class ExploreArtistDetails extends LitElement {
     /* ── Similar Artists Section ── */
 
     private renderSimilarArtists() {
-        // D024: when loading or empty/null, simply omit the section.
         if (this.loadingSimilar || this.similarArtists.length === 0) {
             return nothing;
         }
 
+        const showToggle = this.similarArtists.length > 6;
+        const collapsed = !this.similarExpanded && showToggle;
+
         return html`
             <section>
                 <h3 class="section-header">Similar Artists</h3>
-                <div class="horizontal-row">
+                <div class="similar-row ${collapsed ? 'collapsed' : ''}">
                     ${this.similarArtists.map((a) => {
                         const hue = nameToHue(a.name);
                         const imgURL = this.similarImageURLs.get(a.artistMbid);
@@ -1458,6 +1490,20 @@ export class ExploreArtistDetails extends LitElement {
                         `;
                     })}
                 </div>
+                ${showToggle
+                    ? html`
+                          <button
+                              class="disco-toggle"
+                              aria-expanded="${this.similarExpanded}"
+                              @click=${() => { this.similarExpanded = !this.similarExpanded; }}
+                          >
+                              ${this.similarExpanded
+                                  ? 'Show less'
+                                  : `Show all ${this.similarArtists.length}`}
+                              <wa-icon name="chevron-down"></wa-icon>
+                          </button>
+                      `
+                    : nothing}
             </section>
         `;
     }

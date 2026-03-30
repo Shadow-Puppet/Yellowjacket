@@ -38,6 +38,10 @@ export function GetArtistPlayCount(arg1) {
   return window['go']['explore']['Service']['GetArtistPlayCount'](arg1);
 }
 
+export function GetLibrarySimilarArtists(arg1) {
+  return window['go']['explore']['Service']['GetLibrarySimilarArtists'](arg1);
+}
+
 export function GetThumbnail(arg1, arg2, arg3) {
   return window['go']['explore']['Service']['GetThumbnail'](arg1, arg2, arg3);
 }

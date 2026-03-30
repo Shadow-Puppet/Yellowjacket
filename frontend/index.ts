@@ -32,6 +32,7 @@ import '@store/theme-store';
 // Importing the keyboard shortcut service triggers initialization:
 // registers the document keydown listener for global shortcuts.
 import './src/services/keyboard-shortcut-service';
+import { exploreSettings } from '@store/explore-settings';
 import {
     hasTrackPayload,
     getDragPayload,
@@ -268,3 +269,24 @@ if (queueButton && queuePanel) {
 // or timing assumptions needed.
 void Player.EmitCurrentState();
 void Queue.EmitCurrentState();
+
+// ---------------------------------------------------------------------------
+// Library Only toggle
+// ---------------------------------------------------------------------------
+const libraryOnlyToggle = document.getElementById('library-only-toggle');
+
+if (libraryOnlyToggle) {
+    // Sync initial state.
+    if (exploreSettings.libraryOnly) {
+        libraryOnlyToggle.classList.add('active');
+    }
+
+    libraryOnlyToggle.addEventListener('click', () => {
+        exploreSettings.toggle();
+        libraryOnlyToggle.classList.toggle('active', exploreSettings.libraryOnly);
+    });
+
+    exploreSettings.subscribe(() => {
+        libraryOnlyToggle.classList.toggle('active', exploreSettings.libraryOnly);
+    });
+}

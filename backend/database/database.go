@@ -409,6 +409,14 @@ func runMigrations(
 		}
 	}
 
+	if version < 17 { //nolint:mnd
+		if err := migration17SimilarArtistMap(
+			ctx, db, logger,
+		); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -1829,6 +1837,43 @@ func migration16ArtistImages(
 	}
 
 	logger.Info("migration 16 complete")
+
+	return nil
+}
+
+func migration17SimilarArtistMap(
+	ctx context.Context,
+	db *sql.DB,
+	logger *slog.Logger,
+) error {
+	logger.Info("applying migration 17: similar_artist_map table")
+
+	if _, err := db.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS similar_artist_map (
+			source_artist_mbid  TEXT NOT NULL,
+			similar_artist_mbid TEXT NOT NULL,
+			similar_artist_name TEXT NOT NULL,
+			score               INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY (source_artist_mbid, similar_artist_mbid)
+		)
+	`); err != nil {
+		return fmt.Errorf("migration 17: create similar_artist_map: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx, `
+		CREATE INDEX IF NOT EXISTS idx_similar_artist_map_source
+		ON similar_artist_map(source_artist_mbid)
+	`); err != nil {
+		return fmt.Errorf("migration 17: create source index: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx,
+		"PRAGMA user_version = 17",
+	); err != nil {
+		return fmt.Errorf("could not set user_version to 17: %w", err)
+	}
+
+	logger.Info("migration 17 complete")
 
 	return nil
 }
