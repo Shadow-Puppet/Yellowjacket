@@ -19,6 +19,8 @@ export function GetArtistImages(arg1:Array<string>):Promise<Record<string, strin
 
 export function GetArtistMBID(arg1:string):Promise<string>;
 
+export function GetArtistPlayCount(arg1:string):Promise<number>;
+
 export function GetThumbnail(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function GetThumbnails(arg1:Array<explore.ThumbnailRequest>):Promise<Record<string, string>>;

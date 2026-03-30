@@ -224,6 +224,17 @@ func (e *Service) SimilarArtists(artistMBID string) ([]LBSimilarArtist, error) {
 	return e.lb.SimilarArtists(e.ctx, artistMBID)
 }
 
+// GetArtistPlayCount returns the total LB listen count for an artist.
+// Returns 0 if unknown.
+func (e *Service) GetArtistPlayCount(artistMBID string) int {
+	pop, err := e.lb.ArtistPopularity(e.ctx, []string{artistMBID})
+	if err != nil || len(pop) == 0 {
+		return 0
+	}
+
+	return pop[artistMBID]
+}
+
 // ---------------------------------------------------------------------------
 // Cover Art Archive
 // ---------------------------------------------------------------------------

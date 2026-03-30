@@ -8,6 +8,7 @@ import {
     TopReleaseGroupsForArtist,
     SimilarArtists,
     GetArtistImageURL,
+    GetArtistPlayCount,
     CheckLibraryMBIDs,
 } from '@go/explore/Service';
 import type {
@@ -99,6 +100,7 @@ export class ExploreArtistDetails extends LitElement {
     @state() private artistImageURL = '';
     @state() private similarImageURLs = new Map<string, string>();
     @state() private topSectionExpanded = false;
+    @state() private artistPlayCount = 0;
     private libraryMBIDs = new Set<string>();
 
     /* ── Styles ── */
@@ -669,6 +671,9 @@ export class ExploreArtistDetails extends LitElement {
             this.fetchArtistImage(mbid);
         }
 
+        // Play count is fire-and-forget.
+        this.fetchArtistPlayCount(mbid);
+
         // Check which release groups are in the local library.
         this.checkLibrary();
 
@@ -831,6 +836,17 @@ export class ExploreArtistDetails extends LitElement {
             }
         } catch {
             // No image available — avatar stays as initial letter.
+        }
+    }
+
+    private async fetchArtistPlayCount(mbid: string) {
+        try {
+            const count = await GetArtistPlayCount(mbid);
+            if (count > 0) {
+                this.artistPlayCount = count;
+            }
+        } catch {
+            // Non-critical.
         }
     }
 
@@ -1026,6 +1042,9 @@ export class ExploreArtistDetails extends LitElement {
                         ? html`<div class="artist-native-name">${this.artist.name}</div>`
                         : nothing}
                     ${this.renderArtistMeta()}
+                    ${this.artistPlayCount > 0
+                        ? html`<span class="artist-meta">${formatListenCount(this.artistPlayCount)} plays on ListenBrainz</span>`
+                        : nothing}
                 </div>
             </div>
             <div class="content">
