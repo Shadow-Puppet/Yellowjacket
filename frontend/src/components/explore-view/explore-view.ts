@@ -637,46 +637,88 @@ export class ExploreView extends LitElement {
     private searchLibraryCache(query: string): MBSearchResult | null {
         const q = query.toLowerCase();
 
-        const artists: MBArtist[] = [];
+        // Collect all matching artists with match-quality scores.
+        const artistMatches: Array<{ artist: any; score: number }> = [];
         const cachedArtists = libraryStore.cachedArtists;
         if (cachedArtists) {
             for (const a of cachedArtists) {
-                if (fuzzyMatch(q, a.Name.toLowerCase())) {
-                    artists.push({
-                        mbid: a.MBID || '',
-                        name: a.Name,
-                        sortName: '',
-                        type: '',
-                        country: '',
-                        disambiguation: '',
-                        score: 100,
-                        _imageSmall: a.ImageSmall || '',
-                        _imageMedium: a.ImageMedium || '',
-                        _inLibrary: true,
-                    } as MBArtist & { _imageSmall: string; _imageMedium: string; _inLibrary: boolean });
-                    if (artists.length >= 5) break;
+                const name = a.Name.toLowerCase();
+                if (!fuzzyMatch(q, name)) continue;
+
+                // Score by match quality (same tiers as remote search).
+                let score: number;
+                if (name === q) {
+                    score = 100; // exact
+                } else if (name.startsWith(q)) {
+                    score = 90;  // starts with
+                } else if (name.includes(q)) {
+                    score = 70;  // substring
+                } else {
+                    score = 50;  // fuzzy/word match
                 }
+
+                artistMatches.push({ artist: a, score });
             }
         }
 
-        const releaseGroups: MBReleaseGroup[] = [];
+        // Sort by score descending, then alphabetically.
+        artistMatches.sort((a, b) => b.score - a.score || a.artist.Name.localeCompare(b.artist.Name));
+
+        const artists: MBArtist[] = artistMatches.slice(0, 10).map((m) => ({
+            mbid: m.artist.MBID || '',
+            name: m.artist.Name,
+            sortName: '',
+            type: '',
+            country: '',
+            disambiguation: '',
+            score: m.score,
+            _imageSmall: m.artist.ImageSmall || '',
+            _imageMedium: m.artist.ImageMedium || '',
+            _inLibrary: true,
+        } as MBArtist & { _imageSmall: string; _imageMedium: string; _inLibrary: boolean }));
+
+        // Collect all matching albums with match-quality scores.
+        const albumMatches: Array<{ album: any; score: number }> = [];
         const cachedAlbums = libraryStore.cachedAlbums;
         if (cachedAlbums) {
             for (const a of cachedAlbums) {
-                if (fuzzyMatch(q, a.Name.toLowerCase()) || fuzzyMatch(q, a.ArtistName.toLowerCase())) {
-                    releaseGroups.push({
-                        mbid: a.MBID || '',
-                        title: a.Name,
-                        primaryType: 'Album',
-                        artistCredit: a.ArtistName,
-                        firstReleaseDate: a.Year ? String(a.Year) : '',
-                        _coverArt: a.CoverArtMedium || a.CoverArtSmall || '',
-                        _inLibrary: true,
-                    } as MBReleaseGroup & { _coverArt: string; _inLibrary: boolean });
-                    if (releaseGroups.length >= 5) break;
+                const name = a.Name.toLowerCase();
+                const artist = a.ArtistName.toLowerCase();
+                const matchesName = fuzzyMatch(q, name);
+                const matchesArtist = fuzzyMatch(q, artist);
+                if (!matchesName && !matchesArtist) continue;
+
+                let score: number;
+                // Artist name match is strongest (same as remote rgMatchTier).
+                if (artist === q) {
+                    score = 100;
+                } else if (artist.startsWith(q) || artist.includes(q)) {
+                    score = 85;
+                } else if (name === q) {
+                    score = 80;
+                } else if (name.startsWith(q)) {
+                    score = 75;
+                } else if (name.includes(q)) {
+                    score = 60;
+                } else {
+                    score = 40;
                 }
+
+                albumMatches.push({ album: a, score });
             }
         }
+
+        albumMatches.sort((a, b) => b.score - a.score || a.album.Name.localeCompare(b.album.Name));
+
+        const releaseGroups: MBReleaseGroup[] = albumMatches.slice(0, 10).map((m) => ({
+            mbid: m.album.MBID || '',
+            title: m.album.Name,
+            primaryType: 'Album',
+            artistCredit: m.album.ArtistName,
+            firstReleaseDate: m.album.Year ? String(m.album.Year) : '',
+            _coverArt: m.album.CoverArtMedium || m.album.CoverArtSmall || '',
+            _inLibrary: true,
+        } as MBReleaseGroup & { _coverArt: string; _inLibrary: boolean }));
 
         if (artists.length === 0 && releaseGroups.length === 0) {
             return null;
