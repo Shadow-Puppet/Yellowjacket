@@ -597,6 +597,15 @@ export class ExploreView extends LitElement {
                 localResults.artists || [],
                 localResults.releaseGroups || [],
             );
+
+            // Seed artist image cache from library data.
+            for (const a of localResults.artists || []) {
+                const img = (a as any)._imageMedium || (a as any)._imageSmall;
+                if (img && a.mbid) {
+                    this.artistImageCache.set(a.mbid, img);
+                }
+            }
+
             // In library-only mode, local results already have cover art
             // and artist images from the library store — no API calls needed.
             if (!exploreSettings.libraryOnly) {
