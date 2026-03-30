@@ -902,6 +902,31 @@ const (
 	minBlendedScore = 25
 )
 
+// tierBonus maps artist name-match tiers to additive score adjustments.
+// These are soft bonuses — a sufficiently popular lower-tier result can
+// overcome the tier advantage.  The effective gap between adjacent tiers
+// (~6 points on a 0–100 scale) requires roughly a 4–5× popularity
+// difference to overcome.
+//
+//nolint:gochecknoglobals
+var tierBonus = map[int]int{
+	0: 12,  // exact match: "shannon" == "shannon"
+	1: 6,   // starts with: "shannon" in "shannon and the clams"
+	2: 0,   // substring: "shannon" in "del shannon"
+	3: -10, // no substring match: only individual words matched
+}
+
+// rgTierBonus maps release group match tiers to additive score adjustments.
+//
+//nolint:gochecknoglobals
+var rgTierBonus = map[int]int{
+	0: 12, // artist credit exact match
+	1: 8,  // artist credit contains query
+	2: 4,  // title exact match
+	3: 0,  // title contains query
+	4: -5, // no match in either field
+}
+
 // mbSpecialPurposeArtists is a set of MusicBrainz Special Purpose
 // Artist MBIDs that should be excluded from search results.  These
 // are placeholder entries (e.g. [unknown], [anonymous]) that
@@ -1057,6 +1082,18 @@ func (e *Service) boostWithPopularity(result *MBSearchResult) {
 
 	wg.Wait()
 
+	// Add library bonus to artist popularity — same bonus as the
+	// fast path (boostWithIndexPopularity via GetPopularityBatch).
+	if artistPop != nil {
+		libraryMBIDs := e.libMBID.CheckMBIDs(artistMBIDs)
+
+		for mbid, entityType := range libraryMBIDs {
+			if entityType == "artist" {
+				artistPop[mbid] += 10_000_000 //nolint:mnd
+			}
+		}
+	}
+
 	// Rerank each entity type.
 	rerankArtists(result.Artists, artistPop)
 	rerankRecordings(result.Recordings, recordingPop)
@@ -1078,42 +1115,36 @@ func (e *Service) boostNameMatches(query string, result *MBSearchResult) {
 		return
 	}
 
-	// Boost artists whose name contains the full query.
+	// Apply tier bonus/penalty to artist scores.  This replaces
+	// the hard tier sort — tiers are now additive adjustments to
+	// the blended score, so a sufficiently popular near-match can
+	// overcome an unpopular exact match.
 	if len(result.Artists) > 1 {
-		sort.SliceStable(result.Artists, func(i, j int) bool {
-			iMatch := nameMatchTier(q, strings.ToLower(result.Artists[i].Name))
-			jMatch := nameMatchTier(q, strings.ToLower(result.Artists[j].Name))
+		for i := range result.Artists {
+			tier := nameMatchTier(q, strings.ToLower(result.Artists[i].Name))
+			result.Artists[i].Score += tierBonus[tier]
+		}
 
-			return iMatch < jMatch
+		sort.SliceStable(result.Artists, func(i, j int) bool {
+			return result.Artists[i].Score > result.Artists[j].Score
 		})
 
 		// For same-named artists in tier 0, resolve ordering via
-		// a targeted LB popularity lookup.  This handles the case
-		// where multiple artists share a name (e.g. "The Teenagers"
-		// US vs FR) and the index has no popularity for either.
+		// a targeted LB popularity lookup.
 		e.disambiguateSameNameArtists(q, result.Artists)
 	}
 
-	// Boost release groups whose title or artist credit contains the query.
+	// Apply tier bonus/penalty to release group scores.
 	if len(result.ReleaseGroups) > 1 {
-		sort.SliceStable(result.ReleaseGroups, func(i, j int) bool {
-			iMatch := rgMatchTier(q,
+		for i := range result.ReleaseGroups {
+			tier := rgMatchTier(q,
 				strings.ToLower(result.ReleaseGroups[i].Title),
 				strings.ToLower(result.ReleaseGroups[i].ArtistCredit))
-			jMatch := rgMatchTier(q,
-				strings.ToLower(result.ReleaseGroups[j].Title),
-				strings.ToLower(result.ReleaseGroups[j].ArtistCredit))
+			result.ReleaseGroups[i].Score += rgTierBonus[tier]
+		}
 
-			if iMatch != jMatch {
-				return iMatch < jMatch
-			}
-
-			// Within same tier, prefer higher blended score.
-			if result.ReleaseGroups[i].Score != result.ReleaseGroups[j].Score {
-				return result.ReleaseGroups[i].Score > result.ReleaseGroups[j].Score
-			}
-
-			return false
+		sort.SliceStable(result.ReleaseGroups, func(i, j int) bool {
+			return result.ReleaseGroups[i].Score > result.ReleaseGroups[j].Score
 		})
 	}
 }
