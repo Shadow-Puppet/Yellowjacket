@@ -522,6 +522,20 @@ func (e *Service) Search(query string) (*MBSearchResult, error) {
 	// even when The Beatles have vastly more listens.
 	e.boostNameMatches(query, &result)
 
+	// Debug: log artist scores before filtering.
+	if len(result.Artists) > 0 {
+		for i, a := range result.Artists {
+			if i < 20 {
+				e.logger.Info("search artist ranking",
+					"pos", i+1,
+					"name", a.Name,
+					"score", a.Score,
+					"mbid", a.MBID[:8],
+				)
+			}
+		}
+	}
+
 	// Phase 6: filter low-scoring results and cap counts.
 	filterAndCap(&result)
 
