@@ -332,13 +332,15 @@ export class ExploreArtistDetails extends LitElement {
 
             .top-section-column {
                 min-width: 0;
+                display: flex;
+                flex-direction: column;
             }
 
             .top-releases-grid {
                 display: grid;
-                grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+                grid-template-columns: 1fr 1fr;
                 gap: 10px;
-                align-content: start;
+                flex: 1;
             }
 
             .top-release-card {
