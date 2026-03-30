@@ -142,7 +142,6 @@ body div.sidebar {
 .main-panel {
     flex: 1;
     min-width: 0;
-    padding: 0.25em;
     background-color: var(--yj-bg-surface, #212529);
     overflow: hidden;
     contain: layout style paint;
@@ -150,6 +149,7 @@ body div.sidebar {
 
 .main-panel > * {
     height: 100%;
+    box-sizing: border-box;
     contain: layout style paint;
 }
 
