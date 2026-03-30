@@ -597,8 +597,12 @@ export class ExploreView extends LitElement {
                 localResults.artists || [],
                 localResults.releaseGroups || [],
             );
-            this.loadThumbnails();
-            this.loadArtistImages();
+            // In library-only mode, local results already have cover art
+            // and artist images from the library store — no API calls needed.
+            if (!exploreSettings.libraryOnly) {
+                this.loadThumbnails();
+                this.loadArtistImages();
+            }
             const elapsed = (performance.now() - startTime).toFixed(0);
             console.log(
                 `[explore] library results: "${query}" in ${elapsed}ms — ` +

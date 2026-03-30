@@ -426,6 +426,14 @@ export class ExploreAlbumDetails extends LitElement {
             console.log(`[explore-album] hydrated from cache: "${cached.title}"`);
         }
 
+        // Library-only mode: no external API calls.
+        if (exploreSettings.libraryOnly) {
+            this.loadingInfo = false;
+            this.loadingReleases = false;
+            console.log(`[explore-album] loaded (library-only): "${this.albumName}"`);
+            return;
+        }
+
         // Phase 1: API calls for full data.
         const [infoResult, releasesResult] = await Promise.allSettled([
             this.fetchReleaseGroup(mbid),
