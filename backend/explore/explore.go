@@ -516,7 +516,7 @@ func (e *Service) Search(query string) (*MBSearchResult, error) {
 	// Phase 5: boost exact/substring name matches so a search for
 	// "the teenagers" ranks "The Teenagers" above "The Beatles"
 	// even when The Beatles have vastly more listens.
-	boostNameMatches(query, &result)
+	e.boostNameMatches(query, &result)
 
 	// Phase 6: filter low-scoring results and cap counts.
 	filterAndCap(&result)
@@ -1083,32 +1083,26 @@ func (e *Service) boostWithPopularity(result *MBSearchResult) {
 //
 // The boost is applied after popularity reranking so it acts as
 // a final tiebreaker that respects user intent.
-func boostNameMatches(query string, result *MBSearchResult) {
+func (e *Service) boostNameMatches(query string, result *MBSearchResult) {
 	q := strings.ToLower(strings.TrimSpace(query))
 	if q == "" {
 		return
 	}
 
 	// Boost artists whose name contains the full query.
-	// Within the same tier, sort by original MB relevance score
-	// (not the library-boosted blended score) so the most globally
-	// relevant exact match ranks first.
 	if len(result.Artists) > 1 {
 		sort.SliceStable(result.Artists, func(i, j int) bool {
 			iMatch := nameMatchTier(q, strings.ToLower(result.Artists[i].Name))
 			jMatch := nameMatchTier(q, strings.ToLower(result.Artists[j].Name))
 
-			if iMatch != jMatch {
-				return iMatch < jMatch // lower tier = better match
-			}
-
-			// Within same tier, prefer higher blended score.
-			if result.Artists[i].Score != result.Artists[j].Score {
-				return result.Artists[i].Score > result.Artists[j].Score
-			}
-
-			return false // preserve existing order as last resort
+			return iMatch < jMatch
 		})
+
+		// For same-named artists in tier 0, resolve ordering via
+		// a targeted LB popularity lookup.  This handles the case
+		// where multiple artists share a name (e.g. "The Teenagers"
+		// US vs FR) and the index has no popularity for either.
+		e.disambiguateSameNameArtists(q, result.Artists)
 	}
 
 	// Boost release groups whose title contains the full query.
@@ -1124,6 +1118,67 @@ func boostNameMatches(query string, result *MBSearchResult) {
 			return false
 		})
 	}
+}
+
+// disambiguateSameNameArtists resolves ordering among artists
+// that share the exact same name as the query by fetching their
+// LB popularity.  This is a targeted micro-lookup (typically 2-6
+// MBIDs) that only fires when the index fast path left same-named
+// artists with zero popularity.
+func (e *Service) disambiguateSameNameArtists(query string, artists []MBArtist) {
+	// Find the contiguous block of tier-0 same-name artists at the front.
+	var sameNameEnd int
+
+	for sameNameEnd < len(artists) {
+		if strings.ToLower(artists[sameNameEnd].Name) != query {
+			break
+		}
+
+		sameNameEnd++
+	}
+
+	if sameNameEnd < 2 {
+		return // 0 or 1 same-name artists — nothing to disambiguate
+	}
+
+	// Check if they already have differentiated scores.
+	allSameScore := true
+
+	firstScore := artists[0].Score
+
+	for i := 1; i < sameNameEnd; i++ {
+		if artists[i].Score != firstScore {
+			allSameScore = false
+
+			break
+		}
+	}
+
+	if !allSameScore {
+		return // scores already differ — reranking handled it
+	}
+
+	// Collect MBIDs for the targeted LB lookup.
+	mbids := make([]string, 0, sameNameEnd)
+	for i := range sameNameEnd {
+		if artists[i].MBID != "" {
+			mbids = append(mbids, artists[i].MBID)
+		}
+	}
+
+	if len(mbids) < 2 {
+		return
+	}
+
+	pop, err := e.lb.ArtistPopularity(e.ctx, mbids)
+	if err != nil || len(pop) == 0 {
+		return
+	}
+
+	// Re-sort the same-name block by LB popularity descending.
+	sort.SliceStable(artists[:sameNameEnd], func(i, j int) bool {
+		return pop[artists[i].MBID] > pop[artists[j].MBID]
+	})
 }
 
 // nameMatchTier returns a tier value for how well a name matches
