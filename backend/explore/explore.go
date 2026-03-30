@@ -902,29 +902,28 @@ const (
 	minBlendedScore = 25
 )
 
-// tierBonus maps artist name-match tiers to additive score adjustments.
-// These are soft bonuses — a sufficiently popular lower-tier result can
-// overcome the tier advantage.  The effective gap between adjacent tiers
-// (~6 points on a 0–100 scale) requires roughly a 4–5× popularity
-// difference to overcome.
+// tierBonus maps artist name-match tiers to percentage score multipliers.
+// Applied as: score = score * (1 + multiplier).  A popular lower-tier
+// result can overcome the tier advantage when the popularity gap is
+// proportionally larger than the tier difference.
 //
 //nolint:gochecknoglobals
-var tierBonus = map[int]int{
-	0: 12,  // exact match: "shannon" == "shannon"
-	1: 6,   // starts with: "shannon" in "shannon and the clams"
-	2: 0,   // substring: "shannon" in "del shannon"
-	3: -10, // no substring match: only individual words matched
+var tierBonus = map[int]float64{
+	0: 0.15,  // exact match: +15%
+	1: 0.08,  // starts with: +8%
+	2: 0.0,   // substring: no change
+	3: -0.15, // no substring match: -15%
 }
 
-// rgTierBonus maps release group match tiers to additive score adjustments.
+// rgTierBonus maps release group match tiers to percentage multipliers.
 //
 //nolint:gochecknoglobals
-var rgTierBonus = map[int]int{
-	0: 12, // artist credit exact match
-	1: 8,  // artist credit contains query
-	2: 4,  // title exact match
-	3: 0,  // title contains query
-	4: -5, // no match in either field
+var rgTierBonus = map[int]float64{
+	0: 0.15, // artist credit exact match: +15%
+	1: 0.10, // artist credit contains query: +10%
+	2: 0.05, // title exact match: +5%
+	3: 0.0,  // title contains query: no change
+	4: -0.10, // no match: -10%
 }
 
 // mbSpecialPurposeArtists is a set of MusicBrainz Special Purpose
@@ -1115,14 +1114,14 @@ func (e *Service) boostNameMatches(query string, result *MBSearchResult) {
 		return
 	}
 
-	// Apply tier bonus/penalty to artist scores.  This replaces
-	// the hard tier sort — tiers are now additive adjustments to
-	// the blended score, so a sufficiently popular near-match can
-	// overcome an unpopular exact match.
+	// Apply tier multiplier to artist scores.  Percentage-based so the
+	// boost scales with the artist's existing score — a popular
+	// near-match can overcome an unpopular exact match when the
+	// popularity gap is proportionally larger than the tier difference.
 	if len(result.Artists) > 1 {
 		for i := range result.Artists {
 			tier := nameMatchTier(q, strings.ToLower(result.Artists[i].Name))
-			result.Artists[i].Score += tierBonus[tier]
+			result.Artists[i].Score = int(float64(result.Artists[i].Score) * (1.0 + tierBonus[tier]))
 		}
 
 		sort.SliceStable(result.Artists, func(i, j int) bool {
@@ -1134,13 +1133,13 @@ func (e *Service) boostNameMatches(query string, result *MBSearchResult) {
 		e.disambiguateSameNameArtists(q, result.Artists)
 	}
 
-	// Apply tier bonus/penalty to release group scores.
+	// Apply tier multiplier to release group scores.
 	if len(result.ReleaseGroups) > 1 {
 		for i := range result.ReleaseGroups {
 			tier := rgMatchTier(q,
 				strings.ToLower(result.ReleaseGroups[i].Title),
 				strings.ToLower(result.ReleaseGroups[i].ArtistCredit))
-			result.ReleaseGroups[i].Score += rgTierBonus[tier]
+			result.ReleaseGroups[i].Score = int(float64(result.ReleaseGroups[i].Score) * (1.0 + rgTierBonus[tier]))
 		}
 
 		sort.SliceStable(result.ReleaseGroups, func(i, j int) bool {
