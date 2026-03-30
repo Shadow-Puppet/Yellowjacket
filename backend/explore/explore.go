@@ -827,14 +827,28 @@ func scalePopularity(listens int) int {
 // filterAndCap removes low-scoring results, special-purpose
 // MusicBrainz artists, and limits each entity slice to maxResults.
 func filterAndCap(result *MBSearchResult) {
-	// Filter artists by minimum blended score and remove SPAs.
+	// Filter artists: remove SPAs and zero-popularity artists
+	// that aren't exact name matches.
 	if len(result.Artists) > 0 {
 		filtered := result.Artists[:0]
 
 		for _, a := range result.Artists {
-			if a.Score >= minBlendedScore && !mbSpecialPurposeArtists[a.MBID] {
-				filtered = append(filtered, a)
+			if mbSpecialPurposeArtists[a.MBID] {
+				continue
 			}
+
+			if a.Score < minBlendedScore {
+				continue
+			}
+
+			// Keep artists with popularity data.  Also keep artists
+			// without popularity if they have a high enough score
+			// (likely exact or close name matches).
+			if !a.HasPopularity && a.Score < minZeroPopScore {
+				continue
+			}
+
+			filtered = append(filtered, a)
 		}
 
 		result.Artists = filtered
@@ -899,9 +913,13 @@ const (
 
 	// minBlendedScore is the floor for artists and recordings
 	// after popularity reranking and tier adjustment (0–100 scale).
-	// At 50, artists with zero LB popularity and partial name
-	// matches are filtered out.
-	minBlendedScore = 50
+	minBlendedScore = 25
+
+	// minZeroPopScore is the floor for artists with zero LB
+	// popularity data.  Higher than minBlendedScore so that
+	// obscure artists without any listening history are filtered
+	// unless they're a very strong name match (exact or near-exact).
+	minZeroPopScore = 50
 )
 
 // tierBonus maps artist name-match tiers to percentage score multipliers.
@@ -984,9 +1002,10 @@ func (e *Service) boostWithIndexPopularity(result *MBSearchResult) {
 
 	// Build per-entity maps from the batch result.
 	artistPop := make(map[string]int, len(result.Artists))
-	for _, a := range result.Artists {
+	for i, a := range result.Artists {
 		if pop, ok := popMap[a.MBID]; ok {
 			artistPop[a.MBID] = pop
+			result.Artists[i].HasPopularity = true
 		}
 	}
 
@@ -1091,6 +1110,15 @@ func (e *Service) boostWithPopularity(result *MBSearchResult) {
 		for mbid, entityType := range libraryMBIDs {
 			if entityType == "artist" {
 				artistPop[mbid] += 10_000_000 //nolint:mnd
+			}
+		}
+	}
+
+	// Mark artists that have popularity data.
+	if artistPop != nil {
+		for i := range result.Artists {
+			if _, ok := artistPop[result.Artists[i].MBID]; ok {
+				result.Artists[i].HasPopularity = true
 			}
 		}
 	}
