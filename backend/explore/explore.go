@@ -826,9 +826,52 @@ func scalePopularity(listens int) int {
 
 // filterAndCap removes low-scoring results, special-purpose
 // MusicBrainz artists, and limits each entity slice to maxResults.
+// minScoreForArtist returns the minimum score threshold for an
+// artist based on their popularity.  The threshold slides from
+// minScoreZeroPop (60, for zero-listen artists) down to
+// minBlendedScore (15, for popular artists).
+//
+// Uses log scaling: the threshold drops quickly for even modest
+// popularity (1K listens → ~35) and flattens toward the floor
+// for high popularity (100K+ → ~18).
+//
+//	0 listens     → threshold 60  (need strong name match)
+//	100 listens   → threshold 50
+//	1K listens    → threshold 42
+//	10K listens   → threshold 33
+//	100K listens  → threshold 24
+//	1M+ listens   → threshold 15  (almost anything passes)
+func minScoreForArtist(a MBArtist) int {
+	if a.Popularity <= 0 {
+		return minScoreZeroPop
+	}
+
+	// log10(pop) ranges from ~2 (100 listens) to ~6+ (1M+).
+	// Scale to 0-1 range using 6.0 as the reference ceiling.
+	const logCeiling = 6.0 // log10(1,000,000)
+
+	logPop := math.Log10(float64(a.Popularity))
+	ratio := logPop / logCeiling
+
+	if ratio > 1.0 {
+		ratio = 1.0
+	}
+
+	spread := float64(minScoreZeroPop - minBlendedScore)
+	threshold := minScoreZeroPop - int(ratio*spread)
+
+	if threshold < minBlendedScore {
+		threshold = minBlendedScore
+	}
+
+	return threshold
+}
+
 func filterAndCap(result *MBSearchResult) {
-	// Filter artists: remove SPAs and zero-popularity artists
-	// that aren't exact name matches.
+	// Filter artists: remove SPAs and apply popularity-scaled threshold.
+	// The minimum score to survive scales with popularity — artists
+	// with zero listens need a very high score (near-exact match),
+	// while popular artists pass with any reasonable score.
 	if len(result.Artists) > 0 {
 		filtered := result.Artists[:0]
 
@@ -837,14 +880,7 @@ func filterAndCap(result *MBSearchResult) {
 				continue
 			}
 
-			if a.Score < minBlendedScore {
-				continue
-			}
-
-			// Keep artists with popularity data.  Also keep artists
-			// without popularity if they have a high enough score
-			// (likely exact or close name matches).
-			if !a.HasPopularity && a.Score < minZeroPopScore {
+			if a.Score < minScoreForArtist(a) {
 				continue
 			}
 
@@ -911,15 +947,14 @@ const (
 	// maxResults caps each entity slice after filtering.
 	maxResults = 15
 
-	// minBlendedScore is the floor for artists and recordings
-	// after popularity reranking and tier adjustment (0–100 scale).
-	minBlendedScore = 25
+	// minBlendedScore is the absolute floor — no result survives
+	// below this regardless of popularity.
+	minBlendedScore = 15
 
-	// minZeroPopScore is the floor for artists with zero LB
-	// popularity data.  Higher than minBlendedScore so that
-	// obscure artists without any listening history are filtered
-	// unless they're a very strong name match (exact or near-exact).
-	minZeroPopScore = 50
+	// minScoreZeroPop is the threshold for artists with zero
+	// popularity.  The threshold slides between this and
+	// minBlendedScore based on listen count.
+	minScoreZeroPop = 60
 )
 
 // tierBonus maps artist name-match tiers to percentage score multipliers.
@@ -1006,6 +1041,7 @@ func (e *Service) boostWithIndexPopularity(result *MBSearchResult) {
 		if pop, ok := popMap[a.MBID]; ok {
 			artistPop[a.MBID] = pop
 			result.Artists[i].HasPopularity = true
+			result.Artists[i].Popularity = pop
 		}
 	}
 
@@ -1117,8 +1153,9 @@ func (e *Service) boostWithPopularity(result *MBSearchResult) {
 	// Mark artists that have popularity data.
 	if artistPop != nil {
 		for i := range result.Artists {
-			if _, ok := artistPop[result.Artists[i].MBID]; ok {
+			if pop, ok := artistPop[result.Artists[i].MBID]; ok {
 				result.Artists[i].HasPopularity = true
+				result.Artists[i].Popularity = pop
 			}
 		}
 	}

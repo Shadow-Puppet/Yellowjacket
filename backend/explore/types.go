@@ -27,6 +27,7 @@ type MBArtist struct {
 	Score          int    `json:"score"`
 	OriginalScore  int    `json:"-"` // MB search relevance, preserved across reranking
 	HasPopularity  bool   `json:"-"` // true if LB/index had listen data for this artist
+	Popularity     int    `json:"-"` // raw LB listen count (0 if unknown)
 }
 
 // MBReleaseGroup is a Wails-friendly projection of a MusicBrainz
