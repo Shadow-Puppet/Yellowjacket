@@ -773,15 +773,26 @@ export class ExploreArtistDetails extends LitElement {
      * Shows cached data instantly before API calls complete.
      */
     private hydrateFromCache(mbid: string) {
-        // Artist image from explore cache (populated by search results).
-        const cachedArtist = exploreCache.getArtist(mbid);
-        if (cachedArtist) {
-            if (cachedArtist.imageURL) {
-                this.artistImageURL = cachedArtist.imageURL;
-            } else if (cachedArtist.imageMedium) {
-                this.artistImageURL = cachedArtist.imageMedium;
-            } else if (cachedArtist.imageSmall) {
-                this.artistImageURL = cachedArtist.imageSmall;
+        // Artist image: check explore cache first, then library store.
+        if (!this.artistImageURL) {
+            const cachedArtist = exploreCache.getArtist(mbid);
+            if (cachedArtist) {
+                this.artistImageURL = cachedArtist.imageURL
+                    || cachedArtist.imageMedium
+                    || cachedArtist.imageSmall
+                    || '';
+            }
+        }
+
+        if (!this.artistImageURL) {
+            const cachedArtists = libraryStore.cachedArtists;
+            if (cachedArtists) {
+                for (const a of cachedArtists) {
+                    if (a.MBID === mbid) {
+                        this.artistImageURL = a.ImageMedium || a.ImageSmall || '';
+                        break;
+                    }
+                }
             }
         }
 
@@ -930,6 +941,30 @@ export class ExploreArtistDetails extends LitElement {
     }
 
     private async checkLibrary() {
+        // Check frontend-side first.
+        const cachedAlbums = libraryStore.cachedAlbums;
+        if (cachedAlbums) {
+            const localMBIDs = new Set<string>();
+            for (const a of cachedAlbums) {
+                if (a.MBID) localMBIDs.add(a.MBID);
+            }
+
+            let updated = false;
+
+            for (const rg of this.releaseGroups) {
+                if (rg.mbid && localMBIDs.has(rg.mbid)) {
+                    this.libraryMBIDs.add(rg.mbid);
+                    updated = true;
+                }
+            }
+
+            if (updated) {
+                this.requestUpdate();
+                return;
+            }
+        }
+
+        // Fallback to backend.
         const mbids: string[] = [];
 
         for (const rg of this.releaseGroups) {

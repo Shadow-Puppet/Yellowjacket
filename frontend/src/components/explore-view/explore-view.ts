@@ -858,7 +858,27 @@ export class ExploreView extends LitElement {
             return;
         }
 
-        // Collect MBIDs that need fetching.
+        // Seed thumbnails from library album cover art (instant, no API).
+        const cachedAlbums = libraryStore.cachedAlbums;
+        if (cachedAlbums) {
+            const libAlbumsByMBID = new Map<string, string>();
+            for (const a of cachedAlbums) {
+                if (a.MBID && (a.CoverArtMedium || a.CoverArtSmall)) {
+                    libAlbumsByMBID.set(a.MBID, a.CoverArtMedium || a.CoverArtSmall);
+                }
+            }
+
+            for (const rg of this.results.releaseGroups) {
+                if (!this.thumbnailCache.has(rg.mbid)) {
+                    const localArt = libAlbumsByMBID.get(rg.mbid) || (rg as any)._coverArt;
+                    if (localArt) {
+                        this.thumbnailCache.set(rg.mbid, localArt);
+                    }
+                }
+            }
+        }
+
+        // Collect MBIDs that still need fetching from the API.
         const requests: ThumbnailRequest[] = [];
 
         for (const rg of this.results.releaseGroups) {
@@ -917,7 +937,29 @@ export class ExploreView extends LitElement {
     private async loadArtistImages() {
         if (!this.results?.artists?.length) return;
 
-        // Load sequentially to avoid hammering the MB rate limiter.
+        // Seed from library store first (instant, no API).
+        const cachedArtists = libraryStore.cachedArtists;
+        if (cachedArtists) {
+            const libByMBID = new Map<string, string>();
+            for (const a of cachedArtists) {
+                if (a.MBID && (a.ImageMedium || a.ImageSmall)) {
+                    libByMBID.set(a.MBID, a.ImageMedium || a.ImageSmall);
+                }
+            }
+
+            for (const a of this.results.artists) {
+                if (!this.artistImageCache.has(a.mbid) && a.mbid) {
+                    const local = libByMBID.get(a.mbid) || (a as any)._imageMedium || (a as any)._imageSmall;
+                    if (local) {
+                        this.artistImageCache.set(a.mbid, local);
+                    }
+                }
+            }
+
+            this.requestUpdate();
+        }
+
+        // Fetch remaining from API (only artists not yet resolved).
         for (const a of this.results.artists) {
             if (this.artistImageCache.has(a.mbid)) continue;
 
@@ -942,14 +984,50 @@ export class ExploreView extends LitElement {
     private async checkLibrary() {
         if (!this.results) return;
 
-        const mbids: string[] = [];
+        // Check frontend-side first using library store MBIDs.
+        const cachedArtists = libraryStore.cachedArtists;
+        const cachedAlbums = libraryStore.cachedAlbums;
+        const localMBIDs = new Set<string>();
+
+        if (cachedArtists) {
+            for (const a of cachedArtists) {
+                if (a.MBID) localMBIDs.add(a.MBID);
+            }
+        }
+
+        if (cachedAlbums) {
+            for (const a of cachedAlbums) {
+                if (a.MBID) localMBIDs.add(a.MBID);
+            }
+        }
+
+        let updated = false;
 
         for (const a of this.results.artists ?? []) {
-            if (a.mbid) mbids.push(a.mbid);
+            if (a.mbid && localMBIDs.has(a.mbid)) {
+                this.libraryMBIDs.add(a.mbid);
+                updated = true;
+            }
         }
 
         for (const rg of this.results.releaseGroups ?? []) {
-            if (rg.mbid) mbids.push(rg.mbid);
+            if (rg.mbid && localMBIDs.has(rg.mbid)) {
+                this.libraryMBIDs.add(rg.mbid);
+                updated = true;
+            }
+        }
+
+        if (updated) {
+            this.requestUpdate();
+            return;
+        }
+
+        // Fallback to backend check for recordings and edge cases
+        // (recordings aren't in the library store cache).
+        const mbids: string[] = [];
+
+        for (const r of this.results.recordings ?? []) {
+            if (r.mbid) mbids.push(r.mbid);
         }
 
         if (mbids.length === 0) return;
