@@ -508,7 +508,7 @@ func (si *SearchIndex) build(ctx context.Context) {
 	si.logger.Info("search index build starting")
 
 	// Mark ready from existing rows so search works during the build.
-	si.markReadyIfPopulated()
+	si.MarkReadyIfPopulated()
 
 	indexLimiter := NewRateLimiterN(indexerRate)
 	indexLB := NewListenBrainzClient(indexLimiter, si.lb.cache, si.logger.WithGroup("indexer"))
@@ -1609,7 +1609,10 @@ func (si *SearchIndex) setMeta(key, value string) {
 	}
 }
 
-func (si *SearchIndex) markReadyIfPopulated() {
+// MarkReadyIfPopulated sets the index as ready for querying if it
+// already contains data from a previous build.  Called eagerly at
+// service creation so the index is queryable before StartBuild runs.
+func (si *SearchIndex) MarkReadyIfPopulated() {
 	rows, err := si.db.QueryContext("SELECT COUNT(*) FROM explore_index")
 	if err != nil {
 		return

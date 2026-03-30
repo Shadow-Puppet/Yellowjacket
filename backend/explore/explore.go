@@ -48,6 +48,7 @@ func NewExploreService(logger *slog.Logger, db *database.DB) *Service {
 		db, cache, mbBackgroundLimiter, logger.WithGroup("artist-image"),
 	)
 	index := NewSearchIndex(db, lb, artistImg, logger.WithGroup("search-index"))
+	index.MarkReadyIfPopulated() // make index queryable immediately if data exists
 	libMBID := NewLibraryMBIDIndex(db)
 
 	logger.Info("explore service created")
