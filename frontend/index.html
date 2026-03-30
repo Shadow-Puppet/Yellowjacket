@@ -15,10 +15,11 @@
             <h1 class="title">YellowJacket</h1>
             <h3 class="subtitle">Music how it was meant to bee.</h3>
         </hgroup>
-        <button id="library-only-toggle" class="library-only-toggle" title="Library Only mode">
-            <wa-icon name="book"></wa-icon>
-            <span>Library Only</span>
-        </button>
+        <div id="library-only-toggle" class="mode-toggle" title="Toggle Library Only mode">
+            <wa-icon name="globe" class="mode-icon mode-icon-globe"></wa-icon>
+            <div class="mode-toggle-thumb"></div>
+            <wa-icon name="hard-drive" class="mode-icon mode-icon-local"></wa-icon>
+        </div>
         <library-filter></library-filter>
         <search-bar></search-bar>
     </header>
