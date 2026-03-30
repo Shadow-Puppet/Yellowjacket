@@ -740,17 +740,10 @@ func mergeIndexHits(result *MBSearchResult, hits []SearchIndexResult) {
 		rgMBIDs[rg.MBID] = true
 	}
 
-	recMBIDs := make(map[string]bool, len(result.Recordings))
-	for _, r := range result.Recordings {
-		recMBIDs[r.MBID] = true
-	}
-
 	// Collect new entries from index.
 	var newArtists []MBArtist
 
 	var newRGs []MBReleaseGroup
-
-	var newRecs []MBRecording
 
 	for _, h := range hits {
 		switch h.EntityType {
@@ -787,16 +780,11 @@ func mergeIndexHits(result *MBSearchResult, hits []SearchIndexResult) {
 			}
 
 		case "recording":
-			if !recMBIDs[h.MBID] {
-				newRecs = append(newRecs, MBRecording{
-					MBID:         h.MBID,
-					Title:        h.Title,
-					ArtistCredit: h.ArtistName,
-					Score:        scalePopularity(h.Popularity),
-				})
-
-				recMBIDs[h.MBID] = true
-			}
+			// Skip index recordings — they lack duration data and
+			// don't add value over MB search results which have it.
+			// Index artists and release groups are still merged
+			// because they carry popularity data the MB results lack.
+			continue
 		}
 	}
 
@@ -807,10 +795,6 @@ func mergeIndexHits(result *MBSearchResult, hits []SearchIndexResult) {
 
 	if len(newRGs) > 0 {
 		result.ReleaseGroups = append(newRGs, result.ReleaseGroups...)
-	}
-
-	if len(newRecs) > 0 {
-		result.Recordings = append(newRecs, result.Recordings...)
 	}
 }
 
