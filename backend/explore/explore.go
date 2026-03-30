@@ -476,15 +476,58 @@ func (e *Service) Search(query string) (*MBSearchResult, error) {
 	p2Start := time.Now()
 	indexReady := e.index.IsReady()
 
-	if indexReady {
-		// Phase 2 (lite): rerank MB results using index popularity.
-		e.boostWithIndexPopularity(&result)
+	// Phase 2a: always fetch LB artist popularity (single POST,
+	// ~200ms).  This ensures correct ranking regardless of index
+	// coverage.  The index fast path is still used for release
+	// groups and recordings where LB popularity is less critical.
+	artistMBIDs := make([]string, 0, len(result.Artists))
+	for _, a := range result.Artists {
+		if a.MBID != "" {
+			artistMBIDs = append(artistMBIDs, a.MBID)
+		}
+	}
 
-		// If most artists lack index popularity, do a targeted LB
-		// lookup for just the artist MBIDs.  This handles the case
-		// where a search returns artists not covered by the index
-		// (not sitewide popular, not in library, not similar).
-		e.backfillArtistPopularity(&result)
+	artistPop, _ := e.lb.ArtistPopularity(e.ctx, artistMBIDs)
+	if artistPop == nil {
+		artistPop = make(map[string]int)
+	}
+
+	// Merge index popularity for artists the index knows about
+	// (may have higher counts from aggregation).
+	if indexReady {
+		batch := e.index.GetPopularityBatch(artistMBIDs)
+		if batch != nil {
+			for mbid, pop := range batch.Popularity {
+				if pop > artistPop[mbid] {
+					artistPop[mbid] = pop
+				}
+			}
+		}
+	}
+
+	// Build library set and rerank artists.
+	libCheck := e.libMBID.CheckMBIDs(artistMBIDs)
+	libMBIDs := make(map[string]bool)
+	for mbid, entityType := range libCheck {
+		if entityType == "artist" {
+			libMBIDs[mbid] = true
+		}
+	}
+
+	// Mark popularity on artists for downstream use.
+	for i := range result.Artists {
+		if pop, ok := artistPop[result.Artists[i].MBID]; ok && pop > 0 {
+			result.Artists[i].HasPopularity = true
+			result.Artists[i].Popularity = pop
+		}
+	}
+
+	rerankArtists(result.Artists, artistPop, libMBIDs)
+
+	// Phase 2b: rerank release groups and recordings.
+	if indexReady {
+		// Use index for RGs and recordings (good coverage, no API call).
+		e.boostWithIndexPopularityRGsAndRecs(&result)
 	} else {
 		// Phase 2: LB popularity lookups (3 POST calls, rate-limited).
 		// Use a tight deadline so a slow LB/MB doesn't stall the search.
@@ -1040,73 +1083,57 @@ func (e *Service) boostWithIndexPopularity(result *MBSearchResult) {
 	rerankRecordings(result.Recordings, recPop)
 }
 
+// boostWithIndexPopularityRGsAndRecs reranks release groups and
+// recordings using index popularity.  Artists are handled separately
+// via the always-on LB API lookup.
+func (e *Service) boostWithIndexPopularityRGsAndRecs(result *MBSearchResult) {
+	allMBIDs := make([]string, 0,
+		len(result.ReleaseGroups)+len(result.Recordings))
+
+	for _, rg := range result.ReleaseGroups {
+		if rg.MBID != "" {
+			allMBIDs = append(allMBIDs, rg.MBID)
+		}
+	}
+
+	for _, r := range result.Recordings {
+		if r.MBID != "" {
+			allMBIDs = append(allMBIDs, r.MBID)
+		}
+	}
+
+	if len(allMBIDs) == 0 {
+		return
+	}
+
+	batch := e.index.GetPopularityBatch(allMBIDs)
+	if batch == nil {
+		return
+	}
+
+	rgPop := make(map[string]int, len(result.ReleaseGroups))
+	for _, rg := range result.ReleaseGroups {
+		if pop, ok := batch.Popularity[rg.MBID]; ok {
+			rgPop[rg.MBID] = pop
+		}
+	}
+
+	rerankReleaseGroups(result.ReleaseGroups, rgPop)
+
+	recPop := make(map[string]int, len(result.Recordings))
+	for _, r := range result.Recordings {
+		if pop, ok := batch.Popularity[r.MBID]; ok {
+			recPop[r.MBID] = pop
+		}
+	}
+
+	rerankRecordings(result.Recordings, recPop)
+}
+
 // boostWithPopularity fetches ListenBrainz listen counts for all
 // entities in result and re-sorts each slice using a blended score
 // of MB text relevance + log-scaled popularity.  Modifies result
 // in place.  Failures are logged and degrade to MB-only ordering.
-// backfillArtistPopularity does a targeted LB API lookup for
-// artists that the index fast path couldn't provide popularity for.
-// Only fires when a significant fraction of artists have unknown
-// popularity.  Single POST call with just the missing MBIDs.
-func (e *Service) backfillArtistPopularity(result *MBSearchResult) {
-	if len(result.Artists) == 0 {
-		return
-	}
-
-	// Collect MBIDs that have no popularity data.
-	var missing []string
-
-	for _, a := range result.Artists {
-		if !a.HasPopularity && a.MBID != "" {
-			missing = append(missing, a.MBID)
-		}
-	}
-
-	// Only backfill if most artists lack data.
-	if len(missing) < len(result.Artists)/2 {
-		return
-	}
-
-	pop, err := e.lb.ArtistPopularity(e.ctx, missing)
-	if err != nil || len(pop) == 0 {
-		return
-	}
-
-	// Find the maxPop across ALL artists (both index and backfilled)
-	// so normalization is consistent.
-	maxPop := 0
-
-	for _, a := range result.Artists {
-		if a.Popularity > maxPop {
-			maxPop = a.Popularity
-		}
-	}
-
-	for _, p := range pop {
-		if p > maxPop {
-			maxPop = p
-		}
-	}
-
-	// Update scores only for artists that got backfilled.
-	// Preserve scores of artists that already had index data.
-	for i := range result.Artists {
-		a := &result.Artists[i]
-		if p, ok := pop[a.MBID]; ok {
-			a.HasPopularity = true
-			a.Popularity = p
-
-			rel := float64(a.OriginalScore) / 100.0
-			s := blendedScore(rel, p, maxPop)
-			a.Score = int(s * 100)
-		}
-	}
-
-	// Re-sort all artists by score (index-scored + backfill-scored).
-	sort.SliceStable(result.Artists, func(i, j int) bool {
-		return result.Artists[i].Score > result.Artists[j].Score
-	})
-}
 
 func (e *Service) boostWithPopularity(result *MBSearchResult) {
 	// Collect MBIDs per entity type.
