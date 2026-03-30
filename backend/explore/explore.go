@@ -933,47 +933,56 @@ var mbSpecialPurposeArtists = map[string]bool{
 // just SQLite lookups.  This is the fast path used when the index
 // is ready.
 func (e *Service) boostWithIndexPopularity(result *MBSearchResult) {
-	// Look up popularity for all artist MBIDs.
-	// Give a large bonus to library artists so they rank first.
-	artistPop := make(map[string]int, len(result.Artists))
+	// Collect all MBIDs across all entity types.
+	allMBIDs := make([]string, 0,
+		len(result.Artists)+len(result.ReleaseGroups)+len(result.Recordings))
 
 	for _, a := range result.Artists {
-		pop := e.index.GetPopularity(a.MBID)
-
-		// Library artists get a massive popularity bonus.
-		if e.index.IsInLibrary(a.MBID) {
-			pop += 10_000_000 //nolint:mnd
+		if a.MBID != "" {
+			allMBIDs = append(allMBIDs, a.MBID)
 		}
+	}
 
-		if pop > 0 {
+	for _, rg := range result.ReleaseGroups {
+		if rg.MBID != "" {
+			allMBIDs = append(allMBIDs, rg.MBID)
+		}
+	}
+
+	for _, r := range result.Recordings {
+		if r.MBID != "" {
+			allMBIDs = append(allMBIDs, r.MBID)
+		}
+	}
+
+	// Single batch query for all popularity + in_library data.
+	popMap := e.index.GetPopularityBatch(allMBIDs)
+	if popMap == nil {
+		return
+	}
+
+	// Build per-entity maps from the batch result.
+	artistPop := make(map[string]int, len(result.Artists))
+	for _, a := range result.Artists {
+		if pop, ok := popMap[a.MBID]; ok {
 			artistPop[a.MBID] = pop
 		}
 	}
 
 	rerankArtists(result.Artists, artistPop)
 
-	// Look up popularity for release groups.
 	rgPop := make(map[string]int, len(result.ReleaseGroups))
-
 	for _, rg := range result.ReleaseGroups {
-		pop := e.index.GetPopularity(rg.MBID)
-
-		if e.index.IsInLibrary(rg.MBID) {
-			pop += 10_000_000 //nolint:mnd
-		}
-
-		if pop > 0 {
+		if pop, ok := popMap[rg.MBID]; ok {
 			rgPop[rg.MBID] = pop
 		}
 	}
 
 	rerankReleaseGroups(result.ReleaseGroups, rgPop)
 
-	// Look up popularity for recordings.
 	recPop := make(map[string]int, len(result.Recordings))
-
 	for _, r := range result.Recordings {
-		if pop := e.index.GetPopularity(r.MBID); pop > 0 {
+		if pop, ok := popMap[r.MBID]; ok {
 			recPop[r.MBID] = pop
 		}
 	}

@@ -316,6 +316,53 @@ func (si *SearchIndex) GetPopularity(mbid string) int {
 	return 0
 }
 
+// GetPopularityBatch returns popularity (listen count) for multiple
+// MBIDs in a single query.  Returns a map of MBID → popularity.
+func (si *SearchIndex) GetPopularityBatch(mbids []string) map[string]int {
+	if len(mbids) == 0 {
+		return nil
+	}
+
+	placeholders := make([]string, len(mbids))
+	args := make([]any, len(mbids))
+
+	for i, m := range mbids {
+		placeholders[i] = "?"
+		args[i] = m
+	}
+
+	query := "SELECT mbid, popularity, in_library FROM explore_index WHERE mbid IN (" +
+		strings.Join(placeholders, ",") + ")"
+
+	rows, err := si.db.QueryContext(query, args...)
+	if err != nil {
+		return nil
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	result := make(map[string]int, len(mbids))
+
+	for rows.Next() {
+		var mbid string
+		var pop int
+		var inLib int
+
+		if err := rows.Scan(&mbid, &pop, &inLib); err == nil {
+			existing, ok := result[mbid]
+			if !ok || pop > existing {
+				if inLib == 1 {
+					pop += 10_000_000 //nolint:mnd // library bonus
+				}
+
+				result[mbid] = pop
+			}
+		}
+	}
+
+	return result
+}
+
 // IsInLibrary returns whether the given MBID is marked as in the
 // user's local library in the search index.
 func (si *SearchIndex) IsInLibrary(mbid string) bool {
