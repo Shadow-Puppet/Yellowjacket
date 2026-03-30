@@ -104,6 +104,26 @@ function extractYear(dateStr: string): string {
     return dateStr.substring(0, 4);
 }
 
+/**
+ * Find album cover art for an artist from the library store.
+ * Returns the best available cover art URL, or '' if none.
+ */
+function getArtistAlbumArt(artistName: string): string {
+    const cachedAlbums = libraryStore.cachedAlbums;
+    if (!cachedAlbums) return '';
+
+    const name = artistName.toLowerCase();
+
+    for (const a of cachedAlbums) {
+        if (a.ArtistName.toLowerCase() === name) {
+            const art = a.CoverArtMedium || a.CoverArtSmall || a.CoverArtPath;
+            if (art) return art;
+        }
+    }
+
+    return '';
+}
+
 @customElement('explore-view')
 export class ExploreView extends LitElement {
     /* ── State ── */
@@ -606,6 +626,16 @@ export class ExploreView extends LitElement {
                 }
             }
 
+            // Fallback: album art for artists without images.
+            for (const a of localResults.artists || []) {
+                if (a.mbid && !this.artistImageCache.get(a.mbid)) {
+                    const albumArt = getArtistAlbumArt(a.name);
+                    if (albumArt) {
+                        this.artistImageCache.set(a.mbid, albumArt);
+                    }
+                }
+            }
+
             // In library-only mode, local results already have cover art
             // and artist images from the library store — no API calls needed.
             if (!exploreSettings.libraryOnly) {
@@ -1001,6 +1031,16 @@ export class ExploreView extends LitElement {
             this.requestUpdate();
         }
 
+        // Fallback: use album cover art for artists without images.
+        for (const a of this.results.artists) {
+            if (a.mbid && !this.artistImageCache.get(a.mbid)) {
+                const albumArt = getArtistAlbumArt(a.name);
+                if (albumArt) {
+                    this.artistImageCache.set(a.mbid, albumArt);
+                }
+            }
+        }
+
         // Fetch remaining from API (only artists not yet resolved).
         for (const a of this.results.artists) {
             if (this.artistImageCache.has(a.mbid)) continue;
@@ -1018,6 +1058,21 @@ export class ExploreView extends LitElement {
                 // No image — leave empty string.
             }
         }
+
+        // Final fallback: album art for artists the API couldn't resolve.
+        let fallbackUpdated = false;
+
+        for (const a of this.results.artists) {
+            if (a.mbid && !this.artistImageCache.get(a.mbid)) {
+                const albumArt = getArtistAlbumArt(a.name);
+                if (albumArt) {
+                    this.artistImageCache.set(a.mbid, albumArt);
+                    fallbackUpdated = true;
+                }
+            }
+        }
+
+        if (fallbackUpdated) this.requestUpdate();
     }
 
     /**

@@ -818,6 +818,23 @@ export class ExploreArtistDetails extends LitElement {
                 this.loadingReleases = false;
             }
         }
+
+        // Fallback: use album cover art if no artist image found.
+        if (!this.artistImageURL && cachedAlbums) {
+            const artistName = this.artistName.toLowerCase();
+
+            for (const a of cachedAlbums) {
+                if (a.ArtistName.toLowerCase() === artistName) {
+                    const art = a.CoverArtMedium || a.CoverArtSmall || a.CoverArtPath;
+
+                    if (art) {
+                        this.artistImageURL = art;
+
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     private async fetchArtist(mbid: string) {
@@ -925,7 +942,27 @@ export class ExploreArtistDetails extends LitElement {
                 this.artistImageURL = url;
             }
         } catch {
-            // No image available — avatar stays as initial letter.
+            // No image available.
+        }
+
+        // Fallback: album cover art if no artist image resolved.
+        if (!this.artistImageURL) {
+            const cachedAlbums = libraryStore.cachedAlbums;
+            if (cachedAlbums) {
+                const artistName = this.artistName.toLowerCase();
+
+                for (const a of cachedAlbums) {
+                    if (a.ArtistName.toLowerCase() === artistName) {
+                        const art = a.CoverArtMedium || a.CoverArtSmall;
+
+                        if (art) {
+                            this.artistImageURL = art;
+
+                            break;
+                        }
+                    }
+                }
+            }
         }
     }
 
