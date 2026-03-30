@@ -316,9 +316,15 @@ func (si *SearchIndex) GetPopularity(mbid string) int {
 	return 0
 }
 
-// GetPopularityBatch returns popularity (listen count) for multiple
-// MBIDs in a single query.  Returns a map of MBID → popularity.
-func (si *SearchIndex) GetPopularityBatch(mbids []string) map[string]int {
+// PopularityBatchResult contains popularity and library status.
+type PopularityBatchResult struct {
+	Popularity map[string]int
+	InLibrary  map[string]bool
+}
+
+// GetPopularityBatch returns popularity (listen count) and library
+// status for multiple MBIDs in a single query.
+func (si *SearchIndex) GetPopularityBatch(mbids []string) *PopularityBatchResult {
 	if len(mbids) == 0 {
 		return nil
 	}
@@ -341,7 +347,10 @@ func (si *SearchIndex) GetPopularityBatch(mbids []string) map[string]int {
 
 	defer func() { _ = rows.Close() }()
 
-	result := make(map[string]int, len(mbids))
+	result := &PopularityBatchResult{
+		Popularity: make(map[string]int, len(mbids)),
+		InLibrary:  make(map[string]bool),
+	}
 
 	for rows.Next() {
 		var mbid string
@@ -349,13 +358,13 @@ func (si *SearchIndex) GetPopularityBatch(mbids []string) map[string]int {
 		var inLib int
 
 		if err := rows.Scan(&mbid, &pop, &inLib); err == nil {
-			existing, ok := result[mbid]
+			existing, ok := result.Popularity[mbid]
 			if !ok || pop > existing {
-				if inLib == 1 {
-					pop += 10_000_000 //nolint:mnd // library bonus
-				}
+				result.Popularity[mbid] = pop
+			}
 
-				result[mbid] = pop
+			if inLib == 1 {
+				result.InLibrary[mbid] = true
 			}
 		}
 	}

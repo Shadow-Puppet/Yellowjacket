@@ -961,6 +961,11 @@ const (
 	// popularity.  The threshold slides between this and
 	// minBlendedScore based on listen count.
 	minScoreZeroPop = 60
+
+	// libraryScoreBonus is added to library artists' blended scores
+	// after normalization.  Applied post-blending so it doesn't
+	// pollute the maxPop denominator.
+	libraryScoreBonus = 25
 )
 
 // tierBonus maps artist name-match tiers to percentage score multipliers.
@@ -1036,26 +1041,26 @@ func (e *Service) boostWithIndexPopularity(result *MBSearchResult) {
 	}
 
 	// Single batch query for all popularity + in_library data.
-	popMap := e.index.GetPopularityBatch(allMBIDs)
-	if popMap == nil {
+	batch := e.index.GetPopularityBatch(allMBIDs)
+	if batch == nil {
 		return
 	}
 
 	// Build per-entity maps from the batch result.
 	artistPop := make(map[string]int, len(result.Artists))
 	for i, a := range result.Artists {
-		if pop, ok := popMap[a.MBID]; ok {
+		if pop, ok := batch.Popularity[a.MBID]; ok {
 			artistPop[a.MBID] = pop
 			result.Artists[i].HasPopularity = true
 			result.Artists[i].Popularity = pop
 		}
 	}
 
-	rerankArtists(result.Artists, artistPop)
+	rerankArtists(result.Artists, artistPop, batch.InLibrary)
 
 	rgPop := make(map[string]int, len(result.ReleaseGroups))
 	for _, rg := range result.ReleaseGroups {
-		if pop, ok := popMap[rg.MBID]; ok {
+		if pop, ok := batch.Popularity[rg.MBID]; ok {
 			rgPop[rg.MBID] = pop
 		}
 	}
@@ -1064,7 +1069,7 @@ func (e *Service) boostWithIndexPopularity(result *MBSearchResult) {
 
 	recPop := make(map[string]int, len(result.Recordings))
 	for _, r := range result.Recordings {
-		if pop, ok := popMap[r.MBID]; ok {
+		if pop, ok := batch.Popularity[r.MBID]; ok {
 			recPop[r.MBID] = pop
 		}
 	}
@@ -1144,14 +1149,15 @@ func (e *Service) boostWithPopularity(result *MBSearchResult) {
 
 	wg.Wait()
 
-	// Add library bonus to artist popularity — same bonus as the
-	// fast path (boostWithIndexPopularity via GetPopularityBatch).
-	if artistPop != nil {
-		libraryMBIDs := e.libMBID.CheckMBIDs(artistMBIDs)
+	// Build library MBID set for the library score bonus.
+	libMBIDs := make(map[string]bool)
 
-		for mbid, entityType := range libraryMBIDs {
+	if artistPop != nil {
+		libraryCheck := e.libMBID.CheckMBIDs(artistMBIDs)
+
+		for mbid, entityType := range libraryCheck {
 			if entityType == "artist" {
-				artistPop[mbid] += 10_000_000 //nolint:mnd
+				libMBIDs[mbid] = true
 			}
 		}
 	}
@@ -1167,7 +1173,7 @@ func (e *Service) boostWithPopularity(result *MBSearchResult) {
 	}
 
 	// Rerank each entity type.
-	rerankArtists(result.Artists, artistPop)
+	rerankArtists(result.Artists, artistPop, libMBIDs)
 	rerankRecordings(result.Recordings, recordingPop)
 	rerankReleaseGroups(result.ReleaseGroups, rgPop)
 }
@@ -1323,7 +1329,7 @@ func rgMatchTier(query, title, artistCredit string) int {
 
 // rerankArtists sorts artists by blended score and updates their
 // Score field to the new value (0–100 scale).
-func rerankArtists(artists []MBArtist, pop map[string]int) {
+func rerankArtists(artists []MBArtist, pop map[string]int, libraryMBIDs map[string]bool) {
 	if len(artists) == 0 {
 		return
 	}
@@ -1334,16 +1340,30 @@ func rerankArtists(artists []MBArtist, pop map[string]int) {
 		si := blendedScore(float64(artists[i].Score)/100.0, pop[artists[i].MBID], maxPop)
 		sj := blendedScore(float64(artists[j].Score)/100.0, pop[artists[j].MBID], maxPop)
 
+		// Library boost as tiebreaker — library artists win ties.
+		if si == sj {
+			iLib := libraryMBIDs[artists[i].MBID]
+			jLib := libraryMBIDs[artists[j].MBID]
+
+			if iLib != jLib {
+				return iLib
+			}
+		}
+
 		return si > sj
 	})
 
-	// Update Score field so the frontend's top-results section can
-	// use it directly.
-	maxPop2 := maxListenCount(pop)
-
+	// Update Score field.  Library artists get a post-normalization
+	// bonus that doesn't pollute the maxPop denominator.
 	for i := range artists {
-		s := blendedScore(float64(artists[i].Score)/100.0, pop[artists[i].MBID], maxPop2)
-		artists[i].Score = int(s * 100)
+		s := blendedScore(float64(artists[i].Score)/100.0, pop[artists[i].MBID], maxPop)
+		score := int(s * 100)
+
+		if libraryMBIDs[artists[i].MBID] {
+			score += libraryScoreBonus
+		}
+
+		artists[i].Score = score
 	}
 }
 
