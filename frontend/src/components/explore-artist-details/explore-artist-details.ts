@@ -335,7 +335,6 @@ export class ExploreArtistDetails extends LitElement {
                 display: grid;
                 grid-template-columns: 1fr 1fr;
                 gap: 24px;
-                align-items: start;
             }
 
             .top-section-column {
@@ -346,17 +345,20 @@ export class ExploreArtistDetails extends LitElement {
                 display: grid;
                 grid-template-columns: 1fr 1fr;
                 gap: 8px;
+                justify-items: center;
             }
 
             .top-release-card {
                 display: flex;
                 flex-direction: column;
+                align-items: center;
                 gap: 4px;
                 cursor: pointer;
                 transition: background 0.15s ease;
                 padding: 4px;
                 border-radius: 6px;
                 min-width: 0;
+                width: 100%;
             }
 
             .top-release-card:hover {
@@ -373,8 +375,6 @@ export class ExploreArtistDetails extends LitElement {
             .top-release-art {
                 width: 100%;
                 aspect-ratio: 1;
-                max-height: 80px;
-                max-width: 80px;
                 border-radius: 4px;
                 overflow: hidden;
                 background: linear-gradient(
