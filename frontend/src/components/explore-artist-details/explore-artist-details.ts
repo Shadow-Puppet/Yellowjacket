@@ -343,18 +343,18 @@ export class ExploreArtistDetails extends LitElement {
             }
 
             .top-releases-grid {
-                display: grid;
-                grid-template-columns: 1fr 1fr;
-                gap: 10px;
+                display: flex;
+                flex-direction: column;
+                gap: 6px;
             }
 
             .top-release-card {
                 display: flex;
-                flex-direction: column;
-                gap: 4px;
+                align-items: center;
+                gap: 10px;
                 cursor: pointer;
                 transition: background 0.15s ease;
-                padding: 4px;
+                padding: 6px 8px;
                 border-radius: 6px;
                 min-width: 0;
             }
@@ -367,14 +367,15 @@ export class ExploreArtistDetails extends LitElement {
             }
 
             .top-release-card:active {
-                transform: scale(0.97);
+                transform: scale(0.98);
             }
 
             .top-release-art {
-                width: 100%;
-                aspect-ratio: 1;
+                width: 40px;
+                height: 40px;
                 border-radius: 4px;
                 overflow: hidden;
+                flex-shrink: 0;
                 background: linear-gradient(
                     135deg,
                     var(--yj-bg-overlay, #404040) 0%,
@@ -406,7 +407,9 @@ export class ExploreArtistDetails extends LitElement {
 
             .top-release-text {
                 min-width: 0;
-                text-align: center;
+                display: flex;
+                flex-direction: column;
+                gap: 1px;
             }
 
             .top-release-title {
@@ -421,7 +424,6 @@ export class ExploreArtistDetails extends LitElement {
             .top-release-meta {
                 display: flex;
                 align-items: center;
-                justify-content: center;
                 gap: 6px;
                 color: var(--yj-text-tertiary, #888);
                 font-size: var(--yj-text-xs);
