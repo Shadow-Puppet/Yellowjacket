@@ -334,18 +334,39 @@ export class ExploreArtistDetails extends LitElement {
             .top-section-columns {
                 display: grid;
                 grid-template-columns: 1fr 1fr;
-                gap: 24px;
+                grid-template-rows: auto 1fr;
+                gap: 0 24px;
             }
 
             .top-section-column {
                 min-width: 0;
+                display: contents;
+            }
+
+            .section-header-tracks {
+                grid-column: 1;
+                grid-row: 1;
+            }
+
+            .section-header-releases {
+                grid-column: 2;
+                grid-row: 1;
+            }
+
+            .track-list-container {
+                grid-column: 1;
+                grid-row: 2;
             }
 
             .top-releases-grid {
+                grid-column: 2;
+                grid-row: 2;
                 display: grid;
                 grid-template-columns: 1fr 1fr;
+                grid-template-rows: 1fr;
                 gap: 8px;
-                justify-items: center;
+                align-self: stretch;
+                overflow: hidden;
             }
 
             .top-release-card {
@@ -358,7 +379,8 @@ export class ExploreArtistDetails extends LitElement {
                 padding: 4px;
                 border-radius: 6px;
                 min-width: 0;
-                width: 100%;
+                min-height: 0;
+                overflow: hidden;
             }
 
             .top-release-card:hover {
@@ -374,7 +396,8 @@ export class ExploreArtistDetails extends LitElement {
 
             .top-release-art {
                 width: 100%;
-                aspect-ratio: 1;
+                flex: 1;
+                min-height: 0;
                 border-radius: 4px;
                 overflow: hidden;
                 background: linear-gradient(
@@ -1292,57 +1315,51 @@ export class ExploreArtistDetails extends LitElement {
                 <div class="top-section-columns">
                     ${hasTracks
                         ? html`
-                              <div class="top-section-column">
-                                  <h3 class="section-header">Top Tracks</h3>
-                                  <div class="track-list">
-                                      ${tracks.map(
-                                          (t, i) => html`
-                                              <div class="track-item">
-                                                  <span class="track-rank"
-                                                      >${i + 1}</span
+                              <h3 class="section-header section-header-tracks">Top Tracks</h3>
+                              <div class="track-list track-list-container">
+                                  ${tracks.map(
+                                      (t, i) => html`
+                                          <div class="track-item">
+                                              <span class="track-rank"
+                                                  >${i + 1}</span
+                                              >
+                                              <div class="track-info">
+                                                  <div
+                                                      class="track-title"
                                                   >
-                                                  <div class="track-info">
-                                                      <div
-                                                          class="track-title"
-                                                      >
-                                                          ${t.trackName}
-                                                      </div>
-                                                      <div
-                                                          class="track-artist"
-                                                      >
-                                                          ${t.artistName}
-                                                      </div>
+                                                      ${t.trackName}
                                                   </div>
-                                                  <span class="track-listens">
-                                                      ${formatListenCount(
-                                                          t.totalListenCount,
-                                                      )}
-                                                      plays
-                                                  </span>
+                                                  <div
+                                                      class="track-artist"
+                                                  >
+                                                      ${t.artistName}
+                                                  </div>
                                               </div>
-                                          `,
-                                      )}
-                                  </div>
+                                              <span class="track-listens">
+                                                  ${formatListenCount(
+                                                      t.totalListenCount,
+                                                  )}
+                                                  plays
+                                              </span>
+                                          </div>
+                                      `,
+                                  )}
                               </div>
                           `
                         : nothing}
                     ${hasReleases
                         ? html`
-                              <div class="top-section-column">
-                                  <h3 class="section-header">Top Releases</h3>
-                                  <div class="top-releases-grid">
-                                      ${releases.map((rg) =>
-                                          this.renderTopReleaseCard(rg),
-                                      )}
-                                  </div>
+                              <h3 class="section-header section-header-releases">Top Releases</h3>
+                              <div class="top-releases-grid">
+                                  ${releases.map((rg) =>
+                                      this.renderTopReleaseCard(rg),
+                                  )}
                               </div>
                           `
                         : releasesLoading
                           ? html`
-                                <div class="top-section-column">
-                                    <h3 class="section-header">Top Releases</h3>
-                                    <div class="section-loading">Loading\u2026</div>
-                                </div>
+                                <h3 class="section-header section-header-releases">Top Releases</h3>
+                                <div class="section-loading" style="grid-column:2;grid-row:2">Loading\u2026</div>
                             `
                           : nothing}
                 </div>
