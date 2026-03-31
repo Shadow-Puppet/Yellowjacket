@@ -335,19 +335,17 @@ export class ExploreArtistDetails extends LitElement {
                 display: grid;
                 grid-template-columns: 1fr 1fr;
                 gap: 24px;
+                align-items: start;
             }
 
             .top-section-column {
                 min-width: 0;
-                display: flex;
-                flex-direction: column;
             }
 
             .top-releases-grid {
                 display: grid;
                 grid-template-columns: 1fr 1fr;
                 gap: 10px;
-                flex: 1;
             }
 
             .top-release-card {
