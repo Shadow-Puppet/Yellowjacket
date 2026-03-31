@@ -343,18 +343,18 @@ export class ExploreArtistDetails extends LitElement {
             }
 
             .top-releases-grid {
-                display: flex;
-                flex-direction: column;
-                gap: 6px;
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 8px;
             }
 
             .top-release-card {
                 display: flex;
-                align-items: center;
-                gap: 10px;
+                flex-direction: column;
+                gap: 4px;
                 cursor: pointer;
                 transition: background 0.15s ease;
-                padding: 6px 8px;
+                padding: 4px;
                 border-radius: 6px;
                 min-width: 0;
             }
@@ -367,15 +367,16 @@ export class ExploreArtistDetails extends LitElement {
             }
 
             .top-release-card:active {
-                transform: scale(0.98);
+                transform: scale(0.97);
             }
 
             .top-release-art {
-                width: 40px;
-                height: 40px;
+                width: 100%;
+                aspect-ratio: 1;
+                max-height: 80px;
+                max-width: 80px;
                 border-radius: 4px;
                 overflow: hidden;
-                flex-shrink: 0;
                 background: linear-gradient(
                     135deg,
                     var(--yj-bg-overlay, #404040) 0%,
@@ -407,15 +408,13 @@ export class ExploreArtistDetails extends LitElement {
 
             .top-release-text {
                 min-width: 0;
-                display: flex;
-                flex-direction: column;
-                gap: 1px;
+                text-align: center;
             }
 
             .top-release-title {
                 font-weight: 500;
                 color: var(--yj-text-primary, #fff);
-                font-size: var(--yj-text-sm);
+                font-size: var(--yj-text-xs);
                 white-space: nowrap;
                 overflow: hidden;
                 text-overflow: ellipsis;
@@ -424,6 +423,7 @@ export class ExploreArtistDetails extends LitElement {
             .top-release-meta {
                 display: flex;
                 align-items: center;
+                justify-content: center;
                 gap: 6px;
                 color: var(--yj-text-tertiary, #888);
                 font-size: var(--yj-text-xs);
