@@ -26,7 +26,7 @@ jobs:
           go-version: "1.26"
 
       - name: Run Renovate
-        uses: renovatebot/github-action@v46.1.1
+        uses: renovatebot/github-action@v46.1.9
         with:
           configurationFile: renovate.json5
           token: ${{ secrets.RENOVATE_TOKEN }}
