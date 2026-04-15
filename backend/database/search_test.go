@@ -575,6 +575,8 @@ func TestSearchFTSTracks(t *testing.T) {
 
 	if br == nil {
 		t.Fatal("SearchFTSTracks: Bohemian Rhapsody not found")
+
+		return
 	}
 
 	// Verify all fields are populated.

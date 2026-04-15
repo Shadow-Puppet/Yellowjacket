@@ -789,11 +789,13 @@ func TestMigration10PlayHistory(t *testing.T) {
 
 	if !verRows.Next() {
 		_ = verRows.Close()
+
 		t.Fatal("PRAGMA user_version: no row returned")
 	}
 
 	if err := verRows.Scan(&version); err != nil {
 		_ = verRows.Close()
+
 		t.Fatalf("scan user_version: %v", err)
 	}
 
@@ -815,11 +817,13 @@ func TestMigration10PlayHistory(t *testing.T) {
 
 	if !tblRows.Next() {
 		_ = tblRows.Close()
+
 		t.Fatal("no row from sqlite_master query")
 	}
 
 	if err := tblRows.Scan(&tableCount); err != nil {
 		_ = tblRows.Close()
+
 		t.Fatalf("scan table count: %v", err)
 	}
 
@@ -852,6 +856,7 @@ func TestMigration10PlayHistory(t *testing.T) {
 			&cid, &name, &colType, &notNull, &dfltValue, &pk,
 		); err != nil {
 			_ = colRows.Close()
+
 			t.Fatalf("scan audio_files table_info: %v", err)
 		}
 
@@ -896,6 +901,7 @@ func TestMigration10PlayHistory(t *testing.T) {
 			&cid, &name, &colType, &notNull, &dfltValue, &pk,
 		); err != nil {
 			_ = vcRows.Close()
+
 			t.Fatalf("scan track_metadata table_info: %v", err)
 		}
 
@@ -950,11 +956,13 @@ func TestMigration10PlayHistory(t *testing.T) {
 
 	if !pcRows.Next() {
 		_ = pcRows.Close()
+
 		t.Fatal("audio_file not found")
 	}
 
 	if err := pcRows.Scan(&playCount); err != nil {
 		_ = pcRows.Close()
+
 		t.Fatalf("scan play_count: %v", err)
 	}
 
@@ -992,6 +1000,7 @@ func TestMigration10PlayHistory(t *testing.T) {
 
 	if !pcRows2.Next() {
 		_ = pcRows2.Close()
+
 		t.Fatal("audio_file not found after update")
 	}
 
@@ -1002,6 +1011,7 @@ func TestMigration10PlayHistory(t *testing.T) {
 
 	if err := pcRows2.Scan(&updatedCount, &lastPlayed); err != nil {
 		_ = pcRows2.Close()
+
 		t.Fatalf("scan updated play_count: %v", err)
 	}
 
@@ -1025,6 +1035,7 @@ func TestMigration10PlayHistory(t *testing.T) {
 
 	if !tmRows.Next() {
 		_ = tmRows.Close()
+
 		t.Fatal("track_metadata row not found")
 	}
 
@@ -1032,6 +1043,7 @@ func TestMigration10PlayHistory(t *testing.T) {
 
 	if err := tmRows.Scan(&viewPlayCount); err != nil {
 		_ = tmRows.Close()
+
 		t.Fatalf("scan track_metadata play_count: %v", err)
 	}
 

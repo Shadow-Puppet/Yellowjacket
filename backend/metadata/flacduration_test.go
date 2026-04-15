@@ -69,6 +69,8 @@ func TestGetFlacDuration_BasicParsing(t *testing.T) {
 
 			if props == nil {
 				t.Fatal("expected non-nil AudioProperties")
+
+				return
 			}
 
 			if props.SampleRate <= 0 {
