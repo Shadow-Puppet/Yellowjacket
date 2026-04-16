@@ -10,6 +10,11 @@ export interface QueueTrack {
   position: number;
   title: string;
   artist: string;
+  album: string;
+  coverArtPath: string;
+  artistMbid: string;
+  releaseGroupMbid: string;
+  recordingMbid: string;
 }
 
 export type RepeatMode = 'off' | 'all' | 'one';

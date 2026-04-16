@@ -98,6 +98,10 @@ export function RenamePlaylist(arg1, arg2) {
   return window['go']['playlist']['Service']['RenamePlaylist'](arg1, arg2);
 }
 
+export function RepopulateFromM3U() {
+  return window['go']['playlist']['Service']['RepopulateFromM3U']();
+}
+
 export function ResolvePhantomTracks(arg1, arg2) {
   return window['go']['playlist']['Service']['ResolvePhantomTracks'](arg1, arg2);
 }

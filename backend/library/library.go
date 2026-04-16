@@ -76,9 +76,16 @@ type RescanHooks struct {
 // completes.  The app layer wires these so the library package
 // does not depend on the playlist package directly.
 type ScanHooks struct {
+	// RepopulatePlaylists re-imports tracks for playlists that
+	// lost their playlist_tracks rows (e.g., from a pre-fix
+	// FullRescan).  Runs before ResolvePhantoms.
+	RepopulatePlaylists func()
 	// ResolvePhantoms re-links phantom playlist tracks whose
 	// files now exist in the library after scanning.
 	ResolvePhantoms func()
+	// OnAllScansComplete runs after ALL queued scans finish
+	// (queue drained).
+	OnAllScansComplete func()
 }
 
 // Library manages scanning and querying the music collection.
@@ -691,10 +698,13 @@ func (l *Library) scanInternal(
 		metrics.OrphanCleanup = time.Since(orphanStart)
 	}
 
-	// --- Phase 6: resolve phantom playlist tracks ---
-	// Delegated to the playlist service via ScanHooks so that
-	// M3U8-based path resolution can handle both pre-existing
-	// phantoms (no phantom_file_path) and new ones.
+	// --- Phase 6: repopulate + resolve phantom playlist tracks ---
+	// Repopulate first: re-imports tracks for playlists that lost
+	// their rows (from a pre-fix FullRescan that deleted them).
+	if !cancelled && l.scanHooks.RepopulatePlaylists != nil {
+		l.scanHooks.RepopulatePlaylists()
+	}
+	// Then resolve: re-links phantom tracks to audio_files.
 	if !cancelled && l.scanHooks.ResolvePhantoms != nil {
 		l.scanHooks.ResolvePhantoms()
 	}
@@ -973,7 +983,7 @@ func (l *Library) saveAudioFile(
 
 	// Process metadata and create related records.
 	recordingID, err := l.processMetadata(
-		q, cache, metrics, result, thumbChan,
+		q, tx, cache, metrics, result, thumbChan,
 	)
 	if err != nil {
 		return fmt.Errorf("could not process metadata: %w", err)
@@ -1067,7 +1077,7 @@ func (l *Library) updateAudioFileMetadata(
 
 	// Process metadata and create related records.
 	recordingID, err := l.processMetadata(
-		q, cache, metrics, result, thumbChan,
+		q, tx, cache, metrics, result, thumbChan,
 	)
 	if err != nil {
 		return fmt.Errorf("could not process metadata: %w", err)
@@ -1148,6 +1158,7 @@ func (l *Library) updateAudioFileMetadata(
 // asynchronously.
 func (l *Library) processMetadata(
 	q *sqlcgen.Queries,
+	tx *sql.Tx,
 	cache *entityCache,
 	metrics *ScanMetrics,
 	result importResult,
@@ -1234,7 +1245,58 @@ func (l *Library) processMetadata(
 		}
 	}
 
+	// 7. Update MusicBrainz IDs (if present in tags).
+	if releaseGroupID.Valid {
+		l.updateMBIDs(tx, cache, tags, artistName, releaseGroupID.Int64, recording.ID)
+	} else {
+		l.updateMBIDs(tx, cache, tags, artistName, 0, recording.ID)
+	}
+
 	return recording.ID, nil
+}
+
+// updateMBIDs writes MusicBrainz IDs from audio file tags to the
+// corresponding database entities.  Uses raw SQL since the sqlc
+// queries predate the mbid columns.  Skips silently if tags have
+// no MBIDs.
+func (l *Library) updateMBIDs(
+	tx *sql.Tx,
+	cache *entityCache,
+	tags *metadata.TrackMetadata,
+	artistName string,
+	releaseGroupID int64,
+	recordingID int64,
+) {
+	// Artist MBID — prefer album artist, fall back to track artist.
+	artistMBID := tags.AlbumArtistMBID
+	if artistMBID == "" {
+		artistMBID = tags.ArtistMBID
+	}
+
+	if artistMBID != "" {
+		if artist, ok := cache.artists[artistName]; ok {
+			_, _ = tx.ExecContext(l.ctx,
+				"UPDATE artists SET mbid = ? WHERE id = ? AND (mbid IS NULL OR mbid = '')",
+				artistMBID, artist.ID,
+			)
+		}
+	}
+
+	// Release group MBID.
+	if tags.ReleaseGroupMBID != "" && releaseGroupID > 0 {
+		_, _ = tx.ExecContext(l.ctx,
+			"UPDATE release_groups SET mbid = ? WHERE id = ? AND (mbid IS NULL OR mbid = '')",
+			tags.ReleaseGroupMBID, releaseGroupID,
+		)
+	}
+
+	// Recording MBID.
+	if tags.RecordingMBID != "" && recordingID > 0 {
+		_, _ = tx.ExecContext(l.ctx,
+			"UPDATE recordings SET mbid = ? WHERE id = ? AND (mbid IS NULL OR mbid = '')",
+			tags.RecordingMBID, recordingID,
+		)
+	}
 }
 
 // processCoverArt saves cover art to disk and upserts the DB record,

@@ -52,6 +52,8 @@ export function RemoveTracksFromPlaylist(arg1:number,arg2:Array<number>):Promise
 
 export function RenamePlaylist(arg1:number,arg2:string):Promise<void>;
 
+export function RepopulateFromM3U():Promise<void>;
+
 export function ResolvePhantomTracks(arg1:number,arg2:Record<string, string>):Promise<void>;
 
 export function ResolvePhantomTracksAfterScan():Promise<void>;

@@ -3,6 +3,11 @@ import { customElement, state } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
 import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
+import {
+    artistLink,
+    trackLink,
+    exploreLinkStyles,
+} from '@utils/explore-link';
 import { PlayerController } from '@store/controllers/player-controller';
 import { FavoritesController } from '@store/controllers/favorites-controller';
 import { designTokens } from '../../styles/tokens.css';
@@ -61,7 +66,7 @@ export class NowPlaying extends LitElement {
 
     private resizeObserver?: ResizeObserver;
 
-    static override styles = [designTokens, css`
+    static override styles = [designTokens, exploreLinkStyles, css`
     :host {
       display: block;
       position: relative;
@@ -338,7 +343,7 @@ export class NowPlaying extends LitElement {
               @mouseleave=${this.handleTitleMouseLeave}
               @transitionend=${() => this.onScrollCycleEnd('title')}
             >
-              <span class="scroll-content">${track.title}</span>
+              <span class="scroll-content">${trackLink(track.title, track.album, track.releaseGroupMbid, track.recordingMbid) || track.title}</span>
             </span>
             <span
               class="track-artist ${artistScrolling ? 'will-scroll' : ''} ${this.artistScrolling ? 'scrolling' : ''}"
@@ -346,7 +351,7 @@ export class NowPlaying extends LitElement {
               @mouseleave=${this.handleArtistMouseLeave}
               @transitionend=${() => this.onScrollCycleEnd('artist')}
             >
-              <span class="scroll-content">${track.artist || 'Unknown Artist'}</span>
+              <span class="scroll-content">${artistLink(track.artist, track.artistMbid) || 'Unknown Artist'}</span>
             </span>
           </div>
           ${track.filePath

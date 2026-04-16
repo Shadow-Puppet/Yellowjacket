@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS release_groups (
   year                   INTEGER,
   total_tracks           INTEGER,
   total_discs            INTEGER,
+  mbid                   TEXT,
   FOREIGN KEY(cover_art_id) REFERENCES cover_art(id),
   FOREIGN KEY(album_artist_credit_id) REFERENCES artist_credit(id),
   UNIQUE(name, album_artist_credit_id)

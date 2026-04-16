@@ -26,6 +26,7 @@ type Config struct {
 	ctx       context.Context
 	logger    *slog.Logger
 	filePath  string            // required
+	loaded    bool              // true once Load() succeeds
 	Library   *library.Config   `toml:"Library"`
 	Theme     *theme.Config     `toml:"Theme"`
 	Window    *WindowConfig     `toml:"Window"`
@@ -142,12 +143,22 @@ func (c *Config) Load() error {
 	}
 
 	c.logger.Debug("loaded config file", "file", c.filePath)
+	c.loaded = true
 
 	return nil
 }
 
-// Save writes the config to disk.
+// Save writes the config to disk.  Refuses to write if the config
+// was never successfully loaded — prevents overwriting user config
+// with defaults during abnormal startup/shutdown sequences.
 func (c *Config) Save() error {
+	if !c.loaded {
+		// Allow the initial save when the file doesn't exist yet.
+		if _, err := os.Stat(c.filePath); err == nil {
+			return fmt.Errorf("refusing to save: config not loaded from disk")
+		}
+	}
+
 	if err := c.Validate(); err != nil {
 		return fmt.Errorf("invalid config: %w", err)
 	}

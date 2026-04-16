@@ -12,6 +12,7 @@ import (
 type Artist struct {
 	ID   int64
 	Name string
+	Mbid sql.NullString
 }
 
 type ArtistCredit struct {
@@ -23,6 +24,13 @@ type ArtistCreditArtist struct {
 	ID       int64
 	ArtistID int64
 	CreditID int64
+}
+
+type ArtistMetadatum struct {
+	Mbid      string
+	Source    string
+	Data      []byte
+	FetchedAt time.Time
 }
 
 type AudioFile struct {
@@ -57,6 +65,14 @@ type FileType struct {
 type Genre struct {
 	ID   int64
 	Name string
+}
+
+type HttpCache struct {
+	UrlKey     string
+	Response   []byte
+	ExpiresAt  time.Time
+	EntityMbid string
+	EntityType string
 }
 
 type Library struct {
@@ -129,6 +145,7 @@ type Recording struct {
 	Composer       sql.NullString
 	Lyrics         sql.NullString
 	Comment        sql.NullString
+	Mbid           sql.NullString
 }
 
 type RecordingGenre struct {
@@ -145,6 +162,7 @@ type ReleaseGroup struct {
 	Year                sql.NullInt64
 	TotalTracks         sql.NullInt64
 	TotalDiscs          sql.NullInt64
+	Mbid                sql.NullString
 }
 
 type ReleaseGroupRecording struct {
@@ -183,4 +201,8 @@ type TrackMetadatum struct {
 	LibraryID          int64
 	PlayCount          int64
 	LastPlayed         sql.NullTime
+	CoverArtPath       string
+	ArtistMbid         string
+	ReleaseGroupMbid   string
+	RecordingMbid      string
 }

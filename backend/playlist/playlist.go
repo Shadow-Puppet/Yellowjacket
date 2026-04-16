@@ -56,18 +56,21 @@ type Summary struct {
 // Track represents a track within a playlist, including its
 // metadata.
 type Track struct {
-	ID             int64  `json:"ID"`
-	Position       int64  `json:"Position"`
-	FilePath       string `json:"FilePath"`
-	Title          string `json:"Title"`
-	Artist         string `json:"Artist"`
-	Album          string `json:"Album"`
-	CoverArtPath   string `json:"CoverArtPath"`
-	CoverArtSmall  string `json:"CoverArtSmall"`
-	CoverArtMedium string `json:"CoverArtMedium"`
-	CoverArtLarge  string `json:"CoverArtLarge"`
-	Duration       string `json:"Duration"`
-	Phantom        bool   `json:"Phantom"`
+	ID               int64  `json:"ID"`
+	Position         int64  `json:"Position"`
+	FilePath         string `json:"FilePath"`
+	Title            string `json:"Title"`
+	Artist           string `json:"Artist"`
+	Album            string `json:"Album"`
+	CoverArtPath     string `json:"CoverArtPath"`
+	CoverArtSmall    string `json:"CoverArtSmall"`
+	CoverArtMedium   string `json:"CoverArtMedium"`
+	CoverArtLarge    string `json:"CoverArtLarge"`
+	Duration         string `json:"Duration"`
+	Phantom          bool   `json:"Phantom"`
+	ArtistMBID       string `json:"ArtistMBID"`
+	ReleaseGroupMBID string `json:"ReleaseGroupMBID"`
+	RecordingMBID    string `json:"RecordingMBID"`
 }
 
 // WithTracks contains a playlist summary and all its tracks.
@@ -242,6 +245,9 @@ func (s *Service) GetAllPlaylistsWithTracks() (
 			row.Album,
 			row.LengthMilliseconds,
 			row.CoverArtPath,
+			row.ArtistMbid,
+			row.ReleaseGroupMbid,
+			row.RecordingMbid,
 		)
 
 		if dbTracksByPlaylist[row.PlaylistID] == nil {
@@ -312,6 +318,9 @@ func (s *Service) GetPlaylistTracks(
 			row.Album,
 			row.LengthMilliseconds,
 			row.CoverArtPath,
+			row.ArtistMbid,
+			row.ReleaseGroupMbid,
+			row.RecordingMbid,
 		)
 
 		dbTracks[row.FilePath] = track
@@ -429,15 +438,19 @@ func trackFromRow(
 	filePath, title, artist, album string,
 	lengthMilliseconds int64,
 	coverArtPath string,
+	artistMBID, releaseGroupMBID, recordingMBID string,
 ) Track {
 	track := Track{
-		ID:       id,
-		Position: position,
-		FilePath: filePath,
-		Title:    title,
-		Artist:   artist,
-		Album:    album,
-		Duration: strconv.FormatInt(lengthMilliseconds, 10),
+		ID:               id,
+		Position:         position,
+		FilePath:         filePath,
+		Title:            title,
+		Artist:           artist,
+		Album:            album,
+		Duration:         strconv.FormatInt(lengthMilliseconds, 10),
+		ArtistMBID:       artistMBID,
+		ReleaseGroupMBID: releaseGroupMBID,
+		RecordingMBID:    recordingMBID,
 	}
 
 	if coverArtPath != "" {
@@ -1496,6 +1509,165 @@ func (s *Service) migrateExistingPlaylists() {
 			"Migrated existing playlists to M3U8 files",
 			"count", migrated,
 		)
+	}
+}
+
+// =================================================================
+// Playlist repopulation from M3U8
+// =================================================================
+
+// RepopulateFromM3U re-imports tracks for playlists that have zero
+// playlist_tracks rows but still have a corresponding M3U8 file.
+// This recovers from a FullRescan that deleted playlist tracks
+// before the ON DELETE SET NULL fix was in place.  Each M3U8 entry
+// is resolved against the audio_files table; unresolved entries
+// become phantom tracks with metadata preserved from the M3U8.
+func (s *Service) RepopulateFromM3U() {
+	dir, err := s.playlistsDir()
+	if err != nil {
+		s.logger.Warn(
+			"could not get playlists dir for repopulation",
+			"err", err,
+		)
+		return
+	}
+
+	// Get all playlists.
+	playlists, err := s.db.Queries.GetAllPlaylists(s.db.Ctx)
+	if err != nil {
+		s.logger.Warn("could not get playlists for repopulation", "err", err)
+		return
+	}
+
+	libraryRoots := s.getAllLibraryRoots()
+
+	// Build audio file path→ID map for resolution.
+	afRows, err := s.db.QueryContext(
+		`SELECT id, file_path FROM audio_files`,
+	)
+	if err != nil {
+		s.logger.Warn("could not query audio files for repopulation", "err", err)
+		return
+	}
+
+	audioFileByPath := make(map[string]int64)
+	for afRows.Next() {
+		var id int64
+		var fp string
+		if err := afRows.Scan(&id, &fp); err != nil {
+			continue
+		}
+		audioFileByPath[fp] = id
+	}
+	_ = afRows.Close()
+
+	knownPaths := make(map[string]struct{}, len(audioFileByPath))
+	for k := range audioFileByPath {
+		knownPaths[k] = struct{}{}
+	}
+
+	var totalRepopulated int
+
+	for _, pl := range playlists {
+		// Only repopulate playlists with zero tracks.
+		countRows, err := s.db.QueryContext(
+			`SELECT COUNT(*) FROM playlist_tracks WHERE playlist_id = ?`,
+			pl.ID,
+		)
+		if err != nil {
+			continue
+		}
+		var count int
+		if countRows.Next() {
+			_ = countRows.Scan(&count)
+		}
+		_ = countRows.Close()
+		if count > 0 {
+			continue
+		}
+
+		m3uPath, err := findPlaylistFile(dir, pl.ID)
+		if err != nil || m3uPath == "" {
+			continue
+		}
+
+		parsed, err := parseM3U8(m3uPath)
+		if err != nil {
+			s.logger.Warn(
+				"could not parse M3U8 for repopulation",
+				"playlistId", pl.ID,
+				"path", m3uPath,
+				"err", err,
+			)
+			continue
+		}
+
+		var resolved, phantom int
+
+		for i, entry := range parsed.Entries {
+			absPath := resolveM3UPath(
+				entry.RelativePath, libraryRoots, knownPaths,
+			)
+
+			audioFileID, exists := audioFileByPath[absPath]
+
+			if exists {
+				// Linked track.
+				_, addErr := s.db.ExecContext(
+					`INSERT INTO playlist_tracks
+						(playlist_id, audio_file_id, position)
+					VALUES (?, ?, ?)`,
+					pl.ID, audioFileID, i,
+				)
+				if addErr != nil {
+					s.logger.Warn(
+						"could not add repopulated track",
+						"playlistId", pl.ID,
+						"position", i,
+						"err", addErr,
+					)
+					continue
+				}
+				resolved++
+			} else {
+				// Phantom track — preserve what we have from M3U8.
+				_, addErr := s.db.ExecContext(
+					`INSERT INTO playlist_tracks
+						(playlist_id, position, phantom_title, phantom_file_path)
+					VALUES (?, ?, ?, ?)`,
+					pl.ID, i, entry.DisplayTitle, absPath,
+				)
+				if addErr != nil {
+					s.logger.Warn(
+						"could not add phantom repopulated track",
+						"playlistId", pl.ID,
+						"position", i,
+						"err", addErr,
+					)
+					continue
+				}
+				phantom++
+			}
+		}
+
+		if resolved+phantom > 0 {
+			totalRepopulated += resolved + phantom
+			s.logger.Info(
+				"repopulated playlist from M3U8",
+				"playlistId", pl.ID,
+				"name", pl.Name,
+				"resolved", resolved,
+				"phantom", phantom,
+			)
+		}
+	}
+
+	if totalRepopulated > 0 {
+		s.logger.Info(
+			"playlist repopulation complete",
+			"totalTracks", totalRepopulated,
+		)
+		s.emitEvent(events.PlaylistTracksChanged, nil)
 	}
 }
 

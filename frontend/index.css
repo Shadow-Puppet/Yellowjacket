@@ -40,6 +40,68 @@ p {
     flex: 0 1 320px;
 }
 
+.mode-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.mode-toggle-track {
+    position: relative;
+    width: 36px;
+    height: 20px;
+    border-radius: 10px;
+    background: var(--yj-bg-overlay, rgba(255, 255, 255, 0.15));
+    transition: background 0.2s ease;
+}
+
+.mode-toggle:hover .mode-toggle-track {
+    background: rgba(255, 255, 255, 0.22);
+}
+
+.mode-toggle-thumb {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--yj-text-primary, #fff);
+    transition: left 0.2s ease, background 0.2s ease;
+}
+
+.mode-toggle.active .mode-toggle-track {
+    background: var(--yj-accent, #ffd43b);
+}
+
+.mode-toggle.active .mode-toggle-thumb {
+    left: 18px;
+    background: #000;
+}
+
+.mode-icon {
+    font-size: 14px;
+    transition: color 0.2s ease, opacity 0.2s ease;
+}
+
+.mode-icon-globe {
+    color: var(--yj-text-primary, #fff);
+}
+
+.mode-icon-local {
+    color: var(--yj-text-secondary, #888);
+}
+
+.mode-toggle.active .mode-icon-globe {
+    color: var(--yj-text-secondary, #888);
+}
+
+.mode-toggle.active .mode-icon-local {
+    color: var(--yj-accent, #ffd43b);
+}
+
 ul {
     list-style-type: none;
 }
@@ -142,14 +204,17 @@ body div.sidebar {
 .main-panel {
     flex: 1;
     min-width: 0;
-    padding: 0.25em;
+    display: flex;
+    flex-direction: column;
     background-color: var(--yj-bg-surface, #212529);
     overflow: hidden;
     contain: layout style paint;
 }
 
 .main-panel > * {
-    height: 100%;
+    flex: 1;
+    min-height: 0;
+    box-sizing: border-box;
     contain: layout style paint;
 }
 
@@ -158,7 +223,13 @@ body div.sidebar {
    display:none discards scroll state in WebKitGTK. */
 .main-panel > .view-hidden {
     visibility: hidden !important;
+    flex: 0 0 0px !important;
+    min-height: 0 !important;
+    max-height: 0 !important;
     height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: none !important;
     overflow: hidden !important;
     pointer-events: none !important;
     contain: strict !important;

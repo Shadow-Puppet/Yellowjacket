@@ -86,6 +86,10 @@ export function GetScanQueueLength() {
   return window['go']['library']['Library']['GetScanQueueLength']();
 }
 
+export function GetTrackMBIDs(arg1) {
+  return window['go']['library']['Library']['GetTrackMBIDs'](arg1);
+}
+
 export function GetTracksByGenre(arg1) {
   return window['go']['library']['Library']['GetTracksByGenre'](arg1);
 }

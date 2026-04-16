@@ -46,6 +46,8 @@ export function GetRemovalImpact(arg1:number):Promise<library.RemovalImpact>;
 
 export function GetScanQueueLength():Promise<number>;
 
+export function GetTrackMBIDs(arg1:string):Promise<library.TrackMBIDs>;
+
 export function GetTracksByGenre(arg1:string):Promise<Array<library.Track>>;
 
 export function GetTracksByGenreByLibrary(arg1:string,arg2:number):Promise<Array<library.Track>>;

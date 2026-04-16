@@ -18,6 +18,8 @@ import {
     BatchWriteTrackTags,
     CancelBatchWrite,
 } from '@go/tagwriter/TagWriter';
+import { GetTrackMBIDs } from '@go/library/Library';
+import type { TrackMBIDs } from '@go/library/Library';
 import { ImageFilePicker, ReadFile } from '@go/frontendutil/FrontendUtil';
 import { libraryStore } from '../../store/library-store';
 import { EventsOn, EventsOff } from '@runtime/runtime';
@@ -98,6 +100,7 @@ export class TrackDetails extends LitElement {
         failures: Array<{ filePath: string; error: string }>;
     } | null = null;
     @state() private showConfirmation = false;
+    @state() private trackMBIDs: TrackMBIDs | null = null;
 
     @query('wa-dialog')
     private dialog!: HTMLElement & { open: boolean };
@@ -117,8 +120,12 @@ export class TrackDetails extends LitElement {
         this.editing = false;
         this.editValues = {};
         this.errorMessage = '';
+        this.trackMBIDs = null;
         this.cleanupPendingCoverArt();
         this.resetBatchState();
+
+        // Load MBIDs asynchronously.
+        this.loadMBIDs(track.FilePath);
 
         this.updateComplete.then(() => {
             if (this.dialog) this.dialog.open = true;
@@ -314,6 +321,39 @@ export class TrackDetails extends LitElement {
         .meta-value.empty {
             color: var(--yj-text-tertiary, #888);
             font-style: italic;
+        }
+
+        /* MusicBrainz badge + links */
+        .mb-verified-badge {
+            color: #1db954;
+            font-size: 14px;
+            margin-left: 6px;
+            vertical-align: middle;
+            cursor: help;
+        }
+
+        .mb-section-header {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .mb-icon {
+            color: #1db954;
+            font-size: 14px;
+        }
+
+        .mb-link {
+            font-size: var(--yj-text-xs);
+            color: var(--yj-text-secondary, #b3b3b3);
+            text-decoration: none;
+            word-break: break-all;
+            font-family: monospace;
+        }
+
+        .mb-link:hover {
+            color: #1db954;
+            text-decoration: underline;
         }
 
         /* Edit mode inputs */
@@ -725,6 +765,7 @@ export class TrackDetails extends LitElement {
             <div class="metadata-grid">
                 ${this.renderAudioProperties(t)}
             </div>
+            ${this.renderMusicBrainzSection()}
             <div class="action-bar">
                 ${this.renderActions()}
             </div>
@@ -1297,6 +1338,14 @@ export class TrackDetails extends LitElement {
                 <label class="main-field-label">Title</label>
                 <span class="title">
                     ${t.TrackName || this.fileNameFromPath(t.FilePath)}
+                    ${this.trackMBIDs?.recordingMbid
+                        ? html`<span
+                              class="mb-verified-badge"
+                              title="Metadata verified by MusicBrainz"
+                          >
+                              <wa-icon name="circle-check"></wa-icon>
+                          </span>`
+                        : nothing}
                 </span>
             </div>
             <div class="main-field-group">
@@ -1418,6 +1467,61 @@ export class TrackDetails extends LitElement {
                 </span>
             `,
         );
+    }
+
+    private renderMusicBrainzSection() {
+        if (!this.trackMBIDs) return nothing;
+
+        const mbids = this.trackMBIDs;
+        const links: Array<{ label: string; mbid: string; type: string }> = [];
+
+        if (mbids.recordingMbid) {
+            links.push({
+                label: 'Recording',
+                mbid: mbids.recordingMbid,
+                type: 'recording',
+            });
+        }
+
+        if (mbids.releaseGroupMbid) {
+            links.push({
+                label: 'Release Group',
+                mbid: mbids.releaseGroupMbid,
+                type: 'release-group',
+            });
+        }
+
+        if (mbids.artistMbid) {
+            links.push({
+                label: 'Artist',
+                mbid: mbids.artistMbid,
+                type: 'artist',
+            });
+        }
+
+        if (links.length === 0) return nothing;
+
+        return html`
+            <div class="section-header mb-section-header">
+                <wa-icon name="circle-check" class="mb-icon"></wa-icon>
+                MusicBrainz
+            </div>
+            <div class="metadata-grid">
+                ${links.map(
+                    (l) => html`
+                        <span class="meta-label">${l.label}</span>
+                        <a
+                            class="mb-link"
+                            href="https://musicbrainz.org/${l.type}/${l.mbid}"
+                            target="_blank"
+                            title="View on MusicBrainz"
+                        >
+                            ${l.mbid}
+                        </a>
+                    `,
+                )}
+            </div>
+        `;
     }
 
     private renderField(f: MetadataField) {
@@ -1554,18 +1658,13 @@ export class TrackDetails extends LitElement {
             if (updated) {
                 this.track = updated;
 
-                // Re-resolve cover art from the refreshed
-                // album data (URLs change on new content hash).
-                const album = albums.find(
-                    (a) => a.Name === updated.Album,
-                );
-
-                if (album?.CoverArtPath) {
+                // Re-resolve cover art from the refreshed track data.
+                if (updated.CoverArtPath) {
                     this.coverArt = {
-                        coverArtPath: album.CoverArtPath,
-                        coverArtSmall: album.CoverArtSmall,
-                        coverArtMedium: album.CoverArtMedium,
-                        coverArtLarge: album.CoverArtLarge,
+                        coverArtPath: updated.CoverArtPath,
+                        coverArtSmall: updated.CoverArtSmall,
+                        coverArtMedium: updated.CoverArtMedium,
+                        coverArtLarge: updated.CoverArtLarge,
                     };
                 } else {
                     this.coverArt = null;
@@ -1691,31 +1790,23 @@ export class TrackDetails extends LitElement {
         this.batchTracks = refreshed;
 
         // Re-resolve cover art state.
-        const albumNames = new Set(
-            refreshed.map((t) => t.Album),
-        );
+        const first = refreshed[0];
+        const albumNames = new Set(refreshed.map((t) => t.Album));
 
-        if (albumNames.size === 1) {
-            const albumName = [...albumNames][0]!;
-            const album = albums.find(
-                (a) => a.Name === albumName,
-            );
-
-            if (album?.CoverArtPath) {
-                this.coverArt = {
-                    coverArtPath: album.CoverArtPath,
-                    coverArtSmall: album.CoverArtSmall,
-                    coverArtMedium: album.CoverArtMedium,
-                    coverArtLarge: album.CoverArtLarge,
-                };
-                this.batchCoverArtMixed = false;
-            } else {
-                this.coverArt = null;
-                this.batchCoverArtMixed = false;
-            }
+        if (albumNames.size === 1 && first?.CoverArtPath) {
+            this.coverArt = {
+                coverArtPath: first.CoverArtPath,
+                coverArtSmall: first.CoverArtSmall,
+                coverArtMedium: first.CoverArtMedium,
+                coverArtLarge: first.CoverArtLarge,
+            };
+            this.batchCoverArtMixed = false;
+        } else if (albumNames.size > 1) {
+            this.coverArt = null;
+            this.batchCoverArtMixed = true;
         } else {
             this.coverArt = null;
-            this.batchCoverArtMixed = albumNames.size > 1;
+            this.batchCoverArtMixed = false;
         }
     };
 
@@ -1883,6 +1974,18 @@ export class TrackDetails extends LitElement {
         this.errorMessage = '';
         this.showConfirmation = false;
         this.cleanupPendingCoverArt();
+    }
+
+    private async loadMBIDs(filePath: string): Promise<void> {
+        try {
+            const mbids = await GetTrackMBIDs(filePath);
+
+            if (mbids.recordingMbid || mbids.releaseGroupMbid || mbids.artistMbid) {
+                this.trackMBIDs = mbids;
+            }
+        } catch {
+            // Non-critical — MBIDs just won't show.
+        }
     }
 
     private cleanupPendingCoverArt(): void {

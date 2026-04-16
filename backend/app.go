@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"path/filepath"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
@@ -15,6 +17,7 @@ import (
 	"yellowjacket/backend/config"
 	"yellowjacket/backend/coverart"
 	"yellowjacket/backend/database"
+	"yellowjacket/backend/explore"
 	"yellowjacket/backend/frontendutil"
 	"yellowjacket/backend/library"
 	"yellowjacket/backend/mediacontrols"
@@ -22,6 +25,7 @@ import (
 	"yellowjacket/backend/playlist"
 	"yellowjacket/backend/profiling"
 	"yellowjacket/backend/queue"
+	"yellowjacket/backend/system"
 	"yellowjacket/backend/tagwriter"
 )
 
@@ -37,6 +41,7 @@ type YellowJacketApp struct {
 	player        *player.Player
 	playlist      *playlist.Service
 	queue         *queue.Queue
+	explore       *explore.Service
 	mediaControls mediacontrols.Handler
 	tagWriter     *tagwriter.TagWriter
 	appContext    context.Context
@@ -102,6 +107,17 @@ func NewYellowJacketApp(
 
 	yjApp.assetHandler.RegisterHandler(coverart.PathPrefix, coverHandler)
 
+	// Register artist image handler for serving cached artist photos.
+	artistImgDir, err := system.GetUserDataDirPath()
+	if err == nil {
+		artistImgHandler := http.StripPrefix(
+			"/artist-images/",
+			http.FileServer(http.Dir(filepath.Join(artistImgDir, "artist-images"))),
+		)
+
+		yjApp.assetHandler.RegisterHandler("/artist-images/", artistImgHandler)
+	}
+
 	// create playlist service
 	yjApp.playlist = playlist.NewService(
 		yjApp.logger, yjApp.database, yjApp.appConfig,
@@ -125,6 +141,11 @@ func NewYellowJacketApp(
 		yjApp.library,
 	)
 
+	// create explore service
+	yjApp.explore = explore.NewExploreService(
+		yjApp.logger.WithGroup("explore"), yjApp.database,
+	)
+
 	yjApp.FEBindings = []any{
 		yjApp.FrontendUtil,
 		yjApp.appConfig,
@@ -133,6 +154,7 @@ func NewYellowJacketApp(
 		yjApp.queue,
 		yjApp.player,
 		yjApp.tagWriter,
+		yjApp.explore,
 	}
 
 	return yjApp, nil
@@ -167,6 +189,8 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 	yj.library.SetContext(ctx)
 	yj.playlist.SetContext(ctx)
 	yj.playlist.EnsureDefaultPlaylist()
+	// Recover playlists that lost tracks from a pre-fix FullRescan.
+	go yj.playlist.RepopulateFromM3U()
 
 	// Initialize speaker hardware (player struct created in
 	// NewYellowJacketApp for Wails binding registration).
@@ -179,6 +203,7 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 
 	yj.player.SetContext(ctx)
 	yj.tagWriter.SetContext(ctx)
+	yj.explore.SetContext(ctx)
 
 	// Wire queue (created in NewYellowJacketApp for Wails binding)
 	yj.queue.SetContext(ctx)
@@ -189,14 +214,41 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 	// orchestrate queue clearing and playlist restoration
 	// without depending on those packages directly.
 	yj.library.SetRescanHooks(library.RescanHooks{
-		PreClear: yj.queue.Clear,
-		PostScan: yj.playlist.RestoreAllPlaylists,
+		PreClear: func() {
+			yj.queue.Clear()
+			// Stop the search index build so it doesn't fight
+			// with the rescan for DB access.
+			yj.explore.StopIndexBuild()
+		},
+		PostScan: func() {
+			yj.playlist.RestoreAllPlaylists()
+			// DON'T restart the index build here — queued
+			// library scans may still be running.  The index
+			// build starts after ALL scans complete (via the
+			// scan hooks below).
+		},
 	})
 
 	// Wire scan hooks so the playlist service can resolve
 	// phantom tracks after each library scan completes.
 	yj.library.SetScanHooks(library.ScanHooks{
-		ResolvePhantoms: yj.playlist.ResolvePhantomTracksAfterScan,
+		RepopulatePlaylists: yj.playlist.RepopulateFromM3U,
+		ResolvePhantoms:     yj.playlist.ResolvePhantomTracksAfterScan,
+		OnAllScansComplete: func() {
+			// Index new library artists (blocks until done).
+			yj.explore.IndexNewArtists()
+			yj.explore.WaitForIndexIdle()
+
+			// Populate local_*_id cross-reference columns on
+			// explore_index so "is this in my library?" is O(1).
+			yj.explore.PopulateLocalCrossReferences()
+
+			// Always start the full build — it's incremental and
+			// will skip tiers that are already fresh.  This ensures
+			// sitewide + similar artist tiers run even if the index
+			// already has library data.
+			yj.explore.StartIndexBuild()
+		},
 	})
 
 	// Wire removal hooks so the library can stop playback and
@@ -262,6 +314,13 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 func (yj *YellowJacketApp) OnBeforeClose(ctx context.Context) bool {
 	w, h := wailsruntime.WindowGetSize(ctx)
 
+	yj.logger.Info("OnBeforeClose: saving window state",
+		"width", w,
+		"height", h,
+		"accentColor", yj.appConfig.Theme.AccentColor,
+		"backgroundShade", yj.appConfig.Theme.BackgroundShade,
+	)
+
 	yj.appConfig.Window.Width = w
 	yj.appConfig.Window.Height = h
 
@@ -309,6 +368,13 @@ func (yj *YellowJacketApp) OnDomReady(ctx context.Context) {
 	go func() {
 		if err := yj.library.SoftScanAllLibraries(); err != nil {
 			yj.logger.Error("soft scan failed", "err", err)
+		}
+
+		// If no scans were queued (library unchanged), start the
+		// index build directly.  If scans WERE queued, the
+		// OnAllScansComplete hook starts it after they finish.
+		if yj.library.GetScanQueueLength() == 0 && !yj.library.IsScanActive() {
+			yj.explore.StartIndexBuild()
 		}
 	}()
 }

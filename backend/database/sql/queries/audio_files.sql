@@ -62,10 +62,15 @@ SELECT
     COALESCE(r.name, '') AS title,
     COALESCE(ac.text, '') AS artist,
     COALESCE(rg.name, '') AS album,
-    COALESCE(ca.file_path, '') AS cover_art_path
+    COALESCE(ca.file_path, '') AS cover_art_path,
+    COALESCE(a.mbid, '') AS artist_mbid,
+    COALESCE(rg.mbid, '') AS release_group_mbid,
+    COALESCE(r.mbid, '') AS recording_mbid
 FROM audio_files af
 LEFT JOIN recordings r ON af.recording_id = r.id
 LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
+LEFT JOIN artist_credit_artist aca ON aca.credit_id = ac.id
+LEFT JOIN artists a ON a.id = aca.artist_id
 LEFT JOIN release_group_recordings rgr ON r.id = rgr.recording_id
 LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
 LEFT JOIN cover_art ca ON rg.cover_art_id = ca.id
@@ -97,12 +102,19 @@ SELECT
     af.bitrate,
     af.file_size,
     af.play_count,
-    af.last_played
+    af.last_played,
+    COALESCE(ca.file_path, '') AS cover_art_path,
+    COALESCE(a.mbid, '') AS artist_mbid,
+    COALESCE(rg.mbid, '') AS release_group_mbid,
+    COALESCE(r.mbid, '') AS recording_mbid
 FROM audio_files af
 JOIN recordings r ON af.recording_id = r.id
 JOIN artist_credit ac ON r.artist_credit_id = ac.id
+LEFT JOIN artist_credit_artist aca ON aca.credit_id = ac.id
+LEFT JOIN artists a ON a.id = aca.artist_id
 LEFT JOIN release_group_recordings rgr ON r.id = rgr.recording_id
 LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
+LEFT JOIN cover_art ca ON rg.cover_art_id = ca.id
 LEFT JOIN file_types ft ON af.file_type_id = ft.id;
 
 -- name: SearchAudioFilesByBasename :many
@@ -125,7 +137,7 @@ WHERE af.basename = ?
 LIMIT ?;
 
 -- name: LookupTrackMetaByPaths :many
-SELECT id, file_path, title, artist_name
+SELECT id, file_path, title, artist_name, album, cover_art_path, artist_mbid, release_group_mbid, recording_mbid
 FROM track_metadata
 WHERE file_path IN (sqlc.slice('paths'));
 
@@ -163,12 +175,19 @@ SELECT
     af.bitrate,
     af.file_size,
     af.play_count,
-    af.last_played
+    af.last_played,
+    COALESCE(ca.file_path, '') AS cover_art_path,
+    COALESCE(a.mbid, '') AS artist_mbid,
+    COALESCE(rg.mbid, '') AS release_group_mbid,
+    COALESCE(r.mbid, '') AS recording_mbid
 FROM audio_files af
 JOIN recordings r ON af.recording_id = r.id
 JOIN artist_credit ac ON r.artist_credit_id = ac.id
+LEFT JOIN artist_credit_artist aca ON aca.credit_id = ac.id
+LEFT JOIN artists a ON a.id = aca.artist_id
 LEFT JOIN release_group_recordings rgr ON r.id = rgr.recording_id
 LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
+LEFT JOIN cover_art ca ON rg.cover_art_id = ca.id
 LEFT JOIN file_types ft ON af.file_type_id = ft.id
 WHERE af.library_id = ?;
 
@@ -195,11 +214,16 @@ SELECT
     af.bit_depth,
     af.channels,
     af.bitrate,
-    af.file_size
+    af.file_size,
+    COALESCE(a.mbid, '') AS artist_mbid,
+    COALESCE(rg.mbid, '') AS release_group_mbid,
+    COALESCE(r.mbid, '') AS recording_mbid
 FROM release_group_recordings rgr
 JOIN recordings r ON rgr.recording_id = r.id
 JOIN audio_files af ON af.recording_id = r.id
 LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
+LEFT JOIN artist_credit_artist aca ON aca.credit_id = ac.id
+LEFT JOIN artists a ON a.id = aca.artist_id
 LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
 LEFT JOIN file_types ft ON af.file_type_id = ft.id
 WHERE rgr.release_group_id = ?
@@ -228,11 +252,16 @@ SELECT
     af.bit_depth,
     af.channels,
     af.bitrate,
-    af.file_size
+    af.file_size,
+    COALESCE(a.mbid, '') AS artist_mbid,
+    COALESCE(rg.mbid, '') AS release_group_mbid,
+    COALESCE(r.mbid, '') AS recording_mbid
 FROM release_group_recordings rgr
 JOIN recordings r ON rgr.recording_id = r.id
 JOIN audio_files af ON af.recording_id = r.id
 LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
+LEFT JOIN artist_credit_artist aca ON aca.credit_id = ac.id
+LEFT JOIN artists a ON a.id = aca.artist_id
 LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
 LEFT JOIN file_types ft ON af.file_type_id = ft.id
 WHERE rgr.release_group_id = ? AND af.library_id = ?

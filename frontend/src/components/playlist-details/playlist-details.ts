@@ -52,6 +52,12 @@ import type { PhantomResolver } from '@components/phantom-resolver/phantom-resol
 import '@components/duplicate-tracks-dialog/duplicate-tracks-dialog.js';
 import type { DuplicateTracksDialog } from '@components/duplicate-tracks-dialog/duplicate-tracks-dialog.js';
 import { formatMilliseconds } from '@utils/time';
+import {
+    artistLink,
+    albumLink,
+    trackLink,
+    exploreLinkStyles,
+} from '@utils/explore-link';
 import { designTokens } from '../../styles/tokens.css';
 
 @customElement('playlist-details')
@@ -441,12 +447,18 @@ export class PlaylistDetails
 
         if (!track) return;
 
-        const coverArt =
-            this.resolvePlaylistCoverArt(track.Album);
+        const coverArt = track.CoverArtPath
+            ? {
+                coverArtPath: track.CoverArtPath,
+                coverArtSmall: track.CoverArtSmall,
+                coverArtMedium: track.CoverArtMedium,
+                coverArtLarge: track.CoverArtLarge,
+            }
+            : undefined;
 
         this.trackDetailsDialog?.show(
             track,
-            coverArt ?? undefined,
+            coverArt,
         );
     }
 
@@ -471,19 +483,19 @@ export class PlaylistDetails
 
         if (tracks.length === 0) return;
 
-        const albumNames = new Set(
-            tracks.map((t) => t.Album),
-        );
+        const first = tracks[0]!;
+        const albumNames = new Set(tracks.map((t) => t.Album));
         let coverArt: CoverArtUrls | null = null;
         let coverArtMixed = false;
 
-        if (albumNames.size === 1) {
-            const albumName = [...albumNames][0]!;
-            coverArt =
-                this.resolvePlaylistCoverArt(
-                    albumName,
-                );
-        } else {
+        if (albumNames.size === 1 && first.CoverArtPath) {
+            coverArt = {
+                coverArtPath: first.CoverArtPath,
+                coverArtSmall: first.CoverArtSmall,
+                coverArtMedium: first.CoverArtMedium,
+                coverArtLarge: first.CoverArtLarge,
+            };
+        } else if (albumNames.size > 1) {
             coverArtMixed = true;
         }
 
@@ -492,31 +504,6 @@ export class PlaylistDetails
             coverArt,
             coverArtMixed,
         );
-    }
-
-    private resolvePlaylistCoverArt(
-        albumName: string,
-    ): CoverArtUrls | null {
-        if (!albumName) return null;
-
-        const albums = libraryStore.getCachedAlbums();
-
-        if (!albums) return null;
-
-        const album = albums.find(
-            (a) => a.Name === albumName,
-        );
-
-        if (!album || !album.CoverArtPath) {
-            return null;
-        }
-
-        return {
-            coverArtPath: album.CoverArtPath,
-            coverArtSmall: album.CoverArtSmall,
-            coverArtMedium: album.CoverArtMedium,
-            coverArtLarge: album.CoverArtLarge,
-        };
     }
 
     /**
@@ -799,6 +786,7 @@ export class PlaylistDetails
     static override styles = [
         designTokens,
         contextMenuStyles,
+        exploreLinkStyles,
         css`
         :host {
             display: flex;
@@ -977,7 +965,7 @@ export class PlaylistDetails
         .track-header,
         .track-item {
             display: grid;
-            grid-template-columns: 40px 1fr 1fr 1fr 80px;
+            grid-template-columns: 40px 36px 1fr 1fr 1fr 80px;
             align-items: center;
             gap: 0;
         }
@@ -991,6 +979,22 @@ export class PlaylistDetails
             letter-spacing: 0.03em;
             border-bottom: 1px solid var(--yj-text-tertiary, #666);
             user-select: none;
+        }
+
+        .track-art {
+            width: 32px;
+            height: 32px;
+            border-radius: 4px;
+            overflow: hidden;
+            flex-shrink: 0;
+            background: var(--yj-bg-overlay, rgba(255, 255, 255, 0.06));
+        }
+
+        .track-art img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
         }
 
         .header-cell,
@@ -1017,7 +1021,7 @@ export class PlaylistDetails
         /* Phantom rows span full grid */
         .track-item.phantom {
             display: grid;
-            grid-template-columns: 40px 1fr 1fr 1fr 80px;
+            grid-template-columns: 40px 36px 1fr 1fr 1fr 80px;
         }
 
         .track-item {
@@ -1252,6 +1256,7 @@ export class PlaylistDetails
             </div>
             <div class="track-header">
                 <div class="header-cell col-number">#</div>
+                <div class="header-cell col-art"></div>
                 <div class="header-cell col-title">Title</div>
                 <div class="header-cell col-artist">Artist</div>
                 <div class="header-cell col-album">Album</div>
@@ -1376,9 +1381,14 @@ export class PlaylistDetails
                                       </div>
                                   </div>`
                                 : html`<span class="cell col-number">${trackIndex + 1}</span>
-                                  <span class="cell col-title" title="${track.Title || track.FilePath}">${track.Title || track.FilePath}</span>
-                                  <span class="cell col-artist" title="${track.Artist}">${track.Artist}</span>
-                                  <span class="cell col-album" title="${track.Album}">${track.Album}</span>
+                                  <div class="track-art">
+                                      ${track.CoverArtSmall || track.CoverArtMedium
+                                          ? html`<img src="${track.CoverArtSmall || track.CoverArtMedium}" alt="" />`
+                                          : nothing}
+                                  </div>
+                                  <span class="cell col-title" title="${track.Title || track.FilePath}">${trackLink(track.Title, track.Album, track.ReleaseGroupMBID, track.RecordingMBID) || track.FilePath}</span>
+                                  <span class="cell col-artist" title="${track.Artist}">${artistLink(track.Artist, track.ArtistMBID)}</span>
+                                  <span class="cell col-album" title="${track.Album}">${albumLink(track.Album, track.ReleaseGroupMBID)}</span>
                                   <span class="cell col-duration">${formatMilliseconds(track.Duration)}</span>`}
                         </div>
                     `;

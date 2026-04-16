@@ -6,6 +6,7 @@ import {
 } from 'lit/decorators.js';
 import { library } from '@go/models';
 import { LibraryController } from '@store/controllers/library-controller';
+import { GetArtistImageURL, GetArtistMBID } from '@go/explore/Service';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@components/cover-grid/cover-grid.js';
 import { designTokens } from '../../styles/tokens.css';
@@ -18,11 +19,17 @@ export class ArtistDetails extends LitElement {
     @property({ type: String, attribute: 'artist-name' })
     artistName = '';
 
+    @property({ type: String, attribute: 'artist-mbid' })
+    artistMBID = '';
+
     @state()
     private albums: library.Album[] = [];
 
     @state()
     private loading = true;
+
+    @state()
+    private artistImageURL = '';
 
     private libraryCtrl = new LibraryController(this);
 
@@ -35,6 +42,7 @@ export class ArtistDetails extends LitElement {
             flex-direction: column;
             overflow: hidden;
             height: 100%;
+            box-sizing: border-box;
         }
 
         /* ====================================
@@ -99,6 +107,12 @@ export class ArtistDetails extends LitElement {
             flex-shrink: 0;
         }
 
+        .artist-avatar img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
         .artist-avatar .initial {
             color: var(
                 --yj-text-secondary,
@@ -156,6 +170,7 @@ export class ArtistDetails extends LitElement {
     override connectedCallback() {
         super.connectedCallback();
         this.loadAlbums();
+        this.loadArtistImage();
     }
 
     override updated() {
@@ -173,6 +188,31 @@ export class ArtistDetails extends LitElement {
     /* ================================================================
      * Data loading
      * ================================================================ */
+
+    private async loadArtistImage() {
+        // Resolve MBID from tags if not provided via attribute.
+        let mbid = this.artistMBID;
+
+        if (!mbid && this.artistName) {
+            try {
+                mbid = await GetArtistMBID(this.artistName);
+            } catch {
+                return;
+            }
+        }
+
+        if (!mbid) return;
+
+        try {
+            const url = await GetArtistImageURL(mbid);
+
+            if (url) {
+                this.artistImageURL = url;
+            }
+        } catch {
+            // No image — avatar stays as initial letter.
+        }
+    }
 
     private async loadAlbums() {
         if (!this.artistId) return;
@@ -293,11 +333,14 @@ export class ArtistDetails extends LitElement {
                     ></wa-icon>
                 </button>
                 <div class="artist-avatar">
-                    <span class="initial">
-                        ${this.getInitial(
-                            this.artistName,
-                        )}
-                    </span>
+                    ${this.artistImageURL
+                        ? html`<img
+                              src="${this.artistImageURL}"
+                              alt="${this.artistName}"
+                          />`
+                        : html`<span class="initial">
+                              ${this.getInitial(this.artistName)}
+                          </span>`}
                 </div>
                 <div class="artist-info">
                     <h1

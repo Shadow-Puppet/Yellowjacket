@@ -73,3 +73,8 @@ const (
 	TrackMetadataChanged = "TrackMetadataChanged"
 	BatchWriteProgress   = "BatchWriteProgress"
 )
+
+// Explore / search index events.
+const (
+	IndexStatusChanged = "IndexStatusChanged"
+)

@@ -51,6 +51,9 @@ export const Events = {
     // Tag writing events
     TrackMetadataChanged: "TrackMetadataChanged",
     BatchWriteProgress: "BatchWriteProgress",
+
+    // Explore / search index events
+    IndexStatusChanged: "IndexStatusChanged",
 } as const;
 
 export type EventName = (typeof Events)[keyof typeof Events];

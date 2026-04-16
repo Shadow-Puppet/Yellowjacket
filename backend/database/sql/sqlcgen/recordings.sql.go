@@ -23,7 +23,7 @@ func (q *Queries) CountRecordingsByArtistCredit(ctx context.Context, artistCredi
 
 const createRecording = `-- name: CreateRecording :one
 INSERT INTO recordings (name, artist_credit_id) VALUES (?, ?)
-RETURNING id, name, artist_credit_id, track_number, disc_number, year, genre, composer, lyrics, comment
+RETURNING id, name, artist_credit_id, track_number, disc_number, year, genre, composer, lyrics, comment, mbid
 `
 
 type CreateRecordingParams struct {
@@ -45,6 +45,7 @@ func (q *Queries) CreateRecording(ctx context.Context, arg CreateRecordingParams
 		&i.Composer,
 		&i.Lyrics,
 		&i.Comment,
+		&i.Mbid,
 	)
 	return i, err
 }
@@ -54,7 +55,7 @@ INSERT INTO recordings (
   name, artist_credit_id, track_number, disc_number,
   year, genre, composer, lyrics, comment
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, name, artist_credit_id, track_number, disc_number, year, genre, composer, lyrics, comment
+RETURNING id, name, artist_credit_id, track_number, disc_number, year, genre, composer, lyrics, comment, mbid
 `
 
 type CreateRecordingFullParams struct {
@@ -93,6 +94,7 @@ func (q *Queries) CreateRecordingFull(ctx context.Context, arg CreateRecordingFu
 		&i.Composer,
 		&i.Lyrics,
 		&i.Comment,
+		&i.Mbid,
 	)
 	return i, err
 }
@@ -117,7 +119,7 @@ func (q *Queries) DeleteRecording(ctx context.Context, id int64) error {
 }
 
 const getAllRecordings = `-- name: GetAllRecordings :many
-SELECT id, name, artist_credit_id, track_number, disc_number, year, genre, composer, lyrics, comment FROM recordings
+SELECT id, name, artist_credit_id, track_number, disc_number, year, genre, composer, lyrics, comment, mbid FROM recordings
 ORDER BY name
 `
 
@@ -141,6 +143,7 @@ func (q *Queries) GetAllRecordings(ctx context.Context) ([]Recording, error) {
 			&i.Composer,
 			&i.Lyrics,
 			&i.Comment,
+			&i.Mbid,
 		); err != nil {
 			return nil, err
 		}
@@ -156,7 +159,7 @@ func (q *Queries) GetAllRecordings(ctx context.Context) ([]Recording, error) {
 }
 
 const getRecording = `-- name: GetRecording :one
-SELECT id, name, artist_credit_id, track_number, disc_number, year, genre, composer, lyrics, comment FROM recordings 
+SELECT id, name, artist_credit_id, track_number, disc_number, year, genre, composer, lyrics, comment, mbid FROM recordings 
 WHERE id = ? LIMIT 1
 `
 
@@ -174,6 +177,7 @@ func (q *Queries) GetRecording(ctx context.Context, id int64) (Recording, error)
 		&i.Composer,
 		&i.Lyrics,
 		&i.Comment,
+		&i.Mbid,
 	)
 	return i, err
 }

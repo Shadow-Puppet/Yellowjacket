@@ -5,7 +5,7 @@ import { designTokens } from '../../styles/tokens.css';
 
 import type { DragActiveDetail } from '@utils/drag-controller';
 
-type View = 'home' | 'playlists' | 'artists' | 'genres' | 'albums' | 'tracks' | 'settings';
+type View = 'home' | 'playlists' | 'artists' | 'genres' | 'albums' | 'tracks' | 'explore' | 'settings';
 
 interface NavItem {
     id: View;
@@ -148,6 +148,7 @@ export class AppSidebar extends LitElement {
         { id: 'genres', label: 'Genres', icon: 'masks-theater' },
         { id: 'albums', label: 'Albums', icon: 'compact-disc' },
         { id: 'tracks', label: 'Tracks', icon: 'music' },
+        { id: 'explore', label: 'Explore', icon: 'globe' },
         { id: 'settings', label: 'Settings', icon: 'gear' },
     ];
 

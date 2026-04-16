@@ -32,6 +32,12 @@ import {
     highlightText,
 } from './search-ranking';
 import {
+    artistLink,
+    albumLink,
+    trackLink,
+    exploreLinkStyles,
+} from '@utils/explore-link';
+import {
     setDragPayload,
     emitDragActive,
 } from '@utils/drag-controller';
@@ -347,7 +353,7 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
         const cols = this.activeColumns;
         const favCol = '24px';
 
-        if (this.columnWidths.length === 0) {
+        if (this.columnWidths.length === 0 || this.columnWidths.length !== cols.length) {
             return (
                 favCol +
                 ' ' +
@@ -388,8 +394,9 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
 
     private initColumnWidths() {
         const saved = this.loadColumnWidths();
+        const cols = this.activeColumns;
 
-        if (saved) {
+        if (saved && saved.length === cols.length) {
             this.columnWidths = saved;
 
             return;
@@ -742,11 +749,12 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
         this.requestUpdate();
     };
 
-    static override styles = [designTokens, contextMenuStyles, css`
+    static override styles = [designTokens, contextMenuStyles, exploreLinkStyles, css`
     :host {
       display: flex;
       flex-direction: column;
       overflow: hidden;
+      height: 100%;
       contain: layout style;
     }
 
@@ -1481,12 +1489,18 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
 
         if (!track) return;
 
-        const coverArt =
-            this.resolveCoverArt(track.Album);
+        const coverArt = track.CoverArtPath
+            ? {
+                coverArtPath: track.CoverArtPath,
+                coverArtSmall: track.CoverArtSmall,
+                coverArtMedium: track.CoverArtMedium,
+                coverArtLarge: track.CoverArtLarge,
+            }
+            : undefined;
 
         this.trackDetailsDialog?.show(
             track,
-            coverArt ?? undefined,
+            coverArt,
         );
     }
 
@@ -1505,17 +1519,22 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
 
         if (tracks.length === 0) return;
 
-        const albumNames = new Set(
-            tracks.map((t) => t.Album),
-        );
+        // Use cover art from the first track. If all tracks share
+        // the same album, they share the same art.
+        const first = tracks[0]!;
         let coverArt: CoverArtUrls | null = null;
         let coverArtMixed = false;
 
-        if (albumNames.size === 1) {
-            const albumName = [...albumNames][0]!;
-            coverArt =
-                this.resolveCoverArt(albumName);
-        } else {
+        const albumNames = new Set(tracks.map((t) => t.Album));
+
+        if (albumNames.size === 1 && first.CoverArtPath) {
+            coverArt = {
+                coverArtPath: first.CoverArtPath,
+                coverArtSmall: first.CoverArtSmall,
+                coverArtMedium: first.CoverArtMedium,
+                coverArtLarge: first.CoverArtLarge,
+            };
+        } else if (albumNames.size > 1) {
             coverArtMixed = true;
         }
 
@@ -1524,29 +1543,6 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
             coverArt,
             coverArtMixed,
         );
-    }
-
-    private resolveCoverArt(
-        albumName: string,
-    ): CoverArtUrls | null {
-        if (!albumName) return null;
-
-        const albums = this.libraryCtrl.cachedAlbums;
-
-        if (!albums) return null;
-
-        const album = albums.find(
-            (a) => a.Name === albumName,
-        );
-
-        if (!album || !album.CoverArtPath) return null;
-
-        return {
-            coverArtPath: album.CoverArtPath,
-            coverArtSmall: album.CoverArtSmall,
-            coverArtMedium: album.CoverArtMedium,
-            coverArtLarge: album.CoverArtLarge,
-        };
     }
 
     // =================================================================
@@ -1756,11 +1752,24 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
           </svg>
         </div>
         ${cols.map((col) => {
+                const customCell = col.renderCell?.(track);
+                if (customCell !== undefined && customCell !== nothing) {
+                    return html`<div class="cell">${customCell}</div>`;
+                }
                 const val = col.accessor(track);
                 const centered = val === '\u2014';
-                const display = term
+                let display: unknown = term
                     ? highlightText(val, term)
                     : val;
+
+                // Wrap artist/album/track values in explore links.
+                if (col.id === 'trackName') {
+                    display = trackLink(track.TrackName, track.Album, track.ReleaseGroupMBID, track.RecordingMBID, display as any);
+                } else if (col.id === 'artistName') {
+                    display = artistLink(track.ArtistName, track.ArtistMBID, display as any);
+                } else if (col.id === 'album') {
+                    display = albumLink(track.Album, track.ReleaseGroupMBID, display as any);
+                }
 
                 return html`
                     <div class=${classMap({

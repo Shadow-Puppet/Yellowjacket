@@ -14,9 +14,12 @@ require (
 	github.com/golang-cz/devslog v0.0.15
 	github.com/gopxl/beep/v2 v2.1.1
 	github.com/wailsapp/wails/v2 v2.10.2
+	go.uploadedlobster.com/mbtypes v0.4.0
+	go.uploadedlobster.com/musicbrainzws2 v0.18.0
 	golang.org/x/image v0.12.0
 	golang.org/x/sync v0.19.0
 	golang.org/x/text v0.34.0
+	golang.org/x/time v0.15.0
 	modernc.org/sqlite v1.46.1
 )
 
@@ -121,6 +124,7 @@ require (
 	github.com/go-git/go-git/v5 v5.13.2 // indirect
 	github.com/go-json-experiment/json v0.0.0-20251027170946-4849db3c2f7e // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
+	github.com/go-resty/resty/v2 v2.17.1 // indirect
 	github.com/go-sql-driver/mysql v1.9.3 // indirect
 	github.com/go-toolsmith/astcast v1.1.0 // indirect
 	github.com/go-toolsmith/astcopy v1.1.0 // indirect

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"yellowjacket/backend/coverart"
 	"yellowjacket/backend/database/sql/sqlcgen"
 	"yellowjacket/backend/profiling"
 )
@@ -245,10 +246,15 @@ func (q *Queue) lookupChunk(
 
 	for _, row := range rows {
 		result[row.FilePath] = trackMeta{
-			AudioFileID: row.ID,
-			FilePath:    row.FilePath,
-			Title:       row.Title,
-			Artist:      row.ArtistName,
+			AudioFileID:      row.ID,
+			FilePath:         row.FilePath,
+			Title:            row.Title,
+			Artist:           row.ArtistName,
+			Album:            row.Album,
+			CoverArtPath:     row.CoverArtPath,
+			ArtistMBID:       row.ArtistMbid,
+			ReleaseGroupMBID: row.ReleaseGroupMbid,
+			RecordingMBID:    row.RecordingMbid,
 		}
 	}
 }
@@ -448,13 +454,23 @@ func (q *Queue) RestoreState() {
 	q.tracks = make([]Track, 0, len(rows))
 
 	for _, row := range rows {
+		var coverArtURL string
+		if row.CoverArtPath != "" {
+			coverArtURL = coverart.ResolveURLs(row.CoverArtPath).Small
+		}
+
 		q.tracks = append(q.tracks, Track{
-			ID:          row.ID,
-			AudioFileID: row.AudioFileID,
-			FilePath:    row.FilePath,
-			Position:    row.Position,
-			Title:       row.Title,
-			Artist:      row.Artist,
+			ID:           row.ID,
+			AudioFileID:  row.AudioFileID,
+			FilePath:     row.FilePath,
+			Position:     row.Position,
+			Title:        row.Title,
+			Artist:           row.Artist,
+			Album:            row.Album,
+			CoverArtPath:     coverArtURL,
+			ArtistMBID:       row.ArtistMbid,
+			ReleaseGroupMBID: row.ReleaseGroupMbid,
+			RecordingMBID:    row.RecordingMbid,
 		})
 	}
 
