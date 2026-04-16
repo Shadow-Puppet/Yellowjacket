@@ -12,6 +12,7 @@ trace-*.out
 
 # ── GSD baseline (auto-generated) ──
 .gsd
+gsd-session-*.html
 .DS_Store
 Thumbs.db
 *.swp
