@@ -1,5 +1,69 @@
 export namespace explore {
 	
+	export class TierStatus {
+	    name: string;
+	    state: string;
+	    total: number;
+	    completed: number;
+	    error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new TierStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.state = source["state"];
+	        this.total = source["total"];
+	        this.completed = source["completed"];
+	        this.error = source["error"];
+	    }
+	}
+	export class IndexStatus {
+	    building: boolean;
+	    ready: boolean;
+	    lastBuilt?: string;
+	    tiers: TierStatus[];
+	    artists: number;
+	    recordings: number;
+	    releaseGroups: number;
+	    totalRows: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new IndexStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.building = source["building"];
+	        this.ready = source["ready"];
+	        this.lastBuilt = source["lastBuilt"];
+	        this.tiers = this.convertValues(source["tiers"], TierStatus);
+	        this.artists = source["artists"];
+	        this.recordings = source["recordings"];
+	        this.releaseGroups = source["releaseGroups"];
+	        this.totalRows = source["totalRows"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class LBSimilarArtist {
 	    artistMbid: string;
 	    name: string;
@@ -21,6 +85,11 @@ export namespace explore {
 	    artistName: string;
 	    trackName: string;
 	    totalListenCount: number;
+	    caaReleaseMbid: string;
+	    releaseName: string;
+	    length: number;
+	    inLibrary: boolean;
+	    localId?: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new LBTopRecording(source);
@@ -32,6 +101,11 @@ export namespace explore {
 	        this.artistName = source["artistName"];
 	        this.trackName = source["trackName"];
 	        this.totalListenCount = source["totalListenCount"];
+	        this.caaReleaseMbid = source["caaReleaseMbid"];
+	        this.releaseName = source["releaseName"];
+	        this.length = source["length"];
+	        this.inLibrary = source["inLibrary"];
+	        this.localId = source["localId"];
 	    }
 	}
 	export class LBTopReleaseGroup {
@@ -41,6 +115,9 @@ export namespace explore {
 	    type: string;
 	    date: string;
 	    totalListenCount: number;
+	    caaReleaseMbid: string;
+	    inLibrary: boolean;
+	    localId?: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new LBTopReleaseGroup(source);
@@ -54,6 +131,9 @@ export namespace explore {
 	        this.type = source["type"];
 	        this.date = source["date"];
 	        this.totalListenCount = source["totalListenCount"];
+	        this.caaReleaseMbid = source["caaReleaseMbid"];
+	        this.inLibrary = source["inLibrary"];
+	        this.localId = source["localId"];
 	    }
 	}
 	export class MBArtist {
@@ -65,6 +145,10 @@ export namespace explore {
 	    country: string;
 	    disambiguation: string;
 	    score: number;
+	    popularity: number;
+	    listenerCount: number;
+	    inLibrary: boolean;
+	    localId?: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new MBArtist(source);
@@ -80,6 +164,10 @@ export namespace explore {
 	        this.country = source["country"];
 	        this.disambiguation = source["disambiguation"];
 	        this.score = source["score"];
+	        this.popularity = source["popularity"];
+	        this.listenerCount = source["listenerCount"];
+	        this.inLibrary = source["inLibrary"];
+	        this.localId = source["localId"];
 	    }
 	}
 	export class MBRecording {
@@ -88,6 +176,10 @@ export namespace explore {
 	    length: number;
 	    artistCredit: string;
 	    score: number;
+	    popularity: number;
+	    listenerCount: number;
+	    inLibrary: boolean;
+	    localId?: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new MBRecording(source);
@@ -100,6 +192,10 @@ export namespace explore {
 	        this.length = source["length"];
 	        this.artistCredit = source["artistCredit"];
 	        this.score = source["score"];
+	        this.popularity = source["popularity"];
+	        this.listenerCount = source["listenerCount"];
+	        this.inLibrary = source["inLibrary"];
+	        this.localId = source["localId"];
 	    }
 	}
 	export class MBTrack {
@@ -108,6 +204,8 @@ export namespace explore {
 	    title: string;
 	    length: number;
 	    mbid: string;
+	    inLibrary: boolean;
+	    localId?: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new MBTrack(source);
@@ -120,6 +218,8 @@ export namespace explore {
 	        this.title = source["title"];
 	        this.length = source["length"];
 	        this.mbid = source["mbid"];
+	        this.inLibrary = source["inLibrary"];
+	        this.localId = source["localId"];
 	    }
 	}
 	export class MBRelease {
@@ -169,6 +269,10 @@ export namespace explore {
 	    secondaryTypes?: string[];
 	    firstReleaseDate: string;
 	    artistCredit: string;
+	    popularity: number;
+	    listenerCount: number;
+	    inLibrary: boolean;
+	    localId?: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new MBReleaseGroup(source);
@@ -182,12 +286,49 @@ export namespace explore {
 	        this.secondaryTypes = source["secondaryTypes"];
 	        this.firstReleaseDate = source["firstReleaseDate"];
 	        this.artistCredit = source["artistCredit"];
+	        this.popularity = source["popularity"];
+	        this.listenerCount = source["listenerCount"];
+	        this.inLibrary = source["inLibrary"];
+	        this.localId = source["localId"];
+	    }
+	}
+	export class TopResult {
+	    entityType: string;
+	    mbid: string;
+	    name: string;
+	    artistCredit?: string;
+	    intentScore: number;
+	    artistType?: string;
+	    country?: string;
+	    primaryType?: string;
+	    year?: string;
+	    length?: number;
+	    inLibrary: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new TopResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.entityType = source["entityType"];
+	        this.mbid = source["mbid"];
+	        this.name = source["name"];
+	        this.artistCredit = source["artistCredit"];
+	        this.intentScore = source["intentScore"];
+	        this.artistType = source["artistType"];
+	        this.country = source["country"];
+	        this.primaryType = source["primaryType"];
+	        this.year = source["year"];
+	        this.length = source["length"];
+	        this.inLibrary = source["inLibrary"];
 	    }
 	}
 	export class MBSearchResult {
 	    artists?: MBArtist[];
 	    releaseGroups?: MBReleaseGroup[];
 	    recordings?: MBRecording[];
+	    topResults?: TopResult[];
 	
 	    static createFrom(source: any = {}) {
 	        return new MBSearchResult(source);
@@ -198,6 +339,7 @@ export namespace explore {
 	        this.artists = this.convertValues(source["artists"], MBArtist);
 	        this.releaseGroups = this.convertValues(source["releaseGroups"], MBReleaseGroup);
 	        this.recordings = this.convertValues(source["recordings"], MBRecording);
+	        this.topResults = this.convertValues(source["topResults"], TopResult);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -231,6 +373,28 @@ export namespace explore {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.mbid = source["mbid"];
+	        this.albumName = source["albumName"];
+	        this.artistName = source["artistName"];
+	    }
+	}
+	
+	
+	export class TrackThumbnailRequest {
+	    key: string;
+	    releaseMbid: string;
+	    releaseGroupMbid: string;
+	    albumName: string;
+	    artistName: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new TrackThumbnailRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.key = source["key"];
+	        this.releaseMbid = source["releaseMbid"];
+	        this.releaseGroupMbid = source["releaseGroupMbid"];
 	        this.albumName = source["albumName"];
 	        this.artistName = source["artistName"];
 	    }
@@ -521,6 +685,10 @@ export namespace library {
 	    RecordingMBID: string;
 	    ArtistMBID: string;
 	    ReleaseGroupMBID: string;
+	    CoverArtPath: string;
+	    CoverArtSmall: string;
+	    CoverArtMedium: string;
+	    CoverArtLarge: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Track(source);
@@ -549,6 +717,10 @@ export namespace library {
 	        this.RecordingMBID = source["RecordingMBID"];
 	        this.ArtistMBID = source["ArtistMBID"];
 	        this.ReleaseGroupMBID = source["ReleaseGroupMBID"];
+	        this.CoverArtPath = source["CoverArtPath"];
+	        this.CoverArtSmall = source["CoverArtSmall"];
+	        this.CoverArtMedium = source["CoverArtMedium"];
+	        this.CoverArtLarge = source["CoverArtLarge"];
 	    }
 	}
 	export class TrackMBIDs {
@@ -586,6 +758,9 @@ export namespace player {
 	    trackLength: number;
 	    seekPosition: number;
 	    trackChangeId: number;
+	    artistMbid: string;
+	    releaseGroupMbid: string;
+	    recordingMbid: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new TrackInfo(source);
@@ -606,6 +781,9 @@ export namespace player {
 	        this.trackLength = source["trackLength"];
 	        this.seekPosition = source["seekPosition"];
 	        this.trackChangeId = source["trackChangeId"];
+	        this.artistMbid = source["artistMbid"];
+	        this.releaseGroupMbid = source["releaseGroupMbid"];
+	        this.recordingMbid = source["recordingMbid"];
 	    }
 	}
 
@@ -787,6 +965,9 @@ export namespace playlist {
 	    CoverArtLarge: string;
 	    Duration: string;
 	    Phantom: boolean;
+	    ArtistMBID: string;
+	    ReleaseGroupMBID: string;
+	    RecordingMBID: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Track(source);
@@ -806,6 +987,9 @@ export namespace playlist {
 	        this.CoverArtLarge = source["CoverArtLarge"];
 	        this.Duration = source["Duration"];
 	        this.Phantom = source["Phantom"];
+	        this.ArtistMBID = source["ArtistMBID"];
+	        this.ReleaseGroupMBID = source["ReleaseGroupMBID"];
+	        this.RecordingMBID = source["RecordingMBID"];
 	    }
 	}
 	export class WithTracks {
@@ -852,6 +1036,11 @@ export namespace queue {
 	    position: number;
 	    title: string;
 	    artist: string;
+	    album: string;
+	    coverArtPath: string;
+	    artistMbid: string;
+	    releaseGroupMbid: string;
+	    recordingMbid: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Track(source);
@@ -865,6 +1054,11 @@ export namespace queue {
 	        this.position = source["position"];
 	        this.title = source["title"];
 	        this.artist = source["artist"];
+	        this.album = source["album"];
+	        this.coverArtPath = source["coverArtPath"];
+	        this.artistMbid = source["artistMbid"];
+	        this.releaseGroupMbid = source["releaseGroupMbid"];
+	        this.recordingMbid = source["recordingMbid"];
 	    }
 	}
 	export class State {

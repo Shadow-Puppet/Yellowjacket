@@ -25,10 +25,16 @@ SELECT
     af.file_size,
     af.library_id,
     af.play_count,
-    af.last_played
+    af.last_played,
+    COALESCE(ca.file_path, '') AS cover_art_path,
+    COALESCE(a.mbid, '') AS artist_mbid,
+    COALESCE(rg.mbid, '') AS release_group_mbid,
+    COALESCE(r.mbid, '') AS recording_mbid
 FROM audio_files af
 LEFT JOIN recordings r ON af.recording_id = r.id
 LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
+LEFT JOIN artist_credit_artist aca ON aca.credit_id = ac.id
+LEFT JOIN artists a ON a.id = aca.artist_id
 LEFT JOIN (
     SELECT recording_id,
         MIN(release_group_id) AS release_group_id
@@ -36,4 +42,5 @@ LEFT JOIN (
     GROUP BY recording_id
 ) rgr ON r.id = rgr.recording_id
 LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
+LEFT JOIN cover_art ca ON rg.cover_art_id = ca.id
 LEFT JOIN file_types ft ON af.file_type_id = ft.id;

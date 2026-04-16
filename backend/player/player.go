@@ -79,19 +79,22 @@ const (
 // event and serialized as camelCase JSON to match the frontend
 // TrackInfo interface in player-store.ts.
 type TrackInfo struct {
-	FileName       string `json:"fileName"`
-	FilePath       string `json:"filePath"`
-	State          State  `json:"state"`
-	Title          string `json:"title"`
-	Artist         string `json:"artist"`
-	Album          string `json:"album"`
-	CoverArt       string `json:"coverArt"`
-	CoverArtSmall  string `json:"coverArtSmall"`
-	CoverArtMedium string `json:"coverArtMedium"`
-	CoverArtLarge  string `json:"coverArtLarge"`
-	TrackLength    int    `json:"trackLength"`
-	SeekPosition   int    `json:"seekPosition"`
-	TrackChangeID  uint64 `json:"trackChangeId"`
+	FileName         string `json:"fileName"`
+	FilePath         string `json:"filePath"`
+	State            State  `json:"state"`
+	Title            string `json:"title"`
+	Artist           string `json:"artist"`
+	Album            string `json:"album"`
+	CoverArt         string `json:"coverArt"`
+	CoverArtSmall    string `json:"coverArtSmall"`
+	CoverArtMedium   string `json:"coverArtMedium"`
+	CoverArtLarge    string `json:"coverArtLarge"`
+	TrackLength      int    `json:"trackLength"`
+	SeekPosition     int    `json:"seekPosition"`
+	TrackChangeID    uint64 `json:"trackChangeId"`
+	ArtistMBID       string `json:"artistMbid"`
+	ReleaseGroupMBID string `json:"releaseGroupMbid"`
+	RecordingMBID    string `json:"recordingMbid"`
 }
 
 // Sentinel errors for player operations.
@@ -870,6 +873,9 @@ func (p *Player) getCurrentTrackInfoLocked() TrackInfo {
 
 			info.Artist = meta.Artist
 			info.Album = meta.Album
+			info.ArtistMBID = meta.ArtistMbid
+			info.ReleaseGroupMBID = meta.ReleaseGroupMbid
+			info.RecordingMBID = meta.RecordingMbid
 			p.trackLengthMs = meta.LengthMilliseconds
 
 			if meta.CoverArtPath != "" {

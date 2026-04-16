@@ -1658,18 +1658,13 @@ export class TrackDetails extends LitElement {
             if (updated) {
                 this.track = updated;
 
-                // Re-resolve cover art from the refreshed
-                // album data (URLs change on new content hash).
-                const album = albums.find(
-                    (a) => a.Name === updated.Album,
-                );
-
-                if (album?.CoverArtPath) {
+                // Re-resolve cover art from the refreshed track data.
+                if (updated.CoverArtPath) {
                     this.coverArt = {
-                        coverArtPath: album.CoverArtPath,
-                        coverArtSmall: album.CoverArtSmall,
-                        coverArtMedium: album.CoverArtMedium,
-                        coverArtLarge: album.CoverArtLarge,
+                        coverArtPath: updated.CoverArtPath,
+                        coverArtSmall: updated.CoverArtSmall,
+                        coverArtMedium: updated.CoverArtMedium,
+                        coverArtLarge: updated.CoverArtLarge,
                     };
                 } else {
                     this.coverArt = null;
@@ -1795,31 +1790,23 @@ export class TrackDetails extends LitElement {
         this.batchTracks = refreshed;
 
         // Re-resolve cover art state.
-        const albumNames = new Set(
-            refreshed.map((t) => t.Album),
-        );
+        const first = refreshed[0];
+        const albumNames = new Set(refreshed.map((t) => t.Album));
 
-        if (albumNames.size === 1) {
-            const albumName = [...albumNames][0]!;
-            const album = albums.find(
-                (a) => a.Name === albumName,
-            );
-
-            if (album?.CoverArtPath) {
-                this.coverArt = {
-                    coverArtPath: album.CoverArtPath,
-                    coverArtSmall: album.CoverArtSmall,
-                    coverArtMedium: album.CoverArtMedium,
-                    coverArtLarge: album.CoverArtLarge,
-                };
-                this.batchCoverArtMixed = false;
-            } else {
-                this.coverArt = null;
-                this.batchCoverArtMixed = false;
-            }
+        if (albumNames.size === 1 && first?.CoverArtPath) {
+            this.coverArt = {
+                coverArtPath: first.CoverArtPath,
+                coverArtSmall: first.CoverArtSmall,
+                coverArtMedium: first.CoverArtMedium,
+                coverArtLarge: first.CoverArtLarge,
+            };
+            this.batchCoverArtMixed = false;
+        } else if (albumNames.size > 1) {
+            this.coverArt = null;
+            this.batchCoverArtMixed = true;
         } else {
             this.coverArt = null;
-            this.batchCoverArtMixed = albumNames.size > 1;
+            this.batchCoverArtMixed = false;
         }
     };
 

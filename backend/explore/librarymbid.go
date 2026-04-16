@@ -1,6 +1,8 @@
 package explore
 
 import (
+	"strings"
+
 	"yellowjacket/backend/database"
 )
 
@@ -26,32 +28,58 @@ func (idx *LibraryMBIDIndex) CheckMBIDs(mbids []string) map[string]string {
 
 	result := make(map[string]string, len(mbids))
 
-	// Check each table.  For a small number of MBIDs this is fine.
-	// For bulk checks we'd use a temp table join, but search results
-	// are capped at ~30 MBIDs total.
-	for _, mbid := range mbids {
-		if mbid == "" {
+	// Batch check all MBIDs against each table with a single IN query.
+	type tableEntity struct {
+		table      string
+		entityType string
+	}
+
+	tables := []tableEntity{
+		{"artists", "artist"},
+		{"release_groups", "release_group"},
+		{"recordings", "recording"},
+	}
+
+	// Build a set of MBIDs still unresolved.
+	remaining := make(map[string]bool, len(mbids))
+	for _, m := range mbids {
+		if m != "" {
+			remaining[m] = true
+		}
+	}
+
+	for _, te := range tables {
+		if len(remaining) == 0 {
+			break
+		}
+
+		// Build IN clause from remaining MBIDs.
+		placeholders := make([]string, 0, len(remaining))
+		args := make([]any, 0, len(remaining))
+
+		for m := range remaining {
+			placeholders = append(placeholders, "?")
+			args = append(args, m)
+		}
+
+		//nolint:gosec // table name is hardcoded from the tables slice above
+		query := "SELECT mbid FROM " + te.table + " WHERE mbid IN (" +
+			strings.Join(placeholders, ",") + ")"
+
+		rows, err := idx.db.QueryContext(query, args...)
+		if err != nil {
 			continue
 		}
 
-		// Check artists.
-		if idx.exists("artists", mbid) {
-			result[mbid] = "artist"
-
-			continue
+		for rows.Next() {
+			var mbid string
+			if err := rows.Scan(&mbid); err == nil {
+				result[mbid] = te.entityType
+				delete(remaining, mbid)
+			}
 		}
 
-		// Check release groups.
-		if idx.exists("release_groups", mbid) {
-			result[mbid] = "release_group"
-
-			continue
-		}
-
-		// Check recordings.
-		if idx.exists("recordings", mbid) {
-			result[mbid] = "recording"
-		}
+		_ = rows.Close()
 	}
 
 	return result

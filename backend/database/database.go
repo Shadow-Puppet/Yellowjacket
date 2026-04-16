@@ -417,10 +417,508 @@ func runMigrations(
 		}
 	}
 
+	if version < 18 {
+		if err := migration18TrackCoverArt(
+			ctx, db, logger,
+		); err != nil {
+			return err
+		}
+	}
+
+	if version < 19 {
+		if err := migration19TrackMBIDs(
+			ctx, db, logger,
+		); err != nil {
+			return err
+		}
+	}
+
+	if version < 20 {
+		if err := migration20TrackRecordingMBID(
+			ctx, db, logger,
+		); err != nil {
+			return err
+		}
+	}
+
+	if version < 21 { //nolint:mnd
+		logger.Info("applying migration 21: explore_index mbid-only index")
+
+		if _, err := db.ExecContext(ctx, `
+			CREATE INDEX IF NOT EXISTS idx_explore_index_mbid_only
+			ON explore_index(mbid)
+		`); err != nil {
+			return fmt.Errorf("migration 21: create mbid-only index: %w", err)
+		}
+
+		if _, err := db.ExecContext(ctx,
+			"PRAGMA user_version = 21",
+		); err != nil {
+			return fmt.Errorf("migration 21: set user_version: %w", err)
+		}
+	}
+
+	if version < 22 { //nolint:mnd
+		logger.Info("applying migration 22: replace composite index with UNIQUE(mbid)")
+
+		// Remove any rows with empty MBIDs — they can't be looked up
+		// and would violate the new UNIQUE(mbid) constraint.
+		if _, err := db.ExecContext(ctx, `
+			DELETE FROM explore_index WHERE mbid = ''
+		`); err != nil {
+			return fmt.Errorf("migration 22: delete empty mbids: %w", err)
+		}
+
+		// Drop the over-engineered composite — MBIDs are globally
+		// unique, so entity_type in the key adds nothing.
+		if _, err := db.ExecContext(ctx, `
+			DROP INDEX IF EXISTS idx_explore_index_mbid
+		`); err != nil {
+			return fmt.Errorf("migration 22: drop composite index: %w", err)
+		}
+
+		// Drop the plain index from migration 21 and recreate as UNIQUE.
+		if _, err := db.ExecContext(ctx, `
+			DROP INDEX IF EXISTS idx_explore_index_mbid_only
+		`); err != nil {
+			return fmt.Errorf("migration 22: drop plain mbid index: %w", err)
+		}
+
+		if _, err := db.ExecContext(ctx, `
+			CREATE UNIQUE INDEX IF NOT EXISTS idx_explore_index_mbid_only
+			ON explore_index(mbid)
+		`); err != nil {
+			return fmt.Errorf("migration 22: create unique mbid index: %w", err)
+		}
+
+		if _, err := db.ExecContext(ctx,
+			"PRAGMA user_version = 22",
+		); err != nil {
+			return fmt.Errorf("migration 22: set user_version: %w", err)
+		}
+	}
+
+	if version < 23 { //nolint:mnd
+		logger.Info("applying migration 23: search_clicks table")
+
+		if _, err := db.ExecContext(ctx, `
+			CREATE TABLE IF NOT EXISTS search_clicks (
+				query        TEXT NOT NULL,
+				entity_mbid  TEXT NOT NULL,
+				entity_type  TEXT NOT NULL,
+				click_count  INTEGER NOT NULL DEFAULT 1,
+				last_clicked DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				PRIMARY KEY (query, entity_mbid)
+			)
+		`); err != nil {
+			return fmt.Errorf("migration 23: create search_clicks: %w", err)
+		}
+
+		if _, err := db.ExecContext(ctx, `
+			CREATE INDEX IF NOT EXISTS idx_search_clicks_query
+			ON search_clicks(query)
+		`); err != nil {
+			return fmt.Errorf("migration 23: create query index: %w", err)
+		}
+
+		if _, err := db.ExecContext(ctx,
+			"PRAGMA user_version = 23",
+		); err != nil {
+			return fmt.Errorf("migration 23: set user_version: %w", err)
+		}
+	}
+
+	if version < 24 { //nolint:mnd
+		logger.Info("applying migration 24: explore_index listener_count + duration columns")
+
+		if _, err := db.ExecContext(ctx, `
+			ALTER TABLE explore_index ADD COLUMN listener_count INTEGER NOT NULL DEFAULT 0
+		`); err != nil {
+			// Column may already exist from a partial migration.
+			if !strings.Contains(err.Error(), "duplicate column") {
+				return fmt.Errorf("migration 24: add listener_count: %w", err)
+			}
+		}
+
+		if _, err := db.ExecContext(ctx, `
+			ALTER TABLE explore_index ADD COLUMN duration INTEGER NOT NULL DEFAULT 0
+		`); err != nil {
+			if !strings.Contains(err.Error(), "duplicate column") {
+				return fmt.Errorf("migration 24: add duration: %w", err)
+			}
+		}
+
+		if _, err := db.ExecContext(ctx,
+			"PRAGMA user_version = 24",
+		); err != nil {
+			return fmt.Errorf("migration 24: set user_version: %w", err)
+		}
+	}
+
+	if version < 25 { //nolint:mnd
+		logger.Info("applying migration 25: explore_index duration column")
+
+		if _, err := db.ExecContext(ctx, `
+			ALTER TABLE explore_index ADD COLUMN duration INTEGER NOT NULL DEFAULT 0
+		`); err != nil {
+			if !strings.Contains(err.Error(), "duplicate column") {
+				return fmt.Errorf("migration 25: add duration: %w", err)
+			}
+		}
+
+		if _, err := db.ExecContext(ctx,
+			"PRAGMA user_version = 25",
+		); err != nil {
+			return fmt.Errorf("migration 25: set user_version: %w", err)
+		}
+	}
+
+	if version < 26 { //nolint:mnd
+		logger.Info("applying migration 26: comprehensive explore schema overhaul")
+
+		// Nuke the existing index — we're changing the schema enough
+		// that a clean rebuild is simpler than trying to migrate in place.
+		if _, err := db.ExecContext(ctx, `DROP TABLE IF EXISTS explore_index_fts`); err != nil {
+			return fmt.Errorf("migration 26: drop fts: %w", err)
+		}
+
+		if _, err := db.ExecContext(ctx, `DROP TABLE IF EXISTS explore_index`); err != nil {
+			return fmt.Errorf("migration 26: drop explore_index: %w", err)
+		}
+
+		// Create the new explore_index with all typed columns.
+		// No more extra_json — every field that matters has its own column.
+		if _, err := db.ExecContext(ctx, `
+			CREATE TABLE explore_index (
+				id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+				entity_type              TEXT NOT NULL,
+				mbid                     TEXT NOT NULL,
+				title                    TEXT NOT NULL,
+				artist_name              TEXT NOT NULL,
+				artist_mbid              TEXT NOT NULL,
+				aliases                  TEXT NOT NULL DEFAULT '',
+
+				-- Popularity signals (from LB popularity API, uncapped).
+				popularity               INTEGER NOT NULL DEFAULT 0,
+				listener_count           INTEGER NOT NULL DEFAULT 0,
+
+				-- Recording-specific fields.
+				duration                 INTEGER NOT NULL DEFAULT 0,
+				caa_release_mbid         TEXT NOT NULL DEFAULT '',
+				release_name             TEXT NOT NULL DEFAULT '',
+
+				-- Release-group-specific fields.
+				primary_type             TEXT NOT NULL DEFAULT '',
+				secondary_types          TEXT NOT NULL DEFAULT '',
+				release_date             TEXT NOT NULL DEFAULT '',
+
+				-- Artist-specific fields.
+				artist_type              TEXT NOT NULL DEFAULT '',
+				country                  TEXT NOT NULL DEFAULT '',
+				disambiguation           TEXT NOT NULL DEFAULT '',
+				sort_name                TEXT NOT NULL DEFAULT '',
+
+				-- Personalization flags.
+				in_library               INTEGER NOT NULL DEFAULT 0,
+				is_similar               INTEGER NOT NULL DEFAULT 0,
+
+				-- Cross-reference to local library tables.  NULL when the
+				-- entity has no corresponding row in the library.
+				local_artist_id          INTEGER,
+				local_release_group_id   INTEGER,
+				local_recording_id       INTEGER,
+
+				-- Set to 1 by indexOneArtist after fetching the full
+				-- discography (release groups + recordings).  Used by
+				-- indexedArtistMBIDs() so the AddFromCache organic-growth
+				-- path doesn't shadow artists from later tier 2/3 runs.
+				discog_fetched           INTEGER NOT NULL DEFAULT 0,
+
+				-- Schema version — lets us mark rows as stale after schema changes.
+				schema_version           INTEGER NOT NULL DEFAULT 1,
+
+				UNIQUE(mbid)
+			)
+		`); err != nil {
+			return fmt.Errorf("migration 26: create explore_index: %w", err)
+		}
+
+		if _, err := db.ExecContext(ctx, `
+			CREATE INDEX idx_explore_index_artist_mbid
+			ON explore_index(artist_mbid, entity_type, popularity DESC)
+		`); err != nil {
+			return fmt.Errorf("migration 26: create artist_mbid index: %w", err)
+		}
+
+		if _, err := db.ExecContext(ctx, `
+			CREATE INDEX idx_explore_index_entity_pop
+			ON explore_index(entity_type, popularity DESC)
+		`); err != nil {
+			return fmt.Errorf("migration 26: create entity_pop index: %w", err)
+		}
+
+		// FTS5 virtual table for text search.
+		if _, err := db.ExecContext(ctx, `
+			CREATE VIRTUAL TABLE explore_index_fts USING fts5(
+				title, artist_name, aliases,
+				content='explore_index',
+				content_rowid='id'
+			)
+		`); err != nil {
+			return fmt.Errorf("migration 26: create fts: %w", err)
+		}
+
+		// Triggers to keep FTS in sync with the main table.
+		if _, err := db.ExecContext(ctx, `
+			CREATE TRIGGER explore_index_ai AFTER INSERT ON explore_index BEGIN
+				INSERT INTO explore_index_fts(rowid, title, artist_name, aliases)
+				VALUES (new.id, new.title, new.artist_name, new.aliases);
+			END
+		`); err != nil {
+			return fmt.Errorf("migration 26: create ai trigger: %w", err)
+		}
+
+		if _, err := db.ExecContext(ctx, `
+			CREATE TRIGGER explore_index_ad AFTER DELETE ON explore_index BEGIN
+				INSERT INTO explore_index_fts(explore_index_fts, rowid, title, artist_name, aliases)
+				VALUES ('delete', old.id, old.title, old.artist_name, old.aliases);
+			END
+		`); err != nil {
+			return fmt.Errorf("migration 26: create ad trigger: %w", err)
+		}
+
+		if _, err := db.ExecContext(ctx, `
+			CREATE TRIGGER explore_index_au AFTER UPDATE ON explore_index BEGIN
+				INSERT INTO explore_index_fts(explore_index_fts, rowid, title, artist_name, aliases)
+				VALUES ('delete', old.id, old.title, old.artist_name, old.aliases);
+				INSERT INTO explore_index_fts(rowid, title, artist_name, aliases)
+				VALUES (new.id, new.title, new.artist_name, new.aliases);
+			END
+		`); err != nil {
+			return fmt.Errorf("migration 26: create au trigger: %w", err)
+		}
+
+		// Clear the tier metadata so the next build repopulates everything.
+		if _, err := db.ExecContext(ctx, `DELETE FROM explore_index_meta`); err != nil {
+			return fmt.Errorf("migration 26: clear meta: %w", err)
+		}
+
+		if _, err := db.ExecContext(ctx,
+			"PRAGMA user_version = 26",
+		); err != nil {
+			return fmt.Errorf("migration 26: set user_version: %w", err)
+		}
+	}
+
+	if version < 27 { //nolint:mnd
+		logger.Info("applying migration 27: split explore_cache into http_cache and artist_metadata")
+
+		// Create the new tables (no-op if schemas/*.sql already created them).
+		if _, err := db.ExecContext(ctx, `
+			CREATE TABLE IF NOT EXISTS artist_metadata (
+				mbid       TEXT NOT NULL,
+				source     TEXT NOT NULL,
+				data       BLOB NOT NULL,
+				fetched_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				PRIMARY KEY (mbid, source)
+			)
+		`); err != nil {
+			return fmt.Errorf("migration 27: create artist_metadata: %w", err)
+		}
+
+		if _, err := db.ExecContext(ctx, `
+			CREATE INDEX IF NOT EXISTS idx_artist_metadata_mbid
+			ON artist_metadata(mbid)
+		`); err != nil {
+			return fmt.Errorf("migration 27: create artist_metadata index: %w", err)
+		}
+
+		if _, err := db.ExecContext(ctx, `
+			CREATE TABLE IF NOT EXISTS http_cache (
+				url_key    TEXT PRIMARY KEY,
+				response   BLOB NOT NULL,
+				expires_at DATETIME NOT NULL,
+				entity_mbid TEXT NOT NULL DEFAULT '',
+				entity_type TEXT NOT NULL DEFAULT ''
+			)
+		`); err != nil {
+			return fmt.Errorf("migration 27: create http_cache: %w", err)
+		}
+
+		if _, err := db.ExecContext(ctx, `
+			CREATE INDEX IF NOT EXISTS idx_http_cache_expires
+			ON http_cache(expires_at)
+		`); err != nil {
+			return fmt.Errorf("migration 27: create http_cache index: %w", err)
+		}
+
+		// Only migrate existing data if explore_cache exists (not a fresh install).
+		var exploreCacheExists bool
+		{
+			row, err := db.QueryContext(ctx,
+				"SELECT 1 FROM sqlite_master WHERE type='table' AND name='explore_cache'",
+			)
+			if err == nil {
+				if row.Next() {
+					exploreCacheExists = true
+				}
+
+				_ = row.Close()
+			}
+		}
+
+		if exploreCacheExists {
+			// Migrate long-lived sources into artist_metadata.
+			for _, src := range []string{"audiodb", "fanart", "wikidata-p18", "wikipedia-lead"} {
+				if _, err := db.ExecContext(ctx, `
+					INSERT OR IGNORE INTO artist_metadata (mbid, source, data, fetched_at)
+					SELECT substr(url_key, ?+1), ?, response, COALESCE(expires_at, CURRENT_TIMESTAMP)
+					FROM explore_cache
+					WHERE url_key LIKE ?
+				`, len(src)+1, src, src+":%"); err != nil {
+					return fmt.Errorf("migration 27: migrate %s: %w", src, err)
+				}
+			}
+
+			// Migrate remaining (short-lived) entries into http_cache.
+			if _, err := db.ExecContext(ctx, `
+				INSERT OR IGNORE INTO http_cache (url_key, response, expires_at, entity_mbid, entity_type)
+				SELECT url_key, response, expires_at,
+				       COALESCE(mbid, ''), COALESCE(entity_type, '')
+				FROM explore_cache
+			`); err != nil {
+				return fmt.Errorf("migration 27: migrate http_cache: %w", err)
+			}
+
+			// Drop the old table.
+			if _, err := db.ExecContext(ctx, `DROP TABLE IF EXISTS explore_cache`); err != nil {
+				return fmt.Errorf("migration 27: drop explore_cache: %w", err)
+			}
+		}
+
+		if _, err := db.ExecContext(ctx,
+			"PRAGMA user_version = 27",
+		); err != nil {
+			return fmt.Errorf("migration 27: set user_version: %w", err)
+		}
+	}
+
+	if version < 28 { //nolint:mnd
+		logger.Info("applying migration 28: repair broken similar_artist_map data from multi-seed labs bug")
+
+		// The multi-seed POST form of the labs similar-artists endpoint
+		// returns mis-grouped results — each seed ends up with a random
+		// subset of the shared result pool (1-2 artists for most seeds,
+		// hundreds for a few).  Clear the bad rows and invalidate the
+		// tier4 timestamp so the next index build refetches per-seed.
+		if _, err := db.ExecContext(ctx,
+			"DELETE FROM similar_artist_map",
+		); err != nil {
+			return fmt.Errorf("migration 28: clear similar_artist_map: %w", err)
+		}
+
+		// Invalidate the tier4 build timestamp so the next startup
+		// triggers a Tier 4 rebuild.  Also clear is_similar markers
+		// so they get recomputed.
+		if _, err := db.ExecContext(ctx,
+			"DELETE FROM explore_index_meta WHERE key = 'tier4_built'",
+		); err != nil {
+			// Not fatal — the meta table might not exist yet.
+			logger.Warn("migration 28: clear tier4_built failed (ok on fresh install)", "error", err)
+		}
+
+		if _, err := db.ExecContext(ctx,
+			"UPDATE explore_index SET is_similar = 0 WHERE is_similar = 1",
+		); err != nil {
+			// Not fatal — explore_index might not exist yet on a
+			// fresh install where migration 26 just ran.
+			logger.Warn("migration 28: clear is_similar failed", "error", err)
+		}
+
+		if _, err := db.ExecContext(ctx,
+			"PRAGMA user_version = 28",
+		); err != nil {
+			return fmt.Errorf("migration 28: set user_version: %w", err)
+		}
+	}
+
+	if version < 29 { //nolint:mnd
+		logger.Info("applying migration 29: discog_fetched column to track full indexer pipeline coverage")
+
+		// Add a discog_fetched column to explore_index.  When set to 1
+		// on an artist row, the indexer's fetchTopRecordings/
+		// fetchTopReleaseGroups pipeline has run for that artist.
+		// AddFromCache (the frontend-visit organic-growth path) does
+		// NOT set this flag — it only writes the artist row plus
+		// browse-result release groups, so recordings are missing.
+		//
+		// indexedArtistMBIDs() filters by discog_fetched=1, so artists
+		// who only got their row from AddFromCache will still be
+		// processed by Tier 2/3 and have their full discography fetched
+		// (including recordings).
+		if _, err := db.ExecContext(ctx, `
+			ALTER TABLE explore_index
+			ADD COLUMN discog_fetched INTEGER NOT NULL DEFAULT 0
+		`); err != nil {
+			// May fail if migration runs against a fresh schema (column
+			// will be created by the schema file instead).  Don't bail.
+			logger.Warn("migration 29: add discog_fetched column failed (ok if fresh)", "error", err)
+		}
+
+		// Backfill: any artist with at least 5 recordings was almost
+		// certainly hit by fetchTopRecordings (the floor is 5).  Use
+		// this as a heuristic to mark existing data as "discog fetched"
+		// so the migration is non-disruptive — only the broken
+		// AddFromCache-only artists get re-indexed.
+		if _, err := db.ExecContext(ctx, `
+			UPDATE explore_index
+			SET discog_fetched = 1
+			WHERE entity_type = 'artist'
+			  AND mbid IN (
+			    SELECT artist_mbid
+			    FROM explore_index
+			    WHERE entity_type = 'recording'
+			    GROUP BY artist_mbid
+			    HAVING COUNT(*) >= 5
+			  )
+		`); err != nil {
+			logger.Warn("migration 29: backfill discog_fetched failed", "error", err)
+		}
+
+		if _, err := db.ExecContext(ctx,
+			"PRAGMA user_version = 29",
+		); err != nil {
+			return fmt.Errorf("migration 29: set user_version: %w", err)
+		}
+	}
+
+	if version < 30 { //nolint:mnd
+		logger.Info("applying migration 30: invalidate MB browse-releases cache for recording MBID fix")
+
+		// Earlier versions of convertRelease used the MusicBrainz
+		// track MBID instead of the recording MBID for MBTrack.MBID.
+		// Tracks and recordings have distinct MBIDs in MB, and the
+		// local library tags files with the recording MBID, so the
+		// library-status indicator on album detail pages was always
+		// showing "not in library" for cached results.  Clear the
+		// http_cache entries for MB browse-releases so the next
+		// visit refetches with the fixed converter.
+		if _, err := db.ExecContext(ctx,
+			"DELETE FROM http_cache WHERE url_key LIKE 'mb:browse:releases:%'",
+		); err != nil {
+			// Not fatal — cache might not exist on fresh installs.
+			logger.Warn("migration 30: clear browse-releases cache failed", "error", err)
+		}
+
+		if _, err := db.ExecContext(ctx,
+			"PRAGMA user_version = 30",
+		); err != nil {
+			return fmt.Errorf("migration 30: set user_version: %w", err)
+		}
+	}
+
 	return nil
 }
-
-// migration2BasenameAndFTS adds the basename column to audio_files,
 // backfills it from file_path, creates the basename index, and
 // populates the FTS5 search_index table.
 func migration2BasenameAndFTS(
@@ -1878,6 +2376,78 @@ func migration17SimilarArtistMap(
 	return nil
 }
 
+// migration18TrackCoverArt recreates the track_metadata VIEW to
+// include cover_art_path via a JOIN to the cover_art table.
+func migration18TrackCoverArt(
+	ctx context.Context,
+	db *sql.DB,
+	logger *slog.Logger,
+) error {
+	logger.Info("applying migration 18: track_metadata cover_art_path")
+
+	if _, err := db.ExecContext(
+		ctx, "DROP VIEW IF EXISTS track_metadata",
+	); err != nil {
+		return fmt.Errorf("migration 18: drop view: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx, `
+		CREATE VIEW IF NOT EXISTS track_metadata AS
+		SELECT
+			af.id,
+			af.file_path,
+			af.length_milliseconds,
+			COALESCE(r.name, '') AS title,
+			COALESCE(ac.text, '') AS artist_name,
+			r.track_number,
+			r.disc_number,
+			COALESCE(rg.name, '') AS album,
+			CAST(COALESCE(
+				(SELECT GROUP_CONCAT(g.name, '||')
+				 FROM recording_genres rg_sub
+				 JOIN genres g ON rg_sub.genre_id = g.id
+				 WHERE rg_sub.recording_id = r.id),
+				''
+			) AS TEXT) AS genre,
+			COALESCE(r.year, 0) AS year,
+			COALESCE(r.composer, '') AS composer,
+			COALESCE(ft.extension, '') AS file_type,
+			af.sample_rate,
+			af.bit_depth,
+			af.channels,
+			af.bitrate,
+			af.file_size,
+			af.library_id,
+			af.play_count,
+			af.last_played,
+			COALESCE(ca.file_path, '') AS cover_art_path
+		FROM audio_files af
+		LEFT JOIN recordings r ON af.recording_id = r.id
+		LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
+		LEFT JOIN (
+			SELECT recording_id,
+				MIN(release_group_id) AS release_group_id
+			FROM release_group_recordings
+			GROUP BY recording_id
+		) rgr ON r.id = rgr.recording_id
+		LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
+		LEFT JOIN cover_art ca ON rg.cover_art_id = ca.id
+		LEFT JOIN file_types ft ON af.file_type_id = ft.id
+	`); err != nil {
+		return fmt.Errorf("migration 18: create view: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx,
+		"PRAGMA user_version = 18",
+	); err != nil {
+		return fmt.Errorf("could not set user_version to 18: %w", err)
+	}
+
+	logger.Info("migration 18 complete")
+
+	return nil
+}
+
 // readLibraryDirFromTOML reads the TOML config file and returns
 // the Library.DirectoryPath value, or "" if not configured.
 func readLibraryDirFromTOML(logger *slog.Logger) string {
@@ -1999,4 +2569,170 @@ func removeLibraryDirFromTOML(logger *slog.Logger) {
 		"removed Library.DirectoryPath from config.toml",
 		"path", configPath,
 	)
+}
+
+// migration19TrackMBIDs recreates the track_metadata VIEW to include
+// artist_mbid and release_group_mbid columns via the relational
+// chain: recording → artist_credit → artist_credit_artist → artist.
+func migration19TrackMBIDs(
+	ctx context.Context,
+	db *sql.DB,
+	logger *slog.Logger,
+) error {
+	logger.Info("applying migration 19: track_metadata MBID columns")
+
+	if _, err := db.ExecContext(
+		ctx, "DROP VIEW IF EXISTS track_metadata",
+	); err != nil {
+		return fmt.Errorf("migration 19: drop view: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx, `
+		CREATE VIEW IF NOT EXISTS track_metadata AS
+		SELECT
+			af.id,
+			af.file_path,
+			af.length_milliseconds,
+			COALESCE(r.name, '') AS title,
+			COALESCE(ac.text, '') AS artist_name,
+			r.track_number,
+			r.disc_number,
+			COALESCE(rg.name, '') AS album,
+			CAST(COALESCE(
+				(SELECT GROUP_CONCAT(g.name, '||')
+				 FROM recording_genres rg_sub
+				 JOIN genres g ON rg_sub.genre_id = g.id
+				 WHERE rg_sub.recording_id = r.id),
+				''
+			) AS TEXT) AS genre,
+			COALESCE(r.year, 0) AS year,
+			COALESCE(r.composer, '') AS composer,
+			COALESCE(ft.extension, '') AS file_type,
+			af.sample_rate,
+			af.bit_depth,
+			af.channels,
+			af.bitrate,
+			af.file_size,
+			af.library_id,
+			af.play_count,
+			af.last_played,
+			COALESCE(ca.file_path, '') AS cover_art_path,
+			COALESCE(a.mbid, '') AS artist_mbid,
+			COALESCE(rg.mbid, '') AS release_group_mbid,
+			COALESCE(r.mbid, '') AS recording_mbid
+		FROM audio_files af
+		LEFT JOIN recordings r ON af.recording_id = r.id
+		LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
+		LEFT JOIN artist_credit_artist aca ON aca.credit_id = ac.id
+		LEFT JOIN artists a ON a.id = aca.artist_id
+		LEFT JOIN (
+			SELECT recording_id,
+				MIN(release_group_id) AS release_group_id
+			FROM release_group_recordings
+			GROUP BY recording_id
+		) rgr ON r.id = rgr.recording_id
+		LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
+		LEFT JOIN cover_art ca ON rg.cover_art_id = ca.id
+		LEFT JOIN file_types ft ON af.file_type_id = ft.id
+	`); err != nil {
+		return fmt.Errorf("migration 19: create view: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx,
+		"PRAGMA user_version = 19",
+	); err != nil {
+		return fmt.Errorf("could not set user_version to 19: %w", err)
+	}
+
+	logger.Info("migration 19 complete")
+
+	return nil
+}
+
+// migration20TrackRecordingMBID recreates the track_metadata VIEW to
+// add the recording_mbid column (missed in migration 19).
+func migration20TrackRecordingMBID(
+	ctx context.Context,
+	db *sql.DB,
+	logger *slog.Logger,
+) error {
+	logger.Info("applying migration 20: track_metadata recording_mbid")
+
+	if _, err := db.ExecContext(
+		ctx, "DROP VIEW IF EXISTS track_metadata",
+	); err != nil {
+		return fmt.Errorf("migration 20: drop view: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx, `
+		CREATE VIEW IF NOT EXISTS track_metadata AS
+		SELECT
+			af.id,
+			af.file_path,
+			af.length_milliseconds,
+			COALESCE(r.name, '') AS title,
+			COALESCE(ac.text, '') AS artist_name,
+			r.track_number,
+			r.disc_number,
+			COALESCE(rg.name, '') AS album,
+			CAST(COALESCE(
+				(SELECT GROUP_CONCAT(g.name, '||')
+				 FROM recording_genres rg_sub
+				 JOIN genres g ON rg_sub.genre_id = g.id
+				 WHERE rg_sub.recording_id = r.id),
+				''
+			) AS TEXT) AS genre,
+			COALESCE(r.year, 0) AS year,
+			COALESCE(r.composer, '') AS composer,
+			COALESCE(ft.extension, '') AS file_type,
+			af.sample_rate,
+			af.bit_depth,
+			af.channels,
+			af.bitrate,
+			af.file_size,
+			af.library_id,
+			af.play_count,
+			af.last_played,
+			COALESCE(ca.file_path, '') AS cover_art_path,
+			COALESCE(a.mbid, '') AS artist_mbid,
+			COALESCE(rg.mbid, '') AS release_group_mbid,
+			COALESCE(r.mbid, '') AS recording_mbid
+		FROM audio_files af
+		LEFT JOIN recordings r ON af.recording_id = r.id
+		LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
+		LEFT JOIN artist_credit_artist aca ON aca.credit_id = ac.id
+		LEFT JOIN artists a ON a.id = aca.artist_id
+		LEFT JOIN (
+			SELECT recording_id,
+				MIN(release_group_id) AS release_group_id
+			FROM release_group_recordings
+			GROUP BY recording_id
+		) rgr ON r.id = rgr.recording_id
+		LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
+		LEFT JOIN cover_art ca ON rg.cover_art_id = ca.id
+		LEFT JOIN file_types ft ON af.file_type_id = ft.id
+	`); err != nil {
+		return fmt.Errorf("migration 20: create view: %w", err)
+	}
+
+	// Purge stale ListenBrainz top-recordings cache entries that
+	// were written before the caaReleaseMbid field was added to
+	// the LBTopRecording struct.  Without this, cached entries
+	// render without cover art thumbnails in the top tracks section.
+	if _, err := db.ExecContext(ctx,
+		"DELETE FROM explore_cache WHERE url_key LIKE 'lb:top-recordings:%'",
+	); err != nil {
+		logger.Warn("migration 20: could not purge stale top-recordings cache", "err", err)
+		// Non-fatal — entries will expire naturally via TTL.
+	}
+
+	if _, err := db.ExecContext(ctx,
+		"PRAGMA user_version = 20",
+	); err != nil {
+		return fmt.Errorf("could not set user_version to 20: %w", err)
+	}
+
+	logger.Info("migration 20 complete")
+
+	return nil
 }

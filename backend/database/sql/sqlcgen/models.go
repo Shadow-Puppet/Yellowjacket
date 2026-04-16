@@ -26,6 +26,13 @@ type ArtistCreditArtist struct {
 	CreditID int64
 }
 
+type ArtistMetadatum struct {
+	Mbid      string
+	Source    string
+	Data      []byte
+	FetchedAt time.Time
+}
+
 type AudioFile struct {
 	ID                 int64
 	FilePath           string
@@ -50,15 +57,6 @@ type CoverArt struct {
 	MimeType   string
 }
 
-type ExploreCache struct {
-	UrlKey     string
-	Response   string
-	Mbid       sql.NullString
-	EntityType sql.NullString
-	ExpiresAt  time.Time
-	CreatedAt  time.Time
-}
-
 type FileType struct {
 	ID        int64
 	Extension string
@@ -67,6 +65,14 @@ type FileType struct {
 type Genre struct {
 	ID   int64
 	Name string
+}
+
+type HttpCache struct {
+	UrlKey     string
+	Response   []byte
+	ExpiresAt  time.Time
+	EntityMbid string
+	EntityType string
 }
 
 type Library struct {
@@ -139,6 +145,7 @@ type Recording struct {
 	Composer       sql.NullString
 	Lyrics         sql.NullString
 	Comment        sql.NullString
+	Mbid           sql.NullString
 }
 
 type RecordingGenre struct {
@@ -194,4 +201,8 @@ type TrackMetadatum struct {
 	LibraryID          int64
 	PlayCount          int64
 	LastPlayed         sql.NullTime
+	CoverArtPath       string
+	ArtistMbid         string
+	ReleaseGroupMbid   string
+	RecordingMbid      string
 }

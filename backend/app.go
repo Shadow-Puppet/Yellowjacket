@@ -189,6 +189,8 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 	yj.library.SetContext(ctx)
 	yj.playlist.SetContext(ctx)
 	yj.playlist.EnsureDefaultPlaylist()
+	// Recover playlists that lost tracks from a pre-fix FullRescan.
+	go yj.playlist.RepopulateFromM3U()
 
 	// Initialize speaker hardware (player struct created in
 	// NewYellowJacketApp for Wails binding registration).
@@ -230,11 +232,22 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 	// Wire scan hooks so the playlist service can resolve
 	// phantom tracks after each library scan completes.
 	yj.library.SetScanHooks(library.ScanHooks{
-		ResolvePhantoms: yj.playlist.ResolvePhantomTracksAfterScan,
+		RepopulatePlaylists: yj.playlist.RepopulateFromM3U,
+		ResolvePhantoms:     yj.playlist.ResolvePhantomTracksAfterScan,
 		OnAllScansComplete: func() {
-			// Only index artists that are new since the last
-			// build — don't re-run the full tier pipeline.
+			// Index new library artists (blocks until done).
 			yj.explore.IndexNewArtists()
+			yj.explore.WaitForIndexIdle()
+
+			// Populate local_*_id cross-reference columns on
+			// explore_index so "is this in my library?" is O(1).
+			yj.explore.PopulateLocalCrossReferences()
+
+			// Always start the full build — it's incremental and
+			// will skip tiers that are already fresh.  This ensures
+			// sitewide + similar artist tiers run even if the index
+			// already has library data.
+			yj.explore.StartIndexBuild()
 		},
 	})
 
@@ -300,6 +313,13 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 // OnBeforeClose captures window state while the window is still alive.
 func (yj *YellowJacketApp) OnBeforeClose(ctx context.Context) bool {
 	w, h := wailsruntime.WindowGetSize(ctx)
+
+	yj.logger.Info("OnBeforeClose: saving window state",
+		"width", w,
+		"height", h,
+		"accentColor", yj.appConfig.Theme.AccentColor,
+		"backgroundShade", yj.appConfig.Theme.BackgroundShade,
+	)
 
 	yj.appConfig.Window.Width = w
 	yj.appConfig.Window.Height = h

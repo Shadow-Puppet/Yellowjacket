@@ -44,6 +44,10 @@ type Track struct {
 	RecordingMBID    string
 	ArtistMBID       string
 	ReleaseGroupMBID string
+	CoverArtPath     string
+	CoverArtSmall    string
+	CoverArtMedium   string
+	CoverArtLarge    string
 }
 
 // genreDelimiter is the separator used by GROUP_CONCAT in the
@@ -74,13 +78,15 @@ func mapTrackRow(
 	sampleRate, bitDepth, channels, bitrate, fileSize int64,
 	playCount int64,
 	lastPlayed sql.NullTime,
+	coverArtPath string,
+	artistMBID, releaseGroupMBID, recordingMBID string,
 ) Track {
 	var lastPlayedStr string
 	if lastPlayed.Valid {
 		lastPlayedStr = lastPlayed.Time.Format(time.DateTime)
 	}
 
-	return Track{
+	t := Track{
 		TrackName:   title,
 		ArtistName:  artistName,
 		TrackLength: strconv.FormatInt(lengthMs, 10),
@@ -97,9 +103,22 @@ func mapTrackRow(
 		Channels:    channels,
 		Bitrate:     bitrate,
 		FileSize:    fileSize,
-		PlayCount:   playCount,
-		LastPlayed:  lastPlayedStr,
+		PlayCount:        playCount,
+		LastPlayed:        lastPlayedStr,
+		ArtistMBID:       artistMBID,
+		ReleaseGroupMBID: releaseGroupMBID,
+		RecordingMBID:    recordingMBID,
 	}
+
+	if coverArtPath != "" {
+		urls := coverart.ResolveURLs(coverArtPath)
+		t.CoverArtPath = urls.Original
+		t.CoverArtSmall = urls.Small
+		t.CoverArtMedium = urls.Medium
+		t.CoverArtLarge = urls.Large
+	}
+
+	return t
 }
 
 // TrackMBIDs holds MusicBrainz identifiers for a track, resolved
@@ -210,6 +229,10 @@ func (l *Library) GetAllTracks() ([]Track, error) {
 			row.FileSize,
 			row.PlayCount,
 			row.LastPlayed,
+			row.CoverArtPath,
+			row.ArtistMbid,
+			row.ReleaseGroupMbid,
+			row.RecordingMbid,
 		))
 	}
 
@@ -263,6 +286,8 @@ func (l *Library) SearchTracks(
 			row.Bitrate,
 			row.FileSize,
 			0, sql.NullTime{},
+			"",
+			"", "", "",
 		))
 	}
 
@@ -303,6 +328,10 @@ func (l *Library) GetAlbumTracks(albumID int64) ([]Track, error) {
 			row.Bitrate,
 			row.FileSize,
 			0, sql.NullTime{},
+			"",
+			row.ArtistMbid,
+			row.ReleaseGroupMbid,
+			row.RecordingMbid,
 		))
 	}
 
@@ -548,6 +577,8 @@ func (l *Library) GetTracksByGenre(
 			row.Bitrate,
 			row.FileSize,
 			0, sql.NullTime{},
+			"",
+			"", "", "",
 		))
 	}
 
@@ -631,6 +662,10 @@ func (l *Library) GetAllTracksByLibrary(
 			row.FileSize,
 			row.PlayCount,
 			row.LastPlayed,
+			row.CoverArtPath,
+			row.ArtistMbid,
+			row.ReleaseGroupMbid,
+			row.RecordingMbid,
 		))
 	}
 
@@ -876,6 +911,8 @@ func (l *Library) GetTracksByGenreByLibrary(
 			row.Bitrate,
 			row.FileSize,
 			0, sql.NullTime{},
+			"",
+			"", "", "",
 		))
 	}
 
@@ -928,6 +965,10 @@ func (l *Library) GetAlbumTracksByLibrary(
 			row.Bitrate,
 			row.FileSize,
 			0, sql.NullTime{},
+			"",
+			row.ArtistMbid,
+			row.ReleaseGroupMbid,
+			row.RecordingMbid,
 		))
 	}
 
@@ -976,6 +1017,8 @@ func (l *Library) SearchTracksByLibrary(
 			row.Bitrate,
 			row.FileSize,
 			0, sql.NullTime{},
+			"",
+			"", "", "",
 		))
 	}
 

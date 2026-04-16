@@ -1084,7 +1084,6 @@ export class CoverGrid
             }
 
             this.selectedAlbums = next;
-            this.syncDropdownToSelection();
             void this.selMgr.warmCache(
                 this.selectedAlbums,
             );
@@ -1099,31 +1098,23 @@ export class CoverGrid
 
             this.selectedAlbums = next;
             this.lastSelectedAlbumIndex = index;
-            this.syncDropdownToSelection();
             void this.selMgr.warmCache(
                 this.selectedAlbums,
             );
         } else {
-            // Plain click: if this album is the
-            // sole selection, deselect + close.
-            // Otherwise select only this album
-            // and open its dropdown.
-            if (
-                this.selectedAlbums.size === 1 &&
-                this.selectedAlbums.has(album.ID)
-            ) {
-                this.selectedAlbums = new Set();
-                this.closeDropdown();
-            } else {
-                this.selectedAlbums = new Set([
-                    album.ID,
-                ]);
-                void this.openDropdown(album);
-            }
-
-            this.lastSelectedAlbumIndex = index;
-            void this.selMgr.warmCache(
-                this.selectedAlbums,
+            // Plain click: navigate to explore album page.
+            this.selectedAlbums = new Set();
+            this.dispatchEvent(
+                new CustomEvent('navigate', {
+                    bubbles: true,
+                    composed: true,
+                    detail: {
+                        view: 'explore-album-details',
+                        releaseGroupMBID: album.MBID || '',
+                        albumName: album.Name,
+                        localAlbumId: album.ID,
+                    },
+                }),
             );
         }
     };
@@ -1897,9 +1888,7 @@ export class CoverGrid
             `;
         }
 
-        const gridContent = this.splitMode
-            ? this.renderSplitGrid()
-            : this.renderSingleGrid();
+        const gridContent = this.renderSingleGrid();
 
         return html`
             ${this.renderSortToolbar()}

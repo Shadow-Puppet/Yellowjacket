@@ -8,9 +8,13 @@ import {
     TopReleaseGroupsForArtist,
     SimilarArtists,
     GetArtistImageURL,
-    GetArtistPlayCount,
+    GetArtistImageCachedPath,
     GetLibrarySimilarArtists,
-    CheckLibraryMBIDs,
+    GetThumbnail,
+    GetThumbnails,
+    GetTrackThumbnail,
+    GetTrackThumbnails,
+    ResolveReleaseGroupMBIDs,
 } from '@go/explore/Service';
 import type {
     MBArtist,
@@ -22,7 +26,9 @@ import type {
 import { exploreCache } from '../../store/explore-cache';
 import { exploreSettings } from '../../store/explore-settings';
 import { libraryStore } from '../../store/library-store';
+import { GetAlbumsByArtist } from '@go/library/Library';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
+import '../library-status-indicator/library-status-indicator.js';
 
 /* ── Constants ── */
 const CAA_GROUP_BASE = 'https://coverartarchive.org/release-group';
@@ -51,6 +57,10 @@ const NON_STUDIO_SECONDARY_TYPES = new Set([
 
 function CoverArtGroupURL(releaseGroupMBID: string): string {
     return `${CAA_GROUP_BASE}/${releaseGroupMBID}/front-250`;
+}
+
+function CoverArtReleaseURL(releaseMBID: string): string {
+    return `https://coverartarchive.org/release/${releaseMBID}/front-250`;
 }
 
 function nameToHue(name: string): number {
@@ -84,6 +94,9 @@ export class ExploreArtistDetails extends LitElement {
     @property({ type: String, attribute: 'artist-name' })
     artistName = '';
 
+    @property({ type: Number, attribute: 'local-artist-id' })
+    localArtistId = 0;
+
     /* ── Internal state ── */
 
     @state() private artist: MBArtist | null = null;
@@ -101,9 +114,19 @@ export class ExploreArtistDetails extends LitElement {
     @state() private loadingSimilar = true;
     @state() private artistImageURL = '';
     @state() private similarImageURLs = new Map<string, string>();
-    @state() private topSectionExpanded = false;
-    @state() private artistPlayCount = 0;
+    /** Resolved cover art data URLs keyed by release group MBID. */
+    @state() private thumbnailURLs = new Map<string, string>();
+    /** Track thumbnails keyed by recording MBID — resolved via RG
+     * when possible, or the release MBID as fallback. */
+    @state() private trackThumbnails = new Map<string, string>();
+    @state() private topTracksExpanded = false;
+    @state() private topReleasesExpanded = false;
+    private topSectionStacked = false;
+    private topSectionObserver?: ResizeObserver;
     @state() private expandedDiscoGroups = new Set<string>();
+    /** Number of album cards that fit in one row of the discography grid. */
+    @state() private discoRowSize = 5;
+    private discoObserver?: ResizeObserver;
     @state() private similarExpanded = false;
     private libraryMBIDs = new Set<string>();
 
@@ -300,6 +323,32 @@ export class ExploreArtistDetails extends LitElement {
                 flex-shrink: 0;
             }
 
+            .track-art {
+                width: 32px;
+                height: 32px;
+                border-radius: 4px;
+                overflow: hidden;
+                flex-shrink: 0;
+                background: var(--yj-bg-overlay, rgba(255, 255, 255, 0.06));
+                position: relative;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+
+            .track-art img {
+                width: 100%;
+                height: 100%;
+                object-fit: cover;
+                display: block;
+            }
+
+            .track-art wa-icon {
+                font-size: 16px;
+                color: var(--yj-text-tertiary, #888);
+                opacity: 0.5;
+            }
+
             .track-info {
                 flex: 1;
                 min-width: 0;
@@ -330,43 +379,146 @@ export class ExploreArtistDetails extends LitElement {
                 white-space: nowrap;
             }
 
+            .track-item library-status-indicator {
+                flex-shrink: 0;
+            }
+
             /* ── Top section (tracks + releases side-by-side) ── */
+            .top-section-wrapper {
+                container-type: inline-size;
+            }
+
             .top-section-columns {
                 display: grid;
-                grid-template-columns: 1fr 1fr;
-                grid-template-rows: auto 1fr;
-                gap: 0 24px;
+                grid-template-columns: 1fr minmax(300px, 1fr);
+                gap: 24px;
             }
 
-            .top-section-column {
+            .top-section-col {
                 min-width: 0;
-                display: contents;
             }
 
-            .section-header-tracks {
-                grid-column: 1;
-                grid-row: 1;
+            /* Wide: releases column uses absolute positioning so
+               tracks alone determine the row height. */
+            .top-section-col-releases {
+                position: relative;
             }
 
-            .section-header-releases {
-                grid-column: 2;
-                grid-row: 1;
-            }
-
-            .track-list-container {
-                grid-column: 1;
-                grid-row: 2;
+            .top-releases-content {
+                position: absolute;
+                inset: 0;
+                display: flex;
+                flex-direction: column;
             }
 
             .top-releases-grid {
-                grid-column: 2;
-                grid-row: 2;
+                flex: 1;
+                min-height: 0;
+            }
+
+            .top-releases-inner {
+                height: 100%;
                 display: grid;
                 grid-template-columns: 1fr 1fr;
-                grid-template-rows: 1fr;
                 gap: 8px;
-                align-self: stretch;
-                overflow: hidden;
+            }
+
+            /* Per-column toggles: hidden in wide mode */
+            .column-toggle {
+                display: none;
+            }
+
+            /* Shared toggle: visible in wide mode */
+            .top-section-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 6px;
+                padding: 6px 12px;
+                margin-top: 12px;
+                border: none;
+                border-radius: 6px;
+                background: var(--yj-bg-overlay, rgba(255, 255, 255, 0.06));
+                color: var(--yj-text-secondary, #b3b3b3);
+                font-size: var(--yj-text-sm);
+                cursor: pointer;
+                transition: background 0.15s ease, color 0.15s ease;
+                width: 100%;
+            }
+
+            .top-section-toggle:hover {
+                background: var(--yj-bg-hover, rgba(255, 255, 255, 0.1));
+                color: var(--yj-text-primary, #fff);
+            }
+
+            .top-section-toggle wa-icon {
+                font-size: 12px;
+                transition: transform 0.2s ease;
+            }
+
+            .top-section-toggle[aria-expanded='true'] wa-icon {
+                transform: rotate(180deg);
+            }
+
+            /* ── Narrow / stacked layout ── */
+            @container (max-width: 650px) {
+                .top-section-columns {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 16px;
+                }
+
+                /* Releases column goes back to normal flow */
+                .top-section-col-releases {
+                    position: static;
+                }
+
+                .top-releases-content {
+                    position: static;
+                    display: flex;
+                    flex-direction: column;
+                }
+
+                .top-releases-inner {
+                    height: auto;
+                }
+
+                /* Per-column toggles visible */
+                .column-toggle {
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    gap: 6px;
+                    padding: 6px 12px;
+                    margin-top: 8px;
+                    border: none;
+                    border-radius: 6px;
+                    background: var(--yj-bg-overlay, rgba(255, 255, 255, 0.06));
+                    color: var(--yj-text-secondary, #b3b3b3);
+                    font-size: var(--yj-text-sm);
+                    cursor: pointer;
+                    transition: background 0.15s ease, color 0.15s ease;
+                    width: 100%;
+                }
+
+                .column-toggle:hover {
+                    background: var(--yj-bg-hover, rgba(255, 255, 255, 0.1));
+                    color: var(--yj-text-primary, #fff);
+                }
+
+                .column-toggle wa-icon {
+                    font-size: 12px;
+                    transition: transform 0.2s ease;
+                }
+
+                .column-toggle[aria-expanded='true'] wa-icon {
+                    transform: rotate(180deg);
+                }
+
+                /* Shared toggle hidden */
+                .top-section-toggle {
+                    display: none;
+                }
             }
 
             .top-release-card {
@@ -400,19 +552,18 @@ export class ExploreArtistDetails extends LitElement {
                 min-height: 0;
                 border-radius: 4px;
                 overflow: hidden;
-                background: linear-gradient(
-                    135deg,
-                    var(--yj-bg-overlay, #404040) 0%,
-                    var(--yj-bg-surface, #282828) 100%
-                );
                 position: relative;
+                display: flex;
+                align-items: center;
+                justify-content: center;
             }
 
             .top-release-art img {
-                width: 100%;
-                height: 100%;
-                object-fit: cover;
+                max-width: 100%;
+                max-height: 100%;
+                object-fit: contain;
                 display: block;
+                margin: auto;
             }
 
             .top-release-art .album-art-fallback {
@@ -446,42 +597,27 @@ export class ExploreArtistDetails extends LitElement {
             .top-release-meta {
                 display: flex;
                 align-items: center;
-                justify-content: center;
+                justify-content: space-between;
                 gap: 6px;
                 color: var(--yj-text-tertiary, #888);
                 font-size: var(--yj-text-xs);
+                min-height: 18px;
             }
 
-            .top-section-toggle {
+            .top-release-meta-text {
                 display: flex;
                 align-items: center;
-                justify-content: center;
                 gap: 6px;
-                padding: 6px 12px;
-                margin-top: 12px;
-                border: none;
-                border-radius: 6px;
-                background: var(--yj-bg-overlay, rgba(255, 255, 255, 0.06));
-                color: var(--yj-text-secondary, #b3b3b3);
-                font-size: var(--yj-text-sm);
-                cursor: pointer;
-                transition: background 0.15s ease, color 0.15s ease;
-                width: 100%;
+                min-width: 0;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
             }
 
-            .top-section-toggle:hover {
-                background: var(--yj-bg-hover, rgba(255, 255, 255, 0.1));
-                color: var(--yj-text-primary, #fff);
+            .top-release-meta library-status-indicator {
+                flex-shrink: 0;
             }
 
-            .top-section-toggle wa-icon {
-                font-size: 12px;
-                transition: transform 0.2s ease;
-            }
-
-            .top-section-toggle[aria-expanded='true'] wa-icon {
-                transform: rotate(180deg);
-            }
 
             /* ── Discography grid ── */
             .disco-group {
@@ -499,7 +635,7 @@ export class ExploreArtistDetails extends LitElement {
 
             .album-grid {
                 display: grid;
-                grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+                grid-template-columns: repeat(auto-fill, 140px);
                 gap: 16px;
             }
 
@@ -565,15 +701,9 @@ export class ExploreArtistDetails extends LitElement {
                 aspect-ratio: 1;
                 border-radius: 4px;
                 overflow: hidden;
-                background: linear-gradient(
-                    135deg,
-                    var(--yj-bg-overlay, #404040) 0%,
-                    var(--yj-bg-surface, #282828) 100%
-                );
-                display: flex;
-                align-items: center;
-                justify-content: center;
+                flex-shrink: 0;
                 position: relative;
+                background: var(--yj-bg-overlay, rgba(255, 255, 255, 0.06));
             }
 
             .album-art-container img {
@@ -581,6 +711,7 @@ export class ExploreArtistDetails extends LitElement {
                 height: 100%;
                 object-fit: cover;
                 display: block;
+                border-radius: 4px;
             }
 
             .album-art-fallback {
@@ -611,31 +742,39 @@ export class ExploreArtistDetails extends LitElement {
             .album-meta {
                 display: flex;
                 align-items: center;
+                justify-content: space-between;
                 gap: 6px;
                 color: var(--yj-text-tertiary, #888);
                 font-size: var(--yj-text-xs);
+                min-height: 20px;
             }
 
-            .library-badge {
-                background: var(--yj-accent, #1db954);
-                color: #000;
-                padding: 1px 6px;
-                border-radius: 3px;
-                font-size: 10px;
-                font-weight: 600;
+            .album-meta-text {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                min-width: 0;
+                overflow: hidden;
+                text-overflow: ellipsis;
                 white-space: nowrap;
+            }
+
+            .album-meta library-status-indicator {
+                flex-shrink: 0;
+                margin-left: auto;
             }
 
             /* ── Similar artists ── */
             .similar-row {
-                display: flex;
-                flex-wrap: wrap;
-                gap: 12px;
+                display: grid;
+                grid-template-columns: repeat(auto-fill, 140px);
+                gap: 16px;
                 overflow: hidden;
             }
 
             .similar-row.collapsed {
-                max-height: 130px;
+                grid-template-rows: 1fr;
+                overflow: hidden;
             }
 
             .similar-artist-card {
@@ -646,9 +785,6 @@ export class ExploreArtistDetails extends LitElement {
                 padding: 10px;
                 border-radius: 8px;
                 cursor: pointer;
-                min-width: 100px;
-                max-width: 120px;
-                flex-shrink: 0;
                 text-align: center;
                 transition: background 0.15s ease;
             }
@@ -665,15 +801,15 @@ export class ExploreArtistDetails extends LitElement {
             }
 
             .similar-avatar {
-                width: 48px;
-                height: 48px;
+                width: 67px;
+                height: 67px;
                 border-radius: 50%;
                 display: flex;
                 align-items: center;
                 justify-content: center;
                 color: #fff;
                 font-weight: 600;
-                font-size: 20px;
+                font-size: 28px;
                 text-transform: uppercase;
                 user-select: none;
                 flex-shrink: 0;
@@ -689,7 +825,7 @@ export class ExploreArtistDetails extends LitElement {
             .similar-name {
                 font-weight: 500;
                 color: var(--yj-text-primary, #fff);
-                font-size: var(--yj-text-sm);
+                font-size: var(--yj-text-md);
                 white-space: nowrap;
                 overflow: hidden;
                 text-overflow: ellipsis;
@@ -704,14 +840,14 @@ export class ExploreArtistDetails extends LitElement {
 
     override connectedCallback() {
         super.connectedCallback();
-        if (this.artistMBID) {
+        if (this.artistMBID || this.localArtistId) {
             void this.loadAllData();
         }
 
         // Re-render when library-only mode toggles.
         this.unsubSettings = exploreSettings.subscribe(() => {
             this.requestUpdate();
-            if (this.artistMBID) {
+            if (this.artistMBID || this.localArtistId) {
                 void this.loadAllData();
             }
         });
@@ -720,12 +856,108 @@ export class ExploreArtistDetails extends LitElement {
     override disconnectedCallback() {
         super.disconnectedCallback();
         this.unsubSettings?.();
+        this.topSectionObserver?.disconnect();
+        this.discoObserver?.disconnect();
+    }
+
+    protected override firstUpdated() {
+        this.observeTopSectionWidth();
+        this.observeDiscoWidth();
+    }
+
+    protected override updated() {
+        // Re-attach observers if elements appeared after initial render.
+        if (!this.topSectionObserver) {
+            this.observeTopSectionWidth();
+        }
+        if (!this.discoObserver) {
+            this.observeDiscoWidth();
+        }
+    }
+
+    /**
+     * Watch the top-section-wrapper width. When transitioning from
+     * stacked (≤650px) to side-by-side (>650px), sync expand states
+     * so both columns match.
+     */
+    private observeTopSectionWidth() {
+        const wrapper = this.renderRoot.querySelector('.top-section-wrapper');
+        if (!wrapper) return;
+
+        this.topSectionObserver = new ResizeObserver((entries) => {
+            for (const entry of entries) {
+                const width = entry.contentBoxSize?.[0]?.inlineSize ?? entry.contentRect.width;
+                const nowStacked = width <= 650;
+
+                if (this.topSectionStacked && !nowStacked) {
+                    // Transitioning stacked → side-by-side: sync states.
+                    // If either is expanded, expand both.
+                    if (this.topTracksExpanded || this.topReleasesExpanded) {
+                        this.topTracksExpanded = true;
+                        this.topReleasesExpanded = true;
+                    }
+                }
+
+                this.topSectionStacked = nowStacked;
+            }
+        });
+
+        this.topSectionObserver.observe(wrapper);
+    }
+
+    /**
+     * Watch the .content width and compute how many album cards
+     * fit in one row of the discography grid.
+     * Grid uses: repeat(auto-fill, minmax(140px, 1fr)) with 16px gap
+     * and album-card has 8px padding on each side.
+     */
+    private observeDiscoWidth() {
+        const content = this.renderRoot.querySelector('.content');
+        if (!content) return;
+
+        const CARD_MIN = 140;
+        const GAP = 16;
+
+        this.discoObserver = new ResizeObserver((entries) => {
+            for (const entry of entries) {
+                const width = entry.contentBoxSize?.[0]?.inlineSize ?? entry.contentRect.width;
+                const cols = Math.max(1, Math.floor((width + GAP) / (CARD_MIN + GAP)));
+                if (cols !== this.discoRowSize) {
+                    this.discoRowSize = cols;
+                }
+            }
+        });
+
+        this.discoObserver.observe(content);
     }
 
     /* ── Data Loading ── */
 
     private async loadAllData() {
         const mbid = this.artistMBID;
+
+        // Local-only artist (no MBID) — populate from library store.
+        if (!mbid && this.localArtistId) {
+            console.log(
+                `[explore-artist] loading local-only: "${this.artistName}" (id=${this.localArtistId})`,
+            );
+
+            this.loadingArtist = false;
+            this.loadingTracks = false;
+            this.loadingTopReleases = false;
+            this.loadingReleases = false;
+            this.loadingSimilar = false;
+            this.similarArtists = [];
+
+            this.hydrateLocalOnly();
+
+            console.log(
+                `[explore-artist] loaded (local-only): "${this.artistName}"`,
+            );
+
+            return;
+        }
+
         console.log(
             `[explore-artist] loading: "${this.artistName}" (${mbid})`,
         );
@@ -743,10 +975,69 @@ export class ExploreArtistDetails extends LitElement {
             this.loadingReleases = false;
             this.loadingSimilar = false;
 
+            // If the library store hasn't eagerly fetched yet,
+            // await it and re-hydrate.  Covers the race between
+            // navigation and the deferred eagerFetch on DOMContentLoaded.
+            if (!libraryStore.cachedArtists || !libraryStore.cachedAlbums) {
+                try {
+                    const pending: Promise<unknown>[] = [];
+                    if (!libraryStore.cachedArtists) {
+                        pending.push(libraryStore.getArtists());
+                    }
+                    if (!libraryStore.cachedAlbums) {
+                        pending.push(libraryStore.getAlbums());
+                    }
+                    await Promise.all(pending);
+                    this.hydrateFromCache(mbid);
+                } catch {
+                    // Ignore — we'll fall through to the Wails-cached path.
+                }
+            }
+
+            // Artist image: if hydrateFromCache didn't find one (e.g.
+            // the library store's cached artist row has an empty
+            // ImageMedium because the on-disk file post-dates the
+            // store's last fetch), fall back to a disk-only Wails
+            // call.  This just asks the backend whether
+            // /artist-images/.../primary_md.jpg exists — no network,
+            // no base64 transfer.
+            if (!this.artistImageURL && mbid) {
+                void GetArtistImageCachedPath(mbid)
+                    .then((url) => {
+                        if (url) {
+                            this.artistImageURL = url;
+                        } else {
+                            // Final fallback: album art by artist name.
+                            this.fallbackArtistImageFromAlbumArt();
+                        }
+                    })
+                    .catch(() => {
+                        this.fallbackArtistImageFromAlbumArt();
+                    });
+            }
+
             // Fetch library-only similar artists (single Go call, no external API).
             try {
                 const similar = await GetLibrarySimilarArtists(mbid);
-                this.similarArtists = similar ?? [];
+                // Dedupe by MBID as a safety net — the backend query
+                // should already return unique rows but multiple library
+                // artists can share an MBID (ensemble credits), so this
+                // guards against any future query regression.
+                const seen = new Set<string>();
+                const deduped: LBSimilarArtist[] = [];
+                for (const s of similar ?? []) {
+                    const key = s.artistMbid || s.name;
+                    if (!key || seen.has(key)) continue;
+                    seen.add(key);
+                    deduped.push(s);
+                }
+                this.similarArtists = deduped;
+
+                // Resolve similar artist images from library cache —
+                // no Go calls, no network.  These artists are all in
+                // the library (that's the filter GetLibrarySimilarArtists
+                // applies), so the library store has their image paths.
+                this.seedSimilarArtistImagesFromLibrary();
             } catch {
                 this.similarArtists = [];
             }
@@ -758,36 +1049,26 @@ export class ExploreArtistDetails extends LitElement {
             return;
         }
 
-        // Phase 1: fire all API requests in parallel.
-        const [artistResult, tracksResult, topReleasesResult, releasesResult, similarResult] =
-            await Promise.allSettled([
-                this.fetchArtist(mbid),
-                this.fetchTopTracks(mbid),
-                this.fetchTopReleaseGroups(mbid),
-                this.fetchReleaseGroups(mbid),
-                this.fetchSimilarArtists(mbid),
-            ]);
+        // Phase 1: fire all API requests independently so the UI
+        // renders each section as its data arrives, rather than
+        // waiting for the slowest call to finish.
+        void this.fetchArtist(mbid);
+        void this.fetchTopTracks(mbid);
+        void this.fetchTopReleaseGroups(mbid);
+        void this.fetchReleaseGroups(mbid);
+        void this.fetchSimilarArtists(mbid);
 
         // Artist image is fire-and-forget — doesn't block the page.
         if (!this.artistImageURL) {
             this.fetchArtistImage(mbid);
         }
 
-        // Play count is fire-and-forget.
-        this.fetchArtistPlayCount(mbid);
+        // Play count comes from LookupArtist (already populated from index).
 
-        // Check which release groups are in the local library.
-        this.checkLibrary();
+        // checkLibrary now runs from fetchReleaseGroups when data arrives.
 
-        const summary = [
-            `artist=${artistResult.status}`,
-            `tracks=${tracksResult.status}`,
-            `topReleases=${topReleasesResult.status}`,
-            `releases=${releasesResult.status}`,
-            `similar=${similarResult.status}`,
-        ].join(', ');
         console.log(
-            `[explore-artist] loaded: "${this.artistName}" (${summary})`,
+            `[explore-artist] data requests fired: "${this.artistName}" (${mbid})`,
         );
     }
 
@@ -824,21 +1105,41 @@ export class ExploreArtistDetails extends LitElement {
         if (cachedAlbums) {
             const artistName = this.artistName.toLowerCase();
             const libraryAlbums: MBReleaseGroup[] = [];
+            const thumbUpdates = new Map(this.thumbnailURLs);
+            let thumbsChanged = false;
+
             for (const a of cachedAlbums) {
                 if (a.ArtistName.toLowerCase() === artistName) {
+                    const mbid = a.MBID || `local:${a.ID}`;
                     libraryAlbums.push({
-                        mbid: a.MBID || '',
+                        mbid,
                         title: a.Name,
                         primaryType: 'Album',
                         artistCredit: a.ArtistName,
                         firstReleaseDate: a.Year ? String(a.Year) : '',
+                        inLibrary: true,
+                        localId: a.ID,
                     } as MBReleaseGroup);
+
+                    // Seed the thumbnail map directly from the library
+                    // cover art so the renderer doesn't need to call
+                    // GetThumbnail.  Album cover art lives at
+                    // /covers/... served by the Wails dev server.
+                    const art = a.CoverArtMedium || a.CoverArtSmall || a.CoverArtPath;
+                    if (art && !thumbUpdates.has(mbid)) {
+                        thumbUpdates.set(mbid, art);
+                        thumbsChanged = true;
+                    }
                 }
             }
 
             if (libraryAlbums.length > 0) {
                 this.releaseGroups = libraryAlbums;
                 this.loadingReleases = false;
+            }
+
+            if (thumbsChanged) {
+                this.thumbnailURLs = thumbUpdates;
             }
         }
 
@@ -860,6 +1161,101 @@ export class ExploreArtistDetails extends LitElement {
         }
     }
 
+    /**
+     * Populate the view entirely from library data when the artist
+     * has no MusicBrainz ID.  Uses the local artist ID to fetch
+     * albums and resolves the artist image from album cover art.
+     */
+    private async hydrateLocalOnly() {
+        // Ensure library store is populated before reading.
+        if (!libraryStore.cachedArtists || !libraryStore.cachedAlbums) {
+            try {
+                const pending: Promise<unknown>[] = [];
+                if (!libraryStore.cachedArtists) {
+                    pending.push(libraryStore.getArtists());
+                }
+                if (!libraryStore.cachedAlbums) {
+                    pending.push(libraryStore.getAlbums());
+                }
+                await Promise.all(pending);
+            } catch {
+                // Non-fatal — continue with whatever's loaded.
+            }
+        }
+
+        // Artist image: use library store cached artist, then try
+        // the on-disk image cache by MBID if available, then fall
+        // back to album art.
+        const cachedArtists = libraryStore.cachedArtists;
+        let artistMbidForImage = '';
+
+        if (cachedArtists) {
+            for (const a of cachedArtists) {
+                if (a.ID === this.localArtistId) {
+                    this.artistImageURL = a.ImageMedium || a.ImageSmall || '';
+                    artistMbidForImage = a.MBID || '';
+                    break;
+                }
+            }
+        }
+
+        if (!this.artistImageURL && artistMbidForImage) {
+            try {
+                const url = await GetArtistImageCachedPath(artistMbidForImage);
+                if (url) this.artistImageURL = url;
+            } catch {
+                // Ignore.
+            }
+        }
+
+        // Discography: fetch albums by artist ID and seed thumbnails
+        // directly from library cover art.
+        try {
+            const albums = await GetAlbumsByArtist(this.localArtistId);
+            const thumbUpdates = new Map(this.thumbnailURLs);
+            let thumbsChanged = false;
+
+            this.releaseGroups = (albums ?? []).map((a) => {
+                const mbid = a.MBID || `local:${a.ID}`;
+                const art = a.CoverArtMedium || a.CoverArtSmall || a.CoverArtPath;
+
+                if (art && !thumbUpdates.has(mbid)) {
+                    thumbUpdates.set(mbid, art);
+                    thumbsChanged = true;
+                }
+
+                return {
+                    mbid,
+                    title: a.Name,
+                    primaryType: 'Album',
+                    artistCredit: a.ArtistName,
+                    firstReleaseDate: a.Year ? String(a.Year) : '',
+                    inLibrary: true,
+                    localId: a.ID,
+                    _coverArt: art || '',
+                    _inLibrary: true,
+                } as MBReleaseGroup & { _coverArt: string; _inLibrary: boolean };
+            });
+
+            if (thumbsChanged) {
+                this.thumbnailURLs = thumbUpdates;
+            }
+        } catch {
+            this.releaseGroups = [];
+        }
+
+        // Final fallback: artist image from first album's cover art.
+        if (!this.artistImageURL) {
+            for (const rg of this.releaseGroups) {
+                const art = (rg as MBReleaseGroup & { _coverArt?: string })._coverArt;
+                if (art) {
+                    this.artistImageURL = art;
+                    break;
+                }
+            }
+        }
+    }
+
     private async fetchArtist(mbid: string) {
         try {
             this.artist = await LookupArtist(mbid);
@@ -876,6 +1272,29 @@ export class ExploreArtistDetails extends LitElement {
         try {
             const tracks = await TopRecordingsForArtist(mbid);
             this.topTracks = tracks ?? [];
+
+            if (!tracks || tracks.length === 0) return;
+
+            // Resolve track CAA release MBIDs to their parent release
+            // group MBIDs where possible.  When a track's CAA release
+            // belongs to a release group in the index, we reuse the
+            // shared RG cache (discography, top releases).  When it
+            // doesn't, we fall back to fetching by the release MBID
+            // directly via the backend's GetTrackThumbnail.
+            const caaMbids = tracks
+                .map((t) => t.caaReleaseMbid)
+                .filter((m): m is string => !!m);
+
+            let mapping: Record<string, string> = {};
+            if (caaMbids.length > 0) {
+                try {
+                    mapping = (await ResolveReleaseGroupMBIDs(caaMbids)) || {};
+                } catch (err) {
+                    console.warn('[explore-artist] failed to resolve release groups for tracks:', err);
+                }
+            }
+
+            void this.batchResolveTrackThumbnails(tracks, mapping);
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             this.errorTracks = msg;
@@ -887,10 +1306,79 @@ export class ExploreArtistDetails extends LitElement {
         }
     }
 
+    /**
+     * Two-phase track thumbnail loader: checks the backend cache in
+     * one batch call, then fires individual network fetches for any
+     * that are missing.  Each track's thumbnail is keyed by the
+     * track's recording MBID so the renderer doesn't have to know
+     * whether the art came from RG or release fallback.
+     */
+    private async batchResolveTrackThumbnails(
+        tracks: LBTopRecording[],
+        releaseToRG: Record<string, string>,
+    ) {
+        const needed = tracks.filter(
+            (t) => t.recordingMbid && !this.trackThumbnails.has(t.recordingMbid),
+        );
+        if (needed.length === 0) return;
+
+        // Mark all as in-flight.
+        for (const t of needed) {
+            this.trackThumbnails.set(t.recordingMbid, '');
+        }
+
+        const requests = needed.map((t) => ({
+            key: t.recordingMbid,
+            releaseMbid: t.caaReleaseMbid || '',
+            releaseGroupMbid: releaseToRG[t.caaReleaseMbid] || '',
+            albumName: t.releaseName || '',
+            artistName: t.artistName || '',
+        }));
+
+        // Phase 1: batched cached lookup.
+        let cached: Record<string, string> = {};
+        try {
+            cached = (await GetTrackThumbnails(requests)) || {};
+            if (Object.keys(cached).length > 0) {
+                const updated = new Map(this.trackThumbnails);
+                for (const [key, url] of Object.entries(cached)) {
+                    if (url) updated.set(key, url);
+                }
+
+                this.trackThumbnails = updated;
+            }
+        } catch {
+            // Best-effort.
+        }
+
+        // Phase 2: per-track network fetches for anything still missing.
+        const uncached = requests.filter((r) => !cached[r.key]);
+        for (const req of uncached) {
+            GetTrackThumbnail(
+                req.releaseMbid,
+                req.releaseGroupMbid,
+                req.albumName,
+                req.artistName,
+            )
+                .then((url) => {
+                    if (url) {
+                        this.trackThumbnails = new Map(this.trackThumbnails).set(req.key, url);
+                    }
+                })
+                .catch(() => {});
+        }
+    }
+
     private async fetchTopReleaseGroups(mbid: string) {
         try {
             const rgs = await TopReleaseGroupsForArtist(mbid);
             this.topReleaseGroups = rgs ?? [];
+
+            // Batch-resolve cover art for top releases.
+            void this.batchResolveThumbnails(
+                rgs?.map((r) => ({ mbid: r.releaseGroupMbid, albumName: r.title, artistName: r.artistName }))
+                    ?? [],
+            );
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             console.error(
@@ -906,6 +1394,16 @@ export class ExploreArtistDetails extends LitElement {
         try {
             const rgs = await BrowseReleaseGroups(mbid);
             this.releaseGroups = rgs ?? [];
+
+            // Populate libraryMBIDs from the inLibrary flag (already
+            // set by the backend via local_release_group_id cross-ref).
+            this.checkLibrary();
+
+            // Batch-resolve cover art for discography (lower priority — loaded after top sections).
+            void this.batchResolveThumbnails(
+                rgs?.map((r) => ({ mbid: r.mbid, albumName: r.title, artistName: r.artistCredit }))
+                    ?? [],
+            );
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             this.errorReleases = msg;
@@ -938,11 +1436,191 @@ export class ExploreArtistDetails extends LitElement {
         }
     }
 
+    /**
+     * Resolve a cover art thumbnail for a release group (or release)
+     * via the backend proxy (local library → disk cache → CAA).
+     * Updates thumbnailURLs reactively so the image pops in when ready.
+     */
+    private resolveThumbnail(mbid: string, albumName: string, artistName: string) {
+        if (!mbid || this.thumbnailURLs.has(mbid)) return;
+
+        // Mark as in-flight so we don't fire duplicate requests.
+        this.thumbnailURLs.set(mbid, '');
+
+        GetThumbnail(mbid, albumName, artistName)
+            .then((url) => {
+                if (url) {
+                    this.thumbnailURLs = new Map(this.thumbnailURLs).set(mbid, url);
+                }
+            })
+            .catch(() => {});
+    }
+
+    /**
+     * Batch-resolve thumbnails in two phases:
+     * 1. Batch call for cached/local art — instant.
+     * 2. Individual async calls for uncached items — stream in one by one.
+     * This prevents a slow CAA fetch from blocking cached items from rendering.
+     */
+    private async batchResolveThumbnails(
+        items: Array<{ mbid: string; albumName: string; artistName: string }>,
+    ) {
+        // Filter out already-resolved or in-flight items.
+        const needed = items.filter((i) => i.mbid && !this.thumbnailURLs.has(i.mbid));
+        if (needed.length === 0) return;
+
+        // Mark all as in-flight.
+        for (const item of needed) {
+            this.thumbnailURLs.set(item.mbid, '');
+        }
+
+        // Phase 1: batch cached lookup — instant return.
+        let cached: Record<string, string> = {};
+        try {
+            const requests = needed.map((i) => ({
+                mbid: i.mbid,
+                albumName: i.albumName,
+                artistName: i.artistName,
+            }));
+
+            cached = (await GetThumbnails(requests)) || {};
+            if (Object.keys(cached).length > 0) {
+                const updated = new Map(this.thumbnailURLs);
+                for (const [mbid, url] of Object.entries(cached)) {
+                    if (url) updated.set(mbid, url);
+                }
+
+                this.thumbnailURLs = updated;
+            }
+        } catch {
+            // Best-effort.
+        }
+
+        // Phase 2: fire individual fetches for uncached items so they
+        // stream in as CAA responds, rather than blocking on the slowest.
+        const uncached = needed.filter((i) => !cached[i.mbid]);
+        for (const item of uncached) {
+            GetThumbnail(item.mbid, item.albumName, item.artistName)
+                .then((url) => {
+                    if (url) {
+                        this.thumbnailURLs = new Map(this.thumbnailURLs).set(item.mbid, url);
+                    }
+                })
+                .catch(() => {});
+        }
+    }
+
+    /**
+     * Populate similarImageURLs for the current similarArtists list
+     * using only library-store data and disk-cached artist images.
+     * Makes ZERO network calls — safe for library-only mode.
+     *
+     * Resolution priority per artist:
+     *   1. libraryStore.cachedArtists[mbid].ImageMedium (in-memory)
+     *   2. GetArtistImageCachedPath(mbid) (disk-only Wails call)
+     *   3. First library album cover art by that artist name (fallback)
+     */
+    private async seedSimilarArtistImagesFromLibrary() {
+        if (this.similarArtists.length === 0) return;
+
+        const cachedArtists = libraryStore.cachedArtists;
+        const cachedAlbums = libraryStore.cachedAlbums;
+
+        // Build an MBID → ImageMedium map from library store.
+        const byMbid = new Map<string, string>();
+        if (cachedArtists) {
+            for (const a of cachedArtists) {
+                if (!a.MBID) continue;
+                const img = a.ImageMedium || a.ImageSmall;
+                if (img) byMbid.set(a.MBID, img);
+            }
+        }
+
+        // Seed synchronous hits first.
+        let updates = new Map(this.similarImageURLs);
+        let changed = false;
+
+        for (const s of this.similarArtists) {
+            if (updates.has(s.artistMbid)) continue;
+            const img = byMbid.get(s.artistMbid);
+            if (img) {
+                updates.set(s.artistMbid, img);
+                changed = true;
+            }
+        }
+
+        if (changed) {
+            this.similarImageURLs = updates;
+            changed = false;
+            updates = new Map(this.similarImageURLs);
+        }
+
+        // Disk-only Wails calls for any similars that weren't in the
+        // library store cache (e.g. artist row exists but ImageMedium
+        // is empty because primary_md.jpg was added after the eager
+        // fetch).  Fire in parallel, update the map as each returns.
+        const pending: Promise<void>[] = [];
+
+        for (const s of this.similarArtists) {
+            if (updates.has(s.artistMbid) && updates.get(s.artistMbid)) continue;
+            if (!s.artistMbid) continue;
+
+            pending.push(
+                GetArtistImageCachedPath(s.artistMbid)
+                    .then((url) => {
+                        if (url) {
+                            this.similarImageURLs = new Map(this.similarImageURLs).set(
+                                s.artistMbid,
+                                url,
+                            );
+                            return;
+                        }
+
+                        // Last-resort fallback: first library album by
+                        // this artist name (covers artists without
+                        // cached portraits).
+                        if (!cachedAlbums) return;
+                        const targetName = (s.name || '').toLowerCase();
+                        for (const album of cachedAlbums) {
+                            if (album.ArtistName.toLowerCase() !== targetName) continue;
+                            const art = album.CoverArtMedium || album.CoverArtSmall || album.CoverArtPath;
+                            if (art) {
+                                this.similarImageURLs = new Map(this.similarImageURLs).set(
+                                    s.artistMbid,
+                                    art,
+                                );
+                                return;
+                            }
+                        }
+                    })
+                    .catch(() => {
+                        // Ignore — letter avatar stays.
+                    }),
+            );
+        }
+
+        await Promise.allSettled(pending);
+    }
+
     private async fetchSimilarArtistImages() {
+        // Phase 1: instant seed from library store + disk cache.
+        // This mirrors the library-only path so any card whose image
+        // is already on disk appears immediately, without waiting
+        // for a network-enabled GetArtistImageURL round-trip.
+        await this.seedSimilarArtistImagesFromLibrary();
+
+        // Phase 2: network fetch for any similars still without
+        // an image.  GetArtistImageURL triggers MB → Wikidata →
+        // Wikimedia resolution which is slow (~1-5s per artist),
+        // so we only hit it for cards that weren't resolved
+        // instantly from local sources above.
         const artists = this.similarArtists;
-        // Fetch in parallel — each call is cached after first resolution.
+
         await Promise.allSettled(
             artists.map(async (a) => {
+                if (!a.artistMbid) return;
+                if (this.similarImageURLs.get(a.artistMbid)) return;
+
                 try {
                     const url = await GetArtistImageURL(a.artistMbid);
                     if (url) {
@@ -970,81 +1648,48 @@ export class ExploreArtistDetails extends LitElement {
 
         // Fallback: album cover art if no artist image resolved.
         if (!this.artistImageURL) {
-            const cachedAlbums = libraryStore.cachedAlbums;
-            if (cachedAlbums) {
-                const artistName = this.artistName.toLowerCase();
-
-                for (const a of cachedAlbums) {
-                    if (a.ArtistName.toLowerCase() === artistName) {
-                        const art = a.CoverArtMedium || a.CoverArtSmall;
-
-                        if (art) {
-                            this.artistImageURL = art;
-
-                            break;
-                        }
-                    }
-                }
-            }
+            this.fallbackArtistImageFromAlbumArt();
         }
     }
 
-    private async fetchArtistPlayCount(mbid: string) {
-        try {
-            const count = await GetArtistPlayCount(mbid);
-            if (count > 0) {
-                this.artistPlayCount = count;
-            }
-        } catch {
-            // Non-critical.
-        }
-    }
+    /**
+     * Populate artistImageURL from the first matching library album's
+     * cover art.  Used as a last-resort fallback when no portrait is
+     * available and we don't want to make a network call.
+     */
+    private fallbackArtistImageFromAlbumArt() {
+        if (this.artistImageURL) return;
 
-    private async checkLibrary() {
-        // Check frontend-side first.
         const cachedAlbums = libraryStore.cachedAlbums;
-        if (cachedAlbums) {
-            const localMBIDs = new Set<string>();
-            for (const a of cachedAlbums) {
-                if (a.MBID) localMBIDs.add(a.MBID);
-            }
+        if (!cachedAlbums) return;
 
-            let updated = false;
+        const artistName = this.artistName.toLowerCase();
 
-            for (const rg of this.releaseGroups) {
-                if (rg.mbid && localMBIDs.has(rg.mbid)) {
-                    this.libraryMBIDs.add(rg.mbid);
-                    updated = true;
-                }
-            }
+        for (const a of cachedAlbums) {
+            if (a.ArtistName.toLowerCase() !== artistName) continue;
 
-            if (updated) {
-                this.requestUpdate();
+            const art = a.CoverArtMedium || a.CoverArtSmall || a.CoverArtPath;
+            if (art) {
+                this.artistImageURL = art;
                 return;
             }
         }
+    }
 
-        // Fallback to backend.
-        const mbids: string[] = [];
+    private checkLibrary() {
+        // Backend now populates `inLibrary` directly on each MBReleaseGroup
+        // via the local_release_group_id cross-reference column.  Just read it.
+        let updated = false;
 
         for (const rg of this.releaseGroups) {
-            if (rg.mbid) mbids.push(rg.mbid);
+            if (rg.mbid && rg.inLibrary && !this.libraryMBIDs.has(rg.mbid)) {
+                this.libraryMBIDs.add(rg.mbid);
+                updated = true;
+            }
         }
 
-        if (mbids.length === 0) return;
-
-        try {
-            const found = await CheckLibraryMBIDs(mbids);
-
-            if (found && Object.keys(found).length > 0) {
-                for (const mbid of Object.keys(found)) {
-                    this.libraryMBIDs.add(mbid);
-                }
-
-                this.requestUpdate();
-            }
-        } catch {
-            // Non-critical.
+        if (updated) {
+            this.requestUpdate();
         }
     }
 
@@ -1052,23 +1697,32 @@ export class ExploreArtistDetails extends LitElement {
 
     private navigateBack() {
         this.dispatchEvent(
-            new CustomEvent('navigate', {
+            new CustomEvent('navigate-back', {
                 bubbles: true,
                 composed: true,
-                detail: { view: 'explore' },
             }),
         );
     }
 
     private navigateToAlbum(rg: MBReleaseGroup) {
+        // Strip the synthetic local: prefix that hydrateFromCache uses
+        // for library-only albums without an MBID — those navigate by
+        // local ID instead.
+        const isLocal = typeof rg.mbid === 'string' && rg.mbid.startsWith('local:');
+        const realMBID = isLocal ? '' : (rg.mbid || '');
+        const localId = (rg as MBReleaseGroup & { localId?: number }).localId
+            || (isLocal ? Number(rg.mbid.slice('local:'.length)) : 0);
+
         this.dispatchEvent(
             new CustomEvent('navigate', {
                 bubbles: true,
                 composed: true,
                 detail: {
                     view: 'explore-album-details',
-                    releaseGroupMBID: rg.mbid,
+                    releaseGroupMBID: realMBID,
                     albumName: rg.title,
+                    artistName: rg.artistCredit || this.artistName,
+                    localAlbumId: localId,
                 },
             }),
         );
@@ -1216,8 +1870,8 @@ export class ExploreArtistDetails extends LitElement {
                         ? html`<div class="artist-native-name">${this.artist.name}</div>`
                         : nothing}
                     ${this.renderArtistMeta()}
-                    ${this.artistPlayCount > 0 && !exploreSettings.libraryOnly
-                        ? html`<span class="artist-meta">${formatListenCount(this.artistPlayCount)} plays on ListenBrainz</span>`
+                    ${this.artist?.popularity && this.artist.popularity > 0 && !exploreSettings.libraryOnly
+                        ? html`<span class="artist-meta">${formatListenCount(this.artist.popularity)} plays on ListenBrainz</span>`
                         : nothing}
                 </div>
             </div>
@@ -1262,8 +1916,20 @@ export class ExploreArtistDetails extends LitElement {
 
     /* ── Top Section (tracks + releases side-by-side) ── */
 
+    /** Shared toggle (wide mode) — expands both at once. */
     private toggleTopSection() {
-        this.topSectionExpanded = !this.topSectionExpanded;
+        const next = !(this.topTracksExpanded && this.topReleasesExpanded);
+        this.topTracksExpanded = next;
+        this.topReleasesExpanded = next;
+    }
+
+    /** Per-column toggle (narrow/stacked mode). */
+    private toggleTopTracks() {
+        this.topTracksExpanded = !this.topTracksExpanded;
+    }
+
+    private toggleTopReleases() {
+        this.topReleasesExpanded = !this.topReleasesExpanded;
     }
 
     private toggleDiscoGroup(type: string) {
@@ -1300,89 +1966,128 @@ export class ExploreArtistDetails extends LitElement {
             return nothing;
         }
 
-        const expanded = this.topSectionExpanded;
-        const trackLimit = expanded ? 10 : 5;
-        const releaseLimit = expanded ? 4 : 2;
+        const tracksExpanded = this.topTracksExpanded;
+        const releasesExpanded = this.topReleasesExpanded;
+        const bothExpanded = tracksExpanded && releasesExpanded;
+        const trackLimit = tracksExpanded ? 10 : 5;
+        const releaseLimit = releasesExpanded ? 4 : 2;
 
         const tracks = this.topTracks.slice(0, trackLimit);
         const releases = this.topReleaseGroups.slice(0, releaseLimit);
 
-        const canExpand =
-            this.topTracks.length > 5 || this.topReleaseGroups.length > 2;
+        const canExpandTracks = this.topTracks.length > 5;
+        const canExpandReleases = this.topReleaseGroups.length > 2;
+        const canExpand = canExpandTracks || canExpandReleases;
 
         return html`
             <section>
-                <div class="top-section-columns">
-                    ${hasTracks
+                <div class="top-section-wrapper">
+                    <div class="top-section-columns">
+                        ${hasTracks
+                            ? html`
+                                <div class="top-section-col top-section-col-tracks">
+                                    <h3 class="section-header">Top Tracks</h3>
+                                    <div class="track-list">
+                                        ${tracks.map(
+                                            (t, i) => html`
+                                                <div class="track-item">
+                                                    <span class="track-rank">${i + 1}</span>
+                                                    <div class="track-art">
+                                                        ${(() => {
+                                                            const art = this.trackThumbnails.get(t.recordingMbid) || '';
+                                                            return art
+                                                                ? html`<img src="${art}" alt="" loading="lazy"
+                                                                       @error=${(e: Event) => {
+                                                                           const img = e.target as HTMLImageElement;
+                                                                           img.style.display = 'none';
+                                                                       }} />`
+                                                                : html`<wa-icon name="compact-disc"></wa-icon>`;
+                                                        })()}
+                                                    </div>
+                                                    <div class="track-info">
+                                                        <div class="track-title">${t.trackName}</div>
+                                                        <div class="track-artist">${t.artistName}</div>
+                                                    </div>
+                                                    <span class="track-listens">
+                                                        ${formatListenCount(t.totalListenCount)} plays
+                                                    </span>
+                                                    <library-status-indicator
+                                                        status=${t.inLibrary || t.localId ? 'in-library' : 'not-in-library'}
+                                                        entity-type="track"
+                                                        label=${t.trackName}
+                                                    ></library-status-indicator>
+                                                </div>
+                                            `,
+                                        )}
+                                    </div>
+                                    ${canExpandTracks
+                                        ? html`
+                                            <button
+                                                class="column-toggle"
+                                                @click=${this.toggleTopTracks}
+                                                aria-expanded="${tracksExpanded}"
+                                            >
+                                                ${tracksExpanded ? 'Show less' : 'Show more'}
+                                                <wa-icon name="chevron-down"></wa-icon>
+                                            </button>
+                                          `
+                                        : nothing}
+                                </div>
+                              `
+                            : nothing}
+                        ${hasReleases
+                            ? html`
+                                <div class="top-section-col top-section-col-releases">
+                                    <div class="top-releases-content">
+                                        <h3 class="section-header">Top Releases</h3>
+                                        <div class="top-releases-grid">
+                                            <div class="top-releases-inner">
+                                                ${releases.map((rg) => this.renderTopReleaseCard(rg))}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    ${canExpandReleases
+                                        ? html`
+                                            <button
+                                                class="column-toggle"
+                                                @click=${this.toggleTopReleases}
+                                                aria-expanded="${releasesExpanded}"
+                                            >
+                                                ${releasesExpanded ? 'Show less' : 'Show more'}
+                                                <wa-icon name="chevron-down"></wa-icon>
+                                            </button>
+                                          `
+                                        : nothing}
+                                </div>
+                              `
+                            : releasesLoading
+                              ? html`
+                                    <div class="top-section-col top-section-col-releases">
+                                        <h3 class="section-header">Top Releases</h3>
+                                        <div class="section-loading">Loading\u2026</div>
+                                    </div>
+                                `
+                              : nothing}
+                    </div>
+                    ${canExpand
                         ? html`
-                              <h3 class="section-header section-header-tracks">Top Tracks</h3>
-                              <div class="track-list track-list-container">
-                                  ${tracks.map(
-                                      (t, i) => html`
-                                          <div class="track-item">
-                                              <span class="track-rank"
-                                                  >${i + 1}</span
-                                              >
-                                              <div class="track-info">
-                                                  <div
-                                                      class="track-title"
-                                                  >
-                                                      ${t.trackName}
-                                                  </div>
-                                                  <div
-                                                      class="track-artist"
-                                                  >
-                                                      ${t.artistName}
-                                                  </div>
-                                              </div>
-                                              <span class="track-listens">
-                                                  ${formatListenCount(
-                                                      t.totalListenCount,
-                                                  )}
-                                                  plays
-                                              </span>
-                                          </div>
-                                      `,
-                                  )}
-                              </div>
+                              <button
+                                  class="top-section-toggle"
+                                  @click=${this.toggleTopSection}
+                                  aria-expanded="${bothExpanded}"
+                              >
+                                  ${bothExpanded ? 'Show less' : 'Show more'}
+                                  <wa-icon name="chevron-down"></wa-icon>
+                              </button>
                           `
                         : nothing}
-                    ${hasReleases
-                        ? html`
-                              <h3 class="section-header section-header-releases">Top Releases</h3>
-                              <div class="top-releases-grid">
-                                  ${releases.map((rg) =>
-                                      this.renderTopReleaseCard(rg),
-                                  )}
-                              </div>
-                          `
-                        : releasesLoading
-                          ? html`
-                                <h3 class="section-header section-header-releases">Top Releases</h3>
-                                <div class="section-loading" style="grid-column:2;grid-row:2">Loading\u2026</div>
-                            `
-                          : nothing}
                 </div>
-                ${canExpand
-                    ? html`
-                          <button
-                              class="top-section-toggle"
-                              @click=${this.toggleTopSection}
-                              aria-expanded="${expanded}"
-                          >
-                              ${expanded ? 'Show less' : 'Show more'}
-                              <wa-icon
-                                  name="chevron-down"
-                              ></wa-icon>
-                          </button>
-                      `
-                    : nothing}
             </section>
         `;
     }
 
     private renderTopReleaseCard(rg: LBTopReleaseGroup) {
-        const artURL = CoverArtGroupURL(rg.releaseGroupMbid);
+        const artURL = this.thumbnailURLs.get(rg.releaseGroupMbid) || '';
 
         return html`
             <div
@@ -1398,13 +2103,15 @@ export class ExploreArtistDetails extends LitElement {
                 }}
             >
                 <div class="top-release-art">
-                    <img
-                        src="${artURL}"
-                        alt="${rg.title}"
-                        loading="lazy"
-                        @error=${this.handleImageError}
-                    />
-                    <div class="album-art-fallback" style="display: none">
+                    ${artURL
+                        ? html`<img
+                            src="${artURL}"
+                            alt="${rg.title}"
+                            loading="lazy"
+                            @error=${this.handleImageError}
+                        />`
+                        : nothing}
+                    <div class="album-art-fallback" style="${artURL ? 'display: none' : ''}">
                         <wa-icon name="compact-disc"></wa-icon>
                     </div>
                 </div>
@@ -1413,7 +2120,15 @@ export class ExploreArtistDetails extends LitElement {
                         ${rg.title}
                     </div>
                     <div class="top-release-meta">
-                        ${rg.date ? html`<span>${extractYear(rg.date)}</span>` : nothing}
+                        <div class="top-release-meta-text">
+                            ${rg.date ? html`<span>${extractYear(rg.date)}</span>` : nothing}
+                        </div>
+                        <library-status-indicator
+                            status=${rg.inLibrary || rg.localId ? 'in-library' : 'not-in-library'}
+                            entity-type="album"
+                            label=${rg.title}
+                            size="18"
+                        ></library-status-indicator>
                     </div>
                 </div>
             </div>
@@ -1466,7 +2181,7 @@ export class ExploreArtistDetails extends LitElement {
                 ${groups.map(
                     (g) => {
                         const isExpanded = this.expandedDiscoGroups.has(g.type);
-                        const rowSize = 5;
+                        const rowSize = this.discoRowSize;
                         const showToggle = g.items.length > rowSize;
                         const visibleItems = isExpanded ? g.items : g.items.slice(0, rowSize);
 
@@ -1501,8 +2216,12 @@ export class ExploreArtistDetails extends LitElement {
     }
 
     private renderAlbumCard(rg: MBReleaseGroup) {
-        const artURL = CoverArtGroupURL(rg.mbid);
+        const artURL = this.thumbnailURLs.get(rg.mbid) || '';
         const year = extractYear(rg.firstReleaseDate);
+        const inLibrary = this.libraryMBIDs.has(rg.mbid) || Boolean(rg.inLibrary);
+        const status: 'in-library' | 'not-in-library' = inLibrary
+            ? 'in-library'
+            : 'not-in-library';
 
         return html`
             <div
@@ -1518,22 +2237,28 @@ export class ExploreArtistDetails extends LitElement {
                 }}
             >
                 <div class="album-art-container">
-                    <img
-                        src="${artURL}"
-                        alt="${rg.title}"
-                        loading="lazy"
-                        @error=${this.handleImageError}
-                    />
-                    <div class="album-art-fallback" style="display: none">
+                    ${artURL
+                        ? html`<img
+                            src="${artURL}"
+                            alt="${rg.title}"
+                            loading="lazy"
+                            @error=${this.handleImageError}
+                        />`
+                        : nothing}
+                    <div class="album-art-fallback" style="${artURL ? 'display: none' : ''}">
                         <wa-icon name="compact-disc"></wa-icon>
                     </div>
                 </div>
                 <div class="album-title" title="${rg.title}">${rg.title}</div>
                 <div class="album-meta">
-                    ${this.libraryMBIDs.has(rg.mbid)
-                        ? html`<span class="library-badge">In Library</span>`
-                        : nothing}
-                    ${year ? html`<span>${year}</span>` : nothing}
+                    <div class="album-meta-text">
+                        ${year ? html`<span>${year}</span>` : nothing}
+                    </div>
+                    <library-status-indicator
+                        status=${status}
+                        entity-type="album"
+                        label=${rg.title}
+                    ></library-status-indicator>
                 </div>
             </div>
         `;
@@ -1546,14 +2271,20 @@ export class ExploreArtistDetails extends LitElement {
             return nothing;
         }
 
-        const showToggle = this.similarArtists.length > 6;
+        // Library-only mode: show all library-matching similar artists
+        // (up to the 20 stored per seed).  Online mode: cap at 10 to
+        // avoid a very long list.
+        const maxSimilar = exploreSettings.libraryOnly ? 20 : 10;
+        const artists = this.similarArtists.slice(0, maxSimilar);
+        const showToggle = artists.length > this.discoRowSize;
         const collapsed = !this.similarExpanded && showToggle;
+        const visible = collapsed ? artists.slice(0, this.discoRowSize) : artists;
 
         return html`
             <section>
                 <h3 class="section-header">Similar Artists</h3>
                 <div class="similar-row ${collapsed ? 'collapsed' : ''}">
-                    ${this.similarArtists.map((a) => {
+                    ${visible.map((a) => {
                         const hue = nameToHue(a.name);
                         const imgURL = this.similarImageURLs.get(a.artistMbid);
                         return html`
@@ -1603,7 +2334,7 @@ export class ExploreArtistDetails extends LitElement {
                           >
                               ${this.similarExpanded
                                   ? 'Show less'
-                                  : `Show all ${this.similarArtists.length}`}
+                                  : `Show all ${artists.length}`}
                               <wa-icon name="chevron-down"></wa-icon>
                           </button>
                       `

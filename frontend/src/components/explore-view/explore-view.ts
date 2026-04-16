@@ -1,7 +1,7 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state, query as litQuery } from 'lit/decorators.js';
 import { designTokens } from '../../styles/tokens.css';
-import { Search, GetThumbnails, GetArtistImageURL, CheckLibraryMBIDs } from '@go/explore/Service';
+import { Search, GetThumbnail, GetThumbnails, GetArtistImageURL, GetPopularityBatch, RecordSearchClick } from '@go/explore/Service';
 import type { ThumbnailRequest } from '@go/explore/Service';
 import type {
     MBSearchResult,
@@ -13,6 +13,9 @@ import { libraryStore } from '../../store/library-store';
 import { exploreCache } from '../../store/explore-cache';
 import { exploreSettings } from '../../store/explore-settings';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
+import '../library-status-indicator/library-status-indicator.js';
+import '../top-results-row/top-results-row.js';
+import type { explore } from '@go/models';
 
 /* ── Constants ── */
 const DEBOUNCE_MS = 300;
@@ -91,11 +94,40 @@ function nameToHue(name: string): number {
 
 /** Format milliseconds as mm:ss. */
 function formatDuration(ms: number): string {
-    if (!ms || ms <= 0) return '0:00';
+    if (!ms || ms <= 0) return '';
     const totalSeconds = Math.floor(ms / 1000);
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = totalSeconds % 60;
     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+}
+
+/** Format a raw listen count as a compact human-readable string. */
+function formatPopularity(count: number): string {
+    if (!count || count <= 0) return '';
+    if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M plays`;
+    if (count >= 1_000) return `${(count / 1_000).toFixed(count >= 10_000 ? 0 : 1)}K plays`;
+    return `${count} plays`;
+}
+
+/**
+ * Check if `text` contains `word` as a whole word, bounded by
+ * spaces, hyphens, or string boundaries.  Both args must be
+ * pre-lowercased.
+ */
+function containsWord(text: string, word: string): boolean {
+    const re = new RegExp(`(?:^|[\\s\\-])${escapeRegExp(word)}(?:$|[\\s\\-])`, 'i');
+    return re.test(text);
+}
+
+function escapeRegExp(s: string): string {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Parse a TrackLength string (milliseconds as string) to number. */
+function parseDuration(s: string): number {
+    if (!s) return 0;
+    const n = Number(s);
+    return isNaN(n) ? 0 : n;
 }
 
 /** Extract the year from a date string like "2005-03-29" or "2005". */
@@ -440,9 +472,24 @@ export class ExploreView extends LitElement {
             .album-meta {
                 display: flex;
                 align-items: center;
+                justify-content: space-between;
                 gap: 6px;
                 color: var(--yj-text-tertiary, #888);
                 font-size: var(--yj-text-xs);
+                min-height: 20px;
+            }
+
+            .album-meta-text {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                min-width: 0;
+                overflow: hidden;
+            }
+
+            .album-meta library-status-indicator {
+                flex-shrink: 0;
+                margin-left: auto;
             }
 
             .type-badge {
@@ -450,16 +497,6 @@ export class ExploreView extends LitElement {
                 padding: 1px 6px;
                 border-radius: 3px;
                 font-size: 10px;
-                white-space: nowrap;
-            }
-
-            .library-badge {
-                background: var(--yj-accent, #1db954);
-                color: #000;
-                padding: 1px 6px;
-                border-radius: 3px;
-                font-size: 10px;
-                font-weight: 600;
                 white-space: nowrap;
             }
 
@@ -510,6 +547,24 @@ export class ExploreView extends LitElement {
                 font-size: var(--yj-text-sm);
                 flex-shrink: 0;
                 font-variant-numeric: tabular-nums;
+            }
+
+            .track-meta {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                flex-shrink: 0;
+            }
+
+            .track-item library-status-indicator {
+                flex-shrink: 0;
+            }
+
+            .track-popularity {
+                color: var(--yj-text-tertiary, #888);
+                font-size: var(--yj-text-xs, 11px);
+                white-space: nowrap;
+                opacity: 0.7;
             }
         `,
     ];
@@ -637,8 +692,12 @@ export class ExploreView extends LitElement {
             }
 
             // In library-only mode, local results already have cover art
-            // and artist images from the library store — no API calls needed.
-            if (!exploreSettings.libraryOnly) {
+            // and artist images from the library store — seed both caches
+            // from library data without making any API calls.
+            if (exploreSettings.libraryOnly) {
+                this.seedThumbnailsFromLibrary();
+                this.seedArtistImagesFromLibrary();
+            } else {
                 this.loadThumbnails();
                 this.loadArtistImages();
             }
@@ -655,7 +714,10 @@ export class ExploreView extends LitElement {
         if (!exploreSettings.libraryOnly) {
             void this.executeFullSearch(version, query, startTime);
         } else {
-            this.loading = false;
+            // Rerank with popularity from the explore index, then finalize.
+            void this.rerankWithPopularity(localResults).then(() => {
+                this.loading = false;
+            });
         }
     }
 
@@ -675,16 +737,18 @@ export class ExploreView extends LitElement {
                 const name = a.Name.toLowerCase();
                 if (!fuzzyMatch(q, name)) continue;
 
-                // Score by match quality (same tiers as remote search).
+                // Score by match quality.
                 let score: number;
                 if (name === q) {
                     score = 100; // exact
                 } else if (name.startsWith(q)) {
                     score = 90;  // starts with
+                } else if (containsWord(name, q)) {
+                    score = 75;  // contains word
                 } else if (name.includes(q)) {
-                    score = 70;  // substring
+                    score = 60;  // substring
                 } else {
-                    score = 50;  // fuzzy/word match
+                    score = 40;  // fuzzy/word match
                 }
 
                 artistMatches.push({ artist: a, score });
@@ -702,6 +766,8 @@ export class ExploreView extends LitElement {
             country: '',
             disambiguation: '',
             score: m.score,
+            inLibrary: true,
+            localId: m.artist.ID,
             _imageSmall: m.artist.ImageSmall || '',
             _imageMedium: m.artist.ImageMedium || '',
             _inLibrary: true,
@@ -719,15 +785,20 @@ export class ExploreView extends LitElement {
                 if (!matchesName && !matchesArtist) continue;
 
                 let score: number;
-                // Artist name match is strongest (same as remote rgMatchTier).
                 if (artist === q) {
                     score = 100;
-                } else if (artist.startsWith(q) || artist.includes(q)) {
-                    score = 85;
                 } else if (name === q) {
-                    score = 80;
+                    score = 95;
+                } else if (artist.startsWith(q)) {
+                    score = 88;
                 } else if (name.startsWith(q)) {
+                    score = 85;
+                } else if (containsWord(artist, q)) {
+                    score = 78;
+                } else if (containsWord(name, q)) {
                     score = 75;
+                } else if (artist.includes(q)) {
+                    score = 65;
                 } else if (name.includes(q)) {
                     score = 60;
                 } else {
@@ -750,11 +821,122 @@ export class ExploreView extends LitElement {
             _inLibrary: true,
         } as MBReleaseGroup & { _coverArt: string; _inLibrary: boolean }));
 
-        if (artists.length === 0 && releaseGroups.length === 0) {
+        // Collect matching tracks by title or artist name.
+        const trackMatches: Array<{ track: any; score: number }> = [];
+        const cachedTracks = libraryStore.getCachedTracks();
+        if (cachedTracks) {
+            for (const t of cachedTracks) {
+                const title = t.TrackName.toLowerCase();
+                const artist = t.ArtistName.toLowerCase();
+                const matchesTitle = fuzzyMatch(q, title);
+                const matchesArtist = fuzzyMatch(q, artist);
+                if (!matchesTitle && !matchesArtist) continue;
+
+                let score: number;
+                if (title === q) {
+                    score = 100;
+                } else if (artist === q) {
+                    score = 95;
+                } else if (title.startsWith(q)) {
+                    score = 88;
+                } else if (artist.startsWith(q)) {
+                    score = 85;
+                } else if (containsWord(title, q)) {
+                    score = 78;
+                } else if (containsWord(artist, q)) {
+                    score = 75;
+                } else if (title.includes(q)) {
+                    score = 65;
+                } else if (artist.includes(q)) {
+                    score = 60;
+                } else {
+                    score = 40;
+                }
+
+                trackMatches.push({ track: t, score });
+            }
+        }
+
+        trackMatches.sort((a, b) => b.score - a.score || a.track.TrackName.localeCompare(b.track.TrackName));
+
+        // Deduplicate by recording MBID (keep highest score).
+        const seenRecMBIDs = new Set<string>();
+        const recordings: MBRecording[] = [];
+        for (const m of trackMatches) {
+            if (recordings.length >= 15) break;
+            const mbid = m.track.RecordingMBID || '';
+            if (mbid && seenRecMBIDs.has(mbid)) continue;
+            if (mbid) seenRecMBIDs.add(mbid);
+
+            recordings.push({
+                mbid,
+                title: m.track.TrackName,
+                length: parseDuration(m.track.TrackLength),
+                artistCredit: m.track.ArtistName,
+                score: m.score,
+            } as MBRecording);
+        }
+
+        if (artists.length === 0 && releaseGroups.length === 0 && recordings.length === 0) {
             return null;
         }
 
-        return { artists, releaseGroups, recordings: [] } as MBSearchResult;
+        return { artists, releaseGroups, recordings } as MBSearchResult;
+    }
+
+    /**
+     * Fetch LB popularity for all MBIDs in the result and re-sort
+     * each category using a blended score: match quality + log-scaled
+     * popularity.  Same approach as the backend reranker.
+     */
+    private async rerankWithPopularity(result: MBSearchResult | null): Promise<void> {
+        if (!result) return;
+
+        // Collect all non-empty MBIDs.
+        const mbids: string[] = [];
+        for (const a of result.artists) if (a.mbid) mbids.push(a.mbid);
+        for (const rg of result.releaseGroups) if (rg.mbid) mbids.push(rg.mbid);
+        for (const r of result.recordings) if (r.mbid) mbids.push(r.mbid);
+
+        if (mbids.length === 0) return;
+
+        let batch: Record<string, {popularity: number; inLibrary: boolean; similarityScore: number}>;
+        try {
+            batch = await GetPopularityBatch(mbids);
+        } catch {
+            return; // degrade gracefully — keep match-quality order
+        }
+
+        if (!batch || Object.keys(batch).length === 0) return;
+
+        // Weights matching backend: 0.35 relevance + 0.50 popularity + 0.15 personalization
+        const maxPop = Math.max(1, ...Object.values(batch).map(b => b.popularity));
+        const logMax = Math.log10(maxPop + 1);
+        const maxSim = Math.max(1, ...Object.values(batch).map(b => b.similarityScore || 0));
+
+        const blendedScore = (mbid: string, matchScore: number): number => {
+            const b = batch[mbid];
+            const relevance = matchScore / 100;
+            const logPop = b ? Math.log10(b.popularity + 1) / logMax : 0;
+            let personal = 0;
+            if (b?.inLibrary) {
+                personal = 1.0;
+            } else if (b?.similarityScore && maxSim > 0) {
+                personal = 0.5 * (b.similarityScore / maxSim);
+            }
+            return 0.35 * relevance + 0.50 * logPop + 0.15 * personal;
+        };
+
+        // Re-sort each category.
+        result.artists.sort((a, b) =>
+            blendedScore(b.mbid, b.score) - blendedScore(a.mbid, a.score));
+        result.releaseGroups.sort((a, b) =>
+            blendedScore(b.mbid, b.score) - blendedScore(a.mbid, a.score));
+        result.recordings.sort((a, b) =>
+            blendedScore(b.mbid, b.score) - blendedScore(a.mbid, a.score));
+
+        // Trigger re-render.
+        this.results = { ...result };
     }
 
     /**
@@ -925,30 +1107,96 @@ export class ExploreView extends LitElement {
      * Load thumbnails for all visible album cards in one batched
      * Wails call.  Called after search results are set.
      */
-    private loadThumbnails() {
-        if (this.thumbnailBatchPending || !this.results?.releaseGroups?.length) {
-            return;
-        }
+    /**
+     * Seed the thumbnail cache from local library data only.  Safe
+     * to call in library-only mode — does no API calls.  Reads from
+     * cachedAlbums (by MBID) and from any `_coverArt` underscore
+     * field that searchLibraryCache stamped on the release group.
+     */
+    private seedThumbnailsFromLibrary() {
+        if (!this.results?.releaseGroups?.length) return;
 
-        // Seed thumbnails from library album cover art (instant, no API).
         const cachedAlbums = libraryStore.cachedAlbums;
+        const libAlbumsByMBID = new Map<string, string>();
+
         if (cachedAlbums) {
-            const libAlbumsByMBID = new Map<string, string>();
             for (const a of cachedAlbums) {
                 if (a.MBID && (a.CoverArtMedium || a.CoverArtSmall)) {
                     libAlbumsByMBID.set(a.MBID, a.CoverArtMedium || a.CoverArtSmall);
                 }
             }
+        }
 
-            for (const rg of this.results.releaseGroups) {
-                if (!this.thumbnailCache.has(rg.mbid)) {
-                    const localArt = libAlbumsByMBID.get(rg.mbid) || (rg as any)._coverArt;
-                    if (localArt) {
-                        this.thumbnailCache.set(rg.mbid, localArt);
-                    }
+        let updated = false;
+
+        for (const rg of this.results.releaseGroups) {
+            if (this.thumbnailCache.has(rg.mbid)) continue;
+
+            const localArt = libAlbumsByMBID.get(rg.mbid) || (rg as any)._coverArt;
+            if (localArt) {
+                this.thumbnailCache.set(rg.mbid, localArt);
+                updated = true;
+            }
+        }
+
+        if (updated) {
+            this.requestUpdate();
+        }
+    }
+
+    /**
+     * Seed the artist image cache from local library data only.
+     * Safe to call in library-only mode.  Reads from cachedArtists
+     * by MBID and from any `_imageMedium`/`_imageSmall` underscore
+     * field that searchLibraryCache stamped on the artist.  Falls
+     * back to library album art when an artist has no portrait.
+     */
+    private seedArtistImagesFromLibrary() {
+        if (!this.results?.artists?.length) return;
+
+        const cachedArtists = libraryStore.cachedArtists;
+        const libByMBID = new Map<string, string>();
+
+        if (cachedArtists) {
+            for (const a of cachedArtists) {
+                if (a.MBID && (a.ImageMedium || a.ImageSmall)) {
+                    libByMBID.set(a.MBID, a.ImageMedium || a.ImageSmall);
                 }
             }
         }
+
+        let updated = false;
+
+        for (const a of this.results.artists) {
+            if (!a.mbid || this.artistImageCache.has(a.mbid)) continue;
+
+            const local = libByMBID.get(a.mbid) || (a as any)._imageMedium || (a as any)._imageSmall;
+            if (local) {
+                this.artistImageCache.set(a.mbid, local);
+                updated = true;
+                continue;
+            }
+
+            // Fallback: album art for artists without a portrait.
+            const albumArt = getArtistAlbumArt(a.name);
+            if (albumArt) {
+                this.artistImageCache.set(a.mbid, albumArt);
+                updated = true;
+            }
+        }
+
+        if (updated) {
+            this.requestUpdate();
+        }
+    }
+
+    private loadThumbnails() {
+        if (this.thumbnailBatchPending || !this.results?.releaseGroups?.length) {
+            return;
+        }
+
+        // Always seed from local library first.
+        this.seedThumbnailsFromLibrary();
 
         // Collect MBIDs that still need fetching from the API.
         const requests: ThumbnailRequest[] = [];
@@ -967,30 +1215,44 @@ export class ExploreView extends LitElement {
 
         this.thumbnailBatchPending = true;
 
+        // Phase 1: batch cached lookup (instant, backend returns only cached items).
         GetThumbnails(requests)
             .then((results) => {
                 let updated = false;
+                const cached = results || {};
 
-                for (const [mbid, dataUrl] of Object.entries(results)) {
+                for (const [mbid, dataUrl] of Object.entries(cached)) {
                     if (dataUrl) {
                         this.thumbnailCache.set(mbid, dataUrl);
                         updated = true;
                     }
                 }
 
-                // Mark MBIDs with no art so we don't re-request.
-                for (const req of requests) {
-                    if (!this.thumbnailCache.has(req.mbid)) {
-                        this.thumbnailCache.set(req.mbid, '');
-                    }
-                }
-
                 if (updated) {
                     this.requestUpdate();
                 }
+
+                // Phase 2: fire individual fetches for uncached items —
+                // each runs in its own Go goroutine and streams in as
+                // the CAA fetch completes.
+                const uncached = requests.filter((req) => !cached[req.mbid]);
+                for (const req of uncached) {
+                    // Mark as in-flight to prevent duplicates.
+                    if (this.thumbnailCache.has(req.mbid)) continue;
+                    this.thumbnailCache.set(req.mbid, '');
+
+                    GetThumbnail(req.mbid, req.albumName, req.artistName)
+                        .then((url) => {
+                            if (url) {
+                                this.thumbnailCache.set(req.mbid, url);
+                                this.requestUpdate();
+                            }
+                        })
+                        .catch(() => {});
+                }
             })
             .catch(() => {
-                // Batch failed — mark all as attempted.
+                // Batch failed — mark all as attempted so we don't retry.
                 for (const req of requests) {
                     if (!this.thumbnailCache.has(req.mbid)) {
                         this.thumbnailCache.set(req.mbid, '');
@@ -1010,36 +1272,7 @@ export class ExploreView extends LitElement {
         if (!this.results?.artists?.length) return;
 
         // Seed from library store first (instant, no API).
-        const cachedArtists = libraryStore.cachedArtists;
-        if (cachedArtists) {
-            const libByMBID = new Map<string, string>();
-            for (const a of cachedArtists) {
-                if (a.MBID && (a.ImageMedium || a.ImageSmall)) {
-                    libByMBID.set(a.MBID, a.ImageMedium || a.ImageSmall);
-                }
-            }
-
-            for (const a of this.results.artists) {
-                if (!this.artistImageCache.has(a.mbid) && a.mbid) {
-                    const local = libByMBID.get(a.mbid) || (a as any)._imageMedium || (a as any)._imageSmall;
-                    if (local) {
-                        this.artistImageCache.set(a.mbid, local);
-                    }
-                }
-            }
-
-            this.requestUpdate();
-        }
-
-        // Fallback: use album cover art for artists without images.
-        for (const a of this.results.artists) {
-            if (a.mbid && !this.artistImageCache.get(a.mbid)) {
-                const albumArt = getArtistAlbumArt(a.name);
-                if (albumArt) {
-                    this.artistImageCache.set(a.mbid, albumArt);
-                }
-            }
-        }
+        this.seedArtistImagesFromLibrary();
 
         // Fetch remaining from API (only artists not yet resolved).
         for (const a of this.results.artists) {
@@ -1060,93 +1293,98 @@ export class ExploreView extends LitElement {
         }
 
         // Final fallback: album art for artists the API couldn't resolve.
+        // Try library store first, then search-result release groups.
         let fallbackUpdated = false;
 
         for (const a of this.results.artists) {
             if (a.mbid && !this.artistImageCache.get(a.mbid)) {
+                // 1) Library album art
                 const albumArt = getArtistAlbumArt(a.name);
                 if (albumArt) {
                     this.artistImageCache.set(a.mbid, albumArt);
                     fallbackUpdated = true;
+                    continue;
+                }
+
+                // 2) Cover art from a search-result release group by this artist
+                if (this.results.releaseGroups) {
+                    const name = a.name.toLowerCase();
+                    for (const rg of this.results.releaseGroups) {
+                        if (rg.mbid && rg.artistCredit?.toLowerCase().includes(name)) {
+                            const url = this.thumbnailCache.get(rg.mbid);
+                            if (url) {
+                                this.artistImageCache.set(a.mbid, url);
+                                fallbackUpdated = true;
+                                break;
+                            }
+                        }
+                    }
                 }
             }
         }
 
         if (fallbackUpdated) this.requestUpdate();
+
+        // Sync resolved images into the explore cache so detail pages
+        // pick them up without redundant API calls.
+        for (const a of this.results.artists) {
+            const url = this.artistImageCache.get(a.mbid);
+            if (url) {
+                const cached = exploreCache.getArtist(a.mbid);
+                if (cached) {
+                    cached.imageURL = url;
+                } else {
+                    exploreCache.setArtist(a.mbid, {
+                        mbid: a.mbid,
+                        name: a.name,
+                        imageURL: url,
+                    });
+                }
+            }
+        }
     }
 
     /**
      * Check which result MBIDs exist in the local library.
      */
-    private async checkLibrary() {
+    private checkLibrary() {
         if (!this.results) return;
 
-        // Check frontend-side first using library store MBIDs.
-        const cachedArtists = libraryStore.cachedArtists;
-        const cachedAlbums = libraryStore.cachedAlbums;
-        const localMBIDs = new Set<string>();
-
-        if (cachedArtists) {
-            for (const a of cachedArtists) {
-                if (a.MBID) localMBIDs.add(a.MBID);
-            }
-        }
-
-        if (cachedAlbums) {
-            for (const a of cachedAlbums) {
-                if (a.MBID) localMBIDs.add(a.MBID);
-            }
-        }
-
+        // Backend now populates `inLibrary` directly on each MB result
+        // via the local_*_id cross-reference columns.  Just read those.
         let updated = false;
 
         for (const a of this.results.artists ?? []) {
-            if (a.mbid && localMBIDs.has(a.mbid)) {
+            if (a.mbid && a.inLibrary && !this.libraryMBIDs.has(a.mbid)) {
                 this.libraryMBIDs.add(a.mbid);
                 updated = true;
             }
         }
 
         for (const rg of this.results.releaseGroups ?? []) {
-            if (rg.mbid && localMBIDs.has(rg.mbid)) {
+            if (rg.mbid && rg.inLibrary && !this.libraryMBIDs.has(rg.mbid)) {
                 this.libraryMBIDs.add(rg.mbid);
+                updated = true;
+            }
+        }
+
+        for (const r of this.results.recordings ?? []) {
+            if (r.mbid && r.inLibrary && !this.libraryMBIDs.has(r.mbid)) {
+                this.libraryMBIDs.add(r.mbid);
                 updated = true;
             }
         }
 
         if (updated) {
             this.requestUpdate();
-            return;
-        }
-
-        // Fallback to backend check for recordings and edge cases
-        // (recordings aren't in the library store cache).
-        const mbids: string[] = [];
-
-        for (const r of this.results.recordings ?? []) {
-            if (r.mbid) mbids.push(r.mbid);
-        }
-
-        if (mbids.length === 0) return;
-
-        try {
-            const found = await CheckLibraryMBIDs(mbids);
-
-            if (found && Object.keys(found).length > 0) {
-                for (const mbid of Object.keys(found)) {
-                    this.libraryMBIDs.add(mbid);
-                }
-
-                this.requestUpdate();
-            }
-        } catch {
-            // Library check is non-critical.
         }
     }
 
     /* ── Navigation ── */
 
     private navigateToArtist(artist: MBArtist) {
+        RecordSearchClick(this.searchQuery, artist.mbid, 'artist').catch(() => {});
+
         this.dispatchEvent(
             new CustomEvent('navigate', {
                 bubbles: true,
@@ -1155,23 +1393,83 @@ export class ExploreView extends LitElement {
                     view: 'explore-artist-details',
                     artistMBID: artist.mbid,
                     artistName: artist.name,
+                    localArtistId: (artist as MBArtist & { localId?: number }).localId || 0,
                 },
             }),
         );
     }
 
     private navigateToAlbum(rg: MBReleaseGroup) {
+        RecordSearchClick(this.searchQuery, rg.mbid, 'release_group').catch(() => {});
+
+        const isLocal = typeof rg.mbid === 'string' && rg.mbid.startsWith('local:');
+        const realMBID = isLocal ? '' : (rg.mbid || '');
+        const localId = (rg as MBReleaseGroup & { localId?: number }).localId
+            || (isLocal ? Number(rg.mbid.slice('local:'.length)) : 0);
+
         this.dispatchEvent(
             new CustomEvent('navigate', {
                 bubbles: true,
                 composed: true,
                 detail: {
                     view: 'explore-album-details',
-                    releaseGroupMBID: rg.mbid,
+                    releaseGroupMBID: realMBID,
                     albumName: rg.title,
+                    artistName: rg.artistCredit || '',
+                    localAlbumId: localId,
                 },
             }),
         );
+    }
+
+    private handleTopResultClick(e: CustomEvent<explore.TopResult>) {
+        const r = e.detail;
+
+        switch (r.entityType) {
+            case 'artist':
+                this.dispatchEvent(
+                    new CustomEvent('navigate', {
+                        bubbles: true,
+                        composed: true,
+                        detail: {
+                            view: 'explore-artist-details',
+                            artistMBID: r.mbid,
+                            artistName: r.name,
+                        },
+                    }),
+                );
+                break;
+            case 'release_group':
+                this.dispatchEvent(
+                    new CustomEvent('navigate', {
+                        bubbles: true,
+                        composed: true,
+                        detail: {
+                            view: 'explore-album-details',
+                            releaseGroupMBID: r.mbid,
+                            albumName: r.name,
+                        },
+                    }),
+                );
+                break;
+            case 'recording':
+                // Navigate to the album page if we can resolve it,
+                // otherwise navigate to the artist.
+                if (r.artistCredit) {
+                    this.dispatchEvent(
+                        new CustomEvent('navigate', {
+                            bubbles: true,
+                            composed: true,
+                            detail: {
+                                view: 'explore-artist-details',
+                                artistMBID: '',
+                                artistName: r.artistCredit,
+                            },
+                        }),
+                    );
+                }
+                break;
+        }
     }
 
     /* ── Image Error Handling ── */
@@ -1261,6 +1559,13 @@ export class ExploreView extends LitElement {
 
             return html`
                 <div class="results-container">
+                    ${this.results.topResults?.length
+                        ? html`<top-results-row
+                            .results=${this.results.topResults}
+                            .query=${this.searchQuery}
+                            @top-result-click=${this.handleTopResultClick}
+                        ></top-results-row>`
+                        : nothing}
                     ${hasArtists
                         ? this.renderArtistsSection(this.results.artists!.slice(0, MAX_SECTION_RESULTS))
                         : nothing}
@@ -1326,9 +1631,6 @@ export class ExploreView extends LitElement {
                                           ${a.country}
                                       </div>`
                                     : nothing}
-                                ${this.libraryMBIDs.has(a.mbid)
-                                    ? html`<div class="library-badge">In Library</div>`
-                                    : nothing}
                             </div>
                         `;
                     })}
@@ -1343,8 +1645,7 @@ export class ExploreView extends LitElement {
                 <h3 class="section-header">Albums</h3>
                 <div class="horizontal-row">
                     ${releaseGroups.map((rg) => {
-                        const cachedArt = this.thumbnailCache.get(rg.mbid);
-                        const artURL = cachedArt || CoverArtGroupURL(rg.mbid);
+                        const artURL = this.thumbnailCache.get(rg.mbid) || '';
                         const year = extractYear(rg.firstReleaseDate);
 
                         return html`
@@ -1361,15 +1662,17 @@ export class ExploreView extends LitElement {
                                 }}
                             >
                                 <div class="album-art-container">
-                                    <img
-                                        src="${artURL}"
-                                        alt="${rg.title}"
-                                        loading="lazy"
-                                        @error=${this.handleImageError}
-                                    />
+                                    ${artURL
+                                        ? html`<img
+                                            src="${artURL}"
+                                            alt="${rg.title}"
+                                            loading="lazy"
+                                            @error=${this.handleImageError}
+                                        />`
+                                        : nothing}
                                     <div
                                         class="album-art-fallback"
-                                        style="display: none"
+                                        style="${artURL ? 'display: none' : ''}"
                                     >
                                         <wa-icon name="compact-disc"></wa-icon>
                                     </div>
@@ -1379,15 +1682,19 @@ export class ExploreView extends LitElement {
                                 </div>
                                 <div class="album-artist">${rg.artistCredit}</div>
                                 <div class="album-meta">
-                                    ${this.libraryMBIDs.has(rg.mbid)
-                                        ? html`<span class="library-badge">In Library</span>`
-                                        : nothing}
-                                    ${rg.primaryType
-                                        ? html`<span class="type-badge"
-                                              >${rg.primaryType}</span
-                                          >`
-                                        : nothing}
-                                    ${year ? html`<span>${year}</span>` : nothing}
+                                    <div class="album-meta-text">
+                                        ${rg.primaryType
+                                            ? html`<span class="type-badge"
+                                                  >${rg.primaryType}</span
+                                              >`
+                                            : nothing}
+                                        ${year ? html`<span>${year}</span>` : nothing}
+                                    </div>
+                                    <library-status-indicator
+                                        status=${this.libraryMBIDs.has(rg.mbid) || rg.inLibrary ? 'in-library' : 'not-in-library'}
+                                        entity-type="album"
+                                        label=${rg.title}
+                                    ></library-status-indicator>
                                 </div>
                             </div>
                         `;
@@ -1411,9 +1718,19 @@ export class ExploreView extends LitElement {
                                         ${r.artistCredit}
                                     </div>
                                 </div>
-                                <div class="track-duration">
-                                    ${formatDuration(r.length)}
+                                <div class="track-meta">
+                                    ${r.popularity > 0
+                                        ? html`<span class="track-popularity">${formatPopularity(r.popularity)}</span>`
+                                        : nothing}
+                                    ${r.length > 0
+                                        ? html`<span class="track-duration">${formatDuration(r.length)}</span>`
+                                        : nothing}
                                 </div>
+                                <library-status-indicator
+                                    status=${this.libraryMBIDs.has(r.mbid) || r.inLibrary ? 'in-library' : 'not-in-library'}
+                                    entity-type="track"
+                                    label=${r.title}
+                                ></library-status-indicator>
                             </div>
                         `,
                     )}

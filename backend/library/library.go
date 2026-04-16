@@ -76,6 +76,10 @@ type RescanHooks struct {
 // completes.  The app layer wires these so the library package
 // does not depend on the playlist package directly.
 type ScanHooks struct {
+	// RepopulatePlaylists re-imports tracks for playlists that
+	// lost their playlist_tracks rows (e.g., from a pre-fix
+	// FullRescan).  Runs before ResolvePhantoms.
+	RepopulatePlaylists func()
 	// ResolvePhantoms re-links phantom playlist tracks whose
 	// files now exist in the library after scanning.
 	ResolvePhantoms func()
@@ -694,10 +698,13 @@ func (l *Library) scanInternal(
 		metrics.OrphanCleanup = time.Since(orphanStart)
 	}
 
-	// --- Phase 6: resolve phantom playlist tracks ---
-	// Delegated to the playlist service via ScanHooks so that
-	// M3U8-based path resolution can handle both pre-existing
-	// phantoms (no phantom_file_path) and new ones.
+	// --- Phase 6: repopulate + resolve phantom playlist tracks ---
+	// Repopulate first: re-imports tracks for playlists that lost
+	// their rows (from a pre-fix FullRescan that deleted them).
+	if !cancelled && l.scanHooks.RepopulatePlaylists != nil {
+		l.scanHooks.RepopulatePlaylists()
+	}
+	// Then resolve: re-links phantom tracks to audio_files.
 	if !cancelled && l.scanHooks.ResolvePhantoms != nil {
 		l.scanHooks.ResolvePhantoms()
 	}

@@ -225,6 +225,112 @@ func (p *ArtistImageProvider) GetAliases(artistMBID string) string {
 	return strings.Join(names, " ")
 }
 
+// ArtistDetails holds the structured metadata extracted from MB's
+// artist lookup response.  Returned by GetArtistDetails.
+type ArtistDetails struct {
+	Type           string
+	Country        string
+	Disambiguation string
+	SortName       string
+	Aliases        string
+}
+
+// GetArtistDetails returns structured metadata for an artist from
+// the cached MB artist-rels response (which we fetch anyway during
+// image resolution).  Returns nil if not cached.
+func (p *ArtistImageProvider) GetArtistDetails(artistMBID string) *ArtistDetails {
+	cacheKey := "mb:artist-rels:" + artistMBID
+
+	data, ok := p.cache.Get(cacheKey)
+	if !ok {
+		return nil
+	}
+
+	var envelope struct {
+		Type           string `json:"type"`
+		Country        string `json:"country"`
+		Disambiguation string `json:"disambiguation"`
+		SortName       string `json:"sort-name"`
+		Aliases        []struct {
+			Name string `json:"name"`
+		} `json:"aliases"`
+	}
+
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return nil
+	}
+
+	names := make([]string, 0, len(envelope.Aliases))
+	for _, a := range envelope.Aliases {
+		if a.Name != "" {
+			names = append(names, a.Name)
+		}
+	}
+
+	return &ArtistDetails{
+		Type:           envelope.Type,
+		Country:        envelope.Country,
+		Disambiguation: envelope.Disambiguation,
+		SortName:       envelope.SortName,
+		Aliases:        strings.Join(names, " "),
+	}
+}
+
+// PreloadArtistRels writes a synthesized mb:artist-rels cache entry
+// derived from LB batch metadata.  This lets fetchMBRels skip the
+// per-artist MB network call — we already have type, country, name,
+// and wikidata QID from LB.  Aliases and disambiguation are left
+// empty (those only come from a real MB call).
+//
+// The envelope shape matches what fetchMBRels reads, so the cache
+// hit is transparent to the image resolution pipeline.
+func (p *ArtistImageProvider) PreloadArtistRels(mbid string, meta ArtistMetadata) {
+	cacheKey := "mb:artist-rels:" + mbid
+
+	// Don't overwrite a real MB response if we already have one.
+	if data, ok := p.cache.Get(cacheKey); ok && len(data) > 0 {
+		return
+	}
+
+	// Construct an envelope compatible with both fetchMBRels
+	// (which reads `relations`) and GetArtistDetails (which reads
+	// `type`, `country`, `disambiguation`, `sort-name`, `aliases`).
+	envelope := struct {
+		Type           string       `json:"type"`
+		Country        string       `json:"country"`
+		SortName       string       `json:"sort-name"`
+		Disambiguation string       `json:"disambiguation"`
+		Name           string       `json:"name"`
+		Relations      []mbRelation `json:"relations"`
+		Aliases        []struct {
+			Name string `json:"name"`
+		} `json:"aliases"`
+	}{
+		Type:    meta.Type,
+		Country: meta.Country,
+		Name:    meta.Name,
+	}
+
+	// Add a wikidata relation so getWikidataQID finds the QID.
+	if meta.WikidataQID != "" {
+		envelope.Relations = append(envelope.Relations, mbRelation{
+			Type: "wikidata",
+			URL: struct {
+				Resource string `json:"resource"`
+			}{
+				Resource: "https://www.wikidata.org/wiki/" + meta.WikidataQID,
+			},
+		})
+	}
+
+	data, err := json.Marshal(envelope)
+	if err != nil {
+		return
+	}
+
+	p.cache.Set(cacheKey, data, artistImageCacheTTL, mbid, "artist")
+}
+
 // ---------------------------------------------------------------------------
 // Source resolution
 // ---------------------------------------------------------------------------

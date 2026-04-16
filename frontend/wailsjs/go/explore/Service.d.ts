@@ -13,6 +13,10 @@ export function CoverArtGroupURL(arg1:string):Promise<string>;
 
 export function CoverArtURL(arg1:string):Promise<string>;
 
+export function GetArtistImageCached(arg1:string):Promise<string>;
+
+export function GetArtistImageCachedPath(arg1:string):Promise<string>;
+
 export function GetArtistImageURL(arg1:string):Promise<string>;
 
 export function GetArtistImages(arg1:Array<string>):Promise<Record<string, string>>;
@@ -21,19 +25,35 @@ export function GetArtistMBID(arg1:string):Promise<string>;
 
 export function GetArtistPlayCount(arg1:string):Promise<number>;
 
+export function GetIndexStatus():Promise<explore.IndexStatus>;
+
 export function GetLibrarySimilarArtists(arg1:string):Promise<Array<explore.LBSimilarArtist>>;
+
+export function GetPopularityBatch(arg1:Array<string>):Promise<Record<string, explore.PersonalizationResult>>;
 
 export function GetThumbnail(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function GetThumbnails(arg1:Array<explore.ThumbnailRequest>):Promise<Record<string, string>>;
 
+export function GetTrackThumbnail(arg1:string,arg2:string,arg3:string,arg4:string):Promise<string>;
+
+export function GetTrackThumbnails(arg1:Array<explore.TrackThumbnailRequest>):Promise<Record<string, string>>;
+
 export function IndexNewArtists():Promise<void>;
 
 export function InvalidateIndexDiscographies():Promise<void>;
 
+export function IsIndexReady():Promise<boolean>;
+
 export function LookupArtist(arg1:string):Promise<explore.MBArtist>;
 
 export function LookupReleaseGroup(arg1:string):Promise<explore.MBReleaseGroup>;
+
+export function PopulateLocalCrossReferences():Promise<void>;
+
+export function RecordSearchClick(arg1:string,arg2:string,arg3:string):Promise<void>;
+
+export function ResolveReleaseGroupMBIDs(arg1:Array<string>):Promise<Record<string, string>>;
 
 export function Search(arg1:string):Promise<explore.MBSearchResult>;
 
@@ -56,3 +76,5 @@ export function StopIndexBuild():Promise<void>;
 export function TopRecordingsForArtist(arg1:string):Promise<Array<explore.LBTopRecording>>;
 
 export function TopReleaseGroupsForArtist(arg1:string):Promise<Array<explore.LBTopReleaseGroup>>;
+
+export function WaitForIndexIdle():Promise<void>;

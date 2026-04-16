@@ -22,6 +22,14 @@ export function CoverArtURL(arg1) {
   return window['go']['explore']['Service']['CoverArtURL'](arg1);
 }
 
+export function GetArtistImageCached(arg1) {
+  return window['go']['explore']['Service']['GetArtistImageCached'](arg1);
+}
+
+export function GetArtistImageCachedPath(arg1) {
+  return window['go']['explore']['Service']['GetArtistImageCachedPath'](arg1);
+}
+
 export function GetArtistImageURL(arg1) {
   return window['go']['explore']['Service']['GetArtistImageURL'](arg1);
 }
@@ -38,8 +46,16 @@ export function GetArtistPlayCount(arg1) {
   return window['go']['explore']['Service']['GetArtistPlayCount'](arg1);
 }
 
+export function GetIndexStatus() {
+  return window['go']['explore']['Service']['GetIndexStatus']();
+}
+
 export function GetLibrarySimilarArtists(arg1) {
   return window['go']['explore']['Service']['GetLibrarySimilarArtists'](arg1);
+}
+
+export function GetPopularityBatch(arg1) {
+  return window['go']['explore']['Service']['GetPopularityBatch'](arg1);
 }
 
 export function GetThumbnail(arg1, arg2, arg3) {
@@ -50,6 +66,14 @@ export function GetThumbnails(arg1) {
   return window['go']['explore']['Service']['GetThumbnails'](arg1);
 }
 
+export function GetTrackThumbnail(arg1, arg2, arg3, arg4) {
+  return window['go']['explore']['Service']['GetTrackThumbnail'](arg1, arg2, arg3, arg4);
+}
+
+export function GetTrackThumbnails(arg1) {
+  return window['go']['explore']['Service']['GetTrackThumbnails'](arg1);
+}
+
 export function IndexNewArtists() {
   return window['go']['explore']['Service']['IndexNewArtists']();
 }
@@ -58,12 +82,28 @@ export function InvalidateIndexDiscographies() {
   return window['go']['explore']['Service']['InvalidateIndexDiscographies']();
 }
 
+export function IsIndexReady() {
+  return window['go']['explore']['Service']['IsIndexReady']();
+}
+
 export function LookupArtist(arg1) {
   return window['go']['explore']['Service']['LookupArtist'](arg1);
 }
 
 export function LookupReleaseGroup(arg1) {
   return window['go']['explore']['Service']['LookupReleaseGroup'](arg1);
+}
+
+export function PopulateLocalCrossReferences() {
+  return window['go']['explore']['Service']['PopulateLocalCrossReferences']();
+}
+
+export function RecordSearchClick(arg1, arg2, arg3) {
+  return window['go']['explore']['Service']['RecordSearchClick'](arg1, arg2, arg3);
+}
+
+export function ResolveReleaseGroupMBIDs(arg1) {
+  return window['go']['explore']['Service']['ResolveReleaseGroupMBIDs'](arg1);
 }
 
 export function Search(arg1) {
@@ -108,4 +148,8 @@ export function TopRecordingsForArtist(arg1) {
 
 export function TopReleaseGroupsForArtist(arg1) {
   return window['go']['explore']['Service']['TopReleaseGroupsForArtist'](arg1);
+}
+
+export function WaitForIndexIdle() {
+  return window['go']['explore']['Service']['WaitForIndexIdle']();
 }

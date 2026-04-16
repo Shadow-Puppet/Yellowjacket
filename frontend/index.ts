@@ -66,6 +66,11 @@ const viewCache = new Map<string, HTMLElement>();
 let currentViewEl: HTMLElement | null = null;
 let currentDetailEl: HTMLElement | null = null;
 
+/** Navigation history stack for back-button support in detail views. */
+const navStack: Array<{ view: string; [key: string]: any }> = [];
+/** The current navigation detail (so we can push it onto the stack). */
+let currentNavDetail: { view: string; [key: string]: any } = { view: 'tracks' };
+
 // Seed the cache with the default track-list rendered in index.html.
 const mainContent = document.getElementById('main-content');
 
@@ -88,6 +93,9 @@ document.addEventListener('navigate', (e: Event) => {
 
     // --- Primary (cacheable) views ----------------------------------------
     if (view in VIEW_TAGS) {
+        // Navigating to a primary view clears the history stack.
+        navStack.length = 0;
+
         // Remove any active detail view first
         if (currentDetailEl) {
             currentDetailEl.remove();
@@ -111,10 +119,17 @@ document.addEventListener('navigate', (e: Event) => {
         }
         target.classList.remove('view-hidden');
         currentViewEl = target;
+        currentNavDetail = { view };
         return;
     }
 
     // --- Detail (ephemeral) views -----------------------------------------
+    // Push the current view onto the nav stack before switching
+    // (unless this is a back-navigation, which already popped).
+    if (!detail._isBack) {
+        navStack.push({ ...currentNavDetail });
+    }
+
     // Hide the current primary view
     if (currentViewEl) {
         currentViewEl.classList.add('view-hidden');
@@ -124,6 +139,8 @@ document.addEventListener('navigate', (e: Event) => {
         currentDetailEl.remove();
         currentDetailEl = null;
     }
+
+    currentNavDetail = { ...detail };
 
     switch (view) {
         case 'artist-details': {
@@ -169,21 +186,27 @@ document.addEventListener('navigate', (e: Event) => {
             break;
         }
         case 'explore-artist-details': {
-            const { artistMBID, artistName } = detail;
+            const { artistMBID, artistName, localArtistId } = detail;
             const el = document.createElement('explore-artist-details');
 
-            el.setAttribute('artist-mbid', artistMBID);
+            if (artistMBID) el.setAttribute('artist-mbid', artistMBID);
             el.setAttribute('artist-name', artistName);
+            if (localArtistId) el.setAttribute('local-artist-id', String(localArtistId));
             mainContent.appendChild(el);
             currentDetailEl = el;
             break;
         }
         case 'explore-album-details': {
-            const { releaseGroupMBID, albumName } = detail;
+            const { releaseGroupMBID, albumName, artistName, highlightTrackMBID, localAlbumId } = detail;
             const el = document.createElement('explore-album-details');
 
-            el.setAttribute('release-group-mbid', releaseGroupMBID);
+            if (releaseGroupMBID) el.setAttribute('release-group-mbid', releaseGroupMBID);
             el.setAttribute('album-name', albumName);
+            if (artistName) el.setAttribute('artist-name', artistName);
+            if (highlightTrackMBID) {
+                el.setAttribute('highlight-track-mbid', highlightTrackMBID);
+            }
+            if (localAlbumId) el.setAttribute('local-album-id', String(localAlbumId));
             mainContent.appendChild(el);
             currentDetailEl = el;
             break;
@@ -197,6 +220,18 @@ document.addEventListener('navigate', (e: Event) => {
             mainContent.appendChild(fallback);
             currentDetailEl = fallback;
         }
+    }
+});
+
+// Navigate-back: pop the nav stack and re-dispatch as a regular navigate.
+document.addEventListener('navigate-back', () => {
+    const prev = navStack.pop();
+    if (prev) {
+        document.dispatchEvent(new CustomEvent('navigate', {
+            bubbles: true,
+            composed: true,
+            detail: { ...prev, _isBack: true },
+        }));
     }
 });
 

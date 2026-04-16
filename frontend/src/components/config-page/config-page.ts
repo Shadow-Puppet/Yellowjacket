@@ -2,6 +2,7 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 import { EventsOn } from '@runtime/runtime';
+import type { explore } from '@go/models';
 import {
     FullRescan,
     CancelCurrentScan,
@@ -363,6 +364,7 @@ export class ConfigPage extends LitElement {
     @state() private showCancelDialog = false;
     @state() private cancelMetrics: { added: number } | null = null;
     @state() private scanQueuedCount = 0;
+    @state() private indexStatus: explore.IndexStatus | null = null;
     @state() private shortcutConflict: {
         newAction: string;
         newKey: string;
@@ -376,6 +378,8 @@ export class ConfigPage extends LitElement {
     private cancelScanPaused?: () => void;
     private cancelScanResumed?: () => void;
     private cancelScanCancelled?: () => void;
+    private cancelIndexStatus?: () => void;
+    private indexPollTimer?: ReturnType<typeof setInterval>;
     private cancelScanQueued?: () => void;
     private cancelScanQueueDrained?: () => void;
     private cancelLibraryAdded?: () => void;
@@ -1097,6 +1101,70 @@ export class ConfigPage extends LitElement {
             flex-shrink: 0;
         }
 
+        /* Search index status */
+        .index-status {
+            padding: 0 0.25em 0.5em;
+        }
+
+        .index-stats {
+            display: flex;
+            align-items: center;
+            gap: 0.5em;
+            font-size: var(--yj-text-sm);
+            color: var(--yj-text-secondary, #aaa);
+            margin-bottom: 1em;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .index-stat-sep {
+            opacity: 0.4;
+        }
+
+        .index-tiers {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5em;
+        }
+
+        .index-tier {
+            display: flex;
+            align-items: center;
+            gap: 0.6em;
+            font-size: var(--yj-text-sm);
+        }
+
+        .tier-icon {
+            width: 1.2em;
+            text-align: center;
+            flex-shrink: 0;
+        }
+
+        .tier-name {
+            color: var(--yj-text-primary, #fff);
+        }
+
+        .tier-progress {
+            color: var(--yj-text-tertiary, #888);
+            font-size: var(--yj-text-xs, 11px);
+            font-variant-numeric: tabular-nums;
+        }
+
+        .tier-error {
+            color: var(--yj-accent-error, #f44);
+            font-size: var(--yj-text-xs, 11px);
+        }
+
+        .index-ready {
+            margin-top: 1em;
+            font-size: var(--yj-text-sm);
+            color: var(--yj-accent-success, #4a4);
+        }
+
+        .index-waiting, .index-loading {
+            font-size: var(--yj-text-sm);
+            color: var(--yj-text-tertiary, #888);
+        }
+
     `;
 
     // ===================================================================
@@ -1156,6 +1224,15 @@ export class ConfigPage extends LitElement {
         );
 
         document.addEventListener('click', this.handleDocumentClick);
+
+        // Listen for index status events (pushed from Go, no binding calls).
+        this.cancelIndexStatus = EventsOn(
+            Events.IndexStatusChanged,
+            (status: explore.IndexStatus) => {
+                console.log('IndexStatusChanged event received', status);
+                this.indexStatus = status;
+            },
+        );
     }
 
     override disconnectedCallback(): void {
@@ -1175,6 +1252,8 @@ export class ConfigPage extends LitElement {
         document.removeEventListener('click', this.handleDocumentClick);
 
         if (this.toastTimer) clearTimeout(this.toastTimer);
+        if (this.indexPollTimer) clearInterval(this.indexPollTimer);
+        this.cancelIndexStatus?.();
     }
 
     private async loadLibraries(): Promise<void> {
@@ -1848,6 +1927,7 @@ export class ConfigPage extends LitElement {
         return html`
             <h2>Settings</h2>
 
+            ${this.renderSearchSection()}
             ${this.renderNowPlayingSection()}
             ${this.renderThemeSection()}
             ${this.renderFavoritesSection()}
@@ -1855,6 +1935,106 @@ export class ConfigPage extends LitElement {
             ${this.renderShortcutsSection()}
             ${this.renderLibrarySection()}
         `;
+    }
+
+    // --- Search / Index section ---
+
+    private async pollIndexStatus(): Promise<void> {
+        // Kept as no-op — status comes via events now.
+    }
+
+    private renderSearchSection() {
+        const s = this.indexStatus;
+
+        return html`
+            <config-section
+                heading="Search Index"
+                description="The explore search index pre-caches popular artists, albums, and tracks from ListenBrainz for fast offline search."
+                .open=${true}
+            >
+                <div class="index-status">
+                    ${s
+                        ? html`
+                            <div class="index-stats">
+                                <span class="index-stat">${this.formatCount(s.artists)} artists</span>
+                                <span class="index-stat-sep">·</span>
+                                <span class="index-stat">${this.formatCount(s.recordings)} recordings</span>
+                                <span class="index-stat-sep">·</span>
+                                <span class="index-stat">${this.formatCount(s.releaseGroups)} albums</span>
+                                <span class="index-stat-sep">·</span>
+                                <span class="index-stat">${this.formatCount(s.totalRows)} total</span>
+                                ${s.lastBuilt
+                                    ? html`<span class="index-stat-sep">·</span>
+                                           <span class="index-stat">updated ${this.timeAgo(s.lastBuilt)}</span>`
+                                    : nothing}
+                            </div>
+                            ${s.tiers?.length > 0 && s.tiers.some((t) => t.state === 'running' || t.state === 'pending' || t.state === 'error')
+                                ? html`
+                                    <div class="index-tiers">
+                                        ${s.tiers.map(
+                                            (t) => html`
+                                                <div class="index-tier">
+                                                    <span class="tier-icon">${this.tierIcon(t.state)}</span>
+                                                    <span class="tier-name">${t.name}</span>
+                                                    ${t.state === 'running' && t.total > 0
+                                                        ? html`<span class="tier-progress">${t.completed}/${t.total}</span>`
+                                                        : nothing}
+                                                    ${t.state === 'error'
+                                                        ? html`<span class="tier-error">${t.error}</span>`
+                                                        : nothing}
+                                                </div>
+                                            `,
+                                        )}
+                                    </div>
+                                `
+                                : nothing}
+                            ${!s.building && s.ready
+                                ? html`<div class="index-ready">Index ready</div>`
+                                : !s.building && !s.ready && s.totalRows === 0
+                                    ? html`<div class="index-waiting">Index empty — build will start after library scan</div>`
+                                    : !s.building && !s.ready
+                                        ? html`<div class="index-waiting">Waiting for index build…</div>`
+                                        : nothing}
+                        `
+                        : html`<div class="index-loading">Loading status…</div>`}
+                </div>
+            </config-section>
+        `;
+    }
+
+    private tierIcon(state: string): string {
+        switch (state) {
+            case 'complete':
+            case 'skipped':
+                return '✅';
+            case 'running':
+                return '🔄';
+            case 'error':
+                return '❌';
+            case 'pending':
+            default:
+                return '⏳';
+        }
+    }
+
+    private formatCount(n: number): string {
+        if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+        if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+        return `${n}`;
+    }
+
+    private timeAgo(iso: string): string {
+        const then = new Date(iso).getTime();
+        if (!then) return '';
+        const seconds = Math.floor((Date.now() - then) / 1000);
+        if (seconds < 60) return 'just now';
+        const minutes = Math.floor(seconds / 60);
+        if (minutes < 60) return `${minutes}m ago`;
+        const hours = Math.floor(minutes / 60);
+        if (hours < 24) return `${hours}h ago`;
+        const days = Math.floor(hours / 24);
+        if (days === 1) return 'yesterday';
+        return `${days}d ago`;
     }
 
     // --- Now Playing section ---

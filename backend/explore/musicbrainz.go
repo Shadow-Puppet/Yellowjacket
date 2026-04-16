@@ -3,6 +3,7 @@ package explore
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"time"
 	"unicode"
@@ -63,21 +64,22 @@ func (c *MusicBrainzClient) Close() error {
 // ---------------------------------------------------------------------------
 
 // SearchArtists queries MusicBrainz for artists matching the given
-// query string.  Results are cached for 1 day.
+// query string.  Returns results, the total match count from MB,
+// and any error.  Results are cached for 1 day.
 func (c *MusicBrainzClient) SearchArtists(
 	ctx context.Context, query string, limit int,
-) ([]MBArtist, error) {
-	cacheKey := "mb:search:artist:" + query
+) ([]MBArtist, int, error) {
+	cacheKey := fmt.Sprintf("mb:search:artist:%s:%d", query, limit)
 
 	if data, ok := c.cache.Get(cacheKey); ok {
-		var out []MBArtist
-		if err := json.Unmarshal(data, &out); err == nil {
-			return out, nil
+		var cached mbSearchCache[MBArtist]
+		if err := json.Unmarshal(data, &cached); err == nil {
+			return cached.Results, cached.TotalCount, nil
 		}
 	}
 
 	if err := c.limiter.Wait(ctx); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	c.logger.Info("musicbrainz search artists",
@@ -90,32 +92,34 @@ func (c *MusicBrainzClient) SearchArtists(
 		musicbrainzws2.Paginator{Limit: clampLimit(limit)},
 	)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	out := convertArtists(result.Artists)
 
-	c.cacheJSON(cacheKey, out, cacheTTLSearch, "", "")
+	c.cacheJSON(cacheKey, mbSearchCache[MBArtist]{
+		Results: out, TotalCount: result.Count,
+	}, cacheTTLSearch, "", "")
 
-	return out, nil
+	return out, result.Count, nil
 }
 
 // SearchReleaseGroups queries MusicBrainz for release groups
 // matching the given query string.
 func (c *MusicBrainzClient) SearchReleaseGroups(
 	ctx context.Context, query string, limit int,
-) ([]MBReleaseGroup, error) {
-	cacheKey := "mb:search:release-group:" + query
+) ([]MBReleaseGroup, int, error) {
+	cacheKey := fmt.Sprintf("mb:search:release-group:%s:%d", query, limit)
 
 	if data, ok := c.cache.Get(cacheKey); ok {
-		var out []MBReleaseGroup
-		if err := json.Unmarshal(data, &out); err == nil {
-			return out, nil
+		var cached mbSearchCache[MBReleaseGroup]
+		if err := json.Unmarshal(data, &cached); err == nil {
+			return cached.Results, cached.TotalCount, nil
 		}
 	}
 
 	if err := c.limiter.Wait(ctx); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	c.logger.Info("musicbrainz search release groups",
@@ -128,32 +132,34 @@ func (c *MusicBrainzClient) SearchReleaseGroups(
 		musicbrainzws2.Paginator{Limit: clampLimit(limit)},
 	)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	out := convertReleaseGroups(result.ReleaseGroups)
 
-	c.cacheJSON(cacheKey, out, cacheTTLSearch, "", "")
+	c.cacheJSON(cacheKey, mbSearchCache[MBReleaseGroup]{
+		Results: out, TotalCount: result.Count,
+	}, cacheTTLSearch, "", "")
 
-	return out, nil
+	return out, result.Count, nil
 }
 
 // SearchRecordings queries MusicBrainz for recordings matching the
 // given query string.
 func (c *MusicBrainzClient) SearchRecordings(
 	ctx context.Context, query string, limit int,
-) ([]MBRecording, error) {
-	cacheKey := "mb:search:recording:" + query
+) ([]MBRecording, int, error) {
+	cacheKey := fmt.Sprintf("mb:search:recording:%s:%d", query, limit)
 
 	if data, ok := c.cache.Get(cacheKey); ok {
-		var out []MBRecording
-		if err := json.Unmarshal(data, &out); err == nil {
-			return out, nil
+		var cached mbSearchCache[MBRecording]
+		if err := json.Unmarshal(data, &cached); err == nil {
+			return cached.Results, cached.TotalCount, nil
 		}
 	}
 
 	if err := c.limiter.Wait(ctx); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	c.logger.Info("musicbrainz search recordings",
@@ -166,14 +172,22 @@ func (c *MusicBrainzClient) SearchRecordings(
 		musicbrainzws2.Paginator{Limit: clampLimit(limit)},
 	)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	out := convertRecordings(result.Recordings)
 
-	c.cacheJSON(cacheKey, out, cacheTTLSearch, "", "")
+	c.cacheJSON(cacheKey, mbSearchCache[MBRecording]{
+		Results: out, TotalCount: result.Count,
+	}, cacheTTLSearch, "", "")
 
-	return out, nil
+	return out, result.Count, nil
+}
+
+// mbSearchCache wraps search results with the total count for caching.
+type mbSearchCache[T any] struct {
+	Results    []T `json:"results"`
+	TotalCount int `json:"totalCount"`
 }
 
 // ---------------------------------------------------------------------------
@@ -181,6 +195,8 @@ func (c *MusicBrainzClient) SearchRecordings(
 // ---------------------------------------------------------------------------
 
 // LookupArtist fetches a single artist by MBID.  Cached for 7 days.
+// Uses inc=release-groups to pre-populate the browse cache so the
+// subsequent BrowseReleaseGroups call is a free cache hit.
 func (c *MusicBrainzClient) LookupArtist(
 	ctx context.Context, mbid string,
 ) (*MBArtist, error) {
@@ -201,7 +217,7 @@ func (c *MusicBrainzClient) LookupArtist(
 
 	a, err := c.mb.LookupArtist(ctx,
 		mbtypes.MBID(mbid),
-		musicbrainzws2.IncludesFilter{},
+		musicbrainzws2.IncludesFilter{Includes: []string{"release-groups"}},
 	)
 	if err != nil {
 		return nil, err
@@ -210,6 +226,16 @@ func (c *MusicBrainzClient) LookupArtist(
 	out := convertArtist(a)
 
 	c.cacheJSON(cacheKey, out, cacheTTLEntity, mbid, "artist")
+
+	// Pre-populate the browse cache with the included release groups
+	// so BrowseReleaseGroups returns instantly from cache.
+	// The inc= response is limited to 25 items; only cache if we
+	// likely got the full discography (< 25 means no truncation).
+	if len(a.ReleaseGroups) > 0 && len(a.ReleaseGroups) < 25 {
+		browseKey := "mb:browse:release-groups:" + mbid
+		rgs := convertReleaseGroups(a.ReleaseGroups)
+		c.cacheJSON(browseKey, rgs, cacheTTLEntity, mbid, "artist")
+	}
 
 	return &out, nil
 }
@@ -465,12 +491,29 @@ func convertRelease(r musicbrainzws2.Release) MBRelease {
 
 	for _, m := range r.Media {
 		for _, t := range m.Tracks {
+			// Use the recording MBID, not the track MBID.  Tracks
+			// and recordings have distinct MBIDs in MusicBrainz:
+			// a track is the placement of a recording on a specific
+			// medium/release, while a recording is the underlying
+			// audio work.  Library-tagged audio files store the
+			// recording MBID (MusicBrainz Track Id is a misnomer),
+			// so that's what the local recordings.mbid column
+			// contains — and that's what we need to match against
+			// for the library-status indicator to be accurate.
+			recordingMBID := string(t.Recording.ID)
+			if recordingMBID == "" {
+				// Fall back to the track MBID if the API response
+				// didn't include the recording relation (older
+				// browse endpoints).  Better than empty.
+				recordingMBID = string(t.ID)
+			}
+
 			rel.Tracks = append(rel.Tracks, MBTrack{
 				Position:   t.Position,
 				DiscNumber: m.Position,
 				Title:      t.Title,
 				Length:     int(t.Length.Milliseconds()),
-				MBID:       string(t.ID),
+				MBID:       recordingMBID,
 			})
 		}
 	}

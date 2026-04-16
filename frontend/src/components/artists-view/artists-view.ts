@@ -842,9 +842,10 @@ export class ArtistsView
                     bubbles: true,
                     composed: true,
                     detail: {
-                        view: 'artist-details',
-                        artistId: artist.ID,
+                        view: 'explore-artist-details',
+                        artistMBID: artist.MBID || '',
                         artistName: artist.Name,
+                        localArtistId: artist.ID,
                     },
                 }),
             );
@@ -1089,11 +1090,13 @@ export class ArtistsView
                                     bubbles: true,
                                     composed: true,
                                     detail: {
-                                        view: 'artist-details',
-                                        artistId:
-                                            artist.ID,
+                                        view: 'explore-artist-details',
+                                        artistMBID:
+                                            artist.MBID || '',
                                         artistName:
                                             artist.Name,
+                                        localArtistId:
+                                            artist.ID,
                                     },
                                 },
                             ),

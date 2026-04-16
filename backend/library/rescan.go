@@ -124,9 +124,44 @@ func (l *Library) clearLibraryTables() error {
 		return fmt.Errorf("could not clear queue tracks: %w", err)
 	}
 
-	if err := txq.DeleteAllPlaylistTracks(l.ctx); err != nil {
+	// Preserve playlist tracks across rescan: populate phantom
+	// metadata for all linked tracks before audio_files are deleted.
+	// ON DELETE SET NULL will null out audio_file_id, converting them
+	// to phantoms that ResolvePhantomTracksAfterScan can re-link.
+	if _, err := tx.ExecContext(l.ctx, `
+		UPDATE playlist_tracks
+		SET
+			phantom_title = COALESCE(phantom_title, (
+				SELECT r.name FROM audio_files af
+				JOIN recordings r ON af.recording_id = r.id
+				WHERE af.id = playlist_tracks.audio_file_id
+			)),
+			phantom_artist = COALESCE(phantom_artist, (
+				SELECT ac.text FROM audio_files af
+				JOIN recordings r ON af.recording_id = r.id
+				JOIN artist_credit ac ON r.artist_credit_id = ac.id
+				WHERE af.id = playlist_tracks.audio_file_id
+			)),
+			phantom_album = COALESCE(phantom_album, (
+				SELECT rg.name FROM audio_files af
+				JOIN recordings r ON af.recording_id = r.id
+				LEFT JOIN release_group_recordings rgr ON r.id = rgr.recording_id
+				LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
+				WHERE af.id = playlist_tracks.audio_file_id
+				LIMIT 1
+			)),
+			phantom_duration_ms = COALESCE(phantom_duration_ms, (
+				SELECT af.length_milliseconds FROM audio_files af
+				WHERE af.id = playlist_tracks.audio_file_id
+			)),
+			phantom_file_path = COALESCE(phantom_file_path, (
+				SELECT af.file_path FROM audio_files af
+				WHERE af.id = playlist_tracks.audio_file_id
+			))
+		WHERE audio_file_id IS NOT NULL
+	`); err != nil {
 		return fmt.Errorf(
-			"could not clear playlist tracks: %w", err,
+			"could not preserve playlist track metadata: %w", err,
 		)
 	}
 

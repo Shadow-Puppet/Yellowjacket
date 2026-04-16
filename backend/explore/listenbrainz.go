@@ -191,6 +191,17 @@ func (c *ListenBrainzClient) SimilarArtists(
 		}
 	}
 
+	// Sort by similarity score descending (most similar first).
+	slices.SortFunc(out, func(a, b LBSimilarArtist) int {
+		if a.Score > b.Score {
+			return -1
+		}
+		if a.Score < b.Score {
+			return 1
+		}
+		return 0
+	})
+
 	c.cacheJSON(cacheKey, out, cacheTTLEntity, artistMBID, "artist")
 
 	return out, nil
@@ -212,11 +223,11 @@ type lbPopularityResult struct {
 }
 
 // ArtistPopularity fetches total listen counts for a batch of
-// artist MBIDs.  Returns a map[mbid]→listenCount.  Artists with
+// artist MBIDs.  Returns a map[mbid]→PopularityData.  Artists with
 // null counts (unknown to LB) are omitted from the map.
 func (c *ListenBrainzClient) ArtistPopularity(
 	ctx context.Context, mbids []string,
-) (map[string]int, error) {
+) (map[string]PopularityData, error) {
 	if len(mbids) == 0 {
 		return nil, nil //nolint:nilnil
 	}
@@ -225,7 +236,7 @@ func (c *ListenBrainzClient) ArtistPopularity(
 	cacheKey := "lb:pop:artist:" + hashMBIDs(mbids)
 
 	if data, ok := c.cache.Get(cacheKey); ok {
-		var out map[string]int
+		var out map[string]PopularityData
 		if err := json.Unmarshal(data, &out); err == nil {
 			return out, nil
 		}
@@ -247,7 +258,7 @@ func (c *ListenBrainzClient) ArtistPopularity(
 // recording MBIDs.  Returns a map[mbid]→listenCount.
 func (c *ListenBrainzClient) RecordingPopularity(
 	ctx context.Context, mbids []string,
-) (map[string]int, error) {
+) (map[string]PopularityData, error) {
 	if len(mbids) == 0 {
 		return nil, nil //nolint:nilnil
 	}
@@ -256,7 +267,7 @@ func (c *ListenBrainzClient) RecordingPopularity(
 	cacheKey := "lb:pop:recording:" + hashMBIDs(mbids)
 
 	if data, ok := c.cache.Get(cacheKey); ok {
-		var out map[string]int
+		var out map[string]PopularityData
 		if err := json.Unmarshal(data, &out); err == nil {
 			return out, nil
 		}
@@ -278,7 +289,7 @@ func (c *ListenBrainzClient) RecordingPopularity(
 // release group MBIDs.  Returns a map[mbid]→listenCount.
 func (c *ListenBrainzClient) ReleaseGroupPopularity(
 	ctx context.Context, mbids []string,
-) (map[string]int, error) {
+) (map[string]PopularityData, error) {
 	if len(mbids) == 0 {
 		return nil, nil //nolint:nilnil
 	}
@@ -287,7 +298,7 @@ func (c *ListenBrainzClient) ReleaseGroupPopularity(
 	cacheKey := "lb:pop:release-group:" + hashMBIDs(mbids)
 
 	if data, ok := c.cache.Get(cacheKey); ok {
-		var out map[string]int
+		var out map[string]PopularityData
 		if err := json.Unmarshal(data, &out); err == nil {
 			return out, nil
 		}
@@ -305,24 +316,116 @@ func (c *ListenBrainzClient) ReleaseGroupPopularity(
 	})
 }
 
+// ArtistMetadata holds the fields we extract from LB's batch
+// /1/metadata/artist/ endpoint.  Missing fields: aliases,
+// disambiguation, sort_name (those come from MB per-artist).
+type ArtistMetadata struct {
+	MBID       string
+	Name       string
+	Type       string // "Group", "Person", etc
+	Country    string // from "area" field
+	BeginYear  int
+	EndYear    int
+	WikidataQID string // extracted from rels
+}
+
+// BatchArtistMetadata fetches metadata for up to ~1000 artist MBIDs
+// in a single GET request to LB's /1/metadata/artist/ endpoint.
+// Returns a map of mbid → ArtistMetadata.  MBIDs with no metadata
+// are omitted from the result.
+func (c *ListenBrainzClient) BatchArtistMetadata(
+	ctx context.Context, mbids []string,
+) (map[string]ArtistMetadata, error) {
+	if len(mbids) == 0 {
+		return nil, nil //nolint:nilnil
+	}
+
+	url := listenBrainzBaseURL + "/1/metadata/artist/?artist_mbids=" + strings.Join(mbids, ",")
+	cacheKey := "lb:meta:artist:" + hashMBIDs(mbids)
+
+	if data, ok := c.cache.Get(cacheKey); ok {
+		var out map[string]ArtistMetadata
+		if err := json.Unmarshal(data, &out); err == nil {
+			return out, nil
+		}
+	}
+
+	body, err := c.doGet(ctx, url)
+	if err != nil {
+		return nil, fmt.Errorf("batch artist metadata: %w", err)
+	}
+
+	var raw []struct {
+		ArtistMBID string            `json:"artist_mbid"`
+		MBID       string            `json:"mbid"`
+		Name       string            `json:"name"`
+		Type       string            `json:"type"`
+		Area       string            `json:"area"`
+		BeginYear  int               `json:"begin_year"`
+		EndYear    int               `json:"end_year"`
+		Rels       map[string]string `json:"rels"`
+	}
+
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, fmt.Errorf("batch artist metadata unmarshal: %w", err)
+	}
+
+	out := make(map[string]ArtistMetadata, len(raw))
+
+	for _, r := range raw {
+		mbid := r.ArtistMBID
+		if mbid == "" {
+			mbid = r.MBID
+		}
+
+		meta := ArtistMetadata{
+			MBID:      mbid,
+			Name:      r.Name,
+			Type:      r.Type,
+			Country:   r.Area,
+			BeginYear: r.BeginYear,
+			EndYear:   r.EndYear,
+		}
+
+		// Extract wikidata QID from rels map.
+		if wikidata, ok := r.Rels["wikidata"]; ok {
+			parts := strings.Split(wikidata, "/")
+			if len(parts) > 0 {
+				meta.WikidataQID = parts[len(parts)-1]
+			}
+		}
+
+		out[mbid] = meta
+	}
+
+	c.cacheJSON(cacheKey, out, cacheTTLEntity, "", "")
+
+	return out, nil
+}
+
 // parsePopularity unmarshals a bulk popularity response, extracts
-// the MBID→listenCount mapping, caches it, and returns it.
+// the MBID→PopularityData mapping, caches it, and returns it.
 func (c *ListenBrainzClient) parsePopularity(
 	cacheKey string,
 	body []byte,
 	extractMBID func(lbPopularityResult) string,
-) (map[string]int, error) {
+) (map[string]PopularityData, error) {
 	var raw []lbPopularityResult
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, fmt.Errorf("popularity unmarshal: %w", err)
 	}
 
-	out := make(map[string]int, len(raw))
+	out := make(map[string]PopularityData, len(raw))
 
 	for _, r := range raw {
 		mbid := extractMBID(r)
 		if mbid != "" && r.TotalListenCount != nil {
-			out[mbid] = *r.TotalListenCount
+			data := PopularityData{ListenCount: *r.TotalListenCount}
+			if r.TotalUserCount != nil {
+				data.ListenerCount = *r.TotalUserCount
+			}
+
+			out[mbid] = data
 		}
 	}
 
