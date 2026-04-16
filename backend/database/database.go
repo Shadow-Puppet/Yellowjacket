@@ -148,6 +148,12 @@ func (d *DB) QueryContext(query string, args ...any) (*sql.Rows, error) {
 	return d.db.QueryContext(d.Ctx, query, args...)
 }
 
+// Logger returns the structured logger bound to this DB. Callers can
+// use it to emit timing or diagnostic logs from query-adjacent code.
+func (d *DB) Logger() *slog.Logger {
+	return d.logger
+}
+
 // applyPRAGMAs configures SQLite connection settings. Called by both
 // NewDB and NewTestDB to ensure identical behavior.
 func applyPRAGMAs(ctx context.Context, db *sql.DB) error {
@@ -1222,7 +1228,7 @@ func migration9SmartPlaylists(
 // migration10PlayHistory adds play history tracking:
 // - play_history table for timestamped play log
 // - play_count and last_played columns on audio_files
-// - Recreates track_metadata VIEW to expose the new columns
+// - Recreates track_metadata VIEW to expose the new columns.
 func migration10PlayHistory(
 	ctx context.Context,
 	db *sql.DB,

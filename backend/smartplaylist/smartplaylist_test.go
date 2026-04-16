@@ -608,7 +608,7 @@ func TestBuildWhereClause_GenreIsAnyOfProducesSubquery(t *testing.T) {
 	}
 }
 
-func TestBuildWhereClause_GenreContainsUsesLIKE(t *testing.T) {
+func TestBuildWhereClause_GenreContainsUsesSubquery(t *testing.T) {
 	t.Parallel()
 
 	clause, args, err := BuildWhereClause([]Rule{
@@ -618,17 +618,21 @@ func TestBuildWhereClause_GenreContainsUsesLIKE(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// contains on genre should use LIKE on the concatenated column,
-	// NOT a subquery.
-	if strings.Contains(clause, "recording_genres") {
+	// Since the smart playlist query no longer projects a concatenated
+	// genre column, "contains" filters genres via recording_genres
+	// with g.name LIKE applied to individual genre rows.
+	if !strings.Contains(clause, "recording_genres") {
 		t.Errorf(
-			"genre 'contains' should use LIKE, not subquery: %q",
+			"genre 'contains' should use recording_genres subquery: %q",
 			clause,
 		)
 	}
 
-	if clause != "genre LIKE ?" {
-		t.Errorf("clause = %q, want %q", clause, "genre LIKE ?")
+	if !strings.Contains(clause, "g.name LIKE ?") {
+		t.Errorf(
+			"genre 'contains' should filter with g.name LIKE ?: %q",
+			clause,
+		)
 	}
 
 	if len(args) != 1 || args[0] != "%Rock%" {
@@ -671,10 +675,18 @@ func TestBuildWhereClause_SameFieldMultipleTimes(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if clause != "genre LIKE ? AND genre NOT LIKE ?" {
-		t.Errorf("clause = %q, want %q",
-			clause,
-			"genre LIKE ? AND genre NOT LIKE ?")
+	// Genre text ops combine via AND across subqueries against
+	// recording_genres; the exact SQL shape is asserted elsewhere.
+	if !strings.Contains(clause, " AND ") {
+		t.Errorf("clause should combine rules with AND: %q", clause)
+	}
+
+	if !strings.Contains(clause, "af.recording_id IN") {
+		t.Errorf("clause should include positive IN subquery: %q", clause)
+	}
+
+	if !strings.Contains(clause, "af.recording_id NOT IN") {
+		t.Errorf("clause should include NOT IN subquery: %q", clause)
 	}
 
 	if len(args) != 2 ||

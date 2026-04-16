@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"yellowjacket/backend/database"
 	"yellowjacket/backend/library"
@@ -47,38 +49,38 @@ type RuleSet struct {
 // names. Field names MUST come from this map — never interpolated
 // from user input.
 var fieldMap = map[string]string{
-	"title":        "title",
-	"artist":       "artist_name",
-	"album":        "album",
-	"genre":        "genre",
-	"year":         "year",
-	"composer":     "composer",
-	"file_type":    "file_type",
-	"duration":     "length_milliseconds",
-	"sample_rate":  "sample_rate",
-	"bit_depth":    "bit_depth",
-	"channels":     "channels",
-	"bitrate":      "bitrate",
-	"file_size":    "file_size",
-	"library":      "library_id",
-	"track_number": "track_number",
-	"disc_number":  "disc_number",
-	"play_count":      "play_count",
+	"title":             "title",
+	"artist":            "artist_name",
+	"album":             "album",
+	"genre":             "genre",
+	"year":              "year",
+	"composer":          "composer",
+	"file_type":         "file_type",
+	"duration":          "length_milliseconds",
+	"sample_rate":       "sample_rate",
+	"bit_depth":         "bit_depth",
+	"channels":          "channels",
+	"bitrate":           "bitrate",
+	"file_size":         "file_size",
+	"library":           "library_id",
+	"track_number":      "track_number",
+	"disc_number":       "disc_number",
+	"play_count":        "play_count",
 	"days_since_played": "days_since_played",
 }
 
 // numericFields identifies fields that accept numeric operators.
 var numericFields = map[string]bool{
-	"year":         true,
-	"duration":     true,
-	"sample_rate":  true,
-	"bit_depth":    true,
-	"channels":     true,
-	"bitrate":      true,
-	"file_size":    true,
-	"library":      true,
-	"track_number": true,
-	"disc_number":  true,
+	"year":              true,
+	"duration":          true,
+	"sample_rate":       true,
+	"bit_depth":         true,
+	"channels":          true,
+	"bitrate":           true,
+	"file_size":         true,
+	"library":           true,
+	"track_number":      true,
+	"disc_number":       true,
 	"play_count":        true,
 	"days_since_played": true,
 }
@@ -103,16 +105,8 @@ var numericOperators = map[string]bool{
 	"between":      true,
 }
 
-// genreExactOps require a subquery against recording_genres JOIN
-// genres instead of matching the concatenated genre column.
-var genreExactOps = map[string]bool{
-	"is":        true,
-	"is_not":    true,
-	"is_any_of": true,
-}
-
-// genreDelimiter matches the GROUP_CONCAT delimiter in
-// track_metadata_view.sql.
+// genreDelimiter matches the GROUP_CONCAT delimiter used when
+// batch-loading genres for matched tracks.
 const genreDelimiter = "||"
 
 // BuildWhereClause builds a parameterized SQL WHERE clause from a
@@ -143,9 +137,13 @@ func BuildWhereClause(rules []Rule) (string, []any, error) {
 			)
 		}
 
-		// Genre exact-match operators use a subquery.
-		if rule.Field == "genre" && genreExactOps[rule.Operator] {
-			cond, condArgs, err := buildGenreSubquery(rule)
+		// All genre operators use a subquery against recording_genres.
+		// The smart playlist main query does not project a genre
+		// column — genres are batch-loaded after the main query — so
+		// even text operators like "contains" must filter through the
+		// link table rather than a concatenated column.
+		if rule.Field == "genre" {
+			cond, condArgs, err := buildGenreCondition(rule)
 			if err != nil {
 				return "", nil, err
 			}
@@ -201,23 +199,43 @@ func validateOperator(op string, isNumeric bool) error {
 	return nil
 }
 
-// buildGenreSubquery generates a subquery condition against
-// recording_genres JOIN genres for exact genre matching.
-func buildGenreSubquery(rule Rule) (string, []any, error) {
-	subquery := `af.id IN (
+// buildGenreCondition generates a subquery condition against
+// recording_genres JOIN genres for every supported text operator.
+// The outer query is expected to expose the `recording_id` column of
+// the audio file (aliased through the smart playlist query), which is
+// compared against recording_genres.recording_id.
+func buildGenreCondition(rule Rule) (string, []any, error) {
+	inHead := `af.recording_id IN (
+  SELECT rg_sub.recording_id FROM recording_genres rg_sub
+  JOIN genres g ON rg_sub.genre_id = g.id
+  WHERE `
+	notInHead := `af.recording_id NOT IN (
   SELECT rg_sub.recording_id FROM recording_genres rg_sub
   JOIN genres g ON rg_sub.genre_id = g.id
   WHERE `
 
 	switch rule.Operator {
 	case "is":
-		return subquery + "g.name = ? COLLATE NOCASE)", []any{rule.Value}, nil
+		return inHead + "g.name = ? COLLATE NOCASE)", []any{rule.Value}, nil
 
 	case "is_not":
-		return `af.id NOT IN (
-  SELECT rg_sub.recording_id FROM recording_genres rg_sub
-  JOIN genres g ON rg_sub.genre_id = g.id
-  WHERE g.name = ? COLLATE NOCASE)`, []any{rule.Value}, nil
+		return notInHead + "g.name = ? COLLATE NOCASE)", []any{rule.Value}, nil
+
+	case "contains":
+		return inHead + "g.name LIKE ?)",
+			[]any{"%" + rule.Value + "%"}, nil
+
+	case "does_not_contain":
+		return notInHead + "g.name LIKE ?)",
+			[]any{"%" + rule.Value + "%"}, nil
+
+	case "starts_with":
+		return inHead + "g.name LIKE ?)",
+			[]any{rule.Value + "%"}, nil
+
+	case "ends_with":
+		return inHead + "g.name LIKE ?)",
+			[]any{"%" + rule.Value}, nil
 
 	case "is_any_of":
 		var values []string
@@ -246,7 +264,7 @@ func buildGenreSubquery(rule Rule) (string, []any, error) {
 			condArgs[i] = v
 		}
 
-		return subquery + "g.name IN (" +
+		return inHead + "g.name IN (" +
 			strings.Join(placeholders, ", ") + "))", condArgs, nil
 
 	default:
@@ -304,12 +322,12 @@ func buildDaysSincePlayedCondition(rule Rule) (string, []any, error) {
 		return "last_played IS NOT NULL AND " + expr + " < ?", []any{v}, nil
 
 	case "between":
-		min, max, err := parseBetweenValue(rule.Field, rule.Value)
+		lo, hi, err := parseBetweenValue(rule.Field, rule.Value)
 		if err != nil {
 			return "", nil, err
 		}
 
-		return expr + " BETWEEN ? AND ?", []any{min, max}, nil
+		return expr + " BETWEEN ? AND ?", []any{lo, hi}, nil
 
 	default:
 		return "", nil, fmt.Errorf(
@@ -506,11 +524,82 @@ func parseBetweenValue(
 	return lo, hi, nil
 }
 
-// Evaluate runs the rule set against the track_metadata view and
-// returns matching tracks.
+// leanTrackQuery is the smart-playlist projection: the same columns
+// the `track_metadata` view would expose minus the correlated-subquery
+// `genre` aggregate that made the view expensive to scan. Genres are
+// batch-loaded after this query returns.
+//
+// Wrapping the joins in a subquery aliased `af` lets WHERE/ORDER BY
+// clauses reference the projected names (`title`, `year`, etc.) the
+// same way they would against the view. SQLite flattens this subquery
+// so the runtime cost is equivalent to querying the underlying tables
+// directly.
+const leanTrackQuery = `SELECT
+	af.recording_id,
+	af.file_path,
+	af.length_milliseconds,
+	af.title,
+	af.artist_name,
+	af.track_number,
+	af.disc_number,
+	af.album,
+	af.year,
+	af.composer,
+	af.file_type,
+	af.sample_rate,
+	af.bit_depth,
+	af.channels,
+	af.bitrate,
+	af.file_size,
+	af.play_count,
+	COALESCE(af.last_played, '') AS last_played
+FROM (
+	SELECT
+		af.id,
+		af.recording_id,
+		af.file_path,
+		af.length_milliseconds,
+		COALESCE(r.name, '') AS title,
+		COALESCE(ac.text, '') AS artist_name,
+		r.track_number,
+		r.disc_number,
+		COALESCE(rg.name, '') AS album,
+		COALESCE(r.year, 0) AS year,
+		COALESCE(r.composer, '') AS composer,
+		COALESCE(ft.extension, '') AS file_type,
+		af.sample_rate,
+		af.bit_depth,
+		af.channels,
+		af.bitrate,
+		af.file_size,
+		af.library_id,
+		af.play_count,
+		af.last_played
+	FROM audio_files af
+	LEFT JOIN recordings r ON af.recording_id = r.id
+	LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
+	LEFT JOIN (
+		SELECT recording_id,
+			MIN(release_group_id) AS release_group_id
+		FROM release_group_recordings
+		GROUP BY recording_id
+	) rgr ON r.id = rgr.recording_id
+	LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
+	LEFT JOIN file_types ft ON af.file_type_id = ft.id
+) af`
+
+// Evaluate runs the rule set against the library and returns matching
+// tracks. It issues two queries: one lean SELECT over the joined
+// metadata tables (no genre) and a batched follow-up to attach genres
+// to the matched tracks. This avoids the per-row correlated genre
+// subquery in `track_metadata_view`, which scaled with library size
+// rather than result size.
 func Evaluate(
 	db *database.DB, ruleSet RuleSet,
 ) ([]library.Track, error) {
+	start := time.Now()
+	logger := db.Logger()
+
 	where, args, err := BuildWhereClause(ruleSet.Rules)
 	if err != nil {
 		return nil, fmt.Errorf(
@@ -518,62 +607,57 @@ func Evaluate(
 		)
 	}
 
+	// Sort-by-genre has no single SQL column to sort on (genres are
+	// many-to-one per track). Detect it up front so we can sort in
+	// Go after genres are merged.
+	sortByGenre := ruleSet.SortField == "genre"
+
 	// SAFETY: Dynamic WHERE clause built from whitelisted field
 	// names and parameterized values only. Sort field is validated
 	// against fieldMap. No user-supplied strings are interpolated.
-	query := `SELECT
-		file_path,
-		length_milliseconds,
-		title,
-		artist_name,
-		track_number,
-		disc_number,
-		album,
-		genre,
-		year,
-		composer,
-		file_type,
-		sample_rate,
-		bit_depth,
-		channels,
-		bitrate,
-		file_size,
-		play_count,
-		COALESCE(last_played, '') AS last_played
-	FROM track_metadata af`
+	query := leanTrackQuery
 
 	if where != "" {
 		query += "\nWHERE " + where
 	}
 
 	// Sort.
-	if ruleSet.SortField != "" {
-		if ruleSet.SortField == "random" {
-			query += "\nORDER BY RANDOM()"
-		} else {
-			sortCol, ok := fieldMap[ruleSet.SortField]
-			if !ok {
-				return nil, fmt.Errorf(
-					"%w: %q", errInvalidSortField,
-					ruleSet.SortField,
-				)
-			}
+	applyLimitInSQL := ruleSet.Limit > 0
 
-			dir := "ASC"
-			if strings.EqualFold(ruleSet.SortDir, "DESC") {
-				dir = "DESC"
-			}
+	switch {
+	case sortByGenre:
+		// Sort applied in Go after the batch genre merge. If a LIMIT
+		// was requested we also defer it so the ordering is computed
+		// over the full candidate set.
+		applyLimitInSQL = false
 
-			query += "\nORDER BY " + sortCol + " " + dir
+	case ruleSet.SortField == "random":
+		query += "\nORDER BY RANDOM()"
+
+	case ruleSet.SortField != "":
+		sortCol, ok := fieldMap[ruleSet.SortField]
+		if !ok {
+			return nil, fmt.Errorf(
+				"%w: %q", errInvalidSortField,
+				ruleSet.SortField,
+			)
 		}
+
+		dir := "ASC"
+		if strings.EqualFold(ruleSet.SortDir, "DESC") {
+			dir = "DESC"
+		}
+
+		query += "\nORDER BY " + sortCol + " " + dir
 	}
 
-	// Limit.
-	if ruleSet.Limit > 0 {
+	if applyLimitInSQL {
 		query += "\nLIMIT ?"
 
 		args = append(args, ruleSet.Limit)
 	}
+
+	mainStart := time.Now()
 
 	rows, err := db.QueryContext(query, args...)
 	if err != nil {
@@ -582,17 +666,75 @@ func Evaluate(
 		)
 	}
 
-	defer func() { _ = rows.Close() }()
+	tracks, recordingIDs, err := scanTracks(rows)
 
-	return scanTracks(rows)
+	_ = rows.Close()
+
+	if err != nil {
+		return nil, err
+	}
+
+	mainDuration := time.Since(mainStart)
+
+	// Batch-load genres for every matched recording_id in one query
+	// instead of the per-row correlated subquery the view used.
+	genreStart := time.Now()
+
+	genresByRecording, err := fetchGenres(db, recordingIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	for i, rid := range recordingIDs {
+		if g, ok := genresByRecording[rid]; ok {
+			tracks[i].Genre = splitGenres(g)
+		}
+	}
+
+	genreDuration := time.Since(genreStart)
+
+	// Apply genre-sort and deferred LIMIT in Go if needed.
+	if sortByGenre {
+		dir := 1
+		if strings.EqualFold(ruleSet.SortDir, "DESC") {
+			dir = -1
+		}
+
+		sort.SliceStable(tracks, func(i, j int) bool {
+			return dir*strings.Compare(
+				strings.Join(tracks[i].Genre, genreDelimiter),
+				strings.Join(tracks[j].Genre, genreDelimiter),
+			) < 0
+		})
+
+		if ruleSet.Limit > 0 && len(tracks) > ruleSet.Limit {
+			tracks = tracks[:ruleSet.Limit]
+		}
+	}
+
+	logger.Debug(
+		"smart playlist evaluated",
+		"tracks", len(tracks),
+		"main_ms", mainDuration.Milliseconds(),
+		"genres_ms", genreDuration.Milliseconds(),
+		"total_ms", time.Since(start).Milliseconds(),
+	)
+
+	return tracks, nil
 }
 
-// scanTracks reads all rows from a query result into a Track slice.
-func scanTracks(rows *sql.Rows) ([]library.Track, error) {
-	var tracks []library.Track
+// scanTracks reads all rows from a lean-query result into parallel
+// slices: the Track values (minus genres, which are attached later)
+// and the recording_id for each, used for the batched genre fetch.
+func scanTracks(rows *sql.Rows) ([]library.Track, []int64, error) {
+	var (
+		tracks       []library.Track
+		recordingIDs []int64
+	)
 
 	for rows.Next() {
 		var (
+			recordingID sql.NullInt64
 			filePath    string
 			lengthMs    int64
 			title       string
@@ -600,7 +742,6 @@ func scanTracks(rows *sql.Rows) ([]library.Track, error) {
 			trackNumber sql.NullInt64
 			discNumber  sql.NullInt64
 			album       string
-			genre       string
 			year        int64
 			composer    string
 			fileType    string
@@ -614,14 +755,14 @@ func scanTracks(rows *sql.Rows) ([]library.Track, error) {
 		)
 
 		if err := rows.Scan(
-			&filePath, &lengthMs, &title, &artistName,
+			&recordingID, &filePath, &lengthMs, &title, &artistName,
 			&trackNumber, &discNumber,
-			&album, &genre, &year, &composer, &fileType,
+			&album, &year, &composer, &fileType,
 			&sampleRate, &bitDepth, &channels,
 			&bitrate, &fileSize,
 			&playCount, &lastPlayed,
 		); err != nil {
-			return nil, fmt.Errorf(
+			return nil, nil, fmt.Errorf(
 				"could not scan smart playlist row: %w", err,
 			)
 		}
@@ -634,7 +775,6 @@ func scanTracks(rows *sql.Rows) ([]library.Track, error) {
 			TrackNumber: trackNumber.Int64,
 			DiscNumber:  discNumber.Int64,
 			Album:       album,
-			Genre:       splitGenres(genre),
 			Year:        year,
 			Composer:    composer,
 			FileType:    fileType,
@@ -646,15 +786,101 @@ func scanTracks(rows *sql.Rows) ([]library.Track, error) {
 			PlayCount:   playCount,
 			LastPlayed:  lastPlayed,
 		})
+		recordingIDs = append(recordingIDs, recordingID.Int64)
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf(
+		return nil, nil, fmt.Errorf(
 			"smart playlist row iteration error: %w", err,
 		)
 	}
 
-	return tracks, nil
+	return tracks, recordingIDs, nil
+}
+
+// fetchGenres batch-loads the GROUP_CONCAT-joined genre string for
+// every recording_id in ids using a single IN-list query. Returns a
+// map from recording_id to the concatenated genre string.
+func fetchGenres(
+	db *database.DB, ids []int64,
+) (map[int64]string, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	// Deduplicate to keep the IN list minimal.
+	seen := make(map[int64]struct{}, len(ids))
+	unique := make([]int64, 0, len(ids))
+
+	for _, id := range ids {
+		if id == 0 {
+			continue
+		}
+
+		if _, ok := seen[id]; ok {
+			continue
+		}
+
+		seen[id] = struct{}{}
+
+		unique = append(unique, id)
+	}
+
+	if len(unique) == 0 {
+		return nil, nil
+	}
+
+	placeholders := make([]string, len(unique))
+	args := make([]any, len(unique))
+
+	for i, id := range unique {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+
+	// SAFETY: placeholders are static "?" tokens; every value is
+	// parameterized.
+	query := `SELECT rg_sub.recording_id,
+		GROUP_CONCAT(g.name, '` + genreDelimiter + `')
+	FROM recording_genres rg_sub
+	JOIN genres g ON rg_sub.genre_id = g.id
+	WHERE rg_sub.recording_id IN (` +
+		strings.Join(placeholders, ", ") + `)
+	GROUP BY rg_sub.recording_id`
+
+	rows, err := db.QueryContext(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"smart playlist genre fetch failed: %w", err,
+		)
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	result := make(map[int64]string, len(unique))
+
+	for rows.Next() {
+		var (
+			rid   int64
+			names string
+		)
+
+		if err := rows.Scan(&rid, &names); err != nil {
+			return nil, fmt.Errorf(
+				"could not scan smart playlist genre row: %w", err,
+			)
+		}
+
+		result[rid] = names
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf(
+			"smart playlist genre iteration error: %w", err,
+		)
+	}
+
+	return result, nil
 }
 
 // ParseRuleSet parses a JSON string into a validated RuleSet.
