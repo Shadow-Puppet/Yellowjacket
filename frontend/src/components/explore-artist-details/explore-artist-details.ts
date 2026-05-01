@@ -16,13 +16,12 @@ import {
     GetTrackThumbnails,
     ResolveReleaseGroupMBIDs,
 } from '@go/explore/Service';
-import type {
-    MBArtist,
-    MBReleaseGroup,
-    LBTopRecording,
-    LBTopReleaseGroup,
-    LBSimilarArtist,
-} from '@go/explore/Service';
+import type { explore } from '@go/models';
+type MBArtist = explore.MBArtist;
+type MBReleaseGroup = explore.MBReleaseGroup;
+type LBTopRecording = explore.LBTopRecording;
+type LBTopReleaseGroup = explore.LBTopReleaseGroup;
+type LBSimilarArtist = explore.LBSimilarArtist;
 import { exploreCache } from '../../store/explore-cache';
 import { exploreSettings } from '../../store/explore-settings';
 import { libraryStore } from '../../store/library-store';
@@ -31,7 +30,6 @@ import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '../library-status-indicator/library-status-indicator.js';
 
 /* ── Constants ── */
-const CAA_GROUP_BASE = 'https://coverartarchive.org/release-group';
 
 /** Desired section order for grouping release types. */
 const TYPE_ORDER = ['Albums', 'EP', 'Single', 'Other Albums'];
@@ -54,14 +52,6 @@ const NON_STUDIO_SECONDARY_TYPES = new Set([
 ]);
 
 /* ── Utility functions (duplicated from explore-view per design decision) ── */
-
-function CoverArtGroupURL(releaseGroupMBID: string): string {
-    return `${CAA_GROUP_BASE}/${releaseGroupMBID}/front-250`;
-}
-
-function CoverArtReleaseURL(releaseMBID: string): string {
-    return `https://coverartarchive.org/release/${releaseMBID}/front-250`;
-}
 
 function nameToHue(name: string): number {
     let hash = 0;
@@ -108,7 +98,6 @@ export class ExploreArtistDetails extends LitElement {
     @state() private loadingTopReleases = true;
     @state() private loadingReleases = true;
     @state() private errorArtist = '';
-    @state() private errorTracks = '';
     @state() private errorReleases = '';
     @state() private similarArtists: LBSimilarArtist[] = [];
     @state() private loadingSimilar = true;
@@ -1297,7 +1286,6 @@ export class ExploreArtistDetails extends LitElement {
             void this.batchResolveTrackThumbnails(tracks, mapping);
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            this.errorTracks = msg;
             console.error(
                 `[explore-artist] TopRecordingsForArtist error: ${msg}`,
             );
@@ -1434,26 +1422,6 @@ export class ExploreArtistDetails extends LitElement {
         if (this.similarArtists.length > 0) {
             void this.fetchSimilarArtistImages();
         }
-    }
-
-    /**
-     * Resolve a cover art thumbnail for a release group (or release)
-     * via the backend proxy (local library → disk cache → CAA).
-     * Updates thumbnailURLs reactively so the image pops in when ready.
-     */
-    private resolveThumbnail(mbid: string, albumName: string, artistName: string) {
-        if (!mbid || this.thumbnailURLs.has(mbid)) return;
-
-        // Mark as in-flight so we don't fire duplicate requests.
-        this.thumbnailURLs.set(mbid, '');
-
-        GetThumbnail(mbid, albumName, artistName)
-            .then((url) => {
-                if (url) {
-                    this.thumbnailURLs = new Map(this.thumbnailURLs).set(mbid, url);
-                }
-            })
-            .catch(() => {});
     }
 
     /**

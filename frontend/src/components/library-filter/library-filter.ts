@@ -1,6 +1,7 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { LibraryController } from '@store/controllers/library-controller';
+import { libraryStore } from '@store/library-store';
 import type { library } from '@go/models';
 import { designTokens } from '../../styles/tokens.css';
 
@@ -48,9 +49,25 @@ export class LibraryFilter extends LitElement {
         }
     `];
 
+    private unsubscribeStore?: () => void;
+
     override connectedCallback() {
         super.connectedCallback();
         this.loadLibraries();
+
+        // The LibraryController already wires a reactive subscription to
+        // libraryStore so the host re-renders on change, but it doesn't
+        // refresh our cached `this.libraries` array.  Subscribe directly
+        // and re-fetch so LibraryAdded / Removed / Renamed events flow
+        // into the dropdown without a restart.
+        this.unsubscribeStore = libraryStore.subscribe(() => {
+            this.loadLibraries();
+        });
+    }
+
+    override disconnectedCallback() {
+        super.disconnectedCallback();
+        this.unsubscribeStore?.();
     }
 
     private async loadLibraries() {

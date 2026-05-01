@@ -1,3 +1,262 @@
+export namespace autotagservice {
+	
+	export class AlignmentView {
+	    localIndex: number;
+	    localTitle: string;
+	    localLengthMillis: number;
+	    candidatePosition: number;
+	    candidateDiscNumber: number;
+	    candidateTitle: string;
+	    candidateMbid: string;
+	    candidateLength: number;
+	    titleScore: number;
+	    lengthDeltaMs: number;
+	    trackNumberOk: boolean;
+	    status: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AlignmentView(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.localIndex = source["localIndex"];
+	        this.localTitle = source["localTitle"];
+	        this.localLengthMillis = source["localLengthMillis"];
+	        this.candidatePosition = source["candidatePosition"];
+	        this.candidateDiscNumber = source["candidateDiscNumber"];
+	        this.candidateTitle = source["candidateTitle"];
+	        this.candidateMbid = source["candidateMbid"];
+	        this.candidateLength = source["candidateLength"];
+	        this.titleScore = source["titleScore"];
+	        this.lengthDeltaMs = source["lengthDeltaMs"];
+	        this.trackNumberOk = source["trackNumberOk"];
+	        this.status = source["status"];
+	    }
+	}
+	export class FailureView {
+	    filePath: string;
+	    error: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new FailureView(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.filePath = source["filePath"];
+	        this.error = source["error"];
+	    }
+	}
+	export class ApplyResultView {
+	    groupKey: string;
+	    succeeded: number;
+	    failed: number;
+	    failures: FailureView[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ApplyResultView(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.groupKey = source["groupKey"];
+	        this.succeeded = source["succeeded"];
+	        this.failed = source["failed"];
+	        this.failures = this.convertValues(source["failures"], FailureView);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class ScoreBreakdownView {
+	    titleAvg: number;
+	    lengthAvg: number;
+	    trackCountFit: number;
+	    releaseMeta: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ScoreBreakdownView(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.titleAvg = source["titleAvg"];
+	        this.lengthAvg = source["lengthAvg"];
+	        this.trackCountFit = source["trackCountFit"];
+	        this.releaseMeta = source["releaseMeta"];
+	    }
+	}
+	export class CandidateView {
+	    releaseMbid: string;
+	    releaseGroupMbid: string;
+	    title: string;
+	    artistCredit: string;
+	    date: string;
+	    originalDate: string;
+	    country: string;
+	    status: string;
+	    trackCount: number;
+	    score: number;
+	    breakdown: ScoreBreakdownView;
+	    source: string;
+	    provenance: string;
+	    coverArtUrl: string;
+	    alignments: AlignmentView[];
+	
+	    static createFrom(source: any = {}) {
+	        return new CandidateView(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.releaseMbid = source["releaseMbid"];
+	        this.releaseGroupMbid = source["releaseGroupMbid"];
+	        this.title = source["title"];
+	        this.artistCredit = source["artistCredit"];
+	        this.date = source["date"];
+	        this.originalDate = source["originalDate"];
+	        this.country = source["country"];
+	        this.status = source["status"];
+	        this.trackCount = source["trackCount"];
+	        this.score = source["score"];
+	        this.breakdown = this.convertValues(source["breakdown"], ScoreBreakdownView);
+	        this.source = source["source"];
+	        this.provenance = source["provenance"];
+	        this.coverArtUrl = source["coverArtUrl"];
+	        this.alignments = this.convertValues(source["alignments"], AlignmentView);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	export class LocalTrackView {
+	    audioFileId: number;
+	    filePath: string;
+	    title: string;
+	    artist: string;
+	    trackNumber: number;
+	    discNumber: number;
+	    lengthMillis: number;
+	    recordingMbid: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new LocalTrackView(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.audioFileId = source["audioFileId"];
+	        this.filePath = source["filePath"];
+	        this.title = source["title"];
+	        this.artist = source["artist"];
+	        this.trackNumber = source["trackNumber"];
+	        this.discNumber = source["discNumber"];
+	        this.lengthMillis = source["lengthMillis"];
+	        this.recordingMbid = source["recordingMbid"];
+	    }
+	}
+	export class PendingItem {
+	    groupKey: string;
+	    libraryId: number;
+	    libraryName: string;
+	    folderSubPath: string;
+	    trackCount: number;
+	    albumName: string;
+	    albumArtist: string;
+	    discNumber: number;
+	    bestMatchReleaseMbid: string;
+	    score: number;
+	    status: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new PendingItem(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.groupKey = source["groupKey"];
+	        this.libraryId = source["libraryId"];
+	        this.libraryName = source["libraryName"];
+	        this.folderSubPath = source["folderSubPath"];
+	        this.trackCount = source["trackCount"];
+	        this.albumName = source["albumName"];
+	        this.albumArtist = source["albumArtist"];
+	        this.discNumber = source["discNumber"];
+	        this.bestMatchReleaseMbid = source["bestMatchReleaseMbid"];
+	        this.score = source["score"];
+	        this.status = source["status"];
+	    }
+	}
+	
+	export class ScoreView {
+	    groupKey: string;
+	    localTracks: LocalTrackView[];
+	    candidates: CandidateView[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ScoreView(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.groupKey = source["groupKey"];
+	        this.localTracks = this.convertValues(source["localTracks"], LocalTrackView);
+	        this.candidates = this.convertValues(source["candidates"], CandidateView);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
 export namespace explore {
 	
 	export class TierStatus {
@@ -228,6 +487,7 @@ export namespace explore {
 	    date: string;
 	    country: string;
 	    status: string;
+	    artistCredit?: string;
 	    tracks?: MBTrack[];
 	
 	    static createFrom(source: any = {}) {
@@ -241,6 +501,7 @@ export namespace explore {
 	        this.date = source["date"];
 	        this.country = source["country"];
 	        this.status = source["status"];
+	        this.artistCredit = source["artistCredit"];
 	        this.tracks = this.convertValues(source["tracks"], MBTrack);
 	    }
 	
@@ -361,6 +622,30 @@ export namespace explore {
 		}
 	}
 	
+	export class MusicBrainzClient {
+	
+	
+	    static createFrom(source: any = {}) {
+	        return new MusicBrainzClient(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	
+	    }
+	}
+	export class RateLimiter {
+	
+	
+	    static createFrom(source: any = {}) {
+	        return new RateLimiter(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	
+	    }
+	}
 	export class ThumbnailRequest {
 	    mbid: string;
 	    albumName: string;
@@ -414,6 +699,7 @@ export namespace library {
 	    CoverArtMedium: string;
 	    CoverArtLarge: string;
 	    Year: number;
+	    ReleaseYear: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new Album(source);
@@ -430,6 +716,7 @@ export namespace library {
 	        this.CoverArtMedium = source["CoverArtMedium"];
 	        this.CoverArtLarge = source["CoverArtLarge"];
 	        this.Year = source["Year"];
+	        this.ReleaseYear = source["ReleaseYear"];
 	    }
 	}
 	export class Artist {
@@ -1110,6 +1397,7 @@ export namespace sqlcgen {
 	    Path: string;
 	    // Go type: time
 	    CreatedAt: any;
+	    AutotagWarningAcked: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new Library(source);
@@ -1121,6 +1409,7 @@ export namespace sqlcgen {
 	        this.Name = source["Name"];
 	        this.Path = source["Path"];
 	        this.CreatedAt = this.convertValues(source["CreatedAt"], null);
+	        this.AutotagWarningAcked = source["AutotagWarningAcked"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

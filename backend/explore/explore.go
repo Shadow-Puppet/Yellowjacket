@@ -18,16 +18,17 @@ import (
 // response cache.  Its exported methods form the binding surface
 // that the frontend calls via generated TypeScript stubs.
 type Service struct {
-	mb        *MusicBrainzClient
-	lb        *ListenBrainzClient
-	cache     *Cache
-	index     *SearchIndex
-	artProxy  *CoverArtProxy
-	artistImg *ArtistImageProvider
-	libMBID   *LibraryMBIDIndex
-	db        *database.DB
-	logger    *slog.Logger
-	ctx       context.Context
+	mb         *MusicBrainzClient
+	lb         *ListenBrainzClient
+	cache      *Cache
+	index      *SearchIndex
+	artProxy   *CoverArtProxy
+	artistImg  *ArtistImageProvider
+	libMBID    *LibraryMBIDIndex
+	caaLimiter *RateLimiter
+	db         *database.DB
+	logger     *slog.Logger
+	ctx        context.Context
 }
 
 // NewExploreService creates a Service backed by the given
@@ -57,22 +58,36 @@ func NewExploreService(logger *slog.Logger, db *database.DB) *Service {
 	)
 	index := NewSearchIndex(db, lb, artistImg, logger.WithGroup("search-index"))
 	index.MarkReadyIfPopulated() // make index queryable immediately if data exists
+
 	libMBID := NewLibraryMBIDIndex(db)
 
 	logger.Info("explore service created")
 
 	return &Service{
-		mb:        mb,
-		lb:        lb,
-		cache:     cache,
-		index:     index,
-		artProxy:  artProxy,
-		artistImg: artistImg,
-		libMBID:   libMBID,
-		db:        db,
-		logger:    logger,
-		ctx:       context.Background(),
+		mb:         mb,
+		lb:         lb,
+		cache:      cache,
+		index:      index,
+		artProxy:   artProxy,
+		artistImg:  artistImg,
+		libMBID:    libMBID,
+		caaLimiter: caaLimiter,
+		db:         db,
+		logger:     logger,
+		ctx:        context.Background(),
 	}
+}
+
+// MusicBrainz returns the shared cached MB client so other services
+// (e.g. autotag) can reuse it without spinning up a second limiter.
+func (e *Service) MusicBrainz() *MusicBrainzClient {
+	return e.mb
+}
+
+// CAALimiter returns the shared Cover Art Archive rate limiter.
+// Consumers must respect it for any fresh CAA HTTP GETs.
+func (e *Service) CAALimiter() *RateLimiter {
+	return e.caaLimiter
 }
 
 // SetContext injects the Wails runtime context.  Called from
@@ -137,18 +152,21 @@ func (e *Service) InvalidateIndexDiscographies() {
 // SearchArtists queries MusicBrainz for artists matching the query.
 func (e *Service) SearchArtists(query string) ([]MBArtist, error) {
 	artists, _, err := e.mb.SearchArtists(e.ctx, query, mbSearchLimit)
+
 	return artists, err
 }
 
 // SearchReleaseGroups queries MusicBrainz for release groups matching the query.
 func (e *Service) SearchReleaseGroups(query string) ([]MBReleaseGroup, error) {
 	rgs, _, err := e.mb.SearchReleaseGroups(e.ctx, query, mbSearchLimit)
+
 	return rgs, err
 }
 
 // SearchRecordings queries MusicBrainz for recordings matching the query.
 func (e *Service) SearchRecordings(query string) ([]MBRecording, error) {
 	recs, _, err := e.mb.SearchRecordings(e.ctx, query, mbSearchLimit)
+
 	return recs, err
 }
 
@@ -173,6 +191,7 @@ func (e *Service) SearchLocal(query string) *MBSearchResult {
 				filtered = append(filtered, a)
 			}
 		}
+
 		result.Artists = filtered
 	}
 
@@ -333,10 +352,10 @@ func (e *Service) BrowseReleaseGroups(artistMBID string) ([]MBReleaseGroup, erro
 // of release groups returned from MB browse-by-artist.  MB browse
 // doesn't echo back the artist credit on each item (since the artist
 // is the query parameter), so we need to find a name from somewhere:
-//   1. First non-empty ArtistCredit on any release group
-//   2. The local explore_index (if the artist was previously indexed)
-//   3. A LookupArtist call to MB (last resort)
-//   4. The MBID itself (worst case fallback)
+//  1. First non-empty ArtistCredit on any release group
+//  2. The local explore_index (if the artist was previously indexed)
+//  3. A LookupArtist call to MB (last resort)
+//  4. The MBID itself (worst case fallback)
 func (e *Service) resolveArtistName(artistMBID string, rgs []MBReleaseGroup) string {
 	// Try first non-empty ArtistCredit from the release groups.
 	for _, rg := range rgs {
@@ -346,12 +365,19 @@ func (e *Service) resolveArtistName(artistMBID string, rgs []MBReleaseGroup) str
 	}
 
 	// Check the index for a previously-indexed artist row.
-	if indexed := e.index.LookupArtistByMBID(artistMBID); indexed != nil && indexed.Title != "" && indexed.Title != artistMBID {
+	if indexed := e.index.LookupArtistByMBID(
+		artistMBID,
+	); indexed != nil && indexed.Title != "" &&
+		indexed.Title != artistMBID {
 		return indexed.Title
 	}
 
 	// Last resort: hit MB lookup.
-	if artist, err := e.mb.LookupArtist(e.ctx, artistMBID); err == nil && artist != nil && artist.Name != "" {
+	if artist, err := e.mb.LookupArtist(
+		e.ctx,
+		artistMBID,
+	); err == nil && artist != nil &&
+		artist.Name != "" {
 		return artist.Name
 	}
 
@@ -370,6 +396,7 @@ func (e *Service) BrowseReleases(releaseGroupMBID string) ([]MBRelease, error) {
 	// InLibrary flag on each track so the tracklist renderer can
 	// show the library-status indicator without a per-track roundtrip.
 	var trackMBIDs []string
+
 	for _, rel := range releases {
 		for _, t := range rel.Tracks {
 			if t.MBID != "" {
@@ -572,8 +599,18 @@ func (e *Service) GetThumbnail(releaseGroupMBID, albumName, artistName string) s
 // discography cache; falls back to the release-level CAA endpoint
 // when the RG isn't known — useful when the track's preferred CAA
 // release doesn't belong to any RG currently in the index.
-func (e *Service) GetTrackThumbnail(releaseMBID, releaseGroupMBID, albumName, artistName string) string {
+func (e *Service) GetTrackThumbnail(
+	releaseMBID, releaseGroupMBID, albumName, artistName string,
+) string {
 	return e.artProxy.GetTrackThumbnail(releaseMBID, releaseGroupMBID, albumName, artistName)
+}
+
+// GetCandidateThumbnail returns CAA-only cover art for an autotag
+// candidate, skipping the library-by-name index so embedded ID3
+// art on the user's existing files doesn't pollute the candidate
+// preview.  Disk cache → network on RG → network on release.
+func (e *Service) GetCandidateThumbnail(releaseMBID, releaseGroupMBID string) string {
+	return e.artProxy.GetCandidateThumbnail(releaseMBID, releaseGroupMBID)
 }
 
 // TrackThumbnailRequest is a single item in a batch track thumbnail
@@ -663,6 +700,7 @@ func (e *Service) GetArtistImageCached(artistMBID string) string {
 // image is cached.
 func (e *Service) GetArtistImageCachedPath(artistMBID string) string {
 	_, medium, _, _ := e.artistImg.GetImageURLs(artistMBID)
+
 	return medium
 }
 
@@ -703,7 +741,10 @@ func (e *Service) GetPopularityBatch(mbids []string) map[string]PersonalizationR
 	// Include entries that have library/similar flags but no popularity.
 	for mbid := range batch.InLibrary {
 		if _, ok := out[mbid]; !ok {
-			out[mbid] = PersonalizationResult{InLibrary: true, SimilarityScore: batch.SimilarityScores[mbid]}
+			out[mbid] = PersonalizationResult{
+				InLibrary:       true,
+				SimilarityScore: batch.SimilarityScores[mbid],
+			}
 		}
 	}
 
@@ -928,13 +969,21 @@ func (e *Service) Search(query string) (*MBSearchResult, error) {
 
 	p1Dur := time.Since(p1Start)
 
-	e.logger.Info("search phase 1 complete (MB)",
-		"query", query,
-		"artists", len(result.Artists),
-		"releaseGroups", len(result.ReleaseGroups),
-		"recordings", len(result.Recordings),
-		"expanded", len(result.Artists) > mbSearchLimit || len(result.ReleaseGroups) > mbSearchLimit || len(result.Recordings) > mbSearchLimit,
-		"elapsed", p1Dur.Round(time.Millisecond),
+	e.logger.Info(
+		"search phase 1 complete (MB)",
+		"query",
+		query,
+		"artists",
+		len(result.Artists),
+		"releaseGroups",
+		len(result.ReleaseGroups),
+		"recordings",
+		len(result.Recordings),
+		"expanded",
+		len(result.Artists) > mbSearchLimit || len(result.ReleaseGroups) > mbSearchLimit ||
+			len(result.Recordings) > mbSearchLimit,
+		"elapsed",
+		p1Dur.Round(time.Millisecond),
 	)
 
 	// Phases 2+3: when the index is ready, use cached popularity
@@ -975,6 +1024,7 @@ func (e *Service) Search(query string) (*MBSearchResult, error) {
 		// ordering for result sets where MB gave every candidate
 		// the same text relevance score.
 		var missingPop []string
+
 		for _, mbid := range artistMBIDs {
 			if artistPop[mbid] <= 0 {
 				missingPop = append(missingPop, mbid)
@@ -985,6 +1035,7 @@ func (e *Service) Search(query string) (*MBSearchResult, error) {
 			popCtx, popCancel := context.WithTimeout(e.ctx, searchSlowPathTimeout)
 
 			pop, err := e.lb.ArtistPopularity(popCtx, missingPop)
+
 			popCancel()
 
 			if err == nil && pop != nil {
@@ -1002,6 +1053,7 @@ func (e *Service) Search(query string) (*MBSearchResult, error) {
 		// so a hung LB server doesn't stall the search.
 		popCtx, popCancel := context.WithTimeout(e.ctx, 2*time.Second)
 		pop, _ := e.lb.ArtistPopularity(popCtx, artistMBIDs)
+
 		popCancel()
 
 		if pop != nil {
@@ -1045,12 +1097,14 @@ func (e *Service) Search(query string) (*MBSearchResult, error) {
 		// Leg 1: LB popularity for RGs and recordings.
 		go func() {
 			defer wgSlow.Done()
+
 			e.boostWithPopularityRGsAndRecs(&result)
 		}()
 
 		// Leg 2: cross-reference artist discographies.
 		go func() {
 			defer wgSlow.Done()
+
 			if slowCtx.Err() == nil {
 				e.crossReferenceAlbums(slowCtx, query, &result)
 			}
@@ -1307,9 +1361,11 @@ func mergeIndexHits(result *MBSearchResult, hits []SearchIndexResult) {
 	}
 
 	// Collect new entries from index that MB didn't return.
-	var newArtists []MBArtist
-	var newRGs []MBReleaseGroup
-	var newRecs []MBRecording
+	var (
+		newArtists []MBArtist
+		newRGs     []MBReleaseGroup
+		newRecs    []MBRecording
+	)
 
 	for _, h := range hits {
 		switch h.EntityType {
@@ -1318,18 +1374,18 @@ func mergeIndexHits(result *MBSearchResult, hits []SearchIndexResult) {
 				score := int(float64(scalePopularity(h.Popularity)) * 0.5)
 
 				newArtists = append(newArtists, MBArtist{
-					MBID:          h.MBID,
-					Name:          h.Title,
-					Type:          h.ArtistType,
-					Country:       h.Country,
+					MBID:           h.MBID,
+					Name:           h.Title,
+					Type:           h.ArtistType,
+					Country:        h.Country,
 					Disambiguation: h.Disambiguation,
-					SortName:      h.SortName,
-					Score:         score,
-					HasPopularity: h.Popularity > 0,
-					Popularity:    h.Popularity,
-					ListenerCount: h.ListenerCount,
-					InLibrary:     h.InLibrary || h.LocalArtistID > 0,
-					LocalID:       h.LocalArtistID,
+					SortName:       h.SortName,
+					Score:          score,
+					HasPopularity:  h.Popularity > 0,
+					Popularity:     h.Popularity,
+					ListenerCount:  h.ListenerCount,
+					InLibrary:      h.InLibrary || h.LocalArtistID > 0,
+					LocalID:        h.LocalArtistID,
 				})
 
 				artistMBIDs[h.MBID] = true
@@ -1446,7 +1502,8 @@ func filterAndCap(result *MBSearchResult) {
 
 			// Drop very-low-popularity results when the result
 			// set contains meaningfully popular alternatives.
-			if maxPop >= minPopularityFloor && a.HasPopularity && a.Popularity < minPopularityFloor {
+			if maxPop >= minPopularityFloor && a.HasPopularity &&
+				a.Popularity < minPopularityFloor {
 				continue
 			}
 
@@ -1507,7 +1564,7 @@ const (
 	mbSearchLimit = 25
 
 	// mbSearchMaxLimit caps the expanded fetch.  MB's API maximum is 100.
-	mbSearchMaxLimit = 75
+	mbSearchMaxLimit = 75 //nolint:unused // referenced by deferred MB search rework
 
 	// indexSearchLimit is the number of results to fetch from the local
 	// popularity index (Phase 0).  Larger than maxResults because
@@ -1600,6 +1657,8 @@ var mbSpecialPurposeArtists = map[string]bool{
 // popularity data from the local search index.  No API calls —
 // just SQLite lookups.  This is the fast path used when the index
 // is ready.
+//
+//nolint:unused // referenced by deferred MB search rework.
 func (e *Service) boostWithIndexPopularity(result *MBSearchResult) {
 	// Collect all MBIDs across all entity types.
 	allMBIDs := make([]string, 0,
@@ -1657,7 +1716,12 @@ func (e *Service) boostWithIndexPopularity(result *MBSearchResult) {
 		}
 	}
 
-	rerankReleaseGroupsPersonalized(result.ReleaseGroups, rgPop, batch.InLibrary, batch.SimilarityScores)
+	rerankReleaseGroupsPersonalized(
+		result.ReleaseGroups,
+		rgPop,
+		batch.InLibrary,
+		batch.SimilarityScores,
+	)
 
 	recPop := make(map[string]int, len(result.Recordings))
 	for i, r := range result.Recordings {
@@ -1713,20 +1777,24 @@ func (e *Service) boostWithIndexPopularityRGsAndRecs(result *MBSearchResult) {
 	// common path cache-only while correctness-critical cases get
 	// a ~1 round-trip to LB.
 	missingRecs := make([]string, 0)
+
 	for _, r := range result.Recordings {
 		if r.MBID == "" {
 			continue
 		}
+
 		if _, ok := batch.Popularity[r.MBID]; !ok {
 			missingRecs = append(missingRecs, r.MBID)
 		}
 	}
 
 	missingRGs := make([]string, 0)
+
 	for _, rg := range result.ReleaseGroups {
 		if rg.MBID == "" {
 			continue
 		}
+
 		if _, ok := batch.Popularity[rg.MBID]; !ok {
 			missingRGs = append(missingRGs, rg.MBID)
 		}
@@ -1936,7 +2004,9 @@ func (e *Service) boostNameMatches(query string, result *MBSearchResult) {
 	if len(result.Artists) > 1 {
 		for i := range result.Artists {
 			tier := nameMatchTier(q, strings.ToLower(result.Artists[i].Name))
-			result.Artists[i].Score = int(float64(result.Artists[i].Score) * (1.0 + tierBonus[tier]))
+			result.Artists[i].Score = int(
+				float64(result.Artists[i].Score) * (1.0 + tierBonus[tier]),
+			)
 		}
 
 		sort.SliceStable(result.Artists, func(i, j int) bool {
@@ -1954,7 +2024,9 @@ func (e *Service) boostNameMatches(query string, result *MBSearchResult) {
 			tier := rgMatchTier(q,
 				strings.ToLower(result.ReleaseGroups[i].Title),
 				strings.ToLower(result.ReleaseGroups[i].ArtistCredit))
-			result.ReleaseGroups[i].Score = int(float64(result.ReleaseGroups[i].Score) * (1.0 + rgTierBonus[tier]))
+			result.ReleaseGroups[i].Score = int(
+				float64(result.ReleaseGroups[i].Score) * (1.0 + rgTierBonus[tier]),
+			)
 		}
 
 		sort.SliceStable(result.ReleaseGroups, func(i, j int) bool {
@@ -2065,11 +2137,18 @@ func rgMatchTier(query, title, artistCredit string) int {
 
 // rerankArtists sorts artists by blended score and updates their
 // Score field to the new value (0–100 scale).
+//
+//nolint:unused // referenced by deferred MB search rework.
 func rerankArtists(artists []MBArtist, pop map[string]int, libraryMBIDs map[string]bool) {
 	rerankArtistsPersonalized(artists, pop, libraryMBIDs, nil)
 }
 
-func rerankArtistsPersonalized(artists []MBArtist, pop map[string]int, inLib map[string]bool, simScores map[string]int) {
+func rerankArtistsPersonalized(
+	artists []MBArtist,
+	pop map[string]int,
+	inLib map[string]bool,
+	simScores map[string]int,
+) {
 	if len(artists) == 0 {
 		return
 	}
@@ -2078,13 +2157,29 @@ func rerankArtistsPersonalized(artists []MBArtist, pop map[string]int, inLib map
 	maxSim := maxSimScoreVal(simScores)
 
 	sort.SliceStable(artists, func(i, j int) bool {
-		si := blendedScoreFull(float64(artists[i].Score)/100.0, pop[artists[i].MBID], maxPop, personalScore(artists[i].MBID, inLib, simScores, maxSim))
-		sj := blendedScoreFull(float64(artists[j].Score)/100.0, pop[artists[j].MBID], maxPop, personalScore(artists[j].MBID, inLib, simScores, maxSim))
+		si := blendedScoreFull(
+			float64(artists[i].Score)/100.0,
+			pop[artists[i].MBID],
+			maxPop,
+			personalScore(artists[i].MBID, inLib, simScores, maxSim),
+		)
+		sj := blendedScoreFull(
+			float64(artists[j].Score)/100.0,
+			pop[artists[j].MBID],
+			maxPop,
+			personalScore(artists[j].MBID, inLib, simScores, maxSim),
+		)
+
 		return si > sj
 	})
 
 	for i := range artists {
-		s := blendedScoreFull(float64(artists[i].Score)/100.0, pop[artists[i].MBID], maxPop, personalScore(artists[i].MBID, inLib, simScores, maxSim))
+		s := blendedScoreFull(
+			float64(artists[i].Score)/100.0,
+			pop[artists[i].MBID],
+			maxPop,
+			personalScore(artists[i].MBID, inLib, simScores, maxSim),
+		)
 		artists[i].Score = int(s * 100)
 	}
 }
@@ -2095,7 +2190,12 @@ func rerankRecordings(recordings []MBRecording, pop map[string]int) {
 	rerankRecordingsPersonalized(recordings, pop, nil, nil)
 }
 
-func rerankRecordingsPersonalized(recordings []MBRecording, pop map[string]int, inLib map[string]bool, simScores map[string]int) {
+func rerankRecordingsPersonalized(
+	recordings []MBRecording,
+	pop map[string]int,
+	inLib map[string]bool,
+	simScores map[string]int,
+) {
 	if len(recordings) == 0 {
 		return
 	}
@@ -2104,13 +2204,29 @@ func rerankRecordingsPersonalized(recordings []MBRecording, pop map[string]int, 
 	maxSim := maxSimScoreVal(simScores)
 
 	sort.SliceStable(recordings, func(i, j int) bool {
-		si := blendedScoreFull(float64(recordings[i].Score)/100.0, pop[recordings[i].MBID], maxPop, personalScore(recordings[i].MBID, inLib, simScores, maxSim))
-		sj := blendedScoreFull(float64(recordings[j].Score)/100.0, pop[recordings[j].MBID], maxPop, personalScore(recordings[j].MBID, inLib, simScores, maxSim))
+		si := blendedScoreFull(
+			float64(recordings[i].Score)/100.0,
+			pop[recordings[i].MBID],
+			maxPop,
+			personalScore(recordings[i].MBID, inLib, simScores, maxSim),
+		)
+		sj := blendedScoreFull(
+			float64(recordings[j].Score)/100.0,
+			pop[recordings[j].MBID],
+			maxPop,
+			personalScore(recordings[j].MBID, inLib, simScores, maxSim),
+		)
+
 		return si > sj
 	})
 
 	for i := range recordings {
-		s := blendedScoreFull(float64(recordings[i].Score)/100.0, pop[recordings[i].MBID], maxPop, personalScore(recordings[i].MBID, inLib, simScores, maxSim))
+		s := blendedScoreFull(
+			float64(recordings[i].Score)/100.0,
+			pop[recordings[i].MBID],
+			maxPop,
+			personalScore(recordings[i].MBID, inLib, simScores, maxSim),
+		)
 		recordings[i].Score = int(s * 100)
 	}
 }
@@ -2121,7 +2237,12 @@ func rerankReleaseGroups(rgs []MBReleaseGroup, pop map[string]int) {
 	rerankReleaseGroupsPersonalized(rgs, pop, nil, nil)
 }
 
-func rerankReleaseGroupsPersonalized(rgs []MBReleaseGroup, pop map[string]int, inLib map[string]bool, simScores map[string]int) {
+func rerankReleaseGroupsPersonalized(
+	rgs []MBReleaseGroup,
+	pop map[string]int,
+	inLib map[string]bool,
+	simScores map[string]int,
+) {
 	if len(rgs) == 0 {
 		return
 	}
@@ -2130,13 +2251,29 @@ func rerankReleaseGroupsPersonalized(rgs []MBReleaseGroup, pop map[string]int, i
 	maxSim := maxSimScoreVal(simScores)
 
 	sort.SliceStable(rgs, func(i, j int) bool {
-		si := blendedScoreFull(float64(rgs[i].Score)/100.0, pop[rgs[i].MBID], maxPop, personalScore(rgs[i].MBID, inLib, simScores, maxSim))
-		sj := blendedScoreFull(float64(rgs[j].Score)/100.0, pop[rgs[j].MBID], maxPop, personalScore(rgs[j].MBID, inLib, simScores, maxSim))
+		si := blendedScoreFull(
+			float64(rgs[i].Score)/100.0,
+			pop[rgs[i].MBID],
+			maxPop,
+			personalScore(rgs[i].MBID, inLib, simScores, maxSim),
+		)
+		sj := blendedScoreFull(
+			float64(rgs[j].Score)/100.0,
+			pop[rgs[j].MBID],
+			maxPop,
+			personalScore(rgs[j].MBID, inLib, simScores, maxSim),
+		)
+
 		return si > sj
 	})
 
 	for i := range rgs {
-		s := blendedScoreFull(float64(rgs[i].Score)/100.0, pop[rgs[i].MBID], maxPop, personalScore(rgs[i].MBID, inLib, simScores, maxSim))
+		s := blendedScoreFull(
+			float64(rgs[i].Score)/100.0,
+			pop[rgs[i].MBID],
+			maxPop,
+			personalScore(rgs[i].MBID, inLib, simScores, maxSim),
+		)
 		rgs[i].Score = int(s * 100)
 	}
 }
@@ -2156,7 +2293,12 @@ func maxSimScoreVal(scores map[string]int) int {
 // personalScore returns the personalization signal (0.0–1.0) for an MBID.
 // Uses similarity scores from similar_artist_map, scaled by the max score
 // in the batch so the most similar artist gets the full personalSimilar weight.
-func personalScore(mbid string, inLib map[string]bool, simScores map[string]int, maxSimScore int) float64 {
+func personalScore(
+	mbid string,
+	inLib map[string]bool,
+	simScores map[string]int,
+	maxSimScore int,
+) float64 {
 	if inLib[mbid] {
 		return personalInLibrary
 	}
@@ -2167,7 +2309,6 @@ func personalScore(mbid string, inLib map[string]bool, simScores map[string]int,
 
 	return 0.0
 }
-
 
 // ---------------------------------------------------------------------------
 // Top Results — intent-scored cards
@@ -2268,6 +2409,7 @@ func (e *Service) resolveTopResults(query string, result *MBSearchResult) []TopR
 	// Stage 1: gather candidates.
 	clicks := e.getSearchClicks(q)
 	exactMatches := e.index.ExactMatches(q, topResultsExactCap)
+
 	candidates := e.gatherTopCandidates(q, result, exactMatches, clicks)
 	if len(candidates) == 0 {
 		return nil
@@ -2282,6 +2424,7 @@ func (e *Service) resolveTopResults(query string, result *MBSearchResult) []TopR
 	// matches (query contains both the title and the artist of a
 	// recording or album) are treated the same way.
 	var exactCandidates []topCandidate
+
 	for _, c := range candidates {
 		isExact := isExactNameMatch(q, c.topResult.Name) ||
 			isExactNameMatch(q, c.topResult.ArtistCredit) ||
@@ -2457,7 +2600,7 @@ func (e *Service) gatherTopCandidates(
 		limit = len(result.Artists)
 	}
 
-	for i := 0; i < limit; i++ {
+	for i := range limit {
 		a := result.Artists[i]
 
 		quality := e.scoreArtistCandidate(q, &a, clicks)
@@ -2512,10 +2655,11 @@ func (e *Service) gatherTopCandidates(
 		limit = len(result.ReleaseGroups)
 	}
 
-	for i := 0; i < limit; i++ {
+	for i := range limit {
 		rg := result.ReleaseGroups[i]
 
 		quality := e.scoreReleaseGroupCandidate(q, &rg, clicks)
+
 		year := ""
 		if len(rg.FirstReleaseDate) >= 4 { //nolint:mnd
 			year = rg.FirstReleaseDate[:4]
@@ -2586,7 +2730,7 @@ func (e *Service) gatherTopCandidates(
 		limit = len(result.Recordings)
 	}
 
-	for i := 0; i < limit; i++ {
+	for i := range limit {
 		r := result.Recordings[i]
 
 		quality := e.scoreRecordingCandidate(q, &r, clicks)
@@ -2857,11 +3001,12 @@ func (e *Service) scoreExactMatch(
 
 	score := 0.0
 
-	if title == q {
+	switch {
+	case title == q:
 		score += fwExactTitle
-	} else if credit == q {
+	case credit == q:
 		score += fwExactArtist
-	} else {
+	default:
 		// Shouldn't happen — ExactMatches only returns rows whose
 		// title or artist matches.  Defensive fallback.
 		score += fwContainsWord
@@ -2918,8 +3063,8 @@ func (e *Service) computeIntentPrior(
 
 	switch {
 	case wordCount == 1:
-		weights.artist *= 2.0  //nolint:mnd
-		weights.album *= 0.7   //nolint:mnd
+		weights.artist *= 2.0    //nolint:mnd
+		weights.album *= 0.7     //nolint:mnd
 		weights.recording *= 0.7 //nolint:mnd
 	case wordCount >= 4: //nolint:mnd
 		weights.artist *= 0.5    //nolint:mnd
@@ -2958,6 +3103,7 @@ func (e *Service) computeIntentPrior(
 	// index-sourced exact matches.
 	for _, c := range exactCandidates {
 		var listeners int
+
 		switch c.category {
 		case "artist":
 			listeners = artistListenerByMBID(result.Artists, c.topResult.MBID)
@@ -2982,6 +3128,7 @@ func (e *Service) computeIntentPrior(
 	// Signal: many recordings in the result list with the same
 	// title as the query → cover-wave pattern → strong recording.
 	titleMatches := 0
+
 	for _, r := range result.Recordings {
 		if isExactNameMatch(q, r.Title) {
 			titleMatches++
@@ -3000,17 +3147,17 @@ func (e *Service) computeIntentPrior(
 	// have higher listen counts than albums (each play increments
 	// the recording, not the album), so we use *listener* count
 	// rather than *listen* count to dampen that bias.
-	artistListeners := sumTopListeners(artistListenerCounts(result.Artists), 5) //nolint:mnd
+	artistListeners := sumTopListeners(artistListenerCounts(result.Artists), 5)  //nolint:mnd
 	albumListeners := sumTopListeners(rgListenerCounts(result.ReleaseGroups), 5) //nolint:mnd
-	recListeners := sumTopListeners(recListenerCounts(result.Recordings), 5) //nolint:mnd
+	recListeners := sumTopListeners(recListenerCounts(result.Recordings), 5)     //nolint:mnd
 
 	totalListeners := artistListeners + albumListeners + recListeners
 	if totalListeners > 0 {
 		// Apply as a 0.5x nudge so it doesn't override stronger
 		// signals.  We'd rather trust shape and exact matches
 		// than raw listener distributions.
-		weights.artist *= 1.0 + 0.5*float64(artistListeners)/float64(totalListeners)        //nolint:mnd
-		weights.album *= 1.0 + 0.5*float64(albumListeners)/float64(totalListeners)          //nolint:mnd
+		weights.artist *= 1.0 + 0.5*float64(artistListeners)/float64(totalListeners) //nolint:mnd
+		weights.album *= 1.0 + 0.5*float64(albumListeners)/float64(totalListeners)   //nolint:mnd
 		weights.recording *= 1.0 + 0.5*float64(recListeners)/float64(totalListeners) //nolint:mnd
 	}
 
@@ -3165,12 +3312,13 @@ func sumTopListeners(xs []int, n int) int {
 	}
 
 	sum := 0
-	for i := 0; i < n; i++ {
+	for i := range n {
 		sum += sorted[i]
 	}
 
 	return sum
 }
+
 // containsWord checks if text contains word as a whole word bounded
 // by spaces, hyphens, or string boundaries.
 func containsWord(text, word string) bool {
@@ -3260,10 +3408,12 @@ func normalizeForMatch(s string) string {
 			r >= '0' && r <= '9',
 			r >= 0x80: // keep non-ASCII as-is
 			b.WriteRune(r)
+
 			prevSpace = false
 		case r == ' ' || r == '\t':
 			if !prevSpace && b.Len() > 0 {
 				b.WriteByte(' ')
+
 				prevSpace = true
 			}
 		default:
@@ -3301,9 +3451,11 @@ func (e *Service) getSearchClicks(query string) map[string]searchClick {
 	result := make(map[string]searchClick)
 
 	for rows.Next() {
-		var mbid string
-		var count int
-		var lastClicked time.Time
+		var (
+			mbid        string
+			count       int
+			lastClicked time.Time
+		)
 
 		if err := rows.Scan(&mbid, &count, &lastClicked); err == nil {
 			result[mbid] = searchClick{count: count, lastClicked: lastClicked}
@@ -3334,13 +3486,19 @@ func (e *Service) RecordSearchClick(query, mbid, entityType string) {
 // blendedScore computes relevanceWeight*relevance + popularityWeight*logPop.
 // relevance is 0–1. listenCount is raw; maxListenCount is the
 // maximum in the result set (for normalization).
+//
+//nolint:unused // referenced by deferred MB search rework.
 func blendedScore(relevance float64, listenCount, maxListenCount int) float64 {
 	return blendedScoreFull(relevance, listenCount, maxListenCount, 0.0)
 }
 
 // blendedScoreFull computes the weighted blend of relevance, popularity,
 // and personalization.  personalization is 0.0–1.0.
-func blendedScoreFull(relevance float64, listenCount, maxListenCount int, personalization float64) float64 {
+func blendedScoreFull(
+	relevance float64,
+	listenCount, maxListenCount int,
+	personalization float64,
+) float64 {
 	effectiveMax := maxListenCount
 	if effectiveMax < 100_000 { //nolint:mnd
 		effectiveMax = 100_000
@@ -3356,6 +3514,8 @@ func blendedScoreFull(relevance float64, listenCount, maxListenCount int, person
 // and at most mbSearchMaxLimit.  Aims for ~15% of total matches so
 // the ranking pipeline has enough candidates to surface popular
 // results that MB's text relevance alone would bury.
+//
+//nolint:unused // referenced by deferred MB search rework.
 func dynamicSearchLimit(totalMatches int) int {
 	if totalMatches <= mbSearchLimit {
 		return mbSearchLimit

@@ -9,6 +9,15 @@ import (
 	"context"
 )
 
+const ackLibraryAutotagWarning = `-- name: AckLibraryAutotagWarning :exec
+UPDATE libraries SET autotag_warning_acked = 1 WHERE id = ?
+`
+
+func (q *Queries) AckLibraryAutotagWarning(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, ackLibraryAutotagWarning, id)
+	return err
+}
+
 const countLibraries = `-- name: CountLibraries :one
 SELECT COUNT(*) AS count FROM libraries
 `
@@ -22,7 +31,7 @@ func (q *Queries) CountLibraries(ctx context.Context) (int64, error) {
 
 const createLibrary = `-- name: CreateLibrary :one
 INSERT INTO libraries (name, path) VALUES (?, ?)
-RETURNING id, name, path, created_at
+RETURNING id, name, path, created_at, autotag_warning_acked
 `
 
 type CreateLibraryParams struct {
@@ -38,6 +47,7 @@ func (q *Queries) CreateLibrary(ctx context.Context, arg CreateLibraryParams) (L
 		&i.Name,
 		&i.Path,
 		&i.CreatedAt,
+		&i.AutotagWarningAcked,
 	)
 	return i, err
 }
@@ -52,7 +62,7 @@ func (q *Queries) DeleteLibrary(ctx context.Context, id int64) error {
 }
 
 const getAllLibraries = `-- name: GetAllLibraries :many
-SELECT id, name, path, created_at FROM libraries ORDER BY name
+SELECT id, name, path, created_at, autotag_warning_acked FROM libraries ORDER BY name
 `
 
 func (q *Queries) GetAllLibraries(ctx context.Context) ([]Library, error) {
@@ -69,6 +79,7 @@ func (q *Queries) GetAllLibraries(ctx context.Context) ([]Library, error) {
 			&i.Name,
 			&i.Path,
 			&i.CreatedAt,
+			&i.AutotagWarningAcked,
 		); err != nil {
 			return nil, err
 		}
@@ -84,7 +95,7 @@ func (q *Queries) GetAllLibraries(ctx context.Context) ([]Library, error) {
 }
 
 const getLibrary = `-- name: GetLibrary :one
-SELECT id, name, path, created_at FROM libraries WHERE id = ? LIMIT 1
+SELECT id, name, path, created_at, autotag_warning_acked FROM libraries WHERE id = ? LIMIT 1
 `
 
 func (q *Queries) GetLibrary(ctx context.Context, id int64) (Library, error) {
@@ -95,12 +106,13 @@ func (q *Queries) GetLibrary(ctx context.Context, id int64) (Library, error) {
 		&i.Name,
 		&i.Path,
 		&i.CreatedAt,
+		&i.AutotagWarningAcked,
 	)
 	return i, err
 }
 
 const getLibraryByPath = `-- name: GetLibraryByPath :one
-SELECT id, name, path, created_at FROM libraries WHERE path = ? LIMIT 1
+SELECT id, name, path, created_at, autotag_warning_acked FROM libraries WHERE path = ? LIMIT 1
 `
 
 func (q *Queries) GetLibraryByPath(ctx context.Context, path string) (Library, error) {
@@ -111,6 +123,7 @@ func (q *Queries) GetLibraryByPath(ctx context.Context, path string) (Library, e
 		&i.Name,
 		&i.Path,
 		&i.CreatedAt,
+		&i.AutotagWarningAcked,
 	)
 	return i, err
 }

@@ -19,6 +19,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"golang.org/x/sync/errgroup"
 
+	"yellowjacket/backend/autotag"
 	"yellowjacket/backend/database"
 	"yellowjacket/backend/database/sql/sqlcgen"
 	"yellowjacket/backend/events"
@@ -1001,8 +1002,19 @@ func (l *Library) saveAudioFile(
 
 	basename := filepath.Base(result.absolutePath)
 
-	af, err := q.CreateAudioFile(
-		l.ctx, sqlcgen.CreateAudioFileParams{
+	groupKey := autotag.GroupKey(
+		result.libraryID,
+		result.absolutePath,
+		tags.DiscNumber,
+	)
+
+	tagStatus := "untagged"
+	if tags.RecordingMBID != "" {
+		tagStatus = "user_confirmed"
+	}
+
+	af, err := q.CreateAudioFileWithGroupKey(
+		l.ctx, sqlcgen.CreateAudioFileWithGroupKeyParams{
 			FilePath:           result.absolutePath,
 			LengthMilliseconds: result.lengthMillis,
 			FileTypeID: int64(
@@ -1019,11 +1031,31 @@ func (l *Library) saveAudioFile(
 			FileSize:    props.FileSize,
 			Basename:    basename,
 			LibraryID:   result.libraryID,
+			GroupKey:    groupKey,
+			TagStatus:   tagStatus,
 		})
 	if err != nil {
 		return fmt.Errorf(
 			"could not save audio file to db: %w", err,
 		)
+	}
+
+	if err := q.UpsertTaggingItemOnTrackAdd(
+		l.ctx, sqlcgen.UpsertTaggingItemOnTrackAddParams{
+			GroupKey:    groupKey,
+			LibraryID:   result.libraryID,
+			AlbumName:   tags.Album,
+			AlbumArtist: resolveAlbumArtistName(tags),
+			DiscNumber:  int64(tags.DiscNumber),
+		},
+	); err != nil {
+		l.logger.Warn(
+			"could not upsert tagging_items row",
+			"path", result.absolutePath,
+			"err", err,
+		)
+
+		metrics.addWarning(result.absolutePath, "commit", err)
 	}
 
 	// Index in FTS5 search_index.
@@ -1111,6 +1143,16 @@ func (l *Library) updateAudioFileMetadata(
 	tags := result.tags
 	if tags == nil {
 		tags = &metadata.TrackMetadata{}
+	}
+
+	if err := l.maybeRebindTaggingGroup(q, result, tags); err != nil {
+		l.logger.Warn(
+			"could not rebind tagging group after metadata update",
+			"path", result.absolutePath,
+			"err", err,
+		)
+
+		metrics.addWarning(result.absolutePath, "commit", err)
 	}
 
 	title := l.getRecordingName(tags, result.absolutePath)
@@ -1297,6 +1339,76 @@ func (l *Library) updateMBIDs(
 			tags.RecordingMBID, recordingID,
 		)
 	}
+}
+
+// resolveAlbumArtistName returns the album-artist tag for tagging-
+// group bookkeeping, falling back to the track artist when the
+// album-artist field is empty.
+func resolveAlbumArtistName(tags *metadata.TrackMetadata) string {
+	if tags.AlbumArtist != "" {
+		return tags.AlbumArtist
+	}
+
+	return tags.Artist
+}
+
+// maybeRebindTaggingGroup recomputes the group key from the freshly
+// extracted metadata and, if it differs from the row's current
+// group_key, migrates the track: decrement the old group's count
+// (dropping it if emptied), upsert the new group, and write the new
+// key onto the audio_files row.  A no-op when the key is unchanged.
+func (l *Library) maybeRebindTaggingGroup(
+	q *sqlcgen.Queries,
+	result importResult,
+	tags *metadata.TrackMetadata,
+) error {
+	newKey := autotag.GroupKey(
+		result.libraryID,
+		result.absolutePath,
+		tags.DiscNumber,
+	)
+
+	oldKey, err := q.GetAudioFileGroupKey(l.ctx, result.existingFileID)
+	if err != nil {
+		return fmt.Errorf("read existing group_key: %w", err)
+	}
+
+	if oldKey == newKey {
+		return nil
+	}
+
+	if oldKey != "" {
+		if err := q.DecrementTaggingItemTrackCount(l.ctx, oldKey); err != nil {
+			return fmt.Errorf("decrement old group: %w", err)
+		}
+
+		if err := q.DeleteTaggingItemIfEmpty(l.ctx, oldKey); err != nil {
+			return fmt.Errorf("cleanup old group: %w", err)
+		}
+	}
+
+	if err := q.UpsertTaggingItemOnTrackAdd(
+		l.ctx, sqlcgen.UpsertTaggingItemOnTrackAddParams{
+			GroupKey:    newKey,
+			LibraryID:   result.libraryID,
+			AlbumName:   tags.Album,
+			AlbumArtist: resolveAlbumArtistName(tags),
+			DiscNumber:  int64(tags.DiscNumber),
+		},
+	); err != nil {
+		return fmt.Errorf("upsert new group: %w", err)
+	}
+
+	if err := q.SetAudioFileGroupKey(
+		l.ctx, sqlcgen.SetAudioFileGroupKeyParams{
+			GroupKey: newKey,
+			ID:       result.existingFileID,
+		},
+	); err != nil {
+		return fmt.Errorf("write new group_key: %w", err)
+	}
+
+	return nil
 }
 
 // processCoverArt saves cover art to disk and upserts the DB record,

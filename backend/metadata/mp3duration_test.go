@@ -6,15 +6,19 @@ import (
 	"testing"
 )
 
-// testMP3Files returns the paths to all .mp3 files in the test_data
-// directory.  It skips the test if none are found.
+// testMP3Files returns the paths to all .mp3 files in the curated
+// fixture library (`test_data/music_library_test/`).  Scoped
+// narrowly so that ad-hoc scramble / autotag fixtures placed
+// elsewhere under `test_data/` (e.g. `test_data/mb-tag/`) don't
+// get pulled into the assertion and fail on non-curated codecs.
+// Skips the test when the directory isn't present.
 func testMP3Files(t *testing.T) []string {
 	t.Helper()
 
-	root := filepath.Join("..", "..", "test_data")
+	root := filepath.Join("..", "..", "test_data", "music_library_test")
 
 	if _, err := os.Stat(root); os.IsNotExist(err) {
-		t.Skip("test_data directory not present, skipping")
+		t.Skip("test_data/music_library_test not present, skipping")
 	}
 
 	var files []string

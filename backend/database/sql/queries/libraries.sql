@@ -19,3 +19,6 @@ DELETE FROM libraries WHERE id = ?;
 
 -- name: CountLibraries :one
 SELECT COUNT(*) AS count FROM libraries;
+
+-- name: AckLibraryAutotagWarning :exec
+UPDATE libraries SET autotag_warning_acked = 1 WHERE id = ?;

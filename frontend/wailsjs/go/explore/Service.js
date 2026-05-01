@@ -10,6 +10,10 @@ export function BrowseReleases(arg1) {
   return window['go']['explore']['Service']['BrowseReleases'](arg1);
 }
 
+export function CAALimiter() {
+  return window['go']['explore']['Service']['CAALimiter']();
+}
+
 export function CheckLibraryMBIDs(arg1) {
   return window['go']['explore']['Service']['CheckLibraryMBIDs'](arg1);
 }
@@ -44,6 +48,10 @@ export function GetArtistMBID(arg1) {
 
 export function GetArtistPlayCount(arg1) {
   return window['go']['explore']['Service']['GetArtistPlayCount'](arg1);
+}
+
+export function GetCandidateThumbnail(arg1, arg2) {
+  return window['go']['explore']['Service']['GetCandidateThumbnail'](arg1, arg2);
 }
 
 export function GetIndexStatus() {
@@ -92,6 +100,10 @@ export function LookupArtist(arg1) {
 
 export function LookupReleaseGroup(arg1) {
   return window['go']['explore']['Service']['LookupReleaseGroup'](arg1);
+}
+
+export function MusicBrainz() {
+  return window['go']['explore']['Service']['MusicBrainz']();
 }
 
 export function PopulateLocalCrossReferences() {

@@ -18,6 +18,7 @@ import (
 	"github.com/BurntSushi/toml"
 	_ "modernc.org/sqlite" // Register sqlite driver.
 
+	"yellowjacket/backend/autotag"
 	"yellowjacket/backend/database/sql/sqlcgen"
 	"yellowjacket/backend/profiling"
 	"yellowjacket/backend/system"
@@ -717,7 +718,9 @@ func runMigrations(
 	}
 
 	if version < 27 { //nolint:mnd
-		logger.Info("applying migration 27: split explore_cache into http_cache and artist_metadata")
+		logger.Info(
+			"applying migration 27: split explore_cache into http_cache and artist_metadata",
+		)
 
 		// Create the new tables (no-op if schemas/*.sql already created them).
 		if _, err := db.ExecContext(ctx, `
@@ -810,7 +813,9 @@ func runMigrations(
 	}
 
 	if version < 28 { //nolint:mnd
-		logger.Info("applying migration 28: repair broken similar_artist_map data from multi-seed labs bug")
+		logger.Info(
+			"applying migration 28: repair broken similar_artist_map data from multi-seed labs bug",
+		)
 
 		// The multi-seed POST form of the labs similar-artists endpoint
 		// returns mis-grouped results — each seed ends up with a random
@@ -830,7 +835,11 @@ func runMigrations(
 			"DELETE FROM explore_index_meta WHERE key = 'tier4_built'",
 		); err != nil {
 			// Not fatal — the meta table might not exist yet.
-			logger.Warn("migration 28: clear tier4_built failed (ok on fresh install)", "error", err)
+			logger.Warn(
+				"migration 28: clear tier4_built failed (ok on fresh install)",
+				"error",
+				err,
+			)
 		}
 
 		if _, err := db.ExecContext(ctx,
@@ -849,7 +858,9 @@ func runMigrations(
 	}
 
 	if version < 29 { //nolint:mnd
-		logger.Info("applying migration 29: discog_fetched column to track full indexer pipeline coverage")
+		logger.Info(
+			"applying migration 29: discog_fetched column to track full indexer pipeline coverage",
+		)
 
 		// Add a discog_fetched column to explore_index.  When set to 1
 		// on an artist row, the indexer's fetchTopRecordings/
@@ -868,7 +879,11 @@ func runMigrations(
 		`); err != nil {
 			// May fail if migration runs against a fresh schema (column
 			// will be created by the schema file instead).  Don't bail.
-			logger.Warn("migration 29: add discog_fetched column failed (ok if fresh)", "error", err)
+			logger.Warn(
+				"migration 29: add discog_fetched column failed (ok if fresh)",
+				"error",
+				err,
+			)
 		}
 
 		// Backfill: any artist with at least 5 recordings was almost
@@ -899,7 +914,9 @@ func runMigrations(
 	}
 
 	if version < 30 { //nolint:mnd
-		logger.Info("applying migration 30: invalidate MB browse-releases cache for recording MBID fix")
+		logger.Info(
+			"applying migration 30: invalidate MB browse-releases cache for recording MBID fix",
+		)
 
 		// Earlier versions of convertRelease used the MusicBrainz
 		// track MBID instead of the recording MBID for MBTrack.MBID.
@@ -923,8 +940,76 @@ func runMigrations(
 		}
 	}
 
+	if version < 31 { //nolint:mnd
+		if err := migration31TagStatus(ctx, db, logger); err != nil {
+			return err
+		}
+	}
+
+	if version < 32 { //nolint:mnd
+		if err := migration32TaggingItems(ctx, db, logger); err != nil {
+			return err
+		}
+	}
+
+	if version < 33 { //nolint:mnd
+		if err := migration33AutotagWarning(ctx, db, logger); err != nil {
+			return err
+		}
+	}
+
+	if version < 34 { //nolint:mnd
+		if err := migration34FolderBasedGroupKey(ctx, db, logger); err != nil {
+			return err
+		}
+	}
+
+	if version < 35 { //nolint:mnd
+		if err := migration35OriginalYear(ctx, db, logger); err != nil {
+			return err
+		}
+	}
+
+	if version < 36 { //nolint:mnd
+		if err := migration36ClearedAt(ctx, db, logger); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
+
+// migration36ClearedAt adds tagging_items.cleared_at — a nullable
+// timestamp set when the user invokes "clear completed entries".
+// Cleared rows stay in the table (so a re-scan doesn't resurrect
+// them as pending) but get filtered from the review queue.
+func migration36ClearedAt(
+	ctx context.Context,
+	db *sql.DB,
+	logger *slog.Logger,
+) error {
+	logger.Info("applying migration 36: tagging_items.cleared_at")
+
+	if _, err := db.ExecContext(
+		ctx,
+		`ALTER TABLE tagging_items ADD COLUMN cleared_at DATETIME`,
+	); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column name") {
+			return fmt.Errorf("migration 36: add cleared_at: %w", err)
+		}
+
+		logger.Warn("migration 36: cleared_at already present (ok if fresh)", "err", err)
+	}
+
+	if _, err := db.ExecContext(ctx, "PRAGMA user_version = 36"); err != nil {
+		return fmt.Errorf("migration 36: set user_version: %w", err)
+	}
+
+	logger.Info("migration 36 complete")
+
+	return nil
+}
+
 // backfills it from file_path, creates the basename index, and
 // populates the FTS5 search_index table.
 func migration2BasenameAndFTS(
@@ -2746,6 +2831,465 @@ func migration20TrackRecordingMBID(
 	}
 
 	logger.Info("migration 20 complete")
+
+	return nil
+}
+
+// migration31TagStatus adds the tag_status column to audio_files,
+// indexes the "untagged" slice for the pending-count badge, and
+// backfills rows whose recording already carries an MBID as
+// `user_confirmed`.  Everything else stays at the `untagged`
+// default.  The column-level CHECK constraint is added inline with
+// the ALTER TABLE — SQLite supports column constraints in ADD
+// COLUMN, so existing DBs pick it up too.
+func migration31TagStatus(
+	ctx context.Context,
+	db *sql.DB,
+	logger *slog.Logger,
+) error {
+	logger.Info("applying migration 31: tag_status column")
+
+	if _, err := db.ExecContext(ctx, `
+		ALTER TABLE audio_files
+		ADD COLUMN tag_status TEXT NOT NULL DEFAULT 'untagged'
+		CHECK(tag_status IN (
+		  'untagged', 'auto_matched', 'user_confirmed', 'user_skipped_permanent'
+		))
+	`); err != nil && !isDuplicateColumnErr(err) {
+		return fmt.Errorf("migration 31: add tag_status: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx, `
+		CREATE INDEX IF NOT EXISTS idx_audio_files_tag_status_untagged
+		ON audio_files(library_id) WHERE tag_status = 'untagged'
+	`); err != nil {
+		return fmt.Errorf("migration 31: create index: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx, `
+		UPDATE audio_files
+		SET tag_status = 'user_confirmed'
+		WHERE tag_status = 'untagged'
+		  AND recording_id IN (
+		    SELECT id FROM recordings
+		    WHERE mbid IS NOT NULL AND mbid != ''
+		  )
+	`); err != nil {
+		return fmt.Errorf("migration 31: backfill tag_status: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx,
+		"PRAGMA user_version = 31",
+	); err != nil {
+		return fmt.Errorf("migration 31: set user_version: %w", err)
+	}
+
+	logger.Info("migration 31 complete")
+
+	return nil
+}
+
+// migration32TaggingItems creates the tagging_items table and adds
+// the group_key column to audio_files, then backfills both from the
+// current `audio_files` / `recordings` / `release_groups` state.
+// The Go-side autotag.GroupKey helper is the single source of truth
+// for the key format (keeps the hash algorithm decoupled from SQL).
+//
+// SAFETY: Hand-crafted ALTER TABLE + CREATE TABLE + streaming
+// backfill inside a single transaction.
+func migration32TaggingItems(
+	ctx context.Context,
+	db *sql.DB,
+	logger *slog.Logger,
+) error {
+	logger.Info("applying migration 32: tagging_items + group_key")
+
+	if _, err := db.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS tagging_items (
+		  group_key               TEXT PRIMARY KEY,
+		  library_id              INTEGER NOT NULL,
+		  track_count             INTEGER NOT NULL DEFAULT 0,
+		  album_name              TEXT NOT NULL DEFAULT '',
+		  album_artist            TEXT NOT NULL DEFAULT '',
+		  disc_number             INTEGER NOT NULL DEFAULT 0,
+		  best_match_release_mbid TEXT,
+		  score                   REAL,
+		  last_checked_at         DATETIME,
+		  status                  TEXT NOT NULL DEFAULT 'pending'
+		    CHECK(status IN ('pending', 'matched', 'confirmed', 'skipped')),
+		  created_at              DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		  FOREIGN KEY(library_id) REFERENCES libraries(id)
+		)
+	`); err != nil {
+		return fmt.Errorf("migration 32: create tagging_items: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx, `
+		CREATE INDEX IF NOT EXISTS idx_tagging_items_library_status
+		ON tagging_items(library_id, status)
+	`); err != nil {
+		return fmt.Errorf("migration 32: create library_status index: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx, `
+		CREATE INDEX IF NOT EXISTS idx_tagging_items_status_pending
+		ON tagging_items(library_id) WHERE status = 'pending'
+	`); err != nil {
+		return fmt.Errorf("migration 32: create pending index: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx, `
+		ALTER TABLE audio_files
+		ADD COLUMN group_key TEXT NOT NULL DEFAULT ''
+	`); err != nil && !isDuplicateColumnErr(err) {
+		return fmt.Errorf("migration 32: add group_key: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx, `
+		CREATE INDEX IF NOT EXISTS idx_audio_files_group_key
+		ON audio_files(group_key) WHERE group_key != ''
+	`); err != nil {
+		return fmt.Errorf("migration 32: create group_key index: %w", err)
+	}
+
+	if err := backfillGroupKeys(ctx, db, logger); err != nil {
+		return fmt.Errorf("migration 32: backfill group_key: %w", err)
+	}
+
+	if err := aggregateTaggingItems(ctx, db, logger); err != nil {
+		return fmt.Errorf("migration 32: aggregate tagging_items: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx,
+		"PRAGMA user_version = 32",
+	); err != nil {
+		return fmt.Errorf("migration 32: set user_version: %w", err)
+	}
+
+	logger.Info("migration 32 complete")
+
+	return nil
+}
+
+// backfillGroupKeys streams existing audio_files rows in batches of
+// ~500 and writes the computed group_key back via a single UPDATE
+// per row inside one transaction.  It joins to release_groups for
+// the album name and recordings for the disc number; both fall back
+// to the zero value when absent.
+func backfillGroupKeys(
+	ctx context.Context,
+	db *sql.DB,
+	logger *slog.Logger,
+) error {
+	const batchSize = 500
+
+	type row struct {
+		id         int64
+		libraryID  int64
+		filePath   string
+		discNumber int64
+	}
+
+	for {
+		// Each pass reads the next N rows with group_key still empty;
+		// once updated, they drop out of the filter, so no OFFSET
+		// bookkeeping is needed.
+		rows, err := db.QueryContext(ctx, `
+			SELECT af.id, af.library_id, af.file_path,
+			       COALESCE(r.disc_number, 0)
+			FROM audio_files af
+			LEFT JOIN recordings r ON af.recording_id = r.id
+			WHERE af.group_key = ''
+			ORDER BY af.id
+			LIMIT ?
+		`, batchSize)
+		if err != nil {
+			return fmt.Errorf("select batch: %w", err)
+		}
+
+		batch := make([]row, 0, batchSize)
+
+		for rows.Next() {
+			var r row
+			if scanErr := rows.Scan(
+				&r.id, &r.libraryID, &r.filePath, &r.discNumber,
+			); scanErr != nil {
+				_ = rows.Close()
+
+				return fmt.Errorf("scan row: %w", scanErr)
+			}
+
+			batch = append(batch, r)
+		}
+
+		if closeErr := rows.Close(); closeErr != nil {
+			return fmt.Errorf("close rows: %w", closeErr)
+		}
+
+		if len(batch) == 0 {
+			break
+		}
+
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("begin tx: %w", err)
+		}
+
+		for _, r := range batch {
+			key := autotag.GroupKey(
+				r.libraryID, r.filePath, int(r.discNumber),
+			)
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE audio_files SET group_key = ? WHERE id = ?`,
+				key, r.id,
+			); err != nil {
+				_ = tx.Rollback()
+
+				return fmt.Errorf("update row %d: %w", r.id, err)
+			}
+		}
+
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit tx: %w", err)
+		}
+
+		logger.Debug(
+			"migration 32: backfilled group_key batch", "count", len(batch),
+		)
+
+		if len(batch) < batchSize {
+			break
+		}
+	}
+
+	return nil
+}
+
+// aggregateTaggingItems populates tagging_items from the now-
+// populated audio_files.group_key, one row per (group_key,
+// library_id) pair.  Status defaults to `confirmed` when every
+// track in the group already has tag_status `user_confirmed`,
+// otherwise `pending`.
+func aggregateTaggingItems(
+	ctx context.Context,
+	db *sql.DB,
+	logger *slog.Logger,
+) error {
+	result, err := db.ExecContext(ctx, `
+		INSERT INTO tagging_items (
+		  group_key, library_id, track_count,
+		  album_name, album_artist, disc_number, status
+		)
+		SELECT
+		  af.group_key,
+		  af.library_id,
+		  COUNT(*) AS track_count,
+		  COALESCE(MAX(rg.name), '') AS album_name,
+		  COALESCE(MAX(ac.text), '') AS album_artist,
+		  COALESCE(MAX(r.disc_number), 0) AS disc_number,
+		  CASE WHEN SUM(CASE WHEN af.tag_status = 'user_confirmed' THEN 0 ELSE 1 END) = 0
+		       THEN 'confirmed' ELSE 'pending' END AS status
+		FROM audio_files af
+		LEFT JOIN recordings r ON af.recording_id = r.id
+		LEFT JOIN release_group_recordings rgr ON rgr.recording_id = r.id
+		LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
+		LEFT JOIN artist_credit ac ON rg.album_artist_credit_id = ac.id
+		WHERE af.group_key != ''
+		GROUP BY af.group_key, af.library_id
+		ON CONFLICT(group_key) DO NOTHING
+	`)
+	if err != nil {
+		return fmt.Errorf("insert aggregates: %w", err)
+	}
+
+	if n, rowsErr := result.RowsAffected(); rowsErr == nil {
+		logger.Debug(
+			"migration 32: aggregated tagging_items rows",
+			"count", n,
+		)
+	}
+
+	return nil
+}
+
+// migration33AutotagWarning adds the per-library flag that records
+// whether the user has seen (and dismissed) the first-time autotag
+// apply warning.  Zero means "still warn"; one means acknowledged.
+func migration33AutotagWarning(
+	ctx context.Context,
+	db *sql.DB,
+	logger *slog.Logger,
+) error {
+	logger.Info("applying migration 33: libraries.autotag_warning_acked")
+
+	if _, err := db.ExecContext(ctx, `
+		ALTER TABLE libraries
+		ADD COLUMN autotag_warning_acked INTEGER NOT NULL DEFAULT 0
+	`); err != nil && !isDuplicateColumnErr(err) {
+		return fmt.Errorf("migration 33: add column: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx,
+		"PRAGMA user_version = 33",
+	); err != nil {
+		return fmt.Errorf("migration 33: set user_version: %w", err)
+	}
+
+	logger.Info("migration 33 complete")
+
+	return nil
+}
+
+// migration35OriginalYear adds release_groups.original_year (the
+// release-group's MusicBrainz first-release-date year) and rebuilds
+// the track_metadata view so its "year" column prefers the original
+// release year over the file-tag year.  This makes a 1973 album
+// show as 1973 in the tracklist and smart-playlist year rules even
+// when the user owns the 2010 remaster.  release_year is added as
+// a separate view column for callers that need the file-tag year.
+func migration35OriginalYear(
+	ctx context.Context,
+	db *sql.DB,
+	logger *slog.Logger,
+) error {
+	logger.Info("applying migration 35: release_groups.original_year + view rebuild")
+
+	if _, err := db.ExecContext(
+		ctx,
+		`ALTER TABLE release_groups ADD COLUMN original_year INTEGER`,
+	); err != nil {
+		// Tolerate duplicate-column on re-run / fresh-DB schema race.
+		if !strings.Contains(err.Error(), "duplicate column name") {
+			return fmt.Errorf("migration 35: add original_year: %w", err)
+		}
+
+		logger.Warn("migration 35: original_year already present (ok if fresh)", "err", err)
+	}
+
+	// Drop and recreate the track_metadata view so its year column
+	// picks up the new fallback chain.  CREATE VIEW IF NOT EXISTS
+	// in the schema file is a no-op once the view exists, so we have
+	// to do this explicitly here for existing DBs.
+	//
+	// The body must match sql/schemas/track_metadata_view.sql.
+	if _, err := db.ExecContext(ctx, `DROP VIEW IF EXISTS track_metadata`); err != nil {
+		return fmt.Errorf("migration 35: drop view: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx, `
+		CREATE VIEW track_metadata AS
+		SELECT
+		    af.id,
+		    af.file_path,
+		    af.length_milliseconds,
+		    COALESCE(r.name, '') AS title,
+		    COALESCE(ac.text, '') AS artist_name,
+		    r.track_number,
+		    r.disc_number,
+		    COALESCE(rg.name, '') AS album,
+		    CAST(COALESCE(
+		        (SELECT GROUP_CONCAT(g.name, '||')
+		         FROM recording_genres rg_sub
+		         JOIN genres g ON rg_sub.genre_id = g.id
+		         WHERE rg_sub.recording_id = r.id),
+		        ''
+		    ) AS TEXT) AS genre,
+		    COALESCE(rg.original_year, rg.year, r.year, 0) AS year,
+		    COALESCE(rg.year, r.year, 0) AS release_year,
+		    COALESCE(r.composer, '') AS composer,
+		    COALESCE(ft.extension, '') AS file_type,
+		    af.sample_rate,
+		    af.bit_depth,
+		    af.channels,
+		    af.bitrate,
+		    af.file_size,
+		    af.library_id,
+		    af.play_count,
+		    af.last_played,
+		    COALESCE(ca.file_path, '') AS cover_art_path,
+		    COALESCE(a.mbid, '') AS artist_mbid,
+		    COALESCE(rg.mbid, '') AS release_group_mbid,
+		    COALESCE(r.mbid, '') AS recording_mbid
+		FROM audio_files af
+		LEFT JOIN recordings r ON af.recording_id = r.id
+		LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
+		LEFT JOIN artist_credit_artist aca ON aca.credit_id = ac.id
+		LEFT JOIN artists a ON a.id = aca.artist_id
+		LEFT JOIN (
+		    SELECT recording_id,
+		        MIN(release_group_id) AS release_group_id
+		    FROM release_group_recordings
+		    GROUP BY recording_id
+		) rgr ON r.id = rgr.recording_id
+		LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
+		LEFT JOIN cover_art ca ON rg.cover_art_id = ca.id
+		LEFT JOIN file_types ft ON af.file_type_id = ft.id
+	`); err != nil {
+		return fmt.Errorf("migration 35: recreate view: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx, "PRAGMA user_version = 35"); err != nil {
+		return fmt.Errorf("migration 35: set user_version: %w", err)
+	}
+
+	logger.Info("migration 35 complete")
+
+	return nil
+}
+
+// migration34FolderBasedGroupKey recomputes every audio_files
+// row's group_key with the new folder-based algorithm (album tag
+// dropped from the hash inputs).  Tracks in the same parent
+// directory + same disc number now share a key regardless of any
+// per-track variation in their album tag — fixes the fragmenting
+// behaviour where one album would produce N one-track tagging
+// groups when its tracks carried slightly different album strings.
+//
+// After the recompute, tagging_items is wiped and re-aggregated
+// from the new keys.  The user's review state is reset; this is a
+// blunt instrument but the right one — a partial migration would
+// leave fragments of the old shape stranded in pending status.
+//
+// SAFETY: clears tagging_items unconditionally on existing DBs.
+// On fresh DBs (test_data) the tagging_items aggregate at the end
+// of the migration just no-ops since audio_files is empty.
+func migration34FolderBasedGroupKey(
+	ctx context.Context,
+	db *sql.DB,
+	logger *slog.Logger,
+) error {
+	logger.Info("applying migration 34: folder-based group_key")
+
+	// Wipe stale state first so the recompute can stream into a
+	// clean tagging_items table.
+	if _, err := db.ExecContext(ctx, `DELETE FROM tagging_items`); err != nil {
+		return fmt.Errorf("migration 34: clear tagging_items: %w", err)
+	}
+
+	// Force every audio_files.group_key back to '' so the existing
+	// backfill logic (which filters WHERE group_key = '') can
+	// recompute every row.
+	if _, err := db.ExecContext(ctx,
+		`UPDATE audio_files SET group_key = ''`,
+	); err != nil {
+		return fmt.Errorf("migration 34: clear group_keys: %w", err)
+	}
+
+	if err := backfillGroupKeys(ctx, db, logger); err != nil {
+		return fmt.Errorf("migration 34: backfill: %w", err)
+	}
+
+	if err := aggregateTaggingItems(ctx, db, logger); err != nil {
+		return fmt.Errorf("migration 34: aggregate: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx,
+		"PRAGMA user_version = 34",
+	); err != nil {
+		return fmt.Errorf("migration 34: set user_version: %w", err)
+	}
+
+	logger.Info("migration 34 complete")
 
 	return nil
 }

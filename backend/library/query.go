@@ -87,24 +87,24 @@ func mapTrackRow(
 	}
 
 	t := Track{
-		TrackName:   title,
-		ArtistName:  artistName,
-		TrackLength: strconv.FormatInt(lengthMs, 10),
-		FilePath:    filePath,
-		TrackNumber: trackNumber.Int64,
-		DiscNumber:  discNumber.Int64,
-		Album:       album,
-		Genre:       splitGenres(genre),
-		Year:        year,
-		Composer:    composer,
-		FileType:    fileType,
-		SampleRate:  sampleRate,
-		BitDepth:    bitDepth,
-		Channels:    channels,
-		Bitrate:     bitrate,
-		FileSize:    fileSize,
+		TrackName:        title,
+		ArtistName:       artistName,
+		TrackLength:      strconv.FormatInt(lengthMs, 10),
+		FilePath:         filePath,
+		TrackNumber:      trackNumber.Int64,
+		DiscNumber:       discNumber.Int64,
+		Album:            album,
+		Genre:            splitGenres(genre),
+		Year:             year,
+		Composer:         composer,
+		FileType:         fileType,
+		SampleRate:       sampleRate,
+		BitDepth:         bitDepth,
+		Channels:         channels,
+		Bitrate:          bitrate,
+		FileSize:         fileSize,
 		PlayCount:        playCount,
-		LastPlayed:        lastPlayedStr,
+		LastPlayed:       lastPlayedStr,
 		ArtistMBID:       artistMBID,
 		ReleaseGroupMBID: releaseGroupMBID,
 		RecordingMBID:    recordingMBID,
@@ -173,6 +173,12 @@ type Artist struct {
 }
 
 // Album represents an album for the cover grid display.
+//
+// Year is the album's preferred display year — the release-group's
+// original-release-date (MusicBrainz first-release-date) when known,
+// falling back to the file-tag year.  ReleaseYear is the file-tag
+// year of the specific release in the library; for a 2010 remaster
+// of a 1973 album, Year=1973 and ReleaseYear=2010.
 type Album struct {
 	ID             int64
 	Name           string
@@ -183,6 +189,7 @@ type Album struct {
 	CoverArtMedium string
 	CoverArtLarge  string
 	Year           int64
+	ReleaseYear    int64
 }
 
 // GetAllTracks returns an array of track structs of every file in the library.
@@ -362,6 +369,8 @@ func (l *Library) GetAllAlbums() ([]Album, error) {
 			album.Year = row.Year.Int64
 		}
 
+		album.ReleaseYear = row.ReleaseYear
+
 		if row.Mbid.Valid {
 			album.MBID = row.Mbid.String
 		}
@@ -515,6 +524,8 @@ func (l *Library) GetAlbumsByArtist(
 		if row.Year.Valid {
 			album.Year = row.Year.Int64
 		}
+
+		album.ReleaseYear = row.ReleaseYear
 
 		// Convert filesystem path to URL path for the asset handler.
 		if row.CoverArtPath != "" {
@@ -710,6 +721,8 @@ func (l *Library) GetAllAlbumsByLibrary(
 			album.Year = row.Year.Int64
 		}
 
+		album.ReleaseYear = row.ReleaseYear
+
 		if row.Mbid.Valid {
 			album.MBID = row.Mbid.String
 		}
@@ -818,6 +831,8 @@ func (l *Library) GetAlbumsByArtistByLibrary(
 		if row.Year.Valid {
 			album.Year = row.Year.Int64
 		}
+
+		album.ReleaseYear = row.ReleaseYear
 
 		if row.CoverArtPath != "" {
 			urls := coverart.ResolveURLs(row.CoverArtPath)

@@ -2,6 +2,21 @@
 INSERT INTO audio_files (file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size, basename, library_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
+-- name: CreateAudioFileWithGroupKey :one
+INSERT INTO audio_files (
+  file_path, length_milliseconds, file_type_id, recording_id,
+  sample_rate, bit_depth, channels, bitrate, file_size, basename,
+  library_id, group_key, tag_status
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING *;
+
+-- name: GetAudioFileGroupKey :one
+SELECT group_key FROM audio_files
+WHERE id = ? LIMIT 1;
+
+-- name: SetAudioFileGroupKey :exec
+UPDATE audio_files SET group_key = ? WHERE id = ?;
+
 -- name: GetAudioFile :one
 SELECT * FROM audio_files 
 WHERE id = ? LIMIT 1;

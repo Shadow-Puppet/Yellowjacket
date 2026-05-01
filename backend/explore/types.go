@@ -20,7 +20,7 @@ type MBSearchResult struct {
 // categorized search lists.  Computed by intent scoring after all
 // reranking is complete.
 type TopResult struct {
-	EntityType   string  `json:"entityType"`             // "artist", "release_group", "recording"
+	EntityType   string  `json:"entityType"` // "artist", "release_group", "recording"
 	MBID         string  `json:"mbid"`
 	Name         string  `json:"name"`
 	ArtistCredit string  `json:"artistCredit,omitempty"` // for tracks/albums
@@ -51,7 +51,7 @@ type MBArtist struct {
 	HasPopularity  bool   `json:"-"`          // true if LB/index had listen data for this artist
 	Popularity     int    `json:"popularity"` // raw LB listen count (0 if unknown)
 	ListenerCount  int    `json:"listenerCount"`
-	InLibrary      bool   `json:"inLibrary"`     // true if the user owns music by this artist
+	InLibrary      bool   `json:"inLibrary"`         // true if the user owns music by this artist
 	LocalID        int64  `json:"localId,omitempty"` // local artist row ID for navigation
 }
 
@@ -64,21 +64,22 @@ type MBReleaseGroup struct {
 	SecondaryTypes   []string `json:"secondaryTypes,omitempty"`
 	FirstReleaseDate string   `json:"firstReleaseDate"`
 	ArtistCredit     string   `json:"artistCredit"`
-	Score            int      `json:"-"`              // MB search relevance, used for reranking
-	Popularity       int      `json:"popularity"`     // raw LB listen count (0 if unknown)
+	Score            int      `json:"-"`          // MB search relevance, used for reranking
+	Popularity       int      `json:"popularity"` // raw LB listen count (0 if unknown)
 	ListenerCount    int      `json:"listenerCount"`
-	InLibrary        bool     `json:"inLibrary"`      // true if the user owns this album
+	InLibrary        bool     `json:"inLibrary"`         // true if the user owns this album
 	LocalID          int64    `json:"localId,omitempty"` // local release_group row ID
 }
 
 // MBRelease is a Wails-friendly projection of a MusicBrainz release.
 type MBRelease struct {
-	MBID    string    `json:"mbid"`
-	Title   string    `json:"title"`
-	Date    string    `json:"date"`
-	Country string    `json:"country"`
-	Status  string    `json:"status"`
-	Tracks  []MBTrack `json:"tracks,omitempty"`
+	MBID         string    `json:"mbid"`
+	Title        string    `json:"title"`
+	Date         string    `json:"date"`
+	Country      string    `json:"country"`
+	Status       string    `json:"status"`
+	ArtistCredit string    `json:"artistCredit,omitempty"`
+	Tracks       []MBTrack `json:"tracks,omitempty"`
 }
 
 // MBRecording is a Wails-friendly projection of a MusicBrainz
@@ -91,7 +92,7 @@ type MBRecording struct {
 	Score         int    `json:"score"`
 	Popularity    int    `json:"popularity"` // raw LB listen count (0 if unknown)
 	ListenerCount int    `json:"listenerCount"`
-	InLibrary     bool   `json:"inLibrary"`     // true if the user owns this recording
+	InLibrary     bool   `json:"inLibrary"`         // true if the user owns this recording
 	LocalID       int64  `json:"localId,omitempty"` // local recording row ID
 }
 

@@ -48,6 +48,8 @@ type AudioFile struct {
 	LibraryID          int64
 	PlayCount          int64
 	LastPlayed         sql.NullTime
+	TagStatus          string
+	GroupKey           string
 }
 
 type CoverArt struct {
@@ -76,10 +78,11 @@ type HttpCache struct {
 }
 
 type Library struct {
-	ID        int64
-	Name      string
-	Path      string
-	CreatedAt time.Time
+	ID                  int64
+	Name                string
+	Path                string
+	CreatedAt           time.Time
+	AutotagWarningAcked int64
 }
 
 type PlayHistory struct {
@@ -160,6 +163,7 @@ type ReleaseGroup struct {
 	CoverArtID          sql.NullInt64
 	AlbumArtistCreditID sql.NullInt64
 	Year                sql.NullInt64
+	OriginalYear        sql.NullInt64
 	TotalTracks         sql.NullInt64
 	TotalDiscs          sql.NullInt64
 	Mbid                sql.NullString
@@ -180,6 +184,21 @@ type SearchIndex struct {
 	Album    string
 }
 
+type TaggingItem struct {
+	GroupKey             string
+	LibraryID            int64
+	TrackCount           int64
+	AlbumName            string
+	AlbumArtist          string
+	DiscNumber           int64
+	BestMatchReleaseMbid sql.NullString
+	Score                sql.NullFloat64
+	LastCheckedAt        sql.NullTime
+	Status               string
+	ClearedAt            sql.NullTime
+	CreatedAt            time.Time
+}
+
 type TrackMetadatum struct {
 	ID                 int64
 	FilePath           string
@@ -191,6 +210,7 @@ type TrackMetadatum struct {
 	Album              string
 	Genre              string
 	Year               int64
+	ReleaseYear        int64
 	Composer           string
 	FileType           string
 	SampleRate         int64

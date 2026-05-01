@@ -2,13 +2,6 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state, query as litQuery } from 'lit/decorators.js';
 import { designTokens } from '../../styles/tokens.css';
 import { Search, GetThumbnail, GetThumbnails, GetArtistImageURL, GetPopularityBatch, RecordSearchClick } from '@go/explore/Service';
-import type { ThumbnailRequest } from '@go/explore/Service';
-import type {
-    MBSearchResult,
-    MBArtist,
-    MBReleaseGroup,
-    MBRecording,
-} from '@go/explore/Service';
 import { libraryStore } from '../../store/library-store';
 import { exploreCache } from '../../store/explore-cache';
 import { exploreSettings } from '../../store/explore-settings';
@@ -16,6 +9,11 @@ import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '../library-status-indicator/library-status-indicator.js';
 import '../top-results-row/top-results-row.js';
 import type { explore } from '@go/models';
+type ThumbnailRequest = explore.ThumbnailRequest;
+type MBSearchResult = explore.MBSearchResult;
+type MBArtist = explore.MBArtist;
+type MBReleaseGroup = explore.MBReleaseGroup;
+type MBRecording = explore.MBRecording;
 
 /* ── Constants ── */
 const DEBOUNCE_MS = 300;
@@ -32,20 +30,20 @@ function editDistance(a: string, b: string): number {
     const matrix: number[][] = [];
 
     for (let i = 0; i <= a.length; i++) matrix[i] = [i];
-    for (let j = 0; j <= b.length; j++) matrix[0][j] = j;
+    for (let j = 0; j <= b.length; j++) matrix[0]![j] = j;
 
     for (let i = 1; i <= a.length; i++) {
         for (let j = 1; j <= b.length; j++) {
             const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-            matrix[i][j] = Math.min(
-                matrix[i - 1][j] + 1,
-                matrix[i][j - 1] + 1,
-                matrix[i - 1][j - 1] + cost,
+            matrix[i]![j] = Math.min(
+                matrix[i - 1]![j]! + 1,
+                matrix[i]![j - 1]! + 1,
+                matrix[i - 1]![j - 1]! + cost,
             );
         }
     }
 
-    return matrix[a.length][b.length];
+    return matrix[a.length]![b.length]!;
 }
 
 /**
@@ -72,16 +70,7 @@ function fuzzyMatch(query: string, name: string): boolean {
     );
 }
 const MAX_SECTION_RESULTS = 10;
-const CAA_GROUP_BASE = 'https://coverartarchive.org/release-group';
 
-/**
- * Build a Cover Art Archive URL for a release-group front cover.
- * Mirrors the Wails CoverArtGroupURL binding but runs synchronously
- * on the frontend — avoids N async round-trips per render cycle.
- */
-function CoverArtGroupURL(releaseGroupMBID: string): string {
-    return `${CAA_GROUP_BASE}/${releaseGroupMBID}/front-250`;
-}
 
 /** Hash a string to a hue value 0–360 for avatar coloring. */
 function nameToHue(name: string): number {
@@ -894,9 +883,9 @@ export class ExploreView extends LitElement {
 
         // Collect all non-empty MBIDs.
         const mbids: string[] = [];
-        for (const a of result.artists) if (a.mbid) mbids.push(a.mbid);
-        for (const rg of result.releaseGroups) if (rg.mbid) mbids.push(rg.mbid);
-        for (const r of result.recordings) if (r.mbid) mbids.push(r.mbid);
+        for (const a of result.artists ?? []) if (a.mbid) mbids.push(a.mbid);
+        for (const rg of result.releaseGroups ?? []) if (rg.mbid) mbids.push(rg.mbid);
+        for (const r of result.recordings ?? []) if (r.mbid) mbids.push(r.mbid);
 
         if (mbids.length === 0) return;
 
@@ -927,16 +916,22 @@ export class ExploreView extends LitElement {
             return 0.35 * relevance + 0.50 * logPop + 0.15 * personal;
         };
 
-        // Re-sort each category.
-        result.artists.sort((a, b) =>
-            blendedScore(b.mbid, b.score) - blendedScore(a.mbid, a.score));
-        result.releaseGroups.sort((a, b) =>
-            blendedScore(b.mbid, b.score) - blendedScore(a.mbid, a.score));
-        result.recordings.sort((a, b) =>
-            blendedScore(b.mbid, b.score) - blendedScore(a.mbid, a.score));
+        // Re-sort each category.  Backend stamps a `score` field
+        // onto entries before returning them, but the Wails-
+        // generated MB types don't model it — cast through any to
+        // read it on the way to the comparator.
+        const cmp = (a: { mbid: string }, b: { mbid: string }): number =>
+            blendedScore(b.mbid, (b as any).score ?? 0) - blendedScore(a.mbid, (a as any).score ?? 0);
+        (result.artists ?? []).sort(cmp);
+        (result.releaseGroups ?? []).sort(cmp);
+        (result.recordings ?? []).sort(cmp);
 
-        // Trigger re-render.
-        this.results = { ...result };
+        // Trigger re-render.  MBSearchResult is a Wails-generated
+        // class with bound methods (convertValues), so request an
+        // update directly rather than spreading the object — that
+        // would drop the methods.
+        this.results = result;
+        this.requestUpdate();
     }
 
     /**
@@ -967,8 +962,7 @@ export class ExploreView extends LitElement {
 
         // Enrich artists: if MB result matches a library artist, add local images.
         if (result.artists) {
-            for (let i = 0; i < result.artists.length; i++) {
-                const a = result.artists[i];
+            for (const a of result.artists) {
                 const lib = (a.mbid && libArtistsByMBID.get(a.mbid)) ||
                     libArtistsByName.get(a.name.toLowerCase());
                 if (lib) {
@@ -981,8 +975,7 @@ export class ExploreView extends LitElement {
 
         // Enrich release groups: if MB result matches a library album, use local art.
         if (result.releaseGroups) {
-            for (let i = 0; i < result.releaseGroups.length; i++) {
-                const rg = result.releaseGroups[i];
+            for (const rg of result.releaseGroups) {
                 const lib = rg.mbid ? libAlbumsByMBID.get(rg.mbid) : undefined;
                 if (lib) {
                     (rg as any)._coverArt = lib.CoverArtMedium || lib.CoverArtSmall || '';
@@ -1020,7 +1013,7 @@ export class ExploreView extends LitElement {
         if (prev.releaseGroups?.length) {
             const existing = new Set(
                 (full.releaseGroups || []).map(
-                    (rg) => `${rg.title}|${rg.artistCredit}`.toLowerCase(),
+                    (rg: MBReleaseGroup) => `${rg.title}|${rg.artistCredit}`.toLowerCase(),
                 ),
             );
             for (const rg of prev.releaseGroups) {

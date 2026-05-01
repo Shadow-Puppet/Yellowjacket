@@ -14,6 +14,7 @@ import (
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"yellowjacket/backend/assets"
+	"yellowjacket/backend/autotagservice"
 	"yellowjacket/backend/config"
 	"yellowjacket/backend/coverart"
 	"yellowjacket/backend/database"
@@ -42,6 +43,7 @@ type YellowJacketApp struct {
 	playlist      *playlist.Service
 	queue         *queue.Queue
 	explore       *explore.Service
+	autotag       *autotagservice.Service
 	mediaControls mediacontrols.Handler
 	tagWriter     *tagwriter.TagWriter
 	appContext    context.Context
@@ -146,6 +148,14 @@ func NewYellowJacketApp(
 		yjApp.logger.WithGroup("explore"), yjApp.database,
 	)
 
+	// create autotag service (depends on explore + tagWriter)
+	yjApp.autotag = autotagservice.NewService(
+		yjApp.logger.WithGroup("autotag"),
+		yjApp.database,
+		yjApp.explore,
+		yjApp.tagWriter,
+	)
+
 	yjApp.FEBindings = []any{
 		yjApp.FrontendUtil,
 		yjApp.appConfig,
@@ -155,6 +165,7 @@ func NewYellowJacketApp(
 		yjApp.player,
 		yjApp.tagWriter,
 		yjApp.explore,
+		yjApp.autotag,
 	}
 
 	return yjApp, nil
@@ -204,6 +215,7 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 	yj.player.SetContext(ctx)
 	yj.tagWriter.SetContext(ctx)
 	yj.explore.SetContext(ctx)
+	yj.autotag.SetContext(ctx)
 
 	// Wire queue (created in NewYellowJacketApp for Wails binding)
 	yj.queue.SetContext(ctx)
@@ -248,6 +260,13 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 			// sitewide + similar artist tiers run even if the index
 			// already has library data.
 			yj.explore.StartIndexBuild()
+
+			// Sweep the autotag queue for newly-discovered pending
+			// items so the user sees match scores ready when they
+			// next open the review page.  The worker is idempotent
+			// (skips items that already have a score) and yields
+			// to foreground review activity.
+			yj.autotag.StartBackgroundPrefetch()
 		},
 	})
 
@@ -376,5 +395,12 @@ func (yj *YellowJacketApp) OnDomReady(ctx context.Context) {
 		if yj.library.GetScanQueueLength() == 0 && !yj.library.IsScanActive() {
 			yj.explore.StartIndexBuild()
 		}
+
+		// Kick off the autotag prefetch worker so any unscored
+		// pending items get their match scores filled in while
+		// the user does other things.  Idempotent — re-running on
+		// every app launch is fine; previously-scored items are
+		// skipped (the worker filters score IS NULL).
+		yj.autotag.StartBackgroundPrefetch()
 	}()
 }

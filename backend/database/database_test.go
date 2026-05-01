@@ -1079,11 +1079,13 @@ func TestMigration11ExploreCache(t *testing.T) {
 
 	if !verRows.Next() {
 		_ = verRows.Close()
+
 		t.Fatal("PRAGMA user_version: no row returned")
 	}
 
 	if err := verRows.Scan(&version); err != nil {
 		_ = verRows.Close()
+
 		t.Fatalf("scan user_version: %v", err)
 	}
 
@@ -1111,6 +1113,7 @@ func TestMigration11ExploreCache(t *testing.T) {
 
 	if err := tblRows.Scan(&tableCount); err != nil {
 		_ = tblRows.Close()
+
 		t.Fatalf("scan table count: %v", err)
 	}
 
@@ -1151,6 +1154,7 @@ func TestMigration11ExploreCache(t *testing.T) {
 			&cid, &name, &colType, &notNull, &dfltValue, &pk,
 		); err != nil {
 			_ = colRows.Close()
+
 			t.Fatalf("scan table_info row: %v", err)
 		}
 
@@ -1182,6 +1186,7 @@ func TestMigration11ExploreCache(t *testing.T) {
 
 		if err := idxRows.Scan(&name); err != nil {
 			_ = idxRows.Close()
+
 			t.Fatalf("scan index name: %v", err)
 		}
 
@@ -1216,6 +1221,7 @@ func TestMigration11ExploreCache(t *testing.T) {
 
 	if !rows.Next() {
 		_ = rows.Close()
+
 		t.Fatal("explore_cache row not found")
 	}
 

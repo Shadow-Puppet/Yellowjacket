@@ -74,6 +74,19 @@ const (
 	BatchWriteProgress   = "BatchWriteProgress"
 )
 
+// Autotag apply events — emitted while an async ApplyAsync job is in flight so the review UI can render per-folder progress.
+const (
+	AutotagApplyStarted  = "AutotagApplyStarted"  // {groupKey: string, total: int}
+	AutotagApplyProgress = "AutotagApplyProgress" // {groupKey, current, total, succeeded, failed}
+	AutotagApplyFinished = "AutotagApplyFinished" // {groupKey, succeeded, failed, error}
+)
+
+// Autotag prefetch events — emitted by the background worker that scores pending tagging items so sidebar pills populate without the user having to open each folder.
+const (
+	AutotagPrefetchProgress = "AutotagPrefetchProgress" // {processed, total} — debounce on frontend
+	AutotagPrefetchFinished = "AutotagPrefetchFinished" // {processed, total}
+)
+
 // Explore / search index events.
 const (
 	IndexStatusChanged = "IndexStatusChanged"

@@ -6,35 +6,19 @@ import {
     BrowseReleases,
     GetThumbnail,
 } from '@go/explore/Service';
-import type {
-    MBReleaseGroup,
-    MBRelease,
-    MBTrack,
-} from '@go/explore/Service';
 import { GetAlbumTracks } from '@go/library/Library';
 import { library } from '@go/models';
+import type { explore } from '@go/models';
+type MBReleaseGroup = explore.MBReleaseGroup;
+type MBRelease = explore.MBRelease;
+type MBTrack = explore.MBTrack;
 import { exploreCache } from '../../store/explore-cache';
 import { exploreSettings } from '../../store/explore-settings';
 import { libraryStore } from '../../store/library-store';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '../library-status-indicator/library-status-indicator.js';
 
-/* ── Constants ── */
-const CAA_GROUP_BASE = 'https://coverartarchive.org/release-group';
-
 /* ── Utility functions (duplicated per Knowledge Pattern #9 — no cross-component imports) ── */
-
-function CoverArtGroupURL(releaseGroupMBID: string): string {
-    return `${CAA_GROUP_BASE}/${releaseGroupMBID}/front-250`;
-}
-
-function nameToHue(name: string): number {
-    let hash = 0;
-    for (let i = 0; i < name.length; i++) {
-        hash = name.charCodeAt(i) + ((hash << 5) - hash);
-    }
-    return Math.abs(hash) % 360;
-}
 
 function extractYear(dateStr: string): string {
     if (!dateStr) return '';
@@ -598,7 +582,9 @@ export class ExploreAlbumDetails extends LitElement {
         }
 
         // Phase 1: hydrate tracklist from local library if available.
-        const localRelease = await this.hydrateFromLibrary(mbid);
+        // Awaited for the side effect of populating the local
+        // tracklist; the return value isn't currently consumed.
+        await this.hydrateFromLibrary(mbid);
 
         // Library-only mode: local data is all we show.
         if (exploreSettings.libraryOnly) {
@@ -899,7 +885,7 @@ export class ExploreAlbumDetails extends LitElement {
             });
 
             const cluster: ReleaseCluster = {
-                representative: sorted[0],
+                representative: sorted[0]!,
                 allReleases: sorted,
                 fingerprint,
                 score: 0, // filled in below

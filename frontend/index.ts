@@ -19,6 +19,7 @@ import '@components/track-details/track-details.ts';
 import '@components/explore-view/explore-view.ts';
 import '@components/explore-artist-details/explore-artist-details.js';
 import '@components/explore-album-details/explore-album-details.js';
+import '@components/autotag-view/autotag-view.ts';
 import '@awesome.me/webawesome/dist/styles/themes/default.css';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import { setBasePath } from '@awesome.me/webawesome/dist/webawesome.js';
@@ -59,6 +60,7 @@ const VIEW_TAGS: Record<string, string> = {
     genres: 'genres-view',
     playlists: 'playlist-view',
     explore: 'explore-view',
+    autotag: 'autotag-view',
     settings: 'config-page',
 };
 

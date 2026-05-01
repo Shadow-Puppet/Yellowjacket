@@ -10,7 +10,9 @@
  *   album detail page → check cache before API calls
  */
 
-import type { MBReleaseGroup, LBTopRecording } from '@go/explore/Service';
+import type { explore } from '@go/models';
+type MBReleaseGroup = explore.MBReleaseGroup;
+type LBTopRecording = explore.LBTopRecording;
 
 /** Cached artist data from search results. */
 export interface CachedArtist {

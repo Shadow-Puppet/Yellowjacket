@@ -10,7 +10,8 @@ lefthook-local.yml
 trace-*.out
 *.pprof
 
-# ── GSD baseline (auto-generated) ──
+# ── Legacy GSD planning snapshot (replaced by .planning/) ──
+# Kept on disk for reference only; safe to delete once nothing relies on it.
 .gsd
 gsd-session-*.html
 .DS_Store

@@ -196,9 +196,11 @@ func (c *ListenBrainzClient) SimilarArtists(
 		if a.Score > b.Score {
 			return -1
 		}
+
 		if a.Score < b.Score {
 			return 1
 		}
+
 		return 0
 	})
 
@@ -320,12 +322,12 @@ func (c *ListenBrainzClient) ReleaseGroupPopularity(
 // /1/metadata/artist/ endpoint.  Missing fields: aliases,
 // disambiguation, sort_name (those come from MB per-artist).
 type ArtistMetadata struct {
-	MBID       string
-	Name       string
-	Type       string // "Group", "Person", etc
-	Country    string // from "area" field
-	BeginYear  int
-	EndYear    int
+	MBID        string
+	Name        string
+	Type        string // "Group", "Person", etc
+	Country     string // from "area" field
+	BeginYear   int
+	EndYear     int
 	WikidataQID string // extracted from rels
 }
 

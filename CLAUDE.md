@@ -6,6 +6,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 YellowJacket is a cross-platform desktop music player built with Go (backend) and TypeScript/Lit (frontend), using the Wails framework to bridge them. It supports MP3, FLAC, OGG Vorbis, and WAV playback.
 
+## Planning
+
+Active and historical plans live in `.planning/`:
+
+- `.planning/ROADMAP.md` — vision, capability set, milestone sequence.
+- `.planning/NOTES.md` — gotchas, deferred items, open architecture questions, the "we already considered and rejected" list.
+- `.planning/plans/active/` — work currently in progress (read first).
+- `.planning/plans/pending/` — sequenced future work.
+- `.planning/plans/completed/` — one concise recap per shipped milestone.
+
+Numbering is sequential and stable across status moves (a plan keeps its `NNN-` prefix as it migrates between `pending → active → completed`). Abandoned plans are deleted; paused work stays in `pending/`.
+
+The legacy `.gsd/` directory is a snapshot of the prior GSD-CLI planning system. It's gitignored and will be removed once nothing relies on it.
+
 ## Commands
 
 ```bash

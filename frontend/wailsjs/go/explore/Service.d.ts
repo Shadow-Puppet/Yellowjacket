@@ -7,6 +7,8 @@ export function BrowseReleaseGroups(arg1:string):Promise<Array<explore.MBRelease
 
 export function BrowseReleases(arg1:string):Promise<Array<explore.MBRelease>>;
 
+export function CAALimiter():Promise<explore.RateLimiter>;
+
 export function CheckLibraryMBIDs(arg1:Array<string>):Promise<Record<string, string>>;
 
 export function CoverArtGroupURL(arg1:string):Promise<string>;
@@ -24,6 +26,8 @@ export function GetArtistImages(arg1:Array<string>):Promise<Record<string, strin
 export function GetArtistMBID(arg1:string):Promise<string>;
 
 export function GetArtistPlayCount(arg1:string):Promise<number>;
+
+export function GetCandidateThumbnail(arg1:string,arg2:string):Promise<string>;
 
 export function GetIndexStatus():Promise<explore.IndexStatus>;
 
@@ -48,6 +52,8 @@ export function IsIndexReady():Promise<boolean>;
 export function LookupArtist(arg1:string):Promise<explore.MBArtist>;
 
 export function LookupReleaseGroup(arg1:string):Promise<explore.MBReleaseGroup>;
+
+export function MusicBrainz():Promise<explore.MusicBrainzClient>;
 
 export function PopulateLocalCrossReferences():Promise<void>;
 

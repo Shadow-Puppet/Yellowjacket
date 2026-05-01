@@ -19,7 +19,7 @@ import {
     CancelBatchWrite,
 } from '@go/tagwriter/TagWriter';
 import { GetTrackMBIDs } from '@go/library/Library';
-import type { TrackMBIDs } from '@go/library/Library';
+type TrackMBIDs = library.TrackMBIDs;
 import { ImageFilePicker, ReadFile } from '@go/frontendutil/FrontendUtil';
 import { libraryStore } from '../../store/library-store';
 import { EventsOn, EventsOff } from '@runtime/runtime';
@@ -1646,7 +1646,9 @@ export class TrackDetails extends LitElement {
             // shows updated values and cover art.  The store
             // invalidation is already in-flight from the event;
             // these calls await the pending fetch or start one.
-            const [tracks, albums] = await Promise.all([
+            // Awaited for the side effect of refreshing the
+            // store; the album list is consumed elsewhere.
+            const [tracks] = await Promise.all([
                 libraryStore.getTracks(),
                 libraryStore.getAlbums(),
             ]);
@@ -1776,8 +1778,9 @@ export class TrackDetails extends LitElement {
         this.errorMessage = '';
         this.cleanupPendingCoverArt();
 
-        // Refresh data from library store.
-        const [tracks, albums] = await Promise.all([
+        // Refresh data from library store; album list is
+        // refreshed for side effects only.
+        const [tracks] = await Promise.all([
             libraryStore.getTracks(),
             libraryStore.getAlbums(),
         ]);

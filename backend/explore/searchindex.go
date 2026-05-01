@@ -12,10 +12,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/wailsapp/wails/v2/pkg/runtime"
+
 	"yellowjacket/backend/database"
 	"yellowjacket/backend/events"
-
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // Index build parameters.
@@ -88,12 +88,12 @@ const (
 
 // SearchIndexResult is a single hit from the local popularity index.
 type SearchIndexResult struct {
-	EntityType    string `json:"entityType"`
-	MBID          string `json:"mbid"`
-	Title         string `json:"title"`
-	ArtistName    string `json:"artistName"`
-	ArtistMBID    string `json:"artistMbid"`
-	Aliases       string `json:"aliases,omitempty"`
+	EntityType string `json:"entityType"`
+	MBID       string `json:"mbid"`
+	Title      string `json:"title"`
+	ArtistName string `json:"artistName"`
+	ArtistMBID string `json:"artistMbid"`
+	Aliases    string `json:"aliases,omitempty"`
 
 	// Popularity signals.
 	Popularity    int `json:"popularity"`
@@ -158,10 +158,10 @@ type lbSitewideArtist struct {
 //   - Tier 4: similar artists to library artists (background, ~24min)
 //   - Tier 5: organic growth from user browsing (ongoing, free)
 type SearchIndex struct {
-	db        *database.DB
-	lb        *ListenBrainzClient
-	artistImg *ArtistImageProvider
-	logger    *slog.Logger
+	db         *database.DB
+	lb         *ListenBrainzClient
+	artistImg  *ArtistImageProvider
+	logger     *slog.Logger
 	runtimeCtx context.Context // Wails runtime context for event emission
 
 	cancel context.CancelFunc
@@ -441,8 +441,10 @@ func (si *SearchIndex) refreshStatusCounts() {
 		defer func() { _ = rows.Close() }()
 
 		for rows.Next() {
-			var et string
-			var count int
+			var (
+				et    string
+				count int
+			)
 
 			if err := rows.Scan(&et, &count); err == nil {
 				switch et {
@@ -509,6 +511,8 @@ func (si *SearchIndex) setTierStatus(name, state string, total, completed int) {
 }
 
 // setTierError marks a tier as errored.
+//
+//nolint:unused // kept for future per-tier failure surfacing.
 func (si *SearchIndex) setTierError(name, errMsg string) {
 	si.mu.Lock()
 
@@ -599,7 +603,10 @@ func (si *SearchIndex) GetPopularityBatch(mbids []string) *PopularityBatchResult
 	}
 
 	query := "SELECT mbid, popularity, listener_count, in_library FROM explore_index WHERE mbid IN (" +
-		strings.Join(placeholders, ",") + ")"
+		strings.Join(
+			placeholders,
+			",",
+		) + ")"
 
 	rows, err := si.db.QueryContext(query, args...)
 	if err != nil {
@@ -616,10 +623,12 @@ func (si *SearchIndex) GetPopularityBatch(mbids []string) *PopularityBatchResult
 	}
 
 	for rows.Next() {
-		var mbid string
-		var pop int
-		var listeners int
-		var inLib int
+		var (
+			mbid      string
+			pop       int
+			listeners int
+			inLib     int
+		)
 
 		if err := rows.Scan(&mbid, &pop, &listeners, &inLib); err == nil {
 			existing, ok := result.Popularity[mbid]
@@ -707,7 +716,9 @@ func (si *SearchIndex) LookupArtistByMBID(mbid string) *SearchIndexResult {
 // rows whose caa_release_mbid matches.  Used to find parent release
 // groups for tracks so we can fetch cover art via the existing
 // release-group endpoint instead of the per-release endpoint.
-func (si *SearchIndex) ReleaseGroupMBIDsForCAAReleaseMBIDs(caaReleaseMBIDs []string) map[string]string {
+func (si *SearchIndex) ReleaseGroupMBIDsForCAAReleaseMBIDs(
+	caaReleaseMBIDs []string,
+) map[string]string {
 	if len(caaReleaseMBIDs) == 0 {
 		return nil
 	}
@@ -925,8 +936,6 @@ func (si *SearchIndex) AddFromCache(artistName, artistMBID string, rgs []MBRelea
 	)
 }
 
-// Search queries the local FTS5 index and returns matches sorted
-// by popularity descending.
 // ExactMatches returns index rows whose normalized title (or artist
 // name) exactly equals the given query.  Used by the top-results
 // intent pipeline as a dedicated retrieval source — exact matches
@@ -1017,6 +1026,7 @@ func (si *SearchIndex) ExactMatches(query string, perCategory int) []SearchIndex
 	}
 
 	var out []SearchIndexResult
+
 	out = append(out, buckets["artist"]...)
 	out = append(out, buckets["release_group"]...)
 	out = append(out, buckets["recording"]...)
@@ -1024,7 +1034,11 @@ func (si *SearchIndex) ExactMatches(query string, perCategory int) []SearchIndex
 	return out
 }
 
-func (si *SearchIndex) Search(query string, limit int) []SearchIndexResult {	if !si.IsReady() {
+// Search queries the local FTS5 index and returns matches ordered
+// by relevance (popularity-blended).  Returns nil when the index
+// hasn't finished its initial build.
+func (si *SearchIndex) Search(query string, limit int) []SearchIndexResult {
+	if !si.IsReady() {
 		return nil
 	}
 
@@ -1269,7 +1283,12 @@ func (si *SearchIndex) build(ctx context.Context) {
 			}
 
 			si.setMeta("tier2_built", time.Now().UTC().Format(time.RFC3339))
-			si.setTierStatus("Sitewide Discographies", "complete", len(newSitewide), len(newSitewide))
+			si.setTierStatus(
+				"Sitewide Discographies",
+				"complete",
+				len(newSitewide),
+				len(newSitewide),
+			)
 			si.refreshStatusCounts()
 			si.logger.Info("search index: Tier 2 complete (sitewide discographies)")
 		}
@@ -1324,6 +1343,7 @@ func (si *SearchIndex) build(ctx context.Context) {
 	} else {
 		si.setTierStatus("Popularity Backfill", "running", 0, 0)
 		si.buildTier5Popularity(ctx, indexLB)
+
 		if ctx.Err() != nil {
 			return
 		}
@@ -1984,6 +2004,7 @@ func (si *SearchIndex) prefetchArtistMetadata(
 		}
 
 		batch := mbids[i:end]
+
 		batchWG.Add(1)
 
 		go func(chunk []string) {
@@ -2931,7 +2952,10 @@ func (si *SearchIndex) GetSimilarityScores(mbids []string) map[string]int {
 	}
 
 	query := "SELECT similar_artist_mbid, MAX(score) FROM similar_artist_map WHERE similar_artist_mbid IN (" +
-		strings.Join(placeholders, ",") + ") GROUP BY similar_artist_mbid"
+		strings.Join(
+			placeholders,
+			",",
+		) + ") GROUP BY similar_artist_mbid"
 
 	rows, err := si.db.QueryContext(query, args...)
 	if err != nil {
@@ -2943,8 +2967,10 @@ func (si *SearchIndex) GetSimilarityScores(mbids []string) map[string]int {
 	result := make(map[string]int, len(mbids))
 
 	for rows.Next() {
-		var mbid string
-		var score int
+		var (
+			mbid  string
+			score int
+		)
 
 		if err := rows.Scan(&mbid, &score); err == nil {
 			result[mbid] = score

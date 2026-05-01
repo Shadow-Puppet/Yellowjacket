@@ -21,6 +21,12 @@ import (
 	"yellowjacket/backend/tracklist"
 )
 
+// errSaveBeforeLoad is returned by Save when the in-memory config
+// hasn't been hydrated from disk yet.  Prevents writing a default-
+// only struct over a real config file during abnormal lifecycle
+// sequences (failed startup, racing shutdown).
+var errSaveBeforeLoad = errors.New("refusing to save: config not loaded from disk")
+
 // Config represents the application configuration.
 type Config struct {
 	ctx       context.Context
@@ -155,7 +161,7 @@ func (c *Config) Save() error {
 	if !c.loaded {
 		// Allow the initial save when the file doesn't exist yet.
 		if _, err := os.Stat(c.filePath); err == nil {
-			return fmt.Errorf("refusing to save: config not loaded from disk")
+			return errSaveBeforeLoad
 		}
 	}
 

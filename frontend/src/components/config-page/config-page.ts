@@ -1939,10 +1939,6 @@ export class ConfigPage extends LitElement {
 
     // --- Search / Index section ---
 
-    private async pollIndexStatus(): Promise<void> {
-        // Kept as no-op — status comes via events now.
-    }
-
     private renderSearchSection() {
         const s = this.indexStatus;
 

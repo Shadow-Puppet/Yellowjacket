@@ -39,7 +39,11 @@ type MusicBrainzClient struct {
 // responses in the given Cache.  The provided rate limiter is shared
 // with all other MB consumers (e.g. artist image resolution) to
 // prevent concurrent bursts from triggering 429s.
-func NewMusicBrainzClient(cache *Cache, limiter *RateLimiter, logger *slog.Logger) *MusicBrainzClient {
+func NewMusicBrainzClient(
+	cache *Cache,
+	limiter *RateLimiter,
+	logger *slog.Logger,
+) *MusicBrainzClient {
 	mb := musicbrainzws2.NewClient(musicbrainzws2.AppInfo{
 		Name:    "YellowJacket",
 		Version: "dev",
@@ -317,6 +321,45 @@ func (c *MusicBrainzClient) BrowseReleaseGroups(
 	return out, nil
 }
 
+// LookupRelease fetches a single release by MBID (with media +
+// recordings).  Used by the autotag paste-URL escape hatch.
+// Cached for 7 days.
+func (c *MusicBrainzClient) LookupRelease(
+	ctx context.Context, mbid string,
+) (*MBRelease, error) {
+	cacheKey := "mb:lookup:release:" + mbid
+
+	if data, ok := c.cache.Get(cacheKey); ok {
+		var out MBRelease
+		if err := json.Unmarshal(data, &out); err == nil {
+			return &out, nil
+		}
+	}
+
+	if err := c.limiter.Wait(ctx); err != nil {
+		return nil, err
+	}
+
+	c.logger.Info("musicbrainz lookup release", "mbid", mbid)
+
+	r, err := c.mb.LookupRelease(
+		ctx,
+		mbtypes.MBID(mbid),
+		musicbrainzws2.IncludesFilter{
+			Includes: []string{"recordings", "media", "artist-credits", "release-groups"},
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	out := convertRelease(r)
+
+	c.cacheJSON(cacheKey, out, cacheTTLEntity, mbid, "release")
+
+	return &out, nil
+}
+
 // BrowseReleases fetches the releases for a given release group
 // MBID, including media/track information.  Cached for 7 days.
 func (c *MusicBrainzClient) BrowseReleases(
@@ -482,11 +525,12 @@ func convertReleaseGroups(rgs []musicbrainzws2.ReleaseGroup) []MBReleaseGroup {
 
 func convertRelease(r musicbrainzws2.Release) MBRelease {
 	rel := MBRelease{
-		MBID:    string(r.ID),
-		Title:   r.Title,
-		Date:    r.Date.String(),
-		Country: string(r.CountryCode),
-		Status:  r.Status,
+		MBID:         string(r.ID),
+		Title:        r.Title,
+		Date:         r.Date.String(),
+		Country:      string(r.CountryCode),
+		Status:       r.Status,
+		ArtistCredit: r.ArtistCredit.String(),
 	}
 
 	for _, m := range r.Media {

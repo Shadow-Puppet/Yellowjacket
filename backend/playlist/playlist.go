@@ -1529,6 +1529,7 @@ func (s *Service) RepopulateFromM3U() {
 			"could not get playlists dir for repopulation",
 			"err", err,
 		)
+
 		return
 	}
 
@@ -1536,6 +1537,7 @@ func (s *Service) RepopulateFromM3U() {
 	playlists, err := s.db.Queries.GetAllPlaylists(s.db.Ctx)
 	if err != nil {
 		s.logger.Warn("could not get playlists for repopulation", "err", err)
+
 		return
 	}
 
@@ -1547,18 +1549,25 @@ func (s *Service) RepopulateFromM3U() {
 	)
 	if err != nil {
 		s.logger.Warn("could not query audio files for repopulation", "err", err)
+
 		return
 	}
 
 	audioFileByPath := make(map[string]int64)
+
 	for afRows.Next() {
-		var id int64
-		var fp string
+		var (
+			id int64
+			fp string
+		)
+
 		if err := afRows.Scan(&id, &fp); err != nil {
 			continue
 		}
+
 		audioFileByPath[fp] = id
 	}
+
 	_ = afRows.Close()
 
 	knownPaths := make(map[string]struct{}, len(audioFileByPath))
@@ -1577,11 +1586,14 @@ func (s *Service) RepopulateFromM3U() {
 		if err != nil {
 			continue
 		}
+
 		var count int
 		if countRows.Next() {
 			_ = countRows.Scan(&count)
 		}
+
 		_ = countRows.Close()
+
 		if count > 0 {
 			continue
 		}
@@ -1599,6 +1611,7 @@ func (s *Service) RepopulateFromM3U() {
 				"path", m3uPath,
 				"err", err,
 			)
+
 			continue
 		}
 
@@ -1626,8 +1639,10 @@ func (s *Service) RepopulateFromM3U() {
 						"position", i,
 						"err", addErr,
 					)
+
 					continue
 				}
+
 				resolved++
 			} else {
 				// Phantom track — preserve what we have from M3U8.
@@ -1644,8 +1659,10 @@ func (s *Service) RepopulateFromM3U() {
 						"position", i,
 						"err", addErr,
 					)
+
 					continue
 				}
+
 				phantom++
 			}
 		}

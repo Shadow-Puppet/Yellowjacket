@@ -460,11 +460,11 @@ func (q *Queue) RestoreState() {
 		}
 
 		q.tracks = append(q.tracks, Track{
-			ID:           row.ID,
-			AudioFileID:  row.AudioFileID,
-			FilePath:     row.FilePath,
-			Position:     row.Position,
-			Title:        row.Title,
+			ID:               row.ID,
+			AudioFileID:      row.AudioFileID,
+			FilePath:         row.FilePath,
+			Position:         row.Position,
+			Title:            row.Title,
 			Artist:           row.Artist,
 			Album:            row.Album,
 			CoverArtPath:     coverArtURL,

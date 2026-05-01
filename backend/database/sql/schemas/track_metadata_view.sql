@@ -15,7 +15,13 @@ SELECT
          WHERE rg_sub.recording_id = r.id),
         ''
     ) AS TEXT) AS genre,
-    COALESCE(r.year, 0) AS year,
+    -- Year defaults to the release group's original release year
+    -- (MusicBrainz first-release-date) so a 1973 album shows as
+    -- 1973 even if the user owns the 2010 remaster.  Falls back
+    -- to release-group year (file tag), then to recording year.
+    -- See release_groups.original_year for full semantics.
+    COALESCE(rg.original_year, rg.year, r.year, 0) AS year,
+    COALESCE(rg.year, r.year, 0) AS release_year,
     COALESCE(r.composer, '') AS composer,
     COALESCE(ft.extension, '') AS file_type,
     af.sample_rate,

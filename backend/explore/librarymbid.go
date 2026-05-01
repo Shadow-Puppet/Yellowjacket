@@ -131,6 +131,7 @@ func (idx *LibraryMBIDIndex) AllArtistMBIDs() map[string]string {
 	return result
 }
 
+//nolint:unused // utility kept for future per-MBID existence checks.
 func (idx *LibraryMBIDIndex) exists(table, mbid string) bool {
 	//nolint:gosec // table name is hardcoded from internal callers only
 	rows, err := idx.db.QueryContext(

@@ -35,7 +35,7 @@ func (q *Queries) CountAudioFilesByLibrary(ctx context.Context, libraryID int64)
 
 const createAudioFile = `-- name: CreateAudioFile :one
 INSERT INTO audio_files (file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size, basename, library_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size, basename, library_id, play_count, last_played
+RETURNING id, file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size, basename, library_id, play_count, last_played, tag_status, group_key
 `
 
 type CreateAudioFileParams struct {
@@ -82,6 +82,71 @@ func (q *Queries) CreateAudioFile(ctx context.Context, arg CreateAudioFileParams
 		&i.LibraryID,
 		&i.PlayCount,
 		&i.LastPlayed,
+		&i.TagStatus,
+		&i.GroupKey,
+	)
+	return i, err
+}
+
+const createAudioFileWithGroupKey = `-- name: CreateAudioFileWithGroupKey :one
+INSERT INTO audio_files (
+  file_path, length_milliseconds, file_type_id, recording_id,
+  sample_rate, bit_depth, channels, bitrate, file_size, basename,
+  library_id, group_key, tag_status
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size, basename, library_id, play_count, last_played, tag_status, group_key
+`
+
+type CreateAudioFileWithGroupKeyParams struct {
+	FilePath           string
+	LengthMilliseconds int64
+	FileTypeID         int64
+	RecordingID        int64
+	SampleRate         int64
+	BitDepth           int64
+	Channels           int64
+	Bitrate            int64
+	FileSize           int64
+	Basename           string
+	LibraryID          int64
+	GroupKey           string
+	TagStatus          string
+}
+
+func (q *Queries) CreateAudioFileWithGroupKey(ctx context.Context, arg CreateAudioFileWithGroupKeyParams) (AudioFile, error) {
+	row := q.db.QueryRowContext(ctx, createAudioFileWithGroupKey,
+		arg.FilePath,
+		arg.LengthMilliseconds,
+		arg.FileTypeID,
+		arg.RecordingID,
+		arg.SampleRate,
+		arg.BitDepth,
+		arg.Channels,
+		arg.Bitrate,
+		arg.FileSize,
+		arg.Basename,
+		arg.LibraryID,
+		arg.GroupKey,
+		arg.TagStatus,
+	)
+	var i AudioFile
+	err := row.Scan(
+		&i.ID,
+		&i.FilePath,
+		&i.LengthMilliseconds,
+		&i.FileTypeID,
+		&i.RecordingID,
+		&i.SampleRate,
+		&i.BitDepth,
+		&i.Channels,
+		&i.Bitrate,
+		&i.FileSize,
+		&i.Basename,
+		&i.LibraryID,
+		&i.PlayCount,
+		&i.LastPlayed,
+		&i.TagStatus,
+		&i.GroupKey,
 	)
 	return i, err
 }
@@ -138,7 +203,7 @@ func (q *Queries) GetAllAudioFilePaths(ctx context.Context) ([]GetAllAudioFilePa
 }
 
 const getAllAudioFiles = `-- name: GetAllAudioFiles :many
-SELECT id, file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size, basename, library_id, play_count, last_played FROM audio_files
+SELECT id, file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size, basename, library_id, play_count, last_played, tag_status, group_key FROM audio_files
 `
 
 func (q *Queries) GetAllAudioFiles(ctx context.Context) ([]AudioFile, error) {
@@ -165,6 +230,8 @@ func (q *Queries) GetAllAudioFiles(ctx context.Context) ([]AudioFile, error) {
 			&i.LibraryID,
 			&i.PlayCount,
 			&i.LastPlayed,
+			&i.TagStatus,
+			&i.GroupKey,
 		); err != nil {
 			return nil, err
 		}
@@ -460,7 +527,7 @@ func (q *Queries) GetAllTracksWithFullMetadataByLibrary(ctx context.Context, lib
 }
 
 const getAudioFile = `-- name: GetAudioFile :one
-SELECT id, file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size, basename, library_id, play_count, last_played FROM audio_files 
+SELECT id, file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size, basename, library_id, play_count, last_played, tag_status, group_key FROM audio_files 
 WHERE id = ? LIMIT 1
 `
 
@@ -482,12 +549,14 @@ func (q *Queries) GetAudioFile(ctx context.Context, id int64) (AudioFile, error)
 		&i.LibraryID,
 		&i.PlayCount,
 		&i.LastPlayed,
+		&i.TagStatus,
+		&i.GroupKey,
 	)
 	return i, err
 }
 
 const getAudioFileByPath = `-- name: GetAudioFileByPath :one
-SELECT id, file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size, basename, library_id, play_count, last_played FROM audio_files
+SELECT id, file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size, basename, library_id, play_count, last_played, tag_status, group_key FROM audio_files
 WHERE file_path = ? LIMIT 1
 `
 
@@ -509,12 +578,26 @@ func (q *Queries) GetAudioFileByPath(ctx context.Context, filePath string) (Audi
 		&i.LibraryID,
 		&i.PlayCount,
 		&i.LastPlayed,
+		&i.TagStatus,
+		&i.GroupKey,
 	)
 	return i, err
 }
 
+const getAudioFileGroupKey = `-- name: GetAudioFileGroupKey :one
+SELECT group_key FROM audio_files
+WHERE id = ? LIMIT 1
+`
+
+func (q *Queries) GetAudioFileGroupKey(ctx context.Context, id int64) (string, error) {
+	row := q.db.QueryRowContext(ctx, getAudioFileGroupKey, id)
+	var group_key string
+	err := row.Scan(&group_key)
+	return group_key, err
+}
+
 const getAudioFilesByLibrary = `-- name: GetAudioFilesByLibrary :many
-SELECT id, file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size, basename, library_id, play_count, last_played FROM audio_files WHERE library_id = ?
+SELECT id, file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size, basename, library_id, play_count, last_played, tag_status, group_key FROM audio_files WHERE library_id = ?
 `
 
 func (q *Queries) GetAudioFilesByLibrary(ctx context.Context, libraryID int64) ([]AudioFile, error) {
@@ -541,6 +624,8 @@ func (q *Queries) GetAudioFilesByLibrary(ctx context.Context, libraryID int64) (
 			&i.LibraryID,
 			&i.PlayCount,
 			&i.LastPlayed,
+			&i.TagStatus,
+			&i.GroupKey,
 		); err != nil {
 			return nil, err
 		}
@@ -769,7 +854,7 @@ func (q *Queries) GetAudioFilesByReleaseGroupByLibrary(ctx context.Context, arg 
 }
 
 const getAudioFilesNeedingMetadata = `-- name: GetAudioFilesNeedingMetadata :many
-SELECT id, file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size, basename, library_id, play_count, last_played FROM audio_files
+SELECT id, file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size, basename, library_id, play_count, last_played, tag_status, group_key FROM audio_files
 WHERE recording_id = 0
 `
 
@@ -797,6 +882,8 @@ func (q *Queries) GetAudioFilesNeedingMetadata(ctx context.Context) ([]AudioFile
 			&i.LibraryID,
 			&i.PlayCount,
 			&i.LastPlayed,
+			&i.TagStatus,
+			&i.GroupKey,
 		); err != nil {
 			return nil, err
 		}
@@ -997,6 +1084,20 @@ func (q *Queries) SearchAudioFilesByBasename(ctx context.Context, arg SearchAudi
 		return nil, err
 	}
 	return items, nil
+}
+
+const setAudioFileGroupKey = `-- name: SetAudioFileGroupKey :exec
+UPDATE audio_files SET group_key = ? WHERE id = ?
+`
+
+type SetAudioFileGroupKeyParams struct {
+	GroupKey string
+	ID       int64
+}
+
+func (q *Queries) SetAudioFileGroupKey(ctx context.Context, arg SetAudioFileGroupKeyParams) error {
+	_, err := q.db.ExecContext(ctx, setAudioFileGroupKey, arg.GroupKey, arg.ID)
+	return err
 }
 
 const updateAudioFile = `-- name: UpdateAudioFile :exec

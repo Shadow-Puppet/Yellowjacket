@@ -49,7 +49,7 @@ export class TopResultsRow extends LitElement {
     // Per-card state: cover images.
     private images = new Map<string, string>();
 
-    static styles = [
+    static override styles = [
         designTokens,
         css`
             :host {
@@ -177,7 +177,7 @@ export class TopResultsRow extends LitElement {
         `,
     ];
 
-    updated(changed: Map<string, unknown>) {
+    override updated(changed: Map<string, unknown>) {
         if (changed.has('results')) {
             this.loadCardData();
         }
@@ -227,7 +227,7 @@ export class TopResultsRow extends LitElement {
         );
     }
 
-    render() {
+    override render() {
         if (!this.results?.length) return nothing;
 
         return html`

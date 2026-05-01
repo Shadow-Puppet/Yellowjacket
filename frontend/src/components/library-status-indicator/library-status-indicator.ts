@@ -203,7 +203,7 @@ export class LibraryStatusIndicator extends LitElement {
 }
 
 function capitalize(s: string): string {
-    return s.length > 0 ? s[0].toUpperCase() + s.slice(1) : s;
+    return s.length > 0 ? (s[0] ?? '').toUpperCase() + s.slice(1) : s;
 }
 
 declare global {
