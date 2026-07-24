@@ -37,6 +37,9 @@ type RemovalHooks struct {
 	StopPlayback func()
 	// CompactQueue reloads queue state after cascade deletes.
 	CompactQueue func()
+	// PostRemove runs after the removal commits, for cross-cutting
+	// invalidation (e.g. clearing library-sync "ready" markers).
+	PostRemove func()
 }
 
 // SetRemovalHooks provides optional hooks for cross-cutting
@@ -459,6 +462,12 @@ func (l *Library) RemoveLibrary(id int64) (*RemovalSummary, error) {
 	// 21. Post-commit: Compact queue.
 	if l.removalHooks.CompactQueue != nil {
 		l.removalHooks.CompactQueue()
+	}
+
+	// 22. Post-commit: invalidate library-sync markers so the gated
+	// index/lyric re-sync runs on the next launch.
+	if l.removalHooks.PostRemove != nil {
+		l.removalHooks.PostRemove()
 	}
 
 	summary := &RemovalSummary{

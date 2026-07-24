@@ -1,5 +1,7 @@
 package autotag
 
+import "slices"
+
 // alignTitleFloor is the minimum title similarity required to
 // pair a local file with a candidate track at all.  Below this,
 // even the best available pair is treated as no pair: the local
@@ -10,14 +12,28 @@ package autotag
 // happens to share a track number stays in its own group.
 const alignTitleFloor = 0.30
 
-// AlignTracks pairs local tracks with candidate tracks using a
-// greedy best-score algorithm: repeatedly pick the (local, cand)
-// pair with the highest trackDistance that hasn't already been
-// claimed.  Not optimal (Hungarian would be), but good enough for
-// the small cardinalities we see (album tracks, ~10-50) and much
-// simpler.
+// alignPair carries the per-combination scores AlignTracks computes
+// once per (local, candidate) pair.
+type alignPair struct {
+	li     int
+	ci     int
+	score  float64
+	title  float64
+	length float64
+}
+
+// AlignTracks pairs local tracks with candidate tracks in two
+// passes:
 //
-// Pairs whose title similarity is below alignTitleFloor are
+//  1. Recording-MBID locks: a local track whose RecordingMBID equals
+//     a candidate track's MBID is the same recording by definition —
+//     it pairs unconditionally, regardless of how the titles compare.
+//  2. Greedy best-score: repeatedly pick the remaining (local, cand)
+//     pair with the highest track score.  Not optimal (Hungarian
+//     would be), but good enough for the small cardinalities we see
+//     (album tracks, ~10-50) and much simpler.
+//
+// Greedy pairs whose title similarity is below alignTitleFloor are
 // rejected: the local stays "unmatched" and the candidate slot
 // surfaces as "missing".  This lets a wrong-track-number-but-
 // matching-title file pair correctly while keeping a totally
@@ -25,44 +41,72 @@ const alignTitleFloor = 0.30
 //
 // Returns one TrackAlignment per local track (status = matched,
 // mismatched, or unmatched) plus additional missing alignments
-// for candidate tracks with no local file.  The caller sums Score
-// fields to get a release-level score.
+// for candidate tracks with no local file.
 func AlignTracks(locals []LocalTrack, cands []CandidateTrack) []TrackAlignment {
-	type pair struct {
-		li    int
-		ci    int
-		score float64
-		title float64
+	localUsed := make([]bool, len(locals))
+	candUsed := make([]bool, len(cands))
+	alignments := make([]TrackAlignment, len(locals))
+	localMatched := 0
+
+	// Pass 1: recording-MBID locks.
+	for li, local := range locals {
+		if local.RecordingMBID == "" {
+			continue
+		}
+
+		for ci, cand := range cands {
+			if candUsed[ci] || cand.MBID == "" || cand.MBID != local.RecordingMBID {
+				continue
+			}
+
+			localUsed[li] = true
+			candUsed[ci] = true
+			localMatched++
+			alignments[li] = mkAlignment(li, local, cand, alignPair{
+				title:  titleSimilarity(local.Title, cand.Title),
+				length: lengthScore(local.LengthMillis, cand.LengthMillis),
+			}, true)
+
+			break
+		}
 	}
 
-	// Score every (local, cand) combination.
-	pairs := make([]pair, 0, len(locals)*len(cands))
+	// Pass 2: greedy best-score over the remaining combinations.
+	pairs := make([]alignPair, 0, len(locals)*len(cands))
 
 	for li, local := range locals {
+		if localUsed[li] {
+			continue
+		}
+
 		for ci, cand := range cands {
-			pairs = append(pairs, pair{
-				li:    li,
-				ci:    ci,
-				score: trackDistance(local, cand),
-				title: titleSimilarity(local.Title, cand.Title),
+			if candUsed[ci] {
+				continue
+			}
+
+			title := titleSimilarity(local.Title, cand.Title)
+			length := lengthScore(local.LengthMillis, cand.LengthMillis)
+			pairs = append(pairs, alignPair{
+				li:     li,
+				ci:     ci,
+				score:  combineTrackScore(title, length, trackNumberOK(local, cand)),
+				title:  title,
+				length: length,
 			})
 		}
 	}
 
-	// Sort descending by score — pick best pairs first.  Insertion
-	// sort keeps the dependency surface zero; N^2 here is fine for
-	// album-sized inputs.
-	for i := 1; i < len(pairs); i++ {
-		for j := i; j > 0 && pairs[j].score > pairs[j-1].score; j-- {
-			pairs[j], pairs[j-1] = pairs[j-1], pairs[j]
+	// Sort descending by score — pick best pairs first.
+	slices.SortStableFunc(pairs, func(a, b alignPair) int {
+		switch {
+		case a.score > b.score:
+			return -1
+		case a.score < b.score:
+			return 1
+		default:
+			return 0
 		}
-	}
-
-	localUsed := make([]bool, len(locals))
-	candUsed := make([]bool, len(cands))
-	alignments := make([]TrackAlignment, len(locals))
-
-	localMatched := 0
+	})
 
 	for _, p := range pairs {
 		if localMatched == len(locals) {
@@ -84,34 +128,7 @@ func AlignTracks(locals []LocalTrack, cands []CandidateTrack) []TrackAlignment {
 		localUsed[p.li] = true
 		candUsed[p.ci] = true
 		localMatched++
-
-		l := locals[p.li]
-		c := cands[p.ci]
-
-		status := AlignmentMatched
-		if p.title < titleReject {
-			status = AlignmentMismatched
-		}
-
-		delta := l.LengthMillis - c.LengthMillis
-		if delta < 0 {
-			delta = -delta
-		}
-
-		alignments[p.li] = TrackAlignment{
-			LocalIndex:          p.li,
-			LocalTitle:          l.Title,
-			LocalLengthMillis:   l.LengthMillis,
-			CandidatePosition:   c.Position,
-			CandidateDiscNumber: c.DiscNumber,
-			CandidateTitle:      c.Title,
-			CandidateMBID:       c.MBID,
-			CandidateLength:     c.LengthMillis,
-			TitleScore:          p.title,
-			LengthDeltaMs:       delta,
-			TrackNumberOK:       l.TrackNumber > 0 && l.TrackNumber == c.Position,
-			Status:              status,
-		}
+		alignments[p.li] = mkAlignment(p.li, locals[p.li], cands[p.ci], p, false)
 	}
 
 	// Local tracks left unclaimed → folder has them, candidate
@@ -150,4 +167,39 @@ func AlignTracks(locals []LocalTrack, cands []CandidateTrack) []TrackAlignment {
 	}
 
 	return alignments
+}
+
+// mkAlignment builds the matched/mismatched alignment for one
+// claimed (local, candidate) pair.  idMatch pairs are always
+// "matched" — same recording MBID means same recording, however
+// the titles are spelled.
+func mkAlignment(
+	li int, l LocalTrack, c CandidateTrack, p alignPair, idMatch bool,
+) TrackAlignment {
+	status := AlignmentMatched
+	if !idMatch && p.title < titleReject {
+		status = AlignmentMismatched
+	}
+
+	delta := l.LengthMillis - c.LengthMillis
+	if delta < 0 {
+		delta = -delta
+	}
+
+	return TrackAlignment{
+		LocalIndex:          li,
+		LocalTitle:          l.Title,
+		LocalLengthMillis:   l.LengthMillis,
+		CandidatePosition:   c.Position,
+		CandidateDiscNumber: c.DiscNumber,
+		CandidateTitle:      c.Title,
+		CandidateMBID:       c.MBID,
+		CandidateLength:     c.LengthMillis,
+		TitleScore:          p.title,
+		LengthScore:         p.length,
+		LengthDeltaMs:       delta,
+		TrackNumberOK:       trackNumberOK(l, c),
+		IDMatch:             idMatch,
+		Status:              status,
+	}
 }

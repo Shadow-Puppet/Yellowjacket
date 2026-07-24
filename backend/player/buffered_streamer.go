@@ -19,6 +19,12 @@ import (
 // temporarily empty (read-ahead hasn't caught up), Stream returns
 // silence rather than blocking or signaling end-of-stream.
 type BufferedStreamer struct {
+	// srcMu serializes all access to the underlying source. The
+	// read-ahead goroutine holds it while calling source.Stream;
+	// callers that need to Seek the source must hold it too (via
+	// LockSource/UnlockSource) so the non-thread-safe decoder is
+	// never read and seeked concurrently.
+	srcMu   sync.Mutex
 	mu      sync.Mutex
 	source  beep.Streamer
 	ring    [][2]float64
@@ -89,9 +95,12 @@ func (bs *BufferedStreamer) readAhead() {
 
 		bs.mu.Unlock()
 
-		// Read from source WITHOUT holding the lock so disk I/O
-		// does not block the speaker goroutine.
+		// Read from source WITHOUT holding bs.mu so disk I/O does
+		// not block the speaker goroutine. srcMu is held to keep
+		// this read from racing a concurrent source Seek.
+		bs.srcMu.Lock()
 		n, ok := bs.source.Stream(tmp[:toRead])
+		bs.srcMu.Unlock()
 
 		if n > 0 {
 			bs.mu.Lock()
@@ -188,6 +197,20 @@ func (bs *BufferedStreamer) Flush() {
 	bs.readPos = 0
 	bs.writPos = 0
 	bs.count = 0
+}
+
+// LockSource blocks the read-ahead goroutine from touching the
+// underlying source, giving the caller exclusive access so it can
+// safely Seek the non-thread-safe decoder. Every LockSource must
+// be paired with an UnlockSource.
+func (bs *BufferedStreamer) LockSource() {
+	bs.srcMu.Lock()
+}
+
+// UnlockSource releases the exclusive source access acquired by
+// LockSource, allowing the read-ahead goroutine to resume.
+func (bs *BufferedStreamer) UnlockSource() {
+	bs.srcMu.Unlock()
 }
 
 // Close signals the read-ahead goroutine to stop. It is safe to

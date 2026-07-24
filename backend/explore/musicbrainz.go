@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 	"unicode"
 
@@ -18,6 +19,12 @@ const (
 	// cacheTTLEntity is the TTL for lookup/browse results (entity data
 	// changes rarely).
 	cacheTTLEntity = 7 * 24 * time.Hour
+	// cacheTTLReleases is the TTL for a release group's releases +
+	// tracklists.  This data is effectively immutable once published, so
+	// it's cached far longer than other entities: it's the local store
+	// that keeps an album page's cold fetch a once-per-quarter event
+	// rather than a weekly one.
+	cacheTTLReleases = 90 * 24 * time.Hour
 )
 
 // MusicBrainzClient wraps the musicbrainzws2 library with a local
@@ -360,18 +367,101 @@ func (c *MusicBrainzClient) LookupRelease(
 	return &out, nil
 }
 
-// BrowseReleases fetches the releases for a given release group
-// MBID, including media/track information.  Cached for 7 days.
-func (c *MusicBrainzClient) BrowseReleases(
-	ctx context.Context, releaseGroupMBID string,
-) ([]MBRelease, error) {
-	cacheKey := "mb:browse:releases:" + releaseGroupMBID
+// MBRecordingRelease is a slim reference to one release a recording
+// appears on — enough for the autotagger to pick a representative
+// release and then LookupRelease it in full.
+type MBRecordingRelease struct {
+	MBID   string `json:"mbid"`
+	Title  string `json:"title"`
+	Status string `json:"status"`
+	Date   string `json:"date"`
+}
+
+// LookupRecordingReleases fetches the releases a recording appears on
+// (id / title / status / date only).  Used by the autotag recording-
+// search path to resolve a picked recording to a concrete release.
+// Cached for 7 days.
+func (c *MusicBrainzClient) LookupRecordingReleases(
+	ctx context.Context, recordingMBID string,
+) ([]MBRecordingRelease, error) {
+	cacheKey := "mb:lookup:recording-releases:" + recordingMBID
 
 	if data, ok := c.cache.Get(cacheKey); ok {
-		var out []MBRelease
+		var out []MBRecordingRelease
 		if err := json.Unmarshal(data, &out); err == nil {
 			return out, nil
 		}
+	}
+
+	if err := c.limiter.Wait(ctx); err != nil {
+		return nil, err
+	}
+
+	c.logger.Info("musicbrainz lookup recording releases", "mbid", recordingMBID)
+
+	rec, err := c.mb.LookupRecording(
+		ctx,
+		mbtypes.MBID(recordingMBID),
+		musicbrainzws2.IncludesFilter{Includes: []string{"releases"}},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]MBRecordingRelease, 0, len(rec.Releases))
+	for _, rel := range rec.Releases {
+		out = append(out, MBRecordingRelease{
+			MBID:   string(rel.ID),
+			Title:  rel.Title,
+			Status: rel.Status,
+			Date:   rel.Date.String(),
+		})
+	}
+
+	c.cacheJSON(cacheKey, out, cacheTTLEntity, recordingMBID, "recording")
+
+	return out, nil
+}
+
+// BrowseReleases fetches the releases for a given release group
+// MBID, including media/track information.  Cached for 7 days.
+// browseReleasesCacheKey returns the response-cache key for a release
+// group's releases.
+func browseReleasesCacheKey(releaseGroupMBID string) string {
+	return "mb:browse:releases:" + releaseGroupMBID
+}
+
+// BrowseReleasesCached returns a release group's releases from the local
+// response cache only, never hitting the network.  The bool reports
+// whether a fresh (unexpired) cache entry was found.  Used by the album
+// page's local-first path so a cold fetch can be deferred to the
+// background instead of blocking the request.
+func (c *MusicBrainzClient) BrowseReleasesCached(
+	releaseGroupMBID string,
+) ([]MBRelease, bool) {
+	data, ok := c.cache.Get(browseReleasesCacheKey(releaseGroupMBID))
+	if !ok {
+		return nil, false
+	}
+
+	var out []MBRelease
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, false
+	}
+
+	return out, true
+}
+
+// BrowseReleases fetches all releases (with recordings + media) for a
+// release group, serving from the local response cache when warm and
+// otherwise hitting MusicBrainz and caching the result.
+func (c *MusicBrainzClient) BrowseReleases(
+	ctx context.Context, releaseGroupMBID string,
+) ([]MBRelease, error) {
+	cacheKey := browseReleasesCacheKey(releaseGroupMBID)
+
+	if out, ok := c.BrowseReleasesCached(releaseGroupMBID); ok {
+		return out, nil
 	}
 
 	if err := c.limiter.Wait(ctx); err != nil {
@@ -395,7 +485,7 @@ func (c *MusicBrainzClient) BrowseReleases(
 
 	out := convertReleases(result.Releases)
 
-	c.cacheJSON(cacheKey, out, cacheTTLEntity, releaseGroupMBID, "release-group")
+	c.cacheJSON(cacheKey, out, cacheTTLReleases, releaseGroupMBID, "release-group")
 
 	return out, nil
 }
@@ -534,7 +624,19 @@ func convertRelease(r musicbrainzws2.Release) MBRelease {
 	}
 
 	for _, m := range r.Media {
+		// Skip video media outright — DVD/Blu-ray bonus discs
+		// inflate track counts and wreck track-count-based scoring
+		// (beets ignores video/data tracks for the same reason).
+		if isVideoFormat(m.Format) {
+			continue
+		}
+
 		for _, t := range m.Tracks {
+			// Same for individual video recordings on audio media.
+			if t.Recording.IsVideo {
+				continue
+			}
+
 			// Use the recording MBID, not the track MBID.  Tracks
 			// and recordings have distinct MBIDs in MusicBrainz:
 			// a track is the placement of a recording on a specific
@@ -563,6 +665,25 @@ func convertRelease(r musicbrainzws2.Release) MBRelease {
 	}
 
 	return rel
+}
+
+// isVideoFormat reports whether a medium's format string names a
+// video carrier.  "DVD-Audio" stays audio; bare "DVD", "DVD-Video",
+// "Blu-ray", "HD-DVD", "VHS", "VCD"/"SVCD" are video.
+func isVideoFormat(format string) bool {
+	f := strings.ToLower(format)
+
+	if strings.Contains(f, "dvd-audio") {
+		return false
+	}
+
+	for _, v := range []string{"dvd", "blu-ray", "bluray", "hd-dvd", "vhs", "vcd"} {
+		if strings.Contains(f, v) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func convertReleases(releases []musicbrainzws2.Release) []MBRelease {

@@ -30,12 +30,44 @@ import (
 var schemas embed.FS
 
 // DB wraps the SQLite database connection and queries.
+//
+// Two handles back a single database file.  db is the single-writer
+// connection (MaxOpenConns 1) used for every write and every
+// transaction.  readDB is a small multi-connection, query-only pool
+// used for standalone reads.  Under WAL, readers run concurrently
+// with the writer, so a long background write (index build, dump
+// patch) no longer blocks interactive searches — the reason searches
+// stalled for seconds was that the file was in rollback-journal mode
+// with a single shared connection, so any writer locked out readers.
 type DB struct {
-	db      *sql.DB
-	Ctx     context.Context
+	db     *sql.DB
+	readDB *sql.DB
+	Ctx    context.Context
+	// Queries runs on the single-writer connection.  Use it for every
+	// write and for any read that must observe an uncommitted write made
+	// earlier in the same logical operation.
 	Queries *sqlcgen.Queries
-	logger  *slog.Logger
+	// ReadQueries runs on the query-only WAL read pool, so standalone
+	// reads proceed concurrently with a long background write instead of
+	// queueing behind it on the single writer.  It observes only
+	// committed data.  In tests (no read pool) it aliases Queries.
+	ReadQueries *sqlcgen.Queries
+	logger      *slog.Logger
 }
+
+// Data-source names.  modernc.org/sqlite only honours PRAGMAs passed
+// as `_pragma=name(value)` — the mattn-style `_journal_mode=WAL`
+// form is silently ignored, which is why WAL was never actually on.
+const (
+	writeDSNParams = "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
+	readDSNParams  = "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)" +
+		"&_pragma=query_only(true)&_pragma=synchronous(NORMAL)" +
+		"&_pragma=cache_size(-8000)&_pragma=mmap_size(67108864)"
+	// readPoolConns bounds concurrent read connections.  A handful is
+	// plenty for interactive search + art/lookup fan-out and keeps WAL
+	// reader overhead small.
+	readPoolConns = 4
+)
 
 // NewDB opens the database and applies schema migrations.
 func NewDB(logger *slog.Logger) (*DB, error) {
@@ -52,7 +84,7 @@ func NewDB(logger *slog.Logger) (*DB, error) {
 
 	logger.Debug("opening sqlite database", "filepath", sqliteDBFilePath)
 
-	db, err := sql.Open("sqlite", sqliteDBFilePath+"?_busy_timeout=5000&_journal_mode=WAL")
+	db, err := sql.Open("sqlite", sqliteDBFilePath+writeDSNParams)
 	if err != nil {
 		return nil, fmt.Errorf("could not connect to sqlite database: %w", err)
 	}
@@ -126,12 +158,35 @@ func NewDB(logger *slog.Logger) (*DB, error) {
 	// Get generated queries
 	queries := sqlcgen.New(db)
 
+	// Open a separate query-only read pool.  The write handle above
+	// has already converted the file to WAL, so these connections read
+	// a consistent snapshot concurrently with in-flight writes.
+	readDB, err := sql.Open("sqlite", sqliteDBFilePath+readDSNParams)
+	if err != nil {
+		return nil, fmt.Errorf("could not open read pool: %w", err)
+	}
+
+	readDB.SetMaxOpenConns(readPoolConns)
+
 	return &DB{
-		db:      db,
-		Ctx:     dbCtx,
-		Queries: queries,
-		logger:  logger,
+		db:          db,
+		readDB:      readDB,
+		Ctx:         dbCtx,
+		Queries:     queries,
+		ReadQueries: sqlcgen.New(readDB),
+		logger:      logger,
 	}, err
+}
+
+// reader returns the handle standalone reads should use: the
+// query-only read pool when present, else the write handle (tests
+// share one in-memory connection, which cannot be reopened).
+func (d *DB) reader() *sql.DB {
+	if d.readDB != nil {
+		return d.readDB
+	}
+
+	return d.db
 }
 
 // BeginTx starts a new database transaction.
@@ -144,9 +199,20 @@ func (d *DB) ExecContext(query string, args ...any) (sql.Result, error) {
 	return d.db.ExecContext(d.Ctx, query, args...)
 }
 
-// QueryContext executes a query that returns rows.
+// QueryContext executes a query that returns rows.  Reads run on the
+// query-only read pool so they proceed concurrently with writes under
+// WAL instead of queueing behind the single writer connection.
 func (d *DB) QueryContext(query string, args ...any) (*sql.Rows, error) {
-	return d.db.QueryContext(d.Ctx, query, args...)
+	return d.reader().QueryContext(d.Ctx, query, args...)
+}
+
+// QueryContextWith executes a query that returns rows using a
+// caller-supplied context instead of the DB's lifecycle context.
+// This lets an individual query (e.g. a superseded search) be
+// cancelled independently.  Like QueryContext it runs on the read
+// pool.
+func (d *DB) QueryContextWith(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	return d.reader().QueryContext(ctx, query, args...)
 }
 
 // Logger returns the structured logger bound to this DB. Callers can
@@ -976,6 +1042,468 @@ func runMigrations(
 		}
 	}
 
+	if version < 37 { //nolint:mnd
+		if err := migration37ExploreFTSDiacritics(ctx, db, logger); err != nil {
+			return err
+		}
+	}
+
+	if version < 38 { //nolint:mnd
+		if err := migration38TaggingCandidates(ctx, db, logger); err != nil {
+			return err
+		}
+	}
+
+	if version < 39 { //nolint:mnd
+		if err := migration39LyricsIndex(ctx, db, logger); err != nil {
+			return err
+		}
+	}
+
+	if version < 40 { //nolint:mnd
+		if err := migration40ExploreExactMatchIndexes(ctx, db, logger); err != nil {
+			return err
+		}
+	}
+
+	if version < 41 { //nolint:mnd
+		if err := migration41ExploreChampionFTS(ctx, db, logger); err != nil {
+			return err
+		}
+	}
+
+	if version < 42 { //nolint:mnd
+		if err := migration42ReleaseToRG(ctx, db, logger); err != nil {
+			return err
+		}
+	}
+
+	if version < 43 { //nolint:mnd
+		if err := migration43MergeArtistCredits(ctx, db, logger); err != nil {
+			return err
+		}
+	}
+
+	if version < 44 { //nolint:mnd
+		if err := migration44ExploreCAAReleaseIndex(ctx, db, logger); err != nil {
+			return err
+		}
+	}
+
+	if version < 45 { //nolint:mnd
+		if err := migration45Analyze(ctx, db, logger); err != nil {
+			return err
+		}
+	}
+
+	if version < 46 { //nolint:mnd
+		if err := migration46SmartSnapshot(ctx, db, logger); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migration46SmartSnapshot adds the smart_snapshot_at column to the
+// playlists table. Smart playlists now materialize their evaluated
+// membership into playlist_tracks and only re-evaluate on demand; the
+// timestamp records when that snapshot was last taken (NULL means the
+// playlist has never been materialized, so it is backfilled on first
+// open).
+func migration46SmartSnapshot(
+	ctx context.Context,
+	db *sql.DB,
+	logger *slog.Logger,
+) error {
+	logger.Info("applying migration 46: smart playlist snapshot column")
+
+	if _, err := db.ExecContext(ctx,
+		`ALTER TABLE playlists
+		 ADD COLUMN smart_snapshot_at DATETIME`,
+	); err != nil {
+		if !isDuplicateColumnErr(err) {
+			return fmt.Errorf(
+				"migration 46: could not add smart_snapshot_at column: %w",
+				err,
+			)
+		}
+	}
+
+	if _, err := db.ExecContext(
+		ctx, "PRAGMA user_version = 46",
+	); err != nil {
+		return fmt.Errorf(
+			"migration 46: set user_version: %w", err,
+		)
+	}
+
+	logger.Info("migration 46 complete")
+
+	return nil
+}
+
+// migration45Analyze runs ANALYZE so SQLite's query planner has real
+// table/index statistics.  Without stats the planner guesses from row
+// counts alone and mis-chose indexes on the ~2M-row explore_index — e.g.
+// the top-result parent-release lookup scanned all 400k release_group
+// rows via idx_explore_index_entity_pop instead of seeking the new
+// idx_explore_caa_release, costing seconds per search.  ANALYZE populates
+// sqlite_stat1 (a one-time ~1.5s scan) and the planner then picks the
+// right index for that query and every other query on these large tables.
+func migration45Analyze(
+	ctx context.Context,
+	db *sql.DB,
+	logger *slog.Logger,
+) error {
+	logger.Info("applying migration 45: ANALYZE for query planner statistics")
+
+	if _, err := db.ExecContext(ctx, "ANALYZE"); err != nil {
+		return fmt.Errorf("migration 45: analyze: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx, "PRAGMA user_version = 45"); err != nil {
+		return fmt.Errorf("migration 45: set user_version: %w", err)
+	}
+
+	logger.Info("migration 45 complete")
+
+	return nil
+}
+
+// migration44ExploreCAAReleaseIndex adds a partial index on
+// caa_release_mbid so the top-result resolver's parent-release-group
+// lookup (SearchIndex.ReleaseGroupMBIDsForCAAReleaseMBIDs) seeks the
+// index instead of scanning every release_group row in explore_index
+// (~150k) on the hot search path.  The index is partial, mirroring the
+// query's own filter (entity_type = 'release_group' AND
+// caa_release_mbid is non-empty), so it stays small and covers exactly the
+// rows that lookup can match.  Without it, a generic query whose top
+// results include recordings with cover art (e.g. "big") spends
+// seconds in this scan.
+func migration44ExploreCAAReleaseIndex(
+	ctx context.Context,
+	db *sql.DB,
+	logger *slog.Logger,
+) error {
+	logger.Info("applying migration 44: explore caa_release_mbid index")
+
+	if _, err := db.ExecContext(ctx, `
+		CREATE INDEX IF NOT EXISTS idx_explore_caa_release
+		ON explore_index(caa_release_mbid)
+		WHERE entity_type = 'release_group' AND caa_release_mbid != ''
+	`); err != nil {
+		return fmt.Errorf("migration 44: create caa_release index: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx, "PRAGMA user_version = 44"); err != nil {
+		return fmt.Errorf("migration 44: set user_version: %w", err)
+	}
+
+	logger.Info("migration 44 complete")
+
+	return nil
+}
+
+// migration43MergeArtistCredits repairs artist rows that were created
+// from full credit strings.  Before the scanner resolved a track's
+// primary artist, a credit like "Lana Del Rey ft. Sean Lennon" was
+// stored as its own artists row and stamped with the primary artist's
+// single MBID — so one MusicBrainz artist fanned out into many rows that
+// shared an MBID, and the explore index (last-write-wins per MBID) then
+// displayed a featured-credit string as the artist's name.
+//
+// This collapses every set of artists rows that share an MBID into the
+// one "clean" member (a name with no featuring clause), repoints the
+// artist_credit_artist links, deletes the redundant rows, and refreshes
+// the explore index's artist titles from the survivors.  Clusters with
+// no clean member (all names carry a marker) are left untouched.
+func migration43MergeArtistCredits(
+	ctx context.Context,
+	db *sql.DB,
+	logger *slog.Logger,
+) error {
+	logger.Info("applying migration 43: merge credit-string artists")
+
+	// Map each redundant artist row to the clean canonical row for its
+	// MBID.  "Clean" = a name carrying no featuring marker; the lowest
+	// id among those is the canonical survivor.
+	if _, err := db.ExecContext(ctx, `
+		CREATE TEMP TABLE artist_merge_map AS
+		SELECT a.id AS dirty_id, canon.canon_id AS canon_id
+		FROM artists a
+		JOIN (
+			SELECT mbid, MIN(id) AS canon_id
+			FROM artists
+			WHERE mbid IS NOT NULL AND mbid != ''
+			  AND lower(name) NOT LIKE '% feat %'
+			  AND lower(name) NOT LIKE '% feat. %'
+			  AND lower(name) NOT LIKE '% featuring %'
+			  AND lower(name) NOT LIKE '% ft %'
+			  AND lower(name) NOT LIKE '% ft. %'
+			GROUP BY mbid
+		) canon ON canon.mbid = a.mbid
+		WHERE a.id != canon.canon_id
+	`); err != nil {
+		return fmt.Errorf("migration 43: build merge map: %w", err)
+	}
+
+	// Drop links that would collide with an existing (canonical, credit)
+	// link after repointing — the unique index would otherwise reject
+	// the UPDATE.
+	if _, err := db.ExecContext(ctx, `
+		DELETE FROM artist_credit_artist
+		WHERE id IN (
+			SELECT aca.id
+			FROM artist_credit_artist aca
+			JOIN artist_merge_map m ON m.dirty_id = aca.artist_id
+			WHERE EXISTS (
+				SELECT 1 FROM artist_credit_artist keep
+				WHERE keep.artist_id = m.canon_id
+				  AND keep.credit_id = aca.credit_id
+			)
+		)
+	`); err != nil {
+		return fmt.Errorf("migration 43: prune colliding links: %w", err)
+	}
+
+	// Repoint surviving links to the canonical artist.
+	if _, err := db.ExecContext(ctx, `
+		UPDATE artist_credit_artist
+		SET artist_id = (
+			SELECT canon_id FROM artist_merge_map
+			WHERE dirty_id = artist_credit_artist.artist_id
+		)
+		WHERE artist_id IN (SELECT dirty_id FROM artist_merge_map)
+	`); err != nil {
+		return fmt.Errorf("migration 43: repoint links: %w", err)
+	}
+
+	// Remove the now-orphaned credit-string artist rows.
+	if _, err := db.ExecContext(ctx, `
+		DELETE FROM artists WHERE id IN (SELECT dirty_id FROM artist_merge_map)
+	`); err != nil {
+		return fmt.Errorf("migration 43: delete merged artists: %w", err)
+	}
+
+	// Refresh explore-index artist rows from the surviving library
+	// artists so their (previously clobbered) titles show the clean
+	// name.  The AFTER UPDATE trigger keeps explore_index_fts in sync.
+	// Only rows backed by a library artist are touched; dump-only rows
+	// are left alone.
+	if _, err := db.ExecContext(ctx, `
+		UPDATE explore_index
+		SET title = (
+			    SELECT name FROM artists
+			    WHERE artists.mbid = explore_index.mbid ORDER BY id LIMIT 1),
+		    artist_name = (
+			    SELECT name FROM artists
+			    WHERE artists.mbid = explore_index.mbid ORDER BY id LIMIT 1),
+		    local_artist_id = (
+			    SELECT id FROM artists
+			    WHERE artists.mbid = explore_index.mbid ORDER BY id LIMIT 1)
+		WHERE entity_type = 'artist'
+		  AND EXISTS (SELECT 1 FROM artists WHERE artists.mbid = explore_index.mbid)
+	`); err != nil {
+		return fmt.Errorf("migration 43: refresh explore titles: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx, "DROP TABLE IF EXISTS artist_merge_map"); err != nil {
+		return fmt.Errorf("migration 43: drop temp table: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx, "PRAGMA user_version = 43"); err != nil {
+		return fmt.Errorf("migration 43: set user_version: %w", err)
+	}
+
+	logger.Info("migration 43 complete")
+
+	return nil
+}
+
+// migration42ReleaseToRG creates the release_to_rg mapping table: for
+// every release under an indexed release group, which release-group it
+// belongs to.  It is populated from the canonical dump during a full
+// import (the mapping is otherwise in-memory only and discarded).  The
+// incremental-dump popularity refresh uses it to roll per-release listen
+// deltas up to their release group, so album popularity stays fresh
+// without any API call.
+func migration42ReleaseToRG(
+	ctx context.Context,
+	db *sql.DB,
+	logger *slog.Logger,
+) error {
+	logger.Info("applying migration 42: release_to_rg table")
+
+	if _, err := db.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS release_to_rg (
+			release_mbid TEXT PRIMARY KEY,
+			rg_mbid      TEXT NOT NULL
+		) WITHOUT ROWID
+	`); err != nil {
+		return fmt.Errorf("migration 42: create release_to_rg: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx,
+		"PRAGMA user_version = 42",
+	); err != nil {
+		return fmt.Errorf("migration 42: set user_version: %w", err)
+	}
+
+	logger.Info("migration 42 complete")
+
+	return nil
+}
+
+// migration41ExploreChampionFTS creates the "champion" full-text index:
+// a second external-content FTS5 over explore_index that holds only the
+// high-popularity / owned rows.  Short generic prefixes ("the", "a")
+// match hundreds of thousands of rows in the full index, and the
+// popularity-blended ORDER BY must score every one of them — seconds of
+// work.  Routing those queries at the champion index instead scores only
+// the ~90k rows that could plausibly win, cutting the query from seconds
+// to tens of milliseconds.  The table is created empty here; the search
+// index populates it at runtime (see SearchIndex.RebuildChampionIndex)
+// because the row set derives from popularity, which changes as the
+// index is (re)built.
+func migration41ExploreChampionFTS(
+	ctx context.Context,
+	db *sql.DB,
+	logger *slog.Logger,
+) error {
+	logger.Info("applying migration 41: explore champion FTS")
+
+	if _, err := db.ExecContext(ctx, `
+		CREATE VIRTUAL TABLE IF NOT EXISTS explore_champion_fts USING fts5(
+			title, artist_name, aliases,
+			content='explore_index',
+			content_rowid='id',
+			tokenize='unicode61 remove_diacritics 2'
+		)
+	`); err != nil {
+		return fmt.Errorf("migration 41: create champion fts: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx, "PRAGMA user_version = 41"); err != nil {
+		return fmt.Errorf("migration 41: set user_version: %w", err)
+	}
+
+	logger.Info("migration 41 complete")
+
+	return nil
+}
+
+// migration39LyricsIndex creates the contentless FTS5 lyrics_index
+// (see lyrics_index.sql) and back-populates it from any recordings
+// that already have embedded lyrics, so lyric search works on
+// existing libraries without waiting for a rescan.
+func migration39LyricsIndex(
+	ctx context.Context,
+	db *sql.DB,
+	logger *slog.Logger,
+) error {
+	logger.Info("applying migration 39: lyrics_index FTS")
+
+	if _, err := db.ExecContext(ctx, `
+		CREATE VIRTUAL TABLE IF NOT EXISTS lyrics_index USING fts5(
+			lyrics,
+			content='',
+			contentless_delete=1,
+			tokenize='unicode61 remove_diacritics 2'
+		)
+	`); err != nil {
+		return fmt.Errorf("migration 39: create lyrics_index: %w", err)
+	}
+
+	// Back-populate from recordings that already carry lyrics.  The
+	// rowid is the recording id so it stays stable across rebuilds.
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO lyrics_index(rowid, lyrics)
+		SELECT id, lyrics
+		FROM recordings
+		WHERE lyrics IS NOT NULL AND lyrics != ''
+	`); err != nil {
+		return fmt.Errorf("migration 39: populate lyrics_index: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx, "PRAGMA user_version = 39"); err != nil {
+		return fmt.Errorf("migration 39: set user_version: %w", err)
+	}
+
+	logger.Info("migration 39 complete")
+
+	return nil
+}
+
+// migration40ExploreExactMatchIndexes adds partial expression indexes
+// on LOWER(title) and LOWER(artist_name) so the interactive top-result
+// resolver's exact-match lookup (SearchIndex.ExactMatches) seeks the
+// index instead of scanning all ~240k explore_index rows on every
+// keystroke.  The indexes are partial (WHERE popularity > 0) because
+// that lookup always filters on popularity, keeping them small; the
+// UNION-of-equalities query shape in ExactMatches is what lets SQLite
+// use them (an OR across the two columns forces a scan instead).
+func migration40ExploreExactMatchIndexes(
+	ctx context.Context,
+	db *sql.DB,
+	logger *slog.Logger,
+) error {
+	logger.Info("applying migration 40: explore exact-match indexes")
+
+	if _, err := db.ExecContext(ctx, `
+		CREATE INDEX IF NOT EXISTS idx_explore_title_lower
+		ON explore_index(LOWER(title))
+		WHERE popularity > 0
+	`); err != nil {
+		return fmt.Errorf("migration 40: create title index: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx, `
+		CREATE INDEX IF NOT EXISTS idx_explore_artist_lower
+		ON explore_index(LOWER(artist_name))
+		WHERE popularity > 0
+	`); err != nil {
+		return fmt.Errorf("migration 40: create artist index: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx, "PRAGMA user_version = 40"); err != nil {
+		return fmt.Errorf("migration 40: set user_version: %w", err)
+	}
+
+	logger.Info("migration 40 complete")
+
+	return nil
+}
+
+// migration38TaggingCandidates creates the tagging_candidates table —
+// a durable per-group store for the scored candidate list so it is
+// computed once and reused across restarts instead of re-hitting
+// MusicBrainz every session (see tagging_candidates.sql).  A plain
+// CREATE TABLE IF NOT EXISTS is safe on both fresh and existing DBs.
+func migration38TaggingCandidates(
+	ctx context.Context,
+	db *sql.DB,
+	logger *slog.Logger,
+) error {
+	logger.Info("applying migration 38: tagging_candidates")
+
+	if _, err := db.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS tagging_candidates (
+		  group_key   TEXT PRIMARY KEY,
+		  candidates  TEXT NOT NULL,
+		  computed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		  FOREIGN KEY(group_key) REFERENCES tagging_items(group_key) ON DELETE CASCADE
+		)
+	`); err != nil {
+		return fmt.Errorf("migration 38: create tagging_candidates: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx, "PRAGMA user_version = 38"); err != nil {
+		return fmt.Errorf("migration 38: set user_version: %w", err)
+	}
+
+	logger.Info("migration 38 complete")
+
 	return nil
 }
 
@@ -1006,6 +1534,70 @@ func migration36ClearedAt(
 	}
 
 	logger.Info("migration 36 complete")
+
+	return nil
+}
+
+// migration37ExploreFTSDiacritics rebuilds explore_index_fts with the
+// "unicode61 remove_diacritics 2" tokeniser so accented queries match
+// their unaccented forms (e.g. "beyonce" finds "Beyoncé"), matching the
+// library search_index tokeniser.  The original table (migration 26)
+// was created with the default tokeniser, which does not fold
+// diacritics.
+//
+// Because explore_index_fts is an external-content table over
+// explore_index, the rebuild repopulates from the existing content
+// rows — no data loss and no need to re-run the expensive tiered index
+// build.
+func migration37ExploreFTSDiacritics(
+	ctx context.Context,
+	db *sql.DB,
+	logger *slog.Logger,
+) error {
+	logger.Info("applying migration 37: explore_index_fts diacritic folding")
+
+	// Drop the sync triggers and the FTS table, then recreate both.
+	// The triggers must go first — they reference the FTS table.
+	stmts := []string{
+		`DROP TRIGGER IF EXISTS explore_index_ai`,
+		`DROP TRIGGER IF EXISTS explore_index_ad`,
+		`DROP TRIGGER IF EXISTS explore_index_au`,
+		`DROP TABLE IF EXISTS explore_index_fts`,
+		`CREATE VIRTUAL TABLE explore_index_fts USING fts5(
+			title, artist_name, aliases,
+			content='explore_index',
+			content_rowid='id',
+			tokenize='unicode61 remove_diacritics 2'
+		)`,
+		`CREATE TRIGGER explore_index_ai AFTER INSERT ON explore_index BEGIN
+			INSERT INTO explore_index_fts(rowid, title, artist_name, aliases)
+			VALUES (new.id, new.title, new.artist_name, new.aliases);
+		END`,
+		`CREATE TRIGGER explore_index_ad AFTER DELETE ON explore_index BEGIN
+			INSERT INTO explore_index_fts(explore_index_fts, rowid, title, artist_name, aliases)
+			VALUES ('delete', old.id, old.title, old.artist_name, old.aliases);
+		END`,
+		`CREATE TRIGGER explore_index_au AFTER UPDATE ON explore_index BEGIN
+			INSERT INTO explore_index_fts(explore_index_fts, rowid, title, artist_name, aliases)
+			VALUES ('delete', old.id, old.title, old.artist_name, old.aliases);
+			INSERT INTO explore_index_fts(rowid, title, artist_name, aliases)
+			VALUES (new.id, new.title, new.artist_name, new.aliases);
+		END`,
+		// Repopulate the FTS index from the content table.
+		`INSERT INTO explore_index_fts(explore_index_fts) VALUES('rebuild')`,
+	}
+
+	for _, stmt := range stmts {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("migration 37: %w", err)
+		}
+	}
+
+	if _, err := db.ExecContext(ctx, "PRAGMA user_version = 37"); err != nil {
+		return fmt.Errorf("migration 37: set user_version: %w", err)
+	}
+
+	logger.Info("migration 37 complete")
 
 	return nil
 }

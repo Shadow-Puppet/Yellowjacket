@@ -7,6 +7,7 @@ import {
     GetCandidates,
     GetCandidatesForPasteURL,
     GetCandidateCoverArt,
+    GetLocalCoverArt,
     GetPendingFolder,
     ListPendingFolders,
     ApplyAsync,
@@ -14,19 +15,20 @@ import {
     LeaveAsIs,
     AckLibraryWarning,
     ClearCompletedEntries,
+    SearchCandidates,
+    SelectSearchCandidate,
 } from '@go/autotagservice/Service';
 import type { autotagservice } from '@go/models';
 import { EventsOn } from '@runtime/runtime';
 import { Events } from '../../events';
-import { isMultiDisc, groupByDisc, discNumbers } from '../../utils/disc-grouping';
-import { inlineDiff } from '../../utils/text-diff';
+import { inlineDiff, normalizeStrict, isCosmeticDiff } from '../../utils/text-diff';
 import { libraryStore } from '../../store/library-store';
 
 type PendingItem = autotagservice.PendingItem;
 type ScoreView = autotagservice.ScoreView;
 type CandidateView = autotagservice.CandidateView;
 type AlignmentView = autotagservice.AlignmentView;
-type LocalTrackView = autotagservice.LocalTrackView;
+type SearchHitView = autotagservice.SearchHitView;
 
 interface ApplyJobState {
     state: 'running' | 'completed' | 'failed';
@@ -64,6 +66,28 @@ interface VersionCluster {
     bestIdx: number; // index into candidates[] of the highest-scoring one
 }
 
+// Per-track detail rows behind the expandable match-detail lines.
+// Each carries both sides so the dropdown can render an inline diff.
+interface TitleDiffDetail {
+    pos: number;
+    local: string;
+    candidate: string;
+}
+
+interface NumDiffDetail {
+    title: string;
+    local: number;
+    candidate: number;
+}
+
+interface LengthDiffDetail {
+    pos: number;
+    title: string;
+    localMs: number;
+    candidateMs: number;
+    deltaMs: number;
+}
+
 /** autotag-view is the /autotag page: pick-apply-skip workflow for
  *  pending tagging items.  The left sidebar lists every folder
  *  awaiting review; the main pane shows a beets-style single-view
@@ -87,11 +111,11 @@ export class AutotagView extends LitElement {
 
             .root {
                 display: grid;
-                grid-template-columns: 240px 1fr 220px;
+                grid-template-columns: 240px 1fr;
                 grid-template-rows: auto 1fr;
                 grid-template-areas:
-                    "header header header"
-                    "folders main versions";
+                    "header header"
+                    "folders main";
                 gap: 0.75rem;
                 height: 100%;
                 box-sizing: border-box;
@@ -178,13 +202,50 @@ export class AutotagView extends LitElement {
             }
 
             .folders-section-header {
-                padding: 0.55rem 0.75rem 0.3rem;
-                font-size: 0.72rem;
-                color: var(--yj-text-tertiary, #888);
+                display: flex;
+                align-items: center;
+                gap: 0.35rem;
+                width: 100%;
+                padding: 0.55rem 0.5rem 0.55rem 0.75rem;
+                font-size: 0.78rem;
+                font-family: inherit;
+                color: var(--yj-text-secondary, #b3b3b3);
                 text-transform: uppercase;
-                letter-spacing: 0.5px;
-                margin-top: 0.4rem;
-                border-top: 1px solid var(--yj-bg-overlay, rgba(255, 255, 255, 0.06));
+                letter-spacing: 0.4px;
+                background: transparent;
+                border: 0;
+                border-bottom: 1px solid var(--yj-bg-overlay, rgba(255, 255, 255, 0.08));
+                cursor: pointer;
+                text-align: left;
+            }
+
+            .folders-section-header:hover {
+                color: var(--yj-text-primary, #fff);
+            }
+
+            /* Collapsible-section toggle used in the Pending header —
+               transparent button that inherits the header's type. */
+            .section-toggle {
+                display: flex;
+                align-items: center;
+                gap: 0.35rem;
+                flex: 1;
+                min-width: 0;
+                padding: 0;
+                background: transparent;
+                border: 0;
+                font: inherit;
+                letter-spacing: inherit;
+                text-transform: inherit;
+                color: inherit;
+                cursor: pointer;
+                text-align: left;
+            }
+
+            .section-chevron {
+                font-size: 0.85rem;
+                flex-shrink: 0;
+                color: var(--yj-text-tertiary, #888);
             }
 
             .folders-menu-trigger {
@@ -382,6 +443,63 @@ export class AutotagView extends LitElement {
             .album-artist { font-size: 1rem; color: var(--yj-text-secondary, #b3b3b3); }
             .album-line { font-size: 0.8rem; color: var(--yj-text-secondary, #b3b3b3); }
 
+            /* Skeleton placeholders — the layout (header + panes) paints
+               immediately and these shimmer blocks stand in for data
+               that's still loading (folder list, candidate scoring),
+               instead of a blank full-screen "Loading…". */
+            .skeleton {
+                position: relative;
+                overflow: hidden;
+                background: var(--yj-bg-elevated, #343a40);
+                border-radius: 4px;
+            }
+
+            .skeleton::after {
+                content: '';
+                position: absolute;
+                inset: 0;
+                transform: translateX(-100%);
+                background: linear-gradient(
+                    90deg,
+                    transparent,
+                    rgba(255, 255, 255, 0.06),
+                    transparent
+                );
+                animation: yj-shimmer 1.2s ease-in-out infinite;
+            }
+
+            @media (prefers-reduced-motion: reduce) {
+                .skeleton::after { animation: none; }
+            }
+
+            @keyframes yj-shimmer {
+                100% { transform: translateX(100%); }
+            }
+
+            .sk-line { height: 0.85rem; }
+            .sk-title { height: 1.4rem; width: 65%; }
+            .sk-artist { height: 1rem; width: 45%; }
+            .sk-cover { width: 180px; height: 180px; border-radius: 4px; }
+            .sk-pill { height: 1rem; width: 3.5rem; border-radius: 999px; }
+
+            .sk-folder-row {
+                display: grid;
+                grid-template-columns: 22px 1fr;
+                column-gap: 0.55rem;
+                row-gap: 0.35rem;
+                padding: 0.55rem 0.75rem 1.1rem;
+                border-bottom: 1px solid var(--yj-bg-overlay, rgba(255, 255, 255, 0.04));
+            }
+
+            .sk-folder-row .sk-icon {
+                grid-column: 1;
+                grid-row: 1 / span 2;
+                width: 18px;
+                height: 18px;
+                border-radius: 50%;
+                align-self: center;
+            }
+
             .banner {
                 background: rgba(255, 200, 90, 0.12);
                 border: 1px solid rgba(255, 200, 90, 0.4);
@@ -416,35 +534,121 @@ export class AutotagView extends LitElement {
             }
 
             .md-items {
-                list-style: none;
                 margin: 0;
                 padding: 0;
                 display: flex;
                 flex-direction: column;
-                gap: 0.2rem;
+                gap: 0.1rem;
             }
 
-            .md-items li {
-                display: flex;
-                align-items: baseline;
-                gap: 0.45rem;
+            .md-item {
                 line-height: 1.35;
             }
 
-            .md-items li::before {
-                content: '';
-                display: inline-block;
-                width: 0.65em;
-                flex-shrink: 0;
+            .md-item > summary,
+            .md-item:not(.expandable) {
+                display: flex;
+                align-items: baseline;
+                gap: 0.45rem;
+                padding: 0.15rem 0;
             }
 
-            .md-items li.ok::before    { content: '✓'; color: #9be09b; }
-            .md-items li.warn::before  { content: '⚠'; color: #ffd089; }
-            .md-items li.info::before  { content: '○'; color: var(--yj-text-tertiary, #888); }
+            .md-item.expandable > summary {
+                cursor: pointer;
+                list-style: none;
+                border-radius: 3px;
+            }
 
-            .md-items li.ok    { color: var(--yj-text-secondary, #b3b3b3); }
-            .md-items li.warn  { color: var(--yj-text-primary, #fff); }
-            .md-items li.info  { color: var(--yj-text-secondary, #b3b3b3); }
+            .md-item.expandable > summary::-webkit-details-marker { display: none; }
+            .md-item.expandable > summary:hover {
+                background: var(--yj-bg-elevated, #343a40);
+            }
+
+            .md-mark {
+                display: inline-block;
+                width: 0.9em;
+                flex-shrink: 0;
+                text-align: center;
+            }
+
+            .md-mark-ok::before   { content: '✓'; color: #9be09b; }
+            .md-mark-warn::before { content: '⚠'; color: #ffd089; }
+            .md-mark-info::before { content: '○'; color: var(--yj-text-tertiary, #888); }
+
+            .md-text { flex: 1; min-width: 0; }
+
+            .md-count {
+                font-variant-numeric: tabular-nums;
+                color: #9be09b;
+                font-weight: 500;
+            }
+
+            .md-count.bad { color: #ffd089; }
+
+            .md-item.ok   { color: var(--yj-text-secondary, #b3b3b3); }
+            .md-item.warn { color: var(--yj-text-primary, #fff); }
+            .md-item.info { color: var(--yj-text-secondary, #b3b3b3); }
+
+            .md-chevron {
+                flex-shrink: 0;
+                font-size: 0.8rem;
+                color: var(--yj-text-tertiary, #888);
+                transition: transform 0.15s ease;
+            }
+
+            @media (prefers-reduced-motion: reduce) {
+                .md-chevron { transition: none; }
+            }
+
+            .md-item.expandable[open] > summary .md-chevron {
+                transform: rotate(90deg);
+            }
+
+            .md-body {
+                margin: 0.15rem 0 0.35rem 1.35rem;
+                padding: 0.35rem 0.5rem;
+                border-left: 2px solid var(--yj-bg-overlay, rgba(255, 255, 255, 0.12));
+                background: var(--yj-bg-base, rgba(0, 0, 0, 0.18));
+                border-radius: 0 4px 4px 0;
+                display: flex;
+                flex-direction: column;
+                gap: 0.2rem;
+                font-size: 0.82rem;
+            }
+
+            .md-diff-row {
+                display: flex;
+                align-items: baseline;
+                gap: 0.5rem;
+                line-height: 1.3;
+            }
+
+            .md-diff-pos {
+                flex-shrink: 0;
+                min-width: 1.4rem;
+                text-align: right;
+                color: var(--yj-text-tertiary, #888);
+                font-variant-numeric: tabular-nums;
+                font-size: 0.76rem;
+            }
+
+            .md-diff-text {
+                flex: 1;
+                min-width: 0;
+                color: var(--yj-text-primary, #fff);
+            }
+
+            .md-diff-nums {
+                flex-shrink: 0;
+                display: inline-flex;
+                align-items: baseline;
+                gap: 0.3rem;
+                font-variant-numeric: tabular-nums;
+            }
+
+            .md-arrow, .md-delta {
+                color: var(--yj-text-tertiary, #888);
+            }
 
             .breakdown-line {
                 margin-top: 0.45rem;
@@ -549,25 +753,194 @@ export class AutotagView extends LitElement {
                 color: #ffd089;
             }
 
-            /* ── Versions sidebar ── */
+            /* Cosmetic-only difference (case / punctuation): the
+             * normalized strings match, so the score is unaffected.
+             * Render muted + dotted rather than the alarming
+             * red-strike / green so it reads as "formatting, not a
+             * real change". */
+            .diff-cosmetic-old {
+                color: var(--yj-text-tertiary, #888);
+                text-decoration: line-through dotted;
+                text-decoration-thickness: 1px;
+                opacity: 0.7;
+            }
 
-            .versions {
-                grid-area: versions;
+            .diff-cosmetic-new {
+                color: var(--yj-text-secondary, #b3b3b3);
+                border-bottom: 1px dotted var(--yj-text-tertiary, #888);
+            }
+
+            /* ── Two-column folder-vs-candidate comparison ── */
+
+            .compare {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 0.6rem;
+                align-items: start;
+            }
+
+            .compare-col {
                 background: var(--yj-bg-surface, #222);
                 border: 1px solid var(--yj-bg-overlay, rgba(255, 255, 255, 0.1));
                 border-radius: 6px;
-                overflow: auto;
-                display: flex;
-                flex-direction: column;
+                padding: 0.5rem 0;
+                min-width: 0;
             }
 
-            .versions-header {
-                padding: 0.55rem 0.75rem;
+            .compare-col-header {
+                display: flex;
+                align-items: baseline;
+                justify-content: space-between;
+                padding: 0.2rem 0.9rem 0.45rem;
                 border-bottom: 1px solid var(--yj-bg-overlay, rgba(255, 255, 255, 0.08));
+                margin-bottom: 0.3rem;
+            }
+
+            .compare-col-header .title {
                 font-size: 0.78rem;
-                color: var(--yj-text-secondary, #b3b3b3);
                 text-transform: uppercase;
                 letter-spacing: 0.4px;
+                color: var(--yj-text-secondary, #b3b3b3);
+            }
+
+            .compare-col-header .count {
+                font-size: 0.72rem;
+                color: var(--yj-text-tertiary, #888);
+                font-variant-numeric: tabular-nums;
+            }
+
+            /* Per-column album header — each comparison column shows
+             * its own artwork + album/artist so the local (embedded)
+             * and candidate (fetched) identities sit side by side
+             * without any diff coloring. */
+            .cc-album {
+                display: grid;
+                grid-template-columns: 84px 1fr;
+                gap: 0.75rem;
+                padding: 0.6rem 0.9rem 0.7rem;
+                border-bottom: 1px solid var(--yj-bg-overlay, rgba(255, 255, 255, 0.08));
+                margin-bottom: 0.3rem;
+                align-items: center;
+            }
+
+            .cc-cover {
+                width: 84px;
+                height: 84px;
+                border-radius: 4px;
+                object-fit: cover;
+                display: block;
+                background: var(--yj-bg-elevated, #343a40);
+            }
+
+            .cc-cover.placeholder {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                color: var(--yj-text-tertiary, #888);
+                font-size: 0.68rem;
+                text-align: center;
+                padding: 0.2rem;
+                box-sizing: border-box;
+            }
+
+            .cc-meta {
+                display: flex;
+                flex-direction: column;
+                gap: 0.15rem;
+                min-width: 0;
+            }
+
+            .cc-kicker {
+                font-size: 0.68rem;
+                text-transform: uppercase;
+                letter-spacing: 0.4px;
+                color: var(--yj-text-tertiary, #888);
+            }
+
+            .cc-title {
+                font-size: 1rem;
+                font-weight: 600;
+                line-height: 1.2;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+
+            .cc-artist {
+                font-size: 0.82rem;
+                color: var(--yj-text-secondary, #b3b3b3);
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+
+            .cc-line {
+                font-size: 0.74rem;
+                color: var(--yj-text-tertiary, #888);
+                display: flex;
+                align-items: center;
+                gap: 0.4rem;
+                flex-wrap: wrap;
+                margin-top: 0.1rem;
+            }
+
+            /* A row whose partner (same data-pair) is being hovered. */
+            .track-row.pair-hi { background: rgba(120, 170, 255, 0.16); }
+
+            /* Folder-side track with no candidate partner (extra), and
+             * candidate-side track with no folder partner (missing) —
+             * both are gaps, both amber. */
+            .track-row.extra { background: rgba(255, 200, 90, 0.10); }
+            .track-row.gap-spacer { visibility: hidden; }
+
+            /* ── Candidate picker (ranked alternatives) ── */
+
+            .cand-picker {
+                display: flex;
+                gap: 0.4rem;
+                overflow-x: auto;
+                padding: 0.1rem;
+            }
+
+            .cand-chip {
+                flex: 0 0 auto;
+                display: flex;
+                align-items: center;
+                gap: 0.4rem;
+                padding: 0.3rem 0.55rem;
+                border-radius: 6px;
+                cursor: pointer;
+                background: var(--yj-bg-surface, #222);
+                border: 1px solid var(--yj-bg-overlay, rgba(255, 255, 255, 0.1));
+                font-size: 0.8rem;
+                white-space: nowrap;
+                max-width: 22rem;
+            }
+
+            .cand-chip:hover { background: var(--yj-bg-elevated, #343a40); }
+
+            .cand-chip.selected {
+                border-color: var(--yj-accent, #ffd43b);
+                background: var(--yj-bg-elevated, #343a40);
+            }
+
+            .cand-chip .label {
+                overflow: hidden;
+                text-overflow: ellipsis;
+                max-width: 15rem;
+            }
+
+            /* ── Versions dropdown (editions within the active album) ── */
+
+            .versions-select {
+                font: inherit;
+                font-size: 0.8rem;
+                background: var(--yj-bg-elevated, #343a40);
+                color: var(--yj-text-primary, #fff);
+                border: 1px solid var(--yj-bg-overlay, rgba(255, 255, 255, 0.15));
+                border-radius: 4px;
+                padding: 0.15rem 0.3rem;
+                max-width: 100%;
             }
 
             .version-row {
@@ -617,24 +990,6 @@ export class AutotagView extends LitElement {
                 background: var(--yj-accent, #ffd43b);
                 color: var(--yj-bg-base, #000);
             }
-
-            .provenance-badge {
-                display: inline-block;
-                padding: 0 0.3rem;
-                border-radius: 8px;
-                font-size: 0.62rem;
-                text-transform: uppercase;
-                letter-spacing: 0.3px;
-                color: var(--yj-bg-base, #000);
-            }
-
-            .provenance-local    { background: #9c7; }
-            .provenance-strict   { background: #7bf; }
-            .provenance-no-track-count,
-            .provenance-title-only { background: #fb7; }
-            .provenance-fuzzy-title { background: #e9d; }
-            .provenance-paste    { background: var(--yj-accent, #ffd43b); }
-            .provenance-unknown  { background: #777; color: #fff; }
 
             /* ── Generic states ── */
 
@@ -716,6 +1071,74 @@ export class AutotagView extends LitElement {
                 justify-content: flex-end;
                 margin-top: 1rem;
             }
+
+            /* ── In-app search dialog ── */
+
+            .search-dialog { min-width: 480px; }
+
+            .search-kind {
+                display: flex;
+                gap: 1rem;
+                margin-bottom: 0.6rem;
+                font-size: 0.85rem;
+            }
+
+            .search-kind label {
+                display: flex;
+                align-items: center;
+                gap: 0.3rem;
+                cursor: pointer;
+            }
+
+            .search-input {
+                width: 100%;
+                padding: 0.4rem;
+                font: inherit;
+                margin-bottom: 0.5rem;
+                background: var(--yj-bg-elevated, #343a40);
+                color: var(--yj-text-primary, #fff);
+                border: 1px solid var(--yj-bg-overlay, rgba(255, 255, 255, 0.15));
+                border-radius: 4px;
+                box-sizing: border-box;
+            }
+
+            .search-results {
+                margin-top: 0.75rem;
+                max-height: 320px;
+                overflow: auto;
+                border-top: 1px solid var(--yj-bg-overlay, rgba(255, 255, 255, 0.08));
+            }
+
+            .search-result {
+                padding: 0.45rem 0.5rem;
+                cursor: pointer;
+                border-bottom: 1px solid var(--yj-bg-overlay, rgba(255, 255, 255, 0.05));
+                border-radius: 4px;
+            }
+
+            .search-result:hover { background: var(--yj-bg-elevated, #343a40); }
+
+            .sr-title {
+                font-weight: 500;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+
+            .sr-sub {
+                display: flex;
+                gap: 0.5rem;
+                font-size: 0.78rem;
+                color: var(--yj-text-secondary, #b3b3b3);
+            }
+
+            .sr-detail { color: var(--yj-text-tertiary, #888); }
+
+            .search-empty {
+                margin-top: 0.75rem;
+                font-size: 0.85rem;
+                color: var(--yj-text-secondary, #b3b3b3);
+            }
         `,
     ];
 
@@ -723,11 +1146,32 @@ export class AutotagView extends LitElement {
     @state() private current: PendingItem | null = null;
     @state() private score: ScoreView | null = null;
     @state() private selectedCandidateIdx = 0;
+    // Data-URI for artwork embedded in the current folder's local
+    // files, fetched lazily per folder so the local comparison
+    // column can show "what the folder already looks like".
+    @state() private localCoverUrl = '';
+    // loading tracks candidate scoring for the selected folder;
+    // foldersLoading tracks the folder-list fetch.  They're separate
+    // so the sidebar can paint as soon as the list arrives while the
+    // main pane still shows a candidate skeleton.
     @state() private loading = false;
+    @state() private foldersLoading = false;
     @state() private errorMessage = '';
-    @state() private dialog: 'none' | 'paste' | 'warning' | 'leave' = 'none';
+    @state() private dialog: 'none' | 'paste' | 'warning' | 'leave' | 'search' = 'none';
     @state() private pasteURL = '';
+
+    // In-app MusicBrainz search ("suggest a candidate") dialog state.
+    @state() private searchKind: 'releasegroup' | 'recording' = 'releasegroup';
+    @state() private searchQuery = '';
+    @state() private searchArtist = '';
+    @state() private searchResults: SearchHitView[] = [];
+    @state() private searchLoading = false;
+    @state() private searchError = '';
     @state() private queueMenuOpen = false;
+    // Collapsible sidebar sections.  Pending stays expanded so the
+    // actionable queue is always visible; the non-actionable Skipped
+    // and Completed sections start collapsed to keep the list short.
+    @state() private collapsedSections = new Set<string>(['skipped', 'completed']);
     // Per-folder apply-job state, keyed by groupKey.  Updated from
     // AutotagApply{Started,Progress,Finished} events emitted by the
     // backend.  Drives the sidebar status icons (running ring,
@@ -809,7 +1253,7 @@ export class AutotagView extends LitElement {
         if (this.prefetchRefreshTimer !== undefined) return;
         this.prefetchRefreshTimer = window.setTimeout(() => {
             this.prefetchRefreshTimer = undefined;
-            void this.loadFolders();
+            void this.loadFolders().then(() => this.reconcileSelection());
         }, 500);
     }
 
@@ -896,6 +1340,52 @@ export class AutotagView extends LitElement {
         await this.refreshAfterAction();
     };
 
+    /** Open the in-app MB search dialog, seeding the query fields from
+     *  the current folder's album/artist so the common case is one
+     *  keystroke away. */
+    private openSearch(): void {
+        this.searchKind = 'releasegroup';
+        this.searchQuery = this.current?.albumName ?? '';
+        this.searchArtist = this.current?.albumArtist ?? '';
+        this.searchResults = [];
+        this.searchError = '';
+        this.dialog = 'search';
+    }
+
+    private onSearchCancel = () => { this.dialog = 'none'; };
+
+    private async runSearch(): Promise<void> {
+        const query = this.searchQuery.trim();
+        if (!query) return;
+        this.searchLoading = true;
+        this.searchError = '';
+        try {
+            this.searchResults = await SearchCandidates(
+                this.searchKind, query, this.searchArtist.trim(),
+            );
+        } catch (err) {
+            this.searchError = `Search failed: ${(err as Error).message}`;
+            this.searchResults = [];
+        } finally {
+            this.searchLoading = false;
+        }
+    }
+
+    private async pickSearchResult(hit: SearchHitView): Promise<void> {
+        if (!this.current) return;
+        const groupKey = this.current.groupKey;
+        this.dialog = 'none';
+        this.loading = true;
+        try {
+            this.score = await SelectSearchCandidate(groupKey, hit.kind, hit.mbid);
+            this.selectedCandidateIdx = 0;
+        } catch (err) {
+            this.errorMessage = `Failed to load candidate: ${(err as Error).message}`;
+        } finally {
+            this.loading = false;
+        }
+    }
+
     private toggleQueueMenu = (e: Event) => {
         e.stopPropagation();
         this.queueMenuOpen = !this.queueMenuOpen;
@@ -907,6 +1397,7 @@ export class AutotagView extends LitElement {
         try {
             await ClearCompletedEntries(this.libraryFilterID());
             await this.loadFolders();
+            await this.reconcileSelection();
         } catch (err) {
             this.errorMessage = `Clear completed failed: ${(err as Error).message}`;
         }
@@ -928,8 +1419,25 @@ export class AutotagView extends LitElement {
 
     /* ── Queue ops ── */
 
+    // Incremented on every startQueue so an older in-flight run
+    // (e.g. the initial load racing a library-filter change) can
+    // detect it's stale and stop before clobbering the newer
+    // run's selection.
+    private queueGeneration = 0;
+
+    /** First actionable folder, matching the sidebar's visual
+     *  order: the Pending section renders first and Skipped /
+     *  Completed start collapsed, so raw folders[0] (sorted by
+     *  score across all statuses) may be hidden from view. */
+    private firstPendingFolder(): PendingItem | undefined {
+        return this.folders.find(
+            (f) => f.status !== 'confirmed' && f.status !== 'skipped',
+        );
+    }
+
     private async startQueue(): Promise<void> {
-        this.loading = true;
+        const generation = ++this.queueGeneration;
+        this.foldersLoading = true;
         // Reset state so a library-filter change doesn't leave a
         // stale folder selected from the previous library.
         this.current = null;
@@ -937,15 +1445,23 @@ export class AutotagView extends LitElement {
         this.selectedCandidateIdx = 0;
         try {
             await StartAutotagQueue(this.libraryFilterID());
+            if (generation !== this.queueGeneration) return;
             await this.loadFolders();
-            // Auto-select the first folder so the user lands on
-            // something to review.
-            const first = this.folders[0];
+            if (generation !== this.queueGeneration) return;
+            // Folder list is in — let the sidebar paint now, before we
+            // block on scoring the first folder's candidates.
+            this.foldersLoading = false;
+            // Auto-select the first pending folder so the user lands
+            // on something actionable (selectFolder drives its own
+            // candidate-loading skeleton via this.loading).
+            const first = this.firstPendingFolder();
             if (first) {
                 await this.selectFolder(first.groupKey);
             }
         } finally {
-            this.loading = false;
+            if (generation === this.queueGeneration) {
+                this.foldersLoading = false;
+            }
         }
     }
 
@@ -958,10 +1474,32 @@ export class AutotagView extends LitElement {
         }
     }
 
+    /** Called after a background folder-list reload (prefetch
+     *  refresh, clear-completed).  If the selected folder is no
+     *  longer in the list, fall back to the first pending row so
+     *  the main pane never shows a folder the sidebar doesn't. */
+    private async reconcileSelection(): Promise<void> {
+        const key = this.current?.groupKey;
+        if (key !== undefined && this.folders.some((f) => f.groupKey === key)) {
+            return;
+        }
+
+        const first = this.firstPendingFolder();
+        if (first) {
+            await this.selectFolder(first.groupKey);
+        } else if (this.current) {
+            this.current = null;
+            this.score = null;
+        }
+    }
+
     private async selectFolder(groupKey: string): Promise<void> {
+        const generation = this.queueGeneration;
         this.errorMessage = '';
         this.score = null;
         this.selectedCandidateIdx = 0;
+        this.localCoverUrl = '';
+        void this.loadLocalCover(groupKey);
         // Show what we already know about this folder while
         // candidates load — keeps the header from blanking.
         const inList = this.folders.find((f) => f.groupKey === groupKey);
@@ -969,6 +1507,10 @@ export class AutotagView extends LitElement {
         try {
             if (!inList) {
                 const fetched = await GetPendingFolder(groupKey);
+                // A library-filter change restarted the queue while
+                // this fetch was in flight — don't resurrect a
+                // folder from the previous library.
+                if (generation !== this.queueGeneration) return;
                 this.current = fetched ?? null;
             }
             if (this.current) {
@@ -976,6 +1518,20 @@ export class AutotagView extends LitElement {
             }
         } catch (e) {
             this.errorMessage = `Failed to load folder: ${(e as Error).message}`;
+        }
+    }
+
+    /** Fetch the folder's embedded local artwork (best-effort).
+     *  Guarded on groupKey so a fast folder switch doesn't paint the
+     *  previous folder's cover against the new one. */
+    private async loadLocalCover(groupKey: string): Promise<void> {
+        try {
+            const url = await GetLocalCoverArt(groupKey);
+            if (this.current?.groupKey === groupKey) {
+                this.localCoverUrl = url ?? '';
+            }
+        } catch {
+            // No local art is a normal case; leave the placeholder.
         }
     }
 
@@ -1178,6 +1734,7 @@ export class AutotagView extends LitElement {
             case 's': e.preventDefault(); void this.onSkip(); break;
             case 'l': e.preventDefault(); void this.onLeave(); break;
             case 'u': e.preventDefault(); this.dialog = 'paste'; break;
+            case 'f': e.preventDefault(); this.openSearch(); break;
             case 'arrowdown':
                 e.preventDefault();
                 void this.navigateFolder(1);
@@ -1291,20 +1848,21 @@ export class AutotagView extends LitElement {
      *  instead of the whole title. */
     private diffText(local: string, candidate: string): TemplateResult | string {
         if (local === candidate || candidate === '') return candidate || local || '';
+
+        // Cosmetic-only difference (case / punctuation / the spacing
+        // punctuation induces): render it muted rather than alarming
+        // red-green so the user can see the formatting change without
+        // reading it as a real conflict.
+        const cosmetic = isCosmeticDiff(local, candidate);
+        const removeCls = cosmetic ? 'diff-cosmetic-old' : 'diff-old';
+        const addCls = cosmetic ? 'diff-cosmetic-new' : 'diff-new';
+
         const segments = inlineDiff(local, candidate);
         return html`${segments.map((seg) => {
             if (seg.type === 'equal') return seg.text;
-            if (seg.type === 'remove') return html`<span class="diff-old">${seg.text}</span>`;
-            return html`<span class="diff-new">${seg.text}</span>`;
+            if (seg.type === 'remove') return html`<span class=${removeCls}>${seg.text}</span>`;
+            return html`<span class=${addCls}>${seg.text}</span>`;
         })}`;
-    }
-
-    /** Render an inline diff for a number-valued field (track #).
-     *  Renders nothing for matched values. */
-    private diffNumber(local: number, candidate: number): TemplateResult | string {
-        if (local === candidate || candidate === 0) return String(candidate || local || '');
-        if (!local) return html`<span class="diff-new">${candidate}</span>`;
-        return html`<span class="diff-old">${local}</span><span class="diff-new">${candidate}</span>`;
     }
 
     /* ── Render ── */
@@ -1339,6 +1897,26 @@ export class AutotagView extends LitElement {
         `;
     }
 
+    /** Toggle a sidebar section's collapsed state.  Reassigns a new
+     *  Set so Lit sees the change (in-place mutation wouldn't). */
+    private toggleSection(key: string): void {
+        const next = new Set(this.collapsedSections);
+        if (next.has(key)) {
+            next.delete(key);
+        } else {
+            next.add(key);
+        }
+        this.collapsedSections = next;
+    }
+
+    /** Disclosure chevron for a collapsible section header. */
+    private sectionChevron(key: string): TemplateResult {
+        const collapsed = this.collapsedSections.has(key);
+        return html`<wa-icon
+            class="section-chevron"
+            name=${collapsed ? 'chevron-right' : 'chevron-down'}></wa-icon>`;
+    }
+
     private renderFolderSidebar() {
         // Group folders by review state.  The backend now returns
         // pending + skipped + confirmed in a single list (sorted by
@@ -1366,7 +1944,11 @@ export class AutotagView extends LitElement {
         return html`
             <div class="folders">
                 <div class="folders-header">
-                    <span>Pending (${pending.length})</span>
+                    <button class="section-toggle"
+                            @click=${() => this.toggleSection('pending')}>
+                        ${this.sectionChevron('pending')}
+                        <span>Pending (${pending.length})</span>
+                    </button>
                     ${completed.length > 0 ? html`
                         <button class="folders-menu-trigger"
                                 title="Queue actions"
@@ -1383,20 +1965,32 @@ export class AutotagView extends LitElement {
                     ` : nothing}
                 </div>
                 ${this.folders.length === 0
-                    ? html`<div class="empty">Queue is empty.</div>`
+                    ? (this.foldersLoading
+                        ? this.renderFolderSkeleton()
+                        : html`<div class="empty">Queue is empty.</div>`)
                     : html`
-                        ${pending.map((f) => this.renderFolderRow(f))}
+                        ${this.collapsedSections.has('pending')
+                            ? nothing
+                            : pending.map((f) => this.renderFolderRow(f))}
                         ${skipped.length > 0 ? html`
-                            <div class="folders-section-header">
-                                Skipped (${skipped.length})
-                            </div>
-                            ${skipped.map((f) => this.renderFolderRow(f))}
+                            <button class="folders-section-header"
+                                    @click=${() => this.toggleSection('skipped')}>
+                                ${this.sectionChevron('skipped')}
+                                <span>Skipped (${skipped.length})</span>
+                            </button>
+                            ${this.collapsedSections.has('skipped')
+                                ? nothing
+                                : skipped.map((f) => this.renderFolderRow(f))}
                         ` : nothing}
                         ${completed.length > 0 ? html`
-                            <div class="folders-section-header">
-                                Completed (${completed.length})
-                            </div>
-                            ${completed.map((f) => this.renderFolderRow(f))}
+                            <button class="folders-section-header"
+                                    @click=${() => this.toggleSection('completed')}>
+                                ${this.sectionChevron('completed')}
+                                <span>Completed (${completed.length})</span>
+                            </button>
+                            ${this.collapsedSections.has('completed')
+                                ? nothing
+                                : completed.map((f) => this.renderFolderRow(f))}
                         ` : nothing}
                     `}
             </div>
@@ -1483,53 +2077,47 @@ export class AutotagView extends LitElement {
         `;
     }
 
-    private renderAlbumCard(cand: CandidateView) {
-        const localAlbum = this.current?.albumName ?? '';
-        const localArtist = this.current?.albumArtist ?? '';
-        const releaseYear = (cand.date ?? '').slice(0, 4);
-        const originalYear = (cand.originalDate ?? '').slice(0, 4);
-        const subParts: string[] = [];
-        if (originalYear && releaseYear && originalYear !== releaseYear) {
-            // Remaster/reissue: show the original year prominently,
-            // mark the technical re-release year as such.
-            subParts.push(`${originalYear} (${releaseYear} reissue)`);
-        } else if (releaseYear) {
-            subParts.push(releaseYear);
-        }
-        if (cand.country) subParts.push(cand.country);
-        if (cand.status) subParts.push(cand.status);
-        if (cand.trackCount) subParts.push(`${cand.trackCount} tracks`);
+    /**
+     * Versions dropdown: the editions *within the active cluster*
+     * (remaster / country / reissue of the same album), so the user
+     * picks a release edition here without leaving the current album.
+     * Picking a different album entirely is the candidate picker's job.
+     * Hidden when the active cluster has only one edition.
+     */
+    private renderVersionsDropdown(cand: CandidateView, clusters: VersionCluster[]) {
+        const cluster = clusters.find((c) => c.candidates.includes(cand));
+        if (!cluster || cluster.candidates.length <= 1) return nothing;
+
+        const editions = cluster.candidates
+            .map((c) => ({ cand: c, idx: this.score?.candidates.indexOf(c) ?? -1 }))
+            .filter((e) => e.idx >= 0);
 
         return html`
-            <div class="album-card">
-                ${cand.coverArtUrl
-                    ? html`<img class="cover" src=${cand.coverArtUrl} alt="cover art">`
-                    : html`<div class="cover placeholder">No cover</div>`}
-                <div class="album-meta">
-                    <div class="album-title">${this.diffText(localAlbum, cand.title)}</div>
-                    <div class="album-artist">${this.diffText(localArtist, cand.artistCredit)}</div>
-                    <div class="album-line">${subParts.join(' · ') || '\u00a0'}</div>
-                    <div class="album-line">
-                        <span class="score-badge ${cand.score >= 0.85 ? 'high' : ''}">
-                            ${(cand.score * 100).toFixed(0)}% match
-                        </span>
-                        ${this.renderProvenanceBadge(cand)}
-                    </div>
-                </div>
-            </div>
+            <select class="versions-select"
+                    aria-label="Release version"
+                    @change=${(e: Event) => {
+                        const idx = Number((e.target as HTMLSelectElement).value);
+                        void this.selectCandidateByIdx(idx);
+                    }}>
+                ${editions.map((e) => html`
+                    <option value=${e.idx} ?selected=${e.cand === cand}>
+                        ${this.versionOptionLabel(e.cand)}
+                    </option>
+                `)}
+            </select>
         `;
     }
 
-    private renderProvenanceBadge(cand: CandidateView) {
-        const prov = cand.provenance || 'unknown';
-        const label = prov === 'local' ? 'local'
-            : prov === 'paste' ? 'paste'
-            : prov === 'strict' ? 'exact'
-            : prov === 'no-track-count' ? 'any-tracks'
-            : prov === 'title-only' ? 'title-only'
-            : prov === 'fuzzy-title' ? 'fuzzy'
-            : prov;
-        return html`<span class="provenance-badge provenance-${prov}">${label}</span>`;
+    /** Compact one-line label for a release edition in the versions
+     *  dropdown: year, country, status, falling back to the title. */
+    private versionOptionLabel(c: CandidateView): string {
+        const parts: string[] = [];
+        const year = (c.date ?? '').slice(0, 4);
+        if (year) parts.push(year);
+        if (c.country) parts.push(c.country);
+        if (c.status) parts.push(c.status);
+        if (c.trackCount) parts.push(`${c.trackCount} trk`);
+        return parts.join(' · ') || c.title || 'release';
     }
 
     /**
@@ -1537,21 +2125,33 @@ export class AutotagView extends LitElement {
      * given candidate.  This pairs with renderMatchDetails to give
      * the user a concrete answer to "why isn't this 100%?" — the
      * tracklist already shows per-track title/length/# diffs, but
-     * subtle length drift (<2s) is suppressed there and album-
+     * subtle length drift (<5s) is suppressed there and album-
      * level metadata factors aren't visible at all.
      */
     private computeMatchSummary(cand: CandidateView) {
         let paired = 0;
-        let missingFromFolder = 0;
-        let unmatchedInFolder = 0;
-        let titleDiffs = 0;
-        let trackNumDiffs = 0;
-        let visibleLengthDiffs = 0;
-        let subtleLengthDiffs = 0;
+        // Paired tracks where both sides carry a usable track number,
+        // so "Track Numbers: N/M" only counts tracks it can judge.
+        let numberedPaired = 0;
         let driftSum = 0;
         let driftCount = 0;
 
-        const SUBTLE_LENGTH_MAX_MS = 2000;
+        // Title diffs split by significance: a cosmetic diff (case /
+        // punctuation) has titleScore 1.0 — it does not move the score,
+        // so it shouldn't read as a warning.  A significant diff has
+        // titleScore < 1.  Each detail row keeps both sides so the
+        // dropdown can render an inline diff of exactly what changed.
+        const significantTitleDiffs: TitleDiffDetail[] = [];
+        const cosmeticTitleDiffs: TitleDiffDetail[] = [];
+        const trackNumDiffs: NumDiffDetail[] = [];
+        const visibleLengthDiffs: LengthDiffDetail[] = [];
+        const subtleLengthDiffs: LengthDiffDetail[] = [];
+        const missingTitles: string[] = [];
+        const extraTitles: string[] = [];
+
+        // Mirrors the scorer's lengthExactMs grace band — anything
+        // the score forgives, the UI mutes.
+        const SUBTLE_LENGTH_MAX_MS = 5000;
 
         for (const a of cand.alignments) {
             if (a.status === 'matched' || a.status === 'mismatched') {
@@ -1560,26 +2160,60 @@ export class AutotagView extends LitElement {
                     ? this.score?.localTracks[a.localIndex] ?? null
                     : null;
                 if (local) {
-                    if (local.title !== a.candidateTitle) titleDiffs++;
-                    if (
-                        a.candidatePosition > 0
-                        && local.trackNumber > 0
-                        && local.trackNumber !== a.candidatePosition
-                    ) {
-                        trackNumDiffs++;
+                    if (local.title !== a.candidateTitle) {
+                        const detail: TitleDiffDetail = {
+                            pos: a.candidatePosition,
+                            local: local.title,
+                            candidate: a.candidateTitle,
+                        };
+                        // Cosmetic when the backend already scored it a
+                        // perfect title match, OR when the only
+                        // difference is case/punctuation/spacing that the
+                        // backend's punctuation-deletion left as a stray
+                        // space (so titleScore dipped just under 1).
+                        if (a.titleScore >= 1 || isCosmeticDiff(local.title, a.candidateTitle)) {
+                            cosmeticTitleDiffs.push(detail);
+                        } else {
+                            significantTitleDiffs.push(detail);
+                        }
+                    }
+                    if (a.candidatePosition > 0 && local.trackNumber > 0) {
+                        numberedPaired++;
+                        if (local.trackNumber !== a.candidatePosition) {
+                            trackNumDiffs.push({
+                                title: a.candidateTitle || local.title || '(untitled)',
+                                local: local.trackNumber,
+                                candidate: a.candidatePosition,
+                            });
+                        }
                     }
                 }
                 if (a.lengthDeltaMs > SUBTLE_LENGTH_MAX_MS) {
-                    visibleLengthDiffs++;
+                    visibleLengthDiffs.push({
+                        pos: a.candidatePosition,
+                        title: a.candidateTitle || local?.title || '(untitled)',
+                        localMs: a.localLengthMillis || local?.lengthMillis || 0,
+                        candidateMs: a.candidateLength,
+                        deltaMs: a.lengthDeltaMs,
+                    });
                 } else if (a.lengthDeltaMs > 0) {
-                    subtleLengthDiffs++;
+                    subtleLengthDiffs.push({
+                        pos: a.candidatePosition,
+                        title: a.candidateTitle || local?.title || '(untitled)',
+                        localMs: a.localLengthMillis || local?.lengthMillis || 0,
+                        candidateMs: a.candidateLength,
+                        deltaMs: a.lengthDeltaMs,
+                    });
                     driftSum += a.lengthDeltaMs;
                     driftCount++;
                 }
             } else if (a.status === 'missing') {
-                missingFromFolder++;
+                missingTitles.push(a.candidateTitle || '(untitled)');
             } else if (a.status === 'unmatched') {
-                unmatchedInFolder++;
+                const local = a.localIndex >= 0
+                    ? this.score?.localTracks[a.localIndex] ?? null
+                    : null;
+                extraTitles.push(a.localTitle || local?.title || '(untitled)');
             }
         }
 
@@ -1590,102 +2224,233 @@ export class AutotagView extends LitElement {
 
         return {
             paired,
-            missingFromFolder,
-            unmatchedInFolder,
-            titleDiffs,
+            numberedPaired,
+            missingFromFolder: missingTitles.length,
+            unmatchedInFolder: extraTitles.length,
+            missingTitles,
+            extraTitles,
+            significantTitleDiffs,
+            cosmeticTitleDiffs,
             trackNumDiffs,
             visibleLengthDiffs,
             subtleLengthDiffs,
             avgDriftMs: driftCount > 0 ? driftSum / driftCount : 0,
-            albumTitleMatches: localAlbum === '' || localAlbum === candAlbum,
-            albumArtistMatches: localArtist === '' || localArtist === candArtist,
+            localAlbum,
+            candAlbum,
+            localArtist,
+            candArtist,
+            albumTitleMatches: localAlbum === '' || normalizeStrict(localAlbum) === normalizeStrict(candAlbum),
+            albumArtistMatches: localArtist === '' || normalizeStrict(localArtist) === normalizeStrict(candArtist),
         };
+    }
+
+    /** One match-detail line.  When `body` is provided the line is a
+     *  native <details> disclosure so the user can expand it to see
+     *  exactly what differs; otherwise it's a plain, non-expandable
+     *  row.  `cls` drives the leading marker (ok / warn / info). */
+    private mdItem(
+        cls: 'ok' | 'warn' | 'info',
+        summary: TemplateResult | string,
+        body: TemplateResult | null = null,
+    ): TemplateResult {
+        const mark = html`<span class="md-mark md-mark-${cls}"></span>`;
+        if (!body) {
+            return html`
+                <div class="md-item ${cls}">
+                    ${mark}<span class="md-text">${summary}</span>
+                </div>
+            `;
+        }
+        return html`
+            <details class="md-item ${cls} expandable">
+                <summary>
+                    ${mark}<span class="md-text">${summary}</span>
+                    <wa-icon class="md-chevron" name="chevron-right"></wa-icon>
+                </summary>
+                <div class="md-body">${body}</div>
+            </details>
+        `;
+    }
+
+    /** Inline before/after diff rows for a set of title changes. */
+    private renderTitleDiffBody(details: TitleDiffDetail[]): TemplateResult {
+        return html`${details.map((d) => html`
+            <div class="md-diff-row">
+                ${d.pos > 0 ? html`<span class="md-diff-pos">${d.pos}</span>` : nothing}
+                <span class="md-diff-text">${this.diffText(d.local, d.candidate)}</span>
+            </div>
+        `)}`;
+    }
+
+    /** Track-number change rows: local # → candidate #. */
+    private renderNumDiffBody(details: NumDiffDetail[]): TemplateResult {
+        return html`${details.map((d) => html`
+            <div class="md-diff-row">
+                <span class="md-diff-text">${d.title || '(untitled)'}</span>
+                <span class="md-diff-nums">
+                    <span class="diff-old">#${d.local}</span>
+                    <span class="md-arrow">→</span>
+                    <span class="diff-new">#${d.candidate}</span>
+                </span>
+            </div>
+        `)}`;
+    }
+
+    /** Length-drift rows: local m:ss → candidate m:ss (±Xs).
+     *  When `subtle` (drift under 5s, treated as a successful match)
+     *  the values render muted rather than red-strike/green so the
+     *  row doesn't read as a real mismatch. */
+    private renderLengthDiffBody(
+        details: LengthDiffDetail[], subtle = false,
+    ): TemplateResult {
+        const oldCls = subtle ? 'diff-cosmetic-old' : 'diff-old';
+        const newCls = subtle ? 'diff-cosmetic-new' : 'diff-new';
+        return html`${details.map((d) => {
+            const delta = (d.deltaMs / 1000).toFixed(1);
+            return html`
+                <div class="md-diff-row">
+                    ${d.pos > 0 ? html`<span class="md-diff-pos">${d.pos}</span>` : nothing}
+                    <span class="md-diff-text">${d.title || '(untitled)'}</span>
+                    <span class="md-diff-nums">
+                        <span class=${oldCls}>${this.formatLength(d.localMs) || '—'}</span>
+                        <span class="md-arrow">→</span>
+                        <span class=${newCls}>${this.formatLength(d.candidateMs) || '—'}</span>
+                        <span class="md-delta">(±${delta}s)</span>
+                    </span>
+                </div>
+            `;
+        })}`;
+    }
+
+    /** Plain title list body for missing / extra tracks. */
+    private renderTitleListBody(
+        titles: string[], side: 'candidate' | 'local',
+    ): TemplateResult {
+        const cls = side === 'candidate' ? 'diff-new' : 'diff-old';
+        return html`${titles.map((t) => html`
+            <div class="md-diff-row">
+                <span class="md-diff-text ${cls}">${t || '(untitled)'}</span>
+            </div>
+        `)}`;
+    }
+
+    /** A counted match category rendered as "Label: matched/total".
+     *  When every item matches (matched >= total) the line is a plain
+     *  green-check row with no dropdown; only a real conflict gets the
+     *  expandable detail body. */
+    private mdCategory(
+        label: string,
+        matched: number,
+        total: number,
+        body: TemplateResult | null = null,
+    ): TemplateResult {
+        const ok = matched >= total;
+        const summary = html`${label}:
+            <span class="md-count ${ok ? '' : 'bad'}">${matched}/${total}</span>`;
+        return this.mdItem(ok ? 'ok' : 'warn', summary, ok ? null : body);
+    }
+
+    /** A single-count match line rendered as "Label: N".  `cls`
+     *  drives the marker/colour; a body makes it an expandable
+     *  disclosure (used for the missing/extra track lists). */
+    private mdCount(
+        cls: 'ok' | 'warn' | 'info',
+        label: string,
+        count: number,
+        body: TemplateResult | null = null,
+    ): TemplateResult {
+        const summary = html`${label}:
+            <span class="md-count ${cls === 'warn' ? 'bad' : ''}">${count}</span>`;
+        return this.mdItem(cls, summary, body);
     }
 
     private renderMatchDetails(cand: CandidateView) {
         const s = this.computeMatchSummary(cand);
-        const totalCand = s.paired + s.missingFromFolder;
         const items: TemplateResult[] = [];
 
-        // ── Track pairing ──────────────────────────────────────
-        if (s.missingFromFolder === 0 && s.unmatchedInFolder === 0) {
-            items.push(html`
-                <li class="ok">
-                    All ${s.paired} ${s.paired === 1 ? 'track' : 'tracks'} paired
-                </li>
-            `);
-        } else {
-            if (s.missingFromFolder > 0) {
-                items.push(html`
-                    <li class="warn">
-                        ${s.missingFromFolder} ${s.missingFromFolder === 1 ? 'track' : 'tracks'}
-                        on candidate but not in folder
-                    </li>
-                `);
-            }
-            if (s.unmatchedInFolder > 0) {
-                items.push(html`
-                    <li class="warn">
-                        ${s.unmatchedInFolder} ${s.unmatchedInFolder === 1 ? 'track' : 'tracks'}
-                        in folder but not on candidate
-                    </li>
-                `);
-            }
+        // ── Track pairing — matched / missing / extra as separate
+        // single-count lines, so there's no ambiguous "total".
+        // Matched is always shown; missing/extra only when non-zero
+        // (they're the conflicts, and carry the expandable lists).
+        items.push(this.mdCount('ok', 'Matched Tracks', s.paired));
+        if (s.missingFromFolder > 0) {
+            items.push(this.mdCount(
+                'warn',
+                'Missing Tracks',
+                s.missingFromFolder,
+                this.renderTitleListBody(s.missingTitles, 'candidate'),
+            ));
+        }
+        if (s.unmatchedInFolder > 0) {
+            items.push(this.mdCount(
+                'warn',
+                'Extra Tracks',
+                s.unmatchedInFolder,
+                this.renderTitleListBody(s.extraTitles, 'local'),
+            ));
         }
 
-        // ── Title diffs (pointer to tracklist) ─────────────────
-        if (s.titleDiffs > 0) {
-            items.push(html`
-                <li class="warn">
-                    ${s.titleDiffs} of ${s.paired} ${s.titleDiffs === 1 ? 'title differs' : 'titles differ'}
-                    — see tracklist
-                </li>
-            `);
-        } else if (s.paired > 0) {
-            items.push(html`<li class="ok">All track titles match</li>`);
+        // ── Track titles: cosmetic (case/punctuation) diffs count as
+        // a match since they don't move the score.  Only significant
+        // diffs are conflicts — but when there is one, the dropdown
+        // shows every title change (significant + cosmetic) for context.
+        if (s.paired > 0) {
+            const allTitleDiffs = [...s.significantTitleDiffs, ...s.cosmeticTitleDiffs]
+                .sort((a, b) => a.pos - b.pos);
+            items.push(this.mdCategory(
+                'Track Titles',
+                s.paired - s.significantTitleDiffs.length,
+                s.paired,
+                this.renderTitleDiffBody(allTitleDiffs),
+            ));
         }
 
-        // ── Track-number diffs ─────────────────────────────────
-        if (s.trackNumDiffs > 0) {
-            items.push(html`
-                <li class="warn">
-                    ${s.trackNumDiffs} track ${s.trackNumDiffs === 1 ? 'number' : 'numbers'} would change
-                </li>
-            `);
+        // ── Track lengths: drift under 5s counts as a match, so only
+        // the >5s differences show up (and only they get a dropdown).
+        if (s.paired > 0) {
+            items.push(this.mdCategory(
+                'Track Lengths',
+                s.paired - s.visibleLengthDiffs.length,
+                s.paired,
+                this.renderLengthDiffBody(s.visibleLengthDiffs),
+            ));
         }
 
-        // ── Length diffs: visible (>2s) vs subtle (<=2s) ───────
-        if (s.visibleLengthDiffs > 0) {
-            items.push(html`
-                <li class="warn">
-                    ${s.visibleLengthDiffs}
-                    ${s.visibleLengthDiffs === 1 ? 'track length differs' : 'track lengths differ'}
-                    by more than 2s — see tracklist
-                </li>
-            `);
-        }
-        if (s.subtleLengthDiffs > 0) {
-            const avg = (s.avgDriftMs / 1000).toFixed(1);
-            items.push(html`
-                <li class="info">
-                    ${s.subtleLengthDiffs}
-                    ${s.subtleLengthDiffs === 1 ? 'track' : 'tracks'} drift by ~${avg}s
-                    (under 2s, suppressed in tracklist)
-                </li>
-            `);
+        // ── Track numbers: only counts tracks that carry a number on
+        // both sides, so an untagged folder doesn't read as all-wrong.
+        if (s.numberedPaired > 0) {
+            items.push(this.mdCategory(
+                'Track Numbers',
+                s.numberedPaired - s.trackNumDiffs.length,
+                s.numberedPaired,
+                this.renderNumDiffBody(s.trackNumDiffs),
+            ));
         }
 
-        // ── Album header diffs (mirror what the header card shows) ──
+        // ── Album header — boolean fields, shown only when they'd
+        // change (a conflict); the dropdown shows the exact diff.
         if (!s.albumTitleMatches) {
-            items.push(html`<li class="warn">Album name would change</li>`);
+            items.push(this.mdItem(
+                'warn',
+                'Album name would change',
+                html`<div class="md-diff-row">
+                    <span class="md-diff-text">${this.diffText(s.localAlbum, s.candAlbum)}</span>
+                </div>`,
+            ));
         }
         if (!s.albumArtistMatches) {
-            items.push(html`<li class="warn">Album artist would change</li>`);
+            items.push(this.mdItem(
+                'warn',
+                'Album artist would change',
+                html`<div class="md-diff-row">
+                    <span class="md-diff-text">${this.diffText(s.localArtist, s.candArtist)}</span>
+                </div>`,
+            ));
         }
 
         // ── Release-info line: not a "diff" per se but a useful
         // signal since older / non-Official releases score lower
-        // even when every track lines up.
+        // even when every track lines up.  No dropdown — informational.
         const releaseParts: string[] = [];
         const releaseYear = (cand.date ?? '').slice(0, 4);
         const originalYear = (cand.originalDate ?? '').slice(0, 4);
@@ -1694,20 +2459,11 @@ export class AutotagView extends LitElement {
         } else if (releaseYear) {
             releaseParts.push(releaseYear);
         }
+        if (cand.primaryType) releaseParts.push(cand.primaryType);
         if (cand.country) releaseParts.push(cand.country);
         if (cand.status) releaseParts.push(cand.status);
         if (releaseParts.length) {
-            items.push(html`
-                <li class="info">Release: ${releaseParts.join(' · ')}</li>
-            `);
-        }
-
-        if (totalCand > 0 && cand.trackCount > 0 && cand.trackCount !== totalCand) {
-            items.push(html`
-                <li class="info">
-                    Candidate has ${cand.trackCount} tracks total
-                </li>
-            `);
+            items.push(this.mdItem('info', html`Release: ${releaseParts.join(' · ')}`));
         }
 
         const b = cand.breakdown;
@@ -1718,14 +2474,21 @@ export class AutotagView extends LitElement {
                 <div class="md-header">
                     <span>Match details</span>
                 </div>
-                <ul class="md-items">${items}</ul>
+                <div class="md-items">${items}</div>
                 ${b ? html`
                     <div class="breakdown-line">
                         <span class="b-pair">Match <span class="b-val">${pct(cand.score)}</span></span>
                         <span class="b-pair">Title <span class="b-val">${pct(b.titleAvg)}</span></span>
                         <span class="b-pair">Length <span class="b-val">${pct(b.lengthAvg)}</span></span>
+                        <span class="b-pair">Artist <span class="b-val">${pct(b.artistFit)}</span></span>
+                        ${b.albumFit < 1
+                            ? html`<span class="b-pair">Album <span class="b-val">${pct(b.albumFit)}</span></span>`
+                            : nothing}
                         <span class="b-pair">Tracks <span class="b-val">${pct(b.trackCountFit)}</span></span>
                         <span class="b-pair">Release <span class="b-val">${pct(b.releaseMeta)}</span></span>
+                        ${b.evidence < 1
+                            ? html`<span class="b-pair">Evidence <span class="b-val">${pct(b.evidence)}</span></span>`
+                            : nothing}
                     </div>
                 ` : nothing}
             </div>
@@ -1757,161 +2520,256 @@ export class AutotagView extends LitElement {
      * group at the same level so the user can see what's expected
      * but absent on disk.
      */
-    private renderTracklist(cand: CandidateView) {
-        const locals = new Map<number, LocalTrackView>();
-        this.score?.localTracks.forEach((t, i) => locals.set(i, t));
+    /**
+     * The two-column comparison: the folder's files on the left (in
+     * folder order) and the candidate release on the right (in
+     * candidate order).  Matched rows share a data-pair id so hovering
+     * either side highlights its partner; folder tracks with no
+     * candidate partner (extra) and candidate tracks with no folder
+     * partner (missing) both surface as amber gaps, which is what makes
+     * "do I have extra or missing tracks?" answerable at a glance.
+     * Field-level title/length conflicts are summarised in
+     * renderMatchDetails, so each column shows its own values plainly.
+     */
+    private renderComparison(cand: CandidateView, clusters: VersionCluster[] = []) {
+        const locals = this.score?.localTracks ?? [];
 
-        // Bucket alignments: paired (matched/mismatched) and
-        // candidate-side missing get sorted into the candidate
-        // tracklist by candidate position; folder-side unmatched
-        // is rendered separately.
-        const paired: AlignmentView[] = [];
-        const missing: AlignmentView[] = [];
-        const unmatched: AlignmentView[] = [];
-
+        // localIndex -> its alignment, so a folder row knows whether it
+        // paired and (if so) how confidently.
+        const alignByLocal = new Map<number, AlignmentView>();
         for (const a of cand.alignments) {
-            switch (a.status) {
-                case 'matched':
-                case 'mismatched':
-                    paired.push(a);
-                    break;
-                case 'missing':
-                    missing.push(a);
-                    break;
-                case 'unmatched':
-                    unmatched.push(a);
-                    break;
-                default:
-                    paired.push(a);
-            }
+            if (a.localIndex >= 0) alignByLocal.set(a.localIndex, a);
         }
 
-        const candTracks = [...paired, ...missing].map((a) => ({
-            ...a,
-            discNumber: a.candidateDiscNumber || 1,
-            position: a.candidatePosition || 0,
-        }));
+        // Candidate side: every alignment that has a candidate track
+        // (paired or missing-from-folder), in candidate order.
+        const candRows = cand.alignments
+            .filter((a) => a.status !== 'unmatched' && a.candidatePosition > 0)
+            .slice()
+            .sort((x, y) =>
+                (x.candidateDiscNumber - y.candidateDiscNumber)
+                || (x.candidatePosition - y.candidatePosition));
 
-        const multi = isMultiDisc(candTracks);
-        const grouped = groupByDisc(candTracks);
-        const discs = discNumbers(grouped);
+        const folderRows = locals.map((t, i) => {
+            const a = alignByLocal.get(i);
+            const paired = !!a && (a.status === 'matched' || a.status === 'mismatched');
+            const cls = !paired ? 'extra' : a!.status === 'mismatched' ? 'mismatched' : 'matched';
+            const pair = paired ? `p${i}` : '';
+            return this.renderCompareRow(cls, pair, t.trackNumber, t.title, t.lengthMillis);
+        });
+
+        const candItems = candRows.map((a) => {
+            const paired = a.status === 'matched' || a.status === 'mismatched';
+            const cls = !paired ? 'extra' : a.status === 'mismatched' ? 'mismatched' : 'matched';
+            const pair = paired ? `p${a.localIndex}` : '';
+            return this.renderCompareRow(
+                cls, pair, a.candidatePosition, a.candidateTitle, a.candidateLength,
+            );
+        });
 
         return html`
-            <div class="tracklist">
-                <div class="section-header">Tracks</div>
-                ${discs.map((discNum) => {
-                    const rows = grouped.get(discNum) ?? [];
+            <div class="compare">
+                <div class="compare-col">
+                    ${this.renderLocalAlbumHeader(folderRows.length)}
+                    ${folderRows.length > 0
+                        ? folderRows
+                        : html`<div class="empty">No local tracks.</div>`}
+                </div>
+                <div class="compare-col">
+                    ${this.renderCandidateAlbumHeader(cand, candItems.length, clusters)}
+                    ${candItems.length > 0
+                        ? candItems
+                        : html`<div class="empty">No candidate tracks.</div>`}
+                </div>
+            </div>
+        `;
+    }
+
+    /** Local column header: the folder's own artwork + album/artist,
+     *  shown plainly (no diff coloring) so the user sees what the
+     *  files currently look like. */
+    private renderLocalAlbumHeader(trackCount: number) {
+        const album = this.current?.albumName || '(no album)';
+        const artist = this.current?.albumArtist || 'Unknown artist';
+        return html`
+            <div class="cc-album">
+                ${this.localCoverUrl
+                    ? html`<img class="cc-cover" src=${this.localCoverUrl} alt="local cover art">`
+                    : html`<div class="cc-cover placeholder">No cover</div>`}
+                <div class="cc-meta">
+                    <div class="cc-kicker">Your folder</div>
+                    <div class="cc-title" title=${album}>${album}</div>
+                    <div class="cc-artist" title=${artist}>${artist}</div>
+                    <div class="cc-line">${trackCount} ${trackCount === 1 ? 'track' : 'tracks'}</div>
+                </div>
+            </div>
+        `;
+    }
+
+    /** Candidate column header: the fetched release's artwork +
+     *  title/artist, its release-info line, the match percentage and
+     *  — when the cluster has multiple editions — the versions picker.
+     *  Shown plainly (no diff coloring). */
+    private renderCandidateAlbumHeader(
+        cand: CandidateView, trackCount: number, clusters: VersionCluster[],
+    ) {
+        const title = cand.title || '(untitled)';
+        const artist = cand.artistCredit || 'Unknown artist';
+        const releaseYear = (cand.date ?? '').slice(0, 4);
+        const originalYear = (cand.originalDate ?? '').slice(0, 4);
+        const subParts: string[] = [];
+        if (originalYear && releaseYear && originalYear !== releaseYear) {
+            subParts.push(`${originalYear} (${releaseYear} reissue)`);
+        } else if (releaseYear) {
+            subParts.push(releaseYear);
+        }
+        if (cand.country) subParts.push(cand.country);
+        if (cand.status) subParts.push(cand.status);
+        subParts.push(`${trackCount} ${trackCount === 1 ? 'track' : 'tracks'}`);
+
+        const versions = this.renderVersionsDropdown(cand, clusters);
+
+        return html`
+            <div class="cc-album">
+                ${cand.coverArtUrl
+                    ? html`<img class="cc-cover" src=${cand.coverArtUrl} alt="candidate cover art">`
+                    : html`<div class="cc-cover placeholder">No cover</div>`}
+                <div class="cc-meta">
+                    <div class="cc-kicker">Candidate</div>
+                    <div class="cc-title" title=${title}>${title}</div>
+                    <div class="cc-artist" title=${artist}>${artist}</div>
+                    <div class="cc-line">
+                        <span class="score-badge ${cand.score >= 0.85 ? 'high' : ''}">
+                            ${(cand.score * 100).toFixed(0)}% match
+                        </span>
+                        <span>${subParts.join(' · ')}</span>
+                    </div>
+                    ${versions !== nothing
+                        ? html`<div class="cc-line">${versions}</div>`
+                        : nothing}
+                </div>
+            </div>
+        `;
+    }
+
+    private renderCompareRow(
+        cls: string, pair: string, pos: number, title: string, lengthMs: number,
+    ): TemplateResult {
+        const hover = pair
+            ? {
+                enter: () => this.highlightPair(pair, true),
+                leave: () => this.highlightPair(pair, false),
+            }
+            : { enter: () => {}, leave: () => {} };
+        return html`
+            <div class="track-row ${cls}" data-pair=${pair || nothing}
+                 @mouseenter=${hover.enter} @mouseleave=${hover.leave}>
+                <span class="track-pos">${pos || '-'}</span>
+                <span class="track-title">${title || '(untitled)'}</span>
+                <span class="track-len">${this.formatLength(lengthMs)}</span>
+            </div>
+        `;
+    }
+
+    /** Toggle the partner-highlight class on every row that shares the
+     *  given data-pair id (the local row and its candidate row). */
+    private highlightPair(pair: string, on: boolean): void {
+        const rows = this.renderRoot.querySelectorAll(`[data-pair="${pair}"]`);
+        rows.forEach((r) => r.classList.toggle('pair-hi', on));
+    }
+
+    /**
+     * Ranked candidate picker: one chip per version-cluster (its best
+     * edition), sorted by score, so the user can jump to a lower-scored
+     * alternative — the beets-style "here are the other matches" list.
+     * Editions *within* the selected cluster are chosen via the
+     * versions dropdown in the album card, not here.
+     */
+    private renderCandidatePicker(clusters: VersionCluster[], activeCand: CandidateView) {
+        if (clusters.length <= 1) return nothing;
+
+        return html`
+            <div class="cand-picker">
+                ${clusters.map((cluster) => {
+                    const best = cluster.candidates[cluster.bestIdx]!;
+                    const active = cluster.candidates.includes(activeCand);
+                    const idx = this.score?.candidates.indexOf(best) ?? -1;
                     return html`
-                        ${multi
-                            ? html`<div class="disc-separator">Disc ${discNum}</div>`
-                            : nothing}
-                        ${rows.map((a) => this.renderTrackRow(a, locals))}
+                        <div class="cand-chip ${active ? 'selected' : ''}"
+                             title=${cluster.label}
+                             @click=${() => { void this.selectCandidateByIdx(idx); }}>
+                            <span class="label">${cluster.label}</span>
+                            <span class="score-badge ${best.score >= 0.85 ? 'high' : ''}">
+                                ${(best.score * 100).toFixed(0)}%
+                            </span>
+                        </div>
                     `;
                 })}
-                ${unmatched.length > 0 ? html`
-                    <div class="section-header" style="margin-top:0.5rem;">
-                        Unmatched (in folder, not in candidate)
-                    </div>
-                    ${unmatched.map((a) => this.renderUnmatchedRow(a, locals))}
-                ` : nothing}
             </div>
         `;
     }
 
-    private renderTrackRow(a: AlignmentView, locals: Map<number, LocalTrackView>) {
-        const local = a.localIndex >= 0 ? locals.get(a.localIndex) ?? null : null;
-        const cls = `track-row ${a.status}`;
-
-        if (a.status === 'missing') {
-            // Candidate has this track, folder doesn't.
-            return html`
-                <div class="${cls}">
-                    <span class="track-pos">${a.candidatePosition}</span>
-                    <span class="track-title">
-                        <span class="diff-new">${a.candidateTitle}</span>
-                    </span>
-                    <span class="track-len">${this.formatLength(a.candidateLength)}</span>
+    /** Shimmer placeholder rows for the folder sidebar while the
+     *  pending-folder list is still loading. */
+    private renderFolderSkeleton(): TemplateResult {
+        const rows = 8;
+        return html`
+            ${Array.from({ length: rows }, () => html`
+                <div class="sk-folder-row">
+                    <div class="skeleton sk-icon"></div>
+                    <div class="skeleton sk-line" style="width: 80%;"></div>
+                    <div class="skeleton sk-line" style="width: 55%;"></div>
                 </div>
-            `;
-        }
-
-        // Paired (matched / mismatched).  Show track-#, title,
-        // length — each as a diff against the local file.
-        const localTitle = local?.title ?? '';
-        const localLen = local?.lengthMillis ?? 0;
-        const localPos = local?.trackNumber ?? 0;
-
-        return html`
-            <div class="${cls}">
-                <span class="track-pos">
-                    ${this.diffNumber(localPos, a.candidatePosition)}
-                </span>
-                <span class="track-title">
-                    ${this.diffText(localTitle, a.candidateTitle)}
-                </span>
-                <span class="track-len">
-                    ${this.renderLengthDiff(localLen, a.candidateLength)}
-                </span>
-            </div>
+            `)}
         `;
     }
 
-    private renderLengthDiff(localMs: number, candMs: number): TemplateResult | string {
-        const candStr = this.formatLength(candMs);
-        const localStr = this.formatLength(localMs);
-        if (!candStr) return localStr;
-        if (!localStr || localStr === candStr) return candStr;
-        // Show only the candidate length when the difference is
-        // tiny (<= 2s) — disk seek noise, not a real diff.
-        if (Math.abs(localMs - candMs) <= 2000) return candStr;
-        return html`<span class="diff-old">${localStr}</span><span class="diff-new">${candStr}</span>`;
-    }
-
-    private renderUnmatchedRow(a: AlignmentView, locals: Map<number, LocalTrackView>) {
-        const local = a.localIndex >= 0 ? locals.get(a.localIndex) ?? null : null;
-        const title = a.localTitle || local?.title || '(untitled)';
-        const len = a.localLengthMillis || local?.lengthMillis || 0;
-        const pos = local?.trackNumber ?? 0;
+    /** Shimmer placeholder for the main pane — mirrors the album card
+     *  (cover + meta) and a few tracklist rows so the layout doesn't
+     *  jump when the real candidate data arrives. */
+    private renderMainSkeleton(): TemplateResult {
         return html`
-            <div class="track-row unmatched">
-                <span class="track-pos">${pos || '-'}</span>
-                <span class="track-title">${title}</span>
-                <span class="track-len">${this.formatLength(len)}</span>
-            </div>
-        `;
-    }
-
-    private renderVersionsSidebar(clusters: VersionCluster[]) {
-        const selectedCand = this.currentCandidate();
-        return html`
-            <div class="versions">
-                <div class="versions-header">Versions (${clusters.length})</div>
-                ${clusters.length === 0
-                    ? html`<div class="empty">No candidates.<br>Hit <kbd>U</kbd> to paste a URL.</div>`
-                    : clusters.map((cluster) => {
-                        const best = cluster.candidates[cluster.bestIdx]!;
-                        const isSelected = best === selectedCand;
-                        const idx = this.score?.candidates.indexOf(best) ?? -1;
-                        return html`
-                            <div class="version-row ${isSelected ? 'selected' : ''}"
-                                 @click=${() => { void this.selectCandidateByIdx(idx); }}>
-                                <div class="label">${cluster.label}</div>
-                                <div class="sub">
-                                    <span>${cluster.sublabel || '\u00a0'}</span>
-                                    <span class="score-badge ${best.score >= 0.85 ? 'high' : ''}">
-                                        ${(best.score * 100).toFixed(0)}%
-                                    </span>
-                                </div>
-                            </div>
-                        `;
-                    })}
+            <div class="main">
+                <div class="album-card">
+                    <div class="skeleton sk-cover"></div>
+                    <div class="album-meta">
+                        <div class="skeleton sk-title"></div>
+                        <div class="skeleton sk-artist"></div>
+                        <div class="skeleton sk-line" style="width: 35%;"></div>
+                        <div class="skeleton sk-pill"></div>
+                    </div>
+                </div>
+                <div class="tracklist">
+                    ${Array.from({ length: 6 }, () => html`
+                        <div class="track-row">
+                            <span class="skeleton sk-line" style="width: 1.2rem;"></span>
+                            <span class="skeleton sk-line" style="width: 60%;"></span>
+                            <span class="skeleton sk-line" style="width: 2.5rem;"></span>
+                        </div>
+                    `)}
+                </div>
             </div>
         `;
     }
 
     private renderMain() {
-        if (this.loading && !this.score) {
-            return html`<div class="main"><div class="empty">Loading candidates\u2026</div></div>`;
+        // A scoring error on the selected folder surfaces as an error,
+        // not an endless skeleton.
+        if (this.current && !this.score && this.errorMessage) {
+            return html`
+                <div class="main">
+                    <div class="error">
+                        <span>${this.errorMessage}</span>
+                        <button @click=${this.onDismissError}>Dismiss</button>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Folder list still arriving, or the selected folder's
+        // candidates are still being scored \u2192 skeleton, not text.
+        if (this.foldersLoading || (this.current && (this.loading || !this.score))) {
+            return this.renderMainSkeleton();
         }
 
         if (!this.current) {
@@ -1933,7 +2791,7 @@ export class AutotagView extends LitElement {
                 <div class="main">
                     <div class="empty">
                         No candidates found for this folder.<br>
-                        Hit <kbd>U</kbd> to paste a MusicBrainz URL.
+                        Hit <kbd>F</kbd> to search MusicBrainz or <kbd>U</kbd> to paste a URL.
                     </div>
                 </div>
             `;
@@ -1955,9 +2813,9 @@ export class AutotagView extends LitElement {
                     </div>
                 ` : nothing}
                 ${this.renderLowConfidenceBanner(clusters)}
-                ${this.renderAlbumCard(cand)}
+                ${this.renderCandidatePicker(clusters, cand)}
                 ${this.renderMatchDetails(cand)}
-                ${this.renderTracklist(cand)}
+                ${this.renderComparison(cand, clusters)}
             </div>
         `;
     }
@@ -2061,30 +2919,92 @@ export class AutotagView extends LitElement {
         `;
     }
 
+    private renderSearchDialog() {
+        return html`
+            <div class="dialog-overlay" @click=${(e: MouseEvent) => {
+                if (e.target === e.currentTarget) this.onSearchCancel();
+            }}>
+                <div class="dialog search-dialog">
+                    <div class="dialog-header">
+                        <h3>Search MusicBrainz</h3>
+                        <button class="dialog-close" aria-label="Close"
+                                @click=${this.onSearchCancel}>×</button>
+                    </div>
+                    <div class="search-kind">
+                        <label>
+                            <input type="radio" name="searchKind" value="releasegroup"
+                                   .checked=${this.searchKind === 'releasegroup'}
+                                   @change=${() => { this.searchKind = 'releasegroup'; }}>
+                            Album
+                        </label>
+                        <label>
+                            <input type="radio" name="searchKind" value="recording"
+                                   .checked=${this.searchKind === 'recording'}
+                                   @change=${() => { this.searchKind = 'recording'; }}>
+                            Track (for singles)
+                        </label>
+                    </div>
+                    <input type="text" class="search-input"
+                           placeholder=${this.searchKind === 'recording' ? 'Track title' : 'Album name'}
+                           .value=${this.searchQuery}
+                           @input=${(e: Event) => { this.searchQuery = (e.target as HTMLInputElement).value; }}
+                           @keydown=${(e: KeyboardEvent) => { if (e.key === 'Enter') void this.runSearch(); }}
+                           autofocus>
+                    <input type="text" class="search-input"
+                           placeholder="Artist (optional)"
+                           .value=${this.searchArtist}
+                           @input=${(e: Event) => { this.searchArtist = (e.target as HTMLInputElement).value; }}
+                           @keydown=${(e: KeyboardEvent) => { if (e.key === 'Enter') void this.runSearch(); }}>
+                    <div class="row">
+                        <button class="secondary" @click=${this.onSearchCancel}>Cancel</button>
+                        <button @click=${() => { void this.runSearch(); }}
+                                ?disabled=${this.searchLoading || this.searchQuery.trim() === ''}>
+                            ${this.searchLoading ? 'Searching…' : 'Search'}
+                        </button>
+                    </div>
+                    ${this.searchError
+                        ? html`<div class="error" style="margin-top:0.75rem;">${this.searchError}</div>`
+                        : nothing}
+                    ${this.searchResults.length > 0 ? html`
+                        <div class="search-results">
+                            ${this.searchResults.map((hit) => html`
+                                <div class="search-result"
+                                     @click=${() => { void this.pickSearchResult(hit); }}>
+                                    <div class="sr-title">${hit.title}</div>
+                                    <div class="sr-sub">
+                                        <span>${hit.artist || '—'}</span>
+                                        ${hit.detail ? html`<span class="sr-detail">${hit.detail}</span>` : nothing}
+                                    </div>
+                                </div>
+                            `)}
+                        </div>
+                    ` : this.searchLoading || this.searchError || this.searchQuery.trim() === ''
+                        ? nothing
+                        : html`<div class="search-empty">No results — try dropping the artist or switching Album/Track.</div>`}
+                </div>
+            </div>
+        `;
+    }
+
     private renderDialog() {
         switch (this.dialog) {
             case 'paste':   return this.renderPasteDialog();
             case 'warning': return this.renderWarningDialog();
             case 'leave':   return this.renderLeaveDialog();
+            case 'search':  return this.renderSearchDialog();
             default:        return nothing;
         }
     }
 
     override render() {
-        if (this.loading && !this.current && this.folders.length === 0) {
-            return html`<div class="empty">Loading pending folders\u2026</div>`;
-        }
-
-        const clusters = this.score
-            ? this.clusterVersions(this.score.candidates)
-            : [];
-
+        // The layout chrome always renders immediately; each pane owns
+        // its own skeleton while its data resolves, so the user never
+        // sees a blank full-screen "Loading\u2026".
         return html`
             <div class="root">
                 ${this.renderHeader()}
                 ${this.renderFolderSidebar()}
                 ${this.renderMain()}
-                ${this.renderVersionsSidebar(clusters)}
             </div>
             ${this.renderDialog()}
         `;

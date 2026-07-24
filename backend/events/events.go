@@ -90,4 +90,22 @@ const (
 // Explore / search index events.
 const (
 	IndexStatusChanged = "IndexStatusChanged"
+
+	// ArtistDiscographyReady fires (payload: artist MBID string) after a
+	// lazy background discography fetch persists into the index, so the
+	// artist detail page can re-fetch its top tracks / top releases
+	// without the initial request having blocked on a live fetch.
+	ArtistDiscographyReady = "ArtistDiscographyReady"
+
+	// ArtistSimilarReady fires (payload: artist MBID string) after a lazy
+	// background similar-artists fetch persists into similar_artist_map,
+	// so the artist detail page can re-fetch that section without the
+	// initial request having blocked on a live LB labs call.
+	ArtistSimilarReady = "ArtistSimilarReady"
+
+	// AlbumReleasesReady fires (payload: release-group MBID string) after a
+	// lazy background BrowseReleases fetch populates the response cache, so
+	// the album detail page can re-fetch its versions / tracklist without
+	// the initial request having blocked on a live MusicBrainz browse.
+	AlbumReleasesReady = "AlbumReleasesReady"
 )

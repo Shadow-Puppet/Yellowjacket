@@ -30,6 +30,10 @@ export function GetCandidatesForPasteURL(arg1, arg2) {
   return window['go']['autotagservice']['Service']['GetCandidatesForPasteURL'](arg1, arg2);
 }
 
+export function GetLocalCoverArt(arg1) {
+  return window['go']['autotagservice']['Service']['GetLocalCoverArt'](arg1);
+}
+
 export function GetNextPending() {
   return window['go']['autotagservice']['Service']['GetNextPending']();
 }
@@ -48,6 +52,14 @@ export function ListPendingFolders(arg1) {
 
 export function RetagGroup(arg1) {
   return window['go']['autotagservice']['Service']['RetagGroup'](arg1);
+}
+
+export function SearchCandidates(arg1, arg2, arg3) {
+  return window['go']['autotagservice']['Service']['SearchCandidates'](arg1, arg2, arg3);
+}
+
+export function SelectSearchCandidate(arg1, arg2, arg3) {
+  return window['go']['autotagservice']['Service']['SelectSearchCandidate'](arg1, arg2, arg3);
 }
 
 export function SetContext(arg1) {

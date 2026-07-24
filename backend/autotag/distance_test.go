@@ -33,10 +33,18 @@ func TestTitleSimilarity(t *testing.T) {
 		minScore float64
 	}{
 		{"Hey Jude", "Hey Jude", 1.00},
-		{"Hey Jude", "Hey Jude (Remastered 2009)", 1.00}, // qualifier stripped
+		{"Hey Jude", "Hey Jude (Remastered 2009)", 1.00}, // whitelisted qualifier: free
+		{"Hey Jude", "Hey Jude - 2015 Remaster", 1.00},   // dash-suffix qualifier: free
 		{"Hey Jude", "HEY JUDE!", 1.00},                  // case + punct
-		{"Hey Jude", "Hay Jude", 0.85},                   // one char off
-		{"Hey Jude", "Let It Be", 0.00},                  // different
+		{"Beyoncé", "Beyonce", 1.00},                     // transliteration
+		{"Simon & Garfunkel", "Simon and Garfunkel", 1.00},
+		{"Beatles, The", "The Beatles", 1.00}, // article rotation
+		{"Hey Jude", "Hay Jude", 0.85},        // one char off
+		// Unknown parenthetical content is de-weighted, not free —
+		// still similar, but detectably not identical.
+		{"Song Title (Special Whatever)", "Song Title", 0.80},
+		{"Yellow (feat. Somebody)", "Yellow", 0.90}, // feat credit nearly free
+		{"Hey Jude", "Let It Be", 0.00},             // different
 	}
 
 	for _, tc := range cases {
@@ -66,9 +74,9 @@ func TestLengthScore(t *testing.T) {
 		want        float64
 	}{
 		{200000, 200000, 1.0}, // exact
-		{200000, 200500, 1.0}, // 0.5s — under 2s threshold
-		{200000, 201900, 1.0}, // 1.9s — under 2s threshold
-		{200000, 202000, 1.0}, // exactly 2s — still full credit
+		{200000, 200500, 1.0}, // 0.5s — under the grace band
+		{200000, 204900, 1.0}, // 4.9s — under the grace band
+		{200000, 205000, 1.0}, // exactly 5s — still full credit
 		{0, 200000, 0.5},      // unknown local → neutral
 		{200000, 0, 0.5},      // unknown candidate → neutral
 
@@ -128,5 +136,106 @@ func TestTrackDistance(t *testing.T) {
 
 	if got := trackDistance(local, wrong); got > 0.20 {
 		t.Errorf("wrong match = %.2f, want < 0.2", got)
+	}
+}
+
+func TestDominantArtist(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name  string
+		local []LocalTrack
+		want  string
+	}{
+		{"empty", nil, ""},
+		{"all blank", []LocalTrack{{Artist: ""}, {Artist: ""}}, ""},
+		{
+			"unanimous",
+			[]LocalTrack{{Artist: "Radiohead"}, {Artist: "Radiohead"}},
+			"Radiohead",
+		},
+		{
+			"majority wins over a stray",
+			[]LocalTrack{{Artist: "Radiohead"}, {Artist: "Radiohead"}, {Artist: "Guest"}},
+			"Radiohead",
+		},
+		{
+			"blanks ignored, one real value wins",
+			[]LocalTrack{{Artist: ""}, {Artist: "Bjork"}, {Artist: ""}},
+			"Bjork",
+		},
+	}
+
+	for _, tc := range cases {
+		if got := dominantArtist(tc.local); got != tc.want {
+			t.Errorf("%s: dominantArtist = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestArtistCreditFit(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name       string
+		local, cnd string
+		wantMin    float64 // when > 0, require >= ; when 0, require <= 0.5 (mismatch)
+	}{
+		{"unknown local is neutral", "", "Whoever", 1.0},
+		{"unknown candidate is neutral", "Whoever", "", 1.0},
+		{"exact", "The Beatles", "The Beatles", 1.0},
+		{"case/punct only", "The Beatles", "THE BEATLES!", 1.0},
+		{"almost-right stays high", "Beyonce", "Beyoncé", 0.85},
+		{"completely different artist", "The Beatles", "Metallica", 0.0},
+	}
+
+	for _, tc := range cases {
+		got := artistCreditFit(tc.local, tc.cnd)
+		if tc.wantMin == 0 {
+			if got > 0.5 { //nolint:mnd
+				t.Errorf(
+					"%s: artistCreditFit(%q,%q) = %.2f, want low",
+					tc.name,
+					tc.local,
+					tc.cnd,
+					got,
+				)
+			}
+
+			continue
+		}
+
+		if got < tc.wantMin {
+			t.Errorf(
+				"%s: artistCreditFit(%q,%q) = %.2f, want >= %.2f",
+				tc.name,
+				tc.local,
+				tc.cnd,
+				got,
+				tc.wantMin,
+			)
+		}
+	}
+}
+
+func TestEvidenceFactor(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		tracks int
+		want   float64
+	}{
+		{0, evidenceFloor}, // no tracks — treated as minimum evidence
+		{1, evidenceFloor}, // singleton — the harshest case
+		{2, 0.925},         // halfway between floor and full
+		{3, 1.0},           // full evidence
+		{10, 1.0},          // large album — unscaled
+	}
+
+	for _, tc := range cases {
+		got := evidenceFactor(tc.tracks)
+		if diff := got - tc.want; diff < -0.001 || diff > 0.001 {
+			t.Errorf("evidenceFactor(%d) = %.4f, want %.4f", tc.tracks, got, tc.want)
+		}
 	}
 }

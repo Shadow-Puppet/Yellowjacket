@@ -38,11 +38,15 @@ export function GetPlaylistTracks(arg1:number):Promise<Array<playlist.Track>>;
 
 export function GetSmartPlaylistRules(arg1:number):Promise<string>;
 
+export function GetSmartPlaylistTracks(arg1:number):Promise<Array<playlist.Track>>;
+
 export function ImportPlaylist(arg1:string):Promise<playlist.Summary>;
 
 export function ImportPlaylists(arg1:Array<string>):Promise<Array<playlist.Summary>>;
 
 export function PreviewSmartPlaylist(arg1:string):Promise<Array<library.Track>>;
+
+export function RefreshSmartPlaylist(arg1:number):Promise<void>;
 
 export function RemoveFromDefaultPlaylist(arg1:Array<string>):Promise<void>;
 

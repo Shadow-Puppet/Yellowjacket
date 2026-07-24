@@ -15,6 +15,9 @@ type MBTrack = explore.MBTrack;
 import { exploreCache } from '../../store/explore-cache';
 import { exploreSettings } from '../../store/explore-settings';
 import { libraryStore } from '../../store/library-store';
+import { artistLink, exploreLinkStyles } from '../../utils/explore-link';
+import { EventsOn } from '@runtime/runtime';
+import { Events } from '../../events';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '../library-status-indicator/library-status-indicator.js';
 
@@ -113,6 +116,7 @@ export class ExploreAlbumDetails extends LitElement {
 
     static override styles = [
         designTokens,
+        exploreLinkStyles,
         css`
             :host {
                 display: flex;
@@ -451,6 +455,13 @@ export class ExploreAlbumDetails extends LitElement {
     /* ── Lifecycle ── */
 
     private unsubSettings?: () => void;
+    private unsubReleasesReady?: () => void;
+    /** Release-group MBIDs whose AlbumReleasesReady event we've handled,
+     * so a background BrowseReleases fetch re-hydrates versions once. */
+    private releasesReloaded = new Set<string>();
+    /** Fallback timer that stops the versions spinner if the background
+     * BrowseReleases fetch never signals readiness. */
+    private releasesFallbackTimer?: number;
 
     override connectedCallback() {
         super.connectedCallback();
@@ -465,11 +476,45 @@ export class ExploreAlbumDetails extends LitElement {
                 void this.loadAllData();
             }
         });
+
+        // A background BrowseReleases fetch (cold album, versions +
+        // tracklist not cached yet) finished — re-fetch the versions once
+        // per release group so they fill in without the initial request
+        // having blocked on a live MusicBrainz browse.
+        this.unsubReleasesReady = EventsOn(
+            Events.AlbumReleasesReady,
+            (mbid: string) => {
+                if (mbid !== this.releaseGroupMBID) return;
+                if (this.releasesReloaded.has(mbid)) return;
+
+                if (this.releasesFallbackTimer) clearTimeout(this.releasesFallbackTimer);
+                this.releasesReloaded.add(mbid);
+                void this.fetchReleases(mbid);
+            },
+        );
     }
 
     override disconnectedCallback() {
         super.disconnectedCallback();
         this.unsubSettings?.();
+        this.unsubReleasesReady?.();
+        if (this.releasesFallbackTimer) clearTimeout(this.releasesFallbackTimer);
+    }
+
+    /**
+     * Arm a one-shot fallback that stops the versions spinner if
+     * AlbumReleasesReady never arrives (e.g. the background browse stalled
+     * or the release group genuinely has no releases).
+     */
+    private armReleasesFallback(mbid: string) {
+        if (this.releasesFallbackTimer) clearTimeout(this.releasesFallbackTimer);
+
+        this.releasesFallbackTimer = window.setTimeout(() => {
+            if (this.releasesReloaded.has(mbid)) return;
+
+            this.releasesReloaded.add(mbid);
+            if (this.releases.length === 0) this.loadingReleases = false;
+        }, 12000);
     }
 
     /** Whether we've already scrolled to the highlight target. */
@@ -595,7 +640,11 @@ export class ExploreAlbumDetails extends LitElement {
         }
 
         // Phase 2: fire API calls independently so each section
-        // renders as its data arrives.
+        // renders as its data arrives.  Allow the versions section one
+        // background-fetch re-fetch and arm a fallback so it can't spin
+        // forever if AlbumReleasesReady never arrives.
+        this.releasesReloaded.delete(mbid);
+        this.armReleasesFallback(mbid);
         void this.fetchReleaseGroup(mbid);
         void this.fetchReleases(mbid);
 
@@ -828,13 +877,28 @@ export class ExploreAlbumDetails extends LitElement {
     private async fetchReleases(mbid: string) {
         try {
             const releases = await BrowseReleases(mbid);
-            this.releases = releases ?? [];
-            this.buildClusters();
+
+            if (releases && releases.length > 0) {
+                // Warm cache hit (or the background re-fetch landed):
+                // authoritative MB versions replace any local placeholder.
+                this.releases = releases;
+                this.buildClusters();
+                this.loadingReleases = false;
+                return;
+            }
+
+            // Cold miss: BrowseReleases is cache-first + async and the
+            // versions/tracklist are still being fetched in the background.
+            // Don't clobber a tracklist already hydrated from the library —
+            // keep showing it.  Hold the spinner only when there's nothing
+            // on screen yet; AlbumReleasesReady (or the fallback) resolves it.
+            if (this.releases.length > 0 || this.releasesReloaded.has(mbid)) {
+                this.loadingReleases = false;
+            }
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             this.errorReleases = msg;
             console.error(`[explore-album] BrowseReleases error: ${msg}`);
-        } finally {
             this.loadingReleases = false;
         }
     }
@@ -1437,6 +1501,7 @@ export class ExploreAlbumDetails extends LitElement {
 
         const rg = this.releaseGroup;
         const artist = rg.artistCredit || '';
+        const artistMbid = rg.artistMbid ?? '';
         const year = extractYear(rg.firstReleaseDate);
         const type = rg.primaryType || '';
 
@@ -1446,7 +1511,9 @@ export class ExploreAlbumDetails extends LitElement {
 
         return html`
             ${artist
-                ? html`<div class="album-artist">${artist}</div>`
+                ? html`<div class="album-artist">
+                      ${artistLink(artist, artistMbid)}
+                  </div>`
                 : nothing}
             ${metaParts.length > 0
                 ? html`

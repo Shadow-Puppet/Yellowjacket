@@ -15,6 +15,7 @@ import {
     GetTrackThumbnail,
     GetTrackThumbnails,
     ResolveReleaseGroupMBIDs,
+    PrefetchReleases,
 } from '@go/explore/Service';
 import type { explore } from '@go/models';
 type MBArtist = explore.MBArtist;
@@ -25,7 +26,10 @@ type LBSimilarArtist = explore.LBSimilarArtist;
 import { exploreCache } from '../../store/explore-cache';
 import { exploreSettings } from '../../store/explore-settings';
 import { libraryStore } from '../../store/library-store';
+import { trackLink, exploreLinkStyles } from '../../utils/explore-link';
 import { GetAlbumsByArtist } from '@go/library/Library';
+import { EventsOn } from '@runtime/runtime';
+import { Events } from '../../events';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '../library-status-indicator/library-status-indicator.js';
 
@@ -123,6 +127,7 @@ export class ExploreArtistDetails extends LitElement {
 
     static override styles = [
         designTokens,
+        exploreLinkStyles,
         css`
             :host {
                 display: flex;
@@ -826,6 +831,17 @@ export class ExploreArtistDetails extends LitElement {
     /* ── Lifecycle ── */
 
     private unsubSettings?: () => void;
+    private unsubDiscogReady?: () => void;
+    private unsubSimilarReady?: () => void;
+    /** MBIDs whose ArtistSimilarReady event we've already handled, so a
+     * background similar-artists fetch re-hydrates that section once. */
+    private similarReloaded = new Set<string>();
+    /** MBIDs whose ArtistDiscographyReady event we've already handled,
+     * so an artist with no discography can't trigger a re-fetch loop. */
+    private discogReloaded = new Set<string>();
+    /** Fallback timer that stops the top-section spinners if the
+     * background discography fetch never signals readiness. */
+    private discogFallbackTimer?: number;
 
     override connectedCallback() {
         super.connectedCallback();
@@ -840,13 +856,70 @@ export class ExploreArtistDetails extends LitElement {
                 void this.loadAllData();
             }
         });
+
+        // A background discography fetch (top tracks / top releases for an
+        // artist that wasn't indexed yet) finished — re-fetch those two
+        // sections, once per artist, so they fill in without the initial
+        // request having blocked.
+        this.unsubDiscogReady = EventsOn(
+            Events.ArtistDiscographyReady,
+            (mbid: string) => {
+                if (mbid !== this.artistMBID) return;
+                if (this.discogReloaded.has(mbid)) return;
+
+                if (this.discogFallbackTimer) clearTimeout(this.discogFallbackTimer);
+                this.discogReloaded.add(mbid);
+                void this.fetchTopTracks(mbid);
+                void this.fetchTopReleaseGroups(mbid);
+                // Full discography section is also index-first + async now,
+                // so re-read it from the freshly-populated index too.
+                void this.fetchReleaseGroups(mbid);
+            },
+        );
+
+        // A background similar-artists fetch (LB labs, first view of an
+        // artist) finished — re-fetch that section once per artist.
+        this.unsubSimilarReady = EventsOn(
+            Events.ArtistSimilarReady,
+            (mbid: string) => {
+                if (mbid !== this.artistMBID) return;
+                if (this.similarReloaded.has(mbid)) return;
+
+                this.similarReloaded.add(mbid);
+                void this.fetchSimilarArtists(mbid);
+            },
+        );
     }
 
     override disconnectedCallback() {
         super.disconnectedCallback();
         this.unsubSettings?.();
+        this.unsubDiscogReady?.();
+        this.unsubSimilarReady?.();
+        if (this.discogFallbackTimer) clearTimeout(this.discogFallbackTimer);
         this.topSectionObserver?.disconnect();
         this.discoObserver?.disconnect();
+    }
+
+    /**
+     * Arm a one-shot fallback that clears the top-section loading state
+     * if ArtistDiscographyReady never arrives (e.g. the artist genuinely
+     * has no discography, or the background fetch stalled).  Treated as a
+     * "reload happened" so the finally blocks resolve to empty state.
+     */
+    private armDiscogFallback(mbid: string) {
+        if (this.discogFallbackTimer) clearTimeout(this.discogFallbackTimer);
+
+        this.discogFallbackTimer = window.setTimeout(() => {
+            if (this.discogReloaded.has(mbid)) return;
+
+            this.discogReloaded.add(mbid);
+            this.similarReloaded.add(mbid);
+            if (this.topTracks.length === 0) this.loadingTracks = false;
+            if (this.topReleaseGroups.length === 0) this.loadingTopReleases = false;
+            if (this.releaseGroups.length === 0) this.loadingReleases = false;
+            if (this.similarArtists.length === 0) this.loadingSimilar = false;
+        }, 12000);
     }
 
     protected override firstUpdated() {
@@ -1037,6 +1110,13 @@ export class ExploreArtistDetails extends LitElement {
 
             return;
         }
+
+        // Fresh load for this artist: allow the top sections one
+        // background-fetch re-fetch, and arm a fallback so they can't spin
+        // forever if ArtistDiscographyReady never arrives.
+        this.discogReloaded.delete(mbid);
+        this.similarReloaded.delete(mbid);
+        this.armDiscogFallback(mbid);
 
         // Phase 1: fire all API requests independently so the UI
         // renders each section as its data arrives, rather than
@@ -1290,7 +1370,13 @@ export class ExploreArtistDetails extends LitElement {
                 `[explore-artist] TopRecordingsForArtist error: ${msg}`,
             );
         } finally {
-            this.loadingTracks = false;
+            // An empty first pass may mean a background discography fetch
+            // is still in flight (the artist wasn't indexed yet).  Keep
+            // the loading state up until the ArtistDiscographyReady
+            // re-fetch runs, so the section doesn't flash empty.
+            if (this.topTracks.length > 0 || this.discogReloaded.has(mbid)) {
+                this.loadingTracks = false;
+            }
         }
     }
 
@@ -1367,6 +1453,10 @@ export class ExploreArtistDetails extends LitElement {
                 rgs?.map((r) => ({ mbid: r.releaseGroupMbid, albumName: r.title, artistName: r.artistName }))
                     ?? [],
             );
+
+            // Warm the release/tracklist cache for the top albums — these
+            // are the most likely to be clicked from the artist page.
+            this.prefetchReleases(rgs?.map((r) => r.releaseGroupMbid) ?? []);
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             console.error(
@@ -1374,7 +1464,11 @@ export class ExploreArtistDetails extends LitElement {
             );
             this.topReleaseGroups = [];
         } finally {
-            this.loadingTopReleases = false;
+            // See fetchTopTracks: hold the spinner while a background
+            // discography fetch may still populate this section.
+            if (this.topReleaseGroups.length > 0 || this.discogReloaded.has(mbid)) {
+                this.loadingTopReleases = false;
+            }
         }
     }
 
@@ -1392,6 +1486,10 @@ export class ExploreArtistDetails extends LitElement {
                 rgs?.map((r) => ({ mbid: r.mbid, albumName: r.title, artistName: r.artistCredit }))
                     ?? [],
             );
+
+            // Warm the release/tracklist cache for these albums so opening
+            // one from here is instant instead of a cold MB browse.
+            this.prefetchReleases(rgs?.map((r) => r.mbid) ?? []);
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             this.errorReleases = msg;
@@ -1399,8 +1497,27 @@ export class ExploreArtistDetails extends LitElement {
                 `[explore-artist] BrowseReleaseGroups error: ${msg}`,
             );
         } finally {
-            this.loadingReleases = false;
+            // BrowseReleaseGroups is index-first + async: an empty result on
+            // a cold artist means the discography is still being fetched in
+            // the background.  Hold the spinner until it arrives (via
+            // ArtistDiscographyReady) or the fallback fires.
+            if (this.releaseGroups.length > 0 || this.discogReloaded.has(mbid)) {
+                this.loadingReleases = false;
+            }
         }
+    }
+
+    /**
+     * Warm the backend's release/tracklist cache for a set of release
+     * groups so opening an album from this page is instant.  Fire-and-forget.
+     */
+    private prefetchReleases(mbids: string[]) {
+        const filtered = mbids.filter((m) => m);
+        if (filtered.length === 0) return;
+
+        void PrefetchReleases(filtered).catch(() => {
+            /* best-effort cache warming — ignore failures */
+        });
     }
 
     private async fetchSimilarArtists(mbid: string) {
@@ -1415,7 +1532,13 @@ export class ExploreArtistDetails extends LitElement {
             );
             this.similarArtists = [];
         } finally {
-            this.loadingSimilar = false;
+            // SimilarArtists is DB-first + async: an empty result on the
+            // first view means the LB labs fetch is still running.  Hold the
+            // spinner until ArtistSimilarReady re-fetches (or the fallback
+            // fires); once reloaded, an empty list is genuinely "none".
+            if (this.similarArtists.length > 0 || this.similarReloaded.has(mbid)) {
+                this.loadingSimilar = false;
+            }
         }
 
         // Fire-and-forget: resolve images for similar artists in parallel.
@@ -1973,7 +2096,7 @@ export class ExploreArtistDetails extends LitElement {
                                                         })()}
                                                     </div>
                                                     <div class="track-info">
-                                                        <div class="track-title">${t.trackName}</div>
+                                                        <div class="track-title">${trackLink(t.trackName, t.releaseName, t.releaseGroupMbid ?? '', t.recordingMbid)}</div>
                                                         <div class="track-artist">${t.artistName}</div>
                                                     </div>
                                                     <span class="track-listens">

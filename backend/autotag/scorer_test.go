@@ -166,7 +166,179 @@ func TestScorer_LocalHitSurfacesFirst(t *testing.T) {
 	}
 }
 
-func TestScorer_PersistBestWritesMatched(t *testing.T) {
+// TestScorer_LocalFirstSkipsMB asserts the background (prefetch)
+// scoring path makes zero MusicBrainz calls when a local candidate is
+// already a strong match — the whole point of ScoreGroupLocalFirst.
+func TestScorer_LocalFirstSkipsMB(t *testing.T) {
+	t.Parallel()
+
+	db := database.NewTestDB(t)
+
+	// A canonical local album (MBIDs present) that the pending group
+	// matches track-for-track — the local candidate scores >= 0.90.
+	seed(t, db, seededAlbum{
+		groupKey:    "g-canonical",
+		albumName:   "Good Album",
+		releaseMBID: "rg-abcd",
+		tracks: []seededTrack{
+			{
+				filePath: "/lib/a.mp3", title: "Song A",
+				trackNumber: 1, lengthMillis: 200000, recordingMBID: "rec-a",
+			},
+			{
+				filePath: "/lib/b.mp3", title: "Song B",
+				trackNumber: 2, lengthMillis: 180000, recordingMBID: "rec-b",
+			},
+		},
+	})
+	seed(t, db, seededAlbum{
+		groupKey:  "g-pending",
+		albumName: "Good Album",
+		tracks: []seededTrack{
+			{filePath: "/other/a.mp3", title: "Song A", trackNumber: 1, lengthMillis: 200000},
+			{filePath: "/other/b.mp3", title: "Song B", trackNumber: 2, lengthMillis: 180000},
+		},
+	})
+
+	mbCalls := 0
+	fakeMB := &countingMBClient{onSearch: func() { mbCalls++ }}
+
+	scorer := autotag.NewScorer(db.Queries, fakeMB, slog.New(slog.DiscardHandler))
+
+	result, err := scorer.ScoreGroupLocalFirst(context.Background(), "g-pending")
+	if err != nil {
+		t.Fatalf("ScoreGroupLocalFirst: %v", err)
+	}
+
+	if mbCalls != 0 {
+		t.Errorf("made %d MB calls, want 0 (strong local match should skip MB)", mbCalls)
+	}
+
+	if len(result.Candidates) == 0 || result.Candidates[0].ReleaseGroupMBID != "rg-abcd" {
+		t.Errorf("top candidate = %+v, want local rg-abcd", result.Candidates)
+	}
+}
+
+// TestScorer_IDFirstSkipsSearch asserts that a group whose tracks
+// already carry recording MBIDs resolves through the ID-first path
+// — the release the recordings vote for is looked up directly and
+// the fuzzy search cascade never runs.
+func TestScorer_IDFirstSkipsSearch(t *testing.T) {
+	t.Parallel()
+
+	db := database.NewTestDB(t)
+
+	seed(t, db, seededAlbum{
+		groupKey:  "g-tagged",
+		albumName: "Good Album",
+		tracks: []seededTrack{
+			{
+				filePath: "/lib/a.mp3", title: "Song A",
+				trackNumber: 1, lengthMillis: 200000, recordingMBID: "rec-a",
+			},
+			{
+				filePath: "/lib/b.mp3", title: "Song B",
+				trackNumber: 2, lengthMillis: 180000, recordingMBID: "rec-b",
+			},
+		},
+	})
+
+	fake := &idFakeClient{
+		recRels: map[string][]autotag.MBReleaseRef{
+			"rec-a": {{MBID: "rel-full", Status: "Official", Date: "1999"}},
+			"rec-b": {{MBID: "rel-full", Status: "Official", Date: "1999"}},
+		},
+		releases: map[string]autotag.MBRelease{
+			"rel-full": {
+				MBID: "rel-full", Title: "Good Album",
+				ArtistCredit: "Test Artist", Status: "Official", Country: "US",
+				Tracks: []autotag.CandidateTrack{
+					{Position: 1, Title: "Song A", LengthMillis: 200000, MBID: "rec-a"},
+					{Position: 2, Title: "Song B", LengthMillis: 180000, MBID: "rec-b"},
+				},
+			},
+		},
+	}
+
+	scorer := autotag.NewScorer(db.Queries, fake, slog.New(slog.DiscardHandler))
+
+	result, err := scorer.ScoreGroup(context.Background(), "g-tagged")
+	if err != nil {
+		t.Fatalf("ScoreGroup: %v", err)
+	}
+
+	if fake.searches != 0 {
+		t.Errorf("made %d search calls, want 0 (ID-first should skip the cascade)", fake.searches)
+	}
+
+	if len(result.Candidates) == 0 {
+		t.Fatal("no candidates")
+	}
+
+	top := result.Candidates[0]
+	if top.ReleaseMBID != "rel-full" || top.Provenance != "id" {
+		t.Errorf(
+			"top = %q via %q (%.3f), want 'rel-full' via 'id'",
+			top.ReleaseMBID, top.Provenance, top.Score,
+		)
+	}
+}
+
+// idFakeClient serves canned recording→release lookups and counts
+// search calls so the ID-first test can assert the cascade stayed
+// cold.
+type idFakeClient struct {
+	searches int
+	recRels  map[string][]autotag.MBReleaseRef
+	releases map[string]autotag.MBRelease
+}
+
+func (c *idFakeClient) SearchReleaseGroups(
+	_ context.Context, _ string, _ int,
+) ([]autotag.MBReleaseGroupHit, int, error) {
+	c.searches++
+
+	return nil, 0, nil
+}
+
+func (c *idFakeClient) SearchRecordings(
+	_ context.Context, _ string, _ int,
+) ([]autotag.MBRecordingHit, int, error) {
+	c.searches++
+
+	return nil, 0, nil
+}
+
+func (c *idFakeClient) LookupRecordingReleases(
+	_ context.Context, mbid string,
+) ([]autotag.MBReleaseRef, error) {
+	return c.recRels[mbid], nil
+}
+
+func (c *idFakeClient) BrowseReleases(
+	_ context.Context, _ string,
+) ([]autotag.MBRelease, error) {
+	return nil, nil
+}
+
+func (c *idFakeClient) LookupRelease(
+	_ context.Context, mbid string,
+) (autotag.MBRelease, error) {
+	rel, ok := c.releases[mbid]
+	if !ok {
+		return autotag.MBRelease{}, autotag.ErrGroupNotFound
+	}
+
+	return rel, nil
+}
+
+func (c *idFakeClient) LookupReleaseGroup(
+	_ context.Context, _ string,
+) (autotag.MBReleaseGroupHit, error) {
+	return autotag.MBReleaseGroupHit{}, nil
+}
+
+func TestScorer_PersistScoreWritesTopMatch(t *testing.T) {
 	t.Parallel()
 
 	db := database.NewTestDB(t)
@@ -200,8 +372,8 @@ func TestScorer_PersistBestWritesMatched(t *testing.T) {
 		t.Fatalf("ScoreGroup: %v", err)
 	}
 
-	if err := scorer.PersistBest(context.Background(), result); err != nil {
-		t.Fatalf("PersistBest: %v", err)
+	if err := scorer.PersistScore(context.Background(), result); err != nil {
+		t.Fatalf("PersistScore: %v", err)
 	}
 
 	got, err := db.Queries.GetTaggingItem(context.Background(), "g-pending")
@@ -209,8 +381,10 @@ func TestScorer_PersistBestWritesMatched(t *testing.T) {
 		t.Fatalf("reload: %v", err)
 	}
 
-	if got.Status != "matched" {
-		t.Errorf("status = %q, want 'matched'", got.Status)
+	// PersistScore records the pill score + best match but must leave
+	// the review status untouched so the folder stays in the queue.
+	if got.Status != "pending" {
+		t.Errorf("status = %q, want 'pending' (PersistScore must not flip status)", got.Status)
 	}
 
 	if !got.BestMatchReleaseMbid.Valid || got.BestMatchReleaseMbid.String != "rg-abcd" {
@@ -258,10 +432,20 @@ func (c *countingMBClient) BrowseReleases(
 	return nil, nil
 }
 
-func (c *countingMBClient) LookupArtist(_ context.Context, _ string) (string, error) {
+func (c *countingMBClient) SearchRecordings(
+	_ context.Context, _ string, _ int,
+) ([]autotag.MBRecordingHit, int, error) {
 	c.onSearch()
 
-	return "", nil
+	return nil, 0, nil
+}
+
+func (c *countingMBClient) LookupRecordingReleases(
+	_ context.Context, _ string,
+) ([]autotag.MBReleaseRef, error) {
+	c.onSearch()
+
+	return nil, nil
 }
 
 func (c *countingMBClient) LookupRelease(_ context.Context, _ string) (autotag.MBRelease, error) {

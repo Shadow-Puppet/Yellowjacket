@@ -170,8 +170,9 @@ func newTestService(t *testing.T, db *database.DB) *Service {
 	t.Helper()
 
 	return &Service{
-		db:     db,
-		logger: slog.Default(),
+		db:              db,
+		logger:          slog.Default(),
+		dataDirOverride: t.TempDir(),
 	}
 }
 
@@ -291,6 +292,141 @@ func TestSmartPlaylistUpdateRules(t *testing.T) {
 
 	if tracks[0].ArtistName != "Band B" {
 		t.Errorf("artist = %q, want Band B", tracks[0].ArtistName)
+	}
+}
+
+// TestSmartPlaylistPersistedSnapshot verifies that a smart playlist's
+// membership is materialized and read from a stored snapshot: it is
+// backfilled on first access, does NOT re-evaluate when the rules
+// change out from under it, and only re-materializes on an explicit
+// refresh.
+func TestSmartPlaylistPersistedSnapshot(t *testing.T) {
+	t.Parallel()
+
+	db := database.NewTestDB(t)
+	seedSmartTestTracks(t, db)
+
+	svc := newTestService(t, db)
+
+	// Band A → tracks 1 and 3.
+	bandARules := makeRulesJSON(t, smartplaylist.RuleSet{
+		Rules: []smartplaylist.Rule{
+			{Field: "artist", Operator: "is", Value: "Band A"},
+		},
+	})
+
+	summary, err := svc.CreateSmartPlaylist("Snapshot Test", bandARules)
+	if err != nil {
+		t.Fatalf("CreateSmartPlaylist failed: %v", err)
+	}
+
+	// First access backfills the snapshot (snapshot_at was NULL).
+	tracks, err := svc.GetSmartPlaylistTracks(summary.ID)
+	if err != nil {
+		t.Fatalf("GetSmartPlaylistTracks failed: %v", err)
+	}
+
+	if len(tracks) != 2 {
+		t.Fatalf("initial snapshot: got %d tracks, want 2", len(tracks))
+	}
+
+	for _, tr := range tracks {
+		if tr.Artist != "Band A" {
+			t.Errorf("snapshot track %q has artist %q, want Band A",
+				tr.Title, tr.Artist)
+		}
+	}
+
+	// Change the rules directly in the DB, bypassing
+	// UpdateSmartPlaylistRules so no refresh is triggered. The stored
+	// snapshot must be unaffected.
+	bandBRules := makeRulesJSON(t, smartplaylist.RuleSet{
+		Rules: []smartplaylist.Rule{
+			{Field: "artist", Operator: "is", Value: "Band B"},
+		},
+	})
+
+	if _, err := db.ExecContext(
+		"UPDATE playlists SET smart_rules = ? WHERE id = ?",
+		bandBRules, summary.ID,
+	); err != nil {
+		t.Fatalf("failed to rewrite rules: %v", err)
+	}
+
+	// Snapshot is served as-is: still Band A's two tracks, not Band B.
+	tracks, err = svc.GetSmartPlaylistTracks(summary.ID)
+	if err != nil {
+		t.Fatalf("GetSmartPlaylistTracks (post rule change) failed: %v", err)
+	}
+
+	if len(tracks) != 2 {
+		t.Fatalf("snapshot re-read: got %d tracks, want 2 (must not re-evaluate)",
+			len(tracks))
+	}
+
+	// An explicit refresh re-materializes against the current rules.
+	if err := svc.RefreshSmartPlaylist(summary.ID); err != nil {
+		t.Fatalf("RefreshSmartPlaylist failed: %v", err)
+	}
+
+	tracks, err = svc.GetSmartPlaylistTracks(summary.ID)
+	if err != nil {
+		t.Fatalf("GetSmartPlaylistTracks (post refresh) failed: %v", err)
+	}
+
+	if len(tracks) != 1 {
+		t.Fatalf("post-refresh snapshot: got %d tracks, want 1", len(tracks))
+	}
+
+	if tracks[0].Artist != "Band B" {
+		t.Errorf("post-refresh artist = %q, want Band B", tracks[0].Artist)
+	}
+}
+
+// TestSmartPlaylistSaveRulesRematerializes verifies that saving new
+// rules through UpdateSmartPlaylistRules refreshes the stored snapshot.
+func TestSmartPlaylistSaveRulesRematerializes(t *testing.T) {
+	t.Parallel()
+
+	db := database.NewTestDB(t)
+	seedSmartTestTracks(t, db)
+
+	svc := newTestService(t, db)
+
+	bandARules := makeRulesJSON(t, smartplaylist.RuleSet{
+		Rules: []smartplaylist.Rule{
+			{Field: "artist", Operator: "is", Value: "Band A"},
+		},
+	})
+
+	summary, err := svc.CreateSmartPlaylist("Save Refresh", bandARules)
+	if err != nil {
+		t.Fatalf("CreateSmartPlaylist failed: %v", err)
+	}
+
+	bandBRules := makeRulesJSON(t, smartplaylist.RuleSet{
+		Rules: []smartplaylist.Rule{
+			{Field: "artist", Operator: "is", Value: "Band B"},
+		},
+	})
+
+	if err := svc.UpdateSmartPlaylistRules(summary.ID, bandBRules); err != nil {
+		t.Fatalf("UpdateSmartPlaylistRules failed: %v", err)
+	}
+
+	// The stored snapshot should already reflect the new rules without
+	// any manual refresh.
+	tracks, err := svc.GetSmartPlaylistTracks(summary.ID)
+	if err != nil {
+		t.Fatalf("GetSmartPlaylistTracks failed: %v", err)
+	}
+
+	if len(tracks) != 1 {
+		t.Fatalf("got %d tracks, want 1", len(tracks))
+	}
+
+	if tracks[0].Artist != "Band B" {
+		t.Errorf("artist = %q, want Band B", tracks[0].Artist)
 	}
 }
 

@@ -46,6 +46,7 @@ import type { DragPayload } from '@utils/drag-controller';
 import { ContextMenuController } from '@utils/context-menu-controller.js';
 import type { ContextMenuHost } from '@utils/context-menu-controller.js';
 import { FavoritesController } from '@store/controllers/favorites-controller';
+import { artistLink, exploreLinkStyles } from '../../utils/explore-link';
 import {
     createAlbumArtDragImage,
     createDragImage,
@@ -264,7 +265,7 @@ export class CoverGrid
     private splitEntriesCacheKey: GridEntry[] | null = null;
     private splitEntriesCacheIndex = -1;
 
-    static override styles = coverGridStyles;
+    static override styles = [coverGridStyles, exploreLinkStyles];
 
     /* ====================================================================
      * Reactive state
@@ -1832,7 +1833,7 @@ export class CoverGrid
                         class="artist-name"
                         title="${album.ArtistName}"
                     >
-                        ${album.ArtistName}
+                        ${artistLink(album.ArtistName, album.ArtistMBID ?? '')}
                     </div>
                 </div>
             </div>

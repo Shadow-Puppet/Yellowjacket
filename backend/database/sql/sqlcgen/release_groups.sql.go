@@ -109,6 +109,17 @@ SELECT
     COALESCE(rg.original_year, rg.year) AS year,
     COALESCE(rg.year, 0) AS release_year,
     COALESCE(ac.text, fallback_ac.text, '') as artist_name,
+    -- primary (first-credited) album artist's MBID, for linking the
+    -- artist name to its detail page.  Empty when the album has no
+    -- MB-tagged album-artist credit.
+    CAST(COALESCE((
+        SELECT a.mbid
+        FROM artist_credit_artist aca_p
+        JOIN artists a ON a.id = aca_p.artist_id
+        WHERE aca_p.credit_id = rg.album_artist_credit_id
+        ORDER BY aca_p.id
+        LIMIT 1
+    ), '') AS TEXT) as artist_mbid,
     COALESCE(ca.file_path, '') as cover_art_path
 FROM release_groups rg
 JOIN artist_credit ac ON rg.album_artist_credit_id = ac.id
@@ -131,6 +142,7 @@ type GetAlbumsByArtistRow struct {
 	Year         sql.NullInt64
 	ReleaseYear  int64
 	ArtistName   string
+	ArtistMbid   string
 	CoverArtPath string
 }
 
@@ -149,6 +161,7 @@ func (q *Queries) GetAlbumsByArtist(ctx context.Context, artistID int64) ([]GetA
 			&i.Year,
 			&i.ReleaseYear,
 			&i.ArtistName,
+			&i.ArtistMbid,
 			&i.CoverArtPath,
 		); err != nil {
 			return nil, err
@@ -171,6 +184,17 @@ SELECT
     COALESCE(rg.original_year, rg.year) AS year,
     COALESCE(rg.year, 0) AS release_year,
     COALESCE(ac.text, fallback_ac.text, '') as artist_name,
+    -- primary (first-credited) album artist's MBID, for linking the
+    -- artist name to its detail page.  Empty when the album has no
+    -- MB-tagged album-artist credit.
+    CAST(COALESCE((
+        SELECT a.mbid
+        FROM artist_credit_artist aca_p
+        JOIN artists a ON a.id = aca_p.artist_id
+        WHERE aca_p.credit_id = rg.album_artist_credit_id
+        ORDER BY aca_p.id
+        LIMIT 1
+    ), '') AS TEXT) as artist_mbid,
     COALESCE(ca.file_path, '') as cover_art_path
 FROM release_groups rg
 JOIN artist_credit ac ON rg.album_artist_credit_id = ac.id
@@ -205,6 +229,7 @@ type GetAlbumsByArtistByLibraryRow struct {
 	Year         sql.NullInt64
 	ReleaseYear  int64
 	ArtistName   string
+	ArtistMbid   string
 	CoverArtPath string
 }
 
@@ -223,6 +248,7 @@ func (q *Queries) GetAlbumsByArtistByLibrary(ctx context.Context, arg GetAlbumsB
 			&i.Year,
 			&i.ReleaseYear,
 			&i.ArtistName,
+			&i.ArtistMbid,
 			&i.CoverArtPath,
 		); err != nil {
 			return nil, err
@@ -250,6 +276,17 @@ SELECT
     COALESCE(rg.year, 0) AS release_year,
     rg.mbid,
     COALESCE(ac.text, fallback_ac.text, '') as artist_name,
+    -- primary (first-credited) album artist's MBID, for linking the
+    -- artist name to its detail page.  Empty when the album has no
+    -- MB-tagged album-artist credit.
+    CAST(COALESCE((
+        SELECT a.mbid
+        FROM artist_credit_artist aca_p
+        JOIN artists a ON a.id = aca_p.artist_id
+        WHERE aca_p.credit_id = rg.album_artist_credit_id
+        ORDER BY aca_p.id
+        LIMIT 1
+    ), '') AS TEXT) as artist_mbid,
     COALESCE(ca.file_path, '') as cover_art_path
 FROM release_groups rg
 LEFT JOIN artist_credit ac ON rg.album_artist_credit_id = ac.id
@@ -271,6 +308,7 @@ type GetAllAlbumsWithDetailsRow struct {
 	ReleaseYear  int64
 	Mbid         sql.NullString
 	ArtistName   string
+	ArtistMbid   string
 	CoverArtPath string
 }
 
@@ -290,6 +328,7 @@ func (q *Queries) GetAllAlbumsWithDetails(ctx context.Context) ([]GetAllAlbumsWi
 			&i.ReleaseYear,
 			&i.Mbid,
 			&i.ArtistName,
+			&i.ArtistMbid,
 			&i.CoverArtPath,
 		); err != nil {
 			return nil, err
@@ -317,6 +356,17 @@ SELECT
     COALESCE(rg.year, 0) AS release_year,
     rg.mbid,
     COALESCE(ac.text, fallback_ac.text, '') as artist_name,
+    -- primary (first-credited) album artist's MBID, for linking the
+    -- artist name to its detail page.  Empty when the album has no
+    -- MB-tagged album-artist credit.
+    CAST(COALESCE((
+        SELECT a.mbid
+        FROM artist_credit_artist aca_p
+        JOIN artists a ON a.id = aca_p.artist_id
+        WHERE aca_p.credit_id = rg.album_artist_credit_id
+        ORDER BY aca_p.id
+        LIMIT 1
+    ), '') AS TEXT) as artist_mbid,
     COALESCE(ca.file_path, '') as cover_art_path
 FROM release_groups rg
 LEFT JOIN artist_credit ac ON rg.album_artist_credit_id = ac.id
@@ -345,6 +395,7 @@ type GetAllAlbumsWithDetailsByLibraryRow struct {
 	ReleaseYear  int64
 	Mbid         sql.NullString
 	ArtistName   string
+	ArtistMbid   string
 	CoverArtPath string
 }
 
@@ -364,6 +415,7 @@ func (q *Queries) GetAllAlbumsWithDetailsByLibrary(ctx context.Context, libraryI
 			&i.ReleaseYear,
 			&i.Mbid,
 			&i.ArtistName,
+			&i.ArtistMbid,
 			&i.CoverArtPath,
 		); err != nil {
 			return nil, err

@@ -17,6 +17,8 @@ export function GetCandidates(arg1:string):Promise<autotagservice.ScoreView>;
 
 export function GetCandidatesForPasteURL(arg1:string,arg2:string):Promise<autotagservice.ScoreView>;
 
+export function GetLocalCoverArt(arg1:string):Promise<string>;
+
 export function GetNextPending():Promise<autotagservice.PendingItem>;
 
 export function GetPendingFolder(arg1:string):Promise<autotagservice.PendingItem>;
@@ -26,6 +28,10 @@ export function LeaveAsIs(arg1:string):Promise<void>;
 export function ListPendingFolders(arg1:number):Promise<Array<autotagservice.PendingItem>>;
 
 export function RetagGroup(arg1:string):Promise<void>;
+
+export function SearchCandidates(arg1:string,arg2:string,arg3:string):Promise<Array<autotagservice.SearchHitView>>;
+
+export function SelectSearchCandidate(arg1:string,arg2:string,arg3:string):Promise<autotagservice.ScoreView>;
 
 export function SetContext(arg1:context.Context):Promise<void>;
 

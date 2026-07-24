@@ -9,6 +9,7 @@ import {
 } from '@go/explore/Service';
 import '../library-status-indicator/library-status-indicator.js';
 import type { LibraryStatus } from '../library-status-indicator/library-status-indicator.js';
+import { artistLink, exploreLinkStyles } from '../../utils/explore-link';
 
 /** Format milliseconds as m:ss. */
 function formatDuration(ms: number | undefined): string {
@@ -51,6 +52,7 @@ export class TopResultsRow extends LitElement {
 
     static override styles = [
         designTokens,
+        exploreLinkStyles,
         css`
             :host {
                 display: block;
@@ -242,13 +244,16 @@ export class TopResultsRow extends LitElement {
         const imgUrl = this.images.get(r.mbid);
         const isArtist = r.entityType === 'artist';
 
-        const subtitle = isArtist
-            ? [r.artistType, r.country].filter(Boolean).join(' · ') || ''
+        // The artist portion of the subtitle links to the artist page;
+        // the remaining metadata (type/country, year, duration) is plain
+        // text.  Artist cards have no artist credit — their whole subtitle
+        // is metadata.
+        const artistPart = isArtist ? '' : r.artistCredit || '';
+        const metaPart = isArtist
+            ? [r.artistType, r.country].filter(Boolean).join(' · ')
             : r.entityType === 'release_group'
-              ? [r.artistCredit, r.year].filter(Boolean).join(' · ')
-              : [r.artistCredit, formatDuration(r.length)]
-                    .filter(Boolean)
-                    .join(' · ');
+              ? r.year || ''
+              : formatDuration(r.length) || '';
 
         const status: LibraryStatus = r.inLibrary ? 'in-library' : 'not-in-library';
         const entityType: 'artist' | 'album' | 'track' =
@@ -280,9 +285,13 @@ export class TopResultsRow extends LitElement {
                           </div>`}
                     <div class="card-info">
                         <span class="card-name">${r.name}</span>
-                        ${subtitle
+                        ${artistPart || metaPart
                             ? html`<span class="card-subtitle"
-                                  >${subtitle}</span
+                                  >${artistPart
+                                      ? artistLink(artistPart, r.artistMbid ?? '')
+                                      : nothing}${artistPart && metaPart
+                                      ? ' · '
+                                      : ''}${metaPart}</span
                               >`
                             : nothing}
                     </div>

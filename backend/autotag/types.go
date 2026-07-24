@@ -14,6 +14,15 @@ type LocalTrack struct {
 	RecordingMBID string
 }
 
+// Group is the folder-level context candidates are ranked against:
+// the tagging item's album name/artist plus its local tracks.  The
+// album fields are soft signals — empty values never penalize.
+type Group struct {
+	AlbumName   string
+	AlbumArtist string
+	Tracks      []LocalTrack
+}
+
 // CandidateSource distinguishes candidates served from the local
 // release_groups cache (zero network cost) from those fetched live.
 type CandidateSource string
@@ -42,22 +51,26 @@ type Candidate struct {
 	OriginalDate     string // "YYYY" or "YYYY-MM-DD" — release group's first release
 	Country          string
 	Status           string // "Official", "Promotion", ...
+	PrimaryType      string // release group's primary type: "Album", "Single", ...
 	TrackCount       int
 	Tracks           []CandidateTrack
 	Alignments       []TrackAlignment
 	Score            float64 // 0..1, higher is better
 	Breakdown        ScoreBreakdown
 	Source           CandidateSource
-	Provenance       string // cascade step that produced this ("strict", "fuzzy-title", "paste", "local")
+	Provenance       string // cascade step that produced this ("strict", "fuzzy-title", "id", "paste", "local")
 }
 
-// ScoreBreakdown exposes the four inputs that go into Candidate.Score
-// so the review UI can explain the ranking to the user.
+// ScoreBreakdown exposes the inputs that go into Candidate.Score so
+// the review UI can explain the ranking to the user.
 type ScoreBreakdown struct {
 	TitleAvg      float64 // average per-track title similarity (0..1)
 	LengthAvg     float64 // average per-track length similarity (0..1)
+	ArtistFit     float64 // album-artist vs candidate artist-credit similarity (0..1)
+	AlbumFit      float64 // folder album name vs candidate release title similarity (0..1)
 	TrackCountFit float64 // 1.0 when local and candidate track counts match
-	ReleaseMeta   float64 // year + official + country, averaged
+	ReleaseMeta   float64 // official + country + release-group type, averaged
+	Evidence      float64 // confidence scale from corroborating track count (0..1)
 }
 
 // CandidateTrack is one track inside a candidate release.
@@ -97,14 +110,19 @@ type TrackAlignment struct {
 	CandidateLength     int64
 
 	TitleScore    float64 // 0..1 from normalized-title edit distance
+	LengthScore   float64 // 0..1 from lengthScore; 0.5 (neutral) if either side unknown
 	LengthDeltaMs int64   // abs(local - candidate); 0 if either side missing
 	TrackNumberOK bool    // local track number matches candidate position
+	IDMatch       bool    // local recording MBID equals candidate track MBID
 	Status        AlignmentStatus
 }
 
 // GroupScore is the scorer's full output for one tagging group.
 type GroupScore struct {
-	GroupKey    string
-	LocalTracks []LocalTrack
-	Candidates  []Candidate // sorted by Score, descending
+	GroupKey       string
+	AlbumName      string
+	AlbumArtist    string
+	LocalTracks    []LocalTrack
+	Candidates     []Candidate // sorted by Score, descending
+	Recommendation Recommendation
 }

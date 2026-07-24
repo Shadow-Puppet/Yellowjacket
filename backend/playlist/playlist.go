@@ -132,6 +132,11 @@ type Service struct {
 	db            *database.DB
 	libraryDir    LibraryDirProvider
 	favoritesConf FavoritesConfigProvider
+
+	// dataDirOverride, when non-empty, replaces the OS user data
+	// directory as the base for the playlists folder. Set by tests to
+	// keep M3U writes out of the real user data directory.
+	dataDirOverride string
 }
 
 // NewService creates a new playlist service.
@@ -172,7 +177,7 @@ func (s *Service) SetContext(ctx context.Context) {
 // GetAllPlaylists returns all playlists ordered by most recently
 // updated.
 func (s *Service) GetAllPlaylists() ([]Summary, error) {
-	playlists, err := s.db.Queries.GetAllPlaylists(s.db.Ctx)
+	playlists, err := s.db.ReadQueries.GetAllPlaylists(s.db.Ctx)
 	if err != nil {
 		s.logger.Error(
 			"Failed to get playlists", "err", err,
@@ -204,7 +209,7 @@ func (s *Service) GetAllPlaylistsWithTracks() (
 	[]WithTracks,
 	error,
 ) {
-	playlists, err := s.db.Queries.GetAllPlaylists(s.db.Ctx)
+	playlists, err := s.db.ReadQueries.GetAllPlaylists(s.db.Ctx)
 	if err != nil {
 		s.logger.Error(
 			"Failed to get playlists", "err", err,
@@ -215,7 +220,7 @@ func (s *Service) GetAllPlaylistsWithTracks() (
 		)
 	}
 
-	rows, err := s.db.Queries.GetAllPlaylistTracksWithMetadata(
+	rows, err := s.db.ReadQueries.GetAllPlaylistTracksWithMetadata(
 		s.db.Ctx,
 	)
 	if err != nil {
@@ -288,7 +293,7 @@ func (s *Service) GetAllPlaylistsWithTracks() (
 func (s *Service) GetPlaylistTracks(
 	playlistID int64,
 ) ([]Track, error) {
-	rows, err := s.db.Queries.GetPlaylistTracksWithMetadata(
+	rows, err := s.db.ReadQueries.GetPlaylistTracksWithMetadata(
 		s.db.Ctx,
 		playlistID,
 	)
@@ -563,7 +568,7 @@ func (s *Service) FindDuplicateTracksInPlaylist(
 	playlistID int64,
 	filePaths []string,
 ) (DuplicateCheckResult, error) {
-	rows, err := s.db.Queries.GetPlaylistTracksWithMetadata(
+	rows, err := s.db.ReadQueries.GetPlaylistTracksWithMetadata(
 		s.db.Ctx,
 		playlistID,
 	)
@@ -1229,11 +1234,17 @@ func (s *Service) addSingleTrack(
 // playlistsDir returns the path to the playlists directory,
 // creating it if needed.
 func (s *Service) playlistsDir() (string, error) {
-	dataDir, err := system.GetUserDataDirPath()
-	if err != nil {
-		return "", fmt.Errorf(
-			"could not get user data directory: %w", err,
-		)
+	dataDir := s.dataDirOverride
+
+	if dataDir == "" {
+		var err error
+
+		dataDir, err = system.GetUserDataDirPath()
+		if err != nil {
+			return "", fmt.Errorf(
+				"could not get user data directory: %w", err,
+			)
+		}
 	}
 
 	dir := filepath.Join(dataDir, playlistsDirName)
@@ -1376,7 +1387,7 @@ func (s *Service) saveImportedPlaylistFile(
 func (s *Service) buildM3UEntries(
 	playlistID int64,
 ) []m3uEntry {
-	rows, err := s.db.Queries.GetPlaylistTracksWithMetadata(
+	rows, err := s.db.ReadQueries.GetPlaylistTracksWithMetadata(
 		s.db.Ctx,
 		playlistID,
 	)
@@ -1482,7 +1493,7 @@ func (s *Service) migrateExistingPlaylists() {
 		}
 	}
 
-	playlists, err := s.db.Queries.GetAllPlaylists(s.db.Ctx)
+	playlists, err := s.db.ReadQueries.GetAllPlaylists(s.db.Ctx)
 	if err != nil {
 		s.logger.Warn(
 			"Could not get playlists for migration",
@@ -1534,7 +1545,7 @@ func (s *Service) RepopulateFromM3U() {
 	}
 
 	// Get all playlists.
-	playlists, err := s.db.Queries.GetAllPlaylists(s.db.Ctx)
+	playlists, err := s.db.ReadQueries.GetAllPlaylists(s.db.Ctx)
 	if err != nil {
 		s.logger.Warn("could not get playlists for repopulation", "err", err)
 
@@ -2677,9 +2688,137 @@ func (s *Service) UpdateSmartPlaylistRules(
 		"playlistId", playlistID,
 	)
 
+	// Re-materialize the persisted snapshot so it reflects the new
+	// rules. RefreshSmartPlaylist emits PlaylistTracksChanged.
+	if err := s.RefreshSmartPlaylist(playlistID); err != nil {
+		return fmt.Errorf(
+			"failed to refresh smart playlist after rule update: %w",
+			err,
+		)
+	}
+
+	return nil
+}
+
+// RefreshSmartPlaylist re-evaluates a smart playlist's rules against
+// the current library and replaces its persisted membership in
+// playlist_tracks with the result. This is the only path that
+// re-evaluates a smart playlist — opening one otherwise reads the
+// stored snapshot. Triggered on rule save and by the manual Refresh
+// button.
+func (s *Service) RefreshSmartPlaylist(
+	playlistID int64,
+) error {
+	// EvaluateSmartPlaylist validates that the playlist exists and is
+	// smart, and returns the live rule-matched tracks.
+	tracks, err := s.EvaluateSmartPlaylist(playlistID)
+	if err != nil {
+		return err
+	}
+
+	if err := s.db.Queries.ClearPlaylistTracks(
+		s.db.Ctx, playlistID,
+	); err != nil {
+		return fmt.Errorf(
+			"failed to clear smart playlist tracks: %w", err,
+		)
+	}
+
+	for i, t := range tracks {
+		if strings.TrimSpace(t.FilePath) == "" {
+			continue
+		}
+
+		if err := s.addSingleTrack(
+			playlistID, t.FilePath, int64(i),
+		); err != nil {
+			// A track can vanish between evaluation and insertion
+			// (e.g. a concurrent rescan). Skip it rather than abort
+			// the whole refresh.
+			s.logger.Warn(
+				"Skipping smart playlist track during refresh",
+				"playlistId", playlistID,
+				"filePath", t.FilePath,
+				"err", err,
+			)
+
+			continue
+		}
+	}
+
+	// SAFETY: Hand-crafted UPDATE for smart_snapshot_at column not
+	// yet in sqlc schema. Parameterized by playlist ID.
+	if _, err := s.db.ExecContext(
+		`UPDATE playlists
+		 SET smart_snapshot_at = CURRENT_TIMESTAMP
+		 WHERE id = ? AND is_smart = 1`,
+		playlistID,
+	); err != nil {
+		return fmt.Errorf(
+			"failed to mark smart playlist snapshot: %w", err,
+		)
+	}
+
+	s.logger.Info(
+		"Smart playlist refreshed",
+		"playlistId", playlistID,
+		"trackCount", len(tracks),
+	)
+
+	s.savePlaylistFileByID(playlistID)
 	s.emitEvent(events.PlaylistTracksChanged, playlistID)
 
 	return nil
+}
+
+// GetSmartPlaylistTracks returns the persisted snapshot of a smart
+// playlist as regular playlist tracks (with resolved cover art and
+// phantom entries), identical to a normal playlist. If the playlist
+// has never been materialized — e.g. it predates snapshot support —
+// it is evaluated and stored on first access.
+func (s *Service) GetSmartPlaylistTracks(
+	playlistID int64,
+) ([]Track, error) {
+	// SAFETY: Hand-crafted SELECT for smart_snapshot_at column not
+	// yet in sqlc schema. Parameterized by playlist ID.
+	rows, err := s.db.QueryContext(
+		`SELECT smart_snapshot_at FROM playlists
+		 WHERE id = ? AND is_smart = 1`,
+		playlistID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to load smart playlist: %w", err,
+		)
+	}
+
+	if !rows.Next() {
+		_ = rows.Close()
+
+		return nil, errNotSmartPlaylist
+	}
+
+	var snapshotAt sql.NullString
+
+	if err := rows.Scan(&snapshotAt); err != nil {
+		_ = rows.Close()
+
+		return nil, fmt.Errorf(
+			"failed to read smart playlist snapshot state: %w", err,
+		)
+	}
+
+	// Close before RefreshSmartPlaylist / GetPlaylistTracks issue
+	// their own queries (MaxOpenConns=1 test DBs would deadlock).
+	_ = rows.Close()
+
+	if !snapshotAt.Valid {
+		if err := s.RefreshSmartPlaylist(playlistID); err != nil {
+			return nil, err
+		}
+	}
+
+	return s.GetPlaylistTracks(playlistID)
 }
 
 // EvaluateSmartPlaylist loads the rule set for a smart playlist

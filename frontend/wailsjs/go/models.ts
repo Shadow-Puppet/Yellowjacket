@@ -87,8 +87,11 @@ export namespace autotagservice {
 	export class ScoreBreakdownView {
 	    titleAvg: number;
 	    lengthAvg: number;
+	    artistFit: number;
+	    albumFit: number;
 	    trackCountFit: number;
 	    releaseMeta: number;
+	    evidence: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new ScoreBreakdownView(source);
@@ -98,8 +101,11 @@ export namespace autotagservice {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.titleAvg = source["titleAvg"];
 	        this.lengthAvg = source["lengthAvg"];
+	        this.artistFit = source["artistFit"];
+	        this.albumFit = source["albumFit"];
 	        this.trackCountFit = source["trackCountFit"];
 	        this.releaseMeta = source["releaseMeta"];
+	        this.evidence = source["evidence"];
 	    }
 	}
 	export class CandidateView {
@@ -111,6 +117,7 @@ export namespace autotagservice {
 	    originalDate: string;
 	    country: string;
 	    status: string;
+	    primaryType: string;
 	    trackCount: number;
 	    score: number;
 	    breakdown: ScoreBreakdownView;
@@ -133,6 +140,7 @@ export namespace autotagservice {
 	        this.originalDate = source["originalDate"];
 	        this.country = source["country"];
 	        this.status = source["status"];
+	        this.primaryType = source["primaryType"];
 	        this.trackCount = source["trackCount"];
 	        this.score = source["score"];
 	        this.breakdown = this.convertValues(source["breakdown"], ScoreBreakdownView);
@@ -224,6 +232,7 @@ export namespace autotagservice {
 	    groupKey: string;
 	    localTracks: LocalTrackView[];
 	    candidates: CandidateView[];
+	    recommendation: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ScoreView(source);
@@ -234,6 +243,7 @@ export namespace autotagservice {
 	        this.groupKey = source["groupKey"];
 	        this.localTracks = this.convertValues(source["localTracks"], LocalTrackView);
 	        this.candidates = this.convertValues(source["candidates"], CandidateView);
+	        this.recommendation = source["recommendation"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -253,6 +263,26 @@ export namespace autotagservice {
 		    }
 		    return a;
 		}
+	}
+	export class SearchHitView {
+	    mbid: string;
+	    kind: string;
+	    title: string;
+	    artist: string;
+	    detail: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SearchHitView(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.mbid = source["mbid"];
+	        this.kind = source["kind"];
+	        this.title = source["title"];
+	        this.artist = source["artist"];
+	        this.detail = source["detail"];
+	    }
 	}
 
 }
@@ -345,6 +375,7 @@ export namespace explore {
 	    trackName: string;
 	    totalListenCount: number;
 	    caaReleaseMbid: string;
+	    releaseGroupMbid?: string;
 	    releaseName: string;
 	    length: number;
 	    inLibrary: boolean;
@@ -361,6 +392,7 @@ export namespace explore {
 	        this.trackName = source["trackName"];
 	        this.totalListenCount = source["totalListenCount"];
 	        this.caaReleaseMbid = source["caaReleaseMbid"];
+	        this.releaseGroupMbid = source["releaseGroupMbid"];
 	        this.releaseName = source["releaseName"];
 	        this.length = source["length"];
 	        this.inLibrary = source["inLibrary"];
@@ -393,6 +425,28 @@ export namespace explore {
 	        this.caaReleaseMbid = source["caaReleaseMbid"];
 	        this.inLibrary = source["inLibrary"];
 	        this.localId = source["localId"];
+	    }
+	}
+	export class LyricsResult {
+	    recordingId: number;
+	    filePath: string;
+	    lengthMs: number;
+	    title: string;
+	    artist: string;
+	    album: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new LyricsResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.recordingId = source["recordingId"];
+	        this.filePath = source["filePath"];
+	        this.lengthMs = source["lengthMs"];
+	        this.title = source["title"];
+	        this.artist = source["artist"];
+	        this.album = source["album"];
 	    }
 	}
 	export class MBArtist {
@@ -434,9 +488,13 @@ export namespace explore {
 	    title: string;
 	    length: number;
 	    artistCredit: string;
+	    artistMbid?: string;
 	    score: number;
 	    popularity: number;
 	    listenerCount: number;
+	    caaReleaseMbid?: string;
+	    releaseGroupMbid?: string;
+	    releaseName?: string;
 	    inLibrary: boolean;
 	    localId?: number;
 	
@@ -450,9 +508,13 @@ export namespace explore {
 	        this.title = source["title"];
 	        this.length = source["length"];
 	        this.artistCredit = source["artistCredit"];
+	        this.artistMbid = source["artistMbid"];
 	        this.score = source["score"];
 	        this.popularity = source["popularity"];
 	        this.listenerCount = source["listenerCount"];
+	        this.caaReleaseMbid = source["caaReleaseMbid"];
+	        this.releaseGroupMbid = source["releaseGroupMbid"];
+	        this.releaseName = source["releaseName"];
 	        this.inLibrary = source["inLibrary"];
 	        this.localId = source["localId"];
 	    }
@@ -530,6 +592,7 @@ export namespace explore {
 	    secondaryTypes?: string[];
 	    firstReleaseDate: string;
 	    artistCredit: string;
+	    artistMbid?: string;
 	    popularity: number;
 	    listenerCount: number;
 	    inLibrary: boolean;
@@ -547,6 +610,7 @@ export namespace explore {
 	        this.secondaryTypes = source["secondaryTypes"];
 	        this.firstReleaseDate = source["firstReleaseDate"];
 	        this.artistCredit = source["artistCredit"];
+	        this.artistMbid = source["artistMbid"];
 	        this.popularity = source["popularity"];
 	        this.listenerCount = source["listenerCount"];
 	        this.inLibrary = source["inLibrary"];
@@ -558,12 +622,16 @@ export namespace explore {
 	    mbid: string;
 	    name: string;
 	    artistCredit?: string;
+	    artistMbid?: string;
 	    intentScore: number;
 	    artistType?: string;
 	    country?: string;
 	    primaryType?: string;
 	    year?: string;
 	    length?: number;
+	    caaReleaseMbid?: string;
+	    releaseGroupMbid?: string;
+	    releaseName?: string;
 	    inLibrary: boolean;
 	
 	    static createFrom(source: any = {}) {
@@ -576,12 +644,16 @@ export namespace explore {
 	        this.mbid = source["mbid"];
 	        this.name = source["name"];
 	        this.artistCredit = source["artistCredit"];
+	        this.artistMbid = source["artistMbid"];
 	        this.intentScore = source["intentScore"];
 	        this.artistType = source["artistType"];
 	        this.country = source["country"];
 	        this.primaryType = source["primaryType"];
 	        this.year = source["year"];
 	        this.length = source["length"];
+	        this.caaReleaseMbid = source["caaReleaseMbid"];
+	        this.releaseGroupMbid = source["releaseGroupMbid"];
+	        this.releaseName = source["releaseName"];
 	        this.inLibrary = source["inLibrary"];
 	    }
 	}
@@ -664,6 +736,24 @@ export namespace explore {
 	}
 	
 	
+	export class TrackLyrics {
+	    plain: string;
+	    synced: string;
+	    instrumental: boolean;
+	    source: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new TrackLyrics(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.plain = source["plain"];
+	        this.synced = source["synced"];
+	        this.instrumental = source["instrumental"];
+	        this.source = source["source"];
+	    }
+	}
 	export class TrackThumbnailRequest {
 	    key: string;
 	    releaseMbid: string;
@@ -693,6 +783,7 @@ export namespace library {
 	    ID: number;
 	    Name: string;
 	    ArtistName: string;
+	    ArtistMBID: string;
 	    MBID: string;
 	    CoverArtPath: string;
 	    CoverArtSmall: string;
@@ -710,6 +801,7 @@ export namespace library {
 	        this.ID = source["ID"];
 	        this.Name = source["Name"];
 	        this.ArtistName = source["ArtistName"];
+	        this.ArtistMBID = source["ArtistMBID"];
 	        this.MBID = source["MBID"];
 	        this.CoverArtPath = source["CoverArtPath"];
 	        this.CoverArtSmall = source["CoverArtSmall"];

@@ -1618,3 +1618,120 @@ func TestEvaluate_MultiGenreTrackGenreField(t *testing.T) {
 		)
 	}
 }
+
+// TestEvaluate_YearUsesOriginalReleaseYear is a regression test for a
+// bug where the smart-playlist year filter tested recordings.year (the
+// file's ID3/reissue tag year) instead of the release group's original
+// first-release year, the way the canonical track_metadata view and the
+// UI do. That made a 1977 album owned as a 2010s reissue leak into a
+// "2010s" year filter even though it displays as 1977.
+func TestEvaluate_YearUsesOriginalReleaseYear(t *testing.T) {
+	t.Parallel()
+
+	db := database.NewTestDB(t)
+
+	// One track: a 1977 album the user owns as a 2013 reissue. The file
+	// tag / recording year is 2013, but the release group's original
+	// (first-release) year is 1977.
+	exec := func(query string, args ...any) {
+		t.Helper()
+
+		if _, err := db.ExecContext(query, args...); err != nil {
+			t.Fatalf("exec %q: %v", query, err)
+		}
+	}
+
+	exec("INSERT INTO artist_credit (id, text) VALUES (1, ?)", "The B-52's")
+	exec(
+		"INSERT INTO release_groups (id, name, year, original_year) "+
+			"VALUES (1, ?, 2013, 1977)",
+		"Reissue Compilation",
+	)
+	exec(
+		"INSERT INTO recordings (id, name, artist_credit_id, year) "+
+			"VALUES (1, ?, 1, 2013)",
+		"Rock Lobster",
+	)
+	exec(
+		"INSERT INTO audio_files (id, file_path, length_milliseconds, "+
+			"file_type_id, recording_id) VALUES (1, ?, 300000, 1, 1)",
+		"/music/b52s/rock_lobster.mp3",
+	)
+	exec(
+		"INSERT INTO release_group_recordings " +
+			"(release_group_id, recording_id) VALUES (1, 1)",
+	)
+
+	// A "2010s" filter must NOT match — the album is originally from 1977.
+	tracks, err := Evaluate(db, RuleSet{
+		Rules: []Rule{
+			{Field: "year", Operator: "between", Value: "2010,2019"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Evaluate 2010s: %v", err)
+	}
+
+	if len(tracks) != 0 {
+		t.Errorf(
+			"2010s filter matched %d tracks, want 0 "+
+				"(reissue year leaked in)", len(tracks),
+		)
+	}
+
+	// A "1970s" filter must match — original_year is 1977.
+	tracks, err = Evaluate(db, RuleSet{
+		Rules: []Rule{
+			{Field: "year", Operator: "between", Value: "1970,1979"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Evaluate 1970s: %v", err)
+	}
+
+	if len(tracks) != 1 {
+		t.Fatalf(
+			"1970s filter matched %d tracks, want 1", len(tracks),
+		)
+	}
+
+	if tracks[0].Year != 1977 {
+		t.Errorf("Year = %d, want 1977", tracks[0].Year)
+	}
+
+	// The release_year field, by contrast, tracks the specific release
+	// owned (the 2013 reissue), so a 2010s filter on it MUST match.
+	tracks, err = Evaluate(db, RuleSet{
+		Rules: []Rule{
+			{Field: "release_year", Operator: "between", Value: "2010,2019"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Evaluate release_year 2010s: %v", err)
+	}
+
+	if len(tracks) != 1 {
+		t.Fatalf(
+			"release_year 2010s filter matched %d tracks, want 1",
+			len(tracks),
+		)
+	}
+
+	// And a 1970s release_year filter must NOT match — the owned
+	// release is from 2013.
+	tracks, err = Evaluate(db, RuleSet{
+		Rules: []Rule{
+			{Field: "release_year", Operator: "between", Value: "1970,1979"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Evaluate release_year 1970s: %v", err)
+	}
+
+	if len(tracks) != 0 {
+		t.Errorf(
+			"release_year 1970s filter matched %d tracks, want 0",
+			len(tracks),
+		)
+	}
+}

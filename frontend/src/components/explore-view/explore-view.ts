@@ -1,74 +1,28 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state, query as litQuery } from 'lit/decorators.js';
 import { designTokens } from '../../styles/tokens.css';
-import { Search, GetThumbnail, GetThumbnails, GetArtistImageURL, GetPopularityBatch, RecordSearchClick } from '@go/explore/Service';
+import { SearchLocal, SearchLyrics, GetThumbnail, GetThumbnails, GetArtistImageURL, RecordSearchClick } from '@go/explore/Service';
 import { libraryStore } from '../../store/library-store';
 import { exploreCache } from '../../store/explore-cache';
-import { exploreSettings } from '../../store/explore-settings';
+import { queueStore } from '../../store/queue-store';
+import { artistLink, trackLink, exploreLinkStyles } from '../../utils/explore-link';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '../library-status-indicator/library-status-indicator.js';
 import '../top-results-row/top-results-row.js';
-import type { explore } from '@go/models';
+import { explore } from '@go/models';
 type ThumbnailRequest = explore.ThumbnailRequest;
 type MBSearchResult = explore.MBSearchResult;
+type LyricsResult = explore.LyricsResult;
 type MBArtist = explore.MBArtist;
 type MBReleaseGroup = explore.MBReleaseGroup;
 type MBRecording = explore.MBRecording;
 
 /* ── Constants ── */
-const DEBOUNCE_MS = 300;
 const MIN_QUERY_LENGTH = 2;
-const FUZZY_MAX_DISTANCE = 2;
+// Debounce window for live search-as-you-type.  The index query is
+// local (no network), so this only coalesces rapid keystrokes.
+const SEARCH_DEBOUNCE_MS = 180;
 
-/* ── Fuzzy matching ── */
-
-/** Levenshtein edit distance between two strings. */
-function editDistance(a: string, b: string): number {
-    if (a.length === 0) return b.length;
-    if (b.length === 0) return a.length;
-
-    const matrix: number[][] = [];
-
-    for (let i = 0; i <= a.length; i++) matrix[i] = [i];
-    for (let j = 0; j <= b.length; j++) matrix[0]![j] = j;
-
-    for (let i = 1; i <= a.length; i++) {
-        for (let j = 1; j <= b.length; j++) {
-            const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-            matrix[i]![j] = Math.min(
-                matrix[i - 1]![j]! + 1,
-                matrix[i]![j - 1]! + 1,
-                matrix[i - 1]![j - 1]! + cost,
-            );
-        }
-    }
-
-    return matrix[a.length]![b.length]!;
-}
-
-/**
- * Check if a name fuzzy-matches a query.  Returns true if:
- * - the name contains the query as a substring (exact), OR
- * - any word-aligned segment of the name is within edit distance
- *   FUZZY_MAX_DISTANCE of the query
- */
-function fuzzyMatch(query: string, name: string): boolean {
-    if (name.includes(query)) return true;
-
-    // Split both into words and check if all query words match
-    // a name word within edit distance (handles per-word typos).
-    const qWords = query.split(/\s+/);
-    const nWords = name.split(/\s+/);
-
-    return qWords.every((qw) =>
-        nWords.some(
-            (nw) =>
-                nw.includes(qw) ||
-                (nw.length >= 3 && qw.includes(nw)) ||
-                (qw.length >= 4 && nw.length >= 4 && editDistance(qw, nw) <= FUZZY_MAX_DISTANCE),
-        ),
-    );
-}
 const MAX_SECTION_RESULTS = 10;
 
 
@@ -96,27 +50,6 @@ function formatPopularity(count: number): string {
     if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M plays`;
     if (count >= 1_000) return `${(count / 1_000).toFixed(count >= 10_000 ? 0 : 1)}K plays`;
     return `${count} plays`;
-}
-
-/**
- * Check if `text` contains `word` as a whole word, bounded by
- * spaces, hyphens, or string boundaries.  Both args must be
- * pre-lowercased.
- */
-function containsWord(text: string, word: string): boolean {
-    const re = new RegExp(`(?:^|[\\s\\-])${escapeRegExp(word)}(?:$|[\\s\\-])`, 'i');
-    return re.test(text);
-}
-
-function escapeRegExp(s: string): string {
-    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-/** Parse a TrackLength string (milliseconds as string) to number. */
-function parseDuration(s: string): number {
-    if (!s) return 0;
-    const n = Number(s);
-    return isNaN(n) ? 0 : n;
 }
 
 /** Extract the year from a date string like "2005-03-29" or "2005". */
@@ -154,10 +87,15 @@ export class ExploreView extends LitElement {
     @state() private loading = false;
     @state() private error = '';
     @state() private queryTooShort = false;
+    /** Which search surface is active: catalog (index) or lyrics. */
+    @state() private searchMode: 'catalog' | 'lyrics' = 'catalog';
+    /** Lyric-search hits (library tracks matched by lyric fragment). */
+    @state() private lyricsResults: LyricsResult[] | null = null;
 
     /** Monotonic counter to discard stale responses. */
     private searchVersion = 0;
-    private debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    /** Debounce timer for live search-as-you-type. */
+    private searchDebounceTimer?: ReturnType<typeof setTimeout>;
     private thumbnailCache = new Map<string, string>();
     private artistImageCache = new Map<string, string>();
     private libraryMBIDs = new Set<string>();
@@ -168,6 +106,7 @@ export class ExploreView extends LitElement {
 
     static override styles = [
         designTokens,
+        exploreLinkStyles,
         css`
             :host {
                 display: block;
@@ -175,6 +114,37 @@ export class ExploreView extends LitElement {
                 overflow-y: auto;
                 height: 100%;
                 box-sizing: border-box;
+            }
+
+            /* ── Search mode tabs ── */
+            .search-mode-tabs {
+                display: flex;
+                gap: 4px;
+                margin-bottom: 10px;
+            }
+
+            .search-mode-tab {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                background: none;
+                border: 1px solid transparent;
+                border-radius: 6px;
+                color: var(--yj-text-tertiary, #888);
+                cursor: pointer;
+                padding: 5px 12px;
+                font-size: var(--yj-text-sm);
+                font-family: inherit;
+                transition: color 0.15s ease, background 0.15s ease;
+            }
+
+            .search-mode-tab:hover {
+                color: var(--yj-text-primary, #fff);
+            }
+
+            .search-mode-tab.active {
+                color: var(--yj-bg-base, #1a1a1a);
+                background: var(--yj-accent, #ffd43b);
             }
 
             /* ── Search input ── */
@@ -189,6 +159,66 @@ export class ExploreView extends LitElement {
                 height: 36px;
                 max-width: 520px;
                 transition: border-color 0.15s ease;
+            }
+
+            /* ── Lyrics results ── */
+            .lyrics-results {
+                margin-top: 20px;
+                display: flex;
+                flex-direction: column;
+                gap: 2px;
+                max-width: 640px;
+            }
+
+            .lyrics-hit {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                width: 100%;
+                text-align: left;
+                background: none;
+                border: none;
+                border-radius: 6px;
+                color: var(--yj-text-primary, #fff);
+                cursor: pointer;
+                padding: 8px 10px;
+                font-family: inherit;
+                transition: background 0.12s ease;
+            }
+
+            .lyrics-hit:hover {
+                background: var(--yj-bg-surface, #212529);
+            }
+
+            .lyrics-hit-play {
+                color: var(--yj-text-tertiary, #888);
+                font-size: var(--yj-icon-sm);
+                flex-shrink: 0;
+            }
+
+            .lyrics-hit:hover .lyrics-hit-play {
+                color: var(--yj-accent, #ffd43b);
+            }
+
+            .lyrics-hit-main {
+                display: flex;
+                flex-direction: column;
+                min-width: 0;
+            }
+
+            .lyrics-hit-title {
+                font-size: var(--yj-text-md);
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+
+            .lyrics-hit-meta {
+                font-size: var(--yj-text-sm);
+                color: var(--yj-text-secondary, #b3b3b3);
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
             }
 
             .search-container:focus-within {
@@ -560,26 +590,10 @@ export class ExploreView extends LitElement {
 
     /* ── Lifecycle ── */
 
-    private unsubSettings?: () => void;
-
-    override connectedCallback() {
-        super.connectedCallback();
-        // Re-render and re-search when library-only mode toggles.
-        this.unsubSettings = exploreSettings.subscribe(() => {
-            this.requestUpdate();
-            // Re-run the current search with the new mode.
-            if (this.searchQuery.trim().length >= MIN_QUERY_LENGTH) {
-                void this.executeSearch();
-            }
-        });
-    }
-
     override disconnectedCallback() {
         super.disconnectedCallback();
-        this.unsubSettings?.();
-        if (this.debounceTimer !== null) {
-            clearTimeout(this.debounceTimer);
-            this.debounceTimer = null;
+        if (this.searchDebounceTimer) {
+            clearTimeout(this.searchDebounceTimer);
         }
     }
 
@@ -589,14 +603,10 @@ export class ExploreView extends LitElement {
         const input = e.target as HTMLInputElement;
         this.searchQuery = input.value;
 
-        if (this.debounceTimer !== null) {
-            clearTimeout(this.debounceTimer);
-            this.debounceTimer = null;
-        }
-
         const trimmed = this.searchQuery.trim();
 
         if (!trimmed) {
+            this.cancelPendingSearch();
             this.results = null;
             this.error = '';
             this.loading = false;
@@ -605,6 +615,7 @@ export class ExploreView extends LitElement {
         }
 
         if (trimmed.length < MIN_QUERY_LENGTH) {
+            this.cancelPendingSearch();
             this.results = null;
             this.error = '';
             this.loading = false;
@@ -614,22 +625,57 @@ export class ExploreView extends LitElement {
 
         this.queryTooShort = false;
 
-        this.debounceTimer = setTimeout(() => {
-            this.debounceTimer = null;
+        // Both modes debounce straight to their backend search — catalog
+        // to the offline index (SearchLocal), lyrics to the FTS lyric
+        // search.  No owned-library seed: the index is the sole source of
+        // catalog results, so we never paint temporary library matches.
+        this.scheduleSearch();
+    }
+
+    /** Switch between catalog and lyric search, resetting results. */
+    private setSearchMode(mode: 'catalog' | 'lyrics') {
+        if (this.searchMode === mode) return;
+
+        this.cancelPendingSearch();
+        this.searchMode = mode;
+        this.results = null;
+        this.lyricsResults = null;
+        this.error = '';
+        this.loading = false;
+
+        if (this.searchQuery.trim().length >= MIN_QUERY_LENGTH) {
             void this.executeSearch();
-        }, DEBOUNCE_MS);
+        }
+
+        this.inputEl?.focus();
+    }
+
+    /** Debounce a live index search after the latest keystroke. */
+    private scheduleSearch() {
+        this.cancelPendingSearch();
+        this.searchDebounceTimer = setTimeout(() => {
+            this.searchDebounceTimer = undefined;
+            if (this.searchQuery.trim().length >= MIN_QUERY_LENGTH) {
+                void this.executeSearch();
+            }
+        }, SEARCH_DEBOUNCE_MS);
+    }
+
+    private cancelPendingSearch() {
+        if (this.searchDebounceTimer) {
+            clearTimeout(this.searchDebounceTimer);
+            this.searchDebounceTimer = undefined;
+        }
     }
 
     private handleClear() {
+        this.cancelPendingSearch();
         this.searchQuery = '';
         this.results = null;
+        this.lyricsResults = null;
         this.error = '';
         this.loading = false;
         this.queryTooShort = false;
-        if (this.debounceTimer !== null) {
-            clearTimeout(this.debounceTimer);
-            this.debounceTimer = null;
-        }
         if (this.inputEl) {
             this.inputEl.value = '';
             this.inputEl.focus();
@@ -639,6 +685,17 @@ export class ExploreView extends LitElement {
     private handleKeydown(e: KeyboardEvent) {
         if (e.key === 'Escape') {
             this.handleClear();
+            return;
+        }
+
+        // Enter is optional now — search runs live as you type — but it
+        // still fires an immediate search, skipping the debounce wait.
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            if (this.searchQuery.trim().length >= MIN_QUERY_LENGTH) {
+                this.cancelPendingSearch();
+                void this.executeSearch();
+            }
         }
     }
 
@@ -651,287 +708,18 @@ export class ExploreView extends LitElement {
         this.error = '';
 
         const startTime = performance.now();
-        console.log(`[explore] search started: "${query}"`);
+        console.log(`[explore] search started: "${query}" (${this.searchMode})`);
 
-        // Phase 1: instant library search — pure frontend, no Go calls.
-        const localResults = this.searchLibraryCache(query);
-        if (localResults && (localResults.artists?.length || localResults.releaseGroups?.length)) {
-            this.results = localResults;
-            exploreCache.populateFromSearch(
-                localResults.artists || [],
-                localResults.releaseGroups || [],
-            );
-
-            // Seed artist image cache from library data.
-            for (const a of localResults.artists || []) {
-                const img = (a as any)._imageMedium || (a as any)._imageSmall;
-                if (img && a.mbid) {
-                    this.artistImageCache.set(a.mbid, img);
-                }
-            }
-
-            // Fallback: album art for artists without images.
-            for (const a of localResults.artists || []) {
-                if (a.mbid && !this.artistImageCache.get(a.mbid)) {
-                    const albumArt = getArtistAlbumArt(a.name);
-                    if (albumArt) {
-                        this.artistImageCache.set(a.mbid, albumArt);
-                    }
-                }
-            }
-
-            // In library-only mode, local results already have cover art
-            // and artist images from the library store — seed both caches
-            // from library data without making any API calls.
-            if (exploreSettings.libraryOnly) {
-                this.seedThumbnailsFromLibrary();
-                this.seedArtistImagesFromLibrary();
-            } else {
-                this.loadThumbnails();
-                this.loadArtistImages();
-            }
-            const elapsed = (performance.now() - startTime).toFixed(0);
-            console.log(
-                `[explore] library results: "${query}" in ${elapsed}ms — ` +
-                    `artists=${localResults.artists?.length ?? 0}, ` +
-                    `albums=${localResults.releaseGroups?.length ?? 0}`,
-            );
+        // Lyrics mode: a single FTS lyric search over the library.
+        if (this.searchMode === 'lyrics') {
+            void this.executeLyricsSearch(version, query, startTime);
+            return;
         }
 
-        // Phase 2: full pipeline (MB + LB + reranking) via Wails RPC.
-        // Skip entirely in library-only mode — local results are final.
-        if (!exploreSettings.libraryOnly) {
-            void this.executeFullSearch(version, query, startTime);
-        } else {
-            // Rerank with popularity from the explore index, then finalize.
-            void this.rerankWithPopularity(localResults).then(() => {
-                this.loading = false;
-            });
-        }
-    }
-
-    /**
-     * Search the frontend library cache for matching artists and albums.
-     * Pure JS — no Go calls, guaranteed instant.  Returns results with
-     * MBIDs and local cover art so they can navigate to explore pages.
-     */
-    private searchLibraryCache(query: string): MBSearchResult | null {
-        const q = query.toLowerCase();
-
-        // Collect all matching artists with match-quality scores.
-        const artistMatches: Array<{ artist: any; score: number }> = [];
-        const cachedArtists = libraryStore.cachedArtists;
-        if (cachedArtists) {
-            for (const a of cachedArtists) {
-                const name = a.Name.toLowerCase();
-                if (!fuzzyMatch(q, name)) continue;
-
-                // Score by match quality.
-                let score: number;
-                if (name === q) {
-                    score = 100; // exact
-                } else if (name.startsWith(q)) {
-                    score = 90;  // starts with
-                } else if (containsWord(name, q)) {
-                    score = 75;  // contains word
-                } else if (name.includes(q)) {
-                    score = 60;  // substring
-                } else {
-                    score = 40;  // fuzzy/word match
-                }
-
-                artistMatches.push({ artist: a, score });
-            }
-        }
-
-        // Sort by score descending, then alphabetically.
-        artistMatches.sort((a, b) => b.score - a.score || a.artist.Name.localeCompare(b.artist.Name));
-
-        const artists: MBArtist[] = artistMatches.slice(0, 10).map((m) => ({
-            mbid: m.artist.MBID || '',
-            name: m.artist.Name,
-            sortName: '',
-            type: '',
-            country: '',
-            disambiguation: '',
-            score: m.score,
-            inLibrary: true,
-            localId: m.artist.ID,
-            _imageSmall: m.artist.ImageSmall || '',
-            _imageMedium: m.artist.ImageMedium || '',
-            _inLibrary: true,
-        } as MBArtist & { _imageSmall: string; _imageMedium: string; _inLibrary: boolean }));
-
-        // Collect all matching albums with match-quality scores.
-        const albumMatches: Array<{ album: any; score: number }> = [];
-        const cachedAlbums = libraryStore.cachedAlbums;
-        if (cachedAlbums) {
-            for (const a of cachedAlbums) {
-                const name = a.Name.toLowerCase();
-                const artist = a.ArtistName.toLowerCase();
-                const matchesName = fuzzyMatch(q, name);
-                const matchesArtist = fuzzyMatch(q, artist);
-                if (!matchesName && !matchesArtist) continue;
-
-                let score: number;
-                if (artist === q) {
-                    score = 100;
-                } else if (name === q) {
-                    score = 95;
-                } else if (artist.startsWith(q)) {
-                    score = 88;
-                } else if (name.startsWith(q)) {
-                    score = 85;
-                } else if (containsWord(artist, q)) {
-                    score = 78;
-                } else if (containsWord(name, q)) {
-                    score = 75;
-                } else if (artist.includes(q)) {
-                    score = 65;
-                } else if (name.includes(q)) {
-                    score = 60;
-                } else {
-                    score = 40;
-                }
-
-                albumMatches.push({ album: a, score });
-            }
-        }
-
-        albumMatches.sort((a, b) => b.score - a.score || a.album.Name.localeCompare(b.album.Name));
-
-        const releaseGroups: MBReleaseGroup[] = albumMatches.slice(0, 10).map((m) => ({
-            mbid: m.album.MBID || '',
-            title: m.album.Name,
-            primaryType: 'Album',
-            artistCredit: m.album.ArtistName,
-            firstReleaseDate: m.album.Year ? String(m.album.Year) : '',
-            _coverArt: m.album.CoverArtMedium || m.album.CoverArtSmall || '',
-            _inLibrary: true,
-        } as MBReleaseGroup & { _coverArt: string; _inLibrary: boolean }));
-
-        // Collect matching tracks by title or artist name.
-        const trackMatches: Array<{ track: any; score: number }> = [];
-        const cachedTracks = libraryStore.getCachedTracks();
-        if (cachedTracks) {
-            for (const t of cachedTracks) {
-                const title = t.TrackName.toLowerCase();
-                const artist = t.ArtistName.toLowerCase();
-                const matchesTitle = fuzzyMatch(q, title);
-                const matchesArtist = fuzzyMatch(q, artist);
-                if (!matchesTitle && !matchesArtist) continue;
-
-                let score: number;
-                if (title === q) {
-                    score = 100;
-                } else if (artist === q) {
-                    score = 95;
-                } else if (title.startsWith(q)) {
-                    score = 88;
-                } else if (artist.startsWith(q)) {
-                    score = 85;
-                } else if (containsWord(title, q)) {
-                    score = 78;
-                } else if (containsWord(artist, q)) {
-                    score = 75;
-                } else if (title.includes(q)) {
-                    score = 65;
-                } else if (artist.includes(q)) {
-                    score = 60;
-                } else {
-                    score = 40;
-                }
-
-                trackMatches.push({ track: t, score });
-            }
-        }
-
-        trackMatches.sort((a, b) => b.score - a.score || a.track.TrackName.localeCompare(b.track.TrackName));
-
-        // Deduplicate by recording MBID (keep highest score).
-        const seenRecMBIDs = new Set<string>();
-        const recordings: MBRecording[] = [];
-        for (const m of trackMatches) {
-            if (recordings.length >= 15) break;
-            const mbid = m.track.RecordingMBID || '';
-            if (mbid && seenRecMBIDs.has(mbid)) continue;
-            if (mbid) seenRecMBIDs.add(mbid);
-
-            recordings.push({
-                mbid,
-                title: m.track.TrackName,
-                length: parseDuration(m.track.TrackLength),
-                artistCredit: m.track.ArtistName,
-                score: m.score,
-            } as MBRecording);
-        }
-
-        if (artists.length === 0 && releaseGroups.length === 0 && recordings.length === 0) {
-            return null;
-        }
-
-        return { artists, releaseGroups, recordings } as MBSearchResult;
-    }
-
-    /**
-     * Fetch LB popularity for all MBIDs in the result and re-sort
-     * each category using a blended score: match quality + log-scaled
-     * popularity.  Same approach as the backend reranker.
-     */
-    private async rerankWithPopularity(result: MBSearchResult | null): Promise<void> {
-        if (!result) return;
-
-        // Collect all non-empty MBIDs.
-        const mbids: string[] = [];
-        for (const a of result.artists ?? []) if (a.mbid) mbids.push(a.mbid);
-        for (const rg of result.releaseGroups ?? []) if (rg.mbid) mbids.push(rg.mbid);
-        for (const r of result.recordings ?? []) if (r.mbid) mbids.push(r.mbid);
-
-        if (mbids.length === 0) return;
-
-        let batch: Record<string, {popularity: number; inLibrary: boolean; similarityScore: number}>;
-        try {
-            batch = await GetPopularityBatch(mbids);
-        } catch {
-            return; // degrade gracefully — keep match-quality order
-        }
-
-        if (!batch || Object.keys(batch).length === 0) return;
-
-        // Weights matching backend: 0.35 relevance + 0.50 popularity + 0.15 personalization
-        const maxPop = Math.max(1, ...Object.values(batch).map(b => b.popularity));
-        const logMax = Math.log10(maxPop + 1);
-        const maxSim = Math.max(1, ...Object.values(batch).map(b => b.similarityScore || 0));
-
-        const blendedScore = (mbid: string, matchScore: number): number => {
-            const b = batch[mbid];
-            const relevance = matchScore / 100;
-            const logPop = b ? Math.log10(b.popularity + 1) / logMax : 0;
-            let personal = 0;
-            if (b?.inLibrary) {
-                personal = 1.0;
-            } else if (b?.similarityScore && maxSim > 0) {
-                personal = 0.5 * (b.similarityScore / maxSim);
-            }
-            return 0.35 * relevance + 0.50 * logPop + 0.15 * personal;
-        };
-
-        // Re-sort each category.  Backend stamps a `score` field
-        // onto entries before returning them, but the Wails-
-        // generated MB types don't model it — cast through any to
-        // read it on the way to the comparator.
-        const cmp = (a: { mbid: string }, b: { mbid: string }): number =>
-            blendedScore(b.mbid, (b as any).score ?? 0) - blendedScore(a.mbid, (a as any).score ?? 0);
-        (result.artists ?? []).sort(cmp);
-        (result.releaseGroups ?? []).sort(cmp);
-        (result.recordings ?? []).sort(cmp);
-
-        // Trigger re-render.  MBSearchResult is a Wails-generated
-        // class with bound methods (convertValues), so request an
-        // update directly rather than spreading the object — that
-        // would drop the methods.
-        this.results = result;
-        this.requestUpdate();
+        // Offline search over the local popularity index via Wails RPC.
+        // No network, and no owned-library seed — the index is the sole
+        // source of catalog results.
+        void this.executeIndexSearch(version, query, startTime);
     }
 
     /**
@@ -987,48 +775,19 @@ export class ExploreView extends LitElement {
         return result;
     }
 
-    /**
-     * Merge library-only results from this.results into the full
-     * search result.  Adds local artists/albums that the MB search
-     * didn't find (by name dedup) so they aren't lost.
-     */
-    private mergeLocalIntoFull(full: MBSearchResult) {
-        const prev = this.results;
-        if (!prev) return;
-
-        // Dedup artists by name (case-insensitive).
-        if (prev.artists?.length) {
-            const existing = new Set(
-                (full.artists || []).map((a) => a.name.toLowerCase()),
-            );
-            for (const a of prev.artists) {
-                if (!existing.has(a.name.toLowerCase())) {
-                    full.artists = full.artists || [];
-                    full.artists.push(a);
-                }
-            }
-        }
-
-        // Dedup albums by title + artist (case-insensitive).
-        if (prev.releaseGroups?.length) {
-            const existing = new Set(
-                (full.releaseGroups || []).map(
-                    (rg: MBReleaseGroup) => `${rg.title}|${rg.artistCredit}`.toLowerCase(),
-                ),
-            );
-            for (const rg of prev.releaseGroups) {
-                const key = `${rg.title}|${rg.artistCredit}`.toLowerCase();
-                if (!existing.has(key)) {
-                    full.releaseGroups = full.releaseGroups || [];
-                    full.releaseGroups.push(rg);
-                }
-            }
-        }
-    }
-
-    private async executeFullSearch(version: number, query: string, startTime: number) {
+    private async executeIndexSearch(version: number, query: string, startTime: number) {
         try {
-            const result = await Search(query);
+            // Local FTS index only — no network.  Returns null when the
+            // index has no hits, in which case we keep the owned-library
+            // matches already displayed.
+            const result =
+                (await SearchLocal(query)) ??
+                explore.MBSearchResult.createFrom({
+                    artists: [],
+                    releaseGroups: [],
+                    recordings: [],
+                    topResults: [],
+                });
 
             // Discard stale response
             if (version !== this.searchVersion) {
@@ -1038,32 +797,10 @@ export class ExploreView extends LitElement {
                 return;
             }
 
-            const merged = this.mergeWithLibrary(result);
-
-            // If the full search returned results, use them.
-            // If it returned nothing but we had local results, keep those.
-            const hasFullResults =
-                (merged.artists?.length ?? 0) > 0 ||
-                (merged.releaseGroups?.length ?? 0) > 0 ||
-                (merged.recordings?.length ?? 0) > 0;
-            const hadLocalResults = this.results &&
-                ((this.results.artists?.length ?? 0) > 0 ||
-                 (this.results.releaseGroups?.length ?? 0) > 0 ||
-                 (this.results.recordings?.length ?? 0) > 0);
-
-            if (hasFullResults) {
-                // Preserve any library-only artists/albums that the MB
-                // search didn't find (no MBID, or MB didn't match).
-                if (hadLocalResults) {
-                    this.mergeLocalIntoFull(merged);
-                }
-
-                this.results = merged;
-            } else if (!hadLocalResults) {
-                // Both local and full are empty — show empty state.
-                this.results = merged;
-            }
-            // else: keep existing local results as-is.
+            // Enrich index results with local cover art / "In Library"
+            // badges, but never inject library-only entries — the index
+            // is the sole source of results shown.
+            this.results = this.mergeWithLibrary(result);
 
             exploreCache.populateFromSearch(
                 this.results?.artists || [],
@@ -1090,6 +827,37 @@ export class ExploreView extends LitElement {
                 this.loading = false;
             }
         }
+    }
+
+    /* ── Lyrics Search ── */
+
+    private async executeLyricsSearch(version: number, query: string, startTime: number) {
+        try {
+            const hits = await SearchLyrics(query);
+            if (version !== this.searchVersion) return;
+
+            this.lyricsResults = hits ?? [];
+
+            const elapsed = (performance.now() - startTime).toFixed(0);
+            console.log(
+                `[explore] lyrics search: "${query}" in ${elapsed}ms — ` +
+                    `hits=${this.lyricsResults.length}`,
+            );
+        } catch (err) {
+            if (version !== this.searchVersion) return;
+            this.error = err instanceof Error ? err.message : String(err);
+            console.error(`[explore] lyrics search error: "${query}" — ${this.error}`);
+        } finally {
+            if (version === this.searchVersion) {
+                this.loading = false;
+            }
+        }
+    }
+
+    /** Play a lyric-search hit immediately (replaces the queue). */
+    private playLyricHit(hit: LyricsResult) {
+        if (!hit.filePath) return;
+        queueStore.setQueue([hit.filePath], 0);
     }
 
     /* ── Thumbnail Loading ── */
@@ -1446,9 +1214,26 @@ export class ExploreView extends LitElement {
                 );
                 break;
             case 'recording':
-                // Navigate to the album page if we can resolve it,
-                // otherwise navigate to the artist.
-                if (r.artistCredit) {
+                // Standard track-click behaviour (matches the library list,
+                // queue, playlists, etc.): open the track's album page with
+                // the track highlighted.  The backend resolves the parent
+                // release group from the local index, so this is an instant,
+                // index-backed load rather than a name-only artist lookup.
+                if (r.releaseGroupMbid) {
+                    this.dispatchEvent(
+                        new CustomEvent('navigate', {
+                            bubbles: true,
+                            composed: true,
+                            detail: {
+                                view: 'explore-album-details',
+                                releaseGroupMBID: r.releaseGroupMbid,
+                                albumName: r.releaseName || '',
+                                highlightTrackMBID: r.mbid,
+                            },
+                        }),
+                    );
+                } else if (r.artistCredit) {
+                    // Fallback only when the album can't be resolved locally.
                     this.dispatchEvent(
                         new CustomEvent('navigate', {
                             bubbles: true,
@@ -1496,12 +1281,33 @@ export class ExploreView extends LitElement {
     }
 
     private renderSearchInput() {
+        const placeholder =
+            this.searchMode === 'lyrics'
+                ? 'Search by a lyric\u2026'
+                : 'Search artists, albums, and tracks\u2026';
+
         return html`
+            <div class="search-mode-tabs">
+                <button
+                    class="search-mode-tab ${this.searchMode === 'catalog' ? 'active' : ''}"
+                    @click=${() => this.setSearchMode('catalog')}
+                >
+                    <wa-icon name="magnifying-glass"></wa-icon>
+                    Catalog
+                </button>
+                <button
+                    class="search-mode-tab ${this.searchMode === 'lyrics' ? 'active' : ''}"
+                    @click=${() => this.setSearchMode('lyrics')}
+                >
+                    <wa-icon name="quote-left"></wa-icon>
+                    Lyrics
+                </button>
+            </div>
             <div class="search-container">
                 <wa-icon class="search-icon" name="magnifying-glass"></wa-icon>
                 <input
                     type="text"
-                    placeholder="Search MusicBrainz\u2026"
+                    placeholder=${placeholder}
                     .value=${this.searchQuery}
                     @input=${this.handleInput}
                     @keydown=${this.handleKeydown}
@@ -1520,7 +1326,57 @@ export class ExploreView extends LitElement {
         `;
     }
 
+    private renderLyricsBody() {
+        if (this.queryTooShort) {
+            return html`<div class="status-message">Keep typing…</div>`;
+        }
+
+        if (!this.searchQuery.trim() && !this.lyricsResults) {
+            return html`<div class="status-message">
+                Type a line of lyrics to find the track in your library.
+            </div>`;
+        }
+
+        if (this.loading && !this.lyricsResults) return nothing;
+
+        if (this.lyricsResults && this.lyricsResults.length === 0) {
+            return html`<div class="status-message">
+                No tracks with lyrics matching “${this.searchQuery}”.
+            </div>`;
+        }
+
+        if (!this.lyricsResults) return nothing;
+
+        return html`
+            <div class="lyrics-results">
+                ${this.lyricsResults.map(
+                    (hit) => html`
+                        <button
+                            class="lyrics-hit"
+                            @click=${() => this.playLyricHit(hit)}
+                            title="Play ${hit.title}"
+                        >
+                            <wa-icon class="lyrics-hit-play" name="play"></wa-icon>
+                            <span class="lyrics-hit-main">
+                                <span class="lyrics-hit-title">${hit.title || 'Unknown title'}</span>
+                                <span class="lyrics-hit-meta">
+                                    ${hit.artist || 'Unknown artist'}${hit.album
+                                        ? html` · ${hit.album}`
+                                        : nothing}
+                                </span>
+                            </span>
+                        </button>
+                    `,
+                )}
+            </div>
+        `;
+    }
+
     private renderBody() {
+        if (this.searchMode === 'lyrics') {
+            return this.renderLyricsBody();
+        }
+
         // Query too short
         if (this.queryTooShort) {
             return html`<div class="status-message">
@@ -1531,7 +1387,7 @@ export class ExploreView extends LitElement {
         // No query entered yet
         if (!this.searchQuery.trim() && !this.results) {
             return html`<div class="status-message">
-                Search MusicBrainz to discover artists, albums, and tracks.
+                Search to discover artists, albums, and tracks.
             </div>`;
         }
 
@@ -1673,7 +1529,7 @@ export class ExploreView extends LitElement {
                                 <div class="album-title" title="${rg.title}">
                                     ${rg.title}
                                 </div>
-                                <div class="album-artist">${rg.artistCredit}</div>
+                                <div class="album-artist">${artistLink(rg.artistCredit, rg.artistMbid ?? '')}</div>
                                 <div class="album-meta">
                                     <div class="album-meta-text">
                                         ${rg.primaryType
@@ -1706,9 +1562,11 @@ export class ExploreView extends LitElement {
                         (r) => html`
                             <div class="track-item">
                                 <div class="track-info">
-                                    <div class="track-title">${r.title}</div>
+                                    <div class="track-title">
+                                        ${trackLink(r.title, r.releaseName ?? '', r.releaseGroupMbid ?? '', r.mbid)}
+                                    </div>
                                     <div class="track-artist">
-                                        ${r.artistCredit}
+                                        ${artistLink(r.artistCredit, r.artistMbid ?? '')}
                                     </div>
                                 </div>
                                 <div class="track-meta">

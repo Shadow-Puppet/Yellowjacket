@@ -8,13 +8,14 @@ import '@components/combobox/combobox.ts';
 
 // ── Field / Operator constants ──────────────────────────────────────
 
-/** All 16 fields matching the backend `fieldMap` keys. */
+/** All fields matching the backend `fieldMap` keys. */
 const FIELDS: string[] = [
     'title',
     'artist',
     'album',
     'genre',
     'year',
+    'release_year',
     'composer',
     'file_type',
     'duration',
@@ -32,6 +33,7 @@ const FIELDS: string[] = [
 
 const NUMERIC_FIELDS = new Set([
     'year',
+    'release_year',
     'duration',
     'sample_rate',
     'bit_depth',
@@ -63,7 +65,16 @@ const NUMERIC_OPERATORS = [
     'between',
 ];
 
-const SORT_FIELDS = ['title', 'artist', 'album', 'year', 'duration', 'play_count', 'random'];
+const SORT_FIELDS = [
+    'title',
+    'artist',
+    'album',
+    'year',
+    'release_year',
+    'duration',
+    'play_count',
+    'random',
+];
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -103,7 +114,12 @@ function getAutocompleteOptions(field: string): string[] {
             if (!tracks) return [];
             return [...new Set(tracks.map((t) => t.FileType).filter(Boolean))];
         }
-        case 'year': {
+        case 'year':
+        case 'release_year': {
+            // Both year fields draw suggestions from the set of years
+            // present in the library. The cached Track only carries the
+            // display (original) year, so it seeds both datalists — the
+            // list is just a hint, and the real filter runs server-side.
             const tracks = libraryStore.getCachedTracks();
             if (!tracks) return [];
             return [
@@ -120,8 +136,21 @@ function getAutocompleteOptions(field: string): string[] {
     }
 }
 
+/**
+ * Overrides for fields whose title-cased name would be ambiguous. The
+ * two year fields in particular need to disambiguate the album's
+ * original release from the specific (possibly reissue) release owned.
+ */
+const FIELD_LABEL_OVERRIDES: Record<string, string> = {
+    year: 'Year (Original Release)',
+    release_year: 'Year (This Release)',
+};
+
 /** Format a field name for display: `file_type` → "File Type". */
 function formatFieldLabel(field: string): string {
+    const override = FIELD_LABEL_OVERRIDES[field];
+    if (override) return override;
+
     return field
         .split('_')
         .map((w) => w.charAt(0).toUpperCase() + w.slice(1))

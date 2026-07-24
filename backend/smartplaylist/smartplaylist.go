@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"yellowjacket/backend/coverart"
 	"yellowjacket/backend/database"
 	"yellowjacket/backend/library"
 )
@@ -54,6 +55,7 @@ var fieldMap = map[string]string{
 	"album":             "album",
 	"genre":             "genre",
 	"year":              "year",
+	"release_year":      "release_year",
 	"composer":          "composer",
 	"file_type":         "file_type",
 	"duration":          "length_milliseconds",
@@ -72,6 +74,7 @@ var fieldMap = map[string]string{
 // numericFields identifies fields that accept numeric operators.
 var numericFields = map[string]bool{
 	"year":              true,
+	"release_year":      true,
 	"duration":          true,
 	"sample_rate":       true,
 	"bit_depth":         true,
@@ -552,7 +555,11 @@ const leanTrackQuery = `SELECT
 	af.bitrate,
 	af.file_size,
 	af.play_count,
-	COALESCE(af.last_played, '') AS last_played
+	COALESCE(af.last_played, '') AS last_played,
+	af.cover_art_path,
+	af.artist_mbid,
+	af.release_group_mbid,
+	af.recording_mbid
 FROM (
 	SELECT
 		af.id,
@@ -564,7 +571,17 @@ FROM (
 		r.track_number,
 		r.disc_number,
 		COALESCE(rg.name, '') AS album,
-		COALESCE(r.year, 0) AS year,
+		-- Two year fields, matching the canonical track_metadata view:
+		--   year         — the album's original (first-release) year,
+		--                  the default users filter on. A 1977 album owned
+		--                  as a 2010s reissue still filters as 1977.
+		--   release_year — the year of the specific release in the library
+		--                  (the file/release-group tag), e.g. 2013 for that
+		--                  reissue.
+		-- Both fall back through rg.year → r.year so a track without full
+		-- MusicBrainz data still gets a sensible year.
+		COALESCE(rg.original_year, rg.year, r.year, 0) AS year,
+		COALESCE(rg.year, r.year, 0) AS release_year,
 		COALESCE(r.composer, '') AS composer,
 		COALESCE(ft.extension, '') AS file_type,
 		af.sample_rate,
@@ -574,7 +591,15 @@ FROM (
 		af.file_size,
 		af.library_id,
 		af.play_count,
-		af.last_played
+		af.last_played,
+		COALESCE(ca.file_path, '') AS cover_art_path,
+		COALESCE((SELECT a.mbid
+			FROM artist_credit_artist aca
+			JOIN artists a ON a.id = aca.artist_id
+			WHERE aca.credit_id = ac.id
+			LIMIT 1), '') AS artist_mbid,
+		COALESCE(rg.mbid, '') AS release_group_mbid,
+		COALESCE(r.mbid, '') AS recording_mbid
 	FROM audio_files af
 	LEFT JOIN recordings r ON af.recording_id = r.id
 	LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
@@ -585,6 +610,7 @@ FROM (
 		GROUP BY recording_id
 	) rgr ON r.id = rgr.recording_id
 	LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
+	LEFT JOIN cover_art ca ON rg.cover_art_id = ca.id
 	LEFT JOIN file_types ft ON af.file_type_id = ft.id
 ) af`
 
@@ -752,6 +778,11 @@ func scanTracks(rows *sql.Rows) ([]library.Track, []int64, error) {
 			fileSize    int64
 			playCount   int64
 			lastPlayed  string
+
+			coverArtPath     string
+			artistMBID       string
+			releaseGroupMBID string
+			recordingMBID    string
 		)
 
 		if err := rows.Scan(
@@ -761,31 +792,46 @@ func scanTracks(rows *sql.Rows) ([]library.Track, []int64, error) {
 			&sampleRate, &bitDepth, &channels,
 			&bitrate, &fileSize,
 			&playCount, &lastPlayed,
+			&coverArtPath, &artistMBID,
+			&releaseGroupMBID, &recordingMBID,
 		); err != nil {
 			return nil, nil, fmt.Errorf(
 				"could not scan smart playlist row: %w", err,
 			)
 		}
 
-		tracks = append(tracks, library.Track{
-			TrackName:   title,
-			ArtistName:  artistName,
-			TrackLength: strconv.FormatInt(lengthMs, 10),
-			FilePath:    filePath,
-			TrackNumber: trackNumber.Int64,
-			DiscNumber:  discNumber.Int64,
-			Album:       album,
-			Year:        year,
-			Composer:    composer,
-			FileType:    fileType,
-			SampleRate:  sampleRate,
-			BitDepth:    bitDepth,
-			Channels:    channels,
-			Bitrate:     bitrate,
-			FileSize:    fileSize,
-			PlayCount:   playCount,
-			LastPlayed:  lastPlayed,
-		})
+		track := library.Track{
+			TrackName:        title,
+			ArtistName:       artistName,
+			TrackLength:      strconv.FormatInt(lengthMs, 10),
+			FilePath:         filePath,
+			TrackNumber:      trackNumber.Int64,
+			DiscNumber:       discNumber.Int64,
+			Album:            album,
+			Year:             year,
+			Composer:         composer,
+			FileType:         fileType,
+			SampleRate:       sampleRate,
+			BitDepth:         bitDepth,
+			Channels:         channels,
+			Bitrate:          bitrate,
+			FileSize:         fileSize,
+			PlayCount:        playCount,
+			LastPlayed:       lastPlayed,
+			ArtistMBID:       artistMBID,
+			ReleaseGroupMBID: releaseGroupMBID,
+			RecordingMBID:    recordingMBID,
+		}
+
+		if coverArtPath != "" {
+			urls := coverart.ResolveURLs(coverArtPath)
+			track.CoverArtPath = urls.Original
+			track.CoverArtSmall = urls.Small
+			track.CoverArtMedium = urls.Medium
+			track.CoverArtLarge = urls.Large
+		}
+
+		tracks = append(tracks, track)
 		recordingIDs = append(recordingIDs, recordingID.Int64)
 	}
 

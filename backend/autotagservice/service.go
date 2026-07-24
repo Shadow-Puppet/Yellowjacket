@@ -8,9 +8,12 @@ package autotagservice
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -23,6 +26,7 @@ import (
 	"yellowjacket/backend/database/sql/sqlcgen"
 	"yellowjacket/backend/events"
 	"yellowjacket/backend/explore"
+	"yellowjacket/backend/metadata"
 	"yellowjacket/backend/tagwriter"
 )
 
@@ -81,18 +85,19 @@ type Service struct {
 	exp     *explore.Service
 	logger  *slog.Logger
 	ctx     context.Context
+	// ctxReady reports whether ctx is the Wails lifecycle context set
+	// via SetContext (rather than the context.Background() default).  It
+	// gates event emission: calling wailsruntime.EventsEmit with a
+	// non-runtime context triggers log.Fatalf (os.Exit) inside Wails, so
+	// a background worker that fires before OnStartup wires the context
+	// would otherwise take the whole app down on launch.
+	ctxReady bool
 
 	// Queue cursor — the group_key of the last item returned.
 	// GetNextPending uses it to advance.  Reset by StartAutotagQueue.
 	mu        sync.Mutex
 	cursor    string
 	libraryID int64
-
-	// Candidate cache: freezes the candidate list the user saw so
-	// Apply operates on the exact release they selected even if a
-	// racing rescore would have changed the ranking.  Keyed by
-	// group_key; replaced by GetCandidates / GetCandidatesForPasteURL.
-	candidateCache map[string][]autotag.Candidate
 
 	// In-flight set for ApplyAsync.  Protects against the user
 	// firing two Apply jobs on the same group while the first is
@@ -194,7 +199,6 @@ func NewService(
 		exp:            exp,
 		logger:         logger,
 		ctx:            context.Background(),
-		candidateCache: make(map[string][]autotag.Candidate),
 		runningApplies: make(map[string]struct{}),
 	}
 }
@@ -202,7 +206,36 @@ func NewService(
 // SetContext stores the Wails runtime context (called from
 // OnStartup).
 func (s *Service) SetContext(ctx context.Context) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	s.ctx = ctx
+	s.ctxReady = ctx != nil
+}
+
+// emitEvent emits a Wails runtime event, but only when the stored
+// context actually carries the Wails runtime.  Wails' EventsEmit calls
+// log.Fatalf — which os.Exit()s the process and cannot be recovered —
+// whenever the context lacks its internal "events" value (e.g. the
+// context.Background() default, or any non-lifecycle context).  A
+// background worker (the prefetch/apply sweeps) that emits before, or
+// independently of, OnStartup wiring the real context would otherwise
+// take the whole app down on launch.  We replicate Wails' own
+// precondition here so a not-yet-ready context degrades to a no-op
+// instead of a crash.
+func (s *Service) emitEvent(eventName string, data any) {
+	s.mu.Lock()
+	ready := s.ctxReady
+	ctx := s.ctx
+	s.mu.Unlock()
+
+	// hasWailsRuntime mirrors the check in wails/pkg/runtime.getEvents:
+	// the runtime is present only when ctx.Value("events") is non-nil.
+	if !ready || ctx == nil || ctx.Value("events") == nil {
+		return
+	}
+
+	wailsruntime.EventsEmit(ctx, eventName, data)
 }
 
 // StartBackgroundPrefetch kicks off (or restarts) the prefetch
@@ -335,7 +368,7 @@ func (s *Service) startPrefetch(libraryID int64) {
 		// folder, which populates the cache via the foreground
 		// GetCandidates path.  Skip the redundant re-score.
 		if cached := s.lookupCachedCandidates(key); len(cached) > 0 {
-			wailsruntime.EventsEmit(s.ctx, events.AutotagPrefetchProgress, map[string]any{
+			s.emitEvent(events.AutotagPrefetchProgress, map[string]any{
 				"processed": i + 1,
 				"total":     total,
 			})
@@ -343,7 +376,10 @@ func (s *Service) startPrefetch(libraryID int64) {
 			continue
 		}
 
-		score, err := s.scorer.ScoreGroup(ctx, key)
+		// Local-first: the background sweep skips the MusicBrainz
+		// cascade when a local candidate already scores well, so a
+		// library with cross-library duplicates costs no network here.
+		score, err := s.scorer.ScoreGroupLocalFirst(ctx, key)
 		if err != nil {
 			s.logger.Debug(
 				"prefetch: score failed — skipping",
@@ -360,13 +396,13 @@ func (s *Service) startPrefetch(libraryID int64) {
 			}
 		}
 
-		wailsruntime.EventsEmit(s.ctx, events.AutotagPrefetchProgress, map[string]any{
+		s.emitEvent(events.AutotagPrefetchProgress, map[string]any{
 			"processed": i + 1,
 			"total":     total,
 		})
 	}
 
-	wailsruntime.EventsEmit(s.ctx, events.AutotagPrefetchFinished, map[string]any{
+	s.emitEvent(events.AutotagPrefetchFinished, map[string]any{
 		"processed": total,
 		"total":     total,
 	})
@@ -548,11 +584,164 @@ func (s *Service) GetCandidateCoverArt(
 	return s.exp.GetCandidateThumbnail(releaseMBID, releaseGroupMBID)
 }
 
+// GetLocalCoverArt returns a data-URI for the artwork associated
+// with the group's local files, so the review UI can show "what the
+// folder already looks like" beside the fetched candidate art.
+// It first checks each file for embedded ID3/Vorbis pictures, then
+// falls back to a sidecar cover image (cover.jpg, folder.png, …)
+// sitting in the album directory.  Untagged folders carry one or the
+// other far more often than they have a DB release-group cover, so we
+// read the files directly.  Returns "" when nothing is found.
+func (s *Service) GetLocalCoverArt(groupKey string) string {
+	locals, err := s.scorer.LocalTracksForGroup(s.ctx, groupKey)
+	if err != nil {
+		s.logger.Warn(
+			"local cover art: list tracks failed",
+			"group_key", groupKey, "err", err,
+		)
+
+		return ""
+	}
+
+	// 1. Embedded artwork — guaranteed to travel with the track.
+	for _, t := range locals {
+		if t.FilePath == "" {
+			continue
+		}
+
+		meta, err := metadata.ExtractTags(t.FilePath)
+		if err != nil || meta == nil || meta.Picture == nil {
+			continue
+		}
+
+		if len(meta.Picture.Data) == 0 {
+			continue
+		}
+
+		mime := meta.Picture.MIMEType
+		if mime == "" {
+			mime = "image/jpeg"
+		}
+
+		return "data:" + mime + ";base64," +
+			base64.StdEncoding.EncodeToString(meta.Picture.Data)
+	}
+
+	// 2. Sidecar cover image file in the album directory.  Scan the
+	// distinct directories the tracks live in (usually just one).
+	seen := make(map[string]struct{}, 1)
+
+	for _, t := range locals {
+		if t.FilePath == "" {
+			continue
+		}
+
+		dir := filepath.Dir(t.FilePath)
+		if _, ok := seen[dir]; ok {
+			continue
+		}
+
+		seen[dir] = struct{}{}
+
+		if uri := folderCoverDataURI(dir); uri != "" {
+			return uri
+		}
+	}
+
+	return ""
+}
+
+// coverImageExts maps recognised sidecar cover-image extensions to
+// their MIME type for the data-URI.
+var coverImageExts = map[string]string{
+	".jpg":  "image/jpeg",
+	".jpeg": "image/jpeg",
+	".png":  "image/png",
+	".gif":  "image/gif",
+	".webp": "image/webp",
+	".bmp":  "image/bmp",
+}
+
+// preferredCoverStems lists the base filenames (lower-cased, minus
+// extension) commonly used for album artwork, in priority order.
+var preferredCoverStems = []string{
+	"cover", "folder", "front", "album", "albumart", "albumartsmall", "thumb",
+}
+
+// folderCoverDataURI looks for a conventional cover-image file in dir
+// and returns it as a base64 data-URI, or "" when none is found.
+// Preferred filenames (cover.*, folder.*, …) win; any other image
+// file in the directory is used as a last resort.  Matching is
+// case-insensitive so COVER.JPG and Folder.Png both hit.
+func folderCoverDataURI(dir string) string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+
+	byStem := make(map[string]string) // lower stem -> filename
+
+	var fallback string
+
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+
+		name := e.Name()
+		ext := strings.ToLower(filepath.Ext(name))
+
+		if _, ok := coverImageExts[ext]; !ok {
+			continue
+		}
+
+		stem := strings.ToLower(strings.TrimSuffix(name, filepath.Ext(name)))
+		if _, dup := byStem[stem]; !dup {
+			byStem[stem] = name
+		}
+
+		if fallback == "" {
+			fallback = name
+		}
+	}
+
+	name := fallback
+
+	for _, stem := range preferredCoverStems {
+		if match, ok := byStem[stem]; ok {
+			name = match
+
+			break
+		}
+	}
+
+	if name == "" {
+		return ""
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, name))
+	if err != nil || len(data) == 0 {
+		return ""
+	}
+
+	mime := coverImageExts[strings.ToLower(filepath.Ext(name))]
+	if mime == "" {
+		mime = "image/jpeg"
+	}
+
+	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data)
+}
+
 // ScoreView is the Wails-friendly projection of autotag.GroupScore.
 type ScoreView struct {
 	GroupKey    string           `json:"groupKey"`
 	LocalTracks []LocalTrackView `json:"localTracks"`
 	Candidates  []CandidateView  `json:"candidates"`
+	// Recommendation is the qualitative confidence tier for the
+	// ranked list: "none", "low", "medium", or "strong".  Unlike the
+	// raw score it accounts for ambiguity (a rival release group
+	// scoring nearly as high) and alignment defects.
+	Recommendation string `json:"recommendation"`
 }
 
 // LocalTrackView mirrors autotag.LocalTrack.
@@ -583,6 +772,7 @@ type CandidateView struct {
 	OriginalDate     string             `json:"originalDate"`
 	Country          string             `json:"country"`
 	Status           string             `json:"status"`
+	PrimaryType      string             `json:"primaryType"`
 	TrackCount       int                `json:"trackCount"`
 	Score            float64            `json:"score"`
 	Breakdown        ScoreBreakdownView `json:"breakdown"`
@@ -597,8 +787,11 @@ type CandidateView struct {
 type ScoreBreakdownView struct {
 	TitleAvg      float64 `json:"titleAvg"`
 	LengthAvg     float64 `json:"lengthAvg"`
+	ArtistFit     float64 `json:"artistFit"`
+	AlbumFit      float64 `json:"albumFit"`
 	TrackCountFit float64 `json:"trackCountFit"`
 	ReleaseMeta   float64 `json:"releaseMeta"`
+	Evidence      float64 `json:"evidence"`
 }
 
 // AlignmentView mirrors autotag.TrackAlignment.  LocalIndex of -1
@@ -676,21 +869,50 @@ func (s *Service) GetCandidates(groupKey string) (*ScoreView, error) {
 	return scoreToView(score, s.exp), nil
 }
 
-// cacheCandidates replaces the candidate list for the given group.
-// Thread-safe.
+// cacheCandidates durably persists the scored candidate list for a
+// group as a JSON blob in tagging_candidates.  This freezes the exact
+// list the user saw (so Apply operates on the release they selected
+// even if a racing rescore would reorder it) AND survives process
+// restarts, so a later session reuses the result instead of re-hitting
+// MusicBrainz.  Errors are logged, not returned — a failed persist
+// only costs a recompute, never correctness.
 func (s *Service) cacheCandidates(groupKey string, cands []autotag.Candidate) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	blob, err := json.Marshal(cands)
+	if err != nil {
+		s.logger.Warn("cache candidates: marshal failed", "group_key", groupKey, "err", err)
 
-	s.candidateCache[groupKey] = cands
+		return
+	}
+
+	if err := s.db.Queries.UpsertTaggingCandidates(s.ctx, sqlcgen.UpsertTaggingCandidatesParams{
+		GroupKey:   groupKey,
+		Candidates: string(blob),
+	}); err != nil {
+		s.logger.Warn("cache candidates: persist failed", "group_key", groupKey, "err", err)
+	}
 }
 
-// lookupCachedCandidates returns the cached list, or empty if none.
+// lookupCachedCandidates returns the durably-stored candidate list for
+// a group, or nil when none has been computed yet (or the blob can't
+// be decoded — treated as a miss so the caller recomputes).
 func (s *Service) lookupCachedCandidates(groupKey string) []autotag.Candidate {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	blob, err := s.db.Queries.GetTaggingCandidates(s.ctx, groupKey)
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) && !isNoRows(err) {
+			s.logger.Warn("lookup candidates: query failed", "group_key", groupKey, "err", err)
+		}
 
-	return s.candidateCache[groupKey]
+		return nil
+	}
+
+	var cands []autotag.Candidate
+	if err := json.Unmarshal([]byte(blob), &cands); err != nil {
+		s.logger.Warn("lookup candidates: unmarshal failed", "group_key", groupKey, "err", err)
+
+		return nil
+	}
+
+	return cands
 }
 
 // ApplyResultView mirrors autotag.ApplyResult for the frontend.
@@ -713,33 +935,9 @@ type FailureView struct {
 // always applies the exact release they saw in the UI.
 // Empty releaseMBID picks the top-scored candidate.
 func (s *Service) Apply(groupKey, releaseMBID string) (*ApplyResultView, error) {
-	cands := s.lookupCachedCandidates(groupKey)
-	if len(cands) == 0 {
-		// Cache miss (user reloaded the page?): re-score and carry
-		// on — worst case they get the current top-ranked release.
-		score, err := s.scorer.ScoreGroup(s.ctx, groupKey)
-		if err != nil {
-			return nil, fmt.Errorf("score before apply: %w", err)
-		}
-
-		cands = score.Candidates
-		s.cacheCandidates(groupKey, cands)
-	}
-
-	locals, err := s.scorer.LocalTracksForGroup(s.ctx, groupKey)
+	plan, err := s.prepareApplyPlan(groupKey, releaseMBID)
 	if err != nil {
-		return nil, fmt.Errorf("load locals: %w", err)
-	}
-
-	groupScore := &autotag.GroupScore{
-		GroupKey:    groupKey,
-		LocalTracks: locals,
-		Candidates:  cands,
-	}
-
-	plan, err := s.applier.BuildPlan(groupScore, releaseMBID)
-	if err != nil {
-		return nil, fmt.Errorf("build plan: %w", err)
+		return nil, err
 	}
 
 	result, err := s.applier.Apply(s.ctx, plan, nil)
@@ -799,7 +997,7 @@ func (s *Service) ApplyAsync(groupKey, releaseMBID string) error {
 		}
 	}
 
-	wailsruntime.EventsEmit(s.ctx, events.AutotagApplyStarted, map[string]any{
+	s.emitEvent(events.AutotagApplyStarted, map[string]any{
 		"groupKey": groupKey,
 		"total":    total,
 	})
@@ -852,7 +1050,7 @@ func (s *Service) runApply(groupKey string, plan *autotag.ApplyPlan, total int) 
 	defer s.endApply(groupKey)
 
 	onProgress := func(current, total, succeeded, failed int) {
-		wailsruntime.EventsEmit(s.ctx, events.AutotagApplyProgress, map[string]any{
+		s.emitEvent(events.AutotagApplyProgress, map[string]any{
 			"groupKey":  groupKey,
 			"current":   current,
 			"total":     total,
@@ -879,7 +1077,7 @@ func (s *Service) runApply(groupKey string, plan *autotag.ApplyPlan, total int) 
 		finished["error"] = err.Error()
 	}
 
-	wailsruntime.EventsEmit(s.ctx, events.AutotagApplyFinished, finished)
+	s.emitEvent(events.AutotagApplyFinished, finished)
 }
 
 // tryStartApply records that an Apply for the given group is
@@ -939,8 +1137,14 @@ func (s *Service) LeaveAsIs(groupKey string) error {
 }
 
 // RetagGroup flips a group back to 'pending' so the user can
-// re-review after an apply or skip.
+// re-review after an apply or skip.  Drops the durably-cached
+// candidate list too, so the next open recomputes against fresh
+// MusicBrainz data rather than reusing the stale stored result.
 func (s *Service) RetagGroup(groupKey string) error {
+	if err := s.db.Queries.DeleteTaggingCandidates(s.ctx, groupKey); err != nil {
+		s.logger.Warn("retag: clear cached candidates failed", "group_key", groupKey, "err", err)
+	}
+
 	return s.db.Queries.SetTaggingItemStatus(
 		s.ctx,
 		sqlcgen.SetTaggingItemStatusParams{Status: "pending", GroupKey: groupKey},
@@ -980,13 +1184,133 @@ func (s *Service) GetCandidatesForPasteURL(
 	// splice it to the top of the list.  RankCandidates would
 	// re-sort by score; we explicitly keep the pasted candidate
 	// first so the user's manual pick is visually anchored.
-	scored := autotag.ScoreCandidate(score.LocalTracks, pasted, len(score.LocalTracks))
+	scored := autotag.ScoreCandidate(autotag.Group{
+		AlbumName:   score.AlbumName,
+		AlbumArtist: score.AlbumArtist,
+		Tracks:      score.LocalTracks,
+	}, pasted)
 	merged := append([]autotag.Candidate{scored}, score.Candidates...)
 	score.Candidates = merged
 
 	s.cacheCandidates(groupKey, merged)
 
 	return scoreToView(score, s.exp), nil
+}
+
+// SearchHitView is one in-app MusicBrainz search result surfaced to
+// the review UI.  Kind is "releasegroup" or "recording" so the
+// frontend knows which resolve path SelectSearchCandidate must take.
+type SearchHitView struct {
+	MBID   string `json:"mbid"`
+	Kind   string `json:"kind"`
+	Title  string `json:"title"`
+	Artist string `json:"artist"`
+	Detail string `json:"detail"`
+}
+
+// SearchCandidates runs an in-app MusicBrainz search — the "suggest a
+// new candidate" escape hatch when the automatic cascade misses.
+// kind is "recording" (title + artist, for singletons) or anything
+// else (album + artist release-group search).  Returns lightweight
+// hits; SelectSearchCandidate resolves the picked one into a scored
+// candidate.
+func (s *Service) SearchCandidates(
+	kind, query, artist string,
+) ([]SearchHitView, error) {
+	if kind == "recording" {
+		hits, err := s.mbr.SearchRecordingHits(s.ctx, query, artist)
+		if err != nil {
+			return nil, fmt.Errorf("search recordings: %w", err)
+		}
+
+		out := make([]SearchHitView, 0, len(hits))
+		for _, h := range hits {
+			out = append(out, SearchHitView{
+				MBID:   h.MBID,
+				Kind:   "recording",
+				Title:  h.Title,
+				Artist: h.ArtistCredit,
+				Detail: formatMillis(h.LengthMillis),
+			})
+		}
+
+		return out, nil
+	}
+
+	hits, err := s.mbr.SearchReleaseGroupHits(s.ctx, query, artist)
+	if err != nil {
+		return nil, fmt.Errorf("search release groups: %w", err)
+	}
+
+	out := make([]SearchHitView, 0, len(hits))
+	for _, h := range hits {
+		detail := h.PrimaryType
+		if y := h.FirstDate; len(y) >= 4 { //nolint:mnd
+			detail = strings.TrimSpace(y[:4] + " " + detail)
+		}
+
+		out = append(out, SearchHitView{
+			MBID:   h.MBID,
+			Kind:   "releasegroup",
+			Title:  h.Title,
+			Artist: h.ArtistCredit,
+			Detail: detail,
+		})
+	}
+
+	return out, nil
+}
+
+// SelectSearchCandidate resolves a picked search hit into a fully-
+// scored candidate and splices it to the top of the group's candidate
+// list — the same shape as the paste-URL path, so Apply works
+// unchanged.  A "recording" hit is resolved to a representative
+// release first.
+func (s *Service) SelectSearchCandidate(
+	groupKey, kind, mbid string,
+) (*ScoreView, error) {
+	score, err := s.scorer.ScoreGroup(s.ctx, groupKey)
+	if err != nil {
+		return nil, fmt.Errorf("score group: %w", err)
+	}
+
+	var picked autotag.Candidate
+
+	if kind == "recording" {
+		picked, err = s.mbr.ResolveOneRecordingMBID(s.ctx, mbid)
+	} else {
+		picked, err = s.mbr.ResolveOneReleaseMBID(s.ctx, mbid)
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("resolve %s %s: %w", kind, mbid, err)
+	}
+
+	scored := autotag.ScoreCandidate(autotag.Group{
+		AlbumName:   score.AlbumName,
+		AlbumArtist: score.AlbumArtist,
+		Tracks:      score.LocalTracks,
+	}, picked)
+	merged := append([]autotag.Candidate{scored}, score.Candidates...)
+	score.Candidates = merged
+
+	s.cacheCandidates(groupKey, merged)
+
+	return scoreToView(score, s.exp), nil
+}
+
+// formatMillis renders a millisecond duration as m:ss for the search
+// result detail line; empty for unknown lengths.
+func formatMillis(ms int64) string {
+	if ms <= 0 {
+		return ""
+	}
+
+	sec := ms / 1000
+	minutes := sec / 60
+	seconds := sec % 60
+
+	return fmt.Sprintf("%d:%02d", minutes, seconds)
 }
 
 var errInvalidMBURL = errors.New("autotag: not a valid MusicBrainz release URL")
@@ -1033,7 +1357,16 @@ func extractReleaseMBID(url string) string {
 // top-ranked candidate; pass nil to skip cover art entirely (used
 // only by paths that don't need art).
 func scoreToView(s *autotag.GroupScore, exp *explore.Service) *ScoreView {
-	out := &ScoreView{GroupKey: s.GroupKey}
+	rec := s.Recommendation
+	if rec == "" {
+		// Paths that rebuild a GroupScore from cached candidates
+		// don't run the scorer; derive the tier here.
+		rec = autotag.Recommend(
+			autotag.Group{Tracks: s.LocalTracks}, s.Candidates,
+		)
+	}
+
+	out := &ScoreView{GroupKey: s.GroupKey, Recommendation: string(rec)}
 
 	for _, l := range s.LocalTracks {
 		out.LocalTracks = append(out.LocalTracks, LocalTrackView{
@@ -1058,6 +1391,7 @@ func scoreToView(s *autotag.GroupScore, exp *explore.Service) *ScoreView {
 			OriginalDate:     c.OriginalDate,
 			Country:          c.Country,
 			Status:           c.Status,
+			PrimaryType:      c.PrimaryType,
 			TrackCount:       c.TrackCount,
 			Score:            c.Score,
 			Source:           string(c.Source),
@@ -1065,8 +1399,11 @@ func scoreToView(s *autotag.GroupScore, exp *explore.Service) *ScoreView {
 			Breakdown: ScoreBreakdownView{
 				TitleAvg:      c.Breakdown.TitleAvg,
 				LengthAvg:     c.Breakdown.LengthAvg,
+				ArtistFit:     c.Breakdown.ArtistFit,
+				AlbumFit:      c.Breakdown.AlbumFit,
 				TrackCountFit: c.Breakdown.TrackCountFit,
 				ReleaseMeta:   c.Breakdown.ReleaseMeta,
+				Evidence:      c.Breakdown.Evidence,
 			},
 		}
 

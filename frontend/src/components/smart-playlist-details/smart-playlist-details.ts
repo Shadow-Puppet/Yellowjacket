@@ -3,18 +3,53 @@ import {
     customElement,
     property,
     state,
+    query,
 } from 'lit/decorators.js';
-import { library } from '@go/models';
+import type { playlist, library } from '@go/models';
 import {
-    EvaluateSmartPlaylist,
+    GetSmartPlaylistTracks,
+    RefreshSmartPlaylist,
     GetSmartPlaylistRules,
     UpdateSmartPlaylistRules,
 } from '@go/playlist/Service';
 import { EventsOn } from '@runtime/runtime';
 import { Events } from '../../events';
 import { queueStore } from '@store/queue-store';
+import { PlayerController } from '@store/controllers/player-controller';
+import { SearchController } from '@store/controllers/search-controller';
+import { SelectionController } from '@utils/selection-controller';
+import type { SelectionHost } from '@utils/selection-controller';
+import {
+    ContextMenuController,
+    contextMenuStyles,
+} from '@utils/context-menu-controller.js';
+import type { ContextMenuHost } from '@utils/context-menu-controller.js';
+import { FavoritesController } from '@store/controllers/favorites-controller';
+import {
+    setDragPayload,
+    emitDragActive,
+} from '@utils/drag-controller';
+import {
+    createDragImage,
+    createTrackCardDragImage,
+    removeDragImage,
+} from '@utils/drag-image';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
-import '@components/track-list/track-list.js';
+import '@awesome.me/webawesome/dist/components/popup/popup.js';
+import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
+import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
+import '@components/playlist-picker/playlist-picker.js';
+import '@components/track-details/track-details.js';
+import type { TrackDetails } from '@components/track-details/track-details.js';
+import type { CoverArtUrls } from '@components/track-details/track-details.js';
+import { libraryStore } from '@store/library-store';
+import { formatMilliseconds } from '@utils/time';
+import {
+    artistLink,
+    albumLink,
+    trackLink,
+    exploreLinkStyles,
+} from '@utils/explore-link';
 import '@components/smart-playlist-editor/smart-playlist-editor.js';
 import { designTokens } from '../../styles/tokens.css';
 
@@ -44,7 +79,10 @@ function formatTotalDuration(totalMs: number): string {
 }
 
 @customElement('smart-playlist-details')
-export class SmartPlaylistDetails extends LitElement {
+export class SmartPlaylistDetails
+    extends LitElement
+    implements SelectionHost, ContextMenuHost
+{
     @property({ type: Number, attribute: 'playlist-id' })
     playlistId = 0;
 
@@ -55,7 +93,7 @@ export class SmartPlaylistDetails extends LitElement {
     autoEdit = false;
 
     @state()
-    private tracks: library.Track[] = [];
+    private tracks: playlist.Track[] = [];
 
     @state()
     private loading = true;
@@ -72,14 +110,74 @@ export class SmartPlaylistDetails extends LitElement {
     @state()
     private saving = false;
 
+    @state()
+    private refreshing = false;
+
+    private player = new PlayerController(this);
+    private searchCtrl = new SearchController(this);
+    private selection = new SelectionController(this);
+    private ctxMenu = new ContextMenuController(this);
+    private favCtrl = new FavoritesController(this);
+
     private playlistDeletedCleanup: (() => void) | null = null;
     private playlistRenamedCleanup: (() => void) | null = null;
+
+    private dragImageEl: HTMLElement | null = null;
+
+    @query('#context-menu')
+    private contextMenuPopup!: WaPopup;
+
+    @query('#playlist-submenu')
+    private playlistSubmenuPopup!: WaPopup;
+
+    @query('track-details')
+    private trackDetailsDialog!: TrackDetails;
+
+    // =================================================================
+    // ContextMenuHost interface
+    // =================================================================
+
+    getContextMenuPopup(): WaPopup | undefined {
+        return this.contextMenuPopup;
+    }
+
+    getPlaylistSubmenuPopup(): WaPopup | undefined {
+        return this.playlistSubmenuPopup;
+    }
+
+    onContextMenuClose(): void {
+        // No-op.
+    }
+
+    // =================================================================
+    // SelectionHost interface
+    // =================================================================
+
+    getItemKey(index: number): string | undefined {
+        if (index < 0 || index >= this.tracks.length) {
+            return undefined;
+        }
+
+        return String(index);
+    }
+
+    getItemCount(): number {
+        return this.tracks.length;
+    }
+
+    onSelectionChanged(): void {
+        this.requestUpdate();
+    }
 
     // =================================================================
     // Styles
     // =================================================================
 
-    static override styles = [designTokens, css`
+    static override styles = [
+        designTokens,
+        contextMenuStyles,
+        exploreLinkStyles,
+        css`
         :host {
             display: flex;
             flex-direction: column;
@@ -236,12 +334,162 @@ export class SmartPlaylistDetails extends LitElement {
 
         .content {
             flex: 1;
-            overflow: hidden;
+            overflow-y: auto;
+            padding: 0 16px 12px 16px;
         }
 
-        track-list {
+        .search-bar-row {
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 30px;
+            border-bottom: 1px solid
+                var(--yj-border-subtle, #333);
+            flex-shrink: 0;
+            user-select: none;
+        }
+
+        .search-indicator {
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+            pointer-events: none;
+            background: var(
+                --yj-bg-overlay,
+                #495057
+            );
+            color: var(
+                --yj-text-secondary,
+                #b3b3b3
+            );
+            font-size: 12px;
+            padding: 2px 14px;
+            border-radius: 12px;
+            border: 1px solid
+                var(--yj-border-subtle, #555);
+            white-space: nowrap;
+            opacity: 0.92;
+        }
+
+        /* Column grid layout */
+        .track-header,
+        .track-item {
+            display: grid;
+            grid-template-columns: 40px 36px 1fr 1fr 1fr 80px;
+            align-items: center;
+            gap: 0;
+        }
+
+        .track-header {
+            padding: 6px 8px;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--yj-text-secondary, #b3b3b3);
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            border-bottom: 1px solid var(--yj-text-tertiary, #666);
+            user-select: none;
+        }
+
+        .track-art {
+            width: 32px;
+            height: 32px;
+            border-radius: 4px;
+            overflow: hidden;
+            flex-shrink: 0;
+            background: var(--yj-bg-overlay, rgba(255, 255, 255, 0.06));
+        }
+
+        .track-art img {
             width: 100%;
             height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+
+        .header-cell,
+        .cell {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            min-width: 0;
+            padding: 0 4px;
+        }
+
+        .col-number {
+            text-align: center;
+            color: var(--yj-text-tertiary, #888);
+            font-variant-numeric: tabular-nums;
+        }
+
+        .col-duration {
+            text-align: right;
+            color: var(--yj-text-tertiary, #888);
+            font-variant-numeric: tabular-nums;
+        }
+
+        .track-item {
+            padding: 6px 8px;
+            border-bottom: 1px solid
+                rgba(255, 255, 255, 0.03);
+            cursor: default;
+            user-select: none;
+        }
+
+        .track-item:hover {
+            background-color: var(--yj-hover-overlay, rgba(255, 255, 255, 0.05));
+        }
+
+        .track-item.selected {
+            background-color: var(--yj-selection-bg, rgba(100, 160, 255, 0.15));
+        }
+
+        .track-item.active {
+            background-color: var(--yj-accent-bg, rgba(255, 212, 59, 0.1));
+            color: var(--yj-accent, #ffd43b);
+        }
+
+        .track-item.selected.active {
+            background-color: var(--yj-selection-bg, rgba(100, 160, 255, 0.15));
+        }
+
+        /* Phantom rows span the full grid */
+        .track-item.phantom {
+            display: grid;
+            grid-template-columns: 40px 36px 1fr 1fr 1fr 80px;
+            cursor: default;
+        }
+
+        .phantom-row {
+            grid-column: 1 / -1;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
+            width: 100%;
+        }
+
+        .phantom-caution {
+            flex-shrink: 0;
+            font-size: 14px;
+            color: var(--yj-warning, #e67700);
+        }
+
+        .phantom-path {
+            flex: 1;
+            min-width: 0;
+            font-size: 12px;
+            color: var(--yj-text-tertiary, #888);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .tracks-empty {
+            padding: 12px 0;
+            color: var(--yj-text-tertiary, #666);
+            font-size: 12px;
         }
 
         .loading {
@@ -273,6 +521,24 @@ export class SmartPlaylistDetails extends LitElement {
     // Lifecycle
     // =================================================================
 
+    private handleSelectAll = (): void => {
+        this.selection.selectAll();
+    };
+
+    private clearSelectionHandler = (e: MouseEvent) => {
+        const path = e.composedPath();
+        const isTrackClick = path.some(
+            (el) =>
+                el instanceof HTMLElement &&
+                el.classList.contains('track-item') &&
+                this.shadowRoot?.contains(el),
+        );
+
+        if (!isTrackClick) {
+            this.selection.clear();
+        }
+    };
+
     override connectedCallback() {
         super.connectedCallback();
 
@@ -303,6 +569,15 @@ export class SmartPlaylistDetails extends LitElement {
                 }
             },
         );
+
+        document.addEventListener(
+            'click',
+            this.clearSelectionHandler,
+        );
+        document.addEventListener(
+            'shortcut:select-all',
+            this.handleSelectAll,
+        );
     }
 
     override disconnectedCallback() {
@@ -317,6 +592,15 @@ export class SmartPlaylistDetails extends LitElement {
             this.playlistRenamedCleanup();
             this.playlistRenamedCleanup = null;
         }
+
+        document.removeEventListener(
+            'click',
+            this.clearSelectionHandler,
+        );
+        document.removeEventListener(
+            'shortcut:select-all',
+            this.handleSelectAll,
+        );
     }
 
     // =================================================================
@@ -329,17 +613,35 @@ export class SmartPlaylistDetails extends LitElement {
         this.loading = true;
 
         try {
-            const result = await EvaluateSmartPlaylist(this.playlistId);
+            const result = await GetSmartPlaylistTracks(
+                this.playlistId,
+            );
 
             this.tracks = result ?? [];
+            this.selection.clear();
         } catch (error) {
             console.error(
-                'Failed to evaluate smart playlist:',
+                'Failed to load smart playlist tracks:',
                 error,
             );
             this.tracks = [];
         } finally {
             this.loading = false;
+        }
+    }
+
+    private async refreshTracks() {
+        if (!this.playlistId) return;
+
+        try {
+            this.tracks = await GetSmartPlaylistTracks(
+                this.playlistId,
+            );
+        } catch (error) {
+            console.error(
+                'Failed to refresh smart playlist tracks:',
+                error,
+            );
         }
     }
 
@@ -363,7 +665,7 @@ export class SmartPlaylistDetails extends LitElement {
 
     private handlePlay() {
         const filePaths = this.tracks
-            .filter((t) => t.FilePath)
+            .filter((t) => !t.Phantom)
             .map((t) => t.FilePath);
 
         if (filePaths.length === 0) return;
@@ -373,7 +675,7 @@ export class SmartPlaylistDetails extends LitElement {
 
     private handleShuffle() {
         const filePaths = this.tracks
-            .filter((t) => t.FilePath)
+            .filter((t) => !t.Phantom)
             .map((t) => t.FilePath);
 
         if (filePaths.length === 0) return;
@@ -381,8 +683,20 @@ export class SmartPlaylistDetails extends LitElement {
         queueStore.setQueue(filePaths, 0, true);
     }
 
-    private handleRefresh() {
-        void this.loadTracks();
+    private async handleRefresh() {
+        this.refreshing = true;
+
+        try {
+            await RefreshSmartPlaylist(this.playlistId);
+            await this.refreshTracks();
+        } catch (error) {
+            console.error(
+                'Failed to refresh smart playlist:',
+                error,
+            );
+        } finally {
+            this.refreshing = false;
+        }
     }
 
     private async handleEditRules() {
@@ -425,12 +739,277 @@ export class SmartPlaylistDetails extends LitElement {
     }
 
     // =================================================================
+    // Track interactions
+    // =================================================================
+
+    private handleTrackClick(
+        e: MouseEvent,
+        trackIndex: number,
+    ) {
+        this.selection.handleItemClick(
+            e,
+            String(trackIndex),
+            trackIndex,
+        );
+    }
+
+    private handleTrackDblClick(trackIndex: number) {
+        this.selection.clear();
+
+        const filePaths = this.tracks.map(
+            (t) => t.FilePath,
+        );
+
+        queueStore.setQueue(filePaths, trackIndex);
+    }
+
+    private handleTrackContextMenu(
+        e: MouseEvent,
+        trackIndex: number,
+    ) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        this.selection.handleContextMenu(
+            String(trackIndex),
+        );
+        this.ctxMenu.openAt(e.clientX, e.clientY);
+    }
+
+    private isActiveTrack(
+        track: playlist.Track,
+    ): boolean {
+        const currentTrack = this.player.currentTrack;
+
+        if (!currentTrack) return false;
+
+        return currentTrack.filePath === track.FilePath;
+    }
+
+    // =================================================================
+    // Selection helpers
+    // =================================================================
+
+    private getSelectedFilePaths(): string[] {
+        return this.selection
+            .getSelectedIndices()
+            .map((i) => this.tracks[i]!.FilePath);
+    }
+
+    // =================================================================
+    // Context menu actions
+    // =================================================================
+
+    private onContextMenuAction(action: string) {
+        const filePaths = this.getSelectedFilePaths();
+
+        if (filePaths.length === 0) return;
+
+        switch (action) {
+            case 'play':
+                queueStore.setQueue(filePaths, 0, true);
+                break;
+            case 'add-to-queue':
+                queueStore.addTracksToQueue(filePaths);
+                break;
+            case 'play-next':
+                queueStore.playTracksNext(filePaths);
+                break;
+            case 'track-details':
+                if (filePaths.length === 1) {
+                    this.openTrackDetails(filePaths[0]!);
+                } else {
+                    this.openBatchTrackDetails(filePaths);
+                }
+                break;
+        }
+
+        this.selection.clear();
+        this.ctxMenu.close();
+    }
+
+    private onContextMenuFavoriteToggle() {
+        const filePaths = this.getSelectedFilePaths();
+
+        if (filePaths.length === 0) return;
+
+        if (this.favCtrl.allFavorited(filePaths)) {
+            void this.favCtrl.removeFromFavorites(
+                filePaths,
+            );
+        } else {
+            void this.favCtrl.addToFavorites(
+                filePaths,
+            );
+        }
+
+        this.selection.clear();
+        this.ctxMenu.close();
+    }
+
+    private openTrackDetails(filePath: string) {
+        const tracks = libraryStore.getCachedTracks();
+        const track = tracks?.find(
+            (t) => t.FilePath === filePath,
+        );
+
+        if (!track) return;
+
+        const coverArt = track.CoverArtPath
+            ? {
+                coverArtPath: track.CoverArtPath,
+                coverArtSmall: track.CoverArtSmall,
+                coverArtMedium: track.CoverArtMedium,
+                coverArtLarge: track.CoverArtLarge,
+            }
+            : undefined;
+
+        this.trackDetailsDialog?.show(
+            track,
+            coverArt,
+        );
+    }
+
+    private openBatchTrackDetails(
+        filePaths: string[],
+    ) {
+        const cachedTracks =
+            libraryStore.getCachedTracks();
+
+        if (!cachedTracks) return;
+
+        const tracks = filePaths
+            .map((fp) =>
+                cachedTracks.find(
+                    (t) => t.FilePath === fp,
+                ),
+            )
+            .filter(
+                (t): t is library.Track => t != null,
+            );
+
+        if (tracks.length === 0) return;
+
+        const first = tracks[0]!;
+        const albumNames = new Set(tracks.map((t) => t.Album));
+        let coverArt: CoverArtUrls | null = null;
+        let coverArtMixed = false;
+
+        if (albumNames.size === 1 && first.CoverArtPath) {
+            coverArt = {
+                coverArtPath: first.CoverArtPath,
+                coverArtSmall: first.CoverArtSmall,
+                coverArtMedium: first.CoverArtMedium,
+                coverArtLarge: first.CoverArtLarge,
+            };
+        } else if (albumNames.size > 1) {
+            coverArtMixed = true;
+        }
+
+        this.trackDetailsDialog?.showBatch(
+            tracks,
+            coverArt,
+            coverArtMixed,
+        );
+    }
+
+    // =================================================================
+    // Drag source (smart-playlist tracks -> queue or playlist)
+    // =================================================================
+
+    private onTrackDragStart = (
+        e: DragEvent,
+        track: playlist.Track,
+        trackIndex: number,
+    ) => {
+        let filePaths: string[];
+
+        if (
+            this.selection.isSelected(
+                String(trackIndex),
+            )
+        ) {
+            filePaths = this.getSelectedFilePaths();
+        } else {
+            filePaths = [track.FilePath];
+        }
+
+        if (filePaths.length === 0) return;
+
+        setDragPayload(e, {
+            filePaths,
+            source: 'track-list',
+        });
+
+        this.dragImageEl =
+            filePaths.length === 1
+                ? createTrackCardDragImage(
+                      track.Title,
+                      track.Artist,
+                      track.FilePath,
+                  )
+                : createDragImage(filePaths.length);
+        e.dataTransfer?.setDragImage(
+            this.dragImageEl,
+            0,
+            0,
+        );
+
+        emitDragActive(true);
+    };
+
+    private onTrackDragEnd = () => {
+        if (this.dragImageEl) {
+            removeDragImage(this.dragImageEl);
+            this.dragImageEl = null;
+        }
+
+        emitDragActive(false);
+    };
+
+    // =================================================================
+    // Search filtering
+    // =================================================================
+
+    private getVisibleTracks(): {
+        track: playlist.Track;
+        trackIndex: number;
+    }[] {
+        const term =
+            this.searchCtrl.term.toLowerCase();
+
+        if (!term) {
+            return this.tracks.map(
+                (track, trackIndex) => ({
+                    track,
+                    trackIndex,
+                }),
+            );
+        }
+
+        return this.tracks
+            .map((track, trackIndex) => ({
+                track,
+                trackIndex,
+            }))
+            .filter(
+                ({ track }) =>
+                    track.Title.toLowerCase().includes(
+                        term,
+                    ) ||
+                    track.Artist.toLowerCase().includes(
+                        term,
+                    ),
+            );
+    }
+
+    // =================================================================
     // Helpers
     // =================================================================
 
     private getTotalDuration(): string {
         const totalMs = this.tracks.reduce(
-            (sum, t) => sum + Number(t.TrackLength || 0),
+            (sum, t) => sum + Number(t.Duration || 0),
             0,
         );
 
@@ -444,7 +1023,16 @@ export class SmartPlaylistDetails extends LitElement {
     override render() {
         const trackCount = this.tracks.length;
         const trackLabel = trackCount === 1 ? 'track' : 'tracks';
-        const hasPlayableTracks = this.tracks.some((t) => t.FilePath);
+        const hasPlayableTracks = this.tracks.some((t) => !t.Phantom);
+
+        const searchBar = this.searchCtrl.term
+            ? html`<div class="search-bar-row">
+                  <div class="search-indicator">
+                      Showing results for
+                      &ldquo;${this.searchCtrl.term}&rdquo;
+                  </div>
+              </div>`
+            : nothing;
 
         return html`
             <div class="smart-playlist-header">
@@ -480,7 +1068,7 @@ export class SmartPlaylistDetails extends LitElement {
 
             ${this.loading
                 ? html`<div class="loading">
-                      Evaluating smart playlist…
+                      Loading tracks…
                   </div>`
                 : html`
                       <div class="playlist-actions">
@@ -527,10 +1115,11 @@ export class SmartPlaylistDetails extends LitElement {
                                     <button
                                         class="action-button"
                                         @click=${this.handleRefresh}
-                                        title="Re-evaluate smart playlist rules"
+                                        ?disabled=${this.refreshing}
+                                        title="Re-evaluate smart playlist rules against the library"
                                     >
                                         <wa-icon name="arrow-rotate-right"></wa-icon>
-                                        Refresh
+                                        ${this.refreshing ? 'Refreshing…' : 'Refresh'}
                                     </button>
                                     <button
                                         class="action-button"
@@ -553,10 +1142,9 @@ export class SmartPlaylistDetails extends LitElement {
                             `
                           : trackCount > 0
                             ? html`
+                                  ${searchBar}
                                   <div class="content">
-                                      <track-list
-                                          .externalTracks=${this.tracks}
-                                      ></track-list>
+                                      ${this.renderTrackList()}
                                   </div>
                               `
                             : html`
@@ -566,6 +1154,268 @@ export class SmartPlaylistDetails extends LitElement {
                                   </div>
                               `}
                   `}
+
+            ${this.renderContextMenu()}
+
+            <track-details></track-details>
         `;
+    }
+
+    private renderTrackList() {
+        const visibleTracks = this.getVisibleTracks();
+
+        return html`
+            <div class="track-header">
+                <div class="header-cell col-number">#</div>
+                <div class="header-cell col-art"></div>
+                <div class="header-cell col-title">Title</div>
+                <div class="header-cell col-artist">Artist</div>
+                <div class="header-cell col-album">Album</div>
+                <div class="header-cell col-duration">Duration</div>
+            </div>
+            ${visibleTracks.map(
+                ({ track, trackIndex }) => {
+                    const isPhantom = track.Phantom;
+                    const active =
+                        !isPhantom &&
+                        this.isActiveTrack(track);
+                    const selected =
+                        this.selection.isSelected(
+                            String(trackIndex),
+                        );
+
+                    const classes = [
+                        'track-item',
+                        active ? 'active' : '',
+                        selected ? 'selected' : '',
+                        isPhantom ? 'phantom' : '',
+                    ]
+                        .filter(Boolean)
+                        .join(' ');
+
+                    return html`
+                        <div
+                            class=${classes}
+                            draggable=${isPhantom ? 'false' : 'true'}
+                            @click=${(e: MouseEvent) =>
+                                this.handleTrackClick(
+                                    e,
+                                    trackIndex,
+                                )}
+                            @dblclick=${isPhantom
+                                ? nothing
+                                : () =>
+                                      this.handleTrackDblClick(
+                                          trackIndex,
+                                      )}
+                            @contextmenu=${isPhantom
+                                ? nothing
+                                : (e: MouseEvent) =>
+                                      this.handleTrackContextMenu(
+                                          e,
+                                          trackIndex,
+                                      )}
+                            @dragstart=${isPhantom
+                                ? nothing
+                                : (e: DragEvent) =>
+                                      this.onTrackDragStart(
+                                          e,
+                                          track,
+                                          trackIndex,
+                                      )}
+                            @dragend=${isPhantom
+                                ? nothing
+                                : this.onTrackDragEnd}
+                        >
+                            ${isPhantom
+                                ? html`<div class="phantom-row">
+                                      <wa-icon
+                                          class="phantom-caution"
+                                          name="triangle-exclamation"
+                                          title="File not found — will resolve on next refresh"
+                                      ></wa-icon>
+                                      <span
+                                          class="phantom-path"
+                                          title=${track.FilePath}
+                                      >${track.FilePath}</span>
+                                  </div>`
+                                : html`<span class="cell col-number">${trackIndex + 1}</span>
+                                  <div class="track-art">
+                                      ${track.CoverArtSmall || track.CoverArtMedium
+                                          ? html`<img src="${track.CoverArtSmall || track.CoverArtMedium}" alt="" />`
+                                          : nothing}
+                                  </div>
+                                  <span class="cell col-title" title="${track.Title || track.FilePath}">${trackLink(track.Title, track.Album, track.ReleaseGroupMBID, track.RecordingMBID) || track.FilePath}</span>
+                                  <span class="cell col-artist" title="${track.Artist}">${artistLink(track.Artist, track.ArtistMBID)}</span>
+                                  <span class="cell col-album" title="${track.Album}">${albumLink(track.Album, track.ReleaseGroupMBID)}</span>
+                                  <span class="cell col-duration">${formatMilliseconds(track.Duration)}</span>`}
+                        </div>
+                    `;
+                },
+            )}
+        `;
+    }
+
+    private renderContextMenu() {
+        return html`
+            <wa-popup
+                id="context-menu"
+                placement="bottom-start"
+                flip
+                shift
+                .active=${this.ctxMenu.contextMenuOpen}
+            >
+                ${this.ctxMenu.contextMenuOpen
+                    ? html`
+                          <div class="context-menu-panel">
+                              <wa-dropdown-item
+                                  @click=${() =>
+                                      this.onContextMenuAction(
+                                          'play',
+                                      )}
+                                  @mouseenter=${() =>
+                                      this.ctxMenu.closePlaylistSubmenu()}
+                              >
+                                  <wa-icon
+                                      slot="icon"
+                                      name="play"
+                                  ></wa-icon>
+                                  Play
+                              </wa-dropdown-item>
+                              <wa-dropdown-item
+                                  @click=${() =>
+                                      this.onContextMenuAction(
+                                          'add-to-queue',
+                                      )}
+                                  @mouseenter=${() =>
+                                      this.ctxMenu.closePlaylistSubmenu()}
+                              >
+                                  <wa-icon
+                                      slot="icon"
+                                      name="plus"
+                                  ></wa-icon>
+                                  Add to Queue
+                              </wa-dropdown-item>
+                              <wa-dropdown-item
+                                  @click=${() =>
+                                      this.onContextMenuAction(
+                                          'play-next',
+                                      )}
+                                  @mouseenter=${() =>
+                                      this.ctxMenu.closePlaylistSubmenu()}
+                              >
+                                  <wa-icon
+                                      slot="icon"
+                                      name="forward-step"
+                                  ></wa-icon>
+                                  Play Next
+                              </wa-dropdown-item>
+                              <wa-dropdown-item
+                                  class="submenu-item"
+                                  @mouseenter=${() => {
+                                      this.ctxMenu.clearSubmenuCloseTimer();
+                                      void this.ctxMenu.showPlaylistSubmenu(
+                                          this.getSelectedFilePaths(),
+                                      );
+                                  }}
+                                  @mouseleave=${this
+                                      .ctxMenu
+                                      .scheduleSubmenuClose}
+                                  @click=${(
+                                      e: Event,
+                                  ) => {
+                                      e.stopPropagation();
+                                      void this.ctxMenu.showPlaylistSubmenu(
+                                          this.getSelectedFilePaths(),
+                                      );
+                                  }}
+                              >
+                                  <wa-icon
+                                      slot="icon"
+                                      name="plus"
+                                  ></wa-icon>
+                                  Add to Playlist
+                                  <span
+                                      class="submenu-arrow"
+                                  >
+                                      &#9654;
+                                  </span>
+                              </wa-dropdown-item>
+                              <wa-dropdown-item
+                                  @click=${() =>
+                                      this.onContextMenuFavoriteToggle()}
+                                  @mouseenter=${() =>
+                                      this.ctxMenu.closePlaylistSubmenu()}
+                              >
+                                  <wa-icon
+                                      slot="icon"
+                                      name=${this
+                                          .favCtrl
+                                          .iconName}
+                                  ></wa-icon>
+                                  ${this.favCtrl.allFavorited(
+                                      this.getSelectedFilePaths(),
+                                  )
+                                      ? `Remove from ${this.favCtrl.playlistName}`
+                                      : `Add to ${this.favCtrl.playlistName}`}
+                              </wa-dropdown-item>
+                              <wa-dropdown-item
+                                  @click=${() =>
+                                      this.onContextMenuAction(
+                                          'track-details',
+                                      )}
+                                  @mouseenter=${() =>
+                                      this.ctxMenu.closePlaylistSubmenu()}
+                              >
+                                  <wa-icon
+                                      slot="icon"
+                                      name="circle-info"
+                                  ></wa-icon>
+                                  Track Details
+                              </wa-dropdown-item>
+                          </div>
+                      `
+                    : nothing}
+            </wa-popup>
+
+            <wa-popup
+                id="playlist-submenu"
+                placement="right-start"
+                flip
+                shift
+                .active=${this.ctxMenu
+                    .playlistSubmenuOpen}
+            >
+                ${this.ctxMenu.playlistSubmenuOpen &&
+                this.selection.hasSelection
+                    ? html`
+                          <div
+                              @mouseenter=${() =>
+                                  this.ctxMenu.clearSubmenuCloseTimer()}
+                              @mouseleave=${this
+                                  .ctxMenu
+                                  .scheduleSubmenuClose}
+                          >
+                              <playlist-picker
+                                  .filePaths=${this.getSelectedFilePaths()}
+                                  @playlist-action-complete=${this
+                                      .ctxMenu
+                                      .onPlaylistActionComplete}
+                                  @click=${(
+                                      e: Event,
+                                  ) =>
+                                      e.stopPropagation()}
+                              ></playlist-picker>
+                          </div>
+                      `
+                    : nothing}
+            </wa-popup>
+        `;
+    }
+}
+
+declare global {
+    interface HTMLElementTagNameMap {
+        'smart-playlist-details': SmartPlaylistDetails;
     }
 }

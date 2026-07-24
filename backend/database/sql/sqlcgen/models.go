@@ -85,6 +85,10 @@ type Library struct {
 	AutotagWarningAcked int64
 }
 
+type LyricsIndex struct {
+	Lyrics string
+}
+
 type PlayHistory struct {
 	ID          int64
 	AudioFileID int64
@@ -100,12 +104,13 @@ type PlayerState struct {
 }
 
 type Playlist struct {
-	ID         int64
-	Name       string
-	IsSmart    int64
-	SmartRules sql.NullString
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	ID              int64
+	Name            string
+	IsSmart         int64
+	SmartRules      sql.NullString
+	SmartSnapshotAt sql.NullTime
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 type PlaylistTrack struct {
@@ -182,6 +187,12 @@ type SearchIndex struct {
 	Title    string
 	Artist   string
 	Album    string
+}
+
+type TaggingCandidate struct {
+	GroupKey   string
+	Candidates string
+	ComputedAt time.Time
 }
 
 type TaggingItem struct {

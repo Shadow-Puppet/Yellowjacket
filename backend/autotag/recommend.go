@@ -1,0 +1,133 @@
+package autotag
+
+// Recommendation is a qualitative confidence tier for a group's
+// ranked candidates — the piece a raw score can't express on its
+// own.  Modeled on beets' Recommendation enum: the tier starts from
+// the top candidate's absolute score and is then CAPPED by defects
+// (ambiguity with a different release group, missing/unmatched
+// tracks, thin evidence).  Auto-accept (plan 011) should require
+// RecommendationStrong; the review UI can badge the rest.
+type Recommendation string
+
+// Recommendation tiers, weakest to strongest.
+const (
+	RecommendationNone   Recommendation = "none"
+	RecommendationLow    Recommendation = "low"
+	RecommendationMedium Recommendation = "medium"
+	RecommendationStrong Recommendation = "strong"
+)
+
+const (
+	// Absolute score tiers.
+	strongScoreThresh = 0.90
+	mediumScoreThresh = 0.75
+
+	// A runner-up from a DIFFERENT release group within this margin
+	// of the top score makes the match ambiguous — two genuinely
+	// different albums both fit, so a human should look.  Editions
+	// of the same release group are expected to score nearly
+	// identically and never count as ambiguity.
+	ambiguityMargin = 0.05
+)
+
+// Recommend derives the confidence tier for a ranked candidate
+// list.  candidates must already be sorted best-first (the shape
+// RankCandidates returns).
+func Recommend(g Group, candidates []Candidate) Recommendation {
+	if len(candidates) == 0 {
+		return RecommendationNone
+	}
+
+	top := candidates[0]
+
+	var rec Recommendation
+
+	switch {
+	case top.Score >= strongScoreThresh:
+		rec = RecommendationStrong
+	case top.Score >= mediumScoreThresh:
+		rec = RecommendationMedium
+	default:
+		return RecommendationLow
+	}
+
+	// Cap: a different release group scoring within the ambiguity
+	// margin means the score alone can't pick between two albums.
+	if rivalWithinMargin(top, candidates[1:]) {
+		rec = minRecommendation(rec, RecommendationMedium)
+	}
+
+	// Cap: missing or unmatched tracks mean the alignment itself is
+	// incomplete, however good the matched tracks look (beets caps
+	// these penalties at "medium" the same way).
+	for _, a := range top.Alignments {
+		if a.Status == AlignmentMissing || a.Status == AlignmentUnmatched {
+			rec = minRecommendation(rec, RecommendationMedium)
+
+			break
+		}
+	}
+
+	// Cap: tiny folders can't corroborate a match strongly enough
+	// to act on without review, whatever the arithmetic says.
+	if len(g.Tracks) < evidenceFullTracks {
+		rec = minRecommendation(rec, RecommendationMedium)
+	}
+
+	return rec
+}
+
+// rivalWithinMargin reports whether any candidate from a different
+// release group scores within ambiguityMargin of the top candidate.
+func rivalWithinMargin(top Candidate, rest []Candidate) bool {
+	for _, c := range rest {
+		if top.Score-c.Score > ambiguityMargin {
+			// Sorted descending: everything further is farther away.
+			return false
+		}
+
+		if !sameReleaseGroup(top, c) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// sameReleaseGroup reports whether two candidates belong to the
+// same release group — by MBID when both carry one, by normalized
+// title + artist-credit otherwise (local candidates may lack RG
+// MBIDs).
+func sameReleaseGroup(a, b Candidate) bool {
+	if a.ReleaseGroupMBID != "" && b.ReleaseGroupMBID != "" {
+		return a.ReleaseGroupMBID == b.ReleaseGroupMBID
+	}
+
+	return Normalize(a.Title) == Normalize(b.Title) &&
+		Normalize(a.ArtistCredit) == Normalize(b.ArtistCredit)
+}
+
+// recommendationRank orders tiers for min-comparison.
+func recommendationRank(r Recommendation) int {
+	switch r {
+	case RecommendationNone:
+		return 0
+	case RecommendationLow:
+		return 1
+	case RecommendationMedium:
+		return 2
+	case RecommendationStrong:
+		return 3
+	default:
+		return 0
+	}
+}
+
+// minRecommendation returns the weaker of two tiers.
+func minRecommendation(a, b Recommendation) Recommendation {
+	if recommendationRank(a) <= recommendationRank(b) {
+		return a
+	}
+
+	return b
+}

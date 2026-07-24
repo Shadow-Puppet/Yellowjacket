@@ -174,9 +174,46 @@ func (c *Config) Save() error {
 		return fmt.Errorf("could not marshal config struct: %w", err)
 	}
 
-	err = os.WriteFile(c.filePath, confFileData, 0o644)
+	// Write atomically: marshal into a temp file in the same directory,
+	// then rename it over the target.  os.WriteFile truncates the file
+	// in place before writing, so a crash or kill mid-write (common
+	// during dev restarts) can leave a truncated — often empty — config.
+	// An empty TOML file loads "successfully" as all-defaults and then
+	// gets re-saved as defaults, silently wiping the user's settings.
+	// A temp-file + rename makes the replacement atomic: a reader always
+	// sees either the previous file or the complete new one.
+	tmp, err := os.CreateTemp(path.Dir(c.filePath), "config-*.toml.tmp")
 	if err != nil {
-		return fmt.Errorf("could not write config file (%s): %w", c.filePath, err)
+		return fmt.Errorf("could not create temp config file: %w", err)
+	}
+
+	tmpName := tmp.Name()
+
+	// Best-effort cleanup if we bail before the rename succeeds.
+	defer func() { _ = os.Remove(tmpName) }()
+
+	if _, err := tmp.Write(confFileData); err != nil {
+		_ = tmp.Close()
+
+		return fmt.Errorf("could not write temp config file: %w", err)
+	}
+
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+
+		return fmt.Errorf("could not sync temp config file: %w", err)
+	}
+
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("could not close temp config file: %w", err)
+	}
+
+	if err := os.Chmod(tmpName, 0o644); err != nil {
+		return fmt.Errorf("could not set config file permissions: %w", err)
+	}
+
+	if err := os.Rename(tmpName, c.filePath); err != nil {
+		return fmt.Errorf("could not replace config file (%s): %w", c.filePath, err)
 	}
 
 	c.logger.Debug("saved config to file", "file", c.filePath)

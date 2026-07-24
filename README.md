@@ -1,61 +1,77 @@
 # YellowJacket
 
-[![CI](https://github.com/onion-4-dinner/yellowjacket/actions/workflows/ci.yml/badge.svg)](https://github.com/onion-4-dinner/yellowjacket/actions/workflows/ci.yml)
-[![Release](https://github.com/onion-4-dinner/yellowjacket/actions/workflows/release.yml/badge.svg)](https://github.com/onion-4-dinner/yellowjacket/actions/workflows/release.yml)
+*Music how it was meant to bee.*
 
-Music how it was meant to bee.
+YellowJacket is a fast, cross-platform desktop music player for your local
+collection. It plays your files, keeps your library tidy, and helps you discover
+and organize your music — all in a clean, responsive interface. No accounts, no
+streaming, no telemetry: just your music on your machine.
 
-YellowJacket is a cross-platform desktop music player built with Go and web technologies. It focuses on local music library management with a clean, responsive interface.
+Runs on **Linux**, **macOS**, and **Windows**.
+
+## Features
+
+### Play your music
+- Plays **MP3, FLAC, OGG Vorbis, and WAV**
+- Play, pause, seek, and volume control with a mute toggle
+- Gapless, glitch-free seeking backed by a read-ahead buffer
+- A queue you can add to, reorder, and shuffle, with play-next support
+- Shuffle and repeat (off / all / one)
+- Picks up right where you left off — remembers your track, position, and volume between sessions
+- Media-key and MPRIS support on Linux, so your desktop's playback controls just work
+
+### Keep your library organized
+- Point it at your music folders and it scans them automatically
+- Reads tags and embedded cover art, and de-duplicates artwork so it isn't stored twice
+- Incremental sync — only new or changed files get reprocessed, and deleted files are cleaned up
+- Browse by **album**, **artist**, or **genre**, or search across everything
+- Mark favorites and see what you've been listening to with play history
+- Edit track tags directly when something's off
+
+### Playlists
+- Create playlists, drag tracks in, and reorder them
+- **Smart playlists** that build themselves from rules (by genre, rating, play count, and more)
+- Pin a default playlist and spot duplicate tracks at a glance
+
+### Discover and clean up (powered by MusicBrainz)
+- **Explore** — browse artists, releases, and genres from the MusicBrainz catalog, not just what's already in your library
+- **Auto-tag** — match your files against MusicBrainz to fill in correct artist, album, and track metadata, with a review step before anything is written
+- **Lyrics search** — find a track by a line you remember
 
 ## Install
 
-Grab the latest release for your platform:
+Download the latest build for your platform from the
+[releases page](https://git.ljones.me/yonlu/yellowjacket/releases).
 
-**[Download Latest Release](https://github.com/onion-4-dinner/yellowjacket/releases/latest)**
-
-| Platform | Binary |
-|----------|--------|
+| Platform | Download |
+|----------|----------|
 | Linux | `yellowjacket-linux-amd64` |
 | macOS | `yellowjacket-darwin-universal.app.zip` (Apple Silicon + Intel) |
 | Windows | `yellowjacket-windows-amd64.exe` |
 
-## Features
+Prefer to build it yourself? See [Building from source](#building-from-source).
 
-**Playback**
-- Play, pause, seek, and volume control with mute toggle
-- Support for MP3, FLAC, OGG Vorbis, and WAV
-- Queue management with add, remove, reorder, and play-next
-- Shuffle mode (Fisher-Yates) and repeat modes (off, all, one)
-- Session persistence -- resumes volume, track, and seek position on restart
+## Getting started
 
-**Library**
-- Concurrent library scanning with automatic metadata extraction
-- ID3v2, Vorbis Comments, and other tag format support
-- Embedded cover art extraction with content-hash deduplication
-- Incremental sync -- only processes new or changed files
-- Orphan cleanup for deleted files
+1. Launch YellowJacket.
+2. Open **Settings** and add the folder(s) where your music lives.
+3. Let the initial scan finish — you'll see progress as it works.
+4. Browse by album, artist, or genre, queue something up, and press play.
 
-**Interface**
-- Album cover grid view and track list view
-- Now playing display with cover art
-- Resizable sidebar navigation
-- Slide-out queue panel
-- Context menus for tracks and albums (play, add to queue, play next)
-- Settings page for library directory configuration
+Your library and settings are stored locally:
 
-## Architecture
+| | Linux / macOS | Windows |
+|---|---|---|
+| Config | `~/.config/yellowjacket/` | `%LOCALAPPDATA%\yellowjacket\config` |
+| Library data | `~/.local/share/yellowjacket/` | `%LOCALAPPDATA%\yellowjacket\data` |
 
-YellowJacket uses the [Wails v2](https://wails.io/) framework to bridge a Go backend with a TypeScript/[Lit](https://lit.dev/) frontend running in a native webview.
+## Building from source
 
-- **Go backend** -- audio decoding and playback ([beep](https://github.com/gopxl/beep)), library scanning, SQLite database, cover art serving, TOML configuration
-- **TypeScript frontend** -- Lit web components, singleton stores with reactive controllers, [Web Awesome](https://www.webawesome.com/) UI components
-- **Communication** -- bidirectional event system via Wails runtime; backend is the source of truth
-- **Database** -- SQLite (pure-Go driver) with type-safe queries generated by [sqlc](https://sqlc.dev/); MusicBrainz-style data model (artists, artist credits, recordings, release groups)
-- **Config page** -- HTMX-based, loads HTML fragments rendered by Go [templ](https://templ.guide/) templates
+YellowJacket is built with [Go](https://go.dev/) and a
+[Lit](https://lit.dev/)/TypeScript frontend, bridged by the
+[Wails](https://wails.io/) framework.
 
-## Development
-
-### Prerequisites
+**Prerequisites**
 
 | Tool | Version |
 |------|---------|
@@ -64,66 +80,22 @@ YellowJacket uses the [Wails v2](https://wails.io/) framework to bridge a Go bac
 | pnpm | 10+ |
 | Wails CLI | v2 (`go install github.com/wailsapp/wails/v2/cmd/wails@latest`) |
 
-**Linux system dependencies:**
+On Linux, install the system libraries Wails needs:
+
 ```bash
 sudo apt-get install libasound2-dev libgtk-3-dev libwebkit2gtk-4.1-dev
 ```
 
-On macOS and Windows, no additional system dependencies are needed. Run `wails doctor` to verify your environment.
+macOS and Windows need no extra system packages. Run `wails doctor` to check your
+environment.
 
-### Build & Run
-
-```bash
-make setup        # Install git hooks (lefthook)
-make dev          # Development with hot-reload
-make build-dev    # Debug build
-make build-prod   # Production build (obfuscated + UPX compressed)
-make generate     # Run code generators (sqlc, templ)
-```
-
-### Testing
+**Build**
 
 ```bash
-make test         # All tests (race detector, no cache, 2min timeout)
-
-# Run tests manually (build tag required):
-go test -tags webkit2_41 ./backend/player/                           # Single package
-go test -tags webkit2_41 -run TestFunctionName ./backend/player/     # Single test
-go test -tags webkit2_41 -v -run TestFunctionName ./backend/player/  # Verbose
+make setup        # install tooling and git hooks
+make dev          # run with hot-reload
+make build-prod   # produce a release binary
 ```
 
-### Linting
-
-```bash
-make lint         # golangci-lint (v2 config, strict rules)
-```
-
-### Data Locations
-
-| | Linux | macOS | Windows |
-|---|---|---|---|
-| Config | `~/.config/yellowjacket/` | `~/.config/yellowjacket/` | `%LOCALAPPDATA%\yellowjacket\config` |
-| Data/DB | `~/.local/share/yellowjacket/` | `~/.local/share/yellowjacket/` | `%LOCALAPPDATA%\yellowjacket\data` |
-
-### Project Structure
-
-```
-backend/           Go backend
-  player/          Audio playback (beep)
-  queue/           Queue management, shuffle, repeat
-  library/         Library scanning, metadata extraction, cover art
-  metadata/        Audio decoding and tag extraction
-  database/        SQLite connection, sqlc-generated queries
-  config/          TOML config, HTTP handler for settings page
-  events/          Event name constants (mirrored in frontend)
-  models/          Shared data types (Album, Track, Artist)
-  system/          OS-specific paths
-frontend/src/      TypeScript/Lit frontend
-  components/      UI components (player, sidebar, track list, cover grid, queue)
-  store/           Singleton stores and reactive controllers
-  pages/           Config page (HTMX entry point)
-internal/dev/      Build-tag dev/prod detection
-test_data/         Audio test fixtures
-```
-
-Further development documentation is available in [`docs/dev/`](./docs/dev/overview.md).
+More detail for contributors lives in
+[`docs/dev/overview.md`](./docs/dev/overview.md) and [`CLAUDE.md`](./CLAUDE.md).

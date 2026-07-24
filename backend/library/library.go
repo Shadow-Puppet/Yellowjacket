@@ -1216,14 +1216,19 @@ func (l *Library) processMetadata(
 		q, cache, metrics, tags, thumbChan,
 	)
 
-	// 2. Get or create artist credit for track artist.
-	artistName := tags.Artist
-	if artistName == "" {
-		artistName = "Unknown Artist"
+	// 2. Get or create the artist credit for the track.  The credit
+	// text is the full tagged string (e.g. "Lana Del Rey ft. Sean
+	// Lennon") and is kept only for display; the artist *entity* it
+	// links to is the primary artist, resolved cleanly by primaryArtist
+	// so featured-artist credits don't fork into their own bogus artist
+	// rows (all sharing the primary's single MBID).
+	creditText := tags.Artist
+	if creditText == "" {
+		creditText = "Unknown Artist"
 	}
 
 	artistCredit, err := l.cachedUpsertArtistCredit(
-		q, cache, artistName,
+		q, cache, creditText,
 	)
 	if err != nil {
 		return 0, fmt.Errorf(
@@ -1231,7 +1236,9 @@ func (l *Library) processMetadata(
 		)
 	}
 
-	l.cachedLinkArtist(q, cache, metrics, artistName, artistCredit.ID)
+	primaryName, primaryMBID := primaryArtist(tags)
+
+	l.cachedLinkArtist(q, cache, metrics, primaryName, artistCredit.ID)
 
 	// 3. Get or create artist credit for album artist.
 	albumArtistCreditID := l.resolveAlbumArtistCredit(
@@ -1289,9 +1296,9 @@ func (l *Library) processMetadata(
 
 	// 7. Update MusicBrainz IDs (if present in tags).
 	if releaseGroupID.Valid {
-		l.updateMBIDs(tx, cache, tags, artistName, releaseGroupID.Int64, recording.ID)
+		l.updateMBIDs(tx, cache, tags, primaryName, primaryMBID, releaseGroupID.Int64, recording.ID)
 	} else {
-		l.updateMBIDs(tx, cache, tags, artistName, 0, recording.ID)
+		l.updateMBIDs(tx, cache, tags, primaryName, primaryMBID, 0, recording.ID)
 	}
 
 	return recording.ID, nil
@@ -1306,15 +1313,11 @@ func (l *Library) updateMBIDs(
 	cache *entityCache,
 	tags *metadata.TrackMetadata,
 	artistName string,
+	artistMBID string,
 	releaseGroupID int64,
 	recordingID int64,
 ) {
-	// Artist MBID — prefer album artist, fall back to track artist.
-	artistMBID := tags.AlbumArtistMBID
-	if artistMBID == "" {
-		artistMBID = tags.ArtistMBID
-	}
-
+	// Artist MBID (the primary artist's, resolved by primaryArtist).
 	if artistMBID != "" {
 		if artist, ok := cache.artists[artistName]; ok {
 			_, _ = tx.ExecContext(l.ctx,

@@ -1,0 +1,32 @@
+[
+  {
+    "query": "radiohead",
+    "note": "single-word artist name — should resolve to the artist, not an album titled similarly",
+    "expect": [{ "type": "artist", "mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711" }]
+  },
+  {
+    "query": "the beatles",
+    "note": "common-word prefix must not let the article dominate",
+    "expect": [{ "type": "artist", "mbid": "b10bbbfc-cf9e-42e0-be17-e2c3e1d2600d" }]
+  },
+  {
+    "query": "abbey road",
+    "note": "album title — should rank the release group above any track of the same name",
+    "expect": [{ "type": "release_group", "mbid": "" }]
+  },
+  {
+    "query": "calling you blue october",
+    "note": "composite title+artist query — recording should win even if the artist is unindexed",
+    "expect": [{ "type": "recording", "mbid": "" }]
+  },
+  {
+    "query": "the teenagers",
+    "note": "regression: must rank The Teenagers above The Beatles despite far lower popularity",
+    "expect": [{ "type": "artist", "mbid": "" }]
+  },
+  {
+    "query": "beyonce",
+    "note": "diacritic folding (migration 37): unaccented query must find the accented artist Beyoncé",
+    "expect": [{ "type": "artist", "mbid": "859d0860-d480-4efd-970c-c05d5f1776b8" }]
+  }
+]

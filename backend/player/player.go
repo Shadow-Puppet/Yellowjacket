@@ -764,6 +764,17 @@ func (p *Player) seekLocked(targetSeconds int) error {
 		return fmt.Errorf("cannot get track length: %w", err)
 	}
 
+	// Block the read-ahead goroutine from reading the source while
+	// we seek it. The decoder (e.g. FLAC's bufseekio.ReadSeeker) is
+	// not safe for concurrent Read+Seek, and read-ahead runs on its
+	// own goroutine — without this it can panic with a slice-bounds
+	// error, especially right after load when the buffer is empty
+	// and read-ahead is filling at full speed.
+	if p.buffered != nil {
+		p.buffered.LockSource()
+		defer p.buffered.UnlockSource()
+	}
+
 	speaker.Lock()
 
 	samples := int(
@@ -863,7 +874,7 @@ func (p *Player) getCurrentTrackInfoLocked() TrackInfo {
 
 	// Try to get metadata from database.
 	if p.db != nil {
-		meta, err := p.db.Queries.GetTrackMetadataByPath(
+		meta, err := p.db.ReadQueries.GetTrackMetadataByPath(
 			p.ctx, info.FilePath,
 		)
 		if err == nil {
@@ -1004,7 +1015,7 @@ func (p *Player) buildMediaMetadata(
 	// full path; ResolveURLs converts it to relative HTTP paths
 	// for the frontend, but MPRIS needs the actual file path.
 	if p.db != nil && info.FilePath != "" {
-		dbMeta, err := p.db.Queries.GetTrackMetadataByPath(
+		dbMeta, err := p.db.ReadQueries.GetTrackMetadataByPath(
 			p.ctx, info.FilePath,
 		)
 		if err == nil && dbMeta.CoverArtPath != "" {
@@ -1102,7 +1113,7 @@ func (p *Player) restoreStateLocked() {
 		return
 	}
 
-	state, err := p.db.Queries.GetPlayerState(p.db.Ctx)
+	state, err := p.db.ReadQueries.GetPlayerState(p.db.Ctx)
 	if err != nil {
 		p.logger.Error(
 			"Failed to load player state", "err", err,

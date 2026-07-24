@@ -40,13 +40,51 @@ func NewScorer(q *sqlcgen.Queries, mb MBClient, logger *slog.Logger) *Scorer {
 	}
 }
 
-// ScoreGroup produces the full GroupScore for one tagging item.
-// Always runs both the local resolver (free) and the MB resolver
-// (cache-first, so repeats cost nothing).  Candidates from both
-// sources are merged and ranked — the UI displays them with
-// provenance badges so the user can compare.
+// localSufficient is the local-candidate score above which a
+// local-first caller skips the MusicBrainz round-trip entirely: a
+// local candidate at or above this is a strong match (the same album
+// already tagged correctly in another library), so the MB cascade
+// wouldn't change the top pick and isn't worth a rate-limited network
+// call.  Interactive scoring ignores this and always consults MB so
+// the review UI can show both sources side by side.
+const localSufficient = 0.90
+
+// idSufficient is the score at which an ID-resolved candidate (built
+// from recording MBIDs already present in the local tags) makes the
+// fuzzy search cascade unnecessary — mirrors beets, where a strong
+// mb_albumid match returns immediately without a text search.
+const idSufficient = 0.90
+
+// maxIDSampleTracks caps how many local recording MBIDs the ID-first
+// path looks up — three spread across the folder corroborate a
+// release without paying for a lookup per track.
+const maxIDSampleTracks = 3
+
+// ScoreGroup produces the full GroupScore for one tagging item,
+// always consulting MusicBrainz (when a client is configured) so the
+// review UI can display local + MB candidates side by side with
+// provenance badges.  Use this on interactive paths where the user is
+// looking at the result.
 func (s *Scorer) ScoreGroup(
 	ctx context.Context, groupKey string,
+) (*GroupScore, error) {
+	return s.scoreGroup(ctx, groupKey, false)
+}
+
+// ScoreGroupLocalFirst is the cheap variant for background work
+// (prefetch): it scores local candidates first and skips the
+// MusicBrainz cascade when the best local candidate is already a
+// strong match (score >= localSufficient).  Falls back to the full
+// MB-consulting path otherwise, so albums with no strong local match
+// still get a real score for the sidebar pill.
+func (s *Scorer) ScoreGroupLocalFirst(
+	ctx context.Context, groupKey string,
+) (*GroupScore, error) {
+	return s.scoreGroup(ctx, groupKey, true)
+}
+
+func (s *Scorer) scoreGroup(
+	ctx context.Context, groupKey string, localFirst bool,
 ) (*GroupScore, error) {
 	item, err := s.q.GetTaggingItem(ctx, groupKey)
 	if err != nil {
@@ -62,36 +100,153 @@ func (s *Scorer) ScoreGroup(
 		return nil, err
 	}
 
+	g := Group{
+		AlbumName:   item.AlbumName,
+		AlbumArtist: item.AlbumArtist,
+		Tracks:      locals,
+	}
+
 	localHits, err := s.local.ResolveLocal(ctx, item.AlbumName)
 	if err != nil {
 		return nil, err
 	}
 
+	// Local-first short-circuit: pre-score the free local candidates
+	// and, if one is already a strong match, skip the MB round-trip.
+	var localCandidates []Candidate
+
+	skipMB := false
+
+	if localFirst && s.mb != nil {
+		localCandidates = RankCandidates(g, localHits)
+		skipMB = len(localCandidates) > 0 && localCandidates[0].Score >= localSufficient
+	}
+
 	var mbHits []Candidate
-	if s.mb != nil {
-		mbHits, err = s.mb.ResolveMB(
-			ctx,
-			item.AlbumName,
-			item.AlbumArtist,
-			len(locals),
-			guessArtistMBID(locals),
-		)
+
+	if s.mb != nil && !skipMB {
+		mbHits = s.resolveMBCandidates(ctx, g, groupKey)
+	}
+
+	// Reuse the pre-ranked local list when we skipped MB; otherwise
+	// rank the merged set.
+	candidates := localCandidates
+	if !skipMB {
+		candidates = RankCandidates(g, append(localHits, mbHits...))
+	}
+
+	return &GroupScore{
+		GroupKey:       groupKey,
+		AlbumName:      item.AlbumName,
+		AlbumArtist:    item.AlbumArtist,
+		LocalTracks:    locals,
+		Candidates:     candidates,
+		Recommendation: Recommend(g, candidates),
+	}, nil
+}
+
+// resolveMBCandidates gathers MusicBrainz candidates for a group:
+// ID-first (recording MBIDs already in the tags), then the search
+// cascade when the ID path didn't produce a strong match.  Failures
+// on either path degrade to fewer candidates, never to an error —
+// local candidates must still surface when MB is unreachable.
+func (s *Scorer) resolveMBCandidates(
+	ctx context.Context, g Group, groupKey string,
+) []Candidate {
+	var out []Candidate
+
+	if ids := sampleRecordingMBIDs(g.Tracks); len(ids) > 0 {
+		idCands, err := s.mb.ResolveByRecordingMBIDs(ctx, ids)
 		if err != nil {
 			s.log.Warn(
-				"MB resolve failed — returning local-only candidates",
-				"group_key", groupKey,
-				"err", err,
+				"MB ID-first resolve failed — falling back to search",
+				"group_key", groupKey, "err", err,
 			)
+		}
+
+		if len(idCands) > 0 {
+			ranked := RankCandidates(g, idCands)
+			if ranked[0].Score >= idSufficient {
+				s.log.Info(
+					"MB ID-first match — skipping search cascade",
+					"group_key", groupKey, "score", ranked[0].Score,
+				)
+
+				return idCands
+			}
+
+			out = idCands
 		}
 	}
 
-	candidates := RankCandidates(locals, append(localHits, mbHits...))
+	searchHits, err := s.mb.ResolveMB(ctx, g)
+	if err != nil {
+		s.log.Warn(
+			"MB resolve failed — returning local-only candidates",
+			"group_key", groupKey, "err", err,
+		)
 
-	return &GroupScore{
-		GroupKey:    groupKey,
-		LocalTracks: locals,
-		Candidates:  candidates,
-	}, nil
+		return out
+	}
+
+	return append(out, dropDuplicateReleases(out, searchHits)...)
+}
+
+// dropDuplicateReleases filters from `extra` any candidate whose
+// release MBID already appears in `have`.
+func dropDuplicateReleases(have, extra []Candidate) []Candidate {
+	if len(have) == 0 {
+		return extra
+	}
+
+	seen := make(map[string]bool, len(have))
+
+	for _, c := range have {
+		if c.ReleaseMBID != "" {
+			seen[c.ReleaseMBID] = true
+		}
+	}
+
+	out := make([]Candidate, 0, len(extra))
+
+	for _, c := range extra {
+		if c.ReleaseMBID != "" && seen[c.ReleaseMBID] {
+			continue
+		}
+
+		out = append(out, c)
+	}
+
+	return out
+}
+
+// sampleRecordingMBIDs picks up to maxIDSampleTracks distinct
+// recording MBIDs spread across the group (first, middle, last) —
+// enough to corroborate a release via voting without a lookup per
+// track.
+func sampleRecordingMBIDs(tracks []LocalTrack) []string {
+	distinct := make([]string, 0, len(tracks))
+	seen := make(map[string]bool, len(tracks))
+
+	for _, t := range tracks {
+		if t.RecordingMBID == "" || seen[t.RecordingMBID] {
+			continue
+		}
+
+		seen[t.RecordingMBID] = true
+
+		distinct = append(distinct, t.RecordingMBID)
+	}
+
+	if len(distinct) <= maxIDSampleTracks {
+		return distinct
+	}
+
+	return []string{
+		distinct[0],
+		distinct[len(distinct)/2],
+		distinct[len(distinct)-1],
+	}
 }
 
 // LocalTracksForGroup exposes the local resolver so callers that
@@ -102,32 +257,6 @@ func (s *Scorer) LocalTracksForGroup(
 	ctx context.Context, groupKey string,
 ) ([]LocalTrack, error) {
 	return s.local.LocalTracksForGroup(ctx, groupKey)
-}
-
-// PersistBest writes the top candidate's release MBID and score
-// onto the tagging_items row, bumping status to 'matched' when a
-// candidate exists.  No-op when candidates is empty (keeps the
-// current status — likely 'pending').
-func (s *Scorer) PersistBest(
-	ctx context.Context, score *GroupScore,
-) error {
-	if score == nil || len(score.Candidates) == 0 {
-		return nil
-	}
-
-	top := score.Candidates[0]
-
-	mbid := top.ReleaseMBID
-	if mbid == "" {
-		mbid = top.ReleaseGroupMBID
-	}
-
-	return s.q.SetTaggingItemBestMatch(ctx, sqlcgen.SetTaggingItemBestMatchParams{
-		BestMatchReleaseMbid: sql.NullString{String: mbid, Valid: mbid != ""},
-		Score:                sql.NullFloat64{Float64: top.Score, Valid: true},
-		Status:               "matched",
-		GroupKey:             score.GroupKey,
-	})
 }
 
 // PersistScore writes the top candidate's release MBID and score
@@ -155,20 +284,4 @@ func (s *Scorer) PersistScore(
 		Score:                sql.NullFloat64{Float64: top.Score, Valid: true},
 		GroupKey:             score.GroupKey,
 	})
-}
-
-// guessArtistMBID returns the first non-empty recording MBID-
-// derived artist hint we can find.  Tracks carry recording MBIDs,
-// not artist MBIDs, but existing partial tags are often consistent
-// enough that any non-empty MBID signals "this album already has
-// some MB lineage".  A follow-up in 010 can resolve actual artist
-// MBIDs via the artists table.
-func guessArtistMBID(tracks []LocalTrack) string {
-	// Phase 009 doesn't wire up per-track artist MBIDs through
-	// the LocalTrack struct yet — keeping the hook so the MB
-	// resolver still compiles with the empty hint.  Real artist
-	// MBIDs flow in once 010 wires them into LocalTrack.
-	_ = tracks
-
-	return ""
 }

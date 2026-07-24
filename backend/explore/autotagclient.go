@@ -95,22 +95,52 @@ func (c *AutotagClient) LookupReleaseGroup(
 	}, nil
 }
 
-// LookupArtist returns the artist's sort name when available,
-// falling back to the display name.  Used by the resolver when
-// constructing Lucene-style fallback queries.
-func (c *AutotagClient) LookupArtist(
-	ctx context.Context, mbid string,
-) (string, error) {
-	a, err := c.inner.LookupArtist(ctx, mbid)
+// SearchRecordings delegates to the wrapped client and projects hits
+// into autotag's minimal recording shape.  Length is millisecond-
+// aligned to match local audio_files.
+func (c *AutotagClient) SearchRecordings(
+	ctx context.Context, query string, limit int,
+) ([]autotag.MBRecordingHit, int, error) {
+	recs, total, err := c.inner.SearchRecordings(ctx, query, limit)
 	if err != nil {
-		return "", err
+		return nil, 0, err
 	}
 
-	if a.SortName != "" {
-		return a.SortName, nil
+	out := make([]autotag.MBRecordingHit, 0, len(recs))
+	for _, rec := range recs {
+		out = append(out, autotag.MBRecordingHit{
+			MBID:         rec.MBID,
+			Title:        rec.Title,
+			ArtistCredit: rec.ArtistCredit,
+			LengthMillis: int64(rec.Length),
+		})
 	}
 
-	return a.Name, nil
+	return out, total, nil
+}
+
+// LookupRecordingReleases returns the releases a recording appears on,
+// as slim references the resolver ranks to pick a representative
+// release.
+func (c *AutotagClient) LookupRecordingReleases(
+	ctx context.Context, recordingMBID string,
+) ([]autotag.MBReleaseRef, error) {
+	refs, err := c.inner.LookupRecordingReleases(ctx, recordingMBID)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]autotag.MBReleaseRef, 0, len(refs))
+	for _, r := range refs {
+		out = append(out, autotag.MBReleaseRef{
+			MBID:   r.MBID,
+			Title:  r.Title,
+			Status: r.Status,
+			Date:   r.Date,
+		})
+	}
+
+	return out, nil
 }
 
 func exploreToAutotagRelease(rel MBRelease) autotag.MBRelease {

@@ -237,7 +237,7 @@ func (q *Queue) lookupChunk(
 		return
 	}
 
-	rows, err := q.db.Queries.LookupTrackMetaByPaths(q.db.Ctx, paths)
+	rows, err := q.db.ReadQueries.LookupTrackMetaByPaths(q.db.Ctx, paths)
 	if err != nil {
 		q.logger.Error("Batch metadata lookup failed", "err", err)
 
@@ -415,7 +415,7 @@ func (q *Queue) RestoreState() {
 	defer q.mu.Unlock()
 
 	// Restore queue metadata.
-	state, err := q.db.Queries.GetQueueState(q.db.Ctx)
+	state, err := q.db.ReadQueries.GetQueueState(q.db.Ctx)
 	if err != nil {
 		q.logger.Error("Failed to load queue state", "err", err)
 
@@ -444,7 +444,7 @@ func (q *Queue) RestoreState() {
 	}
 
 	// Restore queue tracks.
-	rows, err := q.db.Queries.GetQueueTracks(q.db.Ctx)
+	rows, err := q.db.ReadQueries.GetQueueTracks(q.db.Ctx)
 	if err != nil {
 		q.logger.Error("Failed to load queue tracks", "err", err)
 

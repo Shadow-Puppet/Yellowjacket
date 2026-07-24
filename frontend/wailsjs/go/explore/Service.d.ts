@@ -3,6 +3,8 @@
 import {explore} from '../models';
 import {context} from '../models';
 
+export function BackfillLibraryLyrics():Promise<void>;
+
 export function BrowseReleaseGroups(arg1:string):Promise<Array<explore.MBReleaseGroup>>;
 
 export function BrowseReleases(arg1:string):Promise<Array<explore.MBRelease>>;
@@ -39,13 +41,15 @@ export function GetThumbnail(arg1:string,arg2:string,arg3:string):Promise<string
 
 export function GetThumbnails(arg1:Array<explore.ThumbnailRequest>):Promise<Record<string, string>>;
 
+export function GetTrackLyrics(arg1:number):Promise<explore.TrackLyrics>;
+
 export function GetTrackThumbnail(arg1:string,arg2:string,arg3:string,arg4:string):Promise<string>;
 
 export function GetTrackThumbnails(arg1:Array<explore.TrackThumbnailRequest>):Promise<Record<string, string>>;
 
-export function IndexNewArtists():Promise<void>;
-
 export function InvalidateIndexDiscographies():Promise<void>;
+
+export function InvalidateLibrarySync():Promise<void>;
 
 export function IsIndexReady():Promise<boolean>;
 
@@ -57,19 +61,23 @@ export function MusicBrainz():Promise<explore.MusicBrainzClient>;
 
 export function PopulateLocalCrossReferences():Promise<void>;
 
+export function PopulateLocalCrossReferencesIfNeeded():Promise<void>;
+
+export function PrefetchReleases(arg1:Array<string>):Promise<void>;
+
+export function RebuildLyricsIndex():Promise<void>;
+
+export function RebuildLyricsIndexIfNeeded():Promise<void>;
+
 export function RecordSearchClick(arg1:string,arg2:string,arg3:string):Promise<void>;
+
+export function RefreshListenCounts():Promise<void>;
 
 export function ResolveReleaseGroupMBIDs(arg1:Array<string>):Promise<Record<string, string>>;
 
-export function Search(arg1:string):Promise<explore.MBSearchResult>;
-
-export function SearchArtists(arg1:string):Promise<Array<explore.MBArtist>>;
-
 export function SearchLocal(arg1:string):Promise<explore.MBSearchResult>;
 
-export function SearchRecordings(arg1:string):Promise<Array<explore.MBRecording>>;
-
-export function SearchReleaseGroups(arg1:string):Promise<Array<explore.MBReleaseGroup>>;
+export function SearchLyrics(arg1:string):Promise<Array<explore.LyricsResult>>;
 
 export function SetContext(arg1:context.Context):Promise<void>;
 

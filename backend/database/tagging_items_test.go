@@ -283,6 +283,56 @@ func TestCountPendingTaggingItems_UsesPartialIndex(t *testing.T) {
 	}
 }
 
+// TestListPendingFolders_SampleFilePathUsesIndex guards the folder-list
+// query's per-row sample_file_path subquery against regressing to a
+// full table scan of audio_files.  The `AND af.group_key != ”` guard
+// is load-bearing: without it SQLite can't prove the partial index
+// idx_audio_files_group_key (WHERE group_key != ”) applies, and the
+// subquery degrades to O(folders * audio_files) — the difference
+// between the review list loading instantly and taking a minute.
+func TestListPendingFolders_SampleFilePathUsesIndex(t *testing.T) {
+	t.Parallel()
+
+	db := database.NewTestDB(t)
+
+	rows, err := db.QueryContext(`
+		EXPLAIN QUERY PLAN
+		SELECT
+		  ti.group_key,
+		  CAST(COALESCE((SELECT af.file_path FROM audio_files af
+		    WHERE af.group_key = ti.group_key AND af.group_key != '' LIMIT 1), '') AS TEXT)
+		FROM tagging_items ti
+	`)
+	if err != nil {
+		t.Fatalf("explain: %v", err)
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	var plan strings.Builder
+
+	for rows.Next() {
+		var id, parent, notused int
+
+		var detail string
+
+		if scanErr := rows.Scan(&id, &parent, &notused, &detail); scanErr != nil {
+			t.Fatalf("scan: %v", scanErr)
+		}
+
+		plan.WriteString(detail)
+		plan.WriteString("\n")
+	}
+
+	if !strings.Contains(plan.String(), "idx_audio_files_group_key") {
+		t.Errorf(
+			"sample_file_path subquery no longer uses idx_audio_files_group_key "+
+				"(would full-scan audio_files per folder):\n%s",
+			plan.String(),
+		)
+	}
+}
+
 func TestGetTaggingItemAndListAudioFilesInGroup(t *testing.T) {
 	t.Parallel()
 

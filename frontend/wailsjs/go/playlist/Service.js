@@ -70,6 +70,10 @@ export function GetSmartPlaylistRules(arg1) {
   return window['go']['playlist']['Service']['GetSmartPlaylistRules'](arg1);
 }
 
+export function GetSmartPlaylistTracks(arg1) {
+  return window['go']['playlist']['Service']['GetSmartPlaylistTracks'](arg1);
+}
+
 export function ImportPlaylist(arg1) {
   return window['go']['playlist']['Service']['ImportPlaylist'](arg1);
 }
@@ -80,6 +84,10 @@ export function ImportPlaylists(arg1) {
 
 export function PreviewSmartPlaylist(arg1) {
   return window['go']['playlist']['Service']['PreviewSmartPlaylist'](arg1);
+}
+
+export function RefreshSmartPlaylist(arg1) {
+  return window['go']['playlist']['Service']['RefreshSmartPlaylist'](arg1);
 }
 
 export function RemoveFromDefaultPlaylist(arg1) {

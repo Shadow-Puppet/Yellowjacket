@@ -24,6 +24,7 @@ type TopResult struct {
 	MBID         string  `json:"mbid"`
 	Name         string  `json:"name"`
 	ArtistCredit string  `json:"artistCredit,omitempty"` // for tracks/albums
+	ArtistMBID   string  `json:"artistMbid,omitempty"`   // for linking the artist subtitle
 	IntentScore  float64 `json:"intentScore"`
 	// Artist-specific
 	ArtistType string `json:"artistType,omitempty"` // "Group", "Person"
@@ -31,8 +32,14 @@ type TopResult struct {
 	// Album-specific
 	PrimaryType string `json:"primaryType,omitempty"`
 	Year        string `json:"year,omitempty"`
-	// Track-specific
-	Length int `json:"length,omitempty"`
+	// Track-specific.  ReleaseGroupMBID is resolved (from CAAReleaseMBID)
+	// so a track click can open its album page with the track highlighted,
+	// matching how tracks behave everywhere else.  ReleaseName is the album
+	// title used for the album page header.
+	Length           int    `json:"length,omitempty"`
+	CAAReleaseMBID   string `json:"caaReleaseMbid,omitempty"`
+	ReleaseGroupMBID string `json:"releaseGroupMbid,omitempty"`
+	ReleaseName      string `json:"releaseName,omitempty"`
 	// Library status — populated from index cross-reference columns.
 	InLibrary bool `json:"inLibrary"`
 }
@@ -64,8 +71,9 @@ type MBReleaseGroup struct {
 	SecondaryTypes   []string `json:"secondaryTypes,omitempty"`
 	FirstReleaseDate string   `json:"firstReleaseDate"`
 	ArtistCredit     string   `json:"artistCredit"`
-	Score            int      `json:"-"`          // MB search relevance, used for reranking
-	Popularity       int      `json:"popularity"` // raw LB listen count (0 if unknown)
+	ArtistMBID       string   `json:"artistMbid,omitempty"` // for linking the artist to its detail page
+	Score            int      `json:"-"`                    // MB search relevance, used for reranking
+	Popularity       int      `json:"popularity"`           // raw LB listen count (0 if unknown)
 	ListenerCount    int      `json:"listenerCount"`
 	InLibrary        bool     `json:"inLibrary"`         // true if the user owns this album
 	LocalID          int64    `json:"localId,omitempty"` // local release_group row ID
@@ -85,15 +93,22 @@ type MBRelease struct {
 // MBRecording is a Wails-friendly projection of a MusicBrainz
 // recording.
 type MBRecording struct {
-	MBID          string `json:"mbid"`
-	Title         string `json:"title"`
-	Length        int    `json:"length"`
-	ArtistCredit  string `json:"artistCredit"`
-	Score         int    `json:"score"`
-	Popularity    int    `json:"popularity"` // raw LB listen count (0 if unknown)
-	ListenerCount int    `json:"listenerCount"`
-	InLibrary     bool   `json:"inLibrary"`         // true if the user owns this recording
-	LocalID       int64  `json:"localId,omitempty"` // local recording row ID
+	MBID           string `json:"mbid"`
+	Title          string `json:"title"`
+	Length         int    `json:"length"`
+	ArtistCredit   string `json:"artistCredit"`
+	ArtistMBID     string `json:"artistMbid,omitempty"` // for linking the artist to its detail page
+	Score          int    `json:"score"`
+	Popularity     int    `json:"popularity"` // raw LB listen count (0 if unknown)
+	ListenerCount  int    `json:"listenerCount"`
+	CAAReleaseMBID string `json:"caaReleaseMbid,omitempty"` // parent release, for album navigation
+	// ReleaseGroupMBID is resolved from CAAReleaseMBID so a track can
+	// link to its album page with the track highlighted, matching how
+	// tracks behave everywhere else.
+	ReleaseGroupMBID string `json:"releaseGroupMbid,omitempty"`
+	ReleaseName      string `json:"releaseName,omitempty"` // album title
+	InLibrary        bool   `json:"inLibrary"`             // true if the user owns this recording
+	LocalID          int64  `json:"localId,omitempty"`     // local recording row ID
 }
 
 // MBTrack is a Wails-friendly projection of a MusicBrainz track.
@@ -119,6 +134,9 @@ type LBTopRecording struct {
 	TrackName        string `json:"trackName"`
 	TotalListenCount int    `json:"totalListenCount"`
 	CAAReleaseMBID   string `json:"caaReleaseMbid"`
+	// ReleaseGroupMBID is resolved from CAAReleaseMBID so a top-track
+	// row can link to its album page with the track highlighted.
+	ReleaseGroupMBID string `json:"releaseGroupMbid,omitempty"`
 	ReleaseName      string `json:"releaseName"`
 	Length           int    `json:"length"` // milliseconds (from LB API)
 	InLibrary        bool   `json:"inLibrary"`

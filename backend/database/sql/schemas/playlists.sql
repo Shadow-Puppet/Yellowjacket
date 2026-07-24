@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS playlists (
     name TEXT NOT NULL,
     is_smart INTEGER NOT NULL DEFAULT 0,
     smart_rules TEXT,
+    smart_snapshot_at DATETIME,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

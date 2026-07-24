@@ -63,6 +63,9 @@ export const Events = {
 
     // Explore / search index events
     IndexStatusChanged: "IndexStatusChanged",
+    ArtistDiscographyReady: "ArtistDiscographyReady",
+    ArtistSimilarReady: "ArtistSimilarReady",
+    AlbumReleasesReady: "AlbumReleasesReady",
 } as const;
 
 export type EventName = (typeof Events)[keyof typeof Events];

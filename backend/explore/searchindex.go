@@ -3,16 +3,17 @@ package explore
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
-	"math"
-	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"golang.org/x/sync/singleflight"
 
 	"yellowjacket/backend/database"
 	"yellowjacket/backend/events"
@@ -20,35 +21,63 @@ import (
 
 // Index build parameters.
 const (
-	// indexTier1Interval is the minimum time between Tier 1
-	// (sitewide top lists) refreshes.  Cheap — 12 API calls.
-	indexTier1Interval = 7 * 24 * time.Hour
-
-	// indexTier2Interval is the minimum time between Tier 2/4
-	// (discography) refreshes.  Incremental — only new artists.
-	indexTier2Interval = 30 * 24 * time.Hour
-
-	// indexTopArtists is the number of artists to fetch per range
-	// from the LB sitewide endpoint.
-	indexTopArtists = 1000
-
-	// indexMaxRGs is the ceiling for release groups per artist.
-	// Top-popularity artists get their full discography.
+	// indexMaxRGs is the number of release groups fetched per
+	// artist by the API discography path (new library artists).
 	indexMaxRGs = 50
 
-	// indexMinRGs is the floor for release groups per artist.
-	// Even the least popular indexed artist gets a couple of albums.
-	indexMinRGs = 2
-
-	// indexMaxRecs is the ceiling for recordings per artist.
+	// indexMaxRecs is the number of recordings fetched per artist
+	// by the API discography path (new library artists).
 	indexMaxRecs = 200
-
-	// indexMinRecs is the floor for recordings per artist.
-	indexMinRecs = 5
 
 	// indexMinPopularity is the minimum listen count for an entry
 	// to be indexed.  Cuts noise from long-tail entries.
 	indexMinPopularity = 50
+
+	// championPopThreshold is the popularity floor for a row to join
+	// the champion FTS.  Rows below it (unless owned) can never win a
+	// generic short-prefix query, whose ranking is popularity-dominated,
+	// so excluding them is lossless for those queries.  ~90k rows.
+	championPopThreshold = 10000
+
+	// genericMaxTokenLen classifies a query as "generic" when its
+	// longest token is at most this many runes.  Such queries ("the",
+	// "a", "u2") match a huge slice of the index with no selective term,
+	// so they route to the champion tier; anything with a longer token
+	// is selective enough that the full index is already fast.
+	genericMaxTokenLen = 3
+
+	// Typo-tolerant rescue (see fuzzyRescue).  When ordinary prefix-FTS
+	// retrieval returns fewer than fuzzyRescueThinHits rows — usually a
+	// misspelled query that shares no token prefix with any indexed name
+	// — a bigram-similarity pass over the champion set kicks in.
+	// fuzzyRescueMinLen guards against very short queries (too few
+	// bigrams to discriminate); fuzzyRescueMinScore is the minimum bigram
+	// Dice coefficient for a candidate to count as a plausible match.
+	fuzzyRescueThinHits = 3
+	fuzzyRescueMinLen   = 4
+	fuzzyRescueMinScore = 0.34
+
+	// prefixCacheTTL bounds how long a memoised generic-query result is
+	// served before it is recomputed; prefixCacheMaxEntries caps the map.
+	prefixCacheTTL        = 10 * time.Minute
+	prefixCacheMaxEntries = 512
+
+	// championBuiltKey marks in explore_index_meta that the champion FTS
+	// has been populated at least once, so it is trusted across restarts.
+	championBuiltKey = "champion_built"
+
+	// localXrefReadyKey marks that PopulateLocalCrossReferences has synced
+	// the current library into the index at least once.  The unchanged-
+	// library launch path skips the (write-heavy) re-sync when it is set;
+	// a scan re-runs the sync unconditionally, and an explore_index wipe
+	// clears explore_index_meta with it.
+	localXrefReadyKey = "local_xref_ready"
+
+	// lyricsIndexReadyKey marks that the lyrics FTS has been rebuilt from
+	// the library at least once.  It is kept in sync incrementally by the
+	// LRCLIB backfill thereafter, so the unchanged-library launch path
+	// skips the redundant full rebuild when it is set.
+	lyricsIndexReadyKey = "lyrics_index_ready"
 
 	// indexBatchSize is the number of rows per INSERT transaction.
 	indexBatchSize = 100
@@ -57,19 +86,9 @@ const (
 	// indexer's dedicated rate limiter (LB allows 30/10s).
 	indexerRate = 3
 
-	// indexProgressInterval is how often to log progress.
-	indexProgressInterval = 100
-
 	// indexSimilarPerArtist is how many similar artists to store
-	// per library artist in similar_artist_map and to consider
-	// for Tier 4 discography expansion.
+	// per library artist in similar_artist_map.
 	indexSimilarPerArtist = 20
-
-	// indexPopularityExponent controls how steeply the per-artist
-	// budget scales with popularity.  Lower = steeper curve.
-	// 0.3 means an artist with 1/10th the listens of the max gets
-	// ~50% of the budget, not 10%.
-	indexPopularityExponent = 0.3
 
 	// labsBaseURL is the base URL for the ListenBrainz labs API.
 	labsBaseURL = "https://labs.api.listenbrainz.org"
@@ -119,11 +138,14 @@ type SearchIndexResult struct {
 	InLibrary bool `json:"inLibrary"`
 	IsSimilar bool `json:"isSimilar"`
 
-	// DiscogFetched marks an artist row as having had its full
-	// discography (release groups + recordings) fetched by the
-	// indexer pipeline.  Only set on artist entity_type entries.
-	// Used by indexedArtistMBIDs() to skip already-processed
-	// artists in tier 2/3.
+	// DiscogFetched marks a row as having had its full MusicBrainz
+	// metadata fetched.  For artist rows it means the discography
+	// (release groups + recordings) was pulled by the indexer
+	// pipeline, and indexedArtistMBIDs() uses it to skip already-
+	// processed artists in tier 2/3.  For release_group rows it means
+	// LookupReleaseGroup already did its one-time MB enrichment (e.g.
+	// secondary_types), so the album page's background lookup fires at
+	// most once per RG instead of on every visit.
 	DiscogFetched bool `json:"-"`
 
 	// Local library cross-reference (0 if not owned).
@@ -149,14 +171,13 @@ type lbSitewideArtist struct {
 }
 
 // SearchIndex maintains a local SQLite FTS5 index of popular
-// albums and tracks from ListenBrainz.  The index is built in the
-// background on startup across multiple tiers:
+// albums and tracks.  The index is populated in the background from
+// the MetaBrainz dumps (see dumpimport.go) and patched incrementally
+// via the ListenBrainz API:
 //
-//   - Tier 1: sitewide top lists (instant, <5s)
-//   - Tier 2: sitewide artists' full discographies (background, ~16min)
-//   - Tier 3: library artists' full discographies (background, ~4min)
-//   - Tier 4: similar artists to library artists (background, ~24min)
-//   - Tier 5: organic growth from user browsing (ongoing, free)
+//   - Initial build: listens dump (popularity) + canonical dump (catalog)
+//   - Post-scan: API discographies for new library artists
+//   - Ongoing: organic growth from user browsing (AddFromCache)
 type SearchIndex struct {
 	db         *database.DB
 	lb         *ListenBrainzClient
@@ -167,12 +188,34 @@ type SearchIndex struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 
-	mu         sync.RWMutex
-	ready      bool
-	maxListens int // highest artist listen count seen, for scaling
+	mu    sync.RWMutex
+	ready bool
+
+	// championReady is set once the champion FTS (see
+	// RebuildChampionIndex) has been populated; championBuilding guards
+	// against overlapping rebuilds.  Both are protected by mu.
+	championReady    bool
+	championBuilding bool
+
+	// prefixCache memoises the raw index hits for generic short-prefix
+	// queries — the expensive ones — so repeats are served from memory.
+	prefixCacheMu sync.Mutex
+	prefixCache   map[string]prefixCacheEntry
+
+	// discogSF dedupes concurrent lazy discography fetches for the same
+	// artist — the detail page fires its top-tracks, top-releases, and
+	// similar-artists requests in parallel, so without this the same
+	// artist would be fetched several times at once on first view.
+	discogSF singleflight.Group
 
 	// Build status tracking — read by GetIndexStatus for the UI.
 	buildStatus IndexStatus
+}
+
+// prefixCacheEntry is one memoised generic-query result.
+type prefixCacheEntry struct {
+	hits    []SearchIndexResult
+	created time.Time
 }
 
 // TierStatus represents the state of a single index tier.
@@ -245,105 +288,109 @@ func (si *SearchIndex) SetContext(ctx context.Context) {
 	}()
 }
 
-// IndexNewArtists indexes only library artists that are not yet in the
-// search index. This is the lightweight post-scan path — no tier
-// machinery, no freshness checks, no sitewide/similar artist logic.
-// Just finds library artists with MBIDs missing from the index and
-// fetches their discographies + images.
-func (si *SearchIndex) IndexNewArtists(ctx context.Context) {
-	si.mu.Lock()
-	if si.cancel != nil {
-		// Full build already running — it will pick up new artists.
-		si.mu.Unlock()
-
+// EnsureArtistDiscography lazily fetches an artist's top release groups
+// and recordings from ListenBrainz and persists them into the index —
+// the first time the artist is actually needed (e.g. their detail page
+// opens).  It is a no-op once the artist is marked discog_fetched, so
+// each artist costs at most one set of API calls, ever; every later
+// view is served from the index with no network.  This replaces the old
+// post-scan sweep that eagerly fetched every library artist on startup.
+//
+// Concurrent calls for the same artist collapse into one via discogSF,
+// since the detail page fires several requests for the same artist at
+// once.  Safe to call synchronously from a request handler: bounded work
+// on its own rate-limited client.
+func (si *SearchIndex) EnsureArtistDiscography(ctx context.Context, artistMBID string) {
+	if si.lb == nil || artistMBID == "" {
 		return
 	}
 
-	si.done = make(chan struct{})
-	si.mu.Unlock()
+	if si.artistDiscogFetched(artistMBID) {
+		return
+	}
 
-	buildCtx, cancel := context.WithCancel(ctx)
+	_, _, _ = si.discogSF.Do(artistMBID, func() (any, error) {
+		// Re-check under the singleflight: a sibling call may have just
+		// finished fetching this artist while we were queued.
+		if si.artistDiscogFetched(artistMBID) {
+			return nil, nil
+		}
 
-	si.mu.Lock()
-	si.cancel = cancel
-	si.mu.Unlock()
+		indexLB := NewListenBrainzClient(
+			NewRateLimiterN(indexerRate), si.lb.cache, si.logger.WithGroup("indexer"),
+		)
 
-	go func() {
-		defer func() {
-			si.mu.Lock()
-			si.cancel = nil
-			si.mu.Unlock()
+		si.indexOneArtist(ctx, indexLB, lbSitewideArtist{
+			ArtistMBID: artistMBID,
+			ArtistName: si.artistDisplayName(artistMBID),
+		})
 
-			close(si.done)
-
-			// Mark ready if we indexed anything, so search works
-			// while the full tier build is pending.
-			si.MarkReadyIfPopulated()
-		}()
-
-		si.indexNewLibraryArtists(buildCtx)
-	}()
+		return nil, nil
+	})
 }
 
-// indexNewLibraryArtists finds library artists with MBIDs that are not
-// in the index and fetches their discographies.
-func (si *SearchIndex) indexNewLibraryArtists(ctx context.Context) {
-	indexed := si.indexedArtistMBIDs()
-	libraryMBIDs := si.getLibraryArtistMBIDs()
+// artistDiscogFetched reports whether the artist row already has its
+// discography fetched, so EnsureArtistDiscography can skip the network.
+func (si *SearchIndex) artistDiscogFetched(mbid string) bool {
+	rows, err := si.db.QueryContext(
+		"SELECT 1 FROM explore_index WHERE entity_type = 'artist' AND mbid = ? AND discog_fetched = 1 LIMIT 1",
+		mbid,
+	)
+	if err != nil {
+		return false
+	}
 
-	var newArtists []lbSitewideArtist
+	defer func() { _ = rows.Close() }()
 
-	for _, mbid := range libraryMBIDs {
-		if !indexed[mbid] {
-			// Look up the artist name from the DB.
+	return rows.Next()
+}
+
+// artistDisplayName resolves a human-readable name for an artist MBID,
+// preferring the index title, then the local library, then the MBID
+// itself.  Used to seed the discography fetch's artist entry.
+func (si *SearchIndex) artistDisplayName(mbid string) string {
+	for _, q := range []string{
+		"SELECT title FROM explore_index WHERE entity_type = 'artist' AND mbid = ? AND title != '' AND title != mbid LIMIT 1",
+		"SELECT name FROM artists WHERE mbid = ? AND name != '' LIMIT 1",
+	} {
+		rows, err := si.db.QueryContext(q, mbid)
+		if err != nil {
+			continue
+		}
+
+		if rows.Next() {
 			var name string
-
-			rows, err := si.db.QueryContext(
-				"SELECT name FROM artists WHERE mbid = ? LIMIT 1", mbid,
-			)
-			if err != nil {
-				continue
-			}
-
-			if !rows.Next() {
+			if err := rows.Scan(&name); err == nil && name != "" {
 				_ = rows.Close()
 
-				continue
+				return name
 			}
+		}
 
-			if err := rows.Scan(&name); err != nil {
-				_ = rows.Close()
+		_ = rows.Close()
+	}
 
-				continue
-			}
+	return mbid
+}
 
-			_ = rows.Close()
+// PersistSimilarArtists stores ListenBrainz similar-artist results into
+// the similar_artist_map so future lookups are served locally instead of
+// re-hitting the labs API on every artist-page view.
+func (si *SearchIndex) PersistSimilarArtists(sourceMBID string, similar []LBSimilarArtist) {
+	if len(similar) == 0 {
+		return
+	}
 
-			newArtists = append(newArtists, lbSitewideArtist{
-				ArtistMBID: mbid,
-				ArtistName: name,
-			})
+	wire := make([]lbSimilarArtistWire, len(similar))
+	for i, s := range similar {
+		wire[i] = lbSimilarArtistWire{
+			ArtistMBID: s.ArtistMBID,
+			Name:       s.Name,
+			Score:      int(s.Score),
 		}
 	}
 
-	if len(newArtists) == 0 {
-		si.logger.Info("search index: no new library artists to index")
-
-		return
-	}
-
-	si.logger.Info("search index: indexing new library artists",
-		"count", len(newArtists),
-	)
-
-	indexLimiter := NewRateLimiterN(indexerRate)
-	indexLB := NewListenBrainzClient(indexLimiter, si.lb.cache, si.logger.WithGroup("indexer"))
-
-	si.indexArtistDiscographies(ctx, indexLB, newArtists, "new-artists", true)
-
-	si.logger.Info("search index: new library artists indexed",
-		"count", len(newArtists),
-	)
+	si.storeSimilarArtists(sourceMBID, wire)
 }
 
 // StartBuild launches the background index build goroutine.
@@ -373,9 +420,13 @@ func (si *SearchIndex) StartBuild(ctx context.Context) {
 			si.mu.Unlock()
 
 			close(si.done)
+
+			// The index rows (and their popularities) may have changed, so
+			// refresh the champion tier once the build settles.
+			si.scheduleChampionRebuild()
 		}()
 
-		si.build(buildCtx)
+		si.runDumpBuild(buildCtx)
 	}()
 }
 
@@ -462,7 +513,7 @@ func (si *SearchIndex) refreshStatusCounts() {
 	var lastBuilt string
 
 	metaRow, err := si.db.QueryContext(
-		"SELECT value FROM explore_index_meta WHERE key = 'tier5_built'",
+		"SELECT value FROM explore_index_meta WHERE key = 'dump_import_done'",
 	)
 	if err == nil {
 		defer func() { _ = metaRow.Close() }()
@@ -510,9 +561,7 @@ func (si *SearchIndex) setTierStatus(name, state string, total, completed int) {
 	si.emitStatus()
 }
 
-// setTierError marks a tier as errored.
-//
-//nolint:unused // kept for future per-tier failure surfacing.
+// setTierError marks a build stage as errored.
 func (si *SearchIndex) setTierError(name, errMsg string) {
 	si.mu.Lock()
 
@@ -541,12 +590,6 @@ func (si *SearchIndex) emitStatus() {
 	status.Ready = si.ready
 	status.Building = si.cancel != nil
 	si.mu.RUnlock()
-
-	si.logger.Info("emitting index status event",
-		"building", status.Building,
-		"tiers", len(status.Tiers),
-		"ready", status.Ready,
-	)
 
 	runtime.EventsEmit(si.runtimeCtx, events.IndexStatusChanged, status)
 }
@@ -785,7 +828,7 @@ func (si *SearchIndex) LookupReleaseGroupByMBID(mbid string) *SearchIndexResult 
 	rows, err := si.db.QueryContext(
 		`SELECT title, artist_name, artist_mbid, popularity, listener_count,
 		        primary_type, secondary_types, release_date,
-		        in_library, COALESCE(local_release_group_id, 0)
+		        in_library, COALESCE(local_release_group_id, 0), discog_fetched
 		 FROM explore_index
 		 WHERE mbid = ? AND entity_type = 'release_group' LIMIT 1`,
 		mbid,
@@ -808,12 +851,34 @@ func (si *SearchIndex) LookupReleaseGroupByMBID(mbid string) *SearchIndexResult 
 	if err := rows.Scan(
 		&r.Title, &r.ArtistName, &r.ArtistMBID, &r.Popularity, &r.ListenerCount,
 		&r.PrimaryType, &r.SecondaryTypes, &r.ReleaseDate,
-		&r.InLibrary, &r.LocalReleaseGroupID,
+		&r.InLibrary, &r.LocalReleaseGroupID, &r.DiscogFetched,
 	); err != nil {
 		return nil
 	}
 
 	return &r
+}
+
+// PersistReleaseGroupLookup writes the MB-enriched metadata for a
+// single release group back into the index and marks it DiscogFetched
+// so LookupReleaseGroup's background enrichment runs at most once per
+// RG.  Popularity is left at 0 here — upsertBatch keeps the higher of
+// old/new, so the dump-provided popularity is never clobbered.
+func (si *SearchIndex) PersistReleaseGroupLookup(rg *MBReleaseGroup) {
+	if rg == nil || rg.MBID == "" {
+		return
+	}
+
+	si.upsertBatch([]SearchIndexResult{{
+		EntityType:     "release_group",
+		MBID:           rg.MBID,
+		Title:          rg.Title,
+		ArtistName:     rg.ArtistCredit,
+		PrimaryType:    rg.PrimaryType,
+		SecondaryTypes: strings.Join(rg.SecondaryTypes, ","),
+		ReleaseDate:    rg.FirstReleaseDate,
+		DiscogFetched:  true,
+	}})
 }
 
 // TopRecordingsByArtist returns the most popular recordings for an
@@ -958,6 +1023,12 @@ func (si *SearchIndex) ExactMatches(query string, perCategory int) []SearchIndex
 		perCategory = 3
 	}
 
+	// UNION of two equality lookups rather than `LOWER(title) = ? OR
+	// LOWER(artist_name) = ?`.  The OR form forces SQLite to scan all
+	// ~240k rows; splitting into two equalities lets each branch seek
+	// its partial expression index (idx_explore_title_lower /
+	// idx_explore_artist_lower).  Ordering is done in Go below since
+	// an ORDER BY here would also defeat the index seek.
 	rows, err := si.db.QueryContext(`
 		SELECT entity_type, mbid, title, artist_name, artist_mbid,
 		       popularity, listener_count, duration, primary_type,
@@ -968,9 +1039,18 @@ func (si *SearchIndex) ExactMatches(query string, perCategory int) []SearchIndex
 		       COALESCE(local_release_group_id, 0),
 		       COALESCE(local_recording_id, 0)
 		FROM explore_index
-		WHERE (LOWER(title) = ? OR LOWER(artist_name) = ?)
-		  AND popularity > 0
-		ORDER BY entity_type, popularity DESC
+		WHERE LOWER(title) = ? AND popularity > 0
+		UNION
+		SELECT entity_type, mbid, title, artist_name, artist_mbid,
+		       popularity, listener_count, duration, primary_type,
+		       secondary_types, release_date, caa_release_mbid,
+		       release_name, artist_type, country, disambiguation,
+		       sort_name, in_library, is_similar,
+		       COALESCE(local_artist_id, 0),
+		       COALESCE(local_release_group_id, 0),
+		       COALESCE(local_recording_id, 0)
+		FROM explore_index
+		WHERE LOWER(artist_name) = ? AND popularity > 0
 	`, q, q)
 	if err != nil {
 		return nil
@@ -978,14 +1058,7 @@ func (si *SearchIndex) ExactMatches(query string, perCategory int) []SearchIndex
 
 	defer func() { _ = rows.Close() }()
 
-	// Group by entity type and cap at perCategory each, ordered by
-	// popularity desc because the SQL `ORDER BY entity_type, popularity DESC`
-	// gives us entity-type buckets already sorted within each.
-	buckets := map[string][]SearchIndexResult{
-		"artist":        nil,
-		"release_group": nil,
-		"recording":     nil,
-	}
+	var matches []SearchIndexResult
 
 	for rows.Next() {
 		var r SearchIndexResult
@@ -1005,9 +1078,8 @@ func (si *SearchIndex) ExactMatches(query string, perCategory int) []SearchIndex
 		// and release groups, match on either title or artist name
 		// — that way "miley cyrus" surfaces both the artist and
 		// her recordings.
-		qLower := strings.ToLower(q)
-		titleMatch := strings.ToLower(r.Title) == qLower
-		artistMatch := strings.ToLower(r.ArtistName) == qLower
+		titleMatch := strings.ToLower(r.Title) == q
+		artistMatch := strings.ToLower(r.ArtistName) == q
 
 		if r.EntityType == "artist" && !titleMatch {
 			continue
@@ -1017,6 +1089,24 @@ func (si *SearchIndex) ExactMatches(query string, perCategory int) []SearchIndex
 			continue
 		}
 
+		matches = append(matches, r)
+	}
+
+	// Sort by popularity desc so the per-category cap keeps the most
+	// popular entries (the old SQL ORDER BY guaranteed this; UNION
+	// does not preserve order).
+	sort.SliceStable(matches, func(i, j int) bool {
+		return matches[i].Popularity > matches[j].Popularity
+	})
+
+	// Group by entity type, capping at perCategory each.
+	buckets := map[string][]SearchIndexResult{
+		"artist":        nil,
+		"release_group": nil,
+		"recording":     nil,
+	}
+
+	for _, r := range matches {
 		bucket := buckets[r.EntityType]
 		if len(bucket) >= perCategory {
 			continue
@@ -1037,7 +1127,7 @@ func (si *SearchIndex) ExactMatches(query string, perCategory int) []SearchIndex
 // Search queries the local FTS5 index and returns matches ordered
 // by relevance (popularity-blended).  Returns nil when the index
 // hasn't finished its initial build.
-func (si *SearchIndex) Search(query string, limit int) []SearchIndexResult {
+func (si *SearchIndex) Search(ctx context.Context, query string, limit int) []SearchIndexResult {
 	if !si.IsReady() {
 		return nil
 	}
@@ -1051,7 +1141,310 @@ func (si *SearchIndex) Search(query string, limit int) []SearchIndexResult {
 		return nil
 	}
 
-	rows, err := si.db.QueryContext(`
+	generic := isGenericQuery(query)
+
+	// Generic short-prefix queries are the slow ones; serve repeats from
+	// the in-memory cache and route the rest through the champion tier.
+	if generic {
+		if hits, ok := si.prefixCacheGet(ftsQuery, limit); ok {
+			return hits
+		}
+	}
+
+	hits := si.runSearch(ctx, ftsQuery, limit, generic)
+
+	// Typo-tolerant fallback: a thin result usually means the query is
+	// misspelled and matched no token prefix.  Rescue with bigram
+	// similarity over the champion set before giving up.  Skipped once a
+	// search is superseded (ctx cancelled) — the result is discarded
+	// anyway.
+	if len(hits) < fuzzyRescueThinHits && ctx.Err() == nil {
+		hits = si.appendFuzzyRescue(ctx, query, limit, hits)
+	}
+
+	// Cache only fully-formed generic results — never a partial list from
+	// a superseded (cancelled) query.
+	if generic && ctx.Err() == nil {
+		si.prefixCachePut(ftsQuery, limit, hits)
+	}
+
+	return hits
+}
+
+// appendFuzzyRescue runs the bigram rescue pass and merges its hits into
+// the existing (thin) result, de-duplicated by MBID and preserving the
+// original hits first.  Returns the original slice unchanged when rescue
+// finds nothing new.
+func (si *SearchIndex) appendFuzzyRescue(
+	ctx context.Context,
+	query string,
+	limit int,
+	hits []SearchIndexResult,
+) []SearchIndexResult {
+	rescued := si.fuzzyRescue(ctx, query, limit)
+	if len(rescued) == 0 {
+		return hits
+	}
+
+	seen := make(map[string]struct{}, len(hits)+len(rescued))
+	for _, h := range hits {
+		seen[h.MBID] = struct{}{}
+	}
+
+	for _, r := range rescued {
+		if _, dup := seen[r.MBID]; dup {
+			continue
+		}
+
+		seen[r.MBID] = struct{}{}
+		hits = append(hits, r)
+
+		if len(hits) >= limit {
+			break
+		}
+	}
+
+	return hits
+}
+
+// fuzzyRescue is the typo-tolerant fallback for Search.  It scans the
+// champion set (high-popularity + owned rows) and scores each candidate
+// by character-bigram overlap (Dice) against its title and artist name,
+// so a misspelled query still surfaces its intended entity even though it
+// shares no token prefix with any indexed name.  Returns up to `limit`
+// hits above fuzzyRescueMinScore, ordered by fuzzy score with popularity
+// as a tie-break.  Bounded work that fires only on the rare thin query,
+// so it never touches the fast common path.
+func (si *SearchIndex) fuzzyRescue(
+	ctx context.Context,
+	query string,
+	limit int,
+) []SearchIndexResult {
+	qSet := fuzzyBigrams(query)
+	if len([]rune(fuzzyNormalize(query))) < fuzzyRescueMinLen || len(qSet) == 0 {
+		return nil
+	}
+
+	// Champion membership predicate, mirrored from rebuildChampionIndex:
+	// a row below the popularity floor that isn't owned can't be a
+	// meaningful popular match, so scoring it would only add noise.
+	rows, err := si.db.QueryContextWith(ctx, `
+		SELECT id, title, artist_name, popularity
+		FROM explore_index
+		WHERE popularity >= ? OR in_library = 1
+	`, championPopThreshold)
+	if err != nil {
+		if !errors.Is(err, context.Canceled) {
+			si.logger.Warn("fuzzy rescue scan error", "error", err)
+		}
+
+		return nil
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	type scored struct {
+		id    int64
+		score float64
+		pop   int
+	}
+
+	var candidates []scored
+
+	scanned := 0
+
+	for rows.Next() {
+		// Periodically honour cancellation: a superseded search shouldn't
+		// keep scoring tens of thousands of rows.
+		scanned++
+		if scanned%4096 == 0 && ctx.Err() != nil {
+			return nil
+		}
+
+		var (
+			id     int64
+			title  string
+			artist string
+			pop    int
+		)
+
+		if err := rows.Scan(&id, &title, &artist, &pop); err != nil {
+			continue
+		}
+
+		score := diceCoefficient(qSet, fuzzyBigrams(title))
+		if s := diceCoefficient(qSet, fuzzyBigrams(artist)); s > score {
+			score = s
+		}
+
+		if score >= fuzzyRescueMinScore {
+			candidates = append(candidates, scored{id: id, score: score, pop: pop})
+		}
+	}
+
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	// Best bigram match first; popularity breaks near-ties so the more
+	// prominent entity wins when two names are equally close.
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].score != candidates[j].score {
+			return candidates[i].score > candidates[j].score
+		}
+
+		return candidates[i].pop > candidates[j].pop
+	})
+
+	if len(candidates) > limit {
+		candidates = candidates[:limit]
+	}
+
+	ids := make([]int64, len(candidates))
+	for i, c := range candidates {
+		ids[i] = c.id
+	}
+
+	return si.rowsByIDs(ctx, ids)
+}
+
+// rowsByIDs loads full index rows for the given explore_index ids,
+// returned in the same order as `ids` (rows are keyed by id in a map,
+// then re-emitted in input order).  Used by fuzzyRescue to hydrate the
+// lightweight candidate ids it scored into full search results.
+func (si *SearchIndex) rowsByIDs(ctx context.Context, ids []int64) []SearchIndexResult {
+	if len(ids) == 0 {
+		return nil
+	}
+
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+
+	query := `
+		SELECT id, entity_type, mbid, title, artist_name, artist_mbid,
+		       popularity, listener_count, duration, primary_type,
+		       secondary_types, release_date, caa_release_mbid,
+		       release_name, artist_type, country, disambiguation,
+		       sort_name, in_library, is_similar,
+		       COALESCE(local_artist_id, 0),
+		       COALESCE(local_release_group_id, 0),
+		       COALESCE(local_recording_id, 0)
+		FROM explore_index
+		WHERE id IN (` + strings.Join(placeholders, ",") + `)`
+
+	rows, err := si.db.QueryContextWith(ctx, query, args...)
+	if err != nil {
+		if !errors.Is(err, context.Canceled) {
+			si.logger.Warn("fuzzy rescue hydrate error", "error", err)
+		}
+
+		return nil
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	byID := make(map[int64]SearchIndexResult, len(ids))
+
+	for rows.Next() {
+		var (
+			id int64
+			r  SearchIndexResult
+		)
+
+		if err := rows.Scan(
+			&id, &r.EntityType, &r.MBID, &r.Title, &r.ArtistName, &r.ArtistMBID,
+			&r.Popularity, &r.ListenerCount, &r.Duration, &r.PrimaryType,
+			&r.SecondaryTypes, &r.ReleaseDate, &r.CAAReleaseMBID,
+			&r.ReleaseName, &r.ArtistType, &r.Country, &r.Disambiguation,
+			&r.SortName, &r.InLibrary, &r.IsSimilar,
+			&r.LocalArtistID, &r.LocalReleaseGroupID, &r.LocalRecordingID,
+		); err != nil {
+			continue
+		}
+
+		byID[id] = r
+	}
+
+	out := make([]SearchIndexResult, 0, len(ids))
+
+	for _, id := range ids {
+		if r, ok := byID[id]; ok {
+			out = append(out, r)
+		}
+	}
+
+	return out
+}
+
+// runSearch dispatches an FTS query to the champion tier when the query
+// is generic and the champion index is ready, falling back to the full
+// index when the champion result is thin (few high-popularity matches)
+// or the champion index isn't built yet.
+func (si *SearchIndex) runSearch(
+	ctx context.Context,
+	ftsQuery string,
+	limit int,
+	generic bool,
+) []SearchIndexResult {
+	if generic {
+		if si.championIsReady() {
+			cStart := time.Now()
+			hits := si.queryFTS(ctx, "explore_champion_fts", ftsQuery, limit)
+
+			if len(hits) >= limit {
+				si.logger.Info("search path: champion",
+					"fts", ftsQuery,
+					"rows", len(hits),
+					"elapsed", time.Since(cStart).Round(time.Millisecond),
+				)
+
+				return hits
+			}
+
+			// Thin champion result: the full index is authoritative, and a
+			// query the champion couldn't fill matches few rows there too.
+			si.logger.Info("search path: champion thin -> full",
+				"fts", ftsQuery,
+				"champion_rows", len(hits),
+				"champion_elapsed", time.Since(cStart).Round(time.Millisecond),
+			)
+		} else {
+			// First generic query before the champion exists — build it in
+			// the background so the next one is fast.
+			si.logger.Info("search path: champion not ready -> full", "fts", ftsQuery)
+			si.scheduleChampionRebuild()
+		}
+	}
+
+	fStart := time.Now()
+	hits := si.queryFTS(ctx, "explore_index_fts", ftsQuery, limit)
+
+	if generic {
+		si.logger.Info("search path: full",
+			"fts", ftsQuery,
+			"rows", len(hits),
+			"elapsed", time.Since(fStart).Round(time.Millisecond),
+		)
+	}
+
+	return hits
+}
+
+// queryFTS runs the popularity-blended ranking query against the named
+// FTS table (the full index or the champion tier — identical schema, so
+// the only difference is how many rows MATCH).
+func (si *SearchIndex) queryFTS(
+	ctx context.Context,
+	ftsTable, ftsQuery string,
+	limit int,
+) []SearchIndexResult {
+	// ftsTable is a trusted in-package constant, never user input.
+	sqlText := fmt.Sprintf(`
 		SELECT i.entity_type, i.mbid, i.title, i.artist_name,
 		       i.artist_mbid, i.popularity, i.listener_count,
 		       i.duration, i.primary_type, i.secondary_types, i.release_date,
@@ -1062,20 +1455,26 @@ func (si *SearchIndex) Search(query string, limit int) []SearchIndexResult {
 		       COALESCE(i.local_release_group_id, 0),
 		       COALESCE(i.local_recording_id, 0)
 		FROM explore_index i
-		JOIN explore_index_fts f ON f.rowid = i.id
-		WHERE explore_index_fts MATCH ?
-		ORDER BY bm25(explore_index_fts, 3.0, 1.0, 0.5)
+		JOIN %[1]s f ON f.rowid = i.id
+		WHERE %[1]s MATCH ?
+		ORDER BY bm25(%[1]s, 3.0, 1.0, 0.5)
 		         - (ln(i.popularity + 1) * 1.5)
 		         - (i.in_library * 3.0)
 		         - (i.is_similar * 1.5)
 		LIMIT ?
-	`, ftsQuery, limit)
+	`, ftsTable)
+
+	rows, err := si.db.QueryContextWith(ctx, sqlText, ftsQuery, limit)
 	if err != nil {
-		si.logger.Warn("search index query error",
-			"query", query,
-			"ftsQuery", ftsQuery,
-			"error", err,
-		)
+		// A superseded search has its context cancelled on purpose; that
+		// is expected shutdown, not a query fault, so don't warn on it.
+		if !errors.Is(err, context.Canceled) {
+			si.logger.Warn("search index query error",
+				"table", ftsTable,
+				"ftsQuery", ftsQuery,
+				"error", err,
+			)
+		}
 
 		return nil
 	}
@@ -1105,6 +1504,176 @@ func (si *SearchIndex) Search(query string, limit int) []SearchIndexResult {
 	}
 
 	return results
+}
+
+// isGenericQuery reports whether a query has no selective (long) token
+// and therefore matches a broad slice of the index — the case the
+// champion tier and prefix cache exist to accelerate.
+func isGenericQuery(query string) bool {
+	words := splitWords(query)
+	if len(words) == 0 {
+		return false
+	}
+
+	for _, w := range words {
+		if len([]rune(w)) > genericMaxTokenLen {
+			return false
+		}
+	}
+
+	return true
+}
+
+// ---------------------------------------------------------------------------
+// Champion tier
+// ---------------------------------------------------------------------------
+
+// championIsReady reports whether the champion FTS is populated.
+func (si *SearchIndex) championIsReady() bool {
+	si.mu.RLock()
+	defer si.mu.RUnlock()
+
+	return si.championReady
+}
+
+// scheduleChampionRebuild rebuilds the champion FTS in the background,
+// unless one is already running or the main index isn't ready yet.  The
+// rebuild runs in a single write transaction, so concurrent searches
+// keep reading the previous champion snapshot (WAL) until it commits.
+func (si *SearchIndex) scheduleChampionRebuild() {
+	si.mu.Lock()
+	if si.championBuilding || !si.ready {
+		si.mu.Unlock()
+
+		return
+	}
+
+	si.championBuilding = true
+	si.mu.Unlock()
+
+	go func() {
+		// Use a stable context, not any per-search one, so a superseded
+		// search can't cancel the rebuild midway.
+		ctx := si.runtimeCtx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+
+		start := time.Now()
+		err := si.rebuildChampionIndex(ctx)
+
+		si.mu.Lock()
+		si.championBuilding = false
+		// Keep a previously-good champion usable if a refresh failed; mark
+		// ready on success.
+		si.championReady = si.championReady || err == nil
+		si.mu.Unlock()
+
+		// The champion set changed, so any memoised generic results are
+		// stale.
+		si.clearPrefixCache()
+
+		if err != nil {
+			si.logger.Warn("champion index rebuild failed", "error", err)
+
+			return
+		}
+
+		si.setMeta(championBuiltKey, time.Now().UTC().Format(time.RFC3339))
+		si.logger.Info("champion index rebuilt",
+			"elapsed", time.Since(start).Round(time.Millisecond),
+		)
+	}()
+}
+
+// rebuildChampionIndex repopulates the champion FTS from the high-
+// popularity and owned rows of explore_index.  A row below the
+// popularity floor can never place in a generic query's top results
+// (ranking there is popularity-dominated), so dropping it is lossless
+// for those queries; owned rows are always kept for their in-library
+// boost.
+func (si *SearchIndex) rebuildChampionIndex(ctx context.Context) error {
+	tx, err := si.db.BeginTx()
+	if err != nil {
+		return fmt.Errorf("begin champion rebuild: %w", err)
+	}
+
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO explore_champion_fts(explore_champion_fts) VALUES('delete-all')`,
+	); err != nil {
+		return fmt.Errorf("clear champion fts: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO explore_champion_fts(rowid, title, artist_name, aliases)
+		SELECT id, title, artist_name, aliases
+		FROM explore_index
+		WHERE popularity >= ? OR in_library = 1
+	`, championPopThreshold); err != nil {
+		return fmt.Errorf("populate champion fts: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit champion rebuild: %w", err)
+	}
+
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Prefix result cache
+// ---------------------------------------------------------------------------
+
+func prefixCacheKey(ftsQuery string, limit int) string {
+	return strconv.Itoa(limit) + "\x00" + ftsQuery
+}
+
+func (si *SearchIndex) prefixCacheGet(ftsQuery string, limit int) ([]SearchIndexResult, bool) {
+	si.prefixCacheMu.Lock()
+	defer si.prefixCacheMu.Unlock()
+
+	key := prefixCacheKey(ftsQuery, limit)
+
+	entry, ok := si.prefixCache[key]
+	if !ok {
+		return nil, false
+	}
+
+	if time.Since(entry.created) > prefixCacheTTL {
+		delete(si.prefixCache, key)
+
+		return nil, false
+	}
+
+	return entry.hits, true
+}
+
+func (si *SearchIndex) prefixCachePut(ftsQuery string, limit int, hits []SearchIndexResult) {
+	si.prefixCacheMu.Lock()
+	defer si.prefixCacheMu.Unlock()
+
+	if si.prefixCache == nil {
+		si.prefixCache = make(map[string]prefixCacheEntry)
+	}
+
+	// Generic keys are few and cheap to recompute; when the cap is hit,
+	// drop everything rather than track per-entry LRU state.
+	if len(si.prefixCache) >= prefixCacheMaxEntries {
+		si.prefixCache = make(map[string]prefixCacheEntry)
+	}
+
+	si.prefixCache[prefixCacheKey(ftsQuery, limit)] = prefixCacheEntry{
+		hits:    hits,
+		created: time.Now(),
+	}
+}
+
+func (si *SearchIndex) clearPrefixCache() {
+	si.prefixCacheMu.Lock()
+	si.prefixCache = nil
+	si.prefixCacheMu.Unlock()
 }
 
 // ---------------------------------------------------------------------------
@@ -1157,643 +1726,6 @@ func isWordChar(r rune) bool {
 		(r >= 'A' && r <= 'Z') ||
 		(r >= '0' && r <= '9') ||
 		r >= 0x80
-}
-
-// ---------------------------------------------------------------------------
-// Background build — orchestrator
-// ---------------------------------------------------------------------------
-
-func (si *SearchIndex) build(ctx context.Context) {
-	start := time.Now()
-
-	si.logger.Info("search index build starting")
-
-	// Initialize tier status for the UI.
-	si.mu.Lock()
-	si.buildStatus = IndexStatus{
-		Building: true,
-		Tiers: []TierStatus{
-			{Name: "Sitewide Top Lists", State: "pending"},
-			{Name: "Sitewide Discographies", State: "pending"},
-			{Name: "Library Artists", State: "pending"},
-			{Name: "Similar Artists", State: "pending"},
-			{Name: "Popularity Backfill", State: "pending"},
-		},
-	}
-	si.mu.Unlock()
-
-	// Mark ready from existing rows so search works during the build.
-	si.MarkReadyIfPopulated()
-
-	indexLimiter := NewRateLimiterN(indexerRate)
-	indexLB := NewListenBrainzClient(indexLimiter, si.lb.cache, si.logger.WithGroup("indexer"))
-
-	// Tier 1: sitewide instant — refresh weekly (12 calls, <5s).
-	tier1Fresh := si.isMetaFresh("tier1_built", indexTier1Interval)
-
-	var sitewideArtists []lbSitewideArtist
-
-	if tier1Fresh {
-		si.logger.Info("search index: Tier 1 fresh, loading cached artists")
-		si.setTierStatus("Sitewide Top Lists", "skipped", 0, 0)
-
-		sitewideArtists = si.loadCachedSitewideArtists()
-	} else {
-		si.setTierStatus("Sitewide Top Lists", "running", 12, 0)
-		sitewideArtists = si.buildTier1Sitewide(ctx, indexLB)
-
-		if ctx.Err() != nil {
-			return
-		}
-
-		si.setMeta("tier1_built", time.Now().UTC().Format(time.RFC3339))
-		si.setTierStatus("Sitewide Top Lists", "complete", 12, 12)
-	}
-
-	si.mu.Lock()
-	si.ready = true
-	si.mu.Unlock()
-
-	si.refreshStatusCounts()
-	si.logger.Info("search index: Tier 1 complete (sitewide instant)")
-
-	// Tiers 2-4: discographies — refresh monthly, incremental.
-	// Only fetch discographies for artists not already indexed.
-	// Each tier's timestamp is tracked independently so progress
-	// survives app restarts mid-build.
-	tier2Fresh := si.isMetaFresh("tier2_built", indexTier2Interval)
-	tier3Fresh := si.isMetaFresh("tier3_built", indexTier2Interval)
-	tier4Fresh := si.isMetaFresh("tier4_built", indexTier2Interval)
-
-	// Repair pass: runs unconditionally (outside the tier-fresh
-	// gate) so gaps from previous incomplete runs are healed even
-	// when the tier timestamps claim the build is fresh.  Any
-	// artist row with discog_fetched=0 — including those created
-	// by AddFromCache during a frontend visit, or left over from
-	// a crash mid-build — gets its full discography pulled here.
-	{
-		indexedForRepair := si.indexedArtistMBIDs()
-		if unindexed := si.unindexedArtistEntries(indexedForRepair); len(unindexed) > 0 {
-			si.logger.Info("search index: repair pass starting",
-				"unindexedArtists", len(unindexed),
-			)
-
-			si.setTierStatus("Repair Discographies", "running", len(unindexed), 0)
-			si.indexArtistDiscographies(ctx, indexLB, unindexed, "Repair", false)
-
-			if ctx.Err() != nil {
-				return
-			}
-
-			si.setTierStatus("Repair Discographies", "complete", len(unindexed), len(unindexed))
-			si.refreshStatusCounts()
-			si.logger.Info("search index: repair pass complete",
-				"artists", len(unindexed),
-			)
-		} else {
-			si.setTierStatus("Repair Discographies", "skipped", 0, 0)
-		}
-	}
-
-	if tier2Fresh && tier3Fresh && tier4Fresh {
-		si.logger.Info("search index: discographies fresh, skipping Tiers 2-4")
-	} else {
-		indexed := si.indexedArtistMBIDs()
-
-		var libraryMBIDs []string
-
-		// Tier 2: sitewide artists' discographies (incremental).
-		if tier2Fresh {
-			si.logger.Info("search index: Tier 2 fresh, skipping")
-			si.setTierStatus("Sitewide Discographies", "skipped", 0, 0)
-		} else {
-			newSitewide := filterUnindexed(sitewideArtists, indexed)
-
-			si.logger.Info("search index: Tier 2 starting",
-				"total", len(sitewideArtists),
-				"alreadyIndexed", len(sitewideArtists)-len(newSitewide),
-				"new", len(newSitewide),
-			)
-
-			si.setTierStatus("Sitewide Discographies", "running", len(newSitewide), 0)
-			si.indexArtistDiscographies(ctx, indexLB, newSitewide, "Tier 2", false)
-
-			if ctx.Err() != nil {
-				return
-			}
-
-			si.setMeta("tier2_built", time.Now().UTC().Format(time.RFC3339))
-			si.setTierStatus(
-				"Sitewide Discographies",
-				"complete",
-				len(newSitewide),
-				len(newSitewide),
-			)
-			si.refreshStatusCounts()
-			si.logger.Info("search index: Tier 2 complete (sitewide discographies)")
-		}
-
-		// Tier 3: library artists' discographies (incremental).
-		if tier3Fresh {
-			si.logger.Info("search index: Tier 3 fresh, skipping")
-			si.setTierStatus("Library Artists", "skipped", 0, 0)
-		} else {
-			si.setTierStatus("Library Artists", "running", 0, 0)
-			indexed = si.indexedArtistMBIDs()
-			libraryMBIDs = si.buildTier3Library(ctx, indexLB, sitewideArtists, indexed)
-
-			if ctx.Err() != nil {
-				return
-			}
-
-			si.setMeta("tier3_built", time.Now().UTC().Format(time.RFC3339))
-			si.setTierStatus("Library Artists", "complete", len(libraryMBIDs), len(libraryMBIDs))
-			si.logger.Info("search index: Tier 3 complete (library discographies)")
-		}
-
-		// Tier 4: similar artists (incremental).
-		if tier4Fresh {
-			si.logger.Info("search index: Tier 4 fresh, skipping")
-			si.setTierStatus("Similar Artists", "skipped", 0, 0)
-		} else {
-			if libraryMBIDs == nil {
-				// Tier 3 was skipped, load library MBIDs for Tier 4.
-				libraryMBIDs = si.getLibraryArtistMBIDs()
-			}
-
-			indexed = si.indexedArtistMBIDs()
-			si.setTierStatus("Similar Artists", "running", len(libraryMBIDs), 0)
-			si.buildTier4Similar(ctx, indexLB, libraryMBIDs, indexed)
-
-			if ctx.Err() != nil {
-				return
-			}
-
-			si.setMeta("tier4_built", time.Now().UTC().Format(time.RFC3339))
-			si.setTierStatus("Similar Artists", "complete", len(libraryMBIDs), len(libraryMBIDs))
-			si.refreshStatusCounts()
-			si.logger.Info("search index: Tier 4 complete (similar artists)")
-		}
-	}
-
-	// Tier 5: backfill popularity for entities with missing data.
-	tier5Fresh := si.isMetaFresh("tier5_built", indexTier1Interval)
-	if tier5Fresh {
-		si.setTierStatus("Popularity Backfill", "skipped", 0, 0)
-	} else {
-		si.setTierStatus("Popularity Backfill", "running", 0, 0)
-		si.buildTier5Popularity(ctx, indexLB)
-
-		if ctx.Err() != nil {
-			return
-		}
-
-		si.setMeta("tier5_built", time.Now().UTC().Format(time.RFC3339))
-		si.setTierStatus("Popularity Backfill", "complete", 0, 0)
-		si.logger.Info("search index: Tier 5 complete (popularity backfill)")
-	}
-
-	si.mu.Lock()
-	si.buildStatus.Building = false
-	si.mu.Unlock()
-
-	// Populate local library cross-reference columns so every
-	// read path has O(1) access to "do I own this?"
-	si.PopulateLocalCrossReferences()
-
-	si.refreshStatusCounts()
-	si.logger.Info("search index build complete", "elapsed", time.Since(start).Round(time.Second))
-}
-
-// ---------------------------------------------------------------------------
-// Tier 1: sitewide instant
-// ---------------------------------------------------------------------------
-
-// buildTier1Sitewide fetches top artists, recordings, and release
-// groups across all time ranges and inserts them.  Returns the
-// deduplicated artist list for Tier 2.
-func (si *SearchIndex) buildTier1Sitewide(
-	ctx context.Context,
-	lb *ListenBrainzClient,
-) []lbSitewideArtist {
-	ranges := []string{"all_time", "this_year", "this_month", "this_week"}
-	artistMap := make(map[string]lbSitewideArtist)
-
-	for _, r := range ranges {
-		if ctx.Err() != nil {
-			break
-		}
-
-		// Artists.
-		artists, err := si.fetchSitewideArtists(ctx, r)
-		if err != nil {
-			si.logger.Warn("search index: sitewide artists failed", "range", r, "error", err)
-
-			continue
-		}
-
-		for _, a := range artists {
-			if _, exists := artistMap[a.ArtistMBID]; !exists {
-				artistMap[a.ArtistMBID] = a
-			}
-		}
-
-		// Recordings.
-		recs := si.fetchSitewideRecordings(ctx, lb, r)
-		si.upsertSearchResults(recs)
-
-		// Release groups.
-		rgs := si.fetchSitewideReleaseGroups(ctx, lb, r)
-		si.upsertSearchResults(rgs)
-	}
-
-	// Insert all artists and track max popularity.
-	artists := make([]lbSitewideArtist, 0, len(artistMap))
-
-	maxL := 0
-
-	for _, a := range artistMap {
-		artists = append(artists, a)
-
-		if a.ListenCount > maxL {
-			maxL = a.ListenCount
-		}
-	}
-
-	si.mu.Lock()
-	si.maxListens = maxL
-	si.mu.Unlock()
-
-	si.upsertArtists(artists)
-
-	si.logger.Info("search index: Tier 1 indexed",
-		"artists", len(artists),
-	)
-
-	return artists
-}
-
-func (si *SearchIndex) fetchSitewideArtists(
-	ctx context.Context, timeRange string,
-) ([]lbSitewideArtist, error) {
-	url := fmt.Sprintf(
-		"%s/1/stats/sitewide/artists?count=%d&range=%s",
-		listenBrainzBaseURL, indexTopArtists, timeRange,
-	)
-
-	req, err := newLBRequest(ctx, url)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := si.lb.http.Do(req)
-	if err != nil {
-		return nil, err
-	}
-
-	defer func() { _ = resp.Body.Close() }()
-
-	var envelope struct {
-		Payload struct {
-			Artists []lbSitewideArtist `json:"artists"`
-		} `json:"payload"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
-		return nil, err
-	}
-
-	return envelope.Payload.Artists, nil
-}
-
-func (si *SearchIndex) fetchSitewideRecordings(
-	ctx context.Context, lb *ListenBrainzClient, timeRange string,
-) []SearchIndexResult {
-	url := fmt.Sprintf(
-		"%s/1/stats/sitewide/recordings?count=%d&range=%s",
-		listenBrainzBaseURL, indexTopArtists, timeRange,
-	)
-
-	body, err := lb.doGet(ctx, url)
-	if err != nil {
-		si.logger.Warn("search index: sitewide recordings failed",
-			"range", timeRange, "error", err,
-		)
-
-		return nil
-	}
-
-	var envelope struct {
-		Payload struct {
-			Recordings []struct {
-				RecordingMBID string   `json:"recording_mbid"`
-				TrackName     string   `json:"track_name"`
-				ArtistName    string   `json:"artist_name"`
-				ArtistMBIDs   []string `json:"artist_mbids"`
-				ListenCount   int      `json:"listen_count"`
-			} `json:"recordings"`
-		} `json:"payload"`
-	}
-
-	if err := json.Unmarshal(body, &envelope); err != nil {
-		si.logger.Warn("search index: sitewide recordings unmarshal",
-			"range", timeRange, "error", err,
-		)
-
-		return nil
-	}
-
-	var results []SearchIndexResult
-
-	for _, r := range envelope.Payload.Recordings {
-		if r.ListenCount < indexMinPopularity {
-			continue
-		}
-
-		artistMBID := ""
-		if len(r.ArtistMBIDs) > 0 {
-			artistMBID = r.ArtistMBIDs[0]
-		}
-
-		results = append(results, SearchIndexResult{
-			EntityType: "recording",
-			MBID:       r.RecordingMBID,
-			Title:      r.TrackName,
-			ArtistName: r.ArtistName,
-			ArtistMBID: artistMBID,
-			// Popularity intentionally 0 — backfilled by Tier 5 with the
-			// uncapped total_listen_count from the popularity API.
-		})
-	}
-
-	return results
-}
-
-func (si *SearchIndex) fetchSitewideReleaseGroups(
-	ctx context.Context, lb *ListenBrainzClient, timeRange string,
-) []SearchIndexResult {
-	url := fmt.Sprintf(
-		"%s/1/stats/sitewide/release-groups?count=%d&range=%s",
-		listenBrainzBaseURL, indexTopArtists, timeRange,
-	)
-
-	body, err := lb.doGet(ctx, url)
-	if err != nil {
-		si.logger.Warn("search index: sitewide release groups failed",
-			"range", timeRange, "error", err,
-		)
-
-		return nil
-	}
-
-	var envelope struct {
-		Payload struct {
-			ReleaseGroups []struct {
-				ReleaseGroupMBID string   `json:"release_group_mbid"`
-				ReleaseGroupName string   `json:"release_group_name"`
-				ArtistName       string   `json:"artist_name"`
-				ArtistMBIDs      []string `json:"artist_mbids"`
-				ListenCount      int      `json:"listen_count"`
-			} `json:"release_groups"`
-		} `json:"payload"`
-	}
-
-	if err := json.Unmarshal(body, &envelope); err != nil {
-		si.logger.Warn("search index: sitewide release groups unmarshal",
-			"range", timeRange, "error", err,
-		)
-
-		return nil
-	}
-
-	var results []SearchIndexResult
-
-	for _, r := range envelope.Payload.ReleaseGroups {
-		if r.ListenCount < indexMinPopularity {
-			continue
-		}
-
-		artistMBID := ""
-		if len(r.ArtistMBIDs) > 0 {
-			artistMBID = r.ArtistMBIDs[0]
-		}
-
-		results = append(results, SearchIndexResult{
-			EntityType: "release_group",
-			MBID:       r.ReleaseGroupMBID,
-			Title:      r.ReleaseGroupName,
-			ArtistName: r.ArtistName,
-			ArtistMBID: artistMBID,
-			// Popularity intentionally 0 — backfilled by Tier 5.
-		})
-	}
-
-	return results
-}
-
-// ---------------------------------------------------------------------------
-// Tier 2: sitewide artists' full discographies
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Tier 3: library artists' full discographies
-// ---------------------------------------------------------------------------
-
-// buildTier3Library matches local library artist names against
-// sitewide artists by name to get MBIDs, then indexes their
-// discographies.  Returns the resolved MBIDs for Tier 4.
-func (si *SearchIndex) buildTier3Library(
-	ctx context.Context,
-	lb *ListenBrainzClient,
-	sitewideArtists []lbSitewideArtist,
-	indexed map[string]bool,
-) []string {
-	// Build a name→artist map from sitewide (lowercased).
-	nameMap := make(map[string]lbSitewideArtist, len(sitewideArtists))
-	for _, a := range sitewideArtists {
-		nameMap[strings.ToLower(a.ArtistName)] = a
-	}
-
-	// Also build from existing index entries (catches organic adds).
-	rows, err := si.db.QueryContext(`
-		SELECT DISTINCT artist_name, artist_mbid
-		FROM explore_index
-		WHERE entity_type = 'artist' AND artist_mbid != ''
-	`)
-	if err == nil {
-		defer func() { _ = rows.Close() }()
-
-		for rows.Next() {
-			var name, mbid string
-			if err := rows.Scan(&name, &mbid); err == nil {
-				lower := strings.ToLower(name)
-				if _, exists := nameMap[lower]; !exists {
-					nameMap[lower] = lbSitewideArtist{
-						ArtistMBID: mbid,
-						ArtistName: name,
-					}
-				}
-			}
-		}
-	}
-
-	// Read local library artists — prefer direct MBIDs from tags,
-	// fall back to name matching against the sitewide/index map.
-	libRows, err := si.db.QueryContext(
-		"SELECT DISTINCT name, mbid FROM artists",
-	)
-	if err != nil {
-		si.logger.Warn("search index: library artists query failed", "error", err)
-
-		return nil
-	}
-
-	defer func() { _ = libRows.Close() }()
-
-	var matched []lbSitewideArtist
-
-	var resolvedMBIDs []string
-
-	for libRows.Next() {
-		var name string
-
-		var mbidPtr *string
-
-		if err := libRows.Scan(&name, &mbidPtr); err != nil {
-			continue
-		}
-
-		// Direct MBID from tags — most reliable.
-		if mbidPtr != nil && *mbidPtr != "" {
-			mbid := *mbidPtr
-			resolvedMBIDs = append(resolvedMBIDs, mbid)
-
-			if !indexed[mbid] {
-				matched = append(matched, lbSitewideArtist{
-					ArtistMBID: mbid,
-					ArtistName: name,
-				})
-			}
-
-			continue
-		}
-
-		// Fall back to name matching.
-		normalized := strings.ToLower(name)
-		if idx := strings.Index(normalized, " feat."); idx >= 0 {
-			normalized = normalized[:idx]
-		}
-
-		if idx := strings.Index(normalized, " ft."); idx >= 0 {
-			normalized = normalized[:idx]
-		}
-
-		normalized = strings.TrimSpace(normalized)
-
-		if a, ok := nameMap[normalized]; ok {
-			resolvedMBIDs = append(resolvedMBIDs, a.ArtistMBID)
-
-			if !indexed[a.ArtistMBID] {
-				matched = append(matched, a)
-			}
-		}
-	}
-
-	if len(matched) > 0 {
-		si.indexArtistDiscographies(ctx, lb, matched, "Tier 3", true)
-
-		// Mark all Tier 3 entries as in_library.
-		si.markInLibrary(matched)
-	}
-
-	si.logger.Info("search index: Tier 3 matched",
-		"libraryArtists", len(resolvedMBIDs),
-		"newToIndex", len(matched),
-	)
-
-	return resolvedMBIDs
-}
-
-// ---------------------------------------------------------------------------
-// Tier 4: similar artists to library artists
-// ---------------------------------------------------------------------------
-
-func (si *SearchIndex) buildTier4Similar(
-	ctx context.Context,
-	lb *ListenBrainzClient,
-	libraryMBIDs []string,
-	indexed map[string]bool,
-) {
-	if len(libraryMBIDs) == 0 {
-		return
-	}
-
-	// Fetch similar artists in batches of seeds, fanned out
-	// concurrently.  The labs multi-seed POST form is broken and
-	// returns mis-grouped results, so fetchSimilarArtistsBatch
-	// actually makes one GET per seed (see its comment).  Batches
-	// keep the log output bounded.
-	newArtistMap := make(map[string]lbSitewideArtist)
-
-	for i := 0; i < len(libraryMBIDs); i += similarArtistsBatchSize {
-		if ctx.Err() != nil {
-			break
-		}
-
-		end := i + similarArtistsBatchSize
-		if end > len(libraryMBIDs) {
-			end = len(libraryMBIDs)
-		}
-
-		batch := libraryMBIDs[i:end]
-		grouped := si.fetchSimilarArtistsBatch(ctx, lb, batch)
-
-		// Persist similarity relationships per seed.
-		for _, seedMBID := range batch {
-			similar := grouped[seedMBID]
-			si.storeSimilarArtists(seedMBID, similar)
-
-			for _, s := range similar {
-				if !indexed[s.ArtistMBID] {
-					if _, exists := newArtistMap[s.ArtistMBID]; !exists {
-						newArtistMap[s.ArtistMBID] = lbSitewideArtist{
-							ArtistMBID: s.ArtistMBID,
-							ArtistName: s.Name,
-						}
-					}
-				}
-			}
-		}
-
-		si.logger.Info("search index: Tier 4 similar batch complete",
-			"batch", (i/similarArtistsBatchSize)+1,
-			"totalBatches", (len(libraryMBIDs)+similarArtistsBatchSize-1)/similarArtistsBatchSize,
-			"processed", end,
-		)
-	}
-
-	if len(newArtistMap) == 0 {
-		return
-	}
-
-	newArtists := make([]lbSitewideArtist, 0, len(newArtistMap))
-	for _, a := range newArtistMap {
-		newArtists = append(newArtists, a)
-	}
-
-	si.logger.Info("search index: Tier 4 discovered",
-		"newArtists", len(newArtists),
-	)
-
-	// Index artist rows only (no discography) — similar artists
-	// are mostly obscure and their per-track data rarely surfaces
-	// in searches.  Discographies are fetched on-demand when the
-	// user drills into an artist detail view.  This saves ~2 API
-	// calls per artist (~10K total for Tier 4).
-	si.indexArtistDiscographies(ctx, lb, newArtists, "Tier 4", false)
-
-	// Mark all Tier 4 entries as similar.
-	si.markSimilar(newArtists)
 }
 
 type lbSimilarArtistWire struct {
@@ -1880,196 +1812,16 @@ func (si *SearchIndex) fetchSimilarArtistsBatch(
 // Shared: index artist discographies
 // ---------------------------------------------------------------------------
 
-// indexArtistDiscographies fetches top release groups and recordings
-// for each artist and inserts them into the index.  Used by Tiers 2-4.
-func (si *SearchIndex) indexArtistDiscographies(
-	ctx context.Context,
-	lb *ListenBrainzClient,
-	artists []lbSitewideArtist,
-	tier string,
-	forceMax bool,
-) {
-	if len(artists) == 0 {
-		return
-	}
-
-	// Prefetch artist metadata in batches of 1000 — one GET per batch
-	// instead of one per artist.  Populates type, country, and writes
-	// artist rows with these fields up-front.  This runs to completion
-	// before the discography loop so indexOneArtist can read from
-	// the batch results via the metadata cache.
-	si.prefetchArtistMetadata(ctx, lb, artists)
-
-	sem := make(chan struct{}, indexerRate)
-
-	var wg sync.WaitGroup
-
-	var completed atomic.Int32
-
-	for _, a := range artists {
-		if ctx.Err() != nil {
-			break
-		}
-
-		sem <- struct{}{}
-
-		wg.Add(1)
-
-		go func(artist lbSitewideArtist) {
-			defer func() {
-				<-sem
-				wg.Done()
-			}()
-
-			si.indexOneArtist(ctx, lb, artist, forceMax)
-
-			n := completed.Add(1)
-
-			// Update tier status for the UI.
-			tierName := tier // "Tier 2" or "Tier 3"
-			switch tier {
-			case "Tier 2":
-				tierName = "Sitewide Discographies"
-			case "Tier 3":
-				tierName = "Library Artists"
-			}
-
-			si.setTierStatus(tierName, "running", len(artists), int(n))
-
-			if int(n)%indexProgressInterval == 0 {
-				si.logger.Info("search index progress",
-					"tier", tier,
-					"completed", n,
-					"total", len(artists),
-					"pct", fmt.Sprintf("%.0f%%", float64(n)/float64(len(artists))*100),
-				)
-			}
-		}(a)
-	}
-
-	wg.Wait()
-
-	si.logger.Info("search index: discographies indexed",
-		"tier", tier,
-		"artists", len(artists),
-	)
-}
-
-// prefetchArtistMetadata batch-fetches artist metadata from LB's
-// /1/metadata/artist/ endpoint and writes artist rows up-front.
-// This populates type and country for all artists in a single
-// GET per 1000-artist chunk, rather than requiring per-artist
-// MB calls.  Aliases, disambiguation, and sort_name still come
-// from the per-artist MB fetch during image resolution — unless
-// we can synthesize a satisfactory cached response.
-//
-// The prefetch also pre-populates the mb:artist-rels cache with
-// a synthesized envelope derived from LB data, so the per-artist
-// MB call is skipped entirely for artists where we have LB data.
-// Aliases/disambiguation won't be available, but type/country/
-// name and wikidata QID (for image resolution) will be.
-func (si *SearchIndex) prefetchArtistMetadata(
-	ctx context.Context,
-	lb *ListenBrainzClient,
-	artists []lbSitewideArtist,
-) {
-	const batchSize = 1000
-
-	var (
-		processed atomic.Int32
-		batchWG   sync.WaitGroup
-	)
-
-	// Build a lookup from mbid to artist name.
-	nameByMBID := make(map[string]string, len(artists))
-	for _, a := range artists {
-		nameByMBID[a.ArtistMBID] = a.ArtistName
-	}
-
-	mbids := make([]string, 0, len(artists))
-	for _, a := range artists {
-		if a.ArtistMBID != "" {
-			mbids = append(mbids, a.ArtistMBID)
-		}
-	}
-
-	for i := 0; i < len(mbids); i += batchSize {
-		if ctx.Err() != nil {
-			return
-		}
-
-		end := i + batchSize
-		if end > len(mbids) {
-			end = len(mbids)
-		}
-
-		batch := mbids[i:end]
-
-		batchWG.Add(1)
-
-		go func(chunk []string) {
-			defer batchWG.Done()
-
-			meta, err := lb.BatchArtistMetadata(ctx, chunk)
-			if err != nil || len(meta) == 0 {
-				return
-			}
-
-			// Upsert artist rows with the LB-sourced fields.
-			entries := make([]SearchIndexResult, 0, len(meta))
-
-			for mbid, m := range meta {
-				name := nameByMBID[mbid]
-				if name == "" {
-					name = m.Name
-				}
-
-				entries = append(entries, SearchIndexResult{
-					EntityType: "artist",
-					MBID:       mbid,
-					Title:      name,
-					ArtistName: name,
-					ArtistMBID: mbid,
-					ArtistType: m.Type,
-					Country:    m.Country,
-				})
-
-				// Synthesize an MB artist-rels cache entry so
-				// fetchMBRels skips the per-artist network call.
-				// Contains only the wikidata URL (for image
-				// resolution) and the type/country/name that
-				// GetArtistDetails reads.  Aliases and
-				// disambiguation are empty — those come from
-				// an on-demand MB lookup later if needed.
-				if si.artistImg != nil {
-					si.artistImg.PreloadArtistRels(mbid, m)
-				}
-			}
-
-			si.upsertBatch(entries)
-			processed.Add(int32(len(entries)))
-		}(batch)
-	}
-
-	batchWG.Wait()
-
-	si.logger.Info("search index: prefetched artist metadata",
-		"artists", len(mbids),
-		"processed", processed.Load(),
-	)
-}
-
 func (si *SearchIndex) indexOneArtist(
 	ctx context.Context,
 	lb *ListenBrainzClient,
 	artist lbSitewideArtist,
-	forceMax bool,
 ) {
 	if ctx.Err() != nil {
 		return
 	}
 
-	rgLimit, recLimit := si.scaledLimits(artist.ListenCount, forceMax)
+	rgLimit, recLimit := indexMaxRGs, indexMaxRecs
 
 	// Run LB discography fetches and MB artist image resolution
 	// concurrently — they use different rate limiters so they
@@ -2276,122 +2028,6 @@ func (si *SearchIndex) fetchTopRecordings(
 	return results
 }
 
-// ---------------------------------------------------------------------------
-// Tier 5: popularity backfill
-// ---------------------------------------------------------------------------
-
-// popularityBatchSize is the number of MBIDs per LB popularity request.
-// LB accepts up to 1000 per POST call.
-const popularityBatchSize = 1000
-
-// buildTier5Popularity batch-queries LB popularity for every entity in the
-// index that has popularity = 0, then writes results back via BackfillPopularity.
-func (si *SearchIndex) buildTier5Popularity(ctx context.Context, lb *ListenBrainzClient) {
-	type entityKind struct {
-		entityType string
-		fetch      func(context.Context, []string) (map[string]PopularityData, error)
-	}
-
-	kinds := []entityKind{
-		{"artist", lb.ArtistPopularity},
-		{"release_group", lb.ReleaseGroupPopularity},
-		{"recording", lb.RecordingPopularity},
-	}
-
-	for _, kind := range kinds {
-		if ctx.Err() != nil {
-			return
-		}
-
-		mbids := si.mbidsWithoutPopularity(kind.entityType)
-		if len(mbids) == 0 {
-			si.logger.Info("search index: Tier 5 skipped (no missing popularity)",
-				"entityType", kind.entityType)
-
-			continue
-		}
-
-		batches := chunkStrings(mbids, popularityBatchSize)
-
-		si.logger.Info("search index: Tier 5 starting",
-			"entityType", kind.entityType,
-			"entities", len(mbids),
-			"batches", len(batches),
-		)
-
-		var filled int
-
-		sem := make(chan struct{}, indexerRate)
-
-		for i, batch := range batches {
-			if ctx.Err() != nil {
-				return
-			}
-
-			sem <- struct{}{}
-
-			pops, err := kind.fetch(ctx, batch)
-
-			<-sem
-
-			if err != nil {
-				si.logger.Warn("search index: Tier 5 batch failed",
-					"entityType", kind.entityType,
-					"batch", i+1,
-					"error", err,
-				)
-
-				continue
-			}
-
-			si.BackfillPopularity(pops)
-			filled += len(pops)
-
-			if (i+1)%indexProgressInterval == 0 {
-				si.logger.Info("search index: Tier 5 progress",
-					"entityType", kind.entityType,
-					"batches", fmt.Sprintf("%d/%d", i+1, len(batches)),
-					"filled", filled,
-				)
-			}
-		}
-
-		si.logger.Info("search index: Tier 5 entity type done",
-			"entityType", kind.entityType,
-			"filled", filled,
-			"batches", len(batches),
-		)
-	}
-}
-
-// mbidsWithoutPopularity returns all MBIDs in the index for the given
-// entity type that have popularity = 0.
-func (si *SearchIndex) mbidsWithoutPopularity(entityType string) []string {
-	rows, err := si.db.QueryContext(
-		"SELECT mbid FROM explore_index WHERE entity_type = ? AND popularity = 0",
-		entityType,
-	)
-	if err != nil {
-		si.logger.Warn("search index: failed to query unpopulated MBIDs",
-			"entityType", entityType, "error", err)
-
-		return nil
-	}
-
-	defer func() { _ = rows.Close() }()
-
-	var mbids []string
-
-	for rows.Next() {
-		var m string
-		if err := rows.Scan(&m); err == nil {
-			mbids = append(mbids, m)
-		}
-	}
-
-	return mbids
-}
-
 // chunkStrings splits a slice into chunks of at most size n.
 func chunkStrings(s []string, n int) [][]string {
 	var chunks [][]string
@@ -2422,48 +2058,6 @@ func chunkStrings(s []string, n int) [][]string {
 // The merge semantics are: non-empty incoming values replace existing
 // empty values, and numeric fields use "highest wins" for popularity/
 // listener_count/duration so older richer data survives refreshes.
-
-// upsertArtists is a convenience wrapper for Tier 1 sitewide artists.
-// Writes them as artist rows with popularity=0 — the actual popularity
-// (uncapped total_listen_count) is filled in by Tier 5 via the
-// POST popularity API.  The sitewide listen_count is a capped
-// different metric we don't want to mix in.
-func (si *SearchIndex) upsertArtists(artists []lbSitewideArtist) {
-	batch := make([]SearchIndexResult, 0, indexBatchSize)
-
-	for _, a := range artists {
-		batch = append(batch, SearchIndexResult{
-			EntityType: "artist",
-			MBID:       a.ArtistMBID,
-			Title:      a.ArtistName,
-			ArtistName: a.ArtistName,
-			ArtistMBID: a.ArtistMBID,
-			// Popularity intentionally 0 — backfilled by Tier 5.
-		})
-
-		if len(batch) >= indexBatchSize {
-			si.upsertBatch(batch)
-			batch = batch[:0]
-		}
-	}
-
-	if len(batch) > 0 {
-		si.upsertBatch(batch)
-	}
-}
-
-// upsertSearchResults chunks large batches into transactions of
-// indexBatchSize and flushes each via upsertBatch.
-func (si *SearchIndex) upsertSearchResults(results []SearchIndexResult) {
-	for i := 0; i < len(results); i += indexBatchSize {
-		end := i + indexBatchSize
-		if end > len(results) {
-			end = len(results)
-		}
-
-		si.upsertBatch(results[i:end])
-	}
-}
 
 // upsertBatch writes a batch of SearchIndexResult entries to the index
 // inside a single transaction.  This is the ONE function that all
@@ -2590,77 +2184,6 @@ func (si *SearchIndex) upsertBatch(entries []SearchIndexResult) {
 // Helpers
 // ---------------------------------------------------------------------------
 
-// unindexedArtistEntries returns artist rows that exist in the
-// index but haven't had their full discography fetched yet
-// (discog_fetched = 0).  Excludes anything in the indexed set.
-// Used by the repair pass to heal gaps from AddFromCache or
-// from previous incomplete runs.
-func (si *SearchIndex) unindexedArtistEntries(indexed map[string]bool) []lbSitewideArtist {
-	rows, err := si.db.QueryContext(`
-		SELECT mbid, title, popularity
-		FROM explore_index
-		WHERE entity_type = 'artist' AND discog_fetched = 0
-	`)
-	if err != nil {
-		return nil
-	}
-
-	defer func() { _ = rows.Close() }()
-
-	var out []lbSitewideArtist
-
-	for rows.Next() {
-		var (
-			mbid string
-			name string
-			pop  int
-		)
-
-		if err := rows.Scan(&mbid, &name, &pop); err != nil {
-			continue
-		}
-
-		if indexed[mbid] {
-			continue
-		}
-
-		out = append(out, lbSitewideArtist{
-			ArtistMBID:  mbid,
-			ArtistName:  name,
-			ListenCount: pop,
-		})
-	}
-
-	return out
-}
-
-// indexedArtistMBIDs returns artist MBIDs that have had their full
-// discography fetched by the indexer pipeline.  Used by tier 2/3 to
-// skip artists already processed.  Excludes artist rows that only
-// got into the index via AddFromCache (frontend organic growth) —
-// those are missing recordings and need a real indexer pass.
-func (si *SearchIndex) indexedArtistMBIDs() map[string]bool {
-	rows, err := si.db.QueryContext(
-		"SELECT DISTINCT artist_mbid FROM explore_index WHERE entity_type = 'artist' AND discog_fetched = 1",
-	)
-	if err != nil {
-		return nil
-	}
-
-	defer func() { _ = rows.Close() }()
-
-	result := make(map[string]bool)
-
-	for rows.Next() {
-		var mbid string
-		if err := rows.Scan(&mbid); err == nil {
-			result[mbid] = true
-		}
-	}
-
-	return result
-}
-
 // getLibraryArtistMBIDs returns MBIDs for all library artists that have one.
 // Used when Tier 3 was skipped but Tier 4 needs the library MBID list.
 func (si *SearchIndex) getLibraryArtistMBIDs() []string {
@@ -2685,9 +2208,10 @@ func (si *SearchIndex) getLibraryArtistMBIDs() []string {
 	return mbids
 }
 
-func (si *SearchIndex) isMetaFresh(key string, maxAge time.Duration) bool {
+// hasMeta reports whether a key exists in explore_index_meta.
+func (si *SearchIndex) hasMeta(key string) bool {
 	rows, err := si.db.QueryContext(
-		"SELECT value FROM explore_index_meta WHERE key = ?", key,
+		"SELECT 1 FROM explore_index_meta WHERE key = ?", key,
 	)
 	if err != nil {
 		return false
@@ -2695,145 +2219,167 @@ func (si *SearchIndex) isMetaFresh(key string, maxAge time.Duration) bool {
 
 	defer func() { _ = rows.Close() }()
 
-	if !rows.Next() {
-		return false
-	}
-
-	var val string
-	if err := rows.Scan(&val); err != nil {
-		return false
-	}
-
-	t, err := time.Parse(time.RFC3339, val)
-	if err != nil {
-		return false
-	}
-
-	return time.Since(t) < maxAge
+	return rows.Next()
 }
 
-// loadCachedSitewideArtists reads artist entries from the existing
-// index when Tier 1 is fresh and doesn't need re-fetching.
-func (si *SearchIndex) loadCachedSitewideArtists() []lbSitewideArtist {
-	rows, err := si.db.QueryContext(`
-		SELECT mbid, title, popularity
-		FROM explore_index
-		WHERE entity_type = 'artist'
-		ORDER BY popularity DESC
-	`)
-	if err != nil {
-		return nil
-	}
-
-	defer func() { _ = rows.Close() }()
-
-	var artists []lbSitewideArtist
-
-	maxL := 0
-
-	for rows.Next() {
-		var a lbSitewideArtist
-		if err := rows.Scan(&a.ArtistMBID, &a.ArtistName, &a.ListenCount); err == nil {
-			artists = append(artists, a)
-
-			if a.ListenCount > maxL {
-				maxL = a.ListenCount
-			}
-		}
-	}
-
-	si.mu.Lock()
-	si.maxListens = maxL
-	si.mu.Unlock()
-
-	return artists
-}
-
-// filterUnindexed returns artists whose MBIDs are not in the
-// indexed set.
-func filterUnindexed(artists []lbSitewideArtist, indexed map[string]bool) []lbSitewideArtist {
-	var out []lbSitewideArtist
-
-	for _, a := range artists {
-		if !indexed[a.ArtistMBID] {
-			out = append(out, a)
-		}
-	}
-
-	return out
-}
-
-// markInLibrary sets in_library=1 for all index entries whose
-// artist_mbid matches one of the given artists.  Also populates
-// the local_artist_id cross-reference column.
-func (si *SearchIndex) markInLibrary(artists []lbSitewideArtist) {
-	for _, a := range artists {
-		_, _ = si.db.ExecContext(
-			`UPDATE explore_index
-			 SET in_library = 1,
-			     local_artist_id = (SELECT id FROM artists WHERE mbid = ?)
-			 WHERE artist_mbid = ?`,
-			a.ArtistMBID, a.ArtistMBID,
-		)
-	}
-}
-
-// PopulateLocalCrossReferences walks the library tables and updates
-// explore_index rows to set local_*_id columns for any MBIDs that
-// exist locally.  Call after a library scan completes.
+// PopulateLocalCrossReferences syncs the local library into the search
+// index: every MB-verified library artist, release group, and recording
+// is upserted into explore_index, flagged in_library with its local id.
+// Call after a library scan completes.
+//
+// This is the local half of the index — it makes owned content
+// searchable regardless of the dump's popularity floor, using only data
+// already in the library tables (no API calls).  upsertBatch's conflict
+// rules mean dump-seeded rows are merely tagged in_library while
+// below-floor owned entities are inserted fresh (popularity 0, to be
+// filled later by incremental dumps or a lazy discography fetch).
+// MBID-less local content is intentionally excluded — the explore index
+// is MBID-keyed, and unmatched files are served by the library search.
 func (si *SearchIndex) PopulateLocalCrossReferences() {
-	// Artists.
-	if _, err := si.db.ExecContext(`
-		UPDATE explore_index
-		SET local_artist_id = (
-			SELECT a.id FROM artists a
-			WHERE a.mbid = explore_index.mbid
-		),
-		in_library = CASE
-			WHEN EXISTS (SELECT 1 FROM artists WHERE mbid = explore_index.mbid)
-			THEN 1 ELSE in_library
-		END
-		WHERE entity_type = 'artist'
-		  AND mbid IN (SELECT mbid FROM artists WHERE mbid IS NOT NULL AND mbid != '')
-	`); err != nil {
-		si.logger.Warn("cross-ref: update artists failed", "error", err)
+	entries := si.collectLibraryEntities()
+	if len(entries) == 0 {
+		si.logger.Info("library sync: no MB-verified library entities to index")
+		si.setMeta(localXrefReadyKey, "1")
+
+		return
 	}
 
-	// Release groups.
-	if _, err := si.db.ExecContext(`
-		UPDATE explore_index
-		SET local_release_group_id = (
-			SELECT rg.id FROM release_groups rg
-			WHERE rg.mbid = explore_index.mbid
-		),
-		in_library = CASE
-			WHEN EXISTS (SELECT 1 FROM release_groups WHERE mbid = explore_index.mbid)
-			THEN 1 ELSE in_library
-		END
-		WHERE entity_type = 'release_group'
-		  AND mbid IN (SELECT mbid FROM release_groups WHERE mbid IS NOT NULL AND mbid != '')
-	`); err != nil {
-		si.logger.Warn("cross-ref: update release groups failed", "error", err)
+	const batchSize = 1000
+	for i := 0; i < len(entries); i += batchSize {
+		end := i + batchSize
+		if end > len(entries) {
+			end = len(entries)
+		}
+
+		si.upsertBatch(entries[i:end])
+	}
+
+	si.setMeta(localXrefReadyKey, "1")
+	si.logger.Info("library sync: upserted library entities into index", "count", len(entries))
+}
+
+// collectLibraryEntities builds index entries for every library artist,
+// release group, and recording that carries a MusicBrainz ID.  Artist
+// credit strings and the primary artist MBID are resolved from the local
+// artist_credit tables so no network lookup is needed.
+func (si *SearchIndex) collectLibraryEntities() []SearchIndexResult {
+	var entries []SearchIndexResult
+
+	// Artists.
+	artistRows, err := si.db.QueryContext(
+		"SELECT id, name, mbid FROM artists WHERE mbid IS NOT NULL AND mbid != ''",
+	)
+	if err == nil {
+		for artistRows.Next() {
+			var (
+				id         int64
+				name, mbid string
+			)
+
+			if err := artistRows.Scan(&id, &name, &mbid); err != nil {
+				continue
+			}
+
+			entries = append(entries, SearchIndexResult{
+				EntityType:    "artist",
+				MBID:          mbid,
+				Title:         name,
+				ArtistName:    name,
+				ArtistMBID:    mbid,
+				InLibrary:     true,
+				LocalArtistID: id,
+			})
+		}
+
+		_ = artistRows.Close()
+	} else {
+		si.logger.Warn("library sync: query artists failed", "error", err)
+	}
+
+	// Release groups.  The correlated subquery picks the primary
+	// credited artist's MBID (if it has one).
+	rgRows, err := si.db.QueryContext(`
+		SELECT rg.id, rg.name, rg.mbid, COALESCE(ac.text, ''),
+		       COALESCE((
+		           SELECT a.mbid FROM artist_credit_artist aca
+		           JOIN artists a ON a.id = aca.artist_id
+		           WHERE aca.credit_id = rg.album_artist_credit_id
+		             AND a.mbid IS NOT NULL AND a.mbid != ''
+		           LIMIT 1
+		       ), '')
+		FROM release_groups rg
+		LEFT JOIN artist_credit ac ON ac.id = rg.album_artist_credit_id
+		WHERE rg.mbid IS NOT NULL AND rg.mbid != ''
+	`)
+	if err == nil {
+		for rgRows.Next() {
+			var (
+				id                           int64
+				name, mbid, credit, artistMB string
+			)
+
+			if err := rgRows.Scan(&id, &name, &mbid, &credit, &artistMB); err != nil {
+				continue
+			}
+
+			entries = append(entries, SearchIndexResult{
+				EntityType:          "release_group",
+				MBID:                mbid,
+				Title:               name,
+				ArtistName:          credit,
+				ArtistMBID:          artistMB,
+				InLibrary:           true,
+				LocalReleaseGroupID: id,
+			})
+		}
+
+		_ = rgRows.Close()
+	} else {
+		si.logger.Warn("library sync: query release groups failed", "error", err)
 	}
 
 	// Recordings.
-	if _, err := si.db.ExecContext(`
-		UPDATE explore_index
-		SET local_recording_id = (
-			SELECT r.id FROM recordings r
-			WHERE r.mbid = explore_index.mbid
-		),
-		in_library = CASE
-			WHEN EXISTS (SELECT 1 FROM recordings WHERE mbid = explore_index.mbid)
-			THEN 1 ELSE in_library
-		END
-		WHERE entity_type = 'recording'
-		  AND mbid IN (SELECT mbid FROM recordings WHERE mbid IS NOT NULL AND mbid != '')
-	`); err != nil {
-		si.logger.Warn("cross-ref: update recordings failed", "error", err)
+	recRows, err := si.db.QueryContext(`
+		SELECT r.id, r.name, r.mbid, COALESCE(ac.text, ''),
+		       COALESCE((
+		           SELECT a.mbid FROM artist_credit_artist aca
+		           JOIN artists a ON a.id = aca.artist_id
+		           WHERE aca.credit_id = r.artist_credit_id
+		             AND a.mbid IS NOT NULL AND a.mbid != ''
+		           LIMIT 1
+		       ), '')
+		FROM recordings r
+		LEFT JOIN artist_credit ac ON ac.id = r.artist_credit_id
+		WHERE r.mbid IS NOT NULL AND r.mbid != ''
+	`)
+	if err == nil {
+		for recRows.Next() {
+			var (
+				id                           int64
+				name, mbid, credit, artistMB string
+			)
+
+			if err := recRows.Scan(&id, &name, &mbid, &credit, &artistMB); err != nil {
+				continue
+			}
+
+			entries = append(entries, SearchIndexResult{
+				EntityType:       "recording",
+				MBID:             mbid,
+				Title:            name,
+				ArtistName:       credit,
+				ArtistMBID:       artistMB,
+				InLibrary:        true,
+				LocalRecordingID: id,
+			})
+		}
+
+		_ = recRows.Close()
+	} else {
+		si.logger.Warn("library sync: query recordings failed", "error", err)
 	}
 
-	si.logger.Info("cross-ref: populated local_*_id columns")
+	return entries
 }
 
 // storeSimilarArtists persists the similar artist relationships
@@ -2865,17 +2411,6 @@ func (si *SearchIndex) storeSimilarArtists(sourceMBID string, similar []lbSimila
 	}
 
 	_ = tx.Commit()
-}
-
-// markSimilar sets is_similar=1 for all index entries whose
-// artist_mbid matches one of the given artists.
-func (si *SearchIndex) markSimilar(artists []lbSitewideArtist) {
-	for _, a := range artists {
-		_, _ = si.db.ExecContext(
-			"UPDATE explore_index SET is_similar = 1 WHERE artist_mbid = ?",
-			a.ArtistMBID,
-		)
-	}
 }
 
 // PopularityData holds both listen count and listener count for a
@@ -2980,11 +2515,11 @@ func (si *SearchIndex) GetSimilarityScores(mbids []string) map[string]int {
 	return result
 }
 
-// InvalidateDiscographies clears the discography build timestamps
-// so the next build re-runs Tiers 2-4.
+// InvalidateDiscographies clears the dump-import completion marker so
+// the next StartBuild re-runs the full dump import.
 func (si *SearchIndex) InvalidateDiscographies() {
 	_, _ = si.db.ExecContext(
-		"DELETE FROM explore_index_meta WHERE key IN ('discog_built', 'tier2_built', 'tier3_built', 'tier4_built')",
+		"DELETE FROM explore_index_meta WHERE key = 'dump_import_done'",
 	)
 }
 
@@ -2997,6 +2532,16 @@ func (si *SearchIndex) setMeta(key, value string) {
 	}
 }
 
+// deleteMeta removes a key from explore_index_meta, e.g. to invalidate a
+// "ready" marker so the next launch re-runs a gated build step.
+func (si *SearchIndex) deleteMeta(key string) {
+	if _, err := si.db.ExecContext(
+		"DELETE FROM explore_index_meta WHERE key = ?", key,
+	); err != nil {
+		si.logger.Warn("search index: delete meta error", "key", key, "error", err)
+	}
+}
+
 // MarkReadyIfPopulated sets the index as ready for querying if it
 // already contains data from a previous build.  Called eagerly at
 // service creation so the index is queryable before StartBuild runs.
@@ -3006,57 +2551,31 @@ func (si *SearchIndex) MarkReadyIfPopulated() {
 		return
 	}
 
-	defer func() { _ = rows.Close() }()
-
+	var count int
 	if rows.Next() {
-		var count int
-		if err := rows.Scan(&count); err == nil && count > 0 {
-			si.mu.Lock()
-			si.ready = true
-			si.mu.Unlock()
-
-			si.logger.Info("search index: using existing index", "entries", count)
-		}
+		_ = rows.Scan(&count)
 	}
-}
+	// Release the connection before any further query: under a
+	// single-connection pool (tests) a nested query while these rows are
+	// open would deadlock.
+	_ = rows.Close()
 
-// scaledLimits returns the number of release groups and recordings
-// to index for an artist with the given listen count, scaled by
-// popularity relative to the most popular artist in the index.
-// If forceMax is true, returns the maximum limits regardless of
-// popularity (used for library artists).
-func (si *SearchIndex) scaledLimits(listenCount int, forceMax bool) (rgs, recs int) {
-	if forceMax {
-		return indexMaxRGs, indexMaxRecs
+	if count == 0 {
+		return
 	}
 
-	si.mu.RLock()
-	maxL := si.maxListens
-	si.mu.RUnlock()
+	// Trust a champion index built in a previous run; otherwise build it
+	// below now that the main index is known-ready.
+	championBuilt := si.hasMeta(championBuiltKey)
 
-	if maxL <= 0 || listenCount <= 0 {
-		return indexMinRGs, indexMinRecs
+	si.mu.Lock()
+	si.ready = true
+	si.championReady = championBuilt
+	si.mu.Unlock()
+
+	si.logger.Info("search index: using existing index", "entries", count)
+
+	if !championBuilt {
+		si.scheduleChampionRebuild()
 	}
-
-	ratio := math.Pow(float64(listenCount)/float64(maxL), indexPopularityExponent)
-
-	rgs = int(float64(indexMinRGs) + ratio*float64(indexMaxRGs-indexMinRGs))
-	recs = int(float64(indexMinRecs) + ratio*float64(indexMaxRecs-indexMinRecs))
-
-	rgs = max(indexMinRGs, min(indexMaxRGs, rgs))
-	recs = max(indexMinRecs, min(indexMaxRecs, recs))
-
-	return rgs, recs
-}
-
-// newLBRequest creates an HTTP GET request with the LB User-Agent.
-func newLBRequest(ctx context.Context, url string) (*http.Request, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Set("User-Agent", lbUserAgent)
-
-	return req, nil
 }

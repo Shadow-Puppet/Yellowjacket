@@ -20,6 +20,47 @@ function tokenize(s: string): string[] {
 }
 
 /**
+ * Loose comparison-only normalization: lowercase, drop punctuation
+ * (keep letters/digits/spaces), collapse whitespace, trim.  Mirrors
+ * the significant part of the backend's autotag.Normalize() so the
+ * UI can tell a cosmetic-only difference (case / punctuation /
+ * whitespace — normalized-equal, score unaffected) from a real one.
+ * Not exhaustive (no qualifier stripping); it only needs to agree on
+ * "is this difference purely formatting?".
+ */
+export function normalizeLoose(s: string): string {
+    return s
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}\s]/gu, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+/**
+ * Strict compare-only normalization: like normalizeLoose but also
+ * drops *all* whitespace, so punctuation that merely changes spacing
+ * doesn't register as a difference.  This is what closes the
+ * "Rock&Roll" vs "Rock & Roll" gap: the backend's Normalize() deletes
+ * punctuation without collapsing the surrounding spaces, leaving a
+ * stray space that scores the pair below 1.0 even though the only
+ * real difference is punctuation/case.
+ */
+export function normalizeStrict(s: string): string {
+    return s.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+}
+
+/**
+ * True when `a` and `b` differ only cosmetically — i.e. by
+ * capitalization, punctuation, or the spacing punctuation induces.
+ * Used to decide whether a title change is a real conflict or just
+ * formatting.  Empty `a` (no local value) is never cosmetic.
+ */
+export function isCosmeticDiff(a: string, b: string): boolean {
+    if (a === '' || a === b) return false;
+    return normalizeStrict(a) === normalizeStrict(b);
+}
+
+/**
  * Compute an inline word/punct-level diff between `a` (old) and
  * `b` (new), returning a list of segments suitable for inline
  * rendering: equal segments come from both sides, remove segments

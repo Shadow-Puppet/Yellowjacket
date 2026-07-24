@@ -1945,7 +1945,7 @@ export class ConfigPage extends LitElement {
         return html`
             <config-section
                 heading="Search Index"
-                description="The explore search index pre-caches popular artists, albums, and tracks from ListenBrainz for fast offline search."
+                description="The explore search index is built from the MusicBrainz/ListenBrainz data dumps — popular artists, albums, and tracks with listen counts — for fast offline search."
                 .open=${true}
             >
                 <div class="index-status">
