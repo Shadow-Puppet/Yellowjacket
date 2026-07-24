@@ -1,0 +1,59 @@
+name: Build & publish Arch package
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  arch-package:
+    # Adjust the label to one your act_runner registered with. The runner must
+    # use the Docker backend so the archlinux container below can start.
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    env:
+      PACKAGE_TOKEN: ${{ secrets.PACKAGE_TOKEN }}
+      SERVER_URL: ${{ github.server_url }}
+      REPO: ${{ github.repository }}
+      OWNER: ${{ github.repository_owner }}
+      SHA: ${{ github.sha }}
+      # Arch registry name (the "$repo" in clients' pacman.conf). Arbitrary label.
+      ARCH_REPO: stable
+    steps:
+      - name: Install build dependencies
+        run: |
+          pacman -Syu --noconfirm --needed \
+            base-devel git go nodejs pnpm curl sudo \
+            webkit2gtk-4.1 gtk3 alsa-lib
+
+      - name: Create unprivileged build user
+        run: |
+          useradd -m builder
+          install -d -o builder -g builder /build
+          echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
+
+      - name: Clone repo at the pushed commit
+        run: |
+          # Token auth works for private repos and needs no SSH key in CI.
+          sudo -u builder git clone \
+            "https://x-access-token:${PACKAGE_TOKEN}@${SERVER_URL#https://}/${REPO}.git" \
+            /build/yellowjacket
+          sudo -u builder git -C /build/yellowjacket checkout --detach "$SHA"
+
+      - name: Build package with makepkg
+        run: |
+          cd /build/yellowjacket/packaging/arch
+          # Point the PKGBUILD at this local clone / exact commit; pkgver() then
+          # derives the version from git automatically.
+          sudo -u builder \
+            env YJ_GITURL="git+file:///build/yellowjacket" YJ_GITREF="#commit=${SHA}" \
+            makepkg -f --noconfirm --cleanbuild
+
+      - name: Publish to the Gitea Arch registry
+        run: |
+          cd /build/yellowjacket/packaging/arch
+          pkg=$(ls yellowjacket-*.pkg.tar.zst)
+          echo "Uploading $pkg"
+          curl --fail-with-body --user "${OWNER}:${PACKAGE_TOKEN}" \
+            --upload-file "$pkg" \
+            "${SERVER_URL}/api/packages/${OWNER}/arch/${ARCH_REPO}"
