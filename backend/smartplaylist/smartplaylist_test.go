@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"yellowjacket/backend/coverart"
 	"yellowjacket/backend/database"
 )
 
@@ -809,6 +810,85 @@ func TestEvaluate_TextIs(t *testing.T) {
 				tr.TrackName, tr.ArtistName,
 			)
 		}
+	}
+}
+
+// TestEvaluate_ArtworkEnrichment verifies the presentation-only
+// cover-art and MusicBrainz-ID fields are attached to matched tracks
+// by the batched fetchArtwork pass (they are no longer part of the
+// lean filter query).
+func TestEvaluate_ArtworkEnrichment(t *testing.T) {
+	t.Parallel()
+
+	db := database.NewTestDB(t)
+
+	// Minimal FK chain: cover_art → release_group(mbid) →
+	// release_group_recordings → recording(mbid) → audio_file, plus
+	// artist_credit → artist_credit_artist → artist(mbid).
+	exec := func(query string, args ...any) {
+		t.Helper()
+
+		if _, err := db.ExecContext(query, args...); err != nil {
+			t.Fatalf("seed %q: %v", query, err)
+		}
+	}
+
+	// file_types are pre-seeded by the schema (id 0 = .mp3).
+	exec("INSERT INTO cover_art (id, file_path, mime_type) " +
+		"VALUES (1, '/covers/abc123.jpg', 'image/jpeg')")
+	exec("INSERT INTO artists (id, name, mbid) " +
+		"VALUES (1, 'Queen', 'artist-mbid-1')")
+	exec("INSERT INTO artist_credit (id, text) VALUES (1, 'Queen')")
+	exec("INSERT INTO artist_credit_artist (credit_id, artist_id) " +
+		"VALUES (1, 1)")
+	exec("INSERT INTO release_groups (id, name, cover_art_id, mbid) " +
+		"VALUES (1, 'A Night at the Opera', 1, 'rg-mbid-1')")
+	exec("INSERT INTO recordings (id, name, artist_credit_id, mbid) " +
+		"VALUES (1, 'Bohemian Rhapsody', 1, 'rec-mbid-1')")
+	exec("INSERT INTO release_group_recordings " +
+		"(release_group_id, recording_id) VALUES (1, 1)")
+	exec("INSERT INTO audio_files (id, file_path, " +
+		"length_milliseconds, recording_id, file_type_id) " +
+		"VALUES (1, '/music/bohemian.mp3', 354000, 1, 0)")
+
+	tracks, err := Evaluate(db, RuleSet{
+		Rules: []Rule{
+			{Field: "artist", Operator: "is", Value: "Queen"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+
+	if len(tracks) != 1 {
+		t.Fatalf("got %d tracks, want 1", len(tracks))
+	}
+
+	tr := tracks[0]
+
+	if tr.ArtistMBID != "artist-mbid-1" {
+		t.Errorf("ArtistMBID = %q, want artist-mbid-1", tr.ArtistMBID)
+	}
+
+	if tr.ReleaseGroupMBID != "rg-mbid-1" {
+		t.Errorf("ReleaseGroupMBID = %q, want rg-mbid-1",
+			tr.ReleaseGroupMBID)
+	}
+
+	if tr.RecordingMBID != "rec-mbid-1" {
+		t.Errorf("RecordingMBID = %q, want rec-mbid-1",
+			tr.RecordingMBID)
+	}
+
+	wantURLs := coverart.ResolveURLs("/covers/abc123.jpg")
+	if tr.CoverArtPath != wantURLs.Original {
+		t.Errorf("CoverArtPath = %q, want %q",
+			tr.CoverArtPath, wantURLs.Original)
+	}
+
+	if tr.CoverArtSmall != wantURLs.Small {
+		t.Errorf("CoverArtSmall = %q, want %q",
+			tr.CoverArtSmall, wantURLs.Small)
 	}
 }
 
