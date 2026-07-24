@@ -52,8 +52,14 @@ jobs:
       - name: Publish to the Gitea Arch registry
         run: |
           cd /build/yellowjacket/packaging/arch
-          pkg=$(ls yellowjacket-*.pkg.tar.zst)
-          echo "Uploading $pkg"
-          curl --fail-with-body --user "${OWNER}:${PACKAGE_TOKEN}" \
-            --upload-file "$pkg" \
-            "${SERVER_URL}/api/packages/${OWNER}/arch/${ARCH_REPO}"
+          # makepkg also produces a -debug package (detached symbols); end users
+          # don't need it, so publish only the runtime package(s).
+          for pkg in yellowjacket-*.pkg.tar.zst; do
+            case "$pkg" in
+              yellowjacket-debug-*) continue ;;
+            esac
+            echo "Uploading $pkg"
+            curl --fail-with-body --user "${OWNER}:${PACKAGE_TOKEN}" \
+              --upload-file "$pkg" \
+              "${SERVER_URL}/api/packages/${OWNER}/arch/${ARCH_REPO}"
+          done
