@@ -18,6 +18,7 @@ import {
 } from '@go/library/Library';
 import { library } from '@go/models';
 import { LibraryController } from '@store/controllers/library-controller';
+import { libraryStore } from '@store/library-store';
 import { SearchController } from '@store/controllers/search-controller';
 import { queueStore } from '@store/queue-store';
 import {
@@ -224,6 +225,7 @@ export class ArtistsView
                 display: flex;
                 flex-direction: column;
                 overflow: hidden;
+                height: 100%;
                 position: relative;
                 contain: layout style;
             }
@@ -292,6 +294,13 @@ export class ArtistsView
                 align-items: center;
                 justify-content: center;
                 flex-shrink: 0;
+            }
+
+            .avatar-image {
+                width: 100%;
+                height: 100%;
+                object-fit: cover;
+                border-radius: 50%;
             }
 
             .avatar-placeholder {
@@ -833,9 +842,10 @@ export class ArtistsView
                     bubbles: true,
                     composed: true,
                     detail: {
-                        view: 'artist-details',
-                        artistId: artist.ID,
+                        view: 'explore-artist-details',
+                        artistMBID: artist.MBID || '',
                         artistName: artist.Name,
+                        localArtistId: artist.ID,
                     },
                 }),
             );
@@ -975,6 +985,52 @@ export class ArtistsView
      * Helpers
      * ================================================================ */
 
+    private renderArtistAvatar(artist: library.Artist) {
+        const needed = (this.imageSize ?? 176) * window.devicePixelRatio;
+        let imageURL = '';
+
+        if (needed <= 100) {
+            imageURL = artist.ImageSmall || artist.ImageMedium || artist.ImageLarge || '';
+        } else if (needed <= 200) {
+            imageURL = artist.ImageMedium || artist.ImageLarge || '';
+        } else {
+            imageURL = artist.ImageLarge || '';
+        }
+
+        // Fallback: use album cover art if no artist image.
+        if (!imageURL) {
+            const cachedAlbums = libraryStore.cachedAlbums;
+            if (cachedAlbums) {
+                const name = artist.Name.toLowerCase();
+
+                for (const a of cachedAlbums) {
+                    if (a.ArtistName.toLowerCase() === name) {
+                        if (needed <= 100) {
+                            imageURL = a.CoverArtSmall || a.CoverArtMedium || '';
+                        } else {
+                            imageURL = a.CoverArtMedium || a.CoverArtLarge || '';
+                        }
+
+                        if (imageURL) break;
+                    }
+                }
+            }
+        }
+
+        if (imageURL) {
+            return html`<img
+                class="avatar-image"
+                src="${imageURL}"
+                alt="${artist.Name}"
+                loading="lazy"
+            />`;
+        }
+
+        return html`<span class="avatar-placeholder">
+            ${this.getArtistInitial(artist.Name)}
+        </span>`;
+    }
+
     private getArtistInitial(
         name: string,
     ): string {
@@ -1034,11 +1090,13 @@ export class ArtistsView
                                     bubbles: true,
                                     composed: true,
                                     detail: {
-                                        view: 'artist-details',
-                                        artistId:
-                                            artist.ID,
+                                        view: 'explore-artist-details',
+                                        artistMBID:
+                                            artist.MBID || '',
                                         artistName:
                                             artist.Name,
+                                        localArtistId:
+                                            artist.ID,
                                     },
                                 },
                             ),
@@ -1047,11 +1105,7 @@ export class ArtistsView
                 }}
             >
                 <div class="avatar-container">
-                    <span class="avatar-placeholder">
-                        ${this.getArtistInitial(
-                            artist.Name,
-                        )}
-                    </span>
+                    ${this.renderArtistAvatar(artist)}
                 </div>
                 <div
                     class="artist-name"

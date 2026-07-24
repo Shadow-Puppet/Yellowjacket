@@ -75,10 +75,13 @@ func NewTestDB(t *testing.T) *DB {
 	t.Cleanup(func() { _ = db.Close() })
 
 	return &DB{
-		db:      db,
-		Ctx:     ctx,
-		Queries: queries,
-		logger:  slog.Default(),
+		db:  db,
+		Ctx: ctx,
+		// The in-memory test DB shares one connection, so reads and
+		// writes use the same handle; ReadQueries aliases Queries.
+		Queries:     queries,
+		ReadQueries: queries,
+		logger:      slog.Default(),
 	}
 }
 

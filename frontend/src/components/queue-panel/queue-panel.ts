@@ -44,7 +44,11 @@ import type { library } from '@go/models';
 import '@components/track-details/track-details.js';
 import type { TrackDetails } from '@components/track-details/track-details.js';
 import type { CoverArtUrls } from '@components/track-details/track-details.js';
-
+import {
+    artistLink,
+    trackLink,
+    exploreLinkStyles,
+} from '@utils/explore-link';
 const MIN_WIDTH = 200;
 const MAX_WIDTH = 500;
 const DEFAULT_WIDTH = 320;
@@ -207,7 +211,7 @@ export class QueuePanel
         return this.playlistSubmenuPopup;
     }
 
-    static override styles = [designTokens, contextMenuStyles, css`
+    static override styles = [designTokens, contextMenuStyles, exploreLinkStyles, css`
         :host {
             flex-shrink: 0;
             width: 0;
@@ -351,6 +355,22 @@ export class QueuePanel
 
         .track-item.active .track-position {
             color: var(--yj-accent, #ffd43b);
+        }
+
+        .track-art {
+            width: 32px;
+            height: 32px;
+            border-radius: 4px;
+            overflow: hidden;
+            flex-shrink: 0;
+            background: var(--yj-bg-overlay, rgba(255, 255, 255, 0.06));
+        }
+
+        .track-art img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
         }
 
         .track-details {
@@ -865,12 +885,18 @@ export class QueuePanel
 
         if (!track) return;
 
-        const coverArt =
-            this.resolveQueueCoverArt(track.Album);
+        const coverArt = track.CoverArtPath
+            ? {
+                coverArtPath: track.CoverArtPath,
+                coverArtSmall: track.CoverArtSmall,
+                coverArtMedium: track.CoverArtMedium,
+                coverArtLarge: track.CoverArtLarge,
+            }
+            : undefined;
 
         this.trackDetailsDialog?.show(
             track,
-            coverArt ?? undefined,
+            coverArt,
         );
     }
 
@@ -899,17 +925,19 @@ export class QueuePanel
 
         if (tracks.length === 0) return;
 
-        const albumNames = new Set(
-            tracks.map((t) => t.Album),
-        );
+        const first = tracks[0]!;
+        const albumNames = new Set(tracks.map((t) => t.Album));
         let coverArt: CoverArtUrls | null = null;
         let coverArtMixed = false;
 
-        if (albumNames.size === 1) {
-            const albumName = [...albumNames][0]!;
-            coverArt =
-                this.resolveQueueCoverArt(albumName);
-        } else {
+        if (albumNames.size === 1 && first.CoverArtPath) {
+            coverArt = {
+                coverArtPath: first.CoverArtPath,
+                coverArtSmall: first.CoverArtSmall,
+                coverArtMedium: first.CoverArtMedium,
+                coverArtLarge: first.CoverArtLarge,
+            };
+        } else if (albumNames.size > 1) {
             coverArtMixed = true;
         }
 
@@ -918,32 +946,6 @@ export class QueuePanel
             coverArt,
             coverArtMixed,
         );
-    }
-
-    private resolveQueueCoverArt(
-        albumName: string,
-    ): CoverArtUrls | null {
-        if (!albumName) return null;
-
-        const albums =
-            libraryStore.getCachedAlbums();
-
-        if (!albums) return null;
-
-        const album = albums.find(
-            (a) => a.Name === albumName,
-        );
-
-        if (!album || !album.CoverArtPath) {
-            return null;
-        }
-
-        return {
-            coverArtPath: album.CoverArtPath,
-            coverArtSmall: album.CoverArtSmall,
-            coverArtMedium: album.CoverArtMedium,
-            coverArtLarge: album.CoverArtLarge,
-        };
     }
 
     private onContextPlaylistActionComplete = () => {
@@ -1396,6 +1398,8 @@ export class QueuePanel
             dropIdx === trackCount &&
             index === trackCount - 1;
 
+        const artUrl = track.coverArtPath || '';
+
         // No inline closures — all events delegated via data-index
         // on the virtualizer element (see firstUpdated).
         return html`
@@ -1413,12 +1417,13 @@ export class QueuePanel
                 <span class="track-position">
                     ${index + 1}
                 </span>
+                ${artUrl ? html`<div class="track-art"><img src="${artUrl}" alt="" loading="lazy" /></div>` : nothing}
                 <div class="track-details">
                     <span class="track-title">
-                        ${this.getDisplayTitle(track)}
+                        ${trackLink(this.getDisplayTitle(track), track.album, track.releaseGroupMbid, track.recordingMbid)}
                     </span>
                     <span class="track-artist">
-                        ${track.artist || 'Unknown Artist'}
+                        ${artistLink(track.artist, track.artistMbid) || 'Unknown Artist'}
                     </span>
                 </div>
                 <button

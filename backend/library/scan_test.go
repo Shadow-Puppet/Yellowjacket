@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"sync/atomic"
 	"testing"
 
 	"yellowjacket/backend/database"
@@ -207,6 +208,12 @@ func TestMapTrackRow(t *testing.T) {
 		2,                                    // channels
 		1411,                                 // bitrate
 		35000000,                             // fileSize
+		0,                                    // playCount
+		sql.NullTime{},                       // lastPlayed
+		"",                                   // coverArtPath
+		"",                                   // artistMBID
+		"",                                   // releaseGroupMBID
+		"",                                   // recordingMBID
 	)
 
 	// Verify all 16 fields.
@@ -287,6 +294,10 @@ func TestMapTrackRow(t *testing.T) {
 		"/music/unknown.mp3", 0, "Test", "Artist",
 		sql.NullInt64{}, sql.NullInt64{}, // invalid (null)
 		"", "", 0, "", "", 0, 0, 0, 0, 0,
+		0,              // playCount
+		sql.NullTime{}, // lastPlayed
+		"",             // coverArtPath
+		"", "", "",     // artistMBID, releaseGroupMBID, recordingMBID
 	)
 
 	if trackNull.TrackNumber != 0 {
@@ -731,4 +742,254 @@ func TestEntityCache_EmptyFields(t *testing.T) {
 			sameACID.Int64, trackAC.ID,
 		)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// commitBatch + tagging_items bookkeeping (phase 008.3)
+// ---------------------------------------------------------------------------
+
+func TestCommitBatch_TaggingItemsBookkeeping(t *testing.T) {
+	t.Parallel()
+
+	lib, db := setupTestLibrary(t)
+	cache := newEntityCache()
+	metrics := newScanMetrics()
+
+	var added, updated, skipped atomic.Int64
+
+	batch := []importResult{
+		{
+			absolutePath: "/music/Artist/Album 1/01.mp3",
+			fileType:     metadata.MP3,
+			lengthMillis: 200000,
+			tags: &metadata.TrackMetadata{
+				Title: "A1T1", Artist: "Artist", AlbumArtist: "Artist",
+				Album: "Album 1", TrackNumber: 1, DiscNumber: 0,
+			},
+			libraryID: 0,
+		},
+		{
+			absolutePath: "/music/Artist/Album 1/02.mp3",
+			fileType:     metadata.MP3,
+			lengthMillis: 210000,
+			tags: &metadata.TrackMetadata{
+				Title: "A1T2", Artist: "Artist", AlbumArtist: "Artist",
+				Album: "Album 1", TrackNumber: 2, DiscNumber: 0,
+			},
+			libraryID: 0,
+		},
+		{
+			absolutePath: "/music/Artist/Album 2 [Disc 1]/01.mp3",
+			fileType:     metadata.MP3,
+			lengthMillis: 220000,
+			tags: &metadata.TrackMetadata{
+				Title: "A2D1T1", Artist: "Artist", AlbumArtist: "Artist",
+				Album: "Album 2", TrackNumber: 1, DiscNumber: 1,
+			},
+			libraryID: 0,
+		},
+		{
+			absolutePath: "/music/Artist/Album 2 [Disc 2]/01.mp3",
+			fileType:     metadata.MP3,
+			lengthMillis: 230000,
+			tags: &metadata.TrackMetadata{
+				Title: "A2D2T1", Artist: "Artist", AlbumArtist: "Artist",
+				Album: "Album 2", TrackNumber: 1, DiscNumber: 2,
+			},
+			libraryID: 0,
+		},
+		{
+			absolutePath: "/music/Orphan/singleton.mp3",
+			fileType:     metadata.MP3,
+			lengthMillis: 100000,
+			tags: &metadata.TrackMetadata{
+				Title: "Orphan", Artist: "Solo", AlbumArtist: "Solo",
+				Album: "", TrackNumber: 0, DiscNumber: 0,
+			},
+			libraryID: 0,
+		},
+	}
+
+	if err := lib.commitBatch(batch, cache, metrics, &added, &updated, &skipped, nil); err != nil {
+		t.Fatalf("commitBatch: %v", err)
+	}
+
+	if added.Load() != int64(len(batch)) {
+		for _, w := range metrics.Warnings {
+			t.Logf("warning: path=%s phase=%s err=%s", w.FilePath, w.Phase, w.Err)
+		}
+
+		t.Fatalf("added = %d, want %d (skipped=%d)", added.Load(), len(batch), skipped.Load())
+	}
+
+	groupCount := queryInt(t, db, "SELECT COUNT(*) FROM tagging_items")
+
+	if groupCount != 4 {
+		t.Errorf("tagging_items count = %d, want 4", groupCount)
+	}
+
+	// Each group should carry the expected track_count.
+	wantCounts := map[[3]any]int64{
+		{int64(0), "Album 1", int64(0)}: 2,
+		{int64(0), "Album 2", int64(1)}: 1,
+		{int64(0), "Album 2", int64(2)}: 1,
+		{int64(0), "", int64(0)}:        1,
+	}
+
+	for key, want := range wantCounts {
+		libID, _ := key[0].(int64)
+		album, _ := key[1].(string)
+		disc, _ := key[2].(int64)
+
+		rows, err := db.QueryContext(
+			`SELECT track_count FROM tagging_items
+			 WHERE library_id = ? AND album_name = ? AND disc_number = ?`,
+			libID, album, disc,
+		)
+		if err != nil {
+			t.Errorf("query track_count for %v: %v", key, err)
+
+			continue
+		}
+
+		var got int64
+		if rows.Next() {
+			if scanErr := rows.Scan(&got); scanErr != nil {
+				t.Errorf("scan track_count for %v: %v", key, scanErr)
+			}
+		}
+
+		_ = rows.Close()
+
+		if got != want {
+			t.Errorf("track_count for %v = %d, want %d", key, got, want)
+		}
+	}
+}
+
+func TestCommitBatch_AlbumTagChangeKeepsGroup(t *testing.T) {
+	t.Parallel()
+
+	// Folder-based grouping: if a track stays in the same folder
+	// but its album tag changes (very common — autotag itself
+	// rewrites album tags), the group_key should NOT change.  Test
+	// guards against the old behavior where any album-tag drift
+	// would split the album into multiple groups.
+	lib, db := setupTestLibrary(t)
+	cache := newEntityCache()
+	metrics := newScanMetrics()
+
+	var added, updated, skipped atomic.Int64
+
+	initial := []importResult{
+		{
+			absolutePath: "/music/Artist/Album Folder/01.mp3",
+			fileType:     metadata.MP3,
+			lengthMillis: 200000,
+			tags: &metadata.TrackMetadata{
+				Title: "Track", Artist: "Artist", AlbumArtist: "Artist",
+				Album: "Old Album",
+			},
+			libraryID: 0,
+		},
+	}
+
+	if err := lib.commitBatch(
+		initial,
+		cache,
+		metrics,
+		&added,
+		&updated,
+		&skipped,
+		nil,
+	); err != nil {
+		t.Fatalf("initial commitBatch: %v", err)
+	}
+
+	var (
+		fileID        int64
+		originalGroup string
+	)
+
+	rows, err := db.QueryContext(
+		`SELECT id, group_key FROM audio_files WHERE file_path = ?`,
+		"/music/Artist/Album Folder/01.mp3",
+	)
+	if err != nil {
+		t.Fatalf("lookup file: %v", err)
+	}
+
+	if rows.Next() {
+		if scanErr := rows.Scan(&fileID, &originalGroup); scanErr != nil {
+			t.Fatalf("scan file: %v", scanErr)
+		}
+	}
+
+	_ = rows.Close()
+
+	update := []importResult{
+		{
+			absolutePath:   "/music/Artist/Album Folder/01.mp3",
+			fileType:       metadata.MP3,
+			lengthMillis:   200000,
+			existingFileID: fileID,
+			needsUpdate:    true,
+			tags: &metadata.TrackMetadata{
+				Title: "Track", Artist: "Artist", AlbumArtist: "Artist",
+				Album: "Albums Canonical Name (Remastered 2024)",
+			},
+			libraryID: 0,
+		},
+	}
+
+	if err := lib.commitBatch(update, cache, metrics, &added, &updated, &skipped, nil); err != nil {
+		t.Fatalf("update commitBatch: %v", err)
+	}
+
+	groupCount := queryInt(t, db, `SELECT COUNT(*) FROM tagging_items`)
+	if groupCount != 1 {
+		t.Errorf("expected exactly 1 tagging_items row, got %d", groupCount)
+	}
+
+	rows2, err := db.QueryContext(
+		`SELECT group_key FROM audio_files WHERE id = ?`, fileID,
+	)
+	if err != nil {
+		t.Fatalf("lookup post-update: %v", err)
+	}
+
+	var afterGroup string
+	if rows2.Next() {
+		if scanErr := rows2.Scan(&afterGroup); scanErr != nil {
+			t.Fatalf("scan post-update: %v", scanErr)
+		}
+	}
+
+	_ = rows2.Close()
+
+	if afterGroup != originalGroup {
+		t.Errorf("group_key changed across album tag edit: %q → %q", originalGroup, afterGroup)
+	}
+}
+
+// queryInt runs a single-column scalar query and returns the first
+// int64 result; fails the test on any error.
+func queryInt(t *testing.T, db *database.DB, query string, args ...any) int64 {
+	t.Helper()
+
+	rows, err := db.QueryContext(query, args...)
+	if err != nil {
+		t.Fatalf("query %q: %v", query, err)
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	var got int64
+	if rows.Next() {
+		if err := rows.Scan(&got); err != nil {
+			t.Fatalf("scan %q: %v", query, err)
+		}
+	}
+
+	return got
 }

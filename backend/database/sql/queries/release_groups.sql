@@ -24,6 +24,13 @@ ON CONFLICT(name, album_artist_credit_id) DO UPDATE SET
   year = COALESCE(excluded.year, release_groups.year)
 RETURNING *;
 
+-- name: SetReleaseGroupOriginalYear :exec
+-- Set the release group's original-release-year (release-group's
+-- first-release-date from MusicBrainz).  Called from autotag apply
+-- when the user confirms a candidate; the file-tag year stays in
+-- the year column.
+UPDATE release_groups SET original_year = ? WHERE id = ?;
+
 -- name: UpdateReleaseGroup :exec
 UPDATE release_groups 
 SET name = ?
@@ -49,8 +56,25 @@ ORDER BY name;
 SELECT
     rg.id,
     rg.name,
-    rg.year,
+    -- year prefers original release year (MB first-release-date)
+    -- over the file-tag year so the UI surfaces the album's
+    -- original year by default.  release_year keeps the file-tag
+    -- year accessible.
+    COALESCE(rg.original_year, rg.year) AS year,
+    COALESCE(rg.year, 0) AS release_year,
+    rg.mbid,
     COALESCE(ac.text, fallback_ac.text, '') as artist_name,
+    -- primary (first-credited) album artist's MBID, for linking the
+    -- artist name to its detail page.  Empty when the album has no
+    -- MB-tagged album-artist credit.
+    CAST(COALESCE((
+        SELECT a.mbid
+        FROM artist_credit_artist aca_p
+        JOIN artists a ON a.id = aca_p.artist_id
+        WHERE aca_p.credit_id = rg.album_artist_credit_id
+        ORDER BY aca_p.id
+        LIMIT 1
+    ), '') AS TEXT) as artist_mbid,
     COALESCE(ca.file_path, '') as cover_art_path
 FROM release_groups rg
 LEFT JOIN artist_credit ac ON rg.album_artist_credit_id = ac.id
@@ -68,8 +92,25 @@ ORDER BY rg.name;
 SELECT
     rg.id,
     rg.name,
-    rg.year,
+    -- year prefers original release year (MB first-release-date)
+    -- over the file-tag year so the UI surfaces the album's
+    -- original year by default.  release_year keeps the file-tag
+    -- year accessible.
+    COALESCE(rg.original_year, rg.year) AS year,
+    COALESCE(rg.year, 0) AS release_year,
+    rg.mbid,
     COALESCE(ac.text, fallback_ac.text, '') as artist_name,
+    -- primary (first-credited) album artist's MBID, for linking the
+    -- artist name to its detail page.  Empty when the album has no
+    -- MB-tagged album-artist credit.
+    CAST(COALESCE((
+        SELECT a.mbid
+        FROM artist_credit_artist aca_p
+        JOIN artists a ON a.id = aca_p.artist_id
+        WHERE aca_p.credit_id = rg.album_artist_credit_id
+        ORDER BY aca_p.id
+        LIMIT 1
+    ), '') AS TEXT) as artist_mbid,
     COALESCE(ca.file_path, '') as cover_art_path
 FROM release_groups rg
 LEFT JOIN artist_credit ac ON rg.album_artist_credit_id = ac.id
@@ -94,8 +135,20 @@ ORDER BY rg.name;
 SELECT
     rg.id,
     rg.name,
-    rg.year,
+    COALESCE(rg.original_year, rg.year) AS year,
+    COALESCE(rg.year, 0) AS release_year,
     COALESCE(ac.text, fallback_ac.text, '') as artist_name,
+    -- primary (first-credited) album artist's MBID, for linking the
+    -- artist name to its detail page.  Empty when the album has no
+    -- MB-tagged album-artist credit.
+    CAST(COALESCE((
+        SELECT a.mbid
+        FROM artist_credit_artist aca_p
+        JOIN artists a ON a.id = aca_p.artist_id
+        WHERE aca_p.credit_id = rg.album_artist_credit_id
+        ORDER BY aca_p.id
+        LIMIT 1
+    ), '') AS TEXT) as artist_mbid,
     COALESCE(ca.file_path, '') as cover_art_path
 FROM release_groups rg
 JOIN artist_credit ac ON rg.album_artist_credit_id = ac.id
@@ -118,8 +171,20 @@ SELECT COUNT(*) FROM release_group_recordings WHERE release_group_id = ?;
 SELECT
     rg.id,
     rg.name,
-    rg.year,
+    COALESCE(rg.original_year, rg.year) AS year,
+    COALESCE(rg.year, 0) AS release_year,
     COALESCE(ac.text, fallback_ac.text, '') as artist_name,
+    -- primary (first-credited) album artist's MBID, for linking the
+    -- artist name to its detail page.  Empty when the album has no
+    -- MB-tagged album-artist credit.
+    CAST(COALESCE((
+        SELECT a.mbid
+        FROM artist_credit_artist aca_p
+        JOIN artists a ON a.id = aca_p.artist_id
+        WHERE aca_p.credit_id = rg.album_artist_credit_id
+        ORDER BY aca_p.id
+        LIMIT 1
+    ), '') AS TEXT) as artist_mbid,
     COALESCE(ca.file_path, '') as cover_art_path
 FROM release_groups rg
 JOIN artist_credit ac ON rg.album_artist_credit_id = ac.id

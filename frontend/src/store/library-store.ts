@@ -120,6 +120,16 @@ class LibraryStore {
     // Returns cached data or fetches from backend on first access.
     // ===================================================================
 
+    /** Synchronous access to cached artists (null if not yet loaded). */
+    get cachedArtists(): library.Artist[] | null {
+        return this.artists;
+    }
+
+    /** Synchronous access to cached albums (null if not yet loaded). */
+    get cachedAlbums(): library.Album[] | null {
+        return this.albums;
+    }
+
     async getTracks(): Promise<library.Track[]> {
         if (this.tracks !== null) {
             return this.tracks;

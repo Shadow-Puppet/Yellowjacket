@@ -587,3 +587,672 @@ func TestMigration6TrackMetadataViewHasLibraryID(t *testing.T) {
 		)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Migration 9 integration tests
+// ---------------------------------------------------------------------------
+
+func TestMigration9SmartPlaylistColumns(t *testing.T) {
+	t.Parallel()
+
+	db := NewTestDB(t)
+
+	// Verify user_version >= 9.
+	var version int
+
+	verRows, err := db.QueryContext("PRAGMA user_version")
+	if err != nil {
+		t.Fatalf("PRAGMA user_version: %v", err)
+	}
+
+	if !verRows.Next() {
+		_ = verRows.Close()
+
+		t.Fatal("PRAGMA user_version: no row returned")
+	}
+
+	if err := verRows.Scan(&version); err != nil {
+		_ = verRows.Close()
+
+		t.Fatalf("scan user_version: %v", err)
+	}
+
+	_ = verRows.Close()
+
+	if version < 9 {
+		t.Errorf("user_version = %d, want >= 9", version)
+	}
+
+	// Verify playlists table has is_smart and smart_rules columns.
+	hasSmart := false
+	hasRules := false
+
+	ptRows, err := db.QueryContext(
+		"PRAGMA table_info(playlists)",
+	)
+	if err != nil {
+		t.Fatalf("PRAGMA table_info(playlists): %v", err)
+	}
+
+	for ptRows.Next() {
+		var (
+			cid       int64
+			name      string
+			colType   string
+			notNull   int64
+			dfltValue sql.NullString
+			pk        int64
+		)
+
+		if err := ptRows.Scan(
+			&cid, &name, &colType, &notNull, &dfltValue, &pk,
+		); err != nil {
+			_ = ptRows.Close()
+
+			t.Fatalf("scan playlists table_info: %v", err)
+		}
+
+		if name == "is_smart" {
+			hasSmart = true
+		}
+
+		if name == "smart_rules" {
+			hasRules = true
+		}
+	}
+
+	_ = ptRows.Close()
+
+	if !hasSmart {
+		t.Error("playlists missing is_smart column")
+	}
+
+	if !hasRules {
+		t.Error("playlists missing smart_rules column")
+	}
+
+	// Insert a smart playlist with rules.
+	rulesJSON := `{"rules":[{"field":"genre","operator":"is","value":"Rock"}]}`
+
+	_, err = db.ExecContext(
+		"INSERT INTO playlists (name, is_smart, smart_rules) VALUES (?, 1, ?)",
+		"Rock Songs", rulesJSON,
+	)
+	if err != nil {
+		t.Fatalf("insert smart playlist: %v", err)
+	}
+
+	// Read it back and verify.
+	rows, err := db.QueryContext(
+		"SELECT is_smart, smart_rules FROM playlists WHERE name = ?",
+		"Rock Songs",
+	)
+	if err != nil {
+		t.Fatalf("query smart playlist: %v", err)
+	}
+
+	if !rows.Next() {
+		_ = rows.Close()
+
+		t.Fatal("smart playlist not found")
+	}
+
+	var (
+		isSmart    int64
+		smartRules sql.NullString
+	)
+
+	if err := rows.Scan(&isSmart, &smartRules); err != nil {
+		_ = rows.Close()
+
+		t.Fatalf("scan smart playlist: %v", err)
+	}
+
+	_ = rows.Close()
+
+	if isSmart != 1 {
+		t.Errorf("is_smart = %d, want 1", isSmart)
+	}
+
+	if !smartRules.Valid || smartRules.String != rulesJSON {
+		t.Errorf(
+			"smart_rules = %q, want %q",
+			smartRules.String, rulesJSON,
+		)
+	}
+
+	// Insert a regular playlist (default is_smart) and verify
+	// it defaults to 0.
+	_, err = db.ExecContext(
+		"INSERT INTO playlists (name) VALUES (?)",
+		"Regular Playlist",
+	)
+	if err != nil {
+		t.Fatalf("insert regular playlist: %v", err)
+	}
+
+	regRows, err := db.QueryContext(
+		"SELECT is_smart, smart_rules FROM playlists WHERE name = ?",
+		"Regular Playlist",
+	)
+	if err != nil {
+		t.Fatalf("query regular playlist: %v", err)
+	}
+
+	if !regRows.Next() {
+		_ = regRows.Close()
+
+		t.Fatal("regular playlist not found")
+	}
+
+	var (
+		regSmart int64
+		regRules sql.NullString
+	)
+
+	if err := regRows.Scan(&regSmart, &regRules); err != nil {
+		_ = regRows.Close()
+
+		t.Fatalf("scan regular playlist: %v", err)
+	}
+
+	_ = regRows.Close()
+
+	if regSmart != 0 {
+		t.Errorf("regular playlist is_smart = %d, want 0", regSmart)
+	}
+
+	if regRules.Valid {
+		t.Errorf(
+			"regular playlist smart_rules should be NULL, got %q",
+			regRules.String,
+		)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Migration 10 — play history tracking
+// ---------------------------------------------------------------------------
+
+func TestMigration10PlayHistory(t *testing.T) {
+	t.Parallel()
+
+	db := NewTestDB(t)
+
+	// Verify user_version >= 10.
+	var version int
+
+	verRows, err := db.QueryContext("PRAGMA user_version")
+	if err != nil {
+		t.Fatalf("PRAGMA user_version: %v", err)
+	}
+
+	if !verRows.Next() {
+		_ = verRows.Close()
+
+		t.Fatal("PRAGMA user_version: no row returned")
+	}
+
+	if err := verRows.Scan(&version); err != nil {
+		_ = verRows.Close()
+
+		t.Fatalf("scan user_version: %v", err)
+	}
+
+	_ = verRows.Close()
+
+	if version < 10 {
+		t.Errorf("user_version = %d, want >= 10", version)
+	}
+
+	// Verify play_history table exists.
+	var tableCount int64
+
+	tblRows, err := db.QueryContext(
+		"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='play_history'",
+	)
+	if err != nil {
+		t.Fatalf("query sqlite_master: %v", err)
+	}
+
+	if !tblRows.Next() {
+		_ = tblRows.Close()
+
+		t.Fatal("no row from sqlite_master query")
+	}
+
+	if err := tblRows.Scan(&tableCount); err != nil {
+		_ = tblRows.Close()
+
+		t.Fatalf("scan table count: %v", err)
+	}
+
+	_ = tblRows.Close()
+
+	if tableCount != 1 {
+		t.Errorf("play_history table count = %d, want 1", tableCount)
+	}
+
+	// Verify audio_files has play_count and last_played columns.
+	hasPlayCount := false
+	hasLastPlayed := false
+
+	colRows, err := db.QueryContext("PRAGMA table_info(audio_files)")
+	if err != nil {
+		t.Fatalf("PRAGMA table_info(audio_files): %v", err)
+	}
+
+	for colRows.Next() {
+		var (
+			cid       int64
+			name      string
+			colType   string
+			notNull   int64
+			dfltValue sql.NullString
+			pk        int64
+		)
+
+		if err := colRows.Scan(
+			&cid, &name, &colType, &notNull, &dfltValue, &pk,
+		); err != nil {
+			_ = colRows.Close()
+
+			t.Fatalf("scan audio_files table_info: %v", err)
+		}
+
+		if name == "play_count" {
+			hasPlayCount = true
+		}
+
+		if name == "last_played" {
+			hasLastPlayed = true
+		}
+	}
+
+	_ = colRows.Close()
+
+	if !hasPlayCount {
+		t.Error("audio_files missing play_count column")
+	}
+
+	if !hasLastPlayed {
+		t.Error("audio_files missing last_played column")
+	}
+
+	// Verify track_metadata VIEW includes play_count and last_played.
+	viewCols := map[string]bool{}
+
+	vcRows, err := db.QueryContext("PRAGMA table_info(track_metadata)")
+	if err != nil {
+		t.Fatalf("PRAGMA table_info(track_metadata): %v", err)
+	}
+
+	for vcRows.Next() {
+		var (
+			cid       int64
+			name      string
+			colType   string
+			notNull   int64
+			dfltValue sql.NullString
+			pk        int64
+		)
+
+		if err := vcRows.Scan(
+			&cid, &name, &colType, &notNull, &dfltValue, &pk,
+		); err != nil {
+			_ = vcRows.Close()
+
+			t.Fatalf("scan track_metadata table_info: %v", err)
+		}
+
+		viewCols[name] = true
+	}
+
+	_ = vcRows.Close()
+
+	if !viewCols["play_count"] {
+		t.Error("track_metadata VIEW missing play_count column")
+	}
+
+	if !viewCols["last_played"] {
+		t.Error("track_metadata VIEW missing last_played column")
+	}
+
+	// Round-trip: insert a play_history row and verify play_count update.
+	// First, set up test data. The test DB already has library id=0.
+	_, err = db.ExecContext(
+		"INSERT OR IGNORE INTO artist_credit (id, text) VALUES (1, 'Test Artist')",
+	)
+	if err != nil {
+		t.Fatalf("insert artist_credit: %v", err)
+	}
+
+	_, err = db.ExecContext(
+		`INSERT OR IGNORE INTO recordings (id, name, artist_credit_id, track_number, disc_number)
+		 VALUES (1, 'Test Track', 1, 1, 1)`,
+	)
+	if err != nil {
+		t.Fatalf("insert recording: %v", err)
+	}
+
+	_, err = db.ExecContext(
+		`INSERT INTO audio_files
+		 (id, file_path, length_milliseconds, file_type_id, recording_id, library_id)
+		 VALUES (1, '/test/track.mp3', 180000, 0, 1, 0)`,
+	)
+	if err != nil {
+		t.Fatalf("insert audio_file: %v", err)
+	}
+
+	// Verify default play_count is 0.
+	var playCount int64
+
+	pcRows, err := db.QueryContext(
+		"SELECT play_count FROM audio_files WHERE id = 1",
+	)
+	if err != nil {
+		t.Fatalf("query play_count: %v", err)
+	}
+
+	if !pcRows.Next() {
+		_ = pcRows.Close()
+
+		t.Fatal("audio_file not found")
+	}
+
+	if err := pcRows.Scan(&playCount); err != nil {
+		_ = pcRows.Close()
+
+		t.Fatalf("scan play_count: %v", err)
+	}
+
+	_ = pcRows.Close()
+
+	if playCount != 0 {
+		t.Errorf("initial play_count = %d, want 0", playCount)
+	}
+
+	// Insert a play_history row and update play_count.
+	_, err = db.ExecContext(
+		"INSERT INTO play_history (audio_file_id) VALUES (1)",
+	)
+	if err != nil {
+		t.Fatalf("insert play_history: %v", err)
+	}
+
+	_, err = db.ExecContext(
+		`UPDATE audio_files
+		 SET play_count = play_count + 1,
+		     last_played = datetime('now')
+		 WHERE id = 1`,
+	)
+	if err != nil {
+		t.Fatalf("update play_count: %v", err)
+	}
+
+	// Verify play_count is now 1.
+	pcRows2, err := db.QueryContext(
+		"SELECT play_count, last_played FROM audio_files WHERE id = 1",
+	)
+	if err != nil {
+		t.Fatalf("query play_count after update: %v", err)
+	}
+
+	if !pcRows2.Next() {
+		_ = pcRows2.Close()
+
+		t.Fatal("audio_file not found after update")
+	}
+
+	var (
+		updatedCount int64
+		lastPlayed   sql.NullString
+	)
+
+	if err := pcRows2.Scan(&updatedCount, &lastPlayed); err != nil {
+		_ = pcRows2.Close()
+
+		t.Fatalf("scan updated play_count: %v", err)
+	}
+
+	_ = pcRows2.Close()
+
+	if updatedCount != 1 {
+		t.Errorf("play_count after update = %d, want 1", updatedCount)
+	}
+
+	if !lastPlayed.Valid {
+		t.Error("last_played should not be NULL after update")
+	}
+
+	// Verify track_metadata VIEW returns the play_count.
+	tmRows, err := db.QueryContext(
+		"SELECT play_count FROM track_metadata WHERE id = 1",
+	)
+	if err != nil {
+		t.Fatalf("query track_metadata play_count: %v", err)
+	}
+
+	if !tmRows.Next() {
+		_ = tmRows.Close()
+
+		t.Fatal("track_metadata row not found")
+	}
+
+	var viewPlayCount int64
+
+	if err := tmRows.Scan(&viewPlayCount); err != nil {
+		_ = tmRows.Close()
+
+		t.Fatalf("scan track_metadata play_count: %v", err)
+	}
+
+	_ = tmRows.Close()
+
+	if viewPlayCount != 1 {
+		t.Errorf("track_metadata play_count = %d, want 1", viewPlayCount)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Migration 11 — explore_cache table
+// ---------------------------------------------------------------------------
+
+func TestMigration11ExploreCache(t *testing.T) {
+	t.Parallel()
+
+	// explore_cache was split into http_cache + artist_metadata by
+	// migration 27 and is dropped on fresh installs. This test covers
+	// a table that no longer exists in a fresh DB; revisit once the
+	// explore cache tests are rewritten against the new schemas.
+	t.Skip("explore_cache dropped by migration 27; test is obsolete")
+
+	db := NewTestDB(t)
+
+	// Verify user_version >= 11.
+	var version int
+
+	verRows, err := db.QueryContext("PRAGMA user_version")
+	if err != nil {
+		t.Fatalf("PRAGMA user_version: %v", err)
+	}
+
+	if !verRows.Next() {
+		_ = verRows.Close()
+
+		t.Fatal("PRAGMA user_version: no row returned")
+	}
+
+	if err := verRows.Scan(&version); err != nil {
+		_ = verRows.Close()
+
+		t.Fatalf("scan user_version: %v", err)
+	}
+
+	_ = verRows.Close()
+
+	if version < 11 {
+		t.Errorf("user_version = %d, want >= 11", version)
+	}
+
+	// Verify explore_cache table exists.
+	var tableCount int64
+
+	tblRows, err := db.QueryContext(
+		"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='explore_cache'",
+	)
+	if err != nil {
+		t.Fatalf("query sqlite_master: %v", err)
+	}
+
+	if !tblRows.Next() {
+		_ = tblRows.Close()
+
+		t.Fatal("no row from sqlite_master query")
+	}
+
+	if err := tblRows.Scan(&tableCount); err != nil {
+		_ = tblRows.Close()
+
+		t.Fatalf("scan table count: %v", err)
+	}
+
+	_ = tblRows.Close()
+
+	if tableCount != 1 {
+		t.Errorf("explore_cache table count = %d, want 1", tableCount)
+	}
+
+	// Verify all expected columns exist.
+	expectedCols := map[string]bool{
+		"url_key":     false,
+		"response":    false,
+		"mbid":        false,
+		"entity_type": false,
+		"expires_at":  false,
+		"created_at":  false,
+	}
+
+	colRows, err := db.QueryContext(
+		"PRAGMA table_info(explore_cache)",
+	)
+	if err != nil {
+		t.Fatalf("PRAGMA table_info(explore_cache): %v", err)
+	}
+
+	for colRows.Next() {
+		var (
+			cid       int64
+			name      string
+			colType   string
+			notNull   int64
+			dfltValue sql.NullString
+			pk        int64
+		)
+
+		if err := colRows.Scan(
+			&cid, &name, &colType, &notNull, &dfltValue, &pk,
+		); err != nil {
+			_ = colRows.Close()
+
+			t.Fatalf("scan table_info row: %v", err)
+		}
+
+		if _, ok := expectedCols[name]; ok {
+			expectedCols[name] = true
+		}
+	}
+
+	_ = colRows.Close()
+
+	for col, found := range expectedCols {
+		if !found {
+			t.Errorf("explore_cache missing column: %s", col)
+		}
+	}
+
+	// Verify indexes exist.
+	idxRows, err := db.QueryContext(
+		"SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='explore_cache'",
+	)
+	if err != nil {
+		t.Fatalf("query indexes: %v", err)
+	}
+
+	indexes := map[string]bool{}
+
+	for idxRows.Next() {
+		var name string
+
+		if err := idxRows.Scan(&name); err != nil {
+			_ = idxRows.Close()
+
+			t.Fatalf("scan index name: %v", err)
+		}
+
+		indexes[name] = true
+	}
+
+	_ = idxRows.Close()
+
+	if !indexes["idx_explore_cache_expires"] {
+		t.Error("missing index: idx_explore_cache_expires")
+	}
+
+	if !indexes["idx_explore_cache_mbid"] {
+		t.Error("missing index: idx_explore_cache_mbid")
+	}
+
+	// Round-trip: insert and read back.
+	_, err = db.ExecContext(
+		`INSERT INTO explore_cache (url_key, response, mbid, entity_type, expires_at)
+		 VALUES ('test-key', '{"data":"value"}', 'abc-123', 'artist', datetime('now', '+1 hour'))`,
+	)
+	if err != nil {
+		t.Fatalf("insert explore_cache: %v", err)
+	}
+
+	rows, err := db.QueryContext(
+		"SELECT url_key, response, mbid, entity_type FROM explore_cache WHERE url_key = 'test-key'",
+	)
+	if err != nil {
+		t.Fatalf("query explore_cache: %v", err)
+	}
+
+	if !rows.Next() {
+		_ = rows.Close()
+
+		t.Fatal("explore_cache row not found")
+	}
+
+	var (
+		urlKey     string
+		response   string
+		mbid       sql.NullString
+		entityType sql.NullString
+	)
+
+	if err := rows.Scan(&urlKey, &response, &mbid, &entityType); err != nil {
+		_ = rows.Close()
+
+		t.Fatalf("scan explore_cache row: %v", err)
+	}
+
+	_ = rows.Close()
+
+	if urlKey != "test-key" {
+		t.Errorf("url_key = %q, want %q", urlKey, "test-key")
+	}
+
+	if response != `{"data":"value"}` {
+		t.Errorf("response = %q, want %q", response, `{"data":"value"}`)
+	}
+
+	if !mbid.Valid || mbid.String != "abc-123" {
+		t.Errorf("mbid = %v, want abc-123", mbid)
+	}
+
+	if !entityType.Valid || entityType.String != "artist" {
+		t.Errorf("entity_type = %v, want artist", entityType)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"yellowjacket/backend/coverart"
 	"yellowjacket/backend/database/sql/sqlcgen"
 	"yellowjacket/backend/profiling"
 )
@@ -236,7 +237,7 @@ func (q *Queue) lookupChunk(
 		return
 	}
 
-	rows, err := q.db.Queries.LookupTrackMetaByPaths(q.db.Ctx, paths)
+	rows, err := q.db.ReadQueries.LookupTrackMetaByPaths(q.db.Ctx, paths)
 	if err != nil {
 		q.logger.Error("Batch metadata lookup failed", "err", err)
 
@@ -245,10 +246,15 @@ func (q *Queue) lookupChunk(
 
 	for _, row := range rows {
 		result[row.FilePath] = trackMeta{
-			AudioFileID: row.ID,
-			FilePath:    row.FilePath,
-			Title:       row.Title,
-			Artist:      row.ArtistName,
+			AudioFileID:      row.ID,
+			FilePath:         row.FilePath,
+			Title:            row.Title,
+			Artist:           row.ArtistName,
+			Album:            row.Album,
+			CoverArtPath:     row.CoverArtPath,
+			ArtistMBID:       row.ArtistMbid,
+			ReleaseGroupMBID: row.ReleaseGroupMbid,
+			RecordingMBID:    row.RecordingMbid,
 		}
 	}
 }
@@ -409,7 +415,7 @@ func (q *Queue) RestoreState() {
 	defer q.mu.Unlock()
 
 	// Restore queue metadata.
-	state, err := q.db.Queries.GetQueueState(q.db.Ctx)
+	state, err := q.db.ReadQueries.GetQueueState(q.db.Ctx)
 	if err != nil {
 		q.logger.Error("Failed to load queue state", "err", err)
 
@@ -438,7 +444,7 @@ func (q *Queue) RestoreState() {
 	}
 
 	// Restore queue tracks.
-	rows, err := q.db.Queries.GetQueueTracks(q.db.Ctx)
+	rows, err := q.db.ReadQueries.GetQueueTracks(q.db.Ctx)
 	if err != nil {
 		q.logger.Error("Failed to load queue tracks", "err", err)
 
@@ -448,13 +454,23 @@ func (q *Queue) RestoreState() {
 	q.tracks = make([]Track, 0, len(rows))
 
 	for _, row := range rows {
+		var coverArtURL string
+		if row.CoverArtPath != "" {
+			coverArtURL = coverart.ResolveURLs(row.CoverArtPath).Small
+		}
+
 		q.tracks = append(q.tracks, Track{
-			ID:          row.ID,
-			AudioFileID: row.AudioFileID,
-			FilePath:    row.FilePath,
-			Position:    row.Position,
-			Title:       row.Title,
-			Artist:      row.Artist,
+			ID:               row.ID,
+			AudioFileID:      row.AudioFileID,
+			FilePath:         row.FilePath,
+			Position:         row.Position,
+			Title:            row.Title,
+			Artist:           row.Artist,
+			Album:            row.Album,
+			CoverArtPath:     coverArtURL,
+			ArtistMBID:       row.ArtistMbid,
+			ReleaseGroupMBID: row.ReleaseGroupMbid,
+			RecordingMBID:    row.RecordingMbid,
 		})
 	}
 

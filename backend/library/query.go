@@ -4,11 +4,15 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"yellowjacket/backend/coverart"
 	"yellowjacket/backend/database/sql/sqlcgen"
+	"yellowjacket/backend/system"
 )
 
 // Sentinel errors for library queries.
@@ -19,22 +23,31 @@ var (
 
 // Track represents a playable audio file in the library.
 type Track struct {
-	TrackName   string
-	ArtistName  string
-	TrackLength string
-	FilePath    string
-	TrackNumber int64
-	DiscNumber  int64
-	Album       string
-	Genre       []string
-	Year        int64
-	Composer    string
-	FileType    string
-	SampleRate  int64
-	BitDepth    int64
-	Channels    int64
-	Bitrate     int64
-	FileSize    int64
+	TrackName        string
+	ArtistName       string
+	TrackLength      string
+	FilePath         string
+	TrackNumber      int64
+	DiscNumber       int64
+	Album            string
+	Genre            []string
+	Year             int64
+	Composer         string
+	FileType         string
+	SampleRate       int64
+	BitDepth         int64
+	Channels         int64
+	Bitrate          int64
+	FileSize         int64
+	PlayCount        int64
+	LastPlayed       string
+	RecordingMBID    string
+	ArtistMBID       string
+	ReleaseGroupMBID string
+	CoverArtPath     string
+	CoverArtSmall    string
+	CoverArtMedium   string
+	CoverArtLarge    string
 }
 
 // genreDelimiter is the separator used by GROUP_CONCAT in the
@@ -63,48 +76,126 @@ func mapTrackRow(
 	year int64,
 	composer, fileType string,
 	sampleRate, bitDepth, channels, bitrate, fileSize int64,
+	playCount int64,
+	lastPlayed sql.NullTime,
+	coverArtPath string,
+	artistMBID, releaseGroupMBID, recordingMBID string,
 ) Track {
-	return Track{
-		TrackName:   title,
-		ArtistName:  artistName,
-		TrackLength: strconv.FormatInt(lengthMs, 10),
-		FilePath:    filePath,
-		TrackNumber: trackNumber.Int64,
-		DiscNumber:  discNumber.Int64,
-		Album:       album,
-		Genre:       splitGenres(genre),
-		Year:        year,
-		Composer:    composer,
-		FileType:    fileType,
-		SampleRate:  sampleRate,
-		BitDepth:    bitDepth,
-		Channels:    channels,
-		Bitrate:     bitrate,
-		FileSize:    fileSize,
+	var lastPlayedStr string
+	if lastPlayed.Valid {
+		lastPlayedStr = lastPlayed.Time.Format(time.DateTime)
 	}
+
+	t := Track{
+		TrackName:        title,
+		ArtistName:       artistName,
+		TrackLength:      strconv.FormatInt(lengthMs, 10),
+		FilePath:         filePath,
+		TrackNumber:      trackNumber.Int64,
+		DiscNumber:       discNumber.Int64,
+		Album:            album,
+		Genre:            splitGenres(genre),
+		Year:             year,
+		Composer:         composer,
+		FileType:         fileType,
+		SampleRate:       sampleRate,
+		BitDepth:         bitDepth,
+		Channels:         channels,
+		Bitrate:          bitrate,
+		FileSize:         fileSize,
+		PlayCount:        playCount,
+		LastPlayed:       lastPlayedStr,
+		ArtistMBID:       artistMBID,
+		ReleaseGroupMBID: releaseGroupMBID,
+		RecordingMBID:    recordingMBID,
+	}
+
+	if coverArtPath != "" {
+		urls := coverart.ResolveURLs(coverArtPath)
+		t.CoverArtPath = urls.Original
+		t.CoverArtSmall = urls.Small
+		t.CoverArtMedium = urls.Medium
+		t.CoverArtLarge = urls.Large
+	}
+
+	return t
+}
+
+// TrackMBIDs holds MusicBrainz identifiers for a track, resolved
+// from the recording, release group, and artist tables.
+type TrackMBIDs struct {
+	RecordingMBID    string `json:"recordingMbid"`
+	ReleaseGroupMBID string `json:"releaseGroupMbid"`
+	ArtistMBID       string `json:"artistMbid"`
+}
+
+// GetTrackMBIDs returns the MusicBrainz IDs for the track at the
+// given file path.  Returns empty strings for entities without MBIDs.
+func (l *Library) GetTrackMBIDs(filePath string) TrackMBIDs {
+	rows, err := l.db.QueryContext(`
+		SELECT
+			COALESCE(r.mbid, '') AS recording_mbid,
+			COALESCE(rg.mbid, '') AS release_group_mbid,
+			COALESCE(a.mbid, '') AS artist_mbid
+		FROM audio_files af
+		JOIN recordings r ON af.recording_id = r.id
+		JOIN artist_credit ac ON r.artist_credit_id = ac.id
+		JOIN artist_credit_artist aca ON aca.credit_id = ac.id
+		JOIN artists a ON a.id = aca.artist_id
+		LEFT JOIN release_group_recordings rgr ON r.id = rgr.recording_id
+		LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
+		WHERE af.file_path = ?
+		LIMIT 1
+	`, filePath)
+	if err != nil {
+		return TrackMBIDs{}
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	var result TrackMBIDs
+
+	if rows.Next() {
+		_ = rows.Scan(&result.RecordingMBID, &result.ReleaseGroupMBID, &result.ArtistMBID)
+	}
+
+	return result
 }
 
 // Artist represents an artist in the library.
 type Artist struct {
-	ID   int64
-	Name string
+	ID          int64
+	Name        string
+	MBID        string
+	ImageSmall  string
+	ImageMedium string
+	ImageLarge  string
 }
 
 // Album represents an album for the cover grid display.
+//
+// Year is the album's preferred display year — the release-group's
+// original-release-date (MusicBrainz first-release-date) when known,
+// falling back to the file-tag year.  ReleaseYear is the file-tag
+// year of the specific release in the library; for a 2010 remaster
+// of a 1973 album, Year=1973 and ReleaseYear=2010.
 type Album struct {
 	ID             int64
 	Name           string
 	ArtistName     string
+	ArtistMBID     string
+	MBID           string
 	CoverArtPath   string
 	CoverArtSmall  string
 	CoverArtMedium string
 	CoverArtLarge  string
 	Year           int64
+	ReleaseYear    int64
 }
 
 // GetAllTracks returns an array of track structs of every file in the library.
 func (l *Library) GetAllTracks() ([]Track, error) {
-	rows, err := l.db.Queries.GetAllTracksWithFullMetadata(
+	rows, err := l.db.ReadQueries.GetAllTracksWithFullMetadata(
 		l.ctx,
 	)
 	if err != nil {
@@ -144,6 +235,12 @@ func (l *Library) GetAllTracks() ([]Track, error) {
 			row.Channels,
 			row.Bitrate,
 			row.FileSize,
+			row.PlayCount,
+			row.LastPlayed,
+			row.CoverArtPath,
+			row.ArtistMbid,
+			row.ReleaseGroupMbid,
+			row.RecordingMbid,
 		))
 	}
 
@@ -196,6 +293,9 @@ func (l *Library) SearchTracks(
 			row.Channels,
 			row.Bitrate,
 			row.FileSize,
+			0, sql.NullTime{},
+			"",
+			"", "", "",
 		))
 	}
 
@@ -204,7 +304,7 @@ func (l *Library) SearchTracks(
 
 // GetAlbumTracks returns all tracks for a given album (release group), ordered by disc and track number.
 func (l *Library) GetAlbumTracks(albumID int64) ([]Track, error) {
-	rows, err := l.db.Queries.GetAudioFilesByReleaseGroup(l.ctx, albumID)
+	rows, err := l.db.ReadQueries.GetAudioFilesByReleaseGroup(l.ctx, albumID)
 	if err != nil {
 		l.logger.Error("could not retrieve album tracks", "albumID", albumID, "error", err)
 
@@ -235,6 +335,11 @@ func (l *Library) GetAlbumTracks(albumID int64) ([]Track, error) {
 			row.Channels,
 			row.Bitrate,
 			row.FileSize,
+			0, sql.NullTime{},
+			"",
+			row.ArtistMbid,
+			row.ReleaseGroupMbid,
+			row.RecordingMbid,
 		))
 	}
 
@@ -243,7 +348,7 @@ func (l *Library) GetAlbumTracks(albumID int64) ([]Track, error) {
 
 // GetAllAlbums returns all albums with cover art and artist info for the cover grid.
 func (l *Library) GetAllAlbums() ([]Album, error) {
-	rows, err := l.db.Queries.GetAllAlbumsWithDetails(l.ctx)
+	rows, err := l.db.ReadQueries.GetAllAlbumsWithDetails(l.ctx)
 	if err != nil {
 		l.logger.Error("could not retrieve albums", "error", err)
 
@@ -259,10 +364,17 @@ func (l *Library) GetAllAlbums() ([]Album, error) {
 			ID:         row.ID,
 			Name:       row.Name,
 			ArtistName: row.ArtistName,
+			ArtistMBID: row.ArtistMbid,
 		}
 
 		if row.Year.Valid {
 			album.Year = row.Year.Int64
+		}
+
+		album.ReleaseYear = row.ReleaseYear
+
+		if row.Mbid.Valid {
+			album.MBID = row.Mbid.String
 		}
 
 		// Convert filesystem path to URL path for the asset handler.
@@ -282,7 +394,7 @@ func (l *Library) GetAllAlbums() ([]Album, error) {
 
 // GetAllArtists returns artists that are credited as album artists, ordered by name.
 func (l *Library) GetAllArtists() ([]Artist, error) {
-	rows, err := l.db.Queries.GetAlbumArtists(l.ctx)
+	rows, err := l.db.ReadQueries.GetAlbumArtists(l.ctx)
 	if err != nil {
 		l.logger.Error(
 			"could not retrieve artists",
@@ -300,20 +412,86 @@ func (l *Library) GetAllArtists() ([]Artist, error) {
 	artists := make([]Artist, 0, len(rows))
 
 	for _, row := range rows {
-		artists = append(artists, Artist{
+		a := Artist{
 			ID:   row.ID,
 			Name: row.Name,
-		})
+		}
+
+		if row.Mbid.Valid {
+			a.MBID = row.Mbid.String
+		}
+
+		artists = append(artists, a)
 	}
 
+	// Resolve artist image URLs from the disk cache.
+	l.resolveArtistImages(artists)
+
 	return artists, nil
+}
+
+// resolveArtistImages populates ImageSmall/Medium/Large for artists
+// that have cached images on disk.  Does a bulk MBID lookup from the
+// artists table, then checks the artist-images directory for each.
+func (l *Library) resolveArtistImages(artists []Artist) {
+	if len(artists) == 0 {
+		return
+	}
+
+	dataDir, err := system.GetUserDataDirPath()
+	if err != nil {
+		return
+	}
+
+	baseDir := filepath.Join(dataDir, "artist-images")
+
+	// Bulk load name→mbid from the artists table.
+	rows, err := l.db.QueryContext(
+		"SELECT name, mbid FROM artists WHERE mbid IS NOT NULL AND mbid != ''",
+	)
+	if err != nil {
+		return
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	mbidMap := make(map[string]string)
+
+	for rows.Next() {
+		var name, mbid string
+		if err := rows.Scan(&name, &mbid); err == nil {
+			mbidMap[name] = mbid
+		}
+	}
+
+	for i := range artists {
+		mbid, ok := mbidMap[artists[i].Name]
+		if !ok || len(mbid) < 2 {
+			continue
+		}
+
+		dir := filepath.Join(baseDir, mbid[:2], mbid)
+		prefix := "/artist-images/" + mbid[:2] + "/" + mbid + "/"
+
+		if _, err := os.Stat(filepath.Join(dir, "primary_sm.jpg")); err == nil {
+			artists[i].ImageSmall = prefix + "primary_sm.jpg"
+		}
+
+		if _, err := os.Stat(filepath.Join(dir, "primary_md.jpg")); err == nil {
+			artists[i].ImageMedium = prefix + "primary_md.jpg"
+		}
+
+		if _, err := os.Stat(filepath.Join(dir, "primary_lg.jpg")); err == nil {
+			artists[i].ImageLarge = prefix + "primary_lg.jpg"
+		}
+	}
 }
 
 // GetAlbumsByArtist returns all albums where the given artist is the album artist.
 func (l *Library) GetAlbumsByArtist(
 	artistID int64,
 ) ([]Album, error) {
-	rows, err := l.db.Queries.GetAlbumsByArtist(
+	rows, err := l.db.ReadQueries.GetAlbumsByArtist(
 		l.ctx,
 		artistID,
 	)
@@ -343,11 +521,14 @@ func (l *Library) GetAlbumsByArtist(
 			ID:         row.ID,
 			Name:       row.Name,
 			ArtistName: row.ArtistName,
+			ArtistMBID: row.ArtistMbid,
 		}
 
 		if row.Year.Valid {
 			album.Year = row.Year.Int64
 		}
+
+		album.ReleaseYear = row.ReleaseYear
 
 		// Convert filesystem path to URL path for the asset handler.
 		if row.CoverArtPath != "" {
@@ -374,7 +555,7 @@ type GenreWithCount struct {
 func (l *Library) GetTracksByGenre(
 	genreName string,
 ) ([]Track, error) {
-	rows, err := l.db.Queries.GetTracksByGenre(
+	rows, err := l.db.ReadQueries.GetTracksByGenre(
 		l.ctx, genreName,
 	)
 	if err != nil {
@@ -409,6 +590,9 @@ func (l *Library) GetTracksByGenre(
 			row.Channels,
 			row.Bitrate,
 			row.FileSize,
+			0, sql.NullTime{},
+			"",
+			"", "", "",
 		))
 	}
 
@@ -419,7 +603,7 @@ func (l *Library) GetTracksByGenre(
 func (l *Library) GetAllGenresWithCounts() (
 	[]GenreWithCount, error,
 ) {
-	rows, err := l.db.Queries.GetAllGenresWithCounts(
+	rows, err := l.db.ReadQueries.GetAllGenresWithCounts(
 		l.ctx,
 	)
 	if err != nil {
@@ -449,7 +633,7 @@ func (l *Library) GetAllGenresWithCounts() (
 func (l *Library) GetAllTracksByLibrary(
 	libraryID int64,
 ) ([]Track, error) {
-	rows, err := l.db.Queries.GetAllTracksWithFullMetadataByLibrary(
+	rows, err := l.db.ReadQueries.GetAllTracksWithFullMetadataByLibrary(
 		l.ctx, libraryID,
 	)
 	if err != nil {
@@ -490,6 +674,12 @@ func (l *Library) GetAllTracksByLibrary(
 			row.Channels,
 			row.Bitrate,
 			row.FileSize,
+			row.PlayCount,
+			row.LastPlayed,
+			row.CoverArtPath,
+			row.ArtistMbid,
+			row.ReleaseGroupMbid,
+			row.RecordingMbid,
 		))
 	}
 
@@ -500,7 +690,7 @@ func (l *Library) GetAllTracksByLibrary(
 func (l *Library) GetAllAlbumsByLibrary(
 	libraryID int64,
 ) ([]Album, error) {
-	rows, err := l.db.Queries.GetAllAlbumsWithDetailsByLibrary(
+	rows, err := l.db.ReadQueries.GetAllAlbumsWithDetailsByLibrary(
 		l.ctx, libraryID,
 	)
 	if err != nil {
@@ -528,10 +718,17 @@ func (l *Library) GetAllAlbumsByLibrary(
 			ID:         row.ID,
 			Name:       row.Name,
 			ArtistName: row.ArtistName,
+			ArtistMBID: row.ArtistMbid,
 		}
 
 		if row.Year.Valid {
 			album.Year = row.Year.Int64
+		}
+
+		album.ReleaseYear = row.ReleaseYear
+
+		if row.Mbid.Valid {
+			album.MBID = row.Mbid.String
 		}
 
 		if row.CoverArtPath != "" {
@@ -553,7 +750,7 @@ func (l *Library) GetAllAlbumsByLibrary(
 func (l *Library) GetAllArtistsByLibrary(
 	libraryID int64,
 ) ([]Artist, error) {
-	rows, err := l.db.Queries.GetAlbumArtistsByLibrary(
+	rows, err := l.db.ReadQueries.GetAlbumArtistsByLibrary(
 		l.ctx, libraryID,
 	)
 	if err != nil {
@@ -577,11 +774,19 @@ func (l *Library) GetAllArtistsByLibrary(
 	artists := make([]Artist, 0, len(rows))
 
 	for _, row := range rows {
-		artists = append(artists, Artist{
+		a := Artist{
 			ID:   row.ID,
 			Name: row.Name,
-		})
+		}
+
+		if row.Mbid.Valid {
+			a.MBID = row.Mbid.String
+		}
+
+		artists = append(artists, a)
 	}
+
+	l.resolveArtistImages(artists)
 
 	return artists, nil
 }
@@ -591,7 +796,7 @@ func (l *Library) GetAllArtistsByLibrary(
 func (l *Library) GetAlbumsByArtistByLibrary(
 	artistID, libraryID int64,
 ) ([]Album, error) {
-	rows, err := l.db.Queries.GetAlbumsByArtistByLibrary(
+	rows, err := l.db.ReadQueries.GetAlbumsByArtistByLibrary(
 		l.ctx, sqlcgen.GetAlbumsByArtistByLibraryParams{
 			ArtistID:  artistID,
 			LibraryID: libraryID,
@@ -625,11 +830,14 @@ func (l *Library) GetAlbumsByArtistByLibrary(
 			ID:         row.ID,
 			Name:       row.Name,
 			ArtistName: row.ArtistName,
+			ArtistMBID: row.ArtistMbid,
 		}
 
 		if row.Year.Valid {
 			album.Year = row.Year.Int64
 		}
+
+		album.ReleaseYear = row.ReleaseYear
 
 		if row.CoverArtPath != "" {
 			urls := coverart.ResolveURLs(row.CoverArtPath)
@@ -650,7 +858,7 @@ func (l *Library) GetAlbumsByArtistByLibrary(
 func (l *Library) GetAllGenresWithCountsByLibrary(
 	libraryID int64,
 ) ([]GenreWithCount, error) {
-	rows, err := l.db.Queries.GetAllGenresWithCountsByLibrary(
+	rows, err := l.db.ReadQueries.GetAllGenresWithCountsByLibrary(
 		l.ctx, libraryID,
 	)
 	if err != nil {
@@ -682,7 +890,7 @@ func (l *Library) GetAllGenresWithCountsByLibrary(
 func (l *Library) GetTracksByGenreByLibrary(
 	genreName string, libraryID int64,
 ) ([]Track, error) {
-	rows, err := l.db.Queries.GetTracksByGenreByLibrary(
+	rows, err := l.db.ReadQueries.GetTracksByGenreByLibrary(
 		l.ctx, sqlcgen.GetTracksByGenreByLibraryParams{
 			Name:      genreName,
 			LibraryID: libraryID,
@@ -722,6 +930,9 @@ func (l *Library) GetTracksByGenreByLibrary(
 			row.Channels,
 			row.Bitrate,
 			row.FileSize,
+			0, sql.NullTime{},
+			"",
+			"", "", "",
 		))
 	}
 
@@ -733,7 +944,7 @@ func (l *Library) GetTracksByGenreByLibrary(
 func (l *Library) GetAlbumTracksByLibrary(
 	albumID, libraryID int64,
 ) ([]Track, error) {
-	rows, err := l.db.Queries.GetAudioFilesByReleaseGroupByLibrary(
+	rows, err := l.db.ReadQueries.GetAudioFilesByReleaseGroupByLibrary(
 		l.ctx, sqlcgen.GetAudioFilesByReleaseGroupByLibraryParams{
 			ReleaseGroupID: albumID,
 			LibraryID:      libraryID,
@@ -773,6 +984,11 @@ func (l *Library) GetAlbumTracksByLibrary(
 			row.Channels,
 			row.Bitrate,
 			row.FileSize,
+			0, sql.NullTime{},
+			"",
+			row.ArtistMbid,
+			row.ReleaseGroupMbid,
+			row.RecordingMbid,
 		))
 	}
 
@@ -820,6 +1036,9 @@ func (l *Library) SearchTracksByLibrary(
 			row.Channels,
 			row.Bitrate,
 			row.FileSize,
+			0, sql.NullTime{},
+			"",
+			"", "", "",
 		))
 	}
 
@@ -838,7 +1057,7 @@ type Info struct {
 // GetAllLibrariesWithTrackCounts returns all libraries with their
 // audio file counts. Typically 1-5 libraries so the loop is trivial.
 func (l *Library) GetAllLibrariesWithTrackCounts() ([]Info, error) {
-	libs, err := l.db.Queries.GetAllLibraries(l.ctx)
+	libs, err := l.db.ReadQueries.GetAllLibraries(l.ctx)
 	if err != nil {
 		return nil, fmt.Errorf("could not get libraries: %w", err)
 	}
@@ -846,7 +1065,7 @@ func (l *Library) GetAllLibrariesWithTrackCounts() ([]Info, error) {
 	result := make([]Info, 0, len(libs))
 
 	for _, lib := range libs {
-		count, countErr := l.db.Queries.CountAudioFilesByLibrary(l.ctx, lib.ID)
+		count, countErr := l.db.ReadQueries.CountAudioFilesByLibrary(l.ctx, lib.ID)
 		if countErr != nil {
 			l.logger.Error("could not count tracks for library",
 				"libraryID", lib.ID, "error", countErr)

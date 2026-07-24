@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS recordings (
   composer         TEXT,
   lyrics           TEXT,
   comment          TEXT,
+  mbid             TEXT,
   FOREIGN KEY(artist_credit_id) REFERENCES artist_credit(id)
 );
 

@@ -15,7 +15,13 @@ SELECT
          WHERE rg_sub.recording_id = r.id),
         ''
     ) AS TEXT) AS genre,
-    COALESCE(r.year, 0) AS year,
+    -- Year defaults to the release group's original release year
+    -- (MusicBrainz first-release-date) so a 1973 album shows as
+    -- 1973 even if the user owns the 2010 remaster.  Falls back
+    -- to release-group year (file tag), then to recording year.
+    -- See release_groups.original_year for full semantics.
+    COALESCE(rg.original_year, rg.year, r.year, 0) AS year,
+    COALESCE(rg.year, r.year, 0) AS release_year,
     COALESCE(r.composer, '') AS composer,
     COALESCE(ft.extension, '') AS file_type,
     af.sample_rate,
@@ -23,10 +29,18 @@ SELECT
     af.channels,
     af.bitrate,
     af.file_size,
-    af.library_id
+    af.library_id,
+    af.play_count,
+    af.last_played,
+    COALESCE(ca.file_path, '') AS cover_art_path,
+    COALESCE(a.mbid, '') AS artist_mbid,
+    COALESCE(rg.mbid, '') AS release_group_mbid,
+    COALESCE(r.mbid, '') AS recording_mbid
 FROM audio_files af
 LEFT JOIN recordings r ON af.recording_id = r.id
 LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
+LEFT JOIN artist_credit_artist aca ON aca.credit_id = ac.id
+LEFT JOIN artists a ON a.id = aca.artist_id
 LEFT JOIN (
     SELECT recording_id,
         MIN(release_group_id) AS release_group_id
@@ -34,4 +48,5 @@ LEFT JOIN (
     GROUP BY recording_id
 ) rgr ON r.id = rgr.recording_id
 LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
+LEFT JOIN cover_art ca ON rg.cover_art_id = ca.id
 LEFT JOIN file_types ft ON af.file_type_id = ft.id;

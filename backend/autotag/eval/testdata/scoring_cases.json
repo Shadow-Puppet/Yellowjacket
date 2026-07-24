@@ -1,0 +1,225 @@
+[
+  {
+    "note": "seed: single with a generic title must reject a same-title, different-artist, wrong-length MB hit and prefer the correct artist. This is the reported 92%-false-positive class.",
+    "local": [
+      { "title": "Intro", "artist": "Real Artist", "track": 1, "lengthMs": 90000 }
+    ],
+    "candidates": [
+      {
+        "mbid": "right",
+        "artistCredit": "Real Artist",
+        "status": "Official",
+        "source": "musicbrainz",
+        "tracks": [{ "pos": 1, "title": "Intro", "lengthMs": 90000 }]
+      },
+      {
+        "mbid": "wrong-artist",
+        "artistCredit": "Some Other Band",
+        "status": "Official",
+        "source": "musicbrainz",
+        "tracks": [{ "pos": 1, "title": "Intro", "lengthMs": 240000 }]
+      }
+    ],
+    "expectTop": "right",
+    "maxScore": { "wrong-artist": 0.75 }
+  },
+  {
+    "note": "seed: full-album exact match should still read as a confident, near-perfect match (evidence scaling must not punish real albums).",
+    "local": [
+      { "title": "Song A", "artist": "The Band", "track": 1, "lengthMs": 200000 },
+      { "title": "Song B", "artist": "The Band", "track": 2, "lengthMs": 210000 },
+      { "title": "Song C", "artist": "The Band", "track": 3, "lengthMs": 195000 },
+      { "title": "Song D", "artist": "The Band", "track": 4, "lengthMs": 220000 }
+    ],
+    "candidates": [
+      {
+        "mbid": "album",
+        "artistCredit": "The Band",
+        "status": "Official",
+        "source": "musicbrainz",
+        "tracks": [
+          { "pos": 1, "title": "Song A", "lengthMs": 200000 },
+          { "pos": 2, "title": "Song B", "lengthMs": 210000 },
+          { "pos": 3, "title": "Song C", "lengthMs": 195000 },
+          { "pos": 4, "title": "Song D", "lengthMs": 220000 }
+        ]
+      }
+    ],
+    "expectTop": "album",
+    "minScore": { "album": 0.9 }
+  },
+  {
+    "note": "seed: near-right artist (accent/spelling) must stay a strong match; soft artist term, not a gate.",
+    "local": [
+      { "title": "Jolene", "artist": "Beyonce", "track": 1, "lengthMs": 200000 },
+      { "title": "Halo", "artist": "Beyonce", "track": 2, "lengthMs": 220000 }
+    ],
+    "candidates": [
+      {
+        "mbid": "accented",
+        "artistCredit": "Beyoncé",
+        "status": "Official",
+        "source": "musicbrainz",
+        "tracks": [
+          { "pos": 1, "title": "Jolene", "lengthMs": 200000 },
+          { "pos": 2, "title": "Halo", "lengthMs": 220000 }
+        ]
+      }
+    ],
+    "expectTop": "accented",
+    "minScore": { "accented": 0.85 }
+  },
+  {
+    "note": "VA compilation: per-track artists all differ, album-artist says Various Artists. The VA candidate must not be penalised for its artist credit and must read as a strong match.",
+    "albumName": "Now That's What I Call Music! 60",
+    "albumArtist": "Various Artists",
+    "local": [
+      { "title": "Song One", "artist": "Artist A", "track": 1, "lengthMs": 200000 },
+      { "title": "Song Two", "artist": "Artist B", "track": 2, "lengthMs": 210000 },
+      { "title": "Song Three", "artist": "Artist C", "track": 3, "lengthMs": 195000 },
+      { "title": "Song Four", "artist": "Artist D", "track": 4, "lengthMs": 205000 }
+    ],
+    "candidates": [
+      {
+        "mbid": "va-comp",
+        "title": "Now That's What I Call Music! 60",
+        "artistCredit": "Various Artists",
+        "status": "Official",
+        "primaryType": "Compilation",
+        "source": "musicbrainz",
+        "tracks": [
+          { "pos": 1, "title": "Song One", "lengthMs": 200000 },
+          { "pos": 2, "title": "Song Two", "lengthMs": 210000 },
+          { "pos": 3, "title": "Song Three", "lengthMs": 195000 },
+          { "pos": 4, "title": "Song Four", "lengthMs": 205000 }
+        ]
+      }
+    ],
+    "expectTop": "va-comp",
+    "minScore": { "va-comp": 0.85 }
+  },
+  {
+    "note": "same recordings, two release groups: folder album name must pull the studio album above the greatest-hits comp with an identical tracklist.",
+    "albumName": "The Studio Album",
+    "albumArtist": "The Band",
+    "local": [
+      { "title": "Song A", "artist": "The Band", "track": 1, "lengthMs": 200000 },
+      { "title": "Song B", "artist": "The Band", "track": 2, "lengthMs": 210000 },
+      { "title": "Song C", "artist": "The Band", "track": 3, "lengthMs": 195000 }
+    ],
+    "candidates": [
+      {
+        "mbid": "studio",
+        "title": "The Studio Album",
+        "artistCredit": "The Band",
+        "status": "Official",
+        "primaryType": "Album",
+        "source": "musicbrainz",
+        "tracks": [
+          { "pos": 1, "title": "Song A", "lengthMs": 200000 },
+          { "pos": 2, "title": "Song B", "lengthMs": 210000 },
+          { "pos": 3, "title": "Song C", "lengthMs": 195000 }
+        ]
+      },
+      {
+        "mbid": "hits-comp",
+        "title": "Greatest Hits",
+        "artistCredit": "The Band",
+        "status": "Official",
+        "primaryType": "Compilation",
+        "source": "musicbrainz",
+        "tracks": [
+          { "pos": 1, "title": "Song A", "lengthMs": 200000 },
+          { "pos": 2, "title": "Song B", "lengthMs": 210000 },
+          { "pos": 3, "title": "Song C", "lengthMs": 195000 }
+        ]
+      }
+    ],
+    "expectTop": "studio",
+    "minScore": { "studio": 0.9 }
+  },
+  {
+    "note": "disc 1 of a 2-disc release: per-disc group must not be punished for 'missing' disc 2, and must not lose to a random single-disc release with fewer matching tracks.",
+    "albumName": "The Double Album",
+    "albumArtist": "The Band",
+    "local": [
+      { "title": "D1 Track 1", "artist": "The Band", "track": 1, "disc": 1, "lengthMs": 200000 },
+      { "title": "D1 Track 2", "artist": "The Band", "track": 2, "disc": 1, "lengthMs": 210000 },
+      { "title": "D1 Track 3", "artist": "The Band", "track": 3, "disc": 1, "lengthMs": 195000 }
+    ],
+    "candidates": [
+      {
+        "mbid": "double",
+        "title": "The Double Album",
+        "artistCredit": "The Band",
+        "status": "Official",
+        "primaryType": "Album",
+        "source": "musicbrainz",
+        "tracks": [
+          { "pos": 1, "disc": 1, "title": "D1 Track 1", "lengthMs": 200000 },
+          { "pos": 2, "disc": 1, "title": "D1 Track 2", "lengthMs": 210000 },
+          { "pos": 3, "disc": 1, "title": "D1 Track 3", "lengthMs": 195000 },
+          { "pos": 1, "disc": 2, "title": "D2 Track 1", "lengthMs": 220000 },
+          { "pos": 2, "disc": 2, "title": "D2 Track 2", "lengthMs": 230000 },
+          { "pos": 3, "disc": 2, "title": "D2 Track 3", "lengthMs": 240000 }
+        ]
+      }
+    ],
+    "expectTop": "double",
+    "minScore": { "double": 0.9 }
+  },
+  {
+    "note": "streaming-style dash qualifiers: '- 2011 Remaster' suffixes on every local title must not cost title score against the clean MB tracklist.",
+    "albumName": "Classic Album",
+    "albumArtist": "The Band",
+    "local": [
+      { "title": "Opener - 2011 Remaster", "artist": "The Band", "track": 1, "lengthMs": 200000 },
+      { "title": "Middle Cut - 2011 Remaster", "artist": "The Band", "track": 2, "lengthMs": 210000 },
+      { "title": "Closer - 2011 Remaster", "artist": "The Band", "track": 3, "lengthMs": 195000 }
+    ],
+    "candidates": [
+      {
+        "mbid": "clean-titles",
+        "title": "Classic Album",
+        "artistCredit": "The Band",
+        "status": "Official",
+        "primaryType": "Album",
+        "source": "musicbrainz",
+        "tracks": [
+          { "pos": 1, "title": "Opener", "lengthMs": 200000 },
+          { "pos": 2, "title": "Middle Cut", "lengthMs": 210000 },
+          { "pos": 3, "title": "Closer", "lengthMs": 195000 }
+        ]
+      }
+    ],
+    "expectTop": "clean-titles",
+    "minScore": { "clean-titles": 0.9 }
+  },
+  {
+    "note": "sorted-artist tag: 'Beatles, The' must match 'The Beatles' releases at full strength (article rotation).",
+    "albumName": "Abbey Road",
+    "albumArtist": "Beatles, The",
+    "local": [
+      { "title": "Come Together", "artist": "Beatles, The", "track": 1, "lengthMs": 259000 },
+      { "title": "Something", "artist": "Beatles, The", "track": 2, "lengthMs": 182000 },
+      { "title": "Octopus's Garden", "artist": "Beatles, The", "track": 3, "lengthMs": 170000 }
+    ],
+    "candidates": [
+      {
+        "mbid": "abbey",
+        "title": "Abbey Road",
+        "artistCredit": "The Beatles",
+        "status": "Official",
+        "primaryType": "Album",
+        "source": "musicbrainz",
+        "tracks": [
+          { "pos": 1, "title": "Come Together", "lengthMs": 259000 },
+          { "pos": 2, "title": "Something", "lengthMs": 182000 },
+          { "pos": 3, "title": "Octopus's Garden", "lengthMs": 170000 }
+        ]
+      }
+    ],
+    "expectTop": "abbey",
+    "minScore": { "abbey": 0.9 }
+  }
+]

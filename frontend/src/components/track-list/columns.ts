@@ -7,6 +7,7 @@ import {
     formatFileSize,
 } from '@utils/format';
 import { formatMilliseconds } from '@utils/time';
+import { html, nothing } from 'lit';
 
 /** Compares two strings using locale-aware ordering. */
 const compareStr = (
@@ -35,6 +36,8 @@ export interface ColumnDef {
     defaultWidth: string;
     /** Text alignment. Defaults to left. */
     align?: 'left' | 'right';
+    /** Optional custom render function returning an HTML template. */
+    renderCell?: (track: library.Track) => unknown;
     /**
      * Comparison function for sorting two tracks by this column.
      * Returns negative if a < b, positive if a > b, zero if equal.
@@ -48,6 +51,16 @@ export interface ColumnDef {
 
 /** Registry of every available column keyed by ID. */
 export const COLUMN_DEFS: Record<string, ColumnDef> = {
+    albumArt: {
+        id: 'albumArt',
+        label: 'Art',
+        accessor: () => '',
+        defaultWidth: '36px',
+        renderCell: (track: library.Track) => {
+            if (!track.CoverArtPath) return nothing;
+            return html`<img src="${track.CoverArtPath}" alt="" style="width:24px;height:24px;border-radius:3px;object-fit:cover;display:block;" />`;
+        },
+    },
     trackName: {
         id: 'trackName',
         label: 'Track Name',
@@ -185,6 +198,14 @@ export const COLUMN_DEFS: Record<string, ColumnDef> = {
         align: 'right',
         comparator: (a, b) =>
             compareNum(a.FileSize, b.FileSize),
+    },
+    playCount: {
+        id: 'playCount',
+        label: 'Play Count',
+        accessor: (t) => t.PlayCount > 0 ? `${t.PlayCount}` : '0',
+        defaultWidth: '80px',
+        comparator: (a, b) =>
+            compareNum(a.PlayCount, b.PlayCount),
     },
 };
 

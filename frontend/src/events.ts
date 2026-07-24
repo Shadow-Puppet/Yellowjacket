@@ -51,6 +51,21 @@ export const Events = {
     // Tag writing events
     TrackMetadataChanged: "TrackMetadataChanged",
     BatchWriteProgress: "BatchWriteProgress",
+
+    // Autotag apply events — emitted while an async ApplyAsync job is in flight so the review UI can render per-folder progress
+    AutotagApplyStarted: "AutotagApplyStarted",
+    AutotagApplyProgress: "AutotagApplyProgress",
+    AutotagApplyFinished: "AutotagApplyFinished",
+
+    // Autotag prefetch events — emitted by the background worker that scores pending tagging items so sidebar pills populate without the user having to open each folder
+    AutotagPrefetchProgress: "AutotagPrefetchProgress",
+    AutotagPrefetchFinished: "AutotagPrefetchFinished",
+
+    // Explore / search index events
+    IndexStatusChanged: "IndexStatusChanged",
+    ArtistDiscographyReady: "ArtistDiscographyReady",
+    ArtistSimilarReady: "ArtistSimilarReady",
+    AlbumReleasesReady: "AlbumReleasesReady",
 } as const;
 
 export type EventName = (typeof Events)[keyof typeof Events];

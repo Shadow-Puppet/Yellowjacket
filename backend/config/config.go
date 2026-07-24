@@ -21,11 +21,18 @@ import (
 	"yellowjacket/backend/tracklist"
 )
 
+// errSaveBeforeLoad is returned by Save when the in-memory config
+// hasn't been hydrated from disk yet.  Prevents writing a default-
+// only struct over a real config file during abnormal lifecycle
+// sequences (failed startup, racing shutdown).
+var errSaveBeforeLoad = errors.New("refusing to save: config not loaded from disk")
+
 // Config represents the application configuration.
 type Config struct {
 	ctx       context.Context
 	logger    *slog.Logger
 	filePath  string            // required
+	loaded    bool              // true once Load() succeeds
 	Library   *library.Config   `toml:"Library"`
 	Theme     *theme.Config     `toml:"Theme"`
 	Window    *WindowConfig     `toml:"Window"`
@@ -142,12 +149,22 @@ func (c *Config) Load() error {
 	}
 
 	c.logger.Debug("loaded config file", "file", c.filePath)
+	c.loaded = true
 
 	return nil
 }
 
-// Save writes the config to disk.
+// Save writes the config to disk.  Refuses to write if the config
+// was never successfully loaded — prevents overwriting user config
+// with defaults during abnormal startup/shutdown sequences.
 func (c *Config) Save() error {
+	if !c.loaded {
+		// Allow the initial save when the file doesn't exist yet.
+		if _, err := os.Stat(c.filePath); err == nil {
+			return errSaveBeforeLoad
+		}
+	}
+
 	if err := c.Validate(); err != nil {
 		return fmt.Errorf("invalid config: %w", err)
 	}
@@ -157,9 +174,46 @@ func (c *Config) Save() error {
 		return fmt.Errorf("could not marshal config struct: %w", err)
 	}
 
-	err = os.WriteFile(c.filePath, confFileData, 0o644)
+	// Write atomically: marshal into a temp file in the same directory,
+	// then rename it over the target.  os.WriteFile truncates the file
+	// in place before writing, so a crash or kill mid-write (common
+	// during dev restarts) can leave a truncated — often empty — config.
+	// An empty TOML file loads "successfully" as all-defaults and then
+	// gets re-saved as defaults, silently wiping the user's settings.
+	// A temp-file + rename makes the replacement atomic: a reader always
+	// sees either the previous file or the complete new one.
+	tmp, err := os.CreateTemp(path.Dir(c.filePath), "config-*.toml.tmp")
 	if err != nil {
-		return fmt.Errorf("could not write config file (%s): %w", c.filePath, err)
+		return fmt.Errorf("could not create temp config file: %w", err)
+	}
+
+	tmpName := tmp.Name()
+
+	// Best-effort cleanup if we bail before the rename succeeds.
+	defer func() { _ = os.Remove(tmpName) }()
+
+	if _, err := tmp.Write(confFileData); err != nil {
+		_ = tmp.Close()
+
+		return fmt.Errorf("could not write temp config file: %w", err)
+	}
+
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+
+		return fmt.Errorf("could not sync temp config file: %w", err)
+	}
+
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("could not close temp config file: %w", err)
+	}
+
+	if err := os.Chmod(tmpName, 0o644); err != nil {
+		return fmt.Errorf("could not set config file permissions: %w", err)
+	}
+
+	if err := os.Rename(tmpName, c.filePath); err != nil {
+		return fmt.Errorf("could not replace config file (%s): %w", c.filePath, err)
 	}
 
 	c.logger.Debug("saved config to file", "file", c.filePath)

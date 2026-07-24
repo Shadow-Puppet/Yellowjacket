@@ -82,7 +82,7 @@ func (q *Queries) CountPlaylistsByName(ctx context.Context, name string) (int64,
 
 const createPlaylist = `-- name: CreatePlaylist :one
 INSERT INTO playlists (name) VALUES (?)
-RETURNING id, name, created_at, updated_at
+RETURNING id, name, is_smart, smart_rules, smart_snapshot_at, created_at, updated_at
 `
 
 func (q *Queries) CreatePlaylist(ctx context.Context, name string) (Playlist, error) {
@@ -91,6 +91,9 @@ func (q *Queries) CreatePlaylist(ctx context.Context, name string) (Playlist, er
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
+		&i.IsSmart,
+		&i.SmartRules,
+		&i.SmartSnapshotAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -127,11 +130,16 @@ SELECT
     COALESCE(ac.text, pt.phantom_artist, '') AS artist,
     COALESCE(rg.name, pt.phantom_album, '') AS album,
     COALESCE(ca.file_path, pt.phantom_cover_art_path, '') AS cover_art_path,
-    CASE WHEN pt.audio_file_id IS NULL THEN 1 ELSE 0 END AS is_phantom
+    CASE WHEN pt.audio_file_id IS NULL THEN 1 ELSE 0 END AS is_phantom,
+    COALESCE(a.mbid, '') AS artist_mbid,
+    COALESCE(rg.mbid, '') AS release_group_mbid,
+    COALESCE(r.mbid, '') AS recording_mbid
 FROM playlist_tracks pt
 LEFT JOIN audio_files af ON pt.audio_file_id = af.id
 LEFT JOIN recordings r ON af.recording_id = r.id
 LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
+LEFT JOIN artist_credit_artist aca ON aca.credit_id = ac.id
+LEFT JOIN artists a ON a.id = aca.artist_id
 LEFT JOIN (
     SELECT recording_id, MIN(release_group_id) AS release_group_id
     FROM release_group_recordings
@@ -154,6 +162,9 @@ type GetAllPlaylistTracksWithMetadataRow struct {
 	Album              string
 	CoverArtPath       string
 	IsPhantom          int64
+	ArtistMbid         string
+	ReleaseGroupMbid   string
+	RecordingMbid      string
 }
 
 func (q *Queries) GetAllPlaylistTracksWithMetadata(ctx context.Context) ([]GetAllPlaylistTracksWithMetadataRow, error) {
@@ -177,6 +188,9 @@ func (q *Queries) GetAllPlaylistTracksWithMetadata(ctx context.Context) ([]GetAl
 			&i.Album,
 			&i.CoverArtPath,
 			&i.IsPhantom,
+			&i.ArtistMbid,
+			&i.ReleaseGroupMbid,
+			&i.RecordingMbid,
 		); err != nil {
 			return nil, err
 		}
@@ -192,7 +206,7 @@ func (q *Queries) GetAllPlaylistTracksWithMetadata(ctx context.Context) ([]GetAl
 }
 
 const getAllPlaylists = `-- name: GetAllPlaylists :many
-SELECT id, name, created_at, updated_at FROM playlists ORDER BY updated_at DESC
+SELECT id, name, is_smart, smart_rules, smart_snapshot_at, created_at, updated_at FROM playlists ORDER BY updated_at DESC
 `
 
 func (q *Queries) GetAllPlaylists(ctx context.Context) ([]Playlist, error) {
@@ -207,6 +221,9 @@ func (q *Queries) GetAllPlaylists(ctx context.Context) ([]Playlist, error) {
 		if err := rows.Scan(
 			&i.ID,
 			&i.Name,
+			&i.IsSmart,
+			&i.SmartRules,
+			&i.SmartSnapshotAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -236,7 +253,7 @@ func (q *Queries) GetNextPlaylistTrackPosition(ctx context.Context, playlistID i
 }
 
 const getPlaylist = `-- name: GetPlaylist :one
-SELECT id, name, created_at, updated_at FROM playlists WHERE id = ? LIMIT 1
+SELECT id, name, is_smart, smart_rules, smart_snapshot_at, created_at, updated_at FROM playlists WHERE id = ? LIMIT 1
 `
 
 func (q *Queries) GetPlaylist(ctx context.Context, id int64) (Playlist, error) {
@@ -245,6 +262,9 @@ func (q *Queries) GetPlaylist(ctx context.Context, id int64) (Playlist, error) {
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
+		&i.IsSmart,
+		&i.SmartRules,
+		&i.SmartSnapshotAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -354,11 +374,16 @@ SELECT
     COALESCE(ac.text, pt.phantom_artist, '') AS artist,
     COALESCE(rg.name, pt.phantom_album, '') AS album,
     COALESCE(ca.file_path, pt.phantom_cover_art_path, '') AS cover_art_path,
-    CASE WHEN pt.audio_file_id IS NULL THEN 1 ELSE 0 END AS is_phantom
+    CASE WHEN pt.audio_file_id IS NULL THEN 1 ELSE 0 END AS is_phantom,
+    COALESCE(a.mbid, '') AS artist_mbid,
+    COALESCE(rg.mbid, '') AS release_group_mbid,
+    COALESCE(r.mbid, '') AS recording_mbid
 FROM playlist_tracks pt
 LEFT JOIN audio_files af ON pt.audio_file_id = af.id
 LEFT JOIN recordings r ON af.recording_id = r.id
 LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
+LEFT JOIN artist_credit_artist aca ON aca.credit_id = ac.id
+LEFT JOIN artists a ON a.id = aca.artist_id
 LEFT JOIN (
     SELECT recording_id, MIN(release_group_id) AS release_group_id
     FROM release_group_recordings
@@ -382,6 +407,9 @@ type GetPlaylistTracksWithMetadataRow struct {
 	Album              string
 	CoverArtPath       string
 	IsPhantom          int64
+	ArtistMbid         string
+	ReleaseGroupMbid   string
+	RecordingMbid      string
 }
 
 func (q *Queries) GetPlaylistTracksWithMetadata(ctx context.Context, playlistID int64) ([]GetPlaylistTracksWithMetadataRow, error) {
@@ -405,6 +433,9 @@ func (q *Queries) GetPlaylistTracksWithMetadata(ctx context.Context, playlistID 
 			&i.Album,
 			&i.CoverArtPath,
 			&i.IsPhantom,
+			&i.ArtistMbid,
+			&i.ReleaseGroupMbid,
+			&i.RecordingMbid,
 		); err != nil {
 			return nil, err
 		}

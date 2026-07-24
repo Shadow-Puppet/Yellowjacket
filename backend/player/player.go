@@ -79,19 +79,22 @@ const (
 // event and serialized as camelCase JSON to match the frontend
 // TrackInfo interface in player-store.ts.
 type TrackInfo struct {
-	FileName       string `json:"fileName"`
-	FilePath       string `json:"filePath"`
-	State          State  `json:"state"`
-	Title          string `json:"title"`
-	Artist         string `json:"artist"`
-	Album          string `json:"album"`
-	CoverArt       string `json:"coverArt"`
-	CoverArtSmall  string `json:"coverArtSmall"`
-	CoverArtMedium string `json:"coverArtMedium"`
-	CoverArtLarge  string `json:"coverArtLarge"`
-	TrackLength    int    `json:"trackLength"`
-	SeekPosition   int    `json:"seekPosition"`
-	TrackChangeID  uint64 `json:"trackChangeId"`
+	FileName         string `json:"fileName"`
+	FilePath         string `json:"filePath"`
+	State            State  `json:"state"`
+	Title            string `json:"title"`
+	Artist           string `json:"artist"`
+	Album            string `json:"album"`
+	CoverArt         string `json:"coverArt"`
+	CoverArtSmall    string `json:"coverArtSmall"`
+	CoverArtMedium   string `json:"coverArtMedium"`
+	CoverArtLarge    string `json:"coverArtLarge"`
+	TrackLength      int    `json:"trackLength"`
+	SeekPosition     int    `json:"seekPosition"`
+	TrackChangeID    uint64 `json:"trackChangeId"`
+	ArtistMBID       string `json:"artistMbid"`
+	ReleaseGroupMBID string `json:"releaseGroupMbid"`
+	RecordingMBID    string `json:"recordingMbid"`
 }
 
 // Sentinel errors for player operations.
@@ -761,6 +764,17 @@ func (p *Player) seekLocked(targetSeconds int) error {
 		return fmt.Errorf("cannot get track length: %w", err)
 	}
 
+	// Block the read-ahead goroutine from reading the source while
+	// we seek it. The decoder (e.g. FLAC's bufseekio.ReadSeeker) is
+	// not safe for concurrent Read+Seek, and read-ahead runs on its
+	// own goroutine — without this it can panic with a slice-bounds
+	// error, especially right after load when the buffer is empty
+	// and read-ahead is filling at full speed.
+	if p.buffered != nil {
+		p.buffered.LockSource()
+		defer p.buffered.UnlockSource()
+	}
+
 	speaker.Lock()
 
 	samples := int(
@@ -818,6 +832,13 @@ func (p *Player) seekLocked(targetSeconds int) error {
 
 	speaker.Unlock()
 
+	// Flush the read-ahead buffer so the speaker immediately
+	// plays audio from the new position instead of draining
+	// up to 2 seconds of stale pre-seek samples.
+	if p.buffered != nil {
+		p.buffered.Flush()
+	}
+
 	if p.mediaControls != nil {
 		p.mediaControls.NotifySeek(targetSeconds)
 	}
@@ -853,7 +874,7 @@ func (p *Player) getCurrentTrackInfoLocked() TrackInfo {
 
 	// Try to get metadata from database.
 	if p.db != nil {
-		meta, err := p.db.Queries.GetTrackMetadataByPath(
+		meta, err := p.db.ReadQueries.GetTrackMetadataByPath(
 			p.ctx, info.FilePath,
 		)
 		if err == nil {
@@ -863,6 +884,9 @@ func (p *Player) getCurrentTrackInfoLocked() TrackInfo {
 
 			info.Artist = meta.Artist
 			info.Album = meta.Album
+			info.ArtistMBID = meta.ArtistMbid
+			info.ReleaseGroupMBID = meta.ReleaseGroupMbid
+			info.RecordingMBID = meta.RecordingMbid
 			p.trackLengthMs = meta.LengthMilliseconds
 
 			if meta.CoverArtPath != "" {
@@ -991,7 +1015,7 @@ func (p *Player) buildMediaMetadata(
 	// full path; ResolveURLs converts it to relative HTTP paths
 	// for the frontend, but MPRIS needs the actual file path.
 	if p.db != nil && info.FilePath != "" {
-		dbMeta, err := p.db.Queries.GetTrackMetadataByPath(
+		dbMeta, err := p.db.ReadQueries.GetTrackMetadataByPath(
 			p.ctx, info.FilePath,
 		)
 		if err == nil && dbMeta.CoverArtPath != "" {
@@ -1089,7 +1113,7 @@ func (p *Player) restoreStateLocked() {
 		return
 	}
 
-	state, err := p.db.Queries.GetPlayerState(p.db.Ctx)
+	state, err := p.db.ReadQueries.GetPlayerState(p.db.Ctx)
 	if err != nil {
 		p.logger.Error(
 			"Failed to load player state", "err", err,

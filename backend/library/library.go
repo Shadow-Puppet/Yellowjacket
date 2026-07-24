@@ -19,6 +19,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"golang.org/x/sync/errgroup"
 
+	"yellowjacket/backend/autotag"
 	"yellowjacket/backend/database"
 	"yellowjacket/backend/database/sql/sqlcgen"
 	"yellowjacket/backend/events"
@@ -76,9 +77,16 @@ type RescanHooks struct {
 // completes.  The app layer wires these so the library package
 // does not depend on the playlist package directly.
 type ScanHooks struct {
+	// RepopulatePlaylists re-imports tracks for playlists that
+	// lost their playlist_tracks rows (e.g., from a pre-fix
+	// FullRescan).  Runs before ResolvePhantoms.
+	RepopulatePlaylists func()
 	// ResolvePhantoms re-links phantom playlist tracks whose
 	// files now exist in the library after scanning.
 	ResolvePhantoms func()
+	// OnAllScansComplete runs after ALL queued scans finish
+	// (queue drained).
+	OnAllScansComplete func()
 }
 
 // Library manages scanning and querying the music collection.
@@ -691,10 +699,13 @@ func (l *Library) scanInternal(
 		metrics.OrphanCleanup = time.Since(orphanStart)
 	}
 
-	// --- Phase 6: resolve phantom playlist tracks ---
-	// Delegated to the playlist service via ScanHooks so that
-	// M3U8-based path resolution can handle both pre-existing
-	// phantoms (no phantom_file_path) and new ones.
+	// --- Phase 6: repopulate + resolve phantom playlist tracks ---
+	// Repopulate first: re-imports tracks for playlists that lost
+	// their rows (from a pre-fix FullRescan that deleted them).
+	if !cancelled && l.scanHooks.RepopulatePlaylists != nil {
+		l.scanHooks.RepopulatePlaylists()
+	}
+	// Then resolve: re-links phantom tracks to audio_files.
 	if !cancelled && l.scanHooks.ResolvePhantoms != nil {
 		l.scanHooks.ResolvePhantoms()
 	}
@@ -973,7 +984,7 @@ func (l *Library) saveAudioFile(
 
 	// Process metadata and create related records.
 	recordingID, err := l.processMetadata(
-		q, cache, metrics, result, thumbChan,
+		q, tx, cache, metrics, result, thumbChan,
 	)
 	if err != nil {
 		return fmt.Errorf("could not process metadata: %w", err)
@@ -991,8 +1002,19 @@ func (l *Library) saveAudioFile(
 
 	basename := filepath.Base(result.absolutePath)
 
-	af, err := q.CreateAudioFile(
-		l.ctx, sqlcgen.CreateAudioFileParams{
+	groupKey := autotag.GroupKey(
+		result.libraryID,
+		result.absolutePath,
+		tags.DiscNumber,
+	)
+
+	tagStatus := "untagged"
+	if tags.RecordingMBID != "" {
+		tagStatus = "user_confirmed"
+	}
+
+	af, err := q.CreateAudioFileWithGroupKey(
+		l.ctx, sqlcgen.CreateAudioFileWithGroupKeyParams{
 			FilePath:           result.absolutePath,
 			LengthMilliseconds: result.lengthMillis,
 			FileTypeID: int64(
@@ -1009,11 +1031,31 @@ func (l *Library) saveAudioFile(
 			FileSize:    props.FileSize,
 			Basename:    basename,
 			LibraryID:   result.libraryID,
+			GroupKey:    groupKey,
+			TagStatus:   tagStatus,
 		})
 	if err != nil {
 		return fmt.Errorf(
 			"could not save audio file to db: %w", err,
 		)
+	}
+
+	if err := q.UpsertTaggingItemOnTrackAdd(
+		l.ctx, sqlcgen.UpsertTaggingItemOnTrackAddParams{
+			GroupKey:    groupKey,
+			LibraryID:   result.libraryID,
+			AlbumName:   tags.Album,
+			AlbumArtist: resolveAlbumArtistName(tags),
+			DiscNumber:  int64(tags.DiscNumber),
+		},
+	); err != nil {
+		l.logger.Warn(
+			"could not upsert tagging_items row",
+			"path", result.absolutePath,
+			"err", err,
+		)
+
+		metrics.addWarning(result.absolutePath, "commit", err)
 	}
 
 	// Index in FTS5 search_index.
@@ -1067,7 +1109,7 @@ func (l *Library) updateAudioFileMetadata(
 
 	// Process metadata and create related records.
 	recordingID, err := l.processMetadata(
-		q, cache, metrics, result, thumbChan,
+		q, tx, cache, metrics, result, thumbChan,
 	)
 	if err != nil {
 		return fmt.Errorf("could not process metadata: %w", err)
@@ -1101,6 +1143,16 @@ func (l *Library) updateAudioFileMetadata(
 	tags := result.tags
 	if tags == nil {
 		tags = &metadata.TrackMetadata{}
+	}
+
+	if err := l.maybeRebindTaggingGroup(q, result, tags); err != nil {
+		l.logger.Warn(
+			"could not rebind tagging group after metadata update",
+			"path", result.absolutePath,
+			"err", err,
+		)
+
+		metrics.addWarning(result.absolutePath, "commit", err)
 	}
 
 	title := l.getRecordingName(tags, result.absolutePath)
@@ -1148,6 +1200,7 @@ func (l *Library) updateAudioFileMetadata(
 // asynchronously.
 func (l *Library) processMetadata(
 	q *sqlcgen.Queries,
+	tx *sql.Tx,
 	cache *entityCache,
 	metrics *ScanMetrics,
 	result importResult,
@@ -1163,14 +1216,19 @@ func (l *Library) processMetadata(
 		q, cache, metrics, tags, thumbChan,
 	)
 
-	// 2. Get or create artist credit for track artist.
-	artistName := tags.Artist
-	if artistName == "" {
-		artistName = "Unknown Artist"
+	// 2. Get or create the artist credit for the track.  The credit
+	// text is the full tagged string (e.g. "Lana Del Rey ft. Sean
+	// Lennon") and is kept only for display; the artist *entity* it
+	// links to is the primary artist, resolved cleanly by primaryArtist
+	// so featured-artist credits don't fork into their own bogus artist
+	// rows (all sharing the primary's single MBID).
+	creditText := tags.Artist
+	if creditText == "" {
+		creditText = "Unknown Artist"
 	}
 
 	artistCredit, err := l.cachedUpsertArtistCredit(
-		q, cache, artistName,
+		q, cache, creditText,
 	)
 	if err != nil {
 		return 0, fmt.Errorf(
@@ -1178,7 +1236,9 @@ func (l *Library) processMetadata(
 		)
 	}
 
-	l.cachedLinkArtist(q, cache, metrics, artistName, artistCredit.ID)
+	primaryName, primaryMBID := primaryArtist(tags)
+
+	l.cachedLinkArtist(q, cache, metrics, primaryName, artistCredit.ID)
 
 	// 3. Get or create artist credit for album artist.
 	albumArtistCreditID := l.resolveAlbumArtistCredit(
@@ -1234,7 +1294,124 @@ func (l *Library) processMetadata(
 		}
 	}
 
+	// 7. Update MusicBrainz IDs (if present in tags).
+	if releaseGroupID.Valid {
+		l.updateMBIDs(tx, cache, tags, primaryName, primaryMBID, releaseGroupID.Int64, recording.ID)
+	} else {
+		l.updateMBIDs(tx, cache, tags, primaryName, primaryMBID, 0, recording.ID)
+	}
+
 	return recording.ID, nil
+}
+
+// updateMBIDs writes MusicBrainz IDs from audio file tags to the
+// corresponding database entities.  Uses raw SQL since the sqlc
+// queries predate the mbid columns.  Skips silently if tags have
+// no MBIDs.
+func (l *Library) updateMBIDs(
+	tx *sql.Tx,
+	cache *entityCache,
+	tags *metadata.TrackMetadata,
+	artistName string,
+	artistMBID string,
+	releaseGroupID int64,
+	recordingID int64,
+) {
+	// Artist MBID (the primary artist's, resolved by primaryArtist).
+	if artistMBID != "" {
+		if artist, ok := cache.artists[artistName]; ok {
+			_, _ = tx.ExecContext(l.ctx,
+				"UPDATE artists SET mbid = ? WHERE id = ? AND (mbid IS NULL OR mbid = '')",
+				artistMBID, artist.ID,
+			)
+		}
+	}
+
+	// Release group MBID.
+	if tags.ReleaseGroupMBID != "" && releaseGroupID > 0 {
+		_, _ = tx.ExecContext(l.ctx,
+			"UPDATE release_groups SET mbid = ? WHERE id = ? AND (mbid IS NULL OR mbid = '')",
+			tags.ReleaseGroupMBID, releaseGroupID,
+		)
+	}
+
+	// Recording MBID.
+	if tags.RecordingMBID != "" && recordingID > 0 {
+		_, _ = tx.ExecContext(l.ctx,
+			"UPDATE recordings SET mbid = ? WHERE id = ? AND (mbid IS NULL OR mbid = '')",
+			tags.RecordingMBID, recordingID,
+		)
+	}
+}
+
+// resolveAlbumArtistName returns the album-artist tag for tagging-
+// group bookkeeping, falling back to the track artist when the
+// album-artist field is empty.
+func resolveAlbumArtistName(tags *metadata.TrackMetadata) string {
+	if tags.AlbumArtist != "" {
+		return tags.AlbumArtist
+	}
+
+	return tags.Artist
+}
+
+// maybeRebindTaggingGroup recomputes the group key from the freshly
+// extracted metadata and, if it differs from the row's current
+// group_key, migrates the track: decrement the old group's count
+// (dropping it if emptied), upsert the new group, and write the new
+// key onto the audio_files row.  A no-op when the key is unchanged.
+func (l *Library) maybeRebindTaggingGroup(
+	q *sqlcgen.Queries,
+	result importResult,
+	tags *metadata.TrackMetadata,
+) error {
+	newKey := autotag.GroupKey(
+		result.libraryID,
+		result.absolutePath,
+		tags.DiscNumber,
+	)
+
+	oldKey, err := q.GetAudioFileGroupKey(l.ctx, result.existingFileID)
+	if err != nil {
+		return fmt.Errorf("read existing group_key: %w", err)
+	}
+
+	if oldKey == newKey {
+		return nil
+	}
+
+	if oldKey != "" {
+		if err := q.DecrementTaggingItemTrackCount(l.ctx, oldKey); err != nil {
+			return fmt.Errorf("decrement old group: %w", err)
+		}
+
+		if err := q.DeleteTaggingItemIfEmpty(l.ctx, oldKey); err != nil {
+			return fmt.Errorf("cleanup old group: %w", err)
+		}
+	}
+
+	if err := q.UpsertTaggingItemOnTrackAdd(
+		l.ctx, sqlcgen.UpsertTaggingItemOnTrackAddParams{
+			GroupKey:    newKey,
+			LibraryID:   result.libraryID,
+			AlbumName:   tags.Album,
+			AlbumArtist: resolveAlbumArtistName(tags),
+			DiscNumber:  int64(tags.DiscNumber),
+		},
+	); err != nil {
+		return fmt.Errorf("upsert new group: %w", err)
+	}
+
+	if err := q.SetAudioFileGroupKey(
+		l.ctx, sqlcgen.SetAudioFileGroupKeyParams{
+			GroupKey: newKey,
+			ID:       result.existingFileID,
+		},
+	); err != nil {
+		return fmt.Errorf("write new group_key: %w", err)
+	}
+
+	return nil
 }
 
 // processCoverArt saves cover art to disk and upserts the DB record,

@@ -254,7 +254,12 @@ func (l *Library) drainQueue() {
 	l.currentScanLibraryID = 0
 	l.currentScanLibraryName = ""
 	l.scanActive = false
+	hooks := l.scanHooks
 	l.mu.Unlock()
 
 	runtime.EventsEmit(l.ctx, events.LibraryScanQueueDrained)
+
+	if hooks.OnAllScansComplete != nil {
+		hooks.OnAllScansComplete()
+	}
 }

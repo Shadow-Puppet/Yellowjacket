@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"yellowjacket/backend/coverart"
 	"yellowjacket/backend/database"
 	"yellowjacket/backend/profiling"
 )
@@ -36,20 +37,35 @@ const initialBatchSize = 50
 
 // trackMeta holds the result of a batch metadata lookup.
 type trackMeta struct {
-	AudioFileID int64
-	FilePath    string
-	Title       string
-	Artist      string
+	AudioFileID      int64
+	FilePath         string
+	Title            string
+	Artist           string
+	Album            string
+	CoverArtPath     string
+	ArtistMBID       string
+	ReleaseGroupMBID string
+	RecordingMBID    string
 }
 
 // toTrack converts metadata lookup results into a queue Track.
 func (m trackMeta) toTrack(position int64) Track {
+	var coverArtURL string
+	if m.CoverArtPath != "" {
+		coverArtURL = coverart.ResolveURLs(m.CoverArtPath).Small
+	}
+
 	return Track{
-		AudioFileID: m.AudioFileID,
-		FilePath:    m.FilePath,
-		Position:    position,
-		Title:       m.Title,
-		Artist:      m.Artist,
+		AudioFileID:      m.AudioFileID,
+		FilePath:         m.FilePath,
+		Position:         position,
+		Title:            m.Title,
+		Artist:           m.Artist,
+		Album:            m.Album,
+		CoverArtPath:     coverArtURL,
+		ArtistMBID:       m.ArtistMBID,
+		ReleaseGroupMBID: m.ReleaseGroupMBID,
+		RecordingMBID:    m.RecordingMBID,
 	}
 }
 
@@ -64,12 +80,17 @@ type TrackLoader interface {
 
 // Track represents a track in the queue with its metadata.
 type Track struct {
-	ID          int64  `json:"id"`
-	AudioFileID int64  `json:"audioFileId"`
-	FilePath    string `json:"filePath"`
-	Position    int64  `json:"position"`
-	Title       string `json:"title"`
-	Artist      string `json:"artist"`
+	ID               int64  `json:"id"`
+	AudioFileID      int64  `json:"audioFileId"`
+	FilePath         string `json:"filePath"`
+	Position         int64  `json:"position"`
+	Title            string `json:"title"`
+	Artist           string `json:"artist"`
+	Album            string `json:"album"`
+	CoverArtPath     string `json:"coverArtPath"`
+	ArtistMBID       string `json:"artistMbid"`
+	ReleaseGroupMBID string `json:"releaseGroupMbid"`
+	RecordingMBID    string `json:"recordingMbid"`
 }
 
 // State is the full state emitted to the frontend.
@@ -1274,13 +1295,20 @@ func (q *Queue) CompactAfterLibraryRemoval() {
 	q.tracks = make([]Track, 0, len(rows))
 
 	for _, row := range rows {
+		var coverArtURL string
+		if row.CoverArtPath != "" {
+			coverArtURL = coverart.ResolveURLs(row.CoverArtPath).Small
+		}
+
 		q.tracks = append(q.tracks, Track{
-			ID:          row.ID,
-			AudioFileID: row.AudioFileID,
-			FilePath:    row.FilePath,
-			Position:    row.Position,
-			Title:       row.Title,
-			Artist:      row.Artist,
+			ID:           row.ID,
+			AudioFileID:  row.AudioFileID,
+			FilePath:     row.FilePath,
+			Position:     row.Position,
+			Title:        row.Title,
+			Artist:       row.Artist,
+			Album:        row.Album,
+			CoverArtPath: coverArtURL,
 		})
 	}
 

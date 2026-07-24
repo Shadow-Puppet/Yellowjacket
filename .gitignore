@@ -9,3 +9,33 @@ lefthook-local.yml
 # Profiling artifacts
 trace-*.out
 *.pprof
+
+# ── Legacy GSD planning snapshot (replaced by .planning/) ──
+# Kept on disk for reference only; safe to delete once nothing relies on it.
+.gsd
+gsd-session-*.html
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.code-workspace
+.env
+.env.*
+!.env.example
+node_modules/
+.next/
+dist/
+build/
+__pycache__/
+*.pyc
+.venv/
+venv/
+target/
+vendor/
+*.log
+coverage/
+.cache/
+tmp/

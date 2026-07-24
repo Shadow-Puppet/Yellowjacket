@@ -11,9 +11,15 @@ import '@components/artist-details/artist-details.ts';
 import '@components/genres-view/genres-view.ts';
 import '@components/genre-details/genre-details.ts';
 import '@components/playlist-details/playlist-details.ts';
+import '@components/smart-playlist-details/smart-playlist-details.ts';
+import '@components/smart-playlist-editor/smart-playlist-editor.ts';
 import '@components/search-bar/search-bar.ts';
 import '@components/library-filter/library-filter.ts';
 import '@components/track-details/track-details.ts';
+import '@components/explore-view/explore-view.ts';
+import '@components/explore-artist-details/explore-artist-details.js';
+import '@components/explore-album-details/explore-album-details.js';
+import '@components/autotag-view/autotag-view.ts';
 import '@awesome.me/webawesome/dist/styles/themes/default.css';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import { setBasePath } from '@awesome.me/webawesome/dist/webawesome.js';
@@ -27,6 +33,7 @@ import '@store/theme-store';
 // Importing the keyboard shortcut service triggers initialization:
 // registers the document keydown listener for global shortcuts.
 import './src/services/keyboard-shortcut-service';
+import { exploreSettings } from '@store/explore-settings';
 import {
     hasTrackPayload,
     getDragPayload,
@@ -52,12 +59,19 @@ const VIEW_TAGS: Record<string, string> = {
     artists: 'artists-view',
     genres: 'genres-view',
     playlists: 'playlist-view',
+    explore: 'explore-view',
+    autotag: 'autotag-view',
     settings: 'config-page',
 };
 
 const viewCache = new Map<string, HTMLElement>();
 let currentViewEl: HTMLElement | null = null;
 let currentDetailEl: HTMLElement | null = null;
+
+/** Navigation history stack for back-button support in detail views. */
+const navStack: Array<{ view: string; [key: string]: any }> = [];
+/** The current navigation detail (so we can push it onto the stack). */
+let currentNavDetail: { view: string; [key: string]: any } = { view: 'tracks' };
 
 // Seed the cache with the default track-list rendered in index.html.
 const mainContent = document.getElementById('main-content');
@@ -81,6 +95,9 @@ document.addEventListener('navigate', (e: Event) => {
 
     // --- Primary (cacheable) views ----------------------------------------
     if (view in VIEW_TAGS) {
+        // Navigating to a primary view clears the history stack.
+        navStack.length = 0;
+
         // Remove any active detail view first
         if (currentDetailEl) {
             currentDetailEl.remove();
@@ -104,10 +121,17 @@ document.addEventListener('navigate', (e: Event) => {
         }
         target.classList.remove('view-hidden');
         currentViewEl = target;
+        currentNavDetail = { view };
         return;
     }
 
     // --- Detail (ephemeral) views -----------------------------------------
+    // Push the current view onto the nav stack before switching
+    // (unless this is a back-navigation, which already popped).
+    if (!detail._isBack) {
+        navStack.push({ ...currentNavDetail });
+    }
+
     // Hide the current primary view
     if (currentViewEl) {
         currentViewEl.classList.add('view-hidden');
@@ -117,6 +141,8 @@ document.addEventListener('navigate', (e: Event) => {
         currentDetailEl.remove();
         currentDetailEl = null;
     }
+
+    currentNavDetail = { ...detail };
 
     switch (view) {
         case 'artist-details': {
@@ -139,6 +165,19 @@ document.addEventListener('navigate', (e: Event) => {
             currentDetailEl = plEl;
             break;
         }
+        case 'smart-playlist-details': {
+            const { playlistId, playlistName } = detail;
+            const spEl = document.createElement('smart-playlist-details');
+
+            spEl.setAttribute('playlist-id', String(playlistId));
+            spEl.setAttribute('playlist-name', playlistName);
+            if (detail.autoEdit) {
+                spEl.setAttribute('auto-edit', '');
+            }
+            mainContent.appendChild(spEl);
+            currentDetailEl = spEl;
+            break;
+        }
         case 'genre-details': {
             const { genreName } = detail;
             const genreEl = document.createElement('genre-details');
@@ -146,6 +185,32 @@ document.addEventListener('navigate', (e: Event) => {
             genreEl.setAttribute('genre-name', genreName);
             mainContent.appendChild(genreEl);
             currentDetailEl = genreEl;
+            break;
+        }
+        case 'explore-artist-details': {
+            const { artistMBID, artistName, localArtistId } = detail;
+            const el = document.createElement('explore-artist-details');
+
+            if (artistMBID) el.setAttribute('artist-mbid', artistMBID);
+            el.setAttribute('artist-name', artistName);
+            if (localArtistId) el.setAttribute('local-artist-id', String(localArtistId));
+            mainContent.appendChild(el);
+            currentDetailEl = el;
+            break;
+        }
+        case 'explore-album-details': {
+            const { releaseGroupMBID, albumName, artistName, highlightTrackMBID, localAlbumId } = detail;
+            const el = document.createElement('explore-album-details');
+
+            if (releaseGroupMBID) el.setAttribute('release-group-mbid', releaseGroupMBID);
+            el.setAttribute('album-name', albumName);
+            if (artistName) el.setAttribute('artist-name', artistName);
+            if (highlightTrackMBID) {
+                el.setAttribute('highlight-track-mbid', highlightTrackMBID);
+            }
+            if (localAlbumId) el.setAttribute('local-album-id', String(localAlbumId));
+            mainContent.appendChild(el);
+            currentDetailEl = el;
             break;
         }
         default: {
@@ -157,6 +222,18 @@ document.addEventListener('navigate', (e: Event) => {
             mainContent.appendChild(fallback);
             currentDetailEl = fallback;
         }
+    }
+});
+
+// Navigate-back: pop the nav stack and re-dispatch as a regular navigate.
+document.addEventListener('navigate-back', () => {
+    const prev = navStack.pop();
+    if (prev) {
+        document.dispatchEvent(new CustomEvent('navigate', {
+            bubbles: true,
+            composed: true,
+            detail: { ...prev, _isBack: true },
+        }));
     }
 });
 
@@ -229,3 +306,24 @@ if (queueButton && queuePanel) {
 // or timing assumptions needed.
 void Player.EmitCurrentState();
 void Queue.EmitCurrentState();
+
+// ---------------------------------------------------------------------------
+// Library Only toggle
+// ---------------------------------------------------------------------------
+const libraryOnlyToggle = document.getElementById('library-only-toggle');
+
+if (libraryOnlyToggle) {
+    // Sync initial state.
+    if (exploreSettings.libraryOnly) {
+        libraryOnlyToggle.classList.add('active');
+    }
+
+    libraryOnlyToggle.addEventListener('click', () => {
+        exploreSettings.toggle();
+        libraryOnlyToggle.classList.toggle('active', exploreSettings.libraryOnly);
+    });
+
+    exploreSettings.subscribe(() => {
+        libraryOnlyToggle.classList.toggle('active', exploreSettings.libraryOnly);
+    });
+}

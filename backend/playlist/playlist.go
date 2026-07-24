@@ -21,6 +21,8 @@ import (
 	"yellowjacket/backend/database"
 	"yellowjacket/backend/database/sql/sqlcgen"
 	"yellowjacket/backend/events"
+	"yellowjacket/backend/library"
+	"yellowjacket/backend/smartplaylist"
 	"yellowjacket/backend/system"
 )
 
@@ -48,23 +50,27 @@ type Summary struct {
 	Name      string `json:"Name"`
 	CreatedAt string `json:"CreatedAt"`
 	UpdatedAt string `json:"UpdatedAt"`
+	IsSmart   bool   `json:"IsSmart"`
 }
 
 // Track represents a track within a playlist, including its
 // metadata.
 type Track struct {
-	ID             int64  `json:"ID"`
-	Position       int64  `json:"Position"`
-	FilePath       string `json:"FilePath"`
-	Title          string `json:"Title"`
-	Artist         string `json:"Artist"`
-	Album          string `json:"Album"`
-	CoverArtPath   string `json:"CoverArtPath"`
-	CoverArtSmall  string `json:"CoverArtSmall"`
-	CoverArtMedium string `json:"CoverArtMedium"`
-	CoverArtLarge  string `json:"CoverArtLarge"`
-	Duration       string `json:"Duration"`
-	Phantom        bool   `json:"Phantom"`
+	ID               int64  `json:"ID"`
+	Position         int64  `json:"Position"`
+	FilePath         string `json:"FilePath"`
+	Title            string `json:"Title"`
+	Artist           string `json:"Artist"`
+	Album            string `json:"Album"`
+	CoverArtPath     string `json:"CoverArtPath"`
+	CoverArtSmall    string `json:"CoverArtSmall"`
+	CoverArtMedium   string `json:"CoverArtMedium"`
+	CoverArtLarge    string `json:"CoverArtLarge"`
+	Duration         string `json:"Duration"`
+	Phantom          bool   `json:"Phantom"`
+	ArtistMBID       string `json:"ArtistMBID"`
+	ReleaseGroupMBID string `json:"ReleaseGroupMBID"`
+	RecordingMBID    string `json:"RecordingMBID"`
 }
 
 // WithTracks contains a playlist summary and all its tracks.
@@ -126,6 +132,11 @@ type Service struct {
 	db            *database.DB
 	libraryDir    LibraryDirProvider
 	favoritesConf FavoritesConfigProvider
+
+	// dataDirOverride, when non-empty, replaces the OS user data
+	// directory as the base for the playlists folder. Set by tests to
+	// keep M3U writes out of the real user data directory.
+	dataDirOverride string
 }
 
 // NewService creates a new playlist service.
@@ -166,7 +177,7 @@ func (s *Service) SetContext(ctx context.Context) {
 // GetAllPlaylists returns all playlists ordered by most recently
 // updated.
 func (s *Service) GetAllPlaylists() ([]Summary, error) {
-	playlists, err := s.db.Queries.GetAllPlaylists(s.db.Ctx)
+	playlists, err := s.db.ReadQueries.GetAllPlaylists(s.db.Ctx)
 	if err != nil {
 		s.logger.Error(
 			"Failed to get playlists", "err", err,
@@ -185,6 +196,7 @@ func (s *Service) GetAllPlaylists() ([]Summary, error) {
 			Name:      p.Name,
 			CreatedAt: p.CreatedAt.Format(time.RFC3339),
 			UpdatedAt: p.UpdatedAt.Format(time.RFC3339),
+			IsSmart:   p.IsSmart != 0,
 		})
 	}
 
@@ -197,7 +209,7 @@ func (s *Service) GetAllPlaylistsWithTracks() (
 	[]WithTracks,
 	error,
 ) {
-	playlists, err := s.db.Queries.GetAllPlaylists(s.db.Ctx)
+	playlists, err := s.db.ReadQueries.GetAllPlaylists(s.db.Ctx)
 	if err != nil {
 		s.logger.Error(
 			"Failed to get playlists", "err", err,
@@ -208,7 +220,7 @@ func (s *Service) GetAllPlaylistsWithTracks() (
 		)
 	}
 
-	rows, err := s.db.Queries.GetAllPlaylistTracksWithMetadata(
+	rows, err := s.db.ReadQueries.GetAllPlaylistTracksWithMetadata(
 		s.db.Ctx,
 	)
 	if err != nil {
@@ -238,6 +250,9 @@ func (s *Service) GetAllPlaylistsWithTracks() (
 			row.Album,
 			row.LengthMilliseconds,
 			row.CoverArtPath,
+			row.ArtistMbid,
+			row.ReleaseGroupMbid,
+			row.RecordingMbid,
 		)
 
 		if dbTracksByPlaylist[row.PlaylistID] == nil {
@@ -264,6 +279,7 @@ func (s *Service) GetAllPlaylistsWithTracks() (
 				Name:      p.Name,
 				CreatedAt: p.CreatedAt.Format(time.RFC3339),
 				UpdatedAt: p.UpdatedAt.Format(time.RFC3339),
+				IsSmart:   p.IsSmart != 0,
 			},
 			Tracks: tracks,
 		})
@@ -277,7 +293,7 @@ func (s *Service) GetAllPlaylistsWithTracks() (
 func (s *Service) GetPlaylistTracks(
 	playlistID int64,
 ) ([]Track, error) {
-	rows, err := s.db.Queries.GetPlaylistTracksWithMetadata(
+	rows, err := s.db.ReadQueries.GetPlaylistTracksWithMetadata(
 		s.db.Ctx,
 		playlistID,
 	)
@@ -307,6 +323,9 @@ func (s *Service) GetPlaylistTracks(
 			row.Album,
 			row.LengthMilliseconds,
 			row.CoverArtPath,
+			row.ArtistMbid,
+			row.ReleaseGroupMbid,
+			row.RecordingMbid,
 		)
 
 		dbTracks[row.FilePath] = track
@@ -424,15 +443,19 @@ func trackFromRow(
 	filePath, title, artist, album string,
 	lengthMilliseconds int64,
 	coverArtPath string,
+	artistMBID, releaseGroupMBID, recordingMBID string,
 ) Track {
 	track := Track{
-		ID:       id,
-		Position: position,
-		FilePath: filePath,
-		Title:    title,
-		Artist:   artist,
-		Album:    album,
-		Duration: strconv.FormatInt(lengthMilliseconds, 10),
+		ID:               id,
+		Position:         position,
+		FilePath:         filePath,
+		Title:            title,
+		Artist:           artist,
+		Album:            album,
+		Duration:         strconv.FormatInt(lengthMilliseconds, 10),
+		ArtistMBID:       artistMBID,
+		ReleaseGroupMBID: releaseGroupMBID,
+		RecordingMBID:    recordingMBID,
 	}
 
 	if coverArtPath != "" {
@@ -480,6 +503,7 @@ func (s *Service) CreatePlaylist(
 		Name:      created.Name,
 		CreatedAt: created.CreatedAt.Format(time.RFC3339),
 		UpdatedAt: created.UpdatedAt.Format(time.RFC3339),
+		IsSmart:   created.IsSmart != 0,
 	})
 
 	return Summary{
@@ -487,6 +511,7 @@ func (s *Service) CreatePlaylist(
 		Name:      created.Name,
 		CreatedAt: created.CreatedAt.Format(time.RFC3339),
 		UpdatedAt: created.UpdatedAt.Format(time.RFC3339),
+		IsSmart:   created.IsSmart != 0,
 	}, nil
 }
 
@@ -543,7 +568,7 @@ func (s *Service) FindDuplicateTracksInPlaylist(
 	playlistID int64,
 	filePaths []string,
 ) (DuplicateCheckResult, error) {
-	rows, err := s.db.Queries.GetPlaylistTracksWithMetadata(
+	rows, err := s.db.ReadQueries.GetPlaylistTracksWithMetadata(
 		s.db.Ctx,
 		playlistID,
 	)
@@ -648,6 +673,7 @@ func (s *Service) CreatePlaylistWithTracks(
 		Name:      created.Name,
 		CreatedAt: created.CreatedAt.Format(time.RFC3339),
 		UpdatedAt: created.UpdatedAt.Format(time.RFC3339),
+		IsSmart:   created.IsSmart != 0,
 	}
 
 	s.logger.Info(
@@ -938,6 +964,7 @@ func (s *Service) ImportPlaylist(
 		Name:      playlistName,
 		CreatedAt: created.CreatedAt.Format(time.RFC3339),
 		UpdatedAt: created.UpdatedAt.Format(time.RFC3339),
+		IsSmart:   created.IsSmart != 0,
 	}
 
 	s.emitEvent(events.PlaylistCreated, summary)
@@ -1207,11 +1234,17 @@ func (s *Service) addSingleTrack(
 // playlistsDir returns the path to the playlists directory,
 // creating it if needed.
 func (s *Service) playlistsDir() (string, error) {
-	dataDir, err := system.GetUserDataDirPath()
-	if err != nil {
-		return "", fmt.Errorf(
-			"could not get user data directory: %w", err,
-		)
+	dataDir := s.dataDirOverride
+
+	if dataDir == "" {
+		var err error
+
+		dataDir, err = system.GetUserDataDirPath()
+		if err != nil {
+			return "", fmt.Errorf(
+				"could not get user data directory: %w", err,
+			)
+		}
 	}
 
 	dir := filepath.Join(dataDir, playlistsDirName)
@@ -1354,7 +1387,7 @@ func (s *Service) saveImportedPlaylistFile(
 func (s *Service) buildM3UEntries(
 	playlistID int64,
 ) []m3uEntry {
-	rows, err := s.db.Queries.GetPlaylistTracksWithMetadata(
+	rows, err := s.db.ReadQueries.GetPlaylistTracksWithMetadata(
 		s.db.Ctx,
 		playlistID,
 	)
@@ -1460,7 +1493,7 @@ func (s *Service) migrateExistingPlaylists() {
 		}
 	}
 
-	playlists, err := s.db.Queries.GetAllPlaylists(s.db.Ctx)
+	playlists, err := s.db.ReadQueries.GetAllPlaylists(s.db.Ctx)
 	if err != nil {
 		s.logger.Warn(
 			"Could not get playlists for migration",
@@ -1487,6 +1520,182 @@ func (s *Service) migrateExistingPlaylists() {
 			"Migrated existing playlists to M3U8 files",
 			"count", migrated,
 		)
+	}
+}
+
+// =================================================================
+// Playlist repopulation from M3U8
+// =================================================================
+
+// RepopulateFromM3U re-imports tracks for playlists that have zero
+// playlist_tracks rows but still have a corresponding M3U8 file.
+// This recovers from a FullRescan that deleted playlist tracks
+// before the ON DELETE SET NULL fix was in place.  Each M3U8 entry
+// is resolved against the audio_files table; unresolved entries
+// become phantom tracks with metadata preserved from the M3U8.
+func (s *Service) RepopulateFromM3U() {
+	dir, err := s.playlistsDir()
+	if err != nil {
+		s.logger.Warn(
+			"could not get playlists dir for repopulation",
+			"err", err,
+		)
+
+		return
+	}
+
+	// Get all playlists.
+	playlists, err := s.db.ReadQueries.GetAllPlaylists(s.db.Ctx)
+	if err != nil {
+		s.logger.Warn("could not get playlists for repopulation", "err", err)
+
+		return
+	}
+
+	libraryRoots := s.getAllLibraryRoots()
+
+	// Build audio file path→ID map for resolution.
+	afRows, err := s.db.QueryContext(
+		`SELECT id, file_path FROM audio_files`,
+	)
+	if err != nil {
+		s.logger.Warn("could not query audio files for repopulation", "err", err)
+
+		return
+	}
+
+	audioFileByPath := make(map[string]int64)
+
+	for afRows.Next() {
+		var (
+			id int64
+			fp string
+		)
+
+		if err := afRows.Scan(&id, &fp); err != nil {
+			continue
+		}
+
+		audioFileByPath[fp] = id
+	}
+
+	_ = afRows.Close()
+
+	knownPaths := make(map[string]struct{}, len(audioFileByPath))
+	for k := range audioFileByPath {
+		knownPaths[k] = struct{}{}
+	}
+
+	var totalRepopulated int
+
+	for _, pl := range playlists {
+		// Only repopulate playlists with zero tracks.
+		countRows, err := s.db.QueryContext(
+			`SELECT COUNT(*) FROM playlist_tracks WHERE playlist_id = ?`,
+			pl.ID,
+		)
+		if err != nil {
+			continue
+		}
+
+		var count int
+		if countRows.Next() {
+			_ = countRows.Scan(&count)
+		}
+
+		_ = countRows.Close()
+
+		if count > 0 {
+			continue
+		}
+
+		m3uPath, err := findPlaylistFile(dir, pl.ID)
+		if err != nil || m3uPath == "" {
+			continue
+		}
+
+		parsed, err := parseM3U8(m3uPath)
+		if err != nil {
+			s.logger.Warn(
+				"could not parse M3U8 for repopulation",
+				"playlistId", pl.ID,
+				"path", m3uPath,
+				"err", err,
+			)
+
+			continue
+		}
+
+		var resolved, phantom int
+
+		for i, entry := range parsed.Entries {
+			absPath := resolveM3UPath(
+				entry.RelativePath, libraryRoots, knownPaths,
+			)
+
+			audioFileID, exists := audioFileByPath[absPath]
+
+			if exists {
+				// Linked track.
+				_, addErr := s.db.ExecContext(
+					`INSERT INTO playlist_tracks
+						(playlist_id, audio_file_id, position)
+					VALUES (?, ?, ?)`,
+					pl.ID, audioFileID, i,
+				)
+				if addErr != nil {
+					s.logger.Warn(
+						"could not add repopulated track",
+						"playlistId", pl.ID,
+						"position", i,
+						"err", addErr,
+					)
+
+					continue
+				}
+
+				resolved++
+			} else {
+				// Phantom track — preserve what we have from M3U8.
+				_, addErr := s.db.ExecContext(
+					`INSERT INTO playlist_tracks
+						(playlist_id, position, phantom_title, phantom_file_path)
+					VALUES (?, ?, ?, ?)`,
+					pl.ID, i, entry.DisplayTitle, absPath,
+				)
+				if addErr != nil {
+					s.logger.Warn(
+						"could not add phantom repopulated track",
+						"playlistId", pl.ID,
+						"position", i,
+						"err", addErr,
+					)
+
+					continue
+				}
+
+				phantom++
+			}
+		}
+
+		if resolved+phantom > 0 {
+			totalRepopulated += resolved + phantom
+			s.logger.Info(
+				"repopulated playlist from M3U8",
+				"playlistId", pl.ID,
+				"name", pl.Name,
+				"resolved", resolved,
+				"phantom", phantom,
+			)
+		}
+	}
+
+	if totalRepopulated > 0 {
+		s.logger.Info(
+			"playlist repopulation complete",
+			"totalTracks", totalRepopulated,
+		)
+		s.emitEvent(events.PlaylistTracksChanged, nil)
 	}
 }
 
@@ -2326,4 +2535,417 @@ func sortCandidatesByScore(candidates []CandidateTrack) {
 			return 0
 		},
 	)
+}
+
+// =================================================================
+// Smart playlist methods
+// =================================================================
+
+// errNotSmartPlaylist is returned when an operation that requires
+// a smart playlist is performed on a regular playlist or a
+// non-existent playlist.
+var errNotSmartPlaylist = errors.New(
+	"playlist not found or is not a smart playlist",
+)
+
+// errNoRowReturned is returned when an INSERT ... RETURNING
+// query does not return the expected row.
+var errNoRowReturned = errors.New(
+	"no row returned from insert",
+)
+
+// CreateSmartPlaylist creates a new smart playlist with the given
+// name and JSON rule set. The rules are validated before storage.
+func (s *Service) CreateSmartPlaylist(
+	name, rulesJSON string,
+) (Summary, error) {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return Summary{}, errEmptyName
+	}
+
+	// Validate rules JSON before storing.
+	if _, err := smartplaylist.ParseRuleSet(rulesJSON); err != nil {
+		return Summary{}, fmt.Errorf(
+			"invalid smart playlist rules: %w", err,
+		)
+	}
+
+	// SAFETY: Hand-crafted INSERT for smart playlist with
+	// is_smart and smart_rules columns not yet in sqlc schema.
+	// All values are parameterized.
+	rows, err := s.db.QueryContext(
+		`INSERT INTO playlists (name, is_smart, smart_rules)
+		 VALUES (?, 1, ?)
+		 RETURNING id, name, created_at, updated_at`,
+		trimmed, rulesJSON,
+	)
+	if err != nil {
+		s.logger.Error(
+			"Failed to create smart playlist",
+			"name", trimmed, "err", err,
+		)
+
+		return Summary{}, fmt.Errorf(
+			"failed to create smart playlist: %w", err,
+		)
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	if !rows.Next() {
+		return Summary{}, fmt.Errorf(
+			"failed to create smart playlist: %w",
+			errNoRowReturned,
+		)
+	}
+
+	var (
+		id        int64
+		retName   string
+		createdAt string
+		updatedAt string
+	)
+
+	if err := rows.Scan(
+		&id, &retName, &createdAt, &updatedAt,
+	); err != nil {
+		s.logger.Error(
+			"Failed to create smart playlist",
+			"name", trimmed, "err", err,
+		)
+
+		return Summary{}, fmt.Errorf(
+			"failed to create smart playlist: %w", err,
+		)
+	}
+
+	s.logger.Info(
+		"Smart playlist created",
+		"id", id, "name", retName,
+	)
+
+	summary := Summary{
+		ID:        id,
+		Name:      retName,
+		CreatedAt: createdAt,
+		UpdatedAt: updatedAt,
+		IsSmart:   true,
+	}
+
+	s.emitEvent(events.PlaylistCreated, summary)
+
+	return summary, nil
+}
+
+// UpdateSmartPlaylistRules updates the rule set for an existing
+// smart playlist. Returns an error if the playlist does not exist
+// or is not a smart playlist.
+func (s *Service) UpdateSmartPlaylistRules(
+	playlistID int64,
+	rulesJSON string,
+) error {
+	// Validate rules JSON before storing.
+	if _, err := smartplaylist.ParseRuleSet(rulesJSON); err != nil {
+		return fmt.Errorf(
+			"invalid smart playlist rules: %w", err,
+		)
+	}
+
+	// SAFETY: Hand-crafted UPDATE for smart_rules column not
+	// yet in sqlc schema. All values are parameterized.
+	// Only updates rows where is_smart = 1.
+	result, err := s.db.ExecContext(
+		`UPDATE playlists
+		 SET smart_rules = ?, updated_at = CURRENT_TIMESTAMP
+		 WHERE id = ? AND is_smart = 1`,
+		rulesJSON, playlistID,
+	)
+	if err != nil {
+		s.logger.Error(
+			"Failed to update smart playlist rules",
+			"playlistId", playlistID, "err", err,
+		)
+
+		return fmt.Errorf(
+			"failed to update smart playlist rules: %w", err,
+		)
+	}
+
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf(
+			"could not check rows affected: %w", err,
+		)
+	}
+
+	if affected == 0 {
+		return errNotSmartPlaylist
+	}
+
+	s.logger.Info(
+		"Smart playlist rules updated",
+		"playlistId", playlistID,
+	)
+
+	// Re-materialize the persisted snapshot so it reflects the new
+	// rules. RefreshSmartPlaylist emits PlaylistTracksChanged.
+	if err := s.RefreshSmartPlaylist(playlistID); err != nil {
+		return fmt.Errorf(
+			"failed to refresh smart playlist after rule update: %w",
+			err,
+		)
+	}
+
+	return nil
+}
+
+// RefreshSmartPlaylist re-evaluates a smart playlist's rules against
+// the current library and replaces its persisted membership in
+// playlist_tracks with the result. This is the only path that
+// re-evaluates a smart playlist — opening one otherwise reads the
+// stored snapshot. Triggered on rule save and by the manual Refresh
+// button.
+func (s *Service) RefreshSmartPlaylist(
+	playlistID int64,
+) error {
+	// EvaluateSmartPlaylist validates that the playlist exists and is
+	// smart, and returns the live rule-matched tracks.
+	tracks, err := s.EvaluateSmartPlaylist(playlistID)
+	if err != nil {
+		return err
+	}
+
+	if err := s.db.Queries.ClearPlaylistTracks(
+		s.db.Ctx, playlistID,
+	); err != nil {
+		return fmt.Errorf(
+			"failed to clear smart playlist tracks: %w", err,
+		)
+	}
+
+	for i, t := range tracks {
+		if strings.TrimSpace(t.FilePath) == "" {
+			continue
+		}
+
+		if err := s.addSingleTrack(
+			playlistID, t.FilePath, int64(i),
+		); err != nil {
+			// A track can vanish between evaluation and insertion
+			// (e.g. a concurrent rescan). Skip it rather than abort
+			// the whole refresh.
+			s.logger.Warn(
+				"Skipping smart playlist track during refresh",
+				"playlistId", playlistID,
+				"filePath", t.FilePath,
+				"err", err,
+			)
+
+			continue
+		}
+	}
+
+	// SAFETY: Hand-crafted UPDATE for smart_snapshot_at column not
+	// yet in sqlc schema. Parameterized by playlist ID.
+	if _, err := s.db.ExecContext(
+		`UPDATE playlists
+		 SET smart_snapshot_at = CURRENT_TIMESTAMP
+		 WHERE id = ? AND is_smart = 1`,
+		playlistID,
+	); err != nil {
+		return fmt.Errorf(
+			"failed to mark smart playlist snapshot: %w", err,
+		)
+	}
+
+	s.logger.Info(
+		"Smart playlist refreshed",
+		"playlistId", playlistID,
+		"trackCount", len(tracks),
+	)
+
+	s.savePlaylistFileByID(playlistID)
+	s.emitEvent(events.PlaylistTracksChanged, playlistID)
+
+	return nil
+}
+
+// GetSmartPlaylistTracks returns the persisted snapshot of a smart
+// playlist as regular playlist tracks (with resolved cover art and
+// phantom entries), identical to a normal playlist. If the playlist
+// has never been materialized — e.g. it predates snapshot support —
+// it is evaluated and stored on first access.
+func (s *Service) GetSmartPlaylistTracks(
+	playlistID int64,
+) ([]Track, error) {
+	// SAFETY: Hand-crafted SELECT for smart_snapshot_at column not
+	// yet in sqlc schema. Parameterized by playlist ID.
+	rows, err := s.db.QueryContext(
+		`SELECT smart_snapshot_at FROM playlists
+		 WHERE id = ? AND is_smart = 1`,
+		playlistID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to load smart playlist: %w", err,
+		)
+	}
+
+	if !rows.Next() {
+		_ = rows.Close()
+
+		return nil, errNotSmartPlaylist
+	}
+
+	var snapshotAt sql.NullString
+
+	if err := rows.Scan(&snapshotAt); err != nil {
+		_ = rows.Close()
+
+		return nil, fmt.Errorf(
+			"failed to read smart playlist snapshot state: %w", err,
+		)
+	}
+
+	// Close before RefreshSmartPlaylist / GetPlaylistTracks issue
+	// their own queries (MaxOpenConns=1 test DBs would deadlock).
+	_ = rows.Close()
+
+	if !snapshotAt.Valid {
+		if err := s.RefreshSmartPlaylist(playlistID); err != nil {
+			return nil, err
+		}
+	}
+
+	return s.GetPlaylistTracks(playlistID)
+}
+
+// EvaluateSmartPlaylist loads the rule set for a smart playlist
+// from the database and evaluates it against the track library,
+// returning the matching tracks.
+func (s *Service) EvaluateSmartPlaylist(
+	playlistID int64,
+) ([]library.Track, error) {
+	// SAFETY: Hand-crafted SELECT for smart_rules column not
+	// yet in sqlc schema. Parameterized by playlist ID.
+	rows, err := s.db.QueryContext(
+		`SELECT smart_rules FROM playlists
+		 WHERE id = ? AND is_smart = 1`,
+		playlistID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to load smart playlist rules: %w", err,
+		)
+	}
+
+	if !rows.Next() {
+		_ = rows.Close()
+
+		return nil, errNotSmartPlaylist
+	}
+
+	var rulesJSON string
+
+	if err := rows.Scan(&rulesJSON); err != nil {
+		_ = rows.Close()
+
+		return nil, fmt.Errorf(
+			"failed to load smart playlist rules: %w", err,
+		)
+	}
+
+	// Close rows before calling Evaluate, which opens its own
+	// query. With MaxOpenConns=1 (test DBs), a deferred close
+	// would deadlock.
+	_ = rows.Close()
+
+	ruleSet, err := smartplaylist.ParseRuleSet(rulesJSON)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"corrupt smart playlist rules for id %d: %w",
+			playlistID, err,
+		)
+	}
+
+	tracks, err := smartplaylist.Evaluate(s.db, ruleSet)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"smart playlist evaluation failed for id %d: %w",
+			playlistID, err,
+		)
+	}
+
+	return tracks, nil
+}
+
+// PreviewSmartPlaylist evaluates a rule set from raw JSON without
+// requiring a saved playlist. This powers live preview in the rule
+// editor — the frontend sends rules as they are being edited and
+// receives matching tracks immediately.
+func (s *Service) PreviewSmartPlaylist(
+	rulesJSON string,
+) ([]library.Track, error) {
+	ruleSet, err := smartplaylist.ParseRuleSet(rulesJSON)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"invalid smart playlist rules: %w", err,
+		)
+	}
+
+	tracks, err := smartplaylist.Evaluate(s.db, ruleSet)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"smart playlist preview failed: %w", err,
+		)
+	}
+
+	s.logger.Info(
+		"Smart playlist preview evaluated",
+		"trackCount", len(tracks),
+	)
+
+	return tracks, nil
+}
+
+// GetSmartPlaylistRules returns the raw JSON rule string for an
+// existing smart playlist. This is used when the user opens the
+// rule editor for an existing smart playlist.
+func (s *Service) GetSmartPlaylistRules(
+	playlistID int64,
+) (string, error) {
+	// SAFETY: Hand-crafted SELECT for smart_rules column not
+	// yet in sqlc schema. Parameterized by playlist ID.
+	rows, err := s.db.QueryContext(
+		`SELECT smart_rules FROM playlists
+		 WHERE id = ? AND is_smart = 1`,
+		playlistID,
+	)
+	if err != nil {
+		return "", fmt.Errorf(
+			"failed to load smart playlist rules: %w", err,
+		)
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	if !rows.Next() {
+		return "", errNotSmartPlaylist
+	}
+
+	var rulesJSON string
+
+	if err := rows.Scan(&rulesJSON); err != nil {
+		return "", fmt.Errorf(
+			"failed to scan smart playlist rules: %w", err,
+		)
+	}
+
+	s.logger.Info(
+		"Smart playlist rules loaded",
+		"playlistId", playlistID,
+	)
+
+	return rulesJSON, nil
 }

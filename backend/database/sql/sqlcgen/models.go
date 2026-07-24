@@ -12,6 +12,7 @@ import (
 type Artist struct {
 	ID   int64
 	Name string
+	Mbid sql.NullString
 }
 
 type ArtistCredit struct {
@@ -23,6 +24,13 @@ type ArtistCreditArtist struct {
 	ID       int64
 	ArtistID int64
 	CreditID int64
+}
+
+type ArtistMetadatum struct {
+	Mbid      string
+	Source    string
+	Data      []byte
+	FetchedAt time.Time
 }
 
 type AudioFile struct {
@@ -38,6 +46,10 @@ type AudioFile struct {
 	FileSize           int64
 	Basename           string
 	LibraryID          int64
+	PlayCount          int64
+	LastPlayed         sql.NullTime
+	TagStatus          string
+	GroupKey           string
 }
 
 type CoverArt struct {
@@ -57,11 +69,30 @@ type Genre struct {
 	Name string
 }
 
+type HttpCache struct {
+	UrlKey     string
+	Response   []byte
+	ExpiresAt  time.Time
+	EntityMbid string
+	EntityType string
+}
+
 type Library struct {
-	ID        int64
-	Name      string
-	Path      string
-	CreatedAt time.Time
+	ID                  int64
+	Name                string
+	Path                string
+	CreatedAt           time.Time
+	AutotagWarningAcked int64
+}
+
+type LyricsIndex struct {
+	Lyrics string
+}
+
+type PlayHistory struct {
+	ID          int64
+	AudioFileID int64
+	PlayedAt    time.Time
 }
 
 type PlayerState struct {
@@ -73,10 +104,13 @@ type PlayerState struct {
 }
 
 type Playlist struct {
-	ID        int64
-	Name      string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID              int64
+	Name            string
+	IsSmart         int64
+	SmartRules      sql.NullString
+	SmartSnapshotAt sql.NullTime
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 type PlaylistTrack struct {
@@ -119,6 +153,7 @@ type Recording struct {
 	Composer       sql.NullString
 	Lyrics         sql.NullString
 	Comment        sql.NullString
+	Mbid           sql.NullString
 }
 
 type RecordingGenre struct {
@@ -133,8 +168,10 @@ type ReleaseGroup struct {
 	CoverArtID          sql.NullInt64
 	AlbumArtistCreditID sql.NullInt64
 	Year                sql.NullInt64
+	OriginalYear        sql.NullInt64
 	TotalTracks         sql.NullInt64
 	TotalDiscs          sql.NullInt64
+	Mbid                sql.NullString
 }
 
 type ReleaseGroupRecording struct {
@@ -152,6 +189,27 @@ type SearchIndex struct {
 	Album    string
 }
 
+type TaggingCandidate struct {
+	GroupKey   string
+	Candidates string
+	ComputedAt time.Time
+}
+
+type TaggingItem struct {
+	GroupKey             string
+	LibraryID            int64
+	TrackCount           int64
+	AlbumName            string
+	AlbumArtist          string
+	DiscNumber           int64
+	BestMatchReleaseMbid sql.NullString
+	Score                sql.NullFloat64
+	LastCheckedAt        sql.NullTime
+	Status               string
+	ClearedAt            sql.NullTime
+	CreatedAt            time.Time
+}
+
 type TrackMetadatum struct {
 	ID                 int64
 	FilePath           string
@@ -163,6 +221,7 @@ type TrackMetadatum struct {
 	Album              string
 	Genre              string
 	Year               int64
+	ReleaseYear        int64
 	Composer           string
 	FileType           string
 	SampleRate         int64
@@ -171,4 +230,10 @@ type TrackMetadatum struct {
 	Bitrate            int64
 	FileSize           int64
 	LibraryID          int64
+	PlayCount          int64
+	LastPlayed         sql.NullTime
+	CoverArtPath       string
+	ArtistMbid         string
+	ReleaseGroupMbid   string
+	RecordingMbid      string
 }

@@ -33,11 +33,14 @@ const (
 	ColChannels    ColumnID = "channels"
 	ColBitrate     ColumnID = "bitrate"
 	ColFileSize    ColumnID = "fileSize"
+	ColPlayCount   ColumnID = "playCount"
+	ColAlbumArt    ColumnID = "albumArt"
 )
 
 // AllColumnIDs lists every recognised column in default display
 // order.
 var AllColumnIDs = []ColumnID{
+	ColAlbumArt,
 	ColTrackName,
 	ColArtistName,
 	ColTrackLength,
@@ -54,6 +57,7 @@ var AllColumnIDs = []ColumnID{
 	ColChannels,
 	ColBitrate,
 	ColFileSize,
+	ColPlayCount,
 }
 
 // DefaultColumns is the initial column configuration matching the

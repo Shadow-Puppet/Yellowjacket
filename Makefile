@@ -3,10 +3,10 @@ COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 LDFLAGS := -X 'main.version=$(VERSION)' -X 'main.commit=$(COMMIT)'
 
 dev: setup generate clean
-	go tool wails dev -tags webkit2_41 -loglevel Debug -v 2
+	if [ -f .env ]; then set -a; . ./.env; set +a; fi; go tool wails dev -tags webkit2_41 -loglevel Debug -v 2
 
 dev-debug: setup generate clean
-	YJ_LOG_LEVEL=debug go tool wails dev -tags webkit2_41 -loglevel Debug -v 2
+	if [ -f .env ]; then set -a; . ./.env; set +a; fi; YJ_LOG_LEVEL=debug go tool wails dev -tags webkit2_41 -loglevel Debug -v 2
 
 build-dev: generate
 	go tool wails build -tags webkit2_41 -debug -clean -ldflags "$(LDFLAGS)"

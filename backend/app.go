@@ -8,13 +8,17 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"path/filepath"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"yellowjacket/backend/assets"
+	"yellowjacket/backend/autotagservice"
 	"yellowjacket/backend/config"
 	"yellowjacket/backend/coverart"
 	"yellowjacket/backend/database"
+	"yellowjacket/backend/explore"
 	"yellowjacket/backend/frontendutil"
 	"yellowjacket/backend/library"
 	"yellowjacket/backend/mediacontrols"
@@ -22,6 +26,7 @@ import (
 	"yellowjacket/backend/playlist"
 	"yellowjacket/backend/profiling"
 	"yellowjacket/backend/queue"
+	"yellowjacket/backend/system"
 	"yellowjacket/backend/tagwriter"
 )
 
@@ -37,6 +42,8 @@ type YellowJacketApp struct {
 	player        *player.Player
 	playlist      *playlist.Service
 	queue         *queue.Queue
+	explore       *explore.Service
+	autotag       *autotagservice.Service
 	mediaControls mediacontrols.Handler
 	tagWriter     *tagwriter.TagWriter
 	appContext    context.Context
@@ -102,6 +109,17 @@ func NewYellowJacketApp(
 
 	yjApp.assetHandler.RegisterHandler(coverart.PathPrefix, coverHandler)
 
+	// Register artist image handler for serving cached artist photos.
+	artistImgDir, err := system.GetUserDataDirPath()
+	if err == nil {
+		artistImgHandler := http.StripPrefix(
+			"/artist-images/",
+			http.FileServer(http.Dir(filepath.Join(artistImgDir, "artist-images"))),
+		)
+
+		yjApp.assetHandler.RegisterHandler("/artist-images/", artistImgHandler)
+	}
+
 	// create playlist service
 	yjApp.playlist = playlist.NewService(
 		yjApp.logger, yjApp.database, yjApp.appConfig,
@@ -125,6 +143,19 @@ func NewYellowJacketApp(
 		yjApp.library,
 	)
 
+	// create explore service
+	yjApp.explore = explore.NewExploreService(
+		yjApp.logger.WithGroup("explore"), yjApp.database,
+	)
+
+	// create autotag service (depends on explore + tagWriter)
+	yjApp.autotag = autotagservice.NewService(
+		yjApp.logger.WithGroup("autotag"),
+		yjApp.database,
+		yjApp.explore,
+		yjApp.tagWriter,
+	)
+
 	yjApp.FEBindings = []any{
 		yjApp.FrontendUtil,
 		yjApp.appConfig,
@@ -133,6 +164,8 @@ func NewYellowJacketApp(
 		yjApp.queue,
 		yjApp.player,
 		yjApp.tagWriter,
+		yjApp.explore,
+		yjApp.autotag,
 	}
 
 	return yjApp, nil
@@ -167,6 +200,8 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 	yj.library.SetContext(ctx)
 	yj.playlist.SetContext(ctx)
 	yj.playlist.EnsureDefaultPlaylist()
+	// Recover playlists that lost tracks from a pre-fix FullRescan.
+	go yj.playlist.RepopulateFromM3U()
 
 	// Initialize speaker hardware (player struct created in
 	// NewYellowJacketApp for Wails binding registration).
@@ -179,6 +214,8 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 
 	yj.player.SetContext(ctx)
 	yj.tagWriter.SetContext(ctx)
+	yj.explore.SetContext(ctx)
+	yj.autotag.SetContext(ctx)
 
 	// Wire queue (created in NewYellowJacketApp for Wails binding)
 	yj.queue.SetContext(ctx)
@@ -189,14 +226,56 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 	// orchestrate queue clearing and playlist restoration
 	// without depending on those packages directly.
 	yj.library.SetRescanHooks(library.RescanHooks{
-		PreClear: yj.queue.Clear,
-		PostScan: yj.playlist.RestoreAllPlaylists,
+		PreClear: func() {
+			yj.queue.Clear()
+			// Stop the search index build so it doesn't fight
+			// with the rescan for DB access.
+			yj.explore.StopIndexBuild()
+		},
+		PostScan: func() {
+			yj.playlist.RestoreAllPlaylists()
+			// DON'T restart the index build here — queued
+			// library scans may still be running.  The index
+			// build starts after ALL scans complete (via the
+			// scan hooks below).
+		},
 	})
 
 	// Wire scan hooks so the playlist service can resolve
 	// phantom tracks after each library scan completes.
 	yj.library.SetScanHooks(library.ScanHooks{
-		ResolvePhantoms: yj.playlist.ResolvePhantomTracksAfterScan,
+		RepopulatePlaylists: yj.playlist.RepopulateFromM3U,
+		ResolvePhantoms:     yj.playlist.ResolvePhantomTracksAfterScan,
+		OnAllScansComplete: func() {
+			// Fold the local library into the search index: every
+			// MB-verified owned artist/album/track is upserted and
+			// flagged in_library, straight from the library tables
+			// with no API calls.  Deep discographies stay lazy.
+			yj.explore.PopulateLocalCrossReferences()
+
+			// Start (or resume) the dump-based index build.  Skips
+			// itself once the one-time import has completed, so this
+			// is cheap on every startup.
+			yj.explore.StartIndexBuild()
+
+			// Fold in any new incremental listen dumps to keep
+			// popularity fresh (weekly-gated, background, no API).
+			// No-op while the full import above is still running.
+			yj.explore.RefreshListenCounts()
+
+			// Refresh the lyric-search FTS index from the just-scanned
+			// library, then backfill any missing lyrics from LRCLIB in
+			// the background (bounded, resumable, idempotent).
+			yj.explore.RebuildLyricsIndex()
+			yj.explore.BackfillLibraryLyrics()
+
+			// Sweep the autotag queue for newly-discovered pending
+			// items so the user sees match scores ready when they
+			// next open the review page.  The worker is idempotent
+			// (skips items that already have a score) and yields
+			// to foreground review activity.
+			yj.autotag.StartBackgroundPrefetch()
+		},
 	})
 
 	// Wire removal hooks so the library can stop playback and
@@ -205,6 +284,10 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 	yj.library.SetRemovalHooks(library.RemovalHooks{
 		StopPlayback: func() { yj.player.UnloadTrack() },
 		CompactQueue: yj.queue.CompactAfterLibraryRemoval,
+		// Removal deletes owned content outside a scan, so force the
+		// gated library-sync steps to re-run on the next launch and
+		// clear stale in_library flags / orphaned lyric-index rows.
+		PostRemove: yj.explore.InvalidateLibrarySync,
 	})
 
 	// Register playback finished handler to drive queue auto-advance.
@@ -262,6 +345,28 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 func (yj *YellowJacketApp) OnBeforeClose(ctx context.Context) bool {
 	w, h := wailsruntime.WindowGetSize(ctx)
 
+	// Guard against a bogus size clobbering a good saved one.  During
+	// teardown / hot-reload the runtime can report a zero or below-
+	// minimum size; persisting that would shrink the window to the
+	// minimum on next launch.  Keep the previously-saved size instead.
+	if w < config.MinWidth || h < config.MinHeight {
+		yj.logger.Warn("OnBeforeClose: ignoring bogus window size",
+			"width", w,
+			"height", h,
+			"kept_width", yj.appConfig.Window.Width,
+			"kept_height", yj.appConfig.Window.Height,
+		)
+
+		return false
+	}
+
+	yj.logger.Info("OnBeforeClose: saving window state",
+		"width", w,
+		"height", h,
+		"accentColor", yj.appConfig.Theme.AccentColor,
+		"backgroundShade", yj.appConfig.Theme.BackgroundShade,
+	)
+
 	yj.appConfig.Window.Width = w
 	yj.appConfig.Window.Height = h
 
@@ -310,5 +415,36 @@ func (yj *YellowJacketApp) OnDomReady(ctx context.Context) {
 		if err := yj.library.SoftScanAllLibraries(); err != nil {
 			yj.logger.Error("soft scan failed", "err", err)
 		}
+
+		// If no scans were queued (library unchanged), start the
+		// index build directly.  If scans WERE queued, the
+		// OnAllScansComplete hook starts it after they finish.
+		if yj.library.GetScanQueueLength() == 0 && !yj.library.IsScanActive() {
+			// Keep the search index's in_library flags and owned-entity
+			// rows in sync.  Gated: the library is unchanged here, so
+			// this only does work on the first launch after an upgrade
+			// or index wipe — steady-state launches skip the write burst.
+			yj.explore.PopulateLocalCrossReferencesIfNeeded()
+
+			yj.explore.StartIndexBuild()
+
+			// Weekly-gated incremental popularity refresh (background,
+			// no API). No-op while the full import is running.
+			yj.explore.RefreshListenCounts()
+
+			// Same for the lyric-search index.  The backfill keeps it in
+			// sync incrementally, so on an unchanged library the full
+			// rebuild is redundant and gated out; the backfill still runs
+			// to fill any remaining gaps.
+			yj.explore.RebuildLyricsIndexIfNeeded()
+			yj.explore.BackfillLibraryLyrics()
+		}
+
+		// Kick off the autotag prefetch worker so any unscored
+		// pending items get their match scores filled in while
+		// the user does other things.  Idempotent — re-running on
+		// every app launch is fine; previously-scored items are
+		// skipped (the worker filters score IS NULL).
+		yj.autotag.StartBackgroundPrefetch()
 	}()
 }

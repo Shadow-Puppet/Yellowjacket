@@ -18,6 +18,9 @@ export interface TrackInfo {
   coverArtMedium: string; // URL path to medium variant (200px max) or empty string
   coverArtLarge: string; // URL path to large variant (400px max) or empty string
   trackChangeId: number; // monotonic counter to detect track changes even when the same file plays consecutively
+  artistMbid: string; // MusicBrainz artist ID or empty string
+  releaseGroupMbid: string; // MusicBrainz release group ID or empty string
+  recordingMbid: string; // MusicBrainz recording ID or empty string
 }
 
 export interface PlayerState {

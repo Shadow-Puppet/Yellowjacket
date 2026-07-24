@@ -59,21 +59,40 @@ func (q *Queries) GetQueueTrackCount(ctx context.Context) (int64, error) {
 const getQueueTracks = `-- name: GetQueueTracks :many
 SELECT qt.id, qt.audio_file_id, qt.position, af.file_path,
     COALESCE(r.name, '') AS title,
-    COALESCE(ac.text, '') AS artist
+    COALESCE(ac.text, '') AS artist,
+    COALESCE(rg.name, '') AS album,
+    COALESCE(ca.file_path, '') AS cover_art_path,
+    COALESCE(a.mbid, '') AS artist_mbid,
+    COALESCE(rg.mbid, '') AS release_group_mbid,
+    COALESCE(r.mbid, '') AS recording_mbid
 FROM queue_tracks qt
 JOIN audio_files af ON qt.audio_file_id = af.id
 LEFT JOIN recordings r ON af.recording_id = r.id
 LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
+LEFT JOIN artist_credit_artist aca ON aca.credit_id = ac.id
+LEFT JOIN artists a ON a.id = aca.artist_id
+LEFT JOIN (
+    SELECT recording_id, MIN(release_group_id) AS release_group_id
+    FROM release_group_recordings
+    GROUP BY recording_id
+) rgr ON r.id = rgr.recording_id
+LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
+LEFT JOIN cover_art ca ON rg.cover_art_id = ca.id
 ORDER BY qt.position
 `
 
 type GetQueueTracksRow struct {
-	ID          int64
-	AudioFileID int64
-	Position    int64
-	FilePath    string
-	Title       string
-	Artist      string
+	ID               int64
+	AudioFileID      int64
+	Position         int64
+	FilePath         string
+	Title            string
+	Artist           string
+	Album            string
+	CoverArtPath     string
+	ArtistMbid       string
+	ReleaseGroupMbid string
+	RecordingMbid    string
 }
 
 func (q *Queries) GetQueueTracks(ctx context.Context) ([]GetQueueTracksRow, error) {
@@ -92,6 +111,11 @@ func (q *Queries) GetQueueTracks(ctx context.Context) ([]GetQueueTracksRow, erro
 			&i.FilePath,
 			&i.Title,
 			&i.Artist,
+			&i.Album,
+			&i.CoverArtPath,
+			&i.ArtistMbid,
+			&i.ReleaseGroupMbid,
+			&i.RecordingMbid,
 		); err != nil {
 			return nil, err
 		}

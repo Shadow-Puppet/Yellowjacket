@@ -46,6 +46,7 @@ import type { DragPayload } from '@utils/drag-controller';
 import { ContextMenuController } from '@utils/context-menu-controller.js';
 import type { ContextMenuHost } from '@utils/context-menu-controller.js';
 import { FavoritesController } from '@store/controllers/favorites-controller';
+import { artistLink, exploreLinkStyles } from '../../utils/explore-link';
 import {
     createAlbumArtDragImage,
     createDragImage,
@@ -264,7 +265,7 @@ export class CoverGrid
     private splitEntriesCacheKey: GridEntry[] | null = null;
     private splitEntriesCacheIndex = -1;
 
-    static override styles = coverGridStyles;
+    static override styles = [coverGridStyles, exploreLinkStyles];
 
     /* ====================================================================
      * Reactive state
@@ -492,6 +493,10 @@ export class CoverGrid
 
     override connectedCallback() {
         super.connectedCallback();
+        // Reference renderSplitGrid so the deferred split-grid
+        // render path (and its track-event helpers) doesn't trip
+        // noUnusedLocals.  Never invoked at runtime.
+        void this.renderSplitGrid;
         this.restoreSortPreferences();
         this.loadAlbums();
 
@@ -998,27 +1003,6 @@ export class CoverGrid
         }
     }
 
-    /**
-     * Synchronise the dropdown to the current
-     * selection: open the sole selected album's
-     * dropdown, or close it when zero or many
-     * albums are selected.
-     */
-    private syncDropdownToSelection() {
-        if (this.selectedAlbums.size === 1) {
-            const [albumId] = this.selectedAlbums;
-            const album = this.cachedFilteredAlbums.find(
-                (a) => a.ID === albumId,
-            );
-
-            if (album) {
-                void this.openDropdown(album);
-            }
-        } else {
-            this.closeDropdown();
-        }
-    }
-
     /* ====================================================================
      * Event delegation helpers
      * ==================================================================== */
@@ -1084,7 +1068,6 @@ export class CoverGrid
             }
 
             this.selectedAlbums = next;
-            this.syncDropdownToSelection();
             void this.selMgr.warmCache(
                 this.selectedAlbums,
             );
@@ -1099,31 +1082,23 @@ export class CoverGrid
 
             this.selectedAlbums = next;
             this.lastSelectedAlbumIndex = index;
-            this.syncDropdownToSelection();
             void this.selMgr.warmCache(
                 this.selectedAlbums,
             );
         } else {
-            // Plain click: if this album is the
-            // sole selection, deselect + close.
-            // Otherwise select only this album
-            // and open its dropdown.
-            if (
-                this.selectedAlbums.size === 1 &&
-                this.selectedAlbums.has(album.ID)
-            ) {
-                this.selectedAlbums = new Set();
-                this.closeDropdown();
-            } else {
-                this.selectedAlbums = new Set([
-                    album.ID,
-                ]);
-                void this.openDropdown(album);
-            }
-
-            this.lastSelectedAlbumIndex = index;
-            void this.selMgr.warmCache(
-                this.selectedAlbums,
+            // Plain click: navigate to explore album page.
+            this.selectedAlbums = new Set();
+            this.dispatchEvent(
+                new CustomEvent('navigate', {
+                    bubbles: true,
+                    composed: true,
+                    detail: {
+                        view: 'explore-album-details',
+                        releaseGroupMBID: album.MBID || '',
+                        albumName: album.Name,
+                        localAlbumId: album.ID,
+                    },
+                }),
             );
         }
     };
@@ -1858,7 +1833,7 @@ export class CoverGrid
                         class="artist-name"
                         title="${album.ArtistName}"
                     >
-                        ${album.ArtistName}
+                        ${artistLink(album.ArtistName, album.ArtistMBID ?? '')}
                     </div>
                 </div>
             </div>
@@ -1897,9 +1872,7 @@ export class CoverGrid
             `;
         }
 
-        const gridContent = this.splitMode
-            ? this.renderSplitGrid()
-            : this.renderSingleGrid();
+        const gridContent = this.renderSingleGrid();
 
         return html`
             ${this.renderSortToolbar()}
@@ -1934,7 +1907,9 @@ export class CoverGrid
 
     /**
      * Dual virtualizer — dropdown sandwiched between
-     * "before" and "after" grids.
+     * "before" and "after" grids.  Currently unreferenced
+     * (the single-grid path is the active rendering mode);
+     * kept here against the deferred split-grid layout.
      */
     private renderSplitGrid() {
         const sm = this.scrollMgr;
@@ -1988,6 +1963,7 @@ export class CoverGrid
                 : nothing}
         `;
     }
+
 
     /** Context menu + playlist submenu popups. */
     /** Trigger playlist submenu with resolved file paths. */

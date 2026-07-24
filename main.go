@@ -14,6 +14,7 @@ import (
 
 	"yellowjacket/backend"
 	"yellowjacket/backend/assets"
+	"yellowjacket/backend/config"
 	"yellowjacket/backend/logging"
 	"yellowjacket/backend/profiling"
 	"yellowjacket/internal/dev"
@@ -86,8 +87,8 @@ func main() {
 		OnBeforeClose:    yjApp.OnBeforeClose,
 		OnShutdown:       yjApp.OnShutdown,
 		Bind:             yjApp.FEBindings,
-		MinWidth:         512,
-		MinHeight:        384,
+		MinWidth:         config.MinWidth,
+		MinHeight:        config.MinHeight,
 		MaxWidth:         0,
 		MaxHeight:        0,
 		Linux: &linux.Options{

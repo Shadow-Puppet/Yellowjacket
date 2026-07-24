@@ -1,10 +1,20 @@
 package config
 
 const (
-	// DefaultWidth is the default window width in pixels.
-	DefaultWidth = 512
-	// DefaultHeight is the default window height in pixels.
-	DefaultHeight = 384
+	// DefaultWidth is the default window width in pixels for a fresh
+	// config.  Kept comfortably above the minimum so a first launch
+	// (or a config with no saved size) opens at a usable size rather
+	// than the cramped minimum.
+	DefaultWidth = 1100
+	// DefaultHeight is the default window height in pixels for a fresh config.
+	DefaultHeight = 720
+
+	// MinWidth is the smallest allowed window width in pixels.  Wails
+	// enforces this at runtime; it is also the floor below which a
+	// reported size is treated as bogus and not persisted.
+	MinWidth = 512
+	// MinHeight is the smallest allowed window height in pixels.
+	MinHeight = 384
 )
 
 // WindowConfig holds window size preferences.
