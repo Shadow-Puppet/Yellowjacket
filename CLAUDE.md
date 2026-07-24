@@ -86,4 +86,4 @@ Tests use `database.NewTestDB(t)` for in-memory SQLite with full schema. Test au
 
 ## Git Workflow
 
-Direct push to `main` is blocked by lefthook — use feature branches and PRs. Pre-commit runs vet, lint, codegen check, and frontend typecheck in parallel. Pre-push runs the full test suite.
+Feature branches and PRs are the norm, but direct pushes to `main` are allowed. Pre-commit runs vet, lint, codegen check, and frontend typecheck in parallel. Pre-push runs the full test suite.

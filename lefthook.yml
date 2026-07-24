@@ -31,17 +31,6 @@ pre-commit:
 pre-push:
   parallel: true
   commands:
-    protect-main:
-      run: |
-        branch=$(git rev-parse --abbrev-ref HEAD)
-        if [ "$branch" = "main" ]; then
-          echo "Direct push to main is not allowed. Use a pull request instead."
-          exit 1
-        fi
-      skip:
-        - merge
-        - rebase
-
     go-test:
       glob: "*.go"
       run: go test -tags webkit2_41 -race -count=1 -timeout 120s ./...

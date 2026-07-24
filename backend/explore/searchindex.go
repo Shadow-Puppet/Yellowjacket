@@ -86,6 +86,13 @@ const (
 	// indexer's dedicated rate limiter (LB allows 30/10s).
 	indexerRate = 3
 
+	// discogBackfillMaxPerRun bounds how many owned artists a single
+	// post-scan discography backfill run enriches before yielding.  The
+	// remainder stay unenriched (discog_fetched = 0) and are picked up by
+	// the next run, so a large first-scan library spreads its enrichment
+	// across launches instead of running for the better part of an hour.
+	discogBackfillMaxPerRun = 2000
+
 	// indexSimilarPerArtist is how many similar artists to store
 	// per library artist in similar_artist_map.
 	indexSimilarPerArtist = 20
@@ -343,6 +350,98 @@ func (si *SearchIndex) artistDiscogFetched(mbid string) bool {
 	defer func() { _ = rows.Close() }()
 
 	return rows.Next()
+}
+
+// unenrichedLibraryArtistMBIDs returns MBIDs for owned artists whose
+// discography has not yet been fetched — either they have no index row
+// or their row is still discog_fetched = 0.  The LEFT JOIN keys off the
+// persistent flag, so an artist enriched on a prior run (interactively or
+// by an earlier backfill) never reappears, giving "new artists only" for
+// free.  Ordered by owned-track count so the artists the user has most of
+// are enriched first.  The limit bounds a single run (see
+// discogBackfillMaxPerRun).
+func (si *SearchIndex) unenrichedLibraryArtistMBIDs(limit int) []string {
+	rows, err := si.db.QueryContext(`
+		SELECT a.mbid
+		FROM artists a
+		LEFT JOIN explore_index ei
+		  ON ei.entity_type = 'artist' AND ei.mbid = a.mbid
+		WHERE a.mbid IS NOT NULL AND a.mbid != ''
+		  AND (ei.id IS NULL OR ei.discog_fetched = 0)
+		GROUP BY a.mbid
+		ORDER BY COUNT(*) DESC
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		si.logger.Warn("discography backfill: query failed", "error", err)
+
+		return nil
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	var mbids []string
+
+	for rows.Next() {
+		var mbid string
+		if err := rows.Scan(&mbid); err == nil {
+			mbids = append(mbids, mbid)
+		}
+	}
+
+	return mbids
+}
+
+// BackfillLibraryDiscographies fetches top release groups and recordings
+// for every owned artist that has not been enriched yet, so an artist's
+// wider catalogue is searchable offline right after a scan instead of
+// only on first artist-page view.  It is bounded (discogBackfillMaxPerRun)
+// and resumable — each artist is marked discog_fetched on success, so a
+// cancelled or capped run simply continues on the next call.  Runs through
+// discogSF so it never double-fetches an artist a concurrent interactive
+// EnsureArtistDiscography is already handling.
+func (si *SearchIndex) BackfillLibraryDiscographies(ctx context.Context) {
+	if si.lb == nil {
+		return
+	}
+
+	mbids := si.unenrichedLibraryArtistMBIDs(discogBackfillMaxPerRun)
+	if len(mbids) == 0 {
+		return
+	}
+
+	// One shared rate limiter paces the whole run, unlike the per-call
+	// client EnsureArtistDiscography builds for interactive fetches.
+	indexLB := NewListenBrainzClient(
+		NewRateLimiterN(indexerRate), si.lb.cache, si.logger.WithGroup("indexer"),
+	)
+
+	done := 0
+
+	for _, mbid := range mbids {
+		if ctx.Err() != nil {
+			return
+		}
+
+		_, _, _ = si.discogSF.Do(mbid, func() (any, error) {
+			// Re-check under the singleflight: an interactive fetch may
+			// have enriched this artist since the query above.
+			if si.artistDiscogFetched(mbid) {
+				return nil, nil
+			}
+
+			si.indexOneArtist(ctx, indexLB, lbSitewideArtist{
+				ArtistMBID: mbid,
+				ArtistName: si.artistDisplayName(mbid),
+			})
+
+			return nil, nil
+		})
+
+		done++
+	}
+
+	si.logger.Info("discography backfill complete", "artists", done)
 }
 
 // artistDisplayName resolves a human-readable name for an artist MBID,

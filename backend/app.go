@@ -253,6 +253,12 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 			// with no API calls.  Deep discographies stay lazy.
 			yj.explore.PopulateLocalCrossReferences()
 
+			// Enrich any owned artists whose discography hasn't been
+			// fetched yet so their wider catalogue is searchable offline
+			// right after the scan.  Background, bounded, resumable, and a
+			// no-op once every owned artist is covered.
+			yj.explore.BackfillLibraryDiscographies()
+
 			// Start (or resume) the dump-based index build.  Skips
 			// itself once the one-time import has completed, so this
 			// is cheap on every startup.
@@ -438,6 +444,11 @@ func (yj *YellowJacketApp) OnDomReady(ctx context.Context) {
 			// to fill any remaining gaps.
 			yj.explore.RebuildLyricsIndexIfNeeded()
 			yj.explore.BackfillLibraryLyrics()
+
+			// Continue enriching any owned artists still missing their
+			// discography (e.g. a prior run was capped or interrupted).
+			// Cheap no-op once every owned artist is covered.
+			yj.explore.BackfillLibraryDiscographies()
 		}
 
 		// Kick off the autotag prefetch worker so any unscored

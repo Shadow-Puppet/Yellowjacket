@@ -177,6 +177,15 @@ func (e *Service) PopulateLocalCrossReferencesIfNeeded() {
 	e.index.PopulateLocalCrossReferences()
 }
 
+// BackfillLibraryDiscographies enriches owned artists that have not had
+// their discography fetched yet, in the background.  Idempotent and
+// bounded — the query only returns unenriched artists and each is marked
+// discog_fetched on success, so this is cheap (an empty query) once every
+// owned artist is covered and safe to call on every scan and launch.
+func (e *Service) BackfillLibraryDiscographies() {
+	go e.index.BackfillLibraryDiscographies(e.ctx)
+}
+
 // InvalidateLibrarySync clears the "ready" markers guarding the gated
 // library-sync steps so they re-run on the next launch.  Call after a
 // mutation that changes owned content outside a scan (e.g. removing a
