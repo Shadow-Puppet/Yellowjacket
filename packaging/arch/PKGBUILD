@@ -1,0 +1,67 @@
+# Maintainer: yonlu <yj@yellowjacket.app>
+pkgname=yellowjacket
+pkgver=1.3.0
+pkgrel=1
+pkgdesc="Cross-platform desktop music player — local library, MusicBrainz explore & auto-tag"
+arch=('x86_64')
+url="https://git.ljones.me/yonlu/yellowjacket"
+license=('custom')
+depends=('webkit2gtk-4.1' 'gtk3' 'alsa-lib' 'hicolor-icon-theme')
+makedepends=('go>=1.25' 'nodejs>=22' 'pnpm' 'git')
+options=('!lto')
+
+# Source is overridable so the same PKGBUILD works two ways:
+#   * Manual release build (default): clones the tag over SSH (port 2222).
+#       git push origin v$pkgver   # push the tag first
+#   * CI build on push to main: the workflow sets these to a local file:// clone
+#     at the exact pushed commit, e.g.
+#       YJ_GITURL="git+file:///build/yellowjacket" YJ_GITREF="#commit=$SHA"
+_giturl="${YJ_GITURL:-git+ssh://git@git.ljones.me:2222/yonlu/yellowjacket.git}"
+_gitref="${YJ_GITREF:-#tag=v$pkgver}"
+source=("$pkgname::${_giturl}${_gitref}"
+        "yellowjacket.desktop")
+sha256sums=('SKIP'
+            'SKIP')
+
+# Derive the real version from git: a clean tag gives 1.3.0.r0.gHASH, commits
+# past a tag give 1.3.0.r<N>.gHASH — monotonic and pacman-friendly, so every
+# push to main is a newer version than the last.
+pkgver() {
+  cd "$srcdir/$pkgname"
+  git describe --long --tags --abbrev=7 2>/dev/null \
+    | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g' \
+    || printf '0.0.0.r%s.g%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+prepare() {
+  cd "$srcdir/$pkgname"
+  export GOPATH="$srcdir/gopath" GOFLAGS="-mod=mod -modcacherw"
+  go mod download
+}
+
+build() {
+  cd "$srcdir/$pkgname"
+  export GOPATH="$srcdir/gopath" GOFLAGS="-mod=mod -modcacherw" CGO_ENABLED=1
+
+  local commit
+  commit="$(git rev-parse --short HEAD)"
+
+  # `go tool wails/sqlc/templ` resolve from the tool directives in go.mod, so no
+  # extra CLIs are needed. Wails runs the frontend install+build itself.
+  go generate ./...
+  go tool wails build -tags webkit2_41 -clean -trimpath \
+    -ldflags "-s -w -X 'main.version=v$pkgver' -X 'main.commit=$commit'"
+}
+
+package() {
+  cd "$srcdir/$pkgname"
+
+  install -Dm755 build/bin/yellowjacket "$pkgdir/usr/bin/yellowjacket"
+  install -Dm644 "$srcdir/yellowjacket.desktop" \
+    "$pkgdir/usr/share/applications/yellowjacket.desktop"
+
+  # No real logo ships in the repo yet; reuse an in-app SVG as the menu icon.
+  # Swap this for a proper branded icon when one exists.
+  install -Dm644 frontend/src/assets/images/icons/music/compact-disc.svg \
+    "$pkgdir/usr/share/icons/hicolor/scalable/apps/yellowjacket.svg"
+}

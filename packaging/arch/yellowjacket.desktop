@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=YellowJacket
+GenericName=Music Player
+Comment=Music how it was meant to bee
+Exec=yellowjacket
+Icon=yellowjacket
+Terminal=false
+Categories=AudioVideo;Audio;Player;GTK;
+MimeType=audio/mpeg;audio/flac;audio/ogg;audio/x-wav;
+StartupWMClass=yellowjacket
+Keywords=music;player;audio;library;
