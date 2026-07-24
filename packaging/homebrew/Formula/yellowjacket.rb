@@ -45,10 +45,15 @@ class Yellowjacket < Formula
            "-clean", "-trimpath",
            "-ldflags", ldflags
 
-    # Wails emits a .app bundle on macOS and a bare ELF binary on Linux.
+    # Wails emits a .app bundle on macOS and a bare ELF binary on Linux. The
+    # bundle is named after `outputfilename` in wails.json; glob for it so a
+    # rename (or casing difference) can't silently break the install.
     if OS.mac?
-      prefix.install "build/bin/YellowJacket.app"
-      bin.write_exec_script "#{prefix}/YellowJacket.app/Contents/MacOS/YellowJacket"
+      app = Dir["build/bin/*.app"].first
+      odie "wails build produced no .app bundle in build/bin" if app.nil?
+      prefix.install app
+      exe = Dir[prefix/"*.app/Contents/MacOS/*"].find { |f| File.executable?(f) }
+      bin.write_exec_script exe
     else
       bin.install "build/bin/yellowjacket"
     end
@@ -57,7 +62,7 @@ class Yellowjacket < Formula
   test do
     # The GUI binary has no headless mode; assert it was built and is runnable.
     if OS.mac?
-      assert_predicate prefix/"YellowJacket.app/Contents/MacOS/YellowJacket", :executable?
+      assert_predicate Dir[prefix/"*.app/Contents/MacOS/*"].first, :executable?
     else
       assert_predicate bin/"yellowjacket", :executable?
     end
