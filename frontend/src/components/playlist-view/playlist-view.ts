@@ -1930,9 +1930,7 @@ export class PlaylistView extends LitElement {
         index: number,
     ) {
         const trackCount = entry.tracks.length;
-        const countLabel = entry.summary.IsSmart
-            ? 'Smart'
-            : `${trackCount} track${trackCount !== 1 ? 's' : ''}`;
+        const countLabel = `${trackCount} track${trackCount !== 1 ? 's' : ''}`;
         const isDragOver =
             this.dragOverPlaylistIndex === index;
 
