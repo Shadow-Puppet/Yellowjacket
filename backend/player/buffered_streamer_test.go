@@ -68,8 +68,11 @@ func TestBufferedStreamer_BasicStream(t *testing.T) {
 		n, ok := bs.Stream(buf)
 
 		for i := range n {
-			// Skip silence frames (buffer not yet filled).
-			if buf[i][0] == 0 && buf[i][1] == 0 && len(collected) == 0 {
+			// Skip silence frames the streamer injects whenever its
+			// ring buffer momentarily underruns (not just leading
+			// silence). Real samples always start at 1.0, so any zero
+			// frame is injected silence, never source data.
+			if buf[i][0] == 0 && buf[i][1] == 0 {
 				continue
 			}
 
