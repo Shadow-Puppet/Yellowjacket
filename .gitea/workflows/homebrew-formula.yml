@@ -1,0 +1,86 @@
+name: Sync Homebrew formula
+
+# On every version tag, recompute the release tarball checksum and push an
+# updated Formula/yellowjacket.rb into the Homebrew tap repo. Keeping the tap
+# in a separate repo (github.com/Shadow-Puppet/homebrew-yellowjacket) is what
+# lets users install with a single command:
+#
+#   brew install shadow-puppet/yellowjacket/yellowjacket
+#
+# (`shadow-puppet/yellowjacket` is shorthand for the homebrew-yellowjacket repo;
+# brew auto-taps it, so no separate `brew tap` step is needed.)
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  sync-formula:
+    runs-on: ubuntu-latest
+    env:
+      # GitHub PAT (or fine-grained token) with write access to the tap repo.
+      TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      # Gitea source that serves the release tarball referenced by the formula.
+      SOURCE_TARBALL_BASE: https://git.ljones.me/yonlu/yellowjacket/archive
+      # separate GitHub tap repo the formula is published to.
+      TAP_REPO: Shadow-Puppet/homebrew-yellowjacket
+    steps:
+      - name: Check out source (for the canonical formula)
+        uses: actions/checkout@v4
+
+      - name: Compute version and tarball checksum
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"          # e.g. v1.3.0
+          VERSION="${TAG#v}"                 # e.g. 1.3.0
+          TARBALL="${SOURCE_TARBALL_BASE}/${TAG}.tar.gz"
+
+          echo "Fetching ${TARBALL}"
+          # Retry briefly: the tag archive can lag a few seconds behind the push.
+          for attempt in 1 2 3 4 5; do
+            if curl -fSsL "$TARBALL" -o release.tar.gz; then
+              break
+            fi
+            echo "attempt ${attempt} failed, retrying..."
+            sleep 5
+          done
+
+          SHA256="$(sha256sum release.tar.gz | cut -d' ' -f1)"
+          echo "version=${VERSION} sha256=${SHA256}"
+
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          echo "SHA256=${SHA256}"   >> "$GITHUB_ENV"
+
+      - name: Render the formula with the new version and checksum
+        run: |
+          set -euo pipefail
+          src="packaging/homebrew/Formula/yellowjacket.rb"
+          # Rewrite only the two managed lines; the interpolated url picks up the
+          # new version automatically.
+          sed -E \
+            -e "s|^  version \".*\"|  version \"${VERSION}\"|" \
+            -e "s|^  sha256 \".*\"|  sha256 \"${SHA256}\"|" \
+            "$src" > yellowjacket.rb
+          echo "----- rendered formula -----"
+          cat yellowjacket.rb
+
+      - name: Push to the Homebrew tap repo
+        run: |
+          set -euo pipefail
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/${TAP_REPO}.git" tap
+          mkdir -p tap/Formula
+          cp yellowjacket.rb tap/Formula/yellowjacket.rb
+
+          cd tap
+          git config user.name  "yellowjacket-ci"
+          git config user.email "yj@yellowjacket.app"
+
+          if git diff --quiet; then
+            echo "Formula already up to date; nothing to push."
+            exit 0
+          fi
+
+          git add Formula/yellowjacket.rb
+          git commit -m "yellowjacket ${VERSION}"
+          git push origin HEAD:main

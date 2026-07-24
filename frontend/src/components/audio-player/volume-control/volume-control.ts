@@ -6,13 +6,27 @@ import type WaSlider from '@awesome.me/webawesome/dist/components/slider/slider.
 import { PlayerController } from '@store/controllers/player-controller';
 import { designTokens } from '../../../styles/tokens.css';
 
+/** Volume change (0-100) applied per scroll-wheel tick. */
+const WHEEL_STEP = 5;
+
+/** Delay before a live volume change is pushed to the backend. */
+const VOLUME_DEBOUNCE_MS = 60;
+
 @customElement('volume-control')
 export class VolumeControl extends LitElement {
   private player = new PlayerController(this);
   private boundHandleOutsideClick = this.handleOutsideClick.bind(this);
+  private volumeDebounceTimer?: ReturnType<typeof setTimeout>;
 
   @state()
   private showSlider = false;
+
+  // Locally-tracked volume while the user is actively dragging or scrolling.
+  // The store's volume only updates once the backend echoes VolumeChanged
+  // (which we debounce), so we track intent here for responsive UI and to let
+  // rapid events accumulate. Cleared once the store catches up.
+  @state()
+  private pendingVolume: number | null = null;
 
   static override styles = [designTokens, css`
     :host {
@@ -70,8 +84,12 @@ export class VolumeControl extends LitElement {
   // DERIVED STATE
   // ===================================================================
 
+  private get currentVolume(): number {
+    return this.pendingVolume ?? this.player.volume;
+  }
+
   private get volumeIcon(): string {
-    const vol = this.player.volume;
+    const vol = this.currentVolume;
 
     if (vol === 0) return 'volume-xmark';
     if (vol <= 50) return 'volume-low';
@@ -86,6 +104,15 @@ export class VolumeControl extends LitElement {
   override disconnectedCallback() {
     super.disconnectedCallback();
     document.removeEventListener('click', this.boundHandleOutsideClick);
+    clearTimeout(this.volumeDebounceTimer);
+  }
+
+  override willUpdate() {
+    // Once the backend has echoed our pending change back through the store,
+    // drop the local override so external volume changes are reflected again.
+    if (this.pendingVolume !== null && this.player.volume === this.pendingVolume) {
+      this.pendingVolume = null;
+    }
   }
 
   // ===================================================================
@@ -113,12 +140,28 @@ export class VolumeControl extends LitElement {
   }
 
   private handleInput(e: Event) {
-    const value = (e.target as WaSlider).value;
-    this.player.setVolume(value);
+    this.changeVolume((e.target as WaSlider).value);
+  }
+
+  private handleWheel(e: WheelEvent) {
+    e.preventDefault();
+    const direction = e.deltaY < 0 ? 1 : -1;
+    this.changeVolume(this.currentVolume + direction * WHEEL_STEP);
   }
 
   private handlePopupClick(e: Event) {
     e.stopPropagation();
+  }
+
+  /** Update the UI immediately and push to the backend on a short debounce. */
+  private changeVolume(value: number) {
+    const clamped = Math.max(0, Math.min(100, Math.round(value)));
+    this.pendingVolume = clamped;
+
+    clearTimeout(this.volumeDebounceTimer);
+    this.volumeDebounceTimer = setTimeout(() => {
+      this.player.setVolume(clamped);
+    }, VOLUME_DEBOUNCE_MS);
   }
 
   // ===================================================================
@@ -127,7 +170,7 @@ export class VolumeControl extends LitElement {
 
   override render() {
     return html`
-      <button @click="${this.toggleSlider}">
+      <button @click="${this.toggleSlider}" @wheel="${this.handleWheel}">
         <wa-icon name=${this.volumeIcon}></wa-icon>
       </button>
       ${this.showSlider
@@ -137,8 +180,8 @@ export class VolumeControl extends LitElement {
                 orientation="vertical"
                 min="0"
                 max="100"
-                .value="${this.player.volume}"
-                @change="${this.handleInput}"
+                .value="${this.currentVolume}"
+                @input="${this.handleInput}"
               ></wa-slider>
             </div>
           `

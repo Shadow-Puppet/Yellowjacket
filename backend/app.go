@@ -202,6 +202,9 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 	yj.playlist.EnsureDefaultPlaylist()
 	// Recover playlists that lost tracks from a pre-fix FullRescan.
 	go yj.playlist.RepopulateFromM3U()
+	// Backfill snapshots for smart playlists created before
+	// creation-time materialization existed.
+	go yj.playlist.MaterializeUnmaterializedSmartPlaylists()
 
 	// Initialize speaker hardware (player struct created in
 	// NewYellowJacketApp for Wails binding registration).

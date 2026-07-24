@@ -555,11 +555,7 @@ const leanTrackQuery = `SELECT
 	af.bitrate,
 	af.file_size,
 	af.play_count,
-	COALESCE(af.last_played, '') AS last_played,
-	af.cover_art_path,
-	af.artist_mbid,
-	af.release_group_mbid,
-	af.recording_mbid
+	COALESCE(af.last_played, '') AS last_played
 FROM (
 	SELECT
 		af.id,
@@ -591,15 +587,7 @@ FROM (
 		af.file_size,
 		af.library_id,
 		af.play_count,
-		af.last_played,
-		COALESCE(ca.file_path, '') AS cover_art_path,
-		COALESCE((SELECT a.mbid
-			FROM artist_credit_artist aca
-			JOIN artists a ON a.id = aca.artist_id
-			WHERE aca.credit_id = ac.id
-			LIMIT 1), '') AS artist_mbid,
-		COALESCE(rg.mbid, '') AS release_group_mbid,
-		COALESCE(r.mbid, '') AS recording_mbid
+		af.last_played
 	FROM audio_files af
 	LEFT JOIN recordings r ON af.recording_id = r.id
 	LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
@@ -610,7 +598,6 @@ FROM (
 		GROUP BY recording_id
 	) rgr ON r.id = rgr.recording_id
 	LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
-	LEFT JOIN cover_art ca ON rg.cover_art_id = ca.id
 	LEFT JOIN file_types ft ON af.file_type_id = ft.id
 ) af`
 
@@ -719,6 +706,38 @@ func Evaluate(
 
 	genreDuration := time.Since(genreStart)
 
+	// Batch-load cover art + MusicBrainz IDs for the matched rows only.
+	// These fields are presentation-only (track-row styling); keeping
+	// them out of the lean query avoids a per-row correlated subquery
+	// and cover-art join over the whole library before WHERE/LIMIT.
+	artStart := time.Now()
+
+	artworkByRecording, err := fetchArtwork(db, recordingIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	for i, rid := range recordingIDs {
+		art, ok := artworkByRecording[rid]
+		if !ok {
+			continue
+		}
+
+		tracks[i].ArtistMBID = art.artistMBID
+		tracks[i].ReleaseGroupMBID = art.releaseGroupMBID
+		tracks[i].RecordingMBID = art.recordingMBID
+
+		if art.coverArtPath != "" {
+			urls := coverart.ResolveURLs(art.coverArtPath)
+			tracks[i].CoverArtPath = urls.Original
+			tracks[i].CoverArtSmall = urls.Small
+			tracks[i].CoverArtMedium = urls.Medium
+			tracks[i].CoverArtLarge = urls.Large
+		}
+	}
+
+	artDuration := time.Since(artStart)
+
 	// Apply genre-sort and deferred LIMIT in Go if needed.
 	if sortByGenre {
 		dir := 1
@@ -743,6 +762,7 @@ func Evaluate(
 		"tracks", len(tracks),
 		"main_ms", mainDuration.Milliseconds(),
 		"genres_ms", genreDuration.Milliseconds(),
+		"artwork_ms", artDuration.Milliseconds(),
 		"total_ms", time.Since(start).Milliseconds(),
 	)
 
@@ -778,11 +798,6 @@ func scanTracks(rows *sql.Rows) ([]library.Track, []int64, error) {
 			fileSize    int64
 			playCount   int64
 			lastPlayed  string
-
-			coverArtPath     string
-			artistMBID       string
-			releaseGroupMBID string
-			recordingMBID    string
 		)
 
 		if err := rows.Scan(
@@ -792,8 +807,6 @@ func scanTracks(rows *sql.Rows) ([]library.Track, []int64, error) {
 			&sampleRate, &bitDepth, &channels,
 			&bitrate, &fileSize,
 			&playCount, &lastPlayed,
-			&coverArtPath, &artistMBID,
-			&releaseGroupMBID, &recordingMBID,
 		); err != nil {
 			return nil, nil, fmt.Errorf(
 				"could not scan smart playlist row: %w", err,
@@ -801,34 +814,23 @@ func scanTracks(rows *sql.Rows) ([]library.Track, []int64, error) {
 		}
 
 		track := library.Track{
-			TrackName:        title,
-			ArtistName:       artistName,
-			TrackLength:      strconv.FormatInt(lengthMs, 10),
-			FilePath:         filePath,
-			TrackNumber:      trackNumber.Int64,
-			DiscNumber:       discNumber.Int64,
-			Album:            album,
-			Year:             year,
-			Composer:         composer,
-			FileType:         fileType,
-			SampleRate:       sampleRate,
-			BitDepth:         bitDepth,
-			Channels:         channels,
-			Bitrate:          bitrate,
-			FileSize:         fileSize,
-			PlayCount:        playCount,
-			LastPlayed:       lastPlayed,
-			ArtistMBID:       artistMBID,
-			ReleaseGroupMBID: releaseGroupMBID,
-			RecordingMBID:    recordingMBID,
-		}
-
-		if coverArtPath != "" {
-			urls := coverart.ResolveURLs(coverArtPath)
-			track.CoverArtPath = urls.Original
-			track.CoverArtSmall = urls.Small
-			track.CoverArtMedium = urls.Medium
-			track.CoverArtLarge = urls.Large
+			TrackName:   title,
+			ArtistName:  artistName,
+			TrackLength: strconv.FormatInt(lengthMs, 10),
+			FilePath:    filePath,
+			TrackNumber: trackNumber.Int64,
+			DiscNumber:  discNumber.Int64,
+			Album:       album,
+			Year:        year,
+			Composer:    composer,
+			FileType:    fileType,
+			SampleRate:  sampleRate,
+			BitDepth:    bitDepth,
+			Channels:    channels,
+			Bitrate:     bitrate,
+			FileSize:    fileSize,
+			PlayCount:   playCount,
+			LastPlayed:  lastPlayed,
 		}
 
 		tracks = append(tracks, track)
@@ -923,6 +925,128 @@ func fetchGenres(
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf(
 			"smart playlist genre iteration error: %w", err,
+		)
+	}
+
+	return result, nil
+}
+
+// trackArtwork holds the presentation-only cover-art path and
+// MusicBrainz identifiers attached to a matched track after the main
+// filter query, keyed by recording_id.
+type trackArtwork struct {
+	coverArtPath     string
+	artistMBID       string
+	releaseGroupMBID string
+	recordingMBID    string
+}
+
+// fetchArtwork batch-loads cover-art paths and MusicBrainz IDs for the
+// given recording_ids in a single IN-list query. These fields drive
+// track-row styling only, so scoping them to the matched result set
+// keeps the cost proportional to results rather than library size.
+func fetchArtwork(
+	db *database.DB, ids []int64,
+) (map[int64]trackArtwork, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	// Deduplicate to keep the IN list minimal.
+	seen := make(map[int64]struct{}, len(ids))
+	unique := make([]int64, 0, len(ids))
+
+	for _, id := range ids {
+		if id == 0 {
+			continue
+		}
+
+		if _, ok := seen[id]; ok {
+			continue
+		}
+
+		seen[id] = struct{}{}
+
+		unique = append(unique, id)
+	}
+
+	if len(unique) == 0 {
+		return nil, nil
+	}
+
+	placeholders := make([]string, len(unique))
+
+	for i := range unique {
+		placeholders[i] = "?"
+	}
+
+	inList := strings.Join(placeholders, ", ")
+
+	// A recording's artist credit can name several artists; the old
+	// correlated subquery picked one via LIMIT 1. GROUP BY r.id with
+	// MIN() reproduces a single stable value without multiplying rows.
+	// SAFETY: placeholders are static "?" tokens; every value is
+	// parameterized. The IN list is bound twice (subquery + outer).
+	query := `SELECT r.id,
+		COALESCE(MIN(ca.file_path), '') AS cover_art_path,
+		COALESCE(MIN(a.mbid), '') AS artist_mbid,
+		COALESCE(MIN(rg.mbid), '') AS release_group_mbid,
+		COALESCE(r.mbid, '') AS recording_mbid
+	FROM recordings r
+	LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
+	LEFT JOIN artist_credit_artist aca ON aca.credit_id = ac.id
+	LEFT JOIN artists a ON a.id = aca.artist_id
+	LEFT JOIN (
+		SELECT recording_id,
+			MIN(release_group_id) AS release_group_id
+		FROM release_group_recordings
+		WHERE recording_id IN (` + inList + `)
+		GROUP BY recording_id
+	) rgr ON r.id = rgr.recording_id
+	LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
+	LEFT JOIN cover_art ca ON rg.cover_art_id = ca.id
+	WHERE r.id IN (` + inList + `)
+	GROUP BY r.id`
+
+	args := make([]any, 0, len(unique)*2)
+	for range 2 {
+		for _, id := range unique {
+			args = append(args, id)
+		}
+	}
+
+	rows, err := db.QueryContext(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"smart playlist artwork fetch failed: %w", err,
+		)
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	result := make(map[int64]trackArtwork, len(unique))
+
+	for rows.Next() {
+		var (
+			rid int64
+			art trackArtwork
+		)
+
+		if err := rows.Scan(
+			&rid, &art.coverArtPath, &art.artistMBID,
+			&art.releaseGroupMBID, &art.recordingMBID,
+		); err != nil {
+			return nil, fmt.Errorf(
+				"could not scan smart playlist artwork row: %w", err,
+			)
+		}
+
+		result[rid] = art
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf(
+			"smart playlist artwork iteration error: %w", err,
 		)
 	}
 

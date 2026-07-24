@@ -2591,9 +2591,9 @@ func (s *Service) CreateSmartPlaylist(
 		)
 	}
 
-	defer func() { _ = rows.Close() }()
-
 	if !rows.Next() {
+		_ = rows.Close()
+
 		return Summary{}, fmt.Errorf(
 			"failed to create smart playlist: %w",
 			errNoRowReturned,
@@ -2610,6 +2610,8 @@ func (s *Service) CreateSmartPlaylist(
 	if err := rows.Scan(
 		&id, &retName, &createdAt, &updatedAt,
 	); err != nil {
+		_ = rows.Close()
+
 		s.logger.Error(
 			"Failed to create smart playlist",
 			"name", trimmed, "err", err,
@@ -2620,10 +2622,25 @@ func (s *Service) CreateSmartPlaylist(
 		)
 	}
 
+	// Close before RefreshSmartPlaylist issues its own queries
+	// (MaxOpenConns=1 test DBs would deadlock).
+	_ = rows.Close()
+
 	s.logger.Info(
 		"Smart playlist created",
 		"id", id, "name", retName,
 	)
+
+	// Materialize the rule set once at creation so the playlist has a
+	// track snapshot immediately (track counts, instant open). A failed
+	// evaluation is non-fatal — the lazy path re-materializes on first
+	// open.
+	if err := s.RefreshSmartPlaylist(id); err != nil {
+		s.logger.Warn(
+			"Failed to materialize smart playlist at creation",
+			"id", id, "err", err,
+		)
+	}
 
 	summary := Summary{
 		ID:        id,
@@ -2819,6 +2836,61 @@ func (s *Service) GetSmartPlaylistTracks(
 	}
 
 	return s.GetPlaylistTracks(playlistID)
+}
+
+// MaterializeUnmaterializedSmartPlaylists evaluates and snapshots any
+// smart playlist that has never been materialized (smart_snapshot_at
+// IS NULL) — e.g. playlists created before creation-time
+// materialization existed. It runs once at startup and is idempotent:
+// once every smart playlist has a snapshot it becomes a no-op. Errors
+// on individual playlists are logged and skipped so one bad rule set
+// doesn't block the rest.
+func (s *Service) MaterializeUnmaterializedSmartPlaylists() {
+	// SAFETY: Static SELECT for smart_snapshot_at column not yet in
+	// sqlc schema. No parameters.
+	rows, err := s.db.QueryContext(
+		`SELECT id FROM playlists
+		 WHERE is_smart = 1 AND smart_snapshot_at IS NULL`,
+	)
+	if err != nil {
+		s.logger.Error(
+			"Failed to list unmaterialized smart playlists",
+			"err", err,
+		)
+
+		return
+	}
+
+	var ids []int64
+
+	for rows.Next() {
+		var id int64
+
+		if err := rows.Scan(&id); err != nil {
+			s.logger.Error(
+				"Failed to scan smart playlist id", "err", err,
+			)
+
+			continue
+		}
+
+		ids = append(ids, id)
+	}
+
+	// Close before RefreshSmartPlaylist issues its own queries
+	// (MaxOpenConns=1 test DBs would deadlock).
+	_ = rows.Close()
+
+	for _, id := range ids {
+		if err := s.RefreshSmartPlaylist(id); err != nil {
+			s.logger.Warn(
+				"Failed to materialize smart playlist snapshot",
+				"id", id, "err", err,
+			)
+
+			continue
+		}
+	}
 }
 
 // EvaluateSmartPlaylist loads the rule set for a smart playlist
