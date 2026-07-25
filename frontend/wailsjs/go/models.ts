@@ -777,6 +777,154 @@ export namespace explore {
 
 }
 
+export namespace jobs {
+	
+	export class Caps {
+	    pausable: boolean;
+	    cancellable: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new Caps(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.pausable = source["pausable"];
+	        this.cancellable = source["cancellable"];
+	    }
+	}
+	export class Stat {
+	    label: string;
+	    value: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Stat(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.label = source["label"];
+	        this.value = source["value"];
+	    }
+	}
+	export class Stage {
+	    name: string;
+	    state: string;
+	    current: number;
+	    total: number;
+	    error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Stage(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.state = source["state"];
+	        this.current = source["current"];
+	        this.total = source["total"];
+	        this.error = source["error"];
+	    }
+	}
+	export class Job {
+	    id: string;
+	    kind: string;
+	    title: string;
+	    subtitle?: string;
+	    state: string;
+	    phase?: string;
+	    current: number;
+	    total: number;
+	    caps: Caps;
+	    stages: Stage[];
+	    stats: Stat[];
+	    error?: string;
+	    startedAt: number;
+	    updatedAt: number;
+	    endedAt?: number;
+	    logCount: number;
+	    warnCount: number;
+	    errorCount: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Job(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.kind = source["kind"];
+	        this.title = source["title"];
+	        this.subtitle = source["subtitle"];
+	        this.state = source["state"];
+	        this.phase = source["phase"];
+	        this.current = source["current"];
+	        this.total = source["total"];
+	        this.caps = this.convertValues(source["caps"], Caps);
+	        this.stages = this.convertValues(source["stages"], Stage);
+	        this.stats = this.convertValues(source["stats"], Stat);
+	        this.error = source["error"];
+	        this.startedAt = source["startedAt"];
+	        this.updatedAt = source["updatedAt"];
+	        this.endedAt = source["endedAt"];
+	        this.logCount = source["logCount"];
+	        this.warnCount = source["warnCount"];
+	        this.errorCount = source["errorCount"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class LogEntry {
+	    time: number;
+	    level: string;
+	    message: string;
+	    detail?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new LogEntry(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.time = source["time"];
+	        this.level = source["level"];
+	        this.message = source["message"];
+	        this.detail = source["detail"];
+	    }
+	}
+	export class Registry {
+	
+	
+	    static createFrom(source: any = {}) {
+	        return new Registry(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	
+	    }
+	}
+	
+
+}
+
 export namespace library {
 	
 	export class Album {

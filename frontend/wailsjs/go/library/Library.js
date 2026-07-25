@@ -126,6 +126,10 @@ export function RenameLibrary(arg1, arg2) {
   return window['go']['library']['Library']['RenameLibrary'](arg1, arg2);
 }
 
+export function RestorePausedScans() {
+  return window['go']['library']['Library']['RestorePausedScans']();
+}
+
 export function ResumeScan() {
   return window['go']['library']['Library']['ResumeScan']();
 }
@@ -148,6 +152,10 @@ export function SearchTracksByLibrary(arg1, arg2) {
 
 export function SetContext(arg1) {
   return window['go']['library']['Library']['SetContext'](arg1);
+}
+
+export function SetJobRegistry(arg1) {
+  return window['go']['library']['Library']['SetJobRegistry'](arg1);
 }
 
 export function SetRemovalHooks(arg1) {

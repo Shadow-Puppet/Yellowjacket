@@ -87,6 +87,15 @@ const (
 	AutotagPrefetchFinished = "AutotagPrefetchFinished" // {processed, total}
 )
 
+// Background job events.
+const (
+	// JobsChanged carries a full snapshot of every known background job
+	// (see backend/jobs).  A full snapshot rather than a delta means a
+	// component mounting mid-scan is correct from its first event.
+	// Emitted coalesced, at most every 250ms.
+	JobsChanged = "JobsChanged"
+)
+
 // Explore / search index events.
 const (
 	IndexStatusChanged = "IndexStatusChanged"

@@ -3,6 +3,7 @@
 import {sqlcgen} from '../models';
 import {library} from '../models';
 import {context} from '../models';
+import {jobs} from '../models';
 
 export function AcquirePipelineLock():Promise<void>;
 
@@ -66,6 +67,8 @@ export function RemoveLibrary(arg1:number):Promise<library.RemovalSummary>;
 
 export function RenameLibrary(arg1:number,arg2:string):Promise<void>;
 
+export function RestorePausedScans():Promise<void>;
+
 export function ResumeScan():Promise<void>;
 
 export function ScanAllLibraries():Promise<void>;
@@ -77,6 +80,8 @@ export function SearchTracks(arg1:string):Promise<Array<library.Track>>;
 export function SearchTracksByLibrary(arg1:string,arg2:number):Promise<Array<library.Track>>;
 
 export function SetContext(arg1:context.Context):Promise<void>;
+
+export function SetJobRegistry(arg1:jobs.Registry):Promise<void>;
 
 export function SetRemovalHooks(arg1:library.RemovalHooks):Promise<void>;
 

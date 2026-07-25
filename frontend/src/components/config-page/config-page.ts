@@ -4,13 +4,6 @@ import { repeat } from 'lit/directives/repeat.js';
 import { EventsOn } from '@runtime/runtime';
 import type { explore } from '@go/models';
 import {
-    FullRescan,
-    CancelCurrentScan,
-    CancelAllScans,
-    ScanAllLibraries,
-    ScanLibrary,
-    PauseScan,
-    ResumeScan,
     AddLibrary,
     RenameLibrary,
     RemoveLibrary,
@@ -45,169 +38,6 @@ import { ShortcutsController } from '../../store/controllers/shortcuts-controlle
 
 const SCROLL_STORAGE_KEY = 'yj-now-playing-scroll-mode';
 const SCROLL_CHANGE_EVENT = 'yj-scroll-mode-changed';
-
-// ===================================================================
-// Scan metrics types and helpers (carried over from library-manager)
-// ===================================================================
-
-const NS_PER_MS = 1_000_000;
-
-interface ScanProgress {
-    phase: 'counting' | 'scanning' | 'orphans' | 'thumbnails';
-    total: number;
-    processed: number;
-    added: number;
-    skipped: number;
-    updated: number;
-    libraryId: number;
-    libraryName: string;
-    queuedCount: number;
-}
-
-interface ScanMetrics {
-    total: number;
-    loadExisting: number;
-    walkDuration: number;
-    extractionWallClock: number;
-    dbWritesWallClock: number;
-    orphanCleanup: number;
-    postScanVariants: number;
-    formatExtraction: Record<string, number>;
-    formatCount: Record<string, number>;
-    tagExtraction: number;
-    durationExtraction: number;
-    batchCommits: number;
-    coverArtSave: number;
-    thumbnailWallClock: number;
-    thumbnailGeneration: number;
-    thumbnailSmall: number;
-    thumbnailMedium: number;
-    thumbnailLarge: number;
-    clearQueue: number;
-    clearDatabase: number;
-    clearCoverFiles: number;
-    added: number;
-    updated: number;
-    skipped: number;
-    removed: number;
-    cancelled: boolean;
-}
-
-function fmtNs(ns: number): string {
-    if (ns <= 0) return '<1ms';
-
-    const ms = ns / NS_PER_MS;
-
-    if (ms < 1) return '<1ms';
-    if (ms < 1000) return `${ms.toFixed(0)}ms`;
-
-    const s = ms / 1000;
-
-    if (s < 60) return `${s.toFixed(2)}s`;
-
-    const m = Math.floor(s / 60);
-    const rem = s % 60;
-
-    return `${m}m ${rem.toFixed(1)}s`;
-}
-
-function fmtMs(ms: number): string {
-    if (ms <= 0) return '<1ms';
-    if (ms < 1000) return `${ms.toFixed(0)}ms`;
-
-    const s = ms / 1000;
-
-    if (s < 60) return `${s.toFixed(2)}s`;
-
-    const m = Math.floor(s / 60);
-    const rem = s % 60;
-
-    return `${m}m ${rem.toFixed(1)}s`;
-}
-
-function formatMetricsText(m: ScanMetrics): string {
-    const line = (
-        label: string,
-        value: string,
-        indent = 0,
-    ) => `${'  '.repeat(indent)}${label}: ${value}`;
-
-    const lines: string[] = [
-        '=== YellowJacket Scan Results ===',
-        '',
-        line('Total', fmtNs(m.total)),
-        '',
-        '-- File Counts --',
-        line('Added', String(m.added), 1),
-        line('Updated', String(m.updated), 1),
-        line('Skipped', String(m.skipped), 1),
-        line('Removed', String(m.removed), 1),
-    ];
-
-    if (
-        m.clearQueue > 0 ||
-        m.clearDatabase > 0 ||
-        m.clearCoverFiles > 0
-    ) {
-        lines.push(
-            '',
-            '-- Clear Phases --',
-            line('Clear Queue', fmtNs(m.clearQueue), 1),
-            line(
-                'Clear Database',
-                fmtNs(m.clearDatabase),
-                1,
-            ),
-            line(
-                'Clear Cover Files',
-                fmtNs(m.clearCoverFiles),
-                1,
-            ),
-        );
-    }
-
-    lines.push(
-        '',
-        '-- Scan Phases --',
-        line(
-            'Load Existing',
-            fmtNs(m.loadExisting),
-            1,
-        ),
-        line(
-            'Directory Walk',
-            fmtNs(m.walkDuration),
-            1,
-        ),
-        line(
-            'Metadata Extraction (wall)',
-            fmtNs(m.extractionWallClock),
-            1,
-        ),
-        line(
-            'DB Writes (wall)',
-            fmtNs(m.dbWritesWallClock),
-            1,
-        ),
-        line(
-            'Thumbnail Generation (wall)',
-            fmtNs(m.thumbnailWallClock),
-            1,
-        ),
-        line(
-            'Orphan Cleanup',
-            fmtNs(m.orphanCleanup),
-            1,
-        ),
-        line(
-            'Post-Scan Variants',
-            fmtNs(m.postScanVariants),
-            1,
-        ),
-    );
-
-    return lines.join('\n');
-}
 
 // ===================================================================
 // Config page component
@@ -351,19 +181,7 @@ export class ConfigPage extends LitElement {
     @state() private toastMessage = '';
     @state() private toastVisible = false;
     @state() private activeMenuId: number | null = null;
-    @state() private selectedLibraryIds: Set<number> = new Set();
-    @state() private scanning = false;
-    @state() private statusMessage = '';
-    @state() private scanProgress: ScanProgress | null = null;
-    @state() private metrics: ScanMetrics | null = null;
-    @state() private copied = false;
-    @state() private errorsCopied = false;
-    @state() private scanErrors = '';
     @state() private concurrencyMode = 'auto';
-    @state() private scanPaused = false;
-    @state() private showCancelDialog = false;
-    @state() private cancelMetrics: { added: number } | null = null;
-    @state() private scanQueuedCount = 0;
     @state() private indexStatus: explore.IndexStatus | null = null;
     @state() private shortcutConflict: {
         newAction: string;
@@ -372,16 +190,8 @@ export class ConfigPage extends LitElement {
     } | null = null;
 
     private toastTimer?: ReturnType<typeof setTimeout>;
-    private cancelScanStarted?: () => void;
-    private cancelScanProgress?: () => void;
-    private cancelScanComplete?: () => void;
-    private cancelScanPaused?: () => void;
-    private cancelScanResumed?: () => void;
-    private cancelScanCancelled?: () => void;
     private cancelIndexStatus?: () => void;
     private indexPollTimer?: ReturnType<typeof setInterval>;
-    private cancelScanQueued?: () => void;
-    private cancelScanQueueDrained?: () => void;
     private cancelLibraryAdded?: () => void;
     private cancelLibraryRenamed?: () => void;
     private cancelLibraryRemoved?: () => void;
@@ -1178,38 +988,8 @@ export class ConfigPage extends LitElement {
         this.scrollMode =
             localStorage.getItem(SCROLL_STORAGE_KEY) || 'hover';
 
-        this.cancelScanStarted = EventsOn(
-            Events.LibraryScanStarted,
-            this.handleScanStarted,
-        );
-        this.cancelScanProgress = EventsOn(
-            Events.LibraryScanProgress,
-            this.handleScanProgress,
-        );
-        this.cancelScanComplete = EventsOn(
-            Events.LibraryScanComplete,
-            this.handleScanComplete,
-        );
-        this.cancelScanPaused = EventsOn(
-            Events.LibraryScanPaused,
-            this.handleScanPaused,
-        );
-        this.cancelScanResumed = EventsOn(
-            Events.LibraryScanResumed,
-            this.handleScanResumed,
-        );
-        this.cancelScanCancelled = EventsOn(
-            Events.LibraryScanCancelled,
-            this.handleScanCancelled,
-        );
-        this.cancelScanQueued = EventsOn(
-            Events.LibraryScanQueued,
-            this.handleScanQueued,
-        );
-        this.cancelScanQueueDrained = EventsOn(
-            Events.LibraryScanQueueDrained,
-            this.handleScanQueueDrained,
-        );
+        // Scan progress lives in the jobs panel now — this page only
+        // needs to know when the library list itself changes.
         this.cancelLibraryAdded = EventsOn(
             Events.LibraryAdded,
             () => void this.loadLibraries(),
@@ -1237,14 +1017,6 @@ export class ConfigPage extends LitElement {
 
     override disconnectedCallback(): void {
         super.disconnectedCallback();
-        this.cancelScanStarted?.();
-        this.cancelScanProgress?.();
-        this.cancelScanComplete?.();
-        this.cancelScanPaused?.();
-        this.cancelScanResumed?.();
-        this.cancelScanCancelled?.();
-        this.cancelScanQueued?.();
-        this.cancelScanQueueDrained?.();
         this.cancelLibraryAdded?.();
         this.cancelLibraryRenamed?.();
         this.cancelLibraryRemoved?.();
@@ -1266,13 +1038,6 @@ export class ConfigPage extends LitElement {
             this.libraries = libs ?? [];
             this.concurrencyMode = mode;
 
-            // Prune selections for libraries that no longer exist.
-            if (this.selectedLibraryIds.size > 0) {
-                const validIds = new Set(this.libraries.map((l) => l.id));
-                const pruned = new Set([...this.selectedLibraryIds].filter((id) => validIds.has(id)));
-
-                this.selectedLibraryIds = pruned;
-            }
         } catch (err) {
             console.error(
                 'Failed to load libraries:',
@@ -1284,131 +1049,6 @@ export class ConfigPage extends LitElement {
     // ===================================================================
     // LIBRARY HANDLERS
     // ===================================================================
-
-    private handleScanStarted = (): void => {
-        this.scanning = true;
-        this.statusMessage = '';
-        this.scanProgress = null;
-        this.metrics = null;
-        this.copied = false;
-        this.scanErrors = '';
-        this.errorsCopied = false;
-    };
-
-    private handleScanProgress = (
-        progress?: ScanProgress,
-    ): void => {
-        if (progress) {
-            this.scanProgress = progress;
-            this.scanQueuedCount =
-                progress.queuedCount ?? 0;
-        }
-    };
-
-    private handleScanComplete = (
-        metrics?: ScanMetrics,
-    ): void => {
-        this.scanProgress = null;
-
-        // If queue still has entries, don't fully reset — next scan will fire ScanStarted
-        if (this.scanQueuedCount > 0) {
-            if (metrics) {
-                this.metrics = metrics;
-            }
-            return;
-        }
-
-        this.scanning = false;
-        this.scanPaused = false;
-        this.statusMessage = 'Scan complete.';
-
-        if (metrics) {
-            this.metrics = metrics;
-        }
-
-        // Refresh track counts after scan finishes.
-        void this.loadLibraries();
-    };
-
-    private handleScanQueued = (): void => {
-        this.scanQueuedCount++;
-    };
-
-    private handleScanQueueDrained = (): void => {
-        this.scanQueuedCount = 0;
-        this.scanning = false;
-        this.scanPaused = false;
-
-        // Refresh track counts after all queued scans finish.
-        void this.loadLibraries();
-    };
-
-    private handleScanPaused = (): void => {
-        this.scanPaused = true;
-    };
-
-    private handleScanResumed = (): void => {
-        this.scanPaused = false;
-    };
-
-    private handleScanCancelled = (
-        metrics?: ScanMetrics,
-    ): void => {
-        this.scanning = false;
-        this.scanPaused = false;
-        this.scanProgress = null;
-
-        if (metrics) {
-            this.metrics = metrics;
-            this.statusMessage =
-                metrics.cancelled
-                    ? 'Scan cancelled.'
-                    : 'Scan complete.';
-        } else {
-            this.statusMessage = 'Scan cancelled.';
-        }
-    };
-
-    private handlePauseScan = (): void => {
-        PauseScan();
-    };
-
-    private handleResumeScan = (): void => {
-        ResumeScan();
-    };
-
-    private handleCancelScan = (): void => {
-        const added =
-            this.scanProgress?.added ?? 0;
-        this.cancelMetrics = { added };
-        this.showCancelDialog = true;
-    };
-
-    private handleCancelKeep = (): void => {
-        this.showCancelDialog = false;
-        this.cancelMetrics = null;
-        CancelCurrentScan();
-    };
-
-    private handleCancelDiscard = (): void => {
-        this.showCancelDialog = false;
-        this.cancelMetrics = null;
-        CancelCurrentScan();
-        this.statusMessage =
-            'Scan cancelled. Partial results discarded \u2014 run Full Rescan for a clean library.';
-    };
-
-    private handleCancelAll = (): void => {
-        this.showCancelDialog = false;
-        this.cancelMetrics = null;
-        CancelAllScans();
-        this.statusMessage = 'All scanning cancelled.';
-    };
-
-    private handleCancelDialogDismiss = (): void => {
-        this.showCancelDialog = false;
-        this.cancelMetrics = null;
-    };
 
     private handleAddLibrary = async (): Promise<void> => {
         try {
@@ -1453,11 +1093,6 @@ export class ConfigPage extends LitElement {
 
     private handleRenameInput = (e: InputEvent): void => {
         this.editingName = (e.target as HTMLInputElement).value;
-    };
-
-    private handleRescanLibrary = (id: number): void => {
-        this.activeMenuId = null;
-        void ScanLibrary(id);
     };
 
     private handleRemoveClick = async (id: number): Promise<void> => {
@@ -1512,26 +1147,6 @@ export class ConfigPage extends LitElement {
         this.activeMenuId = this.activeMenuId === id ? null : id;
     };
 
-    private toggleLibrarySelection = (id: number): void => {
-        const next = new Set(this.selectedLibraryIds);
-
-        if (next.has(id)) {
-            next.delete(id);
-        } else {
-            next.add(id);
-        }
-
-        this.selectedLibraryIds = next;
-    };
-
-    private toggleSelectAllLibraries = (): void => {
-        if (this.selectedLibraryIds.size === this.libraries.length) {
-            this.selectedLibraryIds = new Set();
-        } else {
-            this.selectedLibraryIds = new Set(this.libraries.map((l) => l.id));
-        }
-    };
-
     private handleDocumentClick = (): void => {
         if (this.activeMenuId !== null) {
             this.activeMenuId = null;
@@ -1562,89 +1177,14 @@ export class ConfigPage extends LitElement {
         SetScanConcurrency(mode)
             .then(() => {
                 this.concurrencyMode = mode;
-                this.statusMessage =
-                    'Storage type saved. Takes effect on next scan.';
+                this.showToast(
+                    'Storage type saved. Takes effect on next scan.',
+                );
             })
             .catch((err: unknown) => {
-                this.statusMessage = `Failed to save storage type: ${err}`;
+                this.showToast(`Failed to save storage type: ${err}`);
             });
     };
-
-    private handleSoftScan = async (): Promise<void> => {
-        try {
-            if (this.selectedLibraryIds.size === 0) return;
-
-            // If all libraries selected, use the batch method.
-            if (this.selectedLibraryIds.size === this.libraries.length) {
-                await ScanAllLibraries();
-            } else {
-                // Queue each selected library individually.
-                for (const id of this.selectedLibraryIds) {
-                    await ScanLibrary(id);
-                }
-            }
-        } catch (err) {
-            this.statusMessage =
-                'Scan completed with errors.';
-            this.scanErrors = String(err);
-        }
-    };
-
-    private handleFullRescan = async (): Promise<void> => {
-        const confirmed = confirm(
-            'This will delete ALL library data including cover art and re-scan from scratch. Continue?',
-        );
-
-        if (!confirmed) return;
-
-        try {
-            await FullRescan();
-        } catch (err) {
-            this.statusMessage =
-                'Full rescan completed with errors.';
-            this.scanErrors = String(err);
-        }
-    };
-
-    private handleCopyMetrics = async (): Promise<void> => {
-        if (!this.metrics) return;
-
-        try {
-            await navigator.clipboard.writeText(
-                formatMetricsText(this.metrics),
-            );
-            this.copied = true;
-            setTimeout(() => {
-                this.copied = false;
-            }, 2000);
-        } catch (err) {
-            console.error(
-                'Failed to copy metrics:',
-                err,
-            );
-        }
-    };
-
-    private handleCopyErrors =
-        async (): Promise<void> => {
-            if (!this.scanErrors) return;
-
-            try {
-                await navigator.clipboard.writeText(
-                    this.scanErrors,
-                );
-                this.errorsCopied = true;
-
-                setTimeout(() => {
-                    this.errorsCopied = false;
-                }, 2000);
-            } catch (err) {
-                console.error(
-                    'Failed to copy errors:',
-                    err,
-                );
-            }
-        };
 
     // ===================================================================
     // THEME HANDLERS
@@ -1902,22 +1442,6 @@ export class ConfigPage extends LitElement {
                 );
             });
     };
-
-    // ===================================================================
-    // COMPUTED
-    // ===================================================================
-
-    private get hasRescanPhases(): boolean {
-        if (!this.metrics) return false;
-
-        const m = this.metrics;
-
-        return (
-            m.clearQueue > 0 ||
-            m.clearDatabase > 0 ||
-            m.clearCoverFiles > 0
-        );
-    }
 
     // ===================================================================
     // RENDER
@@ -2446,16 +1970,11 @@ export class ConfigPage extends LitElement {
             (l) => l.id === this.removingLibraryId,
         );
 
-        const allSelected = this.libraries.length > 0
-            && this.selectedLibraryIds.size === this.libraries.length;
-        const someSelected = this.selectedLibraryIds.size > 0
-            && !allSelected;
-        const selectionCount = this.selectedLibraryIds.size;
-
         return html`
             <config-section
                 heading="Libraries"
-                description="Manage your music library folders. Select libraries to scan."
+                description="Manage your music library folders. Scanning and its
+                    progress live in the Jobs panel."
             >
                 <div class="scan-actions">
                     <button
@@ -2464,91 +1983,14 @@ export class ConfigPage extends LitElement {
                     >
                         Add Library
                     </button>
-                    ${this.scanning
-                        ? html`
-                              ${this.scanPaused
-                                  ? html`<button
-                                        class="btn-warning"
-                                        @click=${this.handleResumeScan}
-                                    >
-                                        Resume
-                                    </button>`
-                                  : html`<button
-                                        class="btn-warning"
-                                        @click=${this.handlePauseScan}
-                                    >
-                                        Pause
-                                    </button>`}
-                              <button
-                                  class="btn-danger"
-                                  @click=${this.handleCancelScan}
-                              >
-                                  Cancel Scan
-                              </button>
-                          `
-                        : html`
-                              <button
-                                  class="btn-primary"
-                                  @click=${this.handleSoftScan}
-                                  ?disabled=${selectionCount === 0}
-                              >
-                                  Scan${selectionCount > 0 && selectionCount < this.libraries.length
-                                      ? ` (${selectionCount})`
-                                      : ''}
-                              </button>
-                              <button
-                                  class="btn-danger"
-                                  @click=${this.handleFullRescan}
-                                  ?disabled=${selectionCount === 0}
-                              >
-                                  Full Rescan
-                              </button>
-                          `}
                 </div>
 
                 ${this.libraries.length > 0
                     ? html`
                         <div class="library-list">
-                            <div class="library-header">
-                                <input
-                                    type="checkbox"
-                                    class="library-checkbox"
-                                    .checked=${allSelected}
-                                    .indeterminate=${someSelected}
-                                    @change=${this.toggleSelectAllLibraries}
-                                    @click=${(e: Event) => e.stopPropagation()}
-                                />
-                                <span class="library-header-label">
-                                    ${allSelected ? 'All' : someSelected ? `${selectionCount}` : 'None'} selected
-                                </span>
-                            </div>
                             ${this.libraries.map(
-                                (lib) => {
-                                    const isScanning = this.scanProgress?.libraryId === lib.id
-                                        && this.scanning;
-                                    const p = isScanning ? this.scanProgress : null;
-                                    const percent = p && p.total > 0
-                                        ? Math.min(100, Math.round((p.processed / p.total) * 100))
-                                        : 0;
-                                    const phaseLabels: Record<string, string> = {
-                                        counting: 'Counting\u2026',
-                                        scanning: `Scanning\u2026 ${percent}%`,
-                                        orphans: 'Cleaning up\u2026',
-                                        thumbnails: 'Thumbnails\u2026',
-                                    };
-                                    const statusText = p
-                                        ? phaseLabels[p.phase] ?? 'Scanning\u2026'
-                                        : '';
-
-                                    return html`
+                                (lib) => html`
                                     <div class="library-row">
-                                        <input
-                                            type="checkbox"
-                                            class="library-checkbox"
-                                            .checked=${this.selectedLibraryIds.has(lib.id)}
-                                            @change=${() => this.toggleLibrarySelection(lib.id)}
-                                            @click=${(e: Event) => e.stopPropagation()}
-                                        />
                                         ${this.editingLibraryId === lib.id
                                             ? html`
                                                   <input
@@ -2567,9 +2009,6 @@ export class ConfigPage extends LitElement {
                                                   >
                                                       ${lib.name}
                                                   </span>
-                                                  ${statusText
-                                                      ? html`<span class="library-scan-status">${statusText}</span>`
-                                                      : nothing}
                                               `}
                                         <span class="library-path">${lib.path}</span>
                                         <span class="library-count">
@@ -2595,12 +2034,6 @@ export class ConfigPage extends LitElement {
                                                               Rename
                                                           </div>
                                                           <div
-                                                              class="overflow-item"
-                                                              @click=${() => this.handleRescanLibrary(lib.id)}
-                                                          >
-                                                              Rescan
-                                                          </div>
-                                                          <div
                                                               class="overflow-item overflow-item--danger"
                                                               @click=${() => void this.handleRemoveClick(lib.id)}
                                                           >
@@ -2610,21 +2043,8 @@ export class ConfigPage extends LitElement {
                                                   `
                                                 : nothing}
                                         </div>
-                                        ${p && p.phase !== 'counting'
-                                            ? html`
-                                                <div class="inline-progress">
-                                                    <div class="progress-track">
-                                                        <div
-                                                            class="progress-fill"
-                                                            style="width: ${percent}%"
-                                                        ></div>
-                                                    </div>
-                                                </div>
-                                            `
-                                            : nothing}
                                     </div>
-                                `;
-                                },
+                                `,
                             )}
                         </div>
                     `
@@ -2655,145 +2075,6 @@ export class ConfigPage extends LitElement {
                     .value=${this.concurrencyMode}
                     @config-change=${this.handleConcurrencyChange}
                 ></config-field>
-
-                <div
-                    class="status-bar ${this.scanning ? 'active' : ''} ${this.scanPaused ? 'paused' : ''}"
-                >
-                    ${this.scanPaused
-                        ? 'Scan paused.'
-                        : this.statusMessage || 'Ready.'}
-                </div>
-
-                ${this.scanErrors
-                    ? html`
-                          <div class="error-block">
-                              <div class="error-header">
-                                  <span class="error-title">
-                                      Scan Errors
-                                  </span>
-                                  <button
-                                      class="btn-ghost ${this.errorsCopied ? 'copied' : ''}"
-                                      @click=${this.handleCopyErrors}
-                                  >
-                                      ${this.errorsCopied
-                                          ? 'Copied!'
-                                          : 'Copy'}
-                                  </button>
-                              </div>
-                              <div class="error-body">
-                                  <pre>${this.scanErrors}</pre>
-                              </div>
-                          </div>
-                      `
-                    : ''}
-
-                ${this.renderMetrics()}
-                ${this.showCancelDialog
-                    ? html`
-                          <div
-                              class="cancel-dialog-overlay"
-                              @click=${this.handleCancelDialogDismiss}
-                          >
-                              <div
-                                  class="cancel-dialog"
-                                  @click=${(e: Event) => e.stopPropagation()}
-                              >
-                                  ${this.scanQueuedCount > 0
-                                      ? html`
-                                            <div
-                                                class="cancel-dialog-title"
-                                            >
-                                                Cancel Scanning
-                                            </div>
-                                            <div
-                                                class="cancel-dialog-message"
-                                            >
-                                                A scan is in
-                                                progress with
-                                                ${this
-                                                    .scanQueuedCount}
-                                                ${this
-                                                    .scanQueuedCount ===
-                                                1
-                                                    ? 'library'
-                                                    : 'libraries'}
-                                                still queued.
-                                            </div>
-                                            <div
-                                                class="cancel-dialog-actions"
-                                            >
-                                                <button
-                                                    class="btn-warning"
-                                                    @click=${this.handleCancelKeep}
-                                                >
-                                                    Cancel
-                                                    This
-                                                    Library
-                                                </button>
-                                                <button
-                                                    class="btn-danger"
-                                                    @click=${this.handleCancelAll}
-                                                >
-                                                    Cancel
-                                                    All
-                                                    Scanning
-                                                </button>
-                                                <button
-                                                    class="btn-ghost"
-                                                    @click=${this.handleCancelDialogDismiss}
-                                                >
-                                                    Continue
-                                                    Scanning
-                                                </button>
-                                            </div>
-                                        `
-                                      : html`
-                                            <div
-                                                class="cancel-dialog-title"
-                                            >
-                                                Cancel Scan
-                                            </div>
-                                            <div
-                                                class="cancel-dialog-message"
-                                            >
-                                                ${this
-                                                    .cancelMetrics
-                                                    ?.added
-                                                    ? `Keep ${this.cancelMetrics.added} tracks found so far, or discard?`
-                                                    : 'Cancel the current scan?'}
-                                            </div>
-                                            <div
-                                                class="cancel-dialog-actions"
-                                            >
-                                                <button
-                                                    class="btn-primary"
-                                                    @click=${this.handleCancelKeep}
-                                                >
-                                                    ${this
-                                                        .cancelMetrics
-                                                        ?.added
-                                                        ? `Keep ${this.cancelMetrics.added} tracks`
-                                                        : 'Cancel Scan'}
-                                                </button>
-                                                <button
-                                                    class="btn-danger"
-                                                    @click=${this.handleCancelDiscard}
-                                                >
-                                                    Discard
-                                                </button>
-                                                <button
-                                                    class="btn-ghost"
-                                                    @click=${this.handleCancelDialogDismiss}
-                                                >
-                                                    Continue
-                                                    Scanning
-                                                </button>
-                                            </div>
-                                        `}
-                              </div>
-                          </div>
-                      `
-                    : nothing}
 
                 ${this.removingLibraryId !== null && this.removalImpact
                     ? html`
@@ -2848,175 +2129,6 @@ export class ConfigPage extends LitElement {
         `;
     }
 
-    // --- Metrics ---
-
-    private renderMetricRow(
-        label: string,
-        value: string,
-        highlight = false,
-    ) {
-        return html`
-            <div class="metric-row">
-                <span class="metric-label">${label}</span>
-                <span
-                    class="metric-value ${highlight ? 'highlight' : ''}"
-                    >${value}</span
-                >
-            </div>
-        `;
-    }
-
-    private renderMetrics() {
-        const m = this.metrics;
-
-        if (!m) return nothing;
-
-        const formatEntries = Object.entries(
-            m.formatExtraction ?? {},
-        ).sort(([, a], [, b]) => b - a);
-
-        const pureDb = Math.max(
-            0,
-            m.batchCommits - m.coverArtSave,
-        );
-
-        return html`
-            <div class="metrics-wrapper">
-                <div class="metrics-header">
-                    <p class="metrics-title">
-                        Scan Results
-                    </p>
-                    <button
-                        class="btn-ghost ${this.copied ? 'copied' : ''}"
-                        @click=${this.handleCopyMetrics}
-                    >
-                        ${this.copied
-                            ? 'Copied!'
-                            : 'Copy'}
-                    </button>
-                </div>
-
-                ${this.renderMetricRow('Total', fmtNs(m.total), true)}
-
-                <details class="root" open>
-                    <summary>File Counts</summary>
-                    <div class="counts-grid">
-                        <span class="count-label"
-                            >Added</span
-                        >
-                        <span class="count-value"
-                            >${m.added}</span
-                        >
-                        <span class="count-label"
-                            >Updated</span
-                        >
-                        <span class="count-value"
-                            >${m.updated}</span
-                        >
-                        <span class="count-label"
-                            >Skipped</span
-                        >
-                        <span class="count-value"
-                            >${m.skipped}</span
-                        >
-                        <span class="count-label"
-                            >Removed</span
-                        >
-                        <span class="count-value"
-                            >${m.removed}</span
-                        >
-                    </div>
-                </details>
-
-                ${this.hasRescanPhases
-                    ? html`
-                          <details class="root" open>
-                              <summary>
-                                  Clear Phases
-                              </summary>
-                              ${this.renderMetricRow('Clear Queue', fmtNs(m.clearQueue))}
-                              ${this.renderMetricRow('Clear Database', fmtNs(m.clearDatabase))}
-                              ${this.renderMetricRow('Clear Cover Files', fmtNs(m.clearCoverFiles))}
-                          </details>
-                      `
-                    : nothing}
-
-                ${this.renderMetricRow('Load Existing Files', fmtNs(m.loadExisting))}
-                ${this.renderMetricRow('Directory Walk', fmtNs(m.walkDuration))}
-
-                <details class="root" open>
-                    <summary>
-                        Metadata Extraction &mdash;
-                        ${fmtNs(m.extractionWallClock)}
-                        wall-clock
-                    </summary>
-                    <p class="metric-note">
-                        Per-format and per-operation times
-                        are cumulative across
-                        ${Object.values(
-                            m.formatCount ?? {},
-                        ).reduce((a, b) => a + b, 0)}
-                        files
-                    </p>
-
-                    ${formatEntries.length > 0
-                        ? html`
-                              <details open>
-                                  <summary>
-                                      By Format
-                                  </summary>
-                                  ${formatEntries.map(
-                                      ([ext, ms]) =>
-                                          this.renderMetricRow(
-                                              `${ext} (${m.formatCount?.[ext] ?? 0} files)`,
-                                              fmtMs(
-                                                  ms,
-                                              ),
-                                          ),
-                                  )}
-                              </details>
-                          `
-                        : nothing}
-
-                    <details>
-                        <summary>By Operation</summary>
-                        ${this.renderMetricRow('Tag Extraction', fmtNs(m.tagExtraction))}
-                        ${this.renderMetricRow('Duration Extraction', fmtNs(m.durationExtraction))}
-                    </details>
-                </details>
-
-                <details class="root" open>
-                    <summary>
-                        Database Writes &mdash;
-                        ${fmtNs(m.dbWritesWallClock)}
-                        wall-clock
-                    </summary>
-                    ${this.renderMetricRow('Batch Commits', fmtNs(m.batchCommits))}
-                    ${this.renderMetricRow('Pure DB Operations', fmtNs(pureDb))}
-                    ${this.renderMetricRow('Save Cover Originals', fmtNs(m.coverArtSave))}
-                </details>
-
-                <details class="root" open>
-                    <summary>
-                        Thumbnail Generation &mdash;
-                        ${fmtNs(m.thumbnailWallClock)}
-                        wall-clock
-                    </summary>
-                    <p class="metric-note">
-                        Generated concurrently; cumulative
-                        CPU time may exceed wall-clock
-                    </p>
-                    ${this.renderMetricRow('Cumulative CPU Time', fmtNs(m.thumbnailGeneration))}
-                    ${this.renderMetricRow('Small (_sm)', fmtNs(m.thumbnailSmall))}
-                    ${this.renderMetricRow('Medium (_md)', fmtNs(m.thumbnailMedium))}
-                    ${this.renderMetricRow('Large (_lg)', fmtNs(m.thumbnailLarge))}
-                </details>
-
-                ${this.renderMetricRow('Orphan Cleanup', fmtNs(m.orphanCleanup))}
-                ${this.renderMetricRow('Post-Scan Variants', fmtNs(m.postScanVariants))}
-            </div>
-        `;
-    }
 }
 
 declare global {

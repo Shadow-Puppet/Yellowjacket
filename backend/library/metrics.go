@@ -1,6 +1,8 @@
 package library
 
 import (
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -59,6 +61,11 @@ type ScanMetrics struct {
 
 	// Non-fatal issues encountered during scanning.
 	Warnings []ScanWarning `json:"warnings"`
+
+	// onWarning, when set, receives each warning as it is recorded so
+	// the scan's job log can show problems live instead of only in the
+	// completion payload.  Invoked outside the metrics lock.
+	onWarning func(ScanWarning) `json:"-"`
 }
 
 // ScanProgress is the payload emitted periodically during a scan to
@@ -80,6 +87,59 @@ type ScanWarning struct {
 	FilePath string `json:"filePath"`
 	Phase    string `json:"phase"`
 	Err      string `json:"err"`
+}
+
+// timingBreakdown renders the full per-phase timing profile as plain
+// text for the job log.  This replaces the metrics table that used to
+// live on the settings page: same numbers, but attached to the scan
+// that produced them and copyable from the job's output pane.
+func (m *ScanMetrics) timingBreakdown() string {
+	var b strings.Builder
+
+	line := func(label string, d time.Duration) {
+		b.WriteString(label)
+		b.WriteString(": ")
+		b.WriteString(d.Round(time.Millisecond).String())
+		b.WriteString("\n")
+	}
+
+	line("Total", m.Total)
+
+	// Full-rescan-only phases; zero on an incremental scan.
+	if m.ClearQueue > 0 || m.ClearDatabase > 0 || m.ClearCoverFiles > 0 {
+		line("  Clear queue", m.ClearQueue)
+		line("  Clear database", m.ClearDatabase)
+		line("  Clear cover files", m.ClearCoverFiles)
+	}
+
+	line("  Load existing files", m.LoadExisting)
+	line("  Directory walk", m.WalkDuration)
+	line("  Metadata extraction (wall clock)", m.ExtractionWallClock)
+	line("    Tag extraction (cumulative)", m.TagExtraction)
+	line("    Duration extraction (cumulative)", m.DurationExtraction)
+
+	for format, ms := range m.FormatExtraction {
+		b.WriteString("      ")
+		b.WriteString(format)
+		b.WriteString(" (")
+		b.WriteString(strconv.FormatInt(m.FormatCount[format], 10))
+		b.WriteString(" files): ")
+		b.WriteString((time.Duration(ms) * time.Millisecond).String())
+		b.WriteString("\n")
+	}
+
+	line("  DB writes (wall clock)", m.DBWritesWallClock)
+	line("    Batch commits", m.BatchCommits)
+	line("    Save cover originals", m.CoverArtSave)
+	line("  Thumbnails (wall clock)", m.ThumbnailWallClock)
+	line("    Cumulative CPU time", m.ThumbnailGeneration)
+	line("      Small", m.ThumbnailSmall)
+	line("      Medium", m.ThumbnailMedium)
+	line("      Large", m.ThumbnailLarge)
+	line("  Orphan cleanup", m.OrphanCleanup)
+	line("  Post-scan variants", m.PostScanVariants)
+
+	return b.String()
 }
 
 func newScanMetrics() *ScanMetrics {
@@ -113,14 +173,22 @@ func (m *ScanMetrics) addCoverArtSave(d time.Duration) {
 
 // addWarning records a non-fatal scan issue.  Safe for concurrent use.
 func (m *ScanMetrics) addWarning(filePath, phase string, err error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	m.Warnings = append(m.Warnings, ScanWarning{
+	warning := ScanWarning{
 		FilePath: filePath,
 		Phase:    phase,
 		Err:      err.Error(),
-	})
+	}
+
+	m.mu.Lock()
+	m.Warnings = append(m.Warnings, warning)
+	notify := m.onWarning
+	m.mu.Unlock()
+
+	// Called outside the lock: the job registry takes its own locks and
+	// must never be able to deadlock against a scan worker.
+	if notify != nil {
+		notify(warning)
+	}
 }
 
 // addThumbnailTier records the time spent generating a single

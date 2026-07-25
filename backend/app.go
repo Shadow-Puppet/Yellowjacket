@@ -20,6 +20,7 @@ import (
 	"yellowjacket/backend/database"
 	"yellowjacket/backend/explore"
 	"yellowjacket/backend/frontendutil"
+	"yellowjacket/backend/jobs"
 	"yellowjacket/backend/library"
 	"yellowjacket/backend/mediacontrols"
 	"yellowjacket/backend/player"
@@ -44,6 +45,7 @@ type YellowJacketApp struct {
 	queue         *queue.Queue
 	explore       *explore.Service
 	autotag       *autotagservice.Service
+	jobs          *jobs.Registry
 	mediaControls mediacontrols.Handler
 	tagWriter     *tagwriter.TagWriter
 	appContext    context.Context
@@ -148,6 +150,16 @@ func NewYellowJacketApp(
 		yjApp.logger.WithGroup("explore"), yjApp.database,
 	)
 
+	// create the background job registry and wire it into the
+	// subsystems that run long jobs, so scans and index builds all
+	// report through one surface.
+	yjApp.jobs = jobs.NewRegistry(
+		yjApp.logger.WithGroup("jobs"),
+		jobs.NewStore(yjApp.database, yjApp.logger.WithGroup("jobs")),
+	)
+	yjApp.library.SetJobRegistry(yjApp.jobs)
+	yjApp.explore.SetJobRegistry(yjApp.jobs)
+
 	// create autotag service (depends on explore + tagWriter)
 	yjApp.autotag = autotagservice.NewService(
 		yjApp.logger.WithGroup("autotag"),
@@ -166,6 +178,7 @@ func NewYellowJacketApp(
 		yjApp.tagWriter,
 		yjApp.explore,
 		yjApp.autotag,
+		jobs.NewService(yjApp.jobs),
 	}
 
 	return yjApp, nil
@@ -219,6 +232,13 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 	yj.tagWriter.SetContext(ctx)
 	yj.explore.SetContext(ctx)
 	yj.autotag.SetContext(ctx)
+	yj.jobs.SetContext(ctx)
+
+	// Bring back jobs the user paused before the last shutdown, still
+	// paused.  Must run before the soft scan in OnDomReady, which
+	// checks these records so it does not restart a paused library.
+	yj.library.RestorePausedScans()
+	yj.explore.AdoptPausedIndexBuild()
 
 	// Wire queue (created in NewYellowJacketApp for Wails binding)
 	yj.queue.SetContext(ctx)

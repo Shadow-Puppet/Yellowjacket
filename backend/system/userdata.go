@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/user"
+	"path/filepath"
 	"runtime"
 )
 
@@ -22,14 +23,15 @@ const (
 	dirTypeData   dirType = "data"
 )
 
+// envHomeOverride is the environment variable that, when set, relocates
+// all YellowJacket config and data under a single base directory. It
+// exists so a development build can run against an isolated sandbox
+// without touching the current user's real config.toml or yj.db.
+const envHomeOverride = "YJ_HOME"
+
 // getUserDirPath returns and creates the path for a user directory.
 func getUserDirPath(dt dirType) (string, error) {
-	currentUser, err := user.Current()
-	if err != nil {
-		return "", fmt.Errorf("could not get current user: %w", err)
-	}
-
-	path, err := buildUserDirPath(currentUser.Username, dt)
+	path, err := resolveUserDirPath(dt)
 	if err != nil {
 		return "", err
 	}
@@ -48,6 +50,22 @@ func getUserDirPath(dt dirType) (string, error) {
 	}
 
 	return path, nil
+}
+
+// resolveUserDirPath picks the base path for a user directory. When
+// YJ_HOME is set it wins for every OS, mapping to <YJ_HOME>/<dirType>;
+// otherwise the standard OS-specific location is used.
+func resolveUserDirPath(dt dirType) (string, error) {
+	if home := os.Getenv(envHomeOverride); home != "" {
+		return filepath.Join(home, string(dt)), nil
+	}
+
+	currentUser, err := user.Current()
+	if err != nil {
+		return "", fmt.Errorf("could not get current user: %w", err)
+	}
+
+	return buildUserDirPath(currentUser.Username, dt)
 }
 
 // buildUserDirPath constructs the OS-specific path for a user directory.

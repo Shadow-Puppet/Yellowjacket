@@ -82,6 +82,10 @@ export function ImportPlaylists(arg1) {
   return window['go']['playlist']['Service']['ImportPlaylists'](arg1);
 }
 
+export function MaterializeUnmaterializedSmartPlaylists() {
+  return window['go']['playlist']['Service']['MaterializeUnmaterializedSmartPlaylists']();
+}
+
 export function PreviewSmartPlaylist(arg1) {
   return window['go']['playlist']['Service']['PreviewSmartPlaylist'](arg1);
 }
