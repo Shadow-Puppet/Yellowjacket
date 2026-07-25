@@ -56,12 +56,23 @@ jobs:
       PACKAGE_TOKEN: ${{ secrets.PACKAGE_TOKEN }}
       SERVER_URL: ${{ github.server_url }}
       OWNER: ${{ github.repository_owner }}
+      REPO: ${{ github.repository }}
+      SHA: ${{ github.sha }}
       MODE: ${{ inputs.mode || 'auto' }}
       BUDGET: ${{ inputs.budget || '3h' }}
       ARTISTS: ${{ inputs.artists || '50000' }}
     steps:
-      - name: Check out
-        uses: actions/checkout@v4
+      # Cloned by hand rather than with actions/checkout: that is a JS
+      # action and needs node inside the job container, which the golang
+      # image does not carry. Same approach as arch-package.yml.
+      - name: Clone repo at this commit
+        run: |
+          set -eu
+          git clone --quiet \
+            "https://x-access-token:${PACKAGE_TOKEN}@${SERVER_URL#https://}/${REPO}.git" \
+            /src
+          git -C /src checkout --quiet --detach "$SHA"
+          git -C /src log --oneline -1
 
       - name: Verify the cache volume
         run: |
@@ -79,6 +90,7 @@ jobs:
           df -h /cache
 
       - name: Build tools
+        working-directory: /src
         run: go build -o /usr/local/bin/ ./cmd/indexbuild ./cmd/indexexport
 
       - name: Maintain index
