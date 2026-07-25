@@ -20,6 +20,9 @@ import '@components/explore-view/explore-view.ts';
 import '@components/explore-artist-details/explore-artist-details.js';
 import '@components/explore-album-details/explore-album-details.js';
 import '@components/autotag-view/autotag-view.ts';
+import '@components/first-run-wizard/first-run-wizard.ts';
+import '@components/jobs/job-indicator.ts';
+import '@components/jobs/jobs-view.ts';
 import '@awesome.me/webawesome/dist/styles/themes/default.css';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import { setBasePath } from '@awesome.me/webawesome/dist/webawesome.js';
@@ -61,6 +64,7 @@ const VIEW_TAGS: Record<string, string> = {
     playlists: 'playlist-view',
     explore: 'explore-view',
     autotag: 'autotag-view',
+    jobs: 'jobs-view',
     settings: 'config-page',
 };
 

@@ -1,0 +1,131 @@
+name: Search index maintenance
+
+# indexbuild decides what to do from the index's own state, so every
+# trigger below runs the same command:
+#
+#   no completed import   -> build   (first run, or resume a partial one)
+#   import older than 3mo -> rebuild (re-import from the newest dump)
+#   otherwise             -> refresh (fold in new incremental listens)
+#
+# A refresh is cheap and no-ops when nothing new has been published, so
+# running it on every push to main is safe.
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Weekly update pass. The 3-month rebuild is triggered by the same
+    # command when it notices the import has aged out.
+    - cron: '0 4 * * 1'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'auto | build | refresh | rebuild'
+        required: false
+        default: 'auto'
+      budget:
+        description: 'Max build time this run'
+        required: false
+        default: '3h'
+      artists:
+        description: 'Top artists in the core artifact'
+        required: false
+        default: '50000'
+
+# Runs share one persistent working directory, so they must not overlap.
+# A push landing mid-build waits rather than corrupting the checkpoint.
+concurrency:
+  group: search-index
+  cancel-in-progress: false
+
+jobs:
+  maintain-index:
+    runs-on: ubuntu-latest
+    container:
+      # CGO is not needed: the project uses the pure-Go modernc sqlite
+      # driver, and neither command imports the Wails app.
+      image: golang:1.25
+      # This host path must exist on the runner and be listed verbatim in
+      # act_runner's container.valid_volumes. It holds explore-staging/
+      # (counts.bin + state.json) and yj.db — the checkpoint that makes
+      # resuming possible. Losing it means re-downloading ~205GB.
+      volumes:
+        - /srv/yellowjacket/index-cache:/cache
+    env:
+      YJ_HOME: /cache
+      CGO_ENABLED: '0'
+      PACKAGE_TOKEN: ${{ secrets.PACKAGE_TOKEN }}
+      SERVER_URL: ${{ github.server_url }}
+      OWNER: ${{ github.repository_owner }}
+      MODE: ${{ inputs.mode || 'auto' }}
+      BUDGET: ${{ inputs.budget || '3h' }}
+      ARTISTS: ${{ inputs.artists || '50000' }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Verify the cache volume
+        run: |
+          set -eu
+          mkdir -p /cache
+          # A RAM-backed cache would defeat the point: the checkpoint has
+          # to outlive the job, and the import wants real disk headroom.
+          fstype=$(stat -f -c %T /cache || echo unknown)
+          echo "cache fstype: $fstype"
+          case "$fstype" in
+            tmpfs|ramfs)
+              echo "::error::/cache is RAM-backed; use a disk-backed host path."
+              exit 1 ;;
+          esac
+          df -h /cache
+
+      - name: Build tools
+        run: go build -o /usr/local/bin/ ./cmd/indexbuild ./cmd/indexexport
+
+      - name: Maintain index
+        id: maintain
+        run: |
+          set +e
+          indexbuild -mode "$MODE" -budget "$BUDGET"
+          code=$?
+          set -e
+          case "$code" in
+            0) ;;
+            3) echo "::notice::Build checkpointed with work remaining — rerun to continue." ;;
+            *) exit "$code" ;;
+          esac
+
+      # Publishing only on `changed` keeps identical artifacts from
+      # accumulating when a refresh finds nothing new.
+      - name: Export core artifact
+        if: steps.maintain.outputs.complete == 'true' && steps.maintain.outputs.changed == 'true'
+        run: |
+          set -eu
+          command -v zstd >/dev/null 2>&1 || { apt-get update -qq && apt-get install -y -qq zstd; }
+          indexexport -o /tmp/core-index.db -artists "$ARTISTS"
+          zstd -19 -T0 -q -f /tmp/core-index.db -o /tmp/core-index.db.zst
+          sha256sum /tmp/core-index.db.zst | tee /tmp/core-index.db.zst.sha256
+          ls -lh /tmp/core-index.db.zst
+
+      - name: Publish to the Gitea package registry
+        if: steps.maintain.outputs.complete == 'true' && steps.maintain.outputs.changed == 'true'
+        run: |
+          set -eu
+          version="$(date -u +%Y%m%d)"
+          base="${SERVER_URL}/api/packages/${OWNER}/generic/yellowjacket-core-index/${version}"
+          for f in core-index.db.zst core-index.db.zst.sha256; do
+            echo "Uploading $f -> $version"
+            curl --fail-with-body --user "${OWNER}:${PACKAGE_TOKEN}" \
+              --upload-file "/tmp/$f" "${base}/${f}"
+          done
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "complete=${{ steps.maintain.outputs.complete }}"
+          echo "changed=${{ steps.maintain.outputs.changed }}"
+          if [ "${{ steps.maintain.outputs.complete }}" != "true" ]; then
+            echo "Build incomplete — rerun to continue from the checkpoint."
+            echo "Progress lives in /cache/data/explore-staging."
+          elif [ "${{ steps.maintain.outputs.changed }}" != "true" ]; then
+            echo "Nothing new to publish."
+          fi

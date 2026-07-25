@@ -61,6 +61,9 @@ export const Events = {
     AutotagPrefetchProgress: "AutotagPrefetchProgress",
     AutotagPrefetchFinished: "AutotagPrefetchFinished",
 
+    // Background job events
+    JobsChanged: "JobsChanged",
+
     // Explore / search index events
     IndexStatusChanged: "IndexStatusChanged",
     ArtistDiscographyReady: "ArtistDiscographyReady",

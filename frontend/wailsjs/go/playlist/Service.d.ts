@@ -44,6 +44,8 @@ export function ImportPlaylist(arg1:string):Promise<playlist.Summary>;
 
 export function ImportPlaylists(arg1:Array<string>):Promise<Array<playlist.Summary>>;
 
+export function MaterializeUnmaterializedSmartPlaylists():Promise<void>;
+
 export function PreviewSmartPlaylist(arg1:string):Promise<Array<library.Track>>;
 
 export function RefreshSmartPlaylist(arg1:number):Promise<void>;

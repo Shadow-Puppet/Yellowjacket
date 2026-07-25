@@ -77,6 +77,14 @@ type HttpCache struct {
 	EntityType string
 }
 
+type JobState struct {
+	ID       string
+	Kind     string
+	Title    string
+	Subtitle string
+	PausedAt string
+}
+
 type Library struct {
 	ID                  int64
 	Name                string

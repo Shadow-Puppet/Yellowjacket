@@ -17,6 +17,7 @@ import (
 
 	"yellowjacket/backend/database"
 	"yellowjacket/backend/events"
+	"yellowjacket/backend/jobs"
 )
 
 // Index build parameters.
@@ -217,6 +218,12 @@ type SearchIndex struct {
 
 	// Build status tracking — read by GetIndexStatus for the UI.
 	buildStatus IndexStatus
+
+	// jobs is the background job registry; buildPaused records that the
+	// user paused the build, distinguishing a deliberate stop from a
+	// build that merely finished.  Both are protected by mu.
+	jobs        *jobs.Registry
+	buildPaused bool
 }
 
 // prefixCacheEntry is one memoised generic-query result.
@@ -495,6 +502,15 @@ func (si *SearchIndex) PersistSimilarArtists(sourceMBID string, similar []LBSimi
 // StartBuild launches the background index build goroutine.
 // Returns immediately.
 func (si *SearchIndex) StartBuild(ctx context.Context) {
+	// A build the user paused stays paused until they resume it —
+	// including across restarts, where the marker is read back from
+	// explore_index_meta.  ResumeBuild clears it before calling here.
+	if si.buildPausedByUser() {
+		si.logger.Info("search index: build is paused, not starting")
+
+		return
+	}
+
 	si.mu.Lock()
 	// Don't start if already running.
 	if si.cancel != nil {
@@ -639,10 +655,16 @@ func (si *SearchIndex) setTierStatus(name, state string, total, completed int) {
 
 	for i := range si.buildStatus.Tiers {
 		if si.buildStatus.Tiers[i].Name == name {
+			transitioned := si.buildStatus.Tiers[i].State != state
 			si.buildStatus.Tiers[i].State = state
 			si.buildStatus.Tiers[i].Total = total
 			si.buildStatus.Tiers[i].Completed = completed
 			si.mu.Unlock()
+
+			if transitioned {
+				si.logIndexJob(jobs.LevelInfo, "Stage "+state+": "+name)
+			}
+
 			si.emitStatus()
 
 			return
@@ -669,6 +691,8 @@ func (si *SearchIndex) setTierError(name, errMsg string) {
 			si.buildStatus.Tiers[i].State = "error"
 			si.buildStatus.Tiers[i].Error = errMsg
 			si.mu.Unlock()
+
+			si.logIndexJob(jobs.LevelError, name+": "+errMsg)
 			si.emitStatus()
 
 			return
@@ -691,6 +715,10 @@ func (si *SearchIndex) emitStatus() {
 	si.mu.RUnlock()
 
 	runtime.EventsEmit(si.runtimeCtx, events.IndexStatusChanged, status)
+
+	// Mirror into the shared job registry.  Every status mutation goes
+	// through emitStatus, so hooking here covers all update paths.
+	si.syncIndexJob(status)
 }
 
 // GetPopularity returns the cached popularity (listen count) for

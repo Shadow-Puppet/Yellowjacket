@@ -26,16 +26,19 @@ func (l *Library) ScanLibrary(id int64) error {
 	}
 
 	l.mu.Lock()
-	defer l.mu.Unlock()
 
 	// Silent dedup: already scanning this library.
 	if l.currentScanLibraryID == id {
+		l.mu.Unlock()
+
 		return nil
 	}
 
 	// Silent dedup: already queued.
 	for _, entry := range l.scanQueue {
 		if entry.libraryID == id {
+			l.mu.Unlock()
+
 			return nil
 		}
 	}
@@ -50,6 +53,7 @@ func (l *Library) ScanLibrary(id int64) error {
 		l.scanActive = true
 		l.currentScanLibraryID = entry.libraryID
 		l.currentScanLibraryName = entry.libraryName
+		l.mu.Unlock()
 
 		go l.startScan(entry)
 
@@ -58,12 +62,18 @@ func (l *Library) ScanLibrary(id int64) error {
 
 	// A scan is already running — queue this library.
 	l.scanQueue = append(l.scanQueue, entry)
+	queueLength := len(l.scanQueue)
+	l.mu.Unlock()
 
 	runtime.EventsEmit(l.ctx, events.LibraryScanQueued, map[string]any{
 		"libraryId":   lib.ID,
 		"libraryName": lib.Name,
-		"queueLength": len(l.scanQueue),
+		"queueLength": queueLength,
 	})
+
+	// Registering the queued job takes l.mu again, so it must happen
+	// after the unlock above.
+	l.registerQueuedScanJob(entry)
 
 	return nil
 }
@@ -127,6 +137,20 @@ func (l *Library) SoftScanAllLibraries() error {
 	}
 
 	for _, lib := range libs {
+		// A scan the user paused stays paused across restarts — the
+		// soft scan must not quietly start it again behind their back.
+		// RestorePausedScans has already surfaced it in the jobs panel
+		// with a resume button.
+		if l.isScanPausedPersistently(lib.ID) {
+			l.logger.Info(
+				"soft scan: library scan is paused, skipping",
+				"libraryID", lib.ID,
+				"libraryName", lib.Name,
+			)
+
+			continue
+		}
+
 		dbCount, countErr := l.db.Queries.CountAudioFilesByLibrary(
 			l.ctx, lib.ID,
 		)

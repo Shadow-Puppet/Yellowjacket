@@ -23,6 +23,7 @@ import (
 	"yellowjacket/backend/database"
 	"yellowjacket/backend/database/sql/sqlcgen"
 	"yellowjacket/backend/events"
+	"yellowjacket/backend/jobs"
 	"yellowjacket/backend/metadata"
 	"yellowjacket/backend/system"
 )
@@ -105,6 +106,10 @@ type Library struct {
 	scanCancel  context.CancelFunc
 	scanPaused  bool
 	scanPauseCh chan struct{}
+
+	// jobs is the background job registry.  Nil in tests that do not
+	// exercise progress reporting; every use site must nil-check.
+	jobs *jobs.Registry
 
 	// Scan queue fields — protected by mu.
 	scanQueue              []scanQueueEntry
@@ -218,6 +223,25 @@ func (l *Library) scanInternal(
 	metrics.LibraryName = libraryName
 	scanStart := time.Now()
 
+	// Register the background job before any work starts so the UI
+	// indicator appears immediately, even during the pre-walk count.
+	jobHandle := l.startScanJob(scanQueueEntry{
+		libraryID:   libraryID,
+		libraryName: libraryName,
+		libraryPath: libraryPath,
+	})
+
+	// Stream non-fatal issues into the job log as they happen rather
+	// than dumping them all at completion — the point of the log pane
+	// is to answer "what is it doing right now".
+	metrics.onWarning = func(w ScanWarning) {
+		if jobHandle == nil {
+			return
+		}
+
+		jobHandle.LogDetail(jobs.LevelWarn, w.Phase+": "+w.Err, w.FilePath)
+	}
+
 	scanCtx, scanCancel := context.WithCancel(l.ctx)
 	defer scanCancel()
 
@@ -281,6 +305,14 @@ func (l *Library) scanInternal(
 		}
 	}
 
+	// emitProgress publishes one progress update to both consumers: the
+	// legacy LibraryScanProgress event and the shared job registry.
+	// Routing everything through here keeps the two from drifting.
+	emitProgress := func(p ScanProgress) {
+		runtime.EventsEmit(l.ctx, events.LibraryScanProgress, p)
+		reportScanProgress(jobHandle, p)
+	}
+
 	runtime.EventsEmit(l.ctx, events.LibraryScanStarted, map[string]any{
 		"libraryId":   libraryID,
 		"libraryName": libraryName,
@@ -289,9 +321,7 @@ func (l *Library) scanInternal(
 	basePath := libraryPath
 
 	// --- Pre-walk: count audio files for progress reporting ---
-	runtime.EventsEmit(l.ctx, events.LibraryScanProgress,
-		mkProgress("counting", 0, 0, 0, 0, 0),
-	)
+	emitProgress(mkProgress("counting", 0, 0, 0, 0, 0))
 
 	totalFiles := countAudioFiles(basePath)
 
@@ -488,14 +518,10 @@ func (l *Library) scanInternal(
 				s := skipped.Load()
 				u := updated.Load()
 
-				runtime.EventsEmit(
-					l.ctx,
-					events.LibraryScanProgress,
-					mkProgress(
-						"scanning", totalFiles,
-						a+s+u, a, s, u,
-					),
-				)
+				emitProgress(mkProgress(
+					"scanning", totalFiles,
+					a+s+u, a, s, u,
+				))
 			case <-stopProgress:
 				return
 			}
@@ -618,18 +644,14 @@ func (l *Library) scanInternal(
 	s := skipped.Load()
 	u := updated.Load()
 
-	runtime.EventsEmit(l.ctx, events.LibraryScanProgress,
-		mkProgress("scanning", totalFiles, a+s+u, a, s, u),
-	)
+	emitProgress(mkProgress("scanning", totalFiles, a+s+u, a, s, u))
 
 	// Close thumbnail channel and wait for all thumbnail workers
 	// to finish.  The DB writer has stopped sending work at this
 	// point so it is safe to close.
 	thumbStart := time.Now()
 
-	runtime.EventsEmit(l.ctx, events.LibraryScanProgress,
-		mkProgress("thumbnails", totalFiles, a+s+u, a, s, u),
-	)
+	emitProgress(mkProgress("thumbnails", totalFiles, a+s+u, a, s, u))
 
 	close(thumbChan)
 	thumbWg.Wait()
@@ -648,9 +670,7 @@ func (l *Library) scanInternal(
 		l.logger.Info("scan cancelled, skipping orphan cleanup")
 	} else {
 		// --- Phase 5: orphan cleanup ---
-		runtime.EventsEmit(l.ctx, events.LibraryScanProgress,
-			mkProgress("orphans", totalFiles, a+s+u, a, s, u),
-		)
+		emitProgress(mkProgress("orphans", totalFiles, a+s+u, a, s, u))
 
 		orphanStart := time.Now()
 
@@ -752,6 +772,8 @@ func (l *Library) scanInternal(
 		"cancelled", cancelled,
 		"total", metrics.Total,
 	)
+
+	finishScanJob(jobHandle, metrics, cancelled)
 
 	if cancelled {
 		runtime.EventsEmit(

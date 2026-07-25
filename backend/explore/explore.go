@@ -14,6 +14,7 @@ import (
 
 	"yellowjacket/backend/database"
 	"yellowjacket/backend/events"
+	"yellowjacket/backend/jobs"
 )
 
 // Service is the Wails-bound service for the explore feature.
@@ -146,6 +147,52 @@ func (e *Service) RefreshListenCounts() {
 // Call before a full rescan to free the DB for the scan.
 func (e *Service) StopIndexBuild() {
 	e.index.StopBuild()
+}
+
+// SetJobRegistry wires the background job registry into the search
+// index so its build reports progress and controls to the frontend.
+func (e *Service) SetJobRegistry(reg *jobs.Registry) {
+	e.index.SetJobRegistry(reg)
+}
+
+// AdoptPausedIndexBuild re-registers a build paused in a previous
+// session so it appears in the jobs panel, still paused.
+func (e *Service) AdoptPausedIndexBuild() {
+	e.index.AdoptPausedBuild()
+}
+
+// IndexImportComplete reports whether the dump import has finished all
+// of its stages.  Distinct from IsIndexReady, which only means the index
+// holds enough rows to answer queries — a partially imported index is
+// ready but not complete.  Used by the headless builder to decide
+// whether another run is needed.
+func (e *Service) IndexImportComplete() bool {
+	return e.index.ImportComplete()
+}
+
+// IndexBaselineSeries returns the incremental listens series the index's
+// popularity is caught up to.  A change across a refresh means new data
+// was folded in.
+func (e *Service) IndexBaselineSeries() int {
+	return e.index.BaselineSeries()
+}
+
+// IndexLastImported returns when the dump import last completed, or the
+// zero time if it never has.
+func (e *Service) IndexLastImported() time.Time {
+	return e.index.LastImported()
+}
+
+// PrepareIndexRebuild clears the completion marker so the next build
+// re-imports from the newest published dump.
+func (e *Service) PrepareIndexRebuild() {
+	e.index.PrepareRebuild()
+}
+
+// RefreshIndexNow folds newly published incremental listens dumps into
+// the index synchronously.  Pass 0 to bypass the cadence gate.
+func (e *Service) RefreshIndexNow(minInterval time.Duration) {
+	e.index.RefreshNow(e.ctx, minInterval)
 }
 
 // IsIndexReady returns true once the index has been populated.
