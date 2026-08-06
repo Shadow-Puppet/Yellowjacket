@@ -4,7 +4,7 @@ name: Search index maintenance
 # trigger below runs the same command:
 #
 #   no completed import   -> build   (first run, or resume a partial one)
-#   import older than 3mo -> rebuild (re-import from the newest dump)
+#   import older than 6mo -> rebuild (re-import from the newest dump)
 #   otherwise             -> refresh (fold in new incremental listens)
 #
 # A refresh is cheap and no-ops when nothing new has been published, so
@@ -13,7 +13,7 @@ on:
   push:
     branches: [main]
   schedule:
-    # Weekly update pass. The 3-month rebuild is triggered by the same
+    # Weekly update pass. The 6-month rebuild is triggered by the same
     # command when it notices the import has aged out.
     - cron: '0 4 * * 1'
   workflow_dispatch:
@@ -91,7 +91,12 @@ jobs:
 
       - name: Build tools
         working-directory: /src
-        run: go build -o /usr/local/bin/ ./cmd/indexbuild ./cmd/indexexport
+        # The dump importer is behind the `indexbuild` tag so it is not
+        # linked into the app binary; cmd/indexbuild carries the same tag
+        # and will not build without it.
+        run: |
+          go build -tags indexbuild -o /usr/local/bin/ ./cmd/indexbuild
+          go build -o /usr/local/bin/ ./cmd/indexexport
 
       - name: Maintain index
         id: maintain
@@ -122,12 +127,26 @@ jobs:
         if: steps.maintain.outputs.complete == 'true' && steps.maintain.outputs.changed == 'true'
         run: |
           set -eu
-          version="$(date -u +%Y%m%d)"
-          base="${SERVER_URL}/api/packages/${OWNER}/generic/yellowjacket-core-index/${version}"
-          for f in core-index.db.zst core-index.db.zst.sha256; do
-            echo "Uploading $f -> $version"
-            curl --fail-with-body --user "${OWNER}:${PACKAGE_TOKEN}" \
-              --upload-file "/tmp/$f" "${base}/${f}"
+          pkg="${SERVER_URL}/api/packages/${OWNER}/generic/yellowjacket-core-index"
+
+          # Published twice: under a dated version for history, and under
+          # the fixed "latest" version the client fetches. Clients cannot
+          # discover the newest dated version on their own — the package
+          # listing API requires a token, while a plain file GET does not
+          # — so "latest" is what makes an anonymous first run possible.
+          #
+          # A generic package rejects re-uploading a filename that already
+          # exists, so "latest" is deleted before being rewritten. It is
+          # absent on the very first publish, hence the tolerated 404.
+          curl --silent --show-error --user "${OWNER}:${PACKAGE_TOKEN}" \
+            --request DELETE "${pkg}/latest" || true
+
+          for version in "$(date -u +%Y%m%d)" latest; do
+            for f in core-index.db.zst core-index.db.zst.sha256; do
+              echo "Uploading $f -> $version"
+              curl --fail-with-body --user "${OWNER}:${PACKAGE_TOKEN}" \
+                --upload-file "/tmp/$f" "${pkg}/${version}/${f}"
+            done
           done
 
       - name: Summary

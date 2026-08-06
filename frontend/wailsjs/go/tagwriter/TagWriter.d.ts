@@ -12,3 +12,5 @@ export function SetContext(arg1:context.Context):Promise<void>;
 export function WriteTrackTags(arg1:number,arg2:tagwriter.TagChanges):Promise<void>;
 
 export function WriteTrackTagsByPath(arg1:string,arg2:tagwriter.TagChanges):Promise<void>;
+
+export function WriteUntrackedFileTags(arg1:string,arg2:tagwriter.TagChanges):Promise<void>;

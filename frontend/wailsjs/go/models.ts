@@ -287,6 +287,571 @@ export namespace autotagservice {
 
 }
 
+export namespace download {
+	
+	export class QualityScore {
+	    overall: number;
+	    formatRank: number;
+	    bitrate: number;
+	    health: number;
+	    priority: number;
+	    mixed: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new QualityScore(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.overall = source["overall"];
+	        this.formatRank = source["formatRank"];
+	        this.bitrate = source["bitrate"];
+	        this.health = source["health"];
+	        this.priority = source["priority"];
+	        this.mixed = source["mixed"];
+	    }
+	}
+	export class MatchScore {
+	    overall: number;
+	    titleFit: number;
+	    artistFit: number;
+	    albumFit: number;
+	    completeness: number;
+	    anchored: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new MatchScore(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.overall = source["overall"];
+	        this.titleFit = source["titleFit"];
+	        this.artistFit = source["artistFit"];
+	        this.albumFit = source["albumFit"];
+	        this.completeness = source["completeness"];
+	        this.anchored = source["anchored"];
+	    }
+	}
+	export class CandidateFile {
+	    path: string;
+	    size: number;
+	    format: string;
+	    bitrate?: number;
+	    isAudio: boolean;
+	    matchedTo?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new CandidateFile(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.size = source["size"];
+	        this.format = source["format"];
+	        this.bitrate = source["bitrate"];
+	        this.isAudio = source["isAudio"];
+	        this.matchedTo = source["matchedTo"];
+	    }
+	}
+	export class Candidate {
+	    id: string;
+	    providerId: number;
+	    kind: string;
+	    protocol: string;
+	    title: string;
+	    artist?: string;
+	    origin?: string;
+	    files: CandidateFile[];
+	    totalSize: number;
+	    health: number;
+	    match: MatchScore;
+	    quality: QualityScore;
+	    score: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Candidate(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.providerId = source["providerId"];
+	        this.kind = source["kind"];
+	        this.protocol = source["protocol"];
+	        this.title = source["title"];
+	        this.artist = source["artist"];
+	        this.origin = source["origin"];
+	        this.files = this.convertValues(source["files"], CandidateFile);
+	        this.totalSize = source["totalSize"];
+	        this.health = source["health"];
+	        this.match = this.convertValues(source["match"], MatchScore);
+	        this.quality = this.convertValues(source["quality"], QualityScore);
+	        this.score = source["score"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	export class Caps {
+	    canSearch: boolean;
+	    canTransport: boolean;
+	    canDelegate: boolean;
+	    canList: boolean;
+	    canResume: boolean;
+	    canCancel: boolean;
+	    reportsSize: boolean;
+	    transports: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new Caps(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.canSearch = source["canSearch"];
+	        this.canTransport = source["canTransport"];
+	        this.canDelegate = source["canDelegate"];
+	        this.canList = source["canList"];
+	        this.canResume = source["canResume"];
+	        this.canCancel = source["canCancel"];
+	        this.reportsSize = source["reportsSize"];
+	        this.transports = source["transports"];
+	    }
+	}
+	export class Config {
+	    id: number;
+	    kind: string;
+	    name: string;
+	    enabled: boolean;
+	    priority: number;
+	    settings: Record<string, string>;
+	
+	    static createFrom(source: any = {}) {
+	        return new Config(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.kind = source["kind"];
+	        this.name = source["name"];
+	        this.enabled = source["enabled"];
+	        this.priority = source["priority"];
+	        this.settings = source["settings"];
+	    }
+	}
+	export class Field {
+	    key: string;
+	    label: string;
+	    placeholder?: string;
+	    help?: string;
+	    secret: boolean;
+	    required: boolean;
+	    default?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Field(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.key = source["key"];
+	        this.label = source["label"];
+	        this.placeholder = source["placeholder"];
+	        this.help = source["help"];
+	        this.secret = source["secret"];
+	        this.required = source["required"];
+	        this.default = source["default"];
+	    }
+	}
+	export class Descriptor {
+	    kind: string;
+	    name: string;
+	    summary: string;
+	    caps: Caps;
+	    fields: Field[];
+	    requiresExternal?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Descriptor(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.kind = source["kind"];
+	        this.name = source["name"];
+	        this.summary = source["summary"];
+	        this.caps = this.convertValues(source["caps"], Caps);
+	        this.fields = this.convertValues(source["fields"], Field);
+	        this.requiresExternal = source["requiresExternal"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class ExpectedTrack {
+	    position: number;
+	    discNumber: number;
+	    title: string;
+	    artist: string;
+	    lengthMillis: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ExpectedTrack(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.position = source["position"];
+	        this.discNumber = source["discNumber"];
+	        this.title = source["title"];
+	        this.artist = source["artist"];
+	        this.lengthMillis = source["lengthMillis"];
+	    }
+	}
+	
+	export class Item {
+	    id: string;
+	    requestId: string;
+	    providerId: number;
+	    transportId?: number;
+	    externalId?: string;
+	    candidate: Candidate;
+	    state: string;
+	    bytesDone: number;
+	    bytesTotal: number;
+	    error?: string;
+	    createdAt: time.Time;
+	    updatedAt: time.Time;
+	
+	    static createFrom(source: any = {}) {
+	        return new Item(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.requestId = source["requestId"];
+	        this.providerId = source["providerId"];
+	        this.transportId = source["transportId"];
+	        this.externalId = source["externalId"];
+	        this.candidate = this.convertValues(source["candidate"], Candidate);
+	        this.state = source["state"];
+	        this.bytesDone = source["bytesDone"];
+	        this.bytesTotal = source["bytesTotal"];
+	        this.error = source["error"];
+	        this.createdAt = this.convertValues(source["createdAt"], time.Time);
+	        this.updatedAt = this.convertValues(source["updatedAt"], time.Time);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	
+	export class Reconciler {
+	
+	
+	    static createFrom(source: any = {}) {
+	        return new Reconciler(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	
+	    }
+	}
+	export class RequestView {
+	    id: string;
+	    releaseMbid?: string;
+	    releaseGroupMbid?: string;
+	    recordingMbid?: string;
+	    wantId?: number;
+	    source?: string;
+	    artist: string;
+	    album: string;
+	    query?: string;
+	    expected?: ExpectedTrack[];
+	    libraryId: number;
+	    createdAt: time.Time;
+	    state: string;
+	    error?: string;
+	    items: Item[];
+	
+	    static createFrom(source: any = {}) {
+	        return new RequestView(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.releaseMbid = source["releaseMbid"];
+	        this.releaseGroupMbid = source["releaseGroupMbid"];
+	        this.recordingMbid = source["recordingMbid"];
+	        this.wantId = source["wantId"];
+	        this.source = source["source"];
+	        this.artist = source["artist"];
+	        this.album = source["album"];
+	        this.query = source["query"];
+	        this.expected = this.convertValues(source["expected"], ExpectedTrack);
+	        this.libraryId = source["libraryId"];
+	        this.createdAt = this.convertValues(source["createdAt"], time.Time);
+	        this.state = source["state"];
+	        this.error = source["error"];
+	        this.items = this.convertValues(source["items"], Item);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class SearchRequest {
+	    libraryId: number;
+	    releaseMbid: string;
+	    releaseGroupMbid: string;
+	    artist: string;
+	    album: string;
+	    query: string;
+	    expected: ExpectedTrack[];
+	
+	    static createFrom(source: any = {}) {
+	        return new SearchRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.libraryId = source["libraryId"];
+	        this.releaseMbid = source["releaseMbid"];
+	        this.releaseGroupMbid = source["releaseGroupMbid"];
+	        this.artist = source["artist"];
+	        this.album = source["album"];
+	        this.query = source["query"];
+	        this.expected = this.convertValues(source["expected"], ExpectedTrack);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class StartResult {
+	    requestId: string;
+	    candidates: Candidate[];
+	    autoPicked: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new StartResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.requestId = source["requestId"];
+	        this.candidates = this.convertValues(source["candidates"], Candidate);
+	        this.autoPicked = source["autoPicked"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class Summary {
+	    expanded: number;
+	    satisfied: number;
+	    attempted: number;
+	    started: number;
+	    synced: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Summary(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.expanded = source["expanded"];
+	        this.satisfied = source["satisfied"];
+	        this.attempted = source["attempted"];
+	        this.started = source["started"];
+	        this.synced = source["synced"];
+	    }
+	}
+	export class Want {
+	    id: number;
+	    mbid: string;
+	    entity: string;
+	    libraryId: number;
+	    artist: string;
+	    title: string;
+	    scope: string;
+	    secondary: boolean;
+	    state: string;
+	    parentId?: number;
+	    attempts: number;
+	    lastError?: string;
+	    lastTriedAt?: time.Time;
+	    nextTryAt?: time.Time;
+	    externalIds?: Record<string, string>;
+	    createdAt: time.Time;
+	    updatedAt: time.Time;
+	
+	    static createFrom(source: any = {}) {
+	        return new Want(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.mbid = source["mbid"];
+	        this.entity = source["entity"];
+	        this.libraryId = source["libraryId"];
+	        this.artist = source["artist"];
+	        this.title = source["title"];
+	        this.scope = source["scope"];
+	        this.secondary = source["secondary"];
+	        this.state = source["state"];
+	        this.parentId = source["parentId"];
+	        this.attempts = source["attempts"];
+	        this.lastError = source["lastError"];
+	        this.lastTriedAt = this.convertValues(source["lastTriedAt"], time.Time);
+	        this.nextTryAt = this.convertValues(source["nextTryAt"], time.Time);
+	        this.externalIds = source["externalIds"];
+	        this.createdAt = this.convertValues(source["createdAt"], time.Time);
+	        this.updatedAt = this.convertValues(source["updatedAt"], time.Time);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class WantRequest {
+	    mbid: string;
+	    entity: string;
+	    libraryId: number;
+	    artist: string;
+	    title: string;
+	    scope: string;
+	    secondary: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new WantRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.mbid = source["mbid"];
+	        this.entity = source["entity"];
+	        this.libraryId = source["libraryId"];
+	        this.artist = source["artist"];
+	        this.title = source["title"];
+	        this.scope = source["scope"];
+	        this.secondary = source["secondary"];
+	    }
+	}
+
+}
+
 export namespace explore {
 	
 	export class TierStatus {
@@ -295,6 +860,7 @@ export namespace explore {
 	    total: number;
 	    completed: number;
 	    error?: string;
+	    detail?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new TierStatus(source);
@@ -307,6 +873,7 @@ export namespace explore {
 	        this.total = source["total"];
 	        this.completed = source["completed"];
 	        this.error = source["error"];
+	        this.detail = source["detail"];
 	    }
 	}
 	export class IndexStatus {
@@ -1635,8 +2202,7 @@ export namespace sqlcgen {
 	    ID: number;
 	    Name: string;
 	    Path: string;
-	    // Go type: time
-	    CreatedAt: any;
+	    CreatedAt: time.Time;
 	    AutotagWarningAcked: number;
 	
 	    static createFrom(source: any = {}) {
@@ -1648,7 +2214,7 @@ export namespace sqlcgen {
 	        this.ID = source["ID"];
 	        this.Name = source["Name"];
 	        this.Path = source["Path"];
-	        this.CreatedAt = this.convertValues(source["CreatedAt"], null);
+	        this.CreatedAt = this.convertValues(source["CreatedAt"], time.Time);
 	        this.AutotagWarningAcked = source["AutotagWarningAcked"];
 	    }
 	
@@ -1726,6 +2292,23 @@ export namespace tagwriter {
 		    }
 		    return a;
 		}
+	}
+
+}
+
+export namespace time {
+	
+	export class Time {
+	
+	
+	    static createFrom(source: any = {}) {
+	        return new Time(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	
+	    }
 	}
 
 }

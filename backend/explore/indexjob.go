@@ -153,6 +153,12 @@ func (si *SearchIndex) applyStagesToJob(h *jobs.Handle, status IndexStatus) {
 			phase = t.Name
 			current = int64(t.Completed)
 			total = int64(t.Total)
+
+			// The listens stream's raw completed/total is a bare
+			// percentage; the detail line is what makes it legible.
+			if t.Detail != "" {
+				phase = t.Name + " — " + t.Detail
+			}
 		}
 	}
 

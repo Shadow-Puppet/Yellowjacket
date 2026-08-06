@@ -1062,45 +1062,17 @@ func TestClearSearchIndexPreservesSchema(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Migration test
+// Schema constraint tests
 // ---------------------------------------------------------------------------
 
-func TestMigrationsApplied(t *testing.T) {
+func TestSearchIndexSchema(t *testing.T) {
 	t.Parallel()
 
 	db := NewTestDB(t)
 
-	// Verify user_version >= 3 (all 3 migrations applied).
-	// Use QueryContext + immediate Scan + Close to release the
-	// single connection before subsequent ExecContext calls.
-	var version int
-
-	rows, err := db.QueryContext("PRAGMA user_version")
-	if err != nil {
-		t.Fatalf("PRAGMA user_version: %v", err)
-	}
-
-	if !rows.Next() {
-		_ = rows.Close()
-
-		t.Fatal("PRAGMA user_version: no row returned")
-	}
-
-	if err := rows.Scan(&version); err != nil {
-		_ = rows.Close()
-
-		t.Fatalf("scan user_version: %v", err)
-	}
-
-	_ = rows.Close()
-
-	if version < 3 {
-		t.Errorf("user_version = %d, want >= 3", version)
-	}
-
-	// Verify the UNIQUE index from migration 3 exists by attempting
-	// a duplicate insert. First, create the prerequisite rows.
-	_, err = db.ExecContext(
+	// Verify the UNIQUE index on artist_credit_artist exists by
+	// attempting a duplicate insert. First, create the prerequisites.
+	_, err := db.ExecContext(
 		"INSERT INTO artists (id, name) VALUES (1, 'Test')",
 	)
 	if err != nil {

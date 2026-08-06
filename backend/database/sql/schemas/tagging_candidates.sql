@@ -10,6 +10,8 @@
 -- CASCADE ties the blob's lifetime to its tagging_items row: when a
 -- group's tracks change, the scan path deletes the old group_key row
 -- (and SQLite, with foreign_keys = ON, drops the stale blob with it).
+
+
 CREATE TABLE IF NOT EXISTS tagging_candidates (
   group_key   TEXT PRIMARY KEY,
   candidates  TEXT NOT NULL,

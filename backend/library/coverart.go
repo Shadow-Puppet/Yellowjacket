@@ -48,6 +48,32 @@ var thumbnailTiers = []thumbnailTier{
 // multi-tier system.  Kept for migration purposes only.
 const legacyThumbSuffix = "_thumb"
 
+// CoverArtFileSet returns every file on disk belonging to one cover art
+// entry: the original plus each generated size variant, plus the legacy
+// _thumb file for databases that predate the multi-tier thumbnails.
+//
+// Only the original is recorded in cover_art.file_path — the variants
+// are derived filenames — so any code deleting cover art has to expand
+// the set or the thumbnails are orphaned.
+func CoverArtFileSet(originalPath string) []string {
+	dir := filepath.Dir(originalPath)
+	base := filepath.Base(originalPath)
+
+	paths := make([]string, 0, len(thumbnailTiers)+2) //nolint:mnd
+
+	paths = append(paths, originalPath)
+
+	for _, tier := range thumbnailTiers {
+		paths = append(paths, filepath.Join(
+			dir, coverart.SizedFilename(base, tier.Suffix),
+		))
+	}
+
+	return append(paths, filepath.Join(
+		dir, coverart.SizedFilename(base, legacyThumbSuffix),
+	))
+}
+
 // isSizedVariant reports whether a filename contains any known size suffix
 // (current tiers or legacy).
 func isSizedVariant(name string) bool {

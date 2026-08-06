@@ -869,10 +869,10 @@ export class ExploreView extends LitElement {
      * Wails call.  Called after search results are set.
      */
     /**
-     * Seed the thumbnail cache from local library data only.  Safe
-     * to call in library-only mode — does no API calls.  Reads from
-     * cachedAlbums (by MBID) and from any `_coverArt` underscore
-     * field that searchLibraryCache stamped on the release group.
+     * Seed the thumbnail cache from local library data only — does
+     * no API calls.  Reads from cachedAlbums (by MBID) and from any
+     * `_coverArt` underscore field that searchLibraryCache stamped
+     * on the release group.
      */
     private seedThumbnailsFromLibrary() {
         if (!this.results?.releaseGroups?.length) return;
@@ -906,8 +906,8 @@ export class ExploreView extends LitElement {
     }
 
     /**
-     * Seed the artist image cache from local library data only.
-     * Safe to call in library-only mode.  Reads from cachedArtists
+     * Seed the artist image cache from local library data only —
+     * does no API calls.  Reads from cachedArtists
      * by MBID and from any `_imageMedium`/`_imageSmall` underscore
      * field that searchLibraryCache stamped on the artist.  Falls
      * back to library album art when an artist has no portrait.

@@ -418,6 +418,26 @@ func syncDatabase(
 	}
 
 	// ------------------------------------------------------------------
+	// 7d. Re-baseline the staleness fields.  Writing tags rewrites the
+	//     file, changing its mtime and possibly its size.  Recording the
+	//     new values here keeps the scan from mistaking YellowJacket's
+	//     own edit for an external one and re-importing the track.
+	// ------------------------------------------------------------------
+	if info, statErr := os.Stat(params.filePath); statErr != nil {
+		logger.Warn("could not stat file after tag write",
+			"path", params.filePath, "err", statErr)
+	} else if updErr := txq.UpdateAudioFileStat(ctx,
+		sqlcgen.UpdateAudioFileStatParams{
+			ModifiedAt: info.ModTime().Unix(),
+			FileSize:   info.Size(),
+			ID:         params.audioFileID,
+		},
+	); updErr != nil {
+		logger.Warn("could not update file stat after tag write",
+			"path", params.filePath, "err", updErr)
+	}
+
+	// ------------------------------------------------------------------
 	// 8. Commit.
 	// ------------------------------------------------------------------
 	return tx.Commit()

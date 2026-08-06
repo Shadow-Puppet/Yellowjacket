@@ -13,7 +13,7 @@ import (
 // Migration 31: tag_status column
 // ---------------------------------------------------------------------------
 
-func TestMigration31_TagStatusDefaultAndCheck(t *testing.T) {
+func TestTagStatusDefaultAndCheck(t *testing.T) {
 	t.Parallel()
 
 	db := database.NewTestDB(t)
@@ -42,7 +42,7 @@ func TestMigration31_TagStatusDefaultAndCheck(t *testing.T) {
 	}
 }
 
-func TestMigration31_BackfillFromRecordingMBID(t *testing.T) {
+func TestTagStatusBackfillFromRecordingMBID(t *testing.T) {
 	t.Parallel()
 
 	// Migration 31 runs against a DB that already exists — NewTestDB
@@ -97,7 +97,7 @@ func TestMigration31_BackfillFromRecordingMBID(t *testing.T) {
 // Migration 32: tagging_items table + group_key column
 // ---------------------------------------------------------------------------
 
-func TestMigration32_TaggingItemsAndGroupKey(t *testing.T) {
+func TestTaggingItemsAndGroupKey(t *testing.T) {
 	t.Parallel()
 
 	db := database.NewTestDB(t)

@@ -7,8 +7,8 @@ CREATE TABLE IF NOT EXISTS recording_genres (
   UNIQUE(recording_id, genre_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_recording_genres_recording_id
-    ON recording_genres(recording_id);
-
 CREATE INDEX IF NOT EXISTS idx_recording_genres_genre_id
     ON recording_genres(genre_id);
+
+CREATE INDEX IF NOT EXISTS idx_recording_genres_recording_id
+    ON recording_genres(recording_id);

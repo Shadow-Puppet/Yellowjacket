@@ -94,23 +94,12 @@ const (
 	// across launches instead of running for the better part of an hour.
 	discogBackfillMaxPerRun = 2000
 
-	// indexSimilarPerArtist is how many similar artists to store
-	// per library artist in similar_artist_map.
-	indexSimilarPerArtist = 20
-
 	// labsBaseURL is the base URL for the ListenBrainz labs API.
 	labsBaseURL = "https://labs.api.listenbrainz.org"
 
 	// labsSimilarAlgorithm is the algorithm parameter for the
 	// similar-artists endpoint.
 	labsSimilarAlgorithm = "session_based_days_7500_session_300_contribution_5_threshold_10_limit_100_filter_True_skip_30"
-
-	// similarArtistsBatchSize is the number of seed MBIDs processed
-	// in one logging "batch" during Tier 4.  The labs multi-seed
-	// POST form is broken, so we actually issue one GET per seed
-	// (concurrency bounded by indexerRate); batching here just
-	// keeps progress log output bounded.
-	similarArtistsBatchSize = 50
 )
 
 // SearchIndexResult is a single hit from the local popularity index.
@@ -160,15 +149,7 @@ type SearchIndexResult struct {
 	LocalArtistID       int64 `json:"localArtistId,omitempty"`
 	LocalReleaseGroupID int64 `json:"localReleaseGroupId,omitempty"`
 	LocalRecordingID    int64 `json:"localRecordingId,omitempty"`
-
-	// Schema version for staleness detection.
-	SchemaVersion int `json:"-"`
 }
-
-// currentSchemaVersion is bumped when we add new fields that should
-// trigger re-indexing of existing rows.  The build logic checks each
-// artist's rows against this version and re-fetches if stale.
-const currentSchemaVersion = 1
 
 // lbSitewideArtist is the response shape from the LB sitewide
 // top-artists endpoint.
@@ -239,6 +220,11 @@ type TierStatus struct {
 	Total     int    `json:"total"`
 	Completed int    `json:"completed"`
 	Error     string `json:"error,omitempty"`
+
+	// Detail is a human-readable progress line for stages whose raw
+	// completed/total numbers say little on their own — the listens
+	// stream reports "42.3 / 205.1 GB · 18 MB/s · ~3h20m left" here.
+	Detail string `json:"detail,omitempty"`
 }
 
 // IndexStatus is the full index build status, exposed to the frontend.
@@ -456,7 +442,7 @@ func (si *SearchIndex) BackfillLibraryDiscographies(ctx context.Context) {
 // itself.  Used to seed the discography fetch's artist entry.
 func (si *SearchIndex) artistDisplayName(mbid string) string {
 	for _, q := range []string{
-		"SELECT title FROM explore_index WHERE entity_type = 'artist' AND mbid = ? AND title != '' AND title != mbid LIMIT 1",
+		"SELECT title FROM explore_index WHERE entity_type = 'artist' AND mbid = ? AND title != '' LIMIT 1",
 		"SELECT name FROM artists WHERE mbid = ? AND name != '' LIMIT 1",
 	} {
 		rows, err := si.db.QueryContext(q, mbid)
@@ -651,6 +637,11 @@ func (si *SearchIndex) refreshStatusCounts() {
 
 // setTierStatus updates the build status for a named tier.
 func (si *SearchIndex) setTierStatus(name, state string, total, completed int) {
+	si.setTierDetail(name, state, total, completed, "")
+}
+
+// setTierDetail is setTierStatus plus a human-readable progress line.
+func (si *SearchIndex) setTierDetail(name, state string, total, completed int, detail string) {
 	si.mu.Lock()
 
 	for i := range si.buildStatus.Tiers {
@@ -659,6 +650,7 @@ func (si *SearchIndex) setTierStatus(name, state string, total, completed int) {
 			si.buildStatus.Tiers[i].State = state
 			si.buildStatus.Tiers[i].Total = total
 			si.buildStatus.Tiers[i].Completed = completed
+			si.buildStatus.Tiers[i].Detail = detail
 			si.mu.Unlock()
 
 			if transitioned {
@@ -676,30 +668,11 @@ func (si *SearchIndex) setTierStatus(name, state string, total, completed int) {
 		State:     state,
 		Total:     total,
 		Completed: completed,
+		Detail:    detail,
 	})
 
 	si.mu.Unlock()
 	si.emitStatus()
-}
-
-// setTierError marks a build stage as errored.
-func (si *SearchIndex) setTierError(name, errMsg string) {
-	si.mu.Lock()
-
-	for i := range si.buildStatus.Tiers {
-		if si.buildStatus.Tiers[i].Name == name {
-			si.buildStatus.Tiers[i].State = "error"
-			si.buildStatus.Tiers[i].Error = errMsg
-			si.mu.Unlock()
-
-			si.logIndexJob(jobs.LevelError, name+": "+errMsg)
-			si.emitStatus()
-
-			return
-		}
-	}
-
-	si.mu.Unlock()
 }
 
 // emitStatus pushes the current index status to the frontend via Wails event.
@@ -1086,25 +1059,36 @@ func (si *SearchIndex) TopReleaseGroupsByArtist(artistMBID string, limit int) []
 	return results
 }
 
-// AddFromCache inserts entries from a cached discography browse
-// into the search index (Tier 5: organic growth).  Called when a
-// user views an artist page and the discography is fetched.
+// AddFromCache inserts entries from a cached discography browse into
+// the search index.  Called when a user views an artist page and the
+// discography is fetched — organic growth beyond the shipped catalog.
 func (si *SearchIndex) AddFromCache(artistName, artistMBID string, rgs []MBReleaseGroup) {
 	if len(rgs) == 0 {
 		return
 	}
 
+	// resolveArtistName falls back to the MBID when it cannot find a
+	// name, which is fine for a one-off render but must never be
+	// persisted: an MBID stored as a title is unsearchable and shows up
+	// as a UUID in the UI.  Writing nothing lets the upsert's
+	// "non-empty wins" rule keep whatever real name arrives later.
+	if artistName == artistMBID {
+		artistName = ""
+	}
+
 	entries := make([]SearchIndexResult, 0, len(rgs)+1)
 
-	// Add the artist itself.
-	entries = append(entries, SearchIndexResult{
-		EntityType: "artist",
-		MBID:       artistMBID,
-		Title:      artistName,
-		ArtistName: artistName,
-		ArtistMBID: artistMBID,
-		Popularity: 0, // Unknown from this path.
-	})
+	// Add the artist itself, unless there is no name to add.
+	if artistName != "" {
+		entries = append(entries, SearchIndexResult{
+			EntityType: "artist",
+			MBID:       artistMBID,
+			Title:      artistName,
+			ArtistName: artistName,
+			ArtistMBID: artistMBID,
+			Popularity: 0, // Unknown from this path.
+		})
+	}
 
 	for _, rg := range rgs {
 		entries = append(entries, SearchIndexResult{
@@ -1862,79 +1846,6 @@ type lbSimilarArtistWire struct {
 	ReferenceMBID string `json:"reference_mbid"` // which seed artist this result belongs to
 }
 
-// fetchSimilarArtistsBatch queries the labs similar-artists endpoint
-// for multiple seed MBIDs.  Despite the name, this actually fans
-// out one request per seed: the labs API's multi-seed mode is
-// broken (results for different seeds get mis-labeled, and some
-// seeds return zero), so batching with multiple artist_mbids is
-// not viable.  Concurrency is bounded by indexerRate to respect
-// the labs rate limit; each call goes through the provided LB
-// client's rate limiter and cache.
-func (si *SearchIndex) fetchSimilarArtistsBatch(
-	ctx context.Context, lb *ListenBrainzClient, seedMBIDs []string,
-) map[string][]lbSimilarArtistWire {
-	if len(seedMBIDs) == 0 {
-		return nil
-	}
-
-	var (
-		mu      sync.Mutex
-		grouped = make(map[string][]lbSimilarArtistWire, len(seedMBIDs))
-		wg      sync.WaitGroup
-	)
-
-	sem := make(chan struct{}, indexerRate)
-
-	for _, seedMBID := range seedMBIDs {
-		if ctx.Err() != nil {
-			break
-		}
-
-		sem <- struct{}{}
-
-		wg.Add(1)
-
-		go func(seed string) {
-			defer func() {
-				<-sem
-				wg.Done()
-			}()
-
-			// Use the LB client's per-seed GET form — goes through
-			// the shared rate limiter and cache.  The multi-seed
-			// POST form is not viable (see function comment).
-			similar, err := lb.SimilarArtists(ctx, seed)
-			if err != nil || len(similar) == 0 {
-				return
-			}
-
-			// Convert to the internal wire type used by the caller
-			// and trim to indexSimilarPerArtist.
-			if len(similar) > indexSimilarPerArtist {
-				similar = similar[:indexSimilarPerArtist]
-			}
-
-			results := make([]lbSimilarArtistWire, len(similar))
-			for i, s := range similar {
-				results[i] = lbSimilarArtistWire{
-					ArtistMBID:    s.ArtistMBID,
-					Name:          s.Name,
-					Score:         int(s.Score),
-					ReferenceMBID: seed,
-				}
-			}
-
-			mu.Lock()
-			grouped[seed] = results
-			mu.Unlock()
-		}(seedMBID)
-	}
-
-	wg.Wait()
-
-	return grouped
-}
-
 // ---------------------------------------------------------------------------
 // Shared: index artist discographies
 // ---------------------------------------------------------------------------
@@ -2155,22 +2066,6 @@ func (si *SearchIndex) fetchTopRecordings(
 	return results
 }
 
-// chunkStrings splits a slice into chunks of at most size n.
-func chunkStrings(s []string, n int) [][]string {
-	var chunks [][]string
-
-	for i := 0; i < len(s); i += n {
-		end := i + n
-		if end > len(s) {
-			end = len(s)
-		}
-
-		chunks = append(chunks, s[i:end])
-	}
-
-	return chunks
-}
-
 // ---------------------------------------------------------------------------
 // Database writes
 // ---------------------------------------------------------------------------
@@ -2185,6 +2080,69 @@ func chunkStrings(s []string, n int) [][]string {
 // The merge semantics are: non-empty incoming values replace existing
 // empty values, and numeric fields use "highest wins" for popularity/
 // listener_count/duration so older richer data survives refreshes.
+
+// upsertIndexSQL is the single index write statement.  It is kept as
+// a const so assembly can prepare it once per transaction instead of
+// re-parsing this large upsert for every row.
+const upsertIndexSQL = `
+	INSERT INTO explore_index (
+		entity_type, mbid, title, artist_name, artist_mbid, aliases,
+		popularity, listener_count,
+		duration, caa_release_mbid, release_name,
+		primary_type, secondary_types, release_date,
+		artist_type, country, disambiguation, sort_name,
+		in_library, is_similar,
+		local_artist_id, local_release_group_id, local_recording_id,
+		discog_fetched
+	) VALUES (
+		?, ?, ?, ?, ?, ?,
+		?, ?,
+		?, ?, ?,
+		?, ?, ?,
+		?, ?, ?, ?,
+		?, ?,
+		NULLIF(?, 0), NULLIF(?, 0), NULLIF(?, 0),
+		?
+	)` + upsertIndexConflictSQL
+
+// upsertIndexConflictSQL is the merge half of every index write, split
+// out so the bulk artifact import (which inserts by SELECT rather than
+// by parameter list) resolves conflicts identically instead of carrying
+// a second, drifting copy of these rules.
+const upsertIndexConflictSQL = `
+	ON CONFLICT(mbid) DO UPDATE SET
+		-- Title and artist info: never clobber a good value with an
+		-- empty one.  Writers are responsible for not offering an MBID
+		-- as a name; AddFromCache is the path that used to.
+		title       = CASE WHEN excluded.title != '' THEN excluded.title ELSE title END,
+		artist_name = CASE WHEN excluded.artist_name != '' THEN excluded.artist_name ELSE artist_name END,
+		artist_mbid = CASE WHEN excluded.artist_mbid != '' THEN excluded.artist_mbid ELSE artist_mbid END,
+		aliases     = CASE WHEN excluded.aliases != '' THEN excluded.aliases ELSE aliases END,
+
+		-- Highest wins for popularity + listener_count (refreshes can go up).
+		popularity     = CASE WHEN excluded.popularity > popularity THEN excluded.popularity ELSE popularity END,
+		listener_count = CASE WHEN excluded.listener_count > listener_count THEN excluded.listener_count ELSE listener_count END,
+
+		-- Non-empty wins for all other optional fields (never clobber with empty).
+		duration         = CASE WHEN excluded.duration > 0 THEN excluded.duration ELSE duration END,
+		caa_release_mbid = CASE WHEN excluded.caa_release_mbid != '' THEN excluded.caa_release_mbid ELSE caa_release_mbid END,
+		release_name     = CASE WHEN excluded.release_name != '' THEN excluded.release_name ELSE release_name END,
+		primary_type     = CASE WHEN excluded.primary_type != '' THEN excluded.primary_type ELSE primary_type END,
+		secondary_types  = CASE WHEN excluded.secondary_types != '' THEN excluded.secondary_types ELSE secondary_types END,
+		release_date     = CASE WHEN excluded.release_date != '' THEN excluded.release_date ELSE release_date END,
+		artist_type      = CASE WHEN excluded.artist_type != '' THEN excluded.artist_type ELSE artist_type END,
+		country          = CASE WHEN excluded.country != '' THEN excluded.country ELSE country END,
+		disambiguation   = CASE WHEN excluded.disambiguation != '' THEN excluded.disambiguation ELSE disambiguation END,
+		sort_name        = CASE WHEN excluded.sort_name != '' THEN excluded.sort_name ELSE sort_name END,
+
+		-- Flags and cross-references: non-null wins.
+		in_library             = MAX(in_library, excluded.in_library),
+		is_similar             = MAX(is_similar, excluded.is_similar),
+		discog_fetched         = MAX(discog_fetched, excluded.discog_fetched),
+		local_artist_id        = COALESCE(excluded.local_artist_id, local_artist_id),
+		local_release_group_id = COALESCE(excluded.local_release_group_id, local_release_group_id),
+		local_recording_id     = COALESCE(excluded.local_recording_id, local_recording_id)
+`
 
 // upsertBatch writes a batch of SearchIndexResult entries to the index
 // inside a single transaction.  This is the ONE function that all
@@ -2201,6 +2159,17 @@ func (si *SearchIndex) upsertBatch(entries []SearchIndexResult) {
 
 		return
 	}
+
+	stmt, err := tx.Prepare(upsertIndexSQL)
+	if err != nil {
+		si.logger.Warn("search index: prepare upsert error", "error", err)
+
+		_ = tx.Rollback()
+
+		return
+	}
+
+	defer func() { _ = stmt.Close() }()
 
 	for _, e := range entries {
 		if e.MBID == "" {
@@ -2222,69 +2191,7 @@ func (si *SearchIndex) upsertBatch(entries []SearchIndexResult) {
 			discogFetched = 1
 		}
 
-		if _, err := tx.Exec(`
-			INSERT INTO explore_index (
-				entity_type, mbid, title, artist_name, artist_mbid, aliases,
-				popularity, listener_count,
-				duration, caa_release_mbid, release_name,
-				primary_type, secondary_types, release_date,
-				artist_type, country, disambiguation, sort_name,
-				in_library, is_similar,
-				local_artist_id, local_release_group_id, local_recording_id,
-				discog_fetched,
-				schema_version
-			) VALUES (
-				?, ?, ?, ?, ?, ?,
-				?, ?,
-				?, ?, ?,
-				?, ?, ?,
-				?, ?, ?, ?,
-				?, ?,
-				NULLIF(?, 0), NULLIF(?, 0), NULLIF(?, 0),
-				?,
-				?
-			)
-			ON CONFLICT(mbid) DO UPDATE SET
-				-- Title and artist info: don't clobber a good value with
-				-- an empty string or with the MBID itself (which can sneak
-				-- in via fallback paths in AddFromCache).
-				title = CASE
-					WHEN excluded.title != '' AND excluded.title != excluded.mbid THEN excluded.title
-					ELSE title
-				END,
-				artist_name = CASE
-					WHEN excluded.artist_name != '' AND excluded.artist_name != excluded.artist_mbid THEN excluded.artist_name
-					ELSE artist_name
-				END,
-				artist_mbid = CASE WHEN excluded.artist_mbid != '' THEN excluded.artist_mbid ELSE artist_mbid END,
-				aliases     = CASE WHEN excluded.aliases != '' THEN excluded.aliases ELSE aliases END,
-
-				-- Highest wins for popularity + listener_count (refreshes can go up).
-				popularity     = CASE WHEN excluded.popularity > popularity THEN excluded.popularity ELSE popularity END,
-				listener_count = CASE WHEN excluded.listener_count > listener_count THEN excluded.listener_count ELSE listener_count END,
-
-				-- Non-empty wins for all other optional fields (never clobber with empty).
-				duration         = CASE WHEN excluded.duration > 0 THEN excluded.duration ELSE duration END,
-				caa_release_mbid = CASE WHEN excluded.caa_release_mbid != '' THEN excluded.caa_release_mbid ELSE caa_release_mbid END,
-				release_name     = CASE WHEN excluded.release_name != '' THEN excluded.release_name ELSE release_name END,
-				primary_type     = CASE WHEN excluded.primary_type != '' THEN excluded.primary_type ELSE primary_type END,
-				secondary_types  = CASE WHEN excluded.secondary_types != '' THEN excluded.secondary_types ELSE secondary_types END,
-				release_date     = CASE WHEN excluded.release_date != '' THEN excluded.release_date ELSE release_date END,
-				artist_type      = CASE WHEN excluded.artist_type != '' THEN excluded.artist_type ELSE artist_type END,
-				country          = CASE WHEN excluded.country != '' THEN excluded.country ELSE country END,
-				disambiguation   = CASE WHEN excluded.disambiguation != '' THEN excluded.disambiguation ELSE disambiguation END,
-				sort_name        = CASE WHEN excluded.sort_name != '' THEN excluded.sort_name ELSE sort_name END,
-
-				-- Flags and cross-references: non-null wins.
-				in_library             = MAX(in_library, excluded.in_library),
-				is_similar             = MAX(is_similar, excluded.is_similar),
-				discog_fetched         = MAX(discog_fetched, excluded.discog_fetched),
-				local_artist_id        = COALESCE(excluded.local_artist_id, local_artist_id),
-				local_release_group_id = COALESCE(excluded.local_release_group_id, local_release_group_id),
-				local_recording_id     = COALESCE(excluded.local_recording_id, local_recording_id),
-
-				schema_version = MAX(schema_version, excluded.schema_version)
-		`,
+		if _, err := stmt.Exec(
 			e.EntityType, e.MBID, e.Title, e.ArtistName, e.ArtistMBID, e.Aliases,
 			e.Popularity, e.ListenerCount,
 			e.Duration, e.CAAReleaseMBID, e.ReleaseName,
@@ -2293,7 +2200,6 @@ func (si *SearchIndex) upsertBatch(entries []SearchIndexResult) {
 			inLib, isSim,
 			e.LocalArtistID, e.LocalReleaseGroupID, e.LocalRecordingID,
 			discogFetched,
-			currentSchemaVersion,
 		); err != nil {
 			si.logger.Warn("search index: upsert error",
 				"mbid", e.MBID,
@@ -2310,30 +2216,6 @@ func (si *SearchIndex) upsertBatch(entries []SearchIndexResult) {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-// getLibraryArtistMBIDs returns MBIDs for all library artists that have one.
-// Used when Tier 3 was skipped but Tier 4 needs the library MBID list.
-func (si *SearchIndex) getLibraryArtistMBIDs() []string {
-	rows, err := si.db.QueryContext(
-		"SELECT DISTINCT mbid FROM artists WHERE mbid IS NOT NULL AND mbid != ''",
-	)
-	if err != nil {
-		return nil
-	}
-
-	defer func() { _ = rows.Close() }()
-
-	var mbids []string
-
-	for rows.Next() {
-		var mbid string
-		if err := rows.Scan(&mbid); err == nil {
-			mbids = append(mbids, mbid)
-		}
-	}
-
-	return mbids
-}
 
 // hasMeta reports whether a key exists in explore_index_meta.
 func (si *SearchIndex) hasMeta(key string) bool {

@@ -32,6 +32,7 @@ import {
 
 import './config-field';
 import './config-section';
+import './download-clients';
 import './shortcut-capture';
 import { shortcutsStore } from '../../store/shortcuts-store';
 import { ShortcutsController } from '../../store/controllers/shortcuts-controller';
@@ -959,6 +960,12 @@ export class ConfigPage extends LitElement {
             font-variant-numeric: tabular-nums;
         }
 
+        .tier-detail {
+            color: var(--yj-text-tertiary, #888);
+            font-size: var(--yj-text-xs, 11px);
+            font-variant-numeric: tabular-nums;
+        }
+
         .tier-error {
             color: var(--yj-accent-error, #f44);
             font-size: var(--yj-text-xs, 11px);
@@ -1457,6 +1464,7 @@ export class ConfigPage extends LitElement {
             ${this.renderFavoritesSection()}
             ${this.renderTrackListSection()}
             ${this.renderShortcutsSection()}
+            <download-clients></download-clients>
             ${this.renderLibrarySection()}
         `;
     }
@@ -1498,6 +1506,9 @@ export class ConfigPage extends LitElement {
                                                     <span class="tier-name">${t.name}</span>
                                                     ${t.state === 'running' && t.total > 0
                                                         ? html`<span class="tier-progress">${t.completed}/${t.total}</span>`
+                                                        : nothing}
+                                                    ${t.state === 'running' && t.detail
+                                                        ? html`<span class="tier-detail">${t.detail}</span>`
                                                         : nothing}
                                                     ${t.state === 'error'
                                                         ? html`<span class="tier-error">${t.error}</span>`

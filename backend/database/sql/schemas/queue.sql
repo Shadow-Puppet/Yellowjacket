@@ -8,4 +8,5 @@ CREATE TABLE IF NOT EXISTS queue (
     FOREIGN KEY(source_playlist_id) REFERENCES playlists(id) ON DELETE SET NULL
 );
 
+-- Singleton row: there is exactly one playback queue.
 INSERT OR IGNORE INTO queue (id) VALUES (1);

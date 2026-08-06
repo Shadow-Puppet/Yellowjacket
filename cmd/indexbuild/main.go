@@ -1,3 +1,5 @@
+//go:build indexbuild
+
 // Command indexbuild maintains the explore search index outside the
 // desktop app, so the catalog can be built once centrally instead of by
 // every install.
@@ -9,7 +11,7 @@
 //	import older than 3mo    → rebuild (re-import from the newest dump)
 //	otherwise                → refresh (fold in new incremental listens)
 //
-// A full build streams ~205GB from the ListenBrainz spark dump — far
+// A full build streams ~89GB from the ListenBrainz spark dump — far
 // more than one CI job should attempt — so builds are budgeted and
 // resumable: the importer checkpoints its absolute stream offset, and
 // each run continues where the last stopped. A refresh is cheap
@@ -87,7 +89,7 @@ func main() {
 			"stop and checkpoint a build after this long (0 = no limit)")
 		modeFlag = flag.String("mode", string(modeAuto),
 			"auto | build | refresh | rebuild")
-		rebuildAfter = flag.Duration("rebuild-after", 90*24*time.Hour,
+		rebuildAfter = flag.Duration("rebuild-after", 180*24*time.Hour,
 			"re-import from a fresh dump once the last import is older than this")
 		refreshAfter = flag.Duration("refresh-after", 7*24*time.Hour,
 			"minimum gap between incremental refreshes (0 = always)")

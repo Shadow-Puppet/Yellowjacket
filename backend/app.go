@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"path/filepath"
+	"time"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
@@ -18,10 +19,13 @@ import (
 	"yellowjacket/backend/config"
 	"yellowjacket/backend/coverart"
 	"yellowjacket/backend/database"
+	"yellowjacket/backend/download"
+	"yellowjacket/backend/events"
 	"yellowjacket/backend/explore"
 	"yellowjacket/backend/frontendutil"
 	"yellowjacket/backend/jobs"
 	"yellowjacket/backend/library"
+	"yellowjacket/backend/maintenance"
 	"yellowjacket/backend/mediacontrols"
 	"yellowjacket/backend/player"
 	"yellowjacket/backend/playlist"
@@ -45,9 +49,13 @@ type YellowJacketApp struct {
 	queue         *queue.Queue
 	explore       *explore.Service
 	autotag       *autotagservice.Service
+	downloads     *download.Manager
+	downloadSvc   *download.Service
+	wanted        *download.Reconciler
 	jobs          *jobs.Registry
 	mediaControls mediacontrols.Handler
 	tagWriter     *tagwriter.TagWriter
+	janitor       *maintenance.Runner
 	appContext    context.Context
 	appConfig     *config.Config
 	startupErr    error
@@ -65,6 +73,7 @@ func NewYellowJacketApp(
 		logger:       logger,
 		assetHandler: assetHandler,
 		appContext:   context.Background(),
+		janitor:      maintenance.NewRunner(logger),
 	}
 
 	// create database
@@ -168,6 +177,16 @@ func NewYellowJacketApp(
 		yjApp.tagWriter,
 	)
 
+	// Create the download subsystem.  Acquiring music is optional: a
+	// failure here (unwritable data dir, say) must not stop the app
+	// from playing the library the user already has, so it is logged
+	// and the feature stays unavailable rather than fatal.
+	if err := yjApp.initDownloads(); err != nil {
+		yjApp.logger.Error(
+			"download clients unavailable", "error", err,
+		)
+	}
+
 	yjApp.FEBindings = []any{
 		yjApp.FrontendUtil,
 		yjApp.appConfig,
@@ -181,7 +200,49 @@ func NewYellowJacketApp(
 		jobs.NewService(yjApp.jobs),
 	}
 
+	if yjApp.downloadSvc != nil {
+		yjApp.FEBindings = append(yjApp.FEBindings, yjApp.downloadSvc)
+	}
+
 	return yjApp, nil
+}
+
+// initDownloads builds the download subsystem: staging area, secret
+// store, importer and manager, plus the Wails-bound service.
+func (yj *YellowJacketApp) initDownloads() error {
+	logger := yj.logger.WithGroup("download")
+
+	staging, err := download.NewStaging(logger)
+	if err != nil {
+		return fmt.Errorf("could not create download staging: %w", err)
+	}
+
+	secrets, err := download.NewFileSecretStore()
+	if err != nil {
+		return fmt.Errorf("could not create download secret store: %w", err)
+	}
+
+	store := download.NewStore(yj.database)
+
+	importer := download.NewImporter(logger, staging, yj.tagWriter, yj.library)
+
+	yj.downloads = download.NewManager(
+		logger, store, secrets, staging, importer, yj.library,
+	)
+	yj.downloads.SetJobRegistry(yj.jobs)
+
+	yj.downloadSvc = download.NewService(logger, yj.downloads, store, secrets)
+
+	// The wanted list needs the explore index to know what an artist
+	// released and what the library already owns, so it is wired here
+	// where both exist.  The reconcile loop itself is not started until
+	// the Wails runtime is up.
+	yj.wanted = download.NewReconciler(
+		logger, store, yj.downloads, newExploreCatalog(yj.explore),
+	)
+	yj.downloadSvc.SetReconciler(yj.wanted)
+
+	return nil
 }
 
 // playerAdapter wraps *player.Player to satisfy the tagwriter.PlayerStopper
@@ -193,6 +254,46 @@ func (a *playerAdapter) CurrentFilePath() string {
 }
 
 func (a *playerAdapter) StopAndRelease() { a.p.UnloadTrack() }
+
+// initDownloadRuntime brings the download subsystem up once the Wails
+// runtime exists: it applies the user's import layout, builds providers
+// from stored config, and clears staging left by a previous run.
+//
+// Provider construction and the sweep both touch the network and the
+// filesystem, so they run in the background — a slow or unreachable
+// download client must not delay the window appearing.
+func (yj *YellowJacketApp) initDownloadRuntime(ctx context.Context) {
+	cfg := yj.appConfig.Downloads
+	if cfg == nil {
+		cfg = &download.UserConfig{}
+		cfg.ApplyDefaults()
+	}
+
+	yj.downloads.SetImportOptions(download.ImportOptions{
+		LibraryRoot:  yj.appConfig.GetLibraryDirectory(),
+		PathTemplate: cfg.PathTemplate,
+	})
+	yj.downloads.SetMaxConcurrent(cfg.MaxConcurrent)
+
+	go func() {
+		if err := yj.downloads.Reload(ctx); err != nil {
+			yj.logger.Warn("could not load download providers", "error", err)
+		}
+
+		yj.downloads.Sweep(ctx)
+	}()
+
+	if yj.wanted == nil {
+		return
+	}
+
+	yj.wanted.SetInterval(cfg.WantedInterval())
+	yj.wanted.SetBatch(cfg.WantedBatch)
+	yj.wanted.SetOnChange(func() {
+		wailsruntime.EventsEmit(ctx, events.WantedListChanged)
+	})
+	yj.wanted.Start(ctx)
+}
 
 // WindowConfig returns the window configuration for use by the host.
 func (yj *YellowJacketApp) WindowConfig() *config.WindowConfig {
@@ -233,6 +334,11 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 	yj.explore.SetContext(ctx)
 	yj.autotag.SetContext(ctx)
 	yj.jobs.SetContext(ctx)
+
+	if yj.downloadSvc != nil {
+		yj.downloadSvc.SetContext(ctx)
+		yj.initDownloadRuntime(ctx)
+	}
 
 	// Bring back jobs the user paused before the last shutdown, still
 	// paused.  Must run before the soft scan in OnDomReady, which
@@ -480,5 +586,54 @@ func (yj *YellowJacketApp) OnDomReady(ctx context.Context) {
 		// every app launch is fine; previously-scored items are
 		// skipped (the worker filters score IS NULL).
 		yj.autotag.StartBackgroundPrefetch()
+
+		// Start the janitor last: its sweeps compare against live data,
+		// so running them after the scan and index work has settled
+		// avoids deleting something a running import is about to
+		// reference.  Each job enforces its own minimum interval, so the
+		// daily tick is a cheap no-op most of the time.
+		yj.startJanitor()
 	}()
+}
+
+// janitorTick is how often the maintenance runner wakes up.  Individual
+// jobs enforce their own minimum intervals, so most ticks do nothing.
+const janitorTick = 6 * time.Hour
+
+// startJanitor registers the maintenance jobs and starts the background
+// runner.  Every job is registered here rather than at each package's
+// init, so the full set of janitorial work is one visible list — a cache
+// that forgets to register is missing from this function, which is
+// harder to overlook than a function nobody calls.
+func (yj *YellowJacketApp) startJanitor() {
+	coversDir, err := coverart.CoversDir()
+	if err != nil {
+		yj.logger.Warn("janitor: could not resolve covers directory",
+			"err", err)
+
+		return
+	}
+
+	dataDir, err := system.GetUserDataDirPath()
+	if err != nil {
+		yj.logger.Warn("janitor: could not resolve user data directory",
+			"err", err)
+
+		return
+	}
+
+	yj.janitor.Register(maintenance.ExpiredHTTPCacheJob(yj.database))
+	yj.janitor.Register(maintenance.OrphanedCoverFilesJob(
+		yj.database, coversDir, library.CoverArtFileSet,
+	))
+	yj.janitor.Register(maintenance.OrphanedArtistImagesJob(
+		yj.database, filepath.Join(dataDir, explore.ArtistImageDirName),
+	))
+	yj.janitor.Register(maintenance.ExpiredProxyCacheJob(
+		filepath.Join(dataDir, explore.CoverArtCacheDirName),
+	))
+
+	yj.logger.Info("janitor started", "jobs", yj.janitor.JobNames())
+
+	yj.janitor.Start(yj.appContext, janitorTick)
 }

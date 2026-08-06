@@ -1,3 +1,5 @@
+//go:build indexbuild
+
 package explore
 
 import (
@@ -440,7 +442,7 @@ func (a *artistTopRG) add(rg uuid16, listens uint32) {
 func (imp *dumpImporter) scanCanonicalDump(
 	ctx context.Context, url string, ks *keptSets,
 ) (*canonicalScan, error) {
-	stream := newResumableReader(ctx, imp.httpClient, url, 0)
+	stream := imp.openDumpStream(ctx, url, 0)
 
 	defer func() { _ = stream.Close() }()
 

@@ -11,3 +11,6 @@ CREATE INDEX IF NOT EXISTS idx_artist_credit_artist_artist_id
 
 CREATE INDEX IF NOT EXISTS idx_artist_credit_artist_credit_id
     ON artist_credit_artist(credit_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_artist_credit_artist_unique
+  ON artist_credit_artist(artist_id, credit_id);

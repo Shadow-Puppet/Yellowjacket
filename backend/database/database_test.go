@@ -12,7 +12,7 @@ import (
 // Migration 6 integration tests
 // ---------------------------------------------------------------------------
 
-func TestMigration6FreshDB(t *testing.T) {
+func TestSchemaCreatesLibrariesTable(t *testing.T) {
 	t.Parallel()
 
 	db := NewTestDB(t)
@@ -172,32 +172,6 @@ func TestMigration6FreshDB(t *testing.T) {
 		t.Error("track_metadata VIEW does not contain library_id")
 	}
 
-	// Verify user_version >= 7.
-	var version int
-
-	verRows, err := db.QueryContext("PRAGMA user_version")
-	if err != nil {
-		t.Fatalf("PRAGMA user_version: %v", err)
-	}
-
-	if !verRows.Next() {
-		_ = verRows.Close()
-
-		t.Fatal("PRAGMA user_version: no row returned")
-	}
-
-	if err := verRows.Scan(&version); err != nil {
-		_ = verRows.Close()
-
-		t.Fatalf("scan user_version: %v", err)
-	}
-
-	_ = verRows.Close()
-
-	if version < 7 {
-		t.Errorf("user_version = %d, want >= 7", version)
-	}
-
 	// Verify libraries table has only the sentinel row on fresh DB.
 	count, err := db.Queries.CountLibraries(db.Ctx)
 	if err != nil {
@@ -213,7 +187,7 @@ func TestMigration6FreshDB(t *testing.T) {
 	}
 }
 
-func TestMigration6LibraryQueries(t *testing.T) {
+func TestLibraryQueries(t *testing.T) {
 	t.Parallel()
 
 	db := NewTestDB(t)
@@ -331,7 +305,7 @@ func TestMigration6LibraryQueries(t *testing.T) {
 	}
 }
 
-func TestMigration6PhantomPlaylistTracks(t *testing.T) {
+func TestPhantomPlaylistTracksAreCleaned(t *testing.T) {
 	t.Parallel()
 
 	db, libID := NewTestDBWithLibrary(t, "Test", "/test/music")
@@ -462,7 +436,7 @@ func TestMigration6PhantomPlaylistTracks(t *testing.T) {
 	}
 }
 
-func TestMigration6AudioFilesLibraryFK(t *testing.T) {
+func TestAudioFilesLibraryForeignKey(t *testing.T) {
 	t.Parallel()
 
 	db, libID := NewTestDBWithLibrary(t, "Test", "/test/fk-lib")
@@ -523,7 +497,7 @@ func TestMigration6AudioFilesLibraryFK(t *testing.T) {
 	}
 }
 
-func TestMigration6TrackMetadataViewHasLibraryID(t *testing.T) {
+func TestTrackMetadataViewHasLibraryID(t *testing.T) {
 	t.Parallel()
 
 	db, libID := NewTestDBWithLibrary(t, "Test", "/test/view-lib")
@@ -592,36 +566,10 @@ func TestMigration6TrackMetadataViewHasLibraryID(t *testing.T) {
 // Migration 9 integration tests
 // ---------------------------------------------------------------------------
 
-func TestMigration9SmartPlaylistColumns(t *testing.T) {
+func TestSmartPlaylistColumns(t *testing.T) {
 	t.Parallel()
 
 	db := NewTestDB(t)
-
-	// Verify user_version >= 9.
-	var version int
-
-	verRows, err := db.QueryContext("PRAGMA user_version")
-	if err != nil {
-		t.Fatalf("PRAGMA user_version: %v", err)
-	}
-
-	if !verRows.Next() {
-		_ = verRows.Close()
-
-		t.Fatal("PRAGMA user_version: no row returned")
-	}
-
-	if err := verRows.Scan(&version); err != nil {
-		_ = verRows.Close()
-
-		t.Fatalf("scan user_version: %v", err)
-	}
-
-	_ = verRows.Close()
-
-	if version < 9 {
-		t.Errorf("user_version = %d, want >= 9", version)
-	}
 
 	// Verify playlists table has is_smart and smart_rules columns.
 	hasSmart := false
@@ -774,36 +722,10 @@ func TestMigration9SmartPlaylistColumns(t *testing.T) {
 // Migration 10 — play history tracking
 // ---------------------------------------------------------------------------
 
-func TestMigration10PlayHistory(t *testing.T) {
+func TestPlayHistoryTable(t *testing.T) {
 	t.Parallel()
 
 	db := NewTestDB(t)
-
-	// Verify user_version >= 10.
-	var version int
-
-	verRows, err := db.QueryContext("PRAGMA user_version")
-	if err != nil {
-		t.Fatalf("PRAGMA user_version: %v", err)
-	}
-
-	if !verRows.Next() {
-		_ = verRows.Close()
-
-		t.Fatal("PRAGMA user_version: no row returned")
-	}
-
-	if err := verRows.Scan(&version); err != nil {
-		_ = verRows.Close()
-
-		t.Fatalf("scan user_version: %v", err)
-	}
-
-	_ = verRows.Close()
-
-	if version < 10 {
-		t.Errorf("user_version = %d, want >= 10", version)
-	}
 
 	// Verify play_history table exists.
 	var tableCount int64
@@ -1058,7 +980,7 @@ func TestMigration10PlayHistory(t *testing.T) {
 // Migration 11 — explore_cache table
 // ---------------------------------------------------------------------------
 
-func TestMigration11ExploreCache(t *testing.T) {
+func TestHTTPCacheTable(t *testing.T) {
 	t.Parallel()
 
 	// explore_cache was split into http_cache + artist_metadata by
@@ -1068,32 +990,6 @@ func TestMigration11ExploreCache(t *testing.T) {
 	t.Skip("explore_cache dropped by migration 27; test is obsolete")
 
 	db := NewTestDB(t)
-
-	// Verify user_version >= 11.
-	var version int
-
-	verRows, err := db.QueryContext("PRAGMA user_version")
-	if err != nil {
-		t.Fatalf("PRAGMA user_version: %v", err)
-	}
-
-	if !verRows.Next() {
-		_ = verRows.Close()
-
-		t.Fatal("PRAGMA user_version: no row returned")
-	}
-
-	if err := verRows.Scan(&version); err != nil {
-		_ = verRows.Close()
-
-		t.Fatalf("scan user_version: %v", err)
-	}
-
-	_ = verRows.Close()
-
-	if version < 11 {
-		t.Errorf("user_version = %d, want >= 11", version)
-	}
 
 	// Verify explore_cache table exists.
 	var tableCount int64

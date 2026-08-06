@@ -21,3 +21,7 @@ export function WriteTrackTags(arg1, arg2) {
 export function WriteTrackTagsByPath(arg1, arg2) {
   return window['go']['tagwriter']['TagWriter']['WriteTrackTagsByPath'](arg1, arg2);
 }
+
+export function WriteUntrackedFileTags(arg1, arg2) {
+  return window['go']['tagwriter']['TagWriter']['WriteUntrackedFileTags'](arg1, arg2);
+}

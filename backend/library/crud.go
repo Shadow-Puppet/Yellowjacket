@@ -9,8 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
-
 	"yellowjacket/backend/database"
 	"yellowjacket/backend/database/sql/sqlcgen"
 	"yellowjacket/backend/events"
@@ -104,7 +102,7 @@ func (l *Library) AddLibrary(path string) (*sqlcgen.Library, error) {
 			"libraryID", lib.ID, "claimed", claimed)
 	}
 
-	runtime.EventsEmit(l.ctx, events.LibraryAdded, lib)
+	l.emit(events.LibraryAdded, lib)
 
 	go func() {
 		if scanErr := l.ScanLibrary(lib.ID); scanErr != nil {
@@ -149,7 +147,7 @@ func (l *Library) RenameLibrary(id int64, newName string) error {
 		return fmt.Errorf("could not rename library: %w", err)
 	}
 
-	runtime.EventsEmit(l.ctx, events.LibraryRenamed, map[string]any{
+	l.emit(events.LibraryRenamed, map[string]any{
 		"id":   id,
 		"name": newName,
 	})
@@ -427,7 +425,18 @@ func (l *Library) RemoveLibrary(id int64) (*RemovalSummary, error) {
 		return nil, fmt.Errorf("could not delete orphaned cover_art: %w", err)
 	}
 
-	// 17. Delete library row.
+	// 17. Delete the library's tagging queue.  tagging_items holds a
+	// FOREIGN KEY to libraries with no ON DELETE clause, so leaving these
+	// rows behind makes the DELETE below fail the whole transaction and
+	// the library becomes unremovable.  tagging_candidates is tied to
+	// tagging_items by ON DELETE CASCADE and goes with it.
+	// SAFETY: Hand-crafted DELETE — sqlc has no query for this. Parameterized.
+	if _, err := tx.ExecContext(l.ctx,
+		`DELETE FROM tagging_items WHERE library_id = ?`, id); err != nil {
+		return nil, fmt.Errorf("could not delete tagging items: %w", err)
+	}
+
+	// 18. Delete library row.
 	// SAFETY: Hand-crafted DELETE matching sqlc DeleteLibrary but within
 	// the same transaction. Parameterized.
 	if _, err := tx.ExecContext(l.ctx,
@@ -435,36 +444,41 @@ func (l *Library) RemoveLibrary(id int64) (*RemovalSummary, error) {
 		return nil, fmt.Errorf("could not delete library: %w", err)
 	}
 
-	// 18. Commit transaction.
+	// 19. Commit transaction.
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("could not commit removal transaction: %w", err)
 	}
 
 	committed = true
 
-	// 19. FTS5 rebuild skipped — contentless FTS5 (content='') cannot
+	// 20. FTS5 rebuild skipped — contentless FTS5 (content='') cannot
 	// delete individual rows, but stale entries are harmless: search
 	// queries JOIN against track_metadata which filters out deleted
 	// rows. The index is rebuilt on the next full rescan. Skipping
 	// avoids a costly full re-index of all remaining tracks (~10s for
 	// 25K tracks).
 
-	// 20. Post-commit: Delete orphaned cover art files.
+	// 21. Post-commit: Delete orphaned cover art files and their sized
+	// variants.  Only the original is stored in cover_art.file_path; the
+	// _sm/_md/_lg thumbnails are derived filenames beside it, so they
+	// have to be removed by name or they accumulate forever.
 	for _, coverPath := range orphanedCoverArtPaths {
-		if err := os.Remove(coverPath); err != nil && !os.IsNotExist(err) {
-			l.logger.Warn("could not remove orphaned cover art file",
-				"path", coverPath,
-				"err", err,
-			)
+		for _, path := range CoverArtFileSet(coverPath) {
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				l.logger.Warn("could not remove orphaned cover art file",
+					"path", path,
+					"err", err,
+				)
+			}
 		}
 	}
 
-	// 21. Post-commit: Compact queue.
+	// 22. Post-commit: Compact queue.
 	if l.removalHooks.CompactQueue != nil {
 		l.removalHooks.CompactQueue()
 	}
 
-	// 22. Post-commit: invalidate library-sync markers so the gated
+	// 23. Post-commit: invalidate library-sync markers so the gated
 	// index/lyric re-sync runs on the next launch.
 	if l.removalHooks.PostRemove != nil {
 		l.removalHooks.PostRemove()
@@ -480,7 +494,7 @@ func (l *Library) RemoveLibrary(id int64) (*RemovalSummary, error) {
 	}
 
 	// 22. Emit events.
-	runtime.EventsEmit(l.ctx, events.LibraryRemoved, map[string]any{
+	l.emit(events.LibraryRemoved, map[string]any{
 		"id":      id,
 		"summary": summary,
 	})

@@ -7,6 +7,8 @@
 -- tokenised inverted index, so it stays compact even for large
 -- libraries.  contentless_delete=1 lets us delete/reinsert a single
 -- row when a track's lyrics change (scan update or LRCLIB backfill).
+
+
 CREATE VIRTUAL TABLE IF NOT EXISTS lyrics_index USING fts5(
     lyrics,
     content='',

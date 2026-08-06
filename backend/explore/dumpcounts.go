@@ -1,9 +1,10 @@
+//go:build indexbuild
+
 package explore
 
 import (
 	"archive/tar"
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
@@ -13,8 +14,8 @@ import (
 	"os"
 	"strings"
 	"sync"
-
-	"github.com/parquet-go/parquet-go"
+	"sync/atomic"
+	"time"
 )
 
 // Stage 1 of the dump import: stream the ListenBrainz spark listens
@@ -27,9 +28,6 @@ import (
 
 const (
 	// countKindRecording etc. tag entries in the counts map/file.
-	countKindRecording = byte(1)
-	countKindRelease   = byte(2)
-	countKindArtist    = byte(3)
 
 	// countsFlushEveryMembers controls checkpoint frequency.  Each
 	// flush rewrites counts.bin (~1GB by the end), so this trades
@@ -37,104 +35,34 @@ const (
 	// 19GB of stream progress).
 	countsFlushEveryMembers = 150
 
-	// countsProgressEveryMembers controls progress log frequency.
-	countsProgressEveryMembers = 50
+	// countsUIRefreshInterval is how often the live download line is
+	// pushed to the UI.  A parquet member is ~128MB, so member
+	// boundaries are minutes apart on a typical connection — sampling
+	// the stream position instead keeps the stage visibly moving.
+	countsUIRefreshInterval = 3 * time.Second
+
+	// countsLogInterval and countsJobLogInterval throttle the two log
+	// surfaces: the app log gets a line every few minutes, the jobs
+	// panel a coarser one.  Checkpoints always log to both.
+	countsLogInterval    = 2 * time.Minute
+	countsJobLogInterval = 15 * time.Minute
+
+	// countsStallAfter is how long the stream position may stand still
+	// before progress is reported as stalled rather than as a rate.
+	countsStallAfter = 45 * time.Second
+
+	// countsRateSmoothing is the EWMA weight given to the newest
+	// throughput sample, trading responsiveness against jitter.
+	countsRateSmoothing = 0.25
 
 	// parquetParseWorkers is the number of concurrent parquet
 	// decoders.  Bounded to limit RAM: each worker holds one
 	// ~128MB member buffer.
 	parquetParseWorkers = 3
 
-	// maxParquetMemberSize guards against unexpected dump format
-	// changes blowing out RAM.
-	maxParquetMemberSize = 1 << 30
-
 	// countsFileMagic identifies + versions the counts file format.
 	countsFileMagic = "YJCNTS01"
 )
-
-// ErrDumpFormat is returned when dump contents don't match the
-// expected format.
-var ErrDumpFormat = errors.New("unexpected dump format")
-
-// mbidKey is a parsed UUID plus an entity-kind tag, used as the counts
-// map key.  17 bytes instead of a 36-byte string keeps the ~40M-entry
-// map around 2GB.
-type mbidKey [17]byte
-
-func makeMBIDKey(kind byte, mbid string) (mbidKey, bool) {
-	var k mbidKey
-
-	k[0] = kind
-
-	if !parseUUID(mbid, k[1:]) {
-		return k, false
-	}
-
-	return k, true
-}
-
-// parseUUID parses a canonical 36-char UUID string into 16 bytes.
-// Returns false for anything malformed.
-func parseUUID(s string, out []byte) bool {
-	if len(s) != 36 || s[8] != '-' || s[13] != '-' || s[18] != '-' || s[23] != '-' {
-		return false
-	}
-
-	j := 0
-
-	for i := 0; i < 36; i++ {
-		if i == 8 || i == 13 || i == 18 || i == 23 {
-			continue
-		}
-
-		hi := hexNibble(s[i])
-		i++
-
-		lo := hexNibble(s[i])
-		if hi == 0xFF || lo == 0xFF {
-			return false
-		}
-
-		out[j] = hi<<4 | lo
-		j++
-	}
-
-	return true
-}
-
-func hexNibble(c byte) byte {
-	switch {
-	case c >= '0' && c <= '9':
-		return c - '0'
-	case c >= 'a' && c <= 'f':
-		return c - 'a' + 10
-	case c >= 'A' && c <= 'F':
-		return c - 'A' + 10
-	default:
-		return 0xFF
-	}
-}
-
-func formatUUID(b []byte) string {
-	const hexdigits = "0123456789abcdef"
-
-	out := make([]byte, 36)
-	j := 0
-
-	for i := range 16 {
-		if i == 4 || i == 6 || i == 8 || i == 10 {
-			out[j] = '-'
-			j++
-		}
-
-		out[j] = hexdigits[b[i]>>4]
-		out[j+1] = hexdigits[b[i]&0x0F]
-		j += 2
-	}
-
-	return string(out)
-}
 
 // countsState is the checkpointed stage-1 state: the counts map plus
 // the stream position it corresponds to.
@@ -157,14 +85,6 @@ type countsState struct {
 	counts map[mbidKey]uint32
 }
 
-// sparkListenRow is the projection of the spark listens parquet schema
-// that the aggregator reads.  All other columns are skipped.
-type sparkListenRow struct {
-	RecordingMBID string   `parquet:"recording_mbid,optional"`
-	ReleaseMBID   string   `parquet:"release_mbid,optional"`
-	ArtistMBIDs   []string `parquet:"artist_credit_mbids,optional,list"`
-}
-
 type countParseJob struct {
 	idx       int
 	endOffset int64 // exact offset of the next member header
@@ -180,14 +100,46 @@ type countParseResult struct {
 
 // aggregateListenCounts runs stage 1 to completion (or ctx cancel),
 // checkpointing to the staging counts file as it goes.
+//
+// Column projection is tried first: it downloads only the three MBID
+// columns the aggregator reads, which is well under half the archive.
+// It needs a Range-serving origin, so a server that won't range falls
+// back to streaming the whole tar.
 func (imp *dumpImporter) aggregateListenCounts(ctx context.Context, st *countsState) error {
 	if st.counts == nil {
 		st.counts = make(map[mbidKey]uint32, 1<<20)
 	}
 
-	stream := newResumableReader(ctx, imp.httpClient, st.SparkURL, st.Offset)
+	if size, ok := projectionSupported(ctx, imp.httpClient, st.SparkURL); ok {
+		err := imp.aggregateProjected(ctx, st, size)
+		if !errors.Is(err, errProjectionUnsupported) {
+			return err
+		}
+
+		imp.logger.Warn("dump import: column projection unavailable, streaming whole dump",
+			"error", err,
+		)
+	}
+
+	return imp.aggregateStreamed(ctx, st)
+}
+
+// aggregateStreamed is the fallback stage-1 path: read the tar end to
+// end and parse every parquet member in full.
+func (imp *dumpImporter) aggregateStreamed(ctx context.Context, st *countsState) error {
+	stream := imp.openDumpStream(ctx, st.SparkURL, st.Offset)
 
 	defer func() { _ = stream.Close() }()
+
+	// A live reporter samples the stream position on a timer; without
+	// it the stage would sit unchanged for minutes at a time between
+	// parquet members, which reads as "hung" rather than "downloading".
+	var awaitingWorkers atomic.Bool
+
+	stopReporter := imp.startCountsReporter(ctx, stream, &awaitingWorkers)
+	defer stopReporter()
+
+	progress := &countsLogger{imp: imp, stream: stream, started: time.Now()}
 
 	buffered := bufio.NewReaderSize(stream, 1<<20)
 	tr := tar.NewReader(buffered)
@@ -196,7 +148,7 @@ func (imp *dumpImporter) aggregateListenCounts(ctx context.Context, st *countsSt
 	// tar reader has consumed: bytes delivered by HTTP minus bytes
 	// still sitting in the bufio buffer.
 	consumedOffset := func() int64 {
-		return stream.Offset - int64(buffered.Buffered())
+		return stream.Pos() - int64(buffered.Buffered())
 	}
 
 	jobs := make(chan countParseJob)
@@ -231,64 +183,13 @@ func (imp *dumpImporter) aggregateListenCounts(ctx context.Context, st *countsSt
 	// checkpoint is a contiguous prefix of the stream.  It owns
 	// st.counts, st.Offset, and st.MemberIdx until applierDone closes;
 	// on error it keeps draining results so nothing deadlocks.
-	var applyErr error
+	applier := newCountsApplier(imp, st, progress)
 
 	go func() {
 		defer close(applierDone)
 
-		pending := make(map[int]countParseResult)
-		next := st.MemberIdx
-		lastFlushed := st.MemberIdx
-
 		for res := range results {
-			if applyErr != nil {
-				continue
-			}
-
-			pending[res.idx] = res
-
-			for {
-				r, ok := pending[next]
-				if !ok {
-					break
-				}
-
-				delete(pending, next)
-
-				if r.err != nil {
-					applyErr = r.err
-
-					break
-				}
-
-				for k, v := range r.deltas {
-					st.counts[k] += v
-				}
-
-				next++
-				st.MemberIdx = next
-				st.Offset = r.endOffset
-
-				if next-lastFlushed >= countsFlushEveryMembers {
-					if err := imp.writeCountsFile(st); err != nil {
-						applyErr = err
-
-						break
-					}
-
-					lastFlushed = next
-
-					imp.logCountsProgress(next, r.endOffset, stream.Size, len(st.counts))
-
-					if err := imp.checkDiskHeadroom(); err != nil {
-						applyErr = err
-
-						break
-					}
-				} else if next%countsProgressEveryMembers == 0 {
-					imp.logCountsProgress(next, r.endOffset, stream.Size, len(st.counts))
-				}
-			}
+			applier.apply(res, nil)
 		}
 	}()
 
@@ -342,9 +243,14 @@ readLoop:
 		// uses PAX extension headers (those start at its header offset).
 		endOffset := consumedOffset() + tarPadding(hdr.Size)
 
+		awaitingWorkers.Store(true)
+
 		select {
 		case jobs <- countParseJob{idx: memberIdx, endOffset: endOffset, buf: buf}:
+			awaitingWorkers.Store(false)
 		case <-ctx.Done():
+			awaitingWorkers.Store(false)
+
 			readErr = ctx.Err()
 
 			break readLoop
@@ -359,7 +265,7 @@ readLoop:
 	<-applierDone
 
 	if readErr == nil {
-		readErr = applyErr
+		readErr = applier.err
 	}
 
 	if readErr != nil {
@@ -378,8 +284,15 @@ readLoop:
 
 	imp.logger.Info("dump import: listen counts complete",
 		"members", st.MemberIdx,
+		"gb", fmt.Sprintf("%.1f", float64(st.Offset)/(1<<30)),
 		"entities", len(st.counts),
+		"elapsed", time.Since(progress.started).Truncate(time.Second).String(),
 	)
+
+	imp.logJob(fmt.Sprintf(
+		"Listen counts complete — %s of listens read, %s entities ranked",
+		formatGB(st.Offset), formatCount(len(st.counts)),
+	))
 
 	return nil
 }
@@ -390,55 +303,6 @@ func tarPadding(size int64) int64 {
 	const block = 512
 
 	return (block - size%block) % block
-}
-
-// parseListenParquet decodes one parquet member and returns the
-// per-entity listen-count deltas.
-func parseListenParquet(buf []byte) (map[mbidKey]uint32, error) {
-	reader := parquet.NewGenericReader[sparkListenRow](bytes.NewReader(buf))
-
-	defer func() { _ = reader.Close() }()
-
-	deltas := make(map[mbidKey]uint32, 1<<18)
-	rows := make([]sparkListenRow, 4096)
-
-	for {
-		n, err := reader.Read(rows)
-
-		for _, row := range rows[:n] {
-			key, ok := makeMBIDKey(countKindRecording, row.RecordingMBID)
-			if !ok {
-				// Unmapped listen — no usable recording MBID.
-				continue
-			}
-
-			deltas[key]++
-
-			if relKey, relOK := makeMBIDKey(countKindRelease, row.ReleaseMBID); relOK {
-				deltas[relKey]++
-			}
-
-			for _, artist := range row.ArtistMBIDs {
-				if artKey, artOK := makeMBIDKey(countKindArtist, artist); artOK {
-					deltas[artKey]++
-				}
-			}
-		}
-
-		if errors.Is(err, io.EOF) {
-			break
-		}
-
-		if err != nil {
-			return nil, fmt.Errorf("parquet read: %w", err)
-		}
-
-		if n == 0 {
-			break
-		}
-	}
-
-	return deltas, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -567,18 +431,245 @@ func (imp *dumpImporter) readCountsFile() (*countsState, error) {
 	return st, nil
 }
 
-func (imp *dumpImporter) logCountsProgress(members int, offset, size int64, entities int) {
-	pct := float64(0)
-	if size > 0 {
-		pct = float64(offset) / float64(size) * 100
+// ---------------------------------------------------------------------------
+// progress reporting
+// ---------------------------------------------------------------------------
+
+// startCountsReporter runs a goroutine that samples the listens stream
+// position every few seconds and publishes it as the stage's UI
+// progress.  The returned function stops the reporter and waits for it
+// to exit, so no stale "running" update can land after the stage is
+// marked complete.
+func (imp *dumpImporter) startCountsReporter(
+	ctx context.Context, stream dumpStream, backlog *atomic.Bool,
+) func() {
+	stop := make(chan struct{})
+	exited := make(chan struct{})
+
+	rep := &countsReporter{
+		imp:        imp,
+		stream:     stream,
+		backlog:    backlog,
+		lastSample: time.Now(),
+		lastOffset: stream.Fetched(),
+		lastMoved:  time.Now(),
 	}
 
-	imp.logger.Info("dump import: listen counts progress",
+	go func() {
+		defer close(exited)
+
+		ticker := time.NewTicker(countsUIRefreshInterval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ctx.Done():
+				return
+			case now := <-ticker.C:
+				rep.tick(now)
+			}
+		}
+	}()
+
+	return func() {
+		close(stop)
+		<-exited
+	}
+}
+
+// countsReporter turns stream position samples into a percentage and a
+// human-readable throughput line.  Only its own goroutine touches it.
+type countsReporter struct {
+	imp    *dumpImporter
+	stream dumpStream
+
+	// backlog is set while the reader is blocked handing a member to
+	// the parquet workers.  The stream stops moving then too, and
+	// calling that a network stall would be wrong.
+	backlog *atomic.Bool
+
+	lastSample time.Time
+	lastOffset int64
+	lastMoved  time.Time
+	rate       float64 // EWMA bytes/sec
+}
+
+func (rep *countsReporter) tick(now time.Time) {
+	// Track the downloader, not the consumer: parallel lanes buffer a
+	// chunk at a time, so delivery stands still for a minute at the
+	// start of a stream while the network is in fact saturated.  Watching
+	// Pos here would report that as a stall.
+	offset := rep.stream.Fetched()
+	size := rep.stream.Total()
+
+	if elapsed := now.Sub(rep.lastSample).Seconds(); elapsed > 0 {
+		sample := float64(offset-rep.lastOffset) / elapsed
+		if rep.rate == 0 {
+			rep.rate = sample
+		} else {
+			rep.rate = countsRateSmoothing*sample + (1-countsRateSmoothing)*rep.rate
+		}
+	}
+
+	if offset != rep.lastOffset {
+		rep.lastMoved = now
+	}
+
+	rep.lastSample = now
+	rep.lastOffset = offset
+
+	// A stream that has stopped moving is either reconnecting or held
+	// up by the parsers; either way, reporting a rate that is really
+	// just an average of nothing would be misleading.
+	var detail string
+
+	switch {
+	case now.Sub(rep.lastMoved) <= countsStallAfter:
+		rep.imp.countsRate.Store(uint64(max(rep.rate, 0)))
+
+		detail = formatStreamProgress(offset, size, rep.rate)
+	case rep.backlog != nil && rep.backlog.Load():
+		rep.imp.countsRate.Store(0)
+
+		detail = formatGB(offset) + " downloaded · parsing, download paused"
+	default:
+		rep.imp.countsRate.Store(0)
+
+		detail = formatGB(offset) + " downloaded · stalled, retrying…"
+	}
+
+	rep.imp.setStageDetail(dumpStageCounts, streamPercent(offset, size), 100, detail)
+}
+
+// countsLogger writes stage-1 progress to the app log and the jobs
+// panel on independent time-based schedules.  Per-member lines would be
+// too sparse to reassure and too noisy to read; checkpoints, which are
+// the points a crash would resume from, always log to both.
+type countsLogger struct {
+	imp    *dumpImporter
+	stream dumpStream
+
+	started    time.Time
+	lastLog    time.Time
+	lastJobLog time.Time
+}
+
+// member reports an applied parquet member, logging only if enough time
+// has passed since the last line.
+func (l *countsLogger) member(members int, offset int64, entities int) {
+	now := time.Now()
+
+	if now.Sub(l.lastLog) >= countsLogInterval {
+		l.lastLog = now
+
+		l.logApp("dump import: listen counts progress", members, offset, entities)
+	}
+
+	if now.Sub(l.lastJobLog) >= countsJobLogInterval {
+		l.lastJobLog = now
+
+		l.logJob("Listen counts", members, offset, entities)
+	}
+}
+
+// checkpoint reports a counts.bin flush, which always logs — it is the
+// point an interrupted import would resume from.
+func (l *countsLogger) checkpoint(members int, offset int64, entities int) {
+	now := time.Now()
+
+	l.lastLog = now
+	l.lastJobLog = now
+
+	l.logApp("dump import: listen counts checkpoint", members, offset, entities)
+	l.logJob("Listen counts checkpointed", members, offset, entities)
+}
+
+func (l *countsLogger) logApp(msg string, members int, offset int64, entities int) {
+	size := l.stream.Total()
+
+	l.imp.logger.Info(msg,
 		"members", members,
 		"gb", fmt.Sprintf("%.1f", float64(offset)/(1<<30)),
-		"pct", fmt.Sprintf("%.1f", pct),
+		"pct", streamPercent(offset, size),
+		"rate", formatRate(l.imp.streamRate()),
+		"eta", formatETA(offset, size, l.imp.streamRate()),
 		"entities", entities,
 	)
+}
 
-	imp.setStageProgress(dumpStageCounts, int(pct), 100)
+func (l *countsLogger) logJob(prefix string, members int, offset int64, entities int) {
+	l.imp.logJob(fmt.Sprintf("%s: %s · %s members · %s entities",
+		prefix,
+		formatStreamProgress(offset, l.stream.Total(), l.imp.streamRate()),
+		formatCount(members),
+		formatCount(entities),
+	))
+}
+
+// streamRate returns the listens stream throughput most recently
+// measured by the reporter, in bytes/sec.
+func (imp *dumpImporter) streamRate() float64 {
+	return float64(imp.countsRate.Load())
+}
+
+// streamPercent is the whole-percent position in a stream of known
+// size; 0 when the size is not yet known.
+func streamPercent(offset, size int64) int {
+	if size <= 0 {
+		return 0
+	}
+
+	return int(float64(offset) / float64(size) * 100)
+}
+
+// formatStreamProgress renders "42.3 / 205.1 GB (20%) · 18 MB/s ·
+// ~3h20m left", degrading gracefully when the size or rate is unknown.
+func formatStreamProgress(offset, size int64, rate float64) string {
+	parts := make([]string, 0, 3)
+
+	if size > 0 {
+		parts = append(parts, fmt.Sprintf("%s / %s (%d%%)",
+			formatGB(offset), formatGB(size), streamPercent(offset, size)))
+	} else {
+		parts = append(parts, formatGB(offset)+" downloaded")
+	}
+
+	if rate > 0 {
+		parts = append(parts, formatRate(rate))
+	}
+
+	if eta := formatETA(offset, size, rate); eta != "" {
+		parts = append(parts, "~"+eta+" left")
+	}
+
+	return strings.Join(parts, " · ")
+}
+
+func formatRate(bytesPerSec float64) string {
+	if bytesPerSec <= 0 {
+		return "—"
+	}
+
+	return fmt.Sprintf("%.1f MB/s", bytesPerSec/(1<<20))
+}
+
+// formatETA estimates remaining time at the current rate.  Returns ""
+// when the total size or the rate is unknown.
+func formatETA(offset, size int64, rate float64) string {
+	if size <= 0 || rate <= 0 || offset >= size {
+		return ""
+	}
+
+	remaining := time.Duration(float64(size-offset)/rate) * time.Second
+
+	switch {
+	case remaining < time.Minute:
+		return "<1m"
+	case remaining < time.Hour:
+		return fmt.Sprintf("%dm", int(remaining.Minutes()))
+	default:
+		return fmt.Sprintf("%dh%02dm", int(remaining.Hours()), int(remaining.Minutes())%60)
+	}
 }

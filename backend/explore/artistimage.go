@@ -36,7 +36,7 @@ const (
 	artistImageTimeout      = 10 * time.Second
 	artistImageCacheTTL     = 365 * 24 * time.Hour // positive results: ~permanent
 	artistImageMissCacheTTL = 30 * 24 * time.Hour  // negative results: retry monthly
-	artistImageBaseDir      = "artist-images"
+	artistImageBaseDir      = ArtistImageDirName
 	artistImageMaxBytes     = 2 * 1024 * 1024
 	artistImageMaxSize      = 500 // max dimension for stored full-res images
 	maxImagesPerArtist      = 10

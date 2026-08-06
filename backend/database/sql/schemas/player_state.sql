@@ -6,4 +6,5 @@ CREATE TABLE IF NOT EXISTS player_state (
     last_position_seconds INTEGER NOT NULL DEFAULT 0
 );
 
+-- Singleton row: player state is a single mutable record.
 INSERT OR IGNORE INTO player_state (id) VALUES (1);

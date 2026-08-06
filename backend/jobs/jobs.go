@@ -26,6 +26,7 @@ type Kind string
 const (
 	KindLibraryScan Kind = "library-scan"
 	KindIndexBuild  Kind = "index-build"
+	KindDownload    Kind = "download"
 )
 
 // State is the lifecycle position of a job.

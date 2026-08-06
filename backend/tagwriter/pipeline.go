@@ -194,6 +194,51 @@ func (tw *TagWriter) WriteTrackTags(trackID int64, changes TagChanges) error {
 	return nil
 }
 
+// WriteUntrackedFileTags writes tags to a file that is not in the
+// library, skipping every step of the full pipeline that assumes it is:
+// no audio_file lookup, no database sync, no event.
+//
+// This exists for the download import path, which tags files while they
+// are still in the staging directory.  Tagging before the move is what
+// makes the import atomic from the library's point of view — the
+// scanner only ever sees a finished, correctly tagged file, instead of
+// ingesting a mislabelled one and being corrected afterwards.
+//
+// Callers are responsible for ensuring the file is not in a library
+// path; using this on a tracked file would leave the database stale.
+func (tw *TagWriter) WriteUntrackedFileTags(
+	filePath string,
+	changes TagChanges,
+) error {
+	if len(changes) == 0 {
+		return errNoChanges
+	}
+
+	format, err := DetectFormat(filePath)
+	if err != nil {
+		return fmt.Errorf("detect format: %w", err)
+	}
+
+	switch format {
+	case FormatMP3:
+		err = writeMp3Tags(tw.logger, filePath, changes)
+	case FormatFLAC:
+		err = writeFlacTags(tw.logger, filePath, changes)
+	case FormatWAV:
+		err = writeWavTags(tw.logger, filePath, changes)
+	case FormatOGG:
+		err = writeOggTags(tw.logger, filePath, changes)
+	default:
+		err = fmt.Errorf("%w: %s", errUnsupportedFormat, format)
+	}
+
+	if err != nil {
+		return fmt.Errorf("write file tags: %w", err)
+	}
+
+	return nil
+}
+
 // WriteTrackTagsByPath resolves a file path to its audio_file.id and
 // delegates to WriteTrackTags.  This is the frontend-facing entry
 // point since the frontend identifies tracks by FilePath.

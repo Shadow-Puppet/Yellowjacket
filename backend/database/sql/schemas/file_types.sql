@@ -3,6 +3,8 @@ CREATE TABLE IF NOT EXISTS file_types (
   extension text    NOT NULL UNIQUE
 );
 
+-- Seed rows: the supported audio formats, referenced by
+-- audio_files.file_type_id.
 INSERT OR IGNORE INTO file_types (id, extension) VALUES (0, '.mp3');
 INSERT OR IGNORE INTO file_types (id, extension) VALUES (1, '.flac');
 INSERT OR IGNORE INTO file_types (id, extension) VALUES (2, '.ogg');

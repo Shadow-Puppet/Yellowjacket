@@ -6,6 +6,8 @@
 -- Rows are written when a durable job enters the paused state and
 -- deleted on resume, cancel, or completion — this is not a job history
 -- table, and it stays at zero rows in the common case.
+
+
 CREATE TABLE IF NOT EXISTS job_state (
     id         TEXT PRIMARY KEY,
     kind       TEXT NOT NULL,

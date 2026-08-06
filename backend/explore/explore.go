@@ -149,6 +149,12 @@ func (e *Service) StopIndexBuild() {
 	e.index.StopBuild()
 }
 
+// CoreCatalogImported reports whether a prebuilt catalog artifact has
+// been merged into this index.
+func (e *Service) CoreCatalogImported() bool {
+	return e.index.artifactAlreadyMerged()
+}
+
 // SetJobRegistry wires the background job registry into the search
 // index so its build reports progress and controls to the frontend.
 func (e *Service) SetJobRegistry(reg *jobs.Registry) {
@@ -565,8 +571,7 @@ func (e *Service) resolveArtistName(artistMBID string, rgs []MBReleaseGroup) str
 	// Check the index for a previously-indexed artist row.
 	if indexed := e.index.LookupArtistByMBID(
 		artistMBID,
-	); indexed != nil && indexed.Title != "" &&
-		indexed.Title != artistMBID {
+	); indexed != nil && indexed.Title != "" {
 		return indexed.Title
 	}
 
@@ -1048,8 +1053,7 @@ func (e *Service) GetArtistImageURL(artistMBID string) string {
 
 // GetArtistImageCached returns a base64 data URL for the artist's
 // photo ONLY if it's already on disk — no MB/Wikidata resolution
-// or Wikimedia fetch.  Safe to call from library-only mode.
-// Returns "" if not cached.
+// or Wikimedia fetch.  Returns "" if not cached.
 func (e *Service) GetArtistImageCached(artistMBID string) string {
 	return e.artistImg.GetCachedImage(artistMBID)
 }

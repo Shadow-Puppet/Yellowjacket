@@ -12,6 +12,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"yellowjacket/backend/download"
 	"yellowjacket/backend/events"
 	"yellowjacket/backend/favorites"
 	"yellowjacket/backend/library"
@@ -31,14 +32,15 @@ var errSaveBeforeLoad = errors.New("refusing to save: config not loaded from dis
 type Config struct {
 	ctx       context.Context
 	logger    *slog.Logger
-	filePath  string            // required
-	loaded    bool              // true once Load() succeeds
-	Library   *library.Config   `toml:"Library"`
-	Theme     *theme.Config     `toml:"Theme"`
-	Window    *WindowConfig     `toml:"Window"`
-	TrackList *tracklist.Config `toml:"TrackList"`
-	Favorites *favorites.Config `toml:"Favorites"`
-	Shortcuts *shortcuts.Config `toml:"Shortcuts"`
+	filePath  string               // required
+	loaded    bool                 // true once Load() succeeds
+	Library   *library.Config      `toml:"Library"`
+	Theme     *theme.Config        `toml:"Theme"`
+	Window    *WindowConfig        `toml:"Window"`
+	TrackList *tracklist.Config    `toml:"TrackList"`
+	Favorites *favorites.Config    `toml:"Favorites"`
+	Shortcuts *shortcuts.Config    `toml:"Shortcuts"`
+	Downloads *download.UserConfig `toml:"Downloads"`
 }
 
 // NewConfig creates a new config by loading it from disk.
@@ -258,6 +260,12 @@ func (c *Config) applyDefaults() {
 	}
 
 	c.Shortcuts.ApplyDefaults()
+
+	if c.Downloads == nil {
+		c.Downloads = &download.UserConfig{}
+	}
+
+	c.Downloads.ApplyDefaults()
 }
 
 // SetContext sets the Wails runtime context for event emission.

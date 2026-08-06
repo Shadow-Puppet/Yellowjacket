@@ -3,3 +3,5 @@ CREATE TABLE IF NOT EXISTS artists (
   name TEXT NOT NULL UNIQUE,
   mbid TEXT
 );
+
+CREATE INDEX IF NOT EXISTS idx_artists_mbid ON artists(mbid) WHERE mbid IS NOT NULL;

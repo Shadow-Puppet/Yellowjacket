@@ -1,3 +1,5 @@
+//go:build indexbuild
+
 package main
 
 import (

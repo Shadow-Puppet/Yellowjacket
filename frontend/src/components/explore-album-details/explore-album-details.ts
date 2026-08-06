@@ -8,18 +8,20 @@ import {
 } from '@go/explore/Service';
 import { GetAlbumTracks } from '@go/library/Library';
 import { library } from '@go/models';
-import type { explore } from '@go/models';
+import type { download, explore } from '@go/models';
 type MBReleaseGroup = explore.MBReleaseGroup;
 type MBRelease = explore.MBRelease;
 type MBTrack = explore.MBTrack;
 import { exploreCache } from '../../store/explore-cache';
-import { exploreSettings } from '../../store/explore-settings';
 import { libraryStore } from '../../store/library-store';
 import { artistLink, exploreLinkStyles } from '../../utils/explore-link';
 import { EventsOn } from '@runtime/runtime';
 import { Events } from '../../events';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '../library-status-indicator/library-status-indicator.js';
+import '@awesome.me/webawesome/dist/components/button/button.js';
+import '../download-picker/download-picker';
+import { downloadStore } from '../../store/download-store';
 
 /* ── Utility functions (duplicated per Knowledge Pattern #9 — no cross-component imports) ── */
 
@@ -111,6 +113,18 @@ export class ExploreAlbumDetails extends LitElement {
     /** Currently-selected dropdown entry (by VersionEntry.key). */
     @state() private selectedVersionKey: string = '';
     @state() private coverArtURL = '';
+
+    /** Open state of the "find this album" dialog. */
+    @state() private pickerOpen = false;
+
+    /** True once a download client is configured and enabled. */
+    @state() private canDownload = false;
+
+    /** True when this album is already on the wanted list. */
+    @state() private isWanted = false;
+
+    /** Unsubscribe handle for the download store. */
+    private downloadUnsub: (() => void) | null = null;
 
     /* ── Styles ── */
 
@@ -454,7 +468,6 @@ export class ExploreAlbumDetails extends LitElement {
 
     /* ── Lifecycle ── */
 
-    private unsubSettings?: () => void;
     private unsubReleasesReady?: () => void;
     /** Release-group MBIDs whose AlbumReleasesReady event we've handled,
      * so a background BrowseReleases fetch re-hydrates versions once. */
@@ -469,12 +482,16 @@ export class ExploreAlbumDetails extends LitElement {
             void this.loadAllData();
         }
 
-        this.unsubSettings = exploreSettings.subscribe(() => {
-            // Re-run data loading — library-only mode may show/hide
-            // API-sourced content or hydrate from local tracks.
-            if (this.releaseGroupMBID || this.localAlbumId) {
-                void this.loadAllData();
-            }
+        // The download button only appears once a client is connected,
+        // so this tracks the provider list rather than assuming.
+        this.downloadUnsub = downloadStore.subscribe(() => {
+            this.canDownload = downloadStore.available;
+            this.syncWanted();
+        });
+
+        void downloadStore.init().then(() => {
+            this.canDownload = downloadStore.available;
+            this.syncWanted();
         });
 
         // A background BrowseReleases fetch (cold album, versions +
@@ -496,7 +513,8 @@ export class ExploreAlbumDetails extends LitElement {
 
     override disconnectedCallback() {
         super.disconnectedCallback();
-        this.unsubSettings?.();
+        this.downloadUnsub?.();
+        this.downloadUnsub = null;
         this.unsubReleasesReady?.();
         if (this.releasesFallbackTimer) clearTimeout(this.releasesFallbackTimer);
     }
@@ -630,14 +648,6 @@ export class ExploreAlbumDetails extends LitElement {
         // Awaited for the side effect of populating the local
         // tracklist; the return value isn't currently consumed.
         await this.hydrateFromLibrary(mbid);
-
-        // Library-only mode: local data is all we show.
-        if (exploreSettings.libraryOnly) {
-            this.loadingInfo = false;
-            this.loadingReleases = false;
-            console.log(`[explore-album] loaded (library-only): "${this.albumName}"`);
-            return;
-        }
 
         // Phase 2: fire API calls independently so each section
         // renders as its data arrives.  Allow the versions section one
@@ -1336,7 +1346,7 @@ export class ExploreAlbumDetails extends LitElement {
      *   - localAlbumId set            → owned
      *   - releaseGroup.inLibrary set  → owned (backend cross-ref)
      *   - cachedAlbums has MBID match → owned
-     *   - any selected version has    → owned (covers library-only mode
+     *   - any selected version has    → owned (covers local-only albums
      *     a track marked inLibrary       where releaseGroup may be null)
      *   - else                        → not owned
      *
@@ -1478,9 +1488,135 @@ export class ExploreAlbumDetails extends LitElement {
                         ></library-status-indicator>
                     </h1>
                     ${this.renderAlbumMeta()}
+                    ${this.renderDownloadAction()}
                 </div>
             </div>
+            ${this.renderPicker()}
         `;
+    }
+
+    /**
+     * Offers to acquire the album, but only when the user has actually
+     * connected a download client and does not already own it. Showing
+     * the button otherwise would advertise a feature that cannot work.
+     */
+    private renderDownloadAction() {
+        if (this.albumLibraryStatus() === 'in-library') return nothing;
+
+        return html`
+            <div class="album-download">
+                ${this.canDownload
+                    ? html`
+                          <wa-button
+                              size="small"
+                              appearance="outlined"
+                              @click=${() => {
+                                  this.pickerOpen = true;
+                              }}
+                          >
+                              <wa-icon slot="start" name="download"></wa-icon>
+                              Find this album
+                          </wa-button>
+                      `
+                    : nothing}
+                ${this.renderWantAction()}
+            </div>
+        `;
+    }
+
+    /**
+     * Adds the album to the wanted list, which is the answer to "look
+     * for it, but not right now".
+     *
+     * Unlike the download button this shows whether or not a client is
+     * connected: wanting something is a durable statement about the
+     * library, and it stays true — and stays queued — until a client
+     * exists to act on it.
+     */
+    private renderWantAction() {
+        if (!this.releaseGroupMBID) return nothing;
+
+        const want = downloadStore.wantFor(this.releaseGroupMBID);
+
+        return html`
+            <wa-button
+                size="small"
+                appearance=${this.isWanted ? 'filled' : 'outlined'}
+                @click=${() => void this.toggleWanted(want?.id)}
+            >
+                <wa-icon
+                    slot="start"
+                    name=${this.isWanted ? 'bookmark-check' : 'bookmark'}
+                ></wa-icon>
+                ${this.isWanted ? 'Wanted' : 'Want this'}
+            </wa-button>
+        `;
+    }
+
+    /** Reflects the store's view of whether this album is wanted. */
+    private syncWanted(): void {
+        this.isWanted = this.releaseGroupMBID
+            ? downloadStore.isWanted(this.releaseGroupMBID)
+            : false;
+    }
+
+    private async toggleWanted(wantId: number | undefined): Promise<void> {
+        if (!this.releaseGroupMBID) return;
+
+        try {
+            if (wantId) {
+                await downloadStore.removeWant(wantId);
+            } else {
+                await downloadStore.addWant({
+                    mbid: this.releaseGroupMBID,
+                    entity: 'release-group',
+                    libraryId: libraryStore.getSelectedLibraryId() ?? 0,
+                    artist: this.releaseGroup?.artistCredit ?? '',
+                    title: this.albumName,
+                    scope: 'future',
+                    secondary: false,
+                } as download.WantRequest);
+            }
+        } catch (err) {
+            console.error('Could not update the wanted list:', err);
+        }
+
+        this.syncWanted();
+    }
+
+    private renderPicker() {
+        if (!this.pickerOpen) return nothing;
+
+        const tracks = this.currentTracks();
+
+        return html`
+            <download-picker
+                ?open=${this.pickerOpen}
+                library-id=${libraryStore.getSelectedLibraryId() ?? 0}
+                artist=${this.releaseGroup?.artistCredit ?? ''}
+                album=${this.albumName}
+                release-group-mbid=${this.releaseGroupMBID ?? ''}
+                .expected=${tracks.map((t, index) => ({
+                    position: t.position || index + 1,
+                    discNumber: t.discNumber ?? 0,
+                    title: t.title,
+                    artist: '',
+                    lengthMillis: t.length ?? 0,
+                }))}
+                @picker-close=${() => {
+                    this.pickerOpen = false;
+                }}
+            ></download-picker>
+        `;
+    }
+
+    /** Tracks of the version currently selected in the dropdown. */
+    private currentTracks(): MBTrack[] {
+        const entry = this.versionEntries.find(
+            (e) => e.key === this.selectedVersionKey,
+        );
+
+        return entry?.tracks ?? [];
     }
 
     private renderAlbumMeta() {
@@ -1535,9 +1671,6 @@ export class ExploreAlbumDetails extends LitElement {
     /* ── Version Selector (R025, R026, R027) ── */
 
     private renderVersionSelector() {
-        // Library-only mode: no version selector (only local tracks).
-        if (exploreSettings.libraryOnly) return nothing;
-
         if (this.loadingReleases) {
             return html`
                 <section>
@@ -1683,19 +1816,6 @@ export class ExploreAlbumDetails extends LitElement {
         }
         const current = this.currentVersion();
         if (!current) {
-            // In library-only mode with no local tracks, show a gentle message.
-            if (exploreSettings.libraryOnly) {
-                return html`
-                    <section>
-                        <h3 class="section-header">Tracklist</h3>
-                        <div
-                            style="color: var(--yj-text-tertiary, #888); font-size: var(--yj-text-md)"
-                        >
-                            This album is not in your library.
-                        </div>
-                    </section>
-                `;
-            }
             return html`
                 <section>
                     <h3 class="section-header">Tracklist</h3>

@@ -26,6 +26,20 @@ type ArtistCreditArtist struct {
 	CreditID int64
 }
 
+type ArtistImage struct {
+	ID         int64
+	ArtistMbid string
+	Source     string
+	SourceUrl  string
+	FilePath   string
+	IsPrimary  int64
+	SortOrder  int64
+	Width      sql.NullInt64
+	Height     sql.NullInt64
+	FileSize   sql.NullInt64
+	CreatedAt  time.Time
+}
+
 type ArtistMetadatum struct {
 	Mbid      string
 	Source    string
@@ -50,6 +64,7 @@ type AudioFile struct {
 	LastPlayed         sql.NullTime
 	TagStatus          string
 	GroupKey           string
+	ModifiedAt         int64
 }
 
 type CoverArt struct {
@@ -57,6 +72,116 @@ type CoverArt struct {
 	IsEmbedded bool
 	FilePath   string
 	MimeType   string
+}
+
+type DownloadItem struct {
+	ID            string
+	RequestID     string
+	ProviderID    int64
+	TransportID   sql.NullInt64
+	ExternalID    string
+	Candidate     string
+	State         string
+	StagingDir    string
+	BytesDone     int64
+	BytesTotal    int64
+	ImportedPaths string
+	Error         string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
+type DownloadProvider struct {
+	ID        int64
+	Kind      string
+	Name      string
+	Enabled   int64
+	Priority  int64
+	Settings  string
+	CreatedAt time.Time
+}
+
+type DownloadRequest struct {
+	ID               string
+	LibraryID        int64
+	Source           string
+	WantID           sql.NullInt64
+	ReleaseMbid      sql.NullString
+	ReleaseGroupMbid sql.NullString
+	RecordingMbid    sql.NullString
+	Artist           string
+	Album            string
+	Query            string
+	Expected         string
+	State            string
+	Error            string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
+type DownloadWant struct {
+	ID          int64
+	Mbid        string
+	Entity      string
+	LibraryID   int64
+	Artist      string
+	Title       string
+	Scope       string
+	Secondary   int64
+	State       string
+	ParentID    sql.NullInt64
+	Attempts    int64
+	LastError   string
+	LastTriedAt sql.NullTime
+	NextTryAt   sql.NullTime
+	ExternalIds string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+type ExploreChampionFt struct {
+	Title      string
+	ArtistName string
+	Aliases    string
+}
+
+type ExploreIndex struct {
+	ID                  int64
+	EntityType          string
+	Mbid                string
+	Title               string
+	ArtistName          string
+	ArtistMbid          string
+	Aliases             string
+	Popularity          int64
+	ListenerCount       int64
+	Duration            int64
+	CaaReleaseMbid      string
+	ReleaseName         string
+	PrimaryType         string
+	SecondaryTypes      string
+	ReleaseDate         string
+	ArtistType          string
+	Country             string
+	Disambiguation      string
+	SortName            string
+	InLibrary           int64
+	IsSimilar           int64
+	LocalArtistID       sql.NullInt64
+	LocalReleaseGroupID sql.NullInt64
+	LocalRecordingID    sql.NullInt64
+	DiscogFetched       int64
+}
+
+type ExploreIndexFt struct {
+	Title      string
+	ArtistName string
+	Aliases    string
+}
+
+type ExploreIndexMetum struct {
+	Key   string
+	Value string
 }
 
 type FileType struct {
@@ -176,10 +301,10 @@ type ReleaseGroup struct {
 	CoverArtID          sql.NullInt64
 	AlbumArtistCreditID sql.NullInt64
 	Year                sql.NullInt64
-	OriginalYear        sql.NullInt64
 	TotalTracks         sql.NullInt64
 	TotalDiscs          sql.NullInt64
 	Mbid                sql.NullString
+	OriginalYear        sql.NullInt64
 }
 
 type ReleaseGroupRecording struct {
@@ -190,11 +315,31 @@ type ReleaseGroupRecording struct {
 	DiscNumber     sql.NullInt64
 }
 
+type ReleaseToRg struct {
+	ReleaseMbid string
+	RgMbid      string
+}
+
+type SearchClick struct {
+	Query       string
+	EntityMbid  string
+	EntityType  string
+	ClickCount  int64
+	LastClicked time.Time
+}
+
 type SearchIndex struct {
 	FilePath string
 	Title    string
 	Artist   string
 	Album    string
+}
+
+type SimilarArtistMap struct {
+	SourceArtistMbid  string
+	SimilarArtistMbid string
+	SimilarArtistName string
+	Score             int64
 }
 
 type TaggingCandidate struct {

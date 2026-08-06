@@ -2,9 +2,7 @@ package database
 
 import (
 	"database/sql"
-	"io/fs"
 	"log/slog"
-	"path"
 	"testing"
 
 	_ "modernc.org/sqlite" // Register sqlite driver.
@@ -34,31 +32,10 @@ func NewTestDB(t *testing.T) *DB {
 		t.Fatalf("could not apply PRAGMAs: %v", err)
 	}
 
-	dirEntries, err := schemas.ReadDir("sql/schemas")
-	if err != nil {
-		t.Fatalf("could not read schemas directory: %v", err)
-	}
-
-	for _, dirEntry := range dirEntries {
-		if !dirEntry.IsDir() {
-			filePath := path.Join("sql/schemas", dirEntry.Name())
-
-			sqlContent, err := fs.ReadFile(schemas, filePath)
-			if err != nil {
-				t.Fatalf("could not read file %s: %v", filePath, err)
-			}
-
-			if _, err = db.ExecContext(ctx, string(sqlContent)); err != nil {
-				t.Fatalf(
-					"error executing sql from file %s: %v",
-					filePath, err,
-				)
-			}
-		}
-	}
-
-	if err := runMigrations(ctx, db, slog.Default(), ":memory:"); err != nil {
-		t.Fatalf("could not run migrations: %v", err)
+	// The same call production uses, so a test database and a real one
+	// cannot diverge.
+	if err := applySchema(ctx, db); err != nil {
+		t.Fatalf("could not apply schema: %v", err)
 	}
 
 	// Insert a sentinel library row at id=0 so audio_files inserts

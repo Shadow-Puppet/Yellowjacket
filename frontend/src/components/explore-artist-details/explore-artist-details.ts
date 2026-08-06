@@ -9,7 +9,6 @@ import {
     SimilarArtists,
     GetArtistImageURL,
     GetArtistImageCachedPath,
-    GetLibrarySimilarArtists,
     GetThumbnail,
     GetThumbnails,
     GetTrackThumbnail,
@@ -24,8 +23,9 @@ type LBTopRecording = explore.LBTopRecording;
 type LBTopReleaseGroup = explore.LBTopReleaseGroup;
 type LBSimilarArtist = explore.LBSimilarArtist;
 import { exploreCache } from '../../store/explore-cache';
-import { exploreSettings } from '../../store/explore-settings';
 import { libraryStore } from '../../store/library-store';
+import { downloadStore } from '../../store/download-store';
+import '@awesome.me/webawesome/dist/components/button/button.js';
 import { trackLink, exploreLinkStyles } from '../../utils/explore-link';
 import { GetAlbumsByArtist } from '@go/library/Library';
 import { EventsOn } from '@runtime/runtime';
@@ -192,6 +192,10 @@ export class ExploreArtistDetails extends LitElement {
                 width: 100%;
                 height: 100%;
                 object-fit: cover;
+            }
+
+            .artist-follow {
+                margin-top: 10px;
             }
 
             .artist-info {
@@ -830,7 +834,6 @@ export class ExploreArtistDetails extends LitElement {
 
     /* ── Lifecycle ── */
 
-    private unsubSettings?: () => void;
     private unsubDiscogReady?: () => void;
     private unsubSimilarReady?: () => void;
     /** MBIDs whose ArtistSimilarReady event we've already handled, so a
@@ -843,19 +846,20 @@ export class ExploreArtistDetails extends LitElement {
      * background discography fetch never signals readiness. */
     private discogFallbackTimer?: number;
 
+    /** Unsubscribe handle for the wanted list. */
+    private unsubWanted: (() => void) | null = null;
+
     override connectedCallback() {
         super.connectedCallback();
         if (this.artistMBID || this.localArtistId) {
             void this.loadAllData();
         }
 
-        // Re-render when library-only mode toggles.
-        this.unsubSettings = exploreSettings.subscribe(() => {
-            this.requestUpdate();
-            if (this.artistMBID || this.localArtistId) {
-                void this.loadAllData();
-            }
-        });
+        // Keep the follow button in step with the wanted list, which a
+        // background reconcile pass can change without this page doing
+        // anything.
+        this.unsubWanted = downloadStore.subscribe(() => this.requestUpdate());
+        void downloadStore.init().then(() => this.requestUpdate());
 
         // A background discography fetch (top tracks / top releases for an
         // artist that wasn't indexed yet) finished — re-fetch those two
@@ -893,7 +897,8 @@ export class ExploreArtistDetails extends LitElement {
 
     override disconnectedCallback() {
         super.disconnectedCallback();
-        this.unsubSettings?.();
+        this.unsubWanted?.();
+        this.unsubWanted = null;
         this.unsubDiscogReady?.();
         this.unsubSimilarReady?.();
         if (this.discogFallbackTimer) clearTimeout(this.discogFallbackTimer);
@@ -1026,90 +1031,6 @@ export class ExploreArtistDetails extends LitElement {
 
         // Phase 0: hydrate from caches (instant, no Go calls).
         this.hydrateFromCache(mbid);
-
-        if (exploreSettings.libraryOnly) {
-            // Library-only mode: no external API calls.
-            // Discography comes from library store (already hydrated).
-            // Similar artists from pre-computed DB table.
-            this.loadingArtist = false;
-            this.loadingTracks = false;
-            this.loadingTopReleases = false;
-            this.loadingReleases = false;
-            this.loadingSimilar = false;
-
-            // If the library store hasn't eagerly fetched yet,
-            // await it and re-hydrate.  Covers the race between
-            // navigation and the deferred eagerFetch on DOMContentLoaded.
-            if (!libraryStore.cachedArtists || !libraryStore.cachedAlbums) {
-                try {
-                    const pending: Promise<unknown>[] = [];
-                    if (!libraryStore.cachedArtists) {
-                        pending.push(libraryStore.getArtists());
-                    }
-                    if (!libraryStore.cachedAlbums) {
-                        pending.push(libraryStore.getAlbums());
-                    }
-                    await Promise.all(pending);
-                    this.hydrateFromCache(mbid);
-                } catch {
-                    // Ignore — we'll fall through to the Wails-cached path.
-                }
-            }
-
-            // Artist image: if hydrateFromCache didn't find one (e.g.
-            // the library store's cached artist row has an empty
-            // ImageMedium because the on-disk file post-dates the
-            // store's last fetch), fall back to a disk-only Wails
-            // call.  This just asks the backend whether
-            // /artist-images/.../primary_md.jpg exists — no network,
-            // no base64 transfer.
-            if (!this.artistImageURL && mbid) {
-                void GetArtistImageCachedPath(mbid)
-                    .then((url) => {
-                        if (url) {
-                            this.artistImageURL = url;
-                        } else {
-                            // Final fallback: album art by artist name.
-                            this.fallbackArtistImageFromAlbumArt();
-                        }
-                    })
-                    .catch(() => {
-                        this.fallbackArtistImageFromAlbumArt();
-                    });
-            }
-
-            // Fetch library-only similar artists (single Go call, no external API).
-            try {
-                const similar = await GetLibrarySimilarArtists(mbid);
-                // Dedupe by MBID as a safety net — the backend query
-                // should already return unique rows but multiple library
-                // artists can share an MBID (ensemble credits), so this
-                // guards against any future query regression.
-                const seen = new Set<string>();
-                const deduped: LBSimilarArtist[] = [];
-                for (const s of similar ?? []) {
-                    const key = s.artistMbid || s.name;
-                    if (!key || seen.has(key)) continue;
-                    seen.add(key);
-                    deduped.push(s);
-                }
-                this.similarArtists = deduped;
-
-                // Resolve similar artist images from library cache —
-                // no Go calls, no network.  These artists are all in
-                // the library (that's the filter GetLibrarySimilarArtists
-                // applies), so the library store has their image paths.
-                this.seedSimilarArtistImagesFromLibrary();
-            } catch {
-                this.similarArtists = [];
-            }
-
-            console.log(
-                `[explore-artist] loaded (library-only): "${this.artistName}"`,
-            );
-
-            return;
-        }
 
         // Fresh load for this artist: allow the top sections one
         // background-fetch re-fetch, and arm a fallback so they can't spin
@@ -1604,7 +1525,7 @@ export class ExploreArtistDetails extends LitElement {
     /**
      * Populate similarImageURLs for the current similarArtists list
      * using only library-store data and disk-cached artist images.
-     * Makes ZERO network calls — safe for library-only mode.
+     * Makes ZERO network calls.
      *
      * Resolution priority per artist:
      *   1. libraryStore.cachedArtists[mbid].ImageMedium (in-memory)
@@ -1694,10 +1615,10 @@ export class ExploreArtistDetails extends LitElement {
     }
 
     private async fetchSimilarArtistImages() {
-        // Phase 1: instant seed from library store + disk cache.
-        // This mirrors the library-only path so any card whose image
-        // is already on disk appears immediately, without waiting
-        // for a network-enabled GetArtistImageURL round-trip.
+        // Phase 1: instant seed from library store + disk cache, so any
+        // card whose image is already on disk appears immediately,
+        // without waiting for a network-enabled GetArtistImageURL
+        // round-trip.
         await this.seedSimilarArtistImagesFromLibrary();
 
         // Phase 2: network fetch for any similars still without
@@ -1961,9 +1882,10 @@ export class ExploreArtistDetails extends LitElement {
                         ? html`<div class="artist-native-name">${this.artist.name}</div>`
                         : nothing}
                     ${this.renderArtistMeta()}
-                    ${this.artist?.popularity && this.artist.popularity > 0 && !exploreSettings.libraryOnly
+                    ${this.artist?.popularity && this.artist.popularity > 0
                         ? html`<span class="artist-meta">${formatListenCount(this.artist.popularity)} plays on ListenBrainz</span>`
                         : nothing}
+                    ${this.renderFollowAction()}
                 </div>
             </div>
             <div class="content">
@@ -1971,6 +1893,61 @@ export class ExploreArtistDetails extends LitElement {
                 ${this.renderSimilarArtists()}
             </div>
         `;
+    }
+
+    /**
+     * Subscribes to an artist: their new releases go on the wanted list
+     * as they come out.
+     *
+     * The default is new releases only. Following an artist should not
+     * silently queue forty albums — someone who wants the back
+     * catalogue can widen it from the wanted list, and will not be
+     * surprised by having done so.
+     */
+    private renderFollowAction() {
+        if (!this.artistMBID) return nothing;
+
+        const want = downloadStore.wantFor(this.artistMBID);
+
+        return html`
+            <div class="artist-follow">
+                <wa-button
+                    size="small"
+                    appearance=${want ? 'filled' : 'outlined'}
+                    @click=${() => void this.toggleFollow(want?.id)}
+                >
+                    <wa-icon
+                        slot="start"
+                        name=${want ? 'bookmark-check' : 'bookmark'}
+                    ></wa-icon>
+                    ${want ? 'Following' : 'Follow for new releases'}
+                </wa-button>
+            </div>
+        `;
+    }
+
+    private async toggleFollow(wantId: number | undefined): Promise<void> {
+        if (!this.artistMBID) return;
+
+        try {
+            if (wantId) {
+                await downloadStore.removeWant(wantId);
+            } else {
+                await downloadStore.addWant({
+                    mbid: this.artistMBID,
+                    entity: 'artist',
+                    libraryId: libraryStore.getSelectedLibraryId() ?? 0,
+                    artist: this.displayName,
+                    title: this.displayName,
+                    scope: 'future',
+                    secondary: false,
+                } as never);
+            }
+        } catch (err) {
+            console.error('Could not update the wanted list:', err);
+        }
+
+        this.requestUpdate();
     }
 
     private renderArtistMeta() {
@@ -2034,9 +2011,6 @@ export class ExploreArtistDetails extends LitElement {
     }
 
     private renderTopSection() {
-        // Library-only mode: no top tracks/releases from LB.
-        if (exploreSettings.libraryOnly) return nothing;
-
         const hasTracks = !this.loadingTracks && this.topTracks.length > 0;
         const hasReleases = !this.loadingTopReleases && this.topReleaseGroups.length > 0;
         const tracksLoading = this.loadingTracks;
@@ -2362,10 +2336,8 @@ export class ExploreArtistDetails extends LitElement {
             return nothing;
         }
 
-        // Library-only mode: show all library-matching similar artists
-        // (up to the 20 stored per seed).  Online mode: cap at 10 to
-        // avoid a very long list.
-        const maxSimilar = exploreSettings.libraryOnly ? 20 : 10;
+        // Cap the similar-artists list at 10 to avoid a very long list.
+        const maxSimilar = 10;
         const artists = this.similarArtists.slice(0, maxSimilar);
         const showToggle = artists.length > this.discoRowSize;
         const collapsed = !this.similarExpanded && showToggle;

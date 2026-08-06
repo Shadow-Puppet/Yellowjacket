@@ -3,8 +3,6 @@ package library
 import (
 	"context"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
-
 	"yellowjacket/backend/events"
 	"yellowjacket/backend/jobs"
 )
@@ -41,7 +39,7 @@ func (l *Library) PauseScan() {
 	reg := l.jobs
 	l.mu.Unlock()
 
-	runtime.EventsEmit(l.ctx, events.LibraryScanPaused)
+	l.emit(events.LibraryScanPaused)
 
 	// Confirm the pause on the job — the registry moved it to "pausing"
 	// when the request came in.  Writing the durable pause record is a
@@ -76,7 +74,7 @@ func (l *Library) ResumeScan() {
 	reg := l.jobs
 	l.mu.Unlock()
 
-	runtime.EventsEmit(l.ctx, events.LibraryScanResumed)
+	l.emit(events.LibraryScanResumed)
 
 	// Clears the durable pause record as a side effect of leaving
 	// StatePaused.

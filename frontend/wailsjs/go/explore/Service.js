@@ -30,6 +30,10 @@ export function CheckLibraryMBIDs(arg1) {
   return window['go']['explore']['Service']['CheckLibraryMBIDs'](arg1);
 }
 
+export function CoreCatalogImported() {
+  return window['go']['explore']['Service']['CoreCatalogImported']();
+}
+
 export function CoverArtGroupURL(arg1) {
   return window['go']['explore']['Service']['CoverArtGroupURL'](arg1);
 }
@@ -98,6 +102,18 @@ export function GetTrackThumbnails(arg1) {
   return window['go']['explore']['Service']['GetTrackThumbnails'](arg1);
 }
 
+export function IndexBaselineSeries() {
+  return window['go']['explore']['Service']['IndexBaselineSeries']();
+}
+
+export function IndexImportComplete() {
+  return window['go']['explore']['Service']['IndexImportComplete']();
+}
+
+export function IndexLastImported() {
+  return window['go']['explore']['Service']['IndexLastImported']();
+}
+
 export function InvalidateIndexDiscographies() {
   return window['go']['explore']['Service']['InvalidateIndexDiscographies']();
 }
@@ -134,6 +150,10 @@ export function PrefetchReleases(arg1) {
   return window['go']['explore']['Service']['PrefetchReleases'](arg1);
 }
 
+export function PrepareIndexRebuild() {
+  return window['go']['explore']['Service']['PrepareIndexRebuild']();
+}
+
 export function RebuildLyricsIndex() {
   return window['go']['explore']['Service']['RebuildLyricsIndex']();
 }
@@ -144,6 +164,10 @@ export function RebuildLyricsIndexIfNeeded() {
 
 export function RecordSearchClick(arg1, arg2, arg3) {
   return window['go']['explore']['Service']['RecordSearchClick'](arg1, arg2, arg3);
+}
+
+export function RefreshIndexNow(arg1) {
+  return window['go']['explore']['Service']['RefreshIndexNow'](arg1);
 }
 
 export function RefreshListenCounts() {

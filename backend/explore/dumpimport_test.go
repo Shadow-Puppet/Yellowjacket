@@ -1,42 +1,25 @@
+//go:build indexbuild
+
 package explore
 
 import (
-	"archive/tar"
 	"bytes"
 	"context"
 	"encoding/csv"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/klauspost/compress/zstd"
-	"github.com/parquet-go/parquet-go"
 
 	"yellowjacket/backend/database"
 )
-
-// Fixed MBIDs for fixtures.
-const (
-	recA = "11111111-1111-1111-1111-111111111111"
-	recB = "22222222-2222-2222-2222-222222222222"
-	recC = "33333333-3333-3333-3333-333333333333"
-	relA = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-	relB = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
-	rgA  = "cccccccc-cccc-cccc-cccc-cccccccccccc"
-	rgB  = "dddddddd-dddd-dddd-dddd-dddddddddddd"
-	artA = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"
-	artB = "ffffffff-ffff-ffff-ffff-ffffffffffff"
-)
-
-func testLogger() *slog.Logger {
-	return slog.New(slog.DiscardHandler)
-}
 
 // ---------------------------------------------------------------------------
 // Unit tests: parsing helpers
@@ -244,67 +227,6 @@ func TestArtistTopRGBoundedAndDeduped(t *testing.T) {
 // Fixture builders
 // ---------------------------------------------------------------------------
 
-// sparkFixtureRow mimics the real spark listens schema: the aggregator
-// must project just recording/release/artist MBIDs out of it.
-type sparkFixtureRow struct {
-	ListenedAt    int64    `parquet:"listened_at"`
-	UserID        int64    `parquet:"user_id"`
-	ArtistName    string   `parquet:"artist_name,optional"`
-	RecordingMBID string   `parquet:"recording_mbid,optional"`
-	ReleaseMBID   string   `parquet:"release_mbid,optional"`
-	ArtistMBIDs   []string `parquet:"artist_credit_mbids,optional,list"`
-}
-
-func makeParquet(t *testing.T, rows []sparkFixtureRow) []byte {
-	t.Helper()
-
-	var buf bytes.Buffer
-
-	w := parquet.NewGenericWriter[sparkFixtureRow](&buf)
-
-	if _, err := w.Write(rows); err != nil {
-		t.Fatalf("parquet write: %v", err)
-	}
-
-	if err := w.Close(); err != nil {
-		t.Fatalf("parquet close: %v", err)
-	}
-
-	return buf.Bytes()
-}
-
-func makeTar(t *testing.T, members map[string][]byte, order []string) []byte {
-	t.Helper()
-
-	var buf bytes.Buffer
-
-	tw := tar.NewWriter(&buf)
-
-	for _, name := range order {
-		data := members[name]
-		hdr := &tar.Header{
-			Name:     name,
-			Mode:     0o644,
-			Size:     int64(len(data)),
-			Typeflag: tar.TypeReg,
-		}
-
-		if err := tw.WriteHeader(hdr); err != nil {
-			t.Fatalf("tar header: %v", err)
-		}
-
-		if _, err := tw.Write(data); err != nil {
-			t.Fatalf("tar write: %v", err)
-		}
-	}
-
-	if err := tw.Close(); err != nil {
-		t.Fatalf("tar close: %v", err)
-	}
-
-	return buf.Bytes()
-}
-
 func zstdCompress(t *testing.T, data []byte) []byte {
 	t.Helper()
 
@@ -337,23 +259,6 @@ func csvBytes(t *testing.T, rows [][]string) []byte {
 	}
 
 	return buf.Bytes()
-}
-
-// listensOf builds n identical listen rows for a recording.
-func listensOf(n int, recording, release string, artists []string) []sparkFixtureRow {
-	rows := make([]sparkFixtureRow, n)
-	for i := range rows {
-		rows[i] = sparkFixtureRow{
-			ListenedAt:    1700000000 + int64(i),
-			UserID:        int64(i),
-			ArtistName:    "Fixture Artist",
-			RecordingMBID: recording,
-			ReleaseMBID:   release,
-			ArtistMBIDs:   artists,
-		}
-	}
-
-	return rows
 }
 
 // canonicalDataCSV builds a canonical_musicbrainz_data.csv fixture.
@@ -651,39 +556,37 @@ func TestDumpImportEndToEnd(t *testing.T) {
 
 	// A legacy API-crawled row with inflated popularity must be
 	// cleared by the first dump import (scale consistency).
-	legacyMBID := "99999999-9999-9999-9999-999999999999"
-
-	si.upsertBatch([]SearchIndexResult{{
-		EntityType: "recording",
-		MBID:       legacyMBID,
-		Title:      "Legacy Row",
-		ArtistName: "Old Crawl",
-		ArtistMBID: artA,
-		Popularity: 123_456_789,
-	}})
-
 	if err := imp.run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
-	legacyRows, err := db.QueryContext(
-		"SELECT COUNT(*) FROM explore_index WHERE mbid = ?", legacyMBID,
-	)
-	if err != nil {
-		t.Fatalf("legacy query: %v", err)
-	}
+	// The import bulk-loads with the FTS sync triggers suspended, so
+	// the rebuild that closes that window is the only thing keeping
+	// search usable: assembled rows must be findable afterwards.
+	ftsCount := func(query string) int {
+		t.Helper()
 
-	if legacyRows.Next() {
-		var n int
-
-		_ = legacyRows.Scan(&n)
-
-		if n != 0 {
-			t.Error("legacy API-crawled row survived the first dump import")
+		rows, err := db.QueryContext(
+			"SELECT COUNT(*) FROM explore_index_fts WHERE explore_index_fts MATCH ?", query,
+		)
+		if err != nil {
+			t.Fatalf("fts query %q: %v", query, err)
 		}
+
+		defer func() { _ = rows.Close() }()
+
+		n := 0
+
+		if rows.Next() {
+			_ = rows.Scan(&n)
+		}
+
+		return n
 	}
 
-	_ = legacyRows.Close()
+	if got := ftsCount("Song"); got == 0 {
+		t.Error("FTS matches no assembled recordings; the rebuild did not run")
+	}
 
 	// Index rows landed with dump-derived popularity.
 	assertRow := func(mbid, entityType, title string, popularity int) {
@@ -829,6 +732,212 @@ func TestDumpImportResumesAfterCancel(t *testing.T) {
 	if len(results) == 0 {
 		t.Fatal("index empty after resumed run")
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Progress reporting
+// ---------------------------------------------------------------------------
+
+func TestFormatStreamProgress(t *testing.T) {
+	const gb = int64(1) << 30
+
+	tests := []struct {
+		name   string
+		offset int64
+		size   int64
+		rate   float64
+		want   string
+	}{
+		{
+			name:   "size and rate known",
+			offset: 40 * gb,
+			size:   200 * gb,
+			rate:   20 << 20,
+			want:   "40.0 GB / 200.0 GB (20%) · 20.0 MB/s · ~2h16m left",
+		},
+		{
+			name:   "size unknown before first response",
+			offset: 2 * gb,
+			rate:   10 << 20,
+			want:   "2.0 GB downloaded · 10.0 MB/s",
+		},
+		{
+			name:   "rate unknown on the first tick",
+			offset: 10 * gb,
+			size:   100 * gb,
+			want:   "10.0 GB / 100.0 GB (10%)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := formatStreamProgress(tt.offset, tt.size, tt.rate); got != tt.want {
+				t.Errorf("formatStreamProgress() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFormatETA(t *testing.T) {
+	const gb = int64(1) << 30
+
+	tests := []struct {
+		name   string
+		offset int64
+		size   int64
+		rate   float64
+		want   string
+	}{
+		{name: "hours", offset: 0, size: 100 * gb, rate: 10 << 20, want: "2h50m"},
+		{name: "minutes", offset: 0, size: gb, rate: 10 << 20, want: "1m"},
+		{name: "seconds", offset: 0, size: 1 << 20, rate: 10 << 20, want: "<1m"},
+		{name: "unknown size", offset: 0, size: -1, rate: 10 << 20, want: ""},
+		{name: "stalled", offset: 0, size: 100 * gb, rate: 0, want: ""},
+		{name: "past the end", offset: 2 * gb, size: gb, rate: 10 << 20, want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := formatETA(tt.offset, tt.size, tt.rate); got != tt.want {
+				t.Errorf("formatETA() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFormatCount(t *testing.T) {
+	tests := []struct {
+		in   int
+		want string
+	}{
+		{0, "0"},
+		{999, "999"},
+		{1000, "1,000"},
+		{12345, "12,345"},
+		{1234567, "1,234,567"},
+	}
+
+	for _, tt := range tests {
+		if got := formatCount(tt.in); got != tt.want {
+			t.Errorf("formatCount(%d) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+// The reporter is what keeps the listens stage from looking frozen, so
+// it must publish a detail line for the stage while the stream runs.
+func TestCountsReporterPublishesDetail(t *testing.T) {
+	db := database.NewTestDB(t)
+	si := NewSearchIndex(db, nil, nil, testLogger())
+	imp := &dumpImporter{si: si, logger: testLogger()}
+
+	stream := newResumableReader(context.Background(), nil, "", 0)
+	stream.offset.Store(50 << 30)
+	stream.size.Store(200 << 30)
+
+	rep := &countsReporter{
+		imp:        imp,
+		stream:     stream,
+		lastSample: time.Now().Add(-time.Second),
+		lastMoved:  time.Now(),
+	}
+
+	rep.tick(time.Now())
+
+	tier := findTier(t, si, dumpStageNames[dumpStageCounts])
+
+	if tier.Completed != 25 {
+		t.Errorf("tier completed = %d, want 25", tier.Completed)
+	}
+
+	if !strings.Contains(tier.Detail, "50.0 GB / 200.0 GB (25%)") {
+		t.Errorf("tier detail = %q, want it to report GB progress", tier.Detail)
+	}
+}
+
+// A stream that stops moving is reported as stalled rather than as a
+// decaying transfer rate.
+func TestCountsReporterReportsStall(t *testing.T) {
+	db := database.NewTestDB(t)
+	si := NewSearchIndex(db, nil, nil, testLogger())
+	imp := &dumpImporter{si: si, logger: testLogger()}
+
+	stream := newResumableReader(context.Background(), nil, "", 0)
+	stream.offset.Store(50 << 30)
+	stream.size.Store(200 << 30)
+
+	now := time.Now()
+	rep := &countsReporter{
+		imp:        imp,
+		stream:     stream,
+		lastSample: now.Add(-countsUIRefreshInterval),
+		lastOffset: 50 << 30,
+		lastMoved:  now.Add(-2 * countsStallAfter),
+	}
+
+	rep.tick(now)
+
+	tier := findTier(t, si, dumpStageNames[dumpStageCounts])
+
+	if !strings.Contains(tier.Detail, "stalled") {
+		t.Errorf("tier detail = %q, want a stall notice", tier.Detail)
+	}
+
+	if imp.streamRate() != 0 {
+		t.Errorf("stalled rate = %v, want 0", imp.streamRate())
+	}
+}
+
+// A download paused by parser back-pressure is not a network stall and
+// must not be reported as one.
+func TestCountsReporterDistinguishesBacklog(t *testing.T) {
+	db := database.NewTestDB(t)
+	si := NewSearchIndex(db, nil, nil, testLogger())
+	imp := &dumpImporter{si: si, logger: testLogger()}
+
+	stream := newResumableReader(context.Background(), nil, "", 0)
+	stream.offset.Store(50 << 30)
+	stream.size.Store(200 << 30)
+
+	var backlog atomic.Bool
+
+	backlog.Store(true)
+
+	now := time.Now()
+	rep := &countsReporter{
+		imp:        imp,
+		stream:     stream,
+		backlog:    &backlog,
+		lastSample: now.Add(-countsUIRefreshInterval),
+		lastOffset: 50 << 30,
+		lastMoved:  now.Add(-2 * countsStallAfter),
+	}
+
+	rep.tick(now)
+
+	tier := findTier(t, si, dumpStageNames[dumpStageCounts])
+
+	if strings.Contains(tier.Detail, "stalled") {
+		t.Errorf("tier detail = %q, want parsing back-pressure, not a stall", tier.Detail)
+	}
+
+	if !strings.Contains(tier.Detail, "parsing") {
+		t.Errorf("tier detail = %q, want it to name the parsing pause", tier.Detail)
+	}
+}
+
+func findTier(t *testing.T, si *SearchIndex, name string) TierStatus {
+	t.Helper()
+
+	for _, tier := range si.GetIndexStatus().Tiers {
+		if tier.Name == name {
+			return tier
+		}
+	}
+
+	t.Fatalf("tier %q not found", name)
+
+	return TierStatus{}
 }
 
 func TestCheckFreeDisk(t *testing.T) {

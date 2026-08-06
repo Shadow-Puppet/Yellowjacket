@@ -7,8 +7,8 @@ import (
 	"io"
 	"net/http"
 	"regexp"
-	"sort"
 	"strconv"
+	"sync/atomic"
 	"time"
 )
 
@@ -25,8 +25,13 @@ const (
 	maxStreamRetries = 8
 
 	// streamRetryBaseDelay is the initial reconnect backoff; it
-	// doubles per consecutive failure.
+	// doubles per consecutive failure, up to streamRetryMaxDelay.
 	streamRetryBaseDelay = 2 * time.Second
+
+	// streamRetryMaxDelay caps the backoff.  Uncapped doubling reaches
+	// four minutes by the last attempt, which is a long time to leave a
+	// download lane idle over a transient 503 from a busy dump server.
+	streamRetryMaxDelay = 20 * time.Second
 
 	// dumpDiscoveryTimeout bounds the small directory-listing
 	// requests (not the multi-hour stream requests).
@@ -42,103 +47,6 @@ var ErrDumpStream = errors.New("dump stream failed")
 
 var hrefRe = regexp.MustCompile(`href="([^"?/][^"?]*)"`)
 
-// listHrefs fetches an Apache-style index page and returns the href
-// values (directory entries end with a trailing slash).
-func listHrefs(ctx context.Context, client *http.Client, url string) ([]string, error) {
-	reqCtx, cancel := context.WithTimeout(ctx, dumpDiscoveryTimeout)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("dump listing request: %w", err)
-	}
-
-	req.Header.Set("User-Agent", lbUserAgent)
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("dump listing fetch: %w", err)
-	}
-
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf(
-			"%w: listing %s returned HTTP %d", ErrDumpDiscovery, url, resp.StatusCode,
-		)
-	}
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-	if err != nil {
-		return nil, fmt.Errorf("dump listing read: %w", err)
-	}
-
-	var hrefs []string
-
-	for _, m := range hrefRe.FindAllStringSubmatch(string(body), -1) {
-		hrefs = append(hrefs, m[1])
-	}
-
-	return hrefs, nil
-}
-
-// discoverDumpFile walks a dump base directory, finds subdirectories
-// matching dirRe (newest first, lexicographically — MetaBrainz dump
-// directory names embed sortable timestamps), and returns the full URL
-// of the first file inside matching fileRe.  Directories that don't
-// contain a matching file (e.g. partial uploads) are skipped.
-func discoverDumpFile(
-	ctx context.Context,
-	client *http.Client,
-	baseURL string,
-	dirRe, fileRe *regexp.Regexp,
-) (string, error) {
-	hrefs, err := listHrefs(ctx, client, baseURL)
-	if err != nil {
-		return "", err
-	}
-
-	var dirs []string
-
-	for _, h := range hrefs {
-		trimmed := trimTrailingSlash(h)
-		if dirRe.MatchString(trimmed) {
-			dirs = append(dirs, trimmed)
-		}
-	}
-
-	if len(dirs) == 0 {
-		return "", fmt.Errorf("%w: no dump directories under %s", ErrDumpDiscovery, baseURL)
-	}
-
-	sort.Sort(sort.Reverse(sort.StringSlice(dirs)))
-
-	for _, dir := range dirs {
-		dirURL := baseURL + dir + "/"
-
-		files, err := listHrefs(ctx, client, dirURL)
-		if err != nil {
-			continue
-		}
-
-		for _, f := range files {
-			if fileRe.MatchString(f) {
-				return dirURL + f, nil
-			}
-		}
-	}
-
-	return "", fmt.Errorf("%w: no matching dump file under %s", ErrDumpDiscovery, baseURL)
-}
-
-func trimTrailingSlash(s string) string {
-	if len(s) > 0 && s[len(s)-1] == '/' {
-		return s[:len(s)-1]
-	}
-
-	return s
-}
-
 // resumableReader is an io.Reader over an HTTP resource that survives
 // connection failures by reconnecting with a Range request at the
 // current offset.  Offset is the absolute position of the next byte to
@@ -149,27 +57,31 @@ type resumableReader struct {
 	client *http.Client
 	url    string
 
-	// Offset is the absolute byte position of the next read.
-	Offset int64
-
-	// Size is the total resource size, learned from the first
-	// response.  -1 until known.
-	Size int64
+	// offset is the absolute byte position of the next read, and size
+	// the total resource size (-1 until the first response reveals it).
+	// Both are atomic so a progress reporter on another goroutine can
+	// sample them while the stream is being read.
+	offset atomic.Int64
+	size   atomic.Int64
 
 	body    io.ReadCloser
 	retries int
 }
 
-func newResumableReader(
-	ctx context.Context, client *http.Client, url string, offset int64,
-) *resumableReader {
-	return &resumableReader{
-		ctx:    ctx,
-		client: client,
-		url:    url,
-		Offset: offset,
-		Size:   -1,
-	}
+// Pos returns the absolute byte position of the next read.
+func (r *resumableReader) Pos() int64 {
+	return r.offset.Load()
+}
+
+// Fetched matches Pos: a single sequential connection reads no further
+// ahead than it delivers.
+func (r *resumableReader) Fetched() int64 {
+	return r.offset.Load()
+}
+
+// Total returns the total resource size, or -1 while unknown.
+func (r *resumableReader) Total() int64 {
+	return r.size.Load()
 }
 
 func (r *resumableReader) Read(p []byte) (int, error) {
@@ -185,7 +97,7 @@ func (r *resumableReader) Read(p []byte) (int, error) {
 		}
 
 		n, err := r.body.Read(p)
-		r.Offset += int64(n)
+		offset := r.offset.Add(int64(n))
 
 		if n > 0 {
 			r.retries = 0
@@ -197,7 +109,7 @@ func (r *resumableReader) Read(p []byte) (int, error) {
 		case errors.Is(err, io.EOF):
 			// A server that closes early looks like EOF; only
 			// trust it when we've seen the advertised size.
-			if r.Size >= 0 && r.Offset < r.Size {
+			if size := r.size.Load(); size >= 0 && offset < size {
 				r.closeBody()
 
 				if retryErr := r.backoff(err); retryErr != nil {
@@ -236,7 +148,7 @@ func (r *resumableReader) backoff(cause error) error {
 		)
 	}
 
-	delay := streamRetryBaseDelay << (r.retries - 1)
+	delay := min(streamRetryBaseDelay<<(r.retries-1), streamRetryMaxDelay)
 
 	select {
 	case <-r.ctx.Done():
@@ -254,8 +166,9 @@ func (r *resumableReader) connect() error {
 
 	req.Header.Set("User-Agent", lbUserAgent)
 
-	if r.Offset > 0 {
-		req.Header.Set("Range", "bytes="+strconv.FormatInt(r.Offset, 10)+"-")
+	offset := r.offset.Load()
+	if offset > 0 {
+		req.Header.Set("Range", "bytes="+strconv.FormatInt(offset, 10)+"-")
 	}
 
 	resp, err := r.client.Do(req)
@@ -265,22 +178,22 @@ func (r *resumableReader) connect() error {
 
 	switch resp.StatusCode {
 	case http.StatusPartialContent:
-		if r.Size < 0 {
-			r.Size = parseContentRangeTotal(resp.Header.Get("Content-Range"))
+		if r.size.Load() < 0 {
+			r.size.Store(parseContentRangeTotal(resp.Header.Get("Content-Range")))
 		}
 
 		r.body = resp.Body
 
 		return nil
 	case http.StatusOK:
-		if r.Size < 0 && resp.ContentLength > 0 {
-			r.Size = resp.ContentLength
+		if r.size.Load() < 0 && resp.ContentLength > 0 {
+			r.size.Store(resp.ContentLength)
 		}
 
 		// Server ignored the Range header: discard the prefix so
 		// the caller still reads from the requested offset.
-		if r.Offset > 0 {
-			if _, err := io.CopyN(io.Discard, resp.Body, r.Offset); err != nil {
+		if offset > 0 {
+			if _, err := io.CopyN(io.Discard, resp.Body, offset); err != nil {
 				_ = resp.Body.Close()
 
 				return r.backoff(err)
@@ -326,4 +239,67 @@ func parseContentRangeTotal(v string) int64 {
 	}
 
 	return -1
+}
+
+func newResumableReader(
+	ctx context.Context, client *http.Client, url string, offset int64,
+) *resumableReader {
+	r := &resumableReader{
+		ctx:    ctx,
+		client: client,
+		url:    url,
+	}
+
+	r.offset.Store(offset)
+	r.size.Store(-1)
+
+	return r
+}
+
+// listHrefs fetches an Apache-style index page and returns the href
+// values (directory entries end with a trailing slash).
+func listHrefs(ctx context.Context, client *http.Client, url string) ([]string, error) {
+	reqCtx, cancel := context.WithTimeout(ctx, dumpDiscoveryTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("dump listing request: %w", err)
+	}
+
+	req.Header.Set("User-Agent", lbUserAgent)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("dump listing fetch: %w", err)
+	}
+
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf(
+			"%w: listing %s returned HTTP %d", ErrDumpDiscovery, url, resp.StatusCode,
+		)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return nil, fmt.Errorf("dump listing read: %w", err)
+	}
+
+	var hrefs []string
+
+	for _, m := range hrefRe.FindAllStringSubmatch(string(body), -1) {
+		hrefs = append(hrefs, m[1])
+	}
+
+	return hrefs, nil
+}
+
+func trimTrailingSlash(s string) string {
+	if len(s) > 0 && s[len(s)-1] == '/' {
+		return s[:len(s)-1]
+	}
+
+	return s
 }

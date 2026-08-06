@@ -6,8 +6,8 @@ RETURNING *;
 INSERT INTO audio_files (
   file_path, length_milliseconds, file_type_id, recording_id,
   sample_rate, bit_depth, channels, bitrate, file_size, basename,
-  library_id, group_key, tag_status
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  library_id, group_key, tag_status, modified_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: GetAudioFileGroupKey :one
@@ -32,8 +32,22 @@ WHERE id = ?;
 
 -- name: UpdateAudioFileRecording :exec
 UPDATE audio_files
-SET recording_id = ?, sample_rate = ?, bit_depth = ?, channels = ?, bitrate = ?, file_size = ?
+SET recording_id = ?, sample_rate = ?, bit_depth = ?, channels = ?, bitrate = ?, file_size = ?, length_milliseconds = ?, modified_at = ?
 WHERE id = ?;
+
+-- name: UpdateAudioFileStat :exec
+-- Records the on-disk mtime/size without re-reading tags.  Used to
+-- backfill the staleness baseline for files the scan skipped, and to
+-- re-baseline after YellowJacket's own tag writer rewrites a file.
+UPDATE audio_files
+SET modified_at = ?, file_size = ?
+WHERE id = ?;
+
+-- name: GetLibraryMaxModifiedAt :one
+-- Newest recorded mtime in a library, for the startup soft scan.  0 when
+-- the library is empty or no row has a baseline yet.
+SELECT CAST(COALESCE(MAX(modified_at), 0) AS INTEGER) FROM audio_files
+WHERE library_id = ?;
 
 -- name: DeleteAudioFile :exec
 DELETE FROM audio_files 

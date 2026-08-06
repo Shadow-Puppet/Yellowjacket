@@ -69,6 +69,9 @@ export const Events = {
     ArtistDiscographyReady: "ArtistDiscographyReady",
     ArtistSimilarReady: "ArtistSimilarReady",
     AlbumReleasesReady: "AlbumReleasesReady",
+    DownloadProvidersChanged: "DownloadProvidersChanged",
+    DownloadsChanged: "DownloadsChanged",
+    WantedListChanged: "WantedListChanged",
 } as const;
 
 export type EventName = (typeof Events)[keyof typeof Events];

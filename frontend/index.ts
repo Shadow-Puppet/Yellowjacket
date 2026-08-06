@@ -23,6 +23,7 @@ import '@components/autotag-view/autotag-view.ts';
 import '@components/first-run-wizard/first-run-wizard.ts';
 import '@components/jobs/job-indicator.ts';
 import '@components/jobs/jobs-view.ts';
+import '@components/wanted-view/wanted-view.ts';
 import '@awesome.me/webawesome/dist/styles/themes/default.css';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import { setBasePath } from '@awesome.me/webawesome/dist/webawesome.js';
@@ -36,7 +37,6 @@ import '@store/theme-store';
 // Importing the keyboard shortcut service triggers initialization:
 // registers the document keydown listener for global shortcuts.
 import './src/services/keyboard-shortcut-service';
-import { exploreSettings } from '@store/explore-settings';
 import {
     hasTrackPayload,
     getDragPayload,
@@ -64,6 +64,7 @@ const VIEW_TAGS: Record<string, string> = {
     playlists: 'playlist-view',
     explore: 'explore-view',
     autotag: 'autotag-view',
+    wanted: 'wanted-view',
     jobs: 'jobs-view',
     settings: 'config-page',
 };
@@ -310,24 +311,3 @@ if (queueButton && queuePanel) {
 // or timing assumptions needed.
 void Player.EmitCurrentState();
 void Queue.EmitCurrentState();
-
-// ---------------------------------------------------------------------------
-// Library Only toggle
-// ---------------------------------------------------------------------------
-const libraryOnlyToggle = document.getElementById('library-only-toggle');
-
-if (libraryOnlyToggle) {
-    // Sync initial state.
-    if (exploreSettings.libraryOnly) {
-        libraryOnlyToggle.classList.add('active');
-    }
-
-    libraryOnlyToggle.addEventListener('click', () => {
-        exploreSettings.toggle();
-        libraryOnlyToggle.classList.toggle('active', exploreSettings.libraryOnly);
-    });
-
-    exploreSettings.subscribe(() => {
-        libraryOnlyToggle.classList.toggle('active', exploreSettings.libraryOnly);
-    });
-}

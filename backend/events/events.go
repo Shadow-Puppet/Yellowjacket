@@ -117,4 +117,21 @@ const (
 	// the album detail page can re-fetch its versions / tracklist without
 	// the initial request having blocked on a live MusicBrainz browse.
 	AlbumReleasesReady = "AlbumReleasesReady"
+
+	// DownloadProvidersChanged fires after a download client is added,
+	// edited, enabled/disabled or removed, so the settings page and any
+	// open download picker re-read the provider list.
+	DownloadProvidersChanged = "DownloadProvidersChanged"
+
+	// DownloadsChanged fires when the set of download requests changes
+	// (started, picked, cancelled, cleared).  Per-transfer progress does
+	// not use this — it flows through the jobs registry's JobsChanged,
+	// which already coalesces high-frequency updates.
+	DownloadsChanged = "DownloadsChanged"
+
+	// WantedListChanged fires when the wanted list gains, loses or
+	// retires an entry — including from a background reconcile pass,
+	// which is why the list is event-driven rather than fetched once on
+	// mount.
+	WantedListChanged = "WantedListChanged"
 )

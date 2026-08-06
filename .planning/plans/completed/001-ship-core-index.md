@@ -1,8 +1,27 @@
 # 001 — Ship a prebuilt "core" explore index
 
-**Status:** pending
-**Branch:** wip
+**Status:** complete
+**Branch:** cleanup/fresh-start-schema
 **Created:** 2026-07-25
+**Completed:** 2026-07-30
+
+## Outcome
+
+A fresh install downloads a 70.6 MB artifact and merges 1,076,133 rows
+in ~43 s, instead of streaming 205 GB over ~27 h. The dump importer that
+produces the artifact left the app binary entirely — it is behind the
+`indexbuild` build tag and runs only in CI.
+
+Phase 5 landed differently than planned: rather than a user-facing
+setting gating the deep import, the deep import is simply not in the
+app. `deep_catalog_enabled` existed briefly and was removed with it.
+
+Two things remain unverified or undone, both recorded in
+`.planning/NOTES.md`: anonymous package download on git.ljones.me has
+not been confirmed against a real published artifact, and installs whose
+index was built by older code (no `listens_applied_series`) have no
+rescue path — though with no migration chain, those databases are now
+unsupported anyway.
 
 ## Problem
 
@@ -250,17 +269,96 @@ egress if it is self-hosted on a home connection.
    columns dropped, metadata stamped, vacuumed. Verified against a
    synthetic index: no personal columns leak, no orphaned rows, caps
    respected.
-3. ⬜ **One real build.** Run `indexbuild` against a persistent volume
-   until it converges. This yields the first genuine dump-built index and
-   with it true row counts, on-disk size, real FTS share, and
-   `release_to_rg` size. **Every tier number above is still an
-   extrapolation from synthetic rows until this exists.**
-4. ⬜ **Import path.** First-run download + attach + upsert, with checksum
-   verification, resumability, and clean degradation on failure. Report
-   it as a job in the Jobs panel — the plumbing for that already exists.
-5. ⬜ **Gate the dump build.** Add the setting that makes the full import
-   opt-in, so a shipped core index isn't immediately followed by the
-   multi-GB download it was meant to replace.
+3. ✅ **One real build.** Superseded by a real dump-built index that
+   already existed on the dev machine (`dump_import_done` 2026-07-17).
+   Measured 2026-07-29 — these replace every extrapolation above:
+
+   | | rows | on disk |
+   |---|---|---|
+   | `explore_index` | 2,052,168 (227,359 artists / 400,675 RGs / 1,424,134 recordings) | 383 MB |
+   | its indexes | | 395 MB |
+   | FTS | | 80 MB |
+
+   187 B/row for the shippable table, 418 B/row all-in — so the ~900 MB
+   full-budget estimate was right. Two real exports:
+
+   | tier | rows | artifact | zstd -19 |
+   |---|---|---|---|
+   | 50K artists (default) | 1,076,133 | 191.5 MB | **70.6 MB** |
+   | 25K artists / 10 RG / 20 rec | 620,973 | 110.6 MB | **37.8 MB** |
+
+   `release_to_rg` was empty in that index — it predates the code that
+   persists it — so its size is still unmeasured.
+4. ✅ **Import path.** `backend/explore/artifactfetch.go` (download,
+   Range-resume, sha256, zstd) and `artifactimport.go` (validate, ATTACH,
+   batched merge, FTS rebuild, meta stamping). Reported in the Jobs panel
+   under its own two stages. Measured end to end on the real 50K-artist
+   artifact against a disk-backed DB: **1,076,133 rows merged in 43.2s**
+   (24,900 rows/s), yielding a 455 MB `yj.db`, FTS populated and
+   searchable. In-memory the same merge runs in 28.3s.
+5. ✅ **Gate the dump build.** `deep_catalog_enabled` in
+   `explore_index_meta` (beside `index_build_paused` — it is build state,
+   read at one decision point). Off by default; exposed as
+   `DeepCatalogEnabled` / `SetDeepCatalogEnabled` on the explore Service.
+   An interrupted dump import resumes regardless of the setting, so the
+   gate never discards a checkpoint that already cost hours.
+
+## Measured 2026-07-29: why the client cannot fix this itself
+
+`data.metabrainz.org` caps a client at ~2.1 MB/s. One Range stream and
+four concurrent Range lanes both delivered 32 MB at the same aggregate
+rate (2,111,195 B/s vs 2,209,000 B/s) while the same machine pulled
+66.9 MB/s from a CDN. **Parallelism buys nothing** — the four lanes just
+divide the same cap, and one of them starved to 0.5 MB/s.
+
+So stage 1 costs, unavoidably:
+
+| | bytes | wall clock |
+|---|---|---|
+| Whole tar (what shipped before column projection) | 205 GB | ~27 h |
+| Column projection, 3 columns (43.4%) | 89 GB | ~11.8 h |
+| `recording_mbid` only (24.1%), rolled up via canonical | 49 GB | ~6.5 h |
+| + 1-in-4 member stride sample | 12 GB | ~1.6 h |
+
+The last two are CI-side options, not client defaults: recording-only
+drops listens carrying no recording MBID and re-derives artist totals as
+a sum over recordings, and sampling trades exact counts for a ranking.
+Both are only safe because the selection they feed is a top-N cut.
+
+## Distribution: the "latest" version trick
+
+The client cannot enumerate package versions — Gitea's package listing
+API requires a token, while an anonymous file GET does not (a probe of a
+non-existent artifact returns 404, not 401). So `index-artifact.yml`
+publishes each artifact twice: under a dated version for history, and
+under a fixed `latest` version that the client fetches from a
+predictable URL. Generic packages reject overwriting an existing
+filename, so `latest` is DELETEd before each rewrite.
+
+⚠️ **Unverified:** that anonymous package *download* is actually enabled
+on git.ljones.me. The 404-vs-401 probe is suggestive, not proof — no
+artifact has been published yet to test against. Confirm before relying
+on it, and note that every install pulling from a personal Gitea makes
+its bandwidth and uptime a user-facing dependency.
+
+## Incremental retention bounds artifact staleness
+
+The incremental dump directory holds 30 dumps (series 2579–2610 as of
+2026-07-29) and full dumps land roughly monthly. An artifact older than
+~30 days therefore cannot be topped up: the dailies bridging the gap are
+gone. That is a permanent undercount of that window's listens, not
+corruption — but it pins the republish cadence at monthly.
+
+## Upgrade path for indexes built by older code
+
+The dev machine's index has `dump_import_done` set but **no**
+`listens_applied_series` and an empty `release_to_rg`, because it was
+built before the code that writes them. That combination is a dead end:
+`RefreshListenCounts` bails with "no baseline series recorded", and
+`runDumpBuild` short-circuits on the done marker, so popularity can
+never update again. Current code writes both, so this affects only
+pre-existing installs — but the artifact import is the natural place to
+rescue them, since merging one stamps a fresh baseline series.
 6. ✅ **CI wiring.** `.gitea/workflows/index-artifact.yml` — push +
    weekly cron + manual, concurrency-guarded, publishes only when
    `complete && changed` so identical artifacts don't accumulate.

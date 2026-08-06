@@ -36,6 +36,73 @@ fresh-install: setup generate clean
 	esac; \
 	go tool wails dev -tags webkit2_41 -loglevel Debug -v 2
 
+# Named, persistent sandboxes: `make sandbox foo` runs dev against
+# $(FRESH_HOME_BASE)/yellowjacket-sandbox-foo, creating it on first use
+# and reusing it (never deleting) afterward, so you can keep several
+# long-lived states around — one with an imported search index, one with
+# a small library, etc. `make sandbox-foo` is the same thing.
+#
+# `make sandboxes` lists the ones that exist.
+#
+# `make sandbox-rm foo [bar ...]` deletes them again, after confirming.
+#
+# The bare words after `sandbox` / `sandbox-rm` are extra make goals, so
+# they need do-nothing rules to keep make from complaining. Those rules
+# exist only when one of those is the first goal, so typos in other
+# targets still fail loudly.
+SANDBOX_DIR = $(FRESH_HOME_BASE)/yellowjacket-sandbox
+ifneq (,$(filter $(firstword $(MAKECMDGOALS)),sandbox sandbox-rm))
+SANDBOX_ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
+SANDBOX_NAME := $(firstword $(SANDBOX_ARGS))
+$(foreach a,$(SANDBOX_ARGS),$(eval $(a):;@:))
+endif
+
+sandbox: ## Run dev against a named, persistent YJ_HOME: make sandbox <name>
+	@if [ -z "$(SANDBOX_NAME)" ]; then \
+	  echo "usage: make sandbox <name>   (e.g. make sandbox foo)" >&2; exit 2; \
+	fi
+	@$(MAKE) --no-print-directory sandbox-$(SANDBOX_NAME)
+
+sandbox-rm: ## Delete named sandboxes: make sandbox-rm <name> [name ...]
+	@if [ -z "$(SANDBOX_ARGS)" ]; then \
+	  echo "usage: make sandbox-rm <name> [name ...]" >&2; exit 2; \
+	fi
+	@set -e; \
+	targets=""; \
+	for n in $(SANDBOX_ARGS); do \
+	  d="$(SANDBOX_DIR)-$$n"; \
+	  if [ -d "$$d" ]; then \
+	    echo "  $$(du -sh "$$d" 2>/dev/null | cut -f1)	$$d"; \
+	    targets="$$targets $$d"; \
+	  else \
+	    echo "  (no such sandbox: $$n)" >&2; \
+	  fi; \
+	done; \
+	if [ -z "$$targets" ]; then exit 1; fi; \
+	if [ "$(FORCE)" != "1" ]; then \
+	  printf "delete the above? [y/N] "; read -r ans; \
+	  case "$$ans" in y|Y|yes|YES) ;; *) echo "aborted"; exit 1 ;; esac; \
+	fi; \
+	rm -rf $$targets; \
+	echo "==> removed"
+
+sandbox-%: setup generate clean
+	if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
+	export YJ_HOME="$(SANDBOX_DIR)-$*"; \
+	mkdir -p "$$YJ_HOME"; \
+	echo "==> sandbox '$*' YJ_HOME=$$YJ_HOME"; \
+	case "$$(findmnt -no FSTYPE -T "$$YJ_HOME" 2>/dev/null)" in \
+	  tmpfs|ramfs) echo "==> WARNING: $$YJ_HOME is RAM-backed; the search index import needs ~6GB of real disk. Set FRESH_HOME_BASE to a disk-backed path." ;; \
+	esac; \
+	go tool wails dev -tags webkit2_41 -loglevel Debug -v 2
+
+sandboxes: ## List existing named sandboxes
+	@ls -d "$(SANDBOX_DIR)"-* 2>/dev/null \
+	  | sed 's|.*/yellowjacket-sandbox-|  |' \
+	  || echo "  (none)"
+
+.PHONY: sandbox sandbox-rm sandboxes
+
 build-dev: generate
 	go tool wails build -tags webkit2_41 -debug -clean -ldflags "$(LDFLAGS)"
 
@@ -54,9 +121,15 @@ generate:
 
 lint:
 	go tool golangci-lint run
+	go tool golangci-lint run --build-tags indexbuild
 
+# Two passes: the app build, then the `indexbuild` build that adds the
+# CI-only dump importer.  Without the second pass nothing would compile
+# or exercise backend/explore/dump*.go or cmd/indexbuild at all.
 test:
 	go test -tags webkit2_41 -race -count=1 -timeout 120s ./...
+	go test -tags "webkit2_41 indexbuild" -race -count=1 -timeout 300s \
+		./backend/explore/... ./cmd/...
 
 vulncheck:
 	go tool govulncheck ./...

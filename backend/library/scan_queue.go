@@ -3,8 +3,6 @@ package library
 import (
 	"fmt"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
-
 	"yellowjacket/backend/events"
 )
 
@@ -65,7 +63,7 @@ func (l *Library) ScanLibrary(id int64) error {
 	queueLength := len(l.scanQueue)
 	l.mu.Unlock()
 
-	runtime.EventsEmit(l.ctx, events.LibraryScanQueued, map[string]any{
+	l.emit(events.LibraryScanQueued, map[string]any{
 		"libraryId":   lib.ID,
 		"libraryName": lib.Name,
 		"queueLength": queueLength,
@@ -167,9 +165,31 @@ func (l *Library) SoftScanAllLibraries() error {
 			continue
 		}
 
-		diskCount := countAudioFiles(lib.Path)
+		dbModTime, modErr := l.db.Queries.GetLibraryMaxModifiedAt(
+			l.ctx, lib.ID,
+		)
+		if modErr != nil {
+			l.logger.Warn(
+				"soft scan: could not read newest mtime, queueing full scan",
+				"libraryID", lib.ID,
+				"libraryName", lib.Name,
+				"err", modErr,
+			)
 
-		if diskCount == dbCount {
+			_ = l.ScanLibrary(lib.ID)
+
+			continue
+		}
+
+		diskCount, diskModTime := surveyAudioFiles(lib.Path)
+
+		// A newer file on disk than anything on record means something
+		// was edited in place since the last scan.  An older newest-mtime
+		// is not evidence of a change: deleting the newest file lowers it
+		// while the count check already covers that case.
+		staleTags := diskModTime > dbModTime
+
+		if diskCount == dbCount && !staleTags {
 			l.logger.Info(
 				"soft scan: library unchanged, skipping",
 				"libraryID", lib.ID,
@@ -181,11 +201,14 @@ func (l *Library) SoftScanAllLibraries() error {
 		}
 
 		l.logger.Info(
-			"soft scan: file count mismatch, queueing scan",
+			"soft scan: library changed, queueing scan",
 			"libraryID", lib.ID,
 			"libraryName", lib.Name,
 			"diskFiles", diskCount,
 			"dbTracks", dbCount,
+			"diskModTime", diskModTime,
+			"dbModTime", dbModTime,
+			"reason", softScanReason(diskCount != dbCount, staleTags),
 		)
 
 		if err := l.ScanLibrary(lib.ID); err != nil {
@@ -199,6 +222,18 @@ func (l *Library) SoftScanAllLibraries() error {
 	}
 
 	return nil
+}
+
+// softScanReason labels why the soft scan queued a library, for the log.
+func softScanReason(countChanged, staleTags bool) string {
+	switch {
+	case countChanged && staleTags:
+		return "file count mismatch and modified files"
+	case countChanged:
+		return "file count mismatch"
+	default:
+		return "modified files"
+	}
 }
 
 // CancelCurrentScan cancels only the currently scanning library.
@@ -281,7 +316,7 @@ func (l *Library) drainQueue() {
 	hooks := l.scanHooks
 	l.mu.Unlock()
 
-	runtime.EventsEmit(l.ctx, events.LibraryScanQueueDrained)
+	l.emit(events.LibraryScanQueueDrained)
 
 	if hooks.OnAllScansComplete != nil {
 		hooks.OnAllScansComplete()

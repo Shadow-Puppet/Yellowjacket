@@ -44,6 +44,13 @@ type TrackMetadata struct {
 	// Format info
 	TagFormat  string // "ID3v2.3", "VORBIS", etc.
 	FileFormat string // "MP3", "FLAC", etc.
+
+	// TagReadWarning is set when the tag could not be read cleanly:
+	// ErrTagsRecovered if the lenient parser salvaged the fields above,
+	// ErrTagsUnreadable if they are empty because nothing could read the
+	// tag.  Nil on a clean read.  Either way the file is still usable —
+	// callers should surface the warning, not discard the track.
+	TagReadWarning error
 }
 
 // PictureData holds embedded artwork.
@@ -74,7 +81,11 @@ func ExtractTagsFromReader(r io.ReadSeeker) (*TrackMetadata, error) {
 			return &TrackMetadata{}, nil
 		}
 
-		return nil, fmt.Errorf("could not read tags: %w", err)
+		// A single malformed frame must not cost us the whole file: retry
+		// with a more forgiving parser and, failing that, hand back empty
+		// metadata carrying a warning.  The audio is still playable and
+		// the caller can fall back to the filename.
+		return recoverTags(r, err), nil
 	}
 
 	trackNum, totalTracks := m.Track()

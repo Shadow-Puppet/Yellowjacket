@@ -3,21 +3,20 @@ import { customElement, state, query } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/dialog/dialog.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import {
-    GetLibraryDirectory,
-    SetLibraryDirectory,
-} from '@go/config/Config';
+    AddLibrary,
+    GetAllLibrariesWithTrackCounts,
+} from '@go/library/Library';
 import { DirectoryPicker } from '@go/frontendutil/FrontendUtil';
 
 /**
  * First-run setup wizard.
  *
- * On startup it checks whether a library directory has already been
- * configured.  If one exists the wizard stays hidden and the app
- * proceeds as normal.  If none is set (fresh install), it presents a
- * non-dismissable modal prompting the user to pick their music folder,
- * saves it to the config, and dismisses itself.  Saving the directory
- * emits LibraryConfigChanged on the backend, which kicks off the
- * initial scan automatically.
+ * On startup it checks whether any library has already been registered.
+ * If one exists the wizard stays hidden and the app proceeds as normal.
+ * If there are none (fresh install), it presents a non-dismissable modal
+ * prompting the user to pick their music folder, registers it through the
+ * library CRUD API, and dismisses itself.  AddLibrary emits LibraryAdded
+ * and kicks off the initial scan automatically.
  */
 @customElement('first-run-wizard')
 export class FirstRunWizard extends LitElement {
@@ -40,13 +39,13 @@ export class FirstRunWizard extends LitElement {
         super.connectedCallback();
 
         try {
-            const existing = await GetLibraryDirectory();
+            const existing = await GetAllLibrariesWithTrackCounts();
 
-            // A configured directory means setup is already complete.
-            if (existing) return;
+            // An existing library means setup is already complete.
+            if (existing && existing.length > 0) return;
         } catch (err) {
             console.error(
-                'First-run wizard: failed to read library directory:',
+                'First-run wizard: failed to read libraries:',
                 err,
             );
 
@@ -249,7 +248,7 @@ export class FirstRunWizard extends LitElement {
         this.errorMessage = '';
 
         try {
-            await SetLibraryDirectory(this.selectedDirectory);
+            await AddLibrary(this.selectedDirectory);
 
             this.finished = true;
 
@@ -257,8 +256,8 @@ export class FirstRunWizard extends LitElement {
 
             this.active = false;
         } catch (err) {
-            this.errorMessage = `Could not save the folder: ${err}`;
-            console.error('First-run wizard: save failed:', err);
+            this.errorMessage = `Could not add the folder: ${err}`;
+            console.error('First-run wizard: add library failed:', err);
         } finally {
             this.saving = false;
         }

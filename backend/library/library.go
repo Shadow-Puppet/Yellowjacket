@@ -193,6 +193,31 @@ func (l *Library) SetContext(ctx context.Context) {
 	l.registerEventHandlers()
 }
 
+// emit publishes a Wails event, tolerating a context that carries no
+// Wails runtime.
+//
+// runtime.EventsEmit calls log.Fatalf when the context is nil or lacks
+// the runtime's "events" value, which terminates the process rather
+// than returning an error.  Background workers that outlive a context
+// and tests that construct a Library directly both hit that path, so
+// every emit in this package routes through here.
+func (l *Library) emit(event string, data ...any) {
+	l.mu.Lock()
+	ctx := l.ctx
+	l.mu.Unlock()
+
+	if ctx == nil || ctx.Value("events") == nil {
+		l.logger.Debug(
+			"skipping event emit, no Wails runtime in context",
+			"event", event,
+		)
+
+		return
+	}
+
+	runtime.EventsEmit(ctx, event, data...)
+}
+
 // registerEventHandlers sets up Wails runtime event listeners.
 // The legacy LibraryConfigChanged handler was removed — in the
 // multi-library model, libraries are managed through the CRUD
@@ -309,11 +334,11 @@ func (l *Library) scanInternal(
 	// legacy LibraryScanProgress event and the shared job registry.
 	// Routing everything through here keeps the two from drifting.
 	emitProgress := func(p ScanProgress) {
-		runtime.EventsEmit(l.ctx, events.LibraryScanProgress, p)
+		l.emit(events.LibraryScanProgress, p)
 		reportScanProgress(jobHandle, p)
 	}
 
-	runtime.EventsEmit(l.ctx, events.LibraryScanStarted, map[string]any{
+	l.emit(events.LibraryScanStarted, map[string]any{
 		"libraryId":   libraryID,
 		"libraryName": libraryName,
 	})
@@ -369,6 +394,12 @@ func (l *Library) scanInternal(
 
 	var errMu sync.Mutex
 
+	// statBackfill collects staleness baselines for skipped files whose
+	// rows predate migration 47.  Appended to only by the walk goroutine
+	// and read after workChan closes, which orders the writes before the
+	// flush.
+	var statBackfill []sqlcgen.UpdateAudioFileStatParams
+
 	// --- Phase 2: directory walk ---
 	walkStart := time.Now()
 
@@ -406,14 +437,38 @@ func (l *Library) scanInternal(
 					return nil
 				}
 
+				// Stat the entry for the staleness comparison below.
+				// This happens before the file is read, so a file
+				// modified mid-scan records the pre-read mtime and is
+				// picked up again next scan — the safe direction.
+				var (
+					diskModTime int64
+					diskSize    int64
+				)
+
+				if info, infoErr := d.Info(); infoErr == nil {
+					diskModTime = info.ModTime().Unix()
+					diskSize = info.Size()
+				} else {
+					l.logger.Debug(
+						"could not stat file, treating as unchanged",
+						"path", absoluteFilePath, "err", infoErr,
+					)
+				}
+
 				// Check if file already exists in database.
 				if existing, exists := existingPaths.LoadAndDelete(absoluteFilePath); exists {
 					audioFile := existing.(sqlcgen.AudioFile)
 
-					if audioFile.RecordingID == 0 {
+					contentChanged := fileContentChanged(
+						audioFile, diskModTime, diskSize,
+					)
+
+					if audioFile.RecordingID == 0 || contentChanged {
 						l.logger.Debug(
 							"file needs metadata update",
 							"path", absoluteFilePath,
+							"contentChanged", contentChanged,
 						)
 
 						select {
@@ -423,6 +478,8 @@ func (l *Library) scanInternal(
 							existingFileID: audioFile.ID,
 							needsUpdate:    true,
 							existingLength: audioFile.LengthMilliseconds,
+							contentChanged: contentChanged,
+							modTime:        diskModTime,
 						}:
 						case <-scanCtx.Done():
 							return scanCtx.Err()
@@ -438,6 +495,21 @@ func (l *Library) scanInternal(
 					)
 					skipped.Add(1)
 
+					// Record the baseline for a row that lacks one so the
+					// next scan can detect edits.  Collected here and
+					// flushed in one transaction after the walk rather
+					// than issuing an UPDATE per file.
+					if audioFile.ModifiedAt == 0 && diskModTime != 0 {
+						statBackfill = append(
+							statBackfill,
+							sqlcgen.UpdateAudioFileStatParams{
+								ModifiedAt: diskModTime,
+								FileSize:   diskSize,
+								ID:         audioFile.ID,
+							},
+						)
+					}
+
 					return nil
 				}
 
@@ -450,6 +522,7 @@ func (l *Library) scanInternal(
 				case workChan <- scanWork{
 					absolutePath: absoluteFilePath,
 					fileType:     fileType,
+					modTime:      diskModTime,
 				}:
 				case <-scanCtx.Done():
 					return scanCtx.Err()
@@ -658,6 +731,11 @@ func (l *Library) scanInternal(
 
 	metrics.ThumbnailWallClock = time.Since(thumbStart)
 
+	// Establish staleness baselines for unchanged files that lacked one.
+	// Safe to run even on a cancelled scan: every entry was individually
+	// confirmed against the file on disk during the walk.
+	l.flushStatBackfill(statBackfill)
+
 	// Skip orphan cleanup if the scan was cancelled — existingPaths
 	// still contains unvisited files that would be incorrectly deleted.
 	cancelled := scanCtx.Err() != nil
@@ -776,13 +854,9 @@ func (l *Library) scanInternal(
 	finishScanJob(jobHandle, metrics, cancelled)
 
 	if cancelled {
-		runtime.EventsEmit(
-			l.ctx, events.LibraryScanCancelled, metrics,
-		)
+		l.emit(events.LibraryScanCancelled, metrics)
 	} else {
-		runtime.EventsEmit(
-			l.ctx, events.LibraryScanComplete, metrics,
-		)
+		l.emit(events.LibraryScanComplete, metrics)
 	}
 
 	return metrics
@@ -791,6 +865,84 @@ func (l *Library) scanInternal(
 // progressInterval controls how often scan progress events are
 // emitted to the frontend.
 const progressInterval = 300 * time.Millisecond
+
+// fileContentChanged reports whether a file on disk differs from what
+// was imported, by comparing mtime and size against the recorded
+// baseline.  This is what catches another application retagging a file
+// in place — without it the scan skips every path already in the
+// database and the edit stays invisible until a full rescan.
+//
+// Two cases are deliberately treated as unchanged:
+//
+//   - A recorded mtime of 0 means no baseline exists (the row predates
+//     migration 47).  There is nothing to compare against, so reporting
+//     a change would re-import the entire library on first upgrade.
+//   - A disk mtime of 0 means the stat failed.  Skipping is preferable
+//     to re-importing a file on no evidence.
+//
+// A writer that preserves mtime and lands on an identical file size
+// defeats this check.  That needs content hashing to catch, which costs
+// a full read of every file — deliberately out of scope.
+func fileContentChanged(
+	audioFile sqlcgen.AudioFile,
+	diskModTime, diskSize int64,
+) bool {
+	if audioFile.ModifiedAt == 0 || diskModTime == 0 {
+		return false
+	}
+
+	return diskModTime != audioFile.ModifiedAt ||
+		diskSize != audioFile.FileSize
+}
+
+// flushStatBackfill writes mtime/size baselines for files the scan
+// skipped but that had no baseline recorded.  Failures are logged and
+// not fatal — a missing baseline only means the file is re-checked on
+// the next scan.
+func (l *Library) flushStatBackfill(
+	entries []sqlcgen.UpdateAudioFileStatParams,
+) {
+	if len(entries) == 0 {
+		return
+	}
+
+	tx, err := l.db.BeginTx()
+	if err != nil {
+		l.logger.Warn(
+			"could not begin stat backfill transaction",
+			"count", len(entries), "err", err,
+		)
+
+		return
+	}
+
+	defer func() { _ = tx.Rollback() }() // no-op after commit
+
+	txq := l.db.Queries.WithTx(tx)
+
+	for _, e := range entries {
+		if updErr := txq.UpdateAudioFileStat(l.ctx, e); updErr != nil {
+			l.logger.Warn(
+				"could not backfill file stat",
+				"audioFileID", e.ID, "err", updErr,
+			)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		l.logger.Warn(
+			"could not commit stat backfill",
+			"count", len(entries), "err", err,
+		)
+
+		return
+	}
+
+	l.logger.Info(
+		"recorded staleness baselines for existing files",
+		"count", len(entries),
+	)
+}
 
 // countAudioFiles performs a fast walk of the library directory,
 // counting only files with supported audio extensions.  No per-file
@@ -815,6 +967,46 @@ func countAudioFiles(basePath string) int64 {
 	)
 
 	return count
+}
+
+// surveyAudioFiles walks the library directory and returns both the
+// number of supported audio files and the newest mtime among them
+// (Unix seconds).  The soft scan compares both against the database:
+// the count catches added and removed files, the mtime catches files
+// another application edited in place.
+//
+// Unlike countAudioFiles this stats every entry, so it is the more
+// expensive of the two walks.  Only the startup soft scan uses it —
+// the in-scan progress total does not need mtimes.
+func surveyAudioFiles(basePath string) (count, maxModTime int64) {
+	_ = fs.WalkDir(
+		os.DirFS(basePath), ".",
+		func(_ string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+
+			ext := filepath.Ext(d.Name())
+			if _, ok := metadata.GetSupportedFileType(ext); !ok {
+				return nil
+			}
+
+			count++
+
+			info, infoErr := d.Info()
+			if infoErr != nil {
+				return nil
+			}
+
+			if mt := info.ModTime().Unix(); mt > maxModTime {
+				maxModTime = mt
+			}
+
+			return nil
+		},
+	)
+
+	return count, maxModTime
 }
 
 // hddWorkerCount is the maximum number of concurrent extraction
@@ -851,6 +1043,14 @@ type scanWork struct {
 	existingFileID int64 // non-zero if this is an update
 	needsUpdate    bool
 	existingLength int64 // existing length if updating
+	// contentChanged marks a file whose bytes differ from what was
+	// imported (mtime/size mismatch), as opposed to one merely missing
+	// its metadata link.  The audio itself may have changed, so cached
+	// values like duration cannot be reused.
+	contentChanged bool
+	// modTime is the file's mtime (Unix seconds) observed during the
+	// walk, stored as the new staleness baseline.
+	modTime int64
 }
 
 // importResult holds metadata extracted by workers, ready for DB insertion.
@@ -863,6 +1063,7 @@ type importResult struct {
 	existingFileID int64 // non-zero if this is an update
 	needsUpdate    bool
 	libraryID      int64 // library this file belongs to
+	modTime        int64 // mtime baseline to persist (Unix seconds)
 }
 
 // extractAudioMetadata reads and extracts metadata from an audio file.
@@ -877,10 +1078,15 @@ func (l *Library) extractAudioMetadata(
 		fileType:       work.fileType,
 		existingFileID: work.existingFileID,
 		needsUpdate:    work.needsUpdate,
+		modTime:        work.modTime,
 	}
 
 	// Skip duration decode if we already have it from a previous import.
-	skipDuration := work.needsUpdate && work.existingLength > 0
+	// A file whose bytes changed is decoded again — a re-encode or a
+	// replaced file can have a different duration than the one on record.
+	skipDuration := work.needsUpdate &&
+		work.existingLength > 0 &&
+		!work.contentChanged
 
 	tags, lengthMillis, audioProps, timing, err := metadata.ExtractAllMetadata(
 		work.absolutePath, skipDuration,
@@ -900,6 +1106,19 @@ func (l *Library) extractAudioMetadata(
 			work.absolutePath,
 			err,
 		)
+	}
+
+	// A degraded tag read is reported but never fatal — the track is
+	// imported either way, falling back to the filename if the tag
+	// yielded nothing.
+	if tags.TagReadWarning != nil {
+		l.logger.Warn(
+			"degraded tag read",
+			"path", work.absolutePath,
+			"err", tags.TagReadWarning,
+		)
+
+		metrics.addWarning(work.absolutePath, "tags", tags.TagReadWarning)
 	}
 
 	result.tags = tags
@@ -1055,6 +1274,7 @@ func (l *Library) saveAudioFile(
 			LibraryID:   result.libraryID,
 			GroupKey:    groupKey,
 			TagStatus:   tagStatus,
+			ModifiedAt:  result.modTime,
 		})
 	if err != nil {
 		return fmt.Errorf(
@@ -1144,13 +1364,15 @@ func (l *Library) updateAudioFileMetadata(
 
 	if err := q.UpdateAudioFileRecording(
 		l.ctx, sqlcgen.UpdateAudioFileRecordingParams{
-			RecordingID: recordingID,
-			SampleRate:  int64(props.SampleRate),
-			BitDepth:    int64(props.BitDepth),
-			Channels:    int64(props.Channels),
-			Bitrate:     int64(props.Bitrate),
-			FileSize:    props.FileSize,
-			ID:          result.existingFileID,
+			RecordingID:        recordingID,
+			SampleRate:         int64(props.SampleRate),
+			BitDepth:           int64(props.BitDepth),
+			Channels:           int64(props.Channels),
+			Bitrate:            int64(props.Bitrate),
+			FileSize:           props.FileSize,
+			LengthMilliseconds: result.lengthMillis,
+			ModifiedAt:         result.modTime,
+			ID:                 result.existingFileID,
 		}); err != nil {
 		return fmt.Errorf(
 			"could not update audio file recording: %w", err,

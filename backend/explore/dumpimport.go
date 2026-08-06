@@ -1,25 +1,33 @@
+//go:build indexbuild
+
 package explore
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"sync/atomic"
 	"time"
 
+	"yellowjacket/backend/database"
+	"yellowjacket/backend/jobs"
 	"yellowjacket/backend/system"
 )
 
 // Dump-based index population.  Instead of crawling the ListenBrainz
 // API artist-by-artist, the index is built from two MetaBrainz dumps:
 //
-//  1. The spark listens dump (~170GB, streamed, never stored) yields
+//  1. The spark listens dump (~205GB on the server, of which only the
+//     three MBID columns are downloaded — see dumpproject.go) yields
 //     listen counts for every recording/release/artist MBID.
 //  2. The MusicBrainz canonical dump (~2GB, streamed) yields names and
 //     MBIDs, filtered to entities above a popularity floor.
@@ -30,14 +38,6 @@ import (
 // resumes from checkpoints after interruption.
 
 const (
-	// dumpImportDoneKey marks a completed import in explore_index_meta.
-	dumpImportDoneKey = "dump_import_done"
-
-	// listensAppliedSeriesKey stores the dump series number whose listen
-	// counts are folded into popularity (the high-water-mark for the
-	// incremental refresh).  Set to the full dump's series at import, then
-	// advanced by each applied incremental.
-	listensAppliedSeriesKey = "listens_applied_series"
 
 	// releaseToRGInsertBatch bounds how many rows are written per
 	// transaction when persisting the release→release-group map.
@@ -55,9 +55,6 @@ const (
 	// written and only patch passes remain.
 	dumpStageAssembled = "assembled"
 )
-
-// ErrDiskSpace is returned when free disk falls below the safety floor.
-var ErrDiskSpace = errors.New("insufficient free disk space")
 
 // Dump import stages, mapped to status names shown in the UI.
 const (
@@ -115,6 +112,14 @@ type dumpImporter struct {
 	// pendingArtists are kept artists whose names weren't derivable
 	// from the canonical dump; the metadata patch pass resolves them.
 	pendingArtists []string
+
+	// countsRate is the listens stream throughput in bytes/sec, written
+	// by the stage-1 progress reporter and read by its loggers.
+	countsRate atomic.Uint64
+
+	// ftsResumed guards the bulk-load window so the FTS rebuild runs
+	// exactly once per import.
+	ftsResumed bool
 }
 
 func newDumpImporter(si *SearchIndex, lb *ListenBrainzClient) (*dumpImporter, error) {
@@ -132,10 +137,10 @@ func newDumpImporter(si *SearchIndex, lb *ListenBrainzClient) (*dumpImporter, er
 		si:     si,
 		lb:     lb,
 		logger: si.logger,
-		// No client-level timeout: the listens stream runs for hours.
-		// Discovery requests use per-request context timeouts, and
-		// resumableReader recovers from stalled connections.
-		httpClient:        &http.Client{},
+		// HTTP/1.1-only, no client-level timeout: the listens stream
+		// runs for hours.  Discovery requests use per-request context
+		// timeouts, and the stream readers recover from stalls.
+		httpClient:        newDumpHTTPClient(),
 		stagingDir:        stagingDir,
 		canonicalBaseURL:  defaultCanonicalBaseURL,
 		listensBaseURL:    defaultListensBaseURL,
@@ -192,6 +197,8 @@ func (imp *dumpImporter) run(ctx context.Context) error {
 		}
 
 		imp.logger.Info("dump import: starting", "listensDump", sparkURL)
+		imp.logJob("Streaming listens dump " + path.Base(sparkURL) +
+			" — this stage reads tens of gigabytes and runs for hours")
 
 		counts = &countsState{SparkURL: sparkURL}
 	} else if !counts.Done {
@@ -200,6 +207,10 @@ func (imp *dumpImporter) run(ctx context.Context) error {
 			"members", counts.MemberIdx,
 			"entities", len(counts.counts),
 		)
+		imp.logJob(fmt.Sprintf(
+			"Resuming listen counts from %s (%s members, %s entities so far)",
+			formatGB(counts.Offset), formatCount(counts.MemberIdx), formatCount(len(counts.counts)),
+		))
 	}
 
 	// Record which dump series this import is baselined on, so the
@@ -251,15 +262,15 @@ func (imp *dumpImporter) run(ctx context.Context) error {
 		return err
 	}
 
-	// One-time reset when migrating from the legacy API-crawled
-	// index: its popularity values are on a different scale (the LB
-	// API includes MLHD+ history) and would permanently outrank
-	// dump-derived counts via the highest-wins upsert.  Re-imports
-	// (dump→dump) skip this — listen counts only grow.
-	if !imp.si.hasMeta(dumpImportDoneKey) {
-		if _, err := imp.si.db.ExecContext("DELETE FROM explore_index"); err == nil {
-			imp.logger.Info("dump import: cleared legacy index for consistent popularity scale")
-		}
+	// Bulk-load window: the wipe below and the millions of upserts that
+	// follow would otherwise each maintain the FTS5 index row by row,
+	// which dominates the entire import (~31 rows/s vs ~4,700).  The
+	// index is rebuilt in one pass when the window closes.
+	if err := imp.si.db.SuspendExploreIndexFTS(); err != nil {
+		// Not fatal: the import still completes, just slowly.
+		imp.logger.Warn("dump import: could not suspend FTS sync", "error", err)
+	} else {
+		defer imp.resumeFTS()
 	}
 
 	if err := imp.assembleIndex(ctx, kept, scan); err != nil {
@@ -271,6 +282,11 @@ func (imp *dumpImporter) run(ctx context.Context) error {
 	// album without an API call.  Kept in lockstep with the index it was
 	// just built from.
 	imp.persistReleaseToRG(ctx, scan.releaseToRG)
+
+	// Close the bulk-load window now rather than at return: the patch
+	// passes below run at API rate, so per-row FTS upkeep costs nothing
+	// there and keeps search current while they work.
+	imp.resumeFTS()
 
 	imp.si.setTierStatus(dumpStageNames[dumpStageCatalog], "complete", 0, 0)
 
@@ -299,15 +315,37 @@ func (imp *dumpImporter) run(ctx context.Context) error {
 	return imp.finalize()
 }
 
+// resumeFTS closes the bulk-load window, restoring the FTS sync
+// triggers and rebuilding the index.  Idempotent, so it can run both at
+// its natural point in the pipeline and from a defer covering the
+// error and cancellation paths.
+func (imp *dumpImporter) resumeFTS() {
+	if imp.ftsResumed {
+		return
+	}
+
+	imp.ftsResumed = true
+
+	start := time.Now()
+
+	if err := imp.si.db.ResumeExploreIndexFTS(); err != nil {
+		// Leaving search unindexed is worse than a slow import, so this
+		// is loud: it needs a rebuild to recover.
+		imp.logger.Error("dump import: FTS rebuild failed — search index is stale",
+			"error", err,
+		)
+
+		return
+	}
+
+	imp.logger.Info("dump import: FTS index rebuilt",
+		"elapsed", time.Since(start).Round(time.Millisecond),
+	)
+}
+
 // finalize records completion and removes all staging data.
 func (imp *dumpImporter) finalize() error {
 	imp.si.setMeta(dumpImportDoneKey, time.Now().UTC().Format(time.RFC3339))
-
-	// Retire the legacy tier-crawl freshness keys.
-	_, _ = imp.si.db.ExecContext(
-		`DELETE FROM explore_index_meta
-		 WHERE key IN ('tier1_built', 'tier2_built', 'tier3_built', 'tier4_built')`,
-	)
 
 	if err := os.RemoveAll(imp.stagingDir); err != nil {
 		imp.logger.Warn("dump import: staging cleanup failed", "error", err)
@@ -324,25 +362,6 @@ func (imp *dumpImporter) finalize() error {
 	imp.logger.Info("dump import: complete")
 
 	return nil
-}
-
-// dumpSeriesRe extracts the monotonic series number NNNN from a dump
-// URL or directory name (e.g. "listenbrainz-spark-dump-2593-…").
-var dumpSeriesRe = regexp.MustCompile(`listenbrainz-(?:spark-)?dump-(\d+)-`)
-
-// parseDumpSeries pulls the series number out of a dump URL/name.
-func parseDumpSeries(url string) (int, bool) {
-	m := dumpSeriesRe.FindStringSubmatch(url)
-	if m == nil {
-		return 0, false
-	}
-
-	n, err := strconv.Atoi(m[1])
-	if err != nil {
-		return 0, false
-	}
-
-	return n, true
 }
 
 // recordDumpSeries stores the baseline series number for this import.
@@ -374,7 +393,10 @@ func (imp *dumpImporter) persistReleaseToRG(ctx context.Context, m map[uuid16]rg
 	written := 0
 	pending := 0
 
-	tx, err := imp.si.db.BeginTx()
+	// The statement is prepared per transaction rather than passed to
+	// tx.Exec per row: re-parsing it for each of several million rows
+	// costs an order of magnitude more than the insert itself.
+	tx, stmt, err := beginReleaseToRGTx(imp.si.db)
 	if err != nil {
 		imp.logger.Warn("dump import: begin release_to_rg tx failed", "error", err)
 
@@ -383,13 +405,13 @@ func (imp *dumpImporter) persistReleaseToRG(ctx context.Context, m map[uuid16]rg
 
 	for rel, target := range m {
 		if ctx.Err() != nil {
+			_ = stmt.Close()
 			_ = tx.Rollback()
 
 			return
 		}
 
-		if _, err := tx.Exec(
-			"INSERT OR REPLACE INTO release_to_rg (release_mbid, rg_mbid) VALUES (?, ?)",
+		if _, err := stmt.Exec(
 			formatUUID(rel[:]), formatUUID(target.rg[:]),
 		); err != nil {
 			imp.logger.Warn("dump import: insert release_to_rg failed", "error", err)
@@ -401,6 +423,8 @@ func (imp *dumpImporter) persistReleaseToRG(ctx context.Context, m map[uuid16]rg
 		pending++
 
 		if pending >= releaseToRGInsertBatch {
+			_ = stmt.Close()
+
 			if err := tx.Commit(); err != nil {
 				imp.logger.Warn("dump import: commit release_to_rg batch failed", "error", err)
 
@@ -409,7 +433,7 @@ func (imp *dumpImporter) persistReleaseToRG(ctx context.Context, m map[uuid16]rg
 
 			pending = 0
 
-			tx, err = imp.si.db.BeginTx()
+			tx, stmt, err = beginReleaseToRGTx(imp.si.db)
 			if err != nil {
 				imp.logger.Warn("dump import: begin release_to_rg tx failed", "error", err)
 
@@ -418,6 +442,8 @@ func (imp *dumpImporter) persistReleaseToRG(ctx context.Context, m map[uuid16]rg
 		}
 	}
 
+	_ = stmt.Close()
+
 	if err := tx.Commit(); err != nil {
 		imp.logger.Warn("dump import: commit release_to_rg failed", "error", err)
 
@@ -425,6 +451,26 @@ func (imp *dumpImporter) persistReleaseToRG(ctx context.Context, m map[uuid16]rg
 	}
 
 	imp.logger.Info("dump import: persisted release→release-group map", "rows", written)
+}
+
+// beginReleaseToRGTx opens a batch transaction with the row insert
+// already prepared on it.
+func beginReleaseToRGTx(db *database.DB) (*sql.Tx, *sql.Stmt, error) {
+	tx, err := db.BeginTx()
+	if err != nil {
+		return nil, nil, fmt.Errorf("release_to_rg begin: %w", err)
+	}
+
+	stmt, err := tx.Prepare(
+		"INSERT OR REPLACE INTO release_to_rg (release_mbid, rg_mbid) VALUES (?, ?)",
+	)
+	if err != nil {
+		_ = tx.Rollback()
+
+		return nil, nil, fmt.Errorf("release_to_rg prepare: %w", err)
+	}
+
+	return tx, stmt, nil
 }
 
 func (imp *dumpImporter) readState() (*dumpImportState, error) {
@@ -470,26 +516,22 @@ func (imp *dumpImporter) setStageProgress(stage, completed, total int) {
 	imp.si.setTierStatus(dumpStageNames[stage], "running", total, completed)
 }
 
+// setStageDetail is setStageProgress plus a human-readable line for
+// stages where completed/total alone is uninformative.
+func (imp *dumpImporter) setStageDetail(stage, completed, total int, detail string) {
+	imp.si.setTierDetail(dumpStageNames[stage], "running", total, completed, detail)
+}
+
+// logJob appends a line to the index build's job log, which is what the
+// user sees in the jobs panel.  A build with no registered job (tests,
+// headless imports) drops the line.
+func (imp *dumpImporter) logJob(message string) {
+	imp.si.logIndexJob(jobs.LevelInfo, message)
+}
+
 // checkDiskHeadroom aborts the import when free disk is critically low.
 func (imp *dumpImporter) checkDiskHeadroom() error {
 	return checkFreeDisk(imp.stagingDir, imp.abortFreeBytes)
-}
-
-// checkFreeDisk returns ErrDiskSpace when the volume holding path has
-// less than minBytes free.  Unknown free space (unsupported platform)
-// passes.
-func checkFreeDisk(path string, minBytes uint64) error {
-	free, ok := diskFreeBytes(path)
-	if !ok {
-		return nil
-	}
-
-	if free < minBytes {
-		return fmt.Errorf("%w: %d MB free, need %d MB",
-			ErrDiskSpace, free>>20, minBytes>>20)
-	}
-
-	return nil
 }
 
 // ---------------------------------------------------------------------------

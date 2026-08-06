@@ -10,15 +10,12 @@ YellowJacket is a cross-platform desktop music player built with Go (backend) an
 
 Active and historical plans live in `.planning/`:
 
-- `.planning/ROADMAP.md` — vision, capability set, milestone sequence.
 - `.planning/NOTES.md` — gotchas, deferred items, open architecture questions, the "we already considered and rejected" list.
 - `.planning/plans/active/` — work currently in progress (read first).
 - `.planning/plans/pending/` — sequenced future work.
 - `.planning/plans/completed/` — one concise recap per shipped milestone.
 
 Numbering is sequential and stable across status moves (a plan keeps its `NNN-` prefix as it migrates between `pending → active → completed`). Abandoned plans are deleted; paused work stays in `pending/`.
-
-The legacy `.gsd/` directory is a snapshot of the prior GSD-CLI planning system. It's gitignored and will be removed once nothing relies on it.
 
 ## Commands
 
@@ -28,8 +25,8 @@ make dev-debug        # Same as dev but with YJ_LOG_LEVEL=debug
 make build-dev        # Debug build with symbols
 make build-prod       # Production build (stripped, UPX-compressed)
 make generate         # Run code generators (sqlc + templ via go generate)
-make lint             # golangci-lint v2 (strict)
-make test             # All tests with race detector, 2min timeout
+make lint             # golangci-lint v2 (strict), both build configurations
+make test             # All tests with race detector, both build configurations
 make vulncheck        # govulncheck for CVEs
 make setup            # Install go tools, frontend deps, git hooks (lefthook)
 ```
@@ -44,6 +41,14 @@ go test -tags webkit2_41 ./backend/player/               # Single package
 go test -tags webkit2_41 -run TestName ./backend/player/  # Single test
 ```
 
+The central index builder is behind a second tag and is **not** covered
+by the command above — `make test` runs both passes, but a manual run
+needs it spelled out:
+
+```bash
+go test -tags "webkit2_41 indexbuild" ./backend/explore/... ./cmd/...
+```
+
 Audio playback integration tests require `YELLOWJACKET_INTEGRATION=1`.
 
 ## Architecture
@@ -55,12 +60,38 @@ Audio playback integration tests require `YELLOWJACKET_INTEGRATION=1`.
 - `queue` — Track queue with shuffle (Fisher-Yates), repeat modes, auto-advance, and session persistence.
 - `library` — Concurrent library scanning, metadata extraction, cover art deduplication, incremental rescan.
 - `database` — SQLite via pure-Go driver. Schema in `database/sql/schemas/`, queries in `database/sql/queries/`. **sqlc** generates Go code into `database/sql/sqlcgen/` — never edit that directory by hand.
+  There is **no migration chain**: `applySchema` creates everything from
+  the schema files on every open (all DDL is `IF NOT EXISTS`), and a
+  database written by an older build is not supported. Changing the
+  schema means editing the file in `sql/schemas/`, not adding a step.
 - `metadata` — Tag extraction (ID3v2, Vorbis Comments, FLAC).
 - `config` — TOML-based settings. Settings page uses HTMX + templ for server-rendered HTML fragments.
 - `playlist` / `smartplaylist` — Playlist CRUD and rule-based smart playlists.
 - `mediacontrols` — MPRIS integration on Linux via D-Bus.
 - `system` — OS-specific paths (XDG on Linux, `%LOCALAPPDATA%` on Windows).
+- `explore` — Catalog search and browse over `explore_index`. See below.
 - `profiling` — pprof server on `:6060`, compiled out in non-dev builds via build tags (`internal/dev/`).
+
+**Explore catalog** (`backend/explore/`): the searchable MusicBrainz/
+ListenBrainz catalog in `explore_index`. Deriving it from the MetaBrainz
+dumps means streaming ~89 GB from a server that caps a client near
+2 MB/s — half a day, for a catalog identical for every user. So that
+work happens **once, centrally**, and users download the result:
+
+- `cmd/indexbuild` builds the catalog from the dumps; `cmd/indexexport`
+  cuts it down to a shippable core and stamps its provenance.
+  `.gitea/workflows/index-artifact.yml` runs both and publishes the
+  compressed artifact under a fixed `latest` version.
+- The app fetches and merges that artifact (`artifactfetch.go`,
+  `artifactimport.go`) — about a minute, versus a day.
+- Everything the app does **not** need is behind the `indexbuild` build
+  tag (`dumpimport.go`, `dumpcounts.go`, `dumpcatalog.go`,
+  `dumpproject.go`, `dumpparallel.go`, `indexpatch.go`) so it is not
+  linked into the binary. `dumpbuild_stub.go` is the app-side entry
+  point; `dumpshared.go` holds what both sides use.
+- The app keeps popularity current with the daily incremental dumps
+  (`dumpincremental.go`), and resolves artists outside the artifact's
+  coverage lazily on first view.
 
 **Frontend** (`frontend/`): Lit 3.2 web components + Web Awesome UI library + HTMX. State management via singleton reactive stores in `src/store/`. Wails bindings auto-generated in `frontend/wailsjs/` — don't edit by hand.
 
@@ -82,7 +113,8 @@ Pre-commit hooks verify generated code is fresh — always run `make generate` a
 
 ## Testing
 
-Tests use `database.NewTestDB(t)` for in-memory SQLite with full schema. Test audio fixtures live in `test_data/music_library_test/`. Table-driven tests are the norm.
+Tests use `database.NewTestDB(t)` for in-memory SQLite, built by the same
+`applySchema` production uses so the two cannot diverge. Test audio fixtures live in `test_data/music_library_test/`. Table-driven tests are the norm.
 
 ## Git Workflow
 

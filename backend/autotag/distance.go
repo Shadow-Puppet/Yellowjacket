@@ -192,6 +192,16 @@ func rotateEndWord(s string) string {
 	return s
 }
 
+// TitleSimilarity exposes titleSimilarity for callers outside the
+// package that compare music metadata strings and should get the same
+// answer the tagger would.  The download pipeline uses it to match
+// candidate filenames against an expected tracklist — Soulseek and
+// torrent results carry paths, not tags, so filename comparison is the
+// only signal available before the bytes arrive.
+func TitleSimilarity(a, b string) float64 {
+	return titleSimilarity(a, b)
+}
+
 // titleSimilarity returns a score in [0, 1] from stringDist.  1.0
 // means identical after normalization, 0.0 means fully dissimilar.
 func titleSimilarity(a, b string) float64 {

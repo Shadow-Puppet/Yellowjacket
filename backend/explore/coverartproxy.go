@@ -23,7 +23,7 @@ var ErrCoverArt = errors.New("cover art fetch failed")
 const (
 	// thumbnailDir is the subdirectory under the user data dir
 	// where cached cover art thumbnails are stored.
-	thumbnailDir = "cover-art-cache"
+	thumbnailDir = CoverArtCacheDirName
 
 	// thumbnailTimeout is the HTTP timeout for fetching a thumbnail.
 	thumbnailTimeout = 10 * time.Second

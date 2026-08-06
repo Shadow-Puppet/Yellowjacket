@@ -15,3 +15,5 @@ CREATE TABLE IF NOT EXISTS recordings (
 
 CREATE INDEX IF NOT EXISTS idx_recordings_artist_credit_id
     ON recordings(artist_credit_id);
+
+CREATE INDEX IF NOT EXISTS idx_recordings_mbid ON recordings(mbid) WHERE mbid IS NOT NULL;
