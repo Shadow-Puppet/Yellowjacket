@@ -137,148 +137,148 @@ func providerRowToConfig(r sqlcgen.DownloadProvider) Config {
 }
 
 // ---------------------------------------------------------------------------
-// Requests
+// Downloads
 // ---------------------------------------------------------------------------
 
-// CreateRequest persists a new request.
-func (s *Store) CreateRequest(ctx context.Context, req Request) error {
-	expected, err := json.Marshal(req.Expected)
+// CreateDownload persists a new download.
+func (s *Store) CreateDownload(ctx context.Context, dl Download) error {
+	expected, err := json.Marshal(dl.Expected)
 	if err != nil {
 		return fmt.Errorf("encode expected tracks: %w", err)
 	}
 
-	source := req.Source
+	source := dl.Source
 	if source == "" {
 		source = "manual"
 	}
 
-	wantID := sql.NullInt64{}
-	if req.WantID != 0 {
-		wantID = sql.NullInt64{Int64: req.WantID, Valid: true}
+	requestID := sql.NullInt64{}
+	if dl.RequestID != 0 {
+		requestID = sql.NullInt64{Int64: dl.RequestID, Valid: true}
 	}
 
-	if err := s.db.Queries.CreateDownloadRequest(
+	if err := s.db.Queries.CreateDownload(
 		ctx,
-		sqlcgen.CreateDownloadRequestParams{
-			ID:               req.ID,
-			LibraryID:        req.LibraryID,
+		sqlcgen.CreateDownloadParams{
+			ID:               dl.ID,
+			LibraryID:        dl.LibraryID,
 			Source:           source,
-			WantID:           wantID,
-			ReleaseMbid:      toNullString(req.ReleaseMBID),
-			ReleaseGroupMbid: toNullString(req.ReleaseGroupMBID),
-			RecordingMbid:    toNullString(req.RecordingMBID),
-			Artist:           req.Artist,
-			Album:            req.Album,
-			Query:            req.Query,
+			RequestID:        requestID,
+			ReleaseMbid:      toNullString(dl.ReleaseMBID),
+			ReleaseGroupMbid: toNullString(dl.ReleaseGroupMBID),
+			RecordingMbid:    toNullString(dl.RecordingMBID),
+			Artist:           dl.Artist,
+			Album:            dl.Album,
+			Query:            dl.Query,
 			Expected:         string(expected),
 			State:            string(StateSearching),
 		},
 	); err != nil {
-		return fmt.Errorf("create download request: %w", err)
+		return fmt.Errorf("create download: %w", err)
 	}
 
 	return nil
 }
 
-// GetRequest loads a request by ID.
-func (s *Store) GetRequest(ctx context.Context, id string) (Request, error) {
-	row, err := s.db.ReadQueries.GetDownloadRequest(ctx, id)
+// GetDownload loads a download by ID.
+func (s *Store) GetDownload(ctx context.Context, id string) (Download, error) {
+	row, err := s.db.ReadQueries.GetDownload(ctx, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return Request{}, fmt.Errorf("%w: request %s", ErrNotFound, id)
+			return Download{}, fmt.Errorf("%w: download %s", ErrNotFound, id)
 		}
 
-		return Request{}, fmt.Errorf("get download request: %w", err)
+		return Download{}, fmt.Errorf("get download: %w", err)
 	}
 
-	return requestRowToRequest(row), nil
+	return downloadRowToDownload(row), nil
 }
 
-// GetRequestState returns a request's current state and error text.
-// Kept separate from GetRequest because state is the one field that
+// GetDownloadState returns a download's current state and error text.
+// Kept separate from GetDownload because state is the one field that
 // changes constantly while the rest of the row is immutable.
-func (s *Store) GetRequestState(
+func (s *Store) GetDownloadState(
 	ctx context.Context,
 	id string,
 ) (State, string, error) {
-	row, err := s.db.ReadQueries.GetDownloadRequest(ctx, id)
+	row, err := s.db.ReadQueries.GetDownload(ctx, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return "", "", fmt.Errorf("%w: request %s", ErrNotFound, id)
+			return "", "", fmt.Errorf("%w: download %s", ErrNotFound, id)
 		}
 
-		return "", "", fmt.Errorf("get download request state: %w", err)
+		return "", "", fmt.Errorf("get download state: %w", err)
 	}
 
 	return State(row.State), row.Error, nil
 }
 
-// ListRequests returns the most recent requests, newest first.
-func (s *Store) ListRequests(ctx context.Context, limit int) ([]Request, error) {
-	rows, err := s.db.ReadQueries.ListDownloadRequests(ctx, int64(limit))
+// ListDownloads returns the most recent downloads, newest first.
+func (s *Store) ListDownloads(ctx context.Context, limit int) ([]Download, error) {
+	rows, err := s.db.ReadQueries.ListDownloads(ctx, int64(limit))
 	if err != nil {
-		return nil, fmt.Errorf("list download requests: %w", err)
+		return nil, fmt.Errorf("list downloads: %w", err)
 	}
 
-	out := make([]Request, 0, len(rows))
+	out := make([]Download, 0, len(rows))
 
 	for _, r := range rows {
-		out = append(out, requestRowToRequest(r))
+		out = append(out, downloadRowToDownload(r))
 	}
 
 	return out, nil
 }
 
-// SetRequestState updates a request's state and error text.
-func (s *Store) SetRequestState(
+// SetDownloadState updates a download's state and error text.
+func (s *Store) SetDownloadState(
 	ctx context.Context,
 	id string,
 	state State,
 	errText string,
 ) error {
-	if err := s.db.Queries.SetDownloadRequestState(
+	if err := s.db.Queries.SetDownloadState(
 		ctx,
-		sqlcgen.SetDownloadRequestStateParams{
+		sqlcgen.SetDownloadStateParams{
 			State: string(state),
 			Error: errText,
 			ID:    id,
 		},
 	); err != nil {
-		return fmt.Errorf("set download request state: %w", err)
+		return fmt.Errorf("set download state: %w", err)
 	}
 
 	return nil
 }
 
-// DeleteRequest removes a request and, by cascade, its items.
-func (s *Store) DeleteRequest(ctx context.Context, id string) error {
-	if err := s.db.Queries.DeleteDownloadRequest(ctx, id); err != nil {
-		return fmt.Errorf("delete download request: %w", err)
+// DeleteDownload removes a download and, by cascade, its items.
+func (s *Store) DeleteDownload(ctx context.Context, id string) error {
+	if err := s.db.Queries.DeleteDownload(ctx, id); err != nil {
+		return fmt.Errorf("delete download: %w", err)
 	}
 
 	return nil
 }
 
-// ClearFinished removes every terminal request.
+// ClearFinished removes every terminal download.
 func (s *Store) ClearFinished(ctx context.Context) error {
-	if err := s.db.Queries.DeleteFinishedDownloadRequests(ctx); err != nil {
-		return fmt.Errorf("clear finished download requests: %w", err)
+	if err := s.db.Queries.DeleteFinishedDownloads(ctx); err != nil {
+		return fmt.Errorf("clear finished downloads: %w", err)
 	}
 
 	return nil
 }
 
-// requestRowToRequest decodes a stored request row.
-func requestRowToRequest(r sqlcgen.DownloadRequest) Request {
+// downloadRowToDownload decodes a stored download row.
+func downloadRowToDownload(r sqlcgen.DownloadDownload) Download {
 	var expected []ExpectedTrack
 
 	_ = json.Unmarshal([]byte(r.Expected), &expected)
 
-	return Request{
+	return Download{
 		ID:               r.ID,
 		LibraryID:        r.LibraryID,
 		Source:           r.Source,
-		WantID:           r.WantID.Int64,
+		RequestID:        r.RequestID.Int64,
 		ReleaseMBID:      r.ReleaseMbid.String,
 		ReleaseGroupMBID: r.ReleaseGroupMbid.String,
 		RecordingMBID:    r.RecordingMbid.String,
@@ -294,10 +294,16 @@ func requestRowToRequest(r sqlcgen.DownloadRequest) Request {
 // Items
 // ---------------------------------------------------------------------------
 
-// Item is one grab attempt, as stored.
-type Item struct {
+// DownloadItem is one grab attempt, as stored.
+//
+// deliberate: distinguishes it from download.Download (the attempt) and
+// download.Request (the durable record) at every call site, which a bare
+// "Item" would not.
+//
+//nolint:revive // stutters as download.DownloadItem, but the name is
+type DownloadItem struct {
 	ID         string    `json:"id"`
-	RequestID  string    `json:"requestId"`
+	DownloadID string    `json:"downloadId"`
 	ProviderID int64     `json:"providerId"`
 	Transport  int64     `json:"transportId,omitempty"`
 	ExternalID string    `json:"externalId,omitempty"`
@@ -313,7 +319,7 @@ type Item struct {
 }
 
 // CreateItem persists a grab attempt.
-func (s *Store) CreateItem(ctx context.Context, item Item) error {
+func (s *Store) CreateItem(ctx context.Context, item DownloadItem) error {
 	candidate, err := json.Marshal(item.Candidate)
 	if err != nil {
 		return fmt.Errorf("encode candidate: %w", err)
@@ -328,7 +334,7 @@ func (s *Store) CreateItem(ctx context.Context, item Item) error {
 		ctx,
 		sqlcgen.CreateDownloadItemParams{
 			ID:          item.ID,
-			RequestID:   item.RequestID,
+			DownloadID:  item.DownloadID,
 			ProviderID:  item.ProviderID,
 			TransportID: transport,
 			ExternalID:  item.ExternalID,
@@ -345,30 +351,31 @@ func (s *Store) CreateItem(ctx context.Context, item Item) error {
 }
 
 // GetItem loads one item.
-func (s *Store) GetItem(ctx context.Context, id string) (Item, error) {
+func (s *Store) GetItem(ctx context.Context, id string) (DownloadItem, error) {
 	row, err := s.db.ReadQueries.GetDownloadItem(ctx, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return Item{}, fmt.Errorf("%w: item %s", ErrNotFound, id)
+			return DownloadItem{}, fmt.Errorf("%w: item %s", ErrNotFound, id)
 		}
 
-		return Item{}, fmt.Errorf("get download item: %w", err)
+		return DownloadItem{}, fmt.Errorf("get download item: %w", err)
 	}
 
 	return itemRowToItem(row), nil
 }
 
-// ListItemsForRequest returns a request's grab attempts, oldest first.
-func (s *Store) ListItemsForRequest(
+// ListItemsForDownload returns a download's grab attempts, oldest
+// first.
+func (s *Store) ListItemsForDownload(
 	ctx context.Context,
-	requestID string,
-) ([]Item, error) {
-	rows, err := s.db.ReadQueries.ListDownloadItemsForRequest(ctx, requestID)
+	downloadID string,
+) ([]DownloadItem, error) {
+	rows, err := s.db.ReadQueries.ListDownloadItemsForDownload(ctx, downloadID)
 	if err != nil {
 		return nil, fmt.Errorf("list download items: %w", err)
 	}
 
-	out := make([]Item, 0, len(rows))
+	out := make([]DownloadItem, 0, len(rows))
 
 	for _, r := range rows {
 		out = append(out, itemRowToItem(r))
@@ -379,13 +386,13 @@ func (s *Store) ListItemsForRequest(
 
 // ListLiveItems returns every non-terminal item.  Called at startup to
 // decide what to resume, reconcile or abandon.
-func (s *Store) ListLiveItems(ctx context.Context) ([]Item, error) {
+func (s *Store) ListLiveItems(ctx context.Context) ([]DownloadItem, error) {
 	rows, err := s.db.ReadQueries.ListLiveDownloadItems(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list live download items: %w", err)
 	}
 
-	out := make([]Item, 0, len(rows))
+	out := make([]DownloadItem, 0, len(rows))
 
 	for _, r := range rows {
 		out = append(out, itemRowToItem(r))
@@ -479,7 +486,7 @@ func (s *Store) SetItemImported(
 }
 
 // itemRowToItem decodes a stored item row.
-func itemRowToItem(r sqlcgen.DownloadItem) Item {
+func itemRowToItem(r sqlcgen.DownloadItem) DownloadItem {
 	var (
 		candidate Candidate
 		imported  []string
@@ -488,9 +495,9 @@ func itemRowToItem(r sqlcgen.DownloadItem) Item {
 	_ = json.Unmarshal([]byte(r.Candidate), &candidate)
 	_ = json.Unmarshal([]byte(r.ImportedPaths), &imported)
 
-	return Item{
+	return DownloadItem{
 		ID:         r.ID,
-		RequestID:  r.RequestID,
+		DownloadID: r.DownloadID,
 		ProviderID: r.ProviderID,
 		Transport:  r.TransportID.Int64,
 		ExternalID: r.ExternalID,

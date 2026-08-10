@@ -125,7 +125,7 @@ type ImportResult struct {
 // retry or inspect it; only a fully successful import releases staging.
 func (i *Importer) Import(
 	ctx context.Context,
-	req Request,
+	dl Download,
 	result Result,
 	opts ImportOptions,
 ) (ImportResult, error) {
@@ -139,13 +139,13 @@ func (i *Importer) Import(
 		return ImportResult{}, ErrNoAudio
 	}
 
-	if err := checkCompleteness(len(audio), req); err != nil {
+	if err := checkCompleteness(len(audio), dl); err != nil {
 		return ImportResult{}, err
 	}
 
 	// Align staged files to the expected tracklist so tags and
 	// filenames reflect the release, not the uploader's naming.
-	plan := i.planFiles(audio, req)
+	plan := i.planFiles(audio, dl)
 
 	out := ImportResult{
 		Paths:   make([]string, 0, len(plan)),
@@ -158,7 +158,7 @@ func (i *Importer) Import(
 		}
 
 		if opts.WriteTags {
-			if err := i.tagFile(p, req); err != nil {
+			if err := i.tagFile(p, dl); err != nil {
 				// A file that cannot be tagged is still worth importing
 				// — the scanner will read whatever tags it has, and the
 				// autotag queue can pick it up later.  Losing the whole
@@ -173,7 +173,7 @@ func (i *Importer) Import(
 			}
 		}
 
-		dest, err := i.destinationFor(p, req, opts)
+		dest, err := i.destinationFor(p, dl, opts)
 		if err != nil {
 			return out, err
 		}
@@ -199,7 +199,7 @@ type plannedFile struct {
 }
 
 // planFiles aligns staged files to the expected tracklist.
-func (i *Importer) planFiles(audio []string, req Request) []plannedFile {
+func (i *Importer) planFiles(audio []string, dl Download) []plannedFile {
 	files := make([]CandidateFile, 0, len(audio))
 
 	for _, a := range audio {
@@ -211,10 +211,10 @@ func (i *Importer) planFiles(audio []string, req Request) []plannedFile {
 		})
 	}
 
-	matched, _ := matchFiles(files, req.Expected)
+	matched, _ := matchFiles(files, dl.Expected)
 
-	byPosition := make(map[int]ExpectedTrack, len(req.Expected))
-	for _, e := range req.Expected {
+	byPosition := make(map[int]ExpectedTrack, len(dl.Expected))
+	for _, e := range dl.Expected {
 		byPosition[e.Position] = e
 	}
 
@@ -253,14 +253,14 @@ func (i *Importer) planFiles(audio []string, req Request) []plannedFile {
 }
 
 // tagFile writes the release's metadata onto a staged file.
-func (i *Importer) tagFile(p plannedFile, req Request) error {
+func (i *Importer) tagFile(p plannedFile, dl Download) error {
 	if i.tags == nil || !p.Matched {
 		return nil
 	}
 
 	changes := tagwriter.TagChanges{
-		tagwriter.FieldAlbum:       req.Album,
-		tagwriter.FieldAlbumArtist: req.Artist,
+		tagwriter.FieldAlbum:       dl.Album,
+		tagwriter.FieldAlbumArtist: dl.Artist,
 		tagwriter.FieldTitle:       p.Track.Title,
 		tagwriter.FieldTrackNumber: p.Track.Position,
 	}
@@ -268,7 +268,7 @@ func (i *Importer) tagFile(p plannedFile, req Request) error {
 	if p.Track.Artist != "" {
 		changes[tagwriter.FieldArtist] = p.Track.Artist
 	} else {
-		changes[tagwriter.FieldArtist] = req.Artist
+		changes[tagwriter.FieldArtist] = dl.Artist
 	}
 
 	if p.Track.DiscNumber > 0 {
@@ -285,7 +285,7 @@ func (i *Importer) tagFile(p plannedFile, req Request) error {
 // destinationFor computes a file's library path from the template.
 func (i *Importer) destinationFor(
 	p plannedFile,
-	req Request,
+	dl Download,
 	opts ImportOptions,
 ) (string, error) {
 	if opts.LibraryRoot == "" {
@@ -311,13 +311,13 @@ func (i *Importer) destinationFor(
 
 	artist := p.Track.Artist
 	if artist == "" {
-		artist = req.Artist
+		artist = dl.Artist
 	}
 
 	repl := strings.NewReplacer(
-		"{albumartist}", sanitizePathPart(fallback(req.Artist, "Unknown Artist")),
+		"{albumartist}", sanitizePathPart(fallback(dl.Artist, "Unknown Artist")),
 		"{artist}", sanitizePathPart(fallback(artist, "Unknown Artist")),
-		"{album}", sanitizePathPart(fallback(req.Album, "Unknown Album")),
+		"{album}", sanitizePathPart(fallback(dl.Album, "Unknown Album")),
 		"{title}", sanitizePathPart(title),
 		"{track}", trackToken(p.Track.Position),
 		"{disc}", strconv.Itoa(p.Track.DiscNumber),
@@ -443,16 +443,16 @@ func copyFile(src, dest string) error {
 
 // checkCompleteness rejects an anchored download that is missing too
 // much of its tracklist.
-func checkCompleteness(got int, req Request) error {
-	if len(req.Expected) == 0 {
+func checkCompleteness(got int, dl Download) error {
+	if len(dl.Expected) == 0 {
 		return nil
 	}
 
-	ratio := float64(got) / float64(len(req.Expected))
+	ratio := float64(got) / float64(len(dl.Expected))
 	if ratio < minCompleteness {
 		return fmt.Errorf(
 			"%w: got %d of %d tracks",
-			ErrTooIncomplete, got, len(req.Expected),
+			ErrTooIncomplete, got, len(dl.Expected),
 		)
 	}
 

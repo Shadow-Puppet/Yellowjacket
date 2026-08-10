@@ -82,29 +82,36 @@ func (c Caps) Handles(p Protocol) bool {
 	return slices.Contains(c.Transports, p)
 }
 
-// Request is what the user asked for.  Requests that carry a MusicBrainz
-// anchor are far more reliable than free-text ones, because the anchor
-// gives the import step an expected tracklist to match against — so the
-// pipeline records which it got and refuses to auto-pick without one.
-type Request struct {
+// Download is one search-and-grab attempt: it searches, it grabs, it
+// succeeds or fails, and then it is history.  A Download that carries a
+// MusicBrainz anchor is far more reliable than a free-text one, because
+// the anchor gives the import step an expected tracklist to match
+// against — so the pipeline records which it got and refuses to
+// auto-pick without one.
+//
+// A Download is not the same thing as a Request (request.go): a
+// Request is durable and outlives every attempt made on its behalf,
+// while a Download is one such attempt and is disposable.
+type Download struct {
 	ID string `json:"id"`
 
 	// Anchors.  Any may be empty; all empty means free-text.
 	ReleaseMBID      string `json:"releaseMbid,omitempty"`
 	ReleaseGroupMBID string `json:"releaseGroupMbid,omitempty"`
 
-	// RecordingMBID anchors a single-track request.  Its Expected holds
-	// exactly that one track, which is what lets a track request be
+	// RecordingMBID anchors a single-track download.  Its Expected holds
+	// exactly that one track, which is what lets a track download be
 	// scored — and therefore auto-picked — on the same footing as an
 	// album.
 	RecordingMBID string `json:"recordingMbid,omitempty"`
 
-	// WantID links back to the wanted-list row this request was raised
-	// for, or 0 for a request the user started by hand.  The reconciler
-	// writes the outcome back through it.
-	WantID int64 `json:"wantId,omitempty"`
+	// RequestID links back to the durable Request row this download was
+	// raised for or attached to, or 0 for a free-text download with
+	// nothing stable to attach to.  The reconciler and manual anchored
+	// downloads both write the outcome back through it.
+	RequestID int64 `json:"requestId,omitempty"`
 
-	// Source records where the request came from, for the downloads
+	// Source records where the download came from, for the downloads
 	// list.  Empty means "manual".
 	Source string `json:"source,omitempty"`
 
@@ -116,7 +123,7 @@ type Request struct {
 
 	// Expected is the tracklist the anchor resolves to, used for
 	// completeness scoring and for the autotag match at import.  Empty
-	// for free-text requests.
+	// for free-text downloads.
 	Expected []ExpectedTrack `json:"expected,omitempty"`
 
 	// LibraryID is the library imported files belong to.
@@ -125,12 +132,12 @@ type Request struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 
-// Anchored reports whether the request carries a MusicBrainz ID.  Only
-// anchored requests are eligible for auto-pick.
-func (r Request) Anchored() bool {
-	return r.ReleaseMBID != "" ||
-		r.ReleaseGroupMBID != "" ||
-		r.RecordingMBID != ""
+// Anchored reports whether the download carries a MusicBrainz ID.  Only
+// anchored downloads are eligible for auto-pick.
+func (d Download) Anchored() bool {
+	return d.ReleaseMBID != "" ||
+		d.ReleaseGroupMBID != "" ||
+		d.RecordingMBID != ""
 }
 
 // SearchText returns the string to hand a provider's search endpoint.
@@ -142,16 +149,16 @@ func (r Request) Anchored() bool {
 // return zero results on providers that expect every term to appear
 // in a match (Soulseek in particular), so the artist is dropped when
 // the album title already leads with it.
-func (r Request) SearchText() string {
-	if r.Query != "" {
-		return r.Query
+func (d Download) SearchText() string {
+	if d.Query != "" {
+		return d.Query
 	}
 
-	if r.Artist != "" && albumLeadsWithArtist(r.Artist, r.Album) {
-		return strings.TrimSpace(r.Album)
+	if d.Artist != "" && albumLeadsWithArtist(d.Artist, d.Album) {
+		return strings.TrimSpace(d.Album)
 	}
 
-	return strings.TrimSpace(r.Artist + " " + r.Album)
+	return strings.TrimSpace(d.Artist + " " + d.Album)
 }
 
 // albumLeadsWithArtist reports whether album starts with artist as a
@@ -295,6 +302,7 @@ type QualityScore struct {
 	Bitrate    float64 `json:"bitrate"`
 	Health     float64 `json:"health"`   // seeders, free slots
 	Priority   float64 `json:"priority"` // user's per-provider preference
+	SizeFit    float64 `json:"sizeFit"`  // closeness to the preferred download size
 
 	// Mixed marks a candidate whose files are not all the same format,
 	// which usually means a hand-assembled folder rather than a rip.

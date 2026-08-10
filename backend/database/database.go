@@ -306,6 +306,14 @@ func applySchema(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("could not apply migrations: %w", err)
 	}
 
+	// The download subsystem's Want/Request rename reuses table names
+	// (download_requests names a different table before and after), so
+	// it cannot be a plain sql/migrations file the way an ADD COLUMN
+	// migration can; see download_rename_migration.go for why.
+	if err := migrateDownloadRename(ctx, db); err != nil {
+		return fmt.Errorf("could not migrate download rename: %w", err)
+	}
+
 	return nil
 }
 

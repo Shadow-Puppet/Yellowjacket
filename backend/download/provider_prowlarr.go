@@ -210,10 +210,10 @@ type prowlarrResult struct {
 // Search queries every configured indexer through Prowlarr.
 func (p *prowlarr) Search(
 	ctx context.Context,
-	req Request,
+	dl Download,
 ) ([]Candidate, error) {
 	query := url.Values{}
-	query.Set("query", req.SearchText())
+	query.Set("query", dl.SearchText())
 	query.Set("categories", prowlarrMusicCategory)
 	query.Set("type", "search")
 

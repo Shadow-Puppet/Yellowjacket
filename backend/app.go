@@ -273,6 +273,7 @@ func (yj *YellowJacketApp) initDownloadRuntime(ctx context.Context) {
 		PathTemplate: cfg.PathTemplate,
 	})
 	yj.downloads.SetMaxConcurrent(cfg.MaxConcurrent)
+	yj.downloads.SetPreferences(cfg.AutoDownloadPrefs())
 
 	go func() {
 		if err := yj.downloads.Reload(ctx); err != nil {
@@ -289,7 +290,7 @@ func (yj *YellowJacketApp) initDownloadRuntime(ctx context.Context) {
 	yj.wanted.SetInterval(cfg.WantedInterval())
 	yj.wanted.SetBatch(cfg.WantedBatch)
 	yj.wanted.SetOnChange(func() {
-		wailsruntime.EventsEmit(ctx, events.WantedListChanged)
+		wailsruntime.EventsEmit(ctx, events.RequestsChanged)
 	})
 	yj.wanted.Start(ctx)
 }

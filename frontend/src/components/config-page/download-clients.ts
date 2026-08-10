@@ -15,7 +15,27 @@ import type {
 } from '@store/download-store';
 import { downloadStore } from '@store/download-store';
 import { DirectoryPicker } from '@go/frontendutil/FrontendUtil';
+import { GetDownloadPreferences, SetDownloadPreferences } from '@go/config/Config';
+import { SetPreferences } from '@go/download/Service';
+import type { download } from '@go/models';
 import './config-section';
+
+/**
+ * Allowed audio formats for auto-download, mirrored from
+ * backend/download/types.go's `Format` constants. `FormatUnknown` is
+ * deliberately excluded — it names "no format detected", not a format a
+ * user could opt into.
+ */
+const AUTO_DOWNLOAD_FORMATS: { value: string; label: string }[] = [
+    { value: 'flac', label: 'FLAC' },
+    { value: 'alac', label: 'ALAC' },
+    { value: 'wav', label: 'WAV' },
+    { value: 'mp3', label: 'MP3' },
+    { value: 'aac', label: 'AAC' },
+    { value: 'ogg', label: 'OGG' },
+    { value: 'opus', label: 'Opus' },
+    { value: 'wma', label: 'WMA' },
+];
 
 /**
  * Download client configuration.
@@ -59,6 +79,24 @@ export class DownloadClients extends LitElement {
     @state()
     private errorMessage = '';
 
+    /** Working copy of the auto-download guardrails. */
+    @state()
+    private prefs: download.AutoDownloadPrefs = {
+        minSizeMb: 0,
+        maxSizeMb: 0,
+        preferredSizeMb: 0,
+        allowedFormats: [],
+    } as download.AutoDownloadPrefs;
+
+    @state()
+    private prefsSaving = false;
+
+    @state()
+    private prefsError = '';
+
+    @state()
+    private prefsSaved = false;
+
     private unsubscribe: (() => void) | null = null;
 
     override connectedCallback(): void {
@@ -67,6 +105,7 @@ export class DownloadClients extends LitElement {
         this.unsubscribe = downloadStore.subscribe(() => this.syncFromStore());
 
         void downloadStore.init().then(() => this.syncFromStore());
+        void this.loadPreferences();
     }
 
     override disconnectedCallback(): void {
@@ -79,6 +118,14 @@ export class DownloadClients extends LitElement {
     private syncFromStore(): void {
         this.providers = downloadStore.providers;
         this.descriptors = downloadStore.descriptors;
+    }
+
+    private async loadPreferences(): Promise<void> {
+        try {
+            this.prefs = await GetDownloadPreferences();
+        } catch (err) {
+            console.error('Failed to load auto-download preferences:', err);
+        }
     }
 
     static override styles = [
@@ -178,6 +225,21 @@ export class DownloadClients extends LitElement {
             .field-row .browse-button {
                 flex-shrink: 0;
             }
+
+            .format-options {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 0.4em 1em;
+                margin-top: 0.4em;
+            }
+
+            .format-option {
+                display: flex;
+                align-items: center;
+                gap: 0.4em;
+                font-size: 0.9em;
+                cursor: pointer;
+            }
         `,
     ];
 
@@ -207,6 +269,104 @@ export class DownloadClients extends LitElement {
                             </wa-button>
                         </div>
                     `}
+            </config-section>
+
+            <config-section
+                heading="Auto-download preferences"
+                description="Guardrails on what the pipeline may grab without asking — a manual pick is never restricted by these, only automatic ones."
+            >
+                ${this.prefsError
+                    ? html`<wa-callout variant="danger">${this.prefsError}</wa-callout>`
+                    : nothing}
+
+                <div class="form">
+                    <div class="field-row">
+                        <wa-input
+                            label="Minimum size (MB)"
+                            type="number"
+                            min="0"
+                            placeholder="No minimum"
+                            .value=${this.prefs.minSizeMb ? String(this.prefs.minSizeMb) : ''}
+                            @input=${(e: Event) => {
+                                this.prefs = {
+                                    ...this.prefs,
+                                    minSizeMb: Number((e.target as HTMLInputElement).value) || 0,
+                                };
+                            }}
+                        ></wa-input>
+                        <wa-input
+                            label="Maximum size (MB)"
+                            type="number"
+                            min="0"
+                            placeholder="No maximum"
+                            .value=${this.prefs.maxSizeMb ? String(this.prefs.maxSizeMb) : ''}
+                            @input=${(e: Event) => {
+                                this.prefs = {
+                                    ...this.prefs,
+                                    maxSizeMb: Number((e.target as HTMLInputElement).value) || 0,
+                                };
+                            }}
+                        ></wa-input>
+                        <wa-input
+                            label="Preferred size (MB)"
+                            type="number"
+                            min="0"
+                            placeholder="No preference"
+                            .value=${this.prefs.preferredSizeMb
+                                ? String(this.prefs.preferredSizeMb)
+                                : ''}
+                            @input=${(e: Event) => {
+                                this.prefs = {
+                                    ...this.prefs,
+                                    preferredSizeMb:
+                                        Number((e.target as HTMLInputElement).value) || 0,
+                                };
+                            }}
+                        ></wa-input>
+                    </div>
+
+                    <div>
+                        <div class="requires">
+                            Allowed formats — leave all unchecked to allow any format.
+                        </div>
+                        <div class="format-options">
+                            ${AUTO_DOWNLOAD_FORMATS.map(
+                                (format) => html`
+                                    <label class="format-option">
+                                        <input
+                                            type="checkbox"
+                                            .checked=${(this.prefs.allowedFormats ?? []).includes(
+                                                format.value,
+                                            )}
+                                            @change=${(e: Event) =>
+                                                this.toggleFormat(
+                                                    format.value,
+                                                    (e.target as HTMLInputElement).checked,
+                                                )}
+                                        />
+                                        ${format.label}
+                                    </label>
+                                `,
+                            )}
+                        </div>
+                    </div>
+
+                    <div class="form-actions">
+                        ${this.prefsSaved
+                            ? html`<span class="test-result ok">Saved.</span>`
+                            : nothing}
+                        <wa-button
+                            size="small"
+                            variant="brand"
+                            ?disabled=${this.prefsSaving}
+                            @click=${this.savePreferences}
+                        >
+                            ${this.prefsSaving
+                                ? html`<wa-spinner></wa-spinner>`
+                                : 'Save preferences'}
+                        </wa-button>
+                    </div>
+                </div>
             </config-section>
         `;
     }
@@ -554,6 +714,37 @@ export class DownloadClients extends LitElement {
             this.testing = null;
         }
     }
+
+    private toggleFormat(format: string, checked: boolean): void {
+        const current = this.prefs.allowedFormats ?? [];
+        const allowedFormats = checked
+            ? [...current, format]
+            : current.filter((f) => f !== format);
+
+        this.prefs = { ...this.prefs, allowedFormats };
+    }
+
+    /**
+     * Saves the guardrails both to disk and to the running download
+     * manager in one action — persistence alone would leave the setting
+     * inert until restart, which is exactly the bug this mirrors away
+     * from (see `config.Library`'s prior persist-without-apply gap).
+     */
+    private savePreferences = async () => {
+        this.prefsSaving = true;
+        this.prefsError = '';
+        this.prefsSaved = false;
+
+        try {
+            await SetDownloadPreferences(this.prefs);
+            await SetPreferences(this.prefs);
+            this.prefsSaved = true;
+        } catch (err) {
+            this.prefsError = String(err);
+        } finally {
+            this.prefsSaving = false;
+        }
+    };
 }
 
 declare global {

@@ -130,7 +130,7 @@ cat <<'EOF'
 EOF
 `)
 
-	got, err := y.Search(context.Background(), Request{
+	got, err := y.Search(context.Background(), Download{
 		Artist: "Radiohead",
 		Album:  "OK Computer",
 	})
@@ -173,7 +173,7 @@ not json at all
 EOF
 `)
 
-	got, err := y.Search(context.Background(), Request{Query: "radiohead"})
+	got, err := y.Search(context.Background(), Download{Query: "radiohead"})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -193,8 +193,8 @@ func TestYtDlpAssemblesAlbumFromTracklist(t *testing.T) {
 echo '{"id":"x","title":"whatever the uploader called it","webpage_url":"https://example.com/x","filesize_approx":4000000}'
 `)
 
-	req := Request{
-		ID:          "req-1",
+	dl := Download{
+		ID:          "dl-1",
 		ReleaseMBID: "mbid-1",
 		Artist:      "Radiohead",
 		Album:       "OK Computer",
@@ -205,7 +205,7 @@ echo '{"id":"x","title":"whatever the uploader called it","webpage_url":"https:/
 		},
 	}
 
-	got, err := y.Search(context.Background(), req)
+	got, err := y.Search(context.Background(), dl)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -254,7 +254,7 @@ case "$*" in
 esac
 `)
 
-	got, err := y.Search(context.Background(), Request{
+	got, err := y.Search(context.Background(), Download{
 		ID:          "req-1",
 		ReleaseMBID: "mbid-1",
 		Artist:      "Radiohead",

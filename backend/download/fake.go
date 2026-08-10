@@ -92,7 +92,7 @@ func (f *FakeProvider) Close() error {
 // Search returns the configured candidates.
 func (f *FakeProvider) Search(
 	ctx context.Context,
-	_ Request,
+	_ Download,
 ) ([]Candidate, error) {
 	f.mu.Lock()
 	f.SearchCalls++
@@ -208,7 +208,7 @@ var errNoDelegateStatus = errors.New("fake: no delegate status configured")
 // Delegate records the call and returns a fixed external ID.
 func (f *FakeProvider) Delegate(
 	_ context.Context,
-	_ Request,
+	_ Download,
 ) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

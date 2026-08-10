@@ -17,18 +17,18 @@ func TestNextRetryClimbsAndCaps(t *testing.T) {
 		attempts int
 		nominal  time.Duration
 	}{
-		{attempts: 1, nominal: wantRetryBase},
-		{attempts: 2, nominal: 2 * wantRetryBase},
-		{attempts: 3, nominal: 4 * wantRetryBase},
-		{attempts: 20, nominal: wantRetryMax},
-		{attempts: 500, nominal: wantRetryMax},
+		{attempts: 1, nominal: requestRetryBase},
+		{attempts: 2, nominal: 2 * requestRetryBase},
+		{attempts: 3, nominal: 4 * requestRetryBase},
+		{attempts: 20, nominal: requestRetryMax},
+		{attempts: 500, nominal: requestRetryMax},
 	}
 
 	for _, tt := range tests {
 		got := nextRetry(now, tt.attempts).Sub(now)
 
-		lo := time.Duration(float64(tt.nominal) * (1 - wantRetryJitter))
-		hi := time.Duration(float64(tt.nominal) * (1 + wantRetryJitter))
+		lo := time.Duration(float64(tt.nominal) * (1 - requestRetryJitter))
+		hi := time.Duration(float64(tt.nominal) * (1 + requestRetryJitter))
 
 		if got < lo || got > hi {
 			t.Errorf(
@@ -83,14 +83,14 @@ func TestReleaseDateAfter(t *testing.T) {
 	}
 }
 
-func TestWantsReleaseGroupFilters(t *testing.T) {
+func TestRequestsReleaseGroupFilters(t *testing.T) {
 	t.Parallel()
 
 	subscribed := time.Date(2026, 3, 15, 0, 0, 0, 0, time.UTC)
 
-	future := Want{Scope: ScopeFuture, CreatedAt: subscribed}
-	all := Want{Scope: ScopeAll, CreatedAt: subscribed}
-	allSecondary := Want{
+	future := Request{Scope: ScopeFuture, CreatedAt: subscribed}
+	all := Request{Scope: ScopeAll, CreatedAt: subscribed}
+	allSecondary := Request{
 		Scope: ScopeAll, Secondary: true, CreatedAt: subscribed,
 	}
 
@@ -107,7 +107,7 @@ func TestWantsReleaseGroupFilters(t *testing.T) {
 
 	tests := []struct {
 		name   string
-		artist Want
+		artist Request
 		rg     CatalogItem
 		want   bool
 	}{
@@ -131,54 +131,54 @@ func TestWantsReleaseGroupFilters(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		if got := wantsReleaseGroup(tt.artist, tt.rg); got != tt.want {
+		if got := requestsReleaseGroup(tt.artist, tt.rg); got != tt.want {
 			t.Errorf("%s: got %v, want %v", tt.name, got, tt.want)
 		}
 	}
 }
 
-func TestWantToRequestAnchors(t *testing.T) {
+func TestRequestToDownloadAnchors(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		entity Entity
-		check  func(Request) string
+		check  func(Download) string
 	}{
 		{
 			entity: EntityReleaseGroup,
-			check: func(r Request) string {
+			check: func(r Download) string {
 				return r.ReleaseGroupMBID
 			},
 		},
 		{
 			entity: EntityRelease,
-			check:  func(r Request) string { return r.ReleaseMBID },
+			check:  func(r Download) string { return r.ReleaseMBID },
 		},
 		{
 			entity: EntityRecording,
-			check:  func(r Request) string { return r.RecordingMBID },
+			check:  func(r Download) string { return r.RecordingMBID },
 		},
 	}
 
 	for _, tt := range tests {
-		w := Want{ID: 7, MBID: "mbid-x", Entity: tt.entity, LibraryID: 1}
+		req := Request{ID: 7, MBID: "mbid-x", Entity: tt.entity, LibraryID: 1}
 
-		req := w.ToRequest("req-1")
+		dl := req.ToDownload("dl-1")
 
-		if got := tt.check(req); got != "mbid-x" {
+		if got := tt.check(dl); got != "mbid-x" {
 			t.Errorf("%s: anchor = %q, want mbid-x", tt.entity, got)
 		}
 
-		if !req.Anchored() {
-			t.Errorf("%s: request is not anchored", tt.entity)
+		if !dl.Anchored() {
+			t.Errorf("%s: download is not anchored", tt.entity)
 		}
 
-		if req.WantID != 7 {
-			t.Errorf("%s: WantID = %d, want 7", tt.entity, req.WantID)
+		if dl.RequestID != 7 {
+			t.Errorf("%s: RequestID = %d, want 7", tt.entity, dl.RequestID)
 		}
 
-		if req.Source != wantSource {
-			t.Errorf("%s: Source = %q, want %q", tt.entity, req.Source, wantSource)
+		if dl.Source != requestSource {
+			t.Errorf("%s: Source = %q, want %q", tt.entity, dl.Source, requestSource)
 		}
 	}
 }
@@ -189,7 +189,7 @@ func TestWantToRequestAnchors(t *testing.T) {
 func TestAutoPickableRequiresTracklist(t *testing.T) {
 	t.Parallel()
 
-	req := Request{ReleaseGroupMBID: "rg-1", Artist: "A", Album: "B"}
+	dl := Download{ReleaseGroupMBID: "rg-1", Artist: "A", Album: "B"}
 
 	ranked := []Candidate{{
 		Match:   MatchScore{Overall: 0.99, Anchored: true},
@@ -197,42 +197,42 @@ func TestAutoPickableRequiresTracklist(t *testing.T) {
 		Score:   0.95,
 	}}
 
-	if AutoPickable(req, ranked) {
-		t.Error("auto-picked a request with no expected tracklist")
+	if AutoPickable(dl, ranked, AutoDownloadPrefs{}) {
+		t.Error("auto-picked a download with no expected tracklist")
 	}
 
-	req.Expected = []ExpectedTrack{{Position: 1, Title: "T"}}
+	dl.Expected = []ExpectedTrack{{Position: 1, Title: "T"}}
 
-	if !AutoPickable(req, ranked) {
-		t.Error("did not auto-pick a well-anchored, well-matched request")
+	if !AutoPickable(dl, ranked, AutoDownloadPrefs{}) {
+		t.Error("did not auto-pick a well-anchored, well-matched download")
 	}
 }
 
 // The wanted list's identity is the MBID, so the same one arriving
 // twice — in a different case, with whitespace — is one row.
-func TestAddWantNormalizesAndDeduplicates(t *testing.T) {
+func TestAddRequestNormalizesAndDeduplicates(t *testing.T) {
 	t.Parallel()
 
 	f := newManagerFixture(t)
 	ctx := context.Background()
 
-	first, err := f.store.AddWant(ctx, Want{
+	first, err := f.store.AddRequest(ctx, Request{
 		MBID:      "  ABC-123  ",
 		Entity:    EntityReleaseGroup,
 		LibraryID: 1,
 		Title:     "OK Computer",
 	})
 	if err != nil {
-		t.Fatalf("AddWant: %v", err)
+		t.Fatalf("AddRequest: %v", err)
 	}
 
-	second, err := f.store.AddWant(ctx, Want{
+	second, err := f.store.AddRequest(ctx, Request{
 		MBID:      "abc-123",
 		Entity:    EntityReleaseGroup,
 		LibraryID: 1,
 	})
 	if err != nil {
-		t.Fatalf("AddWant again: %v", err)
+		t.Fatalf("AddRequest again: %v", err)
 	}
 
 	if first != second {
@@ -240,27 +240,27 @@ func TestAddWantNormalizesAndDeduplicates(t *testing.T) {
 	}
 
 	// Re-adding with no title must not wipe the one we have.
-	w, err := f.store.GetWant(ctx, first)
+	req, err := f.store.GetRequest(ctx, first)
 	if err != nil {
-		t.Fatalf("GetWant: %v", err)
+		t.Fatalf("GetRequest: %v", err)
 	}
 
-	if w.Title != "OK Computer" {
-		t.Errorf("title = %q, want it preserved", w.Title)
+	if req.Title != "OK Computer" {
+		t.Errorf("title = %q, want it preserved", req.Title)
 	}
 
-	if w.MBID != "abc-123" {
-		t.Errorf("mbid = %q, want normalized", w.MBID)
+	if req.MBID != "abc-123" {
+		t.Errorf("mbid = %q, want normalized", req.MBID)
 	}
 }
 
-func TestWantStoreLifecycle(t *testing.T) {
+func TestRequestStoreLifecycle(t *testing.T) {
 	t.Parallel()
 
 	f := newManagerFixture(t)
 	ctx := context.Background()
 
-	id, err := f.store.AddWant(ctx, Want{
+	id, err := f.store.AddRequest(ctx, Request{
 		MBID:      "rg-1",
 		Entity:    EntityReleaseGroup,
 		LibraryID: 1,
@@ -268,17 +268,17 @@ func TestWantStoreLifecycle(t *testing.T) {
 		Title:     "OK Computer",
 	})
 	if err != nil {
-		t.Fatalf("AddWant: %v", err)
+		t.Fatalf("AddRequest: %v", err)
 	}
 
 	// A brand new want is due immediately.
-	due, err := f.store.ListDueWants(ctx, 10)
+	due, err := f.store.ListDueRequests(ctx, 10)
 	if err != nil {
-		t.Fatalf("ListDueWants: %v", err)
+		t.Fatalf("ListDueRequests: %v", err)
 	}
 
 	if len(due) != 1 {
-		t.Fatalf("got %d due wants, want 1", len(due))
+		t.Fatalf("got %d due requests, want 1", len(due))
 	}
 
 	// Recording an attempt pushes it out of the due set without
@@ -287,92 +287,92 @@ func TestWantStoreLifecycle(t *testing.T) {
 		t.Fatalf("RecordAttempt: %v", err)
 	}
 
-	due, err = f.store.ListDueWants(ctx, 10)
+	due, err = f.store.ListDueRequests(ctx, 10)
 	if err != nil {
-		t.Fatalf("ListDueWants after attempt: %v", err)
+		t.Fatalf("ListDueRequests after attempt: %v", err)
 	}
 
 	if len(due) != 0 {
-		t.Errorf("got %d due wants after an attempt, want 0", len(due))
+		t.Errorf("got %d due requests after an attempt, want 0", len(due))
 	}
 
-	w, err := f.store.GetWant(ctx, id)
+	req, err := f.store.GetRequest(ctx, id)
 	if err != nil {
-		t.Fatalf("GetWant: %v", err)
+		t.Fatalf("GetRequest: %v", err)
 	}
 
-	if w.State != WantStateWanted {
-		t.Errorf("state = %q, want it still wanted", w.State)
+	if req.State != RequestStateWanted {
+		t.Errorf("state = %q, want it still wanted", req.State)
 	}
 
-	if w.Attempts != 1 {
-		t.Errorf("attempts = %d, want 1", w.Attempts)
+	if req.Attempts != 1 {
+		t.Errorf("attempts = %d, want 1", req.Attempts)
 	}
 
-	if w.LastError == "" {
+	if req.LastError == "" {
 		t.Error("last error was not recorded")
 	}
 
-	if err := f.store.SatisfyWant(ctx, id); err != nil {
-		t.Fatalf("SatisfyWant: %v", err)
+	if err := f.store.SatisfyRequest(ctx, id); err != nil {
+		t.Fatalf("SatisfyRequest: %v", err)
 	}
 
-	w, err = f.store.GetWant(ctx, id)
+	req, err = f.store.GetRequest(ctx, id)
 	if err != nil {
-		t.Fatalf("GetWant after satisfy: %v", err)
+		t.Fatalf("GetRequest after satisfy: %v", err)
 	}
 
-	if w.State != WantStateSatisfied {
-		t.Errorf("state = %q, want satisfied", w.State)
+	if req.State != RequestStateSatisfied {
+		t.Errorf("state = %q, want satisfied", req.State)
 	}
 }
 
 // Removing an artist subscription takes the albums it derived with it,
 // so a user who unsubscribes does not keep downloading that artist.
-func TestDeleteArtistWantCascadesToChildren(t *testing.T) {
+func TestDeleteArtistRequestCascadesToChildren(t *testing.T) {
 	t.Parallel()
 
 	f := newManagerFixture(t)
 	ctx := context.Background()
 
-	artist, err := f.store.AddWant(ctx, Want{
+	artist, err := f.store.AddRequest(ctx, Request{
 		MBID:      "artist-1",
 		Entity:    EntityArtist,
 		LibraryID: 1,
 		Artist:    "Radiohead",
 	})
 	if err != nil {
-		t.Fatalf("AddWant artist: %v", err)
+		t.Fatalf("AddRequest artist: %v", err)
 	}
 
-	if _, err := f.store.AddWant(ctx, Want{
+	if _, err := f.store.AddRequest(ctx, Request{
 		MBID:      "rg-1",
 		Entity:    EntityReleaseGroup,
 		LibraryID: 1,
 		ParentID:  artist,
 	}); err != nil {
-		t.Fatalf("AddWant child: %v", err)
+		t.Fatalf("AddRequest child: %v", err)
 	}
 
-	children, err := f.store.ListChildWants(ctx, artist)
+	children, err := f.store.ListChildRequests(ctx, artist)
 	if err != nil {
-		t.Fatalf("ListChildWants: %v", err)
+		t.Fatalf("ListChildRequests: %v", err)
 	}
 
 	if len(children) != 1 {
 		t.Fatalf("got %d children, want 1", len(children))
 	}
 
-	if err := f.store.DeleteWant(ctx, artist); err != nil {
-		t.Fatalf("DeleteWant: %v", err)
+	if err := f.store.DeleteRequest(ctx, artist); err != nil {
+		t.Fatalf("DeleteRequest: %v", err)
 	}
 
-	all, err := f.store.ListWants(ctx)
+	all, err := f.store.ListRequests(ctx)
 	if err != nil {
-		t.Fatalf("ListWants: %v", err)
+		t.Fatalf("ListRequests: %v", err)
 	}
 
 	if len(all) != 0 {
-		t.Errorf("got %d wants after deleting the artist, want 0", len(all))
+		t.Errorf("got %d requests after deleting the artist, want 0", len(all))
 	}
 }

@@ -288,7 +288,7 @@ func TestSlskdGroupsResultsByPeerAndFolder(t *testing.T) {
 
 	s, _ := newStubSlskd(t, stub)
 
-	got, err := s.Search(context.Background(), Request{
+	got, err := s.Search(context.Background(), Download{
 		Artist: "Radiohead",
 		Album:  "OK Computer",
 	})
@@ -354,7 +354,7 @@ func TestSlskdSkipsTinyFolders(t *testing.T) {
 
 	s, _ := newStubSlskd(t, stub)
 
-	got, err := s.Search(context.Background(), Request{Query: "x"})
+	got, err := s.Search(context.Background(), Download{Query: "x"})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}

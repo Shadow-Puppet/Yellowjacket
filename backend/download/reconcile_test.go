@@ -111,14 +111,14 @@ func TestExpandArtistIsIdempotent(t *testing.T) {
 		{MBID: "rg-2", Title: "Second", FirstReleaseDate: "2030-06-01"},
 	}
 
-	if _, err := f.store.AddWant(ctx, Want{
+	if _, err := f.store.AddRequest(ctx, Request{
 		MBID:      "artist-1",
 		Entity:    EntityArtist,
 		LibraryID: 1,
 		Artist:    "Radiohead",
 		Scope:     ScopeAll,
 	}); err != nil {
-		t.Fatalf("AddWant: %v", err)
+		t.Fatalf("AddRequest: %v", err)
 	}
 
 	first, err := f.reconciler.expandArtists(ctx)
@@ -127,7 +127,7 @@ func TestExpandArtistIsIdempotent(t *testing.T) {
 	}
 
 	if first != 2 {
-		t.Fatalf("first pass created %d wants, want 2", first)
+		t.Fatalf("first pass created %d requests, want 2", first)
 	}
 
 	second, err := f.reconciler.expandArtists(ctx)
@@ -136,7 +136,7 @@ func TestExpandArtistIsIdempotent(t *testing.T) {
 	}
 
 	if second != 0 {
-		t.Errorf("second pass created %d wants, want 0", second)
+		t.Errorf("second pass created %d requests, want 0", second)
 	}
 
 	// A new album appearing later is picked up by the same pass.
@@ -153,7 +153,7 @@ func TestExpandArtistIsIdempotent(t *testing.T) {
 	}
 
 	if third != 1 {
-		t.Errorf("third pass created %d wants, want 1", third)
+		t.Errorf("third pass created %d requests, want 1", third)
 	}
 }
 
@@ -170,32 +170,32 @@ func TestExpandArtistFutureScopeSkipsBackCatalogue(t *testing.T) {
 		{MBID: "rg-new", Title: "New", FirstReleaseDate: "2099-01-01"},
 	}
 
-	if _, err := f.store.AddWant(ctx, Want{
+	if _, err := f.store.AddRequest(ctx, Request{
 		MBID:      "artist-1",
 		Entity:    EntityArtist,
 		LibraryID: 1,
 		Scope:     ScopeFuture,
 	}); err != nil {
-		t.Fatalf("AddWant: %v", err)
+		t.Fatalf("AddRequest: %v", err)
 	}
 
 	if _, err := f.reconciler.expandArtists(ctx); err != nil {
 		t.Fatalf("expandArtists: %v", err)
 	}
 
-	wants, err := f.store.ListWants(ctx)
+	requests, err := f.store.ListRequests(ctx)
 	if err != nil {
-		t.Fatalf("ListWants: %v", err)
+		t.Fatalf("ListDownloads: %v", err)
 	}
 
-	for _, w := range wants {
-		if w.MBID == "rg-old" {
+	for _, req := range requests {
+		if req.MBID == "rg-old" {
 			t.Error("future scope queued a back-catalogue album")
 		}
 	}
 
-	if len(wants) != 2 {
-		t.Errorf("got %d wants (artist + new album), want 2", len(wants))
+	if len(requests) != 2 {
+		t.Errorf("got %d requests (artist + new album), want 2", len(requests))
 	}
 }
 
@@ -209,12 +209,12 @@ func TestExpandArtistToleratesCatalogFailure(t *testing.T) {
 
 	f.catalog.discographyErr = errors.New("index not ready") //nolint:err113 // test
 
-	if _, err := f.store.AddWant(ctx, Want{
+	if _, err := f.store.AddRequest(ctx, Request{
 		MBID:      "artist-1",
 		Entity:    EntityArtist,
 		LibraryID: 1,
 	}); err != nil {
-		t.Fatalf("AddWant: %v", err)
+		t.Fatalf("AddRequest: %v", err)
 	}
 
 	created, err := f.reconciler.expandArtists(ctx)
@@ -223,24 +223,24 @@ func TestExpandArtistToleratesCatalogFailure(t *testing.T) {
 	}
 
 	if created != 0 {
-		t.Errorf("created %d wants from a failing catalog, want 0", created)
+		t.Errorf("created %d requests from a failing catalog, want 0", created)
 	}
 }
 
 // Something the library already owns is retired, however it got there.
-func TestRetireOwnedSatisfiesWants(t *testing.T) {
+func TestRetireOwnedSatisfiesRequests(t *testing.T) {
 	t.Parallel()
 
 	f := newReconcileFixture(t)
 	ctx := context.Background()
 
-	id, err := f.store.AddWant(ctx, Want{
+	id, err := f.store.AddRequest(ctx, Request{
 		MBID:      "rg-1",
 		Entity:    EntityReleaseGroup,
 		LibraryID: 1,
 	})
 	if err != nil {
-		t.Fatalf("AddWant: %v", err)
+		t.Fatalf("AddRequest: %v", err)
 	}
 
 	f.catalog.owned["rg-1"] = true
@@ -251,16 +251,16 @@ func TestRetireOwnedSatisfiesWants(t *testing.T) {
 	}
 
 	if n != 1 {
-		t.Fatalf("retired %d wants, want 1", n)
+		t.Fatalf("retired %d requests, want 1", n)
 	}
 
-	w, err := f.store.GetWant(ctx, id)
+	req, err := f.store.GetRequest(ctx, id)
 	if err != nil {
-		t.Fatalf("GetWant: %v", err)
+		t.Fatalf("GetRequest: %v", err)
 	}
 
-	if w.State != WantStateSatisfied {
-		t.Errorf("state = %q, want satisfied", w.State)
+	if req.State != RequestStateSatisfied {
+		t.Errorf("state = %q, want satisfied", req.State)
 	}
 }
 
@@ -275,7 +275,7 @@ func TestReconcileDownloadsAndSatisfies(t *testing.T) {
 	provider := fakeWithAlbum(1, "source", ".flac")
 	f.manager.installProvider(Config{ID: 1, Priority: 50}, provider)
 
-	id, err := f.store.AddWant(ctx, Want{
+	id, err := f.store.AddRequest(ctx, Request{
 		MBID:      "rg-1",
 		Entity:    EntityReleaseGroup,
 		LibraryID: 1,
@@ -283,10 +283,10 @@ func TestReconcileDownloadsAndSatisfies(t *testing.T) {
 		Title:     "OK Computer",
 	})
 	if err != nil {
-		t.Fatalf("AddWant: %v", err)
+		t.Fatalf("AddRequest: %v", err)
 	}
 
-	f.catalog.tracklists["rg-1"] = fourTrackRequest().Expected
+	f.catalog.tracklists["rg-1"] = fourTrackDownload().Expected
 
 	summary, err := f.reconciler.RunOnce(ctx)
 	if err != nil {
@@ -301,9 +301,9 @@ func TestReconcileDownloadsAndSatisfies(t *testing.T) {
 	}
 
 	waitFor(t, func() bool {
-		w, err := f.store.GetWant(ctx, id)
+		req, err := f.store.GetRequest(ctx, id)
 
-		return err == nil && w.State == WantStateSatisfied
+		return err == nil && req.State == RequestStateSatisfied
 	}, "want was never satisfied after its download completed")
 
 	if provider.GrabCalls != 1 {
@@ -313,7 +313,7 @@ func TestReconcileDownloadsAndSatisfies(t *testing.T) {
 
 // Nothing good enough is not a failure.  The want stays wanted, gains
 // an attempt and a reason, and leaves no request row behind.
-func TestReconcileKeepsWantingWhenNothingIsGoodEnough(t *testing.T) {
+func TestReconcileKeepsRequestingWhenNothingIsGoodEnough(t *testing.T) {
 	t.Parallel()
 
 	f := newReconcileFixture(t)
@@ -328,7 +328,7 @@ func TestReconcileKeepsWantingWhenNothingIsGoodEnough(t *testing.T) {
 
 	f.manager.installProvider(Config{ID: 1, Priority: 50}, provider)
 
-	id, err := f.store.AddWant(ctx, Want{
+	id, err := f.store.AddRequest(ctx, Request{
 		MBID:      "rg-1",
 		Entity:    EntityReleaseGroup,
 		LibraryID: 1,
@@ -336,10 +336,10 @@ func TestReconcileKeepsWantingWhenNothingIsGoodEnough(t *testing.T) {
 		Title:     "OK Computer",
 	})
 	if err != nil {
-		t.Fatalf("AddWant: %v", err)
+		t.Fatalf("AddRequest: %v", err)
 	}
 
-	f.catalog.tracklists["rg-1"] = fourTrackRequest().Expected
+	f.catalog.tracklists["rg-1"] = fourTrackDownload().Expected
 
 	summary, err := f.reconciler.RunOnce(ctx)
 	if err != nil {
@@ -350,32 +350,32 @@ func TestReconcileKeepsWantingWhenNothingIsGoodEnough(t *testing.T) {
 		t.Fatalf("started %d downloads, want 0", summary.Started)
 	}
 
-	w, err := f.store.GetWant(ctx, id)
+	req, err := f.store.GetRequest(ctx, id)
 	if err != nil {
-		t.Fatalf("GetWant: %v", err)
+		t.Fatalf("GetRequest: %v", err)
 	}
 
-	if w.State != WantStateWanted {
-		t.Errorf("state = %q, want it still wanted", w.State)
+	if req.State != RequestStateWanted {
+		t.Errorf("state = %q, want it still wanted", req.State)
 	}
 
-	if w.Attempts != 1 {
-		t.Errorf("attempts = %d, want 1", w.Attempts)
+	if req.Attempts != 1 {
+		t.Errorf("attempts = %d, want 1", req.Attempts)
 	}
 
-	if w.LastError == "" {
+	if req.LastError == "" {
 		t.Error("no reason was recorded for the user")
 	}
 
-	if !w.NextTryAt.After(time.Now()) {
-		t.Errorf("next try at %v, want it in the future", w.NextTryAt)
+	if !req.NextTryAt.After(time.Now()) {
+		t.Errorf("next try at %v, want it in the future", req.NextTryAt)
 	}
 
 	// The whole point of Attempt over Start: an unsuccessful pass
 	// leaves no request row to clutter the downloads list.
-	requests, err := f.store.ListRequests(ctx, 50)
+	requests, err := f.store.ListDownloads(ctx, 50)
 	if err != nil {
-		t.Fatalf("ListRequests: %v", err)
+		t.Fatalf("ListDownloads: %v", err)
 	}
 
 	if len(requests) != 0 {
@@ -393,14 +393,14 @@ func TestReconcileWaitsWithoutTracklist(t *testing.T) {
 	provider := fakeWithAlbum(1, "source", ".flac")
 	f.manager.installProvider(Config{ID: 1, Priority: 50}, provider)
 
-	if _, err := f.store.AddWant(ctx, Want{
+	if _, err := f.store.AddRequest(ctx, Request{
 		MBID:      "rg-1",
 		Entity:    EntityReleaseGroup,
 		LibraryID: 1,
 		Artist:    "Radiohead",
 		Title:     "OK Computer",
 	}); err != nil {
-		t.Fatalf("AddWant: %v", err)
+		t.Fatalf("AddRequest: %v", err)
 	}
 
 	summary, err := f.reconciler.RunOnce(ctx)
@@ -421,27 +421,27 @@ func TestReconcileWaitsWithoutTracklist(t *testing.T) {
 }
 
 // Artist subscriptions are never attempted as downloads: they expand.
-func TestArtistWantsAreNeverDue(t *testing.T) {
+func TestArtistRequestsAreNeverDue(t *testing.T) {
 	t.Parallel()
 
 	f := newReconcileFixture(t)
 	ctx := context.Background()
 
-	if _, err := f.store.AddWant(ctx, Want{
+	if _, err := f.store.AddRequest(ctx, Request{
 		MBID:      "artist-1",
 		Entity:    EntityArtist,
 		LibraryID: 1,
 	}); err != nil {
-		t.Fatalf("AddWant: %v", err)
+		t.Fatalf("AddRequest: %v", err)
 	}
 
-	due, err := f.store.ListDueWants(ctx, 10)
+	due, err := f.store.ListDueRequests(ctx, 10)
 	if err != nil {
-		t.Fatalf("ListDueWants: %v", err)
+		t.Fatalf("ListDueRequests: %v", err)
 	}
 
 	if len(due) != 0 {
-		t.Errorf("got %d due wants, want 0 — artists expand, not download", len(due))
+		t.Errorf("got %d due requests, want 0 — artists expand, not download", len(due))
 	}
 }
 
@@ -456,16 +456,16 @@ func TestReconcileRespectsBatchSize(t *testing.T) {
 	f.reconciler.SetBatch(2)
 
 	for _, mbid := range []string{"rg-1", "rg-2", "rg-3", "rg-4"} {
-		if _, err := f.store.AddWant(ctx, Want{
+		if _, err := f.store.AddRequest(ctx, Request{
 			MBID:      mbid,
 			Entity:    EntityReleaseGroup,
 			LibraryID: 1,
 			Title:     "Album " + mbid,
 		}); err != nil {
-			t.Fatalf("AddWant: %v", err)
+			t.Fatalf("AddRequest: %v", err)
 		}
 
-		f.catalog.tracklists[mbid] = fourTrackRequest().Expected
+		f.catalog.tracklists[mbid] = fourTrackDownload().Expected
 	}
 
 	summary, err := f.reconciler.RunOnce(ctx)
@@ -474,7 +474,7 @@ func TestReconcileRespectsBatchSize(t *testing.T) {
 	}
 
 	if summary.Attempted != 2 {
-		t.Errorf("attempted %d wants, want 2 (the batch size)", summary.Attempted)
+		t.Errorf("attempted %d requests, want 2 (the batch size)", summary.Attempted)
 	}
 }
 

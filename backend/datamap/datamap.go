@@ -143,9 +143,16 @@ var tables = []Table{
 			"must be expanded when deleting (see library.coverArtFileSet).",
 	},
 	{
+		Name: "download_downloads", Kind: Authored, Lifetime: Cascade,
+		Note: "One row per 'go find me this', i.e. one search-and-grab " +
+			"attempt. Cascades from libraries, and cascades onward to " +
+			"download_items. Terminal rows are history the user clears " +
+			"explicitly.",
+	},
+	{
 		Name: "download_items", Kind: Authored, Lifetime: Cascade,
 		Note: "One grab attempt per row, with the ranked candidate stored " +
-			"as JSON. Cascades from download_requests. The candidate blob " +
+			"as JSON. Cascades from download_downloads. The candidate blob " +
 			"is kept rather than re-derived because a provider's result " +
 			"set is ephemeral — the peer that had the files may be gone, " +
 			"and the row still has to explain why it was chosen.",
@@ -159,18 +166,13 @@ var tables = []Table{
 	},
 	{
 		Name: "download_requests", Kind: Authored, Lifetime: Cascade,
-		Note: "One row per 'go find me this'. Cascades from libraries, " +
-			"and cascades onward to download_items. Terminal rows are " +
-			"history the user clears explicitly.",
-	},
-	{
-		Name: "download_wants", Kind: Authored, Lifetime: Cascade,
-		Note: "The wanted list: one MBID per row, plus retry bookkeeping. " +
-			"Cascades from libraries, and from a parent artist want to " +
-			"the album wants it derived. Unlike download_requests these " +
-			"are not history — a want outlives every attempt made on it " +
-			"and is only removed by the user or by the library coming " +
-			"to own what it names.",
+		Note: "The durable request list: one MBID per row, plus retry " +
+			"bookkeeping. Cascades from libraries, and from a parent " +
+			"artist request to the album requests it derived. Unlike " +
+			"download_downloads these are not history — a request " +
+			"outlives every download attempt made on it and is only " +
+			"removed by the user or by the library coming to own what it " +
+			"names.",
 	},
 	{
 		Name: "explore_champion_fts", Kind: Cache, Lifetime: Retained, FTS: true,

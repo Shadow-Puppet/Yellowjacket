@@ -11,10 +11,10 @@ import (
 	"time"
 )
 
-// The reconciler is the only thing that turns wants into downloads.
+// The reconciler is the only thing that turns requests into downloads.
 //
 // It runs on a slow loop rather than reacting to events, because
-// everything it cares about changes slowly: a release the user wants
+// everything it cares about changes slowly: a release the user requests
 // appears on a source days or weeks after they asked, an artist puts
 // out an album once a year, and a library gains files by scan rather
 // than by notification.  A loop that wakes a few times a day is
@@ -24,17 +24,17 @@ import (
 //
 // Each pass does four things, in this order and for this reason:
 //
-//  1. Expand artist subscriptions into per-album wants, so step 2 sees
+//  1. Expand artist subscriptions into per-album requests, so step 2 sees
 //     them this pass rather than next.
-//  2. Retire wants the library already owns — including ones the user
+//  2. Retire requests the library already owns — including ones the user
 //     satisfied by other means, which is why ownership is checked
 //     rather than assumed from our own downloads.
 //  3. Push the list to clients that keep their own (Lidarr), so the
 //     user's intent is expressed in both places.
-//  4. Attempt a bounded batch of due wants.
+//  4. Attempt a bounded batch of due requests.
 //
-// Nothing here fails a want.  A want that cannot be found gets an
-// attempt recorded and a longer backoff, and stays exactly as wanted as
+// Nothing here fails a request.  A request that cannot be found gets an
+// attempt recorded and a longer backoff, and stays exactly as requested as
 // it was.
 
 // CatalogPort is what the reconciler needs to know about the world of
@@ -51,8 +51,8 @@ type CatalogPort interface {
 	) ([]CatalogItem, error)
 
 	// Tracklist resolves a release group or release to the tracks it
-	// should contain.  This is what makes a want's download safe to
-	// complete unattended, so a want with no tracklist is never
+	// should contain.  This is what makes a request's download safe to
+	// complete unattended, so a request with no tracklist is never
 	// auto-grabbed.
 	Tracklist(
 		ctx context.Context,
@@ -64,8 +64,8 @@ type CatalogPort interface {
 	// names.
 	Owns(ctx context.Context, entity Entity, mbid string) (bool, error)
 
-	// Describe fills in display text for a want the user added by MBID
-	// alone.  Best-effort: an unknown MBID returns false and the want
+	// Describe fills in display text for a request the user added by MBID
+	// alone.  Best-effort: an unknown MBID returns false and the request
 	// is still perfectly valid.
 	Describe(
 		ctx context.Context,
@@ -87,7 +87,7 @@ type CatalogItem struct {
 	PrimaryType string
 
 	// SecondaryTypes carries "Compilation", "Live", "Remix" and
-	// friends.  Their presence is what an artist want's default scope
+	// friends.  Their presence is what an artist request's default scope
 	// filters out.
 	SecondaryTypes []string
 
@@ -100,25 +100,25 @@ type CatalogItem struct {
 
 // Reconciler defaults.
 const (
-	// defaultReconcileInterval is how often the wanted list is worked.
+	// defaultReconcileInterval is how often the request list is worked.
 	// Four times a day is far more often than new music appears and far
 	// less often than any provider would object to.
 	defaultReconcileInterval = 6 * time.Hour
 
 	// startupDelay lets the app finish starting — library scan, explore
-	// index, provider construction — before the first pass.  A wanted
+	// index, provider construction — before the first pass.  A requested
 	// list worked against an index that has not loaded yet would record
 	// a pile of pointless attempts.
 	startupDelay = 3 * time.Minute
 
-	// maxExpandPerArtist bounds how many child wants one artist
+	// maxExpandPerArtist bounds how many child requests one artist
 	// subscription creates in a single pass, so switching an artist to
 	// full-discography scope does not enqueue four hundred albums at
 	// once.  The remainder is picked up next pass.
 	maxExpandPerArtist = 40
 )
 
-// Reconciler works the wanted list.
+// Reconciler works the request list.
 type Reconciler struct {
 	logger  *slog.Logger
 	store   *Store
@@ -143,12 +143,12 @@ type Reconciler struct {
 	stop     chan struct{}
 
 	// runMu serializes passes: two reconcilers racing would search for
-	// the same want twice.
+	// the same request twice.
 	runMu sync.Mutex
 }
 
 // NewReconciler builds a reconciler.  catalog may be nil, in which case
-// the wanted list still stores and lists wants but never acts on them —
+// the request list still stores and lists requests but never acts on them —
 // which is the right behaviour when the explore index is unavailable.
 func NewReconciler(
 	logger *slog.Logger,
@@ -176,7 +176,7 @@ func (r *Reconciler) SetInterval(d time.Duration) {
 	}
 }
 
-// SetBatch overrides how many wants one pass attempts.
+// SetBatch overrides how many requests one pass attempts.
 func (r *Reconciler) SetBatch(n int) {
 	if n > 0 {
 		r.batch = n
@@ -200,7 +200,7 @@ func (r *Reconciler) Stop() {
 }
 
 // Trigger asks for a pass as soon as possible without blocking the
-// caller.  Used when the user adds a want and expects something to
+// caller.  Used when the user adds a request and expects something to
 // happen.
 func (r *Reconciler) Trigger() {
 	select {
@@ -229,27 +229,27 @@ func (r *Reconciler) loop(ctx context.Context) {
 		}
 
 		if _, err := r.RunOnce(ctx); err != nil {
-			r.logger.Warn("wanted list reconcile failed", "error", err)
+			r.logger.Warn("request list reconcile failed", "error", err)
 		}
 	}
 }
 
 // Summary reports what a pass did, for logging and for the UI.
 type Summary struct {
-	// Expanded is how many child wants artist subscriptions produced.
+	// Expanded is how many child requests artist subscriptions produced.
 	Expanded int `json:"expanded"`
 
-	// Satisfied is how many wants the library turned out to own.
+	// Satisfied is how many requests the library turned out to own.
 	Satisfied int `json:"satisfied"`
 
-	// Attempted is how many wants were searched for.
+	// Attempted is how many requests were searched for.
 	Attempted int `json:"attempted"`
 
 	// Started is how many of those found a clear enough winner to
 	// download unattended.
 	Started int `json:"started"`
 
-	// Synced is how many wants were pushed to an external list.
+	// Synced is how many requests were pushed to an external list.
 	Synced int `json:"synced"`
 }
 
@@ -259,7 +259,7 @@ func (s Summary) changed() bool {
 	return s.Expanded > 0 || s.Satisfied > 0 || s.Started > 0
 }
 
-// RunOnce works the wanted list once.  It is safe to call directly, and
+// RunOnce works the request list once.  It is safe to call directly, and
 // the "search now" button does.
 func (r *Reconciler) RunOnce(ctx context.Context) (Summary, error) {
 	r.runMu.Lock()
@@ -296,7 +296,7 @@ func (r *Reconciler) RunOnce(ctx context.Context) (Summary, error) {
 	summary.Started = started
 
 	r.logger.Info(
-		"reconciled wanted list",
+		"reconciled request list",
 		"expanded", summary.Expanded,
 		"satisfied", summary.Satisfied,
 		"attempted", summary.Attempted,
@@ -315,15 +315,15 @@ func (r *Reconciler) RunOnce(ctx context.Context) (Summary, error) {
 // Artist expansion
 // ---------------------------------------------------------------------------
 
-// expandArtists turns artist subscriptions into per-album wants.
+// expandArtists turns artist subscriptions into per-album requests.
 //
-// The expansion is idempotent: child wants are upserted on (mbid,
+// The expansion is idempotent: child requests are upserted on (mbid,
 // library), so re-running adds only what is genuinely new.  That is
-// what makes an artist want a standing subscription rather than a
+// what makes an artist request a standing subscription rather than a
 // one-time queue-filling operation — an album released next year gets
 // picked up by the same code path that ran today.
 func (r *Reconciler) expandArtists(ctx context.Context) (int, error) {
-	artists, err := r.store.ListArtistWants(ctx)
+	artists, err := r.store.ListActiveRequests(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -336,7 +336,7 @@ func (r *Reconciler) expandArtists(ctx context.Context) (int, error) {
 			// One artist whose discography will not resolve must not
 			// stop the rest of the list.
 			r.logger.Warn(
-				"could not expand artist want",
+				"could not expand artist request",
 				"artist", artist.Label(),
 				"mbid", artist.MBID,
 				"error", err,
@@ -352,7 +352,7 @@ func (r *Reconciler) expandArtists(ctx context.Context) (int, error) {
 }
 
 // expandArtist expands one subscription.
-func (r *Reconciler) expandArtist(ctx context.Context, artist Want) (int, error) {
+func (r *Reconciler) expandArtist(ctx context.Context, artist Request) (int, error) {
 	groups, err := r.catalog.ReleaseGroupsForArtist(ctx, artist.MBID)
 	if err != nil {
 		return 0, err
@@ -365,16 +365,16 @@ func (r *Reconciler) expandArtist(ctx context.Context, artist Want) (int, error)
 			break
 		}
 
-		if !wantsReleaseGroup(artist, rg) {
+		if !requestsReleaseGroup(artist, rg) {
 			continue
 		}
 
 		// Existence is checked before inserting rather than relying on
 		// the upsert, because "how many albums are new this pass" is
 		// the number the UI reports and an upsert cannot tell an insert
-		// from a no-op.  It also means a want the user pinned by hand
+		// from a no-op.  It also means a request the user pinned by hand
 		// is never quietly reparented under the artist.
-		if _, exists, err := r.store.FindWant(
+		if _, exists, err := r.store.FindRequest(
 			ctx, rg.MBID, artist.LibraryID,
 		); err != nil || exists {
 			continue
@@ -385,7 +385,7 @@ func (r *Reconciler) expandArtist(ctx context.Context, artist Want) (int, error)
 			credit = artist.Artist
 		}
 
-		if _, err := r.store.AddWant(ctx, Want{
+		if _, err := r.store.AddRequest(ctx, Request{
 			MBID:      rg.MBID,
 			Entity:    EntityReleaseGroup,
 			LibraryID: artist.LibraryID,
@@ -394,7 +394,7 @@ func (r *Reconciler) expandArtist(ctx context.Context, artist Want) (int, error)
 			ParentID:  artist.ID,
 		}); err != nil {
 			r.logger.Warn(
-				"could not add derived want",
+				"could not add derived request",
 				"release_group", rg.MBID,
 				"error", err,
 			)
@@ -408,9 +408,9 @@ func (r *Reconciler) expandArtist(ctx context.Context, artist Want) (int, error)
 	return created, nil
 }
 
-// wantsReleaseGroup applies an artist subscription's filters to one
+// requestsReleaseGroup applies an artist subscription's filters to one
 // release group.
-func wantsReleaseGroup(artist Want, rg CatalogItem) bool {
+func requestsReleaseGroup(artist Request, rg CatalogItem) bool {
 	if rg.MBID == "" || rg.InLibrary {
 		return false
 	}
@@ -457,30 +457,30 @@ func releaseDateAfter(date string, since time.Time) bool {
 // Retiring what the library already has
 // ---------------------------------------------------------------------------
 
-// retireOwned satisfies wants the library turns out to own.
+// retireOwned satisfies requests the library turns out to own.
 //
 // Ownership is asked of the library rather than inferred from our own
 // completed downloads on purpose: the user may have bought the album,
-// ripped their CD, or copied it in from another machine, and a wanted
+// ripped their CD, or copied it in from another machine, and a requested
 // list that keeps hunting for music already sitting on disk is worse
-// than no wanted list at all.
+// than no request list at all.
 func (r *Reconciler) retireOwned(ctx context.Context) (int, error) {
-	wants, err := r.store.ListWants(ctx)
+	requests, err := r.store.ListRequests(ctx)
 	if err != nil {
 		return 0, err
 	}
 
 	satisfied := 0
 
-	for _, w := range wants {
-		if w.State != WantStateWanted || w.Entity.Expands() {
+	for _, req := range requests {
+		if req.State != RequestStateWanted || req.Entity.Expands() {
 			continue
 		}
 
-		owned, err := r.catalog.Owns(ctx, w.Entity, w.MBID)
+		owned, err := r.catalog.Owns(ctx, req.Entity, req.MBID)
 		if err != nil {
 			r.logger.Debug(
-				"ownership check failed", "want", w.MBID, "error", err,
+				"ownership check failed", "request", req.MBID, "error", err,
 			)
 
 			continue
@@ -490,8 +490,8 @@ func (r *Reconciler) retireOwned(ctx context.Context) (int, error) {
 			continue
 		}
 
-		if err := r.store.SatisfyWant(ctx, w.ID); err != nil {
-			r.logger.Warn("could not satisfy want", "want", w.ID, "error", err)
+		if err := r.store.SatisfyRequest(ctx, req.ID); err != nil {
+			r.logger.Warn("could not satisfy request", "request", req.ID, "error", err)
 
 			continue
 		}
@@ -506,15 +506,15 @@ func (r *Reconciler) retireOwned(ctx context.Context) (int, error) {
 // Attempting downloads
 // ---------------------------------------------------------------------------
 
-// attemptDue searches for a bounded batch of due wants and grabs the
+// attemptDue searches for a bounded batch of due requests and grabs the
 // ones with a clear winner.
 func (r *Reconciler) attemptDue(ctx context.Context) (attempted, started int, err error) {
-	due, err := r.store.ListDueWants(ctx, r.batch)
+	due, err := r.store.ListDueRequests(ctx, r.batch)
 	if err != nil {
 		return 0, 0, err
 	}
 
-	for _, w := range due {
+	for _, req := range due {
 		select {
 		case <-ctx.Done():
 			return attempted, started, nil
@@ -523,7 +523,7 @@ func (r *Reconciler) attemptDue(ctx context.Context) (attempted, started int, er
 
 		attempted++
 
-		ok, reason := r.attempt(ctx, w)
+		ok, reason := r.attempt(ctx, req)
 		if ok {
 			started++
 
@@ -531,10 +531,10 @@ func (r *Reconciler) attemptDue(ctx context.Context) (attempted, started int, er
 		}
 
 		if err := r.store.RecordAttempt(
-			ctx, w.ID, w.Attempts, reason,
+			ctx, req.ID, req.Attempts, reason,
 		); err != nil {
 			r.logger.Warn(
-				"could not record want attempt", "want", w.ID, "error", err,
+				"could not record request attempt", "request", req.ID, "error", err,
 			)
 		}
 	}
@@ -542,64 +542,64 @@ func (r *Reconciler) attemptDue(ctx context.Context) (attempted, started int, er
 	return attempted, started, nil
 }
 
-// tracklistFor resolves what a want should contain, which is the
+// tracklistFor resolves what a request should contain, which is the
 // evidence an unattended download is checked against.
 //
-// A track want is its own tracklist: one entry, built from the title
-// the want already carries.  That single expected title is what lets
+// A track request is its own tracklist: one entry, built from the title
+// the request already carries.  That single expected title is what lets
 // filename matching score a track download at all — without it a
 // request for one song would be scored as an album with no tracks and
 // could never clear the auto-pick bar.
 func (r *Reconciler) tracklistFor(
 	ctx context.Context,
-	w Want,
+	req Request,
 ) ([]ExpectedTrack, error) {
-	if w.Entity != EntityRecording {
-		return r.catalog.Tracklist(ctx, w.Entity, w.MBID)
+	if req.Entity != EntityRecording {
+		return r.catalog.Tracklist(ctx, req.Entity, req.MBID)
 	}
 
-	if w.Title == "" {
+	if req.Title == "" {
 		return nil, nil
 	}
 
 	return []ExpectedTrack{{
 		Position: 1,
-		Title:    w.Title,
-		Artist:   w.Artist,
+		Title:    req.Title,
+		Artist:   req.Artist,
 	}}, nil
 }
 
-// attempt tries one want.  It returns false with a human-readable
+// attempt tries one request.  It returns false with a human-readable
 // reason rather than an error, because none of the ways this does not
 // work out are failures: no providers configured yet, nothing on any
 // source, or nothing good enough to take without asking are all just
 // "not today".
-func (r *Reconciler) attempt(ctx context.Context, w Want) (bool, string) {
-	expected, err := r.tracklistFor(ctx, w)
+func (r *Reconciler) attempt(ctx context.Context, req Request) (bool, string) {
+	expected, err := r.tracklistFor(ctx, req)
 	if err != nil || len(expected) == 0 {
 		// Without a tracklist an unattended grab has nothing to verify
-		// itself against, so this want waits rather than guessing.  The
+		// itself against, so this request waits rather than guessing.  The
 		// tracklist usually arrives on its own once the explore index
 		// fetches the release.
 		return false, "waiting for the tracklist to resolve"
 	}
 
-	req := w.ToRequest(newID())
-	req.Expected = expected
+	dl := req.ToDownload(newID())
+	dl.Expected = expected
 
-	if req.Artist == "" || req.Album == "" {
-		if item, ok := r.catalog.Describe(ctx, w.Entity, w.MBID); ok {
-			if req.Artist == "" {
-				req.Artist = item.Artist
+	if dl.Artist == "" || dl.Album == "" {
+		if item, ok := r.catalog.Describe(ctx, req.Entity, req.MBID); ok {
+			if dl.Artist == "" {
+				dl.Artist = item.Artist
 			}
 
-			if req.Album == "" {
-				req.Album = item.Title
+			if dl.Album == "" {
+				dl.Album = item.Title
 			}
 		}
 	}
 
-	started, reason, err := r.manager.Attempt(ctx, req)
+	started, reason, err := r.manager.Attempt(ctx, dl)
 	if err != nil {
 		if errors.Is(err, ErrNoProviders) {
 			return false, "no download clients are enabled"
@@ -619,7 +619,7 @@ func (r *Reconciler) attempt(ctx context.Context, w Want) (bool, string) {
 // External list sync
 // ---------------------------------------------------------------------------
 
-// syncExternalLists pushes wants to providers that keep a persistent
+// syncExternalLists pushes requests to providers that keep a persistent
 // list of their own.
 //
 // The sync is one-directional by design.  Two systems that both accept
@@ -634,21 +634,21 @@ func (r *Reconciler) syncExternalLists(ctx context.Context) int {
 		return 0
 	}
 
-	wants, err := r.store.ListWants(ctx)
+	requests, err := r.store.ListRequests(ctx)
 	if err != nil {
-		r.logger.Warn("could not list wants for sync", "error", err)
+		r.logger.Warn("could not list requests for sync", "error", err)
 
 		return 0
 	}
 
 	synced := 0
 
-	for _, w := range wants {
-		if w.State != WantStateWanted {
+	for _, req := range requests {
+		if req.State != RequestStateWanted {
 			continue
 		}
 
-		external := w.ExternalIDs
+		external := req.ExternalIDs
 		if external == nil {
 			external = map[string]string{}
 		}
@@ -661,11 +661,11 @@ func (r *Reconciler) syncExternalLists(ctx context.Context) int {
 				continue
 			}
 
-			externalID, err := l.PushWant(ctx, w)
+			externalID, err := l.PushRequest(ctx, req)
 			if err != nil {
 				r.logger.Debug(
-					"could not push want to external list",
-					"want", w.MBID,
+					"could not push request to external list",
+					"request", req.MBID,
 					"provider", id,
 					"error", err,
 				)
@@ -686,9 +686,9 @@ func (r *Reconciler) syncExternalLists(ctx context.Context) int {
 			continue
 		}
 
-		if err := r.store.SetWantExternalIDs(ctx, w.ID, external); err != nil {
+		if err := r.store.SetRequestExternalIDs(ctx, req.ID, external); err != nil {
 			r.logger.Warn(
-				"could not record external want ids", "want", w.ID, "error", err,
+				"could not record external request ids", "request", req.ID, "error", err,
 			)
 		}
 	}
@@ -696,7 +696,7 @@ func (r *Reconciler) syncExternalLists(ctx context.Context) int {
 	return synced
 }
 
-// ImportExternal pulls an external manager's own list into the wanted
+// ImportExternal pulls an external manager's own list into the requested
 // list.  This is the one place data flows the other way, and it is a
 // deliberate user action ("import my monitored Lidarr artists") rather
 // than part of the loop, because silently adopting whatever another
@@ -715,19 +715,19 @@ func (r *Reconciler) ImportExternal(
 		)
 	}
 
-	external, err := l.ListWants(ctx)
+	external, err := l.ListRequests(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("list external wants: %w", err)
+		return 0, fmt.Errorf("list external requests: %w", err)
 	}
 
 	imported := 0
 
-	for _, w := range external {
-		w.LibraryID = libraryID
+	for _, req := range external {
+		req.LibraryID = libraryID
 
-		if _, err := r.store.AddWant(ctx, w); err != nil {
+		if _, err := r.store.AddRequest(ctx, req); err != nil {
 			r.logger.Warn(
-				"could not import external want", "mbid", w.MBID, "error", err,
+				"could not import external request", "mbid", req.MBID, "error", err,
 			)
 
 			continue

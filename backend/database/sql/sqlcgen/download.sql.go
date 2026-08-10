@@ -10,9 +10,55 @@ import (
 	"database/sql"
 )
 
+const createDownload = `-- name: CreateDownload :exec
+
+INSERT INTO download_downloads (
+    id, library_id, source, request_id, release_mbid, release_group_mbid,
+    recording_mbid, artist, album, query, expected, state
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`
+
+type CreateDownloadParams struct {
+	ID               string
+	LibraryID        int64
+	Source           string
+	RequestID        sql.NullInt64
+	ReleaseMbid      sql.NullString
+	ReleaseGroupMbid sql.NullString
+	RecordingMbid    sql.NullString
+	Artist           string
+	Album            string
+	Query            string
+	Expected         string
+	State            string
+}
+
+// ---------------------------------------------------------------------
+// Downloads (one-shot search+grab attempts)
+// ---------------------------------------------------------------------
+func (q *Queries) CreateDownload(ctx context.Context, arg CreateDownloadParams) error {
+	_, err := q.db.ExecContext(ctx, createDownload,
+		arg.ID,
+		arg.LibraryID,
+		arg.Source,
+		arg.RequestID,
+		arg.ReleaseMbid,
+		arg.ReleaseGroupMbid,
+		arg.RecordingMbid,
+		arg.Artist,
+		arg.Album,
+		arg.Query,
+		arg.Expected,
+		arg.State,
+	)
+	return err
+}
+
 const createDownloadItem = `-- name: CreateDownloadItem :exec
+
 INSERT INTO download_items (
-    id, request_id, provider_id, transport_id, external_id,
+    id, download_id, provider_id, transport_id, external_id,
     candidate, state, staging_dir, bytes_total
 )
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -20,7 +66,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 
 type CreateDownloadItemParams struct {
 	ID          string
-	RequestID   string
+	DownloadID  string
 	ProviderID  int64
 	TransportID sql.NullInt64
 	ExternalID  string
@@ -30,10 +76,13 @@ type CreateDownloadItemParams struct {
 	BytesTotal  int64
 }
 
+// ---------------------------------------------------------------------
+// Items (transfer records within a download)
+// ---------------------------------------------------------------------
 func (q *Queries) CreateDownloadItem(ctx context.Context, arg CreateDownloadItemParams) error {
 	_, err := q.db.ExecContext(ctx, createDownloadItem,
 		arg.ID,
-		arg.RequestID,
+		arg.DownloadID,
 		arg.ProviderID,
 		arg.TransportID,
 		arg.ExternalID,
@@ -72,44 +121,13 @@ func (q *Queries) CreateDownloadProvider(ctx context.Context, arg CreateDownload
 	return id, err
 }
 
-const createDownloadRequest = `-- name: CreateDownloadRequest :exec
-INSERT INTO download_requests (
-    id, library_id, source, want_id, release_mbid, release_group_mbid,
-    recording_mbid, artist, album, query, expected, state
-)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+const deleteDownload = `-- name: DeleteDownload :exec
+DELETE FROM download_downloads
+WHERE id = ?
 `
 
-type CreateDownloadRequestParams struct {
-	ID               string
-	LibraryID        int64
-	Source           string
-	WantID           sql.NullInt64
-	ReleaseMbid      sql.NullString
-	ReleaseGroupMbid sql.NullString
-	RecordingMbid    sql.NullString
-	Artist           string
-	Album            string
-	Query            string
-	Expected         string
-	State            string
-}
-
-func (q *Queries) CreateDownloadRequest(ctx context.Context, arg CreateDownloadRequestParams) error {
-	_, err := q.db.ExecContext(ctx, createDownloadRequest,
-		arg.ID,
-		arg.LibraryID,
-		arg.Source,
-		arg.WantID,
-		arg.ReleaseMbid,
-		arg.ReleaseGroupMbid,
-		arg.RecordingMbid,
-		arg.Artist,
-		arg.Album,
-		arg.Query,
-		arg.Expected,
-		arg.State,
-	)
+func (q *Queries) DeleteDownload(ctx context.Context, id string) error {
+	_, err := q.db.ExecContext(ctx, deleteDownload, id)
 	return err
 }
 
@@ -124,45 +142,66 @@ func (q *Queries) DeleteDownloadProvider(ctx context.Context, id int64) error {
 }
 
 const deleteDownloadRequest = `-- name: DeleteDownloadRequest :exec
-DELETE FROM download_requests
-WHERE id = ?
+DELETE FROM download_requests WHERE id = ?
 `
 
-func (q *Queries) DeleteDownloadRequest(ctx context.Context, id string) error {
+func (q *Queries) DeleteDownloadRequest(ctx context.Context, id int64) error {
 	_, err := q.db.ExecContext(ctx, deleteDownloadRequest, id)
 	return err
 }
 
-const deleteDownloadWant = `-- name: DeleteDownloadWant :exec
-DELETE FROM download_wants WHERE id = ?
-`
-
-func (q *Queries) DeleteDownloadWant(ctx context.Context, id int64) error {
-	_, err := q.db.ExecContext(ctx, deleteDownloadWant, id)
-	return err
-}
-
-const deleteFinishedDownloadRequests = `-- name: DeleteFinishedDownloadRequests :exec
-DELETE FROM download_requests
+const deleteFinishedDownloads = `-- name: DeleteFinishedDownloads :exec
+DELETE FROM download_downloads
 WHERE state IN ('complete', 'cancelled', 'failed')
 `
 
-func (q *Queries) DeleteFinishedDownloadRequests(ctx context.Context) error {
-	_, err := q.db.ExecContext(ctx, deleteFinishedDownloadRequests)
+func (q *Queries) DeleteFinishedDownloads(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, deleteFinishedDownloads)
 	return err
 }
 
-const deleteSatisfiedDownloadWants = `-- name: DeleteSatisfiedDownloadWants :exec
-DELETE FROM download_wants WHERE state = 'satisfied'
+const deleteSatisfiedDownloadRequests = `-- name: DeleteSatisfiedDownloadRequests :exec
+DELETE FROM download_requests WHERE state = 'satisfied'
 `
 
-func (q *Queries) DeleteSatisfiedDownloadWants(ctx context.Context) error {
-	_, err := q.db.ExecContext(ctx, deleteSatisfiedDownloadWants)
+func (q *Queries) DeleteSatisfiedDownloadRequests(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, deleteSatisfiedDownloadRequests)
 	return err
+}
+
+const getDownload = `-- name: GetDownload :one
+SELECT id, library_id, source, request_id, release_mbid, release_group_mbid,
+       recording_mbid, artist, album, query, expected, state, error,
+       created_at, updated_at
+FROM download_downloads
+WHERE id = ?
+`
+
+func (q *Queries) GetDownload(ctx context.Context, id string) (DownloadDownload, error) {
+	row := q.db.QueryRowContext(ctx, getDownload, id)
+	var i DownloadDownload
+	err := row.Scan(
+		&i.ID,
+		&i.LibraryID,
+		&i.Source,
+		&i.RequestID,
+		&i.ReleaseMbid,
+		&i.ReleaseGroupMbid,
+		&i.RecordingMbid,
+		&i.Artist,
+		&i.Album,
+		&i.Query,
+		&i.Expected,
+		&i.State,
+		&i.Error,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const getDownloadItem = `-- name: GetDownloadItem :one
-SELECT id, request_id, provider_id, transport_id, external_id, candidate,
+SELECT id, download_id, provider_id, transport_id, external_id, candidate,
        state, staging_dir, bytes_done, bytes_total, imported_paths,
        error, created_at, updated_at
 FROM download_items
@@ -174,7 +213,7 @@ func (q *Queries) GetDownloadItem(ctx context.Context, id string) (DownloadItem,
 	var i DownloadItem
 	err := row.Scan(
 		&i.ID,
-		&i.RequestID,
+		&i.DownloadID,
 		&i.ProviderID,
 		&i.TransportID,
 		&i.ExternalID,
@@ -213,45 +252,14 @@ func (q *Queries) GetDownloadProvider(ctx context.Context, id int64) (DownloadPr
 }
 
 const getDownloadRequest = `-- name: GetDownloadRequest :one
-SELECT id, library_id, source, want_id, release_mbid, release_group_mbid,
-       recording_mbid, artist, album, query, expected, state, error,
-       created_at, updated_at
-FROM download_requests
-WHERE id = ?
+SELECT id, mbid, entity, library_id, artist, title, scope, secondary, state, parent_id, attempts, last_error, last_tried_at, next_try_at, external_ids, created_at, updated_at FROM download_requests WHERE id = ?
 `
 
-func (q *Queries) GetDownloadRequest(ctx context.Context, id string) (DownloadRequest, error) {
+func (q *Queries) GetDownloadRequest(ctx context.Context, id int64) (DownloadRequest, error) {
 	row := q.db.QueryRowContext(ctx, getDownloadRequest, id)
 	var i DownloadRequest
 	err := row.Scan(
 		&i.ID,
-		&i.LibraryID,
-		&i.Source,
-		&i.WantID,
-		&i.ReleaseMbid,
-		&i.ReleaseGroupMbid,
-		&i.RecordingMbid,
-		&i.Artist,
-		&i.Album,
-		&i.Query,
-		&i.Expected,
-		&i.State,
-		&i.Error,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const getDownloadWant = `-- name: GetDownloadWant :one
-SELECT id, mbid, entity, library_id, artist, title, scope, secondary, state, parent_id, attempts, last_error, last_tried_at, next_try_at, external_ids, created_at, updated_at FROM download_wants WHERE id = ?
-`
-
-func (q *Queries) GetDownloadWant(ctx context.Context, id int64) (DownloadWant, error) {
-	row := q.db.QueryRowContext(ctx, getDownloadWant, id)
-	var i DownloadWant
-	err := row.Scan(
-		&i.ID,
 		&i.Mbid,
 		&i.Entity,
 		&i.LibraryID,
@@ -272,18 +280,18 @@ func (q *Queries) GetDownloadWant(ctx context.Context, id int64) (DownloadWant, 
 	return i, err
 }
 
-const getDownloadWantByMBID = `-- name: GetDownloadWantByMBID :one
-SELECT id, mbid, entity, library_id, artist, title, scope, secondary, state, parent_id, attempts, last_error, last_tried_at, next_try_at, external_ids, created_at, updated_at FROM download_wants WHERE mbid = ? AND library_id = ?
+const getDownloadRequestByMBID = `-- name: GetDownloadRequestByMBID :one
+SELECT id, mbid, entity, library_id, artist, title, scope, secondary, state, parent_id, attempts, last_error, last_tried_at, next_try_at, external_ids, created_at, updated_at FROM download_requests WHERE mbid = ? AND library_id = ?
 `
 
-type GetDownloadWantByMBIDParams struct {
+type GetDownloadRequestByMBIDParams struct {
 	Mbid      string
 	LibraryID int64
 }
 
-func (q *Queries) GetDownloadWantByMBID(ctx context.Context, arg GetDownloadWantByMBIDParams) (DownloadWant, error) {
-	row := q.db.QueryRowContext(ctx, getDownloadWantByMBID, arg.Mbid, arg.LibraryID)
-	var i DownloadWant
+func (q *Queries) GetDownloadRequestByMBID(ctx context.Context, arg GetDownloadRequestByMBIDParams) (DownloadRequest, error) {
+	row := q.db.QueryRowContext(ctx, getDownloadRequestByMBID, arg.Mbid, arg.LibraryID)
+	var i DownloadRequest
 	err := row.Scan(
 		&i.ID,
 		&i.Mbid,
@@ -306,19 +314,19 @@ func (q *Queries) GetDownloadWantByMBID(ctx context.Context, arg GetDownloadWant
 	return i, err
 }
 
-const listChildDownloadWants = `-- name: ListChildDownloadWants :many
-SELECT id, mbid, entity, library_id, artist, title, scope, secondary, state, parent_id, attempts, last_error, last_tried_at, next_try_at, external_ids, created_at, updated_at FROM download_wants WHERE parent_id = ? ORDER BY id
+const listChildDownloadRequests = `-- name: ListChildDownloadRequests :many
+SELECT id, mbid, entity, library_id, artist, title, scope, secondary, state, parent_id, attempts, last_error, last_tried_at, next_try_at, external_ids, created_at, updated_at FROM download_requests WHERE parent_id = ? ORDER BY id
 `
 
-func (q *Queries) ListChildDownloadWants(ctx context.Context, parentID sql.NullInt64) ([]DownloadWant, error) {
-	rows, err := q.db.QueryContext(ctx, listChildDownloadWants, parentID)
+func (q *Queries) ListChildDownloadRequests(ctx context.Context, parentID sql.NullInt64) ([]DownloadRequest, error) {
+	rows, err := q.db.QueryContext(ctx, listChildDownloadRequests, parentID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []DownloadWant
+	var items []DownloadRequest
 	for rows.Next() {
-		var i DownloadWant
+		var i DownloadRequest
 		if err := rows.Scan(
 			&i.ID,
 			&i.Mbid,
@@ -351,17 +359,17 @@ func (q *Queries) ListChildDownloadWants(ctx context.Context, parentID sql.NullI
 	return items, nil
 }
 
-const listDownloadItemsForRequest = `-- name: ListDownloadItemsForRequest :many
-SELECT id, request_id, provider_id, transport_id, external_id, candidate,
+const listDownloadItemsForDownload = `-- name: ListDownloadItemsForDownload :many
+SELECT id, download_id, provider_id, transport_id, external_id, candidate,
        state, staging_dir, bytes_done, bytes_total, imported_paths,
        error, created_at, updated_at
 FROM download_items
-WHERE request_id = ?
+WHERE download_id = ?
 ORDER BY created_at
 `
 
-func (q *Queries) ListDownloadItemsForRequest(ctx context.Context, requestID string) ([]DownloadItem, error) {
-	rows, err := q.db.QueryContext(ctx, listDownloadItemsForRequest, requestID)
+func (q *Queries) ListDownloadItemsForDownload(ctx context.Context, downloadID string) ([]DownloadItem, error) {
+	rows, err := q.db.QueryContext(ctx, listDownloadItemsForDownload, downloadID)
 	if err != nil {
 		return nil, err
 	}
@@ -371,7 +379,7 @@ func (q *Queries) ListDownloadItemsForRequest(ctx context.Context, requestID str
 		var i DownloadItem
 		if err := rows.Scan(
 			&i.ID,
-			&i.RequestID,
+			&i.DownloadID,
 			&i.ProviderID,
 			&i.TransportID,
 			&i.ExternalID,
@@ -436,16 +444,14 @@ func (q *Queries) ListDownloadProviders(ctx context.Context) ([]DownloadProvider
 }
 
 const listDownloadRequests = `-- name: ListDownloadRequests :many
-SELECT id, library_id, source, want_id, release_mbid, release_group_mbid,
-       recording_mbid, artist, album, query, expected, state, error,
-       created_at, updated_at
-FROM download_requests
-ORDER BY created_at DESC
-LIMIT ?
+SELECT id, mbid, entity, library_id, artist, title, scope, secondary, state, parent_id, attempts, last_error, last_tried_at, next_try_at, external_ids, created_at, updated_at FROM download_requests
+ORDER BY
+    CASE state WHEN 'wanted' THEN 0 WHEN 'paused' THEN 1 ELSE 2 END,
+    artist, title
 `
 
-func (q *Queries) ListDownloadRequests(ctx context.Context, limit int64) ([]DownloadRequest, error) {
-	rows, err := q.db.QueryContext(ctx, listDownloadRequests, limit)
+func (q *Queries) ListDownloadRequests(ctx context.Context) ([]DownloadRequest, error) {
+	rows, err := q.db.QueryContext(ctx, listDownloadRequests)
 	if err != nil {
 		return nil, err
 	}
@@ -455,9 +461,111 @@ func (q *Queries) ListDownloadRequests(ctx context.Context, limit int64) ([]Down
 		var i DownloadRequest
 		if err := rows.Scan(
 			&i.ID,
+			&i.Mbid,
+			&i.Entity,
+			&i.LibraryID,
+			&i.Artist,
+			&i.Title,
+			&i.Scope,
+			&i.Secondary,
+			&i.State,
+			&i.ParentID,
+			&i.Attempts,
+			&i.LastError,
+			&i.LastTriedAt,
+			&i.NextTryAt,
+			&i.ExternalIds,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDownloadRequestsByEntity = `-- name: ListDownloadRequestsByEntity :many
+SELECT id, mbid, entity, library_id, artist, title, scope, secondary, state, parent_id, attempts, last_error, last_tried_at, next_try_at, external_ids, created_at, updated_at FROM download_requests
+WHERE entity = ? AND state = ?
+ORDER BY id
+`
+
+type ListDownloadRequestsByEntityParams struct {
+	Entity string
+	State  string
+}
+
+func (q *Queries) ListDownloadRequestsByEntity(ctx context.Context, arg ListDownloadRequestsByEntityParams) ([]DownloadRequest, error) {
+	rows, err := q.db.QueryContext(ctx, listDownloadRequestsByEntity, arg.Entity, arg.State)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DownloadRequest
+	for rows.Next() {
+		var i DownloadRequest
+		if err := rows.Scan(
+			&i.ID,
+			&i.Mbid,
+			&i.Entity,
+			&i.LibraryID,
+			&i.Artist,
+			&i.Title,
+			&i.Scope,
+			&i.Secondary,
+			&i.State,
+			&i.ParentID,
+			&i.Attempts,
+			&i.LastError,
+			&i.LastTriedAt,
+			&i.NextTryAt,
+			&i.ExternalIds,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDownloads = `-- name: ListDownloads :many
+SELECT id, library_id, source, request_id, release_mbid, release_group_mbid,
+       recording_mbid, artist, album, query, expected, state, error,
+       created_at, updated_at
+FROM download_downloads
+ORDER BY created_at DESC
+LIMIT ?
+`
+
+func (q *Queries) ListDownloads(ctx context.Context, limit int64) ([]DownloadDownload, error) {
+	rows, err := q.db.QueryContext(ctx, listDownloads, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DownloadDownload
+	for rows.Next() {
+		var i DownloadDownload
+		if err := rows.Scan(
+			&i.ID,
 			&i.LibraryID,
 			&i.Source,
-			&i.WantID,
+			&i.RequestID,
 			&i.ReleaseMbid,
 			&i.ReleaseGroupMbid,
 			&i.RecordingMbid,
@@ -483,108 +591,8 @@ func (q *Queries) ListDownloadRequests(ctx context.Context, limit int64) ([]Down
 	return items, nil
 }
 
-const listDownloadWants = `-- name: ListDownloadWants :many
-SELECT id, mbid, entity, library_id, artist, title, scope, secondary, state, parent_id, attempts, last_error, last_tried_at, next_try_at, external_ids, created_at, updated_at FROM download_wants
-ORDER BY
-    CASE state WHEN 'wanted' THEN 0 WHEN 'paused' THEN 1 ELSE 2 END,
-    artist, title
-`
-
-func (q *Queries) ListDownloadWants(ctx context.Context) ([]DownloadWant, error) {
-	rows, err := q.db.QueryContext(ctx, listDownloadWants)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []DownloadWant
-	for rows.Next() {
-		var i DownloadWant
-		if err := rows.Scan(
-			&i.ID,
-			&i.Mbid,
-			&i.Entity,
-			&i.LibraryID,
-			&i.Artist,
-			&i.Title,
-			&i.Scope,
-			&i.Secondary,
-			&i.State,
-			&i.ParentID,
-			&i.Attempts,
-			&i.LastError,
-			&i.LastTriedAt,
-			&i.NextTryAt,
-			&i.ExternalIds,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listDownloadWantsByEntity = `-- name: ListDownloadWantsByEntity :many
-SELECT id, mbid, entity, library_id, artist, title, scope, secondary, state, parent_id, attempts, last_error, last_tried_at, next_try_at, external_ids, created_at, updated_at FROM download_wants
-WHERE entity = ? AND state = ?
-ORDER BY id
-`
-
-type ListDownloadWantsByEntityParams struct {
-	Entity string
-	State  string
-}
-
-func (q *Queries) ListDownloadWantsByEntity(ctx context.Context, arg ListDownloadWantsByEntityParams) ([]DownloadWant, error) {
-	rows, err := q.db.QueryContext(ctx, listDownloadWantsByEntity, arg.Entity, arg.State)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []DownloadWant
-	for rows.Next() {
-		var i DownloadWant
-		if err := rows.Scan(
-			&i.ID,
-			&i.Mbid,
-			&i.Entity,
-			&i.LibraryID,
-			&i.Artist,
-			&i.Title,
-			&i.Scope,
-			&i.Secondary,
-			&i.State,
-			&i.ParentID,
-			&i.Attempts,
-			&i.LastError,
-			&i.LastTriedAt,
-			&i.NextTryAt,
-			&i.ExternalIds,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listDueDownloadWants = `-- name: ListDueDownloadWants :many
-SELECT id, mbid, entity, library_id, artist, title, scope, secondary, state, parent_id, attempts, last_error, last_tried_at, next_try_at, external_ids, created_at, updated_at FROM download_wants
+const listDueDownloadRequests = `-- name: ListDueDownloadRequests :many
+SELECT id, mbid, entity, library_id, artist, title, scope, secondary, state, parent_id, attempts, last_error, last_tried_at, next_try_at, external_ids, created_at, updated_at FROM download_requests
 WHERE state = 'wanted'
   AND entity <> 'artist'
   AND (next_try_at IS NULL OR next_try_at <= CURRENT_TIMESTAMP)
@@ -595,15 +603,15 @@ LIMIT ?
 // Everything the reconciler should act on this pass: wanted, not an
 // artist subscription (those expand rather than download), and either
 // never tried or past its backoff.
-func (q *Queries) ListDueDownloadWants(ctx context.Context, limit int64) ([]DownloadWant, error) {
-	rows, err := q.db.QueryContext(ctx, listDueDownloadWants, limit)
+func (q *Queries) ListDueDownloadRequests(ctx context.Context, limit int64) ([]DownloadRequest, error) {
+	rows, err := q.db.QueryContext(ctx, listDueDownloadRequests, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []DownloadWant
+	var items []DownloadRequest
 	for rows.Next() {
-		var i DownloadWant
+		var i DownloadRequest
 		if err := rows.Scan(
 			&i.ID,
 			&i.Mbid,
@@ -637,7 +645,7 @@ func (q *Queries) ListDueDownloadWants(ctx context.Context, limit int64) ([]Down
 }
 
 const listLiveDownloadItems = `-- name: ListLiveDownloadItems :many
-SELECT id, request_id, provider_id, transport_id, external_id, candidate,
+SELECT id, download_id, provider_id, transport_id, external_id, candidate,
        state, staging_dir, bytes_done, bytes_total, imported_paths,
        error, created_at, updated_at
 FROM download_items
@@ -656,7 +664,7 @@ func (q *Queries) ListLiveDownloadItems(ctx context.Context) ([]DownloadItem, er
 		var i DownloadItem
 		if err := rows.Scan(
 			&i.ID,
-			&i.RequestID,
+			&i.DownloadID,
 			&i.ProviderID,
 			&i.TransportID,
 			&i.ExternalID,
@@ -683,29 +691,29 @@ func (q *Queries) ListLiveDownloadItems(ctx context.Context) ([]DownloadItem, er
 	return items, nil
 }
 
-const listLiveDownloadRequests = `-- name: ListLiveDownloadRequests :many
-SELECT id, library_id, source, want_id, release_mbid, release_group_mbid,
+const listLiveDownloads = `-- name: ListLiveDownloads :many
+SELECT id, library_id, source, request_id, release_mbid, release_group_mbid,
        recording_mbid, artist, album, query, expected, state, error,
        created_at, updated_at
-FROM download_requests
+FROM download_downloads
 WHERE state NOT IN ('complete', 'cancelled', 'failed')
 ORDER BY created_at
 `
 
-func (q *Queries) ListLiveDownloadRequests(ctx context.Context) ([]DownloadRequest, error) {
-	rows, err := q.db.QueryContext(ctx, listLiveDownloadRequests)
+func (q *Queries) ListLiveDownloads(ctx context.Context) ([]DownloadDownload, error) {
+	rows, err := q.db.QueryContext(ctx, listLiveDownloads)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []DownloadRequest
+	var items []DownloadDownload
 	for rows.Next() {
-		var i DownloadRequest
+		var i DownloadDownload
 		if err := rows.Scan(
 			&i.ID,
 			&i.LibraryID,
 			&i.Source,
-			&i.WantID,
+			&i.RequestID,
 			&i.ReleaseMbid,
 			&i.ReleaseGroupMbid,
 			&i.RecordingMbid,
@@ -731,8 +739,8 @@ func (q *Queries) ListLiveDownloadRequests(ctx context.Context) ([]DownloadReque
 	return items, nil
 }
 
-const recordDownloadWantAttempt = `-- name: RecordDownloadWantAttempt :exec
-UPDATE download_wants
+const recordDownloadRequestAttempt = `-- name: RecordDownloadRequestAttempt :exec
+UPDATE download_requests
 SET attempts      = attempts + 1,
     last_error    = ?,
     last_tried_at = CURRENT_TIMESTAMP,
@@ -741,26 +749,26 @@ SET attempts      = attempts + 1,
 WHERE id = ?
 `
 
-type RecordDownloadWantAttemptParams struct {
+type RecordDownloadRequestAttemptParams struct {
 	LastError string
 	NextTryAt sql.NullTime
 	ID        int64
 }
 
-func (q *Queries) RecordDownloadWantAttempt(ctx context.Context, arg RecordDownloadWantAttemptParams) error {
-	_, err := q.db.ExecContext(ctx, recordDownloadWantAttempt, arg.LastError, arg.NextTryAt, arg.ID)
+func (q *Queries) RecordDownloadRequestAttempt(ctx context.Context, arg RecordDownloadRequestAttemptParams) error {
+	_, err := q.db.ExecContext(ctx, recordDownloadRequestAttempt, arg.LastError, arg.NextTryAt, arg.ID)
 	return err
 }
 
-const satisfyDownloadWant = `-- name: SatisfyDownloadWant :exec
-UPDATE download_wants
+const satisfyDownloadRequest = `-- name: SatisfyDownloadRequest :exec
+UPDATE download_requests
 SET state = 'satisfied', last_error = '', next_try_at = NULL,
     updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
 `
 
-func (q *Queries) SatisfyDownloadWant(ctx context.Context, id int64) error {
-	_, err := q.db.ExecContext(ctx, satisfyDownloadWant, id)
+func (q *Queries) SatisfyDownloadRequest(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, satisfyDownloadRequest, id)
 	return err
 }
 
@@ -831,53 +839,53 @@ func (q *Queries) SetDownloadItemState(ctx context.Context, arg SetDownloadItemS
 	return err
 }
 
-const setDownloadRequestState = `-- name: SetDownloadRequestState :exec
+const setDownloadRequestExternalIDs = `-- name: SetDownloadRequestExternalIDs :exec
 UPDATE download_requests
-SET state = ?, error = ?, updated_at = CURRENT_TIMESTAMP
-WHERE id = ?
-`
-
-type SetDownloadRequestStateParams struct {
-	State string
-	Error string
-	ID    string
-}
-
-func (q *Queries) SetDownloadRequestState(ctx context.Context, arg SetDownloadRequestStateParams) error {
-	_, err := q.db.ExecContext(ctx, setDownloadRequestState, arg.State, arg.Error, arg.ID)
-	return err
-}
-
-const setDownloadWantExternalIDs = `-- name: SetDownloadWantExternalIDs :exec
-UPDATE download_wants
 SET external_ids = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
 `
 
-type SetDownloadWantExternalIDsParams struct {
+type SetDownloadRequestExternalIDsParams struct {
 	ExternalIds string
 	ID          int64
 }
 
-func (q *Queries) SetDownloadWantExternalIDs(ctx context.Context, arg SetDownloadWantExternalIDsParams) error {
-	_, err := q.db.ExecContext(ctx, setDownloadWantExternalIDs, arg.ExternalIds, arg.ID)
+func (q *Queries) SetDownloadRequestExternalIDs(ctx context.Context, arg SetDownloadRequestExternalIDsParams) error {
+	_, err := q.db.ExecContext(ctx, setDownloadRequestExternalIDs, arg.ExternalIds, arg.ID)
 	return err
 }
 
-const setDownloadWantState = `-- name: SetDownloadWantState :exec
-UPDATE download_wants
+const setDownloadRequestState = `-- name: SetDownloadRequestState :exec
+UPDATE download_requests
 SET state = ?, last_error = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
 `
 
-type SetDownloadWantStateParams struct {
+type SetDownloadRequestStateParams struct {
 	State     string
 	LastError string
 	ID        int64
 }
 
-func (q *Queries) SetDownloadWantState(ctx context.Context, arg SetDownloadWantStateParams) error {
-	_, err := q.db.ExecContext(ctx, setDownloadWantState, arg.State, arg.LastError, arg.ID)
+func (q *Queries) SetDownloadRequestState(ctx context.Context, arg SetDownloadRequestStateParams) error {
+	_, err := q.db.ExecContext(ctx, setDownloadRequestState, arg.State, arg.LastError, arg.ID)
+	return err
+}
+
+const setDownloadState = `-- name: SetDownloadState :exec
+UPDATE download_downloads
+SET state = ?, error = ?, updated_at = CURRENT_TIMESTAMP
+WHERE id = ?
+`
+
+type SetDownloadStateParams struct {
+	State string
+	Error string
+	ID    string
+}
+
+func (q *Queries) SetDownloadState(ctx context.Context, arg SetDownloadStateParams) error {
+	_, err := q.db.ExecContext(ctx, setDownloadState, arg.State, arg.Error, arg.ID)
 	return err
 }
 
@@ -906,25 +914,25 @@ func (q *Queries) UpdateDownloadProvider(ctx context.Context, arg UpdateDownload
 	return err
 }
 
-const upsertDownloadWant = `-- name: UpsertDownloadWant :one
+const upsertDownloadRequest = `-- name: UpsertDownloadRequest :one
 
-INSERT INTO download_wants (
+INSERT INTO download_requests (
     mbid, entity, library_id, artist, title, scope, secondary,
     parent_id, next_try_at
 )
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 ON CONFLICT(mbid, library_id) DO UPDATE SET
     artist     = CASE WHEN excluded.artist <> '' THEN excluded.artist
-                      ELSE download_wants.artist END,
+                      ELSE download_requests.artist END,
     title      = CASE WHEN excluded.title <> '' THEN excluded.title
-                      ELSE download_wants.title END,
+                      ELSE download_requests.title END,
     scope      = excluded.scope,
     secondary  = excluded.secondary,
     updated_at = CURRENT_TIMESTAMP
 RETURNING id
 `
 
-type UpsertDownloadWantParams struct {
+type UpsertDownloadRequestParams struct {
 	Mbid      string
 	Entity    string
 	LibraryID int64
@@ -936,14 +944,14 @@ type UpsertDownloadWantParams struct {
 }
 
 // ---------------------------------------------------------------------
-// Wants
+// Requests (durable "I asked for this" records)
 // ---------------------------------------------------------------------
-// Adding something already wanted is not an error and must not reset
-// the retry clock, so the conflict path only refreshes display text and
-// un-pauses nothing.  scope and secondary are updated because asking
-// again with a wider scope is a real change of intent.
-func (q *Queries) UpsertDownloadWant(ctx context.Context, arg UpsertDownloadWantParams) (int64, error) {
-	row := q.db.QueryRowContext(ctx, upsertDownloadWant,
+// Adding something already requested is not an error and must not
+// reset the retry clock, so the conflict path only refreshes display
+// text and un-pauses nothing.  scope and secondary are updated because
+// asking again with a wider scope is a real change of intent.
+func (q *Queries) UpsertDownloadRequest(ctx context.Context, arg UpsertDownloadRequestParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, upsertDownloadRequest,
 		arg.Mbid,
 		arg.Entity,
 		arg.LibraryID,

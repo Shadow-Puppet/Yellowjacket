@@ -6,8 +6,8 @@ export function AddProvider(arg1, arg2, arg3) {
   return window['go']['download']['Service']['AddProvider'](arg1, arg2, arg3);
 }
 
-export function AddWant(arg1) {
-  return window['go']['download']['Service']['AddWant'](arg1);
+export function AddRequest(arg1) {
+  return window['go']['download']['Service']['AddRequest'](arg1);
 }
 
 export function Cancel(arg1) {
@@ -22,36 +22,36 @@ export function ClearFinished() {
   return window['go']['download']['Service']['ClearFinished']();
 }
 
-export function ClearSatisfiedWants() {
-  return window['go']['download']['Service']['ClearSatisfiedWants']();
+export function ClearSatisfiedRequests() {
+  return window['go']['download']['Service']['ClearSatisfiedRequests']();
 }
 
 export function DeleteProvider(arg1) {
   return window['go']['download']['Service']['DeleteProvider'](arg1);
 }
 
-export function ImportExternalWants(arg1, arg2) {
-  return window['go']['download']['Service']['ImportExternalWants'](arg1, arg2);
+export function ImportExternalRequests(arg1, arg2) {
+  return window['go']['download']['Service']['ImportExternalRequests'](arg1, arg2);
 }
 
-export function IsWanted(arg1, arg2) {
-  return window['go']['download']['Service']['IsWanted'](arg1, arg2);
+export function IsRequested(arg1, arg2) {
+  return window['go']['download']['Service']['IsRequested'](arg1, arg2);
+}
+
+export function ListDownloads(arg1) {
+  return window['go']['download']['Service']['ListDownloads'](arg1);
 }
 
 export function ListProviders() {
   return window['go']['download']['Service']['ListProviders']();
 }
 
-export function ListRequests(arg1) {
-  return window['go']['download']['Service']['ListRequests'](arg1);
+export function ListRequests() {
+  return window['go']['download']['Service']['ListRequests']();
 }
 
-export function ListWants() {
-  return window['go']['download']['Service']['ListWants']();
-}
-
-export function PauseWant(arg1, arg2) {
-  return window['go']['download']['Service']['PauseWant'](arg1, arg2);
+export function PauseRequest(arg1, arg2) {
+  return window['go']['download']['Service']['PauseRequest'](arg1, arg2);
 }
 
 export function Pick(arg1, arg2) {
@@ -62,24 +62,28 @@ export function ProviderKinds() {
   return window['go']['download']['Service']['ProviderKinds']();
 }
 
-export function ReconcileWanted() {
-  return window['go']['download']['Service']['ReconcileWanted']();
+export function ReconcileRequests() {
+  return window['go']['download']['Service']['ReconcileRequests']();
 }
 
-export function RemoveWant(arg1) {
-  return window['go']['download']['Service']['RemoveWant'](arg1);
+export function RemoveRequest(arg1) {
+  return window['go']['download']['Service']['RemoveRequest'](arg1);
 }
 
 export function SetContext(arg1) {
   return window['go']['download']['Service']['SetContext'](arg1);
 }
 
+export function SetPreferences(arg1) {
+  return window['go']['download']['Service']['SetPreferences'](arg1);
+}
+
 export function SetReconciler(arg1) {
   return window['go']['download']['Service']['SetReconciler'](arg1);
 }
 
-export function Start(arg1) {
-  return window['go']['download']['Service']['Start'](arg1);
+export function StartDownload(arg1) {
+  return window['go']['download']['Service']['StartDownload'](arg1);
 }
 
 export function TestProvider(arg1) {

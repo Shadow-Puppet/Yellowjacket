@@ -3,8 +3,8 @@ package download
 import "testing"
 
 // okComputer is the reference request used across ranking tests.
-func okComputer() Request {
-	return Request{
+func okComputer() Download {
+	return Download{
 		ReleaseMBID: "mbid-ok-computer",
 		Artist:      "Radiohead",
 		Album:       "OK Computer",
@@ -53,7 +53,7 @@ func allTitles() []string {
 func TestRankPrefersQualityAtEqualMatch(t *testing.T) {
 	t.Parallel()
 
-	req := okComputer()
+	dl := okComputer()
 
 	flac := candidateFor("flac", allTitles(), ".flac", 30_000_000)
 	mp3 := candidateFor("mp3", allTitles(), ".mp3", 3_000_000)
@@ -62,7 +62,7 @@ func TestRankPrefersQualityAtEqualMatch(t *testing.T) {
 		mp3.Files[i].Bitrate = 128
 	}
 
-	ranked := Rank(req, []Candidate{mp3, flac}, nil)
+	ranked := Rank(dl, []Candidate{mp3, flac}, nil, AutoDownloadPrefs{})
 
 	if ranked[0].ID != "flac" {
 		t.Fatalf("winner = %s, want flac", ranked[0].ID)
@@ -83,7 +83,7 @@ func TestRankPrefersQualityAtEqualMatch(t *testing.T) {
 func TestRankMatchDominatesQuality(t *testing.T) {
 	t.Parallel()
 
-	req := okComputer()
+	dl := okComputer()
 
 	// Right album, poor bitrate.
 	right := candidateFor("right", allTitles(), ".mp3", 2_000_000)
@@ -103,7 +103,7 @@ func TestRankMatchDominatesQuality(t *testing.T) {
 			trackToken(i+1) + " - x.flac"
 	}
 
-	ranked := Rank(req, []Candidate{wrong, right}, nil)
+	ranked := Rank(dl, []Candidate{wrong, right}, nil, AutoDownloadPrefs{})
 
 	if ranked[0].ID != "right" {
 		t.Fatalf(
@@ -116,12 +116,12 @@ func TestRankMatchDominatesQuality(t *testing.T) {
 func TestIncompleteCandidateScoresLower(t *testing.T) {
 	t.Parallel()
 
-	req := okComputer()
+	dl := okComputer()
 
 	full := candidateFor("full", allTitles(), ".flac", 30_000_000)
 	partial := candidateFor("partial", allTitles()[:2], ".flac", 30_000_000)
 
-	ranked := Rank(req, []Candidate{partial, full}, nil)
+	ranked := Rank(dl, []Candidate{partial, full}, nil, AutoDownloadPrefs{})
 
 	if ranked[0].ID != "full" {
 		t.Fatalf("winner = %s, want full", ranked[0].ID)
@@ -138,7 +138,7 @@ func TestIncompleteCandidateScoresLower(t *testing.T) {
 func TestMixedFormatIsPenalized(t *testing.T) {
 	t.Parallel()
 
-	req := okComputer()
+	dl := okComputer()
 
 	clean := candidateFor("clean", allTitles(), ".flac", 30_000_000)
 
@@ -146,7 +146,7 @@ func TestMixedFormatIsPenalized(t *testing.T) {
 	mixed.Files[2].Path = "Radiohead - OK Computer/03 - x.mp3"
 	mixed.Files[2].Format = FormatUnknown
 
-	ranked := Rank(req, []Candidate{mixed, clean}, nil)
+	ranked := Rank(dl, []Candidate{mixed, clean}, nil, AutoDownloadPrefs{})
 
 	var mixedScore QualityScore
 
@@ -170,10 +170,10 @@ func TestMixedFormatIsPenalized(t *testing.T) {
 func TestUnanchoredMatchIsCapped(t *testing.T) {
 	t.Parallel()
 
-	req := Request{Artist: "Radiohead", Album: "OK Computer"}
+	dl := Download{Artist: "Radiohead", Album: "OK Computer"}
 	c := candidateFor("c", allTitles(), ".flac", 30_000_000)
 
-	scored := Score(req, c, 50)
+	scored := Score(dl, c, 50, AutoDownloadPrefs{})
 
 	if scored.Match.Anchored {
 		t.Error("free-text request reported as anchored")
@@ -190,19 +190,20 @@ func TestUnanchoredMatchIsCapped(t *testing.T) {
 func TestAutoPickableRequiresAnchorAndLead(t *testing.T) {
 	t.Parallel()
 
-	req := okComputer()
-	best := Score(req, candidateFor("a", allTitles(), ".flac", 30_000_000), 50)
+	dl := okComputer()
+	best := Score(dl, candidateFor("a", allTitles(), ".flac", 30_000_000), 50, AutoDownloadPrefs{})
 
 	t.Run("clear winner is auto-pickable", func(t *testing.T) {
 		t.Parallel()
 
 		weak := Score(
-			req,
+			dl,
 			candidateFor("b", allTitles()[:2], ".mp3", 1_000_000),
 			50,
+			AutoDownloadPrefs{},
 		)
 
-		if !AutoPickable(req, []Candidate{best, weak}) {
+		if !AutoPickable(dl, []Candidate{best, weak}, AutoDownloadPrefs{}) {
 			t.Errorf(
 				"want auto-pickable: match %f quality %f lead %f",
 				best.Match.Overall, best.Quality.Overall, best.Score-weak.Score,
@@ -216,7 +217,7 @@ func TestAutoPickableRequiresAnchorAndLead(t *testing.T) {
 		twin := best
 		twin.ID = "twin"
 
-		if AutoPickable(req, []Candidate{best, twin}) {
+		if AutoPickable(dl, []Candidate{best, twin}, AutoDownloadPrefs{}) {
 			t.Error("identical candidates must not auto-pick")
 		}
 	})
@@ -224,9 +225,9 @@ func TestAutoPickableRequiresAnchorAndLead(t *testing.T) {
 	t.Run("free text is never auto-pickable", func(t *testing.T) {
 		t.Parallel()
 
-		free := Request{Artist: "Radiohead", Album: "OK Computer"}
+		free := Download{Artist: "Radiohead", Album: "OK Computer"}
 
-		if AutoPickable(free, []Candidate{best}) {
+		if AutoPickable(free, []Candidate{best}, AutoDownloadPrefs{}) {
 			t.Error("unanchored request must not auto-pick")
 		}
 	})
@@ -234,7 +235,7 @@ func TestAutoPickableRequiresAnchorAndLead(t *testing.T) {
 	t.Run("empty list is not", func(t *testing.T) {
 		t.Parallel()
 
-		if AutoPickable(req, nil) {
+		if AutoPickable(dl, nil, AutoDownloadPrefs{}) {
 			t.Error("empty candidate list must not auto-pick")
 		}
 	})
@@ -276,7 +277,7 @@ func TestCompleteness(t *testing.T) {
 func TestProviderPriorityBreaksTies(t *testing.T) {
 	t.Parallel()
 
-	req := okComputer()
+	dl := okComputer()
 
 	a := candidateFor("a", allTitles(), ".flac", 30_000_000)
 	a.ProviderID = 1
@@ -292,9 +293,146 @@ func TestProviderPriorityBreaksTies(t *testing.T) {
 		return 10
 	}
 
-	ranked := Rank(req, []Candidate{a, b}, priority)
+	ranked := Rank(dl, []Candidate{a, b}, priority, AutoDownloadPrefs{})
 
 	if ranked[0].ID != "b" {
 		t.Errorf("winner = %s, want b (higher provider priority)", ranked[0].ID)
+	}
+}
+
+const mb = 1 << 20
+
+func TestAutoDownloadPrefsEligible(t *testing.T) {
+	t.Parallel()
+
+	flacCandidate := candidateFor("c", allTitles(), ".flac", 30_000_000)
+	flacCandidate.Files = AnnotateFiles(flacCandidate.Files)
+	flacCandidate.TotalSize = 300 * mb
+
+	mp3Candidate := candidateFor("c", allTitles(), ".mp3", 3_000_000)
+	mp3Candidate.Files = AnnotateFiles(mp3Candidate.Files)
+	mp3Candidate.TotalSize = 30 * mb
+
+	tests := []struct {
+		name  string
+		prefs AutoDownloadPrefs
+		c     Candidate
+		want  bool
+	}{
+		{"zero value is permissive", AutoDownloadPrefs{}, flacCandidate, true},
+		{
+			"within min/max window",
+			AutoDownloadPrefs{MinSizeMB: 100, MaxSizeMB: 500},
+			flacCandidate, true,
+		},
+		{
+			"below minimum",
+			AutoDownloadPrefs{MinSizeMB: 400},
+			flacCandidate, false,
+		},
+		{
+			"above maximum",
+			AutoDownloadPrefs{MaxSizeMB: 200},
+			flacCandidate, false,
+		},
+		{
+			"allowed format passes",
+			AutoDownloadPrefs{AllowedFormats: []Format{FormatFLAC}},
+			flacCandidate, true,
+		},
+		{
+			"disallowed format rejected",
+			AutoDownloadPrefs{AllowedFormats: []Format{FormatFLAC}},
+			mp3Candidate, false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := tt.prefs.eligible(tt.c); got != tt.want {
+				t.Errorf("eligible() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAutoDownloadPrefsFilter(t *testing.T) {
+	t.Parallel()
+
+	small := candidateFor("small", allTitles(), ".flac", 10_000_000)
+	small.TotalSize = 50 * mb
+
+	big := candidateFor("big", allTitles(), ".flac", 30_000_000)
+	big.TotalSize = 500 * mb
+
+	prefs := AutoDownloadPrefs{MinSizeMB: 100, MaxSizeMB: 600}
+
+	filtered := prefs.filter([]Candidate{small, big})
+
+	if len(filtered) != 1 || filtered[0].ID != "big" {
+		t.Errorf("filter() = %v, want only the in-window candidate", filtered)
+	}
+}
+
+func TestAutoDownloadPrefsSizeFit(t *testing.T) {
+	t.Parallel()
+
+	const neutral = 0.5
+
+	tests := []struct {
+		name      string
+		prefs     AutoDownloadPrefs
+		totalSize int64
+		want      float64
+	}{
+		{"no preference is neutral", AutoDownloadPrefs{}, 300 * mb, neutral},
+		{
+			"exact match scores 1",
+			AutoDownloadPrefs{PreferredSizeMB: 300},
+			300 * mb, 1.0,
+		},
+		{
+			"double the preferred size scores 0",
+			AutoDownloadPrefs{PreferredSizeMB: 300},
+			600 * mb, 0.0,
+		},
+		{
+			"half the preferred size scores 0",
+			AutoDownloadPrefs{PreferredSizeMB: 300},
+			150 * mb, 0.0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := tt.prefs.sizeFit(tt.totalSize); got != tt.want {
+				t.Errorf("sizeFit(%d) = %f, want %f", tt.totalSize, got, tt.want)
+			}
+		})
+	}
+}
+
+// An otherwise-perfect candidate must not auto-pick when it falls
+// outside the configured size guard: the guardrail applies before the
+// match/quality/lead checks, not as one more input averaged into them.
+func TestAutoPickableRejectsCandidateOutsideSizeGuard(t *testing.T) {
+	t.Parallel()
+
+	dl := okComputer()
+	best := Score(dl, candidateFor("a", allTitles(), ".flac", 30_000_000), 50, AutoDownloadPrefs{})
+	best.TotalSize = 500 * mb
+
+	if !AutoPickable(dl, []Candidate{best}, AutoDownloadPrefs{}) {
+		t.Fatal("expected this candidate to be auto-pickable with no guardrails")
+	}
+
+	tight := AutoDownloadPrefs{MinSizeMB: 10, MaxSizeMB: 100}
+
+	if AutoPickable(dl, []Candidate{best}, tight) {
+		t.Error("candidate outside the size guard must not auto-pick")
 	}
 }

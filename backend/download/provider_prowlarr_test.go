@@ -169,7 +169,7 @@ func TestProwlarrSearchMarksProtocols(t *testing.T) {
 
 	p := newStubProwlarr(t, stub, nil)
 
-	got, err := p.Search(context.Background(), Request{
+	got, err := p.Search(context.Background(), Download{
 		Artist: "Radiohead",
 		Album:  "OK Computer",
 	})
@@ -230,7 +230,7 @@ func TestProwlarrFiltersDeadTorrents(t *testing.T) {
 
 	p := newStubProwlarr(t, stub, map[string]string{"minSeeders": "1"})
 
-	got, err := p.Search(context.Background(), Request{Query: "x"})
+	got, err := p.Search(context.Background(), Download{Query: "x"})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -253,7 +253,7 @@ func TestProwlarrSearchesMusicCategory(t *testing.T) {
 	p := newStubProwlarr(t, stub, nil)
 
 	if _, err := p.Search(
-		context.Background(), Request{Query: "radiohead"},
+		context.Background(), Download{Query: "radiohead"},
 	); err != nil {
 		t.Fatalf("Search: %v", err)
 	}

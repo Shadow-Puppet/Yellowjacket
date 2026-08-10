@@ -84,17 +84,17 @@ func TestPerProviderCapSerializesTransfers(t *testing.T) {
 
 	// Three requests against the same one-at-a-time provider.
 	for i := range 3 {
-		req := fourTrackRequest()
-		req.ID = "req-" + string(rune('a'+i))
+		dl := fourTrackDownload()
+		dl.ID = "dl-" + string(rune('a'+i))
 
-		if err := f.store.CreateRequest(ctx, req); err != nil {
-			t.Fatalf("CreateRequest: %v", err)
+		if err := f.store.CreateDownload(ctx, dl); err != nil {
+			t.Fatalf("CreateDownload: %v", err)
 		}
 
 		candidate := slow.Candidates[0]
 		candidate.ProviderID = 1
 
-		go f.manager.grab(ctx, req, candidate, nil)
+		go f.manager.grab(ctx, dl, candidate, nil)
 	}
 
 	// Give all three a chance to reach the transport, then check how
@@ -139,17 +139,17 @@ func TestPerProviderCapAllowsParallelWhereSafe(t *testing.T) {
 	ctx := context.Background()
 
 	for i := range 3 {
-		req := fourTrackRequest()
-		req.ID = "req-" + string(rune('a'+i))
+		dl := fourTrackDownload()
+		dl.ID = "dl-" + string(rune('a'+i))
 
-		if err := f.store.CreateRequest(ctx, req); err != nil {
-			t.Fatalf("CreateRequest: %v", err)
+		if err := f.store.CreateDownload(ctx, dl); err != nil {
+			t.Fatalf("CreateDownload: %v", err)
 		}
 
 		candidate := fast.Candidates[0]
 		candidate.ProviderID = 1
 
-		go f.manager.grab(ctx, req, candidate, nil)
+		go f.manager.grab(ctx, dl, candidate, nil)
 	}
 
 	waitFor(

@@ -297,12 +297,31 @@ export namespace autotagservice {
 
 export namespace download {
 	
+	export class AutoDownloadPrefs {
+	    minSizeMb: number;
+	    maxSizeMb: number;
+	    preferredSizeMb: number;
+	    allowedFormats: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new AutoDownloadPrefs(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.minSizeMb = source["minSizeMb"];
+	        this.maxSizeMb = source["maxSizeMb"];
+	        this.preferredSizeMb = source["preferredSizeMb"];
+	        this.allowedFormats = source["allowedFormats"];
+	    }
+	}
 	export class QualityScore {
 	    overall: number;
 	    formatRank: number;
 	    bitrate: number;
 	    health: number;
 	    priority: number;
+	    sizeFit: number;
 	    mixed: boolean;
 	
 	    static createFrom(source: any = {}) {
@@ -316,6 +335,7 @@ export namespace download {
 	        this.bitrate = source["bitrate"];
 	        this.health = source["health"];
 	        this.priority = source["priority"];
+	        this.sizeFit = source["sizeFit"];
 	        this.mixed = source["mixed"];
 	    }
 	}
@@ -534,30 +554,9 @@ export namespace download {
 		    return a;
 		}
 	}
-	export class ExpectedTrack {
-	    position: number;
-	    discNumber: number;
-	    title: string;
-	    artist: string;
-	    lengthMillis: number;
-	
-	    static createFrom(source: any = {}) {
-	        return new ExpectedTrack(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.position = source["position"];
-	        this.discNumber = source["discNumber"];
-	        this.title = source["title"];
-	        this.artist = source["artist"];
-	        this.lengthMillis = source["lengthMillis"];
-	    }
-	}
-	
-	export class Item {
+	export class DownloadItem {
 	    id: string;
-	    requestId: string;
+	    downloadId: string;
 	    providerId: number;
 	    transportId?: number;
 	    externalId?: string;
@@ -570,13 +569,13 @@ export namespace download {
 	    updatedAt: time.Time;
 	
 	    static createFrom(source: any = {}) {
-	        return new Item(source);
+	        return new DownloadItem(source);
 	    }
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
-	        this.requestId = source["requestId"];
+	        this.downloadId = source["downloadId"];
 	        this.providerId = source["providerId"];
 	        this.transportId = source["transportId"];
 	        this.externalId = source["externalId"];
@@ -607,26 +606,32 @@ export namespace download {
 		    return a;
 		}
 	}
-	
-	
-	export class Reconciler {
-	
+	export class ExpectedTrack {
+	    position: number;
+	    discNumber: number;
+	    title: string;
+	    artist: string;
+	    lengthMillis: number;
 	
 	    static createFrom(source: any = {}) {
-	        return new Reconciler(source);
+	        return new ExpectedTrack(source);
 	    }
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	
+	        this.position = source["position"];
+	        this.discNumber = source["discNumber"];
+	        this.title = source["title"];
+	        this.artist = source["artist"];
+	        this.lengthMillis = source["lengthMillis"];
 	    }
 	}
-	export class RequestView {
+	export class DownloadView {
 	    id: string;
 	    releaseMbid?: string;
 	    releaseGroupMbid?: string;
 	    recordingMbid?: string;
-	    wantId?: number;
+	    requestId?: number;
 	    source?: string;
 	    artist: string;
 	    album: string;
@@ -636,10 +641,10 @@ export namespace download {
 	    createdAt: time.Time;
 	    state: string;
 	    error?: string;
-	    items: Item[];
+	    items: DownloadItem[];
 	
 	    static createFrom(source: any = {}) {
-	        return new RequestView(source);
+	        return new DownloadView(source);
 	    }
 	
 	    constructor(source: any = {}) {
@@ -648,7 +653,7 @@ export namespace download {
 	        this.releaseMbid = source["releaseMbid"];
 	        this.releaseGroupMbid = source["releaseGroupMbid"];
 	        this.recordingMbid = source["recordingMbid"];
-	        this.wantId = source["wantId"];
+	        this.requestId = source["requestId"];
 	        this.source = source["source"];
 	        this.artist = source["artist"];
 	        this.album = source["album"];
@@ -658,7 +663,7 @@ export namespace download {
 	        this.createdAt = this.convertValues(source["createdAt"], time.Time);
 	        this.state = source["state"];
 	        this.error = source["error"];
-	        this.items = this.convertValues(source["items"], Item);
+	        this.items = this.convertValues(source["items"], DownloadItem);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -678,6 +683,108 @@ export namespace download {
 		    }
 		    return a;
 		}
+	}
+	
+	
+	
+	
+	export class Reconciler {
+	
+	
+	    static createFrom(source: any = {}) {
+	        return new Reconciler(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	
+	    }
+	}
+	export class Request {
+	    id: number;
+	    mbid: string;
+	    entity: string;
+	    libraryId: number;
+	    artist: string;
+	    title: string;
+	    scope: string;
+	    secondary: boolean;
+	    state: string;
+	    parentId?: number;
+	    attempts: number;
+	    lastError?: string;
+	    lastTriedAt?: time.Time;
+	    nextTryAt?: time.Time;
+	    externalIds?: Record<string, string>;
+	    createdAt: time.Time;
+	    updatedAt: time.Time;
+	
+	    static createFrom(source: any = {}) {
+	        return new Request(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.mbid = source["mbid"];
+	        this.entity = source["entity"];
+	        this.libraryId = source["libraryId"];
+	        this.artist = source["artist"];
+	        this.title = source["title"];
+	        this.scope = source["scope"];
+	        this.secondary = source["secondary"];
+	        this.state = source["state"];
+	        this.parentId = source["parentId"];
+	        this.attempts = source["attempts"];
+	        this.lastError = source["lastError"];
+	        this.lastTriedAt = this.convertValues(source["lastTriedAt"], time.Time);
+	        this.nextTryAt = this.convertValues(source["nextTryAt"], time.Time);
+	        this.externalIds = source["externalIds"];
+	        this.createdAt = this.convertValues(source["createdAt"], time.Time);
+	        this.updatedAt = this.convertValues(source["updatedAt"], time.Time);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class RequestInput {
+	    mbid: string;
+	    entity: string;
+	    libraryId: number;
+	    artist: string;
+	    title: string;
+	    scope: string;
+	    secondary: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new RequestInput(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.mbid = source["mbid"];
+	        this.entity = source["entity"];
+	        this.libraryId = source["libraryId"];
+	        this.artist = source["artist"];
+	        this.title = source["title"];
+	        this.scope = source["scope"];
+	        this.secondary = source["secondary"];
+	    }
 	}
 	export class SearchRequest {
 	    libraryId: number;
@@ -722,7 +829,7 @@ export namespace download {
 		}
 	}
 	export class StartResult {
-	    requestId: string;
+	    downloadId: string;
 	    candidates: Candidate[];
 	    autoPicked: boolean;
 	
@@ -732,7 +839,7 @@ export namespace download {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.requestId = source["requestId"];
+	        this.downloadId = source["downloadId"];
 	        this.candidates = this.convertValues(source["candidates"], Candidate);
 	        this.autoPicked = source["autoPicked"];
 	    }
@@ -773,92 +880,6 @@ export namespace download {
 	        this.attempted = source["attempted"];
 	        this.started = source["started"];
 	        this.synced = source["synced"];
-	    }
-	}
-	export class Want {
-	    id: number;
-	    mbid: string;
-	    entity: string;
-	    libraryId: number;
-	    artist: string;
-	    title: string;
-	    scope: string;
-	    secondary: boolean;
-	    state: string;
-	    parentId?: number;
-	    attempts: number;
-	    lastError?: string;
-	    lastTriedAt?: time.Time;
-	    nextTryAt?: time.Time;
-	    externalIds?: Record<string, string>;
-	    createdAt: time.Time;
-	    updatedAt: time.Time;
-	
-	    static createFrom(source: any = {}) {
-	        return new Want(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.mbid = source["mbid"];
-	        this.entity = source["entity"];
-	        this.libraryId = source["libraryId"];
-	        this.artist = source["artist"];
-	        this.title = source["title"];
-	        this.scope = source["scope"];
-	        this.secondary = source["secondary"];
-	        this.state = source["state"];
-	        this.parentId = source["parentId"];
-	        this.attempts = source["attempts"];
-	        this.lastError = source["lastError"];
-	        this.lastTriedAt = this.convertValues(source["lastTriedAt"], time.Time);
-	        this.nextTryAt = this.convertValues(source["nextTryAt"], time.Time);
-	        this.externalIds = source["externalIds"];
-	        this.createdAt = this.convertValues(source["createdAt"], time.Time);
-	        this.updatedAt = this.convertValues(source["updatedAt"], time.Time);
-	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
-	}
-	export class WantRequest {
-	    mbid: string;
-	    entity: string;
-	    libraryId: number;
-	    artist: string;
-	    title: string;
-	    scope: string;
-	    secondary: boolean;
-	
-	    static createFrom(source: any = {}) {
-	        return new WantRequest(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.mbid = source["mbid"];
-	        this.entity = source["entity"];
-	        this.libraryId = source["libraryId"];
-	        this.artist = source["artist"];
-	        this.title = source["title"];
-	        this.scope = source["scope"];
-	        this.secondary = source["secondary"];
 	    }
 	}
 

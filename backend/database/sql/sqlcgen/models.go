@@ -74,9 +74,27 @@ type CoverArt struct {
 	MimeType   string
 }
 
+type DownloadDownload struct {
+	ID               string
+	LibraryID        int64
+	Source           string
+	RequestID        sql.NullInt64
+	ReleaseMbid      sql.NullString
+	ReleaseGroupMbid sql.NullString
+	RecordingMbid    sql.NullString
+	Artist           string
+	Album            string
+	Query            string
+	Expected         string
+	State            string
+	Error            string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
 type DownloadItem struct {
 	ID            string
-	RequestID     string
+	DownloadID    string
 	ProviderID    int64
 	TransportID   sql.NullInt64
 	ExternalID    string
@@ -102,24 +120,6 @@ type DownloadProvider struct {
 }
 
 type DownloadRequest struct {
-	ID               string
-	LibraryID        int64
-	Source           string
-	WantID           sql.NullInt64
-	ReleaseMbid      sql.NullString
-	ReleaseGroupMbid sql.NullString
-	RecordingMbid    sql.NullString
-	Artist           string
-	Album            string
-	Query            string
-	Expected         string
-	State            string
-	Error            string
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
-}
-
-type DownloadWant struct {
 	ID          int64
 	Mbid        string
 	Entity      string

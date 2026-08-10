@@ -278,7 +278,7 @@ func (t slskdTransfer) done() (finished, ok bool) {
 // per-folder candidates.  A folder from one peer is the unit a user
 // actually wants: Soulseek has no album concept, but people organise
 // their shares by album directory.
-func (s *slskd) Search(ctx context.Context, req Request) ([]Candidate, error) {
+func (s *slskd) Search(ctx context.Context, dl Download) ([]Candidate, error) {
 	// slskd's search endpoint deserializes id as a .NET Guid server-side,
 	// so it must be a dashed UUID — the app's own newID() (a plain hex
 	// string, used for request/item IDs elsewhere) is rejected with an
@@ -287,7 +287,7 @@ func (s *slskd) Search(ctx context.Context, req Request) ([]Candidate, error) {
 
 	body := map[string]any{
 		"id":         searchID,
-		"searchText": req.SearchText(),
+		"searchText": dl.SearchText(),
 	}
 
 	if err := s.client.post(ctx, "/api/v0/searches", body, nil); err != nil {

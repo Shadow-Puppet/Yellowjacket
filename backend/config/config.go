@@ -364,6 +364,50 @@ func (c *Config) SetScanConcurrency(mode string) error {
 	return nil
 }
 
+// GetDownloadPreferences returns the configured auto-download
+// guardrails.
+func (c *Config) GetDownloadPreferences() download.AutoDownloadPrefs {
+	if c.Downloads == nil {
+		return download.AutoDownloadPrefs{}
+	}
+
+	return c.Downloads.AutoDownloadPrefs()
+}
+
+// SetDownloadPreferences saves new auto-download guardrails.  This only
+// persists them; the download package cannot depend on config (config
+// already depends on download for UserConfig), so making the change
+// live without a restart is the caller's job — the frontend settings
+// save calls this and download.Service.SetPreferences in the same
+// action, and app.go's initDownloadRuntime applies the saved value to
+// the running Manager at startup.
+func (c *Config) SetDownloadPreferences(prefs download.AutoDownloadPrefs) error {
+	if c.Downloads == nil {
+		c.Downloads = &download.UserConfig{}
+		c.Downloads.ApplyDefaults()
+	}
+
+	formats := make([]string, 0, len(prefs.AllowedFormats))
+	for _, f := range prefs.AllowedFormats {
+		formats = append(formats, string(f))
+	}
+
+	c.Downloads.MinFileSizeMB = prefs.MinSizeMB
+	c.Downloads.MaxFileSizeMB = prefs.MaxSizeMB
+	c.Downloads.PreferredFileSizeMB = prefs.PreferredSizeMB
+	c.Downloads.AllowedFormats = formats
+
+	if err := c.Save(); err != nil {
+		return fmt.Errorf(
+			"could not save config: %w", err,
+		)
+	}
+
+	c.logger.Info("download auto-pick preferences updated")
+
+	return nil
+}
+
 // GetThemeAccentColor returns the configured accent colour.
 func (c *Config) GetThemeAccentColor() string {
 	if c.Theme == nil {

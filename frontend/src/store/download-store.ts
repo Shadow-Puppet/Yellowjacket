@@ -1,22 +1,22 @@
 import { EventsOn } from '@runtime/runtime';
 import {
     AddProvider,
-    AddWant,
+    AddRequest,
     Cancel,
     Candidates,
     ClearFinished,
-    ClearSatisfiedWants,
+    ClearSatisfiedRequests,
     DeleteProvider,
-    ImportExternalWants,
+    ImportExternalRequests,
+    ListDownloads,
     ListProviders,
     ListRequests,
-    ListWants,
-    PauseWant,
+    PauseRequest,
     Pick,
     ProviderKinds,
-    ReconcileWanted,
-    RemoveWant,
-    Start,
+    ReconcileRequests,
+    RemoveRequest,
+    StartDownload,
     TestProvider,
     UpdateProvider,
 } from '@go/download/Service';
@@ -26,32 +26,32 @@ import { Events } from '../events';
 export type DownloadCandidate = download.Candidate;
 export type DownloadProvider = download.Config;
 export type DownloadDescriptor = download.Descriptor;
-export type DownloadRequest = download.RequestView;
+export type DownloadView = download.DownloadView;
 export type ProviderField = download.Field;
-export type Want = download.Want;
-export type WantSummary = download.Summary;
+export type Request = download.Request;
+export type RequestSummary = download.Summary;
 
 /**
- * What a want's MBID names. Mirrors backend/download.Entity — the
- * wanted list makes no other type distinction, because an MBID plus
- * what it names is the whole of a want.
+ * What a request's MBID names. Mirrors backend/download.Entity — the
+ * request list makes no other type distinction, because an MBID plus
+ * what it names is the whole of a request.
  */
-export type WantEntity = 'artist' | 'release-group' | 'release' | 'recording';
+export type RequestEntity = 'artist' | 'release-group' | 'release' | 'recording';
 
 /**
- * Where a want sits. There is deliberately no "failed": an attempt can
- * fail, a want cannot — something unfindable today is still wanted.
+ * Where a request sits. There is deliberately no "failed": an attempt can
+ * fail, a request cannot — something unfindable today is still requested.
  */
-export type WantState = 'wanted' | 'satisfied' | 'paused';
+export type RequestState = 'wanted' | 'satisfied' | 'paused';
 
 /**
  * How much of an artist's output a subscription covers. 'future' is the
  * default so subscribing does not silently queue a back catalogue.
  */
-export type WantScope = 'future' | 'all';
+export type RequestScope = 'future' | 'all';
 
-/** Lifecycle states a request can be in. Mirrors backend/download.State. */
-export type DownloadState =
+/** Lifecycle states a download can be in. Mirrors backend/download.State. */
+export type DownloadLifecycleState =
     | 'searching'
     | 'found'
     | 'queued'
@@ -71,12 +71,12 @@ const TERMINAL_STATES: ReadonlySet<string> = new Set([
     'failed',
 ]);
 
-export function isRequestTerminal(request: DownloadRequest): boolean {
-    return TERMINAL_STATES.has(request.state);
+export function isDownloadTerminal(view: DownloadView): boolean {
+    return TERMINAL_STATES.has(view.state);
 }
 
 /**
- * Human-readable label for a request state. Kept here rather than in the
+ * Human-readable label for a download state. Kept here rather than in the
  * components so the downloads list and the picker never disagree about
  * what a state is called.
  */
@@ -171,7 +171,7 @@ export function formatBytes(bytes: number): string {
  * Per-transfer progress deliberately does not flow through here — that
  * lives in the jobs registry, which already coalesces high-frequency
  * updates into one event. This store handles the coarse changes: which
- * providers exist, which requests exist, and what the user is being
+ * providers exist, which downloads exist, and what the user is being
  * asked to choose between.
  */
 class DownloadStore {
@@ -179,9 +179,9 @@ class DownloadStore {
 
     private descriptorsValue: DownloadDescriptor[] = [];
 
-    private requestsValue: DownloadRequest[] = [];
+    private downloadsValue: DownloadView[] = [];
 
-    private wantsValue: Want[] = [];
+    private requestsValue: Request[] = [];
 
     private subscribers = new Set<Subscriber>();
 
@@ -195,21 +195,21 @@ class DownloadStore {
         });
 
         EventsOn(Events.DownloadsChanged, () => {
-            void this.refreshRequests();
+            void this.refreshDownloads();
         });
 
-        // The wanted list changes on its own — a background reconcile
+        // The request list changes on its own — a background reconcile
         // pass expands an artist, retires something the library gained,
         // or starts a download nobody asked for just now. So it is
         // event-driven rather than fetched once on mount.
-        EventsOn(Events.WantedListChanged, () => {
-            void this.refreshWants();
+        EventsOn(Events.RequestsChanged, () => {
+            void this.refreshRequests();
         });
     }
 
     /**
-     * Loads providers and requests once. Safe to call from every
-     * component's connectedCallback — subsequent calls are no-ops.
+     * Loads providers, downloads and requests once. Safe to call from
+     * every component's connectedCallback — subsequent calls are no-ops.
      */
     async init(): Promise<void> {
         if (this.initialized) return;
@@ -219,8 +219,8 @@ class DownloadStore {
         await Promise.all([
             this.refreshDescriptors(),
             this.refreshProviders(),
+            this.refreshDownloads(),
             this.refreshRequests(),
-            this.refreshWants(),
         ]);
     }
 
@@ -238,12 +238,12 @@ class DownloadStore {
         return this.descriptorsValue;
     }
 
-    get requests(): DownloadRequest[] {
-        return this.requestsValue;
+    get downloads(): DownloadView[] {
+        return this.downloadsValue;
     }
 
-    get activeRequests(): DownloadRequest[] {
-        return this.requestsValue.filter((r) => !isRequestTerminal(r));
+    get activeDownloads(): DownloadView[] {
+        return this.downloadsValue.filter((d) => !isDownloadTerminal(d));
     }
 
     /**
@@ -294,9 +294,9 @@ class DownloadStore {
         }
     }
 
-    async refreshRequests(): Promise<void> {
+    async refreshDownloads(): Promise<void> {
         try {
-            this.requestsValue = (await ListRequests(50)) ?? [];
+            this.downloadsValue = (await ListDownloads(50)) ?? [];
             this.notify();
         } catch (err) {
             console.error('Failed to load downloads:', err);
@@ -346,7 +346,7 @@ class DownloadStore {
     }
 
     // -----------------------------------------------------------------
-    // Requests
+    // Downloads (one search+grab attempt)
     // -----------------------------------------------------------------
 
     /**
@@ -355,94 +355,102 @@ class DownloadStore {
      * the picker or just show progress.
      */
     async start(request: download.SearchRequest): Promise<download.StartResult> {
-        const result = await Start(request);
+        const result = await StartDownload(request);
 
-        await this.refreshRequests();
+        await this.refreshDownloads();
 
         return result;
     }
 
-    async pick(requestId: string, candidateId: string): Promise<void> {
-        await Pick(requestId, candidateId);
-        await this.refreshRequests();
+    async pick(downloadId: string, candidateId: string): Promise<void> {
+        await Pick(downloadId, candidateId);
+        await this.refreshDownloads();
     }
 
-    async cancel(requestId: string): Promise<void> {
-        await Cancel(requestId);
-        await this.refreshRequests();
+    async cancel(downloadId: string): Promise<void> {
+        await Cancel(downloadId);
+        await this.refreshDownloads();
     }
 
-    async candidates(requestId: string): Promise<DownloadCandidate[]> {
-        return (await Candidates(requestId)) ?? [];
+    async candidates(downloadId: string): Promise<DownloadCandidate[]> {
+        return (await Candidates(downloadId)) ?? [];
     }
 
     async clearFinished(): Promise<void> {
         await ClearFinished();
-        await this.refreshRequests();
+        await this.refreshDownloads();
     }
 
     // -----------------------------------------------------------------
-    // Wanted list
+    // Requests (durable "I asked for this")
     // -----------------------------------------------------------------
 
-    get wants(): Want[] {
-        return this.wantsValue;
+    get requests(): Request[] {
+        return this.requestsValue;
     }
 
-    /** Wants still being looked for. */
-    get activeWants(): Want[] {
-        return this.wantsValue.filter((w) => w.state === 'wanted');
+    /** Requests still being looked for. */
+    get activeRequests(): Request[] {
+        return this.requestsValue.filter((r) => r.state === 'wanted');
     }
 
     /** Artist subscriptions, which expand rather than download. */
-    get subscriptions(): Want[] {
-        return this.wantsValue.filter((w) => w.entity === 'artist');
+    get subscriptions(): Request[] {
+        return this.requestsValue.filter((r) => r.entity === 'artist');
     }
 
-    async refreshWants(): Promise<void> {
+    async refreshRequests(): Promise<void> {
         try {
-            this.wantsValue = (await ListWants()) ?? [];
+            this.requestsValue = (await ListRequests()) ?? [];
             this.notify();
         } catch (err) {
-            console.error('Failed to load the wanted list:', err);
+            console.error('Failed to load the requests list:', err);
         }
     }
 
-    /** True when this MBID is already on the list. */
-    isWanted(mbid: string): boolean {
+    /**
+     * True when this MBID is already requested.
+     *
+     * Checked against the locally cached request list rather than the
+     * `IsRequested` RPC: the list is already kept current via
+     * `RequestsChanged`, and a local lookup keeps this usable
+     * synchronously from render — the same shape callers relied on
+     * before the rename.
+     */
+    isRequested(mbid: string): boolean {
         const needle = mbid.trim().toLowerCase();
 
-        return this.wantsValue.some((w) => w.mbid === needle);
+        return this.requestsValue.some((r) => r.mbid === needle);
     }
 
-    /** The want for an MBID, if it is on the list. */
-    wantFor(mbid: string): Want | undefined {
+    /** The request for an MBID, if one exists. */
+    requestFor(mbid: string): Request | undefined {
         const needle = mbid.trim().toLowerCase();
 
-        return this.wantsValue.find((w) => w.mbid === needle);
+        return this.requestsValue.find((r) => r.mbid === needle);
     }
 
-    async addWant(want: download.WantRequest): Promise<number> {
-        const id = await AddWant(want);
+    async addRequest(request: download.RequestInput): Promise<number> {
+        const id = await AddRequest(request);
 
-        await this.refreshWants();
+        await this.refreshRequests();
 
         return id;
     }
 
-    async removeWant(id: number): Promise<void> {
-        await RemoveWant(id);
-        await this.refreshWants();
+    async removeRequest(id: number): Promise<void> {
+        await RemoveRequest(id);
+        await this.refreshRequests();
     }
 
-    async pauseWant(id: number, paused: boolean): Promise<void> {
-        await PauseWant(id, paused);
-        await this.refreshWants();
+    async pauseRequest(id: number, paused: boolean): Promise<void> {
+        await PauseRequest(id, paused);
+        await this.refreshRequests();
     }
 
-    async clearSatisfiedWants(): Promise<void> {
-        await ClearSatisfiedWants();
-        await this.refreshWants();
+    async clearSatisfiedRequests(): Promise<void> {
+        await ClearSatisfiedRequests();
+        await this.refreshRequests();
     }
 
     /**
@@ -450,22 +458,22 @@ class DownloadStore {
      * with what the pass did so the UI can say something concrete
      * rather than just stopping its spinner.
      */
-    async reconcileWanted(): Promise<WantSummary> {
-        const summary = await ReconcileWanted();
+    async reconcileRequests(): Promise<RequestSummary> {
+        const summary = await ReconcileRequests();
 
-        await Promise.all([this.refreshWants(), this.refreshRequests()]);
+        await Promise.all([this.refreshRequests(), this.refreshDownloads()]);
 
         return summary;
     }
 
     /** Adopts a provider's own list, e.g. Lidarr's monitored artists. */
-    async importExternalWants(
+    async importExternalRequests(
         providerId: number,
         libraryId: number,
     ): Promise<number> {
-        const count = await ImportExternalWants(providerId, libraryId);
+        const count = await ImportExternalRequests(providerId, libraryId);
 
-        await this.refreshWants();
+        await this.refreshRequests();
 
         return count;
     }

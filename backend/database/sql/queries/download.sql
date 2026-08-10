@@ -22,69 +22,81 @@ WHERE id = ?;
 DELETE FROM download_providers
 WHERE id = ?;
 
--- name: CreateDownloadRequest :exec
-INSERT INTO download_requests (
-    id, library_id, source, want_id, release_mbid, release_group_mbid,
+-- ---------------------------------------------------------------------
+-- Downloads (one-shot search+grab attempts)
+-- ---------------------------------------------------------------------
+
+-- name: CreateDownload :exec
+INSERT INTO download_downloads (
+    id, library_id, source, request_id, release_mbid, release_group_mbid,
     recording_mbid, artist, album, query, expected, state
 )
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
--- name: GetDownloadRequest :one
-SELECT id, library_id, source, want_id, release_mbid, release_group_mbid,
+-- name: GetDownload :one
+SELECT id, library_id, source, request_id, release_mbid, release_group_mbid,
        recording_mbid, artist, album, query, expected, state, error,
        created_at, updated_at
-FROM download_requests
+FROM download_downloads
 WHERE id = ?;
 
--- name: ListDownloadRequests :many
-SELECT id, library_id, source, want_id, release_mbid, release_group_mbid,
+-- name: ListDownloads :many
+SELECT id, library_id, source, request_id, release_mbid, release_group_mbid,
        recording_mbid, artist, album, query, expected, state, error,
        created_at, updated_at
-FROM download_requests
+FROM download_downloads
 ORDER BY created_at DESC
 LIMIT ?;
 
--- name: ListLiveDownloadRequests :many
-SELECT id, library_id, source, want_id, release_mbid, release_group_mbid,
+-- name: ListLiveDownloads :many
+SELECT id, library_id, source, request_id, release_mbid, release_group_mbid,
        recording_mbid, artist, album, query, expected, state, error,
        created_at, updated_at
-FROM download_requests
+FROM download_downloads
 WHERE state NOT IN ('complete', 'cancelled', 'failed')
 ORDER BY created_at;
 
--- name: SetDownloadRequestState :exec
-UPDATE download_requests
+-- name: SetDownloadState :exec
+UPDATE download_downloads
 SET state = ?, error = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?;
 
--- name: DeleteDownloadRequest :exec
-DELETE FROM download_requests
+-- name: DeleteDownload :exec
+DELETE FROM download_downloads
 WHERE id = ?;
+
+-- name: DeleteFinishedDownloads :exec
+DELETE FROM download_downloads
+WHERE state IN ('complete', 'cancelled', 'failed');
+
+-- ---------------------------------------------------------------------
+-- Items (transfer records within a download)
+-- ---------------------------------------------------------------------
 
 -- name: CreateDownloadItem :exec
 INSERT INTO download_items (
-    id, request_id, provider_id, transport_id, external_id,
+    id, download_id, provider_id, transport_id, external_id,
     candidate, state, staging_dir, bytes_total
 )
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetDownloadItem :one
-SELECT id, request_id, provider_id, transport_id, external_id, candidate,
+SELECT id, download_id, provider_id, transport_id, external_id, candidate,
        state, staging_dir, bytes_done, bytes_total, imported_paths,
        error, created_at, updated_at
 FROM download_items
 WHERE id = ?;
 
--- name: ListDownloadItemsForRequest :many
-SELECT id, request_id, provider_id, transport_id, external_id, candidate,
+-- name: ListDownloadItemsForDownload :many
+SELECT id, download_id, provider_id, transport_id, external_id, candidate,
        state, staging_dir, bytes_done, bytes_total, imported_paths,
        error, created_at, updated_at
 FROM download_items
-WHERE request_id = ?
+WHERE download_id = ?
 ORDER BY created_at;
 
 -- name: ListLiveDownloadItems :many
-SELECT id, request_id, provider_id, transport_id, external_id, candidate,
+SELECT id, download_id, provider_id, transport_id, external_id, candidate,
        state, staging_dir, bytes_done, bytes_total, imported_paths,
        error, created_at, updated_at
 FROM download_items
@@ -112,72 +124,68 @@ SET imported_paths = ?, state = 'complete', error = '',
     updated_at = CURRENT_TIMESTAMP
 WHERE id = ?;
 
--- name: DeleteFinishedDownloadRequests :exec
-DELETE FROM download_requests
-WHERE state IN ('complete', 'cancelled', 'failed');
-
 -- ---------------------------------------------------------------------
--- Wants
+-- Requests (durable "I asked for this" records)
 -- ---------------------------------------------------------------------
 
--- name: UpsertDownloadWant :one
--- Adding something already wanted is not an error and must not reset
--- the retry clock, so the conflict path only refreshes display text and
--- un-pauses nothing.  scope and secondary are updated because asking
--- again with a wider scope is a real change of intent.
-INSERT INTO download_wants (
+-- name: UpsertDownloadRequest :one
+-- Adding something already requested is not an error and must not
+-- reset the retry clock, so the conflict path only refreshes display
+-- text and un-pauses nothing.  scope and secondary are updated because
+-- asking again with a wider scope is a real change of intent.
+INSERT INTO download_requests (
     mbid, entity, library_id, artist, title, scope, secondary,
     parent_id, next_try_at
 )
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 ON CONFLICT(mbid, library_id) DO UPDATE SET
     artist     = CASE WHEN excluded.artist <> '' THEN excluded.artist
-                      ELSE download_wants.artist END,
+                      ELSE download_requests.artist END,
     title      = CASE WHEN excluded.title <> '' THEN excluded.title
-                      ELSE download_wants.title END,
+                      ELSE download_requests.title END,
     scope      = excluded.scope,
     secondary  = excluded.secondary,
     updated_at = CURRENT_TIMESTAMP
 RETURNING id;
 
--- name: GetDownloadWant :one
-SELECT * FROM download_wants WHERE id = ?;
+-- name: GetDownloadRequest :one
+SELECT * FROM download_requests WHERE id = ?;
 
--- name: GetDownloadWantByMBID :one
-SELECT * FROM download_wants WHERE mbid = ? AND library_id = ?;
+-- name: GetDownloadRequestByMBID :one
+SELECT * FROM download_requests WHERE mbid = ? AND library_id = ?;
 
--- name: ListDownloadWants :many
-SELECT * FROM download_wants
+-- name: ListDownloadRequests :many
+SELECT * FROM download_requests
 ORDER BY
     CASE state WHEN 'wanted' THEN 0 WHEN 'paused' THEN 1 ELSE 2 END,
     artist, title;
 
--- name: ListDownloadWantsByEntity :many
-SELECT * FROM download_wants
+-- name: ListDownloadRequestsByEntity :many
+SELECT * FROM download_requests
 WHERE entity = ? AND state = ?
 ORDER BY id;
 
--- name: ListDueDownloadWants :many
+-- name: ListDueDownloadRequests :many
 -- Everything the reconciler should act on this pass: wanted, not an
 -- artist subscription (those expand rather than download), and either
 -- never tried or past its backoff.
-SELECT * FROM download_wants
+SELECT * FROM download_requests
 WHERE state = 'wanted'
   AND entity <> 'artist'
   AND (next_try_at IS NULL OR next_try_at <= CURRENT_TIMESTAMP)
 ORDER BY attempts, created_at
 LIMIT ?;
 
--- name: ListChildDownloadWants :many
-SELECT * FROM download_wants WHERE parent_id = ? ORDER BY id;
+-- name: ListChildDownloadRequests :many
+SELECT * FROM download_requests WHERE parent_id = ? ORDER BY id;
 
--- name: SetDownloadWantState :exec
-UPDATE download_wants
+-- name: SetDownloadRequestState :exec
+UPDATE download_requests
 SET state = ?, last_error = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?;
 
--- name: RecordDownloadWantAttempt :exec
-UPDATE download_wants
+-- name: RecordDownloadRequestAttempt :exec
+UPDATE download_requests
 SET attempts      = attempts + 1,
     last_error    = ?,
     last_tried_at = CURRENT_TIMESTAMP,
@@ -185,19 +193,19 @@ SET attempts      = attempts + 1,
     updated_at    = CURRENT_TIMESTAMP
 WHERE id = ?;
 
--- name: SatisfyDownloadWant :exec
-UPDATE download_wants
+-- name: SatisfyDownloadRequest :exec
+UPDATE download_requests
 SET state = 'satisfied', last_error = '', next_try_at = NULL,
     updated_at = CURRENT_TIMESTAMP
 WHERE id = ?;
 
--- name: SetDownloadWantExternalIDs :exec
-UPDATE download_wants
+-- name: SetDownloadRequestExternalIDs :exec
+UPDATE download_requests
 SET external_ids = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?;
 
--- name: DeleteDownloadWant :exec
-DELETE FROM download_wants WHERE id = ?;
+-- name: DeleteDownloadRequest :exec
+DELETE FROM download_requests WHERE id = ?;
 
--- name: DeleteSatisfiedDownloadWants :exec
-DELETE FROM download_wants WHERE state = 'satisfied';
+-- name: DeleteSatisfiedDownloadRequests :exec
+DELETE FROM download_requests WHERE state = 'satisfied';

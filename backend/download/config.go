@@ -33,6 +33,34 @@ type UserConfig struct {
 	// for.  A large list should be worked through steadily rather than
 	// in one burst that every provider sees as a flood.
 	WantedBatch int `toml:"WantedBatch"`
+
+	// MinFileSizeMB, MaxFileSizeMB and PreferredFileSizeMB bound and
+	// nudge what auto-pick (interactive or via the request list) may
+	// grab without asking.  Zero on any of them is permissive: see
+	// AutoDownloadPrefs.
+	MinFileSizeMB       int `toml:"MinFileSizeMB"`
+	MaxFileSizeMB       int `toml:"MaxFileSizeMB"`
+	PreferredFileSizeMB int `toml:"PreferredFileSizeMB"`
+
+	// AllowedFormats restricts auto-pick to these formats.  Empty means
+	// no restriction.  Values are Format strings ("flac", "mp3", ...).
+	AllowedFormats []string `toml:"AllowedFormats"`
+}
+
+// AutoDownloadPrefs converts the persisted guardrail fields to the
+// runtime type Manager and the ranker consume.
+func (c *UserConfig) AutoDownloadPrefs() AutoDownloadPrefs {
+	formats := make([]Format, 0, len(c.AllowedFormats))
+	for _, f := range c.AllowedFormats {
+		formats = append(formats, Format(f))
+	}
+
+	return AutoDownloadPrefs{
+		MinSizeMB:       c.MinFileSizeMB,
+		MaxSizeMB:       c.MaxFileSizeMB,
+		PreferredSizeMB: c.PreferredFileSizeMB,
+		AllowedFormats:  formats,
+	}
 }
 
 // ApplyDefaults fills unset fields.

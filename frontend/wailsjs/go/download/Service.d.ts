@@ -5,7 +5,7 @@ import {context} from '../models';
 
 export function AddProvider(arg1:string,arg2:string,arg3:Record<string, string>):Promise<number>;
 
-export function AddWant(arg1:download.WantRequest):Promise<number>;
+export function AddRequest(arg1:download.RequestInput):Promise<number>;
 
 export function Cancel(arg1:string):Promise<void>;
 
@@ -13,35 +13,37 @@ export function Candidates(arg1:string):Promise<Array<download.Candidate>>;
 
 export function ClearFinished():Promise<void>;
 
-export function ClearSatisfiedWants():Promise<void>;
+export function ClearSatisfiedRequests():Promise<void>;
 
 export function DeleteProvider(arg1:number):Promise<void>;
 
-export function ImportExternalWants(arg1:number,arg2:number):Promise<number>;
+export function ImportExternalRequests(arg1:number,arg2:number):Promise<number>;
 
-export function IsWanted(arg1:string,arg2:number):Promise<boolean>;
+export function IsRequested(arg1:string,arg2:number):Promise<boolean>;
+
+export function ListDownloads(arg1:number):Promise<Array<download.DownloadView>>;
 
 export function ListProviders():Promise<Array<download.Config>>;
 
-export function ListRequests(arg1:number):Promise<Array<download.RequestView>>;
+export function ListRequests():Promise<Array<download.Request>>;
 
-export function ListWants():Promise<Array<download.Want>>;
-
-export function PauseWant(arg1:number,arg2:boolean):Promise<void>;
+export function PauseRequest(arg1:number,arg2:boolean):Promise<void>;
 
 export function Pick(arg1:string,arg2:string):Promise<void>;
 
 export function ProviderKinds():Promise<Array<download.Descriptor>>;
 
-export function ReconcileWanted():Promise<download.Summary>;
+export function ReconcileRequests():Promise<download.Summary>;
 
-export function RemoveWant(arg1:number):Promise<void>;
+export function RemoveRequest(arg1:number):Promise<void>;
 
 export function SetContext(arg1:context.Context):Promise<void>;
 
+export function SetPreferences(arg1:download.AutoDownloadPrefs):Promise<void>;
+
 export function SetReconciler(arg1:download.Reconciler):Promise<void>;
 
-export function Start(arg1:download.SearchRequest):Promise<download.StartResult>;
+export function StartDownload(arg1:download.SearchRequest):Promise<download.StartResult>;
 
 export function TestProvider(arg1:number):Promise<void>;
 

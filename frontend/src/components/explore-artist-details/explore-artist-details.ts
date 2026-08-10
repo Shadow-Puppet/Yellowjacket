@@ -846,8 +846,8 @@ export class ExploreArtistDetails extends LitElement {
      * background discography fetch never signals readiness. */
     private discogFallbackTimer?: number;
 
-    /** Unsubscribe handle for the wanted list. */
-    private unsubWanted: (() => void) | null = null;
+    /** Unsubscribe handle for the requests list. */
+    private unsubRequests: (() => void) | null = null;
 
     override connectedCallback() {
         super.connectedCallback();
@@ -855,10 +855,10 @@ export class ExploreArtistDetails extends LitElement {
             void this.loadAllData();
         }
 
-        // Keep the follow button in step with the wanted list, which a
+        // Keep the follow button in step with the requests list, which a
         // background reconcile pass can change without this page doing
         // anything.
-        this.unsubWanted = downloadStore.subscribe(() => this.requestUpdate());
+        this.unsubRequests = downloadStore.subscribe(() => this.requestUpdate());
         void downloadStore.init().then(() => this.requestUpdate());
 
         // A background discography fetch (top tracks / top releases for an
@@ -897,8 +897,8 @@ export class ExploreArtistDetails extends LitElement {
 
     override disconnectedCallback() {
         super.disconnectedCallback();
-        this.unsubWanted?.();
-        this.unsubWanted = null;
+        this.unsubRequests?.();
+        this.unsubRequests = null;
         this.unsubDiscogReady?.();
         this.unsubSimilarReady?.();
         if (this.discogFallbackTimer) clearTimeout(this.discogFallbackTimer);
@@ -1896,50 +1896,50 @@ export class ExploreArtistDetails extends LitElement {
     }
 
     /**
-     * Subscribes to an artist: their new releases go on the wanted list
-     * as they come out.
+     * Subscribes to an artist: their new releases go on the requests
+     * list as they come out.
      *
      * The default is new releases only. Following an artist should not
      * silently queue forty albums — someone who wants the back
-     * catalogue can widen it from the wanted list, and will not be
+     * catalogue can widen it from the requests list, and will not be
      * surprised by having done so.
      */
     private renderFollowAction() {
         if (!this.artistMBID) return nothing;
 
-        const want = downloadStore.wantFor(this.artistMBID);
+        const request = downloadStore.requestFor(this.artistMBID);
 
         return html`
             <div class="artist-follow">
                 <wa-button
                     size="small"
-                    appearance=${want ? 'filled' : 'outlined'}
-                    @click=${() => void this.toggleFollow(want?.id)}
+                    appearance=${request ? 'filled' : 'outlined'}
+                    @click=${() => void this.toggleFollow(request?.id)}
                 >
                     <wa-icon
                         slot="start"
-                        name=${want ? 'bookmark-check' : 'bookmark'}
+                        name=${request ? 'bookmark-check' : 'bookmark'}
                     ></wa-icon>
-                    ${want ? 'Following' : 'Follow for new releases'}
+                    ${request ? 'Following' : 'Follow for new releases'}
                 </wa-button>
             </div>
         `;
     }
 
-    private async toggleFollow(wantId: number | undefined): Promise<void> {
+    private async toggleFollow(requestId: number | undefined): Promise<void> {
         if (!this.artistMBID) return;
 
         try {
-            if (wantId) {
-                await downloadStore.removeWant(wantId);
+            if (requestId) {
+                await downloadStore.removeRequest(requestId);
             } else {
                 const libraryId = await libraryStore.getDefaultLibraryId();
                 if (!libraryId) {
-                    console.error('Could not update the wanted list: no library available');
+                    console.error('Could not update the requests list: no library available');
                     return;
                 }
 
-                await downloadStore.addWant({
+                await downloadStore.addRequest({
                     mbid: this.artistMBID,
                     entity: 'artist',
                     libraryId,
@@ -1950,7 +1950,7 @@ export class ExploreArtistDetails extends LitElement {
                 } as never);
             }
         } catch (err) {
-            console.error('Could not update the wanted list:', err);
+            console.error('Could not update the requests list:', err);
         }
 
         this.requestUpdate();

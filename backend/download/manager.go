@@ -124,6 +124,10 @@ type Manager struct {
 	optsMu sync.RWMutex
 	opts   ImportOptions
 
+	// prefs gates and scores what auto-pick may grab without asking.
+	prefsMu sync.RWMutex
+	prefs   AutoDownloadPrefs
+
 	// providers caches built provider instances by config ID.  Rebuilt
 	// whenever config changes, so a settings edit takes effect without
 	// a restart.
@@ -204,6 +208,32 @@ func (m *Manager) importOptions() ImportOptions {
 	defer m.optsMu.RUnlock()
 
 	return m.opts
+}
+
+// SetPreferences configures the auto-download guardrails: the size
+// window and format list AutoPickable is allowed to grab without
+// asking.  Live-settable so a settings change takes effect immediately,
+// the same way SetImportOptions does.
+func (m *Manager) SetPreferences(prefs AutoDownloadPrefs) {
+	m.prefsMu.Lock()
+	defer m.prefsMu.Unlock()
+
+	m.prefs = prefs
+}
+
+// preferences returns the current auto-download guardrails.
+func (m *Manager) preferences() AutoDownloadPrefs {
+	m.prefsMu.RLock()
+	defer m.prefsMu.RUnlock()
+
+	return m.prefs
+}
+
+// AutoPickable wraps the package function with this manager's current
+// preferences, so callers do not need direct field access to apply the
+// live guardrails.
+func (m *Manager) AutoPickable(dl Download, ranked []Candidate) bool {
+	return AutoPickable(dl, ranked, m.preferences())
 }
 
 // Reload rebuilds every provider from stored config.  Called at startup
@@ -293,12 +323,12 @@ func (m *Manager) Sweep(ctx context.Context) {
 			)
 		}
 
-		if err := m.store.SetRequestState(
-			ctx, item.RequestID, StateFailed, "interrupted by restart",
+		if err := m.store.SetDownloadState(
+			ctx, item.DownloadID, StateFailed, "interrupted by restart",
 		); err != nil {
 			m.logger.Warn(
 				"could not fail interrupted download request",
-				"request", item.RequestID, "error", err,
+				"request", item.DownloadID, "error", err,
 			)
 		}
 	}
@@ -399,7 +429,7 @@ func (m *Manager) syncSemaphores(configs map[int64]Config) {
 	}
 }
 
-// listers returns every enabled provider that keeps a persistent wanted
+// listers returns every enabled provider that keeps a persistent
 // list of its own, keyed by provider ID.
 func (m *Manager) listers() map[int64]Lister {
 	m.provMu.RLock()
@@ -434,7 +464,7 @@ func (m *Manager) priorityFor(id int64) int {
 // and skipped, because partial results beat no results.
 func (m *Manager) Search(
 	ctx context.Context,
-	req Request,
+	dl Download,
 ) ([]Candidate, error) {
 	providers := m.enabledProviders()
 	if len(providers) == 0 {
@@ -462,7 +492,7 @@ func (m *Manager) Search(
 			sctx, cancel := context.WithTimeout(ctx, searchTimeout)
 			defer cancel()
 
-			c, err := s.Search(sctx, req)
+			c, err := s.Search(sctx, dl)
 			results <- found{candidates: c, err: err, id: id}
 		}(id, s)
 	}
@@ -497,7 +527,7 @@ func (m *Manager) Search(
 		return nil, ErrNoCandidates
 	}
 
-	return Rank(req, all, m.priorityFor), nil
+	return Rank(dl, all, m.priorityFor, m.preferences()), nil
 }
 
 // Start creates a request, searches for it, and either grabs the clear
@@ -506,31 +536,31 @@ func (m *Manager) Search(
 // in the background under a job.
 func (m *Manager) Start(
 	ctx context.Context,
-	req Request,
+	dl Download,
 ) ([]Candidate, error) {
-	if req.ID == "" {
-		req.ID = newID()
+	if dl.ID == "" {
+		dl.ID = newID()
 	}
 
-	if err := m.store.CreateRequest(ctx, req); err != nil {
+	if err := m.store.CreateDownload(ctx, dl); err != nil {
 		return nil, err
 	}
 
-	job := m.startJob(req)
+	job := m.startJob(dl)
 
-	ranked, err := m.Search(ctx, req)
+	ranked, err := m.Search(ctx, dl)
 	if err != nil {
-		m.failRequest(ctx, job, req.ID, err)
+		m.failDownload(ctx, job, dl.ID, err)
 
 		return nil, err
 	}
 
 	m.resMu.Lock()
-	m.results[req.ID] = ranked
+	m.results[dl.ID] = ranked
 	m.resMu.Unlock()
 
-	if err := m.store.SetRequestState(
-		ctx, req.ID, StateFound, "",
+	if err := m.store.SetDownloadState(
+		ctx, dl.ID, StateFound, "",
 	); err != nil {
 		m.logger.Warn("could not record found state", "error", err)
 	}
@@ -541,12 +571,12 @@ func (m *Manager) Start(
 		))
 	}
 
-	if AutoPickable(req, ranked) {
+	if m.AutoPickable(dl, ranked) {
 		if job != nil {
 			job.Logf(jobs.LevelInfo, "Auto-selected best candidate")
 		}
 
-		go m.grab(context.WithoutCancel(ctx), req, ranked[0], job)
+		go m.grab(context.WithoutCancel(ctx), dl, ranked[0], job)
 
 		return ranked, nil
 	}
@@ -559,30 +589,30 @@ func (m *Manager) Start(
 	return ranked, nil
 }
 
-// Attempt searches on behalf of the wanted list and starts a download
+// Attempt searches on behalf of the request list and starts a download
 // only if there is a clear winner.  It returns whether it started and,
-// when it did not, a sentence the wanted list can show the user.
+// when it did not, a sentence the request list can show the user.
 //
-// Unlike Start it persists nothing when it does not act.  A want that
+// Unlike Start it persists nothing when it does not act.  A request that
 // is retried weekly for a year would otherwise leave fifty failed
-// request rows behind it, all saying the same thing the want itself
+// download rows behind it, all saying the same thing the request itself
 // already says — and none of them anything the user can do something
 // about.  Nobody is watching a reconcile pass, so the only two honest
 // outcomes are "downloading it now" and "still looking".
 func (m *Manager) Attempt(
 	ctx context.Context,
-	req Request,
+	dl Download,
 ) (bool, string, error) {
-	if req.ID == "" {
-		req.ID = newID()
+	if dl.ID == "" {
+		dl.ID = newID()
 	}
 
-	ranked, err := m.Search(ctx, req)
+	ranked, err := m.Search(ctx, dl)
 	if err != nil {
 		return false, "", err
 	}
 
-	if !AutoPickable(req, ranked) {
+	if !m.AutoPickable(dl, ranked) {
 		best := ranked[0]
 
 		return false, fmt.Sprintf(
@@ -594,28 +624,28 @@ func (m *Manager) Attempt(
 		), nil
 	}
 
-	if err := m.store.CreateRequest(ctx, req); err != nil {
+	if err := m.store.CreateDownload(ctx, dl); err != nil {
 		return false, "", err
 	}
 
 	m.resMu.Lock()
-	m.results[req.ID] = ranked
+	m.results[dl.ID] = ranked
 	m.resMu.Unlock()
 
-	if err := m.store.SetRequestState(ctx, req.ID, StateFound, ""); err != nil {
+	if err := m.store.SetDownloadState(ctx, dl.ID, StateFound, ""); err != nil {
 		m.logger.Warn("could not record found state", "error", err)
 	}
 
-	job := m.startJob(req)
+	job := m.startJob(dl)
 
 	if job != nil {
 		job.Logf(jobs.LevelInfo, fmt.Sprintf(
-			"Wanted list: auto-selected the best of %d candidates",
+			"Request list: auto-selected the best of %d candidates",
 			len(ranked),
 		))
 	}
 
-	go m.grab(context.WithoutCancel(ctx), req, ranked[0], job)
+	go m.grab(context.WithoutCancel(ctx), dl, ranked[0], job)
 
 	return true, "", nil
 }
@@ -623,15 +653,15 @@ func (m *Manager) Attempt(
 // Pick starts the transfer for a candidate the user chose.
 func (m *Manager) Pick(
 	ctx context.Context,
-	requestID, candidateID string,
+	downloadID, candidateID string,
 ) error {
-	req, err := m.store.GetRequest(ctx, requestID)
+	dl, err := m.store.GetDownload(ctx, downloadID)
 	if err != nil {
 		return err
 	}
 
 	m.resMu.RLock()
-	ranked := m.results[requestID]
+	ranked := m.results[downloadID]
 	m.resMu.RUnlock()
 
 	var chosen *Candidate
@@ -648,25 +678,25 @@ func (m *Manager) Pick(
 		return fmt.Errorf("%w: %s", ErrCandidateGone, candidateID)
 	}
 
-	job := m.startJob(req)
+	job := m.startJob(dl)
 
-	go m.grab(context.WithoutCancel(ctx), req, *chosen, job)
+	go m.grab(context.WithoutCancel(ctx), dl, *chosen, job)
 
 	return nil
 }
 
 // Cancel aborts a live request.
-func (m *Manager) Cancel(ctx context.Context, requestID string) error {
+func (m *Manager) Cancel(ctx context.Context, downloadID string) error {
 	m.actMu.Lock()
-	cancel, ok := m.active[requestID]
+	cancel, ok := m.active[downloadID]
 	m.actMu.Unlock()
 
 	if ok {
 		cancel()
 	}
 
-	if err := m.store.SetRequestState(
-		ctx, requestID, StateCancelled, "",
+	if err := m.store.SetDownloadState(
+		ctx, downloadID, StateCancelled, "",
 	); err != nil {
 		return err
 	}
@@ -678,7 +708,7 @@ func (m *Manager) Cancel(ctx context.Context, requestID string) error {
 // own goroutine and owns the job from here on.
 func (m *Manager) grab(
 	ctx context.Context,
-	req Request,
+	dl Download,
 	c Candidate,
 	job *jobs.Handle,
 ) {
@@ -686,12 +716,12 @@ func (m *Manager) grab(
 	defer cancel()
 
 	m.actMu.Lock()
-	m.active[req.ID] = cancel
+	m.active[dl.ID] = cancel
 	m.actMu.Unlock()
 
 	defer func() {
 		m.actMu.Lock()
-		delete(m.active, req.ID)
+		delete(m.active, dl.ID)
 		m.actMu.Unlock()
 	}()
 
@@ -701,9 +731,9 @@ func (m *Manager) grab(
 	// happening inside another system, which is doing its own limiting,
 	// and blocking a local slot on it would be counting someone else's
 	// work against our budget.
-	plan, err := m.planTransfer(req, c)
+	plan, err := m.planTransfer(dl, c)
 	if err != nil {
-		m.failRequest(ctx, job, req.ID, err)
+		m.failDownload(ctx, job, dl.ID, err)
 
 		return
 	}
@@ -715,7 +745,7 @@ func (m *Manager) grab(
 		case provSem <- struct{}{}:
 			defer func() { <-provSem }()
 		case <-ctx.Done():
-			m.failRequest(ctx, job, req.ID, ctx.Err())
+			m.failDownload(ctx, job, dl.ID, ctx.Err())
 
 			return
 		}
@@ -726,15 +756,15 @@ func (m *Manager) grab(
 		case globalSem <- struct{}{}:
 			defer func() { <-globalSem }()
 		case <-ctx.Done():
-			m.failRequest(ctx, job, req.ID, ctx.Err())
+			m.failDownload(ctx, job, dl.ID, ctx.Err())
 
 			return
 		}
 	}
 
-	item := Item{
+	item := DownloadItem{
 		ID:         newID(),
-		RequestID:  req.ID,
+		DownloadID: dl.ID,
 		ProviderID: c.ProviderID,
 		Candidate:  c,
 		State:      StateQueued,
@@ -743,7 +773,7 @@ func (m *Manager) grab(
 
 	dir, err := m.staging.Reserve(item.ID)
 	if err != nil {
-		m.failRequest(ctx, job, req.ID, err)
+		m.failDownload(ctx, job, dl.ID, err)
 
 		return
 	}
@@ -751,19 +781,19 @@ func (m *Manager) grab(
 	item.StagingDir = dir
 
 	if err := m.store.CreateItem(ctx, item); err != nil {
-		m.failRequest(ctx, job, req.ID, err)
+		m.failDownload(ctx, job, dl.ID, err)
 
 		return
 	}
 
-	result, err := m.transfer(ctx, req, item, plan, job)
+	result, err := m.transfer(ctx, dl, item, plan, job)
 	if err != nil {
-		m.failItem(ctx, job, item, req.ID, err)
+		m.failItem(ctx, job, item, dl.ID, err)
 
 		return
 	}
 
-	m.setStates(ctx, req.ID, item.ID, StateImporting)
+	m.setStates(ctx, dl.ID, item.ID, StateImporting)
 
 	if job != nil {
 		job.SetPhase("Importing")
@@ -790,17 +820,17 @@ func (m *Manager) grab(
 		opts := m.importOptions()
 		opts.WriteTags = true
 
-		opts.LibraryRoot, err = m.library.LibraryPath(req.LibraryID)
+		opts.LibraryRoot, err = m.library.LibraryPath(dl.LibraryID)
 		if err != nil {
-			m.failItem(ctx, job, item, req.ID,
+			m.failItem(ctx, job, item, dl.ID,
 				fmt.Errorf("resolve library root: %w", err))
 
 			return
 		}
 
-		imported, err = m.importer.Import(ctx, req, result, opts)
+		imported, err = m.importer.Import(ctx, dl, result, opts)
 		if err != nil {
-			m.failItem(ctx, job, item, req.ID, err)
+			m.failItem(ctx, job, item, dl.ID, err)
 
 			return
 		}
@@ -812,21 +842,21 @@ func (m *Manager) grab(
 		m.logger.Warn("could not record imported paths", "error", err)
 	}
 
-	if err := m.store.SetRequestState(
-		ctx, req.ID, StateComplete, "",
+	if err := m.store.SetDownloadState(
+		ctx, dl.ID, StateComplete, "",
 	); err != nil {
 		m.logger.Warn("could not record complete state", "error", err)
 	}
 
-	// A request raised from the wanted list retires its want here
+	// A download raised from a durable Request retires it here
 	// rather than waiting for the next reconcile pass to notice the
-	// files, so the wanted list is right the moment the download
+	// files, so the request list is right the moment the download
 	// finishes.  The pass would reach the same conclusion by asking the
 	// library; this is the same answer, sooner.
-	if req.WantID != 0 {
-		if err := m.store.SatisfyWant(ctx, req.WantID); err != nil {
+	if dl.RequestID != 0 {
+		if err := m.store.SatisfyRequest(ctx, dl.RequestID); err != nil {
 			m.logger.Warn(
-				"could not satisfy want", "want", req.WantID, "error", err,
+				"could not satisfy request", "request", dl.RequestID, "error", err,
 			)
 		}
 	}
@@ -835,7 +865,7 @@ func (m *Manager) grab(
 	// mid-flight.  Holding it after the download completes would leak a
 	// few hundred candidates per request for the life of the process.
 	m.resMu.Lock()
-	delete(m.results, req.ID)
+	delete(m.results, dl.ID)
 	m.resMu.Unlock()
 
 	// Staging is only released on a fully successful import; a failure
@@ -845,10 +875,10 @@ func (m *Manager) grab(
 	}
 
 	if m.library != nil {
-		if err := m.library.ScanLibrary(req.LibraryID); err != nil {
+		if err := m.library.ScanLibrary(dl.LibraryID); err != nil {
 			m.logger.Warn(
 				"could not trigger scan after import",
-				"library", req.LibraryID,
+				"library", dl.LibraryID,
 				"error", err,
 			)
 		}
@@ -871,16 +901,16 @@ func (m *Manager) grab(
 // delegates the whole thing.
 func (m *Manager) transfer(
 	ctx context.Context,
-	req Request,
-	item Item,
+	dl Download,
+	item DownloadItem,
 	plan transferPlan,
 	job *jobs.Handle,
 ) (Result, error) {
 	if plan.delegated() {
-		return m.delegate(ctx, req, item, plan.delegate, job)
+		return m.delegate(ctx, dl, item, plan.delegate, job)
 	}
 
-	m.setStates(ctx, req.ID, item.ID, StateGrabbing)
+	m.setStates(ctx, dl.ID, item.ID, StateGrabbing)
 
 	if job != nil {
 		job.SetPhase("Downloading")
@@ -896,7 +926,7 @@ func (m *Manager) transfer(
 		return Result{}, fmt.Errorf("grab failed: %w", err)
 	}
 
-	m.setStates(ctx, req.ID, item.ID, StateVerifying)
+	m.setStates(ctx, dl.ID, item.ID, StateVerifying)
 
 	if job != nil {
 		job.SetPhase("Verifying")
@@ -966,7 +996,7 @@ type transferPlan struct {
 func (p transferPlan) delegated() bool { return p.delegate != nil }
 
 // planTransfer decides how a candidate will be fetched.
-func (m *Manager) planTransfer(_ Request, c Candidate) (transferPlan, error) {
+func (m *Manager) planTransfer(_ Download, c Candidate) (transferPlan, error) {
 	providers := m.enabledProviders()
 
 	source, ok := providers[c.ProviderID]
@@ -992,12 +1022,12 @@ func (m *Manager) planTransfer(_ Request, c Candidate) (transferPlan, error) {
 // reports terminal state.
 func (m *Manager) delegate(
 	ctx context.Context,
-	req Request,
-	item Item,
+	dl Download,
+	item DownloadItem,
 	d Delegator,
 	job *jobs.Handle,
 ) (Result, error) {
-	externalID, err := d.Delegate(ctx, req)
+	externalID, err := d.Delegate(ctx, dl)
 	if err != nil {
 		return Result{}, fmt.Errorf("delegate request: %w", err)
 	}
@@ -1006,7 +1036,7 @@ func (m *Manager) delegate(
 		m.logger.Warn("could not record external id", "error", err)
 	}
 
-	m.setStates(ctx, req.ID, item.ID, StateGrabbing)
+	m.setStates(ctx, dl.ID, item.ID, StateGrabbing)
 
 	if job != nil {
 		job.SetPhase("Waiting on external manager")
@@ -1104,12 +1134,12 @@ func (m *Manager) progressReporter(
 }
 
 // Candidates returns the ranked candidates for a live request.
-func (m *Manager) Candidates(requestID string) []Candidate {
+func (m *Manager) Candidates(downloadID string) []Candidate {
 	m.resMu.RLock()
 	defer m.resMu.RUnlock()
 
-	out := make([]Candidate, len(m.results[requestID]))
-	copy(out, m.results[requestID])
+	out := make([]Candidate, len(m.results[downloadID]))
+	copy(out, m.results[downloadID])
 
 	return out
 }
@@ -1117,10 +1147,10 @@ func (m *Manager) Candidates(requestID string) []Candidate {
 // setStates advances a request and its item together.
 func (m *Manager) setStates(
 	ctx context.Context,
-	requestID, itemID string,
+	downloadID, itemID string,
 	state State,
 ) {
-	if err := m.store.SetRequestState(ctx, requestID, state, ""); err != nil {
+	if err := m.store.SetDownloadState(ctx, downloadID, state, ""); err != nil {
 		m.logger.Warn("could not set request state", "error", err)
 	}
 
@@ -1129,17 +1159,17 @@ func (m *Manager) setStates(
 	}
 }
 
-// failRequest records a request-level failure.
-func (m *Manager) failRequest(
+// failDownload records a download-level failure.
+func (m *Manager) failDownload(
 	ctx context.Context,
 	job *jobs.Handle,
-	requestID string,
+	downloadID string,
 	err error,
 ) {
-	m.logger.Warn("download request failed", "request", requestID, "error", err)
+	m.logger.Warn("download failed", "download", downloadID, "error", err)
 
-	if serr := m.store.SetRequestState(
-		ctx, requestID, StateFailed, err.Error(),
+	if serr := m.store.SetDownloadState(
+		ctx, downloadID, StateFailed, err.Error(),
 	); serr != nil {
 		m.logger.Warn("could not record failure", "error", serr)
 	}
@@ -1149,12 +1179,12 @@ func (m *Manager) failRequest(
 	}
 }
 
-// failItem records an item-level failure and fails its request.
+// failItem records an item-level failure and fails its download.
 func (m *Manager) failItem(
 	ctx context.Context,
 	job *jobs.Handle,
-	item Item,
-	requestID string,
+	item DownloadItem,
+	downloadID string,
 	err error,
 ) {
 	if serr := m.store.SetItemState(
@@ -1163,30 +1193,30 @@ func (m *Manager) failItem(
 		m.logger.Warn("could not record item failure", "error", serr)
 	}
 
-	m.failRequest(ctx, job, requestID, err)
+	m.failDownload(ctx, job, downloadID, err)
 }
 
 // startJob registers the request in the background jobs panel.
-func (m *Manager) startJob(req Request) *jobs.Handle {
+func (m *Manager) startJob(dl Download) *jobs.Handle {
 	if m.jobsReg == nil {
 		return nil
 	}
 
-	title := req.Album
+	title := dl.Album
 	if title == "" {
-		title = req.SearchText()
+		title = dl.SearchText()
 	}
 
 	return m.jobsReg.Start(jobs.Spec{
-		ID:       "download-" + req.ID,
+		ID:       "download-" + dl.ID,
 		Kind:     jobs.KindDownload,
 		Title:    "Downloading " + title,
-		Subtitle: req.Artist,
+		Subtitle: dl.Artist,
 		State:    jobs.StateRunning,
 		Caps:     jobs.Caps{Cancellable: true},
 		Controls: jobs.Controls{
 			Cancel: func() {
-				if err := m.Cancel(context.Background(), req.ID); err != nil {
+				if err := m.Cancel(context.Background(), dl.ID); err != nil {
 					m.logger.Warn("cancel failed", "error", err)
 				}
 			},

@@ -327,7 +327,7 @@ func TestLidarrDelegateExistingAlbum(t *testing.T) {
 
 	l := newStubLidarr(t, stub)
 
-	externalID, err := l.Delegate(context.Background(), Request{
+	externalID, err := l.Delegate(context.Background(), Download{
 		ReleaseGroupMBID: "rg-mbid",
 		Artist:           "Radiohead",
 		Album:            "OK Computer",
@@ -373,7 +373,7 @@ func TestLidarrDelegateNewArtistMonitorsNothingByDefault(t *testing.T) {
 
 	l := newStubLidarr(t, stub)
 
-	if _, err := l.Delegate(context.Background(), Request{
+	if _, err := l.Delegate(context.Background(), Download{
 		ReleaseGroupMBID: "rg-mbid",
 		Artist:           "Radiohead",
 		Album:            "OK Computer",
@@ -414,7 +414,7 @@ func TestLidarrDelegateNoMatch(t *testing.T) {
 
 	l := newStubLidarr(t, stub)
 
-	_, err := l.Delegate(context.Background(), Request{
+	_, err := l.Delegate(context.Background(), Download{
 		Artist: "Nobody",
 		Album:  "Nothing",
 	})

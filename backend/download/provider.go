@@ -50,7 +50,7 @@ type Provider interface {
 // respect ctx deadlines: the pipeline searches providers concurrently
 // with a per-provider timeout and takes whatever came back in time.
 type Searcher interface {
-	Search(ctx context.Context, req Request) ([]Candidate, error)
+	Search(ctx context.Context, dl Download) ([]Candidate, error)
 }
 
 // Transporter moves a candidate's bytes into dst, which the pipeline
@@ -73,7 +73,7 @@ type Transporter interface {
 // the manager reports terminal state.
 type Delegator interface {
 	// Delegate submits the request and returns the manager's own ID.
-	Delegate(ctx context.Context, req Request) (string, error)
+	Delegate(ctx context.Context, dl Download) (string, error)
 
 	// Poll reports on a previously delegated request.
 	Poll(ctx context.Context, externalID string) (DelegateStatus, error)
@@ -92,18 +92,18 @@ type Delegator interface {
 // pushes, the external system receives.  Pulling happens only when the
 // user explicitly imports.
 type Lister interface {
-	// PushWant records a want in the provider's own list and returns
-	// the provider's identifier for it.  Implementations must be
-	// idempotent: pushing a want the provider already has returns the
-	// existing identifier rather than duplicating it.
-	PushWant(ctx context.Context, w Want) (string, error)
+	// PushRequest records a request in the provider's own list and
+	// returns the provider's identifier for it.  Implementations must
+	// be idempotent: pushing a request the provider already has returns
+	// the existing identifier rather than duplicating it.
+	PushRequest(ctx context.Context, r Request) (string, error)
 
-	// RemoveWant drops a previously pushed want.  Best-effort.
-	RemoveWant(ctx context.Context, externalID string) error
+	// RemoveRequest drops a previously pushed request.  Best-effort.
+	RemoveRequest(ctx context.Context, externalID string) error
 
-	// ListWants reads the provider's list back, for the deliberate
+	// ListRequests reads the provider's list back, for the deliberate
 	// import path.  LibraryID is filled in by the caller.
-	ListWants(ctx context.Context) ([]Want, error)
+	ListRequests(ctx context.Context) ([]Request, error)
 }
 
 // ProviderInfo is a provider's identity as the frontend sees it.

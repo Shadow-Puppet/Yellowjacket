@@ -91,7 +91,7 @@ func TestManagerSearchRanksAcrossProviders(t *testing.T) {
 	f.manager.installProvider(Config{ID: 1, Priority: 50}, mp3)
 	f.manager.installProvider(Config{ID: 2, Priority: 50}, flac)
 
-	ranked, err := f.manager.Search(context.Background(), fourTrackRequest())
+	ranked, err := f.manager.Search(context.Background(), fourTrackDownload())
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestManagerSearchToleratesProviderFailure(t *testing.T) {
 	f.manager.installProvider(Config{ID: 1, Priority: 50}, broken)
 	f.manager.installProvider(Config{ID: 2, Priority: 50}, working)
 
-	ranked, err := f.manager.Search(context.Background(), fourTrackRequest())
+	ranked, err := f.manager.Search(context.Background(), fourTrackDownload())
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestManagerSearchNoProviders(t *testing.T) {
 
 	f := newManagerFixture(t)
 
-	_, err := f.manager.Search(context.Background(), fourTrackRequest())
+	_, err := f.manager.Search(context.Background(), fourTrackDownload())
 	if !errors.Is(err, ErrNoProviders) {
 		t.Fatalf("error = %v, want ErrNoProviders", err)
 	}
@@ -157,7 +157,7 @@ func TestManagerSearchNoCandidates(t *testing.T) {
 	empty := NewFakeProvider(1, "empty", Caps{CanSearch: true})
 	f.manager.installProvider(Config{ID: 1, Priority: 50}, empty)
 
-	_, err := f.manager.Search(context.Background(), fourTrackRequest())
+	_, err := f.manager.Search(context.Background(), fourTrackDownload())
 	if !errors.Is(err, ErrNoCandidates) {
 		t.Fatalf("error = %v, want ErrNoCandidates", err)
 	}
@@ -173,21 +173,21 @@ func TestManagerEndToEndAutoPick(t *testing.T) {
 	provider := fakeWithAlbum(1, "flac-source", ".flac")
 	f.manager.installProvider(Config{ID: 1, Priority: 50}, provider)
 
-	req := fourTrackRequest()
+	dl := fourTrackDownload()
 
-	ranked, err := f.manager.Start(context.Background(), req)
+	ranked, err := f.manager.Start(context.Background(), dl)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
-	if !AutoPickable(req, ranked) {
+	if !f.manager.AutoPickable(dl, ranked) {
 		t.Fatalf(
 			"expected a clear winner to auto-pick; best match %f quality %f",
 			ranked[0].Match.Overall, ranked[0].Quality.Overall,
 		)
 	}
 
-	waitForRequestState(t, f.store, req.ID, StateComplete)
+	waitForDownloadState(t, f.store, dl.ID, StateComplete)
 
 	if provider.GrabCalls != 1 {
 		t.Errorf("grab calls = %d, want 1", provider.GrabCalls)
@@ -231,14 +231,14 @@ func TestManagerWaitsWhenAmbiguous(t *testing.T) {
 	f.manager.installProvider(Config{ID: 1, Priority: 50}, a)
 	f.manager.installProvider(Config{ID: 2, Priority: 50}, b)
 
-	req := fourTrackRequest()
+	dl := fourTrackDownload()
 
-	ranked, err := f.manager.Start(context.Background(), req)
+	ranked, err := f.manager.Start(context.Background(), dl)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
-	if AutoPickable(req, ranked) {
+	if f.manager.AutoPickable(dl, ranked) {
 		t.Fatal("two equivalent candidates must not auto-pick")
 	}
 
@@ -250,23 +250,23 @@ func TestManagerWaitsWhenAmbiguous(t *testing.T) {
 		)
 	}
 
-	stored, err := f.store.GetRequest(context.Background(), req.ID)
+	stored, err := f.store.GetDownload(context.Background(), dl.ID)
 	if err != nil {
-		t.Fatalf("GetRequest: %v", err)
+		t.Fatalf("GetDownload: %v", err)
 	}
 
-	if stored.ID != req.ID {
-		t.Errorf("stored request id = %s, want %s", stored.ID, req.ID)
+	if stored.ID != dl.ID {
+		t.Errorf("stored request id = %s, want %s", stored.ID, dl.ID)
 	}
 
 	// The user picks the second one explicitly.
 	if err := f.manager.Pick(
-		context.Background(), req.ID, ranked[1].ID,
+		context.Background(), dl.ID, ranked[1].ID,
 	); err != nil {
 		t.Fatalf("Pick: %v", err)
 	}
 
-	waitForRequestState(t, f.store, req.ID, StateComplete)
+	waitForDownloadState(t, f.store, dl.ID, StateComplete)
 }
 
 func TestManagerPickUnknownCandidate(t *testing.T) {
@@ -277,14 +277,14 @@ func TestManagerPickUnknownCandidate(t *testing.T) {
 	provider := fakeWithAlbum(1, "source", ".flac")
 	f.manager.installProvider(Config{ID: 1, Priority: 50}, provider)
 
-	req := fourTrackRequest()
-	req.Expected = nil // free text: never auto-picks
+	dl := fourTrackDownload()
+	dl.Expected = nil // free text: never auto-picks
 
-	if _, err := f.manager.Start(context.Background(), req); err != nil {
+	if _, err := f.manager.Start(context.Background(), dl); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
-	err := f.manager.Pick(context.Background(), req.ID, "no-such-candidate")
+	err := f.manager.Pick(context.Background(), dl.ID, "no-such-candidate")
 	if !errors.Is(err, ErrCandidateGone) {
 		t.Fatalf("error = %v, want ErrCandidateGone", err)
 	}
@@ -302,13 +302,13 @@ func TestManagerFailedGrabLeavesLibraryClean(t *testing.T) {
 
 	f.manager.installProvider(Config{ID: 1, Priority: 50}, provider)
 
-	req := fourTrackRequest()
+	dl := fourTrackDownload()
 
-	if _, err := f.manager.Start(context.Background(), req); err != nil {
+	if _, err := f.manager.Start(context.Background(), dl); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
-	waitForRequestState(t, f.store, req.ID, StateFailed)
+	waitForDownloadState(t, f.store, dl.ID, StateFailed)
 
 	entries, err := os.ReadDir(f.root)
 	if err != nil {
@@ -355,13 +355,13 @@ func TestManagerPairsSearcherWithTransport(t *testing.T) {
 	f.manager.installProvider(Config{ID: 1, Priority: 50}, searcher)
 	f.manager.installProvider(Config{ID: 2, Priority: 50}, transport)
 
-	req := fourTrackRequest()
+	dl := fourTrackDownload()
 
-	if _, err := f.manager.Start(context.Background(), req); err != nil {
+	if _, err := f.manager.Start(context.Background(), dl); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
-	waitForRequestState(t, f.store, req.ID, StateComplete)
+	waitForDownloadState(t, f.store, dl.ID, StateComplete)
 
 	if transport.GrabCalls != 1 {
 		t.Errorf("transport grabs = %d, want 1", transport.GrabCalls)
@@ -387,22 +387,22 @@ func TestManagerNoTransportForProtocol(t *testing.T) {
 
 	f.manager.installProvider(Config{ID: 1, Priority: 50}, searcher)
 
-	req := fourTrackRequest()
+	dl := fourTrackDownload()
 
-	if _, err := f.manager.Start(context.Background(), req); err != nil {
+	if _, err := f.manager.Start(context.Background(), dl); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
-	waitForRequestState(t, f.store, req.ID, StateFailed)
+	waitForDownloadState(t, f.store, dl.ID, StateFailed)
 }
 
-// waitForRequestState polls until a request reaches the wanted state.
+// waitForDownloadState polls until a download reaches the wanted state.
 // The pipeline runs on its own goroutine, so tests observe it through
 // the store rather than by reaching into the manager.
-func waitForRequestState(
+func waitForDownloadState(
 	t *testing.T,
 	store *Store,
-	requestID string,
+	downloadID string,
 	want State,
 ) {
 	t.Helper()
@@ -412,7 +412,7 @@ func waitForRequestState(
 	var last State
 
 	for time.Now().Before(deadline) {
-		state, _, err := store.GetRequestState(context.Background(), requestID)
+		state, _, err := store.GetDownloadState(context.Background(), downloadID)
 		if err == nil {
 			last = state
 			if last == want {
@@ -423,7 +423,7 @@ func waitForRequestState(
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	t.Fatalf("request state = %q after 5s, want %q", last, want)
+	t.Fatalf("download state = %q after 5s, want %q", last, want)
 }
 
 // A delegate's files are already in the external manager's library,
@@ -457,13 +457,13 @@ func TestManagerDelegateReconcilesInPlace(t *testing.T) {
 
 	f.manager.installProvider(Config{ID: 1, Priority: 50}, delegate)
 
-	req := fourTrackRequest()
+	dl := fourTrackDownload()
 
-	if _, err := f.manager.Start(context.Background(), req); err != nil {
+	if _, err := f.manager.Start(context.Background(), dl); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
-	waitForRequestState(t, f.store, req.ID, StateComplete)
+	waitForDownloadState(t, f.store, dl.ID, StateComplete)
 
 	if delegate.DelegateCalls != 1 {
 		t.Errorf("delegate calls = %d, want 1", delegate.DelegateCalls)
@@ -489,9 +489,9 @@ func TestManagerDelegateReconcilesInPlace(t *testing.T) {
 	}
 
 	// The external paths were recorded against the item.
-	items, err := f.store.ListItemsForRequest(context.Background(), req.ID)
+	items, err := f.store.ListItemsForDownload(context.Background(), dl.ID)
 	if err != nil {
-		t.Fatalf("ListItemsForRequest: %v", err)
+		t.Fatalf("ListItemsForDownload: %v", err)
 	}
 
 	if len(items) != 1 {

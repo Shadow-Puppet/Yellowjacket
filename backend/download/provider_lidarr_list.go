@@ -7,10 +7,10 @@ import (
 	"strconv"
 )
 
-// Lidarr's Lister role: mirroring this app's wanted list into Lidarr's
+// Lidarr's Lister role: mirroring this app's request list into Lidarr's
 // own monitoring.
 //
-// Lidarr already models exactly what a want is — a monitored artist or
+// Lidarr already models exactly what a request is — a monitored artist or
 // a monitored album — so the mapping is direct and, more usefully, it
 // means an artist subscription made here keeps working through Lidarr's
 // own release-checking even while this app is closed.  That is the
@@ -21,52 +21,52 @@ import (
 //
 // The mapping is deliberately lossy in one direction only:
 //
-//	artist want         -> Lidarr artist, monitored
-//	release-group want  -> Lidarr album, monitored (artist added if new)
-//	release want        -> same, at release-group granularity
-//	recording want      -> not pushed; Lidarr has no concept of wanting
+//	artist request         -> Lidarr artist, monitored
+//	release-group request  -> Lidarr album, monitored (artist added if new)
+//	release request        -> same, at release-group granularity
+//	recording request      -> not pushed; Lidarr has no concept of wanting
 //	                       one track, and monitoring the whole album to
 //	                       get it would download far more than asked.
 //
-// Nothing here searches.  Pushing a want expresses intent; Lidarr
+// Nothing here searches.  Pushing a request expresses intent; Lidarr
 // decides when to act on it, which is the point of delegating.
 
-// PushWant records a want in Lidarr's own monitoring.
+// PushRequest records a request in Lidarr's own monitoring.
 //
 // It is idempotent because Lidarr is: adding an artist that already
 // exists returns the existing record, and monitoring an already-
 // monitored album is a no-op.  Callers rely on that — the reconciler
 // pushes on every pass until it gets an ID back.
-func (l *lidarr) PushWant(ctx context.Context, w Want) (string, error) {
-	switch w.Entity {
+func (l *lidarr) PushRequest(ctx context.Context, r Request) (string, error) {
+	switch r.Entity {
 	case EntityArtist:
-		return l.pushArtistWant(ctx, w)
+		return l.pushArtistRequest(ctx, r)
 	case EntityReleaseGroup, EntityRelease:
-		return l.pushAlbumWant(ctx, w)
+		return l.pushAlbumRequest(ctx, r)
 	case EntityRecording:
 		// Deliberately unsupported rather than approximated.  See the
 		// mapping note above.
 		return "", nil
 	default:
-		return "", fmt.Errorf("%w: entity %q", ErrUnsupported, w.Entity)
+		return "", fmt.Errorf("%w: entity %q", ErrUnsupported, r.Entity)
 	}
 }
 
-// pushArtistWant makes Lidarr monitor an artist.
+// pushArtistRequest makes Lidarr monitor an artist.
 //
 // Scope is honoured through Lidarr's own monitor option rather than by
 // pushing each album separately: "future" maps to monitoring new
 // releases only, "all" to monitoring everything missing.  Letting
 // Lidarr apply the policy means it stays applied to albums released
 // after this push, which is what a subscription is for.
-func (l *lidarr) pushArtistWant(ctx context.Context, w Want) (string, error) {
-	existing, err := l.findArtistByMBID(ctx, w.MBID)
+func (l *lidarr) pushArtistRequest(ctx context.Context, r Request) (string, error) {
+	existing, err := l.findArtistByMBID(ctx, r.MBID)
 	if err != nil {
 		return "", err
 	}
 
 	monitor := "future"
-	if w.Scope == ScopeAll {
+	if r.Scope == ScopeAll {
 		monitor = "missing"
 	}
 
@@ -84,13 +84,13 @@ func (l *lidarr) pushArtistWant(ctx context.Context, w Want) (string, error) {
 		return "", err
 	}
 
-	name := w.Artist
+	name := r.Artist
 	if name == "" {
-		name = w.Title
+		name = r.Title
 	}
 
 	body := map[string]any{
-		"foreignArtistId":   w.MBID,
+		"foreignArtistId":   r.MBID,
 		"artistName":        name,
 		"qualityProfileId":  quality,
 		"metadataProfileId": metadata,
@@ -118,13 +118,13 @@ func (l *lidarr) pushArtistWant(ctx context.Context, w Want) (string, error) {
 	return strconv.Itoa(created.ID), nil
 }
 
-// pushAlbumWant makes Lidarr monitor one album, adding its artist if
+// pushAlbumRequest makes Lidarr monitor one album, adding its artist if
 // Lidarr has never heard of them.
-func (l *lidarr) pushAlbumWant(ctx context.Context, w Want) (string, error) {
-	album, err := l.findAlbum(ctx, Request{
-		ReleaseGroupMBID: w.MBID,
-		Artist:           w.Artist,
-		Album:            w.Title,
+func (l *lidarr) pushAlbumRequest(ctx context.Context, r Request) (string, error) {
+	album, err := l.findAlbum(ctx, Download{
+		ReleaseGroupMBID: r.MBID,
+		Artist:           r.Artist,
+		Album:            r.Title,
 	})
 	if err != nil {
 		return "", err
@@ -146,13 +146,13 @@ func (l *lidarr) pushAlbumWant(ctx context.Context, w Want) (string, error) {
 	return strconv.Itoa(album.ID), nil
 }
 
-// RemoveWant stops Lidarr monitoring something.
+// RemoveRequest stops Lidarr monitoring something.
 //
 // It unmonitors rather than deletes: the user's Lidarr may have been
 // monitoring that artist long before this app existed, and removing a
-// want here is not permission to tear down their setup.  An unmonitored
+// request here is not permission to tear down their setup.  An unmonitored
 // artist stays in their library with its files intact.
-func (l *lidarr) RemoveWant(ctx context.Context, externalID string) error {
+func (l *lidarr) RemoveRequest(ctx context.Context, externalID string) error {
 	id, err := strconv.Atoi(externalID)
 	if err != nil {
 		return fmt.Errorf("%w: bad lidarr id %q", ErrLidarrNoMatch, externalID)
@@ -180,14 +180,14 @@ func (l *lidarr) RemoveWant(ctx context.Context, externalID string) error {
 	return l.client.put(ctx, endpoint, artist, nil)
 }
 
-// ListWants reads Lidarr's monitored artists back, for the deliberate
+// ListRequests reads Lidarr's monitored artists back, for the deliberate
 // "import what Lidarr is already watching" action.
 //
 // Only artists are imported, not their individual monitored albums: an
 // artist is the durable statement of intent, and importing every
-// monitored album alongside it would produce a wanted list that is
+// monitored album alongside it would produce a request list that is
 // mostly redundant with the subscription that generated it.
-func (l *lidarr) ListWants(ctx context.Context) ([]Want, error) {
+func (l *lidarr) ListRequests(ctx context.Context) ([]Request, error) {
 	var artists []struct {
 		lidarrArtist
 
@@ -198,14 +198,14 @@ func (l *lidarr) ListWants(ctx context.Context) ([]Want, error) {
 		return nil, err
 	}
 
-	out := make([]Want, 0, len(artists))
+	out := make([]Request, 0, len(artists))
 
 	for _, a := range artists {
 		if !a.Monitored || a.ForeignArtistID == "" {
 			continue
 		}
 
-		out = append(out, Want{
+		out = append(out, Request{
 			MBID:   a.ForeignArtistID,
 			Entity: EntityArtist,
 			Artist: a.ArtistName,

@@ -9,12 +9,12 @@ import (
 // scope translated into Lidarr's own monitor option — so the policy
 // keeps applying to albums released after the push, which is the whole
 // reason to mirror a subscription rather than a list of albums.
-func TestLidarrPushArtistWantMapsScope(t *testing.T) {
+func TestLidarrPushArtistRequestMapsScope(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name        string
-		scope       WantScope
+		scope       RequestScope
 		wantMonitor string
 	}{
 		{name: "future", scope: ScopeFuture, wantMonitor: "future"},
@@ -25,14 +25,14 @@ func TestLidarrPushArtistWantMapsScope(t *testing.T) {
 		stub := newLidarrStub(t)
 		l := newStubLidarr(t, stub)
 
-		id, err := l.PushWant(context.Background(), Want{
+		id, err := l.PushRequest(context.Background(), Request{
 			MBID:   "artist-mbid",
 			Entity: EntityArtist,
 			Artist: "Radiohead",
 			Scope:  tt.scope,
 		})
 		if err != nil {
-			t.Fatalf("%s: PushWant: %v", tt.name, err)
+			t.Fatalf("%s: PushRequest: %v", tt.name, err)
 		}
 
 		if id != "42" {
@@ -70,7 +70,7 @@ func TestLidarrPushArtistWantMapsScope(t *testing.T) {
 // Pushing a want Lidarr already has returns the existing ID instead of
 // adding a second copy — the reconciler pushes on every pass, so this
 // is load-bearing rather than tidy.
-func TestLidarrPushArtistWantIsIdempotent(t *testing.T) {
+func TestLidarrPushArtistRequestIsIdempotent(t *testing.T) {
 	t.Parallel()
 
 	stub := newLidarrStub(t)
@@ -83,13 +83,13 @@ func TestLidarrPushArtistWantIsIdempotent(t *testing.T) {
 
 	l := newStubLidarr(t, stub)
 
-	id, err := l.PushWant(context.Background(), Want{
+	id, err := l.PushRequest(context.Background(), Request{
 		MBID:   "artist-mbid",
 		Entity: EntityArtist,
 		Artist: "Radiohead",
 	})
 	if err != nil {
-		t.Fatalf("PushWant: %v", err)
+		t.Fatalf("PushRequest: %v", err)
 	}
 
 	if id != "7" {
@@ -107,19 +107,19 @@ func TestLidarrPushArtistWantIsIdempotent(t *testing.T) {
 
 // Lidarr cannot express "I want one track", and monitoring the whole
 // album to get it would download far more than was asked for.
-func TestLidarrPushRecordingWantIsSkipped(t *testing.T) {
+func TestLidarrPushRecordingRequestIsSkipped(t *testing.T) {
 	t.Parallel()
 
 	stub := newLidarrStub(t)
 	l := newStubLidarr(t, stub)
 
-	id, err := l.PushWant(context.Background(), Want{
+	id, err := l.PushRequest(context.Background(), Request{
 		MBID:   "recording-mbid",
 		Entity: EntityRecording,
 		Title:  "Paranoid Android",
 	})
 	if err != nil {
-		t.Fatalf("PushWant: %v", err)
+		t.Fatalf("PushRequest: %v", err)
 	}
 
 	if id != "" {
@@ -141,7 +141,7 @@ func TestLidarrPushRecordingWantIsSkipped(t *testing.T) {
 
 // Importing adopts monitored artists conservatively: a subscription
 // pulled in from elsewhere must not queue a back catalogue.
-func TestLidarrListWantsImportsMonitoredArtistsOnly(t *testing.T) {
+func TestLidarrListRequestsImportsMonitoredArtistsOnly(t *testing.T) {
 	t.Parallel()
 
 	stub := newLidarrStub(t)
@@ -168,40 +168,40 @@ func TestLidarrListWantsImportsMonitoredArtistsOnly(t *testing.T) {
 
 	l := newStubLidarr(t, stub)
 
-	wants, err := l.ListWants(context.Background())
+	requests, err := l.ListRequests(context.Background())
 	if err != nil {
-		t.Fatalf("ListWants: %v", err)
+		t.Fatalf("ListRequests: %v", err)
 	}
 
-	if len(wants) != 1 {
-		t.Fatalf("imported %d wants, want 1", len(wants))
+	if len(requests) != 1 {
+		t.Fatalf("imported %d requests, want 1", len(requests))
 	}
 
-	w := wants[0]
+	req := requests[0]
 
-	if w.MBID != "artist-1" {
-		t.Errorf("mbid = %q, want artist-1", w.MBID)
+	if req.MBID != "artist-1" {
+		t.Errorf("mbid = %q, want artist-1", req.MBID)
 	}
 
-	if w.Entity != EntityArtist {
-		t.Errorf("entity = %q, want artist", w.Entity)
+	if req.Entity != EntityArtist {
+		t.Errorf("entity = %q, want artist", req.Entity)
 	}
 
-	if w.Scope != ScopeFuture {
-		t.Errorf("scope = %q, want the conservative future", w.Scope)
+	if req.Scope != ScopeFuture {
+		t.Errorf("scope = %q, want the conservative future", req.Scope)
 	}
 }
 
 // Removing a want must not tear down a Lidarr setup that may predate
 // this app: it unmonitors, it does not delete.
-func TestLidarrRemoveWantUnmonitorsOnly(t *testing.T) {
+func TestLidarrRemoveRequestUnmonitorsOnly(t *testing.T) {
 	t.Parallel()
 
 	stub := newLidarrStub(t)
 	l := newStubLidarr(t, stub)
 
-	if err := l.RemoveWant(context.Background(), "55"); err != nil {
-		t.Fatalf("RemoveWant: %v", err)
+	if err := l.RemoveRequest(context.Background(), "55"); err != nil {
+		t.Fatalf("RemoveRequest: %v", err)
 	}
 
 	stub.mu.Lock()

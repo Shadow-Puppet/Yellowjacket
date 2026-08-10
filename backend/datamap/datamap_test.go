@@ -223,22 +223,23 @@ func TestAuthoredCascadesAreDeliberate(t *testing.T) {
 
 		// Download history is scoped to the library it imported into.
 		// When that library is removed the files it acquired go with
-		// it, so a request describing "fetch this into library 3" has
+		// it, so a download describing "fetch this into library 3" has
 		// nothing left to mean. Keeping the rows would leave history
 		// pointing at a library the user deleted.
-		"download_requests": true,
+		"download_downloads": true,
 
-		// Items belong to their request and have no independent
+		// Items belong to their download and have no independent
 		// meaning; they cascade with it.
 		"download_items": true,
 
-		// A want says "put this in library 3". Delete that library and
-		// there is no longer anywhere for it to go, so the want has
-		// nothing left to mean — the same reasoning as its requests.
-		// The second cascade, artist want to derived album wants, is
-		// the point of the subscription: unsubscribing from an artist
-		// must stop the albums it queued on the user's behalf.
-		"download_wants": true,
+		// A request says "put this in library 3". Delete that library
+		// and there is no longer anywhere for it to go, so the request
+		// has nothing left to mean — the same reasoning as its
+		// downloads. The second cascade, artist request to derived
+		// album requests, is the point of the subscription:
+		// unsubscribing from an artist must stop the albums it queued
+		// on the user's behalf.
+		"download_requests": true,
 	}
 
 	for _, entry := range datamap.ByKind(datamap.Authored) {

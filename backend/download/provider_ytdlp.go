@@ -201,9 +201,9 @@ func (e ytEntry) link() string {
 // how yt-dlp is actually useful for albums — a single "full album"
 // video is one file and cannot be imported as tracks.  Without a
 // tracklist it falls back to returning the top individual results.
-func (y *ytDlp) Search(ctx context.Context, req Request) ([]Candidate, error) {
-	if len(req.Expected) > 0 {
-		c, err := y.assembleAlbum(ctx, req)
+func (y *ytDlp) Search(ctx context.Context, dl Download) ([]Candidate, error) {
+	if len(dl.Expected) > 0 {
+		c, err := y.assembleAlbum(ctx, dl)
 		if err != nil {
 			return nil, err
 		}
@@ -213,7 +213,7 @@ func (y *ytDlp) Search(ctx context.Context, req Request) ([]Candidate, error) {
 		}
 	}
 
-	entries, err := y.search(ctx, req.SearchText(), ytSearchCount)
+	entries, err := y.search(ctx, dl.SearchText(), ytSearchCount)
 	if err != nil {
 		return nil, err
 	}
@@ -257,7 +257,7 @@ func (y *ytDlp) Search(ctx context.Context, req Request) ([]Candidate, error) {
 // threshold decides whether what arrived is enough.
 func (y *ytDlp) assembleAlbum(
 	ctx context.Context,
-	req Request,
+	dl Download,
 ) (Candidate, error) {
 	type hit struct {
 		index int
@@ -272,10 +272,10 @@ func (y *ytDlp) assembleAlbum(
 	group, gctx := errgroup.WithContext(ctx)
 	group.SetLimit(ytTrackConcurrency)
 
-	for i, track := range req.Expected {
+	for i, track := range dl.Expected {
 		group.Go(func() error {
 			query := strings.TrimSpace(
-				req.Artist + " " + track.Title,
+				dl.Artist + " " + track.Title,
 			)
 
 			entries, err := y.search(gctx, query, 1)
@@ -300,11 +300,11 @@ func (y *ytDlp) assembleAlbum(
 	}
 
 	c := Candidate{
-		ID:       "ytdlp:album:" + req.ID,
+		ID:       "ytdlp:album:" + dl.ID,
 		Kind:     KindYtDlp,
 		Protocol: ProtocolDirect,
-		Title:    req.Album,
-		Artist:   req.Artist,
+		Title:    dl.Album,
+		Artist:   dl.Artist,
 		Origin:   "yt-dlp (assembled per track)",
 		Health:   0.75,
 		Payload:  map[string]string{},
@@ -312,7 +312,7 @@ func (y *ytDlp) assembleAlbum(
 	}
 
 	for _, h := range hits {
-		track := req.Expected[h.index]
+		track := dl.Expected[h.index]
 
 		link := h.entry.link()
 		if link == "" {

@@ -57,7 +57,7 @@ export class DownloadPicker extends LitElement {
     private candidates: DownloadCandidate[] = [];
 
     @state()
-    private requestId = '';
+    private downloadId = '';
 
     @state()
     private autoPicked = false;
@@ -141,7 +141,7 @@ export class DownloadPicker extends LitElement {
                 expected: this.expected ?? [],
             } as download.SearchRequest);
 
-            this.requestId = result.requestId;
+            this.downloadId = result.downloadId;
             this.candidates = result.candidates ?? [];
             this.autoPicked = result.autoPicked;
         } catch (err) {
@@ -158,7 +158,7 @@ export class DownloadPicker extends LitElement {
         this.errorMessage = '';
 
         try {
-            await downloadStore.pick(this.requestId, event.detail.candidateId);
+            await downloadStore.pick(this.downloadId, event.detail.candidateId);
             this.close();
         } catch (err) {
             this.errorMessage = String(err);

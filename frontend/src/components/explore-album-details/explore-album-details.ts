@@ -120,11 +120,11 @@ export class ExploreAlbumDetails extends LitElement {
     /** True once a download client is configured and enabled. */
     @state() private canDownload = false;
 
-    /** True when this album is already on the wanted list. */
-    @state() private isWanted = false;
+    /** True when this album already has a request. */
+    @state() private isRequested = false;
 
     /**
-     * Library to attach downloads/wants to.  The library-filter UI that
+     * Library to attach downloads/requests to.  The library-filter UI that
      * would normally set libraryStore's selection isn't mounted anywhere
      * currently, so that selection is always null here — falling back to
      * `?? 0` would send a library id that doesn't exist and fail the
@@ -496,12 +496,12 @@ export class ExploreAlbumDetails extends LitElement {
         // so this tracks the provider list rather than assuming.
         this.downloadUnsub = downloadStore.subscribe(() => {
             this.canDownload = downloadStore.available;
-            this.syncWanted();
+            this.syncRequested();
         });
 
         void downloadStore.init().then(() => {
             this.canDownload = downloadStore.available;
-            this.syncWanted();
+            this.syncRequested();
         });
 
         void this.resolveTargetLibraryId();
@@ -1537,62 +1537,62 @@ export class ExploreAlbumDetails extends LitElement {
     }
 
     /**
-     * Adds the album to the wanted list, which is the answer to "look
+     * Adds the album to the requests list, which is the answer to "look
      * for it, but not right now".
      *
      * Unlike the download button this shows whether or not a client is
-     * connected: wanting something is a durable statement about the
+     * connected: requesting something is a durable statement about the
      * library, and it stays true — and stays queued — until a client
      * exists to act on it.
      */
     private renderWantAction() {
         if (!this.releaseGroupMBID) return nothing;
 
-        const want = downloadStore.wantFor(this.releaseGroupMBID);
+        const request = downloadStore.requestFor(this.releaseGroupMBID);
 
         return html`
             <wa-button
                 size="small"
-                appearance=${this.isWanted ? 'filled' : 'outlined'}
-                @click=${() => void this.toggleWanted(want?.id)}
+                appearance=${this.isRequested ? 'filled' : 'outlined'}
+                @click=${() => void this.toggleRequested(request?.id)}
             >
                 <wa-icon
                     slot="start"
-                    name=${this.isWanted ? 'bookmark-check' : 'bookmark'}
+                    name=${this.isRequested ? 'bookmark-check' : 'bookmark'}
                 ></wa-icon>
-                ${this.isWanted ? 'Wanted' : 'Want this'}
+                ${this.isRequested ? 'Wanted' : 'Want this'}
             </wa-button>
         `;
     }
 
-    /** Resolves the library to attach downloads/wants to. */
+    /** Resolves the library to attach downloads/requests to. */
     private async resolveTargetLibraryId(): Promise<void> {
         this.targetLibraryId = await libraryStore.getDefaultLibraryId();
     }
 
-    /** Reflects the store's view of whether this album is wanted. */
-    private syncWanted(): void {
-        this.isWanted = this.releaseGroupMBID
-            ? downloadStore.isWanted(this.releaseGroupMBID)
+    /** Reflects the store's view of whether this album is requested. */
+    private syncRequested(): void {
+        this.isRequested = this.releaseGroupMBID
+            ? downloadStore.isRequested(this.releaseGroupMBID)
             : false;
     }
 
-    private async toggleWanted(wantId: number | undefined): Promise<void> {
+    private async toggleRequested(requestId: number | undefined): Promise<void> {
         if (!this.releaseGroupMBID) return;
 
         try {
-            if (wantId) {
-                await downloadStore.removeWant(wantId);
+            if (requestId) {
+                await downloadStore.removeRequest(requestId);
             } else {
                 if (!this.targetLibraryId) {
                     await this.resolveTargetLibraryId();
                 }
                 if (!this.targetLibraryId) {
-                    console.error('Could not update the wanted list: no library available');
+                    console.error('Could not update the requests list: no library available');
                     return;
                 }
 
-                await downloadStore.addWant({
+                await downloadStore.addRequest({
                     mbid: this.releaseGroupMBID,
                     entity: 'release-group',
                     libraryId: this.targetLibraryId,
@@ -1600,13 +1600,13 @@ export class ExploreAlbumDetails extends LitElement {
                     title: this.albumName,
                     scope: 'future',
                     secondary: false,
-                } as download.WantRequest);
+                } as download.RequestInput);
             }
         } catch (err) {
-            console.error('Could not update the wanted list:', err);
+            console.error('Could not update the requests list:', err);
         }
 
-        this.syncWanted();
+        this.syncRequested();
     }
 
     private async openPicker(): Promise<void> {

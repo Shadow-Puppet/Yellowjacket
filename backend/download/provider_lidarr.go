@@ -237,8 +237,8 @@ type lidarrTrackFile struct {
 // Delegate adds the album to Lidarr, monitors it and triggers a search.
 // The external ID returned is Lidarr's album ID, which is what Poll
 // needs and what survives a restart.
-func (l *lidarr) Delegate(ctx context.Context, req Request) (string, error) {
-	album, err := l.findAlbum(ctx, req)
+func (l *lidarr) Delegate(ctx context.Context, dl Download) (string, error) {
+	album, err := l.findAlbum(ctx, dl)
 	if err != nil {
 		return "", err
 	}
@@ -276,12 +276,12 @@ func (l *lidarr) Delegate(ctx context.Context, req Request) (string, error) {
 // not.
 func (l *lidarr) findAlbum(
 	ctx context.Context,
-	req Request,
+	dl Download,
 ) (lidarrAlbum, error) {
-	term := req.SearchText()
+	term := dl.SearchText()
 
-	if req.ReleaseGroupMBID != "" {
-		term = "lidarr:" + req.ReleaseGroupMBID
+	if dl.ReleaseGroupMBID != "" {
+		term = "lidarr:" + dl.ReleaseGroupMBID
 	}
 
 	var results []struct {
@@ -300,7 +300,7 @@ func (l *lidarr) findAlbum(
 		}
 	}
 
-	return lidarrAlbum{}, fmt.Errorf("%w: %s", ErrLidarrNoMatch, req.SearchText())
+	return lidarrAlbum{}, fmt.Errorf("%w: %s", ErrLidarrNoMatch, dl.SearchText())
 }
 
 // addArtistForAlbum adds the album's artist so the album becomes a real

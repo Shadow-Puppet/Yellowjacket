@@ -34,12 +34,13 @@ const (
 	weightArtistFit    = 0.12
 )
 
-// Quality sub-weights.
+// Quality sub-weights.  They sum to 1.0 along with weightSizeFit below.
 const (
-	weightFormat   = 0.45
-	weightBitrate  = 0.25
+	weightFormat   = 0.42
+	weightBitrate  = 0.23
 	weightHealth   = 0.20
 	weightPriority = 0.10
+	weightSizeFit  = 0.05
 )
 
 // unanchoredCap bounds the match score of a free-text request.  Without
@@ -47,20 +48,119 @@ const (
 // looking score would be a lie — and auto-pick keys off this.
 const unanchoredCap = 0.65
 
+// AutoDownloadPrefs gates and scores what AutoPickable may choose
+// without asking.  Zero values are permissive: no size window and no
+// format restriction.
+type AutoDownloadPrefs struct {
+	// MinSizeMB and MaxSizeMB bound what auto-pick will grab.  Zero
+	// means no bound on that side.  A candidate outside the window is
+	// filtered out of auto-pick entirely, not merely scored down — a
+	// tiny "sampler" torrent or a boxset ten times the expected size is
+	// usually the wrong thing entirely, not a worse copy of the right
+	// thing.
+	MinSizeMB int `json:"minSizeMb"`
+	MaxSizeMB int `json:"maxSizeMb"`
+
+	// PreferredSizeMB nudges the score toward a target size within the
+	// min/max window (a lossless rip and a heavily-padded lossless rip
+	// can both pass the window).  Zero disables the nudge; sizeFit then
+	// returns a neutral value that does not affect ranking.
+	PreferredSizeMB int `json:"preferredSizeMb"`
+
+	// AllowedFormats restricts auto-pick to candidates whose audio
+	// files are all in one of these formats.  Empty means no
+	// restriction.
+	AllowedFormats []Format `json:"allowedFormats"`
+}
+
+// eligible reports whether a candidate may be auto-picked under these
+// preferences: within the size window (when set) and, when a format
+// list is given, every audio file in an allowed format.
+func (p AutoDownloadPrefs) eligible(c Candidate) bool {
+	const bytesPerMB = 1 << 20
+
+	if p.MinSizeMB > 0 && c.TotalSize < int64(p.MinSizeMB)*bytesPerMB {
+		return false
+	}
+
+	if p.MaxSizeMB > 0 && c.TotalSize > int64(p.MaxSizeMB)*bytesPerMB {
+		return false
+	}
+
+	if len(p.AllowedFormats) == 0 {
+		return true
+	}
+
+	allowed := make(map[Format]bool, len(p.AllowedFormats))
+	for _, f := range p.AllowedFormats {
+		allowed[f] = true
+	}
+
+	for _, f := range c.AudioFiles() {
+		if !allowed[f.Format] {
+			return false
+		}
+	}
+
+	return true
+}
+
+// filter returns only the candidates these preferences allow to be
+// auto-picked, in the same (already ranked) order.
+func (p AutoDownloadPrefs) filter(ranked []Candidate) []Candidate {
+	out := make([]Candidate, 0, len(ranked))
+
+	for _, c := range ranked {
+		if p.eligible(c) {
+			out = append(out, c)
+		}
+	}
+
+	return out
+}
+
+// sizeFit scores how close totalSize is to PreferredSizeMB, 0..1,
+// falling off linearly as the size doubles or halves away from it.
+// Returns a neutral 0.5 when no preference is set, so the absence of a
+// preference does not bias ranking.
+func (p AutoDownloadPrefs) sizeFit(totalSize int64) float64 {
+	const (
+		bytesPerMB = 1 << 20
+		neutral    = 0.5
+	)
+
+	if p.PreferredSizeMB <= 0 || totalSize <= 0 {
+		return neutral
+	}
+
+	preferred := float64(p.PreferredSizeMB) * bytesPerMB
+	ratio := float64(totalSize) / preferred
+
+	if ratio < 1 {
+		ratio = 1 / ratio
+	}
+
+	// ratio is now >= 1: 1.0 is an exact match, 2.0 is double or half
+	// the preferred size.  Falls to 0 at 2x away and beyond.
+	fit := 1 - (ratio - 1)
+
+	return clamp01(fit)
+}
+
 // Score fills a candidate's Match, Quality and Score fields.
-func Score(req Request, c Candidate, priority int) Candidate {
+func Score(dl Download, c Candidate, priority int, prefs AutoDownloadPrefs) Candidate {
 	c.Files = AnnotateFiles(c.Files)
 
 	audio := c.AudioFiles()
 
-	matched, titleFit := matchFiles(audio, req.Expected)
+	matched, titleFit := matchFiles(audio, dl.Expected)
 
 	// Write the alignment back so the picker can show which file maps
 	// to which track.
 	c.Files = mergeMatched(c.Files, matched)
 
-	c.Match = scoreMatch(req, c, audio, titleFit)
-	c.Quality = scoreQuality(c, audio, priority)
+	c.Match = scoreMatch(dl, c, audio, titleFit)
+	c.Quality = scoreQuality(c, audio, priority, prefs)
 
 	c.Score = weightMatch*c.Match.Overall + weightQuality*c.Quality.Overall
 
@@ -69,17 +169,17 @@ func Score(req Request, c Candidate, priority int) Candidate {
 
 // scoreMatch answers whether this candidate is the requested release.
 func scoreMatch(
-	req Request,
+	dl Download,
 	c Candidate,
 	audio []CandidateFile,
 	titleFit float64,
 ) MatchScore {
 	m := MatchScore{
-		Anchored: req.Anchored(),
+		Anchored: dl.Anchored(),
 		TitleFit: titleFit,
 	}
 
-	m.Completeness = completeness(len(audio), len(req.Expected))
+	m.Completeness = completeness(len(audio), len(dl.Expected))
 
 	// The candidate's own title, and the folder its files sit in, are
 	// two independent guesses at the album name.  Take the better one:
@@ -90,16 +190,16 @@ func scoreMatch(
 	}
 
 	m.AlbumFit = math.Max(
-		autotag.TitleSimilarity(req.Album, c.Title),
-		autotag.TitleSimilarity(req.Album, folder),
+		autotag.TitleSimilarity(dl.Album, c.Title),
+		autotag.TitleSimilarity(dl.Album, folder),
 	)
 
-	m.ArtistFit = artistFit(req.Artist, c)
+	m.ArtistFit = artistFit(dl.Artist, c)
 
 	// With no expected tracklist there is no title signal at all, so
 	// redistribute its weight onto the album/artist evidence rather
 	// than scoring every free-text result as half-wrong.
-	if len(req.Expected) == 0 {
+	if len(dl.Expected) == 0 {
 		m.Overall = 0.55*m.AlbumFit + 0.45*m.ArtistFit
 	} else {
 		m.Overall = weightTitleFit*m.TitleFit +
@@ -178,10 +278,12 @@ func scoreQuality(
 	c Candidate,
 	audio []CandidateFile,
 	priority int,
+	prefs AutoDownloadPrefs,
 ) QualityScore {
 	q := QualityScore{
 		Health:   clamp01(c.Health),
 		Priority: clamp01(float64(priority) / 100.0),
+		SizeFit:  prefs.sizeFit(c.TotalSize),
 	}
 
 	if len(audio) == 0 {
@@ -211,7 +313,8 @@ func scoreQuality(
 	q.Overall = weightFormat*q.FormatRank +
 		weightBitrate*q.Bitrate +
 		weightHealth*q.Health +
-		weightPriority*q.Priority
+		weightPriority*q.Priority +
+		weightSizeFit*q.SizeFit
 
 	if q.Mixed {
 		q.Overall *= 0.9
@@ -316,9 +419,10 @@ func lossyBitrateScore(kbps int) float64 {
 // on match, then on provider priority, then on file count, so the order
 // is stable across runs rather than map-iteration dependent.
 func Rank(
-	req Request,
+	dl Download,
 	candidates []Candidate,
 	priority func(providerID int64) int,
+	prefs AutoDownloadPrefs,
 ) []Candidate {
 	out := make([]Candidate, 0, len(candidates))
 
@@ -328,7 +432,7 @@ func Rank(
 			p = priority(c.ProviderID)
 		}
 
-		out = append(out, Score(req, c, p))
+		out = append(out, Score(dl, c, p, prefs))
 	}
 
 	sort.SliceStable(out, func(i, j int) bool {
@@ -354,31 +458,41 @@ func Rank(
 // to grab without asking.  It demands an anchored request, a high match,
 // decent quality, and daylight between first and second place — if two
 // candidates are close, the choice is the user's.
-func AutoPickable(req Request, ranked []Candidate) bool {
+func AutoPickable(dl Download, ranked []Candidate, prefs AutoDownloadPrefs) bool {
 	const (
 		minMatch   = 0.85
 		minQuality = 0.5
 		minLead    = 0.08
 	)
 
-	if !req.Anchored() || len(ranked) == 0 {
+	if !dl.Anchored() || len(ranked) == 0 {
 		return false
 	}
 
 	// An anchor with no tracklist behind it is an anchor in name only:
 	// the match score then rests on album and artist text alone, which
 	// is exactly the evidence a wrong-album candidate also has.  This
-	// matters most for the wanted list, where nobody is watching.
-	if len(req.Expected) == 0 {
+	// matters most for the request list, where nobody is watching.
+	if len(dl.Expected) == 0 {
 		return false
 	}
 
-	best := ranked[0]
+	// The guardrails apply before the match/quality/lead checks: a
+	// candidate outside the allowed size or format is not a worse
+	// choice, it is not a choice auto-pick may make at all, so it must
+	// not count as "the winner" nor as "second place" for the lead
+	// check below.
+	eligible := prefs.filter(ranked)
+	if len(eligible) == 0 {
+		return false
+	}
+
+	best := eligible[0]
 	if best.Match.Overall < minMatch || best.Quality.Overall < minQuality {
 		return false
 	}
 
-	if len(ranked) > 1 && best.Score-ranked[1].Score < minLead {
+	if len(eligible) > 1 && best.Score-eligible[1].Score < minLead {
 		return false
 	}
 

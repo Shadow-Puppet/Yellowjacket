@@ -117,9 +117,9 @@ func newImportFixture(t *testing.T, names ...string) importFixture {
 	}
 }
 
-func fourTrackRequest() Request {
-	return Request{
-		ID:          "req-1",
+func fourTrackDownload() Download {
+	return Download{
+		ID:          "dl-1",
 		LibraryID:   1,
 		ReleaseMBID: "mbid-1",
 		Artist:      "Radiohead",
@@ -145,7 +145,7 @@ func TestImportPlacesAndTagsFiles(t *testing.T) {
 
 	got, err := f.importer.Import(
 		context.Background(),
-		fourTrackRequest(),
+		fourTrackDownload(),
 		Result{Dir: f.dir, Files: f.files},
 		ImportOptions{LibraryRoot: f.root, WriteTags: true},
 	)
@@ -184,12 +184,12 @@ func TestImportTagsBeforeMoving(t *testing.T) {
 
 	f := newImportFixture(t, "01 - Airbag.flac")
 
-	req := fourTrackRequest()
-	req.Expected = req.Expected[:1]
+	dl := fourTrackDownload()
+	dl.Expected = dl.Expected[:1]
 
 	if _, err := f.importer.Import(
 		context.Background(),
-		req,
+		dl,
 		Result{Dir: f.dir, Files: f.files},
 		ImportOptions{LibraryRoot: f.root, WriteTags: true},
 	); err != nil {
@@ -227,7 +227,7 @@ func TestImportContinuesWhenTaggingFails(t *testing.T) {
 
 	got, err := f.importer.Import(
 		context.Background(),
-		fourTrackRequest(),
+		fourTrackDownload(),
 		Result{Dir: f.dir, Files: f.files},
 		ImportOptions{LibraryRoot: f.root, WriteTags: true},
 	)
@@ -251,7 +251,7 @@ func TestImportRejectsTooIncomplete(t *testing.T) {
 
 	_, err := f.importer.Import(
 		context.Background(),
-		fourTrackRequest(),
+		fourTrackDownload(),
 		Result{Dir: f.dir, Files: f.files},
 		ImportOptions{LibraryRoot: f.root, WriteTags: true},
 	)
@@ -273,7 +273,7 @@ func TestImportRejectsNoAudio(t *testing.T) {
 
 	_, err := f.importer.Import(
 		context.Background(),
-		fourTrackRequest(),
+		fourTrackDownload(),
 		Result{Dir: f.dir, Files: f.files},
 		ImportOptions{LibraryRoot: f.root, WriteTags: true},
 	)
@@ -297,7 +297,7 @@ func TestImportSkipsNonAudioFiles(t *testing.T) {
 
 	got, err := f.importer.Import(
 		context.Background(),
-		fourTrackRequest(),
+		fourTrackDownload(),
 		Result{Dir: f.dir, Files: f.files},
 		ImportOptions{LibraryRoot: f.root, WriteTags: true},
 	)
@@ -322,8 +322,8 @@ func TestImportNeverOverwrites(t *testing.T) {
 
 	f := newImportFixture(t, "01 - Airbag.flac")
 
-	req := fourTrackRequest()
-	req.Expected = req.Expected[:1]
+	dl := fourTrackDownload()
+	dl.Expected = dl.Expected[:1]
 
 	existing := filepath.Join(
 		f.root, "Radiohead", "OK Computer", "01 Airbag.flac",
@@ -339,7 +339,7 @@ func TestImportNeverOverwrites(t *testing.T) {
 
 	got, err := f.importer.Import(
 		context.Background(),
-		req,
+		dl,
 		Result{Dir: f.dir, Files: f.files},
 		ImportOptions{LibraryRoot: f.root, WriteTags: true},
 	)
@@ -366,12 +366,12 @@ func TestImportCustomPathTemplate(t *testing.T) {
 
 	f := newImportFixture(t, "01 - Airbag.flac")
 
-	req := fourTrackRequest()
-	req.Expected = req.Expected[:1]
+	dl := fourTrackDownload()
+	dl.Expected = dl.Expected[:1]
 
 	got, err := f.importer.Import(
 		context.Background(),
-		req,
+		dl,
 		Result{Dir: f.dir, Files: f.files},
 		ImportOptions{
 			LibraryRoot:  f.root,
@@ -423,12 +423,12 @@ func TestImportRequiresLibraryRoot(t *testing.T) {
 
 	f := newImportFixture(t, "01 - Airbag.flac")
 
-	req := fourTrackRequest()
-	req.Expected = req.Expected[:1]
+	dl := fourTrackDownload()
+	dl.Expected = dl.Expected[:1]
 
 	_, err := f.importer.Import(
 		context.Background(),
-		req,
+		dl,
 		Result{Dir: f.dir, Files: f.files},
 		ImportOptions{WriteTags: true},
 	)

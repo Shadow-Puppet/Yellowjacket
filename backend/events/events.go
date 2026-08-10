@@ -123,15 +123,15 @@ const (
 	// open download picker re-read the provider list.
 	DownloadProvidersChanged = "DownloadProvidersChanged"
 
-	// DownloadsChanged fires when the set of download requests changes
-	// (started, picked, cancelled, cleared).  Per-transfer progress does
-	// not use this — it flows through the jobs registry's JobsChanged,
-	// which already coalesces high-frequency updates.
+	// DownloadsChanged fires when the set of downloads changes (started,
+	// picked, cancelled, cleared).  Per-transfer progress does not use
+	// this — it flows through the jobs registry's JobsChanged, which
+	// already coalesces high-frequency updates.
 	DownloadsChanged = "DownloadsChanged"
 
-	// WantedListChanged fires when the wanted list gains, loses or
+	// RequestsChanged fires when the request list gains, loses or
 	// retires an entry — including from a background reconcile pass,
 	// which is why the list is event-driven rather than fetched once on
 	// mount.
-	WantedListChanged = "WantedListChanged"
+	RequestsChanged = "RequestsChanged"
 )

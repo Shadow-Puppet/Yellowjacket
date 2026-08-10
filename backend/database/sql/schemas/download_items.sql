@@ -1,4 +1,4 @@
--- One row per grab attempt against one candidate.  A request can have
+-- One row per grab attempt against one candidate.  A download can have
 -- several: the first pick stalls, the user picks another, or a
 -- search-only provider's candidate is fetched by a separate transport
 -- (in which case provider_id is the searcher and transport_id is the
@@ -17,7 +17,7 @@
 
 CREATE TABLE IF NOT EXISTS download_items (
     id           TEXT PRIMARY KEY,
-    request_id   TEXT    NOT NULL,
+    download_id  TEXT    NOT NULL,
     provider_id  INTEGER NOT NULL,
     transport_id INTEGER,
     external_id  TEXT    NOT NULL DEFAULT '',
@@ -35,15 +35,18 @@ CREATE TABLE IF NOT EXISTS download_items (
     error        TEXT    NOT NULL DEFAULT '',
     created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(request_id) REFERENCES download_requests(id) ON DELETE CASCADE
+    FOREIGN KEY(download_id) REFERENCES download_downloads(id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_download_items_live
     ON download_items(state)
     WHERE state NOT IN ('complete', 'cancelled', 'failed');
 
-CREATE INDEX IF NOT EXISTS idx_download_items_request
-    ON download_items(request_id);
-
 CREATE INDEX IF NOT EXISTS idx_download_items_state
     ON download_items(state);
+
+-- idx_download_items_download is deliberately NOT declared here: on an
+-- existing database this table already exists at schema-pass time with
+-- its old column still named request_id, so an inline CREATE INDEX on
+-- download_id would fail outright. See ensureDownloadIndexes in
+-- backend/database/download_rename_migration.go.
