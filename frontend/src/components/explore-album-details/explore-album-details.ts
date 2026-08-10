@@ -123,6 +123,16 @@ export class ExploreAlbumDetails extends LitElement {
     /** True when this album is already on the wanted list. */
     @state() private isWanted = false;
 
+    /**
+     * Library to attach downloads/wants to.  The library-filter UI that
+     * would normally set libraryStore's selection isn't mounted anywhere
+     * currently, so that selection is always null here — falling back to
+     * `?? 0` would send a library id that doesn't exist and fail the
+     * download_requests/download_wants foreign key.  Resolved to the
+     * selected library, or the first one if none is selected.
+     */
+    @state() private targetLibraryId: number | null = null;
+
     /** Unsubscribe handle for the download store. */
     private downloadUnsub: (() => void) | null = null;
 
@@ -493,6 +503,8 @@ export class ExploreAlbumDetails extends LitElement {
             this.canDownload = downloadStore.available;
             this.syncWanted();
         });
+
+        void this.resolveTargetLibraryId();
 
         // A background BrowseReleases fetch (cold album, versions +
         // tracklist not cached yet) finished — re-fetch the versions once
@@ -1511,7 +1523,7 @@ export class ExploreAlbumDetails extends LitElement {
                               size="small"
                               appearance="outlined"
                               @click=${() => {
-                                  this.pickerOpen = true;
+                                  void this.openPicker();
                               }}
                           >
                               <wa-icon slot="start" name="download"></wa-icon>
@@ -1553,6 +1565,11 @@ export class ExploreAlbumDetails extends LitElement {
         `;
     }
 
+    /** Resolves the library to attach downloads/wants to. */
+    private async resolveTargetLibraryId(): Promise<void> {
+        this.targetLibraryId = await libraryStore.getDefaultLibraryId();
+    }
+
     /** Reflects the store's view of whether this album is wanted. */
     private syncWanted(): void {
         this.isWanted = this.releaseGroupMBID
@@ -1567,10 +1584,18 @@ export class ExploreAlbumDetails extends LitElement {
             if (wantId) {
                 await downloadStore.removeWant(wantId);
             } else {
+                if (!this.targetLibraryId) {
+                    await this.resolveTargetLibraryId();
+                }
+                if (!this.targetLibraryId) {
+                    console.error('Could not update the wanted list: no library available');
+                    return;
+                }
+
                 await downloadStore.addWant({
                     mbid: this.releaseGroupMBID,
                     entity: 'release-group',
-                    libraryId: libraryStore.getSelectedLibraryId() ?? 0,
+                    libraryId: this.targetLibraryId,
                     artist: this.releaseGroup?.artistCredit ?? '',
                     title: this.albumName,
                     scope: 'future',
@@ -1584,15 +1609,28 @@ export class ExploreAlbumDetails extends LitElement {
         this.syncWanted();
     }
 
+    private async openPicker(): Promise<void> {
+        if (!this.targetLibraryId) {
+            await this.resolveTargetLibraryId();
+        }
+
+        if (!this.targetLibraryId) {
+            console.error('Cannot search for downloads: no library available');
+            return;
+        }
+
+        this.pickerOpen = true;
+    }
+
     private renderPicker() {
-        if (!this.pickerOpen) return nothing;
+        if (!this.pickerOpen || !this.targetLibraryId) return nothing;
 
         const tracks = this.currentTracks();
 
         return html`
             <download-picker
                 ?open=${this.pickerOpen}
-                library-id=${libraryStore.getSelectedLibraryId() ?? 0}
+                library-id=${this.targetLibraryId}
                 artist=${this.releaseGroup?.artistCredit ?? ''}
                 album=${this.albumName}
                 release-group-mbid=${this.releaseGroupMBID ?? ''}

@@ -106,6 +106,10 @@ export function IsScanPaused() {
   return window['go']['library']['Library']['IsScanPaused']();
 }
 
+export function LibraryPath(arg1) {
+  return window['go']['library']['Library']['LibraryPath'](arg1);
+}
+
 export function PauseScan() {
   return window['go']['library']['Library']['PauseScan']();
 }

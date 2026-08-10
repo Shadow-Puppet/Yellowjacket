@@ -57,6 +57,8 @@ export function IsScanActive():Promise<boolean>;
 
 export function IsScanPaused():Promise<boolean>;
 
+export function LibraryPath(arg1:number):Promise<string>;
+
 export function PauseScan():Promise<void>;
 
 export function QueuedLibraryNames():Promise<Array<string>>;

@@ -70,6 +70,10 @@ export function Skip(arg1) {
   return window['go']['autotagservice']['Service']['Skip'](arg1);
 }
 
+export function SplitMixedFolder(arg1) {
+  return window['go']['autotagservice']['Service']['SplitMixedFolder'](arg1);
+}
+
 export function StartAutotagQueue(arg1) {
   return window['go']['autotagservice']['Service']['StartAutotagQueue'](arg1);
 }

@@ -39,6 +39,15 @@ JOIN artist_credit ac ON ac.id = aca.credit_id
 JOIN release_groups rg ON rg.album_artist_credit_id = ac.id
 ORDER BY a.name;
 
+-- name: GetOrphanedArtistIDs :many
+-- Artists no longer credited on any recording or release group - left
+-- behind when a scan's orphan cleanup removes the audio_files that used
+-- to justify them, since deleting an audio_files row doesn't cascade.
+SELECT a.id FROM artists a
+WHERE NOT EXISTS (
+    SELECT 1 FROM artist_credit_artist aca WHERE aca.artist_id = a.id
+);
+
 -- name: GetAlbumArtistsByLibrary :many
 SELECT DISTINCT a.id, a.name, a.mbid
 FROM artists a

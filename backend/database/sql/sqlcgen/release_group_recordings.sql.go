@@ -75,6 +75,16 @@ func (q *Queries) DeleteReleaseGroupRecordingByFK(ctx context.Context, arg Delet
 	return err
 }
 
+const deleteReleaseGroupRecordingsByRecording = `-- name: DeleteReleaseGroupRecordingsByRecording :exec
+DELETE FROM release_group_recordings
+WHERE recording_id = ?
+`
+
+func (q *Queries) DeleteReleaseGroupRecordingsByRecording(ctx context.Context, recordingID int64) error {
+	_, err := q.db.ExecContext(ctx, deleteReleaseGroupRecordingsByRecording, recordingID)
+	return err
+}
+
 const getRecordingReleaseGroups = `-- name: GetRecordingReleaseGroups :many
 SELECT id, release_group_id, recording_id, track_number, disc_number FROM release_group_recordings
 WHERE recording_id = ?

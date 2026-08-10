@@ -88,6 +88,29 @@ func TestGroupKey_DistinctInputsDiffer(t *testing.T) {
 	}
 }
 
+func TestGroupKey_UntaggedDiscFoldsIntoDiscOne(t *testing.T) {
+	t.Parallel()
+
+	// A folder where only some tracks carry an explicit disc tag must
+	// not split: the untagged tracks (disc 0, dhowden/tag's zero value
+	// for a missing frame) should group with the ones tagged disc 1.
+	untagged := autotag.GroupKey(1, "/music/Artist/Album/01.mp3", 0)
+	tagged := autotag.GroupKey(1, "/music/Artist/Album/02.mp3", 1)
+
+	if untagged != tagged {
+		t.Fatalf(
+			"disc 0 and disc 1 in the same folder should share a key, got %q vs %q",
+			untagged, tagged,
+		)
+	}
+
+	// A genuine disc 2 must still separate from disc 1/untagged.
+	discTwo := autotag.GroupKey(1, "/music/Artist/Album/01.mp3", 2)
+	if discTwo == tagged {
+		t.Fatalf("disc 2 should not share a key with disc 1, got %q", discTwo)
+	}
+}
+
 func TestGroupKey_AmbiguityBoundary(t *testing.T) {
 	t.Parallel()
 

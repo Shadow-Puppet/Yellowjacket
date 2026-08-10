@@ -269,6 +269,13 @@ var tables = []Table{
 		Note: "Release to release-group mapping from the dump.",
 	},
 	{
+		Name: "schema_migrations", Kind: Derived, Lifetime: Retained,
+		Note: "Bookkeeping for sql/migrations: which numbered files have " +
+			"run. Safe to lose — replaying an already-applied migration " +
+			"tolerates its ALTER TABLE ADD COLUMN as a no-op and just " +
+			"re-records it.",
+	},
+	{
 		Name: "search_clicks", Kind: Authored, Lifetime: Retained,
 		Note: "Which results the user picked, used to rank future " +
 			"searches. Behavioural but unrecoverable if dropped.",

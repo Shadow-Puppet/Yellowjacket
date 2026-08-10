@@ -325,10 +325,19 @@ export class WantedView extends LitElement {
     /** Widens or narrows what an artist subscription covers. */
     private async toggleScope(want: Want): Promise<void> {
         try {
+            const libraryId =
+                want.libraryId || (await libraryStore.getDefaultLibraryId());
+            if (!libraryId) {
+                console.error(
+                    'Could not change what this subscription covers: no library available',
+                );
+                return;
+            }
+
             await downloadStore.addWant({
                 mbid: want.mbid,
                 entity: 'artist',
-                libraryId: want.libraryId || (libraryStore.getSelectedLibraryId() ?? 0),
+                libraryId,
                 artist: want.artist,
                 title: want.title,
                 scope: want.scope === 'all' ? 'future' : 'all',

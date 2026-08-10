@@ -104,6 +104,7 @@ func (s *Scorer) scoreGroup(
 		AlbumName:   item.AlbumName,
 		AlbumArtist: item.AlbumArtist,
 		Tracks:      locals,
+		Synthetic:   item.Synthetic != 0,
 	}
 
 	localHits, err := s.local.ResolveLocal(ctx, item.AlbumName)
@@ -142,6 +143,7 @@ func (s *Scorer) scoreGroup(
 		LocalTracks:    locals,
 		Candidates:     candidates,
 		Recommendation: Recommend(g, candidates),
+		Synthetic:      g.Synthetic,
 	}, nil
 }
 

@@ -59,13 +59,36 @@ yet to test against. Confirm before relying on it.
 Also worth deciding deliberately: every install pulling from a personal
 Gitea makes its bandwidth and uptime a user-facing dependency.
 
-## No migration chain
+## Migrations came back (2026-08-08), scoped to avoid the old failure mode
 
-`applySchema` creates the whole schema from `sql/schemas/*.sql` on every
-open; all DDL is `IF NOT EXISTS`. A database written by an older build is
-not supported and there is no upgrade path by design.
+The "no migration chain" design below lasted until a real `make sandbox`
+DB (schema pre-dating the `tagging_items.synthetic`/`parent_group_key`
+columns) hit `no such column: parent_group_key` — `IF NOT EXISTS` had
+silently no-op'd the `CREATE TABLE` on the existing table, columns and
+all. A database written by an older build genuinely needed an upgrade
+path; there wasn't one.
 
-Two things this replaced, worth not reintroducing:
+What came back is **not** the old 48-step chain. `sql/schemas/*.sql`
+stays the single source of truth for the current shape (still what sqlc
+reads, still what a fresh install gets verbatim). `sql/migrations/*.sql`
+holds small numbered files — `ALTER TABLE ADD COLUMN`, `CREATE INDEX`,
+etc. — that run after the schema files, tracked in `schema_migrations`,
+tolerating "duplicate column name" as a no-op so the exact same files run
+unconditionally on both a fresh database and an old one and converge on
+one shape. See the "Schema changes need two things, not one" section in
+CLAUDE.md for the column-order and index-placement gotchas this
+implies, and `backend/database/migrations_test.go` for the regression
+tests. Squashing `sql/migrations/` back into `sql/schemas/` and deleting
+the migration files is fine pre-1.0 (see CLAUDE.md); stop once real user
+databases exist.
+
+The original decision this replaces, kept for why the old chain died:
+
+`applySchema` created the whole schema from `sql/schemas/*.sql` on every
+open; all DDL was `IF NOT EXISTS`. A database written by an older build
+was not supported and there was no upgrade path, by design.
+
+Two things that removal fixed, worth not reintroducing:
 
 - The 48-step chain was ~3,700 of `database.go`'s 4,061 lines, plus
   helpers that existed only to serve it (`backupDatabase`,
@@ -77,6 +100,13 @@ Two things this replaced, worth not reintroducing:
   `artist_metadata` entirely. sqlc reads that directory, so it had been
   generating against a stale schema and silently missed columns such as
   `audio_files.modified_at`.
+
+  The new design's answer to this specific risk: `sql/schemas/` is
+  never edited to describe something migrations already did elsewhere
+  — it's edited to directly declare the target shape, and migrations
+  exist only to carry an old on-disk database to that same shape. There
+  is exactly one hand-maintained description of "what does the schema
+  look like", same as before; migrations don't add a second one.
 
 **When regenerating schema files from a live database, remember the seed
 rows.** `file_types` (the four supported extensions), `player_state` and

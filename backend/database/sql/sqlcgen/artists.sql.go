@@ -166,6 +166,39 @@ func (q *Queries) GetArtistByName(ctx context.Context, name string) (Artist, err
 	return i, err
 }
 
+const getOrphanedArtistIDs = `-- name: GetOrphanedArtistIDs :many
+SELECT a.id FROM artists a
+WHERE NOT EXISTS (
+    SELECT 1 FROM artist_credit_artist aca WHERE aca.artist_id = a.id
+)
+`
+
+// Artists no longer credited on any recording or release group - left
+// behind when a scan's orphan cleanup removes the audio_files that used
+// to justify them, since deleting an audio_files row doesn't cascade.
+func (q *Queries) GetOrphanedArtistIDs(ctx context.Context) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, getOrphanedArtistIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateArtist = `-- name: UpdateArtist :exec
 UPDATE artists 
 SET name = ?

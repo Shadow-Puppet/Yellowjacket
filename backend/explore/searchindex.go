@@ -359,10 +359,13 @@ func (si *SearchIndex) unenrichedLibraryArtistMBIDs(limit int) []string {
 		FROM artists a
 		LEFT JOIN explore_index ei
 		  ON ei.entity_type = 'artist' AND ei.mbid = a.mbid
+		LEFT JOIN artist_credit_artist aca ON aca.artist_id = a.id
+		LEFT JOIN recordings r ON r.artist_credit_id = aca.credit_id
+		LEFT JOIN audio_files af ON af.recording_id = r.id
 		WHERE a.mbid IS NOT NULL AND a.mbid != ''
 		  AND (ei.id IS NULL OR ei.discog_fetched = 0)
 		GROUP BY a.mbid
-		ORDER BY COUNT(*) DESC
+		ORDER BY COUNT(DISTINCT af.id) DESC
 		LIMIT ?
 	`, limit)
 	if err != nil {
@@ -2245,6 +2248,11 @@ func (si *SearchIndex) hasMeta(key string) bool {
 // MBID-less local content is intentionally excluded — the explore index
 // is MBID-keyed, and unmatched files are served by the library search.
 func (si *SearchIndex) PopulateLocalCrossReferences() {
+	// Clear cross-references for entities no longer owned before adding
+	// current ones — the upsert below only ever adds/refreshes rows for
+	// what's currently in the library, so removals need their own pass.
+	si.pruneStaleLocalCrossReferences()
+
 	entries := si.collectLibraryEntities()
 	if len(entries) == 0 {
 		si.logger.Info("library sync: no MB-verified library entities to index")
@@ -2265,6 +2273,59 @@ func (si *SearchIndex) PopulateLocalCrossReferences() {
 
 	si.setMeta(localXrefReadyKey, "1")
 	si.logger.Info("library sync: upserted library entities into index", "count", len(entries))
+}
+
+// pruneStaleLocalCrossReferences clears in_library/local_*_id on
+// explore_index rows whose local row no longer exists — e.g. an artist
+// whose owned files were swapped out and removed by a rescan.  The
+// index upsert (upsertIndexConflictSQL) is a one-way ratchet that only
+// ever sets these columns, never clears them, so this is the only place
+// a removal from the library is ever reflected back into the index.
+// The row itself is left in place (it may still be part of the shipped
+// catalog, just no longer owned) — only the "this is mine" bookkeeping
+// is cleared.
+func (si *SearchIndex) pruneStaleLocalCrossReferences() {
+	type prune struct {
+		entityType string
+		column     string
+		table      string
+	}
+
+	for _, p := range []prune{
+		{"artist", "local_artist_id", "artists"},
+		{"release_group", "local_release_group_id", "release_groups"},
+		{"recording", "local_recording_id", "recordings"},
+	} {
+		result, err := si.db.ExecContext(
+			`UPDATE explore_index
+			 SET in_library = 0, `+p.column+` = NULL
+			 WHERE entity_type = ?
+			   AND `+p.column+` IS NOT NULL
+			   AND `+p.column+` NOT IN (SELECT id FROM `+p.table+`)`,
+			p.entityType,
+		)
+		if err != nil {
+			si.logger.Warn(
+				"library sync: prune stale cross-references failed",
+				"entityType",
+				p.entityType,
+				"error",
+				err,
+			)
+
+			continue
+		}
+
+		if n, err := result.RowsAffected(); err == nil && n > 0 {
+			si.logger.Info(
+				"library sync: cleared stale cross-references",
+				"entityType",
+				p.entityType,
+				"count",
+				n,
+			)
+		}
+	}
 }
 
 // collectLibraryEntities builds index entries for every library artist,

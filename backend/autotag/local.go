@@ -39,14 +39,16 @@ func (r *LocalResolver) LocalTracksForGroup(
 	out := make([]LocalTrack, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, LocalTrack{
-			AudioFileID:   row.ID,
-			FilePath:      row.FilePath,
-			Title:         row.Title,
-			Artist:        row.ArtistName,
-			TrackNumber:   int(row.TrackNumber),
-			DiscNumber:    int(row.DiscNumber),
-			LengthMillis:  row.LengthMilliseconds,
-			RecordingMBID: row.RecordingMbid,
+			AudioFileID:    row.ID,
+			FilePath:       row.FilePath,
+			Title:          row.Title,
+			Artist:         row.ArtistName,
+			TrackNumber:    int(row.TrackNumber),
+			DiscNumber:     int(row.DiscNumber),
+			LengthMillis:   row.LengthMilliseconds,
+			RecordingMBID:  row.RecordingMbid,
+			AlbumTag:       row.AlbumName,
+			AlbumArtistTag: row.AlbumArtist,
 		})
 	}
 

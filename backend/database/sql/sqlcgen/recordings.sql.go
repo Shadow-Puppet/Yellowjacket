@@ -158,6 +158,38 @@ func (q *Queries) GetAllRecordings(ctx context.Context) ([]Recording, error) {
 	return items, nil
 }
 
+const getOrphanedRecordingIDs = `-- name: GetOrphanedRecordingIDs :many
+SELECT r.id FROM recordings r
+LEFT JOIN audio_files af ON af.recording_id = r.id
+WHERE af.id IS NULL
+`
+
+// Recordings no longer backed by any audio_files row - left behind
+// when a scan's orphan cleanup deletes the file that used to own them,
+// since deleting audio_files doesn't cascade to recordings.
+func (q *Queries) GetOrphanedRecordingIDs(ctx context.Context) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, getOrphanedRecordingIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getRecording = `-- name: GetRecording :one
 SELECT id, name, artist_credit_id, track_number, disc_number, year, genre, composer, lyrics, comment, mbid FROM recordings 
 WHERE id = ? LIMIT 1

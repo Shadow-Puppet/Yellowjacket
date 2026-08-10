@@ -270,7 +270,6 @@ func (yj *YellowJacketApp) initDownloadRuntime(ctx context.Context) {
 	}
 
 	yj.downloads.SetImportOptions(download.ImportOptions{
-		LibraryRoot:  yj.appConfig.GetLibraryDirectory(),
 		PathTemplate: cfg.PathTemplate,
 	})
 	yj.downloads.SetMaxConcurrent(cfg.MaxConcurrent)

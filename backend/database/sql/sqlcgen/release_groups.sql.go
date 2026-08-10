@@ -469,6 +469,38 @@ func (q *Queries) GetAllReleaseGroups(ctx context.Context) ([]ReleaseGroup, erro
 	return items, nil
 }
 
+const getOrphanedReleaseGroupIDs = `-- name: GetOrphanedReleaseGroupIDs :many
+SELECT rg.id FROM release_groups rg
+LEFT JOIN release_group_recordings rgr ON rgr.release_group_id = rg.id
+WHERE rgr.id IS NULL
+`
+
+// Release groups with no recordings left in them - run after orphaned
+// recordings (and their release_group_recordings rows) are deleted, so
+// a release group whose last owned track was removed is cleaned up too.
+func (q *Queries) GetOrphanedReleaseGroupIDs(ctx context.Context) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, getOrphanedReleaseGroupIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getReleaseGroup = `-- name: GetReleaseGroup :one
 SELECT id, name, cover_art_id, album_artist_credit_id, year, total_tracks, total_discs, mbid, original_year FROM release_groups 
 WHERE id = ? LIMIT 1

@@ -2595,15 +2595,40 @@ func (e *Service) computeIntentPrior(
 	// have for "the user means this artist".  Scale by listener
 	// count so a popular exact match dominates and an obscure
 	// one doesn't move the needle.
+	//
+	// As above, a Title match is evidence for the entity's own
+	// category; an ArtistName match is evidence for the artist
+	// category specifically, even when the matching row is a
+	// release_group/recording — otherwise an artist's own catalog
+	// entries in the local index would outvote the artist itself.
+	// Take the strongest boost per target instead of multiplying
+	// once per matching row.
+	localOwnCategoryBoost := map[string]float64{}
+
+	localArtistNameBoost := 0.0
+
 	for _, m := range exactMatches {
-		if !isExactNameMatch(q, m.Title) && !isExactNameMatch(q, m.ArtistName) {
+		titleMatch := isExactNameMatch(q, m.Title)
+		artistMatch := isExactNameMatch(q, m.ArtistName)
+
+		if !titleMatch && !artistMatch {
 			continue
 		}
 
 		// Confidence boost scales with log listener count.
 		boost := 1.0 + 1.5*normLog(m.ListenerCount) //nolint:mnd
 
-		switch m.EntityType {
+		if titleMatch && boost > localOwnCategoryBoost[m.EntityType] {
+			localOwnCategoryBoost[m.EntityType] = boost
+		}
+
+		if artistMatch && boost > localArtistNameBoost {
+			localArtistNameBoost = boost
+		}
+	}
+
+	for cat, boost := range localOwnCategoryBoost {
+		switch cat {
 		case "artist":
 			weights.artist *= boost
 		case "release_group":
@@ -2613,12 +2638,31 @@ func (e *Service) computeIntentPrior(
 		}
 	}
 
+	if localArtistNameBoost > 0 {
+		weights.artist *= localArtistNameBoost
+	}
+
 	// Signal: exact-match candidates discovered in the MB result
 	// list (Source 1b/2b/3b in gatherTopCandidates).  These cover
 	// the case where the local index doesn't have the entity but
 	// MB does — e.g. Blue October's "Calling You" when Blue
 	// October isn't yet a known artist.  Same scaling as
 	// index-sourced exact matches.
+	//
+	// A title match is evidence for that candidate's own category.
+	// An artist-credit match is evidence for the *artist* category
+	// specifically, regardless of what kind of entity carries the
+	// credit — searching an artist's exact name naturally surfaces
+	// their whole discography in the release/recording pools, and
+	// crediting each of those to "album"/"recording" would drown
+	// out the one true artist candidate. Take the strongest boost
+	// per target rather than multiplying once per matching item, so
+	// an artist with many releases doesn't compound the signal.
+	var (
+		ownCategoryBoost  = map[string]float64{}
+		artistCreditBoost float64
+	)
+
 	for _, c := range exactCandidates {
 		var listeners int
 
@@ -2633,7 +2677,17 @@ func (e *Service) computeIntentPrior(
 
 		boost := 1.0 + 1.0*normLog(listeners) //nolint:mnd
 
-		switch c.category {
+		if isExactNameMatch(q, c.topResult.Name) && boost > ownCategoryBoost[c.category] {
+			ownCategoryBoost[c.category] = boost
+		}
+
+		if isExactNameMatch(q, c.topResult.ArtistCredit) && boost > artistCreditBoost {
+			artistCreditBoost = boost
+		}
+	}
+
+	for cat, boost := range ownCategoryBoost {
+		switch cat {
 		case "artist":
 			weights.artist *= boost
 		case "release_group":
@@ -2641,6 +2695,10 @@ func (e *Service) computeIntentPrior(
 		case "recording":
 			weights.recording *= boost
 		}
+	}
+
+	if artistCreditBoost > 0 {
+		weights.artist *= artistCreditBoost
 	}
 
 	// Signal: many recordings in the result list with the same

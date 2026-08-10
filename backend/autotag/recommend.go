@@ -59,9 +59,16 @@ func Recommend(g Group, candidates []Candidate) Recommendation {
 
 	// Cap: missing or unmatched tracks mean the alignment itself is
 	// incomplete, however good the matched tracks look (beets caps
-	// these penalties at "medium" the same way).
+	// these penalties at "medium" the same way).  A synthetic
+	// (tag-clustered) group is, by construction, a subset of a
+	// bigger folder, so AlignmentMissing (the candidate has tracks
+	// the group doesn't) is the expected shape rather than a defect
+	// and doesn't cap the recommendation.  AlignmentUnmatched (the
+	// group has a track the candidate doesn't) is still a real
+	// discrepancy regardless of source.
 	for _, a := range top.Alignments {
-		if a.Status == AlignmentMissing || a.Status == AlignmentUnmatched {
+		if a.Status == AlignmentUnmatched ||
+			(a.Status == AlignmentMissing && !g.Synthetic) {
 			rec = minRecommendation(rec, RecommendationMedium)
 
 			break

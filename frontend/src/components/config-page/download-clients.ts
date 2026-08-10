@@ -11,8 +11,10 @@ import { designTokens } from '../../styles/tokens.css';
 import type {
     DownloadDescriptor,
     DownloadProvider,
+    ProviderField,
 } from '@store/download-store';
 import { downloadStore } from '@store/download-store';
+import { DirectoryPicker } from '@go/frontendutil/FrontendUtil';
 import './config-section';
 
 /**
@@ -162,6 +164,20 @@ export class DownloadClients extends LitElement {
             .add-row {
                 margin-top: 0.8em;
             }
+
+            .field-row {
+                display: flex;
+                gap: 0.5em;
+                align-items: flex-end;
+            }
+
+            .field-row wa-input {
+                flex: 1;
+            }
+
+            .field-row .browse-button {
+                flex-shrink: 0;
+            }
         `,
     ];
 
@@ -257,7 +273,7 @@ export class DownloadClients extends LitElement {
                 <wa-select
                     label="Client type"
                     .value=${this.newKind}
-                    @wa-change=${this.onKindChange}
+                    @change=${this.onKindChange}
                 >
                     ${this.descriptors.map(
                         (d) => html`<wa-option value=${d.kind}>${d.name}</wa-option>`,
@@ -277,7 +293,7 @@ export class DownloadClients extends LitElement {
                         <wa-input
                             label="Name"
                             .value=${this.draftName}
-                            @wa-input=${(e: Event) => {
+                            @input=${(e: Event) => {
                                 this.draftName = (e.target as HTMLInputElement).value;
                             }}
                         ></wa-input>
@@ -311,25 +327,25 @@ export class DownloadClients extends LitElement {
                 <wa-input
                     label="Name"
                     .value=${this.draftName}
-                    @wa-input=${(e: Event) => {
+                    @input=${(e: Event) => {
                         this.draftName = (e.target as HTMLInputElement).value;
                     }}
                 ></wa-input>
 
-                ${descriptor ? this.renderFields(descriptor) : nothing}
+                ${descriptor ? this.renderFields(descriptor, provider) : nothing}
 
                 <wa-input
                     label="Priority"
                     type="number"
                     .value=${String(provider.priority)}
-                    @wa-input=${(e: Event) => {
+                    @input=${(e: Event) => {
                         this.draft['__priority'] = (e.target as HTMLInputElement).value;
                     }}
                 ></wa-input>
 
                 <wa-switch
                     ?checked=${provider.enabled}
-                    @wa-change=${(e: Event) => {
+                    @change=${(e: Event) => {
                         this.draft['__enabled'] = (e.target as HTMLInputElement)
                             .checked
                             ? '1'
@@ -355,27 +371,60 @@ export class DownloadClients extends LitElement {
         `;
     }
 
-    /** Renders one input per descriptor field. */
-    private renderFields(descriptor: DownloadDescriptor) {
-        return (descriptor.fields ?? []).map(
-            (field) => html`
-                <wa-input
-                    label=${field.label}
-                    placeholder=${field.placeholder ?? ''}
-                    type=${field.secret ? 'password' : 'text'}
-                    .value=${this.draft[field.key] ?? ''}
-                    @wa-input=${(e: Event) => {
-                        this.draft = {
-                            ...this.draft,
-                            [field.key]: (e.target as HTMLInputElement).value,
-                        };
-                    }}
-                >
-                    ${field.help ? html`<span slot="hint">${field.help}</span>` : nothing}
-                </wa-input>
-            `,
-        );
+    /** Renders one input per descriptor field, plus a folder browse
+     * button for path fields and an "already set" placeholder for
+     * secrets the provider already has a stored value for. */
+    private renderFields(descriptor: DownloadDescriptor, provider?: DownloadProvider) {
+        return (descriptor.fields ?? []).map((field) => {
+            const isSet = field.secret && provider?.setSecrets?.[field.key];
+            const placeholder = isSet
+                ? '•••••••• (unchanged — enter a new value to replace it)'
+                : (field.placeholder ?? '');
+
+            return html`
+                <div class="field-row">
+                    <wa-input
+                        label=${field.label}
+                        placeholder=${placeholder}
+                        type=${field.secret ? 'password' : 'text'}
+                        .value=${this.draft[field.key] ?? ''}
+                        @input=${(e: Event) => {
+                            this.draft = {
+                                ...this.draft,
+                                [field.key]: (e.target as HTMLInputElement).value,
+                            };
+                        }}
+                    >
+                        ${field.help ? html`<span slot="hint">${field.help}</span>` : nothing}
+                    </wa-input>
+                    ${field.path
+                        ? html`
+                            <wa-button
+                                size="small"
+                                appearance="outlined"
+                                class="browse-button"
+                                @click=${() => this.browseForFolder(field)}
+                            >
+                                Browse
+                            </wa-button>
+                        `
+                        : nothing}
+                </div>
+            `;
+        });
     }
+
+    private browseForFolder = async (field: ProviderField) => {
+        try {
+            const dir = await DirectoryPicker();
+
+            if (dir) {
+                this.draft = { ...this.draft, [field.key]: dir };
+            }
+        } catch (err) {
+            console.error('Failed to open directory picker:', err);
+        }
+    };
 
     private descriptorFor(kind: string): DownloadDescriptor | undefined {
         return this.descriptors.find((d) => d.kind === kind);

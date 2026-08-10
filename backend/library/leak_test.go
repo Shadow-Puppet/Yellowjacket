@@ -16,6 +16,8 @@ var staleTolerated = map[string]string{
 		"stale entries are filtered by joining track_metadata and are " +
 		"cleared by a full rescan",
 	"lyrics_index": "contentless FTS5, same constraint as search_index",
+	"schema_migrations": "global migration bookkeeping, not scoped to any " +
+		"library; removing the only library must not touch it",
 }
 
 // Removing the only library must leave no owned or derived rows behind.

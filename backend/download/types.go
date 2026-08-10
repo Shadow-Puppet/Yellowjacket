@@ -134,12 +134,46 @@ func (r Request) Anchored() bool {
 }
 
 // SearchText returns the string to hand a provider's search endpoint.
+//
+// Album titles routinely start with the artist name — self-titled
+// albums ("Boston" / "Boston") and titles like "Blank Banshee 0" both
+// do — so naively concatenating Artist and Album would search for
+// "Blank Banshee Blank Banshee 0". That repeated term is enough to
+// return zero results on providers that expect every term to appear
+// in a match (Soulseek in particular), so the artist is dropped when
+// the album title already leads with it.
 func (r Request) SearchText() string {
 	if r.Query != "" {
 		return r.Query
 	}
 
+	if r.Artist != "" && albumLeadsWithArtist(r.Artist, r.Album) {
+		return strings.TrimSpace(r.Album)
+	}
+
 	return strings.TrimSpace(r.Artist + " " + r.Album)
+}
+
+// albumLeadsWithArtist reports whether album starts with artist as a
+// whole word, case-insensitively, so it is safe to drop the artist
+// from a combined query without losing a real search term. A plain
+// substring check would misfire on cases like artist "Air" against
+// album "Repair".
+func albumLeadsWithArtist(artist, album string) bool {
+	a, b := strings.ToLower(strings.TrimSpace(artist)), strings.ToLower(strings.TrimSpace(album))
+	if a == "" || !strings.HasPrefix(b, a) {
+		return false
+	}
+
+	rest := b[len(a):]
+
+	return rest == "" || !isWordChar(rune(rest[0]))
+}
+
+// isWordChar reports whether r continues a word for the purposes of
+// albumLeadsWithArtist's boundary check.
+func isWordChar(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
 }
 
 // ExpectedTrack is one track of the release the user asked for.

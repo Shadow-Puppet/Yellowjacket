@@ -177,7 +177,7 @@ func NewService(
 	exp *explore.Service,
 	tw *tagwriter.TagWriter,
 ) *Service {
-	mbAdapter := explore.NewAutotagClient(exp.MusicBrainz())
+	mbAdapter := explore.NewAutotagClient(exp)
 	scorer := autotag.NewScorer(db.Queries, mbAdapter, logger.WithGroup("autotag"))
 	mbr := autotag.NewMBResolver(mbAdapter, logger.WithGroup("autotag-mb"))
 
@@ -307,6 +307,12 @@ func (s *Service) startPrefetch(libraryID int64) {
 		s.mu.Unlock()
 	}()
 
+	// Self-heal before enumerating: don't burn a scoring pass on rows
+	// whose bookkeeping never ran or drifted (see ListPendingFolders).
+	if err := s.db.Queries.PruneOrphanedTaggingItems(ctx); err != nil {
+		s.logger.Warn("prefetch: prune orphaned items failed", "err", err)
+	}
+
 	// Find all pending items missing a score.  Ordered alphabetically
 	// for stable progress reporting; libraryID=0 fans out to all.
 	const maxPrefetch = 5000
@@ -376,25 +382,30 @@ func (s *Service) startPrefetch(libraryID int64) {
 			continue
 		}
 
+		// A folder that looks like a pile of unrelated tracks gets
+		// torn apart before scoring — otherwise the scorer treats
+		// the whole pile as one album candidate and every track that
+		// doesn't fit the best partial match gets counted as an
+		// "extra" of it, rather than being matched on its own.  The
+		// original group key is gone once every track has moved to a
+		// synthetic child, so score those instead of key.
+		if newKeys := s.autoSplitMixedBag(ctx, key); len(newKeys) > 0 {
+			for _, nk := range newKeys {
+				s.scoreAndPersist(ctx, nk, "prefetch: score synthetic group")
+			}
+
+			s.emitEvent(events.AutotagPrefetchProgress, map[string]any{
+				"processed": i + 1,
+				"total":     total,
+			})
+
+			continue
+		}
+
 		// Local-first: the background sweep skips the MusicBrainz
 		// cascade when a local candidate already scores well, so a
 		// library with cross-library duplicates costs no network here.
-		score, err := s.scorer.ScoreGroupLocalFirst(ctx, key)
-		if err != nil {
-			s.logger.Debug(
-				"prefetch: score failed — skipping",
-				"group_key", key, "err", err,
-			)
-		} else {
-			s.cacheCandidates(key, score.Candidates)
-
-			if perr := s.scorer.PersistScore(ctx, score); perr != nil {
-				s.logger.Debug(
-					"prefetch: persist failed",
-					"group_key", key, "err", perr,
-				)
-			}
-		}
+		s.scoreAndPersist(ctx, key, "prefetch: score failed — skipping")
 
 		s.emitEvent(events.AutotagPrefetchProgress, map[string]any{
 			"processed": i + 1,
@@ -407,6 +418,74 @@ func (s *Service) startPrefetch(libraryID int64) {
 		"total":     total,
 	})
 	s.logger.Info("autotag prefetch: done", "groups", total)
+}
+
+// scoreAndPersist runs the cheap local-first score for one group and
+// caches + persists the result, logging (never failing the caller)
+// on error.  failMsg labels the debug log line when scoring itself
+// errors.
+func (s *Service) scoreAndPersist(ctx context.Context, groupKey, failMsg string) {
+	score, err := s.scorer.ScoreGroupLocalFirst(ctx, groupKey)
+	if err != nil {
+		s.logger.Debug(failMsg, "group_key", groupKey, "err", err)
+
+		return
+	}
+
+	s.cacheCandidates(groupKey, score.Candidates)
+
+	if perr := s.scorer.PersistScore(ctx, score); perr != nil {
+		s.logger.Debug(
+			"prefetch: persist failed",
+			"group_key", groupKey, "err", perr,
+		)
+	}
+}
+
+// autoSplitMixedBag detects a folder that looks like a pile of
+// unrelated tracks (autotag.IsMixedBag) and, if so, tears it apart
+// via the same clustering SplitMixedFolder uses (autotag.SplitPlan)
+// before the background sweep scores it — otherwise the scorer
+// treats the whole pile as one album candidate and every track that
+// doesn't fit the best partial match gets counted as an "extra" of
+// it.  Returns the new synthetic group keys, or nil when the folder
+// isn't a mixed bag (or had nothing to split).
+func (s *Service) autoSplitMixedBag(ctx context.Context, groupKey string) []string {
+	item, err := s.db.Queries.GetTaggingItem(ctx, groupKey)
+	if err != nil {
+		return nil
+	}
+
+	locals, err := s.scorer.LocalTracksForGroup(ctx, groupKey)
+	if err != nil {
+		s.logger.Debug("prefetch: auto-split load locals failed", "group_key", groupKey, "err", err)
+
+		return nil
+	}
+
+	g := autotag.Group{AlbumName: item.AlbumName, AlbumArtist: item.AlbumArtist, Tracks: locals}
+	if !autotag.IsMixedBag(g) {
+		return nil
+	}
+
+	clusters := autotag.SplitPlan(locals)
+	if len(clusters) <= 1 {
+		return nil
+	}
+
+	newKeys, err := s.splitIntoSyntheticGroups(groupKey, item.LibraryID, clusters)
+	if err != nil {
+		s.logger.Warn("prefetch: auto-split failed", "group_key", groupKey, "err", err)
+
+		return nil
+	}
+
+	s.logger.Info(
+		"autotag prefetch: auto-split mixed-bag folder",
+		"group_key", groupKey, "into", len(newKeys),
+	)
+
+	return newKeys
 }
 
 // PendingItem is a projection of tagging_items that's safe to hand
@@ -430,6 +509,19 @@ type PendingItem struct {
 	BestMatchReleaseMbid string  `json:"bestMatchReleaseMbid"`
 	Score                float64 `json:"score"`
 	Status               string  `json:"status"`
+	// Synthetic marks a group SplitMixedFolder carved out of a
+	// bigger folder by matching tags rather than a directory — the
+	// review UI labels these distinctly since several may share the
+	// same FolderSubPath.
+	Synthetic bool `json:"synthetic"`
+	// LikelyMixedBag is a cheap SQL-side approximation of autotag.
+	// IsMixedBag, computed for the whole library in one pass by
+	// ListPendingFolders (see ListLikelyMixedBagGroupKeys) rather
+	// than hydrating every group's tracks in Go.  It's a badge hint,
+	// not a guarantee — ScoreView.MixedBag (computed from the real
+	// track list when a folder is opened) is the authoritative check
+	// that gates the SplitMixedFolder action itself.
+	LikelyMixedBag bool `json:"likelyMixedBag"`
 }
 
 // GetNextPending returns the next pending tagging item after the
@@ -489,6 +581,15 @@ func (s *Service) GetNextPending() (*PendingItem, error) {
 func (s *Service) ListPendingFolders(libraryID int64) ([]PendingItem, error) {
 	const maxFolders = 5000
 
+	// Self-heal before listing: a row whose bookkeeping (scan orphan
+	// cleanup, maybeRebindTaggingGroup, SplitMixedFolder) never ran
+	// or drifted otherwise lingers here indefinitely, showing as an
+	// "old/nonexistent" entry with no folder path. Best-effort — a
+	// failed prune shouldn't block the list itself.
+	if err := s.db.Queries.PruneOrphanedTaggingItems(s.ctx); err != nil {
+		s.logger.Warn("list pending folders: prune orphaned items failed", "err", err)
+	}
+
 	rows, err := s.db.Queries.ListPendingTaggingItemsByScore(
 		s.ctx,
 		sqlcgen.ListPendingTaggingItemsByScoreParams{
@@ -502,19 +603,32 @@ func (s *Service) ListPendingFolders(libraryID int64) ([]PendingItem, error) {
 		return nil, fmt.Errorf("list pending folders: %w", err)
 	}
 
+	mixedBagKeys, err := s.db.Queries.ListLikelyMixedBagGroupKeys(s.ctx)
+	if err != nil {
+		// A cheap badge hint isn't worth failing the whole list for.
+		s.logger.Warn("list pending folders: mixed-bag triage failed", "err", err)
+	}
+
+	mixedBag := make(map[string]bool, len(mixedBagKeys))
+	for _, k := range mixedBagKeys {
+		mixedBag[k] = true
+	}
+
 	out := make([]PendingItem, 0, len(rows))
 
 	for _, row := range rows {
 		item := PendingItem{
-			GroupKey:      row.GroupKey,
-			LibraryID:     row.LibraryID,
-			LibraryName:   row.LibraryName,
-			FolderSubPath: folderSubPath(row.LibraryPath, row.SampleFilePath),
-			TrackCount:    row.TrackCount,
-			AlbumName:     row.AlbumName,
-			AlbumArtist:   row.AlbumArtist,
-			DiscNumber:    row.DiscNumber,
-			Status:        row.Status,
+			GroupKey:       row.GroupKey,
+			LibraryID:      row.LibraryID,
+			LibraryName:    row.LibraryName,
+			FolderSubPath:  folderSubPath(row.LibraryPath, row.SampleFilePath),
+			TrackCount:     row.TrackCount,
+			AlbumName:      row.AlbumName,
+			AlbumArtist:    row.AlbumArtist,
+			DiscNumber:     row.DiscNumber,
+			Status:         row.Status,
+			Synthetic:      row.Synthetic != 0,
+			LikelyMixedBag: mixedBag[row.GroupKey],
 		}
 
 		if row.BestMatchReleaseMbid.Valid {
@@ -555,6 +669,7 @@ func (s *Service) GetPendingFolder(groupKey string) (*PendingItem, error) {
 		AlbumArtist:   row.AlbumArtist,
 		DiscNumber:    row.DiscNumber,
 		Status:        row.Status,
+		Synthetic:     row.Synthetic != 0,
 	}
 
 	if row.BestMatchReleaseMbid.Valid {
@@ -742,6 +857,15 @@ type ScoreView struct {
 	// raw score it accounts for ambiguity (a rival release group
 	// scoring nearly as high) and alignment defects.
 	Recommendation string `json:"recommendation"`
+	// MixedBag is true when this group's tracks look like an
+	// unrelated pile rather than one release (autotag.IsMixedBag) —
+	// the review UI offers SplitMixedFolder when set.  Always false
+	// for a group that's already Synthetic; a split group doesn't
+	// get split again.
+	MixedBag bool `json:"mixedBag"`
+	// Synthetic mirrors PendingItem.Synthetic for the currently
+	// open group.
+	Synthetic bool `json:"synthetic"`
 }
 
 // LocalTrackView mirrors autotag.LocalTrack.
@@ -1151,6 +1275,156 @@ func (s *Service) RetagGroup(groupKey string) error {
 	)
 }
 
+// errNothingToSplit is returned by SplitMixedFolder when the
+// folder's tracks carry no repeated (album, album-artist) tag pair
+// to cluster on — nothing to split out.
+var errNothingToSplit = errors.New("autotag: no tag-matched sub-albums to split out")
+
+// SplitMixedFolder is the "this folder is a pile of unrelated
+// tracks" escape hatch: it partitions the group's local tracks via
+// autotag.SplitPlan — tag-matched sub-albums (see
+// autotag.ClusterByAlbumArtist) plus a one-track cluster for every
+// track that didn't share an (album, album-artist) pair with
+// anything else — and carves each piece out into its own synthetic
+// tagging group, reassigning just those audio_files rows (no files
+// move on disk).  Every track leaves the original group; nothing is
+// left behind to be scored as "extra tracks" of whichever piece
+// happens to match first.  The synthetic groups are scored with
+// relaxed missing-track handling (rank.go, recommend.go), since
+// they're expected to be an incomplete subset of whatever release
+// they belong to.
+//
+// Returns the resulting PendingItems — the leftover original group
+// first (if anything remains in it), then the new synthetic groups
+// — so the frontend can splice them into the sidebar without a full
+// reload.  Errors with errNothingToSplit when the folder is already
+// one coherent unit (SplitPlan produces a single cluster covering
+// every track); callers should treat that as "nothing to show", not
+// a failure.
+func (s *Service) SplitMixedFolder(groupKey string) ([]PendingItem, error) {
+	item, err := s.db.Queries.GetTaggingItem(s.ctx, groupKey)
+	if err != nil {
+		return nil, fmt.Errorf("get tagging item: %w", err)
+	}
+
+	locals, err := s.scorer.LocalTracksForGroup(s.ctx, groupKey)
+	if err != nil {
+		return nil, fmt.Errorf("load locals: %w", err)
+	}
+
+	clusters := autotag.SplitPlan(locals)
+	if len(clusters) <= 1 {
+		return nil, errNothingToSplit
+	}
+
+	newKeys, err := s.splitIntoSyntheticGroups(groupKey, item.LibraryID, clusters)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]PendingItem, 0, len(newKeys)+1)
+
+	if leftover, err := s.GetPendingFolder(groupKey); err != nil {
+		s.logger.Warn("split: reload leftover parent", "group_key", groupKey, "err", err)
+	} else if leftover != nil {
+		out = append(out, *leftover)
+	}
+
+	for _, k := range newKeys {
+		child, err := s.GetPendingFolder(k)
+		if err != nil || child == nil {
+			s.logger.Warn("split: reload synthetic group", "group_key", k, "err", err)
+
+			continue
+		}
+
+		out = append(out, *child)
+	}
+
+	return out, nil
+}
+
+// splitIntoSyntheticGroups performs the actual DB migration inside a
+// single transaction: each cluster's tracks are reassigned onto a
+// deterministic synthetic group key, the parent's track count is
+// decremented per track moved, and the parent row is dropped if it
+// ends up empty.  Returns the new group keys in cluster order.
+func (s *Service) splitIntoSyntheticGroups(
+	parentKey string, libraryID int64, clusters []autotag.TrackCluster,
+) ([]string, error) {
+	tx, err := s.db.BeginTx()
+	if err != nil {
+		return nil, fmt.Errorf("begin split tx: %w", err)
+	}
+
+	defer func() { _ = tx.Rollback() }()
+
+	q := s.db.Queries.WithTx(tx)
+	newKeys := make([]string, 0, len(clusters))
+
+	for _, c := range clusters {
+		var newKey string
+		if len(c.Tracks) == 1 {
+			// A lone leftover track from SplitPlan's singleton
+			// fallback may carry an empty (or shared-but-coincidental)
+			// album/album-artist tag — key on the track itself so two
+			// untagged leftovers can't collide.
+			newKey = autotag.SyntheticTrackGroupKey(parentKey, c.Tracks[0].AudioFileID)
+		} else {
+			newKey = autotag.SyntheticGroupKey(parentKey, c.AlbumName, c.AlbumArtist)
+		}
+
+		newKeys = append(newKeys, newKey)
+
+		for _, t := range c.Tracks {
+			if err := q.DecrementTaggingItemTrackCount(s.ctx, parentKey); err != nil {
+				return nil, fmt.Errorf("decrement parent group: %w", err)
+			}
+
+			upsertParams := sqlcgen.UpsertTaggingItemOnTrackAddParams{
+				GroupKey:    newKey,
+				LibraryID:   libraryID,
+				AlbumName:   c.AlbumName,
+				AlbumArtist: c.AlbumArtist,
+				DiscNumber:  0,
+			}
+			if err := q.UpsertTaggingItemOnTrackAdd(s.ctx, upsertParams); err != nil {
+				return nil, fmt.Errorf("upsert synthetic group: %w", err)
+			}
+
+			if err := q.SetAudioFileGroupKey(s.ctx, sqlcgen.SetAudioFileGroupKeyParams{
+				GroupKey: newKey,
+				ID:       t.AudioFileID,
+			}); err != nil {
+				return nil, fmt.Errorf("reassign track %d: %w", t.AudioFileID, err)
+			}
+		}
+
+		if err := q.MarkTaggingItemSynthetic(s.ctx, sqlcgen.MarkTaggingItemSyntheticParams{
+			ParentGroupKey: parentKey,
+			GroupKey:       newKey,
+		}); err != nil {
+			return nil, fmt.Errorf("mark synthetic: %w", err)
+		}
+	}
+
+	if err := q.DeleteTaggingItemIfEmpty(s.ctx, parentKey); err != nil {
+		return nil, fmt.Errorf("cleanup leftover parent: %w", err)
+	}
+
+	// The parent's cached candidates (if it still exists) no longer
+	// reflect its track set now that some tracks moved out.
+	if err := q.DeleteTaggingCandidates(s.ctx, parentKey); err != nil {
+		s.logger.Warn("split: drop stale parent candidates", "group_key", parentKey, "err", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit split: %w", err)
+	}
+
+	return newKeys, nil
+}
+
 // AckLibraryWarning records that the user has seen the first-
 // time-apply irreversibility warning for this library.
 func (s *Service) AckLibraryWarning(libraryID int64) error {
@@ -1188,6 +1462,7 @@ func (s *Service) GetCandidatesForPasteURL(
 		AlbumName:   score.AlbumName,
 		AlbumArtist: score.AlbumArtist,
 		Tracks:      score.LocalTracks,
+		Synthetic:   score.Synthetic,
 	}, pasted)
 	merged := append([]autotag.Candidate{scored}, score.Candidates...)
 	score.Candidates = merged
@@ -1357,16 +1632,26 @@ func extractReleaseMBID(url string) string {
 // top-ranked candidate; pass nil to skip cover art entirely (used
 // only by paths that don't need art).
 func scoreToView(s *autotag.GroupScore, exp *explore.Service) *ScoreView {
+	group := autotag.Group{
+		AlbumName:   s.AlbumName,
+		AlbumArtist: s.AlbumArtist,
+		Tracks:      s.LocalTracks,
+		Synthetic:   s.Synthetic,
+	}
+
 	rec := s.Recommendation
 	if rec == "" {
 		// Paths that rebuild a GroupScore from cached candidates
 		// don't run the scorer; derive the tier here.
-		rec = autotag.Recommend(
-			autotag.Group{Tracks: s.LocalTracks}, s.Candidates,
-		)
+		rec = autotag.Recommend(group, s.Candidates)
 	}
 
-	out := &ScoreView{GroupKey: s.GroupKey, Recommendation: string(rec)}
+	out := &ScoreView{
+		GroupKey:       s.GroupKey,
+		Recommendation: string(rec),
+		Synthetic:      s.Synthetic,
+		MixedBag:       !s.Synthetic && autotag.IsMixedBag(group),
+	}
 
 	for _, l := range s.LocalTracks {
 		out.LocalTracks = append(out.LocalTracks, LocalTrackView{

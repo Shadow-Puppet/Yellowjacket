@@ -2,6 +2,7 @@ package download
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -10,6 +11,12 @@ import (
 
 	"yellowjacket/backend/events"
 )
+
+// ErrNoLibrary means the request did not name a library to attach the
+// download to.  Letting it through would hit the download_requests /
+// download_wants foreign key on library_id and surface as a raw SQLite
+// error, so it is rejected here with a message the UI can show.
+var ErrNoLibrary = errors.New("no library selected")
 
 // Service is the frontend-facing surface of the download subsystem.
 // Its methods are bound into Wails and called from TypeScript, so
@@ -71,7 +78,39 @@ func (s *Service) ProviderKinds() []Descriptor {
 
 // ListProviders returns the user's configured download clients.
 func (s *Service) ListProviders() ([]Config, error) {
-	return s.store.ListProviders(context.Background())
+	cfgs, err := s.store.ListProviders(context.Background())
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range cfgs {
+		cfgs[i].SetSecrets = s.setSecretFlags(cfgs[i])
+	}
+
+	return cfgs, nil
+}
+
+// setSecretFlags reports, for each secret field the provider's kind
+// declares, whether a value is already stored — so the settings form
+// can distinguish an unset secret from one it simply isn't shown.
+func (s *Service) setSecretFlags(cfg Config) map[string]bool {
+	desc, ok := DescriptorFor(cfg.Kind)
+	if !ok {
+		return nil
+	}
+
+	flags := map[string]bool{}
+
+	for _, field := range desc.Fields {
+		if !field.Secret {
+			continue
+		}
+
+		v, err := s.secrets.Get(cfg.ID, field.Key)
+		flags[field.Key] = err == nil && v != ""
+	}
+
+	return flags
 }
 
 // AddProvider creates a provider and stores any secret settings
@@ -248,6 +287,10 @@ type StartResult struct {
 // Start searches for a release and either auto-picks a clear winner or
 // returns ranked candidates for the user to choose from.
 func (s *Service) Start(req SearchRequest) (StartResult, error) {
+	if req.LibraryID <= 0 {
+		return StartResult{}, ErrNoLibrary
+	}
+
 	r := Request{
 		ID:               newID(),
 		LibraryID:        req.LibraryID,
@@ -397,6 +440,10 @@ type WantRequest struct {
 // pass, so the user sees something happen rather than waiting six hours
 // for the next scheduled one.
 func (s *Service) AddWant(req WantRequest) (int64, error) {
+	if req.LibraryID <= 0 {
+		return 0, ErrNoLibrary
+	}
+
 	entity := Entity(req.Entity)
 	if !entity.Valid() {
 		return 0, fmt.Errorf("%w: entity %q", ErrUnsupported, req.Entity)

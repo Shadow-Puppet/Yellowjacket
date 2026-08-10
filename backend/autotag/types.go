@@ -12,6 +12,15 @@ type LocalTrack struct {
 	DiscNumber    int
 	LengthMillis  int64
 	RecordingMBID string
+
+	// AlbumTag/AlbumArtistTag are this track's OWN album tags (via
+	// its release_group link), independent of the folder-level
+	// Group.AlbumName/AlbumArtist below.  A coherent album's tracks
+	// all carry the same values here; a junk-drawer folder's don't.
+	// Used only by SplitMixedFolder's clustering — the scorer itself
+	// still ranks against Group.AlbumName/AlbumArtist.
+	AlbumTag       string
+	AlbumArtistTag string
 }
 
 // Group is the folder-level context candidates are ranked against:
@@ -21,6 +30,14 @@ type Group struct {
 	AlbumName   string
 	AlbumArtist string
 	Tracks      []LocalTrack
+
+	// Synthetic marks a group carved out of a mixed-bag folder by
+	// SplitMixedFolder rather than corresponding to a real directory.
+	// Its tracks are a tag-matched subset of a bigger folder, so a
+	// candidate with MORE tracks than the group is expected, not a
+	// sign of a bad match — see the synthetic-aware evidence/track-
+	// count handling in rank.go and recommend.go.
+	Synthetic bool
 }
 
 // CandidateSource distinguishes candidates served from the local
@@ -125,4 +142,5 @@ type GroupScore struct {
 	LocalTracks    []LocalTrack
 	Candidates     []Candidate // sorted by Score, descending
 	Recommendation Recommendation
+	Synthetic      bool // true for a SplitMixedFolder-derived group
 }

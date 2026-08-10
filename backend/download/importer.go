@@ -56,11 +56,17 @@ type TagWriterPort interface {
 type LibraryPort interface {
 	// ScanLibrary triggers a rescan so imported files are ingested.
 	ScanLibrary(id int64) error
+
+	// LibraryPath resolves a library's root directory by id.
+	LibraryPath(id int64) (string, error)
 }
 
 // ImportOptions configures how imported files are laid out.
 type ImportOptions struct {
 	// LibraryRoot is the directory imported files are placed under.
+	// Resolved per-request from the request's LibraryID — never a
+	// fixed, app-wide directory, since a user can have several
+	// libraries.
 	LibraryRoot string
 
 	// PathTemplate lays out the destination path.  Supported tokens:

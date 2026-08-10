@@ -136,7 +136,8 @@ SELECT
   ti.score,
   ti.last_checked_at,
   ti.status,
-  ti.created_at
+  ti.created_at,
+  ti.synthetic
 FROM tagging_items ti
 LEFT JOIN libraries lb ON lb.id = ti.library_id
 WHERE ti.group_key = ?
@@ -158,6 +159,7 @@ type GetPendingFolderDetailRow struct {
 	LastCheckedAt        sql.NullTime
 	Status               string
 	CreatedAt            time.Time
+	Synthetic            int64
 }
 
 func (q *Queries) GetPendingFolderDetail(ctx context.Context, groupKey string) (GetPendingFolderDetailRow, error) {
@@ -178,6 +180,7 @@ func (q *Queries) GetPendingFolderDetail(ctx context.Context, groupKey string) (
 		&i.LastCheckedAt,
 		&i.Status,
 		&i.CreatedAt,
+		&i.Synthetic,
 	)
 	return i, err
 }
@@ -197,7 +200,7 @@ func (q *Queries) GetRecordingReleaseGroupID(ctx context.Context, recordingID in
 }
 
 const getTaggingItem = `-- name: GetTaggingItem :one
-SELECT group_key, library_id, track_count, album_name, album_artist, disc_number, best_match_release_mbid, score, last_checked_at, status, cleared_at, created_at FROM tagging_items
+SELECT group_key, library_id, track_count, album_name, album_artist, disc_number, best_match_release_mbid, score, last_checked_at, status, cleared_at, created_at, synthetic, parent_group_key FROM tagging_items
 WHERE group_key = ?
 LIMIT 1
 `
@@ -218,6 +221,8 @@ func (q *Queries) GetTaggingItem(ctx context.Context, groupKey string) (TaggingI
 		&i.Status,
 		&i.ClearedAt,
 		&i.CreatedAt,
+		&i.Synthetic,
+		&i.ParentGroupKey,
 	)
 	return i, err
 }
@@ -233,10 +238,15 @@ SELECT
   COALESCE(r.disc_number, 0) AS disc_number,
   COALESCE(r.name, '') AS title,
   COALESCE(ac.text, '') AS artist_name,
-  COALESCE(r.mbid, '') AS recording_mbid
+  COALESCE(r.mbid, '') AS recording_mbid,
+  COALESCE(rg.name, '') AS album_name,
+  COALESCE(rgac.text, '') AS album_artist
 FROM audio_files af
 LEFT JOIN recordings r ON af.recording_id = r.id
 LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
+LEFT JOIN release_group_recordings rgr ON rgr.recording_id = r.id
+LEFT JOIN release_groups rg ON rg.id = rgr.release_group_id
+LEFT JOIN artist_credit rgac ON rg.album_artist_credit_id = rgac.id
 WHERE af.group_key = ?
 ORDER BY COALESCE(r.disc_number, 0),
          COALESCE(r.track_number, 0),
@@ -254,8 +264,14 @@ type ListAudioFilesInTaggingGroupRow struct {
 	Title              string
 	ArtistName         string
 	RecordingMbid      string
+	AlbumName          string
+	AlbumArtist        string
 }
 
+// album_name/album_artist are the PER-TRACK tags (via each track's
+// own release_group link), not the folder-level tagging_items
+// values.  SplitMixedFolder clusters on these to find sub-albums
+// hiding inside a folder full of unrelated tracks.
 func (q *Queries) ListAudioFilesInTaggingGroup(ctx context.Context, groupKey string) ([]ListAudioFilesInTaggingGroupRow, error) {
 	rows, err := q.db.QueryContext(ctx, listAudioFilesInTaggingGroup, groupKey)
 	if err != nil {
@@ -276,10 +292,62 @@ func (q *Queries) ListAudioFilesInTaggingGroup(ctx context.Context, groupKey str
 			&i.Title,
 			&i.ArtistName,
 			&i.RecordingMbid,
+			&i.AlbumName,
+			&i.AlbumArtist,
 		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLikelyMixedBagGroupKeys = `-- name: ListLikelyMixedBagGroupKeys :many
+SELECT ti.group_key
+FROM tagging_items ti
+JOIN audio_files af ON af.group_key = ti.group_key
+LEFT JOIN recordings r ON af.recording_id = r.id
+LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
+LEFT JOIN release_group_recordings rgr ON rgr.recording_id = r.id
+LEFT JOIN release_groups rg ON rg.id = rgr.release_group_id
+WHERE ti.synthetic = 0
+  AND ti.track_count >= 4
+  AND (
+    ti.album_artist = ''
+    OR LOWER(TRIM(ti.album_artist)) IN ('various artists', 'various', 'va', 'v.a.', 'v a', 'unknown')
+  )
+GROUP BY ti.group_key
+HAVING COUNT(DISTINCT CASE WHEN ac.text != '' THEN LOWER(TRIM(ac.text)) END) > 1
+   AND COUNT(DISTINCT CASE WHEN rg.name != '' THEN LOWER(TRIM(rg.name)) END) > 1
+`
+
+// Cheap, whole-library triage pass for autotag.IsMixedBag: one
+// grouped scan over audio_files (indexed on group_key) rather than
+// hydrating every group's full track list in Go.  LOWER/TRIM is an
+// approximation of autotag.Normalize (no unicode fold, no qualifier
+// stripping) so this can flag a false positive Normalize would
+// clear, or miss a true one Normalize would catch.  Treat it as a
+// triage filter for which groups are worth a real autotag.
+// IsMixedBag check, or a badge at minimum, not the final word.
+func (q *Queries) ListLikelyMixedBagGroupKeys(ctx context.Context) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listLikelyMixedBagGroupKeys)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var group_key string
+		if err := rows.Scan(&group_key); err != nil {
+			return nil, err
+		}
+		items = append(items, group_key)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -552,7 +620,8 @@ SELECT
   ti.score,
   ti.last_checked_at,
   ti.status,
-  ti.created_at
+  ti.created_at,
+  ti.synthetic
 FROM tagging_items ti
 LEFT JOIN libraries lb ON lb.id = ti.library_id
 WHERE (CAST(?1 AS INTEGER) = 0 OR ti.library_id = ?1)
@@ -584,6 +653,7 @@ type ListPendingTaggingItemsByScoreRow struct {
 	LastCheckedAt        sql.NullTime
 	Status               string
 	CreatedAt            time.Time
+	Synthetic            int64
 }
 
 func (q *Queries) ListPendingTaggingItemsByScore(ctx context.Context, arg ListPendingTaggingItemsByScoreParams) ([]ListPendingTaggingItemsByScoreRow, error) {
@@ -615,6 +685,7 @@ func (q *Queries) ListPendingTaggingItemsByScore(ctx context.Context, arg ListPe
 			&i.LastCheckedAt,
 			&i.Status,
 			&i.CreatedAt,
+			&i.Synthetic,
 		); err != nil {
 			return nil, err
 		}
@@ -627,6 +698,49 @@ func (q *Queries) ListPendingTaggingItemsByScore(ctx context.Context, arg ListPe
 		return nil, err
 	}
 	return items, nil
+}
+
+const markTaggingItemSynthetic = `-- name: MarkTaggingItemSynthetic :exec
+UPDATE tagging_items
+SET synthetic = 1,
+    parent_group_key = ?
+WHERE group_key = ?
+`
+
+type MarkTaggingItemSyntheticParams struct {
+	ParentGroupKey string
+	GroupKey       string
+}
+
+// Stamps a group as carved out of parent_group_key by
+// SplitMixedFolder.  Idempotent: safe to call every time a track
+// is migrated into the synthetic group, not just on first creation.
+func (q *Queries) MarkTaggingItemSynthetic(ctx context.Context, arg MarkTaggingItemSyntheticParams) error {
+	_, err := q.db.ExecContext(ctx, markTaggingItemSynthetic, arg.ParentGroupKey, arg.GroupKey)
+	return err
+}
+
+const pruneOrphanedTaggingItems = `-- name: PruneOrphanedTaggingItems :exec
+DELETE FROM tagging_items
+WHERE NOT EXISTS (
+  SELECT 1 FROM audio_files af WHERE af.group_key = tagging_items.group_key
+)
+`
+
+// Self-healing sweep for rows whose track_count bookkeeping (scan
+// orphan cleanup, maybeRebindTaggingGroup, SplitMixedFolder) never
+// ran or drifted: a cancelled scan, a library move/rename the
+// SoftScanAllLibraries disk-count/mtime heuristic did not catch, or
+// a decrement that landed without its paired delete. Rather than
+// trust track_count, this checks the ground truth directly: any
+// group_key no audio_files row still points at is gone, and its
+// tagging_items row (and cascaded tagging_candidates) should be too.
+// Cheap: one indexed (idx_audio_files_group_key) existence check per
+// row. Called opportunistically wherever the pending list is read,
+// so stale entries cannot linger indefinitely between full rescans.
+func (q *Queries) PruneOrphanedTaggingItems(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, pruneOrphanedTaggingItems)
+	return err
 }
 
 const setAudioFileTagStatus = `-- name: SetAudioFileTagStatus :exec

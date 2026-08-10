@@ -45,6 +45,16 @@ func (q *Queries) DeleteArtistCreditArtist(ctx context.Context, id int64) error 
 	return err
 }
 
+const deleteArtistCreditArtistByCredit = `-- name: DeleteArtistCreditArtistByCredit :exec
+DELETE FROM artist_credit_artist
+WHERE credit_id = ?
+`
+
+func (q *Queries) DeleteArtistCreditArtistByCredit(ctx context.Context, creditID int64) error {
+	_, err := q.db.ExecContext(ctx, deleteArtistCreditArtistByCredit, creditID)
+	return err
+}
+
 const getArtistCreditArtist = `-- name: GetArtistCreditArtist :one
 SELECT id, artist_id, credit_id FROM artist_credit_artist 
 WHERE id = ? LIMIT 1

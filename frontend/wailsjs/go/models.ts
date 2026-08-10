@@ -207,6 +207,8 @@ export namespace autotagservice {
 	    bestMatchReleaseMbid: string;
 	    score: number;
 	    status: string;
+	    synthetic: boolean;
+	    likelyMixedBag: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new PendingItem(source);
@@ -225,6 +227,8 @@ export namespace autotagservice {
 	        this.bestMatchReleaseMbid = source["bestMatchReleaseMbid"];
 	        this.score = source["score"];
 	        this.status = source["status"];
+	        this.synthetic = source["synthetic"];
+	        this.likelyMixedBag = source["likelyMixedBag"];
 	    }
 	}
 	
@@ -233,6 +237,8 @@ export namespace autotagservice {
 	    localTracks: LocalTrackView[];
 	    candidates: CandidateView[];
 	    recommendation: string;
+	    mixedBag: boolean;
+	    synthetic: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new ScoreView(source);
@@ -244,6 +250,8 @@ export namespace autotagservice {
 	        this.localTracks = this.convertValues(source["localTracks"], LocalTrackView);
 	        this.candidates = this.convertValues(source["candidates"], CandidateView);
 	        this.recommendation = source["recommendation"];
+	        this.mixedBag = source["mixedBag"];
+	        this.synthetic = source["synthetic"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -443,6 +451,7 @@ export namespace download {
 	    enabled: boolean;
 	    priority: number;
 	    settings: Record<string, string>;
+	    setSecrets?: Record<string, boolean>;
 	
 	    static createFrom(source: any = {}) {
 	        return new Config(source);
@@ -456,6 +465,7 @@ export namespace download {
 	        this.enabled = source["enabled"];
 	        this.priority = source["priority"];
 	        this.settings = source["settings"];
+	        this.setSecrets = source["setSecrets"];
 	    }
 	}
 	export class Field {
@@ -464,6 +474,7 @@ export namespace download {
 	    placeholder?: string;
 	    help?: string;
 	    secret: boolean;
+	    path: boolean;
 	    required: boolean;
 	    default?: string;
 	
@@ -478,6 +489,7 @@ export namespace download {
 	        this.placeholder = source["placeholder"];
 	        this.help = source["help"];
 	        this.secret = source["secret"];
+	        this.path = source["path"];
 	        this.required = source["required"];
 	        this.default = source["default"];
 	    }

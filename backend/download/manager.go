@@ -790,6 +790,14 @@ func (m *Manager) grab(
 		opts := m.importOptions()
 		opts.WriteTags = true
 
+		opts.LibraryRoot, err = m.library.LibraryPath(req.LibraryID)
+		if err != nil {
+			m.failItem(ctx, job, item, req.ID,
+				fmt.Errorf("resolve library root: %w", err))
+
+			return
+		}
+
 		imported, err = m.importer.Import(ctx, req, result, opts)
 		if err != nil {
 			m.failItem(ctx, job, item, req.ID, err)

@@ -37,3 +37,11 @@ ORDER BY name;
 
 -- name: CountRecordingsByArtistCredit :one
 SELECT COUNT(*) FROM recordings WHERE artist_credit_id = ?;
+
+-- name: GetOrphanedRecordingIDs :many
+-- Recordings no longer backed by any audio_files row - left behind
+-- when a scan's orphan cleanup deletes the file that used to own them,
+-- since deleting audio_files doesn't cascade to recordings.
+SELECT r.id FROM recordings r
+LEFT JOIN audio_files af ON af.recording_id = r.id
+WHERE af.id IS NULL;

@@ -46,6 +46,7 @@ func (r *recordingTagWriter) WriteUntrackedFileTags(
 type stubLibrary struct {
 	mu      sync.Mutex
 	scanned []int64
+	path    string
 }
 
 func (s *stubLibrary) ScanLibrary(id int64) error {
@@ -55,6 +56,13 @@ func (s *stubLibrary) ScanLibrary(id int64) error {
 	s.scanned = append(s.scanned, id)
 
 	return nil
+}
+
+func (s *stubLibrary) LibraryPath(int64) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.path, nil
 }
 
 // importFixture stages a set of files and returns the pieces an import

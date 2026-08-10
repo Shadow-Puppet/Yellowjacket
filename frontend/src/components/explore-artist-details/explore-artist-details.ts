@@ -1933,10 +1933,16 @@ export class ExploreArtistDetails extends LitElement {
             if (wantId) {
                 await downloadStore.removeWant(wantId);
             } else {
+                const libraryId = await libraryStore.getDefaultLibraryId();
+                if (!libraryId) {
+                    console.error('Could not update the wanted list: no library available');
+                    return;
+                }
+
                 await downloadStore.addWant({
                     mbid: this.artistMBID,
                     entity: 'artist',
-                    libraryId: libraryStore.getSelectedLibraryId() ?? 0,
+                    libraryId,
                     artist: this.displayName,
                     title: this.displayName,
                     scope: 'future',

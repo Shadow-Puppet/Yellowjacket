@@ -61,6 +61,18 @@ type MBClient interface {
 		query string,
 		limit int,
 	) ([]MBReleaseGroupHit, int, error)
+	// SearchReleaseGroupsLocal searches the offline dump-derived
+	// catalog for release groups matching albumName — no network
+	// round-trip.  ok is false when the local catalog isn't
+	// populated yet (or the implementation has no offline index),
+	// telling the caller to rely on the network cascade alone; ok
+	// true with zero hits means the catalog was consulted and
+	// genuinely has nothing.
+	SearchReleaseGroupsLocal(
+		ctx context.Context,
+		albumName string,
+		limit int,
+	) (hits []MBReleaseGroupHit, ok bool)
 	SearchRecordings(
 		ctx context.Context,
 		query string,
@@ -128,11 +140,39 @@ func (r *MBResolver) ResolveMB(ctx context.Context, g Group) ([]Candidate, error
 	}
 
 	nArtist := Normalize(groupArtist(g))
-	steps := buildMBQueryCascade(nAlbum, nArtist, len(g.Tracks), vaLikely(g))
 
 	seen := make(map[string]bool)
 
 	var merged []Candidate
+
+	// Local-index pass: the offline dump-derived catalog covers
+	// essentially every popular release group, so try it before
+	// spending any rate-limited search calls.  This never skips
+	// BrowseReleases (the catalog doesn't carry per-release
+	// tracklists) but it very often means the network Lucene
+	// cascade below never has to run at all.
+	if localHits, ok := r.client.SearchReleaseGroupsLocal(ctx, g.AlbumName, r.limit); ok {
+		added := r.fanOutBrowse(ctx, g, localHits, "index", seen, &merged)
+
+		r.logger.Debug(
+			"local index search done",
+			"hits", len(localHits), "new_candidates", added,
+		)
+
+		if added > 0 {
+			ranked := RankCandidates(g, merged)
+			if len(ranked) > 0 && ranked[0].Score >= cascadeSufficient {
+				r.logger.Info(
+					"MB cascade stopped — sufficient local-index candidate",
+					"score", ranked[0].Score,
+				)
+
+				return merged, nil
+			}
+		}
+	}
+
+	steps := buildMBQueryCascade(nAlbum, nArtist, len(g.Tracks), vaLikely(g))
 
 	for _, step := range steps {
 		hits, _, err := r.client.SearchReleaseGroups(ctx, step.query, r.limit)

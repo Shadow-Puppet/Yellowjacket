@@ -60,10 +60,53 @@ Audio playback integration tests require `YELLOWJACKET_INTEGRATION=1`.
 - `queue` — Track queue with shuffle (Fisher-Yates), repeat modes, auto-advance, and session persistence.
 - `library` — Concurrent library scanning, metadata extraction, cover art deduplication, incremental rescan.
 - `database` — SQLite via pure-Go driver. Schema in `database/sql/schemas/`, queries in `database/sql/queries/`. **sqlc** generates Go code into `database/sql/sqlcgen/` — never edit that directory by hand.
-  There is **no migration chain**: `applySchema` creates everything from
-  the schema files on every open (all DDL is `IF NOT EXISTS`), and a
-  database written by an older build is not supported. Changing the
-  schema means editing the file in `sql/schemas/`, not adding a step.
+
+  **Schema changes need two things, not one.** `sql/schemas/*.sql` is
+  `CREATE ... IF NOT EXISTS` and is what sqlc reads — it's the single
+  source of truth for "what the schema looks like right now", and it's
+  what a fresh install gets verbatim. But it's a no-op against a
+  database that already has the table, so an existing install needs a
+  matching file in `sql/schemas/../migrations/` (e.g.
+  `NNNN_description.sql`, `ALTER TABLE ... ADD COLUMN ...` /
+  `CREATE INDEX ...`) to actually reach that shape. Both run on every
+  open, migrations after schema files, tracked in `schema_migrations`
+  so each applies once; a migration's `ALTER TABLE ADD COLUMN` failing
+  with "duplicate column name" on an already-current database is
+  expected and tolerated, not an error.
+
+  A few things that bite if forgotten:
+  - **Column order must match between the two paths.** `ALTER TABLE
+    ADD COLUMN` always appends at the end, so a migrated column must
+    also be declared *last* in the `CREATE TABLE` in `sql/schemas/`
+    — otherwise a fresh install and an upgraded install disagree on
+    column order, and a `SELECT *` query (sqlc binds those
+    positionally) silently reads the wrong field on one of them. See
+    `backend/database/migrations_test.go`'s
+    `TestMigrations_ColumnOrderMatchesFreshInstall`, which is the
+    regression test for exactly this.
+  - **Don't put an index on a migrated column in `sql/schemas/`.**
+    Schema files run before migrations, against a database that may
+    not have that column yet — the index's predicate would fail
+    (this is precisely the bug an earlier session shipped and a user
+    hit at `make sandbox`). Declare it in the migration file instead,
+    after the `ALTER TABLE` that adds the column.
+  - This project **had** a 48-step migration chain before and tore it
+    out (see `.planning/NOTES.md`, "No migration chain") because
+    `sql/schemas/` had drifted from what the migrations actually
+    produced and sqlc silently generated against the stale version.
+    The design here avoids that by keeping `sql/schemas/` as the
+    literal target shape (not a hand-maintained description of it)
+    and letting migrations replay tolerantly against it — but the
+    same drift is possible again if a schema change ships without
+    updating both files. Don't reintroduce a *second* description of
+    the schema anywhere else.
+  - **Squashing is fine pre-1.0.** While this hasn't shipped to real
+    users, periodically folding `sql/migrations/` into `sql/schemas/`
+    and deleting the migration files (then wiping your own dev/sandbox
+    DB) is a legitimate way to keep the migrations directory from
+    accumulating dev-only churn — same effect as the old "just nuke
+    it" workflow, opt-in instead of mandatory. Stop doing that once
+    real user databases exist in the wild.
 - `metadata` — Tag extraction (ID3v2, Vorbis Comments, FLAC).
 - `config` — TOML-based settings. Settings page uses HTMX + templ for server-rendered HTML fragments.
 - `playlist` / `smartplaylist` — Playlist CRUD and rule-based smart playlists.

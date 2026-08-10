@@ -33,6 +33,19 @@ const (
 	// auto-accept entirely.
 	evidenceFloor      = 0.85
 	evidenceFullTracks = 3
+
+	// Synthetic groups (SplitMixedFolder's tag-clustered sub-albums)
+	// are, by construction, a SUBSET of a bigger folder: the folder
+	// might not have every track from the release the cluster
+	// belongs to.  A candidate with more tracks than the synthetic
+	// group is therefore expected, not a sign of a wrong match, so
+	// its trackCountMatch penalty is softened relative to a real
+	// folder (where a track-count gap usually does mean the wrong
+	// release).  A candidate with FEWER tracks than the group is
+	// still scored by the normal (harsher) formula — that's a real
+	// mismatch regardless of source.
+	syntheticMissingPenaltyScale = 0.35
+	syntheticTrackCountFloor     = 0.55
 )
 
 // vaNames are artist strings that signal "various artists" — used
@@ -139,7 +152,7 @@ func ScoreCandidate(g Group, c Candidate) Candidate {
 
 	trackAgg := ((titleAvg*weightTitle + lengthAvg*weightLength) / trackWeightSum) * coverage
 
-	trackCountScore := trackCountMatch(len(targets), len(local))
+	trackCountScore := trackCountMatch(len(targets), len(local), g.Synthetic)
 
 	// Artist fit: compare the folder's artist against the
 	// candidate's release artist-credit.  This is a SOFT signal, not
@@ -347,14 +360,28 @@ func evidenceFactor(localTrackCount int) float64 {
 }
 
 // trackCountMatch returns 1.0 when equal, 0.0 when off by >= 50%,
-// linear between.
-func trackCountMatch(a, b int) float64 {
+// linear between.  When synthetic is true and the candidate (a) has
+// MORE tracks than the local group (b) — the group having fewer
+// tracks than the full release, exactly what's expected from a
+// tag-clustered subset of a folder — the penalty is softened instead
+// of using the normal harsh formula.  Fewer candidate tracks than
+// local (b > a) always uses the normal formula: that pattern means
+// the group has tracks the candidate release doesn't, which is a
+// real mismatch however the group was built.
+func trackCountMatch(a, b int, synthetic bool) float64 {
 	if a == 0 && b == 0 {
 		return 1.0
 	}
 
 	if a == 0 || b == 0 {
 		return 0.0
+	}
+
+	if synthetic && a > b {
+		diff := a - b
+		frac := float64(diff) / float64(a)
+
+		return max(1.0-frac*syntheticMissingPenaltyScale, syntheticTrackCountFloor)
 	}
 
 	diff := a - b

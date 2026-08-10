@@ -18,3 +18,7 @@ WHERE id =?;
 -- name: DeleteAllArtistCreditArtists :exec
 DELETE FROM artist_credit_artist;
 
+-- name: DeleteArtistCreditArtistByCredit :exec
+DELETE FROM artist_credit_artist
+WHERE credit_id = ?;
+

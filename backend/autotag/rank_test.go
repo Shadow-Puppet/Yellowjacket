@@ -49,6 +49,55 @@ func TestRankCandidates_PrefersExactTrackCountMatch(t *testing.T) {
 	}
 }
 
+func TestScoreCandidate_SyntheticGroupSoftensMissingTrackPenalty(t *testing.T) {
+	t.Parallel()
+
+	// Two tracks pulled from a mixed-bag folder, tag-clustered as a
+	// subset of a 5-track release — exactly what SplitMixedFolder
+	// produces.  A candidate release with the other 3 tracks the
+	// folder simply never had must not be penalized nearly as hard
+	// as a real folder missing 3 of 5 tracks would be.
+	local := []autotag.LocalTrack{
+		{Title: "A", TrackNumber: 1, LengthMillis: 200000},
+		{Title: "B", TrackNumber: 2, LengthMillis: 200000},
+	}
+
+	candidate := autotag.Candidate{
+		ReleaseMBID: "full-release",
+		Title:       "Album",
+		Status:      "Official",
+		Tracks: []autotag.CandidateTrack{
+			{Position: 1, Title: "A", LengthMillis: 200000},
+			{Position: 2, Title: "B", LengthMillis: 200000},
+			{Position: 3, Title: "C", LengthMillis: 200000},
+			{Position: 4, Title: "D", LengthMillis: 200000},
+			{Position: 5, Title: "E", LengthMillis: 200000},
+		},
+	}
+
+	fromRealFolder := autotag.ScoreCandidate(
+		autotag.Group{Tracks: local, Synthetic: false}, candidate,
+	)
+	fromSynthetic := autotag.ScoreCandidate(
+		autotag.Group{Tracks: local, Synthetic: true}, candidate,
+	)
+
+	if fromSynthetic.Breakdown.TrackCountFit <= fromRealFolder.Breakdown.TrackCountFit {
+		t.Errorf(
+			"synthetic track-count fit (%.3f) should exceed the real-folder fit (%.3f) for the same gap",
+			fromSynthetic.Breakdown.TrackCountFit,
+			fromRealFolder.Breakdown.TrackCountFit,
+		)
+	}
+
+	if fromSynthetic.Score <= fromRealFolder.Score {
+		t.Errorf(
+			"synthetic group score (%.3f) should exceed the real-folder score (%.3f)",
+			fromSynthetic.Score, fromRealFolder.Score,
+		)
+	}
+}
+
 func TestRankCandidates_PrefersOfficial(t *testing.T) {
 	t.Parallel()
 

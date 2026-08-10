@@ -356,6 +356,25 @@ class LibraryStore {
         return libs;
     }
 
+    /**
+     * Resolves a library id to attach a download/want to: the selected
+     * filter if one is set, otherwise the first known library. Callers
+     * that need a library id (rather than "all libraries", which is
+     * what `getSelectedLibraryId()` returning null means for browsing)
+     * should use this instead of defaulting to 0 — id 0 never exists
+     * and trips the library_id foreign key on download_requests /
+     * download_wants.
+     */
+    async getDefaultLibraryId(): Promise<number | null> {
+        if (this.selectedLibraryIdValue !== null) {
+            return this.selectedLibraryIdValue;
+        }
+
+        const libraries = await this.getLibraries();
+
+        return libraries[0]?.id ?? null;
+    }
+
     // ===================================================================
     // SCROLL POSITION
     // ===================================================================

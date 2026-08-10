@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // Soulseek is reached through a user-run slskd daemon rather than the
@@ -54,8 +56,14 @@ const (
 
 	// slskdSearchWait bounds a single search.  Soulseek searches return
 	// results progressively; waiting the full budget gets noticeably
-	// more peers than bailing at the first response.
-	slskdSearchWait = 12 * time.Second
+	// more peers than bailing at the first response.  12s was measured
+	// to miss real, available peers on real-world queries (roughly 4 of
+	// 5 attempts for a live search came back empty before this many
+	// responses had a chance to arrive), so this is generous rather
+	// than tight.  Kept a few seconds under Manager's per-provider
+	// searchTimeout (25s) so the request/cleanup round-trips around it
+	// do not get cut off by the context deadline.
+	slskdSearchWait = 20 * time.Second
 
 	// slskdTransferPoll is how often transfer state is polled.
 	slskdTransferPoll = 3 * time.Second
@@ -102,6 +110,7 @@ func init() {
 					Key:         "downloadsPath",
 					Label:       "slskd downloads folder",
 					Placeholder: "/var/lib/slskd/downloads",
+					Path:        true,
 					Required:    true,
 					Help: "The folder slskd saves to, as this machine sees it. " +
 						"If slskd runs elsewhere, this must be a mounted share.",
@@ -270,7 +279,11 @@ func (t slskdTransfer) done() (finished, ok bool) {
 // actually wants: Soulseek has no album concept, but people organise
 // their shares by album directory.
 func (s *slskd) Search(ctx context.Context, req Request) ([]Candidate, error) {
-	searchID := newID()
+	// slskd's search endpoint deserializes id as a .NET Guid server-side,
+	// so it must be a dashed UUID — the app's own newID() (a plain hex
+	// string, used for request/item IDs elsewhere) is rejected with an
+	// HTTP 400 before any search happens.
+	searchID := uuid.NewString()
 
 	body := map[string]any{
 		"id":         searchID,

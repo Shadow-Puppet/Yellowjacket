@@ -97,6 +97,46 @@ func TestRecommend_AlignmentDefectsCapAtMedium(t *testing.T) {
 	}
 }
 
+func TestRecommend_SyntheticGroupMissingTracksDoNotCap(t *testing.T) {
+	t.Parallel()
+
+	top := mkScoredCandidate("rg1", 0.95)
+	top.Alignments = []TrackAlignment{
+		{Status: AlignmentMatched},
+		{Status: AlignmentMissing, LocalIndex: -1},
+	}
+
+	g := fullGroup()
+	g.Synthetic = true
+
+	if got := Recommend(g, []Candidate{top}); got != RecommendationStrong {
+		t.Errorf(
+			"synthetic group with only missing (not unmatched) tracks: Recommend = %q, want strong",
+			got,
+		)
+	}
+}
+
+func TestRecommend_SyntheticGroupUnmatchedTracksStillCap(t *testing.T) {
+	t.Parallel()
+
+	top := mkScoredCandidate("rg1", 0.95)
+	top.Alignments = []TrackAlignment{
+		{Status: AlignmentMatched},
+		{Status: AlignmentUnmatched, LocalIndex: 1},
+	}
+
+	g := fullGroup()
+	g.Synthetic = true
+
+	if got := Recommend(g, []Candidate{top}); got != RecommendationMedium {
+		t.Errorf(
+			"synthetic group with an unmatched local track: Recommend = %q, want medium",
+			got,
+		)
+	}
+}
+
 func TestRecommend_ThinEvidenceCapsAtMedium(t *testing.T) {
 	t.Parallel()
 

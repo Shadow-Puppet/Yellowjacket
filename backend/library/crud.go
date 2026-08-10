@@ -116,6 +116,16 @@ func (l *Library) AddLibrary(path string) (*sqlcgen.Library, error) {
 	return &lib, nil
 }
 
+// LibraryPath resolves a library's root directory by id.
+func (l *Library) LibraryPath(id int64) (string, error) {
+	lib, err := l.db.ReadQueries.GetLibrary(l.ctx, id)
+	if err != nil {
+		return "", fmt.Errorf("could not get library %d: %w", id, err)
+	}
+
+	return lib.Path, nil
+}
+
 // RenameLibrary validates and updates a library's display name.
 func (l *Library) RenameLibrary(id int64, newName string) error {
 	newName = strings.TrimSpace(newName)

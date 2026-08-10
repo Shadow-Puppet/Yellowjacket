@@ -167,6 +167,14 @@ ORDER BY rg.name;
 -- name: CountReleaseGroupRecordings :one
 SELECT COUNT(*) FROM release_group_recordings WHERE release_group_id = ?;
 
+-- name: GetOrphanedReleaseGroupIDs :many
+-- Release groups with no recordings left in them - run after orphaned
+-- recordings (and their release_group_recordings rows) are deleted, so
+-- a release group whose last owned track was removed is cleaned up too.
+SELECT rg.id FROM release_groups rg
+LEFT JOIN release_group_recordings rgr ON rgr.release_group_id = rg.id
+WHERE rgr.id IS NULL;
+
 -- name: GetAlbumsByArtistByLibrary :many
 SELECT
     rg.id,

@@ -37,6 +37,8 @@ export function SetContext(arg1:context.Context):Promise<void>;
 
 export function Skip(arg1:string):Promise<void>;
 
+export function SplitMixedFolder(arg1:string):Promise<Array<autotagservice.PendingItem>>;
+
 export function StartAutotagQueue(arg1:number):Promise<void>;
 
 export function StartBackgroundPrefetch():Promise<void>;

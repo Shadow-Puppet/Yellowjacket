@@ -31,15 +31,15 @@ func newManagerFixture(t *testing.T) managerFixture {
 	store := NewStore(db)
 	staging := newTestStaging(t)
 	tags := newRecordingTagWriter()
-	lib := &stubLibrary{}
 	root := t.TempDir()
+	lib := &stubLibrary{path: root}
 
 	imp := NewImporter(slogDiscard(), staging, tags, lib)
 
 	m := NewManager(
 		slogDiscard(), store, NewMemSecretStore(), staging, imp, lib,
 	)
-	m.SetImportOptions(ImportOptions{LibraryRoot: root})
+	m.SetImportOptions(ImportOptions{})
 
 	return managerFixture{
 		manager: m,

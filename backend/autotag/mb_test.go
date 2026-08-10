@@ -23,6 +23,8 @@ type fakeMBClient struct {
 	lookupRGs     map[string]MBReleaseGroupHit
 	searchRecs    []MBRecordingHit
 	recRelsByMBID map[string][]MBReleaseRef
+	localHits     []MBReleaseGroupHit
+	localOK       bool
 }
 
 func (f *fakeMBClient) SearchReleaseGroups(
@@ -34,6 +36,15 @@ func (f *fakeMBClient) SearchReleaseGroups(
 	hits := f.searchByStep[step]
 
 	return hits, len(hits), nil
+}
+
+// SearchReleaseGroupsLocal is a no-op by default (ok=false), so
+// existing cascade tests exercise the network path unchanged.  Set
+// localHits / localOK on the fake to exercise the index-first path.
+func (f *fakeMBClient) SearchReleaseGroupsLocal(
+	_ context.Context, _ string, _ int,
+) ([]MBReleaseGroupHit, bool) {
+	return f.localHits, f.localOK
 }
 
 func (f *fakeMBClient) BrowseReleases(
@@ -185,6 +196,89 @@ func TestMBResolver_CascadeStopsWhenSufficient(t *testing.T) {
 
 	if cands[0].Provenance != "no-track-count" {
 		t.Errorf("provenance = %q, want 'no-track-count'", cands[0].Provenance)
+	}
+}
+
+func TestMBResolver_LocalIndexSufficientSkipsNetworkSearch(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeMBClient{
+		localOK: true,
+		localHits: []MBReleaseGroupHit{
+			{MBID: "rg1", Title: "Abbey Road"},
+		},
+		browseByMBID: map[string][]MBRelease{
+			"rg1": {{
+				MBID: "rel1", Title: "Abbey Road", Status: "Official",
+				Tracks: []CandidateTrack{
+					{Position: 1, Title: "Come Together", LengthMillis: 259000},
+				},
+			}},
+		},
+	}
+
+	r := NewMBResolver(fake, slog.New(slog.DiscardHandler))
+
+	cands, err := r.ResolveMB(context.Background(), abbeyRoadGroup())
+	if err != nil {
+		t.Fatalf("ResolveMB: %v", err)
+	}
+
+	if len(cands) != 1 {
+		t.Fatalf("expected 1 candidate, got %d", len(cands))
+	}
+
+	if cands[0].Provenance != "index" {
+		t.Errorf("provenance = %q, want 'index'", cands[0].Provenance)
+	}
+
+	if len(fake.queries) != 0 {
+		t.Errorf(
+			"expected zero network search queries when the local index sufficed, got %d: %v",
+			len(fake.queries), fake.queries,
+		)
+	}
+}
+
+func TestMBResolver_LocalIndexThinFallsThroughToNetwork(t *testing.T) {
+	t.Parallel()
+
+	// Local index is "ready" but has nothing plausible for this
+	// album — the cascade must still fall through to the network
+	// steps exactly as if there were no local index at all.
+	fake := &fakeMBClient{
+		localOK:   true,
+		localHits: nil,
+		searchByStep: map[int][]MBReleaseGroupHit{
+			1: {{MBID: "rg1", Title: "Abbey Road"}},
+		},
+		browseByMBID: map[string][]MBRelease{
+			"rg1": {{
+				MBID: "rel1", Title: "Abbey Road", Status: "Official",
+				Tracks: []CandidateTrack{
+					{Position: 1, Title: "Come Together", LengthMillis: 259000},
+				},
+			}},
+		},
+	}
+
+	r := NewMBResolver(fake, slog.New(slog.DiscardHandler))
+
+	cands, err := r.ResolveMB(context.Background(), abbeyRoadGroup())
+	if err != nil {
+		t.Fatalf("ResolveMB: %v", err)
+	}
+
+	if len(cands) != 1 {
+		t.Fatalf("expected 1 candidate, got %d", len(cands))
+	}
+
+	if cands[0].Provenance != "no-track-count" {
+		t.Errorf("provenance = %q, want 'no-track-count'", cands[0].Provenance)
+	}
+
+	if len(fake.queries) != 2 { //nolint:mnd
+		t.Errorf("expected the usual 2 network queries, got %d", len(fake.queries))
 	}
 }
 

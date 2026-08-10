@@ -130,6 +130,12 @@ type Config struct {
 	Enabled  bool              `json:"enabled"`
 	Priority int               `json:"priority"`
 	Settings map[string]string `json:"settings"`
+
+	// SetSecrets names which of the descriptor's secret fields already
+	// have a stored value, without exposing it.  Populated only when a
+	// Config is built for the frontend (see Service.withSecretFlags);
+	// empty when read from or written to the store.
+	SetSecrets map[string]bool `json:"setSecrets,omitempty"`
 }
 
 // Setting returns a config value, or fallback when unset.
@@ -196,6 +202,11 @@ type Field struct {
 	// Secret marks a value stored in the secrets store rather than the
 	// provider config row, and rendered as a password input.
 	Secret bool `json:"secret"`
+
+	// Path marks a value that names a local filesystem directory, so
+	// the settings form can offer a native folder picker beside the
+	// text input rather than making the user type or paste it.
+	Path bool `json:"path"`
 
 	Required bool   `json:"required"`
 	Default  string `json:"default,omitempty"`

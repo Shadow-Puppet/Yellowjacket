@@ -776,6 +776,39 @@ func (l *Library) scanInternal(
 				return true
 			}
 
+			// Keep the file's tagging group in sync: drop the group's
+			// track count and clear it out once empty, mirroring the
+			// bookkeeping maybeRebindTaggingGroup does for a group_key
+			// change. Without this, a folder whose files are removed
+			// and replaced leaves a stale tagging_items row behind —
+			// its track_count still counts the deleted files, and it
+			// never clears from the autotag queue.
+			if audioFile.GroupKey != "" {
+				if err := l.db.Queries.DecrementTaggingItemTrackCount(
+					l.ctx, audioFile.GroupKey,
+				); err != nil {
+					l.logger.Warn(
+						"failed to decrement tagging group for orphan",
+						"path", path,
+						"group_key", audioFile.GroupKey,
+						"err", err,
+					)
+
+					metrics.addWarning(path, "orphan", err)
+				} else if err := l.db.Queries.DeleteTaggingItemIfEmpty(
+					l.ctx, audioFile.GroupKey,
+				); err != nil {
+					l.logger.Warn(
+						"failed to clean up emptied tagging group for orphan",
+						"path", path,
+						"group_key", audioFile.GroupKey,
+						"err", err,
+					)
+
+					metrics.addWarning(path, "orphan", err)
+				}
+			}
+
 			// Remove from FTS5 search index.
 			if err := l.db.DeleteSearchIndex(
 				audioFile.ID,
@@ -795,6 +828,14 @@ func (l *Library) scanInternal(
 		})
 
 		metrics.OrphanCleanup = time.Since(orphanStart)
+
+		// --- Phase 5b: orphaned metadata cleanup ---
+		// Deleting an audio_files row above doesn't cascade to the
+		// recording/release_group/artist_credit/artist rows it was the
+		// last owner of — clean those up too, so a swapped-out artist
+		// doesn't leave stale rows behind for the Explore index to
+		// keep pointing at.
+		l.pruneOrphanedMetadata()
 	}
 
 	// --- Phase 6: repopulate + resolve phantom playlist tracks ---
@@ -942,6 +983,120 @@ func (l *Library) flushStatBackfill(
 		"recorded staleness baselines for existing files",
 		"count", len(entries),
 	)
+}
+
+// pruneOrphanedMetadata removes recording/release_group/artist_credit/
+// artist rows left behind once the audio_files rows that justified them
+// are gone — deleting an audio_files row doesn't cascade to any of
+// these.  Runs in dependency order: recordings first (and their
+// release_group_recordings/recording_genres rows), then release groups
+// left with no recordings, then artist credits left with no
+// recordings/release groups, then artists left with no credits.  Best
+// effort — logs and continues on error rather than failing the scan.
+func (l *Library) pruneOrphanedMetadata() {
+	tx, err := l.db.BeginTx()
+	if err != nil {
+		l.logger.Warn("could not begin orphaned metadata cleanup transaction", "err", err)
+
+		return
+	}
+
+	defer func() { _ = tx.Rollback() }() // no-op after commit
+
+	txq := l.db.Queries.WithTx(tx)
+
+	recordingIDs, err := txq.GetOrphanedRecordingIDs(l.ctx)
+	if err != nil {
+		l.logger.Warn("could not find orphaned recordings", "err", err)
+
+		return
+	}
+
+	for _, id := range recordingIDs {
+		if err := txq.DeleteReleaseGroupRecordingsByRecording(l.ctx, id); err != nil {
+			l.logger.Warn(
+				"could not delete release group links for orphaned recording",
+				"id",
+				id,
+				"err",
+				err,
+			)
+		}
+
+		if err := txq.DeleteRecordingGenres(l.ctx, id); err != nil {
+			l.logger.Warn("could not delete genres for orphaned recording", "id", id, "err", err)
+		}
+
+		if err := txq.DeleteRecording(l.ctx, id); err != nil {
+			l.logger.Warn("could not delete orphaned recording", "id", id, "err", err)
+		}
+	}
+
+	releaseGroupIDs, err := txq.GetOrphanedReleaseGroupIDs(l.ctx)
+	if err != nil {
+		l.logger.Warn("could not find orphaned release groups", "err", err)
+
+		return
+	}
+
+	for _, id := range releaseGroupIDs {
+		if err := txq.DeleteReleaseGroup(l.ctx, id); err != nil {
+			l.logger.Warn("could not delete orphaned release group", "id", id, "err", err)
+		}
+	}
+
+	artistCreditIDs, err := txq.GetOrphanedArtistCreditIDs(l.ctx)
+	if err != nil {
+		l.logger.Warn("could not find orphaned artist credits", "err", err)
+
+		return
+	}
+
+	for _, id := range artistCreditIDs {
+		if err := txq.DeleteArtistCreditArtistByCredit(l.ctx, id); err != nil {
+			l.logger.Warn(
+				"could not delete artist links for orphaned artist credit",
+				"id",
+				id,
+				"err",
+				err,
+			)
+		}
+
+		if err := txq.DeleteArtistCredit(l.ctx, id); err != nil {
+			l.logger.Warn("could not delete orphaned artist credit", "id", id, "err", err)
+		}
+	}
+
+	artistIDs, err := txq.GetOrphanedArtistIDs(l.ctx)
+	if err != nil {
+		l.logger.Warn("could not find orphaned artists", "err", err)
+
+		return
+	}
+
+	for _, id := range artistIDs {
+		if err := txq.DeleteArtist(l.ctx, id); err != nil {
+			l.logger.Warn("could not delete orphaned artist", "id", id, "err", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		l.logger.Warn("could not commit orphaned metadata cleanup", "err", err)
+
+		return
+	}
+
+	if len(recordingIDs) > 0 || len(releaseGroupIDs) > 0 || len(artistCreditIDs) > 0 ||
+		len(artistIDs) > 0 {
+		l.logger.Info(
+			"pruned orphaned library metadata",
+			"recordings", len(recordingIDs),
+			"releaseGroups", len(releaseGroupIDs),
+			"artistCredits", len(artistCreditIDs),
+			"artists", len(artistIDs),
+		)
+	}
 }
 
 // countAudioFiles performs a fast walk of the library directory,

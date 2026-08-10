@@ -26,3 +26,7 @@ WHERE release_group_id = ? AND recording_id = ?;
 
 -- name: DeleteAllReleaseGroupRecordings :exec
 DELETE FROM release_group_recordings;
+
+-- name: DeleteReleaseGroupRecordingsByRecording :exec
+DELETE FROM release_group_recordings
+WHERE recording_id = ?;

@@ -676,6 +676,180 @@ func TestOrphanDeletion(t *testing.T) {
 	}
 }
 
+func TestPruneOrphanedMetadata(t *testing.T) {
+	t.Parallel()
+
+	lib, db := setupTestLibrary(t)
+	ctx := context.Background()
+	q := db.Queries
+
+	// Seed a full chain: artist -> artist_credit -> recording -> audio_file,
+	// plus a release group crediting the same artist.
+	artist, err := q.UpsertArtist(ctx, "Orphaned Artist")
+	if err != nil {
+		t.Fatalf("upsert artist: %v", err)
+	}
+
+	ac, err := q.UpsertArtistCredit(ctx, "Orphaned Artist")
+	if err != nil {
+		t.Fatalf("upsert artist credit: %v", err)
+	}
+
+	if _, err := q.CreateArtistCreditArtist(ctx, sqlcgen.CreateArtistCreditArtistParams{
+		ArtistID: artist.ID,
+		CreditID: ac.ID,
+	}); err != nil {
+		t.Fatalf("link artist credit artist: %v", err)
+	}
+
+	rec, err := q.CreateRecordingFull(ctx, sqlcgen.CreateRecordingFullParams{
+		Name:           "Orphaned Song",
+		ArtistCreditID: ac.ID,
+	})
+	if err != nil {
+		t.Fatalf("create recording: %v", err)
+	}
+
+	rg, err := q.CreateReleaseGroupFull(ctx, sqlcgen.CreateReleaseGroupFullParams{
+		Name:                "Orphaned Album",
+		AlbumArtistCreditID: sql.NullInt64{Int64: ac.ID, Valid: true},
+	})
+	if err != nil {
+		t.Fatalf("create release group: %v", err)
+	}
+
+	if _, err := q.CreateReleaseGroupRecording(ctx, sqlcgen.CreateReleaseGroupRecordingParams{
+		ReleaseGroupID: rg.ID,
+		RecordingID:    rec.ID,
+	}); err != nil {
+		t.Fatalf("link release group recording: %v", err)
+	}
+
+	af, err := q.CreateAudioFile(ctx, sqlcgen.CreateAudioFileParams{
+		FilePath:           "/music/orphaned.mp3",
+		LengthMilliseconds: 180000,
+		FileTypeID:         0,
+		RecordingID:        rec.ID,
+		Basename:           "orphaned.mp3",
+	})
+	if err != nil {
+		t.Fatalf("create audio file: %v", err)
+	}
+
+	// Simulate a rescan removing the file: delete the audio_files row
+	// (what the existing Phase 5 orphan cleanup does), then run the new
+	// metadata cleanup that's supposed to cascade the rest.
+	if err := q.DeleteAudioFile(ctx, af.ID); err != nil {
+		t.Fatalf("delete audio file: %v", err)
+	}
+
+	lib.pruneOrphanedMetadata()
+
+	if _, err := q.GetRecording(ctx, rec.ID); err == nil {
+		t.Error("expected orphaned recording to be deleted")
+	}
+
+	if _, err := q.GetReleaseGroup(ctx, rg.ID); err == nil {
+		t.Error("expected orphaned release group to be deleted")
+	}
+
+	if _, err := q.GetArtistCredit(ctx, ac.ID); err == nil {
+		t.Error("expected orphaned artist credit to be deleted")
+	}
+
+	if _, err := q.GetArtist(ctx, artist.ID); err == nil {
+		t.Error("expected orphaned artist to be deleted")
+	}
+}
+
+// TestPruneOrphanedMetadata_KeepsStillOwnedEntities verifies that pruning
+// only removes rows with no remaining audio_files, leaving an artist who
+// still owns other tracks untouched.
+func TestPruneOrphanedMetadata_KeepsStillOwnedEntities(t *testing.T) {
+	t.Parallel()
+
+	lib, db := setupTestLibrary(t)
+	ctx := context.Background()
+	q := db.Queries
+
+	artist, err := q.UpsertArtist(ctx, "Still Owned Artist")
+	if err != nil {
+		t.Fatalf("upsert artist: %v", err)
+	}
+
+	ac, err := q.UpsertArtistCredit(ctx, "Still Owned Artist")
+	if err != nil {
+		t.Fatalf("upsert artist credit: %v", err)
+	}
+
+	if _, err := q.CreateArtistCreditArtist(ctx, sqlcgen.CreateArtistCreditArtistParams{
+		ArtistID: artist.ID,
+		CreditID: ac.ID,
+	}); err != nil {
+		t.Fatalf("link artist credit artist: %v", err)
+	}
+
+	// Two recordings under the same artist credit; only one loses its file.
+	recGone, err := q.CreateRecordingFull(ctx, sqlcgen.CreateRecordingFullParams{
+		Name:           "Removed Song",
+		ArtistCreditID: ac.ID,
+	})
+	if err != nil {
+		t.Fatalf("create recording (removed): %v", err)
+	}
+
+	recKept, err := q.CreateRecordingFull(ctx, sqlcgen.CreateRecordingFullParams{
+		Name:           "Kept Song",
+		ArtistCreditID: ac.ID,
+	})
+	if err != nil {
+		t.Fatalf("create recording (kept): %v", err)
+	}
+
+	afGone, err := q.CreateAudioFile(ctx, sqlcgen.CreateAudioFileParams{
+		FilePath:           "/music/gone.mp3",
+		LengthMilliseconds: 180000,
+		FileTypeID:         0,
+		RecordingID:        recGone.ID,
+		Basename:           "gone.mp3",
+	})
+	if err != nil {
+		t.Fatalf("create audio file (gone): %v", err)
+	}
+
+	if _, err := q.CreateAudioFile(ctx, sqlcgen.CreateAudioFileParams{
+		FilePath:           "/music/kept.mp3",
+		LengthMilliseconds: 180000,
+		FileTypeID:         0,
+		RecordingID:        recKept.ID,
+		Basename:           "kept.mp3",
+	}); err != nil {
+		t.Fatalf("create audio file (kept): %v", err)
+	}
+
+	if err := q.DeleteAudioFile(ctx, afGone.ID); err != nil {
+		t.Fatalf("delete audio file: %v", err)
+	}
+
+	lib.pruneOrphanedMetadata()
+
+	if _, err := q.GetRecording(ctx, recGone.ID); err == nil {
+		t.Error("expected orphaned recording to be deleted")
+	}
+
+	if _, err := q.GetRecording(ctx, recKept.ID); err != nil {
+		t.Errorf("expected still-owned recording to survive, got: %v", err)
+	}
+
+	if _, err := q.GetArtistCredit(ctx, ac.ID); err != nil {
+		t.Errorf("expected still-referenced artist credit to survive, got: %v", err)
+	}
+
+	if _, err := q.GetArtist(ctx, artist.ID); err != nil {
+		t.Errorf("expected still-referenced artist to survive, got: %v", err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Empty/missing metadata tests
 // ---------------------------------------------------------------------------

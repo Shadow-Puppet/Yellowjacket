@@ -338,6 +338,12 @@ func (c *idFakeClient) LookupReleaseGroup(
 	return autotag.MBReleaseGroupHit{}, nil
 }
 
+func (c *idFakeClient) SearchReleaseGroupsLocal(
+	_ context.Context, _ string, _ int,
+) ([]autotag.MBReleaseGroupHit, bool) {
+	return nil, false
+}
+
 func TestScorer_PersistScoreWritesTopMatch(t *testing.T) {
 	t.Parallel()
 
@@ -461,4 +467,12 @@ func (c *countingMBClient) LookupReleaseGroup(
 	c.onSearch()
 
 	return autotag.MBReleaseGroupHit{}, nil
+}
+
+// SearchReleaseGroupsLocal is not a network call — it never counts
+// against the zero-network-call assertions this fake exists for.
+func (c *countingMBClient) SearchReleaseGroupsLocal(
+	_ context.Context, _ string, _ int,
+) ([]autotag.MBReleaseGroupHit, bool) {
+	return nil, false
 }

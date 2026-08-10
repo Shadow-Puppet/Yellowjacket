@@ -24,10 +24,62 @@ WHERE group_key = ?;
 DELETE FROM tagging_items
 WHERE group_key = ? AND track_count <= 0;
 
+-- name: PruneOrphanedTaggingItems :exec
+-- Self-healing sweep for rows whose track_count bookkeeping (scan
+-- orphan cleanup, maybeRebindTaggingGroup, SplitMixedFolder) never
+-- ran or drifted: a cancelled scan, a library move/rename the
+-- SoftScanAllLibraries disk-count/mtime heuristic did not catch, or
+-- a decrement that landed without its paired delete. Rather than
+-- trust track_count, this checks the ground truth directly: any
+-- group_key no audio_files row still points at is gone, and its
+-- tagging_items row (and cascaded tagging_candidates) should be too.
+-- Cheap: one indexed (idx_audio_files_group_key) existence check per
+-- row. Called opportunistically wherever the pending list is read,
+-- so stale entries cannot linger indefinitely between full rescans.
+DELETE FROM tagging_items
+WHERE NOT EXISTS (
+  SELECT 1 FROM audio_files af WHERE af.group_key = tagging_items.group_key
+);
+
+-- name: MarkTaggingItemSynthetic :exec
+-- Stamps a group as carved out of parent_group_key by
+-- SplitMixedFolder.  Idempotent: safe to call every time a track
+-- is migrated into the synthetic group, not just on first creation.
+UPDATE tagging_items
+SET synthetic = 1,
+    parent_group_key = ?
+WHERE group_key = ?;
+
 -- name: GetTaggingItem :one
 SELECT * FROM tagging_items
 WHERE group_key = ?
 LIMIT 1;
+
+-- name: ListLikelyMixedBagGroupKeys :many
+-- Cheap, whole-library triage pass for autotag.IsMixedBag: one
+-- grouped scan over audio_files (indexed on group_key) rather than
+-- hydrating every group's full track list in Go.  LOWER/TRIM is an
+-- approximation of autotag.Normalize (no unicode fold, no qualifier
+-- stripping) so this can flag a false positive Normalize would
+-- clear, or miss a true one Normalize would catch.  Treat it as a
+-- triage filter for which groups are worth a real autotag.
+-- IsMixedBag check, or a badge at minimum, not the final word.
+SELECT ti.group_key
+FROM tagging_items ti
+JOIN audio_files af ON af.group_key = ti.group_key
+LEFT JOIN recordings r ON af.recording_id = r.id
+LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
+LEFT JOIN release_group_recordings rgr ON rgr.recording_id = r.id
+LEFT JOIN release_groups rg ON rg.id = rgr.release_group_id
+WHERE ti.synthetic = 0
+  AND ti.track_count >= 4
+  AND (
+    ti.album_artist = ''
+    OR LOWER(TRIM(ti.album_artist)) IN ('various artists', 'various', 'va', 'v.a.', 'v a', 'unknown')
+  )
+GROUP BY ti.group_key
+HAVING COUNT(DISTINCT CASE WHEN ac.text != '' THEN LOWER(TRIM(ac.text)) END) > 1
+   AND COUNT(DISTINCT CASE WHEN rg.name != '' THEN LOWER(TRIM(rg.name)) END) > 1;
 
 -- name: CountPendingTaggingItems :one
 SELECT COUNT(*) FROM tagging_items
@@ -71,7 +123,8 @@ SELECT
   ti.score,
   ti.last_checked_at,
   ti.status,
-  ti.created_at
+  ti.created_at,
+  ti.synthetic
 FROM tagging_items ti
 LEFT JOIN libraries lb ON lb.id = ti.library_id
 WHERE (CAST(@library_id AS INTEGER) = 0 OR ti.library_id = @library_id)
@@ -102,7 +155,8 @@ SELECT
   ti.score,
   ti.last_checked_at,
   ti.status,
-  ti.created_at
+  ti.created_at,
+  ti.synthetic
 FROM tagging_items ti
 LEFT JOIN libraries lb ON lb.id = ti.library_id
 WHERE ti.group_key = ?
@@ -130,6 +184,10 @@ ORDER BY ti.created_at DESC, ti.group_key
 LIMIT @row_limit OFFSET @row_offset;
 
 -- name: ListAudioFilesInTaggingGroup :many
+-- album_name/album_artist are the PER-TRACK tags (via each track's
+-- own release_group link), not the folder-level tagging_items
+-- values.  SplitMixedFolder clusters on these to find sub-albums
+-- hiding inside a folder full of unrelated tracks.
 SELECT
   af.id,
   af.file_path,
@@ -140,10 +198,15 @@ SELECT
   COALESCE(r.disc_number, 0) AS disc_number,
   COALESCE(r.name, '') AS title,
   COALESCE(ac.text, '') AS artist_name,
-  COALESCE(r.mbid, '') AS recording_mbid
+  COALESCE(r.mbid, '') AS recording_mbid,
+  COALESCE(rg.name, '') AS album_name,
+  COALESCE(rgac.text, '') AS album_artist
 FROM audio_files af
 LEFT JOIN recordings r ON af.recording_id = r.id
 LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
+LEFT JOIN release_group_recordings rgr ON rgr.recording_id = r.id
+LEFT JOIN release_groups rg ON rg.id = rgr.release_group_id
+LEFT JOIN artist_credit rgac ON rg.album_artist_credit_id = rgac.id
 WHERE af.group_key = ?
 ORDER BY COALESCE(r.disc_number, 0),
          COALESCE(r.track_number, 0),

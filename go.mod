@@ -12,6 +12,7 @@ require (
 	github.com/go-flac/go-flac/v2 v2.0.4
 	github.com/godbus/dbus/v5 v5.1.0
 	github.com/golang-cz/devslog v0.0.15
+	github.com/google/uuid v1.6.0
 	github.com/gopxl/beep/v2 v2.1.1
 	github.com/klauspost/compress v1.17.9
 	github.com/parquet-go/parquet-go v0.30.1
@@ -158,7 +159,6 @@ require (
 	github.com/google/cel-go v0.26.1 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/gookit/color v1.6.0 // indirect
 	github.com/gordonklaus/ineffassign v0.2.0 // indirect
 	github.com/gorilla/css v1.0.1 // indirect

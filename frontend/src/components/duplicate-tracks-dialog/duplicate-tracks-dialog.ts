@@ -315,7 +315,7 @@ export class DuplicateTracksDialog extends LitElement {
                 <wa-switch
                     size="small"
                     ?checked=${this.applyToAll}
-                    @wa-change=${(e: Event) => {
+                    @change=${(e: Event) => {
                         this.applyToAll = (
                             e.target as HTMLInputElement
                         ).checked;

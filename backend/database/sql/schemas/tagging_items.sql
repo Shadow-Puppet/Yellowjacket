@@ -17,6 +17,28 @@ CREATE TABLE IF NOT EXISTS tagging_items (
   -- review state.
   cleared_at              DATETIME,
   created_at              DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  -- synthetic marks a group carved out of a "mixed bag" folder by
+  -- SplitMixedFolder: its tracks share a folder with unrelated
+  -- tracks (a junk-drawer directory) but were clustered together by
+  -- matching album/album-artist tags rather than by directory.
+  -- Scoring relaxes the missing-track penalty for these groups,
+  -- since they're a subset pulled out of a bigger folder, not a
+  -- complete rip of their own directory.  parent_group_key is the
+  -- original folder group they were split from.
+  --
+  -- These two columns are declared LAST, after created_at, even
+  -- though that reads oddly next to the rest of the table: sql/
+  -- migrations/0001 brings a pre-existing tagging_items up to date
+  -- with `ALTER TABLE ADD COLUMN`, which SQLite always appends at
+  -- the end of the column list.  A fresh install (this file) and an
+  -- upgraded database (this file + the migration) must end up with
+  -- IDENTICAL column order, because sqlc-generated `SELECT *` scans
+  -- (e.g. GetTaggingItem) bind columns positionally — see the
+  -- schema/migration column-order test in database_test.go.  Put
+  -- new columns wherever reads best when adding a table for the
+  -- first time; append-only from the second migration on.
+  synthetic               INTEGER NOT NULL DEFAULT 0,
+  parent_group_key        TEXT NOT NULL DEFAULT '',
   FOREIGN KEY(library_id) REFERENCES libraries(id)
 );
 
@@ -25,3 +47,10 @@ CREATE INDEX IF NOT EXISTS idx_tagging_items_library_status
 
 CREATE INDEX IF NOT EXISTS idx_tagging_items_status_pending
     ON tagging_items(library_id) WHERE status = 'pending';
+
+-- idx_tagging_items_parent_group_key is NOT declared here on
+-- purpose: this file runs unconditionally, before migrations, even
+-- against a database that hasn't run 0001 yet — an index predicate
+-- referencing parent_group_key would fail on that table.  It lives
+-- solely in sql/migrations/0001_tagging_items_synthetic.sql, which
+-- runs after the column exists either way (see database.go).

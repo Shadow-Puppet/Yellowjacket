@@ -361,6 +361,8 @@ type TaggingItem struct {
 	Status               string
 	ClearedAt            sql.NullTime
 	CreatedAt            time.Time
+	Synthetic            int64
+	ParentGroupKey       string
 }
 
 type TrackMetadatum struct {

@@ -78,6 +78,38 @@ func (q *Queries) GetArtistCreditByText(ctx context.Context, text string) (Artis
 	return i, err
 }
 
+const getOrphanedArtistCreditIDs = `-- name: GetOrphanedArtistCreditIDs :many
+SELECT ac.id FROM artist_credit ac
+WHERE NOT EXISTS (SELECT 1 FROM recordings r WHERE r.artist_credit_id = ac.id)
+  AND NOT EXISTS (SELECT 1 FROM release_groups rg WHERE rg.album_artist_credit_id = ac.id)
+`
+
+// Artist credits no longer used by any recording or release group - run
+// after orphaned recordings/release groups are deleted, so a credit
+// that only existed for now-removed tracks is cleaned up too.
+func (q *Queries) GetOrphanedArtistCreditIDs(ctx context.Context) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, getOrphanedArtistCreditIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateArtistCredit = `-- name: UpdateArtistCredit :exec
 UPDATE artist_credit 
 SET text = ?

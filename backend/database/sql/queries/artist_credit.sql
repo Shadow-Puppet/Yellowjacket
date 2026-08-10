@@ -32,3 +32,11 @@ SELECT
   (SELECT COUNT(*) FROM recordings WHERE artist_credit_id = ?1) +
   (SELECT COUNT(*) FROM release_groups WHERE album_artist_credit_id = ?1)
 AS total;
+
+-- name: GetOrphanedArtistCreditIDs :many
+-- Artist credits no longer used by any recording or release group - run
+-- after orphaned recordings/release groups are deleted, so a credit
+-- that only existed for now-removed tracks is cleaned up too.
+SELECT ac.id FROM artist_credit ac
+WHERE NOT EXISTS (SELECT 1 FROM recordings r WHERE r.artist_credit_id = ac.id)
+  AND NOT EXISTS (SELECT 1 FROM release_groups rg WHERE rg.album_artist_credit_id = ac.id);
