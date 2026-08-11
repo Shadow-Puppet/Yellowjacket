@@ -1766,11 +1766,11 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
 
                 // Wrap artist/album/track values in explore links.
                 if (col.id === 'trackName') {
-                    display = trackLink(track.TrackName, track.Album, track.ReleaseGroupMBID, track.RecordingMBID, display as any);
+                    display = trackLink(track.TrackName, track.Album, track.ReleaseGroupMBID, track.RecordingMBID, display as any, track.ArtistName);
                 } else if (col.id === 'artistName') {
                     display = artistLink(track.ArtistName, track.ArtistMBID, display as any);
                 } else if (col.id === 'album') {
-                    display = albumLink(track.Album, track.ReleaseGroupMBID, display as any);
+                    display = albumLink(track.Album, track.ReleaseGroupMBID, display as any, track.ArtistName);
                 }
 
                 return html`

@@ -97,6 +97,11 @@ export class ExploreAlbumDetails extends LitElement {
     @property({ type: String, attribute: 'highlight-track-mbid' })
     highlightTrackMBID = '';
 
+    /** Highlight target for a track with no recording MBID — the only
+     * handle an untagged track has is its title. */
+    @property({ type: String, attribute: 'highlight-track-title' })
+    highlightTrackTitle = '';
+
     @property({ type: Number, attribute: 'local-album-id' })
     localAlbumId = 0;
 
@@ -552,13 +557,15 @@ export class ExploreAlbumDetails extends LitElement {
 
     override updated() {
         if (
-            this.highlightTrackMBID &&
+            (this.highlightTrackMBID || this.highlightTrackTitle) &&
             !this.hasScrolledToHighlight &&
             !this.loadingReleases
         ) {
-            const el = this.shadowRoot?.querySelector<HTMLElement>(
-                `[data-track-mbid="${this.highlightTrackMBID}"]`,
-            );
+            const el = this.highlightTrackMBID
+                ? this.shadowRoot?.querySelector<HTMLElement>(
+                      `[data-track-mbid="${this.highlightTrackMBID}"]`,
+                  )
+                : this.findRowByTitle(this.highlightTrackTitle);
 
             if (el) {
                 this.hasScrolledToHighlight = true;
@@ -607,6 +614,26 @@ export class ExploreAlbumDetails extends LitElement {
                 });
             }
         }
+    }
+
+    /**
+     * Locate a track row by title, for tracks with no recording MBID.
+     * Matched in JS rather than by attribute selector because titles
+     * contain quotes and other things a selector cannot carry.
+     */
+    private findRowByTitle(title: string): HTMLElement | null {
+        const wanted = title.trim().toLowerCase();
+        const rows = this.shadowRoot?.querySelectorAll<HTMLElement>(
+            '.track-row[data-track-title]',
+        );
+
+        for (const row of rows ?? []) {
+            if ((row.dataset.trackTitle ?? '').toLowerCase() === wanted) {
+                return row;
+            }
+        }
+
+        return null;
     }
 
     /* ── Data Loading ── */
@@ -1904,6 +1931,7 @@ export class ExploreAlbumDetails extends LitElement {
                                     <div
                                         class="track-row"
                                         data-track-mbid="${track.mbid}"
+                                        data-track-title="${track.title}"
                                     >
                                         <span class="track-position"
                                             >${track.position}</span

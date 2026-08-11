@@ -1422,7 +1422,7 @@ export class QueuePanel
                 ${artUrl ? html`<div class="track-art"><img src="${artUrl}" alt="" loading="lazy" /></div>` : nothing}
                 <div class="track-details">
                     <span class="track-title">
-                        ${trackLink(this.getDisplayTitle(track), track.album, track.releaseGroupMbid, track.recordingMbid)}
+                        ${trackLink(this.getDisplayTitle(track), track.album, track.releaseGroupMbid, track.recordingMbid, undefined, track.artist)}
                     </span>
                     <span class="track-artist">
                         ${artistLink(track.artist, track.artistMbid) || 'Unknown Artist'}

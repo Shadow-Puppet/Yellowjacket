@@ -1245,9 +1245,9 @@ export class SmartPlaylistDetails
                                           ? html`<img src="${track.CoverArtSmall || track.CoverArtMedium}" alt="" />`
                                           : nothing}
                                   </div>
-                                  <span class="cell col-title" title="${track.Title || track.FilePath}">${trackLink(track.Title, track.Album, track.ReleaseGroupMBID, track.RecordingMBID) || track.FilePath}</span>
+                                  <span class="cell col-title" title="${track.Title || track.FilePath}">${trackLink(track.Title, track.Album, track.ReleaseGroupMBID, track.RecordingMBID, undefined, track.Artist) || track.FilePath}</span>
                                   <span class="cell col-artist" title="${track.Artist}">${artistLink(track.Artist, track.ArtistMBID)}</span>
-                                  <span class="cell col-album" title="${track.Album}">${albumLink(track.Album, track.ReleaseGroupMBID)}</span>
+                                  <span class="cell col-album" title="${track.Album}">${albumLink(track.Album, track.ReleaseGroupMBID, undefined, track.Artist)}</span>
                                   <span class="cell col-duration">${formatMilliseconds(track.Duration)}</span>`}
                         </div>
                     `;

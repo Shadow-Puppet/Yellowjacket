@@ -209,7 +209,14 @@ document.addEventListener('navigate', (e: Event) => {
             break;
         }
         case 'explore-album-details': {
-            const { releaseGroupMBID, albumName, artistName, highlightTrackMBID, localAlbumId } = detail;
+            const {
+                releaseGroupMBID,
+                albumName,
+                artistName,
+                highlightTrackMBID,
+                highlightTrackTitle,
+                localAlbumId,
+            } = detail;
             const el = document.createElement('explore-album-details');
 
             if (releaseGroupMBID) el.setAttribute('release-group-mbid', releaseGroupMBID);
@@ -217,6 +224,9 @@ document.addEventListener('navigate', (e: Event) => {
             if (artistName) el.setAttribute('artist-name', artistName);
             if (highlightTrackMBID) {
                 el.setAttribute('highlight-track-mbid', highlightTrackMBID);
+            }
+            if (highlightTrackTitle) {
+                el.setAttribute('highlight-track-title', highlightTrackTitle);
             }
             if (localAlbumId) el.setAttribute('local-album-id', String(localAlbumId));
             mainContent.appendChild(el);
