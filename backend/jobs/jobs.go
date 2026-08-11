@@ -13,8 +13,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
-
 	"yellowjacket/backend/events"
 )
 
@@ -245,7 +243,7 @@ func (r *Registry) emit() {
 		return
 	}
 
-	runtime.EventsEmit(ctx, events.JobsChanged, r.Snapshot())
+	events.Emit(ctx, events.JobsChanged, r.Snapshot())
 }
 
 // touch marks the registry dirty so the next emitter tick publishes it.

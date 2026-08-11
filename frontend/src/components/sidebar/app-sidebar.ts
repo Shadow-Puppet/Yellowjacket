@@ -215,6 +215,10 @@ export class AppSidebar extends LitElement {
             return html`
                         <li
                             class=${classes}
+                            data-testid="nav-${item.id}"
+                            aria-current=${this.activeView === item.id
+                    ? 'page'
+                    : 'false'}
                             @click=${() =>
                     this.navigate(item.id)}
                             @dragover=${(e: DragEvent) =>

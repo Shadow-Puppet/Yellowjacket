@@ -7,8 +7,6 @@ import (
 	"log/slog"
 	"strconv"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
-
 	"yellowjacket/backend/events"
 )
 
@@ -55,14 +53,9 @@ func (s *Service) SetContext(ctx context.Context) {
 }
 
 // emit publishes an event, tolerating a service that has no runtime
-// context yet.  Emitting on a non-runtime context is fatal in Wails, so
-// the nil check is load-bearing rather than defensive.
+// context yet.
 func (s *Service) emit(name string, data ...any) {
-	if s.ctx == nil {
-		return
-	}
-
-	runtime.EventsEmit(s.ctx, name, data...)
+	events.Emit(s.ctx, name, data...)
 }
 
 // ---------------------------------------------------------------------------

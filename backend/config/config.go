@@ -10,7 +10,6 @@ import (
 	"path"
 
 	"github.com/BurntSushi/toml"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"yellowjacket/backend/download"
 	"yellowjacket/backend/events"
@@ -306,15 +305,13 @@ func (c *Config) SetLibraryDirectory(dir string) error {
 		)
 	}
 
-	if c.ctx != nil {
-		runtime.EventsEmit(
-			c.ctx,
-			events.LibraryConfigChanged,
-			map[string]any{
-				"DirectoryPath": dir,
-			},
-		)
-	}
+	events.Emit(
+		c.ctx,
+		events.LibraryConfigChanged,
+		map[string]any{
+			"DirectoryPath": dir,
+		},
+	)
 
 	c.logger.Info(
 		"library directory updated",
@@ -494,11 +491,11 @@ func (c *Config) SetThemeBackgroundShade(
 
 // emitThemeChanged sends the ThemeConfigChanged event to the frontend.
 func (c *Config) emitThemeChanged() {
-	if c.ctx == nil || c.Theme == nil {
+	if c.Theme == nil {
 		return
 	}
 
-	runtime.EventsEmit(
+	events.Emit(
 		c.ctx,
 		events.ThemeConfigChanged,
 		map[string]any{
@@ -564,7 +561,7 @@ func (c *Config) emitTrackListChanged() {
 		})
 	}
 
-	runtime.EventsEmit(
+	events.Emit(
 		c.ctx,
 		events.TrackListConfigChanged,
 		map[string]any{
@@ -688,11 +685,11 @@ func (c *Config) SetPinDefaultPlaylist(pin bool) error {
 // emitFavoritesChanged sends the FavoritesConfigChanged event
 // to the frontend.
 func (c *Config) emitFavoritesChanged() {
-	if c.ctx == nil || c.Favorites == nil {
+	if c.Favorites == nil {
 		return
 	}
 
-	runtime.EventsEmit(
+	events.Emit(
 		c.ctx,
 		events.FavoritesConfigChanged,
 		map[string]any{
@@ -729,13 +726,11 @@ func (c *Config) SetShortcuts(
 		)
 	}
 
-	if c.ctx != nil {
-		runtime.EventsEmit(
-			c.ctx,
-			events.ShortcutsConfigChanged,
-			bindings,
-		)
-	}
+	events.Emit(
+		c.ctx,
+		events.ShortcutsConfigChanged,
+		bindings,
+	)
 
 	c.logger.Info("shortcuts config updated")
 
@@ -759,13 +754,11 @@ func (c *Config) SetShortcut(
 		)
 	}
 
-	if c.ctx != nil {
-		runtime.EventsEmit(
-			c.ctx,
-			events.ShortcutsConfigChanged,
-			c.Shortcuts.Bindings,
-		)
-	}
+	events.Emit(
+		c.ctx,
+		events.ShortcutsConfigChanged,
+		c.Shortcuts.Bindings,
+	)
 
 	c.logger.Info(
 		"shortcut updated",
@@ -788,13 +781,11 @@ func (c *Config) ResetShortcuts() error {
 		)
 	}
 
-	if c.ctx != nil {
-		runtime.EventsEmit(
-			c.ctx,
-			events.ShortcutsConfigChanged,
-			c.Shortcuts.Bindings,
-		)
-	}
+	events.Emit(
+		c.ctx,
+		events.ShortcutsConfigChanged,
+		c.Shortcuts.Bindings,
+	)
 
 	c.logger.Info("shortcuts reset to defaults")
 

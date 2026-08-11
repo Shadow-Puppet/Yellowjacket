@@ -23,7 +23,7 @@
         <app-sidebar></app-sidebar>
     </div>
     <div class="content-area">
-        <main class="main-panel" id="main-content">
+        <main class="main-panel" data-active-view="tracks" data-testid="main-content" id="main-content">
             <track-list></track-list>
         </main>
         <queue-panel id="queue-panel"></queue-panel>
@@ -31,7 +31,7 @@
     <footer class="bottom-bar">
         <now-playing></now-playing>
         <audio-player></audio-player>
-        <button id="queue-button">
+        <button aria-label="Toggle queue" id="queue-button">
             <wa-icon name="list"></wa-icon>
         </button>
     </footer>

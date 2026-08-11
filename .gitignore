@@ -3,6 +3,20 @@ node_modules
 build
 test_data
 test.db
+
+# ── Agent development harness (plan 005) ──
+# playwright-cli scratch output (snapshots, console logs, screenshots)
+.playwright-cli/
+# headless app process state: pid file + captured stdout
+.dev/
+# Playwright spec output: traces, screenshots and videos of failures
+e2e/test-results/
+e2e/playwright-report/
+
+# Vitest browser-mode scratch (screenshot diffs, failure captures).
+# The committed baselines under frontend/test/**/__screenshots__ stay.
+frontend/.vitest-attachments/
+
 .aider*
 lefthook-local.yml
 

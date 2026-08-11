@@ -12,7 +12,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"golang.org/x/sync/singleflight"
 
 	"yellowjacket/backend/database"
@@ -690,7 +689,7 @@ func (si *SearchIndex) emitStatus() {
 	status.Building = si.cancel != nil
 	si.mu.RUnlock()
 
-	runtime.EventsEmit(si.runtimeCtx, events.IndexStatusChanged, status)
+	events.Emit(si.runtimeCtx, events.IndexStatusChanged, status)
 
 	// Mirror into the shared job registry.  Every status mutation goes
 	// through emitStatus, so hooking here covers all update paths.

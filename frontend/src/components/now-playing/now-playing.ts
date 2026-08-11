@@ -339,6 +339,7 @@ export class NowPlaying extends LitElement {
           <div class="track-info">
             <span
               class="track-title ${titleScrolling ? 'will-scroll' : ''} ${this.titleScrolling ? 'scrolling' : ''}"
+              data-testid="now-playing-title"
               @mouseenter=${this.handleTitleMouseEnter}
               @mouseleave=${this.handleTitleMouseLeave}
               @transitionend=${() => this.onScrollCycleEnd('title')}
@@ -347,6 +348,7 @@ export class NowPlaying extends LitElement {
             </span>
             <span
               class="track-artist ${artistScrolling ? 'will-scroll' : ''} ${this.artistScrolling ? 'scrolling' : ''}"
+              data-testid="now-playing-artist"
               @mouseenter=${this.handleArtistMouseEnter}
               @mouseleave=${this.handleArtistMouseLeave}
               @transitionend=${() => this.onScrollCycleEnd('artist')}

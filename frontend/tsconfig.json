@@ -31,9 +31,10 @@
       "@pages/*": ["./src/pages/*"],
       "@runtime/*": ["./wailsjs/runtime/*"],
       "@utils/*": ["./src/utils/*"],
-      "@store/*": ["./src/store/*"]
+      "@store/*": ["./src/store/*"],
+      "@test/*": ["./test/*"]
     },
-    "types": ["vite/client"],
+    "types": ["vite/client", "@vitest/browser-playwright"],
     // needed for Lit Elements
     "experimentalDecorators": true,
     "useDefineForClassFields": false, // allows us to define properties as class fields
@@ -43,7 +44,7 @@
       {"name": "typescript-lit-html-plugin"}
     ]
   },
-  "include": ["src", "wailsjs"],
+  "include": ["src", "wailsjs", "test"],
   // Wails-generated JS stubs use @ts-check with untyped patterns that
   // violate strict mode. The companion .d.ts files provide the types.
   "exclude": ["wailsjs/go/**/*.js"]

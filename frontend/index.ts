@@ -98,6 +98,11 @@ document.addEventListener('navigate', (e: Event) => {
 
     searchStore.setCurrentView(view);
 
+    // Which view is showing is otherwise only inferable from which of
+    // the cached children lacks .view-hidden.  Publishing it as an
+    // attribute keeps e2e selectors semantic instead of structural.
+    mainContent.dataset.activeView = view;
+
     // --- Primary (cacheable) views ----------------------------------------
     if (view in VIEW_TAGS) {
         // Navigating to a primary view clears the history stack.

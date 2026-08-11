@@ -1,0 +1,21 @@
+{
+  "browser": {
+    "browserName": "chromium",
+    "launchOptions": {
+      "channel": "chromium"
+    },
+    "contextOptions": {
+      "viewport": { "width": 1440, "height": 900 }
+    },
+    "initScript": ["init-events.js"]
+  },
+  "testIdAttribute": "data-testid",
+  "outputDir": ".playwright-cli",
+  "console": {
+    "level": "warning"
+  },
+  "timeouts": {
+    "action": 10000,
+    "navigation": 30000
+  }
+}

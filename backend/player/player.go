@@ -16,7 +16,6 @@ import (
 	"github.com/gopxl/beep/v2/effects"
 	"github.com/gopxl/beep/v2/generators"
 	"github.com/gopxl/beep/v2/speaker"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"yellowjacket/backend/coverart"
 	"yellowjacket/backend/database"
@@ -192,7 +191,7 @@ func (p *Player) emitPlaybackStateChanged(state State) {
 		"Emitting PlaybackStateChangedEvent", "state", state,
 	)
 
-	runtime.EventsEmit(
+	events.Emit(
 		p.ctx,
 		events.PlaybackStateChanged,
 		map[string]string{"state": string(state)},
@@ -214,7 +213,7 @@ func (p *Player) emitPlaybackFinished() {
 	}
 
 	p.logger.Info("Emitting PlaybackFinishedEvent")
-	runtime.EventsEmit(p.ctx, events.PlaybackFinished, nil)
+	events.Emit(p.ctx, events.PlaybackFinished, nil)
 }
 
 func (p *Player) emitVolumeChanged() {
@@ -229,7 +228,7 @@ func (p *Player) emitVolumeChanged() {
 		"Emitting VolumeChangedEvent", "volume", volume,
 	)
 
-	runtime.EventsEmit(p.ctx, events.VolumeChanged, volume)
+	events.Emit(p.ctx, events.VolumeChanged, volume)
 
 	if p.mediaControls != nil {
 		// MPRIS volume is 0.0–1.0 linear.
@@ -263,7 +262,7 @@ func (p *Player) emitTrackChanged() {
 	p.trackChangeID++
 	trackInfo.TrackChangeID = p.trackChangeID
 
-	runtime.EventsEmit(
+	events.Emit(
 		p.ctx, events.TrackChanged, trackInfo,
 	)
 
@@ -381,13 +380,11 @@ func (p *Player) onPlaybackFinished() {
 	// calls that don't need player state.
 	p.emitPlaybackFinished()
 
-	if p.ctx != nil {
-		runtime.EventsEmit(
-			p.ctx,
-			events.PlaybackStateChanged,
-			map[string]string{"state": string(Stopped)},
-		)
-	}
+	events.Emit(
+		p.ctx,
+		events.PlaybackStateChanged,
+		map[string]string{"state": string(Stopped)},
+	)
 
 	// Notify media controls outside the lock. The track just
 	// ended so position is 0.
@@ -643,7 +640,7 @@ func (p *Player) UnloadTrack() {
 
 	// Notify frontend that there is no longer a current track.
 	p.emitPlaybackStateChanged(p.state)
-	runtime.EventsEmit(p.ctx, events.TrackChanged, nil)
+	events.Emit(p.ctx, events.TrackChanged, nil)
 
 	if p.mediaControls != nil {
 		p.mediaControls.UpdateMetadata(mediacontrols.Metadata{})
@@ -754,7 +751,7 @@ func (p *Player) Seek(targetSeconds int) error {
 
 func (p *Player) seekLocked(targetSeconds int) error {
 	if p.seeker == nil {
-		runtime.EventsEmit(p.ctx, events.SeekFailed)
+		events.Emit(p.ctx, events.SeekFailed)
 
 		return errNoAudioFileLoaded
 	}

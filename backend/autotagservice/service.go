@@ -19,8 +19,6 @@ import (
 	"sync"
 	"time"
 
-	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
-
 	"yellowjacket/backend/autotag"
 	"yellowjacket/backend/database"
 	"yellowjacket/backend/database/sql/sqlcgen"
@@ -85,13 +83,6 @@ type Service struct {
 	exp     *explore.Service
 	logger  *slog.Logger
 	ctx     context.Context
-	// ctxReady reports whether ctx is the Wails lifecycle context set
-	// via SetContext (rather than the context.Background() default).  It
-	// gates event emission: calling wailsruntime.EventsEmit with a
-	// non-runtime context triggers log.Fatalf (os.Exit) inside Wails, so
-	// a background worker that fires before OnStartup wires the context
-	// would otherwise take the whole app down on launch.
-	ctxReady bool
 
 	// Queue cursor — the group_key of the last item returned.
 	// GetNextPending uses it to advance.  Reset by StartAutotagQueue.
@@ -210,32 +201,18 @@ func (s *Service) SetContext(ctx context.Context) {
 	defer s.mu.Unlock()
 
 	s.ctx = ctx
-	s.ctxReady = ctx != nil
 }
 
-// emitEvent emits a Wails runtime event, but only when the stored
-// context actually carries the Wails runtime.  Wails' EventsEmit calls
-// log.Fatalf — which os.Exit()s the process and cannot be recovered —
-// whenever the context lacks its internal "events" value (e.g. the
-// context.Background() default, or any non-lifecycle context).  A
-// background worker (the prefetch/apply sweeps) that emits before, or
-// independently of, OnStartup wiring the real context would otherwise
-// take the whole app down on launch.  We replicate Wails' own
-// precondition here so a not-yet-ready context degrades to a no-op
-// instead of a crash.
+// emitEvent emits a Wails runtime event under the service lock, which
+// the background prefetch/apply sweeps need because they can emit
+// before OnStartup has wired the real context.  events.Emit tolerates
+// that; see its doc comment.
 func (s *Service) emitEvent(eventName string, data any) {
 	s.mu.Lock()
-	ready := s.ctxReady
 	ctx := s.ctx
 	s.mu.Unlock()
 
-	// hasWailsRuntime mirrors the check in wails/pkg/runtime.getEvents:
-	// the runtime is present only when ctx.Value("events") is non-nil.
-	if !ready || ctx == nil || ctx.Value("events") == nil {
-		return
-	}
-
-	wailsruntime.EventsEmit(ctx, eventName, data)
+	events.Emit(ctx, eventName, data)
 }
 
 // StartBackgroundPrefetch kicks off (or restarts) the prefetch

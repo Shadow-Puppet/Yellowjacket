@@ -243,6 +243,12 @@ export class ScrollManager {
     ): void {
         // Guard against stacked observers.
         this.resizeObserver?.disconnect();
+
+        // An empty library renders no scroll container, so the caller's
+        // query returns undefined and observe() throws — asynchronously,
+        // out of loadAlbums, where nothing catches it.
+        if (!container) return;
+
         this.currentColumnCount =
             this.getColumnCount(container);
 

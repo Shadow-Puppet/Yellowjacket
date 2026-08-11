@@ -4,44 +4,30 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"yellowjacket/internal/testfixtures"
 )
 
-// testMP3Files returns the paths to all .mp3 files in the curated
-// fixture library (`test_data/music_library_test/`).  Scoped
-// narrowly so that ad-hoc scramble / autotag fixtures placed
-// elsewhere under `test_data/` (e.g. `test_data/mb-tag/`) don't
-// get pulled into the assertion and fail on non-curated codecs.
-// Skips the test when the directory isn't present.
+// testMP3Files returns every .mp3 in the generated fixture library
+// (`make testdata`).  Scoped to that manifest so ad-hoc scramble /
+// autotag fixtures elsewhere under `test_data/` don't get pulled into
+// the assertion and fail on non-curated codecs.  Skips when the
+// fixtures haven't been generated.
 func testMP3Files(t *testing.T) []string {
 	t.Helper()
 
-	root := filepath.Join("..", "..", "test_data", "music_library_test")
-
-	if _, err := os.Stat(root); os.IsNotExist(err) {
-		t.Skip("test_data/music_library_test not present, skipping")
-	}
+	m := testfixtures.Load(t)
 
 	var files []string
 
-	err := filepath.Walk(root, func(
-		path string, info os.FileInfo, err error,
-	) error {
-		if err != nil {
-			return err
+	for _, track := range m.Tracks {
+		if track.Format == "mp3" {
+			files = append(files, m.Abs(track.Path))
 		}
-
-		if !info.IsDir() && filepath.Ext(path) == ".mp3" {
-			files = append(files, path)
-		}
-
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("walking test_data: %v", err)
 	}
 
 	if len(files) == 0 {
-		t.Skip("no .mp3 test fixtures found in test_data/")
+		t.Skip("no .mp3 fixtures in the manifest")
 	}
 
 	return files

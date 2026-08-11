@@ -15,8 +15,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
-
 	"yellowjacket/backend/coverart"
 	"yellowjacket/backend/database"
 	"yellowjacket/backend/database/sql/sqlcgen"
@@ -1451,11 +1449,7 @@ func (s *Service) emitEvent(
 	eventName string,
 	data any,
 ) {
-	if s.ctx == nil {
-		return
-	}
-
-	runtime.EventsEmit(s.ctx, eventName, data)
+	events.Emit(s.ctx, eventName, data)
 }
 
 // migrateExistingPlaylists generates M3U8 files for any

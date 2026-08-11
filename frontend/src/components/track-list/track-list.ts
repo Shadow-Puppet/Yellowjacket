@@ -1740,6 +1740,8 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
         })}
         draggable="true"
         data-index=${index}
+        data-testid="track-row"
+        data-file-path=${track.FilePath}
       >
         <div
           class=${classMap({

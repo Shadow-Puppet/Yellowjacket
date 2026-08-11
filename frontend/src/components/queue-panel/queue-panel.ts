@@ -1412,6 +1412,8 @@ export class QueuePanel
                     'drop-after': showAfter,
                 })}
                 data-index=${index}
+                data-testid="queue-row"
+                data-file-path=${track.filePath}
                 draggable="true"
             >
                 <span class="track-position">

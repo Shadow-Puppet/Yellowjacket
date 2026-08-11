@@ -7,8 +7,6 @@ import (
 	"log/slog"
 	"time"
 
-	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
-
 	"yellowjacket/backend/database"
 	"yellowjacket/backend/events"
 )
@@ -175,8 +173,8 @@ func (tw *TagWriter) WriteTrackTags(trackID int64, changes TagChanges) error {
 	}
 
 	// 7. Emit event (suppressed during batch writes).
-	if tw.ctx != nil && !tw.suppressEvents {
-		wailsruntime.EventsEmit(tw.ctx, events.TrackMetadataChanged,
+	if !tw.suppressEvents {
+		events.Emit(tw.ctx, events.TrackMetadataChanged,
 			map[string]any{
 				"trackId":  trackID,
 				"filePath": audioFile.FilePath,
@@ -214,6 +212,22 @@ func (tw *TagWriter) WriteUntrackedFileTags(
 		return errNoChanges
 	}
 
+	return WriteFileTags(tw.logger, filePath, changes)
+}
+
+// WriteFileTags writes tags straight to an audio file, with no
+// database, player or lock involvement.  It is the format-dispatch
+// half of WriteUntrackedFileTags, exported so tooling that has no
+// app to construct — the fixture generator in cmd/gentestdata — can
+// tag files with the same writers the app uses, rather than growing a
+// second tagger that is free to drift from this one.
+//
+// Callers owning a *TagWriter should use WriteUntrackedFileTags.
+func WriteFileTags(
+	logger *slog.Logger,
+	filePath string,
+	changes TagChanges,
+) error {
 	format, err := DetectFormat(filePath)
 	if err != nil {
 		return fmt.Errorf("detect format: %w", err)
@@ -221,13 +235,13 @@ func (tw *TagWriter) WriteUntrackedFileTags(
 
 	switch format {
 	case FormatMP3:
-		err = writeMp3Tags(tw.logger, filePath, changes)
+		err = writeMp3Tags(logger, filePath, changes)
 	case FormatFLAC:
-		err = writeFlacTags(tw.logger, filePath, changes)
+		err = writeFlacTags(logger, filePath, changes)
 	case FormatWAV:
-		err = writeWavTags(tw.logger, filePath, changes)
+		err = writeWavTags(logger, filePath, changes)
 	case FormatOGG:
-		err = writeOggTags(tw.logger, filePath, changes)
+		err = writeOggTags(logger, filePath, changes)
 	default:
 		err = fmt.Errorf("%w: %s", errUnsupportedFormat, format)
 	}
@@ -334,30 +348,26 @@ func (tw *TagWriter) BatchWriteTrackTags(
 		}
 
 		// Emit progress after each track (success or failure).
-		if tw.ctx != nil {
-			wailsruntime.EventsEmit(tw.ctx,
-				events.BatchWriteProgress,
-				map[string]any{
-					"current":   i + 1,
-					"total":     total,
-					"filePath":  filePath,
-					"succeeded": result.Succeeded,
-					"failed":    result.Failed,
-				},
-			)
-		}
+		events.Emit(tw.ctx,
+			events.BatchWriteProgress,
+			map[string]any{
+				"current":   i + 1,
+				"total":     total,
+				"filePath":  filePath,
+				"succeeded": result.Succeeded,
+				"failed":    result.Failed,
+			},
+		)
 	}
 
 	// Emit a single TrackMetadataChanged after the batch completes
 	// so the library store invalidates once rather than per-track.
-	if tw.ctx != nil {
-		wailsruntime.EventsEmit(tw.ctx, events.TrackMetadataChanged,
-			map[string]any{
-				"batch": true,
-				"total": result.Succeeded,
-			},
-		)
-	}
+	events.Emit(tw.ctx, events.TrackMetadataChanged,
+		map[string]any{
+			"batch": true,
+			"total": result.Succeeded,
+		},
+	)
 
 	tw.logger.Info("batch write complete",
 		"total", total,

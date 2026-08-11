@@ -16,7 +16,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"golang.org/x/sync/errgroup"
 
 	"yellowjacket/backend/autotag"
@@ -193,29 +192,16 @@ func (l *Library) SetContext(ctx context.Context) {
 	l.registerEventHandlers()
 }
 
-// emit publishes a Wails event, tolerating a context that carries no
-// Wails runtime.
-//
-// runtime.EventsEmit calls log.Fatalf when the context is nil or lacks
-// the runtime's "events" value, which terminates the process rather
-// than returning an error.  Background workers that outlive a context
-// and tests that construct a Library directly both hit that path, so
-// every emit in this package routes through here.
+// emit publishes a Wails event under the library lock, which the
+// background scan workers need because they outlive the context that
+// started them.  events.Emit tolerates a context with no Wails runtime;
+// see its doc comment.
 func (l *Library) emit(event string, data ...any) {
 	l.mu.Lock()
 	ctx := l.ctx
 	l.mu.Unlock()
 
-	if ctx == nil || ctx.Value("events") == nil {
-		l.logger.Debug(
-			"skipping event emit, no Wails runtime in context",
-			"event", event,
-		)
-
-		return
-	}
-
-	runtime.EventsEmit(ctx, event, data...)
+	events.Emit(ctx, event, data...)
 }
 
 // registerEventHandlers sets up Wails runtime event listeners.

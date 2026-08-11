@@ -155,8 +155,9 @@ export class SeekBar extends LitElement {
 
     return html`
       <div id="seek-bar-container">
-        <small>${elapsedTime}</small>
+        <small data-testid="elapsed-time">${elapsedTime}</small>
         <wa-slider
+          aria-label="Seek"
           .value="${this.seekValue}"
           max="${this.trackLength}"
           ?with-tooltip="${this.hasTrack}"
@@ -165,7 +166,7 @@ export class SeekBar extends LitElement {
           @change="${this.handleChange}"
           @input="${this.handleInput}"
         ></wa-slider>
-        <small>${remainingTime}</small>
+        <small data-testid="remaining-time">${remainingTime}</small>
       </div>
     `;
   }

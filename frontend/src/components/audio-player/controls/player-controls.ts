@@ -119,19 +119,29 @@ export class PlayerControls extends LitElement {
 
     return html`
       <div id="player-control-buttons">
-        <button class=${shuffleClass} @click=${this.handleShuffleClick}>
+        <button
+          class=${shuffleClass}
+          aria-label="Shuffle"
+          aria-pressed=${this.shuffleMode}
+          @click=${this.handleShuffleClick}
+        >
           <wa-icon name="shuffle"></wa-icon>
         </button>
-        <button @click=${this.handlePreviousClick}>
+        <button aria-label="Previous track" @click=${this.handlePreviousClick}>
           <wa-icon name="backward-step"></wa-icon>
         </button>
-        <button @click="${playOrPauseHandler}">
+        <button aria-label=${this.player.isPlaying ? 'Pause' : 'Play'} @click="${playOrPauseHandler}">
           <wa-icon name=${playOrPauseIcon}></wa-icon>
         </button>
-        <button @click=${this.handleNextClick}>
+        <button aria-label="Next track" @click=${this.handleNextClick}>
           <wa-icon name="forward-step"></wa-icon>
         </button>
-        <button class=${repeatClasses} @click=${this.handleRepeatClick}>
+        <button
+          class=${repeatClasses}
+          aria-label=${`Repeat: ${repeatMode}`}
+          aria-pressed=${repeatMode !== 'off'}
+          @click=${this.handleRepeatClick}
+        >
           <wa-icon name="repeat"></wa-icon>
         </button>
       </div>

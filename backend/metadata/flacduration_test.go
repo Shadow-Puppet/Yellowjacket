@@ -4,40 +4,32 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"yellowjacket/internal/testfixtures"
 )
 
-// testFlacFiles returns the paths to all .flac files in the
-// test_data directory.  It skips the test if none are found.
+// testFlacFiles returns every .flac in the generated fixture library
+// (`make testdata`).
+//
+// Sourced from the manifest rather than by walking test_data/, which
+// used to sweep up the deliberately malformed fixtures — a zero-byte
+// .flac is there to prove the scanner survives it, not to be handed to
+// a duration parser.
 func testFlacFiles(t *testing.T) []string {
 	t.Helper()
 
-	root := filepath.Join("..", "..", "test_data")
-
-	if _, err := os.Stat(root); os.IsNotExist(err) {
-		t.Skip("test_data directory not present, skipping")
-	}
+	m := testfixtures.Load(t)
 
 	var files []string
 
-	err := filepath.Walk(root, func(
-		path string, info os.FileInfo, err error,
-	) error {
-		if err != nil {
-			return err
+	for _, track := range m.Tracks {
+		if track.Format == "flac" {
+			files = append(files, m.Abs(track.Path))
 		}
-
-		if !info.IsDir() && filepath.Ext(path) == ".flac" {
-			files = append(files, path)
-		}
-
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("walking test_data: %v", err)
 	}
 
 	if len(files) == 0 {
-		t.Skip("no .flac test fixtures found in test_data/")
+		t.Skip("no .flac fixtures in the manifest")
 	}
 
 	return files

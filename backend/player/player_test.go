@@ -4,13 +4,9 @@ import (
 	"log/slog"
 	"os"
 	"testing"
-)
 
-var testQueue = []string{
-	"../../test_data/music_library_test/other_music/03 PONPONPON.mp3",
-	"../../test_data/music_library_test/01 Some Chords.mp3",
-	"../../test_data/music_library_test/03 anything.mp3",
-}
+	"yellowjacket/internal/testfixtures"
+)
 
 func TestPlayer(t *testing.T) {
 	// This is an integration test that requires:
@@ -22,6 +18,17 @@ func TestPlayer(t *testing.T) {
 		t.Skip(
 			"skipping: integration test requires Wails runtime and audio device (set YELLOWJACKET_INTEGRATION=1 to run)",
 		)
+	}
+
+	// One track per supported container, so a decoder regression in
+	// any of the four shows up here rather than only in whichever
+	// format the fixtures happened to lead with.
+	m := testfixtures.Load(t)
+	testQueue := []string{
+		m.Case(t, testfixtures.CaseCoverDedup)[0],
+		m.Case(t, testfixtures.CaseFLACAlbum)[0],
+		m.Case(t, testfixtures.CaseOGGAlbum)[0],
+		m.Case(t, testfixtures.CaseWAVTracks)[0],
 	}
 
 	t.Logf("Starting test")

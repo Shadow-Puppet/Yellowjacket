@@ -33,6 +33,7 @@ import (
 	"yellowjacket/backend/queue"
 	"yellowjacket/backend/system"
 	"yellowjacket/backend/tagwriter"
+	"yellowjacket/backend/testctl"
 )
 
 // YellowJacketApp is the main application struct for Wails.
@@ -130,6 +131,17 @@ func NewYellowJacketApp(
 
 		yjApp.assetHandler.RegisterHandler("/artist-images/", artistImgHandler)
 	}
+
+	// Dev-only /__test/ control surface: the residue of harness work the
+	// browser cannot reach (snapshot/restore the DB mid-run, force a
+	// backend event).  Compiled out of non-dev builds entirely, and even
+	// in a dev build it registers nothing unless YJ_TESTCTL=1.  The
+	// context is read lazily because it only exists after OnStartup.
+	testctl.Register(yjApp.assetHandler, testctl.Deps{
+		Logger:  logger,
+		DB:      yjApp.database,
+		Context: func() context.Context { return yjApp.appContext },
+	})
 
 	// create playlist service
 	yjApp.playlist = playlist.NewService(
@@ -290,7 +302,7 @@ func (yj *YellowJacketApp) initDownloadRuntime(ctx context.Context) {
 	yj.wanted.SetInterval(cfg.WantedInterval())
 	yj.wanted.SetBatch(cfg.WantedBatch)
 	yj.wanted.SetOnChange(func() {
-		wailsruntime.EventsEmit(ctx, events.RequestsChanged)
+		events.Emit(ctx, events.RequestsChanged)
 	})
 	yj.wanted.Start(ctx)
 }

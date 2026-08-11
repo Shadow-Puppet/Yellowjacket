@@ -1,0 +1,299 @@
+name: CI
+
+# The other three workflows package and publish; none of them test
+# anything, so a green tick on this repo used to mean "the Arch package
+# built", which is not the question anyone was asking.  This is the
+# workflow that gates.
+#
+# Both jobs were prototyped end to end in a bare ubuntu:24.04 container
+# before being written here, so every step below is a transcription of
+# something observed working rather than something expected to.
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+# A newer push supersedes an older one on the same ref.  Job 2 binds
+# :34115, so overlapping runs on one runner would fight over the port.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: '1.25.0'
+  # Shared by all three Playwright consumers (@playwright/cli, e2e/'s
+  # @playwright/test, frontend/'s Vitest provider).  See the browsers
+  # step in job 2 for why that is not the whole story.
+  PLAYWRIGHT_BROWSERS_PATH: /cache/ms-playwright
+  # Best-effort pnpm store reuse; pnpm reads npm_config_* for its own
+  # config keys.  If it ever stops honouring this we lose cache warmth
+  # and nothing else.
+  npm_config_store_dir: /cache/pnpm-store
+
+jobs:
+  # ---------------------------------------------------------------- #
+  # Job 1: everything that does not need a display.                   #
+  # ---------------------------------------------------------------- #
+  check:
+    runs-on: ubuntu-latest
+    container:
+      # Not golang:1.25 — this job runs `make ui-test`, which is Vitest
+      # *browser* mode and needs a Chromium and its system libraries
+      # anyway, so the "fast job needs no browser" split does not hold.
+      # Not the Playwright image either: e2e/ pins @playwright/test
+      # ^1.56 and frontend/ pins playwright ^1.62, so a prebuilt browser
+      # set matches at most one of them.  Ubuntu 24.04 is also what
+      # Playwright's WebKit build links against, which job 2 needs.
+      image: ubuntu:24.04
+      # GOMODCACHE / GOCACHE / GOLANGCI_LINT_CACHE are already mounted
+      # and exported for every job by the runner's container.options, so
+      # only the Node-side caches are listed here.  The runner's
+      # valid_volumes allows anything under the cache root.
+      volumes:
+        - /home/logan/docker/gitea/data/runner/cache/tool:/cache/tool
+        - /home/logan/docker/gitea/data/runner/cache/ms-playwright:/cache/ms-playwright
+        - /home/logan/docker/gitea/data/runner/cache/pnpm-store:/cache/pnpm-store
+    env:
+      PACKAGE_TOKEN: ${{ secrets.PACKAGE_TOKEN }}
+      SERVER_URL: ${{ github.server_url }}
+      REPO: ${{ github.repository }}
+      SHA: ${{ github.sha }}
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: System packages
+        run: |
+          set -eu
+          apt-get update -qq
+          # libwebkit2gtk-4.1-dev and libasound2-dev are not optional:
+          # the app is cgo, and without alsa.pc oto/v3 fails at
+          # `pkg-config --cflags -- alsa` before anything is compiled.
+          apt-get install -y -qq --no-install-recommends \
+            ca-certificates curl git jq build-essential pkg-config \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libasound2-dev ffmpeg
+
+      # Cloned by hand rather than with actions/checkout: that is a JS
+      # action and needs node inside the job container before any step
+      # has had a chance to install it.  Same approach as the other
+      # three workflows in this directory.
+      - name: Clone repo at this commit
+        run: |
+          set -eu
+          git clone --quiet \
+            "https://x-access-token:${PACKAGE_TOKEN}@${SERVER_URL#https://}/${REPO}.git" /src
+          git -C /src checkout --quiet --detach "$SHA"
+          git -C /src log --oneline -1
+          # make bindings-check compares against the work tree, so git
+          # has to be willing to operate on a directory it does not own.
+          git config --global --add safe.directory /src
+
+      - name: Go toolchain
+        run: |
+          set -eu
+          if [ ! -x /cache/tool/go/bin/go ] || ! /cache/tool/go/bin/go version | grep -q "$GO_VERSION"; then
+            mkdir -p /cache/tool && rm -rf /cache/tool/go
+            curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" | tar -C /cache/tool -xz
+          fi
+          echo "/cache/tool/go/bin" >> "$GITHUB_PATH"
+          /cache/tool/go/bin/go version
+
+      - name: Node toolchain
+        run: |
+          set -eu
+          curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+          apt-get install -y -qq --no-install-recommends nodejs
+          corepack enable
+          node --version
+
+      - name: Vitest provider browser
+        working-directory: /src/frontend
+        run: |
+          set -eu
+          pnpm install --frozen-lockfile
+          npx playwright install --with-deps chromium
+
+      # `make lint` and `make test` each run all three build
+      # configurations (app / indexbuild / dev) with matching tag sets.
+      - name: Lint
+        working-directory: /src
+        run: make lint
+
+      - name: Test
+        working-directory: /src
+        run: make test
+
+      - name: Typecheck the frontend
+        working-directory: /src/frontend
+        run: npx tsc --noEmit
+
+      - name: Component and store suite
+        working-directory: /src
+        run: make ui-test
+
+      # frontend/wailsjs is generated by `wails`, not by `go generate`,
+      # so the codegen pre-commit hook does not cover it.
+      - name: Bindings are current
+        working-directory: /src
+        run: make bindings-check
+
+      # Every `make <target>` named under .pi/**/*.md must exist, so an
+      # agent is never sent at a command that was renamed away.
+      - name: Documented make targets exist
+        working-directory: /src
+        run: make skill-check
+
+  # ---------------------------------------------------------------- #
+  # Job 2: the real app, under a virtual display.                     #
+  # ---------------------------------------------------------------- #
+  e2e:
+    runs-on: ubuntu-latest
+    needs: check
+    container:
+      image: ubuntu:24.04
+      volumes:
+        - /home/logan/docker/gitea/data/runner/cache/tool:/cache/tool
+        - /home/logan/docker/gitea/data/runner/cache/ms-playwright:/cache/ms-playwright
+        - /home/logan/docker/gitea/data/runner/cache/pnpm-store:/cache/pnpm-store
+    env:
+      PACKAGE_TOKEN: ${{ secrets.PACKAGE_TOKEN }}
+      SERVER_URL: ${{ github.server_url }}
+      REPO: ${{ github.repository }}
+      SHA: ${{ github.sha }}
+      DEBIAN_FRONTEND: noninteractive
+      # The explore artifact is stubbed with a dead address, exactly as
+      # scripts/seed-sandbox.sh does it.  Serving a real cut-down
+      # artifact would mean building one under the indexbuild tag from
+      # dump state this runner does not have, and no spec asserts on
+      # explore content, so it would buy nothing.  Note that
+      # dev-headless.sh does *not* set this itself — only seed-sandbox
+      # does — so the run would otherwise fetch the real artifact over
+      # the network.  It is also worth ~8x on suite wall clock: the
+      # testctl DB restore spec copies every table, and the real
+      # artifact makes that table set enormous.
+      YJ_CORE_INDEX_URL: 'http://127.0.0.1:1/none.tar.zst'
+    steps:
+      - name: System packages
+        run: |
+          set -eu
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+            ca-certificates curl git jq build-essential pkg-config \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libasound2-dev \
+            xvfb dbus dbus-x11 ffmpeg libasound2t64
+
+      - name: Clone repo at this commit
+        run: |
+          set -eu
+          git clone --quiet \
+            "https://x-access-token:${PACKAGE_TOKEN}@${SERVER_URL#https://}/${REPO}.git" /src
+          git -C /src checkout --quiet --detach "$SHA"
+          git config --global --add safe.directory /src
+
+      - name: Go toolchain
+        run: |
+          set -eu
+          if [ ! -x /cache/tool/go/bin/go ] || ! /cache/tool/go/bin/go version | grep -q "$GO_VERSION"; then
+            mkdir -p /cache/tool && rm -rf /cache/tool/go
+            curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" | tar -C /cache/tool -xz
+          fi
+          echo "/cache/tool/go/bin" >> "$GITHUB_PATH"
+
+      - name: Node toolchain
+        run: |
+          set -eu
+          curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+          apt-get install -y -qq --no-install-recommends nodejs
+          corepack enable
+
+      # scripts/seed-sandbox.sh drives the real AddLibrary binding
+      # through playwright-cli, so the CLI has to be on PATH.
+      - name: Playwright CLI
+        run: npm install -g @playwright/cli
+
+      - name: Browsers
+        working-directory: /src/e2e
+        run: |
+          set -eu
+          # PLAYWRIGHT_BROWSERS_PATH unifies the *location*, not the
+          # *revisions*: @playwright/cli bundles its own playwright-core
+          # pinned to a different Chromium build than @playwright/test,
+          # so each installs its own into the shared directory.  Drop
+          # either line and the other fails with "Browser chromium is
+          # not installed; expected executable at ...".
+          pnpm install --frozen-lockfile
+          npx playwright install --with-deps chromium webkit
+          playwright-cli install-browser chromium
+
+      # oto/v3 talks to libasound directly, and a container has no
+      # PulseAudio socket to fall back on.  ALSA's null plugin advances
+      # its pointer on a timer rather than discarding instantly, so beep
+      # is consumed at real-time rate and the elapsed clock actually
+      # moves — which playback.spec.ts asserts.  Measured: InitSpeaker
+      # succeeds in ~36 ms and all six playback specs pass.  Without
+      # this, app.go joins the failure into startupErr and everything
+      # except playback still works, so the suite fails looking like
+      # flake rather than like a missing dependency.
+      - name: Null audio sink
+        run: |
+          printf 'pcm.!default { type null }\nctl.!default { type null }\n' > /etc/asound.conf
+
+      - name: Fixtures and seed
+        working-directory: /src
+        run: |
+          set -eu
+          make testdata
+          # A seed is built by *running the app* and driving the real
+          # AddLibrary binding — never by writing config.toml and DB
+          # rows, which would be a second description of a valid YJ_HOME.
+          make sandbox-seed NAME=default
+
+      # dev-headless daemonises (writes .dev/app.pid and returns), which
+      # is why Playwright's webServer cannot supervise it and why this is
+      # a step of its own.  e2e/'s globalSetup checks /__test/health.
+      - name: Start the app headless
+        working-directory: /src
+        run: make dev-headless SEED=default
+
+      - name: E2E — chromium
+        working-directory: /src
+        run: make e2e
+
+      # Playwright's Linux WebKit links Ubuntu 24.04 libraries that Arch
+      # does not provide, so this cannot run on a dev machine at all: CI
+      # is the only place we get any signal about the WebKit2GTK renderer
+      # we actually ship.  Required rather than advisory because it was
+      # measured green (19/19) in this exact container before being
+      # enabled, and because nothing in e2e/ compares pixels — every
+      # assertion is an event payload, a testid, an attribute or backend
+      # state, so a WebKit failure here is an engine bug, not baseline
+      # noise.  It costs ~11 s.
+      - name: E2E — webkit
+        working-directory: /src
+        env:
+          YJ_E2E_WEBKIT: '1'
+        run: make e2e E2E_ARGS="--project=webkit"
+
+      # The app log is the only place a hung binding call explains
+      # itself, so put it in the job log where `gitea_ci job_logs` can
+      # reach it without downloading an artifact.
+      - name: App log on failure
+        if: failure()
+        working-directory: /src
+        run: tail -n 200 .dev/app.log || true
+
+      - name: Upload traces and screenshots
+        if: failure()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-report-${{ github.run_id }}
+          path: |
+            /src/e2e/playwright-report/
+            /src/.dev/app.log
+          retention-days: 7
+
+      - name: Stop the app
+        if: always()
+        working-directory: /src
+        run: make dev-stop || true

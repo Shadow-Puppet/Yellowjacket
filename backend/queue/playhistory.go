@@ -3,8 +3,6 @@ package queue
 import (
 	"time"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
-
 	"yellowjacket/backend/events"
 )
 
@@ -62,9 +60,5 @@ func (q *Queue) recordPlay(audioFileID int64) {
 	)
 
 	// Notify frontend so the track list refreshes play count.
-	if q.ctx != nil {
-		runtime.EventsEmit(
-			q.ctx, events.TrackMetadataChanged,
-		)
-	}
+	events.Emit(q.ctx, events.TrackMetadataChanged)
 }

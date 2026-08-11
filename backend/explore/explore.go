@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"golang.org/x/sync/singleflight"
 
 	"yellowjacket/backend/database"
@@ -650,8 +649,8 @@ func (e *Service) ensureReleasesAsync(releaseGroupMBID string) {
 	go func() {
 		_, _, _ = e.releasesSF.Do(releaseGroupMBID, func() (any, error) {
 			_, err := e.mb.BrowseReleases(e.ctx, releaseGroupMBID)
-			if err == nil && e.ctx != nil {
-				runtime.EventsEmit(e.ctx, events.AlbumReleasesReady, releaseGroupMBID)
+			if err == nil {
+				events.Emit(e.ctx, events.AlbumReleasesReady, releaseGroupMBID)
 			}
 
 			return nil, nil
@@ -804,9 +803,7 @@ func (e *Service) ensureDiscographyAsync(artistMBID string) {
 		_, _, _ = e.discogSF.Do(artistMBID, func() (any, error) {
 			e.index.EnsureArtistDiscography(e.ctx, artistMBID)
 
-			if e.ctx != nil {
-				runtime.EventsEmit(e.ctx, events.ArtistDiscographyReady, artistMBID)
-			}
+			events.Emit(e.ctx, events.ArtistDiscographyReady, artistMBID)
 
 			return nil, nil
 		})
@@ -864,9 +861,7 @@ func (e *Service) ensureSimilarArtistsAsync(artistMBID string) {
 			if err == nil {
 				e.index.PersistSimilarArtists(artistMBID, similar)
 
-				if e.ctx != nil {
-					runtime.EventsEmit(e.ctx, events.ArtistSimilarReady, artistMBID)
-				}
+				events.Emit(e.ctx, events.ArtistSimilarReady, artistMBID)
 			}
 
 			return nil, nil
