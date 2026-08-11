@@ -16,19 +16,25 @@ All four tiers verified green from a cold, cleaned state:
 verified green in a bare `ubuntu:24.04` container, including 19/19 on
 WebKit.
 
-- [ ] **Push `.gitea/workflows/ci.yml` and confirm with `gitea_ci`.**
-      Nothing has run on the shared runner yet — the whole workflow was
-      validated locally in Docker. A run that never starts looks
-      identical to one that passed, so the push is not done until
-      `gitea_ci` says so.
-- [ ] Decide whether to commit phases 1–7 as one commit or split by
-      phase (waiting on the user; nothing is committed yet).
+**Committed and pushed** as `5ca6cad` (the harness) + `ccacd67` (a CI
+fix), and **green on the real runner**: job `check` ~4 min, job `e2e`
+~3 min with 19/19 chromium *and* 19/19 webkit. One commit rather than
+seven because the working tree was the end state, not per-phase
+snapshots — `Makefile`, `CLAUDE.md` and `lefthook.yml` are touched by
+nearly every phase, so a split would have been fabricated history.
 
-Unverified on the real runner, and the likeliest first failures:
-`actions/upload-artifact` needs node in the container (it is installed
-by an earlier step, and the step is `continue-on-error`, so a failure
-there cannot mask a real one); and the `npm_config_store_dir` pnpm
-cache is best-effort — if pnpm ignores it we lose warmth, nothing else.
+Still unverified, because no run has failed yet: the
+`actions/upload-artifact` step (`continue-on-error`, so it cannot mask
+a real failure) and whether pnpm honours `npm_config_store_dir` for
+store caching. Worth checking the next time a spec legitimately fails.
+
+- [ ] `gitea_ci`'s `job_logs` returns 404 on Gitea 1.27.1 — the endpoint
+      is not exposed. Logs come from the VPS instead: `zstdcat` the file
+      under `gitea/actions_log/<owner>/<repo>/<xx>/<task_id>.log.zst`,
+      and note `zstdcat` is not in the gitea container, so
+      `docker cp` it out first. Job status is `action_run_job.status`
+      (1 success, 2 failure, 4 skipped, 5 waiting, 6 running).
+      Probably belongs in the `gitea` skill, not here.
 
 Open items deliberately not fixed: WAV tags are write-only
 (`TestWAVTagsAreNotReadableYet`), `themeStore.loadFromBackend`'s failure
