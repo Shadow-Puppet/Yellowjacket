@@ -8,6 +8,7 @@ import { describe, expect, it, beforeEach, vi, afterEach } from 'vitest';
 
 import '@components/audio-player/controls/player-controls';
 import '@components/audio-player/seekbar/seek-bar';
+import '@components/audio-player/volume-control/volume-control';
 import { Events } from '../../src/events';
 import { emit, calls, lastArgs, flush } from '@test/support/harness';
 import {
@@ -308,5 +309,53 @@ describe('<seek-bar>', () => {
 
     await visual(el, 'seek-bar');
     expect(text(el, '[data-testid="elapsed-time"]')).toBe('00:30');
+  });
+});
+
+/**
+ * Mute is silence at an unchanged volume level, so the indicator has to
+ * be driven by its own event — watching the volume number, as it used
+ * to, meant pressing M visibly did nothing.
+ */
+describe('volume control: mute', () => {
+  beforeEach(() => {
+    emit(Events.VolumeChanged, 40);
+    emit(Events.MuteChanged, false);
+  });
+
+  it('shows a muted glyph and label once the backend reports mute', async () => {
+    const el = await fixture('volume-control');
+
+    expect(shadow(el, 'button')?.getAttribute('data-muted')).toBe('false');
+
+    emit(Events.MuteChanged, true);
+    await flush();
+    await el.updateComplete;
+
+    expect(shadow(el, 'button')?.getAttribute('data-muted')).toBe('true');
+    expect(shadow(el, 'button wa-icon')?.getAttribute('name')).toBe(
+      'volume-xmark',
+    );
+    expect(shadow(el, 'button')?.getAttribute('aria-label')).toBe('Muted');
+  });
+
+  it('keeps showing the volume level while muted, because it is unchanged', async () => {
+    emit(Events.MuteChanged, true);
+    await flush();
+
+    const el = await fixture('volume-control');
+    await click(el, 'button');
+
+    expect(shadow<HTMLInputElement>(el, 'wa-slider')?.value).toBe(40);
+  });
+
+  it('toggles mute through the backend rather than locally', async () => {
+    const el = await fixture('volume-control');
+    await click(el, 'button');
+    await click(el, '.mute-toggle');
+
+    expect(calls('player.Player.MuteToggle').length).toBe(1);
+    // Nothing optimistic: the icon follows the backend's event.
+    expect(shadow(el, 'button')?.getAttribute('data-muted')).toBe('false');
   });
 });

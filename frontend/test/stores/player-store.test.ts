@@ -79,6 +79,19 @@ describe('player store: playback state', () => {
     expect(playerStore.getState().volume).toBe(42);
   });
 
+  it('tracks mute separately from the volume level', () => {
+    // Mute leaves the volume number alone, which is exactly why it
+    // needs an event of its own: the indicator had nothing to react to.
+    emit(Events.VolumeChanged, 42);
+    emit(Events.MuteChanged, true);
+
+    expect(playerStore.getState()).toMatchObject({ volume: 42, muted: true });
+
+    emit(Events.MuteChanged, false);
+
+    expect(playerStore.getState().muted).toBe(false);
+  });
+
   it('replaces state rather than mutating it, so a saved reference is stable', () => {
     emit(Events.VolumeChanged, 10);
     const before = playerStore.getState();
@@ -110,12 +123,14 @@ describe('player store: actions', () => {
     playerStore.loadTrack('/music/one.mp3');
     playerStore.seek(30);
     playerStore.setVolume(60);
+    playerStore.toggleMute();
 
     expect(calls().map((c) => c.path)).toEqual([
       'player.Player.Pause',
       'player.Player.LoadFile',
       'player.Player.Seek',
       'player.Player.SetVolume',
+      'player.Player.MuteToggle',
     ]);
   });
 

@@ -224,11 +224,18 @@ func (p *Player) emitVolumeChanged() {
 	}
 
 	volume := int(p.getUserVolume())
+	muted := p.volume != nil && p.volume.Silent
 	p.logger.Info(
-		"Emitting VolumeChangedEvent", "volume", volume,
+		"Emitting VolumeChangedEvent", "volume", volume, "muted", muted,
 	)
 
 	events.Emit(p.ctx, events.VolumeChanged, volume)
+
+	// Mute rides on its own event rather than widening the volume
+	// payload: silence does not change the volume level, so a UI that
+	// only watched VolumeChanged saw nothing happen when the user hit
+	// the mute key.
+	events.Emit(p.ctx, events.MuteChanged, muted)
 
 	if p.mediaControls != nil {
 		// MPRIS volume is 0.0–1.0 linear.
@@ -692,12 +699,27 @@ func (p *Player) getUserVolume() UserVolume {
 	return Volume(p.volume.Volume).ToUserVolume()
 }
 
+// Muted reports whether playback is currently silenced.
+func (p *Player) Muted() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	return p.volume != nil && p.volume.Silent
+}
+
 // MuteToggle toggles the mute state.
 func (p *Player) MuteToggle() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	if p.volume == nil {
+		return errNoAudioFileLoaded
+	}
+
+	speaker.Lock()
 	p.volume.Silent = !p.volume.Silent
+	speaker.Unlock()
+
 	p.emitVolumeChanged()
 	p.saveState()
 

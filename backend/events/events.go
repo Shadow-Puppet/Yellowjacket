@@ -12,6 +12,7 @@ const (
 	TrackChanged         = "TrackChanged"
 	SeekFailed           = "SeekFailed"
 	VolumeChanged        = "VolumeChanged"
+	MuteChanged          = "MuteChanged"
 )
 
 // Queue events (backend → frontend push).

@@ -38,6 +38,10 @@ export function MuteToggle() {
   return window['go']['player']['Player']['MuteToggle']();
 }
 
+export function Muted() {
+  return window['go']['player']['Player']['Muted']();
+}
+
 export function Pause() {
   return window['go']['player']['Player']['Pause']();
 }

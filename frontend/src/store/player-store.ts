@@ -28,6 +28,7 @@ export interface PlayerState {
   isPlaying: boolean;
   currentTrack: TrackInfo | null;
   volume: number; // 0-100
+  muted: boolean; // silenced independently of the volume level
 
   // Frontend-only state (for future use)
   // selectedTrackIds: Set<number>;
@@ -41,6 +42,7 @@ class PlayerStore {
     isPlaying: false,
     currentTrack: null,
     volume: 50,
+    muted: false,
   };
 
   private subscribers = new Set<Subscriber>();
@@ -72,6 +74,10 @@ class PlayerStore {
     EventsOn(Events.VolumeChanged, (volume: number) => {
       this.update({ volume });
     });
+
+    EventsOn(Events.MuteChanged, (muted: boolean) => {
+      this.update({ muted });
+    });
   }
 
   // ===================================================================
@@ -101,6 +107,10 @@ class PlayerStore {
 
   setVolume(level: number): void {
     Player.SetVolume(level);
+  }
+
+  toggleMute(): void {
+    void Player.MuteToggle();
   }
 
   // ===================================================================

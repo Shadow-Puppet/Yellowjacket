@@ -22,6 +22,8 @@ export function LoadFile(arg1:string):Promise<void>;
 
 export function MuteToggle():Promise<void>;
 
+export function Muted():Promise<boolean>;
+
 export function Pause():Promise<void>;
 
 export function Play():Promise<void>;

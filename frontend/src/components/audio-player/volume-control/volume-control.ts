@@ -45,6 +45,23 @@ export class VolumeControl extends LitElement {
       align-items: center;
     }
 
+    /* Muted is a state the volume number cannot express, so it gets a
+       colour of its own on top of the crossed-out icon. */
+    button.muted {
+      color: var(--yj-text-tertiary, #888);
+    }
+
+    .volume-popup.muted wa-slider::part(indicator) {
+      background: var(--yj-text-tertiary, #888);
+    }
+
+    .mute-toggle {
+      margin-top: 10px;
+      font-size: 11px;
+      color: var(--yj-text-secondary, #b3b3b3);
+      white-space: nowrap;
+    }
+
     .volume-popup {
       position: absolute;
       bottom: 100%;
@@ -56,6 +73,8 @@ export class VolumeControl extends LitElement {
       padding: 16px 8px;
       margin-bottom: 8px;
       display: flex;
+      flex-direction: column;
+      align-items: center;
       justify-content: center;
       z-index: 100;
     }
@@ -91,7 +110,8 @@ export class VolumeControl extends LitElement {
   private get volumeIcon(): string {
     const vol = this.currentVolume;
 
-    if (vol === 0) return 'volume-xmark';
+    if (this.player.muted) return 'volume-xmark';
+    if (vol === 0) return 'volume-off';
     if (vol <= 50) return 'volume-low';
 
     return 'volume-high';
@@ -169,13 +189,25 @@ export class VolumeControl extends LitElement {
   // ===================================================================
 
   override render() {
+    const muted = this.player.muted;
+
     return html`
-      <button @click="${this.toggleSlider}" @wheel="${this.handleWheel}">
+      <button
+        class=${muted ? 'muted' : ''}
+        title=${muted ? 'Muted — click for volume' : 'Volume'}
+        aria-label=${muted ? 'Muted' : `Volume ${this.currentVolume}%`}
+        data-muted=${muted ? 'true' : 'false'}
+        @click="${this.toggleSlider}"
+        @wheel="${this.handleWheel}"
+      >
         <wa-icon name=${this.volumeIcon}></wa-icon>
       </button>
       ${this.showSlider
         ? html`
-            <div class="volume-popup" @click="${this.handlePopupClick}">
+            <div
+              class="volume-popup ${muted ? 'muted' : ''}"
+              @click="${this.handlePopupClick}"
+            >
               <wa-slider
                 orientation="vertical"
                 min="0"
@@ -183,6 +215,12 @@ export class VolumeControl extends LitElement {
                 .value="${this.currentVolume}"
                 @input="${this.handleInput}"
               ></wa-slider>
+              <button
+                class="mute-toggle"
+                @click=${() => this.player.toggleMute()}
+              >
+                ${muted ? 'Unmute' : 'Mute'}
+              </button>
             </div>
           `
         : ''}

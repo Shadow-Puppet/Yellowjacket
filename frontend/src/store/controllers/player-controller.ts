@@ -62,6 +62,10 @@ export class PlayerController implements ReactiveController {
     return this.state.volume;
   }
 
+  get muted(): boolean {
+    return this.state.muted;
+  }
+
   // ===================================================================
   // ACTIONS
   // Delegate to store (which delegates to backend)
@@ -81,5 +85,9 @@ export class PlayerController implements ReactiveController {
 
   setVolume(level: number): void {
     playerStore.setVolume(level);
+  }
+
+  toggleMute(): void {
+    playerStore.toggleMute();
   }
 }

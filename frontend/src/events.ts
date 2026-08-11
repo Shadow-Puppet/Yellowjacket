@@ -7,6 +7,7 @@ export const Events = {
     TrackChanged: "TrackChanged",
     SeekFailed: "SeekFailed",
     VolumeChanged: "VolumeChanged",
+    MuteChanged: "MuteChanged",
 
     // Queue events (backend → frontend push)
     QueueChanged: "QueueChanged",
