@@ -638,3 +638,30 @@ WebKit2GTK signal we otherwise have no way to get. And it is cheap
 enough that the earlier plan to scope it (skip `testctl.spec.ts`,
 which tests Go and has no engine content) is not worth the
 complexity at 11 s.
+
+## Every Go typecheck needs a built frontend, and a shared prototype dir hid it
+
+`main.go` embeds the built assets (`//go:embed all:frontend/dist`), so
+`make lint`, `make test` and `make bindings-check` all fail on a fresh
+clone with `pattern all:frontend/dist: no matching files found
+(typecheck)` until `pnpm build` has run once. It never bites locally
+because anyone who has started the app has a `dist/` lying around, and
+it is not a Go dependency anything declares — which is why CI is the
+only place it shows up. Job 1 now builds the frontend before linting.
+
+**The prototype missed it for an embarrassing and reusable reason.**
+Both job scripts were run against the *same* mounted directory, and
+job 2 runs `dev-headless`, which builds the frontend. So job 1 was
+silently consuming an artifact job 2 had produced on an earlier run,
+in an order CI never uses. A container proved the commands work; it did
+not prove the *inputs* were what CI would have, because the directory
+had accumulated state exactly the way a developer machine does.
+
+The fix for the technique, not just the workflow: verify each job in a
+**fresh `git clone --no-hardlinks` of the pushed commit** (a plain
+`git clone` of a repo on the same filesystem fails with "Invalid
+cross-device link" into `/tmp` on a different device), not in an rsync
+of the working tree, and never two jobs in one directory. The
+distinction that matters is not clean-vs-dirty but *whose* dirt: a
+working-tree copy carries a developer's accumulated build output, which
+is the one thing CI is supposed to be checking you do not depend on.

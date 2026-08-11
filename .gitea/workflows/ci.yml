@@ -113,6 +113,16 @@ jobs:
           pnpm install --frozen-lockfile
           npx playwright install --with-deps chromium
 
+      # main.go embeds the built frontend (`//go:embed all:frontend/dist`),
+      # so *every* Go typecheck needs it to exist first — lint, test and
+      # bindings-check all fail with "pattern all:frontend/dist: no
+      # matching files found" on a fresh clone.  This never bites locally
+      # because anyone who has run the app once has a dist/ lying around,
+      # which is exactly why CI has to do it explicitly.
+      - name: Build the frontend
+        working-directory: /src/frontend
+        run: pnpm build
+
       # `make lint` and `make test` each run all three build
       # configurations (app / indexbuild / dev) with matching tag sets.
       - name: Lint
