@@ -192,6 +192,13 @@ See `.planning/plans/active/005-agent-development-harness.md`.
 - `mediacontrols` — MPRIS integration on Linux via D-Bus.
 - `system` — OS-specific paths (XDG on Linux, `%LOCALAPPDATA%` on Windows).
 - `explore` — Catalog search and browse over `explore_index`. See below.
+- `home` — The home page's "start listening" shelves. Each shelf is a
+  *reason* (what you played last, what you never played, a genre you
+  have depth in) rather than a filter, and carries the sentence that
+  says so. Its queries (`sql/queries/home.sql`) return album ids only
+  and are joined back to `GetAllAlbumsWithDetails` in Go, so the album
+  projection has one definition. A shelf with nothing behind it is
+  omitted, never rendered empty.
 - `profiling` — pprof server on `:6060`, compiled out in non-dev builds via build tags (`internal/dev/`).
 
 **Explore catalog** (`backend/explore/`): the searchable MusicBrainz/
@@ -216,6 +223,26 @@ work happens **once, centrally**, and users download the result:
   coverage lazily on first view.
 
 **Frontend** (`frontend/`): Lit 3.2 web components + Web Awesome UI library + HTMX. State management via singleton reactive stores in `src/store/`. Wails bindings auto-generated in `frontend/wailsjs/` — don't edit by hand.
+
+Two cross-cutting pieces of that UI are worth knowing before touching
+a list or a detail view:
+
+- **`utils/explore-link.ts`** renders every track/album/artist name in
+  the app. A name always navigates: to the MusicBrainz page when the
+  entity is tagged, and to the *library* page for the same thing when
+  it is not (`explore-album-details` and `explore-artist-details` both
+  accept a local id instead of an MBID). It fires on a genuine single
+  click only — the navigation is held for one double-click interval
+  and dropped if a second click arrives, because the title is the
+  widest thing in a row and double-clicking a row plays it. Rows do
+  not need to know links exist.
+- **`<catalog-scope-notice>`** is how a detail page admits what it is
+  showing: catalog data (silent), a library stand-in while a fetch is
+  in flight, library-only because the entity has no MBID, or a failed/
+  empty catalog answer with a retry. Both detail views track
+  `catalogPending`/`catalogLoaded` separately from their loading flags,
+  since "something is renderable" and "this is the catalog's answer"
+  are different questions.
 
 **Event-driven communication**: Backend emits events via Wails runtime; frontend stores subscribe to them. Event names are constants in `backend/events/`.
 
