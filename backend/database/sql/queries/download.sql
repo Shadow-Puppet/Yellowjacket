@@ -176,6 +176,16 @@ WHERE state = 'wanted'
 ORDER BY attempts, created_at
 LIMIT ?;
 
+-- name: ListWantedDownloadRequests :many
+-- The same set ignoring the backoff, for a pass the user asked for by
+-- hand: "check now" that respected a six-hour retry schedule looked
+-- like a button that did nothing.
+SELECT * FROM download_requests
+WHERE state = 'wanted'
+  AND entity <> 'artist'
+ORDER BY attempts, created_at
+LIMIT ?;
+
 -- name: ListChildDownloadRequests :many
 SELECT * FROM download_requests WHERE parent_id = ? ORDER BY id;
 

@@ -251,6 +251,16 @@ type Summary struct {
 
 	// Synced is how many requests were pushed to an external list.
 	Synced int `json:"synced"`
+
+	// Waiting is how many requests are on the list and still being
+	// looked for.  A pass that did nothing is the normal case, and the
+	// UI can only say so honestly if it knows the list was not empty.
+	Waiting int `json:"waiting"`
+
+	// NoProviders reports that nothing could be searched because no
+	// download client is enabled — the one "nothing happened" the user
+	// can actually fix.
+	NoProviders bool `json:"noProviders"`
 }
 
 // changed reports whether the pass altered anything worth refreshing
@@ -259,9 +269,22 @@ func (s Summary) changed() bool {
 	return s.Expanded > 0 || s.Satisfied > 0 || s.Started > 0
 }
 
-// RunOnce works the request list once.  It is safe to call directly, and
-// the "search now" button does.
+// RunOnce works the request list once, honouring each request's
+// backoff.  This is what the loop calls.
 func (r *Reconciler) RunOnce(ctx context.Context) (Summary, error) {
+	return r.run(ctx, false)
+}
+
+// RunNow works the request list ignoring backoff.  This is what the
+// "check now" button calls: a scheduled retry is a promise to the
+// provider, not to the user, and a person who presses a button expects
+// their list to actually be searched rather than to be told it is not
+// due yet.
+func (r *Reconciler) RunNow(ctx context.Context) (Summary, error) {
+	return r.run(ctx, true)
+}
+
+func (r *Reconciler) run(ctx context.Context, force bool) (Summary, error) {
 	r.runMu.Lock()
 	defer r.runMu.Unlock()
 
@@ -287,13 +310,15 @@ func (r *Reconciler) RunOnce(ctx context.Context) (Summary, error) {
 
 	summary.Synced = r.syncExternalLists(ctx)
 
-	attempted, started, err := r.attemptDue(ctx)
+	attempted, started, err := r.attemptDue(ctx, force)
 	if err != nil {
 		return summary, err
 	}
 
 	summary.Attempted = attempted
 	summary.Started = started
+	summary.Waiting = r.countWaiting(ctx)
+	summary.NoProviders = len(r.manager.enabledProviders()) == 0
 
 	r.logger.Info(
 		"reconciled request list",
@@ -506,10 +531,19 @@ func (r *Reconciler) retireOwned(ctx context.Context) (int, error) {
 // Attempting downloads
 // ---------------------------------------------------------------------------
 
-// attemptDue searches for a bounded batch of due requests and grabs the
-// ones with a clear winner.
-func (r *Reconciler) attemptDue(ctx context.Context) (attempted, started int, err error) {
-	due, err := r.store.ListDueRequests(ctx, r.batch)
+// attemptDue searches for a bounded batch of requests and grabs the
+// ones with a clear winner.  force takes requests whose backoff has not
+// elapsed as well.
+func (r *Reconciler) attemptDue(
+	ctx context.Context,
+	force bool,
+) (attempted, started int, err error) {
+	list := r.store.ListDueRequests
+	if force {
+		list = r.store.ListWantedRequests
+	}
+
+	due, err := list(ctx, r.batch)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -613,6 +647,26 @@ func (r *Reconciler) attempt(ctx context.Context, req Request) (bool, string) {
 	}
 
 	return started, reason
+}
+
+// countWaiting reports how many non-artist requests are still being
+// looked for, so "nothing happened" can be reported as "nothing new
+// for the twelve things on your list" rather than as silence.
+func (r *Reconciler) countWaiting(ctx context.Context) int {
+	requests, err := r.store.ListRequests(ctx)
+	if err != nil {
+		return 0
+	}
+
+	waiting := 0
+
+	for _, req := range requests {
+		if req.State == RequestStateWanted && !req.Entity.Expands() {
+			waiting++
+		}
+	}
+
+	return waiting
 }
 
 // ---------------------------------------------------------------------------

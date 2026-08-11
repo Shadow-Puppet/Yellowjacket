@@ -739,6 +739,58 @@ func (q *Queries) ListLiveDownloads(ctx context.Context) ([]DownloadDownload, er
 	return items, nil
 }
 
+const listWantedDownloadRequests = `-- name: ListWantedDownloadRequests :many
+SELECT id, mbid, entity, library_id, artist, title, scope, secondary, state, parent_id, attempts, last_error, last_tried_at, next_try_at, external_ids, created_at, updated_at FROM download_requests
+WHERE state = 'wanted'
+  AND entity <> 'artist'
+ORDER BY attempts, created_at
+LIMIT ?
+`
+
+// The same set ignoring the backoff, for a pass the user asked for by
+// hand: "check now" that respected a six-hour retry schedule looked
+// like a button that did nothing.
+func (q *Queries) ListWantedDownloadRequests(ctx context.Context, limit int64) ([]DownloadRequest, error) {
+	rows, err := q.db.QueryContext(ctx, listWantedDownloadRequests, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DownloadRequest
+	for rows.Next() {
+		var i DownloadRequest
+		if err := rows.Scan(
+			&i.ID,
+			&i.Mbid,
+			&i.Entity,
+			&i.LibraryID,
+			&i.Artist,
+			&i.Title,
+			&i.Scope,
+			&i.Secondary,
+			&i.State,
+			&i.ParentID,
+			&i.Attempts,
+			&i.LastError,
+			&i.LastTriedAt,
+			&i.NextTryAt,
+			&i.ExternalIds,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const recordDownloadRequestAttempt = `-- name: RecordDownloadRequestAttempt :exec
 UPDATE download_requests
 SET attempts      = attempts + 1,

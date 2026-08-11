@@ -495,3 +495,101 @@ func waitFor(t *testing.T, cond func() bool, msg string) {
 
 	t.Fatal(msg)
 }
+
+// "Check now" is the user overriding the retry schedule, so it must
+// search a request whose backoff has not elapsed.  The scheduled pass
+// must not: the backoff exists to keep a fruitless search off the
+// providers, and a loop that ignored it would hammer them.
+func TestRunNowIgnoresBackoffAndRunOnceDoesNot(t *testing.T) {
+	t.Parallel()
+
+	f := newReconcileFixture(t)
+	ctx := context.Background()
+
+	provider := NewFakeProvider(1, "weak", Caps{CanSearch: true, CanTransport: true})
+	provider.Candidates = []Candidate{candidateFor(
+		"weak-1", []string{"Something Else Entirely"}, ".mp3", 3_000_000,
+	)}
+
+	f.manager.installProvider(Config{ID: 1, Priority: 50}, provider)
+
+	id, err := f.store.AddRequest(ctx, Request{
+		MBID:      "rg-1",
+		Entity:    EntityReleaseGroup,
+		LibraryID: 1,
+		Artist:    "Radiohead",
+		Title:     "OK Computer",
+	})
+	if err != nil {
+		t.Fatalf("AddRequest: %v", err)
+	}
+
+	f.catalog.tracklists["rg-1"] = fourTrackDownload().Expected
+
+	// First pass: attempted, found nothing, backoff armed.
+	if _, err := f.reconciler.RunOnce(ctx); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+
+	scheduled, err := f.reconciler.RunOnce(ctx)
+	if err != nil {
+		t.Fatalf("RunOnce (second): %v", err)
+	}
+
+	if scheduled.Attempted != 0 {
+		t.Errorf("scheduled pass attempted %d, want 0 while backed off",
+			scheduled.Attempted)
+	}
+
+	forced, err := f.reconciler.RunNow(ctx)
+	if err != nil {
+		t.Fatalf("RunNow: %v", err)
+	}
+
+	if forced.Attempted != 1 {
+		t.Errorf("forced pass attempted %d, want 1", forced.Attempted)
+	}
+
+	if forced.Waiting != 1 {
+		t.Errorf("summary reported %d waiting, want 1 so the UI can say "+
+			"what was searched", forced.Waiting)
+	}
+
+	req, err := f.store.GetRequest(ctx, id)
+	if err != nil {
+		t.Fatalf("GetRequest: %v", err)
+	}
+
+	if req.Attempts != 2 {
+		t.Errorf("attempts = %d, want 2 after a forced re-check", req.Attempts)
+	}
+}
+
+// A pass with no providers says so, because "nothing happened" with no
+// reason is the one outcome the user cannot act on.
+func TestSummaryReportsNoProviders(t *testing.T) {
+	t.Parallel()
+
+	f := newReconcileFixture(t)
+	ctx := context.Background()
+
+	if _, err := f.store.AddRequest(ctx, Request{
+		MBID:      "rg-1",
+		Entity:    EntityReleaseGroup,
+		LibraryID: 1,
+		Title:     "OK Computer",
+	}); err != nil {
+		t.Fatalf("AddRequest: %v", err)
+	}
+
+	f.catalog.tracklists["rg-1"] = fourTrackDownload().Expected
+
+	summary, err := f.reconciler.RunNow(ctx)
+	if err != nil {
+		t.Fatalf("RunNow: %v", err)
+	}
+
+	if !summary.NoProviders {
+		t.Error("summary did not report that no download client is enabled")
+	}
+}

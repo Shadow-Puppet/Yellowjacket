@@ -609,7 +609,7 @@ func (s *Service) ReconcileRequests() (Summary, error) {
 		)
 	}
 
-	summary, err := s.reconciler.RunOnce(context.Background())
+	summary, err := s.reconciler.RunNow(context.Background())
 	if err != nil {
 		return summary, err
 	}

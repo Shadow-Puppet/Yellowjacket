@@ -868,6 +868,8 @@ export namespace download {
 	    attempted: number;
 	    started: number;
 	    synced: number;
+	    waiting: number;
+	    noProviders: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new Summary(source);
@@ -880,6 +882,8 @@ export namespace download {
 	        this.attempted = source["attempted"];
 	        this.started = source["started"];
 	        this.synced = source["synced"];
+	        this.waiting = source["waiting"];
+	        this.noProviders = source["noProviders"];
 	    }
 	}
 

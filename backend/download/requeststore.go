@@ -152,6 +152,23 @@ func (s *Store) ListDueRequests(ctx context.Context, limit int) ([]Request, erro
 	return requestRowsToRequests(rows), nil
 }
 
+// ListWantedRequests returns downloadable requests regardless of their
+// backoff, least-attempted first.  Only a user-initiated pass uses
+// this: the loop honours the schedule, a person pressing "check now"
+// is the schedule.
+func (s *Store) ListWantedRequests(ctx context.Context, limit int) ([]Request, error) {
+	if limit <= 0 {
+		limit = defaultDueBatch
+	}
+
+	rows, err := s.db.ReadQueries.ListWantedDownloadRequests(ctx, int64(limit))
+	if err != nil {
+		return nil, fmt.Errorf("list wanted download requests: %w", err)
+	}
+
+	return requestRowsToRequests(rows), nil
+}
+
 // ListChildRequests returns the requests an artist subscription
 // produced.
 func (s *Store) ListChildRequests(

@@ -33,6 +33,14 @@ export class DownloadsView extends LitElement {
 
     @state() private lastSummary: RequestSummary | null = null;
 
+    /** True when at least one download client is enabled. */
+    @state() private canDownload = false;
+
+    /** Ticks so "next check in …" ages while the page is open. */
+    @state() private nowMs = Date.now();
+
+    private clockTimer?: ReturnType<typeof setInterval>;
+
     private unsubscribe: (() => void) | null = null;
 
     static override styles = [
@@ -167,6 +175,24 @@ export class DownloadsView extends LitElement {
                 color: var(--yj-text-secondary, #b3b3b3);
                 margin: 8px 0 0;
             }
+
+            .notice {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                padding: 10px 12px;
+                margin-bottom: 12px;
+                border-radius: 6px;
+                font-size: 12px;
+                background: var(--yj-bg-overlay, rgba(255, 255, 255, 0.06));
+                color: var(--yj-text-secondary, #b3b3b3);
+            }
+
+            .section-hint {
+                margin: 0 0 8px;
+                font-size: 12px;
+                color: var(--yj-text-tertiary, #888);
+            }
         `,
     ];
 
@@ -176,12 +202,20 @@ export class DownloadsView extends LitElement {
         this.unsubscribe = downloadStore.subscribe(() => {
             this.requests = downloadStore.requests;
             this.downloads = downloadStore.downloads;
+            this.canDownload = downloadStore.available;
         });
 
         void downloadStore.init().then(() => {
             this.requests = downloadStore.requests;
             this.downloads = downloadStore.downloads;
+            this.canDownload = downloadStore.available;
         });
+
+        // A "next check" that never moves reads as a stuck page, so the
+        // relative times re-render on their own.
+        this.clockTimer = setInterval(() => {
+            this.nowMs = Date.now();
+        }, 30_000);
     }
 
     override disconnectedCallback(): void {
@@ -189,6 +223,7 @@ export class DownloadsView extends LitElement {
 
         this.unsubscribe?.();
         this.unsubscribe = null;
+        clearInterval(this.clockTimer);
     }
 
     override render() {
@@ -201,10 +236,11 @@ export class DownloadsView extends LitElement {
                               size="small"
                               appearance="outlined"
                               ?disabled=${this.checking}
+                              title="Search every download client for everything on this list right now, instead of waiting for the next scheduled check"
                               @click=${() => void this.checkNow()}
                           >
                               <wa-icon slot="start" name="rotate"></wa-icon>
-                              ${this.checking ? 'Checking…' : 'Check now'}
+                              ${this.checking ? 'Searching…' : 'Check now'}
                           </wa-button>
                       `
                     : nothing}
@@ -213,7 +249,10 @@ export class DownloadsView extends LitElement {
             <p class="subtitle">
                 Music you have requested, and the download attempts that
                 have run for it. A request that cannot be found today stays
-                on the list and is looked for again later.
+                on the list and is looked for again later — roughly every
+                six hours at first, then less often the longer it goes
+                unfound. “Check now” skips that wait and searches
+                everything on the list immediately.
             </p>
 
             <div class="tabs">
@@ -248,6 +287,7 @@ export class DownloadsView extends LitElement {
         const satisfied = this.requests.filter((r) => r.state === 'satisfied');
 
         return html`
+            ${this.renderProviderNotice()}
             ${this.renderSummary()}
             ${satisfied.length > 0
                 ? html`
@@ -269,7 +309,18 @@ export class DownloadsView extends LitElement {
                 subscriptions,
                 (r) => this.renderSubscription(r),
             )}
-            ${this.renderRequestSection('Looking for', wanted, (r) => this.renderRequest(r))}
+            ${wanted.length > 0
+                ? html`
+                      <h2>Looking for</h2>
+                      <p class="section-hint">
+                          Requested, not found yet. Nothing is wrong — each
+                          of these is searched again on the schedule below,
+                          and moves to “Found” the moment it lands in your
+                          library, however it got there.
+                      </p>
+                      ${wanted.map((r) => this.renderRequest(r))}
+                  `
+                : nothing}
             ${this.renderRequestSection('Paused', paused, (r) => this.renderRequest(r))}
             ${this.renderRequestSection('Found', satisfied, (r) => this.renderRequest(r))}
         `;
@@ -284,6 +335,26 @@ export class DownloadsView extends LitElement {
         `;
     }
 
+    /**
+     * A request list with no download client behind it is a list that
+     * can never move, and that is the single most likely reason “check
+     * now” appears to do nothing.  Say so where the button is.
+     */
+    private renderProviderNotice() {
+        if (this.canDownload) return nothing;
+
+        return html`
+            <div class="notice">
+                <wa-icon name="triangle-exclamation"></wa-icon>
+                <span>
+                    No download client is enabled, so nothing on this list
+                    can be searched for. Requests are still kept — add a
+                    client under Settings → Downloads and they start moving.
+                </span>
+            </div>
+        `;
+    }
+
     private renderSummary() {
         if (!this.lastSummary) return nothing;
 
@@ -293,14 +364,23 @@ export class DownloadsView extends LitElement {
             s.expanded > 0 ? `${s.expanded} new album${s.expanded === 1 ? '' : 's'} found` : '',
             s.satisfied > 0 ? `${s.satisfied} already owned` : '',
             s.started > 0 ? `${s.started} downloading` : '',
-            s.attempted > 0 ? `${s.attempted} searched for` : '',
+            s.attempted > 0
+                ? `${s.attempted} searched, no clear match yet`
+                : '',
         ].filter(Boolean);
 
-        return html`
-            <p class="summary">
-                ${parts.length > 0 ? parts.join(' · ') : 'Nothing new this time.'}
-            </p>
-        `;
+        if (parts.length > 0) {
+            return html`<p class="summary">${parts.join(' · ')}</p>`;
+        }
+
+        // "Nothing happened" needs a reason, or the button looks broken.
+        const idle = s.noProviders
+            ? 'Nothing was searched: no download client is enabled.'
+            : s.waiting > 0
+              ? `Searched all ${s.waiting} request${s.waiting === 1 ? '' : 's'} — no source has anything new yet.`
+              : 'Nothing on the list to search for.';
+
+        return html`<p class="summary">${idle}</p>`;
     }
 
     private renderRequestSection(
@@ -361,7 +441,7 @@ export class DownloadsView extends LitElement {
                         ${request.artist ? `${request.artist} — ` : ''}${request.title ||
                         request.mbid}
                     </div>
-                    <div class="detail">${requestDetail(request)}</div>
+                    <div class="detail">${requestDetail(request, this.nowMs)}</div>
                 </div>
                 <div class="actions">
                     ${request.state === 'satisfied'
@@ -495,15 +575,54 @@ export class DownloadsView extends LitElement {
  * looked for rather than as an error, because that is what it is — the
  * retry is already scheduled and there is nothing for the user to do.
  */
-function requestDetail(request: Request): string {
+function requestDetail(request: Request, nowMs: number): string {
     if (request.state === 'satisfied') return 'In your library';
-    if (request.state === 'paused') return 'Paused';
+    if (request.state === 'paused') return 'Paused — not being looked for';
 
-    if (request.attempts === 0) return 'Not looked for yet';
+    if (request.attempts === 0) return 'Queued — not searched for yet';
 
-    const reason = request.lastError ? ` — ${request.lastError}` : '';
+    const tries = `Searched ${request.attempts} time${request.attempts === 1 ? '' : 's'}`;
+    const reason = request.lastError ? `, ${request.lastError}` : '';
+    // Wails types a Go time.Time as an opaque class; over the wire it
+    // is the RFC 3339 string JSON marshalled it as.
+    const next = nextCheckPhrase(
+        request.nextTryAt as unknown as string | undefined,
+        nowMs,
+    );
 
-    return `Looked for ${request.attempts} time${request.attempts === 1 ? '' : 's'}${reason}`;
+    return `${tries}${reason}${next}`;
+}
+
+/**
+ * "Next check" as a phrase, because the retry schedule is the part of
+ * this feature nothing in the UI used to admit existed — a row that
+ * says only "searched 3 times" gives the user no way to tell a waiting
+ * request from an abandoned one.
+ */
+function nextCheckPhrase(nextTryAt: string | undefined, nowMs: number): string {
+    if (!nextTryAt) return '';
+
+    const due = new Date(nextTryAt).getTime();
+    if (Number.isNaN(due)) return '';
+
+    const deltaMs = due - nowMs;
+    if (deltaMs <= 0) return ' · due for another search';
+
+    return ` · next check ${relativeFuture(deltaMs)}`;
+}
+
+/** Coarse "in 3 hours" phrasing; minutes are noise on a 6-hour cycle. */
+function relativeFuture(ms: number): string {
+    const minutes = Math.round(ms / 60_000);
+
+    if (minutes < 60) return `in ${Math.max(1, minutes)} min`;
+
+    const hours = Math.round(minutes / 60);
+    if (hours < 48) return `in ${hours} hour${hours === 1 ? '' : 's'}`;
+
+    const days = Math.round(hours / 24);
+
+    return `in ${days} day${days === 1 ? '' : 's'}`;
 }
 
 declare global {
