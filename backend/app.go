@@ -23,6 +23,7 @@ import (
 	"yellowjacket/backend/events"
 	"yellowjacket/backend/explore"
 	"yellowjacket/backend/frontendutil"
+	"yellowjacket/backend/home"
 	"yellowjacket/backend/jobs"
 	"yellowjacket/backend/library"
 	"yellowjacket/backend/maintenance"
@@ -210,6 +211,11 @@ func NewYellowJacketApp(
 		yjApp.explore,
 		yjApp.autotag,
 		jobs.NewService(yjApp.jobs),
+		home.NewService(
+			yjApp.logger.WithGroup("home"),
+			yjApp.database,
+			yjApp.library,
+		),
 	}
 
 	if yjApp.downloadSvc != nil {

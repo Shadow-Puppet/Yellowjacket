@@ -24,6 +24,7 @@ import '@components/first-run-wizard/first-run-wizard.ts';
 import '@components/jobs/job-indicator.ts';
 import '@components/jobs/jobs-view.ts';
 import '@components/downloads-view/downloads-view.ts';
+import '@components/home-view/home-view.ts';
 import '@awesome.me/webawesome/dist/styles/themes/default.css';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import { setBasePath } from '@awesome.me/webawesome/dist/webawesome.js';
@@ -57,6 +58,7 @@ setBasePath('/dist/webawesome');
 // ---------------------------------------------------------------------------
 
 const VIEW_TAGS: Record<string, string> = {
+    home: 'home-view',
     tracks: 'track-list',
     albums: 'cover-grid',
     artists: 'artists-view',
