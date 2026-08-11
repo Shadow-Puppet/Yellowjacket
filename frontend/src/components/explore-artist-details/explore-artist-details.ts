@@ -32,6 +32,8 @@ import { EventsOn } from '@runtime/runtime';
 import { Events } from '../../events';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '../library-status-indicator/library-status-indicator.js';
+import '../catalog-scope-notice/catalog-scope-notice.js';
+import type { CatalogScope } from '../catalog-scope-notice/catalog-scope-notice.js';
 
 /* ── Constants ── */
 
@@ -103,6 +105,12 @@ export class ExploreArtistDetails extends LitElement {
     @state() private loadingReleases = true;
     @state() private errorArtist = '';
     @state() private errorReleases = '';
+    /** True once the discography on screen came from the catalog rather
+     * than standing in from the local library. */
+    @state() private catalogLoaded = false;
+    /** True while a catalog fetch — foreground or the background
+     * discography build — may still land. */
+    @state() private catalogPending = false;
     @state() private similarArtists: LBSimilarArtist[] = [];
     @state() private loadingSimilar = true;
     @state() private artistImageURL = '';
@@ -920,6 +928,7 @@ export class ExploreArtistDetails extends LitElement {
 
             this.discogReloaded.add(mbid);
             this.similarReloaded.add(mbid);
+            this.catalogPending = false;
             if (this.topTracks.length === 0) this.loadingTracks = false;
             if (this.topReleaseGroups.length === 0) this.loadingTopReleases = false;
             if (this.releaseGroups.length === 0) this.loadingReleases = false;
@@ -1037,6 +1046,8 @@ export class ExploreArtistDetails extends LitElement {
         // forever if ArtistDiscographyReady never arrives.
         this.discogReloaded.delete(mbid);
         this.similarReloaded.delete(mbid);
+        this.catalogLoaded = false;
+        this.catalogPending = true;
         this.armDiscogFallback(mbid);
 
         // Phase 1: fire all API requests independently so the UI
@@ -1246,6 +1257,35 @@ export class ExploreArtistDetails extends LitElement {
         }
     }
 
+    /**
+     * Where this page's discography came from.  An artist with no MBID
+     * can only ever show what the library holds; one whose catalog
+     * fetch is still in flight says so rather than looking finished.
+     */
+    private catalogScope(): CatalogScope {
+        if (!this.artistMBID) return 'library';
+        if (this.catalogLoaded) return 'catalog';
+        if (this.catalogPending) return 'loading';
+
+        return 'unavailable';
+    }
+
+    /** Ask the catalog again after a failed or empty discography fetch. */
+    private retryCatalog = () => {
+        const mbid = this.artistMBID;
+        if (!mbid) return;
+
+        this.errorReleases = '';
+        this.catalogPending = true;
+        this.discogReloaded.delete(mbid);
+        this.similarReloaded.delete(mbid);
+        this.armDiscogFallback(mbid);
+        void this.fetchTopTracks(mbid);
+        void this.fetchTopReleaseGroups(mbid);
+        void this.fetchReleaseGroups(mbid);
+        void this.fetchSimilarArtists(mbid);
+    };
+
     private async fetchArtist(mbid: string) {
         try {
             this.artist = await LookupArtist(mbid);
@@ -1396,7 +1436,17 @@ export class ExploreArtistDetails extends LitElement {
     private async fetchReleaseGroups(mbid: string) {
         try {
             const rgs = await BrowseReleaseGroups(mbid);
-            this.releaseGroups = rgs ?? [];
+
+            // An empty result is "the index has not built this artist
+            // yet", not "this artist released nothing" — so it must not
+            // wipe the library albums hydrateFromCache put on screen.
+            if (rgs && rgs.length > 0) {
+                this.releaseGroups = rgs;
+                this.catalogLoaded = true;
+                this.catalogPending = false;
+            } else if (this.discogReloaded.has(mbid)) {
+                this.catalogPending = false;
+            }
 
             // Populate libraryMBIDs from the inLibrary flag (already
             // set by the backend via local_release_group_id cross-ref).
@@ -1414,6 +1464,7 @@ export class ExploreArtistDetails extends LitElement {
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             this.errorReleases = msg;
+            this.catalogPending = false;
             console.error(
                 `[explore-artist] BrowseReleaseGroups error: ${msg}`,
             );
@@ -1889,6 +1940,11 @@ export class ExploreArtistDetails extends LitElement {
                 </div>
             </div>
             <div class="content">
+                <catalog-scope-notice
+                    scope=${this.catalogScope()}
+                    entity-type="artist"
+                    @catalog-retry=${this.retryCatalog}
+                ></catalog-scope-notice>
                 ${this.renderTopSection()} ${this.renderDiscography()}
                 ${this.renderSimilarArtists()}
             </div>

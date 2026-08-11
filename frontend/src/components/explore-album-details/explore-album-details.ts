@@ -19,6 +19,8 @@ import { EventsOn } from '@runtime/runtime';
 import { Events } from '../../events';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '../library-status-indicator/library-status-indicator.js';
+import '../catalog-scope-notice/catalog-scope-notice.js';
+import type { CatalogScope } from '../catalog-scope-notice/catalog-scope-notice.js';
 import '@awesome.me/webawesome/dist/components/button/button.js';
 import '../download-picker/download-picker';
 import { downloadStore } from '../../store/download-store';
@@ -113,6 +115,13 @@ export class ExploreAlbumDetails extends LitElement {
     @state() private loadingReleases = true;
     @state() private errorInfo = '';
     @state() private errorReleases = '';
+    /** True once the versions/tracklist on screen came from the catalog
+     * rather than standing in from the local library. */
+    @state() private catalogReleasesLoaded = false;
+    /** True while a catalog fetch (foreground or background) may still
+     * land.  Distinct from loadingReleases, which goes false as soon as
+     * *something* is renderable — including a library stand-in. */
+    @state() private catalogPending = false;
     /** Unified entries shown in the dropdown — synthetics first, then real clusters. */
     @state() private versionEntries: VersionEntry[] = [];
     /** Currently-selected dropdown entry (by VersionEntry.key). */
@@ -548,6 +557,7 @@ export class ExploreAlbumDetails extends LitElement {
             if (this.releasesReloaded.has(mbid)) return;
 
             this.releasesReloaded.add(mbid);
+            this.catalogPending = false;
             if (this.releases.length === 0) this.loadingReleases = false;
         }, 12000);
     }
@@ -646,6 +656,8 @@ export class ExploreAlbumDetails extends LitElement {
         this.errorReleases = '';
         this.loadingInfo = true;
         this.loadingReleases = true;
+        this.catalogReleasesLoaded = false;
+        this.catalogPending = Boolean(this.releaseGroupMBID);
         this.releases = [];
         this.versionEntries = [];
         this.selectedVersionKey = '';
@@ -930,6 +942,8 @@ export class ExploreAlbumDetails extends LitElement {
             if (releases && releases.length > 0) {
                 // Warm cache hit (or the background re-fetch landed):
                 // authoritative MB versions replace any local placeholder.
+                this.catalogReleasesLoaded = true;
+                this.catalogPending = false;
                 this.releases = releases;
                 this.buildClusters();
                 this.loadingReleases = false;
@@ -944,11 +958,18 @@ export class ExploreAlbumDetails extends LitElement {
             if (this.releases.length > 0 || this.releasesReloaded.has(mbid)) {
                 this.loadingReleases = false;
             }
+
+            // A cold miss after the background fetch already signalled
+            // ready is as far as the catalog is going to get.
+            if (this.releasesReloaded.has(mbid)) {
+                this.catalogPending = false;
+            }
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             this.errorReleases = msg;
             console.error(`[explore-album] BrowseReleases error: ${msg}`);
             this.loadingReleases = false;
+            this.catalogPending = false;
         }
     }
 
@@ -1452,6 +1473,11 @@ export class ExploreAlbumDetails extends LitElement {
         return html`
             ${this.renderHeader()}
             <div class="content">
+                <catalog-scope-notice
+                    scope=${this.catalogScope()}
+                    entity-type="album"
+                    @catalog-retry=${this.retryCatalog}
+                ></catalog-scope-notice>
                 ${this.renderVersionSelector()}
                 ${this.renderTracklist()}
             </div>
@@ -1674,6 +1700,38 @@ export class ExploreAlbumDetails extends LitElement {
             ></download-picker>
         `;
     }
+
+    /**
+     * Where the tracklist on screen came from.  The distinction the
+     * user cares about is not "did a fetch fail" but "is what I am
+     * looking at everything, or only my own copy" — so an album with
+     * no MBID is `library` permanently, while one whose catalog fetch
+     * has not landed is `loading` and then either resolves or degrades
+     * to `unavailable`.
+     */
+    private catalogScope(): CatalogScope {
+        if (!this.releaseGroupMBID) return 'library';
+        if (this.catalogReleasesLoaded) return 'catalog';
+        if (this.catalogPending) return 'loading';
+
+        // Not pending and no catalog data: the browse errored, came
+        // back empty, or the fallback timer gave up.  Whatever is on
+        // screen is the library copy, and retrying is worth offering.
+        return 'unavailable';
+    }
+
+    /** Ask the catalog again after a failed or empty fetch. */
+    private retryCatalog = () => {
+        const mbid = this.releaseGroupMBID;
+        if (!mbid) return;
+
+        this.errorReleases = '';
+        this.loadingReleases = this.releases.length === 0;
+        this.catalogPending = true;
+        this.releasesReloaded.delete(mbid);
+        this.armReleasesFallback(mbid);
+        void this.fetchReleases(mbid);
+    };
 
     /** Tracks of the version currently selected in the dropdown. */
     private currentTracks(): MBTrack[] {
