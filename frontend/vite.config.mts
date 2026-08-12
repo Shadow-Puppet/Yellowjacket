@@ -14,6 +14,14 @@ export default defineConfig({
         },
     },
     build: {
+        // The bundled icons must be emitted as files, not inlined.
+        // Vite inlines any asset under 4 kB, and 63 of the 64 icons are
+        // under 4 kB, so the default put ~96 kB of base64 into the main
+        // chunk — parsed at startup, for icons most views never render.
+        // As files they are served same-origin (so still offline) and
+        // fetched on first use.
+        assetsInlineLimit: (filePath: string) =>
+            filePath.includes('/assets/icons/fa/') ? false : undefined,
         rollupOptions: {
             input: {
                 main: "index.html",

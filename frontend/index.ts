@@ -1,33 +1,38 @@
+// ---------------------------------------------------------------------------
+// What is imported here is what is parsed and evaluated before first
+// paint.  Everything else is a chunk fetched on the navigation that
+// needs it (VIEW_LOADERS / DETAIL_LOADERS below) and warmed in the
+// background once the app is idle, so only the *first* second of the
+// session pays for the views the user has not asked for.
+//
+// Three things stay eager that look like candidates:
+//
+//   notification-host, inline-notice, confirm-dialog — the app's only
+//   failure surface.  A message that has to fetch a chunk before it can
+//   be shown is not a failure surface; the moment it is most needed is
+//   exactly the moment loading one may not work.
+//
+//   first-run-wizard — it covers the app until a library exists, so on
+//   the one launch it matters it is on the critical path anyway.
+//
+//   track-list — index.html renders one, so it is the first paint.
+// ---------------------------------------------------------------------------
 import '@components/audio-player/audio-player.ts';
 import '@components/track-list/track-list.ts';
-import '@components/cover-grid/cover-grid.ts';
 import '@components/now-playing/now-playing.ts';
 import '@components/sidebar/app-sidebar.ts';
 import '@components/queue-panel/queue-panel.ts';
-import '@components/playlist-view/playlist-view.ts';
-import '@components/config-page/config-page.ts';
-import '@components/artists-view/artists-view.ts';
-import '@components/artist-details/artist-details.ts';
-import '@components/genres-view/genres-view.ts';
-import '@components/genre-details/genre-details.ts';
-import '@components/playlist-details/playlist-details.ts';
-import '@components/smart-playlist-details/smart-playlist-details.ts';
-import '@components/smart-playlist-editor/smart-playlist-editor.ts';
 import '@components/search-bar/search-bar.ts';
 import '@components/library-filter/library-filter.ts';
-import '@components/track-details/track-details.ts';
-import '@components/explore-view/explore-view.ts';
-import '@components/explore-artist-details/explore-artist-details.js';
-import '@components/explore-album-details/explore-album-details.js';
-import '@components/autotag-view/autotag-view.ts';
 import '@components/first-run-wizard/first-run-wizard.ts';
+import '@components/notifications/notification-host.ts';
+import '@components/notifications/inline-notice.ts';
+import '@components/confirm-dialog/confirm-dialog.ts';
 import '@components/jobs/job-indicator.ts';
-import '@components/jobs/jobs-view.ts';
-import '@components/downloads-view/downloads-view.ts';
-import '@components/home-view/home-view.ts';
 import '@awesome.me/webawesome/dist/styles/themes/default.css';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import { setBasePath } from '@awesome.me/webawesome/dist/webawesome.js';
+import { registerBundledIcons } from './src/icons';
 import { queueStore } from '@store/queue-store';
 import { searchStore } from '@store/search-store';
 import * as Player from '@go/player/Player';
@@ -38,6 +43,7 @@ import '@store/theme-store';
 // Importing the keyboard shortcut service triggers initialization:
 // registers the document keydown listener for global shortcuts.
 import './src/services/keyboard-shortcut-service';
+import { activateView, deactivateView } from '@utils/view-lifecycle';
 import {
     hasTrackPayload,
     getDragPayload,
@@ -45,6 +51,12 @@ import {
 import type { DragActiveDetail } from '@utils/drag-controller';
 
 setBasePath('/dist/webawesome');
+
+// Before any component renders: an icon resolved by the default
+// (remote) library is a request to fontawesome.com, and the module
+// caches by URL, so one early render would pin the remote answer for
+// the session.
+registerBundledIcons();
 
 // ---------------------------------------------------------------------------
 // View caching navigation system
@@ -55,6 +67,13 @@ setBasePath('/dist/webawesome');
 // innerHTML.  Detail views (artist-details, playlist-details, genre-details)
 // are ephemeral — created fresh each navigation because they depend on
 // specific entity IDs that change.
+//
+// Because a cached view is never disconnected, `disconnectedCallback` is
+// not where it stops listening.  Navigation calls viewDeactivated() on
+// the outgoing element and viewActivated() on the incoming one; views
+// hang their document listeners, timers and subscriptions off that pair
+// (see utils/view-lifecycle.ts).  Skipping either call leaves a view
+// listening from a page it is not on, which is finding H-1.
 // ---------------------------------------------------------------------------
 
 const VIEW_TAGS: Record<string, string> = {
@@ -70,6 +89,55 @@ const VIEW_TAGS: Record<string, string> = {
     jobs: 'jobs-view',
     settings: 'config-page',
 };
+
+// The module that defines each view's custom element.  `createElement`
+// on an undefined tag silently produces an inert HTMLElement rather
+// than throwing, so a navigation has to await its loader before it
+// builds anything — a missing entry here is a blank page, not an error.
+const VIEW_LOADERS: Record<string, () => Promise<unknown>> = {
+    home: () => import('@components/home-view/home-view.ts'),
+    tracks: () => Promise.resolve(),
+    albums: () => import('@components/cover-grid/cover-grid.ts'),
+    artists: () => import('@components/artists-view/artists-view.ts'),
+    genres: () => import('@components/genres-view/genres-view.ts'),
+    playlists: () => import('@components/playlist-view/playlist-view.ts'),
+    explore: () => import('@components/explore-view/explore-view.ts'),
+    autotag: () => import('@components/autotag-view/autotag-view.ts'),
+    downloads: () => import('@components/downloads-view/downloads-view.ts'),
+    jobs: () => import('@components/jobs/jobs-view.ts'),
+    settings: () => import('@components/config-page/config-page.ts'),
+};
+
+const DETAIL_LOADERS: Record<string, () => Promise<unknown>> = {
+    'artist-details': () =>
+        import('@components/artist-details/artist-details.ts'),
+    'playlist-details': () =>
+        import('@components/playlist-details/playlist-details.ts'),
+    'smart-playlist-details': () =>
+        import('@components/smart-playlist-details/smart-playlist-details.ts'),
+    'genre-details': () =>
+        import('@components/genre-details/genre-details.ts'),
+    'explore-artist-details': () =>
+        import('@components/explore-artist-details/explore-artist-details.js'),
+    'explore-album-details': () =>
+        import('@components/explore-album-details/explore-album-details.js'),
+};
+
+// Opened from a menu rather than by navigating, so they have no entry
+// above; warmed with everything else below.
+//
+// `track-details` is loaded at the point of use by
+// `utils/lazy-track-details.ts`, from the five components that open it
+// (`track-list`, `cover-grid`, `queue-panel` and both playlist detail
+// views). It used to be imported statically by all five, so its 42 kB
+// rode in the startup chunk whatever this file said. Warming it here
+// means the first open still does not wait for it.
+const EXTRA_LOADERS: Array<() => Promise<unknown>> = [
+    () => import('@components/smart-playlist-editor/smart-playlist-editor.ts'),
+    // Same specifier as `utils/lazy-track-details.ts` uses, so this is
+    // the same chunk rather than a second copy of it.
+    () => import('@components/track-details/track-details.js'),
+];
 
 const viewCache = new Map<string, HTMLElement>();
 let currentViewEl: HTMLElement | null = null;
@@ -89,15 +157,36 @@ if (mainContent) {
     if (initialTrackList) {
         viewCache.set('tracks', initialTrackList as HTMLElement);
         currentViewEl = initialTrackList as HTMLElement;
+        activateView(currentViewEl);
     }
 }
 
+/**
+ * Navigations are numbered, because loading a view's chunk is
+ * asynchronous and a user can click twice. Anything after the `await`
+ * checks that it is still the newest navigation before touching the
+ * DOM; otherwise a slow chunk would land on top of a faster one and
+ * show the page the user navigated *away* from.
+ */
+let navSeq = 0;
+
 document.addEventListener('navigate', (e: Event) => {
-    const detail = (e as CustomEvent).detail;
+    void handleNavigate((e as CustomEvent).detail);
+});
+
+async function handleNavigate(
+    detail: { view: string; [key: string]: any },
+): Promise<void> {
     const view: string = detail.view;
 
     if (!mainContent) return;
 
+    const seq = ++navSeq;
+
+    // Bookkeeping stays synchronous with the click: the search box's
+    // scope and the active-view attribute describe the navigation that
+    // was *asked for*, and are what the rest of the app and the e2e
+    // selectors read.
     searchStore.setCurrentView(view);
 
     // Which view is showing is otherwise only inferable from which of
@@ -112,6 +201,7 @@ document.addEventListener('navigate', (e: Event) => {
 
         // Remove any active detail view first
         if (currentDetailEl) {
+            deactivateView(currentDetailEl);
             currentDetailEl.remove();
             currentDetailEl = null;
         }
@@ -119,6 +209,9 @@ document.addEventListener('navigate', (e: Event) => {
         let target = viewCache.get(view);
 
         if (!target) {
+            await (VIEW_LOADERS[view]?.() ?? Promise.resolve());
+            if (seq !== navSeq) return;
+
             target = document.createElement(VIEW_TAGS[view]);
             viewCache.set(view, target);
             // Start hidden — we'll un-hide below
@@ -130,12 +223,21 @@ document.addEventListener('navigate', (e: Event) => {
         // display:none so scroll containers preserve scrollTop.
         if (currentViewEl && currentViewEl !== target) {
             currentViewEl.classList.add('view-hidden');
+            deactivateView(currentViewEl);
         }
         target.classList.remove('view-hidden');
+        // A freshly created view was appended hidden, so it did not
+        // self-activate on connection; a cached one was deactivated on
+        // the way out.  Either way this is the call that starts it.
+        activateView(target);
         currentViewEl = target;
         currentNavDetail = { view };
+
         return;
     }
+
+    await (DETAIL_LOADERS[view]?.() ?? Promise.resolve());
+    if (seq !== navSeq) return;
 
     // --- Detail (ephemeral) views -----------------------------------------
     // Push the current view onto the nav stack before switching
@@ -147,9 +249,11 @@ document.addEventListener('navigate', (e: Event) => {
     // Hide the current primary view
     if (currentViewEl) {
         currentViewEl.classList.add('view-hidden');
+        deactivateView(currentViewEl);
     }
     // Remove any prior detail element
     if (currentDetailEl) {
+        deactivateView(currentDetailEl);
         currentDetailEl.remove();
         currentDetailEl = null;
     }
@@ -245,7 +349,52 @@ document.addEventListener('navigate', (e: Event) => {
             currentDetailEl = fallback;
         }
     }
-});
+}
+
+// Every view the user has not opened yet, fetched once the app has
+// settled. Splitting keeps them off the path to first paint; warming
+// them means the navigation that needs one almost never waits, which is
+// the cost a naive split would have traded the startup win for.
+function warmViewChunks(): void {
+    const loaders = [
+        ...Object.values(VIEW_LOADERS),
+        ...Object.values(DETAIL_LOADERS),
+        ...EXTRA_LOADERS,
+    ];
+
+    const warmNext = (i: number): void => {
+        if (i >= loaders.length) return;
+
+        void loaders[i]!()
+            .catch(() => {
+                // A chunk that will not preload is not a failure: the
+                // navigation that needs it will ask again and report
+                // for itself if it still cannot be had.
+            })
+            .finally(() => {
+                schedule(() => warmNext(i + 1));
+            });
+    };
+
+    schedule(() => warmNext(0));
+}
+
+/** requestIdleCallback where it exists; WebKit2GTK does not have it. */
+function schedule(fn: () => void): void {
+    const ric = (
+        window as unknown as {
+            requestIdleCallback?: (cb: () => void) => number;
+        }
+    ).requestIdleCallback;
+
+    if (ric) {
+        ric(fn);
+
+        return;
+    }
+
+    setTimeout(fn, 200);
+}
 
 // Navigate-back: pop the nav stack and re-dispatch as a regular navigate.
 document.addEventListener('navigate-back', () => {
@@ -328,3 +477,5 @@ if (queueButton && queuePanel) {
 // or timing assumptions needed.
 void Player.EmitCurrentState();
 void Queue.EmitCurrentState();
+
+warmViewChunks();
