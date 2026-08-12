@@ -1529,3 +1529,57 @@ Seven more things worth keeping:
   removed. Nothing is paid for it — the slot's light-DOM children are
   in the DOM either way; a conditional `<slot>` only stops projecting
   them.
+
+## A dependency with a rate has to be checked at its rate
+
+Same pass, after the plan's three landings: the `e2e` job's red history
+turned out to be one measurement being wrong, and the fix was worth the
+generalisation.
+
+`ci.yml` had made ALSA's `null` plugin the container's default device,
+with a comment saying it "advances its pointer on a timer, so playback
+is consumed at real-time rate". It does not. Measured in the CI image
+under Docker, through beep and oto with the same `speaker.Init`
+arguments `player.InitSpeaker` uses:
+
+| default device | 3000 ms of audio consumed in |
+|---|---|
+| `type null` | **2.96 ms** |
+| PulseAudio null sink | **3762 ms** |
+
+A thousand times too fast. Every track finished instantly, so the
+position reset to zero while the UI kept interpolating, and three specs
+failed on a clock that never moved — 17–19 s adrift, which reads
+exactly like the `H-3` bug Phase 2 fixed. `check` and `e2e` are both
+green now, 54 specs on Chromium and 54 on WebKit.
+
+Five things worth keeping:
+
+- **A dependency with a *rate* needs a check at its rate.** Installing
+  a sound device and asserting it exists is not the same as asserting
+  it plays. The job now plays three seconds and fails if they take
+  under two, in a step called "The sink plays at real time" — so the
+  next regression names itself instead of surfacing three steps later
+  as an app bug.
+- **A failure that succeeds quietly is the expensive kind.**
+  `InitSpeaker` returns nil in ~3 ms against both devices. Nothing
+  logged, nothing errored; the only symptom was arithmetic in three
+  specs. Two sessions read that as a flake and one as a possible
+  WebKit regression.
+- **The CI container is reproducible locally, and nobody had tried.**
+  `docker run --rm ubuntu:24.04` reproduced the whole thing in four
+  minutes and let the fix be verified — including under the private
+  session bus and Xvfb `dev-headless.sh` runs the app in — before it
+  was pushed. Every previous attempt to reason about this job reasoned
+  from the *commits* instead, because the log looked unreachable
+  (which it was not either).
+- **Test the stack you ship, not one that resembles it.** `aplay`
+  showed the same 1000× gap and would have been enough to *diagnose*.
+  It would not have shown that oto opens the pulse-backed device at
+  all, which is the thing that had to be true for the fix to work; a
+  fifteen-line Go program using the app's own `speaker.Init` did.
+- **The comment was the bug's hiding place.** "Measured: InitSpeaker
+  succeeds in ~36 ms and all six playback specs pass" was true when
+  written and had been carried forward through every subsequent read of
+  that file, including two this session. A measurement in a comment
+  needs the same expiry as one in a plan.

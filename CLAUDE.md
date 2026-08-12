@@ -834,20 +834,18 @@ per-step status (which is how "WebKit was skipped" was found) and
 `GET /api/v1/repos/{owner}/{repo}/actions/jobs/{job_id}/logs` returns
 the whole log, with `Authorization: token $GITEA_TOKEN`.
 
-**The `e2e` job is currently red on both engines, for one reason.**
-48 specs pass under Chromium and 48 under WebKit; the same three fail
-— `playback.spec`'s elapsed clock and two in `player-truth.spec` —
-because playback does not advance in the container: the UI
-interpolates while the backend position stays at zero, 17–18 s adrift.
-It is the audio device, not the renderer and not the app. Which means
-the paragraph below was measured once and is no longer true.
-
-Two things the container needs that a developer machine does not. It
-has no PulseAudio socket, so `/etc/asound.conf` makes ALSA's `null`
-plugin the default device — that plugin is *supposed* to advance its
-pointer on a timer, so playback is consumed at real-time rate and the
-elapsed clock moves, which `e2e/specs/playback.spec.ts` asserts; it no
-longer does. And
+Two things the container needs that a developer machine does not.
+**It needs an audio device that keeps time**, because the player's
+position is derived from what has been consumed — so a device that
+accepts audio instantly makes every track finish instantly and the
+clock never move. That is what ALSA's `null` plugin does, contrary to
+a year of this file and `ci.yml` saying it paces on a timer: measured
+through beep and oto with `player.InitSpeaker`'s own arguments,
+**3000 ms of audio consumed in 2.96 ms**. It is a PulseAudio null sink
+now (the same 3000 ms takes 3762 ms), started in system mode because
+the job runs as root, with a step that plays three seconds and fails
+if they take under two — a dependency with a rate, checked like one.
+And
 `YJ_CORE_INDEX_URL` points at a dead address so no run fetches the real
 explore artifact, matching what `scripts/seed-sandbox.sh` already does.
 

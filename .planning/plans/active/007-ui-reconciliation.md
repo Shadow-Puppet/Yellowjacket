@@ -1924,12 +1924,26 @@ route from the albums grid to `track-details`.
 And two things this pass found rather than inherited:
 
 - **Name the dialogs.** One helper, eight call sites.
-- **CI's e2e job cannot go green until the container's audio clock
-  does.** Three specs assert on a position that does not advance
-  there. Either the container gets a sink that really consumes, or
-  those three specs learn to skip when it does not — but silently
-  loosening a tolerance would delete the only assertions this repo has
-  that the player tells the truth.
+
+**CI is green, and the audio clock was the last thing between it and
+green.** Fixed the same pass: `ci.yml` used ALSA's `null` plugin on the
+belief that it paces, and it does not — measured in the CI image
+through beep and oto with `player.InitSpeaker`'s own arguments,
+**3000 ms of audio consumed in 2.96 ms**, against **3762 ms** through a
+PulseAudio null sink. Every track finished instantly, so the position
+reset to zero and three specs failed on a clock that never moved. It
+looked like a flake because `InitSpeaker` succeeds either way, in ~3 ms
+either way. `check` and `e2e` now both pass, **54 specs on Chromium and
+54 on WebKit** — the first fully green run this plan has had.
+
+Two things about how that was found are worth carrying forward. The fix
+was **verified in `ubuntu:24.04` under Docker before it was pushed**,
+including under the private session bus and Xvfb `dev-headless.sh` uses
+— the CI container is reproducible locally, which nothing had tried.
+And the sink is now **checked like the dependency-with-a-rate that it
+is**: a step plays three seconds and fails if they take under two,
+because otherwise the failure surfaces three steps later as "the
+elapsed clock is 19 s adrift" and reads as an app bug.
 
 ## Phase 6 — Explore starts the conversation
 

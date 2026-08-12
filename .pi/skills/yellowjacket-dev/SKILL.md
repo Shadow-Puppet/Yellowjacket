@@ -56,11 +56,12 @@ reference, because you need them *before* the failure, not after.
   `--browser=webkit` is CI-only; local work is Chromium. CI runs it
   with `if: !cancelled()` so a chromium failure does not silently
   skip it, which it did for two sessions.
-- **CI's `e2e` job is red for a reason that is not yours.** Three
-  playback specs fail in the container on both engines (48 pass on
-  each) because the position never advances there — an audio-device
-  problem, not a renderer or app one. Read the per-step status before
-  assuming your change did it.
+- **CI's `e2e` job is green on both engines** (54 specs each) since the
+  container got an audio device that keeps time. If playback specs
+  start failing there again, check the **`The sink plays at real time`**
+  step first: ALSA's `null` plugin consumes 3000 ms of audio in 2.96 ms,
+  so every track finishes instantly and the clock never moves — which
+  reads as an app bug and cost two sessions of that suspicion.
 - **`make e2e` needs `SEED=default`.** Its specs assert on fixture
   content — unicode tracks, the fixture artists, a known playable file.
   Run against the `bulk` seed a measurement session left behind and 13
