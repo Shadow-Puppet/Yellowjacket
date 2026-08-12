@@ -18,7 +18,7 @@ here has disappeared.
 
 ## Read this part before you fail
 
-Five things cost a cycle each the first time. They are here, not in a
+Seven things cost a cycle each the first time. They are here, not in a
 reference, because you need them *before* the failure, not after.
 
 - **Time out every binding call.** A bound Go method called with wrong
@@ -41,6 +41,25 @@ reference, because you need them *before* the failure, not after.
   the real `AddLibrary` binding and waits for the real scan.
 - **Playwright's WebKit does not run on Arch** (Ubuntu-only libs).
   `--browser=webkit` is CI-only; local work is Chromium.
+- **`make e2e` needs `SEED=default`.** Its specs assert on fixture
+  content — unicode tracks, the fixture artists, a known playable file.
+  Run against the `bulk` seed a measurement session left behind and 13
+  of 36 fail, in a list that reads exactly like a regression in
+  whatever you are holding. `make dev-headless SEED=default` first.
+- **A frontend edit is not live until you restart the app.** Vite
+  updates the module, but an already-registered custom element class
+  cannot be re-registered, so a running page keeps the old one and your
+  change reads as having done nothing — including across a browser
+  reload. `make dev-stop && make dev-headless SEED=…`, then re-check.
+  The nastier version: a **build error leaves the dev server serving
+  the last good bundle**, so the page still works and still shows the
+  old behaviour. `make dev-headless` prints the esbuild error; a
+  reload does not. One way to cause one is a stray backtick inside a
+  comment in a `css` tagged template literal, which ends the literal.
+- **`npx tsc --noEmit` is part of the gate, and nothing else runs it.**
+  CI does (`.gitea/workflows/ci.yml`), and it typechecks
+  `frontend/test/` — which `make lint`, `make test`, `make ui-test` and
+  `make e2e` do not. A tree can be green on all four and red in CI.
 
 ## Which tier
 
@@ -56,6 +75,7 @@ only climb when it cannot.
 | A bound method or a bound struct field | `make bindings` then `make ui-test` | ~1.5 s + 2 s |
 | A user-visible flow across frontend *and* backend | `make e2e` (needs the app up) | ~1 min |
 | Something you cannot predict — exploring | `make dev-headless SEED=default` + `playwright-cli` | interactive |
+| Something whose answer is a *number*, not a pass | `make perf` against a bulk-seeded app | ~1 min + setup |
 | A `.sql` or `.templ` file | `make generate`, then the checklist in [references/schema-change.md](references/schema-change.md) | |
 
 Two targets are once-per-clone prerequisites that are **not**
@@ -73,13 +93,178 @@ Two rules about climbing:
 - **A component test passing is not the app rendering.** If you touched
   anything in `frontend/src`, verify it in the real app too — start it
   headless, `screenshot --filename=/tmp/shot.png`, and *read the PNG*.
+  Two of this repo's worst regressions were only ever visible there: a
+  header badge contradicting the settings page, and a virtualized row
+  whose columns no longer lined up with its own header. Neither failed
+  anything.
+- **A list that renders is not a list that repaints.** `lit-virtualizer`
+  re-renders its rows when one of its *own* properties changes, not
+  when the parent does — so selection highlighting, the playing-track
+  row and anything else driven by host state need an explicit
+  `virtualizer.requestUpdate()`. Click a row and look, every time you
+  touch one of these lists; the controller will hold the right state
+  either way. **Check `el.viewActive` first**: dispatching a raw
+  `navigate` event does not always activate a view, and an inactive one
+  does not render at all — which looks exactly like this bug (the
+  controller holds the selection, no row highlights) and is Phase 1
+  working as designed. Navigate by clicking the sidebar.
 - **Do not write an e2e spec first.** Drive the flow by hand, then
   promote it with `/e2e`. Specs written blind assert on selectors that
   do not exist.
 
-Before a commit, the gate is `make lint`, `make test`, `make ui-test`
-and `make bindings-check` — all four are also lefthook hooks, so
-skipping them locally only defers the failure.
+Before a commit, the gate is `make lint`, `make test`, `make ui-test`,
+`make bindings-check` and — from `frontend/` — `npx tsc --noEmit`. The
+first four are lefthook hooks, so skipping them locally only defers the
+failure; the typecheck is a hook too but only CI runs it over the test
+tree, which is where it has actually broken.
+
+Two things about the e2e tier that are not obvious until they bite.
+**The 36 specs share one backend process in file order**, so a spec
+that leaves the app somewhere passes alone and fails the suite — leave
+the UI as you found it, and *wait* for it rather than trusting the
+click to have finished. The queue panel's width is animated and the
+transport slides with it, so a click issued while it closes lands on
+whichever button moved under the pointer. And **anything asserting on
+the queue panel's rows must open it first**: a closed panel renders no
+list at all.
+
+## Measuring, when a pass is not the answer
+
+Performance claims need a before and an after on the same machine
+against the same library, or they are anecdotes. The fixture library
+is a few dozen tracks and cannot show any of it.
+
+```bash
+make bulkdata                  # ~11 s, 466 MB into a gitignored .dev/
+make sandbox-seed-bulk         # minutes: it is a real scan of 50 000 files
+make dev-headless SEED=bulk
+make perf LABEL=before         # ... make the change ...
+make perf LABEL=after
+make perf-compare BEFORE=before AFTER=after
+```
+
+Fourteen numbers: startup (and the count of cross-origin requests, which
+is whether the app works offline), the bundle's shape and each view's
+first open, keystroke-to-paint in the search box, what a naturally
+finished track provokes, what one favourite toggle costs, what sitting
+idle on Settings costs, what **scrolling** a long list costs (image
+bytes and the tier they were requested at, plus frame cost through the
+artist grid), what a long **Explore session** retains (heap sampled
+after each of twenty-four searches, plus every registered cache's
+size), what opening a **2 000-track playlist** costs (elements
+retained, eager cover requests, heap, and what one update pass costs
+and rebinds), what the **selection** costs (ordering the selected keys
+with one row selected at either end of 50 000 and with all of them, and
+what "Select all → Edit tags" blocks for), what an **update pass of the
+player bar** costs (querySelectors, layout reads, style writes and the
+read-after-write interleaves inside `updated()`, measured with a clean
+DOM and a dirty one, plus six seconds of real playback), how many
+**document pointer listeners** are installed at rest (via CDP, so
+nothing else in the run is perturbed), what **"play these"** costs for
+an artist, twenty albums and five genres, and heap after a scripted
+browse. It wraps every bound Go method, so "did that refetch the
+library" is a fact rather than an inference.
+
+`window.__yjCacheStats()` reports every registered cache's entries,
+retained chars and cap in one eval — which is how you check a bound is
+still holding without rebuilding the reproduction that justified it.
+
+Adding a number is usually the first half of an item's work: most
+findings are not among the seven, and the fix cannot be believed
+without one. Two rules for adding one.
+
+**Stage what the seed does not have, idempotently and by name.** The
+bulk seed has one empty playlist, against which "toggling a heart
+refetches every playlist" costs nothing and cannot be reproduced; the
+favourite measurement builds ten 500-track playlists first. Staging by
+name means a before and an after see the same shape — and
+`dev-headless` restores the seed tarball on every launch, so it is
+rebuilt each run anyway.
+
+**Measure both halves of a trade.** Route splitting reports bytes
+before first paint *and* the slowest first open of a view, because a
+split that halves startup by making every page visibly slower has not
+helped anyone.
+
+**Measure the state the cost depends on, not just the operation.** A
+forced layout costs 3 µs against a clean layout and 0.1 ms against a
+dirty one, so a component measured only in its steady state reports
+that the finding about it is imaginary. If the work is conditional,
+stage both conditions and put both rows in the table — they explain
+each other, and one of them is the number the fix has to move.
+
+Fourteen traps, each of which produced a wrong number first:
+
+- **A label is a filename, and audit IDs are case-insensitive as
+  filenames.** `.dev/perf/before-m6.json` is the *capital* `M6` (the
+  3 s ticker) from an earlier pass; measuring lowercase `m6` under that
+  name silently overwrites a baseline three passes of numbers depend
+  on. Name a label after the *change*, not the finding.
+- **The first run after a rebuild is not a measurement — and the
+  second is not reliably a good one either.** A run taken immediately
+  after `make dev-headless` often reports first contentful paint at
+  96–112 ms against 28–32 ms on the next run of the same build (a cold
+  Vite module graph). But the ordering does not hold: one pass saw 100
+  then 96, and another 28 then 76. FCP moves ±50 ms for reasons this
+  harness does not control, so take two, and if they disagree report it
+  as noise rather than taking a third until they agree.
+- **A measurement is against whatever seed the app is running.**
+  `make e2e` needs `SEED=default`, so a confirming perf run taken
+  straight after one measures a few dozen tracks: "Play 20 albums"
+  becomes a dash and an artist's bytes fall 40×. Plausible in shape,
+  meaningless. Restart on `bulk` before re-measuring anything.
+- **A `longtask` entry is delivered *after* the task that produced
+  it.** Reading `window.__yjPerf.longtasks` synchronously after the
+  operation you just timed reports **0 ms of blocking beside a
+  six-second stall**. Wait a couple of hundred milliseconds first. The
+  tell is that the two numbers in the row disagree — which is a good
+  reason to always measure blocking *and* wall time.
+
+
+- **`make dev-headless` immediately after `make sandbox-seed`** loses
+  the race for port 34115 and comes up with no dev server, while still
+  printing `up`. The measurement then attaches to a dying app. Sleep,
+  or check `curl -s -o /dev/null -w '%{http_code}' localhost:34115`.
+- **`search-bar` debounces 150 ms.** Anything measuring to the next
+  frame measures the input echoing its own character.
+- **`__yjEvents.wait()` returns an already-buffered event.** Without a
+  `reset()` first you get the previous run's answer, which looks like a
+  real result and is off by one iteration.
+- **A `0 ms` result is usually a broken measurement, not a win.**
+  Waiting for `#main-content > :not(.view-hidden)` after a navigation
+  matches the view being left — it stays on screen until the incoming
+  one is ready — so every view reported 0 ms on every build. Wait for
+  the specific element, never a generic selector. Same tell as the
+  debounce: **a number that cannot move is not evidence.**
+- **`git stash` will not give you a baseline** on a tree carrying
+  uncommitted phases: stashing one file reverts *every* uncommitted
+  change in it, not the one being measured. Build the before by undoing
+  the single change by hand in the current file. For a cap or a
+  threshold, setting the constant to `Infinity` is the cleanest
+  possible one-variable undo.
+- **A bound cannot be verified by a run that never reaches it.** The
+  first bounded build measured *identical* to the unbounded one,
+  because the session cached 180 entries against a cap of 192 and never
+  evicted anything. Same tell as the two traps above — before and after
+  suspiciously equal. Make the session overrun the limit.
+- **A negative result inherits the coverage of whatever produced it.**
+  Two sessions recorded the unbounded Explore caches as "does not
+  reproduce" from a browse script that visits Explore and never
+  *searches* in it — so both caches were empty the whole time. Before
+  believing a finding did not reproduce, check the code path it names
+  actually ran.
+- **A measurement that warms something has to run after everything
+  that reads it.** The playlist-open number pulls ~90 cover images;
+  placed before the scroll measurement it filled the HTTP cache and
+  took that row's request count from 26 to 0 — a clean, plausible,
+  entirely fabricated improvement in a number nothing had touched. It
+  runs last now, which costs it its own request count (zero on any
+  build, so that row is in the JSON and off the table).
+- **The bulk library's covers are 300×300 and ~3.7 kB**, deliberately
+  (a realistic cover generator made a 2 GB library). Any finding about
+  full-size artwork cannot show its magnitude here; measure the
+  mechanism instead — e.g. *which tier the request asked for* rather
+  than bytes saved.
 
 ## Running the app
 

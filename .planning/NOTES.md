@@ -665,3 +665,597 @@ of the working tree, and never two jobs in one directory. The
 distinction that matters is not clean-vs-dirty but *whose* dirt: a
 working-tree copy carries a developer's accumulated build output, which
 is the one thing CI is supposed to be checking you do not depend on.
+
+## A cached view needs a lifecycle, and so do its controllers
+
+Plan 007 phase 1. `index.ts` caches primary views and hides them with a
+class so `scrollTop` survives navigation — a deliberate, good decision
+that nothing else was told about. `disconnectedCallback` therefore
+never fires, and every document listener, interval and subscription a
+view registers runs for the session. The measured cost was not a leak:
+pressing `s` on **Settings** skipped albums out of the Autotag queue,
+because `autotag-view`'s document keydown handler was still live.
+
+Three things that were not obvious before doing it:
+
+- **A focus-only scope rule would have been a regression.** The
+  shortcut service resolves a panel scope by walking up from the
+  focused element, and this app is driven with the mouse: focus sits on
+  `<body>` almost always. Panel bindings would only have worked after
+  a click landed inside the panel, where the old document listener
+  worked always. Hence the *ambient* scope claimed by the active view
+  (`services/shortcut-scope.ts`) as a fallback after the focus walk.
+- **Shared reactive controllers have the same bug.**
+  `ContextMenuController` bound three document listeners in
+  `hostConnected`, which for a cached host never un-happens. A
+  controller cannot know whether its host is cached, so
+  `registerViewAware` lets it ask, and it keeps connection-based
+  behaviour on hosts that are not.
+- **Off-screen views were still rendering.** Store controllers call
+  `requestUpdate()` on every subscriber, so one keystroke in the search
+  box re-rendered eleven pages, ten of them invisible. The mixin
+  withholds the update and replays it on activation, which is why
+  coming back to a view still shows current state.
+
+Re-running a view's *load* on activation is not free and is not always
+right: `autotag-view`'s `startQueue()` resets the selected folder and
+refetches candidates over the network, so it stays once-per-mount and
+only the local folder list refreshes on return.
+
+## A local timer is not a clock, and a fixed grid row is not a notice board
+
+Plan 007 phase 2. Both halves of the finding were reproduced by hand
+first, and both reproduced exactly as measured in August: the seek bar
+read `00:44` against a backend at `73` after four keyboard seeks, and
+a queue with a moved file in the middle stopped dead at index 0 with
+nothing emitted and `IsPlaying` false.
+
+Four things worth keeping:
+
+- **Phase 1 moved the reproduction.** With a track row focused the
+  arrows belong to the grid, so the keyboard seek does not fire from
+  the track list at all any more — the 30 s desync only reproduces
+  with focus off the grid. A fix verified against a stale
+  reproduction would have "passed" without ever running the code
+  path. Re-run the reproduction on the current build, not on the
+  audit's description of it.
+- **A push of state needs an identity and a sequence.** The store is
+  a singleton and keeps the last position, so a seek bar mounting
+  later adopts it: without `trackChangeId` on the payload that is a
+  stale reading rendered as current. And without a monotonic `seq`,
+  a report of the same second as the last one is indistinguishable
+  from no report, so the interpolation it is supposed to reset keeps
+  running. Both are cheap on the emit side and impossible to add
+  later without touching every consumer.
+- **`.bottom-bar` is a fixed `4em` grid row.** An inline message laid
+  out inside it squeezes the transport out of its own footer, which
+  looks like a broken player rather than a message. It floats above
+  the bar (`position: absolute; bottom: calc(100% + 4px)`), which is
+  also the right answer for anything else that wants to speak from
+  down there.
+- **Reporting by event beat returning an error.** The plan wanted the
+  queue bindings to return `error`; the failure that mattered most —
+  auto-advance onto a bad file — has no caller to return to. An event
+  covers both, and the stores kept a `.catch()` per call for the
+  bridge-level rejections that a return value never described anyway.
+
+## A level says how loud, not where, and the bottom band is taken
+
+Plan 007 phase 3. The audit's ~30 "the failure is invisible" findings
+were one problem wearing thirty hats — there was nowhere to put a
+message — so the surface shipped whole: four levels, one store, one
+presentation, and the callers routed through it in the same pass.
+
+Five things worth keeping:
+
+- **A level is not a location.** Blocking, Persistent and Transient say
+  *how loud*; Inline says *not global*, which is not the same as
+  saying where. An inline notification therefore carries a **region**
+  (`player`, and whatever comes next) and the app-level host ignores
+  it. Without that field the "one component with four presentations"
+  would have become two components with two stores, which is the exact
+  thing this phase existed to delete.
+- **The bottom of the window belongs to the player.** The stack was
+  first anchored above the player bar, beside the player's own floating
+  notice. That looked right at 1440×900 and overlapped at 800×600,
+  because the player's notice grows *upward* by however many lines its
+  sentence needs. The stack moved under the header. Anything anchored
+  to the bottom edge is sharing a band with something whose height is
+  not known in advance.
+- **Some backend errors are already sentences.** `describeError` maps
+  runtime causes to copy, but the sentinels this app writes for its own
+  conditions ("a library with that name already exists") are the most
+  useful thing that could be shown, and mapping them to a generic line
+  would have been a regression. `explainError` repeats a message with
+  no Go/HTTP noise markers and defers to the map otherwise. The
+  distinction is whether *we* wrote the string, not how long it is.
+- **C4 and M1 are the same bug from either end.** The library store
+  cached a stale answer because a fetch outlived the selection, and
+  hung its waiters forever because a failed fetch never satisfied the
+  "loaded and not loading" predicate they watched for. Both go away by
+  holding the request itself and stamping it with a cache generation —
+  one change, two findings, and the four hand-written `waitFor*`
+  helpers deleted.
+- **A reproduction can fail for the wrong reason.** The e2e spec for a
+  rejected binding renamed the decoy library to its own name, which the
+  backend accepts as a no-op: red at the right assertion, having never
+  induced the failure it was named for. It only became a reproduction
+  once it picked its row by the seeded library's name. A failing test
+  is evidence of nothing until you have watched *why* it fails.
+
+One operational note: `make bindings-check` requires a clean working
+tree for `frontend/wailsjs/` and reports staged changes as dirty, so it
+cannot pass mid-phase on an uncommitted tree. Regenerating and diffing
+by hand (`go tool wails generate module -tags webkit2_41`, then
+`git diff -- frontend/wailsjs`) is the equivalent check.
+
+## Measuring is the work; the icon CDN was serving Pro
+
+Plan 007 phase 4, items 1–2 of 8. This phase is verified by numbers
+rather than by assertions, which changes what "first" means: the first
+deliverable is not a fix, it is a 50 000-track library and a script
+that takes four measurements against it. Both fixes then landed with a
+before/after, and both had a reproduction that was watched failing.
+
+Six things worth keeping:
+
+- **A measurement library is not a fixture library, and should share
+  nothing but its generator.** `test_data/music_library_test` is
+  curated *cases* selected by name; `.dev/music_library_bulk` is a pile
+  whose only interesting property is its size. Generating 50 000 files
+  through ffmpeg is ~40 minutes, so the bulk one encodes six clips once
+  and copies them — but it still tags every file through
+  `backend/tagwriter`, because a library the app cannot read back
+  measures nothing. 11 s, 466 MB, gitignored, and deliberately not a
+  dependency of `make test`.
+- **The first cover renderer made a 2 GB library.** The fixture cover's
+  diagonal band is ~37 hard edges at 300 px, which is the worst case
+  for a JPEG DCT: ~35 kB per album, nearly all of it artefacts around a
+  pattern nobody looks at. A smooth gradient is ~6 kB and just as
+  distinguishable. 466 MB instead of 2 GB.
+- **Instrument the bindings, not the symptoms.** "Finishing a track
+  refetches the library" became a fact rather than an inference by
+  wrapping every method on `window.go` and recording call, duration and
+  serialized size. The generated bindings look their target up at call
+  time (`window['go']['library']['Library']['GetAllTracks']()`), so
+  post-hoc wrapping catches a store that imported the wrapper long ago.
+  Pair it with a `longtask` PerformanceObserver: a 25 MB JSON parse on
+  the main thread appears there and nowhere else.
+- **A debounce will happily measure nothing.** "Keystroke to paint"
+  against the next frame gave 16 ms on every build, because
+  `search-bar` debounces 150 ms and 16 ms is the input echoing its own
+  character — a number that cannot move, and therefore cannot be
+  evidence. The measurement has to wait past the debounce for the
+  render the keystroke caused.
+- **The icon CDN was serving Font Awesome _Pro_.** Every SVG fetched
+  from the kit host carries a "Commercial License" comment, so the
+  obvious fix — save what the app already downloads — is a licence
+  violation. Font Awesome **Free** 7.3.1 (CC BY 4.0) has all 64 names
+  the app uses, is redistributable with attribution, and moved no
+  `ui-visual` baseline. Check what a CDN is actually serving before
+  vendoring it.
+- **Some icon names cannot be found statically.** Twenty call sites
+  compute one from state (`jobIcon(job)`, `TONE_ICONS[tone]`,
+  `this.favCtrl.iconName`), so the list is committed and *checked at
+  runtime*: the resolver records a miss and renders a fallback, and an
+  e2e sweep across every view asserts there are none. A missing icon
+  used to be invisible because the CDN had everything; it now has to be
+  findable instead.
+
+And two findings that did not survive contact:
+
+- **`perf.M1`/`M2` no longer reproduce.** One keystroke costs 49.9 ms
+  net of the debounce with **zero** long-task blocking at 50 000
+  tracks, not the predicted 50–100 ms across every mounted view —
+  because Phase 1 stopped off-screen views rendering, which was M1's
+  mechanism. An audit finding can be fixed by an unrelated phase, and
+  re-measuring before fixing is how you find out.
+- **`perf.M7`/`M8`'s unbounded caches did not show as heap growth**
+  across a ten-view scripted browse (37 → 38 MB post-GC). They are
+  real by inspection, but the reproduction has to be a long Explore
+  session, and it should exist before the LRU does.
+
+One correction to the audit's own numbering, since two phases cite it:
+in `perf.md` the icons are **M9** (the plan's Phase 4 prose calls them
+C1), the whole-library refetch is **C1**, the selection wipe is **C2**,
+and **C3/C4 were already fixed in Phase 3**.
+
+## A ticker is a hidden dependency for everything that forgot to speak
+
+Plan 007 phase 4, items 3–5 (`C5`, `M6`/`H-14`, `M10`). Three fixes,
+three new measurements, and one bug shipped-and-caught inside the same
+session — the useful part of which is *how* it was caught.
+
+Five things worth keeping:
+
+- **Deleting a polling loop is never only a deletion.** The explore
+  index emitted its status every 3 s forever, with an identical payload
+  once ready, which re-rendered the whole settings page for the life of
+  the session. Every path that *mutates* the status already emitted, so
+  the ticker looked purely redundant. It was not: `si.ready = true` and
+  `si.cancel = nil` both change what `emitStatus` derives and neither
+  announced itself, so the ticker was carrying two transitions within
+  three seconds of their happening. Removing it left the header badge
+  reading "Building search index" over an index the settings page
+  called ready. Before removing a poll, enumerate the writes to
+  everything it reports — `rg 'si\.ready = |\.cancel = '` was the whole
+  audit, and it should have come first rather than second.
+- **The screenshot found it; no test did.** The Go tests passed, the
+  436 component tests passed, all 36 e2e specs passed, and the numbers
+  were exactly the improvement predicted. The contradiction was two
+  labels 700 px apart in a PNG. "Read the PNG" earns its place in the
+  gate on cases like this — the app was *self-inconsistent*, which no
+  assertion was looking for because nobody had thought to.
+- **A "0 ms" measurement is usually a broken measurement.** View-open
+  time waited for `#main-content > :not(.view-hidden)`, which matches
+  the view being navigated *away from* — it is still on screen until
+  the incoming chunk resolves. Every view, every build, 0 ms. This is
+  the same failure as the 150 ms debounce from the first pass, and the
+  same tell: a number that cannot move is not evidence. Both times the
+  fix was to wait for the specific thing, not for a generic selector.
+- **A before/after must differ in exactly one thing, and `git stash` is
+  not a way to arrange that** on a tree carrying four uncommitted
+  phases. Stashing `frontend/index.ts` to measure the pre-split bundle
+  also reverted the bundled-icon registration living in the same file:
+  22 cross-origin requests, and a baseline for a build that has never
+  existed. The honest baseline was made by *adding the static imports
+  back* to the current file — a change that undoes the one thing being
+  measured and nothing else.
+- **The cheapest half of a fix is often the one the audit did not
+  name.** `perf.C5` is written as an event handler that over-fetches,
+  and it is. But `playlistStore` is a singleton constructed at import
+  time and eagerly warmed itself as well, so every launch paid the same
+  2.6 MB whether or not Playlists was ever opened — the event costs
+  that on a user action, the constructor costs it on every start. "Only
+  when there is a subscriber" turned out to be a two-line change that
+  beat the patching logic it was written to support.
+
+And one thing about splitting a bundle: **report the trade, not the
+win.** Route splitting moved 666 kB out of the pre-paint path (1 480 →
+814 kB) and cost up to 6 ms on the *first* open of a view, once per
+session, hidden further by warming the chunks on idle. But first
+contentful paint did not move at all, because at localhost speeds over
+a warm cache 666 kB of JS is not what the paint was waiting for. The
+number that improved is real and is the one that costs on a cold start
+and under WebKit2GTK; the number a user watches did not change. Saying
+both is the difference between a measurement and an advertisement.
+
+## "We looked and saw nothing" is only evidence if the thing that fills it ran
+
+Plan 007 phase 4, items 6 and 7 (`M7`/`M8`, `M3`/`M4`). Two fixes, two
+new measurements, and one finding that two previous sessions had come
+within a sentence of deleting as unreproducible.
+
+`perf.M7` says the Explore art caches are never evicted. Two sessions
+measured a ten-view scripted browse, saw the heap go 37 → 38 MB
+post-GC, and recorded the finding as "real by inspection but it does
+not show up". Both were right about the number and wrong about what it
+meant: **the browse script navigates to Explore and never types in it,
+and both caches are filled only by a search.** It was measuring a view
+with two empty maps. A session of twenty-four searches grows the heap
+20.58 MB and is still accelerating at the end.
+
+Six things worth keeping:
+
+- **A negative result inherits the coverage of the thing that produced
+  it.** "We browsed ten views and the heap was flat" sounds like
+  evidence about caches; it is evidence about ten navigations. Before
+  believing a finding did not reproduce, check that the code path it
+  names actually executed — here, one `console.log` of
+  `thumbnailCache.size` would have ended the question two sessions
+  earlier. Phase 4 has now had three findings evaporate on contact
+  (`M1`, `M2`, and half of `M8`) which makes the fourth *look* like the
+  same thing, and that prior is exactly what made it cheap to accept.
+- **A bound cannot be verified by a run that never reaches it.** The
+  first bounded build measured identical to the unbounded one: twelve
+  searches cached 180 thumbnails against a cap of 192, so nothing was
+  ever evicted. This is the same trap as the 150 ms debounce and the
+  `:not(.view-hidden)` selector, in its third costume — *a number that
+  cannot move is not evidence* — and the tell is the same one every
+  time: before and after are suspiciously equal.
+- **Two caches holding the same string means bounding one frees
+  nothing.** `explore-view`'s `artistImageCache` and
+  `exploreCache.artists` both hold the artist photo's base64 data URL,
+  ~128 kB each, measured at 2.30 M chars in *both* maps. Capping either
+  alone leaves every string pinned by the other, and the measurement
+  would have read as a fix that did not work. The cap is a shared
+  exported constant now. Before bounding a cache, find every reference
+  to what it holds.
+- **The audit named the wrong two maps.** `M8` calls out `artistAlbums`
+  and `artistTopTracks` as holding discographies and top-track lists.
+  Nothing in the app has ever written to either — their only callers
+  were a component test. Deleted rather than bounded. The map that
+  actually retains is one the audit does not mention.
+- **A measurement library optimised for size can remove the property a
+  finding is about.** `M3` is "the Art column renders a 1500×1500
+  original into a 24 px box". The bulk library's covers are 300×300 and
+  3.7 kB, because generating 50 000 realistic covers made a 2 GB
+  library and a smooth gradient made a 466 MB one. So the bytes saved
+  here are 3.7 kB → 1.1 kB and prove nothing. The number that is not
+  hostage to the fixture is **which tier was requested** — 26 of 26
+  originals before, 0 after, true on any library. When the rig cannot
+  show the magnitude, measure the mechanism.
+- **An audit's arithmetic is a hypothesis too.** `M4` predicts 250 000
+  comparisons per scroll frame from 5 000 albums × ~50 visible cards.
+  Measured: 24 visible cards, and the scan breaks on its first match,
+  so it costs **1.46 ms per frame** — real, 146× improvable, and far
+  below the long-task threshold, so it moves no user-visible number
+  today. Worth fixing because it stops scaling with the library, not
+  because anything was stuttering. Say which of those two it is.
+
+One operational trap that cost a cycle and is now in the skill:
+**`make e2e` needs `SEED=default`.** Run against the bulk seed left
+over from a measurement session, 13 of 36 specs fail on fixture
+content — unicode tracks, fixture artists, the seeded playback file —
+and the failure list reads exactly like a regression in the change you
+are holding.
+
+## A virtualizer repaints on its own properties, and the sloppy thing doing that may be load-bearing
+
+Plan 007 phase 4, item 8 (`M5`) and part of the tail (`p3`, `m1`, `m7`,
+`p4`). One large fix, three tail items settled, one audit
+recommendation rejected as a bug, and a broken feature that no audit
+had noticed.
+
+The mechanism under most of it is one sentence: **`<lit-virtualizer>`'s
+rows are rendered by the `virtualize` directive, and that directive
+runs when one of the *virtualizer's own* properties changes — not when
+its parent re-renders.** Everything below follows from that.
+
+Seven things worth keeping:
+
+- **Memoising `items` and hoisting `renderItem` together is how you
+  build a list that never repaints.** Virtualizing the playlist views
+  needed both (that is the point), and selection went silently dead:
+  the controller held exactly the right keys and no row ever showed
+  one. Nothing failed — 447 component tests, 36 e2e specs and every
+  Go test stayed green. A click in the real app found it in ten
+  seconds. The fix is what `track-list` has always done and nobody had
+  written down: push `virtualizer.requestUpdate()` on a selection
+  change and on a playing-track change.
+- **The same fact makes `perf.m1` a regression.** It asks for
+  `artists-view` and `genres-view` to hoist their per-render arrow
+  functions to stable fields "as `cover-grid` already does". That fresh
+  closure is the only thing changing a virtualizer property on a host
+  update, i.e. the only thing repainting the cards. Measured in the
+  running app: 1 highlighted card before the change, 0 after, both
+  views. There is no compensating win — the host mostly re-renders
+  *because* card state changed — so the closures stay, and
+  `card-grid-repaint.test.ts` fails on the change and exists for no
+  other reason. **An audit's suggested fix is a hypothesis too**, and
+  this is the first one in this phase that was actively harmful rather
+  than merely wrong about magnitude.
+- **Two of `M5`'s four stated mechanisms did not survive
+  measurement.** "lit removes and re-adds 10 000 listeners per pass" is
+  false on any build: instrumenting `EventTarget.prototype` recorded
+  **zero** add/remove calls per pass, because lit-html's `EventPart` is
+  itself the listener (`handleEvent`) and a changed listener value
+  updates a field rather than the DOM. And one update pass cost 5.3 ms,
+  not a stall. What was real, and worse than predicted, was elements
+  retained: **22 090** for a 2 000-track playlist against the audit's
+  16 000, and 2 000 eager cover requests. Fixing the two real halves
+  gives 487 elements and 0.
+- **The suggested fix would have cost two features.** "Render these
+  through `<track-list>` the way `genre-details` does" holds for
+  `genre-details` because a genre list is just tracks. Both playlist
+  views render phantom rows for missing files, and `playlist-details`
+  is a drag source and a drop target; `track-list` has never had
+  either. Virtualizing in place got the same 45× on elements with none
+  of the risk, and left `track-list` alone for its four other callers.
+  Check what the reference implementation *does not* do before adopting
+  it.
+- **A row inside a virtualizer needs `width: 100%`.** The virtualizer
+  positions children absolutely, so a grid row shrinks to fit its
+  content: the columns silently stopped lining up with the header above
+  them. Caught by reading the screenshot, not by any assertion — the
+  second time in this phase that a PNG found what the suite could not.
+- **A write with a `RETURNING` clause is still a write.**
+  `CreateSmartPlaylist` issued its `INSERT ... RETURNING` through
+  `DB.QueryContext`, which routes to the query-only read pool, and
+  failed with "attempt to write a readonly database (8)" — so **no
+  smart playlist could be created at all**, in any real build. It was
+  invisible because `NewTestDB` shares one in-memory connection and
+  leaves `readDB` nil, so `reader()` hands back the *writer* under test:
+  every unit test of that path exercised a handle production does not
+  have. `TestNoWritesOnTheReadPool` now walks the tree for the class,
+  watched failing on the bug first. A test double that collapses two
+  handles into one cannot see a bug about which handle you used.
+- **`p3` is right about one store and wrong about the other.**
+  Coalescing `search-store`'s notify to a microtask makes a subscriber
+  that unsubscribes synchronously after a `setTerm` miss the
+  notification entirely — a semantic change, and one an existing test
+  had already pinned deliberately. `playlist-store` took the fix; the
+  keystroke store did not. "Make these five consistent" is a fine
+  instinct and a bad rule when one of them is on a different path.
+
+And two operational notes, both now in the skill:
+
+- **A frontend edit is not live until the app restarts.** Vite HMR
+  updates the module, but an already-registered custom element class
+  cannot be re-registered, so the running page keeps the old one — the
+  edit reads as having done nothing. Worse, a *build error* leaves the
+  dev server serving the last good bundle, silently: a stray backtick
+  inside a comment in a `css` tagged template literal ended the literal,
+  esbuild failed, and the page kept rendering the previous CSS while
+  `make dev-headless` printed nothing about it.
+- **`tsc --noEmit` is in CI and was not in the documented gate.** The
+  previous pass left the tree failing it, under a fully green
+  `make lint && make test && make ui-test && make e2e` — none of which
+  typechecks `frontend/test/`.
+
+## An audit's magnitude and its mechanism are two claims, and the fix is a third
+
+Plan 007 phase 4, fifth pass: the `track-details` chunk split and `m6`.
+Two items, both landed, and the pass's one useful generalisation is
+that a finding is really *three* hypotheses — how big it is, why it is
+that big, and what to do about it — which can be independently right
+and wrong.
+
+`perf.m6` got the first right, the second wrong, and the third half
+wrong:
+
+- **Right about size.** "Select all → Edit tags at 50 000 tracks will
+  hang the renderer." Measured through the real opener: **3.0–6.3 s**
+  of blocked main thread, varying that much run to run on one build.
+  It is the largest single stall this phase has found, and it was in
+  the *minor* tier of the audit.
+- **Wrong about why.** The audit calls it O(selection × total) —
+  2.5 × 10⁹ comparisons. It is not: select-all hands the opener its
+  keys *in list order*, so each `find` matches at index *i* and the
+  real cost is N²/2, quadratic in the **selection**. That matters for
+  what it predicts about everything else: the audit's formula says a
+  ten-track selection costs 500 000 comparisons (it costs about 50),
+  and says nothing about the genuine worst case, which is a selection
+  built from the *bottom* of the list.
+- **Half wrong about the fix.** "Keep an index-ordered selection, and
+  build a `Map<FilePath, Track>` for the batch lookup." The map is the
+  entire 50× (**3 051–6 298 ms → 68 ms**), and it is now
+  `utils/track-index.ts`, a `WeakMap` keyed on the array's identity —
+  the invalidation signal this app already relies on everywhere else.
+  The index-ordered selection is the unsafe half: an index goes stale
+  on any re-sort, re-filter or refetch while a file path survives all
+  three, which is exactly why `retain()` drops `lastSelectedIndex` and
+  keeps the keys. The helper it would have replaced measures **3 ms**.
+  Three milliseconds does not buy a silently mis-ordered queue insert.
+
+That is the second audit recommendation in two passes that would have
+shipped a bug, after `m1`. Both times the reason was the same: the
+audit reasoned from the shape of the code and not from what the rest of
+the file already knew about it.
+
+Five more things worth keeping:
+
+- **A `longtask` entry arrives after the task that produced it.** The
+  new measurement's first run reported `blocking: 0 ms` next to a
+  six-second wall time, because it read the buffer synchronously after
+  the await. Sixth variant of this phase's most-repeated trap, and the
+  first one caught by *another number in the same row* contradicting
+  it rather than by suspicion. Two numbers that must agree are worth
+  more than one number you have to be sceptical about.
+- **The first load after a rebuild is not a measurement of first
+  load.** FCP read 96–112 ms on every run taken immediately after
+  `make dev-headless`, and 28–32 ms on the very next run of the same
+  build. A cold Vite module graph, not variance. The plan had been
+  describing this as "±100 ms run to run" for three passes without
+  naming it.
+- **Measurement labels are a flat namespace; audit IDs are case
+  sensitive.** `before-m6`/`after-m6` already existed — the *second*
+  pass's capital `M6`, an unrelated finding about a 3 s ticker. Naming
+  a baseline after a finding would have overwritten two of them.
+- **An unreachable code path still costs bundle size, and “dead code”
+  can mean “missing feature”.** `cover-grid` is one of the five
+  components that opened `track-details`, and it cannot: its album
+  dropdown is rendered by `renderSplitGrid`, which `connectedCallback`
+  references only to satisfy `noUnusedLocals` and which is, by its own
+  comment, never invoked. Expanding an album fetches its ten tracks and
+  draws nothing. The audit files this as `perf.p2`, "an unreferenced
+  `renderSplitGrid`", under housekeeping. It is a whole interaction
+  that does not exist, and it was only visible from trying to use it.
+- **What keeps a chunk out of a bundle is the absence of an import,
+  which nothing notices.** Five static imports were what put
+  `track-details`'s 42 kB before first paint; adding one back costs
+  nothing anybody would see, because the chunk is also warmed on idle
+  and the dialog carries on working. `lazy-track-details.test.ts` reads
+  the five sources and fails on a returning import — the same shape as
+  `TestNoDirectRuntimeEmits`, and for the same reason: the invariant is
+  about what the code *does not* say.
+
+## A finding's magnitude is measured where the work runs, not where it is written
+
+Plan 007 phase 4, sixth pass: `m5`, `m4`, `m2` — the end of the tail,
+and the phase. Three items, one of which was measured and then
+*dropped*, which is the outcome the discipline exists to allow.
+
+The generalisation the pass added to the previous one's "an audit's
+magnitude and its mechanism are two claims": **a mechanism can be
+exactly as described and still cost nothing, because the cost depends
+on state the reading cannot see.** `perf.m5` is right that
+`now-playing.updated()` interleaves layout reads with style writes on
+every pass, and right that the component updates while playing. It is
+wrong by two orders of magnitude, because a 1 Hz position report
+changes nothing that component renders — so the layout is clean when
+the reads happen and they cost 3 µs. The interleave only flushes when
+the DOM actually changed, measured at 0.103 ms, 34× more. The fix is
+still right (52 forced layouts over six seconds of playback became 2),
+but the number that justifies it had to be found by making the DOM
+dirty on purpose.
+
+Seven things worth keeping:
+
+- **A guard is only correct if it lists everything the measurement
+  depends on, including things a CSS rule adds.**
+  `.will-scroll .scroll-content` has `padding-right: 2em`, so applying
+  the scroll class changes the distance the marquee has to travel:
+  −128 px before the class, −158 px after it. The audit's "guard on the
+  value/flag they already track" reads as "guard on the text", and a
+  text-only guard would have left every first hover scrolling 30 px
+  short — silently, with no test in any tier able to see it. That is
+  the **third** audit recommendation in three passes that would have
+  shipped a bug, after `m1` and `m6`, and all three failed the same
+  way: reasoning from the shape of a function instead of from what the
+  rest of the file already knows about it.
+- **Measuring is also how you decline to fix something.** The same
+  finding names `artists-view` and `genres-view`, which do one
+  `querySelector` and two `style.setProperty` per pass and **no layout
+  read at all** — 0.0033 ms, one percent of their own update pass. They
+  are the two files `perf.m1` was rejected in, where a guard risks
+  stopping the virtualizer seeing a changed property. Three
+  microseconds does not buy that risk, and "measured, declined" is a
+  better record than a silent omission.
+- **A finding can be half-fixed by a phase that was not about it.**
+  `m4` describes two components registering document `mousemove` in
+  `connectedCallback` "for the process lifetime". Phase 1 had already
+  moved `track-list`'s onto `listenWhileActive`, so half the finding
+  described a build a year of work had passed. Check the line the audit
+  cites still says what it said.
+- **An N+1 finding is usually also an N-bytes finding, and the audit's
+  fix may only address the N.** All three `m2` sites want `FilePath`
+  and ask for whole track rows to get it: five genres cost **6 MB over
+  the IPC**, which the suggested `GetTracksByGenres([]string)` would
+  have preserved exactly while removing four round trips. Returning
+  paths made it 1.29 MB. Ask what the caller does with the answer
+  before batching the question.
+- **Return grouped, not flattened, when the caller owns the order.**
+  An album list is sorted by name and a genre selection by click order;
+  a flattened result would have reordered a queue silently. The new
+  bindings return `map[int64][]string` / `map[string][]string`, which
+  also serves the drag cache — a fourth N+1 site the audit does not
+  name, and the one that fires most, since it warms on every selection
+  change rather than on a menu action.
+- **`make generate` was emitting TypeScript that does not parse.**
+  `genevents` prefixed only the *first* line of a const block's doc
+  comment with `//`; Phase 4's first pass gave `events.go` two
+  multi-paragraph comments; so regenerating `frontend/src/events.ts`
+  wrote bare prose into an object literal. It is a pre-commit hook, so
+  the failure was waiting for whoever next touched a `.sql`, a `.templ`
+  or an event constant. Nothing caught it because nobody had run the
+  generator since the comments were written. **A generator is only
+  verified by running it**, and a hook that regenerates is a hook that
+  can break a clean tree.
+- **The `wailsjs` delta is 13 lines across *two* files**, both
+  `autotagservice/Service.*`, not five as three sessions of notes have
+  said. It is 25 across four now, the extra 12 being this pass's two
+  library bindings.
+
+And three on measuring, all of which produced a wrong number first:
+
+- **"First run cold, second warm" is not a rule.** First contentful
+  paint read 100 then 96 on one build this pass, and 28 then 76 on
+  another — the second run warmer in neither. FCP varies ±50 ms here
+  for reasons the harness does not control. The honest response is to
+  report it as unattributable, not to take a third run until it agrees.
+- **A confirming run against the wrong seed looks like a result.** A
+  re-run taken straight after `make e2e` measured the *default*
+  library, because `make e2e` needs `SEED=default` and the app was
+  still on it: "Play 20 albums" went from a number to a dash and the
+  artist's bytes fell 40×. Plausible in shape, meaningless. The tell
+  was a row that stopped having a value at all.
+- **Selection highlighting read from an inactive view measures Phase 1,
+  not a repaint bug.** Driving `artists-view` after navigating with a
+  raw `navigate` event showed the controller holding one selected
+  artist and zero highlighted cards — the exact signature of the
+  virtualizer hazard, and entirely an artifact: `viewActive` was
+  `false` and an off-screen view does not render. Through a real
+  sidebar click: one highlighted card, `aria-selected="true"` on the
+  right one, in both card grids. Check `viewActive` before believing a
+  view did not repaint.
