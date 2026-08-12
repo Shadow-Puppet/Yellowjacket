@@ -1683,3 +1683,102 @@ handler is a comment saying "wire this up later" and a
 `stopPropagation` — 30-odd keyboard stops per page that promise an
 action and perform none. Not fixed here, and recorded rather than
 implied.
+
+## A shelf that shares no ids can still be the shelf above it
+
+Plan 007 phase 6: the two inherited one-liners from the fourth pass,
+and then the only part of this plan that *adds* rather than repairs —
+Explore's shelves.
+
+The generalisation: **a rule is written against a mechanism, and the
+thing it exists to prevent is not the mechanism.** `backend/home`
+suppresses a shelf that repeats the one above it, by comparing album
+ids. Explore's first two shelves hold *different entity types*, so
+their ids are disjoint by construction and no overlap is possible — I
+wrote that in a comment as the reason the guard was unnecessary, and it
+is true, and the page repeated itself anyway. Ordered by raw
+ListenBrainz listen count, the catalog's top twelve albums are seven
+records by one act and its members, and the artists row underneath is
+then the same seven people. One fandom, twice, with nothing in common
+by the only measure the rule knew how to take.
+
+It was found by **reading the screenshot** — the shelves rendered, the
+counts were right, four component tests and six Go tests were green,
+and the page was obviously wrong to anyone looking at it. The fix is
+one album per artist (a shelf is a selection, not a leaderboard) and
+skipping whoever a row above already showed. The existing Go test
+caught the semantic change immediately: an artist seeded as the maker
+of the album shelf's only album correctly stopped appearing in the
+artists shelf, which read as a regression and was the rule working.
+
+Nine more things worth keeping, and the first four are all one theme —
+**a plan's shelf list is a design; the schema is the constraint**:
+
+- **Two of the four planned shelves cannot be built at all.**
+  `explore_index` has no genre or tag column, so "big in a genre you
+  already have depth in" has nothing to join to — genre exists only in
+  the library's own `recording_genres`. And "artists next to ones you
+  own" needs `similar_artist_map`, which `cmd/indexexport` does not
+  ship and which is filled lazily by network calls from artist pages:
+  empty on a fresh install, empty offline, which is exactly when this
+  page most needs content. Both were answerable in ten minutes by
+  reading two schema files, before writing anything.
+- **The third is empty on every library the repo can look at.** It
+  reads `in_library`, set from MusicBrainz IDs, and the fixture library
+  has **0 artists with an MBID** — so a shelf about the user's own
+  music is correctly absent on the seed, in CI, and on any untagged
+  library however large. A feature you cannot see locally has to be
+  designed so that the state you *can* see is a legitimate one.
+- **"The shipped artifact already contains the answer" is false in the
+  place the tests run.** `ci.yml` points `YJ_CORE_INDEX_URL` at a dead
+  address, so CI's app has **0 catalog rows** — as does every user's
+  first run. A developer machine silently downloads the real 1.1 M-row
+  artifact at launch, which is why the local page looked finished. The
+  empty world was reproduced locally by setting the same variable, and
+  it is now the world the e2e spec stages a catalog into.
+- **A spec that skips is not a spec that passes.** The first version
+  branched on the row count and skipped three of its four cases where
+  there was no catalog — which is CI, i.e. the only place both browser
+  engines run. Staging six rows through `/__test/sql` costs nothing
+  and turns "skipped" into signal.
+- **…and it only works because the readiness gate is a question rather
+  than a flag.** Two cached answers were tried first and were wrong in
+  the same way. `GetIndexStatus().TotalRows` is refreshed between build
+  tiers, so on an ordinary launch it reads 0 next to a full catalog and
+  hid every shelf. `IsReady()` is set once at startup by counting, so
+  rows staged afterwards are invisible to it. Both are the shape the
+  `emitStatus` note warns about — a derived value with nothing polling
+  behind it. `SELECT 1 FROM explore_index LIMIT 1` cannot be stale and
+  costs nothing.
+- **A setup step whose failure is not checked is not setup.** The
+  staging fetch passed six values to seven placeholders and never read
+  the response: every insert failed, the table stayed empty, and the
+  helper looked exactly like a helper that had worked. Same family as
+  every "probe that cannot move" in this plan, on the *arrange* side
+  rather than the assert side.
+- **A reproduction of a fix at one scale is not one at another.** End
+  in a split grid worked on the eight-album fixture, because everything
+  is rendered and the scroll is a no-op. At 5 000 albums the fix moved
+  the index and focused nothing: the card arrives a few hundred ms
+  after the host's `updateComplete`, and a ten-*frame* retry budget
+  expired first. The retry is a time budget now. (And a probe that
+  scrolled the grid to demonstrate the *old* behaviour left it
+  somewhere that broke the next measurement in the same eval —
+  measuring the before can spoil the after.)
+- **The audit did not contain the biggest bug this pass fixed.** "Check
+  what Home/End mean across a split grid" was a one-line hunch from the
+  previous session. What it found is that `offsetTop` inside a
+  `lit-virtualizer` is always 0 — the children are positioned by
+  transform — so ArrowDown and ArrowUp have been End and Home in the
+  albums, artists *and* genres grids since the roving controller was
+  written. Reproduced at 700×700 with three real rows: ArrowDown from
+  card 0 landed on card 7. One `getBoundingClientRect` fixed all three.
+- **A label can promise what the control cannot do.**
+  `library-status-indicator` was recorded last pass as a button that
+  does nothing. Its *label* was also an offer — "Add artist “Eno” to
+  library" — from an element that cannot accept it. Making it a badge
+  meant changing the copy too, which is the part a mechanical fix would
+  have left saying the wrong thing. Also worth knowing: a `<span>` does
+  not inherit `box-sizing: border-box` from the UA stylesheet the way a
+  `<button>` does, so swapping the tag grew the badge 36→38px. Nothing
+  but the stored screenshot would have noticed.

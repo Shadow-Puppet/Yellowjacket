@@ -231,6 +231,41 @@ See `.planning/plans/active/005-agent-development-harness.md`.
 - `mediacontrols` — MPRIS integration on Linux via D-Bus.
 - `system` — OS-specific paths (XDG on Linux, `%LOCALAPPDATA%` on Windows).
 - `explore` — Catalog search and browse over `explore_index`. See below.
+  Its **shelves** (`shelves.go`) are the page Explore shows before
+  anyone types, on `home`'s terms — a shelf is a reason, it carries the
+  sentence that says so, and an empty one is omitted. Queries return
+  `explore_index` row ids and are joined back by `rowsByIDs`, so a card
+  has one definition (`artistFromIndex` / `releaseGroupFromIndex` /
+  `recordingFromIndex`, shared with the search path, which is where
+  they were inlined).
+
+  Three things about it are load-bearing. **"No shelves" is three
+  different statements here and the page says which** — Home can omit
+  an empty shelf honestly, because a library with no history really has
+  less to say, but Explore's data is a *downloaded artifact* that can
+  be absent or still arriving, so `ShelfPage.State` is `ready`,
+  `building` or `no-index` and the empty page names the missing catalog
+  and points at Settings. **Whether there is a catalog is asked of the
+  database, not of a flag**: `GetIndexStatus().TotalRows` is refreshed
+  only between build tiers (0 beside a full catalog on an ordinary
+  launch) and `IsReady()` is set once at startup (so rows staged by a
+  spec afterwards are invisible) — both are the shape `emitStatus`
+  warns about, and one `SELECT 1 … LIMIT 1` cannot be stale. And **two
+  shelves with disjoint ids still repeat each other**: ordered by raw
+  listen count the top albums are one act and its members and the
+  artists row underneath was the same people, which `home`'s
+  duplicate guard cannot see because the rows hold different entity
+  types. Shelves are one album per artist and skip whoever a row above
+  already showed. Found by reading a screenshot.
+
+  Two of the four shelves the plan named **cannot be built**, and the
+  schema decides that rather than the design: `explore_index` has no
+  genre column to join a genre shelf to, and `similar_artist_map` is
+  not in the shipped artifact and is filled lazily from the network, so
+  a "similar artists" shelf is empty exactly when the page most needs
+  content. The library-joining shelf reads `in_library`, which is set
+  by MBID, so it is correctly absent on an untagged library — the
+  fixture one included.
 - `home` — The home page's "start listening" shelves. Each shelf is a
   *reason* (what you played last, what you never played, a genre you
   have depth in) rather than a filter, and carries the sentence that
@@ -584,6 +619,39 @@ the order — an album list is sorted by name, not by id, and a flattened
 result would silently reorder a queue — and because `cover-grid`'s drag
 cache stores them per album. A `libraryID` of 0 means "every library",
 matching an unset library filter.
+
+**A badge is not a button, and a control that cannot act is worse than
+none.** `library-status-indicator` — the tick/plus on every Explore
+card and track row — was a `<button>` whose click handler was a
+`stopPropagation()` and a comment saying to wire up the download client
+later: 20 of the 66 tab stops on a results page announced themselves as
+buttons and did nothing (46 and 0 after). It is `role="img"` with a
+label until there is something to click, and its unowned label says
+"… is not in your library" rather than "Add … to library", which was
+the button's promise written into the copy. When the download client
+lands, the change is a `<button>` *with* a handler — not a handler
+bolted onto something already shaped like one. Two smaller things came
+with it: a `<span>` does not get `box-sizing: border-box` from the UA
+stylesheet the way a `<button>` does (the badge grew 36→38px, caught by
+a stored screenshot), and with no click of its own the badge is part of
+its card, so a click on it means what the card means.
+
+**A grid moves by a row, and `offsetTop` cannot tell you how wide a row
+is.** `utils/roving-grid.ts` measured columns by counting cards sharing
+an `offsetTop`, and every card in these grids is positioned by
+`lit-virtualizer` with a **transform**, which `offsetTop` does not see —
+so all of them reported 0, every rendered card counted as one row, and
+ArrowDown was `min(i + everything, last)` while ArrowUp was
+`max(i - everything, 0)`. The vertical arrows were End and Home in the
+albums, artists and genres grids alike, from the day it was written.
+`getBoundingClientRect().top`, rounded, is the measurement. Two things
+behind it are only visible once `cover-grid` splits: `scrollToIndex`
+must pick the half that holds the index and rebase it (it was
+`querySelector('lit-virtualizer')`, always the first), and the focus is
+retried on a **time** budget rather than taken once at `updateComplete`
+— a scroll of 5 000 rows produces the card a few hundred ms later, so
+the tab stop moved and nothing took focus, which is indistinguishable
+from the key not being handled.
 
 **A view says what it is, in one component.** `<page-header>`
 (`components/page-header/`) is title, count, sort and actions, and the

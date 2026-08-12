@@ -2135,6 +2135,129 @@ a search returns to the shelves.
 Anything requiring a network call on page load. The point is that the
 shipped artifact already contains the answer.
 
+### Phase 6 — what actually shipped
+
+The two inherited one-liners from Phase 5's fourth pass, and then the
+phase itself. Three landings.
+
+- **`library-status-indicator` is a badge.** It was a `<button>` whose
+  click handler was a `stopPropagation()` and a comment. Measured in
+  the running app on an Explore results page: **66 tab stops, 20 of
+  them inert** → **46 and 0**. It is `role="img"` with its existing
+  label, and the unowned label says "… is not in your library" rather
+  than "Add … to library", which was the button's promise written out.
+- **The card grids move by a row.** Reproduced first, then fixed: at
+  700×700 with three real rows of 3/3/2, ArrowDown from card 0 landed
+  on card **7**.
+- **`H-23` — Explore opens with shelves.** Three of them, on `home`'s
+  terms, over `explore_index`; two of the plan's four could not be
+  built at all. Plus an honest page for the no-catalog case, which is
+  what CI and every first run actually have.
+
+Pinned by `roving-grid.test.ts` (6), `explore-shelves.test.ts` (7),
+`shelves_test.go` (8), and `e2e/specs/explore-shelves.spec.ts` (4) plus
+one case added to `album-actions.spec.ts`. `make ui-test` 545 → **558**;
+`make e2e` 62 → **68**.
+
+#### Where the plan was wrong — Phase 6
+
+Twelve things. This phase's plan text was the least tested material in
+the repo — written before any of Phases 1–5 existed — and it shows
+most in the shelf list, where **half the named shelves are not
+buildable against the schema they were specified over**:
+
+- **"Big in a genre you already have depth in" cannot be built.**
+  `explore_index` has no genre or tag column; genre exists only in the
+  library's own `recording_genres`. There is nothing to join. Dropped,
+  not deferred — building it means changing the dump pipeline.
+- **"Artists next to ones you own" cannot be built offline.** It needs
+  `similar_artist_map`, which `cmd/indexexport` does not ship (the
+  artifact carries `explore_index` and its metadata, nothing else) and
+  which is filled lazily by ListenBrainz calls from artist pages. It is
+  empty on a fresh install and empty offline — exactly when this page
+  most needs something to show. The plan's own "not in this phase"
+  rules it out in the same breath as naming it.
+- **"You own one album by this artist" is empty on every untagged
+  library**, including the fixture one. Ownership is `in_library`, set
+  by MusicBrainz ID; the seed has **0 artists with an MBID**, so the
+  shelf is correctly absent everywhere it could be looked at locally.
+- **The plan says the queries return MBIDs. They return row ids.**
+  `rowsByIDs` is keyed on the primary key and preserves the order it is
+  given, which is what lets the ordering stay in SQL. MBIDs would mean
+  a second lookup for nothing.
+- **The card projection existed but not as a function.** "One
+  definition of an Explore card" was three inline struct literals
+  inside `mergeIndexHits`, tangled with search scoring. Extracting them
+  is what made the claim true rather than aspirational — and `Score` is
+  deliberately *not* part of them: it is a property of a search, and a
+  shelf has no query to be relevant to.
+- **"A shelf with nothing behind it is omitted" is the wrong rule for
+  this page.** On Home an omitted shelf means a library with no
+  history, which is honest. Explore's data is a *downloaded artifact*,
+  so an empty page can mean it has not arrived — and rendering nothing
+  is the blank panel the phase exists to remove. The page carries a
+  `state` (`ready` / `building` / `no-index`) and says which.
+- **The premise "the shipped artifact already contains the answer" is
+  false in CI and on every first run.** `ci.yml` points
+  `YJ_CORE_INDEX_URL` at a dead address, so the e2e job has **0**
+  catalog rows. The first version of the spec skipped three of its four
+  cases there, which is no signal at all; it stages its own small
+  catalog through `/__test/sql` instead, verified by reproducing the
+  empty world locally with the same environment variable.
+- **…which only works because the readiness gate is a question, not a
+  flag.** Two cached answers were tried and both were wrong in the same
+  way. `GetIndexStatus().TotalRows` is refreshed only between build
+  tiers, so on an ordinary launch it reads 0 beside a full catalog and
+  hid every shelf. `IsReady()` is set once at startup, so rows staged
+  afterwards are invisible. One `SELECT 1 … LIMIT 1` cannot be stale.
+  Both are the shape `emitStatus` warns about — a derived value with
+  nothing polling behind it.
+- **Two shelves with disjoint ids still repeated each other.** Ordered
+  by raw listen count, the catalog's top albums are seven records by
+  one act and its members, and the artists row underneath was the same
+  seven people. `home`'s adjacent-duplicate guard cannot see it — the
+  rows hold different entity types, so no two share an id, which the
+  code comment cited as proof the guard was unnecessary. **Found in a
+  screenshot, by reading it.** The fix is one album per artist, and
+  skipping artists a row above already showed.
+- **The e2e staging step staged nothing, and looked like it worked.**
+  Six values against seven placeholders, and the response was never
+  read. A setup whose failure is not checked is not setup.
+- **`library-status-indicator`'s label was only right for one of its
+  three states.** "Add artist “Eno” to library" is an offer, from an
+  element that cannot accept it.
+- **A `<button>` and a `<span>` are not the same box.** Dropping the
+  button grew the badge 36px → 38px, because the UA stylesheet gives a
+  button `box-sizing: border-box` and a span nothing. Caught by a
+  stored screenshot, which is the only thing that would have.
+
+And one about a probe, in this plan's longest-running family: **an e2e
+spec that reads the DOM immediately after a navigation reads it before
+the fetch it triggered.** `shelfHeadings()` returned `[]`, which is
+also what a broken page returns; it passed on the second run of the
+same build because the caches were warm. The wait belongs in
+`beforeEach`, so no test can start from a page that has not answered.
+
+#### Not done, and still worth doing (after Phase 6)
+
+- **The albums row still leads with one act.** One-per-artist fixed the
+  literal repetition; it cannot know that eight artists are one group
+  and its solo members, and nothing in `explore_index` expresses that.
+  A "related act" notion would need dump-side data.
+- **The unowned badge still draws a `+`.** It is no longer a control
+  and no longer says "Add", but a plus glyph is an affordance. Left
+  alone deliberately: it becomes correct again the day the badge
+  becomes a button, and changing it touches four components' visual
+  baselines for a judgement call that is better made then.
+- **No `make perf` before/after.** Both seeds' catalogs come from the
+  artifact rather than from the seed tarball, so a before and an after
+  are not measuring the same corpus unless the staging fixture is
+  extended to bulk scale. The shelves are three indexed queries behind
+  a view activation, not a startup-path cost, so this is a want rather
+  than a gap — but it is not measured, and is recorded as such.
+- **`tracklist.delete`**, still inherited, still needs a "remove from
+  library" that does not exist.
+
 ---
 
 ## Decisions
