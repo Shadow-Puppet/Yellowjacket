@@ -1,0 +1,81 @@
+# Every icon this app bundles, as <style>/<name>, one per line.
+#
+# It is a list rather than a glob because the alternative is shipping
+# 2 001 SVGs to use 64 of them.  It is *committed* rather than derived
+# because twenty call sites compute their icon name from state
+# (`jobIcon(job)`, `TONE_ICONS[tone]`, `this.favCtrl.iconName`), so no
+# static analysis can produce this list and no build step can check it.
+#
+# What checks it is the runtime: `src/icons/index.ts` reports a name it
+# cannot resolve to `window.__yjIconMisses` and renders a fallback, and
+# `frontend/scripts/icon-sweep.mjs` drives the app to collect them.  A
+# missing icon is therefore a visible, findable bug rather than a
+# silent request to a CDN.
+#
+# Names must exist in Font Awesome **Free** (CC BY 4.0); see
+# fetch-icons.mjs for why that is not negotiable.  Re-vendor with:
+#   node frontend/scripts/fetch-icons.mjs
+regular/heart
+solid/arrow-down-wide-short
+solid/arrow-left
+solid/arrow-rotate-right
+solid/arrows-rotate
+solid/arrow-up-short-wide
+solid/backward-step
+solid/bookmark
+solid/box-open
+solid/check
+solid/chevron-down
+solid/chevron-right
+solid/circle-check
+solid/circle-exclamation
+solid/circle-info
+solid/circle-minus
+solid/circle-question
+solid/clock-rotate-left
+solid/compact-disc
+solid/copy
+solid/database
+solid/download
+solid/file-import
+solid/filter
+solid/floppy-disk
+solid/folder
+solid/forward-step
+solid/gear
+solid/globe
+solid/heart
+solid/home
+solid/hourglass-half
+solid/house
+solid/images
+solid/info
+solid/list
+solid/list-check
+solid/magnifying-glass
+solid/masks-theater
+solid/music
+solid/pause
+solid/pen
+solid/pen-to-square
+solid/play
+solid/plus
+solid/quote-left
+solid/remove
+solid/repeat
+solid/rotate
+solid/running
+solid/shuffle
+solid/star
+solid/stop
+solid/tag
+solid/tags
+solid/trash
+solid/triangle-exclamation
+solid/user
+solid/user-group
+solid/volume-high
+solid/volume-low
+solid/volume-off
+solid/volume-xmark
+solid/xmark
