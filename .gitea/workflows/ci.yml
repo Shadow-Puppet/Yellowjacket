@@ -208,7 +208,8 @@ jobs:
           apt-get install -y -qq --no-install-recommends \
             ca-certificates curl git jq build-essential pkg-config \
             libwebkit2gtk-4.1-dev libgtk-3-dev libasound2-dev \
-            xvfb dbus dbus-x11 ffmpeg libasound2t64
+            xvfb dbus dbus-x11 ffmpeg libasound2t64 \
+            alsa-utils libasound2-plugins pulseaudio pulseaudio-utils
 
       - name: Clone repo at this commit
         run: |
@@ -254,17 +255,64 @@ jobs:
           playwright-cli install-browser chromium
 
       # oto/v3 talks to libasound directly, and a container has no
-      # PulseAudio socket to fall back on.  ALSA's null plugin advances
-      # its pointer on a timer rather than discarding instantly, so beep
-      # is consumed at real-time rate and the elapsed clock actually
-      # moves — which playback.spec.ts asserts.  Measured: InitSpeaker
-      # succeeds in ~36 ms and all six playback specs pass.  Without
-      # this, app.go joins the failure into startupErr and everything
-      # except playback still works, so the suite fails looking like
-      # flake rather than like a missing dependency.
-      - name: Null audio sink
+      # PulseAudio socket to fall back on — so it needs a default device
+      # that not only accepts audio but **paces** it, because the player's
+      # position is derived from what has been consumed.
+      #
+      # ALSA's `null` plugin does not pace.  It was used here on the
+      # belief that it advances its pointer on a timer.  Measured in
+      # this exact image, through beep and oto with the same
+      # `speaker.Init` arguments `player.InitSpeaker` uses:
+      #
+      #   type null    3000 ms of audio consumed in    2.96 ms
+      #   pulse sink   3000 ms of audio consumed in  3762 ms
+      #
+      # A thousand times too fast.  Every track finished instantly, the
+      # position reset to zero, and three specs failed on a clock that
+      # never moved — which is the whole of the e2e job's red history,
+      # and it looked like a flake because `InitSpeaker` succeeds either
+      # way (in ~3 ms, also either way).
+      #
+      # PulseAudio's null sink is timer-scheduled and does pace — the
+      # 0.76 s over is the buffer draining, not a rate error; 12 s of
+      # audio takes 13.5 s.  Verified under the private session bus and
+      # Xvfb that dev-headless.sh runs the app in.  It needs no system
+      # D-Bus and no kernel module, which is why it is reachable from a
+      # container at all.
+      - name: Real-time audio sink
         run: |
-          printf 'pcm.!default { type null }\nctl.!default { type null }\n' > /etc/asound.conf
+          set -eu
+          # --system because the job runs as root and PulseAudio refuses
+          # to start as root any other way.
+          adduser root pulse-access
+          pulseaudio --system --daemonize --disallow-exit \
+            --exit-idle-time=-1 \
+            --load="module-null-sink sink_name=yellowjacket"
+          printf 'pcm.!default { type pulse }\nctl.!default { type pulse }\n' \
+            > /etc/asound.conf
+          pactl list short sinks
+
+      # The sink is a dependency with a *rate*, so it is checked like
+      # one.  Without this the failure surfaces three steps later as
+      # "the elapsed clock is 19 s adrift", which reads as an app bug
+      # and cost two sessions of exactly that suspicion.
+      - name: The sink plays at real time
+        run: |
+          set -eu
+          ffmpeg -loglevel quiet -f lavfi -i "sine=frequency=440:duration=3" \
+            -ar 44100 /tmp/probe.wav
+          # aplay rather than the app: this is a check on the *device*,
+          # and it has to be able to fail before the app is built.
+          start=$(date +%s%N)
+          aplay -q /tmp/probe.wav
+          ms=$(( ($(date +%s%N) - start) / 1000000 ))
+          echo "3000 ms of audio took ${ms} ms"
+          if [ "$ms" -lt 2000 ]; then
+            echo "The default ALSA device is discarding audio rather than" \
+                 "playing it. Every track will finish instantly and the" \
+                 "player's position will never advance." >&2
+            exit 1
+          fi
 
       - name: Fixtures and seed
         working-directory: /src
