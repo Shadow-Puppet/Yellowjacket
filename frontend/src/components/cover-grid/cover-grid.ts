@@ -430,10 +430,6 @@ export class CoverGrid
 
     override connectedCallback() {
         super.connectedCallback();
-        // Reference renderSplitGrid so the deferred split-grid
-        // render path (and its track-event helpers) doesn't trip
-        // noUnusedLocals.  Never invoked at runtime.
-        void this.renderSplitGrid;
         this.restoreSortPreferences();
         this.loadAlbums();
 
@@ -1783,7 +1779,18 @@ export class CoverGrid
             `;
         }
 
-        const gridContent = this.renderSingleGrid();
+        // The split path draws the dropdown between two grids. Until
+        // this was wired up, `render()` ignored `splitMode` entirely:
+        // pressing Enter on an album card fetched its tracks over the
+        // IPC, ran the whole split state machine (`splitMode: true`,
+        // `splitIndex: 6`, measured against the real container) and
+        // then drew the single grid regardless, so the only route from
+        // the albums grid to a track was the plain click that
+        // navigates away to the catalog page.
+        const gridContent =
+            this.splitMode && this.expandedTracks.length > 0
+                ? this.renderSplitGrid()
+                : this.renderSingleGrid();
 
         return html`
             ${this.renderPageHeader()}
@@ -1821,10 +1828,12 @@ export class CoverGrid
     }
 
     /**
-     * Dual virtualizer — dropdown sandwiched between
-     * "before" and "after" grids.  Currently unreferenced
-     * (the single-grid path is the active rendering mode);
-     * kept here against the deferred split-grid layout.
+     * Dual virtualizer — dropdown sandwiched between the "before" and
+     * "after" halves of the grid.
+     *
+     * Both halves carry the same listbox semantics as the single grid:
+     * they are one control to the user, and a selection that spans the
+     * dropdown must be announced the same way on either side of it.
      */
     private renderSplitGrid() {
         const sm = this.scrollMgr;
@@ -1836,6 +1845,9 @@ export class CoverGrid
         return html`
             <lit-virtualizer
                 id="grid-before"
+                role="listbox"
+                aria-label="Albums"
+                aria-multiselectable="true"
                 .items=${this.getBeforeEntries()}
                 .renderItem=${this.renderGridEntry}
                 .keyFunction=${(entry: GridEntry) => entry.album.ID}
@@ -1865,6 +1877,9 @@ export class CoverGrid
                 ? html`
                       <lit-virtualizer
                           id="grid-after"
+                          role="listbox"
+                          aria-label="Albums, continued"
+                          aria-multiselectable="true"
                           .items=${afterEntries}
                           .renderItem=${this.renderGridEntry}
                           .keyFunction=${(entry: GridEntry) => entry.album.ID}
@@ -1904,7 +1919,13 @@ export class CoverGrid
             >
                 ${ctxMenu.contextMenuOpen
                 ? html`
-                          <div class="context-menu-panel" role="menu" aria-label="Album actions">
+                          <div
+                              class="context-menu-panel"
+                              role="menu"
+                              aria-label=${this.contextMenuTarget.kind === 'track'
+                        ? 'Track actions'
+                        : 'Album actions'}
+                          >
                               <wa-dropdown-item
                                   @click=${() =>
                         this.onContextMenuAction(

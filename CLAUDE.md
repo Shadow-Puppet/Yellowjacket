@@ -689,6 +689,37 @@ retained chars and cap in one eval, rather than the next session having
 to rebuild the twenty-four-search reproduction before it can tell
 whether the ceiling still holds.
 
+**Expanding an album shows its tracks, and the code to do it was
+written and never called.** `cover-grid`'s dropdown — the album's
+tracks drawn between the two halves of a split grid — was reachable
+only from Enter/Space on a focused card (a plain *click* navigates to
+`explore-album-details`), and that path fetched the tracks over the
+IPC, ran the whole split state machine and then rendered the single
+grid, because `render()` never consulted `splitMode`.
+`connectedCallback` referenced `renderSplitGrid` purely to satisfy
+`noUnusedLocals`. `perf.p2` files this as dead code in the bundle; it
+is the only route from the albums grid to `track-details`.
+
+Two things it needed that are not in the audit. **The grid could not
+scroll at all**: `.grid-scroll-container` is the same markup
+`artists-view` and `genres-view` use, and `cover-grid` had the class
+with *no rule for it*, so the container grew to its full content height
+inside an `overflow: hidden` host — 186 984 px of albums in a 772 px
+box at 5 000 albums, unreachable by wheel, keyboard or scrollbar, and
+invisible on the eight-album fixture. That is also the element
+`scroll-manager.ts` saves and restores, so its `scrollTop` was
+permanently 0; with a real scroller the manager works as designed
+(2891 preserved exactly across an expand). And the shared context-menu
+panel was **labelled "Album actions" unconditionally**, which nothing
+could observe while the only menu that could open on a track was
+unreachable.
+
+The manager **moves the scroll to reveal the dropdown** rather than
+preserving it — on a small library that is most of the way back to the
+top (80 → 4, with the content *taller* after, so it is not clamping).
+"The position is preserved" is the wrong assertion; "the dropdown is on
+screen" is the contract.
+
 **A list pays per row, and only while scrolling.** The track list's Art
 column rendered `CoverArtPath` — the original artwork — into a 24 px
 box while `CoverArtSmall` sat unused on the same model, and

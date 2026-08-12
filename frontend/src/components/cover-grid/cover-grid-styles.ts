@@ -13,6 +13,27 @@ const gridStyles = css`
         contain: layout style;
     }
 
+    /*
+     * The scroller. artists-view and genres-view carry the same
+     * markup with this rule; cover-grid had the class and no rule for
+     * it, so nothing in the albums view scrolled — the container grew to
+     * its full content height inside an overflow: hidden host and
+     * everything past the first screenful was unreachable by wheel,
+     * keyboard or scrollbar. Invisible on the eight-album fixture and
+     * fatal on a real library: measured at 5 000 albums, 186 984 px of
+     * content in a 772 px box.
+     *
+     * It is also what the dropdown's scroll manager was written
+     * against — it saves and restores this element's scrollTop, which
+     * was permanently 0.
+     */
+    .grid-scroll-container {
+        flex: 1;
+        overflow-y: auto;
+        overflow-x: hidden;
+        contain: paint;
+    }
+
     /* ========================================
      * Album card
      * ======================================== */
