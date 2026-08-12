@@ -9,17 +9,26 @@ import '@awesome.me/webawesome/dist/components/icon/icon.js';
  *  - `queued`: the entity has been handed off to a download client but
  *    hasn't arrived yet.  Reserved for future download-client plumbing.
  *  - `not-in-library` (default): the entity is not owned and has not
- *    been requested.  A click should eventually kick off a download,
- *    but for now the button is inert.
+ *    been requested.
  */
 export type LibraryStatus = 'in-library' | 'queued' | 'not-in-library';
 
 /**
- * Tri-state library status indicator rendered as a small circular
- * button.  Intended to be embedded in track rows, album cards, and
- * artist cards.  The click handler is a no-op for now — the button
- * exists so the layout is stable when "add to library" integration
- * lands later.
+ * Tri-state library status indicator: a small circular badge embedded
+ * in track rows, album cards, and artist cards.
+ *
+ * **It is a badge, not a control.**  It was a `<button>` whose click
+ * handler was a `stopPropagation()` and a comment saying to wire up
+ * the download client later — so an Explore results page offered 20
+ * keyboard stops (of 66) that promised an action and performed none,
+ * and every one of them announced itself as a button.  A control that
+ * cannot act is worse than no control: it costs the keyboard user the
+ * tab stop *and* the expectation.
+ *
+ * So it is `role="img"` with a label, until there is something to
+ * click.  When the download-client integration lands, the right change
+ * is to make it a `<button>` again *with a handler* — not to add the
+ * handler to something already shaped like a button.
  *
  * Colours and glyphs:
  *  - in-library    → green circle, check mark
@@ -83,7 +92,12 @@ export class LibraryStatusIndicator extends LitElement {
             --indicator-border: rgba(255, 255, 255, 0.2);
         }
 
-        button {
+        .badge {
+            /* A <button> gets box-sizing: border-box from the UA
+             * stylesheet and a <span> does not, so dropping the button
+             * grew the badge by its 1px border on each side — 36px to
+             * 38px, caught by the stored screenshot. */
+            box-sizing: border-box;
             width: var(--indicator-size);
             height: var(--indicator-size);
             min-width: var(--indicator-size);
@@ -93,31 +107,10 @@ export class LibraryStatusIndicator extends LitElement {
             color: var(--indicator-fg);
             border: 1px solid var(--indicator-border);
             padding: 0;
-            cursor: pointer;
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            transition:
-                background-color 150ms ease,
-                color 150ms ease,
-                transform 120ms ease,
-                border-color 150ms ease;
             -webkit-tap-highlight-color: transparent;
-        }
-
-        button:hover {
-            transform: scale(1.08);
-        }
-
-        :host([status='not-in-library']) button:hover {
-            background: rgba(255, 255, 255, 0.14);
-            color: #fff;
-            border-color: rgba(255, 255, 255, 0.3);
-        }
-
-        button:focus-visible {
-            outline: 2px solid var(--yj-accent, #1db954);
-            outline-offset: 2px;
         }
 
         wa-icon {
@@ -158,23 +151,9 @@ export class LibraryStatusIndicator extends LitElement {
             case 'queued':
                 return `${capitalize(kind)}${name} is queued for download`;
             default:
-                return `Add ${kind}${name} to library`;
-        }
-    }
-
-    private handleClick(e: Event) {
-        // Stop propagation so clicking the button doesn't bubble up
-        // to the parent card and trigger navigation.  The click
-        // itself is a no-op for now — wire up download-client
-        // integration later.
-        e.stopPropagation();
-    }
-
-    private handleKeydown(e: KeyboardEvent) {
-        // Same reasoning: don't let Enter/Space bubble to a wrapping
-        // card and trigger navigation.
-        if (e.key === 'Enter' || e.key === ' ') {
-            e.stopPropagation();
+                // Not "Add … to library": nothing here adds anything.
+                // The old copy was the button's promise written out.
+                return `${capitalize(kind)}${name} is not in your library`;
         }
     }
 
@@ -187,17 +166,11 @@ export class LibraryStatusIndicator extends LitElement {
         const title = this.tooltip();
 
         return html`
-            <button
-                type="button"
-                title=${title}
-                aria-label=${title}
-                @click=${this.handleClick}
-                @keydown=${this.handleKeydown}
-            >
+            <span class="badge" role="img" title=${title} aria-label=${title}>
                 ${this.iconName()
-                    ? html`<wa-icon name=${this.iconName()}></wa-icon>`
+                    ? html`<wa-icon name=${this.iconName()} aria-hidden="true"></wa-icon>`
                     : nothing}
-            </button>
+            </span>
         `;
     }
 }

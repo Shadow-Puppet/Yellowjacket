@@ -64,6 +64,35 @@ test.describe('playing an album from its page', () => {
       app.locator('explore-album-details').locator('.tracklist-legend'),
     ).toContainText('in your library');
   });
+
+  test('the ticks are badges, not keyboard stops', async ({ app }) => {
+    // Every one of them was a <button> whose click handler was a
+    // stopPropagation() and a comment saying to wire up the download
+    // client later: on an Explore results page, 20 of 66 tab stops
+    // promised an action and performed none. Counted here rather than
+    // reasoned about, because the count is the finding.
+    const stops = await app.evaluate(() => {
+      const badges = [
+        ...(document
+          .querySelector('explore-album-details')
+          ?.shadowRoot?.querySelectorAll('library-status-indicator') ?? []),
+      ];
+
+      return {
+        badges: badges.length,
+        focusable: badges.filter((b) =>
+          b.shadowRoot?.querySelector('button, [tabindex]:not([tabindex="-1"])'),
+        ).length,
+        labelled: badges.filter((b) =>
+          b.shadowRoot?.querySelector('[role="img"][aria-label]'),
+        ).length,
+      };
+    });
+
+    expect(stops.badges).toBeGreaterThan(0);
+    expect(stops.focusable).toBe(0);
+    expect(stops.labelled).toBe(stops.badges);
+  });
 });
 
 /** Albums → click the second card, which navigates to the album page. */

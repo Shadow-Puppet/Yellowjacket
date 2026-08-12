@@ -176,26 +176,43 @@ describe('<library-status-indicator>', () => {
       label: 'Abbey Road',
     });
 
-    expect(shadow(el, 'button')?.getAttribute('aria-label')).toBe(
+    expect(shadow(el, '.badge')?.getAttribute('aria-label')).toBe(
       'Album "Abbey Road" is in your library',
     );
   });
 
-  it('phrases an unowned entity as an invitation', async () => {
+  it('states an unowned entity rather than offering to add it', async () => {
+    // The old copy was "Add artist “Eno” to library", which is the
+    // promise the inert button was making. Nothing here adds anything.
     const el = await fixture('library-status-indicator', {
       entityType: 'artist',
       label: 'Eno',
     });
 
-    expect(shadow(el, 'button')?.getAttribute('aria-label')).toBe(
-      'Add artist "Eno" to library',
+    expect(shadow(el, '.badge')?.getAttribute('aria-label')).toBe(
+      'Artist "Eno" is not in your library',
     );
+  });
+
+  it('is a badge, not a keyboard stop', async () => {
+    // 20 of the 66 tab stops on an Explore results page were these,
+    // each announcing itself as a button and doing nothing.
+    const el = await fixture('library-status-indicator', {
+      status: 'in-library',
+    });
+
+    expect(shadow(el, 'button')).toBeNull();
+
+    const badge = shadow(el, '.badge');
+
+    expect(badge?.getAttribute('role')).toBe('img');
+    expect(badge?.hasAttribute('tabindex')).toBe(false);
   });
 
   it('drops the quoted name when it has none', async () => {
     const el = await fixture('library-status-indicator', { status: 'queued' });
 
-    expect(shadow(el, 'button')?.getAttribute('aria-label')).toBe(
+    expect(shadow(el, '.badge')?.getAttribute('aria-label')).toBe(
       'Track is queued for download',
     );
   });
@@ -205,14 +222,15 @@ describe('<library-status-indicator>', () => {
       status: 'in-library',
     });
 
-    const button = shadow(el, 'button');
+    const badge = shadow(el, '.badge');
 
-    expect(button?.getAttribute('title')).toBe(
-      button?.getAttribute('aria-label'),
-    );
+    expect(badge?.getAttribute('title')).toBe(badge?.getAttribute('aria-label'));
   });
 
-  it('swallows the click, so it does not navigate the card it sits on', async () => {
+  it('lets a click reach the card it sits on, and calls nothing itself', async () => {
+    // It used to stopPropagation() so its own no-op click would not
+    // navigate the card. With no click of its own, the badge is part
+    // of the card and a click on it means what the card means.
     const el = await fixture('library-status-indicator');
     let bubbled = 0;
 
@@ -220,27 +238,9 @@ describe('<library-status-indicator>', () => {
       bubbled += 1;
     });
 
-    shadow<HTMLElement>(el, 'button')?.click();
+    shadow<HTMLElement>(el, '.badge')?.click();
 
-    expect([bubbled, calls()]).toEqual([0, []]);
-  });
-
-  it('swallows Enter and Space for the same reason', async () => {
-    const el = await fixture('library-status-indicator');
-    let bubbled = 0;
-
-    el.addEventListener('keydown', () => {
-      bubbled += 1;
-    });
-
-    for (const key of ['Enter', ' ', 'Tab']) {
-      shadow(el, 'button')?.dispatchEvent(
-        new KeyboardEvent('keydown', { key, bubbles: true, composed: true }),
-      );
-    }
-
-    // Tab still gets through: it is navigation, not activation.
-    expect(bubbled).toBe(1);
+    expect([bubbled, calls()]).toEqual([1, []]);
   });
 
   it('honours a non-default size', async () => {
@@ -256,7 +256,7 @@ describe('<library-status-indicator>', () => {
 
     await update(el, { size: 40 });
     await visual(el, 'library-status-indicator-in-library');
-    expect(shadow(el, 'button')).not.toBeNull();
+    expect(shadow(el, '.badge')).not.toBeNull();
   });
 });
 
