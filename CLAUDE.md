@@ -544,6 +544,35 @@ is therefore **reported at runtime** to `window.__yjIconMisses` and
 drawn as a fallback — an e2e sweep asserts there are none — since a
 missing icon used to be impossible, the CDN having had everything.
 
+**An album page says how much of the album is yours.**
+`explore-album-details` is a *catalog* page and there is no
+library-side album detail page at all, so the album on it may be
+wholly the user's, partly theirs, or not theirs — and its primary
+action has to mean the same thing in each case. It says which: **Play**
+when the whole release is owned, **Play 7 of 12** when some of it is,
+and **no play button at all** when none is, because a Play button that
+plays nothing (or seven tracks of forty) is worse than none.
+
+`albumLibraryStatus()` is deliberately *not* what decides that. It is
+four claims of decreasing confidence OR'd into one tick — a local album
+id, the backend's cross-reference, a cached MBID match, and finally
+*any single track* marked `inLibrary` — which is a fine answer to "is
+any of this mine" and a useless basis for a button. `ownership()`
+counts the displayed tracklist instead, whose `inLibrary` flags the
+backend sets per recording MBID.
+
+**And the key it plays by is not the key it looks owned by.** The local
+album id is used wherever there is one, because a library-only album
+has *no* recording MBIDs — its tracks are synthesised from
+`GetAlbumTracks` with `mbid: RecordingMBID || ''` — so an MBID-keyed
+lookup on an untagged library resolves to nothing and Play queues
+nothing while looking entirely correct.
+`GetFilePathsByRecordingMBIDs` is the catalog-only fallback and the
+third member of the `GetFilePathsBy…` family: one query, paths only,
+grouped so the caller keeps the tracklist's order. It exists rather
+than a lookup by track id because **`MBTrack.LocalID` is declared and
+nothing in the backend ever writes it**.
+
 **Ask for what the caller uses, once.** "Play this artist" resolved
 file paths with one `GetAlbumTracks` per album, sequentially, and every
 one of the four sites doing that asked for whole track rows to read

@@ -1945,6 +1945,129 @@ is**: a step plays three seconds and fails if they take under two,
 because otherwise the failure surfaces three steps later as "the
 elapsed clock is 19 s adrift" and reads as an app bug.
 
+---
+
+### Phase 5 — the fourth pass: the dialogs get names, and the album page gets an action
+
+The last of item 4, in three independently landable pieces. Each was
+reproduced in the running app before it was fixed, and two of the three
+changed shape when it was.
+
+- **Every `wa-dialog` has an accessible name.** Eleven call sites (not
+  the eight the last pass estimated, and not the five `a11y.md` lists —
+  six have been added since it was written), one helper,
+  `utils/name-dialog.ts`. It points the native `<dialog>` at the `<h2
+  id="title">` Web Awesome renders `label` into and never links,
+  falling back to `aria-label` under `without-header`. Verified through
+  CDP's `Accessibility.getFullAXTree`, which reports the name and that
+  it came from `relatedElement`.
+- **`perf.p2` — the album dropdown is drawn.** `renderSplitGrid` was
+  not dead code but a missing feature whose data path already worked:
+  Enter on an album card fetched the tracks and ran the whole split
+  state machine, and `render()` ignored `splitMode`. It is the only
+  route from the albums grid to `track-details`, since a plain click
+  navigates to the catalog page.
+- **`H-13` — the album page has a primary action.** Play / Shuffle
+  album / Add to queue on `explore-album-details`, labelled by how much
+  of the release the user owns, plus the legend the ✓ badges never had.
+  Backed by a new `GetFilePathsByRecordingMBIDs` binding, the third
+  member of the `GetFilePathsBy…` family.
+
+#### Where the plan was wrong — the fourth pass
+
+Nine things, and three of them are findings that had a second bug
+hiding behind them:
+
+- **`perf.p2` is filed as housekeeping and is a two-bug feature.**
+  "Dead code carried in the bundle" is `renderSplitGrid` plus
+  `scroll-manager.ts` (916 lines) and `album-dropdown.ts` (461) — 1 463
+  lines that had never executed. Enabling the render exposed both of
+  the others.
+- **The albums grid could not scroll at all.**
+  `.grid-scroll-container` is the same markup `artists-view` and
+  `genres-view` use, and `cover-grid` had the class with **no rule for
+  it**, so the container grew to its full content height inside an
+  `overflow: hidden` host: 186 984 px of albums in a 772 px box at
+  5 000 albums, unreachable by wheel, keyboard or scrollbar. Invisible
+  on the eight-album fixture, which is why nothing had ever caught it —
+  and it is the element the scroll manager saves and restores, so that
+  machinery had been aiming at a `scrollTop` that was permanently 0.
+  With a real scroller it works as designed (2891 preserved exactly
+  across an expand at 5 000 albums).
+- **The shared context menu was labelled "Album actions"
+  unconditionally** — including on a track row, which nothing could
+  observe while the only menu that could open on one was unreachable. A
+  finding creates the conditions for the next one.
+- **`H-13`'s "unexplained ✓ badges" has half aged.**
+  `library-status-indicator` carries a `title` *and* an `aria-label`
+  reading "Album “X” is in your library", so a hover and a screen
+  reader both get a full sentence. What was missing was a key for a
+  sighted user scanning a column of green circles. Also worth knowing:
+  it is a `<button>` whose click handler is a comment saying "wire this
+  up later" and a `stopPropagation` — a badge in a button's clothes.
+- **`albumLibraryStatus()` is four claims OR'd into one tick**, the
+  weakest of which fires when *one* recording of a forty-track release
+  matches. Right for a badge, useless for a button — which is why the
+  header counts the tracklist instead of reading the status.
+- **The obvious key for "play what I own" does not exist.**
+  `MBTrack.LocalID` is declared, is in the generated bindings, and
+  **nothing in the backend ever writes it**. Ownership is decided by
+  recording MBID (`markReleasesInLibrary` → `CheckMBIDs`), so that is
+  what the new binding is keyed on.
+- **…and keying on it alone shipped a Play button that queued
+  nothing.** A library-only album has no recording MBIDs at all — its
+  tracks are synthesised with `mbid: RecordingMBID || ''` — so on the
+  fixture library the button was wired, labelled correctly, clicked
+  cleanly and queued 0 tracks. Every component test passed. Caught by
+  clicking it in the running app and reading the queue.
+- **`shuffleStart` does not start a shuffle.** `Queue.SetQueue`'s third
+  argument picks a random first track *when shuffle mode is already
+  on*, so a Shuffle button has to set the mode first. Reading the Go
+  rather than the parameter name was the difference between a working
+  button and one that plays track 1.
+- **"Shuffle" is still two controls with one name.** The first pass hit
+  this on Home; the album header would have hit it again, since the
+  transport's shuffle mode is on screen whenever this page is. It is
+  "Shuffle album".
+
+And two about the probes rather than the findings:
+
+- **The a11y snapshot cannot see a dialog's name.**
+  `playwright-cli snapshot` prints `- dialog [ref=…]` whether the
+  dialog is named by `aria-labelledby`, by `aria-label`, or not at all
+  — checked all three ways. A snapshot read as the oracle here reports
+  failure on a working build. `getByRole('dialog', {name})` and CDP
+  both answer correctly, and the e2e spec was watched failing on a
+  probe-disabled build before it was believed.
+- **An e2e assertion about scroll position was vacuous and said so
+  under pressure.** "Wherever the scroll was, it stays" passed against
+  a `scrollTop` of 0 both times on an eight-album fixture. Shrinking
+  the viewport until the grid actually scrolled turned it red — and
+  the red was *correct*: `scrollToShowDropdown` deliberately moves the
+  scroll to reveal the dropdown (80 → 4, with the content taller
+  after, so not clamping). The premise was wrong, not the app; the
+  assertion is now "the dropdown is on screen".
+
+#### Not done, and still worth doing (after the fourth pass)
+
+Item 4 is complete. What remains from the inherited list is
+`tracklist.delete`, which still needs a "remove from library" that does
+not exist and a decision about what it removes.
+
+Two things this pass found and did not fix:
+
+- **`library-status-indicator` is a button that does nothing.** Every
+  tick and every "add to library" affordance in Explore is a `<button>`
+  whose handler stops propagation and returns. It should be a
+  non-interactive `role="img"` with its existing label until the
+  download-client integration it is waiting for exists — as written it
+  is a keyboard stop that promises an action on 30-odd elements per
+  page.
+- **The split grid's roving tab stop was not re-examined.** The
+  dropdown path renders two virtualizers where there was one;
+  `roving-grid` is attached to the scroll container and keeps working,
+  but nobody has checked what Home/End mean across a split.
+
 ## Phase 6 — Explore starts the conversation
 
 The only phase that adds rather than repairs.

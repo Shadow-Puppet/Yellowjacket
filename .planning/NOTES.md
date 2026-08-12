@@ -1583,3 +1583,103 @@ Five things worth keeping:
   written and had been carried forward through every subsequent read of
   that file, including two this session. A measurement in a comment
   needs the same expiry as one in a plan.
+
+## A finding creates the conditions for the next one
+
+Plan 007 phase 5, fourth pass: naming every `wa-dialog`, drawing
+`cover-grid`'s album dropdown, and giving the album page a primary
+action.
+
+The generalisation this pass adds: **a finding is a door, and what is
+behind it has never been looked at.** Three of the four items here had
+a second bug hiding *behind* the one the audit named, and none of them
+could have been found by reading — each was only reachable once the
+first fix made the code path run for the first time.
+
+- `perf.p2` files `renderSplitGrid` as "dead code carried in the
+  bundle", housekeeping, delete it. It was a **missing feature** whose
+  data path already worked, and behind it sat 1 463 lines that had
+  never executed: `scroll-manager.ts` (916) and `album-dropdown.ts`
+  (461). Drawing it revealed that **the albums grid could not scroll
+  at all** — `.grid-scroll-container` is the markup `artists-view`
+  uses and `cover-grid` had the class with no rule for it, so 186 984
+  px of albums sat in a 772 px box at 5 000 albums, unreachable by
+  wheel, keyboard or scrollbar — which in turn revealed that the
+  scroll manager had spent its whole life saving and restoring a
+  `scrollTop` that was permanently 0. And *that* revealed the shared
+  context menu labelled "Album actions" on a track row, which nothing
+  could observe while the only menu that could open on a track was
+  unreachable.
+- `H-13` asks for a Play button. The button needs file paths; the
+  obvious key is `MBTrack.LocalID`, which is declared, is in the
+  generated bindings, and **is never written by anything in the
+  backend**. Ownership is decided by recording MBID. Keying on that
+  produced a button that was wired, labelled correctly, clicked
+  cleanly and **queued nothing** — a library-only album has no
+  recording MBIDs, because its tracks are synthesised with
+  `mbid: RecordingMBID || ''`. Every component test passed. It was
+  caught by clicking the button in the running app and reading the
+  queue.
+
+Seven more things worth keeping:
+
+- **A count of call sites in an audit is a count as of its date.**
+  `a11y.md` lists five `wa-dialog`s; last pass estimated eight; there
+  are eleven. Three of the six added since were added by *this plan*.
+  The fix was written as a helper called from each host rather than a
+  list, so the number stopped mattering — which is the right response
+  to a number that drifts.
+- **Reaching into another library's shadow root is acceptable when the
+  failure is bounded.** `name-dialog.ts` queries Web Awesome's open
+  shadow root, which is not API. If the structure moves, the query
+  misses, nothing is written, and the dialog is exactly as unnamed as
+  it was — no state to get wrong, nothing to throw. The alternative,
+  patching `WaDialog.prototype`, fixes every call site for free and
+  fails loudly and strangely instead. The bound is the argument, not
+  the tidiness.
+- **`aria-labelledby` beats `aria-label` when the label can change.**
+  Three call sites compute their label at render time. An IDREF to the
+  heading the component re-renders anyway stays correct with nothing
+  resyncing it, so the helper can be a one-shot call.
+- **A web component's shadow root is populated in its own update, not
+  its host's.** Naming a `wa-dialog` from the host's `firstUpdated`
+  finds an element with an empty shadow root and names nothing. Same
+  lifecycle trap as `wa-dropdown-item`'s role two passes ago, which
+  suggests it is not a trap so much as a rule: **never query inside a
+  child custom element without awaiting its `updateComplete`.**
+- **The a11y snapshot cannot see a dialog's accessible name.**
+  `playwright-cli snapshot` prints a bare `- dialog [ref=…]` whether
+  the dialog is named by `aria-labelledby`, by `aria-label`, or not at
+  all — checked all three ways against the running app. Twenty minutes
+  went into "the fix did not work" before the probe was suspected.
+  `getByRole('dialog', {name})` and CDP's
+  `Accessibility.getFullAXTree` both answer, and CDP additionally
+  reports *where* the name came from. The e2e spec was watched failing
+  on a probe-disabled build before it was believed, which is the only
+  reason the twenty minutes did not become an hour.
+- **An assertion that cannot fail will pass a bug, and the fix is to
+  make the probe move.** "The scroll position is preserved when the
+  dropdown opens" passed against a `scrollTop` of 0 both times on an
+  eight-album fixture. Shrinking the viewport until the grid genuinely
+  scrolled turned it red — and the red was **correct**:
+  `scrollToShowDropdown` deliberately moves the scroll to reveal the
+  dropdown (80 → 4, with the content *taller* after, so not clamping).
+  The premise was wrong, not the app. Two lessons in one: a vacuous
+  assertion hides a bug *and* a false claim, and the way to tell them
+  apart is to make the number move before deciding what it means.
+- **A parameter name is not a specification.** `Queue.SetQueue`'s
+  `shuffleStart` does not start a shuffle: it picks a random first
+  track *if shuffle mode is already on*. A Shuffle button written from
+  the name plays track 1 and looks broken. Reading the Go was thirty
+  seconds.
+
+And one on the audit's own accounting: **`H-13`'s "unexplained ✓
+badges" was half-aged before it was read.** The indicator has carried a
+`title` and an `aria-label` reading "Album “X” is in your library" all
+along, so a hover and a screen reader were both already answered; what
+was missing was a key for a sighted user scanning a column of green
+circles. The same element turns out to be a `<button>` whose click
+handler is a comment saying "wire this up later" and a
+`stopPropagation` — 30-odd keyboard stops per page that promise an
+action and perform none. Not fixed here, and recorded rather than
+implied.
