@@ -19,6 +19,12 @@ const SEARCH_SCOPES: Record<string, string> = {
     genres: 'genres',
     playlists: 'playlists',
     'playlist-details': 'tracks in this playlist',
+    // Its sibling was in this map and it was not, so the box went
+    // disabled and unlabelled on a view that filters on the term all
+    // the same — typing narrowed the list under a placeholder saying
+    // there was nothing to search. Checked before adding: it reads
+    // `searchCtrl.term` in `getVisibleTracks` and says so in the page.
+    'smart-playlist-details': 'tracks in this smart playlist',
 };
 
 /**

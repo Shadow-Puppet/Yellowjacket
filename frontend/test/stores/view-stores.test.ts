@@ -54,6 +54,10 @@ describe('search store', () => {
       'albums',
       'playlists',
       'playlist-details',
+      // A detail view that filters on the term has to be in the map:
+      // this one was not, so the box was disabled and unlabelled on a
+      // page that narrowed its list as you typed.
+      'smart-playlist-details',
       'artists',
       'genres',
     ].map((view) => {

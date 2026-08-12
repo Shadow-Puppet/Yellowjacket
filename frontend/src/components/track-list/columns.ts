@@ -249,9 +249,16 @@ export const CORE_SEARCH_COLUMN_IDS: string[] = [
     'album',
 ];
 
-/** Default column IDs matching the original hardcoded layout. */
+/**
+ * Default column IDs. Album is in them (H-15): without it, the three
+ * `Tideline / Aurora Fields / 00:06` rows in this app's own fixture
+ * library are indistinguishable, in an app that has duplicate
+ * detection. Must match `tracklist.DefaultColumns` in Go, which is what
+ * a fresh install actually persists.
+ */
 export const DEFAULT_COLUMN_IDS: string[] = [
     'trackName',
     'artistName',
+    'album',
     'trackLength',
 ];

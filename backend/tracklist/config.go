@@ -60,11 +60,16 @@ var AllColumnIDs = []ColumnID{
 	ColPlayCount,
 }
 
-// DefaultColumns is the initial column configuration matching the
-// original hardcoded layout.
+// DefaultColumns is the initial column configuration.  Album is in it
+// (H-15): without it the three identical `Tideline / Aurora Fields /
+// 00:06` rows in this app's own fixture library cannot be told apart,
+// in an app that has a duplicate-detection feature.  Must match
+// DEFAULT_COLUMN_IDS in frontend/src/components/track-list/columns.ts,
+// which is what the UI falls back to before the config arrives.
 var DefaultColumns = []Column{
 	{ID: ColTrackName},
 	{ID: ColArtistName},
+	{ID: ColAlbum},
 	{ID: ColTrackLength},
 }
 
