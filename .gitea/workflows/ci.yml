@@ -296,7 +296,15 @@ jobs:
       # assertion is an event payload, a testid, an attribute or backend
       # state, so a WebKit failure here is an engine bug, not baseline
       # noise.  It costs ~11 s.
+      #
+      # `if: !cancelled()` because without it a chromium failure skips
+      # this step, and chromium has been failing on the container's
+      # audio clock — so the run that was the *only* source of WebKit
+      # signal quietly stopped producing any, and the plan spent a pass
+      # treating "CI also runs WebKit" as true when the job log said
+      # `conclusion: skipped`.
       - name: E2E — webkit
+        if: ${{ !cancelled() }}
         working-directory: /src
         env:
           YJ_E2E_WEBKIT: '1'
