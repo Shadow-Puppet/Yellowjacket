@@ -137,10 +137,82 @@ test.describe('the album dropdown', () => {
       await app.setViewportSize({ width: 1440, height: 900 });
     }
   });
+
+  test('the arrow keys still move by a row across the split', async ({
+    app,
+  }) => {
+    // The dropdown draws two virtualizers where there was one, and the
+    // roving tab stop indexes the whole album list rather than either
+    // half. Home and End have to cross the dropdown, and ArrowDown has
+    // to move by a row rather than to the end — which it did not, in
+    // any of these grids, because `offsetTop` inside a virtualizer is
+    // always 0 and every rendered card counted as one row.
+    await app.setViewportSize({ width: 700, height: 700 });
+
+    try {
+      await expandCard(app, 1);
+      await expect.poll(() => dropdownState(app)).toMatchObject({
+        present: true,
+        split: true,
+      });
+
+      const moves = await app.evaluate(async () => {
+        const grid = document.querySelector('cover-grid');
+        const root = grid?.shadowRoot;
+        const container = root?.querySelector('.grid-scroll-container');
+        const cards = () =>
+          [...(root?.querySelectorAll<HTMLElement>('.album-card') ?? [])];
+        const at = () => {
+          const active = root?.activeElement as HTMLElement | null;
+
+          return active ? Number(active.dataset['index']) : null;
+        };
+        const press = async (key: string) => {
+          container?.dispatchEvent(
+            new KeyboardEvent('keydown', {
+              key,
+              bubbles: true,
+              composed: true,
+            }),
+          );
+          await new Promise((r) => setTimeout(r, 400));
+
+          return at();
+        };
+
+        cards()[0]?.focus();
+
+        const columns = cards().filter(
+          (c) =>
+            Math.round(c.getBoundingClientRect().top) ===
+            Math.round(cards()[0]!.getBoundingClientRect().top),
+        ).length;
+        const down = await press('ArrowDown');
+        const end = await press('End');
+        const home = await press('Home');
+
+        return { columns, down, end, home, last: cards().length - 1 };
+      });
+
+      expect(moves.columns).toBeGreaterThan(1);
+      expect(moves.down).toBe(moves.columns);
+      expect(moves.end).toBe(moves.last);
+      expect(moves.home).toBe(0);
+    } finally {
+      await app.setViewportSize({ width: 1440, height: 900 });
+    }
+  });
 });
 
 /** Focus a card and press Enter, which is the only thing that expands one. */
 async function expandCard(app: Page, index: number): Promise<void> {
+  // The cards come from a virtualizer, so they are not there when the
+  // view is: a keydown dispatched into an empty grid hits nothing, and
+  // what fails is the *poll* several lines later, which reads as the
+  // dropdown being broken rather than as a race. This spec flaked on
+  // roughly one run in two on main without this wait.
+  await expect.poll(() => cardCount(app)).toBeGreaterThan(index);
+
   await app.evaluate((i) => {
     const card = document
       .querySelector('cover-grid')
@@ -155,6 +227,15 @@ async function expandCard(app: Page, index: number): Promise<void> {
       }),
     );
   }, index);
+}
+
+async function cardCount(app: Page): Promise<number> {
+  return app.evaluate(
+    () =>
+      document
+        .querySelector('cover-grid')
+        ?.shadowRoot?.querySelectorAll('.album-card').length ?? 0,
+  );
 }
 
 async function closeDropdown(app: Page): Promise<void> {

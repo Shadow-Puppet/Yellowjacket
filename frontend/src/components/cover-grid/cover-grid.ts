@@ -289,11 +289,7 @@ export class CoverGrid
     private roving = new RovingGridController(this, {
         cardSelector: '.album-card',
         count: () => this.buildGridEntries().length,
-        scrollToIndex: (index) => {
-            this.shadowRoot
-                ?.querySelector<LitVirtualizer>('lit-virtualizer')
-                ?.scrollToIndex(index, 'nearest');
-        },
+        scrollToIndex: (index) => this.scrollGridToIndex(index),
     });
 
     private contextMenuTarget: ContextMenuTarget = {
@@ -847,6 +843,33 @@ export class CoverGrid
         this.gridEntriesCache = entries;
 
         return entries;
+    }
+
+    /**
+     * Bring a card into view, in whichever virtualizer currently holds
+     * it.
+     *
+     * The roving tab stop's index is an index into the whole filtered
+     * album list, but a split grid draws that list across *two*
+     * virtualizers, each of which indexes only its own slice. This used
+     * to be `querySelector('lit-virtualizer')` — always `#grid-before`
+     * — so with a dropdown open, End scrolled the before-grid to an
+     * index it does not contain and the card that should have taken
+     * focus was never rendered to take it.
+     */
+    private scrollGridToIndex(index: number): void {
+        const split = this.splitMode && this.expandedTracks.length > 0;
+        const after = split && index >= this.splitIndex;
+
+        const id = !split
+            ? '#grid-single'
+            : after
+              ? '#grid-after'
+              : '#grid-before';
+
+        this.shadowRoot
+            ?.querySelector<LitVirtualizer>(id)
+            ?.scrollToIndex(after ? index - this.splitIndex : index, 'nearest');
     }
 
     /** Rebuild before/after caches if the entries or splitIndex changed. */

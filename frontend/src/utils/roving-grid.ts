@@ -12,8 +12,29 @@
  * computed from the layout config, because all three grids are
  * virtualized with a centring `justify` and the arithmetic would be a
  * second description of a layout the DOM already knows.
+ *
+ * It has to be measured with `getBoundingClientRect()`, though, and
+ * not with `offsetTop`: `lit-virtualizer` positions its children with
+ * a `transform`, which `offsetTop` does not see, so **every** card in
+ * every one of these grids reported `offsetTop === 0`. That made the
+ * measured column count the number of rendered cards, which made
+ * ArrowDown `min(i + everything, last)` and ArrowUp `max(i - everything,
+ * 0)` — the vertical arrows were End and Home, in all three grids,
+ * from the day this was written. Reproduced at 700×700 with three real
+ * rows of 3/3/2: ArrowDown from card 0 landed on card 7.
  */
 import type { ReactiveController, ReactiveControllerHost } from 'lit';
+
+/**
+ * How long to keep retrying the focus while a virtualizer catches up.
+ *
+ * A deadline rather than a frame count because the wait is a scroll and
+ * a re-render, not a fixed number of paints: at 5 000 albums, End from
+ * the top produced the card in under 500 ms and a ten-frame budget
+ * (~160 ms) expired first — the index moved and nothing took focus,
+ * which is indistinguishable from the key not being handled at all.
+ */
+const focusRetryBudgetMs = 1000;
 
 export interface RovingGridHost extends ReactiveControllerHost {
     shadowRoot: ShadowRoot | null;
@@ -96,19 +117,45 @@ export class RovingGridController implements ReactiveController {
         this.focus(next);
     };
 
-    /** Move the tab stop, scrolling and focusing the card. */
+    /**
+     * Move the tab stop, scrolling and focusing the card.
+     *
+     * The focus is retried across a few frames because the host
+     * finishing its update is not the virtualizer finishing its own: a
+     * scroll of several thousand rows produces the card a frame or two
+     * later, and a single query at `updateComplete` finds nothing and
+     * silently leaves focus where it was. Measured at 5 000 albums with
+     * a dropdown open, where End moved the index and focused nothing.
+     */
     focus(index: number): void {
         this.focusedIndex = index;
         this.opts.scrollToIndex?.(index);
         this.host.requestUpdate();
 
-        void this.host.updateComplete.then(() => {
-            const cards = this.cards();
+        const deadline = performance.now() + focusRetryBudgetMs;
 
-            cards
-                .find((card) => Number(card.dataset['index']) === index)
-                ?.focus();
-        });
+        void this.host.updateComplete.then(() => this.focusCard(index, deadline));
+    }
+
+    private focusCard(index: number, deadline: number): void {
+        const card = this.cards().find(
+            (c) => Number(c.dataset['index']) === index,
+        );
+
+        if (card) {
+            card.focus();
+
+            return;
+        }
+
+        // Give up rather than spin: the index can also simply be gone,
+        // if a rescan shortened the list mid-keypress.
+        if (performance.now() >= deadline) return;
+
+        // Stop chasing an index the user has already moved away from.
+        if (this.focusedIndex !== index) return;
+
+        requestAnimationFrame(() => this.focusCard(index, deadline));
     }
 
     private cards(): HTMLElement[] {
@@ -119,14 +166,24 @@ export class RovingGridController implements ReactiveController {
         ];
     }
 
-    /** Cards sharing a top offset are one row. */
+    /**
+     * Cards sharing a top edge are one row.
+     *
+     * Rounded because a virtualizer's transforms are fractional and two
+     * cards in the same row routinely differ in the third decimal, and
+     * measured against the *first* card's row because that row is the
+     * only one guaranteed to be full — a short last row would
+     * under-count the columns.
+     */
     private measureColumns(): number {
         const cards = this.cards();
 
         if (cards.length === 0) return 1;
 
-        const top = cards[0]!.offsetTop;
-        const inRow = cards.filter((card) => card.offsetTop === top).length;
+        const top = Math.round(cards[0]!.getBoundingClientRect().top);
+        const inRow = cards.filter(
+            (card) => Math.round(card.getBoundingClientRect().top) === top,
+        ).length;
 
         return Math.max(1, inRow);
     }
