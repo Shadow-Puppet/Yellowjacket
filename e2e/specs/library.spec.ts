@@ -65,4 +65,62 @@ test.describe('library views', () => {
     await expect(app.getByText('Aurora Fields').first()).toBeVisible();
     await expect(app.getByText('Pale Circuit').first()).toBeVisible();
   });
+
+  test('a library can be renamed from its own name', async ({ app }) => {
+    // Found while closing Phase 3: clicking the name opened the rename
+    // editor and closed it in the same click, because the click bubbled
+    // to config-page's own document handler — which exists to close it.
+    // The overflow menu's Rename always worked; it stops propagation.
+    //
+    // The editor is opened and abandoned, never committed: these specs
+    // share one backend process, and a renamed library would fail the
+    // ones after this on fixture content.
+    await app.getByTestId('nav-settings').click();
+    await expect(app.getByTestId('main-content')).toHaveAttribute(
+      'data-active-view',
+      'settings',
+    );
+
+    const page = app.locator('config-page');
+
+    await expect
+      .poll(() =>
+        page.evaluate((el) => {
+          const sections = [
+            ...(el.shadowRoot?.querySelectorAll('config-section') ?? []),
+          ];
+          const libraries = sections.at(-1);
+          const header =
+            libraries?.shadowRoot?.querySelector<HTMLElement>('.header');
+
+          header?.click();
+
+          return !!el.shadowRoot?.querySelector('.library-name');
+        }),
+      )
+      .toBe(true);
+
+    const opened = await page.evaluate(async (el) => {
+      el.shadowRoot
+        ?.querySelector<HTMLElement>('.library-name')
+        ?.click();
+
+      // Lit renders on a microtask: a synchronous read here reports
+      // "not editing" on a build where it works, which is how this bug
+      // was first "reproduced" against a fix that already worked.
+      await new Promise((r) => setTimeout(r, 100));
+
+      return !!el.shadowRoot?.querySelector('.edit-input');
+    });
+
+    expect(opened).toBe(true);
+
+    // Escape the editor without renaming, and leave the app on Tracks.
+    await app.keyboard.press('Escape');
+    await app.getByTestId('nav-tracks').click();
+    await expect(app.getByTestId('main-content')).toHaveAttribute(
+      'data-active-view',
+      'tracks',
+    );
+  });
 });

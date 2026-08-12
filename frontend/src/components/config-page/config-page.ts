@@ -2096,7 +2096,13 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
                                             : html`
                                                   <span
                                                       class="library-name"
-                                                      @click=${() => this.handleStartRename(lib.id, lib.name)}
+                                                      @click=${(e: Event) => {
+                                                          // The document handler closes the
+                                                          // editor, and without this it closes
+                                                          // the one this very click opened.
+                                                          e.stopPropagation();
+                                                          this.handleStartRename(lib.id, lib.name);
+                                                      }}
                                                   >
                                                       ${lib.name}
                                                   </span>
