@@ -120,6 +120,28 @@ func cleanComment(s string) string {
 	return s
 }
 
+// commentLines renders a doc comment as indented TypeScript line
+// comments, one per source line.
+func commentLines(comment string) []string {
+	if comment == "" {
+		return nil
+	}
+
+	var out []string
+
+	for _, line := range strings.Split(comment, "\n") {
+		if line == "" {
+			out = append(out, "    //")
+
+			continue
+		}
+
+		out = append(out, "    // "+line)
+	}
+
+	return out
+}
+
 // generateTypeScript produces the full TypeScript source from the parsed
 // constant groups.
 func generateTypeScript(groups []constGroup) string {
@@ -130,8 +152,12 @@ func generateTypeScript(groups []constGroup) string {
 	b.WriteString("export const Events = {\n")
 
 	for i, g := range groups {
-		if g.Comment != "" {
-			b.WriteString("    // " + g.Comment + "\n")
+		// Every line, not just the first: a doc comment that runs to a
+		// second paragraph used to emit its remainder as bare prose
+		// inside the object literal, so `make generate` — a pre-commit
+		// hook — produced TypeScript that does not parse.
+		for _, line := range commentLines(g.Comment) {
+			b.WriteString(line + "\n")
 		}
 
 		for _, c := range g.Consts {
