@@ -411,11 +411,9 @@ async function dispatch(action: string): Promise<void> {
             );
             break;
 
-        case 'tracklist.delete':
-            document.dispatchEvent(
-                new CustomEvent('shortcut:tracklist-delete'),
-            );
-            break;
+        // No `tracklist.delete`: it dispatched an event nothing
+        // listened for, from a binding Settings advertised as
+        // configurable.  See backend/shortcuts/config.go.
 
         // Panel-specific: autotag review.  The view listens for these
         // while it is the view on screen, and for nothing while it is

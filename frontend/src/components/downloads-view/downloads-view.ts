@@ -98,8 +98,16 @@ export class DownloadsView extends ViewLifecycleMixin(LitElement) {
                 font-weight: 600;
                 color: var(--yj-text-secondary, #b3b3b3);
                 cursor: pointer;
+                border: none;
                 border-bottom: 2px solid transparent;
+                background: none;
+                font-family: inherit;
                 user-select: none;
+            }
+
+            .tab:focus-visible {
+                outline: 2px solid var(--yj-accent, #ffd43b);
+                outline-offset: -2px;
             }
 
             .tab:hover {
@@ -261,24 +269,78 @@ export class DownloadsView extends ViewLifecycleMixin(LitElement) {
                 everything on the list immediately.
             </p>
 
-            <div class="tabs">
-                <div
-                    class="tab ${this.tab === 'requests' ? 'active' : ''}"
-                    @click=${() => (this.tab = 'requests')}
-                >
-                    Requests
-                </div>
-                <div
-                    class="tab ${this.tab === 'downloads' ? 'active' : ''}"
-                    @click=${() => (this.tab = 'downloads')}
-                >
-                    Downloads
-                </div>
+            <div
+                class="tabs"
+                role="tablist"
+                aria-label="Downloads sections"
+                @keydown=${this.onTabKeydown}
+            >
+                ${DownloadsView.TABS.map(
+                    ([id, label]) => html`
+                        <button
+                            type="button"
+                            role="tab"
+                            id=${`tab-${id}`}
+                            class="tab ${this.tab === id ? 'active' : ''}"
+                            aria-selected=${this.tab === id ? 'true' : 'false'}
+                            aria-controls=${`panel-${id}`}
+                            tabindex=${this.tab === id ? 0 : -1}
+                            @click=${() => (this.tab = id)}
+                        >
+                            ${label}
+                        </button>
+                    `,
+                )}
             </div>
 
-            ${this.tab === 'requests' ? this.renderRequests() : this.renderDownloads()}
+            <div
+                role="tabpanel"
+                id=${`panel-${this.tab}`}
+                aria-labelledby=${`tab-${this.tab}`}
+            >
+                ${this.tab === 'requests' ? this.renderRequests() : this.renderDownloads()}
+            </div>
         `;
     }
+
+    /**
+     * The tabs, in order, so the markup and the keyboard model read
+     * the same list rather than each spelling it out (a11y.2: these
+     * were two `<div @click>`s with no roles, no tabindex and no
+     * keyboard path at all, which made the Downloads half of the
+     * Downloads view mouse-only).
+     */
+    private static readonly TABS: ReadonlyArray<readonly [Tab, string]> = [
+        ['requests', 'Requests'],
+        ['downloads', 'Downloads'],
+    ];
+
+    /**
+     * A tablist moves with Left/Right/Home/End and activates as it
+     * moves — the panel is already rendered, so there is nothing to
+     * defer. Focus follows, which is what makes the roving tabindex
+     * mean anything.
+     */
+    private onTabKeydown = (e: KeyboardEvent): void => {
+        const ids = DownloadsView.TABS.map(([id]) => id);
+        const at = ids.indexOf(this.tab);
+
+        let next: number | null = null;
+        if (e.key === 'ArrowRight') next = (at + 1) % ids.length;
+        else if (e.key === 'ArrowLeft') next = (at - 1 + ids.length) % ids.length;
+        else if (e.key === 'Home') next = 0;
+        else if (e.key === 'End') next = ids.length - 1;
+
+        if (next === null) return;
+
+        e.preventDefault();
+        this.tab = ids[next]!;
+        void this.updateComplete.then(() => {
+            this.shadowRoot
+                ?.querySelector<HTMLButtonElement>(`#tab-${this.tab}`)
+                ?.focus();
+        });
+    };
 
     // -----------------------------------------------------------------
     // Requests tab

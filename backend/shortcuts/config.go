@@ -32,9 +32,15 @@ func DefaultBindings() map[string]string {
 		// App actions (Global scope, Ctrl modifier)
 		"app.selectAll": "Ctrl+A",
 
-		// Panel-specific (track list)
-		"tracklist.play":   "Enter",
-		"tracklist.delete": "Delete",
+		// Panel-specific (track list).  There is no `tracklist.delete`:
+		// it was bound to Delete and advertised in Settings as
+		// configurable while nothing listened for it, because "remove
+		// from library" does not exist and it is not clear what it would
+		// remove — the row (which the next scan puts back unless the path
+		// is also excluded) or the file (a delete-your-music button one
+		// keystroke from a focused row).  Advertise it again when it does
+		// something.
+		"tracklist.play": "Enter",
 
 		// Panel-specific (autotag review).  These are the keys the
 		// autotag page used to bind on its own document listener, which

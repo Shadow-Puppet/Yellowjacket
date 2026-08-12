@@ -5,6 +5,18 @@ import { customElement, property, state } from 'lit/decorators.js';
  * A visual grouping wrapper for config fields.
  * Renders a collapsible heading with optional description,
  * and a slot for fields. Starts collapsed by default.
+ *
+ * The header is a real `<button aria-expanded aria-controls>`, which
+ * it was not: it was a bare `<div @click>` with no tabindex and no
+ * role, and every section defaults to collapsed — so every setting in
+ * the app sat behind a control that could not be tabbed to (a11y.1).
+ * `explore-artist-details` has had the correct pattern in five places
+ * the whole time.
+ *
+ * The body renders unconditionally and is toggled with `hidden`,
+ * rather than being added and removed. `aria-controls` has to name an
+ * element that exists, and the slot's light-DOM children exist either
+ * way — a conditional `<slot>` only stops projecting them.
  */
 @customElement('config-section')
 export class ConfigSection extends LitElement {
@@ -24,13 +36,25 @@ export class ConfigSection extends LitElement {
             display: flex;
             align-items: flex-start;
             gap: 0.5em;
+            width: 100%;
             padding: 1.25em;
             cursor: pointer;
             user-select: none;
+            background: none;
+            border: none;
+            font: inherit;
+            color: inherit;
+            text-align: left;
         }
 
         .header:hover {
             background: var(--yj-bg-elevated, #343a40);
+            border-radius: 6px;
+        }
+
+        .header:focus-visible {
+            outline: 2px solid var(--yj-accent, #ffc107);
+            outline-offset: -2px;
             border-radius: 6px;
         }
 
@@ -69,6 +93,10 @@ export class ConfigSection extends LitElement {
             padding: 0 1.25em 1.25em;
         }
 
+        .body[hidden] {
+            display: none;
+        }
+
         .fields {
             display: flex;
             flex-direction: column;
@@ -99,8 +127,11 @@ export class ConfigSection extends LitElement {
     override render() {
         return html`
             <div class="section">
-                <div
+                <button
+                    type="button"
                     class="header"
+                    aria-expanded=${this.expanded ? 'true' : 'false'}
+                    aria-controls="section-body"
                     @click=${this.toggle}
                 >
                     <svg
@@ -120,16 +151,12 @@ export class ConfigSection extends LitElement {
                               </p>`
                             : nothing}
                     </div>
+                </button>
+                <div class="body" id="section-body" ?hidden=${!this.expanded}>
+                    <div class="fields">
+                        <slot></slot>
+                    </div>
                 </div>
-                ${this.expanded
-                    ? html`
-                          <div class="body">
-                              <div class="fields">
-                                  <slot></slot>
-                              </div>
-                          </div>
-                      `
-                    : nothing}
             </div>
         `;
     }

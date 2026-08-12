@@ -163,12 +163,6 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
             scope: 'panel:track-list',
             defaultKey: 'Enter',
         },
-        'tracklist.delete': {
-            label: 'Remove Selected',
-            category: 'Navigation',
-            scope: 'panel:track-list',
-            defaultKey: 'Delete',
-        },
         'autotag.apply': {
             label: 'Apply Match',
             category: 'Autotag',
@@ -1500,14 +1494,20 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
         return html`
             <h2>Settings</h2>
 
-            ${this.renderSearchSection()}
+            <!--
+              Ordered by how often a setting is *reached*, not by how
+              the sections were written (H-22).  Libraries was last and
+              below the fold while Search Index — which is configured
+              once, if ever — was first and the only expanded one.
+            -->
+            ${this.renderLibrarySection()}
             ${this.renderNowPlayingSection()}
             ${this.renderThemeSection()}
-            ${this.renderFavoritesSection()}
             ${this.renderTrackListSection()}
+            ${this.renderFavoritesSection()}
             ${this.renderShortcutsSection()}
+            ${this.renderSearchSection()}
             <download-clients></download-clients>
-            ${this.renderLibrarySection()}
         `;
     }
 
@@ -1520,7 +1520,6 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
             <config-section
                 heading="Search Index"
                 description="The explore search index is built from the MusicBrainz/ListenBrainz data dumps — popular artists, albums, and tracks with listen counts — for fast offline search."
-                .open=${true}
             >
                 <div class="index-status">
                     ${s
@@ -2035,6 +2034,7 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
                 heading="Libraries"
                 description="Manage your music library folders. Scanning and its
                     progress live in the Jobs panel."
+                .open=${true}
             >
                 <div class="scan-actions">
                     <button
