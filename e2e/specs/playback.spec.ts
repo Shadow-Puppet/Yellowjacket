@@ -89,6 +89,14 @@ test.describe('queue', () => {
     await longRow(app).dblclick();
     await waitForEvent(app, 'QueueChanged');
 
+    // The panel has to be open to have rows. A closed one is `width: 0`
+    // and now renders no list at all (perf.m7) — before that it kept a
+    // virtualizer measuring its window on every queue change, and this
+    // assertion passed against a panel nobody could see.
+    const queueToggle = app.getByRole('button', { name: 'Toggle queue' });
+
+    await queueToggle.click();
+
     await expect(app.getByTestId('queue-row')).toHaveCount(1);
 
     const state = await callBinding<{ tracks: unknown[] }>(
@@ -97,6 +105,19 @@ test.describe('queue', () => {
     );
 
     expect(state.tracks).toHaveLength(1);
+
+    // Shut it again, and wait until it really is shut. These specs
+    // share one backend process in file order, the panel's width is
+    // animated, and the transport slides while it closes — a click
+    // issued during that lands on whichever button has moved under the
+    // pointer, which for the very next test was Repeat rather than
+    // Shuffle. Both emit QueueModeChanged, so it failed on the
+    // assertion rather than on the wait, one run in two.
+    //
+    // Waiting on the row count rather than a timeout is also the m7
+    // assertion: a closed panel renders no list at all.
+    await queueToggle.click();
+    await expect(app.getByTestId('queue-row')).toHaveCount(0);
   });
 
   test('shuffle and repeat toggles report their state', async ({ app }) => {
