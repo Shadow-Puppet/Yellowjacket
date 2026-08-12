@@ -11,6 +11,7 @@ import {
 import { PlayerController } from '@store/controllers/player-controller';
 import { FavoritesController } from '@store/controllers/favorites-controller';
 import { designTokens } from '../../styles/tokens.css';
+import { srOnly } from '../../styles/sr-only.css';
 
 // H-17: at 200 px the artist truncated to "The Orchestra Of" while
 // ~400 px of empty space sat between it and the transport controls.
@@ -74,7 +75,7 @@ export class NowPlaying extends LitElement {
     private lastGeometryKey = '';
     private geometryDirty = true;
 
-    static override styles = [designTokens, exploreLinkStyles, css`
+    static override styles = [designTokens, srOnly, exploreLinkStyles, css`
     :host {
       display: block;
       position: relative;
@@ -287,9 +288,16 @@ export class NowPlaying extends LitElement {
 
     override render() {
         const track = this.player.currentTrack;
+        // Auto-advance changes the track with no announcement of any
+        // kind (a11y.12). The region is in both branches because it has
+        // to already exist when the *first* track arrives.
+        const announcement = track
+            ? `Now playing: ${track.title}${track.artist ? ` by ${track.artist}` : ''}`
+            : '';
 
         if (!track) {
             return html`
+        <div class="sr-only" role="status" aria-live="polite">${announcement}</div>
         <div class="now-playing">
           <div class="cover-art">
             <div class="cover-placeholder"><wa-icon name="music"></wa-icon></div>
@@ -311,6 +319,7 @@ export class NowPlaying extends LitElement {
         const artistScrolling = this.shouldScroll('artist');
 
         return html`
+      <div class="sr-only" role="status" aria-live="polite">${announcement}</div>
       <div class="now-playing">
         <div class="cover-art-wrapper">
           <div

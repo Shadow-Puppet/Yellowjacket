@@ -31,8 +31,10 @@ import type { SelectionHost } from '@utils/selection-controller';
 import {
     ContextMenuController,
     contextMenuStyles,
+    isContextMenuKey,
 } from '@utils/context-menu-controller.js';
 import type { ContextMenuHost } from '@utils/context-menu-controller.js';
+import { focusRovingRow, nextRovingIndex } from '@utils/roving-rows';
 import { FavoritesController } from '@store/controllers/favorites-controller';
 import { notificationStore } from '@store/notification-store';
 import { describeError } from '@utils/describe-error';
@@ -339,6 +341,51 @@ export class PlaylistDetails
             e,
             String(trackIndex),
             trackIndex,
+        );
+    }
+
+
+    /** The row holding the roving tab stop. Rows had no keyboard path at
+     *  all before this: not focusable, so Shift+F10 had nowhere to fire
+     *  from and the menu was right-click only (a11y.3). */
+    @state() private focusedIndex = 0;
+
+    private onRowKeydown(e: KeyboardEvent, trackIndex: number): void {
+        const count = this.tracks.length;
+
+        if (count === 0) return;
+
+        const row = e.currentTarget as HTMLElement | null;
+
+        if (isContextMenuKey(e) && row) {
+            e.preventDefault();
+            e.stopPropagation();
+            this.selection.handleContextMenu(String(trackIndex));
+            this.ctxMenu.openFrom(row);
+
+            return;
+        }
+
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            e.stopPropagation();
+            this.handleTrackDblClick(trackIndex);
+
+            return;
+        }
+
+        const next = nextRovingIndex(e.key, this.focusedIndex, count);
+
+        if (next === null) return;
+
+        e.preventDefault();
+        e.stopPropagation();
+        this.focusedIndex = next;
+        void focusRovingRow(
+            this,
+            this.virtualizer,
+            next,
+            (i) => `.track-item[data-index="${i}"]`,
         );
     }
 
@@ -1364,6 +1411,9 @@ export class PlaylistDetails
             </div>
             <lit-virtualizer
                 class="track-scroller"
+                role="listbox"
+                aria-label="Playlist tracks"
+                aria-multiselectable="true"
                 .items=${visibleTracks}
                 .renderItem=${this.renderRow}
                 .keyFunction=${this.rowKey}
@@ -1397,6 +1447,12 @@ export class PlaylistDetails
                     return html`
                         <div
                             class=${classes}
+                            role="option"
+                            aria-selected=${selected}
+                            data-index=${trackIndex}
+                            tabindex=${trackIndex === this.focusedIndex ? 0 : -1}
+                            @keydown=${(e: KeyboardEvent) =>
+                                this.onRowKeydown(e, trackIndex)}
                             draggable=${isPhantom
                                 ? 'false'
                                 : 'true'}
@@ -1526,7 +1582,7 @@ export class PlaylistDetails
                 ${this.ctxMenu.contextMenuOpen
                     ? this.isPhantomSelection()
                         ? html`
-                              <div class="context-menu-panel">
+                              <div class="context-menu-panel" role="menu" aria-label="Track actions">
                                   <wa-dropdown-item
                                       @click=${() =>
                                           this.onContextMenuAction(
@@ -1556,7 +1612,7 @@ export class PlaylistDetails
                               </div>
                           `
                         : html`
-                              <div class="context-menu-panel">
+                              <div class="context-menu-panel" role="menu" aria-label="Track actions">
                                   <wa-dropdown-item
                                       @click=${() =>
                                           this.onContextMenuAction(

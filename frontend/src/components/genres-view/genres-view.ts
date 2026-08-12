@@ -21,6 +21,7 @@ import { queueStore } from '@store/queue-store';
 import {
     ContextMenuController,
     contextMenuStyles,
+    isContextMenuKey,
 } from '@utils/context-menu-controller.js';
 import type { ContextMenuHost } from '@utils/context-menu-controller.js';
 import { FavoritesController } from '@store/controllers/favorites-controller';
@@ -959,6 +960,21 @@ export class GenresView
         );
     };
 
+    /** Shift+F10 / ContextMenu on a focused card. */
+    private openGenreMenuFromKey(
+        e: KeyboardEvent,
+        genre: Genre,
+    ): void {
+        const card = e.currentTarget as HTMLElement | null;
+
+        if (!card) return;
+
+        e.preventDefault();
+        e.stopPropagation();
+        this.contextMenuGenreName = genre.name;
+        this.ctxMenu.openFrom(card);
+    }
+
     private async onContextMenuAction(
         action: string,
     ) {
@@ -1036,7 +1052,7 @@ export class GenresView
                 data-index=${index}
                 tabindex=${this.roving.tabIndexFor(index)}
                 @focus=${() => this.roving.noteFocus(index)}
-                role="button"
+                role="option"
                 aria-label="${genre.name}"
                 aria-selected="${isSelected}"
                 style="
@@ -1055,6 +1071,15 @@ export class GenresView
                         genre,
                     )}
                 @keydown=${(e: KeyboardEvent) => {
+                    if (isContextMenuKey(e)) {
+                        this.openGenreMenuFromKey(
+                            e,
+                            genre,
+                        );
+
+                        return;
+                    }
+
                     if (
                         e.key === 'Enter' ||
                         e.key === ' '
@@ -1109,6 +1134,8 @@ export class GenresView
                     ? html`
                           <div
                               class="context-menu-panel"
+                              role="menu"
+                              aria-label="Genre actions"
                           >
                               <wa-dropdown-item
                                   @click=${() =>
@@ -1295,6 +1322,9 @@ export class GenresView
                 @keydown=${this.roving.handleKeydown}
             >
                 <lit-virtualizer
+                    role="listbox"
+                    aria-label="Genres"
+                    aria-multiselectable="true"
                     .items=${entries}
                     .renderItem=${(entry: GenreEntry) => this.renderGenreCard(entry)}
                     .keyFunction=${(entry: GenreEntry) => entry.genre.name}

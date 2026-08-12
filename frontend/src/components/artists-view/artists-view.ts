@@ -24,6 +24,7 @@ import { queueStore } from '@store/queue-store';
 import {
     ContextMenuController,
     contextMenuStyles,
+    isContextMenuKey,
 } from '@utils/context-menu-controller.js';
 import type { ContextMenuHost } from '@utils/context-menu-controller.js';
 import { FavoritesController } from '@store/controllers/favorites-controller';
@@ -948,6 +949,23 @@ export class ArtistsView
         );
     };
 
+    /** Shift+F10 / ContextMenu on a focused card, anchored to the card
+     *  so the menu appears where the artist is and focus goes back
+     *  there when it closes. */
+    private openArtistMenuFromKey(
+        e: KeyboardEvent,
+        artist: library.Artist,
+    ): void {
+        const card = e.currentTarget as HTMLElement | null;
+
+        if (!card) return;
+
+        e.preventDefault();
+        e.stopPropagation();
+        this.contextMenuArtistId = artist.ID;
+        this.ctxMenu.openFrom(card);
+    }
+
     private async onContextMenuAction(
         action: string,
     ) {
@@ -1193,7 +1211,7 @@ export class ArtistsView
                 data-index=${index}
                 tabindex=${this.roving.tabIndexFor(index)}
                 @focus=${() => this.roving.noteFocus(index)}
-                role="button"
+                role="option"
                 aria-label="${artist.Name}"
                 aria-selected="${isSelected}"
                 style="
@@ -1212,6 +1230,15 @@ export class ArtistsView
                         artist,
                     )}
                 @keydown=${(e: KeyboardEvent) => {
+                    if (isContextMenuKey(e)) {
+                        this.openArtistMenuFromKey(
+                            e,
+                            artist,
+                        );
+
+                        return;
+                    }
+
                     if (
                         e.key === 'Enter' ||
                         e.key === ' '
@@ -1266,6 +1293,8 @@ export class ArtistsView
                     ? html`
                           <div
                               class="context-menu-panel"
+                              role="menu"
+                              aria-label="Artist actions"
                           >
                               <wa-dropdown-item
                                   @click=${() =>
@@ -1442,6 +1471,9 @@ export class ArtistsView
                 @keydown=${this.roving.handleKeydown}
             >
                 <lit-virtualizer
+                    role="listbox"
+                    aria-label="Artists"
+                    aria-multiselectable="true"
                     .items=${entries}
                     .renderItem=${(entry: ArtistEntry) => this.renderArtistCard(entry)}
                     .keyFunction=${(entry: ArtistEntry) => entry.artist.ID}

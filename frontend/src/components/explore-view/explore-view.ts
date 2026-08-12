@@ -2,6 +2,7 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state, query as litQuery } from 'lit/decorators.js';
 import '@components/page-header/page-header';
 import { designTokens } from '../../styles/tokens.css';
+import { srOnly } from '../../styles/sr-only.css';
 import { SearchLocal, SearchLyrics, GetThumbnail, GetThumbnails, GetArtistImageURL, RecordSearchClick } from '@go/explore/Service';
 import { libraryStore } from '../../store/library-store';
 import { exploreCache, ARTIST_IMAGE_CACHE_LIMIT } from '../../store/explore-cache';
@@ -156,6 +157,7 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) {
 
     static override styles = [
         designTokens,
+        srOnly,
         exploreLinkStyles,
         css`
             :host {
@@ -1319,6 +1321,9 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) {
     override render() {
         return html`
             <page-header heading="Explore"></page-header>
+            <div class="sr-only" role="status" aria-live="polite">
+                ${this.liveStatus()}
+            </div>
             ${this.renderSearchInput()}
             ${this.loading
                 ? html`<div class="loading-indicator">Searching\u2026</div>`
@@ -1331,6 +1336,26 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) {
                 : nothing}
             ${this.renderBody()}
         `;
+    }
+
+    /** "Searching…" and the error block were both silent (a11y.12). */
+    private liveStatus(): string {
+        if (this.error) return this.error;
+
+        if (this.loading) return 'Searching…';
+
+        const results = this.results;
+
+        if (!results) return '';
+
+        const count =
+            (results.artists?.length ?? 0)
+            + (results.releaseGroups?.length ?? 0)
+            + (results.recordings?.length ?? 0);
+
+        return count === 0
+            ? 'No results.'
+            : `${count} result${count === 1 ? '' : 's'}.`;
     }
 
     private renderSearchInput() {

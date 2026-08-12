@@ -46,7 +46,10 @@ import {
     emitDragActive,
 } from '@utils/drag-controller';
 import type { DragPayload } from '@utils/drag-controller';
-import { ContextMenuController } from '@utils/context-menu-controller.js';
+import {
+    ContextMenuController,
+    isContextMenuKey,
+} from '@utils/context-menu-controller.js';
 import type { ContextMenuHost } from '@utils/context-menu-controller.js';
 import { FavoritesController } from '@store/controllers/favorites-controller';
 import { artistLink, exploreLinkStyles } from '../../utils/explore-link';
@@ -1050,6 +1053,26 @@ export class CoverGrid
     private onGridAlbumKeydown = (
         e: KeyboardEvent,
     ) => {
+        if (isContextMenuKey(e)) {
+            const target = this.resolveAlbumFromEvent(e);
+            const card =
+                e.composedPath().find(
+                    (el): el is HTMLElement =>
+                        el instanceof HTMLElement &&
+                        el.classList.contains('album-card'),
+                );
+
+            if (!target || !card) return;
+
+            e.preventDefault();
+            e.stopPropagation();
+            this.contextMenuAlbumId = target.album.ID;
+            this.contextMenuTarget = { kind: 'album' };
+            this.ctxMenu.openFrom(card);
+
+            return;
+        }
+
         if (e.key !== 'Enter' && e.key !== ' ') return;
 
         const hit = this.resolveAlbumFromEvent(e);
@@ -1679,7 +1702,8 @@ export class CoverGrid
                 class=${classes}
                 tabindex=${this.roving.tabIndexFor(index)}
                 @focus=${() => this.roving.noteFocus(index)}
-                role="button"
+                role="option"
+                aria-selected=${this.selectedAlbums.has(album.ID)}
                 data-index=${index}
                 aria-label="${album.Name} by ${album.ArtistName}"
                 draggable="true"
@@ -1780,6 +1804,9 @@ export class CoverGrid
         return html`
             <lit-virtualizer
                 id="grid-single"
+                role="listbox"
+                aria-label="Albums"
+                aria-multiselectable="true"
                 .items=${this.buildGridEntries()}
                 .renderItem=${this.renderGridEntry}
                 .keyFunction=${(entry: GridEntry) => entry.album.ID}
@@ -1877,7 +1904,7 @@ export class CoverGrid
             >
                 ${ctxMenu.contextMenuOpen
                 ? html`
-                          <div class="context-menu-panel">
+                          <div class="context-menu-panel" role="menu" aria-label="Album actions">
                               <wa-dropdown-item
                                   @click=${() =>
                         this.onContextMenuAction(

@@ -25,8 +25,10 @@ import type { SelectionHost } from '@utils/selection-controller';
 import {
     ContextMenuController,
     contextMenuStyles,
+    isContextMenuKey,
 } from '@utils/context-menu-controller.js';
 import type { ContextMenuHost } from '@utils/context-menu-controller.js';
+import { focusRovingRow, nextRovingIndex } from '@utils/roving-rows';
 import { FavoritesController } from '@store/controllers/favorites-controller';
 import {
     hasTrackPayload,
@@ -156,6 +158,9 @@ export class QueuePanel
             this.selection.clear();
         }
     };
+
+    /** The row holding the roving tab stop. */
+    @state() private focusedIndex = 0;
 
     private panelWidth = DEFAULT_WIDTH;
     private scrollbarDragging = false;
@@ -569,6 +574,7 @@ export class QueuePanel
         virtEl.addEventListener('contextmenu', this.onDelegatedContextMenu);
         virtEl.addEventListener('dragstart', this.onDelegatedDragStart);
         virtEl.addEventListener('dragend', this.onTrackDragEnd);
+        virtEl.addEventListener('keydown', this.onDelegatedKeydown);
         this.delegationAttached = true;
     }
 
@@ -651,6 +657,7 @@ export class QueuePanel
             virtEl.removeEventListener('contextmenu', this.onDelegatedContextMenu);
             virtEl.removeEventListener('dragstart', this.onDelegatedDragStart);
             virtEl.removeEventListener('dragend', this.onTrackDragEnd);
+            virtEl.removeEventListener('keydown', this.onDelegatedKeydown);
         }
         this.delegationAttached = false;
     }
@@ -870,6 +877,55 @@ export class QueuePanel
         this.selection.handleContextMenu(String(index));
         this.ctxMenu.openAt(e.clientX, e.clientY);
     }
+
+    /**
+     * The queue's rows had no keyboard path at all: not focusable, so
+     * neither Enter nor Shift+F10 had anywhere to fire from, and the
+     * menu — which is the only way to reach most of what a queue row can
+     * do — was right-click only (a11y.3).
+     */
+    private onDelegatedKeydown = (e: KeyboardEvent): void => {
+        const count = this.queue.tracks.length;
+
+        if (count === 0) return;
+
+        const row = (e.target as HTMLElement | null)?.closest<HTMLElement>(
+            '.track-item',
+        );
+
+        if (isContextMenuKey(e) && row) {
+            e.preventDefault();
+            e.stopPropagation();
+            this.selection.handleContextMenu(String(this.focusedIndex));
+            this.ctxMenu.openFrom(row);
+
+            return;
+        }
+
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            e.stopPropagation();
+            this.selection.clear();
+            this.queue.playAtIndex(this.focusedIndex);
+
+            return;
+        }
+
+        const next = nextRovingIndex(e.key, this.focusedIndex, count);
+
+        if (next === null) return;
+
+        e.preventDefault();
+        e.stopPropagation();
+        this.focusedIndex = next;
+        this.selection.handleContextMenu(String(next));
+        void focusRovingRow(
+            this,
+            this.virtualizer,
+            next,
+            (i) => `.track-item[data-index="${i}"]`,
+        );
+    };
 
     private onContextMenuAction(action: string) {
         const indices =
@@ -1473,6 +1529,10 @@ export class QueuePanel
                 data-testid="queue-row"
                 data-file-path=${track.filePath}
                 draggable="true"
+                role="option"
+                aria-selected=${selected}
+                aria-current=${active ? 'true' : 'false'}
+                tabindex=${index === this.focusedIndex ? 0 : -1}
             >
                 <span class="track-position">
                     ${index + 1}
@@ -1584,6 +1644,9 @@ export class QueuePanel
                         : html`
                               <lit-virtualizer
                                   scroller
+                                  role="listbox"
+                                  aria-label="Queue"
+                                  aria-multiselectable="true"
                                   .items=${tracks}
                                   .renderItem=${this.renderTrackItem}
                                   .keyFunction=${(track: QueueTrack) => track.id}
@@ -1602,7 +1665,7 @@ export class QueuePanel
             >
                 ${this.ctxMenu.contextMenuOpen
                     ? html`
-                          <div class="context-menu-panel">
+                          <div class="context-menu-panel" role="menu" aria-label="Queue track actions">
                               <wa-dropdown-item
                                   @click=${() =>
                                       this.onContextMenuAction(

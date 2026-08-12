@@ -25,7 +25,11 @@ import {
     getActiveDragSource,
     getActiveDragPlaylistId,
 } from '@utils/drag-controller';
-import { contextMenuStyles } from '@utils/context-menu-controller.js';
+import {
+    MenuKeyboard,
+    contextMenuStyles,
+    isContextMenuKey,
+} from '@utils/context-menu-controller.js';
 import { describeError } from '@utils/describe-error';
 import { notificationStore } from '@store/notification-store';
 import { confirmAction } from '@components/confirm-dialog/confirm-dialog';
@@ -133,6 +137,13 @@ export class PlaylistView extends ViewLifecycleMixin(LitElement) {
 
     @query('duplicate-tracks-dialog')
     private duplicateDialog!: DuplicateTracksDialog;
+
+    /** This view renders its own context menu rather than using
+     *  `ContextMenuController`, so it borrows just the keyboard model —
+     *  which is the part that must not exist twice. */
+    private menuKeyboard = new MenuKeyboard(() =>
+        this.closePlaylistContextMenu(),
+    );
 
     private closePlaylistCtxMenuHandler =
         () => this.closePlaylistContextMenu();
@@ -1031,6 +1042,7 @@ export class PlaylistView extends ViewLifecycleMixin(LitElement) {
     private handlePlaylistContextMenu = (
         e: MouseEvent,
         index: number,
+        opener?: HTMLElement,
     ) => {
         e.preventDefault();
         e.stopPropagation();
@@ -1061,13 +1073,39 @@ export class PlaylistView extends ViewLifecycleMixin(LitElement) {
                     },
                 };
                 popup.active = true;
+                this.menuKeyboard.open(
+                    popup.querySelector('.context-menu-panel'),
+                    opener,
+                );
             }
         });
     };
 
+    /** Shift+F10 / ContextMenu on a focused playlist header. */
+    private handlePlaylistMenuKey(
+        e: KeyboardEvent,
+        index: number,
+    ): void {
+        const header = e.currentTarget as HTMLElement | null;
+
+        if (!header) return;
+
+        const rect = header.getBoundingClientRect();
+
+        this.handlePlaylistContextMenu(
+            new MouseEvent('contextmenu', {
+                clientX: rect.left + 16,
+                clientY: rect.top + rect.height / 2,
+            }),
+            index,
+            header,
+        );
+    }
+
     private closePlaylistContextMenu() {
         if (!this.playlistContextMenuOpen) return;
 
+        this.menuKeyboard.close();
         this.playlistContextMenuOpen = false;
         this.playlistContextMenuIndex = -1;
 
@@ -1499,6 +1537,8 @@ export class PlaylistView extends ViewLifecycleMixin(LitElement) {
                     ? html`
                           <div
                               class="context-menu-panel"
+                              role="menu"
+                              aria-label="Playlist actions"
                           >
                               ${this.selectedPlaylists.size <= 1
                                   ? html`
@@ -1695,8 +1735,18 @@ export class PlaylistView extends ViewLifecycleMixin(LitElement) {
             >
                 <div
                     class="playlist-header ${this.selectedPlaylists.has(index) ? 'selected' : ''}"
+                    role="button"
+                    tabindex="0"
+                    aria-label=${`Playlist ${entry.summary.Name}`}
                     @click=${(e: MouseEvent) =>
                         this.handlePlaylistHeaderClick(e, index)}
+                    @keydown=${(e: KeyboardEvent) => {
+                        if (isContextMenuKey(e)) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            this.handlePlaylistMenuKey(e, index);
+                        }
+                    }}
                     @contextmenu=${(e: MouseEvent) =>
                         this.handlePlaylistContextMenu(
                             e,

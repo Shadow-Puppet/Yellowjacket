@@ -3,6 +3,7 @@ import { customElement, state } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
 import { designTokens } from '../../styles/tokens.css';
+import { srOnly } from '../../styles/sr-only.css';
 import { jobStore } from '@store/job-store';
 import type { Job } from '@store/job-store';
 import { isIndeterminate, progressFraction } from '@store/job-store';
@@ -45,6 +46,7 @@ export class JobIndicator extends LitElement {
 
     static override styles = [
         designTokens,
+        srOnly,
         jobStateStyles,
         css`
             :host {
@@ -337,36 +339,48 @@ export class JobIndicator extends LitElement {
         `;
     }
 
-    private renderTrigger() {
+    /**
+     * What the trigger says. Extracted so the live region can announce
+     * the same sentence — it swung between "Scanning Music", "3
+     * background jobs" and "Finished" in silence (a11y.12).
+     */
+    private triggerLabel(): string {
         const job = this.primaryJob;
         const activeCount = jobStore.activeJobs.length;
+
+        if (activeCount > 1) return `${activeCount} background jobs`;
+
+        if (job && job.state === 'running') return job.title;
+
+        // "Scanning Music" would be a lie for a job that is paused or
+        // queued, so lead with the state instead.
+        if (job) return `${stateLabel(job)} · ${job.title}`;
+
+        return 'Finished';
+    }
+
+    private renderTrigger() {
+        const job = this.primaryJob;
         const hasFailure = jobStore.failedJobs.length > 0;
-
-        let label: string;
-
-        if (activeCount > 1) {
-            label = `${activeCount} background jobs`;
-        } else if (job && job.state === 'running') {
-            label = job.title;
-        } else if (job) {
-            // "Scanning Music" would be a lie for a job that is paused
-            // or queued, so lead with the state instead.
-            label = `${stateLabel(job)} · ${job.title}`;
-        } else {
-            label = 'Finished';
-        }
+        const label = this.triggerLabel();
 
         return html`
             <button
                 class="trigger"
-                aria-haspopup="dialog"
+                aria-haspopup="true"
                 aria-expanded=${this.popoverOpen}
                 title="Background jobs"
                 @click=${this.onTriggerClick}
             >
                 ${this.renderRing(job)}
                 <span class="label">${label}</span>
-                ${hasFailure ? html`<span class="alert-dot"></span>` : nothing}
+                ${hasFailure
+                    ? html`<span
+                          class="alert-dot"
+                          role="img"
+                          aria-label="A background job failed"
+                      ></span>`
+                    : nothing}
             </button>
         `;
     }
@@ -375,7 +389,10 @@ export class JobIndicator extends LitElement {
         const finished = jobStore.finishedJobs;
 
         return html`
-            <div class="panel" role="dialog" aria-label="Background jobs">
+            <!-- Not role="dialog": nothing moves focus into this, traps
+                 Tab or handles Escape, so announcing a dialog that never
+                 receives focus was a promise it does not keep (a11y.17). -->
+            <div class="panel" role="group" aria-label="Background jobs">
                 <div class="panel-header">
                     <span>Background jobs</span>
                     ${finished.length > 0
@@ -415,6 +432,9 @@ export class JobIndicator extends LitElement {
 
     override render() {
         return html`
+            <div class="sr-only" role="status" aria-live="polite">
+                ${this.triggerLabel()}
+            </div>
             <wa-popup
                 placement="bottom-end"
                 distance="8"

@@ -1,6 +1,7 @@
 import { library } from '@go/models';
 import { LitElement, html, svg, css, nothing } from 'lit';
 import { designTokens } from '../../styles/tokens.css';
+import { srOnly } from '../../styles/sr-only.css';
 import {
     customElement,
     property,
@@ -13,6 +14,7 @@ import { ViewLifecycleMixin } from '@utils/view-lifecycle';
 import {
     ContextMenuController,
     contextMenuStyles,
+    isContextMenuKey,
 } from '@utils/context-menu-controller.js';
 
 import type { ContextMenuHost } from '@utils/context-menu-controller.js';
@@ -230,6 +232,24 @@ export class TrackList
         if (last < 0) return;
 
         let next = this.focusedIndex;
+
+        // The menu is most of what a row can do, and it was reachable
+        // only by right-click (a11y.3).
+        if (isContextMenuKey(e)) {
+            const track = this.cachedSortedTracks[this.focusedIndex];
+            const row = e.target instanceof HTMLElement
+                ? e.target.closest<HTMLElement>('[role="row"]')
+                : null;
+
+            if (!track || !row) return;
+
+            e.preventDefault();
+            e.stopPropagation();
+            this.selection.handleContextMenu(track.FilePath);
+            this.ctxMenu.openFrom(row);
+
+            return;
+        }
 
         switch (e.key) {
             case 'ArrowDown':
@@ -877,7 +897,7 @@ export class TrackList
         this.requestUpdate();
     };
 
-    static override styles = [designTokens, contextMenuStyles, exploreLinkStyles, css`
+    static override styles = [designTokens, srOnly, contextMenuStyles, exploreLinkStyles, css`
     :host {
       display: flex;
       flex-direction: column;
@@ -1314,6 +1334,28 @@ export class TrackList
         } finally {
             this.loadingTracks = false;
         }
+    }
+
+    /**
+     * What a screen reader is told about this list, in a sentence.
+     *
+     * Loading, failed, empty and "n results for a search" were all
+     * silent — the list said them in text nobody was watching (a11y.12).
+     */
+    private liveStatus(visible: number): string {
+        if (this.loadError) return this.loadError;
+
+        if (this.loadingTracks) return 'Loading tracks…';
+
+        if (this.tracks.length === 0) return 'No tracks.';
+
+        const term = this.searchCtrl.term.trim();
+
+        if (term === '') return '';
+
+        return visible === 0
+            ? `No tracks match “${term}”.`
+            : `${visible} track${visible === 1 ? '' : 's'} match “${term}”.`;
     }
 
     /** Loading / failed / genuinely empty, said apart. */
@@ -1858,6 +1900,9 @@ export class TrackList
 
         return html`
       ${this.renderPageHeader()}
+      <div class="sr-only" role="status" aria-live="polite">
+        ${this.liveStatus(visibleTracks.length)}
+      </div>
       ${this.tracks.length === 0
                 ? this.renderPlaceholder()
                 : html`
@@ -1866,19 +1911,31 @@ export class TrackList
               role="grid"
               aria-label="Tracks"
               aria-rowcount=${visibleTracks.length}
+              aria-busy=${this.loadingTracks}
               @keydown=${this.onListKeydown}
             >
             <div class="header-row" role="row">
-              <div role="columnheader"></div>
+              <div role="columnheader" aria-label="Favourite"></div>
               ${cols.map(
                     (col) => html`
                 <div
                   role="columnheader"
+                  tabindex="0"
+                  aria-sort=${this.sortField === col.id
+                          ? (this.sortDirection === 'asc' ? 'ascending' : 'descending')
+                          : 'none'}
                   class="header-cell ${col.align === 'right' ? 'cell-right' : ''}"
                   @click=${() =>
                           this.onHeaderCellClick(
                               col.id,
                           )}
+                  @keydown=${(e: KeyboardEvent) => {
+                          if (e.key !== 'Enter' && e.key !== ' ') return;
+
+                          e.preventDefault();
+                          e.stopPropagation();
+                          this.onHeaderCellClick(col.id);
+                      }}
                 >
                   <span>${col.label}</span>
                   ${this.sortField === col.id
@@ -1930,7 +1987,7 @@ export class TrackList
       >
         ${this.ctxMenu.contextMenuOpen
                 ? html`
-              <div class="context-menu-panel">
+              <div class="context-menu-panel" role="menu" aria-label="Track actions">
                 <wa-dropdown-item
                   @click=${() => this.onContextMenuAction('play')}
                    @mouseenter=${() => this.ctxMenu.closePlaylistSubmenu()}
