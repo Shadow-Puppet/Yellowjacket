@@ -113,6 +113,16 @@ type ModeChanged struct {
 	RepeatMode  RepeatMode `json:"repeatMode"`
 }
 
+// PlaybackFailure is the payload for the PlaybackFailed event.  It
+// carries enough to name the track in a message without the frontend
+// having to look anything up, and the raw reason for the log.
+type PlaybackFailure struct {
+	FilePath string `json:"filePath"`
+	Title    string `json:"title"`
+	Artist   string `json:"artist"`
+	Reason   string `json:"reason"`
+}
+
 // TracksModified is the payload for the QueueTracksModified event.
 type TracksModified struct {
 	Action       string  `json:"action"`
@@ -910,16 +920,15 @@ func (q *Queue) Next() {
 
 	nextIdx := q.nextIndex()
 	if nextIdx == -1 {
-		q.onQueueExhausted()
+		q.onQueueExhausted(false)
 
 		return
 	}
 
-	prevIndex := q.currentIndex
 	q.currentIndex = nextIdx
 
-	if !q.playOrLoadCurrentTrack(wasPlaying) {
-		q.currentIndex = prevIndex
+	if !q.playCurrentOrSkip(wasPlaying, q.nextIndex) {
+		q.onQueueExhausted(false)
 
 		return
 	}
@@ -974,7 +983,9 @@ func (q *Queue) Previous() {
 	prevCurrentIndex := q.currentIndex
 	q.currentIndex = prevIdx
 
-	if !q.playOrLoadCurrentTrack(wasPlaying) {
+	// Backwards for the same reason Next skips forwards: otherwise a
+	// bad file behind you makes Previous a button that does nothing.
+	if !q.playCurrentOrSkip(wasPlaying, q.previousIndex) {
 		q.currentIndex = prevCurrentIndex
 
 		return
@@ -1041,7 +1052,7 @@ func (q *Queue) playFromStart() {
 		q.currentIndex = 0
 	}
 
-	if !q.playCurrentTrack() {
+	if !q.playCurrentOrSkip(true, q.nextIndex) {
 		q.currentIndex = -1
 
 		return
@@ -1208,6 +1219,7 @@ func (q *Queue) loadCurrentTrack() bool {
 			"Failed to load file from queue",
 			"filePath", track.FilePath, "err", err,
 		)
+		q.emitPlaybackFailed(track, err)
 
 		return false
 	}
@@ -1231,6 +1243,7 @@ func (q *Queue) playCurrentTrack() bool {
 			"Failed to play file from queue",
 			"filePath", track.FilePath, "err", err,
 		)
+		q.emitPlaybackFailed(track, err)
 
 		return false
 	}
@@ -1238,12 +1251,39 @@ func (q *Queue) playCurrentTrack() bool {
 	return true
 }
 
+// playCurrentOrSkip plays (or loads) the track at currentIndex, and on
+// failure steps to the next candidate rather than giving up.  A moved
+// or unreadable file in the middle of a queue used to stop playback
+// dead, and Next did not help because it hit the same track and
+// reverted.
+//
+// The attempt count is bounded by the queue length so a queue whose
+// files have all gone (a disconnected drive) stops after one pass
+// instead of spinning forever through a RepeatAll wrap.  Returns false
+// when nothing reachable can be played.
+func (q *Queue) playCurrentOrSkip(autoPlay bool, step func() int) bool {
+	for range len(q.tracks) {
+		if q.playOrLoadCurrentTrack(autoPlay) {
+			return true
+		}
+
+		next := step()
+		if next == -1 {
+			return false
+		}
+
+		q.currentIndex = next
+	}
+
+	return false
+}
+
 // handleCurrentTrackRemoved handles the case where the currently loaded
 // track was removed from the queue. If tracks remain it loads the track
 // now at currentIndex (paused); otherwise it exhausts the queue.
 func (q *Queue) handleCurrentTrackRemoved() {
 	if len(q.tracks) == 0 {
-		q.onQueueExhausted()
+		q.onQueueExhausted(true)
 
 		return
 	}
@@ -1252,14 +1292,21 @@ func (q *Queue) handleCurrentTrackRemoved() {
 }
 
 // onQueueExhausted is called when there are no more tracks to play.
-// It unloads the current track, resets the index to -1 (no current track),
-// and notifies the frontend.
-func (q *Queue) onQueueExhausted() {
-	q.logger.Info("Queue exhausted, unloading track")
+// It resets the index to -1 (no current track) and notifies the
+// frontend.
+//
+// unload says whether the player should also let go of the file it
+// holds.  When the queue simply ran out, it should not: the finished
+// track stays on the now-playing bar, paused at 0:00, rather than the
+// bar blanking while the queue panel still lists what just played
+// (H-18).  When the current track was removed from the queue, or the
+// queue was cleared, there is nothing left to show and it does.
+func (q *Queue) onQueueExhausted(unload bool) {
+	q.logger.Info("Queue exhausted", "unload", unload)
 
 	q.currentIndex = -1
 
-	if q.player != nil {
+	if unload && q.player != nil {
 		q.player.UnloadTrack()
 	}
 

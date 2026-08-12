@@ -43,6 +43,28 @@ func (q *Queue) emitModeChanged() {
 	)
 }
 
+// emitPlaybackFailed tells the frontend that a track could not be
+// played.  Before this existed the failure was logged, the index was
+// reverted and nothing reached the user: a moved file was a button
+// that did nothing, twice, forever (errors.C1).
+func (q *Queue) emitPlaybackFailed(track Track, reason error) {
+	msg := ""
+	if reason != nil {
+		msg = reason.Error()
+	}
+
+	events.Emit(
+		q.ctx,
+		events.PlaybackFailed,
+		PlaybackFailure{
+			FilePath: track.FilePath,
+			Title:    track.Title,
+			Artist:   track.Artist,
+			Reason:   msg,
+		},
+	)
+}
+
 // emitTracksModified emits a delta update for track list changes.
 func (q *Queue) emitTracksModified(
 	action string,

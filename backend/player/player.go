@@ -61,6 +61,26 @@ type Player struct {
 	// inflated for files with multiple ID3v2 tags, so this value
 	// is preferred for display and position calculations.
 	trackLengthMs int64
+
+	// positionTickerOnce guards the 1 Hz position ticker so repeated
+	// SetContext calls (tests, re-init) cannot start a second one.
+	positionTickerOnce sync.Once
+
+	// positionSeq increments on every emitted position, so a
+	// consumer can tell "the same second, again" from "a fresh
+	// reading" and reset its interpolation on both.
+	positionSeq uint64
+}
+
+// PositionInfo is the payload of the PlaybackPositionChanged event:
+// the player's own answer to "where are we", which the seek bar
+// renders instead of counting.
+type PositionInfo struct {
+	PositionSeconds int    `json:"positionSeconds"`
+	TrackLength     int    `json:"trackLength"`
+	TrackChangeID   uint64 `json:"trackChangeId"`
+	Seq             uint64 `json:"seq"`
+	Playing         bool   `json:"playing"`
 }
 
 // State represents the current playback state.
@@ -173,6 +193,74 @@ func (p *Player) SetContext(ctx context.Context) {
 
 	p.ctx = ctx
 	p.restoreStateLocked()
+	p.startPositionTicker()
+}
+
+// positionTickInterval is how often the backend reports its own
+// playback position while playing.
+const positionTickInterval = time.Second
+
+// startPositionTicker runs the 1 Hz position report for the life of
+// the Wails context.  Must be called with p.mu held.
+func (p *Player) startPositionTicker() {
+	if p.ctx == nil {
+		return
+	}
+
+	ctx := p.ctx
+
+	p.positionTickerOnce.Do(func() {
+		go func() {
+			ticker := time.NewTicker(positionTickInterval)
+			defer ticker.Stop()
+
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					p.emitPositionIfPlaying()
+				}
+			}
+		}()
+	})
+}
+
+// emitPositionIfPlaying reports the position only while audio is
+// actually moving; a paused or stopped player has already emitted its
+// final position at the transition.
+func (p *Player) emitPositionIfPlaying() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.state != Playing || p.currentFile == nil {
+		return
+	}
+
+	p.emitPositionLocked()
+}
+
+// emitPositionLocked pushes the current position to the frontend.
+// Must be called with p.mu held.
+func (p *Player) emitPositionLocked() {
+	if p.ctx == nil {
+		return
+	}
+
+	length, err := p.trackLengthLocked()
+	if err != nil {
+		length = 0
+	}
+
+	p.positionSeq++
+
+	events.Emit(p.ctx, events.PlaybackPositionChanged, PositionInfo{
+		PositionSeconds: p.displayPositionSecsLocked(),
+		TrackLength:     length,
+		TrackChangeID:   p.trackChangeID,
+		Seq:             p.positionSeq,
+		Playing:         p.state == Playing,
+	})
 }
 
 // ---------------------------------------------------------------
@@ -381,6 +469,13 @@ func (p *Player) onPlaybackFinished() {
 	p.state = Stopped
 	handler := p.playbackFinishedHandler
 	mc := p.mediaControls
+
+	// Rewind so the position the UI is told is the truth: a finished
+	// track sits at 0:00, ready to play again, rather than reporting
+	// its own length forever.  Play() rebuilds the streamer chain from
+	// the Stopped state anyway, so this only moves the decoder.
+	p.rewindLocked()
+	p.emitPositionLocked()
 	p.mu.Unlock()
 
 	// Emit Wails events outside the lock — these are non-blocking
@@ -476,6 +571,7 @@ func (p *Player) loadFileLocked(filePath string) error {
 	p.startPaused()
 	p.emitPlaybackStateChanged(p.state)
 	p.emitTrackChanged()
+	p.emitPositionLocked()
 	p.saveState()
 	p.logger.Info(
 		"File loaded, state set to paused", "file", filePath,
@@ -553,6 +649,7 @@ func (p *Player) Play() error {
 
 	p.state = Playing
 	p.emitPlaybackStateChanged(p.state)
+	p.emitPositionLocked()
 	p.logger.Info("Started playback")
 
 	return nil
@@ -581,6 +678,7 @@ func (p *Player) Pause() error {
 		p.state = Paused
 		p.logger.Info("Paused playback")
 		p.emitPlaybackStateChanged(p.state)
+		p.emitPositionLocked()
 		p.saveState()
 	} else {
 		p.logger.Info("Already paused or not playing")
@@ -771,6 +869,29 @@ func (p *Player) Seek(targetSeconds int) error {
 	return p.seekLocked(targetSeconds)
 }
 
+// rewindLocked returns the decoder to the start of the track without
+// touching playback state.  Must be called with p.mu held.
+func (p *Player) rewindLocked() {
+	if p.seeker == nil {
+		return
+	}
+
+	// Same source lock the seek path takes: the read-ahead goroutine
+	// must not be inside Read while the decoder seeks.
+	if p.buffered != nil {
+		p.buffered.LockSource()
+		defer p.buffered.UnlockSource()
+	}
+
+	speaker.Lock()
+	err := p.seeker.Seek(0)
+	speaker.Unlock()
+
+	if err != nil {
+		p.logger.Warn("Failed to rewind finished track", "err", err)
+	}
+}
+
 func (p *Player) seekLocked(targetSeconds int) error {
 	if p.seeker == nil {
 		events.Emit(p.ctx, events.SeekFailed)
@@ -846,6 +967,11 @@ func (p *Player) seekLocked(targetSeconds int) error {
 			"err", seekErr,
 		)
 
+		// The optimistic move the UI already made has to be taken
+		// back, and only the backend knows it did not happen.
+		events.Emit(p.ctx, events.SeekFailed)
+		p.emitPositionLocked()
+
 		return fmt.Errorf("failed to seek: %w", seekErr)
 	}
 
@@ -861,6 +987,11 @@ func (p *Player) seekLocked(targetSeconds int) error {
 	if p.mediaControls != nil {
 		p.mediaControls.NotifySeek(targetSeconds)
 	}
+
+	// Report the landing position immediately rather than leaving the
+	// UI to guess until the next tick — this is the half of H-3 that
+	// desynced the seek bar by 30 s over four keyboard seeks.
+	p.emitPositionLocked()
 
 	return nil
 }

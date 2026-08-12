@@ -29,18 +29,20 @@ func (q *Queue) OnPlaybackFinished() {
 	nextIdx := q.nextIndex()
 	if nextIdx == -1 {
 		// Queue exhausted — this is the extension point for a future fallback playlist.
-		q.onQueueExhausted()
+		q.onQueueExhausted(false)
 		q.mu.Unlock()
 		q.recordPlay(finishedID)
 
 		return
 	}
 
-	prevIndex := q.currentIndex
 	q.currentIndex = nextIdx
 
-	if !q.playCurrentTrack() {
-		q.currentIndex = prevIndex
+	// Skip over tracks that cannot be played instead of reverting.
+	// Reverting stopped playback dead on the first moved file and left
+	// Next unable to get past it, since Next hit the same track.
+	if !q.playCurrentOrSkip(true, q.nextIndex) {
+		q.onQueueExhausted(false)
 		q.mu.Unlock()
 		q.recordPlay(finishedID)
 
