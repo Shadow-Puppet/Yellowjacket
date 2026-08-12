@@ -2565,35 +2565,6 @@ func (s *Service) CreateSmartPlaylist(
 		)
 	}
 
-	// SAFETY: Hand-crafted INSERT for smart playlist with
-	// is_smart and smart_rules columns not yet in sqlc schema.
-	// All values are parameterized.
-	rows, err := s.db.QueryContext(
-		`INSERT INTO playlists (name, is_smart, smart_rules)
-		 VALUES (?, 1, ?)
-		 RETURNING id, name, created_at, updated_at`,
-		trimmed, rulesJSON,
-	)
-	if err != nil {
-		s.logger.Error(
-			"Failed to create smart playlist",
-			"name", trimmed, "err", err,
-		)
-
-		return Summary{}, fmt.Errorf(
-			"failed to create smart playlist: %w", err,
-		)
-	}
-
-	if !rows.Next() {
-		_ = rows.Close()
-
-		return Summary{}, fmt.Errorf(
-			"failed to create smart playlist: %w",
-			errNoRowReturned,
-		)
-	}
-
 	var (
 		id        int64
 		retName   string
@@ -2601,24 +2572,37 @@ func (s *Service) CreateSmartPlaylist(
 		updatedAt string
 	)
 
-	if err := rows.Scan(
-		&id, &retName, &createdAt, &updatedAt,
-	); err != nil {
-		_ = rows.Close()
-
+	// SAFETY: Hand-crafted INSERT for smart playlist with
+	// is_smart and smart_rules columns not yet in sqlc schema.
+	// All values are parameterized.
+	//
+	// QueryRowWriter, not QueryContext: this is an INSERT wearing a
+	// query's shape, and QueryContext routes to the query-only read
+	// pool.  Through that handle it failed with "attempt to write a
+	// readonly database", i.e. no smart playlist could be created at
+	// all.  A RETURNING clause does not make a write a read.
+	if err := s.db.QueryRowWriter(
+		`INSERT INTO playlists (name, is_smart, smart_rules)
+		 VALUES (?, 1, ?)
+		 RETURNING id, name, created_at, updated_at`,
+		trimmed, rulesJSON,
+	).Scan(&id, &retName, &createdAt, &updatedAt); err != nil {
 		s.logger.Error(
 			"Failed to create smart playlist",
 			"name", trimmed, "err", err,
 		)
 
+		if errors.Is(err, sql.ErrNoRows) {
+			return Summary{}, fmt.Errorf(
+				"failed to create smart playlist: %w",
+				errNoRowReturned,
+			)
+		}
+
 		return Summary{}, fmt.Errorf(
 			"failed to create smart playlist: %w", err,
 		)
 	}
-
-	// Close before RefreshSmartPlaylist issues its own queries
-	// (MaxOpenConns=1 test DBs would deadlock).
-	_ = rows.Close()
 
 	s.logger.Info(
 		"Smart playlist created",
