@@ -23,6 +23,9 @@ import { EventsOn } from '@runtime/runtime';
 import { Events } from '../../events';
 import { inlineDiff, normalizeStrict, isCosmeticDiff } from '../../utils/text-diff';
 import { libraryStore } from '../../store/library-store';
+import { notificationStore } from '../../store/notification-store';
+import { describeError, explainError } from '../../utils/describe-error';
+import { ViewLifecycleMixin } from '../../utils/view-lifecycle';
 
 type PendingItem = autotagservice.PendingItem;
 type ScoreView = autotagservice.ScoreView;
@@ -97,7 +100,13 @@ interface LengthDiffDetail {
  *  leave · U paste URL · ↑↓ navigate folders · Esc close dialogs.
  */
 @customElement('autotag-view')
-export class AutotagView extends LitElement {
+export class AutotagView extends ViewLifecycleMixin(LitElement) {
+    /* The A/S/L/U/F and arrow keys are registered shortcuts in the
+     * `autotag` panel scope, not a document listener of this view's own.
+     * Two document keydown handlers with no arbitration is finding H-2:
+     * on this page `s` both skipped the album and toggled shuffle. */
+    protected override shortcutScope = 'autotag';
+
     static override readonly styles = [
         designTokens,
         css`
@@ -1179,14 +1188,38 @@ export class AutotagView extends LitElement {
     // render the default gray question-mark icon.
     @state() private applyJobs: Map<string, ApplyJobState> = new Map();
 
+    private queueStarted = false;
     private unsubscribeLibraryStore?: () => void;
     private unsubscribeApplyEvents: Array<() => void> = [];
     private currentLibraryFilter: number | null = null;
 
-    override connectedCallback(): void {
-        super.connectedCallback();
-        document.addEventListener('keydown', this.onKeydown);
-        document.addEventListener('mousedown', this.onDocumentClickForMenu);
+    /** Everything here is torn down when the view leaves the screen, not
+     *  when it is disconnected — which never happens, because the view
+     *  is cached (see utils/view-lifecycle.ts). */
+    protected override onViewActivate(): void {
+        this.listenWhileActive(document, 'keydown', this.onKeydown as EventListener);
+        this.listenWhileActive(
+            document,
+            'mousedown',
+            this.onDocumentClickForMenu as EventListener,
+        );
+
+        for (const [event, handler] of [
+            ['shortcut:autotag-apply', () => void this.onApply()],
+            ['shortcut:autotag-skip', () => void this.onSkip()],
+            ['shortcut:autotag-leave', () => void this.onLeave()],
+            ['shortcut:autotag-paste', () => { this.dialog = 'paste'; }],
+            ['shortcut:autotag-search', () => this.openSearch()],
+            ['shortcut:autotag-next', () => void this.navigateFolder(1)],
+            ['shortcut:autotag-previous', () => void this.navigateFolder(-1)],
+        ] as Array<[string, () => void]>) {
+            this.listenWhileActive(document, event, () => {
+                // A dialog owns the keyboard while it is open.
+                if (this.dialog !== 'none') return;
+                handler();
+            });
+        }
+
         // Track the global library filter so the autotag queue
         // shows only folders from the currently-selected library.
         // null means "all libraries", which the backend treats as
@@ -1201,7 +1234,7 @@ export class AutotagView extends LitElement {
 
         // Listen for per-job progress events so the sidebar can
         // render running/completed/failed indicators.  EventsOn
-        // returns an unsubscribe; collected and called on disconnect.
+        // returns an unsubscribe; collected and called on deactivate.
         this.unsubscribeApplyEvents.push(
             EventsOn(Events.AutotagApplyStarted, (data: { groupKey: string; total: number }) => {
                 this.onApplyStarted(data);
@@ -1228,14 +1261,21 @@ export class AutotagView extends LitElement {
             }),
         );
 
-        void this.startQueue();
+        // Starting the queue resets the selection and refetches
+        // candidates over the network, so it happens once.  Returning to
+        // the page only needs the folder list, which is local and may
+        // have moved while the page was away.
+        if (this.queueStarted) {
+            void this.loadFolders();
+        } else {
+            this.queueStarted = true;
+            void this.startQueue();
+        }
     }
 
-    override disconnectedCallback(): void {
-        super.disconnectedCallback();
-        document.removeEventListener('keydown', this.onKeydown);
-        document.removeEventListener('mousedown', this.onDocumentClickForMenu);
+    protected override onViewDeactivate(): void {
         this.unsubscribeLibraryStore?.();
+        this.unsubscribeLibraryStore = undefined;
         for (const fn of this.unsubscribeApplyEvents) fn();
         this.unsubscribeApplyEvents = [];
         if (this.prefetchRefreshTimer !== undefined) {
@@ -1279,17 +1319,44 @@ export class AutotagView extends LitElement {
     private async onApplyFinished({ groupKey, succeeded, failed, error }:
         { groupKey: string; succeeded: number; failed: number; error: string }): Promise<void> {
         const allFailed = error !== '' || (succeeded === 0 && failed > 0);
+
+        // Some files carry the new tags and some the old, and there is
+        // no way to discover that later: Blocking, by the plan's rule
+        // (errors.C3).
+        if (succeeded > 0 && failed > 0) {
+            this.updateApplyJob(groupKey, {
+                state: 'failed',
+                error: `${failed} of ${succeeded + failed} tracks failed`,
+            });
+            notificationStore.blocking({
+                key: `autotag-partial:${groupKey}`,
+                title: 'This folder was only partly retagged',
+                text: `${succeeded} of ${succeeded + failed} tracks were written; ${failed} were not. The folder now holds a mix of old and new tags.`,
+                detail: error || undefined,
+            });
+            await this.loadFolders();
+
+            return;
+        }
+
         if (allFailed) {
             this.updateApplyJob(groupKey, {
                 state: 'failed',
                 error: error || `${failed} of ${failed} tracks failed`,
             });
-            // Toast the error so the user sees it.
-            this.errorMessage = error
-                ? `Apply failed: ${error}`
-                : `Apply failed: ${failed} of ${failed} tracks could not be written.`;
+            // Nothing was written, so nothing is inconsistent: this is
+            // something to retry, not something to interrupt for.
+            notificationStore.persistent({
+                key: 'autotag-apply',
+                title: 'Tags not written',
+                text: error
+                    ? explainError(error, 'That folder could not be retagged.')
+                    : `None of the ${failed} tracks in that folder could be written.`,
+                detail: error || undefined,
+            });
             // Refresh so the row picks up any DB state change.
             await this.loadFolders();
+
             return;
         }
 
@@ -1327,16 +1394,44 @@ export class AutotagView extends LitElement {
     private onWarningCancel = () => { this.dialog = 'none'; };
     private onWarningContinue = async () => {
         if (!this.current) return;
+
         this.markWarningAcked(this.current.libraryId);
-        await AckLibraryWarning(this.current.libraryId);
-        this.dialog = 'none';
+
+        // Unwrapped, a rejection here meant the lines after it — the
+        // one that closes the dialog — never ran, and the dialog sat
+        // there forever (errors.m6).
+        try {
+            await AckLibraryWarning(this.current.libraryId);
+        } catch (err) {
+            console.error('autotag: could not record the warning ack', err);
+            this.errorMessage = describeError(
+                err,
+                'That acknowledgement could not be saved.',
+            );
+        } finally {
+            this.dialog = 'none';
+        }
+
         await this.executeApply();
     };
     private onLeaveCancel = () => { this.dialog = 'none'; };
     private onLeaveConfirm = async () => {
         if (!this.current) return;
+
         this.dialog = 'none';
-        await LeaveAsIs(this.current.groupKey);
+
+        try {
+            await LeaveAsIs(this.current.groupKey);
+        } catch (err) {
+            console.error('autotag: leave-as-is failed', err);
+            this.errorMessage = describeError(
+                err,
+                'That folder could not be left as it is.',
+            );
+
+            return;
+        }
+
         await this.refreshAfterAction();
     };
 
@@ -1364,7 +1459,11 @@ export class AutotagView extends LitElement {
                 this.searchKind, query, this.searchArtist.trim(),
             );
         } catch (err) {
-            this.searchError = `Search failed: ${(err as Error).message}`;
+            console.error('autotag: candidate search failed', err);
+            this.searchError = describeError(
+                err,
+                'The catalog search did not answer.',
+            );
             this.searchResults = [];
         } finally {
             this.searchLoading = false;
@@ -1380,7 +1479,11 @@ export class AutotagView extends LitElement {
             this.score = await SelectSearchCandidate(groupKey, hit.kind, hit.mbid);
             this.selectedCandidateIdx = 0;
         } catch (err) {
-            this.errorMessage = `Failed to load candidate: ${(err as Error).message}`;
+            console.error('autotag: could not load candidate', err);
+            this.errorMessage = describeError(
+                err,
+                'That candidate could not be loaded.',
+            );
         } finally {
             this.loading = false;
         }
@@ -1399,7 +1502,11 @@ export class AutotagView extends LitElement {
             await this.loadFolders();
             await this.reconcileSelection();
         } catch (err) {
-            this.errorMessage = `Clear completed failed: ${(err as Error).message}`;
+            console.error('autotag: clear completed failed', err);
+            this.errorMessage = describeError(
+                err,
+                'The completed folders could not be cleared.',
+            );
         }
     };
 
@@ -1470,7 +1577,11 @@ export class AutotagView extends LitElement {
             const list = await ListPendingFolders(this.libraryFilterID());
             this.folders = list ?? [];
         } catch (e) {
-            this.errorMessage = `Failed to load pending folders: ${(e as Error).message}`;
+            console.error('autotag: could not load pending folders', e);
+            this.errorMessage = describeError(
+                e,
+                'The pending folders could not be loaded.',
+            );
         }
     }
 
@@ -1517,7 +1628,11 @@ export class AutotagView extends LitElement {
                 await this.loadCandidates(this.current.groupKey);
             }
         } catch (e) {
-            this.errorMessage = `Failed to load folder: ${(e as Error).message}`;
+            console.error('autotag: could not load folder', e);
+            this.errorMessage = describeError(
+                e,
+                'That folder could not be loaded.',
+            );
         }
     }
 
@@ -1548,7 +1663,11 @@ export class AutotagView extends LitElement {
             this.score = result;
         } catch (e) {
             if (this.current?.groupKey !== groupKey) return;
-            this.errorMessage = `Failed to score candidates: ${(e as Error).message}`;
+            console.error('autotag: could not score candidates', e);
+            this.errorMessage = describeError(
+                e,
+                'The candidates for this folder could not be scored.',
+            );
         } finally {
             this.loading = false;
         }
@@ -1647,8 +1766,14 @@ export class AutotagView extends LitElement {
             // from the UI, but defensive); other errors clear the
             // running state and surface a toast.
             if (!msg.includes('apply already in flight')) {
+                console.error('autotag: apply failed to start', e);
                 this.updateApplyJob(groupKey, { state: 'failed', error: msg });
-                this.errorMessage = `Apply failed: ${msg}`;
+                notificationStore.persistent({
+                    key: 'autotag-apply',
+                    title: 'Tags not written',
+                    text: explainError(e, 'That folder could not be retagged.'),
+                    detail: msg,
+                });
             }
         });
 
@@ -1659,17 +1784,43 @@ export class AutotagView extends LitElement {
 
     private async onSkip(): Promise<void> {
         if (!this.current) return;
-        await Skip(this.current.groupKey);
+
+        try {
+            await Skip(this.current.groupKey);
+        } catch (err) {
+            console.error('autotag: skip failed', err);
+            this.errorMessage = describeError(
+                err,
+                'That folder could not be skipped.',
+            );
+
+            return;
+        }
+
         await this.refreshAfterAction();
     }
 
     private async onLeave(): Promise<void> {
         if (!this.current) return;
+
         if (this.topScore() < CONFIDENT_SCORE) {
             this.dialog = 'leave';
+
             return;
         }
-        await LeaveAsIs(this.current.groupKey);
+
+        try {
+            await LeaveAsIs(this.current.groupKey);
+        } catch (err) {
+            console.error('autotag: leave-as-is failed', err);
+            this.errorMessage = describeError(
+                err,
+                'That folder could not be left as it is.',
+            );
+
+            return;
+        }
+
         await this.refreshAfterAction();
     }
 
@@ -1684,7 +1835,11 @@ export class AutotagView extends LitElement {
             this.dialog = 'none';
             this.pasteURL = '';
         } catch (e) {
-            this.errorMessage = `Paste URL failed: ${(e as Error).message}`;
+            console.error('autotag: paste URL failed', e);
+            this.errorMessage = describeError(
+                e,
+                'That release URL could not be used.',
+            );
         } finally {
             this.loading = false;
         }
@@ -1703,47 +1858,16 @@ export class AutotagView extends LitElement {
         }
     }
 
+    /** Escape closes this view's hand-rolled dialogs.  Everything else
+     *  the page binds is a registered shortcut in the `autotag` panel
+     *  scope, so the shortcut service is the only thing deciding what a
+     *  key means — including on the pages this view is not on. */
     private onKeydown = (e: KeyboardEvent): void => {
-        const target = e.target as HTMLElement;
-        if (target && (
-            target.tagName === 'INPUT' ||
-            target.tagName === 'TEXTAREA' ||
-            target.isContentEditable
-        )) {
-            if (e.key === 'Escape' && this.dialog !== 'none') {
-                e.preventDefault();
-                this.dialog = 'none';
-                this.pasteURL = '';
-            }
-            return;
-        }
+        if (e.key !== 'Escape' || this.dialog === 'none') return;
 
-        if (e.key === 'Escape') {
-            if (this.dialog !== 'none') {
-                e.preventDefault();
-                this.dialog = 'none';
-                this.pasteURL = '';
-            }
-            return;
-        }
-
-        if (this.dialog !== 'none') return;
-
-        switch (e.key.toLowerCase()) {
-            case 'a': e.preventDefault(); void this.onApply(); break;
-            case 's': e.preventDefault(); void this.onSkip(); break;
-            case 'l': e.preventDefault(); void this.onLeave(); break;
-            case 'u': e.preventDefault(); this.dialog = 'paste'; break;
-            case 'f': e.preventDefault(); this.openSearch(); break;
-            case 'arrowdown':
-                e.preventDefault();
-                void this.navigateFolder(1);
-                break;
-            case 'arrowup':
-                e.preventDefault();
-                void this.navigateFolder(-1);
-                break;
-        }
+        e.preventDefault();
+        this.dialog = 'none';
+        this.pasteURL = '';
     };
 
     /* ── Version clustering ── */

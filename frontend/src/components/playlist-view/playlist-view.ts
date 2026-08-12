@@ -26,6 +26,10 @@ import {
     getActiveDragPlaylistId,
 } from '@utils/drag-controller';
 import { contextMenuStyles } from '@utils/context-menu-controller.js';
+import { describeError } from '@utils/describe-error';
+import { notificationStore } from '@store/notification-store';
+import { confirmAction } from '@components/confirm-dialog/confirm-dialog';
+import { ViewLifecycleMixin } from '@utils/view-lifecycle';
 import { FavoritesController } from '@store/controllers/favorites-controller';
 import '@components/duplicate-tracks-dialog/duplicate-tracks-dialog.js';
 import type { DuplicateTracksDialog } from '@components/duplicate-tracks-dialog/duplicate-tracks-dialog.js';
@@ -51,7 +55,7 @@ interface PlaylistEntry {
 }
 
 @customElement('playlist-view')
-export class PlaylistView extends LitElement {
+export class PlaylistView extends ViewLifecycleMixin(LitElement) {
     private playlistCtrl = new PlaylistController(this);
     private searchCtrl = new SearchController(this);
     private favCtrl = new FavoritesController(this);
@@ -801,23 +805,31 @@ export class PlaylistView extends LitElement {
         super.connectedCallback();
         this.restoreSortPreferences();
         this.loadPlaylists();
-        document.addEventListener(
+    }
+
+    protected override onViewActivate(): void {
+        this.listenWhileActive(
+            document,
             'click',
             this.closePlaylistCtxMenuHandler,
         );
-        document.addEventListener(
+        this.listenWhileActive(
+            document,
             'contextmenu',
             this.closePlaylistCtxMenuHandler,
         );
-        document.addEventListener(
+        this.listenWhileActive(
+            document,
             'mousedown',
             this.playlistCtxMenuMousedownHandler,
         );
-        document.addEventListener(
+        this.listenWhileActive(
+            document,
             'click',
             this.clearSelectionHandler,
         );
-        document.addEventListener(
+        this.listenWhileActive(
+            document,
             'mousedown',
             this.sortDropdownCloseHandler,
         );
@@ -830,27 +842,6 @@ export class PlaylistView extends LitElement {
             clearTimeout(this.scrollDebounceTimer);
             this.scrollDebounceTimer = null;
         }
-
-        document.removeEventListener(
-            'click',
-            this.closePlaylistCtxMenuHandler,
-        );
-        document.removeEventListener(
-            'contextmenu',
-            this.closePlaylistCtxMenuHandler,
-        );
-        document.removeEventListener(
-            'mousedown',
-            this.playlistCtxMenuMousedownHandler,
-        );
-        document.removeEventListener(
-            'click',
-            this.clearSelectionHandler,
-        );
-        document.removeEventListener(
-            'mousedown',
-            this.sortDropdownCloseHandler,
-        );
     }
 
     override updated() {
@@ -1351,13 +1342,33 @@ export class PlaylistView extends LitElement {
                 break;
             case 'delete': {
                 if (this.selectedPlaylists.size > 1) {
-                    const ids = [...this.selectedPlaylists]
+                    const entries = [...this.selectedPlaylists]
                         .map(i => this.entries[i])
-                        .filter((e): e is PlaylistEntry => e !== undefined)
-                        .map(e => e.summary.ID);
+                        .filter((e): e is PlaylistEntry => e !== undefined);
+                    const tracks = entries.reduce(
+                        (sum, e) => sum + e.tracks.length,
+                        0,
+                    );
 
-                    for (const id of ids) {
-                        await DeletePlaylist(id);
+                    // The loop used to delete every selected playlist
+                    // with no prompt at all (errors.M6).
+                    const ok = await confirmAction({
+                        title: `Delete ${entries.length} playlists?`,
+                        message: entries
+                            .map((e) => e.summary.Name)
+                            .join(', '),
+                        impact: `${tracks.toLocaleString()} track entries will be removed. The audio files are not touched.`,
+                        confirmLabel: 'Delete playlists',
+                        danger: true,
+                    });
+
+                    if (!ok) break;
+
+                    for (const e of entries) {
+                        await this.deletePlaylist(
+                            e.summary.ID,
+                            e.summary.Name,
+                        );
                     }
 
                     this.selectedPlaylists = new Set();
@@ -1366,6 +1377,8 @@ export class PlaylistView extends LitElement {
                 } else {
                     await this.handleDeletePlaylist(
                         entry.summary.ID,
+                        entry.summary.Name,
+                        entry.tracks.length,
                     );
                 }
 
@@ -1380,15 +1393,54 @@ export class PlaylistView extends LitElement {
 
     private async handleDeletePlaylist(
         playlistID: number,
+        name = 'this playlist',
+        trackCount = 0,
     ) {
+        const ok = await confirmAction({
+            title: `Delete “${name}”?`,
+            message: 'The playlist is deleted; the audio files are not.',
+            impact:
+                trackCount > 0
+                    ? `${trackCount.toLocaleString()} track entries will be removed.`
+                    : undefined,
+            confirmLabel: 'Delete playlist',
+            danger: true,
+        });
+
+        if (!ok) return;
+
+        await this.deletePlaylist(playlistID, name);
+        await this.refreshPlaylists();
+    }
+
+    /**
+     * The delete itself, already confirmed. A partial failure used to
+     * look exactly like a success until the refresh put the playlist
+     * back (errors.M6), so it is Persistent: the thing the user asked
+     * for did not happen and retrying means something.
+     */
+    private async deletePlaylist(
+        playlistID: number,
+        name: string,
+    ): Promise<void> {
         try {
             await DeletePlaylist(playlistID);
-            await this.refreshPlaylists();
         } catch (err) {
-            console.error(
-                'Failed to delete playlist:',
-                err,
-            );
+            console.error('Failed to delete playlist:', err);
+            notificationStore.persistent({
+                key: 'playlist-delete',
+                text: `Could not delete “${name}”. ${describeError(err)}`,
+                detail: String(err),
+                coalescedText: (count) =>
+                    `Could not delete ${count} playlists.`,
+                action: {
+                    label: 'Try again',
+                    run: () =>
+                        void this.deletePlaylist(playlistID, name).then(() =>
+                            this.refreshPlaylists(),
+                        ),
+                },
+            });
         }
     }
 
@@ -1466,10 +1518,10 @@ export class PlaylistView extends LitElement {
                 'Failed to import playlist:',
                 err,
             );
-            this.importError =
-                err instanceof Error
-                    ? err.message
-                    : String(err);
+            this.importError = describeError(
+                err,
+                'That playlist file could not be imported.',
+            );
             setTimeout(() => {
                 this.importError = '';
             }, 6000);

@@ -13,10 +13,14 @@ import { EventsOn } from '@runtime/runtime';
 import { Events } from '../../events';
 import { jobStore } from '@store/job-store';
 import type { Job } from '@store/job-store';
+import { notificationStore } from '@store/notification-store';
+import { describeError } from '@utils/describe-error';
+import { confirmAction } from '../confirm-dialog/confirm-dialog';
 import './job-row';
 import './job-details-drawer';
 import { applyJobControl } from './job-controls';
 import { jobStateStyles } from './job-format';
+import { ViewLifecycleMixin } from '../../utils/view-lifecycle';
 
 type LibraryInfo = library.Info;
 
@@ -36,7 +40,7 @@ const TERMINAL_STATES: ReadonlySet<string> = new Set([
  * one implementation, two placements, so the two can never disagree.
  */
 @customElement('jobs-view')
-export class JobsView extends LitElement {
+export class JobsView extends ViewLifecycleMixin(LitElement) {
     @state()
     private jobs: Job[] = [];
 
@@ -48,6 +52,15 @@ export class JobsView extends LitElement {
 
     @state()
     private drawerOpen = false;
+
+    /**
+     * Set between pressing a scan button and the job snapshot that
+     * proves it started. `anyScanning` is derived from `JobsChanged`,
+     * which is coalesced at 250 ms — long enough for a second click to
+     * start a second scan (errors.M5).
+     */
+    @state()
+    private starting = false;
 
     private unsubscribe: (() => void) | null = null;
 
@@ -221,8 +234,7 @@ export class JobsView extends LitElement {
         `,
     ];
 
-    override connectedCallback(): void {
-        super.connectedCallback();
+    protected override onViewActivate(): void {
         this.unsubscribe = jobStore.subscribe(() => {
             this.jobs = jobStore.jobs;
         });
@@ -243,8 +255,7 @@ export class JobsView extends LitElement {
         }
     }
 
-    override disconnectedCallback(): void {
-        super.disconnectedCallback();
+    protected override onViewDeactivate(): void {
         this.unsubscribe?.();
         this.unsubscribe = null;
         this.eventCleanups.forEach((off) => off());
@@ -273,20 +284,52 @@ export class JobsView extends LitElement {
         this.drawerOpen = false;
     };
 
-    private async startScan(id: number) {
+    /**
+     * Run something that starts a job, holding the buttons until the
+     * snapshot lands and saying so when it does not start at all.
+     *
+     * Persistent, not a toast: the user asked for work to happen, it
+     * did not, and retrying is exactly the useful response.
+     */
+    private async startJob(
+        what: string,
+        start: () => Promise<unknown>,
+        retry: () => void,
+    ): Promise<void> {
+        if (this.starting) return;
+
+        this.starting = true;
+
         try {
-            await ScanLibrary(id);
+            await start();
         } catch (err) {
-            console.error('Failed to start scan:', err);
+            console.error(`${what} failed:`, err);
+            notificationStore.persistent({
+                key: 'scan-start',
+                title: 'Scan did not start',
+                text: `${what} failed. ${describeError(err)}`,
+                detail: String(err),
+                action: { label: 'Try again', run: retry },
+            });
+        } finally {
+            this.starting = false;
         }
     }
 
+    private async startScan(id: number) {
+        await this.startJob(
+            'Scanning that library',
+            () => ScanLibrary(id),
+            () => void this.startScan(id),
+        );
+    }
+
     private async startAllScans() {
-        try {
-            await ScanAllLibraries();
-        } catch (err) {
-            console.error('Failed to start scans:', err);
-        }
+        await this.startJob(
+            'Scanning your libraries',
+            () => ScanAllLibraries(),
+            () => void this.startAllScans(),
+        );
     }
 
     private async clearFinished() {
@@ -294,22 +337,25 @@ export class JobsView extends LitElement {
     }
 
     private async fullRescan() {
-        if (
-            !window.confirm(
-                'Full rescan deletes ALL library data — including ' +
-                    'downloaded cover art — and rebuilds it from your ' +
-                    'files.\n\nThis is not the same as "Scan now", which ' +
-                    'only picks up what changed. Continue?',
-            )
-        ) {
-            return;
-        }
+        const ok = await confirmAction({
+            title: 'Full rescan',
+            message:
+                'This deletes all library data — including downloaded ' +
+                'cover art — and rebuilds it from your files.',
+            impact:
+                'It is not the same as “Scan now”, which only picks up ' +
+                'what changed.',
+            confirmLabel: 'Rebuild everything',
+            danger: true,
+        });
 
-        try {
-            await FullRescan();
-        } catch (err) {
-            console.error('Full rescan failed:', err);
-        }
+        if (!ok) return;
+
+        await this.startJob(
+            'The full rescan',
+            () => FullRescan(),
+            () => void this.fullRescan(),
+        );
     }
 
     private renderJobList(list: Job[], emptyText: string) {
@@ -393,6 +439,7 @@ export class JobsView extends LitElement {
                     : html`
                           <button
                               class="action"
+                              ?disabled=${this.starting}
                               @click=${() => this.startScan(lib.id)}
                           >
                               <wa-icon name="arrows-rotate"></wa-icon>
@@ -431,7 +478,9 @@ export class JobsView extends LitElement {
                     <h2>Libraries</h2>
                     <button
                         class="action"
-                        ?disabled=${anyScanning || this.libraries.length === 0}
+                        ?disabled=${anyScanning ||
+                        this.starting ||
+                        this.libraries.length === 0}
                         @click=${this.startAllScans}
                     >
                         <wa-icon name="arrows-rotate"></wa-icon>
@@ -467,7 +516,9 @@ export class JobsView extends LitElement {
                         </div>
                         <button
                             class="action danger"
-                            ?disabled=${anyScanning}
+                            ?disabled=${anyScanning ||
+                            this.starting ||
+                            this.libraries.length === 0}
                             @click=${this.fullRescan}
                         >
                             <wa-icon name="triangle-exclamation"></wa-icon>

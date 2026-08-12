@@ -9,6 +9,8 @@ export function jobIcon(job: Job): string {
             return 'folder';
         case 'index-build':
             return 'database';
+        case 'autotag-apply':
+            return 'tags';
         default:
             return 'gear';
     }

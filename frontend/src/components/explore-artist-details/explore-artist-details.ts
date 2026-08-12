@@ -27,6 +27,7 @@ import { libraryStore } from '../../store/library-store';
 import { downloadStore } from '../../store/download-store';
 import '@awesome.me/webawesome/dist/components/button/button.js';
 import { trackLink, exploreLinkStyles } from '../../utils/explore-link';
+import { describeError } from '../../utils/describe-error';
 import { GetAlbumsByArtist } from '@go/library/Library';
 import { EventsOn } from '@runtime/runtime';
 import { Events } from '../../events';
@@ -1014,9 +1015,6 @@ export class ExploreArtistDetails extends LitElement {
 
         // Local-only artist (no MBID) — populate from library store.
         if (!mbid && this.localArtistId) {
-            console.log(
-                `[explore-artist] loading local-only: "${this.artistName}" (id=${this.localArtistId})`,
-            );
 
             this.loadingArtist = false;
             this.loadingTracks = false;
@@ -1027,16 +1025,10 @@ export class ExploreArtistDetails extends LitElement {
 
             this.hydrateLocalOnly();
 
-            console.log(
-                `[explore-artist] loaded (local-only): "${this.artistName}"`,
-            );
 
             return;
         }
 
-        console.log(
-            `[explore-artist] loading: "${this.artistName}" (${mbid})`,
-        );
 
         // Phase 0: hydrate from caches (instant, no Go calls).
         this.hydrateFromCache(mbid);
@@ -1068,9 +1060,6 @@ export class ExploreArtistDetails extends LitElement {
 
         // checkLibrary now runs from fetchReleaseGroups when data arrives.
 
-        console.log(
-            `[explore-artist] data requests fired: "${this.artistName}" (${mbid})`,
-        );
     }
 
     /**
@@ -1290,9 +1279,11 @@ export class ExploreArtistDetails extends LitElement {
         try {
             this.artist = await LookupArtist(mbid);
         } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            this.errorArtist = msg;
-            console.error(`[explore-artist] LookupArtist error: ${msg}`);
+            console.error('[explore-artist] LookupArtist error', err);
+            this.errorArtist = describeError(
+                err,
+                'The catalog did not answer.',
+            );
         } finally {
             this.loadingArtist = false;
         }
@@ -1326,10 +1317,7 @@ export class ExploreArtistDetails extends LitElement {
 
             void this.batchResolveTrackThumbnails(tracks, mapping);
         } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            console.error(
-                `[explore-artist] TopRecordingsForArtist error: ${msg}`,
-            );
+            console.error('[explore-artist] TopRecordingsForArtist error', err);
         } finally {
             // An empty first pass may mean a background discography fetch
             // is still in flight (the artist wasn't indexed yet).  Keep
@@ -1419,10 +1407,7 @@ export class ExploreArtistDetails extends LitElement {
             // are the most likely to be clicked from the artist page.
             this.prefetchReleases(rgs?.map((r) => r.releaseGroupMbid) ?? []);
         } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            console.error(
-                `[explore-artist] TopReleaseGroupsForArtist error: ${msg}`,
-            );
+            console.error('[explore-artist] TopReleaseGroupsForArtist error', err);
             this.topReleaseGroups = [];
         } finally {
             // See fetchTopTracks: hold the spinner while a background
@@ -1462,12 +1447,12 @@ export class ExploreArtistDetails extends LitElement {
             // one from here is instant instead of a cold MB browse.
             this.prefetchReleases(rgs?.map((r) => r.mbid) ?? []);
         } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            this.errorReleases = msg;
-            this.catalogPending = false;
-            console.error(
-                `[explore-artist] BrowseReleaseGroups error: ${msg}`,
+            console.error('[explore-artist] BrowseReleaseGroups error', err);
+            this.errorReleases = describeError(
+                err,
+                'The catalog did not answer for this artist\u2019s albums.',
             );
+            this.catalogPending = false;
         } finally {
             // BrowseReleaseGroups is index-first + async: an empty result on
             // a cold artist means the discography is still being fetched in
@@ -1498,10 +1483,7 @@ export class ExploreArtistDetails extends LitElement {
             this.similarArtists = artists ?? [];
         } catch (err) {
             // D024: graceful degradation — silently omit similar artists on failure.
-            const msg = err instanceof Error ? err.message : String(err);
-            console.error(
-                `[explore-artist] SimilarArtists error: ${msg}`,
-            );
+            console.error('[explore-artist] SimilarArtists error', err);
             this.similarArtists = [];
         } finally {
             // SimilarArtists is DB-first + async: an empty result on the

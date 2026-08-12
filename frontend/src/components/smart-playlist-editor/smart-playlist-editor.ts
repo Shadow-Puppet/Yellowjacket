@@ -3,6 +3,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { library } from '@go/models';
 import { PreviewSmartPlaylist } from '@go/playlist/Service';
 import { libraryStore } from '@store/library-store';
+import { describeError } from '@utils/describe-error';
 import { designTokens } from '../../styles/tokens.css';
 import '@components/combobox/combobox.ts';
 
@@ -675,6 +676,14 @@ export class SmartPlaylistEditor extends LitElement {
         }, 300);
     }
 
+    /**
+     * Monotonic request version. Debouncing only coalesces keystrokes
+     * *within* its window; a query slower than 300 ms overlaps the next
+     * one and whichever answers last used to win (errors.M8). This is
+     * `explore-view`'s guard, checked on all three paths.
+     */
+    private previewVersion = 0;
+
     private async runPreview() {
         // Skip preview if any rule is incomplete
         const incomplete = this.ruleRows.some(
@@ -690,19 +699,30 @@ export class SmartPlaylistEditor extends LitElement {
         }
 
         const json = this.buildRulesJSON();
+        const version = ++this.previewVersion;
+
         this.previewLoading = true;
         this.previewError = '';
 
         try {
             const tracks = await PreviewSmartPlaylist(json);
+
+            if (version !== this.previewVersion) return;
+
             this.previewTracks = tracks ?? [];
         } catch (error) {
+            if (version !== this.previewVersion) return;
+
             console.error('Smart playlist preview failed:', error);
-            this.previewError =
-                error instanceof Error ? error.message : String(error);
+            this.previewError = describeError(
+                error,
+                'The preview could not be built for these rules.',
+            );
             this.previewTracks = [];
         } finally {
-            this.previewLoading = false;
+            if (version === this.previewVersion) {
+                this.previewLoading = false;
+            }
         }
     }
 

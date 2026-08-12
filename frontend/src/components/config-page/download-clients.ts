@@ -18,6 +18,8 @@ import { DirectoryPicker } from '@go/frontendutil/FrontendUtil';
 import { GetDownloadPreferences, SetDownloadPreferences } from '@go/config/Config';
 import { SetPreferences } from '@go/download/Service';
 import type { download } from '@go/models';
+import { describeError, explainError } from '@utils/describe-error';
+import { confirmAction } from '@components/confirm-dialog/confirm-dialog';
 import './config-section';
 
 /**
@@ -416,7 +418,7 @@ export class DownloadClients extends LitElement {
                         size="small"
                         appearance="plain"
                         variant="danger"
-                        @click=${() => this.deleteProvider(provider)}
+                        @click=${() => void this.deleteProvider(provider)}
                     >
                         Remove
                     </wa-button>
@@ -643,7 +645,11 @@ export class DownloadClients extends LitElement {
 
             this.cancelEdit();
         } catch (err) {
-            this.errorMessage = String(err);
+            console.error('Failed to add download client:', err);
+            this.errorMessage = explainError(
+                err,
+                'That client could not be saved.',
+            );
         }
     };
 
@@ -670,7 +676,11 @@ export class DownloadClients extends LitElement {
 
             this.cancelEdit();
         } catch (err) {
-            this.errorMessage = String(err);
+            console.error('Failed to save download client:', err);
+            this.errorMessage = explainError(
+                err,
+                'Those changes could not be saved.',
+            );
         }
     }
 
@@ -685,13 +695,33 @@ export class DownloadClients extends LitElement {
         return out;
     }
 
+    /**
+     * Removing a client discards its stored credentials, which cannot
+     * be recovered — and it used to happen on one click (errors.m4).
+     */
     private async deleteProvider(provider: DownloadProvider) {
+        const ok = await confirmAction({
+            title: `Remove “${provider.name}”?`,
+            message:
+                'YellowJacket will stop using this client for downloads.',
+            impact:
+                'Its stored credentials are deleted and cannot be recovered.',
+            confirmLabel: 'Remove client',
+            danger: true,
+        });
+
+        if (!ok) return;
+
         this.errorMessage = '';
 
         try {
             await downloadStore.deleteProvider(provider.id);
         } catch (err) {
-            this.errorMessage = String(err);
+            console.error('Failed to remove download client:', err);
+            this.errorMessage = describeError(
+                err,
+                'That client could not be removed.',
+            );
         }
     }
 
@@ -706,6 +736,9 @@ export class DownloadClients extends LitElement {
                 [provider.id]: { ok: true, message: 'Connected.' },
             };
         } catch (err) {
+            // Deliberately verbatim: a connection test's error is the
+            // user's debugging tool for a misconfigured client, and is
+            // the documented exception to describeError() (errors.M9).
             this.testResults = {
                 ...this.testResults,
                 [provider.id]: { ok: false, message: String(err) },
@@ -740,7 +773,11 @@ export class DownloadClients extends LitElement {
             await SetPreferences(this.prefs);
             this.prefsSaved = true;
         } catch (err) {
-            this.prefsError = String(err);
+            console.error('Failed to save download preferences:', err);
+            this.prefsError = describeError(
+                err,
+                'Those preferences could not be saved.',
+            );
         } finally {
             this.prefsSaving = false;
         }

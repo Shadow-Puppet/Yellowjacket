@@ -22,7 +22,7 @@ import { GetTrackMBIDs } from '@go/library/Library';
 type TrackMBIDs = library.TrackMBIDs;
 import { ImageFilePicker, ReadFile } from '@go/frontendutil/FrontendUtil';
 import { libraryStore } from '../../store/library-store';
-import { EventsOn, EventsOff } from '@runtime/runtime';
+import { EventsOn } from '@runtime/runtime';
 import { Events } from '../../events';
 
 import '@awesome.me/webawesome/dist/components/dialog/dialog.js';
@@ -1714,8 +1714,10 @@ export class TrackDetails extends LitElement {
 
         const changes = this.buildBatchChanges();
 
-        // Listen for progress events.
-        EventsOn(
+        // Listen for progress events. Kept as the unsubscribe function
+        // EventsOn returns, rather than EventsOff(name), which removes
+        // *every* listener for that event (errors.p3).
+        const stopProgress = EventsOn(
             Events.BatchWriteProgress,
             (data: {
                 current: number;
@@ -1762,7 +1764,7 @@ export class TrackDetails extends LitElement {
                 ],
             };
         } finally {
-            EventsOff(Events.BatchWriteProgress);
+            stopProgress();
             this.batchProgress = null;
         }
     };

@@ -14,7 +14,10 @@ import {
     GetScanConcurrency,
     SetScanConcurrency,
 } from '@go/config/Config';
+import { GetIndexStatus } from '@go/explore/Service';
 import { DirectoryPicker } from '@go/frontendutil/FrontendUtil';
+import { notificationStore } from '@store/notification-store';
+import { describeError, explainError } from '@utils/describe-error';
 import type { library } from '@go/models';
 import { ThemeController } from '@store/controllers/theme-controller';
 import { TrackListController } from '@store/controllers/tracklist-controller';
@@ -22,6 +25,7 @@ import { FavoritesController } from '@store/controllers/favorites-controller';
 import { GetAllPlaylists } from '@go/playlist/Service';
 import type { playlist } from '@go/models';
 import { Events } from '../../events';
+import { ViewLifecycleMixin } from '../../utils/view-lifecycle';
 import type { ConfigFieldChangeEvent } from './config-field';
 import type { BackgroundShade } from '@store/theme-store';
 import type { IconStyle } from '@store/favorites-store';
@@ -45,7 +49,7 @@ const SCROLL_CHANGE_EVENT = 'yj-scroll-mode-changed';
 // ===================================================================
 
 @customElement('config-page')
-export class ConfigPage extends LitElement {
+export class ConfigPage extends ViewLifecycleMixin(LitElement) {
     // --- Theme controller for reading/writing theme state ---
     private themeCtrl = new ThemeController(this);
 
@@ -164,6 +168,48 @@ export class ConfigPage extends LitElement {
             scope: 'panel:track-list',
             defaultKey: 'Delete',
         },
+        'autotag.apply': {
+            label: 'Apply Match',
+            category: 'Autotag',
+            scope: 'panel:autotag',
+            defaultKey: 'A',
+        },
+        'autotag.skip': {
+            label: 'Skip Folder',
+            category: 'Autotag',
+            scope: 'panel:autotag',
+            defaultKey: 'S',
+        },
+        'autotag.leave': {
+            label: 'Leave As Is',
+            category: 'Autotag',
+            scope: 'panel:autotag',
+            defaultKey: 'L',
+        },
+        'autotag.paste': {
+            label: 'Paste Release URL',
+            category: 'Autotag',
+            scope: 'panel:autotag',
+            defaultKey: 'U',
+        },
+        'autotag.search': {
+            label: 'Search Candidates',
+            category: 'Autotag',
+            scope: 'panel:autotag',
+            defaultKey: 'F',
+        },
+        'autotag.next': {
+            label: 'Next Folder',
+            category: 'Autotag',
+            scope: 'panel:autotag',
+            defaultKey: 'Down',
+        },
+        'autotag.previous': {
+            label: 'Previous Folder',
+            category: 'Autotag',
+            scope: 'panel:autotag',
+            defaultKey: 'Up',
+        },
     };
 
     // --- Now Playing state ---
@@ -179,20 +225,20 @@ export class ConfigPage extends LitElement {
     @state() private removingLibraryId: number | null = null;
     @state() private removalImpact: library.RemovalImpact | null = null;
     @state() private isRemoving = false;
-    @state() private toastMessage = '';
-    @state() private toastVisible = false;
     @state() private activeMenuId: number | null = null;
     @state() private concurrencyMode = 'auto';
     @state() private indexStatus: explore.IndexStatus | null = null;
+    /** Three states, not one: the panel used to say "Loading status…"
+     *  for the entire session, because the only thing that ever set
+     *  `indexStatus` was an event that fires on *change* (errors.M3). */
+    @state() private indexStatusFailed = false;
     @state() private shortcutConflict: {
         newAction: string;
         newKey: string;
         existingAction: string;
     } | null = null;
 
-    private toastTimer?: ReturnType<typeof setTimeout>;
     private cancelIndexStatus?: () => void;
-    private indexPollTimer?: ReturnType<typeof setInterval>;
     private cancelLibraryAdded?: () => void;
     private cancelLibraryRenamed?: () => void;
     private cancelLibraryRemoved?: () => void;
@@ -805,35 +851,6 @@ export class ConfigPage extends LitElement {
             );
         }
 
-        .toast {
-            position: fixed;
-            bottom: 80px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: var(--yj-bg-surface, #2a2a2a);
-            color: var(--yj-text-primary, #fff);
-            padding: 0.75em 1.5em;
-            border-radius: 8px;
-            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-            font-size: var(--yj-text-sm, 13px);
-            z-index: 2000;
-            border: 1px solid var(--yj-border, #444);
-            animation: toast-in 0.2s ease-out;
-        }
-
-        @keyframes toast-in {
-            from {
-                opacity: 0;
-                transform: translateX(-50%)
-                    translateY(10px);
-            }
-            to {
-                opacity: 1;
-                transform: translateX(-50%)
-                    translateY(0);
-            }
-        }
-
         .spinner {
             display: inline-block;
             width: 14px;
@@ -982,14 +999,31 @@ export class ConfigPage extends LitElement {
             color: var(--yj-text-tertiary, #888);
         }
 
+        .index-status-failed {
+            align-items: center;
+            color: var(--yj-text-secondary, #b3b3b3);
+            display: flex;
+            font-size: var(--yj-text-sm);
+            gap: 0.5em;
+        }
+
+        .index-status-failed .link {
+            background: none;
+            border: none;
+            color: var(--yj-accent, #ffd43b);
+            cursor: pointer;
+            font: inherit;
+            padding: 0;
+            text-decoration: underline;
+        }
+
     `;
 
     // ===================================================================
     // LIFECYCLE
     // ===================================================================
 
-    override connectedCallback(): void {
-        super.connectedCallback();
+    protected override onViewActivate(): void {
         void this.loadLibraries();
         void this.loadPlaylists();
         this.scrollMode =
@@ -1010,28 +1044,27 @@ export class ConfigPage extends LitElement {
             () => void this.loadLibraries(),
         );
 
-        document.addEventListener('click', this.handleDocumentClick);
+        this.listenWhileActive(document, 'click', this.handleDocumentClick);
 
         // Listen for index status events (pushed from Go, no binding calls).
         this.cancelIndexStatus = EventsOn(
             Events.IndexStatusChanged,
             (status: explore.IndexStatus) => {
-                console.log('IndexStatusChanged event received', status);
                 this.indexStatus = status;
+                this.indexStatusFailed = false;
             },
         );
+
+        // …and pull the current one, because that event only fires when
+        // a build *changes* state, and the steady state is no build.
+        void this.loadIndexStatus();
     }
 
-    override disconnectedCallback(): void {
-        super.disconnectedCallback();
+    protected override onViewDeactivate(): void {
         this.cancelLibraryAdded?.();
         this.cancelLibraryRenamed?.();
         this.cancelLibraryRemoved?.();
 
-        document.removeEventListener('click', this.handleDocumentClick);
-
-        if (this.toastTimer) clearTimeout(this.toastTimer);
-        if (this.indexPollTimer) clearInterval(this.indexPollTimer);
         this.cancelIndexStatus?.();
     }
 
@@ -1058,17 +1091,29 @@ export class ConfigPage extends LitElement {
     // ===================================================================
 
     private handleAddLibrary = async (): Promise<void> => {
-        try {
-            const dir = await DirectoryPicker();
+        let dir = '';
 
-            if (dir) {
-                await AddLibrary(dir);
-            }
+        try {
+            dir = await DirectoryPicker();
+
+            if (!dir) return;
+
+            await AddLibrary(dir);
         } catch (err) {
-            console.error(
-                'Failed to add library:',
-                err,
-            );
+            console.error('Failed to add library:', err);
+            notificationStore.persistent({
+                key: 'library-add',
+                title: 'Library not added',
+                text: explainError(
+                    err,
+                    'That folder could not be added as a library.',
+                ),
+                detail: dir,
+                action: {
+                    label: 'Try again',
+                    run: () => void this.handleAddLibrary(),
+                },
+            });
         }
     };
 
@@ -1083,10 +1128,21 @@ export class ConfigPage extends LitElement {
             e.preventDefault();
 
             if (this.editingLibraryId !== null && this.editingName.trim()) {
+                const name = this.editingName.trim();
+
                 try {
-                    await RenameLibrary(this.editingLibraryId, this.editingName.trim());
+                    await RenameLibrary(this.editingLibraryId, name);
                 } catch (err) {
                     console.error('Failed to rename library:', err);
+                    notificationStore.persistent({
+                        key: 'library-rename',
+                        title: 'Library not renamed',
+                        text: explainError(
+                            err,
+                            `“${name}” could not be used as a library name.`,
+                        ),
+                        detail: String(err),
+                    });
                 }
             }
 
@@ -1130,16 +1186,23 @@ export class ConfigPage extends LitElement {
             this.removingLibraryId = null;
             this.removalImpact = null;
             this.isRemoving = false;
-            this.showToast(
-                `Removed '${libName}' (${summary?.tracksDeleted ?? 0} tracks deleted)`,
-            );
+            notificationStore.transient({
+                tone: 'success',
+                key: 'library-remove',
+                text: `Removed “${libName}” — ${summary?.tracksDeleted ?? 0} tracks deleted.`,
+            });
             void this.loadLibraries();
         } catch (err) {
             this.isRemoving = false;
             this.removingLibraryId = null;
             this.removalImpact = null;
             console.error('Failed to remove library:', err);
-            this.showToast(`Failed to remove '${libName}': ${String(err)}`);
+            notificationStore.persistent({
+                key: 'library-remove',
+                title: 'Library not removed',
+                text: `Could not remove “${libName}”. ${describeError(err)}`,
+                detail: String(err),
+            });
         }
     };
 
@@ -1165,15 +1228,14 @@ export class ConfigPage extends LitElement {
         }
     };
 
-    private showToast(message: string): void {
-        this.toastMessage = message;
-        this.toastVisible = true;
-
-        if (this.toastTimer) clearTimeout(this.toastTimer);
-
-        this.toastTimer = setTimeout(() => {
-            this.toastVisible = false;
-        }, 8000);
+    private async loadIndexStatus(): Promise<void> {
+        try {
+            this.indexStatus = await GetIndexStatus();
+            this.indexStatusFailed = false;
+        } catch (err) {
+            console.error('Failed to read index status:', err);
+            this.indexStatusFailed = true;
+        }
     }
 
     private handleConcurrencyChange = (
@@ -1184,12 +1246,19 @@ export class ConfigPage extends LitElement {
         SetScanConcurrency(mode)
             .then(() => {
                 this.concurrencyMode = mode;
-                this.showToast(
-                    'Storage type saved. Takes effect on next scan.',
-                );
+                notificationStore.transient({
+                    tone: 'success',
+                    key: 'storage-type',
+                    text: 'Storage type saved. Takes effect on next scan.',
+                });
             })
             .catch((err: unknown) => {
-                this.showToast(`Failed to save storage type: ${err}`);
+                console.error('Failed to save storage type:', err);
+                notificationStore.transient({
+                    key: 'storage-type',
+                    text: `Could not save the storage type. ${describeError(err)}`,
+                    detail: String(err),
+                });
             });
     };
 
@@ -1511,7 +1580,7 @@ export class ConfigPage extends LitElement {
                                                         ? html`<span class="tier-detail">${t.detail}</span>`
                                                         : nothing}
                                                     ${t.state === 'error'
-                                                        ? html`<span class="tier-error">${t.error}</span>`
+                                                        ? html`<span class="tier-error">${describeError(t.error, 'This part of the index could not be built.')}</span>`
                                                         : nothing}
                                                 </div>
                                             `,
@@ -1527,7 +1596,18 @@ export class ConfigPage extends LitElement {
                                         ? html`<div class="index-waiting">Waiting for index build…</div>`
                                         : nothing}
                         `
-                        : html`<div class="index-loading">Loading status…</div>`}
+                        : this.indexStatusFailed
+                            ? html`<div class="index-status-failed">
+                                  <span>The index status could not be read.</span>
+                                  <button
+                                      type="button"
+                                      class="link"
+                                      @click=${() => void this.loadIndexStatus()}
+                                  >
+                                      Retry
+                                  </button>
+                              </div>`
+                            : html`<div class="index-loading">Loading status…</div>`}
                 </div>
             </config-section>
         `;
@@ -2133,10 +2213,6 @@ export class ConfigPage extends LitElement {
                       `
                     : nothing}
             </config-section>
-
-            ${this.toastVisible
-                ? html`<div class="toast">${this.toastMessage}</div>`
-                : nothing}
         `;
     }
 

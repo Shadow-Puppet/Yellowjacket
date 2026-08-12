@@ -6,6 +6,10 @@ import { designTokens } from '../../styles/tokens.css';
 import { downloadStore, stateLabel } from '@store/download-store';
 import type { Request, RequestSummary, DownloadView as DownloadRecord } from '@store/download-store';
 import { libraryStore } from '@store/library-store';
+import { notificationStore } from '@store/notification-store';
+import { describeError } from '@utils/describe-error';
+import { confirmAction } from '../confirm-dialog/confirm-dialog';
+import { ViewLifecycleMixin } from '../../utils/view-lifecycle';
 
 type Tab = 'requests' | 'downloads';
 
@@ -22,7 +26,7 @@ type Tab = 'requests' | 'downloads';
  * attempt history nothing rendered before this page existed.
  */
 @customElement('downloads-view')
-export class DownloadsView extends LitElement {
+export class DownloadsView extends ViewLifecycleMixin(LitElement) {
     @state() private tab: Tab = 'requests';
 
     @state() private requests: Request[] = [];
@@ -39,7 +43,6 @@ export class DownloadsView extends LitElement {
     /** Ticks so "next check in …" ages while the page is open. */
     @state() private nowMs = Date.now();
 
-    private clockTimer?: ReturnType<typeof setInterval>;
 
     private unsubscribe: (() => void) | null = null;
 
@@ -196,9 +199,7 @@ export class DownloadsView extends LitElement {
         `,
     ];
 
-    override connectedCallback(): void {
-        super.connectedCallback();
-
+    protected override onViewActivate(): void {
         this.unsubscribe = downloadStore.subscribe(() => {
             this.requests = downloadStore.requests;
             this.downloads = downloadStore.downloads;
@@ -212,18 +213,16 @@ export class DownloadsView extends LitElement {
         });
 
         // A "next check" that never moves reads as a stuck page, so the
-        // relative times re-render on their own.
-        this.clockTimer = setInterval(() => {
+        // relative times re-render on their own — while the page is on
+        // screen, where a re-render can be seen.
+        this.intervalWhileActive(() => {
             this.nowMs = Date.now();
         }, 30_000);
     }
 
-    override disconnectedCallback(): void {
-        super.disconnectedCallback();
-
+    protected override onViewDeactivate(): void {
         this.unsubscribe?.();
         this.unsubscribe = null;
-        clearInterval(this.clockTimer);
     }
 
     override render() {
@@ -295,8 +294,7 @@ export class DownloadsView extends LitElement {
                           <wa-button
                               size="small"
                               appearance="plain"
-                              @click=${() =>
-                                  void downloadStore.clearSatisfiedRequests()}
+                              @click=${() => void this.clearSatisfied()}
                           >
                               Clear found
                           </wa-button>
@@ -450,11 +448,7 @@ export class DownloadsView extends LitElement {
                               <wa-button
                                   size="small"
                                   appearance="plain"
-                                  @click=${() =>
-                                      void downloadStore.pauseRequest(
-                                          request.id,
-                                          request.state !== 'paused',
-                                      )}
+                                  @click=${() => void this.pause(request)}
                               >
                                   ${request.state === 'paused' ? 'Resume' : 'Pause'}
                               </wa-button>
@@ -470,11 +464,75 @@ export class DownloadsView extends LitElement {
             <wa-button
                 size="small"
                 appearance="plain"
-                @click=${() => void downloadStore.removeRequest(request.id)}
+                aria-label="Stop following"
+                @click=${() => void this.removeRequest(request)}
             >
                 <wa-icon name="xmark"></wa-icon>
             </wa-button>
         `;
+    }
+
+    /** What to call a request in a sentence. */
+    private static describeRequest(request: Request): string {
+        return request.artist || request.title || request.mbid || 'that request';
+    }
+
+    /**
+     * Removing a durable request used to be one unconfirmed click with
+     * the promise thrown away (errors.M7) — on a subscription the user
+     * may have been building for months.
+     */
+    private async removeRequest(request: Request): Promise<void> {
+        const name = DownloadsView.describeRequest(request);
+        const ok = await confirmAction({
+            title: `Stop following “${name}”?`,
+            message:
+                request.scope === 'all'
+                    ? 'YellowJacket will stop looking for this artist’s releases.'
+                    : 'YellowJacket will stop looking for this release.',
+            impact: 'Anything already downloaded stays in your library.',
+            confirmLabel: 'Stop following',
+            danger: true,
+        });
+
+        if (!ok) return;
+
+        try {
+            await downloadStore.removeRequest(request.id);
+        } catch (err) {
+            this.report(`remove “${name}”`, err);
+        }
+    }
+
+    private async pause(request: Request): Promise<void> {
+        const paused = request.state !== 'paused';
+
+        try {
+            await downloadStore.pauseRequest(request.id, paused);
+        } catch (err) {
+            this.report(
+                `${paused ? 'pause' : 'resume'} “${DownloadsView.describeRequest(request)}”`,
+                err,
+            );
+        }
+    }
+
+    private async clearSatisfied(): Promise<void> {
+        try {
+            await downloadStore.clearSatisfiedRequests();
+        } catch (err) {
+            this.report('clear the found requests', err);
+        }
+    }
+
+    /** Persistent: the row is still there, and retrying is the point. */
+    private report(what: string, err: unknown): void {
+        console.error(`downloads: could not ${what}`, err);
+        notificationStore.persistent({
+            key: 'download-request',
+            text: `Could not ${what}. ${describeError(err)}`,
+            detail: String(err),
+        });
     }
 
     /** Widens or narrows what an artist subscription covers. */

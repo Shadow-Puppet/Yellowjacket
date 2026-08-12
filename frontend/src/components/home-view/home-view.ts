@@ -10,6 +10,7 @@ import { libraryStore } from '@store/library-store';
 import { EventsOn } from '@runtime/runtime';
 import { Events } from '../../events';
 import { designTokens } from '../../styles/tokens.css';
+import { ViewLifecycleMixin } from '../../utils/view-lifecycle';
 
 type Shelf = home.Shelf;
 
@@ -36,7 +37,7 @@ const KIND_ICONS: Record<string, string> = {
  * cover do the two things a cover should: open the album, or play it.
  */
 @customElement('home-view')
-export class HomeView extends LitElement {
+export class HomeView extends ViewLifecycleMixin(LitElement) {
     @state() private shelves: Shelf[] = [];
 
     @state() private loading = true;
@@ -194,8 +195,10 @@ export class HomeView extends LitElement {
         `,
     ];
 
-    override connectedCallback(): void {
-        super.connectedCallback();
+    protected override onViewActivate(): void {
+        // Reloaded on arrival rather than kept live: the shelves are a
+        // judgement about the whole library, so the answer while the
+        // page is off screen is of no interest to anyone.
         void this.load();
 
         // A finished scan changes what every shelf would say, and the
@@ -204,12 +207,10 @@ export class HomeView extends LitElement {
         this.unsubScan = EventsOn(Events.LibraryScanComplete, () => {
             void this.load();
         });
-    }
-
-    override disconnectedCallback(): void {
-        super.disconnectedCallback();
-        this.unsubScan?.();
-        this.unsubScan = undefined;
+        this.whileActive(() => {
+            this.unsubScan?.();
+            this.unsubScan = undefined;
+        });
     }
 
     /**

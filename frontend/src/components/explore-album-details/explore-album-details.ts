@@ -15,6 +15,7 @@ type MBTrack = explore.MBTrack;
 import { exploreCache } from '../../store/explore-cache';
 import { libraryStore } from '../../store/library-store';
 import { artistLink, exploreLinkStyles } from '../../utils/explore-link';
+import { describeError } from '../../utils/describe-error';
 import { EventsOn } from '@runtime/runtime';
 import { Events } from '../../events';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
@@ -664,22 +665,13 @@ export class ExploreAlbumDetails extends LitElement {
 
         // Local-only album (no MBID) — populate entirely from library.
         if (!mbid && this.localAlbumId) {
-            console.log(
-                `[explore-album] loading local-only: "${this.albumName}" (id=${this.localAlbumId})`,
-            );
 
             await this.hydrateLocalOnly();
 
-            console.log(
-                `[explore-album] loaded (local-only): "${this.albumName}"`,
-            );
 
             return;
         }
 
-        console.log(
-            `[explore-album] loading: "${this.albumName}" (${mbid})`,
-        );
 
         // Phase 0: hydrate from explore cache (instant).
         const cached = exploreCache.getAlbum(mbid);
@@ -692,7 +684,6 @@ export class ExploreAlbumDetails extends LitElement {
                 primaryType: 'Album',
             } as MBReleaseGroup;
             this.loadingInfo = false;
-            console.log(`[explore-album] hydrated from cache: "${cached.title}"`);
         }
 
         // Phase 1: hydrate tracklist from local library if available.
@@ -712,9 +703,6 @@ export class ExploreAlbumDetails extends LitElement {
         // Fire cover art resolution immediately — doesn't wait for release group.
         this.resolveCoverArt();
 
-        console.log(
-            `[explore-album] data requests fired: "${this.albumName}" (${mbid})`,
-        );
     }
 
     /**
@@ -874,9 +862,6 @@ export class ExploreAlbumDetails extends LitElement {
         this.buildClusters();
         this.loadingReleases = false;
 
-        console.log(
-            `[explore-album] hydrated ${localTracks.length} tracks from library`,
-        );
         return true;
     }
 
@@ -908,9 +893,11 @@ export class ExploreAlbumDetails extends LitElement {
             this.releaseGroup = await LookupReleaseGroup(mbid);
             this.resolveCoverArt();
         } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            this.errorInfo = msg;
-            console.error(`[explore-album] LookupReleaseGroup error: ${msg}`);
+            console.error('[explore-album] LookupReleaseGroup error', err);
+            this.errorInfo = describeError(
+                err,
+                'The catalog did not answer for this album.',
+            );
         } finally {
             this.loadingInfo = false;
         }
@@ -965,9 +952,11 @@ export class ExploreAlbumDetails extends LitElement {
                 this.catalogPending = false;
             }
         } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            this.errorReleases = msg;
-            console.error(`[explore-album] BrowseReleases error: ${msg}`);
+            console.error('[explore-album] BrowseReleases error', err);
+            this.errorReleases = describeError(
+                err,
+                'The catalog did not answer for this album\u2019s versions.',
+            );
             this.loadingReleases = false;
             this.catalogPending = false;
         }

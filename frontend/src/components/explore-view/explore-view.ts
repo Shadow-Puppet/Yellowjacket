@@ -3,13 +3,17 @@ import { customElement, state, query as litQuery } from 'lit/decorators.js';
 import { designTokens } from '../../styles/tokens.css';
 import { SearchLocal, SearchLyrics, GetThumbnail, GetThumbnails, GetArtistImageURL, RecordSearchClick } from '@go/explore/Service';
 import { libraryStore } from '../../store/library-store';
-import { exploreCache } from '../../store/explore-cache';
+import { exploreCache, ARTIST_IMAGE_CACHE_LIMIT } from '../../store/explore-cache';
 import { queueStore } from '../../store/queue-store';
 import { artistLink, trackLink, exploreLinkStyles } from '../../utils/explore-link';
+import { describeError } from '../../utils/describe-error';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '../library-status-indicator/library-status-indicator.js';
 import '../top-results-row/top-results-row.js';
 import { explore } from '@go/models';
+import { ViewLifecycleMixin } from '../../utils/view-lifecycle';
+import { registerCacheProbe } from '../../utils/cache-stats';
+import { LRUMap } from '../../utils/lru-map';
 type ThumbnailRequest = explore.ThumbnailRequest;
 type MBSearchResult = explore.MBSearchResult;
 type LyricsResult = explore.LyricsResult;
@@ -24,6 +28,32 @@ const MIN_QUERY_LENGTH = 2;
 const SEARCH_DEBOUNCE_MS = 180;
 
 const MAX_SECTION_RESULTS = 10;
+
+/*
+ * Caps for the two art caches (`perf.M7`).
+ *
+ * Both were unbounded, on a view that never unmounts: twelve searches
+ * retained 8.48 MB and were still climbing 0.7 MB per search.  The caps
+ * come from the measured cost of an entry — a cover thumbnail is ~27 kB
+ * of base64, an artist photo ~128 kB — so each is set to hold roughly a
+ * dozen searches' worth and then stop:
+ *
+ *   thumbnails     96 × ~27 kB  ≈ 2.6 MB ceiling
+ *   artist images  32 × ~128 kB ≈ 4.1 MB ceiling
+ *
+ * Both are comfortably larger than one screen of results, which matters:
+ * a cap below the visible count would evict art that is still rendered,
+ * and the re-render would fetch it again immediately.  A search shows at
+ * most `MAX_SECTION_RESULTS` artists and ~15 release groups, so these
+ * are ~3× and ~6× a screenful — six searches of history for covers,
+ * which is far more than the "go back to the previous search" the cache
+ * exists to serve.
+ *
+ * `ARTIST_IMAGE_CACHE_LIMIT` is shared with `explore-cache.ts`, which
+ * holds the *same* data URLs for the detail pages.  Bounding one and
+ * not the other frees nothing.
+ */
+const THUMBNAIL_CACHE_LIMIT = 96;
 
 
 /** Hash a string to a hue value 0–360 for avatar coloring. */
@@ -79,7 +109,7 @@ function getArtistAlbumArt(artistName: string): string {
 }
 
 @customElement('explore-view')
-export class ExploreView extends LitElement {
+export class ExploreView extends ViewLifecycleMixin(LitElement) {
     /* ── State ── */
 
     @state() private searchQuery = '';
@@ -96,9 +126,28 @@ export class ExploreView extends LitElement {
     private searchVersion = 0;
     /** Debounce timer for live search-as-you-type. */
     private searchDebounceTimer?: ReturnType<typeof setTimeout>;
-    private thumbnailCache = new Map<string, string>();
-    private artistImageCache = new Map<string, string>();
+    private thumbnailCache = new LRUMap<string, string>(THUMBNAIL_CACHE_LIMIT);
+    private artistImageCache = new LRUMap<string, string>(ARTIST_IMAGE_CACHE_LIMIT);
     private libraryMBIDs = new Set<string>();
+
+    constructor() {
+        super();
+
+        // Registered from the constructor rather than on connect: this is
+        // a cached primary view, so it connects once, and a measurement
+        // must be able to read the caches whether or not Explore is the
+        // view currently on screen.
+        const stat = (m: LRUMap<string, string>) => () => {
+            let chars = 0;
+
+            for (const v of m.values()) chars += v.length;
+
+            return { entries: m.size, chars, limit: m.limit };
+        };
+
+        registerCacheProbe('explore.thumbnails', stat(this.thumbnailCache));
+        registerCacheProbe('explore.artistImages', stat(this.artistImageCache));
+    }
 
     @litQuery('input') private inputEl!: HTMLInputElement;
 
@@ -592,9 +641,13 @@ export class ExploreView extends LitElement {
 
     override disconnectedCallback() {
         super.disconnectedCallback();
-        if (this.searchDebounceTimer) {
-            clearTimeout(this.searchDebounceTimer);
-        }
+        this.cancelPendingSearch();
+    }
+
+    /** A debounced search that lands after the user has left the page is
+     *  a query nobody asked for, against a 1.1 M-row index. */
+    protected override onViewDeactivate(): void {
+        this.cancelPendingSearch();
     }
 
     /* ── Search Logic ── */
@@ -707,19 +760,16 @@ export class ExploreView extends LitElement {
         this.loading = true;
         this.error = '';
 
-        const startTime = performance.now();
-        console.log(`[explore] search started: "${query}" (${this.searchMode})`);
-
         // Lyrics mode: a single FTS lyric search over the library.
         if (this.searchMode === 'lyrics') {
-            void this.executeLyricsSearch(version, query, startTime);
+            void this.executeLyricsSearch(version, query);
             return;
         }
 
         // Offline search over the local popularity index via Wails RPC.
         // No network, and no owned-library seed — the index is the sole
         // source of catalog results.
-        void this.executeIndexSearch(version, query, startTime);
+        void this.executeIndexSearch(version, query);
     }
 
     /**
@@ -775,7 +825,7 @@ export class ExploreView extends LitElement {
         return result;
     }
 
-    private async executeIndexSearch(version: number, query: string, startTime: number) {
+    private async executeIndexSearch(version: number, query: string) {
         try {
             // Local FTS index only — no network.  Returns null when the
             // index has no hits, in which case we keep the owned-library
@@ -809,19 +859,16 @@ export class ExploreView extends LitElement {
             this.loadThumbnails();
             this.loadArtistImages();
             this.checkLibrary();
-
-            const elapsed = (performance.now() - startTime).toFixed(0);
-            console.log(
-                `[explore] search completed: "${query}" in ${elapsed}ms — ` +
-                    `artists=${result.artists?.length ?? 0}, ` +
-                    `albums=${result.releaseGroups?.length ?? 0}, ` +
-                    `tracks=${result.recordings?.length ?? 0}`,
-            );
         } catch (err) {
             if (version !== this.searchVersion) return;
-            const message = err instanceof Error ? err.message : String(err);
-            this.error = message;
-            console.error(`[explore] search error: "${query}" — ${message}`);
+
+            console.error(`[explore] search error: "${query}"`, err);
+            // Inline: this failure belongs to the results panel, and
+            // the panel is what the user is looking at (errors.M9).
+            this.error = describeError(
+                err,
+                'The catalog search did not answer.',
+            );
         } finally {
             if (version === this.searchVersion) {
                 this.loading = false;
@@ -831,22 +878,20 @@ export class ExploreView extends LitElement {
 
     /* ── Lyrics Search ── */
 
-    private async executeLyricsSearch(version: number, query: string, startTime: number) {
+    private async executeLyricsSearch(version: number, query: string) {
         try {
             const hits = await SearchLyrics(query);
             if (version !== this.searchVersion) return;
 
             this.lyricsResults = hits ?? [];
-
-            const elapsed = (performance.now() - startTime).toFixed(0);
-            console.log(
-                `[explore] lyrics search: "${query}" in ${elapsed}ms — ` +
-                    `hits=${this.lyricsResults.length}`,
-            );
         } catch (err) {
             if (version !== this.searchVersion) return;
-            this.error = err instanceof Error ? err.message : String(err);
-            console.error(`[explore] lyrics search error: "${query}" — ${this.error}`);
+
+            console.error(`[explore] lyrics search error: "${query}"`, err);
+            this.error = describeError(
+                err,
+                'The lyric search did not answer.',
+            );
         } finally {
             if (version === this.searchVersion) {
                 this.loading = false;

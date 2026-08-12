@@ -12,6 +12,7 @@ import {
 import { EventsOn } from '@runtime/runtime';
 import { Events } from '../../events';
 import { libraryStore } from '@store/library-store';
+import { describeError } from '@utils/describe-error';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@components/track-list/track-list.js';
 import { designTokens } from '../../styles/tokens.css';
@@ -27,6 +28,12 @@ export class GenreDetails extends LitElement {
     @state()
     private loading = true;
 
+    /** A failed genre query used to be handed to `<track-list>` as an
+     *  empty array, so it was indistinguishable from a slow one
+     *  (errors.M2). */
+    @state()
+    private loadError = '';
+
     private scanCompleteCleanup: (() => void) | null =
         null;
 
@@ -36,6 +43,21 @@ export class GenreDetails extends LitElement {
             flex-direction: column;
             overflow: hidden;
             height: 100%;
+        }
+
+        .load-error {
+            color: var(--yj-text-secondary, #b3b3b3);
+            padding: 1em;
+        }
+
+        .load-error button {
+            background: none;
+            border: 1px solid var(--yj-border, #495057);
+            border-radius: 4px;
+            color: inherit;
+            cursor: pointer;
+            font: inherit;
+            padding: 4px 10px;
         }
 
         /* ====================================
@@ -179,6 +201,8 @@ export class GenreDetails extends LitElement {
     private async loadTracks() {
         if (!this.genreName) return;
 
+        this.loadError = '';
+
         try {
             const libId =
                 libraryStore.getSelectedLibraryId();
@@ -192,11 +216,12 @@ export class GenreDetails extends LitElement {
                       this.genreName,
                   );
         } catch (error) {
-            console.error(
-                'Error loading genre tracks:',
-                error,
-            );
+            console.error('Error loading genre tracks:', error);
             this.tracks = [];
+            this.loadError = describeError(
+                error,
+                `The tracks for “${this.genreName}” could not be loaded.`,
+            );
         } finally {
             this.loading = false;
         }
@@ -274,9 +299,19 @@ export class GenreDetails extends LitElement {
                 </div>
             </div>
             <div class="content">
-                <track-list
-                    .externalTracks=${this.tracks}
-                ></track-list>
+                ${this.loadError
+                    ? html`<div class="load-error" data-testid="genre-error">
+                          <p>${this.loadError}</p>
+                          <button
+                              type="button"
+                              @click=${() => void this.loadTracks()}
+                          >
+                              Try again
+                          </button>
+                      </div>`
+                    : html`<track-list
+                          .externalTracks=${this.tracks}
+                      ></track-list>`}
             </div>
         `;
     }

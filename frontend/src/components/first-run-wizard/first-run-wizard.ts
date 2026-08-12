@@ -7,6 +7,7 @@ import {
     GetAllLibrariesWithTrackCounts,
 } from '@go/library/Library';
 import { DirectoryPicker } from '@go/frontendutil/FrontendUtil';
+import { describeError, explainError } from '@utils/describe-error';
 
 /**
  * First-run setup wizard.
@@ -236,7 +237,10 @@ export class FirstRunWizard extends LitElement {
 
             if (dir) this.selectedDirectory = dir;
         } catch (err) {
-            this.errorMessage = `Could not open folder picker: ${err}`;
+            this.errorMessage = describeError(
+                err,
+                'The folder picker could not be opened.',
+            );
             console.error('First-run wizard: directory picker failed:', err);
         }
     };
@@ -256,7 +260,10 @@ export class FirstRunWizard extends LitElement {
 
             this.active = false;
         } catch (err) {
-            this.errorMessage = `Could not add the folder: ${err}`;
+            this.errorMessage = explainError(
+                err,
+                'That folder could not be added.',
+            );
             console.error('First-run wizard: add library failed:', err);
         } finally {
             this.saving = false;

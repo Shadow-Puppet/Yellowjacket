@@ -14,6 +14,8 @@ import {
 import { Events } from '../../events';
 import type { playlist } from '@go/models';
 import '@components/duplicate-tracks-dialog/duplicate-tracks-dialog.js';
+import { notificationStore } from '@store/notification-store';
+import { describeError } from '@utils/describe-error';
 import type { DuplicateTracksDialog } from '@components/duplicate-tracks-dialog/duplicate-tracks-dialog.js';
 
 /**
@@ -188,6 +190,14 @@ export class PlaylistPicker extends LitElement {
             this.dispatchComplete();
         } catch (err) {
             console.error('Failed to add tracks to playlist:', err);
+            // Transient: the picker closes either way, and the tracks
+            // simply are not there — nothing to undo, only to retry
+            // (errors.m7).
+            notificationStore.transient({
+                key: 'playlist-add',
+                text: `Could not add ${this.filePaths.length === 1 ? 'that track' : `those ${this.filePaths.length} tracks`} to the playlist. ${describeError(err)}`,
+                detail: String(err),
+            });
         } finally {
             this.loading = false;
         }
@@ -223,6 +233,11 @@ export class PlaylistPicker extends LitElement {
             this.dispatchComplete();
         } catch (err) {
             console.error('Failed to create playlist:', err);
+            notificationStore.transient({
+                key: 'playlist-create',
+                text: `Could not create “${name}”. ${describeError(err)}`,
+                detail: String(err),
+            });
         } finally {
             this.loading = false;
         }

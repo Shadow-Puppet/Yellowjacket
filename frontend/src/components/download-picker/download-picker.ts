@@ -9,6 +9,7 @@ import type { DownloadCandidate } from '@store/download-store';
 import { downloadStore } from '@store/download-store';
 import type { download } from '@go/models';
 import './candidate-row';
+import { explainError } from '@utils/describe-error';
 
 /**
  * The "find this album" dialog: searches every enabled download client,
@@ -123,8 +124,17 @@ export class DownloadPicker extends LitElement {
         }
     }
 
+    /**
+     * Monotonic search version. Closing and reopening the dialog for a
+     * different album used to let the first search's result overwrite
+     * the second's (errors.m8); the guard is `explore-view`'s.
+     */
+    private searchVersion = 0;
+
     /** Runs the search that populates the dialog. */
     private async search(): Promise<void> {
+        const version = ++this.searchVersion;
+
         this.searching = true;
         this.errorMessage = '';
         this.candidates = [];
@@ -141,13 +151,23 @@ export class DownloadPicker extends LitElement {
                 expected: this.expected ?? [],
             } as download.SearchRequest);
 
+            if (version !== this.searchVersion) return;
+
             this.downloadId = result.downloadId;
             this.candidates = result.candidates ?? [];
             this.autoPicked = result.autoPicked;
         } catch (err) {
-            this.errorMessage = String(err);
+            if (version !== this.searchVersion) return;
+
+            console.error('download search failed', err);
+            this.errorMessage = explainError(
+                err,
+                'The search did not finish.',
+            );
         } finally {
-            this.searching = false;
+            if (version === this.searchVersion) {
+                this.searching = false;
+            }
         }
     }
 
@@ -161,7 +181,11 @@ export class DownloadPicker extends LitElement {
             await downloadStore.pick(this.downloadId, event.detail.candidateId);
             this.close();
         } catch (err) {
-            this.errorMessage = String(err);
+            console.error('download pick failed', err);
+            this.errorMessage = explainError(
+                err,
+                'That download could not be started.',
+            );
         } finally {
             this.picking = false;
         }
