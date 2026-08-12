@@ -1236,76 +1236,38 @@ func mergeIndexHits(query string, result *MBSearchResult, hits []SearchIndexResu
 		switch h.EntityType {
 		case "artist":
 			if !artistMBIDs[h.MBID] {
-				inLib := h.InLibrary || h.LocalArtistID > 0
+				artist := artistFromIndex(h)
+				artist.Score = indexHitBlendedScore(
+					query, h.Title, "", h.Popularity, maxArtistPop,
+					artist.InLibrary, h.IsSimilar,
+				)
 
-				newArtists = append(newArtists, MBArtist{
-					MBID:           h.MBID,
-					Name:           h.Title,
-					Type:           h.ArtistType,
-					Country:        h.Country,
-					Disambiguation: h.Disambiguation,
-					SortName:       h.SortName,
-					Score: indexHitBlendedScore(
-						query, h.Title, "", h.Popularity, maxArtistPop, inLib, h.IsSimilar,
-					),
-					HasPopularity: h.Popularity > 0,
-					Popularity:    h.Popularity,
-					ListenerCount: h.ListenerCount,
-					InLibrary:     inLib,
-					LocalID:       h.LocalArtistID,
-				})
+				newArtists = append(newArtists, artist)
 
 				artistMBIDs[h.MBID] = true
 			}
 
 		case "release_group":
 			if !rgMBIDs[h.MBID] {
-				inLib := h.InLibrary || h.LocalReleaseGroupID > 0
+				rg := releaseGroupFromIndex(h)
+				rg.Score = indexHitBlendedScore(
+					query, h.Title, h.ArtistName, h.Popularity, maxRGPop,
+					rg.InLibrary, h.IsSimilar,
+				)
 
-				var secondary []string
-				if h.SecondaryTypes != "" {
-					secondary = strings.Split(h.SecondaryTypes, ",")
-				}
-
-				newRGs = append(newRGs, MBReleaseGroup{
-					MBID:         h.MBID,
-					Title:        h.Title,
-					ArtistCredit: h.ArtistName,
-					ArtistMBID:   h.ArtistMBID,
-					Score: indexHitBlendedScore(
-						query, h.Title, h.ArtistName, h.Popularity, maxRGPop, inLib, h.IsSimilar,
-					),
-					Popularity:       h.Popularity,
-					ListenerCount:    h.ListenerCount,
-					PrimaryType:      h.PrimaryType,
-					SecondaryTypes:   secondary,
-					FirstReleaseDate: h.ReleaseDate,
-					InLibrary:        inLib,
-					LocalID:          h.LocalReleaseGroupID,
-				})
+				newRGs = append(newRGs, rg)
 				rgMBIDs[h.MBID] = true
 			}
 
 		case "recording":
 			if !recMBIDs[h.MBID] {
-				inLib := h.InLibrary || h.LocalRecordingID > 0
+				rec := recordingFromIndex(h)
+				rec.Score = indexHitBlendedScore(
+					query, h.Title, h.ArtistName, h.Popularity, maxRecPop,
+					rec.InLibrary, h.IsSimilar,
+				)
 
-				newRecs = append(newRecs, MBRecording{
-					MBID:         h.MBID,
-					Title:        h.Title,
-					Length:       h.Duration,
-					ArtistCredit: h.ArtistName,
-					ArtistMBID:   h.ArtistMBID,
-					Score: indexHitBlendedScore(
-						query, h.Title, h.ArtistName, h.Popularity, maxRecPop, inLib, h.IsSimilar,
-					),
-					Popularity:     h.Popularity,
-					ListenerCount:  h.ListenerCount,
-					CAAReleaseMBID: h.CAAReleaseMBID,
-					ReleaseName:    h.ReleaseName,
-					InLibrary:      inLib,
-					LocalID:        h.LocalRecordingID,
-				})
+				newRecs = append(newRecs, rec)
 
 				recMBIDs[h.MBID] = true
 			}
@@ -1332,6 +1294,67 @@ func mergeIndexHits(query string, result *MBSearchResult, hits []SearchIndexResu
 		sort.SliceStable(result.Recordings, func(i, j int) bool {
 			return result.Recordings[i].Score > result.Recordings[j].Score
 		})
+	}
+}
+
+// The three functions below are the one definition of what an index row
+// looks like as a card.  They were inline in mergeIndexHits, which is
+// the only place that needed them until the shelves did; a shelf builds
+// the same cards from the same rows and must not grow a second, subtly
+// different projection of them.  Score is deliberately not set here —
+// it is a property of a *search*, and a shelf has no query to be
+// relevant to.
+
+func artistFromIndex(h SearchIndexResult) MBArtist {
+	return MBArtist{
+		MBID:           h.MBID,
+		Name:           h.Title,
+		Type:           h.ArtistType,
+		Country:        h.Country,
+		Disambiguation: h.Disambiguation,
+		SortName:       h.SortName,
+		HasPopularity:  h.Popularity > 0,
+		Popularity:     h.Popularity,
+		ListenerCount:  h.ListenerCount,
+		InLibrary:      h.InLibrary || h.LocalArtistID > 0,
+		LocalID:        h.LocalArtistID,
+	}
+}
+
+func releaseGroupFromIndex(h SearchIndexResult) MBReleaseGroup {
+	var secondary []string
+	if h.SecondaryTypes != "" {
+		secondary = strings.Split(h.SecondaryTypes, ",")
+	}
+
+	return MBReleaseGroup{
+		MBID:             h.MBID,
+		Title:            h.Title,
+		ArtistCredit:     h.ArtistName,
+		ArtistMBID:       h.ArtistMBID,
+		Popularity:       h.Popularity,
+		ListenerCount:    h.ListenerCount,
+		PrimaryType:      h.PrimaryType,
+		SecondaryTypes:   secondary,
+		FirstReleaseDate: h.ReleaseDate,
+		InLibrary:        h.InLibrary || h.LocalReleaseGroupID > 0,
+		LocalID:          h.LocalReleaseGroupID,
+	}
+}
+
+func recordingFromIndex(h SearchIndexResult) MBRecording {
+	return MBRecording{
+		MBID:           h.MBID,
+		Title:          h.Title,
+		Length:         h.Duration,
+		ArtistCredit:   h.ArtistName,
+		ArtistMBID:     h.ArtistMBID,
+		Popularity:     h.Popularity,
+		ListenerCount:  h.ListenerCount,
+		CAAReleaseMBID: h.CAAReleaseMBID,
+		ReleaseName:    h.ReleaseName,
+		InLibrary:      h.InLibrary || h.LocalRecordingID > 0,
+		LocalID:        h.LocalRecordingID,
 	}
 }
 

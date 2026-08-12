@@ -39,6 +39,8 @@ export function GetArtistPlayCount(arg1:string):Promise<number>;
 
 export function GetCandidateThumbnail(arg1:string,arg2:string):Promise<string>;
 
+export function GetExploreShelves():Promise<explore.ShelfPage>;
+
 export function GetIndexStatus():Promise<explore.IndexStatus>;
 
 export function GetLibrarySimilarArtists(arg1:string):Promise<Array<explore.LBSimilarArtist>>;

@@ -3,7 +3,9 @@ import { customElement, state, query as litQuery } from 'lit/decorators.js';
 import '@components/page-header/page-header';
 import { designTokens } from '../../styles/tokens.css';
 import { srOnly } from '../../styles/sr-only.css';
-import { SearchLocal, SearchLyrics, GetThumbnail, GetThumbnails, GetArtistImageURL, RecordSearchClick } from '@go/explore/Service';
+import { SearchLocal, SearchLyrics, GetThumbnail, GetThumbnails, GetArtistImageURL, GetExploreShelves, RecordSearchClick } from '@go/explore/Service';
+import { EventsOn } from '@runtime/runtime';
+import { Events } from '../../events';
 import { libraryStore } from '../../store/library-store';
 import { exploreCache, ARTIST_IMAGE_CACHE_LIMIT } from '../../store/explore-cache';
 import { queueStore } from '../../store/queue-store';
@@ -22,6 +24,7 @@ type LyricsResult = explore.LyricsResult;
 type MBArtist = explore.MBArtist;
 type MBReleaseGroup = explore.MBReleaseGroup;
 type MBRecording = explore.MBRecording;
+type ShelfPage = explore.ShelfPage;
 
 /* ── Constants ── */
 const MIN_QUERY_LENGTH = 2;
@@ -123,6 +126,21 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) {
     @state() private searchMode: 'catalog' | 'lyrics' = 'catalog';
     /** Lyric-search hits (library tracks matched by lyric fragment). */
     @state() private lyricsResults: LyricsResult[] | null = null;
+
+    /**
+     * What the page shows before anyone has typed (`H-23`).
+     *
+     * `null` means "not asked yet", which is a different thing from a
+     * page with no shelves — the second has an answer and a reason for
+     * it, and says so.
+     */
+    @state() private shelves: ShelfPage | null = null;
+
+    /** Guards against a second fetch while the first is in flight. */
+    private shelvesPending = false;
+
+    /** Unsubscribe for the index-status listener, while active. */
+    private cancelIndexStatus?: () => void;
 
     /** Monotonic counter to discard stale responses. */
     private searchVersion = 0;
@@ -371,6 +389,51 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) {
                 text-transform: uppercase;
                 letter-spacing: 0.05em;
                 font-size: 11px;
+            }
+
+            /* A shelf is a reason, not a filter, and the reason is the
+               part that makes it one — without it a row of covers is
+               another grid. Same rule as the home page's shelves. */
+            .section-reason {
+                margin: -8px 0 12px;
+                color: var(--yj-text-tertiary, #888);
+                font-size: var(--yj-text-sm, 12px);
+            }
+
+            .shelves-note {
+                margin: 0 0 16px;
+                color: var(--yj-text-tertiary, #888);
+                font-size: var(--yj-text-sm, 12px);
+            }
+
+            /* The page with no catalog. It says what is missing and how
+               to get it, because "no shelves" here can mean the artifact
+               has not been fetched — which is a thing the user can act
+               on, unlike an empty shelf on Home. */
+            .shelves-empty {
+                max-width: 34em;
+                margin: 3em auto;
+                text-align: center;
+                color: var(--yj-text-secondary, #b3b3b3);
+            }
+
+            .shelves-empty wa-icon {
+                font-size: 2.5em;
+                color: var(--yj-text-tertiary, #888);
+                margin-bottom: 0.5em;
+            }
+
+            .shelves-empty-title {
+                margin: 0 0 0.5em;
+                font-size: var(--yj-text-lg, 15px);
+                font-weight: 600;
+            }
+
+            .shelves-empty-body {
+                margin: 0;
+                color: var(--yj-text-tertiary, #888);
+                font-size: var(--yj-text-sm, 12px);
+                line-height: 1.5;
             }
 
             /* ── Horizontal scroll rows ── */
@@ -653,10 +716,81 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) {
         this.cancelPendingSearch();
     }
 
+    protected override onViewActivate(): void {
+        // Fetched on arrival rather than on connect: this is a cached
+        // primary view, created and warmed at startup, so a fetch there
+        // is three catalog queries every user pays for whether or not
+        // they ever open Explore.
+        void this.loadShelves();
+
+        // The catalog can arrive after the page does — the artifact is
+        // downloaded and merged in the background on first run, which is
+        // the case where the shelves are empty *and* about to not be.
+        // There is no ticker behind this any more: `emitStatus` drops an
+        // unchanged status, so this fires when something actually
+        // changed, and nothing else will tell us.
+        this.cancelIndexStatus = EventsOn(Events.IndexStatusChanged, () => {
+            if (this.shelves?.state !== 'ready') void this.loadShelves();
+        });
+    }
+
     /** A debounced search that lands after the user has left the page is
      *  a query nobody asked for, against a 1.1 M-row index. */
     protected override onViewDeactivate(): void {
         this.cancelPendingSearch();
+        this.cancelIndexStatus?.();
+        this.cancelIndexStatus = undefined;
+    }
+
+    /**
+     * Load the shelves, and the art for the cards they hold.
+     *
+     * The art goes through the same two capped caches the search path
+     * uses rather than a third one of its own: this view never unmounts,
+     * so an uncapped cache on it is a leak with a long fuse
+     * (`perf.M7`), and a second cache holding the same data URLs would
+     * make both caps meaningless.
+     */
+    private async loadShelves(): Promise<void> {
+        if (this.shelvesPending) return;
+
+        this.shelvesPending = true;
+
+        try {
+            const page = await GetExploreShelves();
+
+            // A binding that answers with nothing is not an error to
+            // report — it is a page with no catalog behind it, which is
+            // a state this view already renders honestly. A *rejected*
+            // call still reaches the catch below.
+            if (!page || !Array.isArray(page.shelves)) {
+                this.shelves = explore.ShelfPage.createFrom({
+                    shelves: [],
+                    state: 'no-index',
+                });
+
+                return;
+            }
+
+            this.shelves = page;
+
+            const albums = page.shelves.flatMap((shelf) => shelf.albums ?? []);
+            const artists = page.shelves.flatMap((shelf) => shelf.artists ?? []);
+
+            this.loadThumbnails(albums);
+            void this.loadArtistImages(artists, albums);
+        } catch (err) {
+            console.error('[explore] shelves failed', err);
+            // Inline, and quietly: the search box above still works, so
+            // this is a panel that could not fill itself rather than
+            // something the user asked for and did not get.
+            this.shelves = explore.ShelfPage.createFrom({
+                shelves: [],
+                state: 'no-index',
+            });
+        } finally {
+            this.shelvesPending = false;
+        }
     }
 
     /* ── Search Logic ── */
@@ -865,8 +999,11 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) {
                 this.results?.artists || [],
                 this.results?.releaseGroups || [],
             );
-            this.loadThumbnails();
-            this.loadArtistImages();
+            this.loadThumbnails(this.results?.releaseGroups ?? []);
+            void this.loadArtistImages(
+                this.results?.artists ?? [],
+                this.results?.releaseGroups ?? [],
+            );
             this.checkLibrary();
         } catch (err) {
             if (version !== this.searchVersion) return;
@@ -928,8 +1065,8 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) {
      * `_coverArt` underscore field that searchLibraryCache stamped
      * on the release group.
      */
-    private seedThumbnailsFromLibrary() {
-        if (!this.results?.releaseGroups?.length) return;
+    private seedThumbnailsFromLibrary(releaseGroups: MBReleaseGroup[]) {
+        if (!releaseGroups.length) return;
 
         const cachedAlbums = libraryStore.cachedAlbums;
         const libAlbumsByMBID = new Map<string, string>();
@@ -944,7 +1081,7 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) {
 
         let updated = false;
 
-        for (const rg of this.results.releaseGroups) {
+        for (const rg of releaseGroups) {
             if (this.thumbnailCache.has(rg.mbid)) continue;
 
             const localArt = libAlbumsByMBID.get(rg.mbid) || (rg as any)._coverArt;
@@ -966,8 +1103,8 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) {
      * field that searchLibraryCache stamped on the artist.  Falls
      * back to library album art when an artist has no portrait.
      */
-    private seedArtistImagesFromLibrary() {
-        if (!this.results?.artists?.length) return;
+    private seedArtistImagesFromLibrary(artists: MBArtist[]) {
+        if (!artists.length) return;
 
         const cachedArtists = libraryStore.cachedArtists;
         const libByMBID = new Map<string, string>();
@@ -982,7 +1119,7 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) {
 
         let updated = false;
 
-        for (const a of this.results.artists) {
+        for (const a of artists) {
             if (!a.mbid || this.artistImageCache.has(a.mbid)) continue;
 
             const local = libByMBID.get(a.mbid) || (a as any)._imageMedium || (a as any)._imageSmall;
@@ -1005,18 +1142,18 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) {
         }
     }
 
-    private loadThumbnails() {
-        if (this.thumbnailBatchPending || !this.results?.releaseGroups?.length) {
+    private loadThumbnails(releaseGroups: MBReleaseGroup[]) {
+        if (this.thumbnailBatchPending || !releaseGroups.length) {
             return;
         }
 
         // Always seed from local library first.
-        this.seedThumbnailsFromLibrary();
+        this.seedThumbnailsFromLibrary(releaseGroups);
 
         // Collect MBIDs that still need fetching from the API.
         const requests: ThumbnailRequest[] = [];
 
-        for (const rg of this.results.releaseGroups) {
+        for (const rg of releaseGroups) {
             if (!this.thumbnailCache.has(rg.mbid)) {
                 requests.push({
                     mbid: rg.mbid,
@@ -1083,14 +1220,17 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) {
      * Load artist images for all visible artist cards.  Each call
      * is async and updates the cache + re-renders on success.
      */
-    private async loadArtistImages() {
-        if (!this.results?.artists?.length) return;
+    private async loadArtistImages(
+        artists: MBArtist[],
+        releaseGroups: MBReleaseGroup[] = [],
+    ) {
+        if (!artists.length) return;
 
         // Seed from library store first (instant, no API).
-        this.seedArtistImagesFromLibrary();
+        this.seedArtistImagesFromLibrary(artists);
 
         // Fetch remaining from API (only artists not yet resolved).
-        for (const a of this.results.artists) {
+        for (const a of artists) {
             if (this.artistImageCache.has(a.mbid)) continue;
 
             this.artistImageCache.set(a.mbid, '');
@@ -1111,7 +1251,7 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) {
         // Try library store first, then search-result release groups.
         let fallbackUpdated = false;
 
-        for (const a of this.results.artists) {
+        for (const a of artists) {
             if (a.mbid && !this.artistImageCache.get(a.mbid)) {
                 // 1) Library album art
                 const albumArt = getArtistAlbumArt(a.name);
@@ -1121,10 +1261,11 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) {
                     continue;
                 }
 
-                // 2) Cover art from a search-result release group by this artist
-                if (this.results.releaseGroups) {
+                // 2) Cover art from a release group by this artist in
+                //    the same batch — a search's results, or a shelf's.
+                {
                     const name = a.name.toLowerCase();
-                    for (const rg of this.results.releaseGroups) {
+                    for (const rg of releaseGroups) {
                         if (rg.mbid && rg.artistCredit?.toLowerCase().includes(name)) {
                             const url = this.thumbnailCache.get(rg.mbid);
                             if (url) {
@@ -1142,7 +1283,7 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) {
 
         // Sync resolved images into the explore cache so detail pages
         // pick them up without redundant API calls.
-        for (const a of this.results.artists) {
+        for (const a of artists) {
             const url = this.artistImageCache.get(a.mbid);
             if (url) {
                 const cached = exploreCache.getArtist(a.mbid);
@@ -1462,11 +1603,11 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) {
             </div>`;
         }
 
-        // No query entered yet
+        // No query entered yet: this is where the page used to be a
+        // sentence telling the user to type into a 1.1 M-row catalog
+        // they had never seen (`H-23`).
         if (!this.searchQuery.trim() && !this.results) {
-            return html`<div class="status-message">
-                Search to discover artists, albums, and tracks.
-            </div>`;
+            return this.renderShelves();
         }
 
         // Loading state already shown above
@@ -1509,12 +1650,88 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) {
         return nothing;
     }
 
+    /* ── Shelves ── */
+
+    /**
+     * The page before a query: shelves, or an honest account of why
+     * there are none.
+     *
+     * Explore's data is a downloaded artifact, so "no shelves" is not
+     * the same statement it is on Home. Home's empty shelf means a
+     * library with no history, which is true and permanent-ish. Here it
+     * can mean the catalog has not arrived yet — so a page that renders
+     * nothing and explains nothing is the blank panel this whole feature
+     * is removing, wearing different clothes.
+     */
+    private renderShelves() {
+        const page = this.shelves;
+
+        // Not asked yet. Deliberately blank rather than a spinner: the
+        // call is three local index queries and lands in a few
+        // milliseconds, and a spinner that flashes is worse than a beat
+        // of nothing.
+        if (!page) return nothing;
+
+        if (page.shelves.length === 0) {
+            return html`
+                <div class="shelves-empty">
+                    <wa-icon
+                        name=${page.state === 'building'
+                            ? 'hourglass-half'
+                            : 'compact-disc'}
+                    ></wa-icon>
+                    <p class="shelves-empty-title">
+                        ${page.state === 'building'
+                            ? 'The music catalog is still downloading.'
+                            : 'The music catalog has not been downloaded yet.'}
+                    </p>
+                    <p class="shelves-empty-body">
+                        ${page.state === 'building'
+                            ? 'Suggestions will appear here when it finishes. Search still works over whatever has arrived.'
+                            : 'Explore suggests music from a catalog of over a million albums. You can fetch it from Settings — search still works without it, over anything already indexed.'}
+                    </p>
+                </div>
+            `;
+        }
+
+        return html`
+            <div class="results-container">
+                ${page.state === 'building'
+                    ? html`<p class="shelves-note">
+                          The catalog is still downloading, so there is more
+                          to come.
+                      </p>`
+                    : nothing}
+                ${page.shelves.map((shelf) =>
+                    shelf.artists?.length
+                        ? this.renderArtistsSection(
+                              shelf.artists,
+                              shelf.title,
+                              shelf.subtitle,
+                          )
+                        : this.renderAlbumsSection(
+                              shelf.albums ?? [],
+                              shelf.title,
+                              shelf.subtitle,
+                          ),
+                )}
+            </div>
+        `;
+    }
+
     /* ── Section Renderers ── */
 
-    private renderArtistsSection(artists: MBArtist[]) {
+    private renderArtistsSection(
+        artists: MBArtist[],
+        heading = 'Artists',
+        subtitle = '',
+    ) {
         return html`
             <section>
-                <h3 class="section-header">Artists</h3>
+                <h3 class="section-header">${heading}</h3>
+                ${subtitle
+                    ? html`<p class="section-reason">${subtitle}</p>`
+                    : nothing}
                 <div class="horizontal-row">
                     ${artists.map((a) => {
                         const hue = nameToHue(a.name);
@@ -1566,10 +1783,17 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) {
         `;
     }
 
-    private renderAlbumsSection(releaseGroups: MBReleaseGroup[]) {
+    private renderAlbumsSection(
+        releaseGroups: MBReleaseGroup[],
+        heading = 'Albums',
+        subtitle = '',
+    ) {
         return html`
             <section>
-                <h3 class="section-header">Albums</h3>
+                <h3 class="section-header">${heading}</h3>
+                ${subtitle
+                    ? html`<p class="section-reason">${subtitle}</p>`
+                    : nothing}
                 <div class="horizontal-row">
                     ${releaseGroups.map((rg) => {
                         const artURL = this.thumbnailCache.get(rg.mbid) || '';

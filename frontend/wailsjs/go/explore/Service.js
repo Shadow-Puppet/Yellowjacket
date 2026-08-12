@@ -70,6 +70,10 @@ export function GetCandidateThumbnail(arg1, arg2) {
   return window['go']['explore']['Service']['GetCandidateThumbnail'](arg1, arg2);
 }
 
+export function GetExploreShelves() {
+  return window['go']['explore']['Service']['GetExploreShelves']();
+}
+
 export function GetIndexStatus() {
   return window['go']['explore']['Service']['GetIndexStatus']();
 }
