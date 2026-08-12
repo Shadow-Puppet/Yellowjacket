@@ -257,3 +257,82 @@ func TestGetShelvesSkipsAlbumsTheLibraryNoLongerHas(t *testing.T) {
 		}
 	}
 }
+
+// A shelf has to be worth its own row.
+//
+// A library with one signal answers several questions with the same
+// albums, so shelves render the same covers in different orders under
+// different reasons and the page reads as repeating itself (H-9).
+// Confirmed in the running app on the fixture library before this
+// existed: "On repeat" was "Pick up where you left off" reordered.
+//
+// The library has to be bigger than one shelf for the rule to apply at
+// all, which is the point: a repeat is only a fault if a different row
+// was possible.
+func TestGetShelvesOmitsAShelfThatRepeatsTheOneAboveIt(t *testing.T) {
+	db := database.NewTestDB(t)
+
+	albums := make([]library.Album, 0, 16)
+
+	// Four albums carry the whole play history, so "what you played
+	// last" and "what you play most" can only answer with those four.
+	for i := range 4 {
+		name := "Played " + string(rune('A'+i))
+		id := seed(t, db, name, "Solo", "", 50+i, "2026-08-1"+string(rune('0'+i))+" 00:00:00")
+
+		albums = append(albums, library.Album{ID: id, Name: name, ArtistName: "Solo"})
+	}
+
+	// …and ten more the user has never touched, so the library is
+	// larger than a single shelf and a different row was possible.
+	for i := range 10 {
+		name := "Quiet " + string(rune('A'+i))
+		id := seed(t, db, name, "Nobody", "", 0, "")
+
+		albums = append(albums, library.Album{ID: id, Name: name, ArtistName: "Nobody"})
+	}
+
+	svc := home.NewService(slog.Default(), db, fakeLibrary{albums: albums})
+
+	shelves, err := svc.GetShelves()
+	if err != nil {
+		t.Fatalf("GetShelves: %v", err)
+	}
+
+	// The first of a duplicate pair survives: the reason the user sees
+	// is the one that came first, not the one built last.
+	if !hasKind(shelves, home.KindRecentlyPlayed) {
+		t.Fatalf("expected a recently-played shelf, got %v", shelfKinds(shelves))
+	}
+
+	// And the page still has somewhere to start.
+	if len(shelves) < 2 {
+		t.Fatalf("suppression left %d shelves: %v", len(shelves), shelfKinds(shelves))
+	}
+
+	for i := 1; i < len(shelves); i++ {
+		above := shelves[i-1]
+		shared := 0
+
+		for _, a := range shelves[i].Albums {
+			for _, b := range above.Albums {
+				if a.ID == b.ID {
+					shared++
+
+					break
+				}
+			}
+		}
+
+		if len(shelves[i].Albums) < 3 {
+			continue
+		}
+
+		if ratio := float64(shared) / float64(len(shelves[i].Albums)); ratio >= 2.0/3.0 {
+			t.Errorf(
+				"shelf %q repeats %q (%d of %d albums)",
+				shelves[i].Kind, above.Kind, shared, len(shelves[i].Albums),
+			)
+		}
+	}
+}

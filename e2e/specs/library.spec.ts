@@ -17,6 +17,7 @@ test.describe('library views', () => {
     // library exists, so its presence proves nothing.  Playwright's own
     // actionability check fails a covered click with "intercepts pointer
     // events", which is exactly the condition worth catching.
+    await app.getByTestId('nav-tracks').click({ timeout: 5_000 });
     await expect(app.getByTestId('track-row').first()).toBeVisible();
     await app.getByTestId('nav-artists').click({ timeout: 5_000 });
 
@@ -30,6 +31,8 @@ test.describe('library views', () => {
     app,
     testctl,
   }) => {
+    await app.getByTestId('nav-tracks').click();
+
     const health = await testctl.health();
     const rows = app.getByTestId('track-row');
 
@@ -40,6 +43,27 @@ test.describe('library views', () => {
     await expect(app.getByText('Привет мир')).toBeVisible();
     await expect(app.getByText('さくら')).toBeVisible();
     await expect(app.getByText('مرحبا بالعالم')).toBeVisible();
+  });
+
+  test('opens on Home, which is the page built to answer what to play', async ({
+    app,
+  }) => {
+    // H-8: the app opened on Tracks — an alphabetical list of
+    // everything, the one entry point that is identical every time and
+    // therefore gives the user nothing to start from. Home is listed
+    // first in the nav and was never what anybody saw.
+    await expect(app.getByTestId('main-content')).toHaveAttribute(
+      'data-active-view',
+      'home',
+    );
+
+    // …and the sidebar agrees. It does not hear a `navigate` it did not
+    // send, so this is a separate claim from the one above and was
+    // briefly false.
+    await expect(app.getByTestId('nav-home')).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
   });
 
   test('the sidebar navigates between primary views', async ({ app }) => {
@@ -62,8 +86,14 @@ test.describe('library views', () => {
       'artists',
     );
 
-    await expect(app.getByText('Aurora Fields').first()).toBeVisible();
-    await expect(app.getByText('Pale Circuit').first()).toBeVisible();
+    // Scoped to the view: every primary view stays in the DOM, and
+    // Home's shelves name the same artists — so an unscoped `.first()`
+    // matches a card on a page that is `.view-hidden`, and asserting it
+    // is visible fails for a reason that has nothing to do with Artists.
+    const artists = app.locator('artists-view');
+
+    await expect(artists.getByText('Aurora Fields').first()).toBeVisible();
+    await expect(artists.getByText('Pale Circuit').first()).toBeVisible();
   });
 
   test('a library can be renamed from its own name', async ({ app }) => {

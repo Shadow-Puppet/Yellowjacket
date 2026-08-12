@@ -95,6 +95,8 @@ async function blurDeepActive(app: Page): Promise<void> {
 
 test.describe('the player reports its real position', () => {
   test.beforeEach(async ({ app }) => {
+    // The app lands on Home now (H-8); these specs start from a row.
+    await app.getByTestId('nav-tracks').click();
     await callBinding(app, 'queue.Queue.Clear');
     await resetEvents(app);
   });

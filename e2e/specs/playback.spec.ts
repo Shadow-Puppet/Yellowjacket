@@ -23,6 +23,9 @@ const longRow = (app: import('@playwright/test').Page) =>
  */
 test.describe('playback', () => {
   test.beforeEach(async ({ app }) => {
+    // The app lands on Home now (H-8), so the track list is a
+    // navigation away rather than the first thing on screen.
+    await app.getByTestId('nav-tracks').click();
     await callBinding(app, 'queue.Queue.Clear').catch(() => {
       /* older builds may not expose Clear; the specs below do not need it */
     });
@@ -84,6 +87,11 @@ test.describe('playback', () => {
 });
 
 test.describe('queue', () => {
+  test.beforeEach(async ({ app }) => {
+    // The app lands on Home now (H-8).
+    await app.getByTestId('nav-tracks').click();
+  });
+
   test('playing a track populates the queue panel', async ({ app }) => {
     await resetEvents(app);
     await longRow(app).dblclick();

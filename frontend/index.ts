@@ -478,4 +478,24 @@ if (queueButton && queuePanel) {
 void Player.EmitCurrentState();
 void Queue.EmitCurrentState();
 
+// ---------------------------------------------------------------
+// Land on Home
+// ---------------------------------------------------------------
+// The app opened on Tracks — an alphabetical list of everything, which
+// is the one entry point that is identical every time and therefore
+// gives the user nothing to start from. Home is listed first in the nav
+// and is the page built to answer "what should I play", and it was
+// never what anybody saw (H-8).
+//
+// index.html still renders the track list eagerly and it is still what
+// paints first: it is the cached 'tracks' view, so this navigation is a
+// class toggle plus one chunk, not a second render of the shell. Doing
+// it here rather than by changing the markup keeps the first paint
+// exactly as Phase 4 left it.
+document.dispatchEvent(
+    new CustomEvent('navigate', {
+        detail: { view: 'home' },
+    }),
+);
+
 warmViewChunks();

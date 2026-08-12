@@ -149,9 +149,24 @@ func (s *Service) GetShelves() ([]Shelf, error) {
 	shelves := make([]Shelf, 0, 8) //nolint:mnd // rough capacity hint
 
 	add := func(shelf Shelf, ok bool) {
-		if ok && len(shelf.Albums) > 0 {
-			shelves = append(shelves, shelf)
+		if !ok || len(shelf.Albums) == 0 {
+			return
 		}
+
+		// A repeat is only a fault if a different row was possible. A
+		// shelf showing the *entire* library answers every question with
+		// the same albums because there are no others, and suppressing
+		// those rows punishes a small library for being small — measured
+		// against a fixed shelf size instead, this let the fixture
+		// library keep three identical shelves while a library one album
+		// larger lost them.
+		if len(shelf.Albums) < len(albums) &&
+			len(shelves) > 0 &&
+			duplicates(shelf, shelves[len(shelves)-1]) {
+			return
+		}
+
+		shelves = append(shelves, shelf)
 	}
 
 	add(s.recentlyPlayed(ctx, byID))
@@ -167,6 +182,56 @@ func (s *Service) GetShelves() ([]Shelf, error) {
 	add(s.random(ctx, byID))
 
 	return shelves, nil
+}
+
+// duplicateThreshold is the share of a shelf that has to be in the
+// shelf above before the second one is not worth showing.  Two thirds:
+// one album in common between two rows of four is a coincidence, three
+// is the same row with a different heading.
+const duplicateThreshold = 2.0 / 3.0
+
+// duplicateMinimum is the shortest shelf this rule judges at all.
+//
+// Below it the ratio says nothing: two rows of one album overlap by
+// 100% whenever they agree at all.  The first version of this had no
+// floor and no library-size guard, and collapsed a four-album library
+// to a single shelf — caught by the existing tests, not by the one
+// written for the change.
+const duplicateMinimum = 3
+
+// duplicates reports whether a shelf is substantially the shelf above
+// it wearing a different reason.
+//
+// A small library has one signal, not six: everything recently played
+// is also everything most played is also everything recently added, so
+// "Pick up where you left off" and "On repeat" render the same four
+// covers in a different order and the page reads as repeating itself
+// (H-9).  This is the same rule as omitting an empty shelf, one step
+// further: a shelf has to be worth its own row.
+//
+// Only the shelf immediately above is compared, deliberately.  Two rows
+// that share content are only jarring when they are adjacent, and
+// comparing against everything already shown would delete the genre and
+// random shelves on any library small enough to reach this at all.
+func duplicates(shelf, previous Shelf) bool {
+	if len(shelf.Albums) < duplicateMinimum {
+		return false
+	}
+
+	above := make(map[int64]struct{}, len(previous.Albums))
+	for _, album := range previous.Albums {
+		above[album.ID] = struct{}{}
+	}
+
+	shared := 0
+
+	for _, album := range shelf.Albums {
+		if _, ok := above[album.ID]; ok {
+			shared++
+		}
+	}
+
+	return float64(shared)/float64(len(shelf.Albums)) >= duplicateThreshold
 }
 
 // resolve turns album ids into albums, dropping any the library no

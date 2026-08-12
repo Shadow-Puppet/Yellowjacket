@@ -154,8 +154,11 @@ export class AppSidebar extends LitElement {
     /** Delay in ms before a drag-hover triggers navigation. */
     private static readonly HOVER_NAV_DELAY = 600;
 
+    /** Home, because that is where `index.ts` now navigates on startup
+     *  (H-8). The sidebar does not hear a `navigate` it did not send,
+     *  so this default is what keeps `aria-current` honest on arrival. */
     @state()
-    private activeView: View = 'tracks';
+    private activeView: View = 'home';
 
     @state()
     private isDragging = false;

@@ -137,6 +137,28 @@ export class HomeView extends ViewLifecycleMixin(LitElement) {
                 display: block;
             }
 
+            /* An album with no cover used to be a small dim icon on a
+               surface the same colour as the page, so a shelf read as
+               having holes in it (H-9) — while the Albums and Artists
+               grids both drew a letter tile. This is that tile, and the
+               gradient is what makes it a tile rather than a gap. */
+            .art .placeholder {
+                width: 100%;
+                height: 100%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                background: linear-gradient(
+                    135deg,
+                    var(--yj-bg-overlay, #404040) 0%,
+                    var(--yj-bg-surface, #282828) 100%
+                );
+                color: var(--yj-text-secondary, #b3b3b3);
+                font-size: 48px;
+                font-weight: 300;
+                user-select: none;
+            }
+
             .play {
                 position: absolute;
                 right: 8px;
@@ -238,6 +260,11 @@ export class HomeView extends ViewLifecycleMixin(LitElement) {
     override render() {
         return html`
             <page-header heading="Home">
+                <!-- "Shuffle" alone was two different controls with one
+                     name: this one and the transport's shuffle mode.
+                     They were never on screen together until the app
+                     started landing on Home (H-8), and a cached view is
+                     in the accessibility tree either way. -->
                 <wa-button
                     slot="actions"
                     size="small"
@@ -246,7 +273,7 @@ export class HomeView extends ViewLifecycleMixin(LitElement) {
                     @click=${() => void this.load()}
                 >
                     <wa-icon slot="start" name="shuffle"></wa-icon>
-                    Shuffle
+                    Shuffle suggestions
                 </wa-button>
             </page-header>
             <p class="lede">Somewhere to start listening.</p>
@@ -304,8 +331,10 @@ export class HomeView extends ViewLifecycleMixin(LitElement) {
             >
                 <div class="art">
                     ${art
-                        ? html`<img src=${art} alt="" loading="lazy" />`
-                        : html`<wa-icon name="compact-disc"></wa-icon>`}
+                        ? html`<img src=${art} alt="" loading="lazy" decoding="async" />`
+                        : html`<div class="placeholder" aria-hidden="true">
+                              ${album.Name.charAt(0).toUpperCase()}
+                          </div>`}
                     <button
                         class="play"
                         title="Play this album"

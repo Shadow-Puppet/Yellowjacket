@@ -70,6 +70,28 @@ describe('home view', () => {
     ]);
   });
 
+  it('draws a letter tile for an album with no cover, not a hole', async () => {
+    // H-9: the missing-art placeholder was a small dim icon on a
+    // surface the same colour as the page, so a shelf read as having
+    // gaps in it — while the Albums and Artists grids both drew a
+    // letter tile. Plainly visible in any Home screenshot, and
+    // invisible to every assertion in this file until now.
+    const el = await fixture('home-view');
+
+    await el.updateComplete;
+    await new Promise((r) => setTimeout(r, 20));
+
+    const placeholders = shadowAll(el, '.art .placeholder');
+
+    expect(placeholders.length, 'no placeholders for coverless albums').toBeGreaterThan(
+      0,
+    );
+    // The initial of the album's own name, as cover-grid does it.
+    expect(placeholders[0]?.textContent?.trim()).toBe('K');
+    // And it is a tile: it fills the art box rather than sitting in it.
+    expect(getComputedStyle(placeholders[0]!).backgroundImage).not.toBe('none');
+  });
+
   it('keys each row by the kind the backend assigned', async () => {
     const el = await fixture('home-view');
     await el.updateComplete;

@@ -123,6 +123,11 @@ test.describe('keyboard reach', () => {
   test('tabs out of the header straight into the sidebar', async ({
     app,
   }) => {
+    // On Tracks, because the header search box is disabled on Home —
+    // it keeps its slot everywhere and says why, but a disabled input
+    // cannot hold focus, and this spec is about what follows it.
+    await app.getByTestId('nav-tracks').click();
+
     // Started from the search box rather than from the top of the page:
     // the header's leading controls come and go (the index-status button
     // is only there while the index builds), so counting stops from the
