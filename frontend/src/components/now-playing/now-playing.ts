@@ -12,9 +12,13 @@ import { PlayerController } from '@store/controllers/player-controller';
 import { FavoritesController } from '@store/controllers/favorites-controller';
 import { designTokens } from '../../styles/tokens.css';
 
+// H-17: at 200 px the artist truncated to "The Orchestra Of" while
+// ~400 px of empty space sat between it and the transport controls.
+// The panel is user-resizable, so this only moves where it starts and
+// how far it can go.
 const MIN_WIDTH = 120;
-const MAX_WIDTH = 350;
-const DEFAULT_WIDTH = 200;
+const MAX_WIDTH = 500;
+const DEFAULT_WIDTH = 320;
 
 const SCROLL_STORAGE_KEY = 'yj-now-playing-scroll-mode';
 const SCROLL_CHANGE_EVENT = 'yj-scroll-mode-changed';
@@ -65,6 +69,10 @@ export class NowPlaying extends LitElement {
     };
 
     private resizeObserver?: ResizeObserver;
+
+    /** See `geometryKey()` — perf.m5. */
+    private lastGeometryKey = '';
+    private geometryDirty = true;
 
     static override styles = [designTokens, exploreLinkStyles, css`
     :host {
@@ -237,19 +245,18 @@ export class NowPlaying extends LitElement {
         super.connectedCallback();
         this.loadScrollMode();
         this.updateWidth(DEFAULT_WIDTH);
-        document.addEventListener('mousemove', this.handleMouseMove);
-        document.addEventListener('mouseup', this.handleMouseUp);
         window.addEventListener(SCROLL_CHANGE_EVENT, this.handleScrollModeEvent);
 
         this.resizeObserver = new ResizeObserver(() => {
-            this.checkOverflows();
+            this.geometryDirty = true;
+            this.requestUpdate();
         });
     }
 
     override disconnectedCallback() {
         super.disconnectedCallback();
-        document.removeEventListener('mousemove', this.handleMouseMove);
-        document.removeEventListener('mouseup', this.handleMouseUp);
+        // A drag interrupted by the bar going away still has to clean up.
+        this.attachDragListeners(false);
         window.removeEventListener(SCROLL_CHANGE_EVENT, this.handleScrollModeEvent);
         this.resizeObserver?.disconnect();
         this.stopScrollCycle('title');
@@ -257,9 +264,24 @@ export class NowPlaying extends LitElement {
     }
 
     protected override updated(): void {
-        this.checkOverflows();
-        this.observeTextContainers();
-        this.applyScrollDistances();
+        // perf.m5: this used to measure and rewrite the text geometry on
+        // every pass, and the player store notifies while playing — so a
+        // component whose DOM had not changed did six querySelectors and
+        // a read/write interleave several times a second for no news.
+        // The geometry depends on exactly four things, and the observer
+        // covers the fifth (the panel being resized).
+        const key = this.geometryKey();
+
+        if (key !== this.lastGeometryKey) {
+            this.lastGeometryKey = key;
+            this.geometryDirty = true;
+        }
+
+        if (this.geometryDirty) {
+            this.geometryDirty = false;
+            this.measureText();
+        }
+
         this.syncScrollCycles();
     }
 
@@ -408,60 +430,73 @@ export class NowPlaying extends LitElement {
         return field === 'title' ? this.titleHovered : this.artistHovered;
     }
 
-    private checkOverflows(): void {
-        const titleEl = this.shadowRoot?.querySelector<HTMLElement>('.track-title');
-        const artistEl = this.shadowRoot?.querySelector<HTMLElement>('.track-artist');
+    /**
+     * Everything the measured geometry depends on, other than the panel
+     * width — which the ResizeObserver reports instead.
+     *
+     * The two scroll flags are in here because `.will-scroll` puts
+     * `padding-right: 2em` on `.scroll-content`, so toggling it changes
+     * the scroll distance the animation travels.  A guard that only
+     * watched the text would leave the first hover scrolling 2em short.
+     */
+    private geometryKey(): string {
+        const track = this.player.currentTrack;
 
-        const titleNow = titleEl ? titleEl.scrollWidth > titleEl.clientWidth : false;
-        const artistNow = artistEl ? artistEl.scrollWidth > artistEl.clientWidth : false;
-
-        // Only update state when changed to avoid infinite loops
-        if (titleNow !== this.titleOverflows) {
-            this.titleOverflows = titleNow;
-        }
-
-        if (artistNow !== this.artistOverflows) {
-            this.artistOverflows = artistNow;
-        }
-    }
-
-    private observeTextContainers(): void {
-        if (!this.resizeObserver) return;
-
-        const titleEl = this.shadowRoot?.querySelector('.track-title');
-        const artistEl = this.shadowRoot?.querySelector('.track-artist');
-
-        // ResizeObserver automatically deduplicates observed elements
-        if (titleEl) this.resizeObserver.observe(titleEl);
-        if (artistEl) this.resizeObserver.observe(artistEl);
+        return [
+            track?.title ?? '',
+            track?.artist ?? '',
+            this.shouldScroll('title') ? '1' : '0',
+            this.shouldScroll('artist') ? '1' : '0',
+        ].join('\u0000');
     }
 
     /**
-     * Set CSS custom properties on each scroll-content span so the
-     * animation knows how far to travel and how long to take.
+     * Measure both text containers and set the CSS custom properties the
+     * scroll animation reads: how far to travel and how long to take.
+     *
+     * Every read happens before every write.  Interleaving them is what
+     * makes the browser flush layout again per write, and this is the
+     * one place in the component that touches layout at all.
      */
-    private applyScrollDistances(): void {
-        const pairs: Array<{ container: string; overflows: boolean }> = [
-            { container: '.track-title', overflows: this.titleOverflows },
-            { container: '.track-artist', overflows: this.artistOverflows },
-        ];
+    private measureText(): void {
+        const titleEl = this.shadowRoot?.querySelector<HTMLElement>('.track-title');
+        const artistEl = this.shadowRoot?.querySelector<HTMLElement>('.track-artist');
 
-        for (const { container, overflows } of pairs) {
-            if (!overflows) continue;
+        const measure = (el: HTMLElement | null | undefined) => {
+            if (!el) return { overflows: false, distance: 0 };
 
-            const el = this.shadowRoot?.querySelector<HTMLElement>(container);
-            const content = el?.querySelector<HTMLElement>('.scroll-content');
+            const content = el.querySelector<HTMLElement>('.scroll-content');
+            const width = el.clientWidth;
 
-            if (!el || !content) continue;
+            return {
+                overflows: el.scrollWidth > width,
+                distance: content ? content.scrollWidth - width : 0,
+            };
+        };
 
-            const overflow = content.scrollWidth - el.clientWidth;
+        const title = measure(titleEl);
+        const artist = measure(artistEl);
 
-            if (overflow > 0) {
-                const duration = Math.min(MAX_DURATION, Math.max(MIN_DURATION, overflow / SCROLL_SPEED));
-                el.style.setProperty('--scroll-distance', `-${overflow}px`);
-                el.style.setProperty('--scroll-duration', `${duration.toFixed(1)}s`);
+        for (const [el, m] of [[titleEl, title], [artistEl, artist]] as const) {
+            if (el && this.resizeObserver) {
+                // ResizeObserver deduplicates observed elements itself.
+                this.resizeObserver.observe(el);
             }
+
+            if (!el || !m.overflows || m.distance <= 0) continue;
+
+            const duration = Math.min(
+                MAX_DURATION,
+                Math.max(MIN_DURATION, m.distance / SCROLL_SPEED),
+            );
+            el.style.setProperty('--scroll-distance', `-${m.distance}px`);
+            el.style.setProperty('--scroll-duration', `${duration.toFixed(1)}s`);
         }
+
+        // Assigned last: these are @state, so they schedule the pass that
+        // re-measures with the scroll classes applied.
+        this.titleOverflows = title.overflows;
+        this.artistOverflows = artist.overflows;
     }
 
     // ===================================================================
@@ -574,9 +609,21 @@ export class NowPlaying extends LitElement {
     // RESIZE
     // ===================================================================
 
+    /** perf.m4: the resize's document listeners exist while it is
+     *  dragging and not before — they used to run on every pointer move
+     *  anywhere in the app, for the life of the process, to guard and
+     *  return. */
+    private attachDragListeners(on: boolean): void {
+        const fn = on ? 'addEventListener' : 'removeEventListener';
+
+        document[fn]('mousemove', this.handleMouseMove as EventListener);
+        document[fn]('mouseup', this.handleMouseUp as EventListener);
+    }
+
     private handleMouseDown = (e: MouseEvent) => {
         e.preventDefault();
         this.isDragging = true;
+        this.attachDragListeners(true);
     };
 
     private handleMouseMove = (e: MouseEvent) => {
@@ -591,6 +638,7 @@ export class NowPlaying extends LitElement {
 
     private handleMouseUp = () => {
         this.isDragging = false;
+        this.attachDragListeners(false);
     };
 
     private updateWidth(width: number) {

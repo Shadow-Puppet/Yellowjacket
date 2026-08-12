@@ -15,8 +15,15 @@ export class SeekBar extends LitElement {
   private timerID: number = -1;
   private previousTrackChangeId: number = -1;
 
+  /** The sequence number of the last backend report applied. */
+  private previousPositionSeq: number = -1;
+
   @state()
   private seekValue: number = 0;
+
+  /** Whether the right-hand clock shows time remaining or total. */
+  @state()
+  private showRemaining: boolean = true;
 
   static override styles = [designTokens, css`
     wa-slider {
@@ -46,6 +53,21 @@ export class SeekBar extends LitElement {
       display: flex;
       justify-content: space-between;
       align-items: center;
+    }
+
+    .time-toggle {
+      background: none;
+      border: none;
+      padding: 0;
+      color: inherit;
+      font: inherit;
+      font-size: var(--wa-font-size-s, 0.875rem);
+      cursor: pointer;
+    }
+
+    .time-toggle:hover,
+    .time-toggle:focus-visible {
+      text-decoration: underline;
     }
   `];
 
@@ -86,6 +108,23 @@ export class SeekBar extends LitElement {
       this.stopProgress();
     }
 
+    // The backend's own position wins over anything counted here.
+    // Every report resets the interpolation, so the bar can be at most
+    // one tick wrong and can never accumulate — which is what made a
+    // keyboard seek desync it by 30 s (H-3).
+    // A report for a track that is no longer loaded is stale by
+    // definition: the change id is the only thing that distinguishes
+    // it, since the same file can play twice in a row.
+    const position = this.player.position;
+    const forThisTrack =
+      position !== null && position.trackChangeId === currentChangeId;
+
+    if (position && forThisTrack && position.seq !== this.previousPositionSeq) {
+      this.previousPositionSeq = position.seq;
+      this.seekValue = position.positionSeconds;
+      this.stopProgress();
+    }
+
     // Start/stop progress interval based on playback state
     if (this.isPlaying && this.hasTrack) {
       this.startProgress();
@@ -105,6 +144,14 @@ export class SeekBar extends LitElement {
     }
   }
 
+  /**
+   * Interpolate between backend reports.
+   *
+   * This is not the clock — it exists only so the display moves
+   * smoothly in the second between two ticks.  It is stopped and
+   * restarted by every report, so its error is bounded by one second
+   * and is discarded rather than carried.
+   */
   private startProgress() {
     // Don't start multiple intervals
     if (this.timerID !== -1) {
@@ -147,11 +194,17 @@ export class SeekBar extends LitElement {
   // RENDER
   // ===================================================================
 
+  /** H-16: the right-hand clock never said which number it was. */
+  private toggleRemaining() {
+    this.showRemaining = !this.showRemaining;
+  }
+
   override render() {
     const elapsedTime = this.hasTrack ? formatSeconds(this.seekValue) : '--:--';
-    const remainingTime = this.hasTrack
-      ? formatSeconds(this.trackLength - this.seekValue)
-      : '--:--';
+    const rightLabel = this.showRemaining
+      ? `-${formatSeconds(Math.max(0, this.trackLength - this.seekValue))}`
+      : formatSeconds(this.trackLength);
+    const rightTime = this.hasTrack ? rightLabel : '--:--';
 
     return html`
       <div id="seek-bar-container">
@@ -166,7 +219,22 @@ export class SeekBar extends LitElement {
           @change="${this.handleChange}"
           @input="${this.handleInput}"
         ></wa-slider>
-        <small data-testid="remaining-time">${remainingTime}</small>
+        <button
+          class="time-toggle"
+          type="button"
+          data-testid="remaining-time"
+          title="${this.showRemaining
+            ? 'Time remaining — click for total duration'
+            : 'Total duration — click for time remaining'}"
+          aria-label="${this.showRemaining
+            ? `Time remaining ${formatSeconds(
+                Math.max(0, this.trackLength - this.seekValue),
+              )}. Show total duration.`
+            : `Total duration ${formatSeconds(
+                this.trackLength,
+              )}. Show time remaining.`}"
+          @click="${this.toggleRemaining}"
+        >${rightTime}</button>
       </div>
     `;
   }
