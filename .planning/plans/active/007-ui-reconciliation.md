@@ -1687,6 +1687,136 @@ And two things about CI, neither mine and both pre-existing on
 
 ---
 
+### Phase 5 — the second pass: the dialogs, the menu, the ARIA tail, and Home
+
+Item 3 of the four as one landing, plus the first of the smaller ones.
+Every finding was reproduced in the running app before it was fixed,
+and two of them changed shape when it was.
+
+- **`a11y.4` / `a11y.16` — five hand-rolled dialogs are `wa-dialog`s.**
+  Split by shape rather than by owner: the three that only ask a
+  question (the autotag warning, the leave-as-is confirmation, the
+  remove-library confirmation) are `confirmAction()` calls, and the two
+  carrying input (paste URL, MusicBrainz search) are `<wa-dialog>`s in
+  place. Verified in the app: the native dialog reports `:modal`, focus
+  lands in the first field, Escape closes it and the view state follows
+  through `@wa-hide`. **`autotag-view`'s last document keydown listener
+  died with them** — it existed only for Escape, because its dialogs
+  could not close themselves.
+- **`a11y.3` — the context menu has a keyboard model.** `MenuKeyboard`
+  in `context-menu-controller.ts`: focus the first item, Arrow/Home/End
+  (wrapping), Enter/Space, Escape/Tab, focus restored to the row.
+  Shift+F10 and the ContextMenu key open it from a focused row in all
+  six hosts. It is standalone rather than part of the controller
+  because `playlist-view` renders a menu without the controller.
+- **Three lists had no focused row to open it from** — the queue panel
+  and both playlist detail views — and gained a roving tab stop
+  (`utils/roving-rows.ts`). `track-list` keeps its own.
+- **The ARIA tail**: `aria-sort` on the column headers (`a11y.9`),
+  `role=listbox`/`option` on the four selectable grids with the invalid
+  `aria-selected`-on-`button` dropped (`a11y.13`), live regions on the
+  four silent async surfaces (`a11y.12`), the `rem` type scale
+  (`a11y.19`), `job-indicator`'s unmanaged `role="dialog"` (`a11y.17`)
+  and its colour-only failure dot (`a11y.23`).
+- **`H-8` / `H-9` — the app lands on Home, and Home is worth landing
+  on.** The missing-art placeholder draws the letter tile the other two
+  grids draw, and a shelf that repeats the one above it is suppressed
+  in `backend/home` — the same rule as omitting an empty one.
+
+#### Where the plan was wrong — the second pass
+
+Eight things, and three of them are the audit describing a build that
+had already moved:
+
+- **`a11y.12`'s first bullet was fixed two phases ago, twice.** It names
+  `config-page`'s private toast as having no `role="status"`. Phase 3
+  deleted that toast, and the surface that replaced it —
+  `notification-host` and `inline-notice` — has had `role="status"
+  aria-live="polite"` from the day it was written. Two of the finding's
+  five bullets were closed by a phase that was not about accessibility.
+- **`H-9`'s stated mechanism is not why the card is invisible.** The
+  audit says the placeholder "has no background". It has one:
+  `--yj-bg-surface`, which is *almost exactly the page colour*, holding
+  a `wa-icon` at `--yj-text-tertiary`. And the icon has rendered at all
+  only since Phase 4 bundled the icon set — before that the fallback
+  was a CDN fetch, so "renders as nothing" was literally true offline
+  and is now merely nearly true. The fix is the same; the reason it was
+  worth checking is that "no background" would have been fixed by one
+  line that changed nothing visible.
+- **`H-9`'s duplicate-shelf half does not reproduce as stated, and the
+  obvious rule breaks a small library.** The audit says "all three
+  shelves show the same seven albums". On the fixture library there are
+  five shelves and the duplication is one *pair* — "On repeat" is
+  "Pick up where you left off" reordered. The first rule I wrote
+  (suppress at two-thirds overlap with the shelf above) **collapsed a
+  four-album library to a single shelf**, and the second (guarded by a
+  fixed shelf size) let an 11-album library keep three identical
+  shelves while a 13-album one lost them. Both were caught by the
+  *existing* Go tests, not by the one written for the change. The rule
+  that survives is "a repeat is a fault only if a different row was
+  possible" — the shelf must not be showing the whole library.
+- **Landing on Home broke eleven e2e specs, and one of them was an app
+  bug.** Nine assumed the track list is the first thing on screen. One
+  failed because Home's shelves name the same artists as
+  `artists-view`, and every primary view stays in the DOM — so an
+  unscoped `getByText().first()` matched a card on a `.view-hidden`
+  page. And one was real: **`getByRole('button', {name: 'Shuffle'})`
+  resolved to two elements**, because Home's page-header action and the
+  transport's shuffle mode had the same accessible name. They were
+  never on screen together before; a cached Home is in the
+  accessibility tree from the first paint. It is "Shuffle suggestions"
+  now.
+- **`a11y.19` and `a11y.20` are one finding, and the second one wins.**
+  Converting the type scale to `rem` works — verified at a 24px root, a
+  track cell goes 12px to 18px — and does *not* reach the four
+  virtualized lists, whose rows are a hardcoded px height duplicated as
+  the layout's `_itemSize` and carry `contain: strict`. Measured: the
+  row stays 33px while its text grows to 18px, so larger text crops it.
+  Left unfixed and documented in the token file, which is what a11y.20
+  itself asks for: deriving `_itemSize` from a measured row is a change
+  to the scroll maths of four lists, not to a type scale.
+- **Two of the three things that made the menu work are invisible to a
+  component test.** `wa-dropdown-item` sets its `role` in its own first
+  update, so querying by role at the host's `updateComplete` finds no
+  items; and `focus()` on a `wa-popup` that has not positioned itself
+  is a silent no-op. Both produced a menu that opened and refused to
+  take focus, and both were found by driving the real app — a component
+  test against hand-built markup passes either way, which is why the
+  e2e spec exists.
+- **A backtick in a comment inside a `css` template literal ends the
+  literal.** The skill warns about this. I did it twice in one session
+  anyway, and the second time every test file in the suite failed to
+  import, which reads like anything except a stray backtick.
+- **The `wa-dialog` migration removed state that had a use.**
+  `config-page`'s `isRemoving` had no reader once the dialog owned the
+  spinner. Rather than delete it, `removingLibraryId` now means "which
+  row is busy" and the row says "Removing…" — the removal is a backend
+  call of unknown length, and moving the confirmation out of the page
+  had quietly removed the only feedback that it had started.
+
+#### Not done, and still worth doing (after the second pass)
+
+Item 4's remaining smaller items, each independently landable: the
+album page's primary action and its unexplained ✓ badges (`H-13`), the
+`?` shortcuts overlay (and with it keyboard seeking from a focused
+row), Settings reordered with a Playback section (`H-22`) together with
+`a11y.1` (`config-section`'s disclosure header is a bare `<div @click>`,
+so every setting is behind a control that cannot be tabbed to) and
+`a11y.2` (the Downloads tabs), an Album column in the track list
+(`H-15`), and `cover-grid`'s dead album dropdown (`perf.p2`).
+
+Three inherited items are unchanged: `tracklist.delete` (below), the
+header search box on `smart-playlist-details`, and keyboard seeking
+from a focused row.
+
+**`tracklist.delete` was deliberately not built.** It needs a "remove
+from library" that does not exist *and* a decision about what it
+removes. Neither answer is currently right: removing the row is a lie
+unless it also excludes the path, since the next scan brings it back,
+and removing the file is a delete-your-music button one keystroke from
+a focused row. The honest interim is to stop advertising the binding in
+Settings; that is not done yet either.
+
 ## Phase 6 — Explore starts the conversation
 
 The only phase that adds rather than repairs.

@@ -237,7 +237,24 @@ See `.planning/plans/active/005-agent-development-harness.md`.
   says so. Its queries (`sql/queries/home.sql`) return album ids only
   and are joined back to `GetAllAlbumsWithDetails` in Go, so the album
   projection has one definition. A shelf with nothing behind it is
-  omitted, never rendered empty.
+  omitted, never rendered empty — **and so is a shelf that repeats the
+  one above it**, which is the same rule one step further: "On repeat"
+  was "Pick up where you left off" reordered, because a small library
+  has one signal and answers several questions with the same albums.
+  Two guards make that safe, and both were arrived at by breaking the
+  existing tests: only shelves of three or more albums are judged (two
+  rows of one overlap by 100% whenever they agree at all), and only
+  when the shelf is **not showing the whole library** — a repeat is a
+  fault only if a different row was possible. Measured against a fixed
+  shelf size instead, an 11-album library kept three identical shelves
+  while a 13-album one lost them.
+
+  **The app lands here**, from `index.ts` after the stores are wired.
+  `index.html` still renders the track list eagerly and it is still what
+  paints first — it is the cached `tracks` view, so the navigation is a
+  class toggle plus one chunk rather than a second render of the shell.
+  `app-sidebar`'s default `activeView` is `home` to match, because the
+  sidebar does not hear a `navigate` it did not send.
 - `profiling` — pprof server on `:6060`, compiled out in non-dev builds via build tags (`internal/dev/`).
 
 **Explore catalog** (`backend/explore/`): the searchable MusicBrainz/
@@ -346,6 +363,75 @@ debugging tool.
 Destructive actions ask once, through `confirmAction()`
 (`components/confirm-dialog/`), which is a `wa-dialog` and so brings the
 focus trap and Escape the hand-rolled overlays do not have.
+
+**Every dialog in the app is a `wa-dialog`, and there is no sixth
+pattern.** The four hand-rolled autotag overlays and the remove-library
+confirmation had no `role`, no `aria-modal`, no focus trap and no focus
+restore — including the two gating an irreversible on-disk metadata
+rewrite. The split is by *shape*, not by owner: a dialog that only asks
+a question is a `confirmAction()` call (title, message, impact,
+confirm/cancel), and a dialog carrying **input** is a `<wa-dialog>` in
+the host's own template. Both remaining autotag dialogs render
+unconditionally with `?open` deciding which is up — mounting one on
+demand puts the element and its `showModal()` in the same update.
+`autotag-view`'s last document keydown listener died with them; it
+existed only because its dialogs could not close themselves.
+
+**A menu has a keyboard model, and it is one model.**
+`utils/context-menu-controller.ts` exports **`MenuKeyboard`** — focus
+the first item on open, Arrow/Home/End to move (wrapping, as a menu
+does and a listbox does not), Enter/Space to activate, Escape or Tab to
+close, and focus back to the element it opened from. It is standalone
+rather than part of `ContextMenuController` because `playlist-view`
+renders a menu without that controller, and two menus with two keyboard
+models is exactly what this is for. `isContextMenuKey()` is the
+Shift+F10 / ContextMenu-key test, and `openFrom(el)` is the keyboard
+open: anchored to the element, restoring focus to it.
+
+Four things in it are load-bearing, and two of them are only visible
+against the real components:
+
+- **The items are not items yet when the host finishes updating.**
+  `wa-dropdown-item` sets its `role` in its *own* first update, so a
+  `[role^="menuitem"]` query at `updateComplete` finds nothing — which
+  reads exactly like a menu that opened and refused to take focus.
+- **`focus()` on a popup that has not positioned itself is a silent
+  no-op**, so the first focus is retried across a few frames.
+- **Focus is only taken back if the menu had it.** A click elsewhere
+  closes the menu too, and pulling focus to the row the user
+  right-clicked a moment ago is worse than leaving it.
+- **Web Awesome keys an item's tabindex and highlight off `active`**, so
+  moving focus without setting it leaves the highlight on whichever
+  item the mouse last touched.
+
+Three lists had no focused row to open a menu *from* — the queue panel
+and both playlist detail views — and gained a roving tab stop through
+`utils/roving-rows.ts`. **`track-list` deliberately does not use it**:
+its equivalent predates this, carries selection semantics (shift-extend,
+ctrl-toggle) the other three do not have, and is pinned by its own
+tests.
+
+**Async surfaces say what they are doing.** `styles/sr-only.css.ts`
+carries the visually-hidden class and the rule that comes with it: a
+live region must be **in the DOM before the text it announces is**,
+because most screen readers announce a change to a region they are
+already watching and ignore one that appears with its content already
+in it. So these regions render unconditionally and empty, and only
+their text changes. Four surfaces have one — the track list (loading,
+failed, and how many rows a search matched), Explore's search,
+`now-playing` (in **both** render branches, so it exists before the
+first track arrives) and `job-indicator`, whose label swings between
+"Scanning Music", "3 background jobs" and "Finished". The notification
+surface already had one from Phase 3.
+
+**A selectable grid is a listbox.** The four grids that ctrl/shift-select
+(`artists-view`, `genres-view`, `cover-grid`, and the queue) are
+`role="listbox" aria-multiselectable` over `role="option"` cards, not
+rows of `role="button"`: `aria-selected` on a button is *invalid* and is
+dropped outright, so the state the whole ctrl/shift interaction exists
+to produce was invisible to anything but a sighted user. `track-list`'s
+column headers carry `aria-sort` (Phase 1 added `role="columnheader"`
+without it) and are activated by Enter/Space as well as by a click.
 
 **One keyboard authority.** No component owns a document keydown
 listener for its own shortcuts; it registers *panel-scoped* bindings

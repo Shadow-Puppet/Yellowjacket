@@ -1329,3 +1329,100 @@ Seven things worth keeping:
   header now renders during load and omits the count until there is an
   answer — `null` meaning "no answer yet", which is a different thing
   from zero and has to be a different value.
+
+## An audit ages against the code, and the oldest claims are the least checked
+
+Plan 007 phase 5, second pass: the five hand-rolled dialogs, the context
+menu's keyboard model, the ARIA tail, and landing on Home. `a11y.md` was
+the least verified material in the repo — three of its 34 findings had
+been touched before this pass — and treating each one as a hypothesis
+was worth it three times over.
+
+The generalisation the pass adds to "an audit's magnitude and its
+mechanism are two claims": **a finding also has a date, and the code has
+moved since.** Three of the findings here describe a build that no
+longer exists, in three different ways:
+
+- **Fixed by a phase that was not about it.** `a11y.12` lists five
+  silent async surfaces. The first is `config-page`'s private toast,
+  which Phase 3 *deleted* — and the surface that replaced it has had
+  `role="status" aria-live="polite"` since the day it was written. Two
+  of five bullets were already closed.
+- **Half-fixed, so the stated mechanism is now wrong.** `H-9` says the
+  Home card's missing-art placeholder "has no background". It has one;
+  it is `--yj-bg-surface`, which is almost exactly the page colour, and
+  it holds a `wa-icon` — which has rendered at all only since Phase 4
+  bundled the icons. "Renders as nothing" was *literally* true offline
+  when the audit was written and is now merely nearly true. Fixing the
+  stated cause would have changed one line and nothing visible.
+- **Reproduces differently.** `H-9`'s other half says "all three shelves
+  show the same seven albums". There are five shelves and the
+  duplication is one adjacent *pair*. The fix is still right; a rule
+  written from the sentence rather than from the page would have been
+  aimed at three shelves that do not exist.
+
+Seven more things worth keeping:
+
+- **The existing tests caught two bad versions of a new rule; the new
+  test caught neither.** "Suppress a shelf that repeats the one above"
+  is one line of intent and three of policy. Version one collapsed a
+  four-album library to a single shelf. Version two, guarded by a fixed
+  shelf size, let an 11-album library keep three identical shelves while
+  a 13-album one lost them. The rule that survives is **"a repeat is a
+  fault only if a different row was possible"** — the shelf must not be
+  showing the whole library — and the reason it is right is that it is
+  about the library rather than about a constant. A test written for a
+  change tests the change; the tests already there are what test the
+  system.
+- **A default that is a behaviour has to be changed in two places, and
+  one of them is a test suite.** Landing on Home broke **eleven** e2e
+  specs. Nine assumed the track list is on screen at startup. One failed
+  because every primary view stays in the DOM and Home names the same
+  artists, so an unscoped `getByText().first()` matched a card on a
+  `.view-hidden` page. And one was a real bug: `getByRole('button',
+  {name: 'Shuffle'})` resolved to *two* elements, because Home's
+  page-header action and the transport's shuffle mode had the same
+  accessible name and had never been on screen together. A cached view
+  is in the accessibility tree from the first paint, so "these two
+  controls are on different pages" stopped being true the moment the app
+  started on one of them.
+- **A component test against hand-built markup cannot see a web
+  component's own lifecycle.** Two of the three things that made the
+  menu keyboard model work are invisible to it: `wa-dropdown-item` sets
+  its `role` in its *own* first update, so a query at the host's
+  `updateComplete` finds no items at all; and `focus()` on a `wa-popup`
+  that has not positioned itself is a silent no-op. Both produce a menu
+  that opens and refuses to take focus. Both were found by driving the
+  real app, and the e2e spec exists because the component test passes
+  either way.
+- **The rule for a live region is about ordering, not markup.** Most
+  screen readers announce a *change* to a region they are already
+  watching and ignore one that appears with its content already in it —
+  which is why `catalog-scope-notice` had a `role="status"` that
+  announced nothing. So the regions render unconditionally and empty
+  and only their text changes, and `now-playing`'s is in **both** render
+  branches, because the branch with no track is the one that has to be
+  mounted before the first track arrives.
+- **`aria-selected` on `role="button"` is not useless, it is dropped.**
+  Four grids whose entire ctrl/shift interaction exists to produce a
+  selection were publishing it into a void. The fix is not an attribute
+  but a role: `listbox`/`option`.
+- **A backtick in a comment inside a `css` tagged template literal ends
+  the literal.** The skill has warned about this for two plans. I did it
+  twice in one session — once in a component, where `tsc` pointed at the
+  line, and once in `tokens.css.ts`, where **every test file in the
+  suite failed to import** and the output reads like a broken test
+  runner. If the whole tier dies at once, suspect the shared module.
+- **Migrating a dialog can delete feedback nobody listed.**
+  `config-page`'s remove-library spinner lived *in* the hand-rolled
+  overlay, so moving the confirmation to `confirmAction()` left a
+  backend call of unknown length with no indication it had started. The
+  state field it used had no reader afterwards, which is the tell:
+  `removingLibraryId` now means "which row is busy" and the row says so.
+
+And one on the harness: **`e2e` has now failed in CI on two consecutive
+commits that changed no application code** — `9e92721` (docs only) and
+`9f03b3f` (a workflow and a shell script). `check` passed on both. That
+is not proof the container's audio clock is the whole story, but a
+failure on a commit which cannot have caused it is worth more than a
+green run, and it is two of them.
