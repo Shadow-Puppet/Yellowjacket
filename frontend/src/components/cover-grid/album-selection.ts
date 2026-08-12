@@ -1,6 +1,7 @@
 import {
     GetAlbumTracks,
     GetAlbumTracksByLibrary,
+    GetFilePathsByAlbums,
 } from '@go/library/Library';
 import { libraryStore } from '@store/library-store';
 import type { library } from '@go/models';
@@ -62,6 +63,31 @@ export class AlbumSelectionManager {
             : GetAlbumTracks(albumId);
     }
 
+    /**
+     * File paths for several albums in one call, keyed
+     * by album id.
+     *
+     * perf.m2: every caller below used to loop over the
+     * albums awaiting `GetAlbumTracks` per album, so
+     * Ctrl+A over 5 000 albums was 5 000 sequential
+     * round trips — each returning whole track rows to
+     * read one field off them.
+     */
+    private async fetchAlbumPaths(
+        albumIds: Iterable<number>,
+    ): Promise<Record<number, string[]>> {
+        const ids = Array.from(albumIds).filter((id) =>
+            this.albumById.has(id),
+        );
+
+        if (ids.length === 0) return {};
+
+        const libId =
+            libraryStore.getSelectedLibraryId();
+
+        return GetFilePathsByAlbums(ids, libId ?? 0);
+    }
+
     // ================================================================
     // Album selection helpers
     // ================================================================
@@ -99,19 +125,25 @@ export class AlbumSelectionManager {
     async getSelectedAlbumFilePaths(
         selectedAlbums: Set<number>,
     ): Promise<string[]> {
-        const allPaths: string[] = [];
+        try {
+            const byAlbum = await this.fetchAlbumPaths(
+                selectedAlbums,
+            );
+            const allPaths: string[] = [];
 
-        for (const id of selectedAlbums) {
-            const album = this.albumById.get(id);
+            for (const id of selectedAlbums) {
+                allPaths.push(...(byAlbum[id] ?? []));
+            }
 
-            if (!album) continue;
+            return allPaths;
+        } catch (error) {
+            console.error(
+                'Error loading album tracks:',
+                error,
+            );
 
-            const paths =
-                await this.getAlbumFilePaths(album);
-            allPaths.push(...paths);
+            return [];
         }
-
-        return allPaths;
     }
 
     /**
@@ -182,32 +214,30 @@ export class AlbumSelectionManager {
     async warmCache(
         selectedAlbums: Set<number>,
     ): Promise<void> {
-        for (const id of selectedAlbums) {
-            if (this.albumFilePathCache.has(id)) {
-                continue;
-            }
+        const missing = [...selectedAlbums].filter(
+            (id) => !this.albumFilePathCache.has(id),
+        );
 
-            const album = this.albumById.get(id);
+        try {
+            const byAlbum =
+                await this.fetchAlbumPaths(missing);
 
-            if (!album) continue;
+            for (const id of missing) {
+                const paths = byAlbum[id];
 
-            try {
-                const tracks =
-                    await this.fetchAlbumTracks(
-                        album.ID,
-                    );
-
-                // Only store if still selected.
-                if (selectedAlbums.has(album.ID)) {
+                // Only store if still selected: the
+                // selection can have moved on while
+                // this was in flight.
+                if (paths && selectedAlbums.has(id)) {
                     this.albumFilePathCache.set(
-                        album.ID,
-                        tracks.map((t) => t.FilePath),
+                        id,
+                        paths,
                     );
                 }
-            } catch {
-                // Silently skip — drag will just not
-                // include this album's paths.
             }
+        } catch {
+            // Silently skip — drag will just not
+            // include these albums' paths.
         }
 
         // Prune stale entries (6h).

@@ -18,13 +18,16 @@ import {
 import { library } from '@go/models';
 import { LibraryController } from '@store/controllers/library-controller';
 import { SearchController } from '@store/controllers/search-controller';
+import { ViewLifecycleMixin } from '@utils/view-lifecycle';
+import { RovingGridController } from '@utils/roving-grid';
 import { queueStore } from '@store/queue-store';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
 import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@components/playlist-picker/playlist-picker.js';
-import '@components/track-details/track-details.js';
+import { loadTrackDetails } from '@utils/lazy-track-details.js';
+import { tracksByFilePath, tracksForPaths } from '@utils/track-index.js';
 import type { TrackDetails } from '@components/track-details/track-details.js';
 import type { CoverArtUrls } from '@components/track-details/track-details.js';
 import { AlbumSelectionManager } from './album-selection.js';
@@ -69,7 +72,7 @@ import type {
 
 @customElement('cover-grid')
 export class CoverGrid
-    extends LitElement
+    extends ViewLifecycleMixin(LitElement)
     implements ContextMenuHost, ScrollManagerHost
 {
     /**
@@ -276,6 +279,18 @@ export class CoverGrid
 
     @state()
     private loading = true;
+
+    /** One tab stop for the grid, moved with the arrow keys — a card per
+     *  tab stop makes a library-length tab sequence (H-5). */
+    private roving = new RovingGridController(this, {
+        cardSelector: '.album-card',
+        count: () => this.buildGridEntries().length,
+        scrollToIndex: (index) => {
+            this.shadowRoot
+                ?.querySelector<LitVirtualizer>('lit-virtualizer')
+                ?.scrollToIndex(index, 'nearest');
+        },
+    });
 
     private contextMenuTarget: ContextMenuTarget = {
         kind: 'album',
@@ -500,11 +515,6 @@ export class CoverGrid
         this.restoreSortPreferences();
         this.loadAlbums();
 
-        document.addEventListener(
-            'mousedown',
-            this.sortDropdownCloseHandler,
-        );
-
         // error events do not bubble — use capture
         // phase to catch <img> load failures.
         this.addEventListener(
@@ -514,13 +524,17 @@ export class CoverGrid
         );
     }
 
-    override disconnectedCallback() {
-        super.disconnectedCallback();
-
-        document.removeEventListener(
+    protected override onViewActivate(): void {
+        this.listenWhileActive(
+            document,
             'mousedown',
             this.sortDropdownCloseHandler,
         );
+    }
+
+    override disconnectedCallback() {
+        super.disconnectedCallback();
+
         this.removeEventListener(
             'error',
             this.onGridImageError,
@@ -1501,9 +1515,9 @@ export class CoverGrid
                 break;
             case 'track-details':
                 if (filePaths.length === 1) {
-                    this.openTrackDetails(filePaths[0]!);
+                    void this.openTrackDetails(filePaths[0]!);
                 } else {
-                    this.openBatchTrackDetails(filePaths);
+                    void this.openBatchTrackDetails(filePaths);
                 }
                 break;
         }
@@ -1541,12 +1555,18 @@ export class CoverGrid
         }
     }
 
-    private openTrackDetails(filePath: string) {
-        const track = this.expandedTracks.find(
-            (t) => t.FilePath === filePath,
-        );
+    private async openTrackDetails(filePath: string) {
+        const track = tracksByFilePath(
+            this.expandedTracks,
+        ).get(filePath);
 
         if (!track) return;
+
+        const ready = await loadTrackDetails(
+            () => void this.openTrackDetails(filePath),
+        );
+
+        if (!ready) return;
 
         const coverArt =
             this.selMgr.resolveTrackCoverArt(
@@ -1560,20 +1580,21 @@ export class CoverGrid
         );
     }
 
-    private openBatchTrackDetails(
+    private async openBatchTrackDetails(
         filePaths: string[],
     ) {
-        const tracks = filePaths
-            .map((fp) =>
-                this.expandedTracks.find(
-                    (t) => t.FilePath === fp,
-                ),
-            )
-            .filter(
-                (t): t is library.Track => t != null,
-            );
+        const tracks = tracksForPaths(
+            this.expandedTracks,
+            filePaths,
+        );
 
         if (tracks.length === 0) return;
+
+        const ready = await loadTrackDetails(
+            () => void this.openBatchTrackDetails(filePaths),
+        );
+
+        if (!ready) return;
 
         const albumNames = new Set(
             tracks.map((t) => t.Album),
@@ -1791,7 +1812,8 @@ export class CoverGrid
         return html`
             <div
                 class=${classes}
-                tabindex="0"
+                tabindex=${this.roving.tabIndexFor(index)}
+                @focus=${() => this.roving.noteFocus(index)}
                 role="button"
                 data-index=${index}
                 aria-label="${album.Name} by ${album.ArtistName}"
@@ -1879,6 +1901,7 @@ export class CoverGrid
             <div
                 class="grid-scroll-container"
                 @click=${this.onGridClick}
+                @keydown=${this.roving.handleKeydown}
             >
                 ${gridContent}
             </div>

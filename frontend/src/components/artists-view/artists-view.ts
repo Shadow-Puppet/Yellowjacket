@@ -12,9 +12,8 @@ import type {
 import { grid } from '@lit-labs/virtualizer/layouts/grid.js';
 import {
     GetAlbumsByArtist,
-    GetAlbumTracks,
     GetAlbumsByArtistByLibrary,
-    GetAlbumTracksByLibrary,
+    GetFilePathsByAlbums,
 } from '@go/library/Library';
 import { library } from '@go/models';
 import { LibraryController } from '@store/controllers/library-controller';
@@ -27,6 +26,8 @@ import {
 } from '@utils/context-menu-controller.js';
 import type { ContextMenuHost } from '@utils/context-menu-controller.js';
 import { FavoritesController } from '@store/controllers/favorites-controller';
+import { ViewLifecycleMixin } from '@utils/view-lifecycle';
+import { RovingGridController } from '@utils/roving-grid';
 
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
@@ -58,7 +59,7 @@ interface ArtistEntry {
 
 @customElement('artists-view')
 export class ArtistsView
-    extends LitElement
+    extends ViewLifecycleMixin(LitElement)
     implements ContextMenuHost
 {
     private libraryCtrl = new LibraryController(this);
@@ -67,6 +68,18 @@ export class ArtistsView
     private favCtrl = new FavoritesController(this);
     private wheelListenerAttached = false;
     private lastSearchTerm = '';
+
+    /** One tab stop for the whole grid, moved with the arrows — a card
+     *  per tab stop makes a library-length tab sequence (H-5). */
+    private roving = new RovingGridController(this, {
+        cardSelector: '.artist-card',
+        count: () => this.cachedGridEntries.length,
+        scrollToIndex: (index) => {
+            this.shadowRoot
+                ?.querySelector<LitVirtualizer>('lit-virtualizer')
+                ?.scrollToIndex(index, 'nearest');
+        },
+    });
 
     /** Tracks the store's cached array reference to detect refreshes. */
     private lastArtistsRef: library.Artist[] | null =
@@ -408,9 +421,17 @@ export class ArtistsView
     override disconnectedCallback() {
         super.disconnectedCallback();
         this.detachWheelListener();
+    }
+
+    /** The wheel listener and the scroll debounce belong to the grid
+     *  while it is on screen; off-screen it cannot be scrolled, and a
+     *  cached view is never disconnected. */
+    protected override onViewDeactivate(): void {
+        this.detachWheelListener();
 
         if (this.scrollDebounceTimer !== null) {
             clearTimeout(this.scrollDebounceTimer);
+            this.scrollDebounceTimer = null;
         }
     }
 
@@ -938,8 +959,13 @@ export class ArtistsView
 
     /**
      * Fetches all file paths for an artist by
-     * loading their albums, then each album's
-     * tracks.  Respects the active library filter.
+     * loading their albums, then every album's paths
+     * in one call.  Respects the active library filter.
+     *
+     * perf.m2: this was a `for await` over the albums,
+     * so a 16-album artist was 17 sequential round
+     * trips returning whole track rows to read one
+     * field off each.
      */
     private async getArtistFilePaths(
         artist: library.Artist,
@@ -955,19 +981,23 @@ export class ArtistsView
                   )
                 : await GetAlbumsByArtist(artist.ID);
 
+            const byAlbum =
+                await GetFilePathsByAlbums(
+                    albums.map((a) => a.ID),
+                    libId ?? 0,
+                );
+
             const allPaths: string[] = [];
 
+            // The album order is the caller's, which is
+            // why the backend groups rather than
+            // flattens.  Keys arrive as strings, JSON
+            // having no integer keys.
             for (const album of albums) {
-                const tracks = libId !== null
-                    ? await GetAlbumTracksByLibrary(
-                          album.ID,
-                          libId,
-                      )
-                    : await GetAlbumTracks(album.ID);
+                const paths =
+                    byAlbum[album.ID] ?? [];
 
-                for (const t of tracks) {
-                    allPaths.push(t.FilePath);
-                }
+                allPaths.push(...paths);
             }
 
             return allPaths;
@@ -998,23 +1028,18 @@ export class ArtistsView
         }
 
         // Fallback: use album cover art if no artist image.
+        //
+        // `perf.M4`. This was a linear scan of every cached album,
+        // lowercasing two strings per comparison, run from inside the
+        // virtualizer's `renderItem` — so per card, per frame. It is
+        // also the *common* case rather than an edge one: a
+        // locally-tagged library has no artist images at all (the bulk
+        // measurement seed has 440 artists, 4 988 albums and zero
+        // images), so every visible card paid it on every pass.
         if (!imageURL) {
-            const cachedAlbums = libraryStore.cachedAlbums;
-            if (cachedAlbums) {
-                const name = artist.Name.toLowerCase();
-
-                for (const a of cachedAlbums) {
-                    if (a.ArtistName.toLowerCase() === name) {
-                        if (needed <= 100) {
-                            imageURL = a.CoverArtSmall || a.CoverArtMedium || '';
-                        } else {
-                            imageURL = a.CoverArtMedium || a.CoverArtLarge || '';
-                        }
-
-                        if (imageURL) break;
-                    }
-                }
-            }
+            imageURL = this.albumArtByArtist().get(
+                artist.Name.toLowerCase(),
+            ) ?? '';
         }
 
         if (imageURL) {
@@ -1029,6 +1054,58 @@ export class ArtistsView
         return html`<span class="avatar-placeholder">
             ${this.getArtistInitial(artist.Name)}
         </span>`;
+    }
+
+    /**
+     * Lowercased artist name → that artist's cover art, built once per
+     * identity of the album cache rather than per card per frame.
+     *
+     * Keyed on the array identity because that is exactly what
+     * `library-store` gives it: the store replaces the array when its
+     * contents change and shares the unchanged members, which is the
+     * same signal every memoized cache in `track-list` keys on.  The
+     * size hint is included so a *tier* change (the grid resizing past
+     * one of `getCoverUrl`'s breakpoints) also rebuilds.
+     */
+    private albumArtCache?: {
+        albums: readonly library.Album[];
+        needed: number;
+        map: Map<string, string>;
+    };
+
+    private albumArtByArtist(): Map<string, string> {
+        const albums = libraryStore.cachedAlbums;
+        const needed = (this.imageSize ?? 176) * window.devicePixelRatio;
+
+        if (!albums) return new Map();
+
+        if (
+            this.albumArtCache
+            && this.albumArtCache.albums === albums
+            && this.albumArtCache.needed === needed
+        ) {
+            return this.albumArtCache.map;
+        }
+
+        const map = new Map<string, string>();
+
+        for (const a of albums) {
+            const key = a.ArtistName.toLowerCase();
+
+            // First album wins, which is what the original scan did by
+            // breaking on its first match.
+            if (map.has(key)) continue;
+
+            const url = needed <= 100
+                ? a.CoverArtSmall || a.CoverArtMedium || ''
+                : a.CoverArtMedium || a.CoverArtLarge || '';
+
+            if (url) map.set(key, url);
+        }
+
+        this.albumArtCache = { albums, needed, map };
+
+        return map;
     }
 
     private getArtistInitial(
@@ -1057,7 +1134,9 @@ export class ArtistsView
                 class="artist-card${isSelected
                     ? ' selected'
                     : ''}"
-                tabindex="0"
+                data-index=${index}
+                tabindex=${this.roving.tabIndexFor(index)}
+                @focus=${() => this.roving.noteFocus(index)}
                 role="button"
                 aria-label="${artist.Name}"
                 aria-selected="${isSelected}"
@@ -1292,6 +1371,7 @@ export class ArtistsView
                     ? 'visibility: hidden'
                     : ''}
                 @click=${this.onGridClick}
+                @keydown=${this.roving.handleKeydown}
             >
                 <lit-virtualizer
                     .items=${entries}

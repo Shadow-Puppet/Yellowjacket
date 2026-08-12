@@ -11,8 +11,7 @@ import type {
 } from '@lit-labs/virtualizer';
 import { grid } from '@lit-labs/virtualizer/layouts/grid.js';
 import {
-    GetTracksByGenre,
-    GetTracksByGenreByLibrary,
+    GetFilePathsByGenres,
 } from '@go/library/Library';
 import type { library } from '@go/models';
 import { LibraryController } from '@store/controllers/library-controller';
@@ -24,6 +23,8 @@ import {
 } from '@utils/context-menu-controller.js';
 import type { ContextMenuHost } from '@utils/context-menu-controller.js';
 import { FavoritesController } from '@store/controllers/favorites-controller';
+import { ViewLifecycleMixin } from '@utils/view-lifecycle';
+import { RovingGridController } from '@utils/roving-grid';
 
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
@@ -59,7 +60,7 @@ interface GenreEntry {
 
 @customElement('genres-view')
 export class GenresView
-    extends LitElement
+    extends ViewLifecycleMixin(LitElement)
     implements ContextMenuHost
 {
     private libraryCtrl = new LibraryController(this);
@@ -68,6 +69,18 @@ export class GenresView
     private favCtrl = new FavoritesController(this);
     private wheelListenerAttached = false;
     private lastSearchTerm = '';
+
+    /** See artists-view: one tab stop for the grid, moved with the
+     *  arrow keys. */
+    private roving = new RovingGridController(this, {
+        cardSelector: '.genre-card',
+        count: () => this.cachedGridEntries.length,
+        scrollToIndex: (index) => {
+            this.shadowRoot
+                ?.querySelector<LitVirtualizer>('lit-virtualizer')
+                ?.scrollToIndex(index, 'nearest');
+        },
+    });
 
     /** Tracks the store's cached array reference to detect refreshes. */
     private lastGenresRef:
@@ -400,9 +413,16 @@ export class GenresView
     override disconnectedCallback() {
         super.disconnectedCallback();
         this.detachWheelListener();
+    }
+
+    /** See artists-view: off-screen the grid cannot be scrolled, and
+     *  being cached it is never disconnected. */
+    protected override onViewDeactivate(): void {
+        this.detachWheelListener();
 
         if (this.scrollDebounceTimer !== null) {
             clearTimeout(this.scrollDebounceTimer);
+            this.scrollDebounceTimer = null;
         }
     }
 
@@ -737,24 +757,24 @@ export class GenresView
         const libId =
             this.libraryCtrl.selectedLibraryId;
 
-        const promises = Array.from(
-            genreNames,
-            (name) =>
-                libId !== null
-                    ? GetTracksByGenreByLibrary(
-                          name,
-                          libId,
-                      )
-                    : GetTracksByGenre(name),
+        // perf.m2: one call per genre, each returning
+        // whole track rows so the file path could be
+        // read off them — 6 MB over the IPC for five
+        // genres of a 50 000-track library.
+        const names = Array.from(genreNames);
+        const byGenre = await GetFilePathsByGenres(
+            names,
+            libId ?? 0,
         );
 
-        const results = await Promise.all(promises);
-
-        for (const tracks of results) {
-            for (const track of tracks ?? []) {
-                if (!seen.has(track.FilePath)) {
-                    seen.add(track.FilePath);
-                    allPaths.push(track.FilePath);
+        // Still de-duplicated here: a track with two of
+        // the selected genres appears under both, and
+        // the caller owns the order.
+        for (const name of names) {
+            for (const path of byGenre[name] ?? []) {
+                if (!seen.has(path)) {
+                    seen.add(path);
+                    allPaths.push(path);
                 }
             }
         }
@@ -945,7 +965,9 @@ export class GenresView
                 class="genre-card${isSelected
                     ? ' selected'
                     : ''}"
-                tabindex="0"
+                data-index=${index}
+                tabindex=${this.roving.tabIndexFor(index)}
+                @focus=${() => this.roving.noteFocus(index)}
                 role="button"
                 aria-label="${genre.name}"
                 aria-selected="${isSelected}"
@@ -1190,6 +1212,7 @@ export class GenresView
                     ? 'visibility: hidden'
                     : ''}
                 @click=${this.onGridClick}
+                @keydown=${this.roving.handleKeydown}
             >
                 <lit-virtualizer
                     .items=${entries}

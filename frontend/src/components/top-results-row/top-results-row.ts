@@ -264,7 +264,19 @@ export class TopResultsRow extends LitElement {
                   : 'track';
 
         return html`
-            <div class="card" @click=${() => this.handleClick(r)}>
+            <div
+                class="card"
+                role="button"
+                tabindex="0"
+                aria-label=${`${badgeLabel(r.entityType)}: ${r.name}`}
+                @click=${() => this.handleClick(r)}
+                @keydown=${(e: KeyboardEvent) => {
+                    if (e.key !== 'Enter' && e.key !== ' ') return;
+
+                    e.preventDefault();
+                    this.handleClick(r);
+                }}
+            >
                 <span
                     class="badge"
                     style="background: ${badgeColor(r.entityType)}"

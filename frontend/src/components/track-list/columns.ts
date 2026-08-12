@@ -57,8 +57,32 @@ export const COLUMN_DEFS: Record<string, ColumnDef> = {
         accessor: () => '',
         defaultWidth: '36px',
         renderCell: (track: library.Track) => {
-            if (!track.CoverArtPath) return nothing;
-            return html`<img src="${track.CoverArtPath}" alt="" style="width:24px;height:24px;border-radius:3px;object-fit:cover;display:block;" />`;
+            // `perf.M3`. This rendered `CoverArtPath` — the *original*
+            // embedded artwork, commonly 1500×1500 and several hundred
+            // kB — scaled by CSS into a 24 px box, while the 100 px
+            // `CoverArtSmall` sat unused on the same model. Every row
+            // the virtualizer recycled into view decoded a full
+            // resolution JPEG on the main thread to draw 576 pixels.
+            //
+            // `cover-grid.getCoverUrl()` has picked the right tier all
+            // along; this is the same rule for a much smaller box, with
+            // the two attributes that keep the decode off the scroll
+            // path.
+            const src = track.CoverArtSmall
+                || track.CoverArtMedium
+                || track.CoverArtPath;
+
+            if (!src) return nothing;
+
+            return html`<img
+                src="${src}"
+                alt=""
+                loading="lazy"
+                decoding="async"
+                width="24"
+                height="24"
+                style="width:24px;height:24px;border-radius:3px;object-fit:cover;display:block;"
+            />`;
         },
     },
     trackName: {

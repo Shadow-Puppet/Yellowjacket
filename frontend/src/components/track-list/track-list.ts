@@ -9,6 +9,7 @@ import {
 } from 'lit/decorators.js';
 import { SelectionController } from '@utils/selection-controller';
 import type { SelectionHost } from '@utils/selection-controller';
+import { ViewLifecycleMixin } from '@utils/view-lifecycle';
 import {
     ContextMenuController,
     contextMenuStyles,
@@ -56,8 +57,10 @@ import '@awesome.me/webawesome/dist/components/popup/popup.js';
 import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
+import { describeError } from '@utils/describe-error';
+import { loadTrackDetails } from '@utils/lazy-track-details.js';
+import { tracksByFilePath, tracksForPaths } from '@utils/track-index.js';
 import '@components/playlist-picker/playlist-picker.js';
-import '@components/track-details/track-details.js';
 import type { TrackDetails } from '@components/track-details/track-details.js';
 import type { CoverArtUrls } from '@components/track-details/track-details.js';
 
@@ -85,7 +88,16 @@ const FAV_ICONS = {
 type SortDirection = 'asc' | 'desc';
 
 @customElement('track-list')
-export class TrackList extends LitElement implements SelectionHost, ContextMenuHost {
+export class TrackList
+    extends ViewLifecycleMixin(LitElement)
+    implements SelectionHost, ContextMenuHost
+{
+    /* Claimed while this list is the view on screen, which is what makes
+     * the `tracklist.*` bindings resolve at all: `data-shortcut-scope`
+     * was read by the shortcut service and set by nobody, so Enter and
+     * Delete were dead shortcuts the Settings page still advertised. */
+    protected override shortcutScope = 'tracklist';
+
     /**
      * When set, the list displays these tracks instead of
      * fetching all tracks from the library store.  The
@@ -93,6 +105,15 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
      */
     @property({ type: Array, attribute: false })
     externalTracks?: library.Track[];
+
+    /**
+     * Loading, empty and failed are three different things, and this
+     * list used to render all three as a permanent “Loading tracks…”
+     * — including on the first screen a new user ever sees, behind the
+     * first-run wizard (errors.M2, H-12). `home-view` is the model.
+     */
+    @state() private loadingTracks = false;
+    @state() private loadError = '';
 
     private player = new PlayerController(this);
     private libraryCtrl = new LibraryController(this);
@@ -172,9 +193,85 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
     private prevSortField: string | null = null;
     private prevSortDir: SortDirection = 'asc';
 
+    /** The row that holds the list's single tab stop.
+     *
+     *  A grid of ten thousand rows must not be ten thousand tab stops,
+     *  so one row is focusable at a time and the arrows move which — the
+     *  standard roving tabindex.  Before this the list had no keyboard
+     *  path into it at all (H-5). */
+    @state() private focusedIndex = 0;
+
     private handleSelectAll = (): void => {
         this.selection.selectAll();
     };
+
+    /** Arrow/Home/End move the focused row; Enter plays it.
+     *
+     *  Enter is not handled here — it is the `tracklist.play` binding,
+     *  which resolves because the list claims the `tracklist` shortcut
+     *  scope while it is on screen. */
+    private onListKeydown = (e: KeyboardEvent): void => {
+        const last = this.cachedSortedTracks.length - 1;
+
+        if (last < 0) return;
+
+        let next = this.focusedIndex;
+
+        switch (e.key) {
+            case 'ArrowDown':
+                next = Math.min(this.focusedIndex + 1, last);
+                break;
+            case 'ArrowUp':
+                next = Math.max(this.focusedIndex - 1, 0);
+                break;
+            case 'Home':
+                next = 0;
+                break;
+            case 'End':
+                next = last;
+                break;
+            case ' ':
+            case 'Enter':
+                return;
+            default:
+                return;
+        }
+
+        e.preventDefault();
+        e.stopPropagation();
+        this.focusRow(next, { select: e.shiftKey || !e.ctrlKey });
+    };
+
+    /** Move the roving tab stop, bringing the row into view and
+     *  selecting it so Enter and the context menu have a subject. */
+    private focusRow(
+        index: number,
+        opts: { select?: boolean } = {},
+    ): void {
+        const track = this.cachedSortedTracks[index];
+
+        if (!track) return;
+
+        this.focusedIndex = index;
+
+        if (opts.select) {
+            this.selection.clear();
+            this.selection.handleItemClick(
+                new MouseEvent('click'),
+                track.FilePath,
+                index,
+            );
+        }
+
+        this.virtualizer?.scrollToIndex(index, 'nearest');
+        void this.updateComplete.then(() => {
+            this.shadowRoot
+                ?.querySelector<HTMLElement>(
+                    `.track-row[data-index="${index}"]`,
+                )
+                ?.focus();
+        });
+    }
 
     private clearSelectionHandler = (e: MouseEvent) => {
         const path = e.composedPath();
@@ -611,11 +708,23 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
         return scaled;
     }
 
+    /** perf.m4: the drag's document listeners exist while it is dragging
+     *  and not before, which is the standard pattern and stops every
+     *  pointer move in the app calling a handler that guards and
+     *  returns. */
+    private attachColResizeListeners(on: boolean): void {
+        const fn = on ? 'addEventListener' : 'removeEventListener';
+
+        document[fn]('mousemove', this.onColResizeMove as EventListener);
+        document[fn]('mouseup', this.onColResizeEnd as EventListener);
+    }
+
     private onColResizeStart = (e: MouseEvent, columnIndex: number) => {
         e.preventDefault();
         this.resizingColumn = columnIndex;
         this.resizeStartX = e.clientX;
         this.resizeStartWidths = [...this.columnWidths];
+        this.attachColResizeListeners(true);
         this.requestUpdate();
     };
 
@@ -742,6 +851,8 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
     };
 
     private onColResizeEnd = () => {
+        this.attachColResizeListeners(false);
+
         if (this.resizingColumn === null) return;
 
         this.resizingColumn = null;
@@ -1059,6 +1170,22 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
       border-radius: 2px;
     }
 
+    .list-placeholder {
+      color: var(--yj-text-secondary, #b3b3b3);
+      padding: 1em;
+    }
+
+    .placeholder-action {
+      background: none;
+      border: 1px solid var(--yj-border, #495057);
+      border-radius: 4px;
+      color: inherit;
+      cursor: pointer;
+      font: inherit;
+      margin-top: 0.5em;
+      padding: 4px 10px;
+    }
+
   `];
 
     override connectedCallback() {
@@ -1070,12 +1197,6 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
         } else {
             this.loadTracks();
         }
-        document.addEventListener('mousedown', this.sortDropdownCloseHandler);
-        document.addEventListener('click', this.clearSelectionHandler);
-        document.addEventListener('shortcut:select-all', this.handleSelectAll);
-        document.addEventListener('mousemove', this.onColResizeMove);
-        document.addEventListener('mouseup', this.onColResizeEnd);
-
         this.resizeObserver = new ResizeObserver(
             () => {
                 this.onHostResize();
@@ -1102,16 +1223,48 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
             this.onVisibilityChanged,
         );
         this.hasRestoredScroll = false;
+        // A drag interrupted by the list going away still has to clean
+        // up after itself; these are no longer registered with the view
+        // lifecycle, so nothing else would.
+        this.attachColResizeListeners(false);
         super.disconnectedCallback();
-        document.removeEventListener('mousedown', this.sortDropdownCloseHandler);
-        document.removeEventListener('click', this.clearSelectionHandler);
-        document.removeEventListener('shortcut:select-all', this.handleSelectAll);
-        document.removeEventListener('mousemove', this.onColResizeMove);
-        document.removeEventListener('mouseup', this.onColResizeEnd);
 
         this.resizeObserver?.disconnect();
         this.resizeObserver = null;
     }
+
+    /** Document-level listeners belong to the *visible* list.  A cached
+     *  list is never disconnected, so this is the only place they can be
+     *  taken down again. */
+    protected override onViewActivate(): void {
+        this.listenWhileActive(
+            document,
+            'mousedown',
+            this.sortDropdownCloseHandler,
+        );
+        this.listenWhileActive(document, 'click', this.clearSelectionHandler);
+        this.listenWhileActive(
+            document,
+            'shortcut:select-all',
+            this.handleSelectAll,
+        );
+        this.listenWhileActive(
+            document,
+            'shortcut:tracklist-play',
+            this.handleShortcutPlay,
+        );
+    }
+
+    /** Enter plays the selection — the `tracklist.play` binding, which
+     *  has existed in the defaults and in Settings since it was written
+     *  and has never had anything on the other end of it. */
+    private handleShortcutPlay = (): void => {
+        const filePaths = this.selection.getSelectedKeysOrdered();
+
+        if (filePaths.length === 0) return;
+
+        queueStore.setQueue(filePaths, 0, true);
+    };
 
     override willUpdate(
         changed: Map<PropertyKey, unknown>,
@@ -1240,10 +1393,20 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
     }
 
     async loadTracks() {
+        this.loadingTracks = this.tracks.length === 0;
+        this.loadError = '';
+
         try {
             const tracks = await this.libraryCtrl.getTracks();
             this.tracks = tracks;
-            this.selection.clear();
+
+            // Keep what is still there. A refetch is not a
+            // deselection: this used to clear, so every finished track
+            // wiped the user's selection while music played (perf.C2).
+            // The keys are file paths, which survive a refetch.
+            const present = new Set(tracks.map((t) => t.FilePath));
+            this.selection.retain((key) => present.has(key));
+
             await this.updateComplete;
 
             if (this.isConnected && this.virtualizer) {
@@ -1254,7 +1417,43 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
             }
         } catch (error) {
             console.error('Error loading tracks:', error);
+            this.loadError = describeError(
+                error,
+                'Your tracks could not be loaded.',
+            );
+        } finally {
+            this.loadingTracks = false;
         }
+    }
+
+    /** Loading / failed / genuinely empty, said apart. */
+    private renderPlaceholder() {
+        if (this.loadError) {
+            return html`
+                <div class="list-placeholder" data-testid="track-list-error">
+                    <p>${this.loadError}</p>
+                    <button
+                        type="button"
+                        class="placeholder-action"
+                        @click=${() => void this.loadTracks()}
+                    >
+                        Try again
+                    </button>
+                </div>
+            `;
+        }
+
+        if (this.loadingTracks) {
+            return html`<p class="list-placeholder" data-testid="track-list-loading">
+                Loading tracks…
+            </p>`;
+        }
+
+        return html`<p class="list-placeholder" data-testid="track-list-empty">
+            ${this.externalTracks
+                ? 'Nothing here yet.'
+                : 'No tracks yet — add a folder in Settings to get started.'}
+        </p>`;
     }
 
     private onVisibilityChanged = (e: Event) => {
@@ -1364,6 +1563,9 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
         track: library.Track,
         index: number,
     ) {
+        // Clicking is also how the keyboard's starting point is chosen:
+        // tabbing back into the list should land where the user was.
+        this.focusedIndex = index;
         this.selection.handleItemClick(e, track.FilePath, index);
     }
 
@@ -1451,9 +1653,9 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
                 break;
             case 'track-details':
                 if (filePaths.length === 1) {
-                    this.openTrackDetails(filePaths[0]!);
+                    void this.openTrackDetails(filePaths[0]!);
                 } else {
-                    this.openBatchTrackDetails(filePaths);
+                    void this.openBatchTrackDetails(filePaths);
                 }
                 break;
         }
@@ -1482,12 +1684,18 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
         this.ctxMenu.close();
     }
 
-    private openTrackDetails(filePath: string) {
-        const track = this.tracks.find(
-            (t) => t.FilePath === filePath,
+    private async openTrackDetails(filePath: string) {
+        const track = tracksByFilePath(this.tracks).get(
+            filePath,
         );
 
         if (!track) return;
+
+        const ready = await loadTrackDetails(
+            () => void this.openTrackDetails(filePath),
+        );
+
+        if (!ready) return;
 
         const coverArt = track.CoverArtPath
             ? {
@@ -1504,20 +1712,21 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
         );
     }
 
-    private openBatchTrackDetails(
+    private async openBatchTrackDetails(
         filePaths: string[],
     ) {
-        const tracks = filePaths
-            .map((fp) =>
-                this.tracks.find(
-                    (t) => t.FilePath === fp,
-                ),
-            )
-            .filter(
-                (t): t is library.Track => t != null,
-            );
+        const tracks = tracksForPaths(
+            this.tracks,
+            filePaths,
+        );
 
         if (tracks.length === 0) return;
+
+        const ready = await loadTrackDetails(
+            () => void this.openBatchTrackDetails(filePaths),
+        );
+
+        if (!ready) return;
 
         // Use cover art from the first track. If all tracks share
         // the same album, they share the same art.
@@ -1738,12 +1947,17 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
             active,
             selected,
         })}
+        role="row"
+        aria-rowindex=${index + 1}
+        aria-selected=${selected}
+        tabindex=${index === this.focusedIndex ? 0 : -1}
         draggable="true"
         data-index=${index}
         data-testid="track-row"
         data-file-path=${track.FilePath}
       >
         <div
+          role="gridcell"
           class=${classMap({
             'fav-icon': true,
             favorited: isFav,
@@ -1756,7 +1970,7 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
         ${cols.map((col) => {
                 const customCell = col.renderCell?.(track);
                 if (customCell !== undefined && customCell !== nothing) {
-                    return html`<div class="cell">${customCell}</div>`;
+                    return html`<div role="gridcell" class="cell">${customCell}</div>`;
                 }
                 const val = col.accessor(track);
                 const centered = val === '\u2014';
@@ -1774,7 +1988,7 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
                 }
 
                 return html`
-                    <div class=${classMap({
+                    <div role="gridcell" class=${classMap({
                         cell: true,
                         'cell-center': centered,
                         'cell-right': !centered && col.align === 'right',
@@ -1899,15 +2113,22 @@ export class TrackList extends LitElement implements SelectionHost, ContextMenuH
 
         return html`
       ${this.tracks.length === 0
-                ? html`<p>Loading tracks...</p>`
+                ? this.renderPlaceholder()
                 : html`
             ${this.renderSortToolbar()}
-            <div class="table-container">
-            <div class="header-row">
-              <div></div>
+            <div
+              class="table-container"
+              role="grid"
+              aria-label="Tracks"
+              aria-rowcount=${visibleTracks.length}
+              @keydown=${this.onListKeydown}
+            >
+            <div class="header-row" role="row">
+              <div role="columnheader"></div>
               ${cols.map(
                     (col) => html`
                 <div
+                  role="columnheader"
                   class="header-cell ${col.align === 'right' ? 'cell-right' : ''}"
                   @click=${() =>
                           this.onHeaderCellClick(
