@@ -5,6 +5,8 @@ import type {
 } from 'lit';
 import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
 
+import { registerViewAware } from './view-lifecycle';
+
 /**
  * Host interface for components using the ContextMenuController.
  * The host must provide access to the popup elements (typically
@@ -96,7 +98,31 @@ export class ContextMenuController
     // LIFECYCLE
     // =================================================================
 
+    /** Whether the document listeners are currently installed. */
+    private listening = false;
+
     hostConnected(): void {
+        // On a cached view, connection is not the right signal: it never
+        // un-happens, so these listeners would stay on the document for
+        // the life of the session and close a menu belonging to a page
+        // the user left.  A lifecycle host drives attach/detach instead.
+        const managed = registerViewAware(this.host, {
+            onHostActivate: () => this.attach(),
+            onHostDeactivate: () => this.detach(),
+        });
+
+        if (!managed) this.attach();
+    }
+
+    hostDisconnected(): void {
+        this.detach();
+        this.clearSubmenuCloseTimer();
+    }
+
+    private attach(): void {
+        if (this.listening) return;
+
+        this.listening = true;
         document.addEventListener(
             'click',
             this.closeHandler,
@@ -111,7 +137,10 @@ export class ContextMenuController
         );
     }
 
-    hostDisconnected(): void {
+    private detach(): void {
+        if (!this.listening) return;
+
+        this.listening = false;
         document.removeEventListener(
             'click',
             this.closeHandler,
@@ -124,7 +153,6 @@ export class ContextMenuController
             'mousedown',
             this.mousedownCloseHandler,
         );
-        this.clearSubmenuCloseTimer();
     }
 
     // =================================================================

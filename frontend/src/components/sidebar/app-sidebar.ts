@@ -53,39 +53,57 @@ export class AppSidebar extends LitElement {
             padding: 16px;
         }
 
+        /* The nav item is a real <button>: it was a bare <li @click>,
+           which is why tabbing through the whole app reached fourteen
+           controls and not one of them was navigation (H-5). */
         li {
+            display: block;
+        }
+
+        li button {
             display: flex;
+            width: 100%;
             align-items: center;
             gap: 10px;
+            border: none;
             border-radius: 5px;
             padding: 8px;
             cursor: pointer;
+            background: none;
+            color: inherit;
+            font: inherit;
+            text-align: left;
             transition: background-color 0.15s ease;
         }
 
-        li wa-icon {
+        li button wa-icon {
             font-size: var(--yj-icon-md);
             flex-shrink: 0;
             width: 20px;
             text-align: center;
         }
 
-        li:hover {
+        li button:hover {
             background-color: var(--yj-bg-elevated, #343a40);
         }
 
-        li.active {
+        li button:focus-visible {
+            outline: 2px solid var(--yj-accent, #ffd43b);
+            outline-offset: -2px;
+        }
+
+        li button.active {
             background-color: var(--yj-bg-overlay, #495057);
         }
 
-        li p {
+        li button p {
             margin: 0;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
         }
 
-        li.drag-hover {
+        li button.drag-hover {
             background-color: var(
                 --yj-accent-bg-strong,
                 rgba(255, 212, 59, 0.15)
@@ -94,7 +112,7 @@ export class AppSidebar extends LitElement {
             outline-offset: -1px;
         }
 
-        li p {
+        li button p {
             font-size: var(--yj-text-md);
         }
 
@@ -103,16 +121,16 @@ export class AppSidebar extends LitElement {
             padding: 8px;
         }
 
-        :host(.collapsed) li {
+        :host(.collapsed) li button {
             justify-content: center;
             padding: 10px;
         }
 
-        :host(.collapsed) li p {
+        :host(.collapsed) li button p {
             display: none;
         }
 
-        :host(.collapsed) li wa-icon {
+        :host(.collapsed) li button wa-icon {
             font-size: var(--yj-icon-md);
         }
     `];
@@ -199,6 +217,7 @@ export class AppSidebar extends LitElement {
                 class="resize-handle ${this.isDragging ? 'dragging' : ''}"
                 @mousedown=${this.handleMouseDown}
             ></div>
+            <nav aria-label="Main">
             <ul>
                 ${this.navItems.map((item) => {
             const classes = [
@@ -213,34 +232,38 @@ export class AppSidebar extends LitElement {
                 .join(' ');
 
             return html`
-                        <li
-                            class=${classes}
-                            data-testid="nav-${item.id}"
-                            aria-current=${this.activeView === item.id
+                        <li>
+                            <button
+                                type="button"
+                                class=${classes}
+                                data-testid="nav-${item.id}"
+                                aria-current=${this.activeView === item.id
                     ? 'page'
                     : 'false'}
-                            @click=${() =>
+                                @click=${() =>
                     this.navigate(item.id)}
-                            @dragover=${(e: DragEvent) =>
+                                @dragover=${(e: DragEvent) =>
                     this.onNavDragOver(
                         e,
                         item.id,
                     )}
-                            @dragleave=${() =>
+                                @dragleave=${() =>
                     this.onNavDragLeave(
                         item.id,
                     )}
-                            @drop=${(e: DragEvent) =>
+                                @drop=${(e: DragEvent) =>
                     this.onNavDrop(e)}
-                        >
-                            <wa-icon
-                                name=${item.icon}
-                            ></wa-icon>
-                            <p>${item.label}</p>
+                            >
+                                <wa-icon
+                                    name=${item.icon}
+                                ></wa-icon>
+                                <p>${item.label}</p>
+                            </button>
                         </li>
                     `;
         })}
             </ul>
+            </nav>
         `;
     }
 

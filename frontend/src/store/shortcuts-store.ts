@@ -14,8 +14,10 @@ export interface ShortcutsState {
 
 type Subscriber = () => void;
 
-/** Panel scope prefixes for scope-aware lookups. */
-const PANEL_PREFIXES = ['tracklist.'] as const;
+/** Panel scope prefixes for scope-aware lookups.  An action with one of
+ *  these prefixes is only ever resolved inside its own panel, so it can
+ *  reuse a key the global table also binds. */
+const PANEL_PREFIXES = ['tracklist.', 'autotag.'] as const;
 
 /**
  * ShortcutsStore holds the current keyboard shortcut bindings

@@ -11,6 +11,7 @@
  * - Action dispatch to player/queue/nav stores
  */
 import { shortcutsStore } from '@store/shortcuts-store';
+import { ambientShortcutScope } from './shortcut-scope';
 import { playerStore } from '@store/player-store';
 import { queueStore } from '@store/queue-store';
 import * as Player from '@go/player/Player';
@@ -132,6 +133,128 @@ type ShortcutScope =
     | 'global';
 
 /**
+ * Elements that own particular keys themselves.
+ *
+ * The global bindings are unmodified single keys (Space, arrows, letters)
+ * — see Decision 1 in plan 007 — so without this a focused button cannot
+ * be activated with Space and a `<select>` cannot be arrowed through,
+ * because the service `preventDefault()`s every match.  Only text inputs
+ * were exempt, which is finding H-6.
+ */
+const ACTIVATION_KEYS = new Set(['Space', 'Enter']);
+const ARROW_KEYS = new Set(['Up', 'Down', 'Left', 'Right', 'Home', 'End']);
+const LIST_KEYS = new Set([...ARROW_KEYS, ...ACTIVATION_KEYS]);
+const SLIDER_KEYS = new Set([...ARROW_KEYS, 'PageUp', 'PageDown']);
+
+/** Roles/tags that consume a key, and which keys they consume. */
+function keysOwnedBy(el: Element): ReadonlySet<string> | null {
+    const tag = el.tagName.toUpperCase();
+    const role = el.getAttribute('role')?.toLowerCase() ?? '';
+
+    if (tag === 'SELECT' || role === 'listbox' || role === 'combobox') {
+        return LIST_KEYS;
+    }
+
+    if (role === 'menu' || role === 'menuitem' || role === 'menubar') {
+        return LIST_KEYS;
+    }
+
+    // A grid row or a listbox option moves with the arrow keys, which is
+    // what makes a track list navigable without a mouse.
+    if (
+        role === 'row' ||
+        role === 'gridcell' ||
+        role === 'grid' ||
+        role === 'option' ||
+        role === 'treeitem'
+    ) {
+        return ARROW_KEYS;
+    }
+
+    if (tag === 'INPUT') {
+        const type = (el as HTMLInputElement).type.toLowerCase();
+
+        if (type === 'range') return SLIDER_KEYS;
+        if (type === 'radio') return LIST_KEYS;
+        if (type === 'checkbox') return ACTIVATION_KEYS;
+    }
+
+    if (role === 'slider' || tag === 'WA-SLIDER') return SLIDER_KEYS;
+
+    if (
+        role === 'checkbox' ||
+        role === 'switch' ||
+        role === 'radio' ||
+        tag === 'WA-CHECKBOX' ||
+        tag === 'WA-SWITCH'
+    ) {
+        return ACTIVATION_KEYS;
+    }
+
+    if (
+        tag === 'BUTTON' ||
+        tag === 'SUMMARY' ||
+        tag === 'WA-BUTTON' ||
+        role === 'button' ||
+        (tag === 'A' && el.hasAttribute('href'))
+    ) {
+        return ACTIVATION_KEYS;
+    }
+
+    if (tag === 'WA-SELECT') return LIST_KEYS;
+
+    return null;
+}
+
+/** Whether an open dialog contains the focused element.  A dialog owns
+ *  the whole keyboard while it is up. */
+function insideOpenDialog(el: Element | null): boolean {
+    let walker: Element | null = el;
+
+    while (walker) {
+        const role = walker.getAttribute?.('role')?.toLowerCase();
+        const tag = walker.tagName.toUpperCase();
+
+        if (
+            role === 'dialog' ||
+            role === 'alertdialog' ||
+            ((tag === 'DIALOG' || tag === 'WA-DIALOG' || tag === 'WA-DRAWER') &&
+                walker.hasAttribute('open'))
+        ) {
+            return true;
+        }
+
+        const parent =
+            walker.parentElement ??
+            ((walker.getRootNode() as ShadowRoot).host ?? null);
+
+        if (parent === walker) break;
+
+        walker = parent;
+    }
+
+    return false;
+}
+
+/**
+ * Whether the focused control, rather than the app, should get this key.
+ */
+function focusedControlOwnsKey(
+    el: Element | null,
+    keyStr: string,
+): boolean {
+    if (!el) return false;
+
+    // Modified combinations (Ctrl+F, Ctrl+A) are the app's; only the
+    // unmodified keys are ever contested.
+    if (keyStr.includes('+')) return false;
+
+    if (insideOpenDialog(el)) return true;
+
+    return keysOwnedBy(el)?.has(keyStr) ?? false;
+}
+
+/**
  * Resolve the current shortcut scope based on the focused element.
  *
  * Priority: text-input > panel-specific > global
@@ -159,7 +282,13 @@ function resolveScope(deepEl: Element | null): ShortcutScope {
         walker = parent ?? null;
     }
 
-    return 'global';
+    // Nothing focused inside a panel.  Fall back to the panel the active
+    // view claimed, if any: this app is driven with the mouse, so focus
+    // usually sits on <body> and a focus-only rule would make panel
+    // bindings work only after a click landed inside the panel.
+    const ambient = ambientShortcutScope();
+
+    return ambient ? (`panel:${ambient}` as ShortcutScope) : 'global';
 }
 
 // ===================================================================
@@ -288,6 +417,23 @@ async function dispatch(action: string): Promise<void> {
             );
             break;
 
+        // Panel-specific: autotag review.  The view listens for these
+        // while it is the view on screen, and for nothing while it is
+        // not — which is the whole of finding H-1.
+        case 'autotag.apply':
+        case 'autotag.skip':
+        case 'autotag.leave':
+        case 'autotag.paste':
+        case 'autotag.search':
+        case 'autotag.next':
+        case 'autotag.previous':
+            document.dispatchEvent(
+                new CustomEvent(
+                    `shortcut:autotag-${action.slice('autotag.'.length)}`,
+                ),
+            );
+            break;
+
         default:
             // Unknown action — silently ignore.
             break;
@@ -334,6 +480,10 @@ class KeyboardShortcutService {
         );
 
         if (!action) return;
+
+        // A focused control that owns this key keeps it: Space activates
+        // the button you tabbed to, arrows move the select you opened.
+        if (focusedControlOwnsKey(deepEl, keyStr)) return;
 
         // Found a match — prevent default and dispatch.
         e.preventDefault();
