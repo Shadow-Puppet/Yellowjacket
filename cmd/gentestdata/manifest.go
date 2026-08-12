@@ -34,15 +34,19 @@ type manifestTrack struct {
 // stamps its own encoder strings, so byte hashes differ between ffmpeg
 // builds while the fixtures they describe are identical.
 type manifest struct {
-	Version     int                 `json:"version"`
-	Generator   string              `json:"generator"`
-	Hash        string              `json:"hash"`
-	LibraryRoot string              `json:"libraryRoot"`
-	BrokenRoot  string              `json:"brokenRoot"`
-	Cases       map[string][]string `json:"cases"`
-	Tracks      []manifestTrack     `json:"tracks"`
-	Extras      []string            `json:"extras"`
-	Broken      []string            `json:"broken"`
+	Version     int    `json:"version"`
+	Generator   string `json:"generator"`
+	Hash        string `json:"hash"`
+	LibraryRoot string `json:"libraryRoot"`
+	BrokenRoot  string `json:"brokenRoot"`
+	// TrackCount is written by the bulk library, which has tens of
+	// thousands of tracks and no reason to describe each one: nothing
+	// selects a bulk track by name, only the total matters.
+	TrackCount int                 `json:"trackCount,omitempty"`
+	Cases      map[string][]string `json:"cases"`
+	Tracks     []manifestTrack     `json:"tracks"`
+	Extras     []string            `json:"extras"`
+	Broken     []string            `json:"broken"`
 }
 
 // buildManifest derives the manifest from the spec alone.  It runs

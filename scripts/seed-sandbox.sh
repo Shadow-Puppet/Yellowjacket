@@ -16,6 +16,13 @@
 #
 # Usage:
 #   scripts/seed-sandbox.sh [--name NAME] [--port N] [--no-build]
+#                           [--manifest PATH]
+#
+# --manifest points at a different generated library's manifest, which
+# is how the bulk measurement library (`make bulkdata`) gets seeded:
+# same script, same discipline, different pile of files.  A manifest
+# either lists its tracks or states a trackCount; both are accepted,
+# because describing 50 000 tracks individually would serve nobody.
 #
 set -euo pipefail
 
@@ -31,6 +38,9 @@ NAME="default"
 PORT=34115
 SESSION="yj-seed"
 BUILD_ARGS=()
+# Replaced below once the manifest says how many tracks are coming: a
+# 50 000-track scan is minutes, and a fixed 180 s deadline would abort
+# a healthy run rather than an unhealthy one.
 SCAN_TIMEOUT=180
 
 while [ $# -gt 0 ]; do
@@ -46,6 +56,10 @@ while [ $# -gt 0 ]; do
 	--no-build)
 		BUILD_ARGS+=(--no-build)
 		shift
+		;;
+	--manifest)
+		MANIFEST="${2:?--manifest needs a path}"
+		shift 2
 		;;
 	*)
 		echo "seed-sandbox: unknown argument: $1" >&2
@@ -64,12 +78,14 @@ need playwright-cli
 need jq
 
 if [ ! -f "$MANIFEST" ]; then
-	echo "seed-sandbox: fixtures missing; run 'make testdata'" >&2
+	echo "seed-sandbox: no manifest at $MANIFEST" >&2
+	echo "  run 'make testdata' (fixtures) or 'make bulkdata' (measurement)" >&2
 	exit 1
 fi
 
 LIBRARY_DIR="$REPO_ROOT/$(jq -r .libraryRoot "$MANIFEST")"
-WANT_TRACKS="$(jq '.tracks | length' "$MANIFEST")"
+WANT_TRACKS="$(jq '.trackCount // (.tracks | length)' "$MANIFEST")"
+SCAN_TIMEOUT=$((180 + WANT_TRACKS / 50))
 FIXTURE_HASH="$(jq -r .hash "$MANIFEST")"
 
 cleanup() {
@@ -137,6 +153,12 @@ while [ "$SECONDS" -lt "$deadline" ]; do
 	got="${got:-0}"
 
 	[ "$got" = "$WANT_TRACKS" ] && break
+
+	# A large scan is minutes of silence otherwise, which is
+	# indistinguishable from a hang.
+	if [ $((SECONDS % 15)) -eq 0 ]; then
+		echo "  ... $got/$WANT_TRACKS"
+	fi
 
 	sleep 1
 done

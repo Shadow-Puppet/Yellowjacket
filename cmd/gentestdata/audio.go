@@ -161,7 +161,19 @@ func requireFFmpeg() error {
 // the library's cover-art deduplication is supposed to collapse into a
 // single stored blob.
 func coverJPEG(key string) ([]byte, error) {
-	img := image.NewRGBA(image.Rect(0, 0, coverSizePx, coverSizePx))
+	return coverJPEGSized(key, coverSizePx)
+}
+
+// coverJPEGSized is coverJPEG at an explicit edge length.  The bulk
+// library uses a larger one, because a 64 px cover cannot show the
+// difference between rendering the original artwork and rendering the
+// thumbnail tier that exists for the purpose.
+// coverJPEGSized is coverJPEG at an explicit edge length.  The bulk
+// library uses a larger one, because a 64 px cover cannot show the
+// difference between rendering the original artwork and rendering the
+// thumbnail tier that exists for the purpose.
+func coverJPEGSized(key string, px int) ([]byte, error) {
+	img := image.NewRGBA(image.Rect(0, 0, px, px))
 
 	// A per-key hue derived from the key's bytes, plus a diagonal
 	// band, so covers are distinguishable by eye in a screenshot.
@@ -177,8 +189,8 @@ func coverJPEG(key string) ([]byte, error) {
 		A: 255,
 	}
 
-	for y := range coverSizePx {
-		for x := range coverSizePx {
+	for y := range px {
+		for x := range px {
 			c := base
 			if (x+y)%16 < 8 {
 				c.R /= 2

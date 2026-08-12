@@ -13,6 +13,11 @@
 //
 //	go run ./cmd/gentestdata            # generate if out of date
 //	go run ./cmd/gentestdata -force     # regenerate unconditionally
+//	go run ./cmd/gentestdata -bulk 50000  # the measurement library
+//
+// The -bulk library is a separate thing with a separate purpose; see
+// bulk.go.  It is not committed, not a test dependency, and generating
+// it does not regenerate the fixture library.
 package main
 
 import (
@@ -44,6 +49,9 @@ func main() {
 		brokenDir   string
 		manifestOut string
 		force       bool
+		bulkTracks  int
+		bulkOut     string
+		bulkCover   int
 	)
 
 	flag.StringVar(
@@ -62,9 +70,33 @@ func main() {
 		&force, "force", false,
 		"regenerate even when the manifest is already up to date",
 	)
+	flag.IntVar(
+		&bulkTracks, "bulk", 0,
+		"generate a bulk measurement library of N tracks instead",
+	)
+	flag.StringVar(
+		&bulkOut, "bulk-out", ".dev/music_library_bulk",
+		"library root for -bulk (gitignored; not a test fixture)",
+	)
+	flag.IntVar(
+		&bulkCover, "bulk-cover-px", bulkCoverPx,
+		"edge length of the embedded cover art for -bulk",
+	)
 	flag.Parse()
 
-	if err := run(outDir, brokenDir, manifestOut, force); err != nil {
+	var err error
+
+	if bulkTracks > 0 {
+		err = generateBulk(bulkSpec{
+			Out:     bulkOut,
+			Tracks:  bulkTracks,
+			CoverPx: bulkCover,
+		}, force)
+	} else {
+		err = run(outDir, brokenDir, manifestOut, force)
+	}
+
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "gentestdata:", err)
 		os.Exit(1)
 	}

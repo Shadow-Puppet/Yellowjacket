@@ -37,6 +37,15 @@ dev-logs: ## Tail the headless app log
 sandbox-seed: testdata ## Build a seeded YJ_HOME snapshot: make sandbox-seed NAME=<n>
 	@./scripts/seed-sandbox.sh $(if $(NAME),--name $(NAME),)
 
+# The bulk seed is the *measurement* seed, not a fixture seed.  Same
+# script and the same discipline (the app builds it by scanning for
+# real); the only difference is which manifest it is pointed at.  It is
+# a separate target because a 50 000-track scan is minutes, and nothing
+# routine should depend on it.
+sandbox-seed-bulk: bulkdata ## Build a seeded YJ_HOME from the bulk library
+	@./scripts/seed-sandbox.sh --name $(if $(NAME),$(NAME),bulk) \
+		--manifest .dev/music_library_bulk.manifest.json
+
 sandbox-seeds: ## List built seeds
 	@ls -1 .dev/seeds/*.tar 2>/dev/null | sed 's|.*/||; s|\.tar$$||' \
 		|| echo "  (none; build one with: make sandbox-seed NAME=default)"
@@ -45,6 +54,21 @@ sandbox-seeds: ## List built seeds
 # daemonises, which is the opposite of what Playwright's `webServer`
 # supervises, and starting one per run would rebuild the frontend every
 # time.  globalSetup fails with the exact commands to run if it is down.
+# Phase 4 of plan 007 is verified by measurement rather than assertion,
+# so this is not a spec and does not run in CI: it produces a number to
+# read, against a running app seeded with the bulk library.
+#
+#   make sandbox-seed-bulk && make dev-headless SEED=bulk
+#   make perf LABEL=before   ... change something ...   make perf LABEL=after
+#   make perf-compare BEFORE=before AFTER=after
+perf: ## Take a performance measurement (LABEL=<name>) of a running app
+	@cd e2e && pnpm install --silent && \
+		node perf/measure.mjs --label $(if $(LABEL),$(LABEL),current)
+
+perf-compare: ## Print a before/after table: BEFORE=<a> AFTER=<b>
+	@cd e2e && node perf/measure.mjs --compare \
+		$(if $(BEFORE),$(BEFORE),before) $(if $(AFTER),$(AFTER),after)
+
 e2e: ## Run the Playwright smoke suite against a running dev-headless app
 	@cd e2e && pnpm install --silent && npx playwright test $(E2E_ARGS)
 
@@ -96,7 +120,8 @@ bindings: ## Regenerate frontend/wailsjs from the bound Go structs
 		frontend/wailsjs/runtime/package.json
 
 .PHONY: dev-headless dev-headless-fresh dev-stop dev-logs \
-	sandbox-seed sandbox-seeds e2e e2e-setup e2e-report \
+	sandbox-seed sandbox-seed-bulk sandbox-seeds e2e e2e-setup e2e-report \
+	perf perf-compare \
 	ui-test ui-watch ui-visual ui-visual-update ui-setup \
 	bindings bindings-check skill-check
 
@@ -220,7 +245,19 @@ testdata-clean: ## Delete the generated fixture library
 	rm -rf test_data/music_library_test test_data/music_library_broken \
 		test_data/music_library_test.manifest.json
 
-.PHONY: testdata testdata-force testdata-clean
+# The bulk library answers a different question from the fixture one:
+# not "does this behave correctly" but "how does this behave at the
+# size the audit measured".  ~11 s, ~470 MB, into a gitignored .dev/,
+# and deliberately not a dependency of `make test`.
+BULK_TRACKS ?= 50000
+
+bulkdata: ## Generate the bulk measurement library (BULK_TRACKS=50000)
+	go run ./cmd/gentestdata -bulk $(BULK_TRACKS)
+
+bulkdata-clean: ## Delete the bulk measurement library
+	rm -rf .dev/music_library_bulk .dev/music_library_bulk.manifest.json
+
+.PHONY: testdata testdata-force testdata-clean bulkdata bulkdata-clean
 
 # The tag sets must match `make test` exactly, or lint is checking three
 # configurations that nothing builds.  webkit2_41 is not optional: without
