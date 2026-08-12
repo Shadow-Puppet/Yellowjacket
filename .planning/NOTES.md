@@ -1420,9 +1420,20 @@ Seven more things worth keeping:
   state field it used had no reader afterwards, which is the tell:
   `removingLibraryId` now means "which row is busy" and the row says so.
 
-And one on the harness: **`e2e` has now failed in CI on two consecutive
-commits that changed no application code** — `9e92721` (docs only) and
-`9f03b3f` (a workflow and a shell script). `check` passed on both. That
-is not proof the container's audio clock is the whole story, but a
-failure on a commit which cannot have caused it is worth more than a
-green run, and it is two of them.
+And one on the harness, stated carefully because it is the kind of
+thing that gets over-claimed: **`e2e` has failed in CI on every push
+this session, including one that changed no application code at all** —
+`9f03b3f`, a workflow file and a shell script. `check` passed on all of
+them. Together with `9e92721` (docs only, recorded last pass) that is
+two failures which cannot have been caused by the commit they ran on.
+
+But **it does not follow that this session's failures are the same
+one**, and I could not check: this Gitea build does not expose the
+job-log endpoint, and the runner is not on this machine, so the log
+tail the skill describes is out of reach from here. The suite passes
+locally, twice consecutively, all 48 specs — **on Chromium only**. CI
+also runs **WebKit**, which cannot run on Arch at all, and this pass
+changed focus management, dialog modality and roles, which is exactly
+the area where the two engines differ. Treat the WebKit half as
+unverified rather than as the known audio-clock flake until someone
+reads the log.
