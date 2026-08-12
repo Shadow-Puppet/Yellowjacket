@@ -12,9 +12,17 @@ const (
 	// MinWidth is the smallest allowed window width in pixels.  Wails
 	// enforces this at runtime; it is also the floor below which a
 	// reported size is treated as bogus and not persisted.
-	MinWidth = 512
+	//
+	// 800x600 is where the shell was measured to still work, rather
+	// than a round number: below ~780 the header's subtitle wraps and
+	// pushes the title out of the 4em top bar, and below ~600 tall the
+	// eleven sidebar items no longer fit at once.  The previous
+	// 512x384 was aspirational — at 700x480 the sidebar overflowed
+	// behind the player bar with no scroll and Settings and Jobs could
+	// not be reached at all.
+	MinWidth = 800
 	// MinHeight is the smallest allowed window height in pixels.
-	MinHeight = 384
+	MinHeight = 600
 )
 
 // WindowConfig holds window size preferences.

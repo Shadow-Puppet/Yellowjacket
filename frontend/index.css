@@ -54,6 +54,16 @@ ul {
     margin-top: 0;
   }
 
+/* The same breakpoint the sidebar collapses at (AUTO_COLLAPSE_VIEWPORT
+   in app-sidebar.ts).  The subtitle wrapped to two lines below ~780 px,
+   which made the title block 98 px tall inside a 4em bar and pushed it
+   down into the nav (H-11). */
+@media (max-width: 899px) {
+    .subtitle {
+        display: none;
+    }
+}
+
 body div.sidebar {
     grid-area: sidebar;
     background-color: var(--yj-bg-surface, #212529);

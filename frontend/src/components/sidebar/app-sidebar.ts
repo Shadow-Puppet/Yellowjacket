@@ -18,6 +18,14 @@ const MAX_WIDTH = 400;
 const DEFAULT_WIDTH = 200;
 const COLLAPSE_WIDTH = 142;
 
+/**
+ * Below this viewport width the sidebar collapses itself to icons.
+ * `.collapsed` existed and only a manual drag ever reached it (H-11),
+ * so a small window kept a 200 px sidebar it could not afford and the
+ * content pane wore the whole loss.
+ */
+const AUTO_COLLAPSE_VIEWPORT = 900;
+
 @customElement('app-sidebar')
 export class AppSidebar extends LitElement {
     static override styles = [designTokens, css`
@@ -28,6 +36,14 @@ export class AppSidebar extends LitElement {
             background-color: var(--yj-bg-surface, #212529);
             min-width: ${MIN_WIDTH}px;
             max-width: ${MAX_WIDTH}px;
+            /* Eleven items need ~406 px and the pane is whatever the
+               window leaves it — 352 px at 700x480, which clipped Jobs
+               and Settings behind the player bar with no way to reach
+               them (H-11).  Collapsing to icons does not help: it is a
+               width mode, and this is the height. */
+            overflow-y: auto;
+            overflow-x: hidden;
+            scrollbar-width: thin;
         }
 
         .resize-handle {
@@ -147,6 +163,12 @@ export class AppSidebar extends LitElement {
     @state()
     private collapsed = false;
 
+    /** The width the user chose, restored when the window grows back. */
+    private userWidth = DEFAULT_WIDTH;
+
+    private narrowViewport: MediaQueryList | null =
+        null;
+
     /** Whether a track drag is in progress somewhere in the app. */
     @state()
     private trackDragActive = false;
@@ -176,6 +198,14 @@ export class AppSidebar extends LitElement {
     override connectedCallback() {
         super.connectedCallback();
         this.style.width = `${DEFAULT_WIDTH}px`;
+        this.narrowViewport = window.matchMedia(
+            `(max-width: ${AUTO_COLLAPSE_VIEWPORT - 1}px)`,
+        );
+        this.narrowViewport.addEventListener(
+            'change',
+            this.onViewportChange,
+        );
+        this.applyViewportWidth();
         document.addEventListener(
             'mousemove',
             this.handleMouseMove,
@@ -192,6 +222,11 @@ export class AppSidebar extends LitElement {
 
     override disconnectedCallback() {
         super.disconnectedCallback();
+        this.narrowViewport?.removeEventListener(
+            'change',
+            this.onViewportChange,
+        );
+        this.narrowViewport = null;
         document.removeEventListener(
             'mousemove',
             this.handleMouseMove,
@@ -284,7 +319,28 @@ export class AppSidebar extends LitElement {
 
         this.style.width = `${clampedWidth}px`;
         this.collapsed = clampedWidth < COLLAPSE_WIDTH;
+        this.userWidth = clampedWidth;
     };
+
+    private onViewportChange = () => {
+        this.applyViewportWidth();
+    };
+
+    /**
+     * Icons below the breakpoint, the user's own width above it.  The
+     * width is inline (set here and by the drag handle), so this cannot
+     * be a media query in the stylesheet.
+     */
+    private applyViewportWidth() {
+        const narrow =
+            this.narrowViewport?.matches ?? false;
+        const width = narrow
+            ? MIN_WIDTH
+            : this.userWidth;
+
+        this.style.width = `${width}px`;
+        this.collapsed = width < COLLAPSE_WIDTH;
+    }
 
     private handleMouseUp = () => {
         this.isDragging = false;

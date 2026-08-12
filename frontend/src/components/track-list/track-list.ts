@@ -70,6 +70,18 @@ const SORT_DIR_KEY = 'track-list-sort-direction';
 const MIN_COLUMN_WIDTH = 50;
 const DEFAULT_FIXED_WIDTH = 80;
 
+/**
+ * Chrome the resizable columns cannot use: the fixed favourite column
+ * and the row's own horizontal padding.  Both numbers also appear in
+ * the CSS below — the `24px` first track of `--grid-cols` and
+ * `.track-row`/`.header-row`'s `padding: 8px` — so they live here and
+ * are read from both places rather than written out four times.
+ */
+const FAV_COL_WIDTH = 24;
+const ROW_PADDING_X = 8;
+const ROW_CHROME_WIDTH =
+    FAV_COL_WIDTH + ROW_PADDING_X * 2;
+
 // Inline SVG paths for favorite icons — eliminates wa-icon shadow DOM
 // overhead (30-50 shadow roots during scroll).  Font Awesome 6 paths.
 const FAV_ICONS = {
@@ -448,7 +460,7 @@ export class TrackList
 
     private get gridTemplateColumns(): string {
         const cols = this.activeColumns;
-        const favCol = '24px';
+        const favCol = `${FAV_COL_WIDTH}px`;
 
         if (this.columnWidths.length === 0 || this.columnWidths.length !== cols.length) {
             return (
@@ -472,10 +484,9 @@ export class TrackList
     private get colBoundaryPositions(): number[] {
         if (this.columnWidths.length === 0) return [];
 
-        const padding = 8;
-        const favColWidth = 24;
         const positions: number[] = [];
-        let cumulative = padding + favColWidth;
+        let cumulative =
+            ROW_PADDING_X + FAV_COL_WIDTH;
 
         for (
             let i = 0;
@@ -502,8 +513,18 @@ export class TrackList
         this.computeDefaultWidths();
     }
 
+    /**
+     * Width the resizable columns may share.  H-7: this was the raw
+     * `clientWidth`, which the columns then summed to exactly — so
+     * every row was `ROW_CHROME_WIDTH` (40 px) wider than the box it
+     * had to fit in and the last column was always clipped.
+     */
+    private get availableColumnWidth(): number {
+        return this.clientWidth - ROW_CHROME_WIDTH;
+    }
+
     private computeDefaultWidths() {
-        const totalWidth = this.clientWidth;
+        const totalWidth = this.availableColumnWidth;
 
         if (totalWidth <= 0) return;
 
@@ -631,13 +652,14 @@ export class TrackList
     }
 
     /**
-     * Scale widths so they sum to exactly the container width.
+     * Scale widths so they sum to exactly the width available to the
+     * columns (the host minus the row chrome).
      * Every column is guaranteed at least MIN_COLUMN_WIDTH.
      */
     private normalizeWidths(
         widths: number[],
     ): number[] {
-        const container = this.clientWidth;
+        const container = this.availableColumnWidth;
 
         if (container <= 0 || widths.length === 0) {
             return widths;
@@ -731,7 +753,7 @@ export class TrackList
     private onColResizeMove = (e: MouseEvent) => {
         if (this.resizingColumn === null) return;
 
-        const container = this.clientWidth;
+        const container = this.availableColumnWidth;
 
         if (container <= 0) return;
 
