@@ -18,7 +18,7 @@ here has disappeared.
 
 ## Read this part before you fail
 
-Nine things cost a cycle each the first time. They are here, not in a
+Fourteen things cost a cycle each the first time. They are here, not in a
 reference, because you need them *before* the failure, not after.
 
 - **Time out every binding call.** A bound Go method called with wrong
@@ -49,9 +49,19 @@ reference, because you need them *before* the failure, not after.
   reports hidden; the visible thing is the native `<dialog>` in its
   shadow root. The slotted content is in the *host's* shadow root, not
   in that dialog's subtree, so `toContainText` on the dialog sees only
-  its chrome. And the dialog has **no accessible name** — Web Awesome
-  never wires `label` to `aria-labelledby` — so
-  `getByRole('dialog', {name})` matches nothing.
+  its chrome. And it has an accessible name **only because
+  `utils/name-dialog.ts` gives it one** — Web Awesome does not wire
+  `label` to `aria-labelledby` — so a new dialog that forgets to call
+  the helper from `updated()` is invisible to
+  `getByRole('dialog', {name})`.
+- **The a11y snapshot cannot check an accessible name on a dialog.**
+  `playwright-cli snapshot` prints `- dialog [ref=…]` with no name
+  whether the dialog is named by `aria-labelledby`, by `aria-label`,
+  or not at all — checked all three ways against the running app. Use
+  `getByRole('dialog', {name})` in a spec, or CDP
+  (`Accessibility.getFullAXTree`) for the browser's own computation,
+  which also reports *where* the name came from. A snapshot read as a
+  probe here reports failure on a working build.
 - **Playwright's WebKit does not run on Arch** (Ubuntu-only libs).
   `--browser=webkit` is CI-only; local work is Chromium. CI runs it
   with `if: !cancelled()` so a chromium failure does not silently

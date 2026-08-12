@@ -13,6 +13,7 @@ import {
     formatFileSize,
 } from '@utils/format';
 import { formatMilliseconds } from '@utils/time';
+import { nameDialogsIn } from '@utils/name-dialog';
 import { WriteTrackTagsByPath } from '@go/tagwriter/TagWriter';
 import {
     BatchWriteTrackTags,
@@ -725,6 +726,15 @@ export class TrackDetails extends LitElement {
     // =================================================================
     // RENDER
     // =================================================================
+
+    /**
+     * Web Awesome renders `label` into a heading it never points the
+     * `<dialog>` at, so the dialog has no accessible name until
+     * something sets one. See `utils/name-dialog.ts`.
+     */
+    override updated() {
+        nameDialogsIn(this.shadowRoot);
+    }
 
     override render() {
         const label = this.batchMode

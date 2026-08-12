@@ -21,6 +21,7 @@ import { customElement, query, state } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/dialog/dialog.js';
 
 import { designTokens } from '../../styles/tokens.css';
+import { nameDialogsIn } from '../../utils/name-dialog';
 import {
     SHORTCUT_CATEGORIES,
     SHORTCUT_META,
@@ -156,6 +157,15 @@ export class ShortcutsOverlay extends LitElement {
     private close(): void {
         if (this.dialog) this.dialog.open = false;
         this.isOpen = false;
+    }
+
+    /**
+     * Web Awesome renders `label` into a heading it never points the
+     * `<dialog>` at, so the dialog has no accessible name until
+     * something sets one. See `utils/name-dialog.ts`.
+     */
+    override updated() {
+        nameDialogsIn(this.shadowRoot);
     }
 
     override render() {

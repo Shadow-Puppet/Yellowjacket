@@ -16,6 +16,7 @@ import {
 } from '@go/playlist/Service';
 import type { playlist } from '@go/models';
 import { formatMilliseconds } from '@utils/time';
+import { nameDialogsIn } from '@utils/name-dialog';
 
 const SEARCH_DEBOUNCE_MS = 400;
 
@@ -921,6 +922,15 @@ export class PhantomResolver extends LitElement {
             }
         `,
     ];
+
+    /**
+     * Web Awesome renders `label` into a heading it never points the
+     * `<dialog>` at, so the dialog has no accessible name until
+     * something sets one. See `utils/name-dialog.ts`.
+     */
+    override updated() {
+        nameDialogsIn(this.shadowRoot);
+    }
 
     override render() {
         return html`

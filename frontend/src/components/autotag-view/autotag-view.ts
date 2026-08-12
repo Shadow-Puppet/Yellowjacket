@@ -25,6 +25,7 @@ import { inlineDiff, normalizeStrict, isCosmeticDiff } from '../../utils/text-di
 import { libraryStore } from '../../store/library-store';
 import { notificationStore } from '../../store/notification-store';
 import { describeError, explainError } from '../../utils/describe-error';
+import { nameDialogsIn } from '../../utils/name-dialog';
 import { ViewLifecycleMixin } from '../../utils/view-lifecycle';
 import { confirmAction } from '../confirm-dialog/confirm-dialog';
 import '@awesome.me/webawesome/dist/components/dialog/dialog.js';
@@ -3040,6 +3041,15 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
     // put the element and its `showModal()` in the same update.
     private renderDialog() {
         return html`${this.renderPasteDialog()}${this.renderSearchDialog()}`;
+    }
+
+    /**
+     * Web Awesome renders `label` into a heading it never points the
+     * `<dialog>` at, so the dialog has no accessible name until
+     * something sets one. See `utils/name-dialog.ts`.
+     */
+    override updated() {
+        nameDialogsIn(this.shadowRoot);
     }
 
     override render() {

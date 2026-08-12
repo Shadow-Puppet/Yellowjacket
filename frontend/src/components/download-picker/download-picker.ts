@@ -10,6 +10,7 @@ import { downloadStore } from '@store/download-store';
 import type { download } from '@go/models';
 import './candidate-row';
 import { explainError } from '@utils/describe-error';
+import { nameDialogsIn } from '@utils/name-dialog';
 
 /**
  * The "find this album" dialog: searches every enabled download client,
@@ -119,6 +120,11 @@ export class DownloadPicker extends LitElement {
     ];
 
     override updated(changed: Map<string, unknown>) {
+        // Web Awesome renders `label` into a heading it never points
+        // the `<dialog>` at, so the dialog has no accessible name until
+        // something sets one. See `utils/name-dialog.ts`.
+        nameDialogsIn(this.shadowRoot);
+
         if (changed.has('open') && this.open) {
             void this.search();
         }

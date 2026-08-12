@@ -8,6 +8,7 @@ import {
 } from '@go/library/Library';
 import { DirectoryPicker } from '@go/frontendutil/FrontendUtil';
 import { describeError, explainError } from '@utils/describe-error';
+import { nameDialogsIn } from '@utils/name-dialog';
 
 /**
  * First-run setup wizard.
@@ -163,6 +164,15 @@ export class FirstRunWizard extends LitElement {
             cursor: not-allowed;
         }
     `;
+
+    /**
+     * Web Awesome renders `label` into a heading it never points the
+     * `<dialog>` at, so the dialog has no accessible name until
+     * something sets one. See `utils/name-dialog.ts`.
+     */
+    override updated() {
+        nameDialogsIn(this.shadowRoot);
+    }
 
     override render() {
         if (!this.active) return nothing;

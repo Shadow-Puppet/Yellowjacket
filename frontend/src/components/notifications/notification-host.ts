@@ -14,6 +14,7 @@ import '@awesome.me/webawesome/dist/components/dialog/dialog.js';
 
 import { notificationStore } from '@store/notification-store';
 import { designTokens } from '../../styles/tokens.css';
+import { nameDialogsIn } from '../../utils/name-dialog';
 
 import { noticeStyles, renderNotice } from './notice';
 
@@ -149,6 +150,15 @@ export class NotificationHost extends LitElement {
                 </div>
             </wa-dialog>
         `;
+    }
+
+    /**
+     * Web Awesome renders `label` into a heading it never points the
+     * `<dialog>` at, so the dialog has no accessible name until
+     * something sets one. See `utils/name-dialog.ts`.
+     */
+    override updated() {
+        nameDialogsIn(this.shadowRoot);
     }
 
     override render() {

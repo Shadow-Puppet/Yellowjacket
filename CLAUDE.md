@@ -377,16 +377,37 @@ demand puts the element and its `showModal()` in the same update.
 `autotag-view`'s last document keydown listener died with them; it
 existed only because its dialogs could not close themselves.
 
-**None of them has an accessible name**, which is worth knowing before
-writing a locator or believing the audit's "already correct" list.
-Every call site passes `label`; Web Awesome renders it into an `<h2
-id="title">` in the same shadow root as the native `<dialog>` and never
-points `aria-labelledby` at it, so `getByRole('dialog', {name})`
-matches nothing and a screen reader announces an unnamed dialog. The
-host is also `display: contents`, so the element carrying the testid
-always reports hidden — what is visible is the `<dialog>` inside it,
-and what holds the slotted content is the *host's* shadow root, not the
-dialog's subtree.
+**None of them had an accessible name, and one helper gives all of them
+one.** Every call site passes `label`; Web Awesome renders it into an
+`<h2 id="title">` in the same shadow root as the native `<dialog>` and
+never points `aria-labelledby` at it — so for eleven dialogs
+`getByRole('dialog', {name})` matched nothing and a screen reader
+announced an unnamed dialog. `utils/name-dialog.ts` sets that IDREF
+(and falls back to `aria-label` under `without-header`, which renders
+no heading to point at), called from each host's `updated()`.
+
+Three things about it are load-bearing. It **reaches into another
+library's shadow root**, which is open but is not API — acceptable
+here only because the failure is bounded: if Web Awesome moves the
+structure the query misses, nothing is written, and the dialog is as
+unnamed as it was. It uses **`aria-labelledby`, not `aria-label`**,
+because three call sites compute their label at render time and an
+IDREF to the heading Web Awesome re-renders stays correct with nothing
+resyncing it. And it **waits for the dialog's own first update**, not
+its host's: `wa-dialog` is a Lit element whose shadow root is populated
+in *its* update, so a query at the host's `firstUpdated` finds an empty
+root and names nothing — the same lifecycle trap that hid
+`wa-dropdown-item`'s role from the menu keyboard model.
+
+Two awkwardnesses remain, and they are about *locating* one rather than
+naming it. The host is `display: contents`, so the element carrying the
+testid always reports hidden — what is visible is the `<dialog>` inside
+it — and what holds the slotted content is the *host's* shadow root,
+not the dialog's subtree. A third is worth knowing before checking any
+of this: the Playwright **a11y snapshot never prints a dialog's name**,
+named or not, so it cannot tell you whether this works. `getByRole`
+can, and CDP's `Accessibility.getFullAXTree` gives the browser's own
+answer.
 
 **A disclosure is a button, and it says what it controls.**
 `config-section`'s header was a bare `<div @click>` with no `tabindex`,

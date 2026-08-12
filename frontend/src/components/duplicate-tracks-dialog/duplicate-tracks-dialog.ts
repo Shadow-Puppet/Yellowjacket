@@ -5,6 +5,7 @@ import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@awesome.me/webawesome/dist/components/switch/switch.js';
 import { AddTracksToPlaylist } from '@go/playlist/Service';
 import { formatMilliseconds } from '@utils/time';
+import { nameDialogsIn } from '@utils/name-dialog';
 
 interface DuplicateTrack {
     FilePath: string;
@@ -270,6 +271,15 @@ export class DuplicateTracksDialog extends LitElement {
     // =================================================================
     // RENDER
     // =================================================================
+
+    /**
+     * Web Awesome renders `label` into a heading it never points the
+     * `<dialog>` at, so the dialog has no accessible name until
+     * something sets one. See `utils/name-dialog.ts`.
+     */
+    override updated() {
+        nameDialogsIn(this.shadowRoot);
+    }
 
     override render() {
         const current = this.duplicates[this.currentIndex];
