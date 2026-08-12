@@ -113,6 +113,11 @@ bindings-check: ## Fail if frontend/wailsjs is stale against the Go bindings
 skill-check: ## Fail if .pi/ documents a make target that does not exist
 	@./scripts/skill-check.sh
 
+# Conventional Commits, which CLAUDE.md claimed CI enforced for a long
+# time before anything did.  RANGE=A..B lints a push; bare lints HEAD.
+commit-check: ## Fail if a commit subject is not a Conventional Commit
+	@./scripts/commit-check.sh $(if $(RANGE),--range $(RANGE))
+
 bindings: ## Regenerate frontend/wailsjs from the bound Go structs
 	go tool wails generate module -tags webkit2_41
 	@chmod 644 frontend/wailsjs/runtime/runtime.js \
@@ -123,7 +128,7 @@ bindings: ## Regenerate frontend/wailsjs from the bound Go structs
 	sandbox-seed sandbox-seed-bulk sandbox-seeds e2e e2e-setup e2e-report \
 	perf perf-compare \
 	ui-test ui-watch ui-visual ui-visual-update ui-setup \
-	bindings bindings-check skill-check
+	bindings bindings-check skill-check commit-check
 
 # Base directory for fresh-install sandboxes. Deliberately NOT $TMPDIR:
 # on most Linux distros /tmp is tmpfs (RAM-backed) and only a few GB, so

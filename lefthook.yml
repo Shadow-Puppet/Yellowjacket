@@ -2,6 +2,13 @@
 # Install with: lefthook install
 # Docs: https://github.com/evilmartians/lefthook
 
+# Conventional Commits. CI runs the same script over every commit in a
+# push, so skipping this locally only defers the failure.
+commit-msg:
+  commands:
+    commit-check:
+      run: ./scripts/commit-check.sh {1}
+
 pre-commit:
   parallel: true
   commands:

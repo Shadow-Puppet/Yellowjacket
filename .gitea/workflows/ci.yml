@@ -88,6 +88,24 @@ jobs:
           # has to be willing to operate on a directory it does not own.
           git config --global --add safe.directory /src
 
+      # Conventional Commits.  `.releaserc.yml` has always derived the
+      # version from the commit type; until now nothing checked that the
+      # type was one it recognises, so a malformed subject silently meant
+      # "no release".  BEFORE is the push's previous tip and is absent or
+      # all-zeros for a new branch, in which case only the tip is linted.
+      - name: Commit messages
+        working-directory: /src
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -eu
+          if [ -n "${BEFORE:-}" ] && [ "${BEFORE#0000000}" = "$BEFORE" ] \
+             && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            make commit-check RANGE="$BEFORE..$SHA"
+          else
+            make commit-check
+          fi
+
       - name: Go toolchain
         run: |
           set -eu

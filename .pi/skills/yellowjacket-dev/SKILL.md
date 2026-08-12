@@ -128,6 +128,11 @@ first four are lefthook hooks, so skipping them locally only defers the
 failure; the typecheck is a hook too but only CI runs it over the test
 tree, which is where it has actually broken.
 
+The **message** is gated too: `make commit-check` (a `commit-msg` hook,
+and a CI step over every commit in a push) rejects a subject that is not
+`type(scope): subject`, is over 72 chars, or ends with a period. A
+`--no-verify` commit skips it locally and meets it in CI.
+
 Two things about the e2e tier that are not obvious until they bite.
 **The 36 specs share one backend process in file order**, so a spec
 that leaves the app somewhere passes alone and fails the suite — leave

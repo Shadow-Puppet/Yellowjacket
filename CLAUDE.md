@@ -41,6 +41,7 @@ make ui-visual        # Same, including toMatchScreenshot comparisons
 make ui-setup         # Install the Vitest provider's own Chromium (once)
 make bindings-check   # Fail if frontend/wailsjs is stale vs the Go bindings
 make skill-check      # Fail if .pi/ documents a make target that doesn't exist
+make commit-check     # Fail if a commit subject is not a Conventional Commit
 make lint             # golangci-lint v2 (strict), all three build configurations
 make test             # All tests with race detector, all three build configurations
 make vulncheck        # govulncheck for CVEs
@@ -636,7 +637,21 @@ Pre-commit hooks verify generated code is fresh — always run `make generate` a
 
 - **Go**: golangci-lint v2 with strict linters including `err113` (static errors), `nlreturn`, `wsl_v5` (whitespace), `godot` (comment periods), `sloglint`, `perfsprint`. Imports grouped: stdlib → third-party → `yellowjacket/...` (enforced by gci).
 - **TypeScript**: Strict mode, no implicit any, no unused locals/parameters.
-- **Commits**: Conventional commits format (enforced by commitlint in CI). Semantic release uses these for versioning.
+- **Commits**: Conventional Commits, enforced by `scripts/commit-check.sh` —
+  a lefthook `commit-msg` hook locally, and a CI step over every commit in
+  a push. It is twenty lines of shell rather than commitlint, because the
+  grammar is one regex and commitlint would mean a Node dependency tree at
+  the root of a Go repo. **Its type list is `.releaserc.yml`'s**; keep the
+  two in step or semantic-release will decline to release something the
+  check accepted.
+
+  `.releaserc.yml` is a complete semantic-release config that **nothing
+  currently runs** — no workflow invokes it, and `CHANGELOG.md` is not
+  being written by it. That is deliberate for now (wiring it means pushing
+  tags, committing a changelog back, and interacting with the three
+  publish workflows); it is recorded here rather than implied, because
+  this file claimed for five phases that commitlint gated CI and that
+  semantic release ran, and neither was true.
 
 ## Testing
 
@@ -656,9 +671,10 @@ push was healthy.
 
 Two jobs, both in an `ubuntu:24.04` container:
 
-- **`check`** — no display: `make lint` and `make test` (three build
-  configurations each), `tsc --noEmit`, `make ui-test`,
-  `make bindings-check`, `make skill-check`.
+- **`check`** — no display: `make commit-check` over the push's commits,
+  `make lint` and `make test` (three build configurations each),
+  `tsc --noEmit`, `make ui-test`, `make bindings-check`,
+  `make skill-check`.
 - **`e2e`** — under Xvfb and a private D-Bus: fixtures, a seed built by
   running the app, `make dev-headless`, then the Playwright suite
   against **both** Chromium and WebKit. Playwright's Linux WebKit links
