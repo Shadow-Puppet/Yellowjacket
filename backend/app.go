@@ -189,6 +189,7 @@ func NewYellowJacketApp(
 		yjApp.explore,
 		yjApp.tagWriter,
 	)
+	yjApp.autotag.SetJobRegistry(yjApp.jobs)
 
 	// Create the download subsystem.  Acquiring music is optional: a
 	// failure here (unwritable data dir, say) must not stop the app
@@ -494,8 +495,19 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 	yj.player.SetMediaControls(yj.mediaControls)
 }
 
-// OnBeforeClose captures window state while the window is still alive.
+// OnBeforeClose captures window state while the window is still alive,
+// and asks first when quitting would abandon a job that is writing to
+// the user's files.
+//
+// Returning true keeps the window open.  Quitting mid-apply cancels the
+// service context and leaves a folder half-retagged with nothing
+// recording where it stopped (errors.p4), which is the one case worth
+// interrupting a quit for.
 func (yj *YellowJacketApp) OnBeforeClose(ctx context.Context) bool {
+	if yj.confirmQuitDuringWrites(ctx) {
+		return true
+	}
+
 	w, h := wailsruntime.WindowGetSize(ctx)
 
 	// Guard against a bogus size clobbering a good saved one.  During
@@ -531,6 +543,33 @@ func (yj *YellowJacketApp) OnBeforeClose(ctx context.Context) bool {
 	}
 
 	return false
+}
+
+// confirmQuitDuringWrites returns true when the user chose to stay.
+// A dialog that cannot be shown is not allowed to trap anyone in the
+// app, so any error here quits.
+func (yj *YellowJacketApp) confirmQuitDuringWrites(ctx context.Context) bool {
+	if yj.autotag == nil || !yj.autotag.WritesInFlight() {
+		return false
+	}
+
+	answer, err := wailsruntime.MessageDialog(ctx, wailsruntime.MessageDialogOptions{
+		Type:  wailsruntime.QuestionDialog,
+		Title: "Tags are still being written",
+		Message: "YellowJacket is rewriting tags on your files. " +
+			"Quitting now leaves that folder holding a mix of old and " +
+			"new tags.\n\nQuit anyway?",
+		Buttons:       []string{"Quit anyway", "Keep writing"},
+		DefaultButton: "Keep writing",
+		CancelButton:  "Keep writing",
+	})
+	if err != nil {
+		yj.logger.Warn("could not ask about quitting mid-write", "err", err)
+
+		return false
+	}
+
+	return answer == "Keep writing" || answer == "No"
 }
 
 // OnShutdown saves player state and cleans up resources before the application exits.

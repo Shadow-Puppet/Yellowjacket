@@ -24,6 +24,7 @@ import (
 	"yellowjacket/backend/database/sql/sqlcgen"
 	"yellowjacket/backend/events"
 	"yellowjacket/backend/explore"
+	"yellowjacket/backend/jobs"
 	"yellowjacket/backend/metadata"
 	"yellowjacket/backend/tagwriter"
 )
@@ -83,6 +84,10 @@ type Service struct {
 	exp     *explore.Service
 	logger  *slog.Logger
 	ctx     context.Context
+
+	// Registry for the apply job, wired after construction like every
+	// other subsystem's.  Guarded by mu.
+	jobsReg *jobs.Registry
 
 	// Queue cursor — the group_key of the last item returned.
 	// GetNextPending uses it to advance.  Reset by StartAutotagQueue.
@@ -1103,7 +1108,9 @@ func (s *Service) ApplyAsync(groupKey, releaseMBID string) error {
 		"total":    total,
 	})
 
-	go s.runApply(groupKey, plan, total)
+	handle, ctx, cancel := s.startApplyJob(groupKey, total)
+
+	go s.runApply(ctx, cancel, handle, groupKey, plan, total)
 
 	return nil
 }
@@ -1147,10 +1154,26 @@ func (s *Service) prepareApplyPlan(
 // runApply executes the plan in the background and emits progress
 // + completion events.  Always releases the in-flight slot when
 // it returns, even on panic.
-func (s *Service) runApply(groupKey string, plan *autotag.ApplyPlan, total int) {
+//
+// The job handle is the same progress and cancel surface every other
+// long-running operation has; the events stay because the autotag page
+// drives its per-folder row from them.
+func (s *Service) runApply(
+	ctx context.Context,
+	cancel context.CancelFunc,
+	handle *jobs.Handle,
+	groupKey string,
+	plan *autotag.ApplyPlan,
+	total int,
+) {
 	defer s.endApply(groupKey)
+	defer cancel()
 
 	onProgress := func(current, total, succeeded, failed int) {
+		if handle != nil {
+			handle.SetProgress(int64(current), int64(total))
+		}
+
 		s.emitEvent(events.AutotagApplyProgress, map[string]any{
 			"groupKey":  groupKey,
 			"current":   current,
@@ -1160,7 +1183,7 @@ func (s *Service) runApply(groupKey string, plan *autotag.ApplyPlan, total int) 
 		})
 	}
 
-	result, err := s.applier.Apply(s.ctx, plan, onProgress)
+	result, err := s.applier.Apply(ctx, plan, onProgress)
 
 	finished := map[string]any{
 		"groupKey":  groupKey,
@@ -1178,7 +1201,38 @@ func (s *Service) runApply(groupKey string, plan *autotag.ApplyPlan, total int) 
 		finished["error"] = err.Error()
 	}
 
+	s.finishApplyJob(ctx, handle, result, err)
+
 	s.emitEvent(events.AutotagApplyFinished, finished)
+}
+
+// finishApplyJob closes the job out in the state the run ended in, so
+// a cancelled apply reads as cancelled rather than as a failure and a
+// partial write says how far it got.
+func (s *Service) finishApplyJob(
+	ctx context.Context,
+	handle *jobs.Handle,
+	result *autotag.ApplyResult,
+	err error,
+) {
+	if handle == nil {
+		return
+	}
+
+	switch {
+	case ctx.Err() != nil:
+		handle.Cancelled()
+	case err != nil:
+		handle.Fail(err)
+	case result != nil && result.Failed > 0:
+		handle.Logf(jobs.LevelWarn, fmt.Sprintf(
+			"%d of %d tracks could not be written",
+			result.Failed, result.Succeeded+result.Failed,
+		))
+		handle.Complete()
+	default:
+		handle.Complete()
+	}
 }
 
 // tryStartApply records that an Apply for the given group is

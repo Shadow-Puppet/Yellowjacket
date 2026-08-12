@@ -22,9 +22,10 @@ type Kind string
 
 // Job kinds.
 const (
-	KindLibraryScan Kind = "library-scan"
-	KindIndexBuild  Kind = "index-build"
-	KindDownload    Kind = "download"
+	KindLibraryScan  Kind = "library-scan"
+	KindIndexBuild   Kind = "index-build"
+	KindDownload     Kind = "download"
+	KindAutotagApply Kind = "autotag-apply"
 )
 
 // State is the lifecycle position of a job.

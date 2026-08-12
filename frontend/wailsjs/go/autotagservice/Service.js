@@ -66,6 +66,10 @@ export function SetContext(arg1) {
   return window['go']['autotagservice']['Service']['SetContext'](arg1);
 }
 
+export function SetJobRegistry(arg1) {
+  return window['go']['autotagservice']['Service']['SetJobRegistry'](arg1);
+}
+
 export function Skip(arg1) {
   return window['go']['autotagservice']['Service']['Skip'](arg1);
 }
@@ -80,4 +84,8 @@ export function StartAutotagQueue(arg1) {
 
 export function StartBackgroundPrefetch() {
   return window['go']['autotagservice']['Service']['StartBackgroundPrefetch']();
+}
+
+export function WritesInFlight() {
+  return window['go']['autotagservice']['Service']['WritesInFlight']();
 }
