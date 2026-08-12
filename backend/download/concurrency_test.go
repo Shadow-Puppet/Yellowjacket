@@ -2,9 +2,73 @@ package download
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 )
+
+// grabAll starts n transfers in the background and returns a function
+// that waits for every one of them to *finish*.
+//
+// Waiting is not optional, and it is not about the assertions.  A
+// `grab` outlives the provider's `Grab`: it imports the staged files,
+// releases the reservation and writes the download's final state.  A
+// test that returns while those are running races `t.TempDir()`'s
+// cleanup, which deletes the staging directory underneath them and
+// fails with `TempDir RemoveAll cleanup: directory not empty` — from
+// the *test framework*, after the test has passed, naming no line of
+// code.  It failed roughly one run in three and then, on a slower CI
+// container, every run.
+func grabAll(
+	t *testing.T,
+	f managerFixture,
+	prov *FakeProvider,
+	n int,
+) func() {
+	t.Helper()
+
+	ctx := context.Background()
+
+	var wg sync.WaitGroup
+
+	for i := range n {
+		dl := fourTrackDownload()
+		dl.ID = "dl-" + string(rune('a'+i))
+
+		if err := f.store.CreateDownload(ctx, dl); err != nil {
+			t.Fatalf("CreateDownload: %v", err)
+		}
+
+		candidate := prov.Candidates[0]
+		candidate.ProviderID = 1
+
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			f.manager.grab(ctx, dl, candidate, nil)
+		}()
+	}
+
+	return func() {
+		done := make(chan struct{})
+
+		go func() {
+			wg.Wait()
+			close(done)
+		}()
+
+		// A bare wg.Wait() on a transfer that never returns hangs the
+		// package until the test binary's timeout, with no clue which
+		// test is stuck.
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("transfers did not finish")
+		}
+	}
+}
 
 func TestConcurrencyForPrefersOverrideThenKind(t *testing.T) {
 	t.Parallel()
@@ -80,22 +144,8 @@ func TestPerProviderCapSerializesTransfers(t *testing.T) {
 		Priority: 50,
 	}, slow)
 
-	ctx := context.Background()
-
 	// Three requests against the same one-at-a-time provider.
-	for i := range 3 {
-		dl := fourTrackDownload()
-		dl.ID = "dl-" + string(rune('a'+i))
-
-		if err := f.store.CreateDownload(ctx, dl); err != nil {
-			t.Fatalf("CreateDownload: %v", err)
-		}
-
-		candidate := slow.Candidates[0]
-		candidate.ProviderID = 1
-
-		go f.manager.grab(ctx, dl, candidate, nil)
-	}
+	wait := grabAll(t, f, slow, 3)
 
 	// Give all three a chance to reach the transport, then check how
 	// many actually got through the gate.
@@ -117,6 +167,8 @@ func TestPerProviderCapSerializesTransfers(t *testing.T) {
 	if got := slow.MaxParallelGrabs(); got != 1 {
 		t.Errorf("%d simultaneous transfers overall, want 1", got)
 	}
+
+	wait()
 }
 
 // A provider that tolerates parallelism is not held to Soulseek's
@@ -136,21 +188,7 @@ func TestPerProviderCapAllowsParallelWhereSafe(t *testing.T) {
 		Priority: 50,
 	}, fast)
 
-	ctx := context.Background()
-
-	for i := range 3 {
-		dl := fourTrackDownload()
-		dl.ID = "dl-" + string(rune('a'+i))
-
-		if err := f.store.CreateDownload(ctx, dl); err != nil {
-			t.Fatalf("CreateDownload: %v", err)
-		}
-
-		candidate := fast.Candidates[0]
-		candidate.ProviderID = 1
-
-		go f.manager.grab(ctx, dl, candidate, nil)
-	}
+	wait := grabAll(t, f, fast, 3)
 
 	waitFor(
 		t,
@@ -159,6 +197,7 @@ func TestPerProviderCapAllowsParallelWhereSafe(t *testing.T) {
 	)
 
 	close(fast.GrabGate)
+	wait()
 }
 
 // Reload must not strand a running transfer's slot when a provider's
