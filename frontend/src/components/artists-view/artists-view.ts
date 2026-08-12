@@ -19,6 +19,7 @@ import { library } from '@go/models';
 import { LibraryController } from '@store/controllers/library-controller';
 import { libraryStore } from '@store/library-store';
 import { SearchController } from '@store/controllers/search-controller';
+import '@components/page-header/page-header';
 import { queueStore } from '@store/queue-store';
 import {
     ContextMenuController,
@@ -52,6 +53,11 @@ const SCROLL_DEBOUNCE_MS = 100;
 /**
  * Grid entry for the virtualized artist grid.
  */
+const ARTIST_SORT_DIR_KEY = 'artists-view-sort-dir';
+
+/** One key, so the header renders a label and a direction button. */
+const ARTIST_SORT_OPTIONS = [{ id: 'name', label: 'Name' }];
+
 interface ArtistEntry {
     artist: library.Artist;
     index: number;
@@ -184,12 +190,22 @@ export class ArtistsView
         });
     }
 
+    /** Sort direction for the artist grid.
+     *
+     *  There is only one key to sort by: `library.Artist` carries a
+     *  name, an MBID and three image URLs, and nothing countable — so
+     *  the header shows "Sort: Name" and this button, rather than a
+     *  select with one option in it (H-19). */
+    @state()
+    private sortDirection: 'asc' | 'desc' = 'asc';
+
     // -- Memoisation caches for filtered artists --
     private cachedFilteredArtists: library.Artist[] =
         [];
     private cachedGridEntries: ArtistEntry[] = [];
     private prevFilterArtists: library.Artist[] = [];
     private prevFilterTerm = '';
+    private prevFilterDir: 'asc' | 'desc' | '' = '';
 
     /**
      * Recompute the filtered-artists and grid-entries
@@ -202,10 +218,12 @@ export class ArtistsView
 
         if (
             this.artists !== this.prevFilterArtists ||
-            term !== this.prevFilterTerm
+            term !== this.prevFilterTerm ||
+            this.sortDirection !== this.prevFilterDir
         ) {
             this.prevFilterArtists = this.artists;
             this.prevFilterTerm = term;
+            this.prevFilterDir = this.sortDirection;
             this.cachedFilteredArtists =
                 this.computeFilteredArtists();
             this.cachedGridEntries =
@@ -222,14 +240,37 @@ export class ArtistsView
         const term =
             this.searchCtrl.term.toLowerCase();
 
-        if (!term) {
-            return this.artists;
-        }
+        const matching = term
+            ? this.artists.filter((a) =>
+                  a.Name.toLowerCase().includes(term),
+              )
+            : this.artists;
 
-        return this.artists.filter((a) =>
-            a.Name.toLowerCase().includes(term),
+        // Descending is the only reordering available, so ascending
+        // keeps the backend's order rather than re-sorting it: the
+        // array's identity is what tells the virtualizer to repaint,
+        // and copying it every pass would repaint on every keystroke.
+        if (this.sortDirection === 'asc') return matching;
+
+        return [...matching].sort((a, b) =>
+            b.Name.localeCompare(a.Name),
         );
     }
+
+    private onPageHeaderSort = (
+        e: CustomEvent<{ direction: 'asc' | 'desc' }>,
+    ) => {
+        this.sortDirection = e.detail.direction;
+
+        try {
+            localStorage.setItem(
+                ARTIST_SORT_DIR_KEY,
+                this.sortDirection,
+            );
+        } catch {
+            // Ignore storage errors.
+        }
+    };
 
     static override styles = [
         contextMenuStyles,
@@ -415,7 +456,22 @@ export class ArtistsView
     override connectedCallback() {
         super.connectedCallback();
         this.loadCardSize();
+        this.loadSortDirection();
         this.loadArtists();
+    }
+
+    private loadSortDirection() {
+        try {
+            const saved = localStorage.getItem(
+                ARTIST_SORT_DIR_KEY,
+            );
+
+            if (saved === 'asc' || saved === 'desc') {
+                this.sortDirection = saved;
+            }
+        } catch {
+            // Ignore storage errors.
+        }
     }
 
     override disconnectedCallback() {
@@ -1334,7 +1390,16 @@ export class ArtistsView
 
     override render() {
         if (this.loading) {
+            // The header keeps its place while the view loads: a
+            // heading that appears only once the data does is the
+            // shifting layout this component exists to stop.
             return html`
+                <page-header
+                    heading="Artists"
+                    .sortOptions=${ARTIST_SORT_OPTIONS}
+                    sort-field="name"
+                    sort-direction=${this.sortDirection}
+                ></page-header>
                 <div class="loading-message">
                     Loading artists...
                 </div>
@@ -1342,15 +1407,18 @@ export class ArtistsView
         }
 
         const entries = this.cachedGridEntries;
-        const searchBar = this.searchCtrl.term
-            ? html`<div class="search-bar-row">
-                  <div class="search-indicator">
-                      Showing results for
-                      &ldquo;${this.searchCtrl
-                          .term}&rdquo;
-                  </div>
-              </div>`
-            : nothing;
+        const searchBar = html`
+            <page-header
+                heading="Artists"
+                .count=${entries.length}
+                count-noun="artist"
+                .sortOptions=${ARTIST_SORT_OPTIONS}
+                sort-field="name"
+                sort-direction=${this.sortDirection}
+                search-term=${this.searchCtrl.term}
+                @sort-change=${this.onPageHeaderSort}
+            ></page-header>
+        `;
 
         if (entries.length === 0) {
             return html`

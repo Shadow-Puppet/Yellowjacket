@@ -18,6 +18,8 @@ import {
 import type { ContextMenuHost } from '@utils/context-menu-controller.js';
 import { PlayerController } from '@store/controllers/player-controller';
 import { SearchController } from '@store/controllers/search-controller';
+import '@components/page-header/page-header';
+import type { SortOption } from '@components/page-header/page-header';
 import { TrackListController } from '@store/controllers/tracklist-controller';
 import { FavoritesController } from '@store/controllers/favorites-controller';
 import { queueStore } from '@store/queue-store';
@@ -311,13 +313,6 @@ export class TrackList
     /** Current sort direction. */
     @state()
     private sortDirection: SortDirection = 'asc';
-
-    /** Whether the sort dropdown popup is open. */
-    @state()
-    private sortDropdownOpen = false;
-
-    @query('#sort-dropdown')
-    private sortDropdownPopup!: WaPopup;
 
     /** Whether delegated event handlers have been attached to the virtualizer. */
     private delegationAttached = false;
@@ -899,109 +894,6 @@ export class TrackList
       overflow: hidden;
     }
 
-    /* ---- Sort toolbar ---- */
-
-    .sort-toolbar {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      padding: 4px 8px;
-      font-size: var(--yj-text-sm);
-      color: var(--yj-text-secondary, #b3b3b3);
-      border-bottom: 1px solid
-        var(--yj-border-subtle, #333);
-      flex-shrink: 0;
-      user-select: none;
-    }
-
-
-    .sort-anchor {
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-      cursor: pointer;
-      padding: 2px 6px;
-      border-radius: 4px;
-      background: transparent;
-      border: none;
-      color: inherit;
-      font: inherit;
-    }
-
-    .sort-anchor:hover {
-      background: var(
-        --yj-hover-overlay,
-        rgba(255, 255, 255, 0.05)
-      );
-    }
-
-    .sort-anchor .sort-label {
-      color: var(--yj-text-primary, #fff);
-    }
-
-    .sort-dir-btn {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      width: 24px;
-      height: 24px;
-      cursor: pointer;
-      border: none;
-      border-radius: 4px;
-      background: transparent;
-      color: var(--yj-text-secondary, #b3b3b3);
-      font-size: var(--yj-text-sm);
-      padding: 0;
-    }
-
-    .sort-dir-btn:hover {
-      background: var(
-        --yj-hover-overlay,
-        rgba(255, 255, 255, 0.05)
-      );
-      color: var(--yj-text-primary, #fff);
-    }
-
-    .sort-dropdown-panel {
-      background-color: var(
-        --yj-bg-elevated,
-        #343a40
-      );
-      border: 1px solid var(--yj-border, #444);
-      border-radius: 6px;
-      padding: 4px 0;
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
-      min-width: 140px;
-    }
-
-    .sort-dropdown-panel wa-dropdown-item {
-      cursor: pointer;
-      --wa-color-text-normal: var(
-        --yj-text-primary,
-        #fff
-      );
-      font-size: var(--yj-text-md);
-    }
-
-    .sort-dropdown-panel wa-dropdown-item:hover {
-      background-color: var(
-        --yj-hover-overlay,
-        rgba(255, 255, 255, 0.1)
-      );
-    }
-
-    .sort-dropdown-panel wa-dropdown-item.active-sort {
-      color: var(--yj-accent, #ffd43b);
-      --wa-color-text-normal: var(
-        --yj-accent,
-        #ffd43b
-      );
-    }
-
-    #sort-dropdown {
-      z-index: 200;
-    }
-
     /* ---- Header row ---- */
 
     .header-row {
@@ -1066,25 +958,6 @@ export class TrackList
     .col-resize-handle:hover,
     .col-resize-handle.active {
       background-color: var(--yj-text-tertiary, #6c757d);
-    }
-
-    .sort-toolbar {
-      position: relative;
-    }
-
-    .search-indicator {
-      position: absolute;
-      left: 50%;
-      transform: translateX(-50%);
-      pointer-events: none;
-      background: var(--yj-bg-overlay, #495057);
-      color: var(--yj-text-secondary, #b3b3b3);
-      font-size: var(--yj-text-sm);
-      padding: 2px 14px;
-      border-radius: 12px;
-      border: 1px solid var(--yj-border-subtle, #555);
-      white-space: nowrap;
-      opacity: 0.92;
     }
 
     .no-results {
@@ -1259,11 +1132,6 @@ export class TrackList
      *  list is never disconnected, so this is the only place they can be
      *  taken down again. */
     protected override onViewActivate(): void {
-        this.listenWhileActive(
-            document,
-            'mousedown',
-            this.sortDropdownCloseHandler,
-        );
         this.listenWhileActive(document, 'click', this.clearSelectionHandler);
         this.listenWhileActive(
             document,
@@ -1851,86 +1719,6 @@ export class TrackList
         this.saveSortPreferences();
     }
 
-    /** Set sort from the dropdown and close it. */
-    private onSortDropdownSelect(
-        colId: string | null,
-    ) {
-        if (colId === null) {
-            this.sortField = null;
-            this.sortDirection = 'asc';
-        } else {
-            this.sortField = colId;
-        }
-
-        this.saveSortPreferences();
-        this.closeSortDropdown();
-    }
-
-    /** Toggle sort direction via the toolbar button. */
-    private toggleSortDirection() {
-        this.sortDirection =
-            this.sortDirection === 'asc'
-                ? 'desc'
-                : 'asc';
-        this.saveSortPreferences();
-    }
-
-    private toggleSortDropdown() {
-        if (this.sortDropdownOpen) {
-            this.closeSortDropdown();
-        } else {
-            this.openSortDropdown();
-        }
-    }
-
-    private async openSortDropdown() {
-        this.sortDropdownOpen = true;
-
-        await this.updateComplete;
-
-        const popup = this.sortDropdownPopup;
-        const anchor = this.shadowRoot?.querySelector(
-            '.sort-anchor',
-        );
-
-        if (popup && anchor) {
-            popup.anchor = anchor;
-            popup.active = true;
-        }
-    }
-
-    private closeSortDropdown() {
-        if (!this.sortDropdownOpen) return;
-
-        this.sortDropdownOpen = false;
-
-        const popup = this.sortDropdownPopup;
-
-        if (popup) {
-            popup.active = false;
-        }
-    }
-
-    private sortDropdownCloseHandler = (
-        e: MouseEvent,
-    ) => {
-        if (!this.sortDropdownOpen) return;
-
-        const path = e.composedPath();
-        const popup = this.sortDropdownPopup;
-
-        if (popup && path.includes(popup)) return;
-
-        const anchor =
-            this.shadowRoot?.querySelector(
-                '.sort-anchor',
-            );
-
-        if (anchor && path.includes(anchor)) return;
-
-        this.closeSortDropdown();
-    };
-
     private isActiveTrack(track: library.Track): boolean {
         const currentTrack = this.player.currentTrack;
 
@@ -2023,121 +1811,56 @@ export class TrackList
     `;
     };
 
-    /** Render the sort toolbar above the header row. */
-    private renderSortToolbar() {
-        const activeCol = this.sortField
-            ? COLUMN_DEFS[this.sortField]
-            : null;
-
-        const label = activeCol
-            ? activeCol.label
-            : 'Default';
-
-        const dirIcon =
-            this.sortDirection === 'asc'
-                ? 'arrow-up-short-wide'
-                : 'arrow-down-wide-short';
+    /**
+     * The page header, which carries what used to be a hand-rolled
+     * sort toolbar written out twice (here and in `cover-grid`).
+     *
+     * `externalTracks` means this list is a section of some other page
+     * — the genre and playlist details — which has a heading already,
+     * so the header keeps the count and the sort and drops the title.
+     */
+    private renderPageHeader() {
+        const options: SortOption[] = [
+            { id: '', label: 'Default' },
+            ...this.activeColumns
+                .filter((c) => c.comparator)
+                .map((c) => ({ id: c.id, label: c.label })),
+        ];
 
         return html`
-            <div class="sort-toolbar">
-                <span>Sort:</span>
-                <button
-                    class="sort-anchor"
-                    @click=${() =>
-                        this.toggleSortDropdown()}
-                >
-                    <span class="sort-label">
-                        ${label}
-                    </span>
-                    <wa-icon
-                        name="chevron-down"
-                    ></wa-icon>
-                </button>
-                ${this.sortField
-                    ? html`
-                          <button
-                              class="sort-dir-btn"
-                              title="${this.sortDirection === 'asc' ? 'Ascending' : 'Descending'}"
-                              @click=${() =>
-                                  this.toggleSortDirection()}
-                          >
-                              <wa-icon
-                                  name=${dirIcon}
-                              ></wa-icon>
-                          </button>
-                      `
-                    : nothing}
-                ${this.searchCtrl.term
-                    ? html`<div class="search-indicator">
-                          Showing results for
-                          &ldquo;${this.searchCtrl.term}&rdquo;
-                      </div>`
-                    : nothing}
-            </div>
-            ${this.renderSortDropdownPopup()}
+            <page-header
+                heading=${this.externalTracks === undefined ? 'Tracks' : ''}
+                .count=${this.loadingTracks
+                    ? null
+                    : this.cachedSortedTracks.length}
+                count-noun="track"
+                .sortOptions=${options}
+                sort-field=${this.sortField ?? ''}
+                sort-direction=${this.sortDirection}
+                search-term=${this.searchCtrl.term}
+                @sort-change=${this.onPageHeaderSort}
+            ></page-header>
         `;
     }
 
-    /** Render the sort dropdown popup. */
-    private renderSortDropdownPopup() {
-        const cols = this.activeColumns;
-
-        return html`
-            <wa-popup
-                id="sort-dropdown"
-                placement="bottom-start"
-                flip
-                shift
-                .active=${this.sortDropdownOpen}
-            >
-                ${this.sortDropdownOpen
-                    ? html`
-                          <div
-                              class="sort-dropdown-panel"
-                          >
-                              <wa-dropdown-item
-                                  class=${!this.sortField ? 'active-sort' : ''}
-                                  @click=${() =>
-                                      this.onSortDropdownSelect(
-                                          null,
-                                      )}
-                              >
-                                  Default
-                              </wa-dropdown-item>
-                              ${cols
-                                  .filter(
-                                      (c) =>
-                                          c.comparator,
-                                  )
-                                  .map(
-                                      (col) => html`
-                                      <wa-dropdown-item
-                                          class=${this.sortField === col.id ? 'active-sort' : ''}
-                                          @click=${() =>
-                                              this.onSortDropdownSelect(
-                                                  col.id,
-                                              )}
-                                      >
-                                          ${col.label}
-                                      </wa-dropdown-item>
-                                  `,
-                                  )}
-                          </div>
-                      `
-                    : nothing}
-            </wa-popup>
-        `;
-    }
+    private onPageHeaderSort = (
+        e: CustomEvent<{ field: string; direction: 'asc' | 'desc' }>,
+    ) => {
+        this.sortField =
+            e.detail.field === '' ? null : e.detail.field;
+        this.sortDirection = e.detail.direction;
+        this.saveSortPreferences();
+    };
 
     override render() {
         const visibleTracks = this.cachedSortedTracks;
         const cols = this.activeColumns;
 
         return html`
+      ${this.renderPageHeader()}
       ${this.tracks.length === 0
                 ? this.renderPlaceholder()
                 : html`
-            ${this.renderSortToolbar()}
             <div
               class="table-container"
               role="grid"

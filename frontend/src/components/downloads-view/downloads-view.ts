@@ -2,6 +2,7 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@awesome.me/webawesome/dist/components/button/button.js';
+import '@components/page-header/page-header';
 import { designTokens } from '../../styles/tokens.css';
 import { downloadStore, stateLabel } from '@store/download-store';
 import type { Request, RequestSummary, DownloadView as DownloadRecord } from '@store/download-store';
@@ -55,6 +56,12 @@ export class DownloadsView extends ViewLifecycleMixin(LitElement) {
                 overflow-y: auto;
                 padding: 20px;
                 box-sizing: border-box;
+            }
+
+            /* The header supplies its own padding and rule, so it runs
+               to the edge of a host that pads its own content. */
+            page-header {
+                margin: -20px -20px 1em;
             }
 
             header {
@@ -227,11 +234,11 @@ export class DownloadsView extends ViewLifecycleMixin(LitElement) {
 
     override render() {
         return html`
-            <header>
-                <h1>Downloads</h1>
+            <page-header heading="Downloads">
                 ${this.tab === 'requests'
                     ? html`
                           <wa-button
+                              slot="actions"
                               size="small"
                               appearance="outlined"
                               ?disabled=${this.checking}
@@ -243,7 +250,7 @@ export class DownloadsView extends ViewLifecycleMixin(LitElement) {
                           </wa-button>
                       `
                     : nothing}
-            </header>
+            </page-header>
 
             <p class="subtitle">
                 Music you have requested, and the download attempts that

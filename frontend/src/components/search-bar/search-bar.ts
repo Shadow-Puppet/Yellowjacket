@@ -5,8 +5,20 @@ import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import { designTokens } from '../../styles/tokens.css';
 
 /**
- * Global search bar displayed in the top bar.
- * Hides itself when the active view is not searchable.
+ * The header search box.
+ *
+ * It is **view-scoped** (plan 007, Decisions 2) and used to look
+ * global: placeheld "Search…", sitting in the app header, and silently
+ * doing nothing on the pages that do not read the term. It now names
+ * what it searches — "Search albums" — so "No playlists match your
+ * search" arrives having already said it was only ever looking at
+ * playlists (H-10).
+ *
+ * It also used to *hide* on those pages, which moved the library
+ * filter and the job indicator every time the user navigated. It keeps
+ * its slot now and is disabled, with the reason in its title and its
+ * placeholder: either the page has a search of its own (Explore), or
+ * there is nothing on it to search.
  */
 @customElement('search-bar')
 export class SearchBar extends LitElement {
@@ -22,8 +34,22 @@ export class SearchBar extends LitElement {
             align-items: center;
         }
 
+        /* Kept, because the first-run wizard hides the whole header;
+           navigation no longer sets it. */
         :host([hidden]) {
             display: none;
+        }
+
+        .search-container.disabled {
+            opacity: 0.55;
+        }
+
+        .search-container.disabled:focus-within {
+            border-color: var(--yj-border-subtle, #555);
+        }
+
+        input:disabled {
+            cursor: not-allowed;
         }
 
         .search-container {
@@ -84,16 +110,6 @@ export class SearchBar extends LitElement {
         }
     `];
 
-    override updated() {
-        // Toggle the hidden attribute based on whether the
-        // current view supports searching.
-        if (this.searchCtrl.isSearchableView) {
-            this.removeAttribute('hidden');
-        } else {
-            this.setAttribute('hidden', '');
-        }
-    }
-
     /**
      * Focus the search input and select all text.
      * Called by the global Ctrl+F handler.
@@ -147,24 +163,39 @@ export class SearchBar extends LitElement {
 
     override render() {
         const term = this.searchCtrl.term;
+        const scope = this.searchCtrl.scopeLabel;
+        const disabledReason = this.searchCtrl.disabledReason;
+        const enabled = disabledReason === '';
+
+        const placeholder = enabled
+            ? `Search ${scope}\u2026`
+            : disabledReason;
 
         return html`
-            <div class="search-container">
+            <div class="search-container ${enabled ? '' : 'disabled'}">
                 <wa-icon
                     class="search-icon"
                     name="magnifying-glass"
                 ></wa-icon>
                 <input
                     type="text"
-                    placeholder="Search..."
-                    .value=${term}
+                    data-testid="search-input"
+                    aria-label=${enabled
+                        ? `Search ${scope}`
+                        : disabledReason}
+                    title=${enabled ? '' : disabledReason}
+                    placeholder=${placeholder}
+                    ?disabled=${!enabled}
+                    .value=${enabled ? term : ''}
                     @input=${this.handleInput}
                     @keydown=${this.handleKeydown}
                 />
-                ${term
+                ${enabled && term
                     ? html`
                           <button
                               class="clear-button"
+                              aria-label="Clear search"
+                              title="Clear search"
                               @click=${this.handleClear}
                           >
                               <wa-icon

@@ -1,6 +1,7 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
+import '@components/page-header/page-header';
 import { designTokens } from '../../styles/tokens.css';
 import {
     GetAllLibrariesWithTrackCounts,
@@ -76,6 +77,12 @@ export class JobsView extends ViewLifecycleMixin(LitElement) {
                 height: 100%;
                 padding: 1.5em 1.75em 3em;
                 box-sizing: border-box;
+            }
+
+            /* The header supplies its own padding and rule, so it runs
+               to the edge of a host that pads its own content. */
+            page-header {
+                margin: -1.5em -1.75em 1em;
             }
 
             h1 {
@@ -460,7 +467,7 @@ export class JobsView extends ViewLifecycleMixin(LitElement) {
         );
 
         return html`
-            <h1>Background jobs</h1>
+            <page-header heading="Background jobs"></page-header>
             <p class="page-sub">
                 Library scans and search index builds, with their progress and
                 output.

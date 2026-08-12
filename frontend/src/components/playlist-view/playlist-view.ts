@@ -122,12 +122,6 @@ export class PlaylistView extends ViewLifecycleMixin(LitElement) {
     /** Sort direction. */
     @state() private sortDirection: SortDirection = 'desc';
 
-    /** Whether the sort dropdown is open. */
-    @state() private sortDropdownOpen = false;
-
-    @query('#sort-dropdown')
-    private sortDropdownPopup!: WaPopup;
-
     /**
      * File paths from a drop that landed outside any playlist.
      * When non-empty the create form is in "create-and-add" mode.
@@ -185,29 +179,9 @@ export class PlaylistView extends ViewLifecycleMixin(LitElement) {
             contain: layout style;
         }
 
-        .header {
+        .header-actions {
             display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 16px;
-            flex-shrink: 0;
-            border-bottom: 1px solid var(--yj-border-subtle, #333);
-        }
-
-        .header h2 {
-            margin: 0;
-            font-size: 18px;
-            font-weight: 600;
-            color: var(--yj-text-primary, #fff);
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        @keyframes spin {
-            to {
-                transform: rotate(360deg);
-            }
+            gap: 8px;
         }
 
         .header-spinner {
@@ -374,29 +348,6 @@ export class PlaylistView extends ViewLifecycleMixin(LitElement) {
             color: var(--yj-text-secondary, #b3b3b3);
         }
 
-        .sort-toolbar {
-            position: relative;
-        }
-
-        .search-indicator {
-            position: absolute;
-            left: 50%;
-            transform: translateX(-50%);
-            pointer-events: none;
-            background: var(--yj-bg-overlay, #495057);
-            color: var(
-                --yj-text-secondary,
-                #b3b3b3
-            );
-            font-size: 12px;
-            padding: 2px 14px;
-            border-radius: 12px;
-            border: 1px solid
-                var(--yj-border-subtle, #555);
-            white-space: nowrap;
-            opacity: 0.92;
-        }
-
         .empty-state {
             display: flex;
             flex-direction: column;
@@ -523,103 +474,6 @@ export class PlaylistView extends ViewLifecycleMixin(LitElement) {
                 var(--yj-error, #e03131);
         }
 
-        /* ---- Sort toolbar ---- */
-
-        .sort-toolbar {
-          display: flex;
-          align-items: center;
-          gap: 6px;
-          padding: 4px 8px;
-          font-size: 12px;
-          color: var(--yj-text-secondary, #b3b3b3);
-          border-bottom: 1px solid
-            var(--yj-border-subtle, #333);
-          flex-shrink: 0;
-          user-select: none;
-        }
-
-        .sort-anchor {
-          display: inline-flex;
-          align-items: center;
-          gap: 4px;
-          cursor: pointer;
-          padding: 2px 6px;
-          border-radius: 4px;
-          background: transparent;
-          border: none;
-          color: inherit;
-          font: inherit;
-        }
-
-        .sort-anchor:hover {
-          background: var(
-            --yj-hover-overlay,
-            rgba(255, 255, 255, 0.05)
-          );
-        }
-
-        .sort-anchor .sort-label {
-          color: var(--yj-text-primary, #fff);
-        }
-
-        .sort-dir-btn {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          width: 24px;
-          height: 24px;
-          cursor: pointer;
-          border: none;
-          border-radius: 4px;
-          background: transparent;
-          color: var(--yj-text-secondary, #b3b3b3);
-          font-size: 12px;
-          padding: 0;
-        }
-
-        .sort-dir-btn:hover {
-          background: var(
-            --yj-hover-overlay,
-            rgba(255, 255, 255, 0.05)
-          );
-          color: var(--yj-text-primary, #fff);
-        }
-
-        .sort-dropdown-panel {
-          background-color: var(
-            --yj-bg-elevated,
-            #343a40
-          );
-          border: 1px solid var(--yj-border, #444);
-          border-radius: 6px;
-          padding: 4px 0;
-          box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
-          min-width: 140px;
-        }
-
-        .sort-dropdown-panel wa-dropdown-item {
-          cursor: pointer;
-          --wa-color-text-normal: var(
-            --yj-text-primary,
-            #fff
-          );
-          font-size: 13px;
-        }
-
-        .sort-dropdown-panel wa-dropdown-item:hover {
-          background-color: var(
-            --yj-hover-overlay,
-            rgba(255, 255, 255, 0.1)
-          );
-        }
-
-        .sort-dropdown-panel wa-dropdown-item.active-sort {
-          color: var(--yj-accent, #ffd43b);
-          --wa-color-text-normal: var(
-            --yj-accent,
-            #ffd43b
-          );
-        }
 
         #sort-dropdown {
           z-index: 200;
@@ -728,79 +582,6 @@ export class PlaylistView extends ViewLifecycleMixin(LitElement) {
         });
     }
 
-    private toggleSortDropdown() {
-        if (this.sortDropdownOpen) {
-            this.closeSortDropdown();
-        } else {
-            this.openSortDropdown();
-        }
-    }
-
-    private async openSortDropdown() {
-        this.sortDropdownOpen = true;
-
-        await this.updateComplete;
-
-        const popup = this.sortDropdownPopup;
-        const anchor =
-            this.shadowRoot?.querySelector(
-                '.sort-anchor',
-            );
-
-        if (popup && anchor) {
-            popup.anchor = anchor;
-            popup.active = true;
-        }
-    }
-
-    private closeSortDropdown() {
-        if (!this.sortDropdownOpen) return;
-
-        this.sortDropdownOpen = false;
-
-        const popup = this.sortDropdownPopup;
-
-        if (popup) {
-            popup.active = false;
-        }
-    }
-
-    private onSortDropdownSelect(
-        field: PlaylistSortField,
-    ) {
-        this.sortField = field;
-        this.saveSortPreferences();
-        this.closeSortDropdown();
-    }
-
-    private toggleSortDirection() {
-        this.sortDirection =
-            this.sortDirection === 'asc'
-                ? 'desc'
-                : 'asc';
-        this.saveSortPreferences();
-    }
-
-    private sortDropdownCloseHandler = (
-        e: MouseEvent,
-    ) => {
-        if (!this.sortDropdownOpen) return;
-
-        const path = e.composedPath();
-        const popup = this.sortDropdownPopup;
-
-        if (popup && path.includes(popup)) return;
-
-        const anchor =
-            this.shadowRoot?.querySelector(
-                '.sort-anchor',
-            );
-
-        if (anchor && path.includes(anchor)) return;
-
-        this.closeSortDropdown();
-    };
-
     override connectedCallback() {
         super.connectedCallback();
         this.restoreSortPreferences();
@@ -827,11 +608,6 @@ export class PlaylistView extends ViewLifecycleMixin(LitElement) {
             document,
             'click',
             this.clearSelectionHandler,
-        );
-        this.listenWhileActive(
-            document,
-            'mousedown',
-            this.sortDropdownCloseHandler,
         );
     }
 
@@ -1644,146 +1420,62 @@ export class PlaylistView extends ViewLifecycleMixin(LitElement) {
     // Render
     // =================================================================
 
-    private renderSortToolbar() {
-        const activeOption = SORT_OPTIONS.find(
-            (o) => o.id === this.sortField,
-        );
-        const label = activeOption?.label ?? 'Recent';
-        const dirIcon =
-            this.sortDirection === 'asc'
-                ? 'arrow-up-short-wide'
-                : 'arrow-down-wide-short';
-
-        return html`
-            <div class="sort-toolbar">
-                <span>Sort:</span>
-                <button
-                    class="sort-anchor"
-                    @click=${() =>
-                        this.toggleSortDropdown()}
-                >
-                    <span class="sort-label">
-                        ${label}
-                    </span>
-                    <wa-icon
-                        name="chevron-down"
-                    ></wa-icon>
-                </button>
-                <button
-                    class="sort-dir-btn"
-                    title="${this.sortDirection === 'asc' ? 'Ascending' : 'Descending'}"
-                    @click=${() =>
-                        this.toggleSortDirection()}
-                >
-                    <wa-icon
-                        name=${dirIcon}
-                    ></wa-icon>
-                </button>
-                ${this.searchCtrl.term
-                    ? html`<div class="search-indicator">
-                          Showing results for
-                          &ldquo;${this.searchCtrl.term}&rdquo;
-                      </div>`
-                    : nothing}
-            </div>
-            ${this.renderSortDropdownPopup()}
-        `;
-    }
-
-    private renderSortDropdownPopup() {
-        return html`
-            <wa-popup
-                id="sort-dropdown"
-                placement="bottom-start"
-                flip
-                shift
-                .active=${this.sortDropdownOpen}
-            >
-                ${this.sortDropdownOpen
-                    ? html`
-                          <div
-                              class="sort-dropdown-panel"
-                          >
-                              ${SORT_OPTIONS.map(
-                                  (opt) => html`
-                                  <wa-dropdown-item
-                                      class=${this.sortField === opt.id ? 'active-sort' : ''}
-                                      @click=${() =>
-                                          this.onSortDropdownSelect(
-                                              opt.id,
-                                          )}
-                                  >
-                                      ${opt.label}
-                                  </wa-dropdown-item>
-                              `,
-                              )}
-                          </div>
-                      `
-                    : nothing}
-            </wa-popup>
-        `;
-    }
+    private onPageHeaderSort = (
+        e: CustomEvent<{ field: string; direction: 'asc' | 'desc' }>,
+    ) => {
+        this.sortField = e.detail.field as PlaylistSortField;
+        this.sortDirection = e.detail.direction;
+        this.saveSortPreferences();
+    };
 
     override render() {
         return html`
-            <div class="header">
-                <h2>
-                    Playlists
-                    ${this.refreshing
-                        ? html`<span
-                              class="header-spinner"
-                          ></span>`
-                        : nothing}
-                </h2>
-                <div
-                    style="display: flex; gap: 8px;"
-                >
+            <page-header
+                heading="Playlists"
+                .count=${this.loading && this.entries.length === 0
+                    ? null
+                    : this.sortedEntries.length}
+                count-noun="playlist"
+                .sortOptions=${SORT_OPTIONS}
+                sort-field=${this.sortField}
+                sort-direction=${this.sortDirection}
+                search-term=${this.searchCtrl.term}
+                ?busy=${this.refreshing}
+                @sort-change=${this.onPageHeaderSort}
+            >
+                <div slot="actions" class="header-actions">
                     <button
                         class="import-button"
-                        @click=${this
-                            .handleImportPlaylist}
+                        @click=${this.handleImportPlaylist}
                     >
-                        <wa-icon
-                            name="file-import"
-                        ></wa-icon>
+                        <wa-icon name="file-import"></wa-icon>
                         Import
                     </button>
                     <button
                         class="new-playlist-button ${this.dragOverNewButton ? 'drag-over' : ''}"
-                        @click=${this
-                            .handleNewPlaylistClick}
-                        @dragover=${this
-                            .onNewButtonDragOver}
-                        @dragleave=${this
-                            .onNewButtonDragLeave}
-                        @drop=${this
-                            .onNewButtonDrop}
+                        @click=${this.handleNewPlaylistClick}
+                        @dragover=${this.onNewButtonDragOver}
+                        @dragleave=${this.onNewButtonDragLeave}
+                        @drop=${this.onNewButtonDrop}
                     >
-                        <wa-icon
-                            name="plus"
-                        ></wa-icon>
+                        <wa-icon name="plus"></wa-icon>
                         New Playlist
                     </button>
                     <button
                         class="new-playlist-button"
-                        @click=${this
-                            .handleNewSmartPlaylistClick}
+                        @click=${this.handleNewSmartPlaylistClick}
                     >
-                        <wa-icon
-                            name="filter"
-                        ></wa-icon>
+                        <wa-icon name="filter"></wa-icon>
                         New Smart Playlist
                     </button>
                 </div>
-            </div>
+            </page-header>
 
             ${this.importError
                 ? html`<div class="import-error">
                       ${this.importError}
                   </div>`
                 : nothing}
-
-            ${this.renderSortToolbar()}
 
             ${this.creating || this.creatingSmart
                 ? this.renderCreateForm()

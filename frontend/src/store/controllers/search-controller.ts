@@ -51,4 +51,14 @@ export class SearchController implements ReactiveController {
     get isSearchableView(): boolean {
         return searchStore.isSearchableView();
     }
+
+    /** What this view searches ('albums'), or '' if it searches nothing. */
+    get scopeLabel(): string {
+        return searchStore.scopeLabel();
+    }
+
+    /** Why the box is disabled here, or '' if it is not. */
+    get disabledReason(): string {
+        return searchStore.disabledReason();
+    }
 }

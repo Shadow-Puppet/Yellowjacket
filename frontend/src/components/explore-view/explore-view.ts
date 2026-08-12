@@ -1,5 +1,6 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state, query as litQuery } from 'lit/decorators.js';
+import '@components/page-header/page-header';
 import { designTokens } from '../../styles/tokens.css';
 import { SearchLocal, SearchLyrics, GetThumbnail, GetThumbnails, GetArtistImageURL, RecordSearchClick } from '@go/explore/Service';
 import { libraryStore } from '../../store/library-store';
@@ -163,6 +164,12 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) {
                 overflow-y: auto;
                 height: 100%;
                 box-sizing: border-box;
+            }
+
+            /* The header supplies its own padding and rule, so it runs
+               to the edge of a host that pads its own content. */
+            page-header {
+                margin: -24px -24px 1em;
             }
 
             /* ── Search mode tabs ── */
@@ -1311,6 +1318,7 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) {
 
     override render() {
         return html`
+            <page-header heading="Explore"></page-header>
             ${this.renderSearchInput()}
             ${this.loading
                 ? html`<div class="loading-indicator">Searching\u2026</div>`

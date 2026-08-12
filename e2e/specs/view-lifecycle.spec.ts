@@ -66,6 +66,15 @@ test.describe('view lifecycle', () => {
       .toBe(1);
 
     expect(await pendingCount(app)).toBe(before);
+
+    // Toggle it back. Shuffle is backend state that outlives the page,
+    // so leaving it on fails `playback.spec`'s shuffle assertion on the
+    // *next* run against the same app — the specs share one process,
+    // and this one was quietly spending state it never returned.
+    await app.keyboard.press('s');
+    await expect
+      .poll(() => eventNames(app).then((n) => n.QueueModeChanged ?? 0))
+      .toBe(2);
   });
 
   test('on Autotag, the same key skips and does not also shuffle', async ({

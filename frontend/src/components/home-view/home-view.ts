@@ -9,6 +9,7 @@ import { queueStore } from '@store/queue-store';
 import { libraryStore } from '@store/library-store';
 import { EventsOn } from '@runtime/runtime';
 import { Events } from '../../events';
+import '@components/page-header/page-header';
 import { designTokens } from '../../styles/tokens.css';
 import { ViewLifecycleMixin } from '../../utils/view-lifecycle';
 
@@ -60,19 +61,11 @@ export class HomeView extends ViewLifecycleMixin(LitElement) {
                 box-sizing: border-box;
             }
 
-            header {
-                display: flex;
-                align-items: baseline;
-                gap: 12px;
-                margin-bottom: 4px;
-            }
-
-            h1 {
-                margin: 0;
-                font-size: 24px;
-                font-weight: 700;
-                color: var(--yj-text-primary, #fff);
-                flex: 1;
+            /* The header brings its own padding, and the host already
+               has some — without this the title sits indented from the
+               lede directly beneath it. */
+            page-header {
+                margin: -24px -20px 4px;
             }
 
             .lede {
@@ -244,9 +237,9 @@ export class HomeView extends ViewLifecycleMixin(LitElement) {
 
     override render() {
         return html`
-            <header>
-                <h1>Home</h1>
+            <page-header heading="Home">
                 <wa-button
+                    slot="actions"
                     size="small"
                     appearance="plain"
                     title="Reshuffle the suggestions"
@@ -255,7 +248,7 @@ export class HomeView extends ViewLifecycleMixin(LitElement) {
                     <wa-icon slot="start" name="shuffle"></wa-icon>
                     Shuffle
                 </wa-button>
-            </header>
+            </page-header>
             <p class="lede">Somewhere to start listening.</p>
             ${this.renderBody()}
         `;

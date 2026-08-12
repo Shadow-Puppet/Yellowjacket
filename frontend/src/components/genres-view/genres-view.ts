@@ -16,6 +16,7 @@ import {
 import type { library } from '@go/models';
 import { LibraryController } from '@store/controllers/library-controller';
 import { SearchController } from '@store/controllers/search-controller';
+import '@components/page-header/page-header';
 import { queueStore } from '@store/queue-store';
 import {
     ContextMenuController,
@@ -47,6 +48,13 @@ const CARD_SIZE_DEFAULT = 176;
 const SCROLL_DEBOUNCE_MS = 100;
 
 /** A genre extracted from the track library. */
+const GENRE_SORT_KEY = 'genres-view-sort';
+
+const GENRE_SORT_OPTIONS = [
+    { id: 'name', label: 'Name' },
+    { id: 'tracks', label: 'Tracks' },
+];
+
 interface Genre {
     name: string;
     trackCount: number;
@@ -189,11 +197,19 @@ export class GenresView
         });
     }
 
+    /** Sort key and direction for the genre grid (H-19: it had none). */
+    @state()
+    private sortField: 'name' | 'tracks' = 'name';
+
+    @state()
+    private sortDirection: 'asc' | 'desc' = 'asc';
+
     // -- Memoisation caches for filtered genres --
     private cachedFilteredGenres: Genre[] = [];
     private cachedGridEntries: GenreEntry[] = [];
     private prevFilterGenres: Genre[] = [];
     private prevFilterTerm = '';
+    private prevFilterSort = '';
 
     /**
      * Recompute the filtered-genres and grid-entries
@@ -204,12 +220,16 @@ export class GenresView
     private recomputeGenreCaches() {
         const term = this.searchCtrl.term;
 
+        const sortKey = `${this.sortField}:${this.sortDirection}`;
+
         if (
             this.genres !== this.prevFilterGenres ||
-            term !== this.prevFilterTerm
+            term !== this.prevFilterTerm ||
+            sortKey !== this.prevFilterSort
         ) {
             this.prevFilterGenres = this.genres;
             this.prevFilterTerm = term;
+            this.prevFilterSort = sortKey;
             this.cachedFilteredGenres =
                 this.computeFilteredGenres();
             this.cachedGridEntries =
@@ -226,13 +246,60 @@ export class GenresView
         const term =
             this.searchCtrl.term.toLowerCase();
 
-        if (!term) {
-            return this.genres;
+        const matching = term
+            ? this.genres.filter((g) =>
+                  g.name.toLowerCase().includes(term),
+              )
+            : this.genres;
+
+        // The default order is the backend's, and the array's identity
+        // is what makes the virtualizer repaint — so leave it alone
+        // unless the user asked for something else.
+        if (this.sortField === 'name' && this.sortDirection === 'asc') {
+            return matching;
         }
 
-        return this.genres.filter((g) =>
-            g.name.toLowerCase().includes(term),
+        const dir = this.sortDirection === 'asc' ? 1 : -1;
+
+        return [...matching].sort((a, b) =>
+            this.sortField === 'tracks'
+                ? dir * (a.trackCount - b.trackCount)
+                : dir * a.name.localeCompare(b.name),
         );
+    }
+
+    private onPageHeaderSort = (
+        e: CustomEvent<{ field: string; direction: 'asc' | 'desc' }>,
+    ) => {
+        this.sortField =
+            e.detail.field === 'tracks' ? 'tracks' : 'name';
+        this.sortDirection = e.detail.direction;
+
+        try {
+            localStorage.setItem(
+                GENRE_SORT_KEY,
+                `${this.sortField}:${this.sortDirection}`,
+            );
+        } catch {
+            // Ignore storage errors.
+        }
+    };
+
+    private loadSortPreferences() {
+        try {
+            const saved = localStorage.getItem(GENRE_SORT_KEY);
+            const [field, dir] = (saved ?? '').split(':');
+
+            if (field === 'name' || field === 'tracks') {
+                this.sortField = field;
+            }
+
+            if (dir === 'asc' || dir === 'desc') {
+                this.sortDirection = dir;
+            }
+        } catch {
+            // Ignore storage errors.
+        }
     }
 
     static override styles = [
@@ -407,6 +474,7 @@ export class GenresView
     override connectedCallback() {
         super.connectedCallback();
         this.loadCardSize();
+        this.loadSortPreferences();
         this.loadGenres();
     }
 
@@ -1175,7 +1243,16 @@ export class GenresView
 
     override render() {
         if (this.loading) {
+            // The header keeps its place while the view loads: a
+            // heading that appears only once the data does is the
+            // shifting layout this component exists to stop.
             return html`
+                <page-header
+                    heading="Genres"
+                    .sortOptions=${GENRE_SORT_OPTIONS}
+                    sort-field=${this.sortField}
+                    sort-direction=${this.sortDirection}
+                ></page-header>
                 <div class="loading-message">
                     Loading genres...
                 </div>
@@ -1183,15 +1260,18 @@ export class GenresView
         }
 
         const entries = this.cachedGridEntries;
-        const searchBar = this.searchCtrl.term
-            ? html`<div class="search-bar-row">
-                  <div class="search-indicator">
-                      Showing results for
-                      &ldquo;${this.searchCtrl
-                          .term}&rdquo;
-                  </div>
-              </div>`
-            : nothing;
+        const searchBar = html`
+            <page-header
+                heading="Genres"
+                .count=${entries.length}
+                count-noun="genre"
+                .sortOptions=${GENRE_SORT_OPTIONS}
+                sort-field=${this.sortField}
+                sort-direction=${this.sortDirection}
+                search-term=${this.searchCtrl.term}
+                @sort-change=${this.onPageHeaderSort}
+            ></page-header>
+        `;
 
         if (entries.length === 0) {
             return html`

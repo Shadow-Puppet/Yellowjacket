@@ -1,5 +1,33 @@
-/** Searchable views that respond to the global search term. */
-const SEARCHABLE_VIEWS = new Set(['tracks', 'albums', 'playlists', 'playlist-details', 'artists', 'genres']);
+/**
+ * What the header search box searches, per view.
+ *
+ * The box is **view-scoped by decision** (plan 007, Decisions 2), and
+ * H-10 is that it never said so: it sits in the global header,
+ * placeheld "Search…", and typing `tide` on Playlists answered "No
+ * playlists match your search" with three *Tideline* tracks in the
+ * library. The scope was always real; the copy is what was missing.
+ *
+ * A view absent from this map is one with nothing of its own to
+ * search. The box keeps its slot there and is disabled, rather than
+ * being removed — its appearing and disappearing is what made the
+ * whole header change shape between pages.
+ */
+const SEARCH_SCOPES: Record<string, string> = {
+    tracks: 'tracks',
+    albums: 'albums',
+    artists: 'artists',
+    genres: 'genres',
+    playlists: 'playlists',
+    'playlist-details': 'tracks in this playlist',
+};
+
+/**
+ * Views with a search of their own in the page. The header box points
+ * at it rather than pretending to be it.
+ */
+const OWN_SEARCH_VIEWS: Record<string, string> = {
+    explore: 'Search the catalog in the page',
+};
 
 type Subscriber = () => void;
 
@@ -39,7 +67,25 @@ class SearchStore {
     }
 
     isSearchableView(): boolean {
-        return SEARCHABLE_VIEWS.has(this.currentView);
+        return this.currentView in SEARCH_SCOPES;
+    }
+
+    /** What this view searches, e.g. `albums`. Empty if it does not. */
+    scopeLabel(): string {
+        return SEARCH_SCOPES[this.currentView] ?? '';
+    }
+
+    /**
+     * What the box should say when it cannot be used here: either that
+     * the page has its own search, or that there is nothing to search.
+     */
+    disabledReason(): string {
+        if (this.isSearchableView()) return '';
+
+        return (
+            OWN_SEARCH_VIEWS[this.currentView] ??
+            'Nothing to search on this page'
+        );
     }
 
     // ===================================================================

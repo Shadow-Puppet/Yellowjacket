@@ -57,6 +57,7 @@ import {
     removeDragImage,
 } from '@utils/drag-image';
 import { coverGridStyles } from './cover-grid-styles.js';
+import '@components/page-header/page-header';
 import {
     ALBUM_SORT_OPTIONS,
     SORT_DIR_KEY,
@@ -315,13 +316,6 @@ export class CoverGrid
     @state()
     private sortDirection: SortDirection = 'asc';
 
-    /** Whether the sort dropdown popup is open. */
-    @state()
-    private sortDropdownOpen = false;
-
-    @query('#sort-dropdown')
-    private sortDropdownPopup!: WaPopup;
-
     /** ID of the album whose dropdown is currently open, or null. */
     @state()
     expandedAlbumId: number | null = null;
@@ -427,81 +421,6 @@ export class CoverGrid
         }
     }
 
-    /** Set the sort field from the dropdown. */
-    private onSortDropdownSelect(
-        field: AlbumSortField,
-    ) {
-        this.sortField = field;
-        this.saveSortPreferences();
-        this.closeSortDropdown();
-    }
-
-    /** Toggle sort direction. */
-    private toggleSortDirection() {
-        this.sortDirection =
-            this.sortDirection === 'asc'
-                ? 'desc'
-                : 'asc';
-        this.saveSortPreferences();
-    }
-
-    private toggleSortDropdown() {
-        if (this.sortDropdownOpen) {
-            this.closeSortDropdown();
-        } else {
-            this.openSortDropdown();
-        }
-    }
-
-    private async openSortDropdown() {
-        this.sortDropdownOpen = true;
-
-        await this.updateComplete;
-
-        const popup = this.sortDropdownPopup;
-        const anchor =
-            this.shadowRoot?.querySelector(
-                '.sort-anchor',
-            );
-
-        if (popup && anchor) {
-            popup.anchor = anchor;
-            popup.active = true;
-        }
-    }
-
-    private closeSortDropdown() {
-        if (!this.sortDropdownOpen) return;
-
-        this.sortDropdownOpen = false;
-
-        const popup = this.sortDropdownPopup;
-
-        if (popup) {
-            popup.active = false;
-        }
-    }
-
-    private sortDropdownCloseHandler = (
-        e: MouseEvent,
-    ) => {
-        if (!this.sortDropdownOpen) return;
-
-        const path = e.composedPath();
-        const popup = this.sortDropdownPopup;
-
-        if (popup && path.includes(popup)) return;
-
-        const anchor =
-            this.shadowRoot?.querySelector(
-                '.sort-anchor',
-            );
-
-        if (anchor && path.includes(anchor)) return;
-
-        this.closeSortDropdown();
-    };
-
     /* ====================================================================
      * Lifecycle
      * ==================================================================== */
@@ -521,14 +440,6 @@ export class CoverGrid
             'error',
             this.onGridImageError,
             true,
-        );
-    }
-
-    protected override onViewActivate(): void {
-        this.listenWhileActive(
-            document,
-            'mousedown',
-            this.sortDropdownCloseHandler,
         );
     }
 
@@ -1642,90 +1553,42 @@ export class CoverGrid
      * ==================================================================== */
 
     /** Render the sort toolbar above the grid. */
-    private renderSortToolbar() {
-        const activeOpt = ALBUM_SORT_OPTIONS.find(
-            (o) => o.id === this.sortField,
-        );
-
-        const label = activeOpt
-            ? activeOpt.label
-            : 'Name';
-
-        const dirIcon =
-            this.sortDirection === 'asc'
-                ? 'arrow-up-short-wide'
-                : 'arrow-down-wide-short';
-
+    /**
+     * The page header: title, count, sort, and what the header search
+     * box is filtering by.  This was a hand-rolled toolbar written out
+     * twice — the other copy was in `track-list` — which is how Albums
+     * and Tracks came to have a sort control while Artists and Genres
+     * had none (H-19).
+     *
+     * `externalAlbums` means this grid is a section of the artist page,
+     * which has a heading of its own; there it keeps the count and the
+     * sort and drops the title.
+     */
+    private renderPageHeader() {
         return html`
-            <div class="sort-toolbar">
-                <span>Sort:</span>
-                <button
-                    class="sort-anchor"
-                    @click=${() =>
-                        this.toggleSortDropdown()}
-                >
-                    <span class="sort-label">
-                        ${label}
-                    </span>
-                    <wa-icon
-                        name="chevron-down"
-                    ></wa-icon>
-                </button>
-                <button
-                    class="sort-dir-btn"
-                    title="${this.sortDirection === 'asc' ? 'Ascending' : 'Descending'}"
-                    @click=${() =>
-                        this.toggleSortDirection()}
-                >
-                    <wa-icon
-                        name=${dirIcon}
-                    ></wa-icon>
-                </button>
-                ${this.searchCtrl.term
-                    ? html`<div class="search-indicator">
-                          Showing results for
-                          &ldquo;${this.searchCtrl.term}&rdquo;
-                      </div>`
-                    : nothing}
-            </div>
-            ${this.renderSortDropdownPopup()}
+            <page-header
+                heading=${this.externalAlbums === undefined ? 'Albums' : ''}
+                .count=${this.cachedFilteredAlbums.length}
+                count-noun="album"
+                .sortOptions=${ALBUM_SORT_OPTIONS.map((o) => ({
+                    id: o.id,
+                    label: o.label,
+                }))}
+                sort-field=${this.sortField}
+                sort-direction=${this.sortDirection}
+                search-term=${this.searchCtrl.term}
+                @sort-change=${this.onPageHeaderSort}
+            ></page-header>
         `;
     }
 
-    /** Render the sort dropdown popup. */
-    private renderSortDropdownPopup() {
-        return html`
-            <wa-popup
-                id="sort-dropdown"
-                placement="bottom-start"
-                flip
-                shift
-                .active=${this.sortDropdownOpen}
-            >
-                ${this.sortDropdownOpen
-                    ? html`
-                          <div
-                              class="sort-dropdown-panel"
-                          >
-                              ${ALBUM_SORT_OPTIONS.map(
-                                  (opt) => html`
-                                      <wa-dropdown-item
-                                          class=${this.sortField === opt.id ? 'active-sort' : ''}
-                                          @click=${() =>
-                                              this.onSortDropdownSelect(
-                                                  opt.id,
-                                              )}
-                                      >
-                                          ${opt.label}
-                                      </wa-dropdown-item>
-                                  `,
-                              )}
-                          </div>
-                      `
-                    : nothing}
-            </wa-popup>
-        `;
-    }
+    private onPageHeaderSort = (
+        e: CustomEvent<{ field: string; direction: SortDirection }>,
+    ) => {
+        this.sortField = e.detail.field as AlbumSortField;
+        this.sortDirection = e.detail.direction;
+        this.saveSortPreferences();
+    };
 
     /* ====================================================================
      * Rendering helpers
@@ -1768,6 +1631,8 @@ export class CoverGrid
 
         return album.CoverArtPath;
     }
+
+    /* ====================================================================
 
     /* ====================================================================
      * Render: grid entry (virtualizer renderItem)
@@ -1887,7 +1752,7 @@ export class CoverGrid
 
         if (this.cachedFilteredAlbums.length === 0) {
             return html`
-                ${this.renderSortToolbar()}
+                ${this.renderPageHeader()}
                 <div class="empty-state">
                     <p>No albums match your search.</p>
                 </div>
@@ -1897,7 +1762,7 @@ export class CoverGrid
         const gridContent = this.renderSingleGrid();
 
         return html`
-            ${this.renderSortToolbar()}
+            ${this.renderPageHeader()}
             <div
                 class="grid-scroll-container"
                 @click=${this.onGridClick}
