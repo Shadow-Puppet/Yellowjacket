@@ -1,5 +1,9 @@
 import type { ReactiveController, ReactiveControllerHost } from 'lit';
-import type { PlayerState, TrackInfo } from '../player-store';
+import type {
+  PlayerState,
+  PositionInfo,
+  TrackInfo,
+} from '../player-store';
 import { playerStore } from '../player-store';
 
 /**
@@ -64,6 +68,11 @@ export class PlayerController implements ReactiveController {
 
   get muted(): boolean {
     return this.state.muted;
+  }
+
+  /** The backend's last position report, or null before the first. */
+  get position(): PositionInfo | null {
+    return this.state.position;
   }
 
   // ===================================================================

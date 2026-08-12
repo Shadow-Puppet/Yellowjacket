@@ -47,6 +47,16 @@ interface TracksModified {
 
 type Subscriber = () => void;
 
+/**
+ * Queue bindings are fire-and-forget by design: what happened is
+ * reported by events (QueueChanged, PlaybackFailed), not by a return
+ * value.  A rejected bridge call still needs somewhere to land other
+ * than an unhandled rejection (errors.m1).
+ */
+function reportBindingFailure(name: string): (err: unknown) => void {
+  return (err: unknown) => console.error(`${name} failed`, err);
+}
+
 class QueueStore {
   private state: QueueState = {
     tracks: [],
@@ -190,15 +200,21 @@ class QueueStore {
   // ===================================================================
 
   play(): void {
-    Queue.Play();
+    void Queue.Play().catch(
+      reportBindingFailure('Queue.Play'),
+    );
   }
 
   next(): void {
-    Queue.Next();
+    void Queue.Next().catch(
+      reportBindingFailure('Queue.Next'),
+    );
   }
 
   previous(): void {
-    Queue.Previous();
+    void Queue.Previous().catch(
+      reportBindingFailure('Queue.Previous'),
+    );
   }
 
   setQueue(
@@ -206,61 +222,87 @@ class QueueStore {
     startIndex: number,
     shuffleStart = false,
   ): void {
-    Queue.SetQueue(filePaths, startIndex, shuffleStart);
+    void Queue.SetQueue(filePaths, startIndex, shuffleStart).catch(
+      reportBindingFailure('Queue.SetQueue'),
+    );
   }
 
   addToQueue(filePath: string): void {
-    Queue.AddTrack(filePath);
+    void Queue.AddTrack(filePath).catch(
+      reportBindingFailure('Queue.AddTrack'),
+    );
   }
 
   playNext(filePath: string): void {
-    Queue.InsertNext(filePath);
+    void Queue.InsertNext(filePath).catch(
+      reportBindingFailure('Queue.InsertNext'),
+    );
   }
 
   removeFromQueue(position: number): void {
-    Queue.RemoveTrack(position);
+    void Queue.RemoveTrack(position).catch(
+      reportBindingFailure('Queue.RemoveTrack'),
+    );
   }
 
   removeTracksFromQueue(positions: number[]): void {
-    Queue.RemoveTracks(positions);
+    void Queue.RemoveTracks(positions).catch(
+      reportBindingFailure('Queue.RemoveTracks'),
+    );
   }
 
   addTracksToQueue(filePaths: string[]): void {
-    Queue.AddTracks(filePaths);
+    void Queue.AddTracks(filePaths).catch(
+      reportBindingFailure('Queue.AddTracks'),
+    );
   }
 
   playTracksNext(filePaths: string[]): void {
-    Queue.InsertNextTracks(filePaths);
+    void Queue.InsertNextTracks(filePaths).catch(
+      reportBindingFailure('Queue.InsertNextTracks'),
+    );
   }
 
   toggleShuffle(): void {
-    Queue.ToggleShuffle();
+    void Queue.ToggleShuffle().catch(
+      reportBindingFailure('Queue.ToggleShuffle'),
+    );
   }
 
   cycleRepeat(): void {
-    Queue.CycleRepeat();
+    void Queue.CycleRepeat().catch(
+      reportBindingFailure('Queue.CycleRepeat'),
+    );
   }
 
   playAtIndex(index: number): void {
-    Queue.PlayIndex(index);
+    void Queue.PlayIndex(index).catch(
+      reportBindingFailure('Queue.PlayIndex'),
+    );
   }
 
   insertTracksAtIndex(
     filePaths: string[],
     index: number,
   ): void {
-    Queue.InsertTracksAt(filePaths, index);
+    void Queue.InsertTracksAt(filePaths, index).catch(
+      reportBindingFailure('Queue.InsertTracksAt'),
+    );
   }
 
   moveTracksInQueue(
     fromIndices: number[],
     toIndex: number,
   ): void {
-    Queue.MoveQueueTracks(fromIndices, toIndex);
+    void Queue.MoveQueueTracks(fromIndices, toIndex).catch(
+      reportBindingFailure('Queue.MoveQueueTracks'),
+    );
   }
 
   clearQueue(): void {
-    Queue.Clear();
+    void Queue.Clear().catch(
+      reportBindingFailure('Queue.Clear'),
+    );
   }
 
   // ===================================================================

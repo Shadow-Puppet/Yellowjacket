@@ -125,12 +125,57 @@ export class SelectionController implements ReactiveController {
         }
     }
 
+    /** Whether `next` holds exactly the currently selected keys. */
+    private sameMembership(next: ReadonlySet<string>): boolean {
+        if (next.size !== this._selectedItems.size) return false;
+
+        for (const key of next) {
+            if (!this._selectedItems.has(key)) return false;
+        }
+
+        return true;
+    }
+
     /** Clear the entire selection. */
     clear(): void {
         if (this._selectedItems.size === 0) return;
 
         this._selectedItems = new Set();
         this.lastSelectedIndex = null;
+        this.host.requestUpdate();
+        this.host.onSelectionChanged?.();
+    }
+
+    /**
+     * Drop selected keys that are no longer in the list, keeping the
+     * rest.
+     *
+     * The reason this exists rather than `clear()`: a refetch is not a
+     * deselection. Every naturally finished track used to invalidate
+     * the library cache, and `track-list` answered the new array by
+     * clearing the selection — so selecting forty tracks to drag into a
+     * playlist was impossible while music was playing (audit perf.C2).
+     * Keys are file paths, which survive a refetch, so the selection
+     * survives with them.
+     *
+     * `lastSelectedIndex` is dropped regardless: it is an index into a
+     * list that has just been replaced, and a shift-click against a
+     * stale one selects the wrong range.
+     */
+    retain(isStillPresent: (key: string) => boolean): void {
+        if (this._selectedItems.size === 0) return;
+
+        const next = new Set<string>();
+
+        for (const key of this._selectedItems) {
+            if (isStillPresent(key)) next.add(key);
+        }
+
+        this.lastSelectedIndex = null;
+
+        if (next.size === this._selectedItems.size) return;
+
+        this._selectedItems = next;
         this.host.requestUpdate();
         this.host.onSelectionChanged?.();
     }
@@ -145,7 +190,12 @@ export class SelectionController implements ReactiveController {
             if (key !== undefined) next.add(key);
         }
 
-        if (next.size === this._selectedItems.size) return;
+        // Membership, not cardinality. The guard used to compare sizes
+        // alone, so selecting four rows and then Select All over a
+        // *different* four was a no-op (audit perf.p5) — reachable now
+        // that `retain()` above carries a selection across a refetch
+        // that replaced the list.
+        if (this.sameMembership(next)) return;
 
         this._selectedItems = next;
         this.lastSelectedIndex = count > 0 ? count - 1 : null;
@@ -156,8 +206,26 @@ export class SelectionController implements ReactiveController {
     /**
      * Return the selected keys in the order they appear in the host's
      * item list. This preserves positional ordering for queue operations.
+     *
+     * This walks the *list*, not the selection, which audit `perf.m6`
+     * calls out: every `dragstart`, every context-menu action and every
+     * favourite toggle pays it. Measured at 50 000 tracks it is **3 ms**
+     * — real, and a fifth of a frame, so the loop stays. What it does
+     * not do any more is keep going after it has found everything.
+     *
+     * It walks the list rather than the selection *deliberately*: the
+     * only way to order the selection directly is to store each key's
+     * index with it, and an index goes stale whenever the list is
+     * re-sorted, re-filtered or refetched, while the keys (file paths)
+     * survive all three — which is exactly why `retain()` drops
+     * `lastSelectedIndex` and keeps the keys. Trading 3 ms for a
+     * silently mis-ordered queue insert is not a trade.
      */
     getSelectedKeysOrdered(): string[] {
+        const wanted = this._selectedItems.size;
+
+        if (wanted === 0) return [];
+
         const count = this.host.getItemCount();
         const result: string[] = [];
 
@@ -166,6 +234,7 @@ export class SelectionController implements ReactiveController {
 
             if (key !== undefined && this._selectedItems.has(key)) {
                 result.push(key);
+                if (result.length === wanted) break;
             }
         }
 
@@ -174,8 +243,15 @@ export class SelectionController implements ReactiveController {
 
     /**
      * Return the selected indices in ascending order.
+     *
+     * Same shape, same reasoning, same early exit as
+     * `getSelectedKeysOrdered()` above.
      */
     getSelectedIndices(): number[] {
+        const wanted = this._selectedItems.size;
+
+        if (wanted === 0) return [];
+
         const count = this.host.getItemCount();
         const result: number[] = [];
 
@@ -184,6 +260,7 @@ export class SelectionController implements ReactiveController {
 
             if (key !== undefined && this._selectedItems.has(key)) {
                 result.push(i);
+                if (result.length === wanted) break;
             }
         }
 

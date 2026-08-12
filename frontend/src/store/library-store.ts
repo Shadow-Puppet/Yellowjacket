@@ -58,11 +58,31 @@ class LibraryStore {
     private notifyScheduled = false;
 
     /**
+     * The one in-flight request per collection.
+     *
+     * Concurrent readers used to be deduplicated by deriving a promise
+     * from subscriber notifications, which never settled when the fetch
+     * *failed* (errors.M1) — the waiter tested for "loaded and not
+     * loading", and a failed fetch is neither. Holding the request
+     * itself makes every waiter settle exactly as the fetch did.
+     */
+    private inFlight = new Map<ViewName, Promise<unknown>>();
+
+    /**
      * Monotonic counter incremented only when actual data changes
      * (not loading flag transitions). Subscribers can compare against
      * a saved value to skip requestUpdate when only loading state toggled.
      */
     private changeGen = 0;
+
+    /**
+     * Incremented only by invalidation — a scan, a retag, or a library
+     * filter switch. A fetch captures it at request time and discards
+     * its answer if it no longer matches, which is what stops library
+     * A's tracks being cached while library B is selected (errors.C4).
+     * Separate from `changeGen`, which any collection landing bumps.
+     */
+    private cacheGen = 0;
 
     constructor() {
         EventsOn(Events.LibraryScanComplete, () => {
@@ -84,6 +104,9 @@ class LibraryStore {
         });
         EventsOn(Events.TrackMetadataChanged, () => {
             this.invalidate();
+        });
+        EventsOn(Events.TrackPlayCountChanged, (payload: unknown) => {
+            this.applyPlayCount(payload);
         });
 
         this.loadCoverSize();
@@ -130,32 +153,87 @@ class LibraryStore {
         return this.albums;
     }
 
+    /**
+     * Track a fetch: guard its answer against an invalidation that
+     * happened while it was in flight, hold it as *the* in-flight
+     * request for its collection, and clear the loading flag when it
+     * settles either way.
+     *
+     * A stale answer is not cached and not returned — the caller is
+     * chained onto whatever the current selection is fetching instead,
+     * so "give me the tracks" always answers with the tracks of the
+     * library that is selected when it answers.
+     */
+    private track<T>(
+        slot: ViewName,
+        request: Promise<T>,
+        commit: (value: T) => void,
+        current: () => Promise<T>,
+    ): Promise<T> {
+        const gen = this.cacheGen;
+        const guarded = request.then((value) => {
+            if (gen !== this.cacheGen) return current();
+
+            commit(value);
+            this.changeGen++;
+
+            return value;
+        });
+        const tracked: Promise<T> = guarded.finally(() => {
+            if (this.inFlight.get(slot) !== tracked) return;
+
+            this.inFlight.delete(slot);
+            this.setLoading(slot, false);
+            this.notify();
+        });
+
+        this.inFlight.set(slot, tracked);
+        this.setLoading(slot, true);
+        this.notify();
+
+        return tracked;
+    }
+
+    private pending<T>(slot: ViewName): Promise<T> | undefined {
+        return this.inFlight.get(slot) as Promise<T> | undefined;
+    }
+
+    private setLoading(slot: ViewName, loading: boolean): void {
+        switch (slot) {
+            case 'tracks':
+                this.tracksLoading = loading;
+                break;
+            case 'albums':
+                this.albumsLoading = loading;
+                break;
+            case 'artists':
+                this.artistsLoading = loading;
+                break;
+            case 'genres':
+                this.genresLoading = loading;
+                break;
+        }
+    }
+
     async getTracks(): Promise<library.Track[]> {
         if (this.tracks !== null) {
             return this.tracks;
         }
 
-        if (this.tracksLoading) {
-            return this.waitForTracks();
-        }
+        const pending = this.pending<library.Track[]>('tracks');
 
-        this.tracksLoading = true;
-        this.notify();
+        if (pending) return pending;
 
-        try {
-            const id = this.selectedLibraryIdValue;
-            const tracks = id !== null
-                ? await GetAllTracksByLibrary(id)
-                : await GetAllTracks();
+        const id = this.selectedLibraryIdValue;
 
-            this.tracks = tracks;
-            this.changeGen++;
-
-            return tracks;
-        } finally {
-            this.tracksLoading = false;
-            this.notify();
-        }
+        return this.track(
+            'tracks',
+            id !== null ? GetAllTracksByLibrary(id) : GetAllTracks(),
+            (tracks) => {
+                this.tracks = tracks;
+            },
+            () => this.getTracks(),
+        );
     }
 
     async getAlbums(): Promise<library.Album[]> {
@@ -163,27 +241,20 @@ class LibraryStore {
             return this.albums;
         }
 
-        if (this.albumsLoading) {
-            return this.waitForAlbums();
-        }
+        const pending = this.pending<library.Album[]>('albums');
 
-        this.albumsLoading = true;
-        this.notify();
+        if (pending) return pending;
 
-        try {
-            const id = this.selectedLibraryIdValue;
-            const albums = id !== null
-                ? await GetAllAlbumsByLibrary(id)
-                : await GetAllAlbums();
+        const id = this.selectedLibraryIdValue;
 
-            this.albums = albums;
-            this.changeGen++;
-
-            return albums;
-        } finally {
-            this.albumsLoading = false;
-            this.notify();
-        }
+        return this.track(
+            'albums',
+            id !== null ? GetAllAlbumsByLibrary(id) : GetAllAlbums(),
+            (albums) => {
+                this.albums = albums;
+            },
+            () => this.getAlbums(),
+        );
     }
 
     async getArtists(): Promise<library.Artist[]> {
@@ -191,27 +262,20 @@ class LibraryStore {
             return this.artists;
         }
 
-        if (this.artistsLoading) {
-            return this.waitForArtists();
-        }
+        const pending = this.pending<library.Artist[]>('artists');
 
-        this.artistsLoading = true;
-        this.notify();
+        if (pending) return pending;
 
-        try {
-            const id = this.selectedLibraryIdValue;
-            const artists = id !== null
-                ? await GetAllArtistsByLibrary(id)
-                : await GetAllArtists();
+        const id = this.selectedLibraryIdValue;
 
-            this.artists = artists;
-            this.changeGen++;
-
-            return artists;
-        } finally {
-            this.artistsLoading = false;
-            this.notify();
-        }
+        return this.track(
+            'artists',
+            id !== null ? GetAllArtistsByLibrary(id) : GetAllArtists(),
+            (artists) => {
+                this.artists = artists;
+            },
+            () => this.getArtists(),
+        );
     }
 
     async getGenres(): Promise<library.GenreWithCount[]> {
@@ -219,27 +283,22 @@ class LibraryStore {
             return this.genres;
         }
 
-        if (this.genresLoading) {
-            return this.waitForGenres();
-        }
+        const pending = this.pending<library.GenreWithCount[]>('genres');
 
-        this.genresLoading = true;
-        this.notify();
+        if (pending) return pending;
 
-        try {
-            const id = this.selectedLibraryIdValue;
-            const genres = id !== null
-                ? await GetAllGenresWithCountsByLibrary(id)
-                : await GetAllGenresWithCounts();
+        const id = this.selectedLibraryIdValue;
 
-            this.genres = genres;
-            this.changeGen++;
-
-            return genres;
-        } finally {
-            this.genresLoading = false;
-            this.notify();
-        }
+        return this.track(
+            'genres',
+            id !== null
+                ? GetAllGenresWithCountsByLibrary(id)
+                : GetAllGenresWithCounts(),
+            (genres) => {
+                this.genres = genres;
+            },
+            () => this.getGenres(),
+        );
     }
 
     async getAlbumsByArtist(
@@ -442,11 +501,75 @@ class LibraryStore {
     // INVALIDATION
     // ===================================================================
 
+    /**
+     * Patch one track's play statistics in place.
+     *
+     * Finishing a track used to arrive as TrackMetadataChanged, so every
+     * song invalidated the whole cache and refetched tracks, albums,
+     * artists and genres — ~37 MB across the IPC and ~0.8 s of blocked
+     * main thread per song at 50 000 tracks (perf.C1), and it cleared
+     * the user's track-list selection while it did (perf.C2).
+     *
+     * A play count changes one integer on one row. The backend sends
+     * everything needed to write it, so nothing is refetched and no
+     * collection identity changes except the tracks array itself.
+     *
+     * The array *is* replaced rather than mutated: consumers key their
+     * memoized filter/sort caches on its identity (`track-list`'s
+     * `cachedTracks` check is the load-bearing one), so an in-place
+     * mutation would be invisible to every one of them. The individual
+     * Track objects other than the patched one are shared, which is
+     * what keeps this cheap.
+     */
+    private applyPlayCount(payload: unknown): void {
+        if (this.tracks === null) return;
+
+        const p = payload as {
+            filePath?: string;
+            playCount?: number;
+            lastPlayed?: string;
+        } | null;
+
+        if (!p?.filePath) return;
+
+        const idx = this.tracks.findIndex((t) => t.FilePath === p.filePath);
+
+        if (idx === -1) return;
+
+        const existing = this.tracks[idx];
+
+        if (existing === undefined) return;
+
+        const patched = Object.assign(
+            Object.create(Object.getPrototypeOf(existing) as object),
+            existing,
+            {
+                PlayCount: p.playCount ?? existing.PlayCount,
+                LastPlayed: p.lastPlayed ?? existing.LastPlayed,
+            },
+        ) as library.Track;
+
+        this.tracks = [
+            ...this.tracks.slice(0, idx),
+            patched,
+            ...this.tracks.slice(idx + 1),
+        ];
+
+        this.changeGen++;
+        this.notify();
+    }
+
     private invalidate(): void {
         this.tracks = null;
         this.albums = null;
         this.artists = null;
         this.genres = null;
+        // Anything still in flight was asked for on behalf of a
+        // selection that no longer applies: forget it, so the eager
+        // refetch below starts a request for the current one rather
+        // than adopting the old one's answer.
+        this.inFlight.clear();
+        this.cacheGen++;
         this.changeGen++;
         this.scrollPositions = { tracks: 0, albums: 0, artists: 0, genres: 0 };
         this.notify();
@@ -461,10 +584,17 @@ class LibraryStore {
      * needing their own LibraryScanComplete listener.
      */
     private eagerFetch(): void {
-        void this.getTracks();
-        void this.getAlbums();
-        void this.getArtists();
-        void this.getGenres();
+        // A failed fetch is reported by whichever view asked for the
+        // data (it is that panel's failure, not the app's), but the
+        // eager refetch has no caller to reject to — without a catch it
+        // is an unhandled rejection.
+        const logged = (what: string) => (err: unknown) =>
+            console.error(`library: could not load ${what}`, err);
+
+        void this.getTracks().catch(logged('tracks'));
+        void this.getAlbums().catch(logged('albums'));
+        void this.getArtists().catch(logged('artists'));
+        void this.getGenres().catch(logged('genres'));
     }
 
     // ===================================================================
@@ -486,54 +616,6 @@ class LibraryStore {
         });
     }
 
-    // ===================================================================
-    // HELPERS
-    // Wait for an in-flight fetch to complete.
-    // ===================================================================
-
-    private waitForTracks(): Promise<library.Track[]> {
-        return new Promise((resolve) => {
-            const unsub = this.subscribe(() => {
-                if (!this.tracksLoading && this.tracks !== null) {
-                    unsub();
-                    resolve(this.tracks);
-                }
-            });
-        });
-    }
-
-    private waitForAlbums(): Promise<library.Album[]> {
-        return new Promise((resolve) => {
-            const unsub = this.subscribe(() => {
-                if (!this.albumsLoading && this.albums !== null) {
-                    unsub();
-                    resolve(this.albums);
-                }
-            });
-        });
-    }
-
-    private waitForArtists(): Promise<library.Artist[]> {
-        return new Promise((resolve) => {
-            const unsub = this.subscribe(() => {
-                if (!this.artistsLoading && this.artists !== null) {
-                    unsub();
-                    resolve(this.artists);
-                }
-            });
-        });
-    }
-
-    private waitForGenres(): Promise<library.GenreWithCount[]> {
-        return new Promise((resolve) => {
-            const unsub = this.subscribe(() => {
-                if (!this.genresLoading && this.genres !== null) {
-                    unsub();
-                    resolve(this.genres);
-                }
-            });
-        });
-    }
 }
 
 // Singleton instance.

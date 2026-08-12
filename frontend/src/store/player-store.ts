@@ -1,6 +1,10 @@
 import { EventsOn } from '@runtime/runtime';
 import { Events } from '../events';
 import * as Player from '@go/player/Player';
+import { notificationStore } from './notification-store';
+
+/** The region `<inline-notice>` renders these in: the player bar. */
+export const PlayerRegion = 'player';
 
 // TrackInfo mirrors the player.TrackInfo struct in the Go backend.
 // Fields are serialized as camelCase JSON via struct tags.
@@ -23,6 +27,26 @@ export interface TrackInfo {
   recordingMbid: string; // MusicBrainz recording ID or empty string
 }
 
+// PositionInfo mirrors player.PositionInfo in the Go backend: the
+// player's own answer to "where are we", pushed once a second while
+// playing and immediately after any seek, pause, resume or track
+// change.
+export interface PositionInfo {
+  positionSeconds: number;
+  trackLength: number;
+  trackChangeId: number;
+  seq: number; // increments per report, so an unchanged second is still a fresh reading
+  playing: boolean;
+}
+
+// PlaybackFailure mirrors queue.PlaybackFailure.
+export interface PlaybackFailure {
+  filePath: string;
+  title: string;
+  artist: string;
+  reason: string;
+}
+
 export interface PlayerState {
   // Cached from backend
   isPlaying: boolean;
@@ -30,12 +54,22 @@ export interface PlayerState {
   volume: number; // 0-100
   muted: boolean; // silenced independently of the volume level
 
-  // Frontend-only state (for future use)
-  // selectedTrackIds: Set<number>;
-  // isQueuePanelOpen: boolean;
+  // The backend's position report.  The seek bar renders this and
+  // interpolates only between reports; it does not count.
+  position: PositionInfo | null;
 }
 
 type Subscriber = () => void;
+
+/**
+ * Bindings are fire-and-forget by design — the backend reports what
+ * happened through events, not return values — but a rejected bridge
+ * call still has to land somewhere other than an unhandled rejection
+ * (errors.m1).
+ */
+function reportBindingFailure(name: string): (err: unknown) => void {
+  return (err: unknown) => console.error(`${name} failed`, err);
+}
 
 class PlayerStore {
   private state: PlayerState = {
@@ -43,6 +77,7 @@ class PlayerStore {
     currentTrack: null,
     volume: 50,
     muted: false,
+    position: null,
   };
 
   private subscribers = new Set<Subscriber>();
@@ -64,6 +99,41 @@ class PlayerStore {
 
     EventsOn(Events.TrackChanged, (trackInfo: TrackInfo | null) => {
       this.update({ currentTrack: trackInfo ?? null });
+    });
+
+    EventsOn(Events.PlaybackPositionChanged, (position: PositionInfo) => {
+      this.update({ position });
+    });
+
+    EventsOn(Events.PlaybackFailed, (failure: PlaybackFailure) => {
+      // The raw Go reason is a debugging tool, not a sentence; it stays
+      // in the console and rides along as `detail`.
+      console.error(`playback failed: ${failure.filePath}: ${failure.reason}`);
+
+      const name = failure.title || failure.filePath;
+
+      // Inline by the plan's own rule: the useful response to a track
+      // that will not play is to keep playing, which the backend is
+      // already doing by skipping it.
+      notificationStore.inline(PlayerRegion, {
+        key: 'playback-failed',
+        tone: 'warning',
+        text: `Could not play “${name}” — the file may have moved.`,
+        coalescedText: (count) =>
+          `Skipped ${count} tracks that could not be played.`,
+        detail: failure.reason,
+      });
+    });
+
+    EventsOn(Events.SeekFailed, () => {
+      // The backend re-reports its real position alongside this, so the
+      // optimistic move the seek bar made is already being taken back;
+      // all that is missing is saying why.
+      notificationStore.inline(PlayerRegion, {
+        key: 'seek-failed',
+        tone: 'warning',
+        text: 'Could not seek in this track.',
+      });
     });
 
     EventsOn(Events.PlaybackFinished, () => {
@@ -94,23 +164,27 @@ class PlayerStore {
   // ===================================================================
 
   pause(): void {
-    Player.Pause();
+    void Player.Pause().catch(reportBindingFailure('Player.Pause'));
   }
 
   loadTrack(filePath: string): void {
-    Player.LoadFile(filePath);
+    void Player.LoadFile(filePath).catch(
+      reportBindingFailure('Player.LoadFile'),
+    );
   }
 
   seek(seconds: number): void {
-    Player.Seek(seconds);
+    void Player.Seek(seconds).catch(reportBindingFailure('Player.Seek'));
   }
 
   setVolume(level: number): void {
-    Player.SetVolume(level);
+    void Player.SetVolume(level).catch(
+      reportBindingFailure('Player.SetVolume'),
+    );
   }
 
   toggleMute(): void {
-    void Player.MuteToggle();
+    void Player.MuteToggle().catch(reportBindingFailure('Player.MuteToggle'));
   }
 
   // ===================================================================

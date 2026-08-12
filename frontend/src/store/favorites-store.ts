@@ -15,8 +15,27 @@ import {
     SetPinDefaultPlaylist,
 } from '@go/config/Config';
 import { Events } from '../events';
+import { describeError } from '@utils/describe-error';
+import { notificationStore } from './notification-store';
 
 export type IconStyle = 'heart' | 'star';
+
+/**
+ * A revert the user can see is not an explanation (errors.m2): the
+ * heart fills, and half a second later it empties again. Transient by
+ * the plan's rule — the state has already put itself back, so there is
+ * nothing to do but say why.
+ */
+function reportRevert(what: string, err: unknown): void {
+    console.error(`favorites: ${what} failed`, err);
+    notificationStore.transient({
+        key: 'favorites',
+        text: `Could not ${what}. ${describeError(err)}`,
+        detail: String(err),
+        coalescedText: (count) =>
+            `Could not ${what} — ${count} changes were undone.`,
+    });
+}
 
 export interface FavoritesState {
     playlistId: number;
@@ -152,7 +171,7 @@ class FavoritesStore {
 
         try {
             await ToggleDefaultPlaylistTrack(filePath);
-        } catch {
+        } catch (err) {
             // Revert optimistic update.
             if (wasIn) {
                 this.favoritedPaths.add(filePath);
@@ -161,6 +180,10 @@ class FavoritesStore {
             }
 
             this.notify();
+            reportRevert(
+                wasIn ? 'remove that favourite' : 'save that favourite',
+                err,
+            );
         }
     }
 
@@ -175,8 +198,9 @@ class FavoritesStore {
 
         try {
             await AddToDefaultPlaylist(filePaths);
-        } catch {
+        } catch (err) {
             void this.loadPaths();
+            reportRevert('save those favourites', err);
         }
     }
 
@@ -191,8 +215,9 @@ class FavoritesStore {
 
         try {
             await RemoveFromDefaultPlaylist(filePaths);
-        } catch {
+        } catch (err) {
             void this.loadPaths();
+            reportRevert('remove those favourites', err);
         }
     }
 

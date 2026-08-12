@@ -52,6 +52,19 @@ class SearchStore {
         return () => this.subscribers.delete(callback);
     }
 
+    /**
+     * Deliberately *not* microtask-coalesced, unlike every other store
+     * here (perf.p3 asks for it, and it is wrong about this one).
+     *
+     * Two reasons. Deferring makes an unsubscribe that happens
+     * synchronously after a set drop the notification entirely, which
+     * is a semantic change, not an optimisation — `view-stores.test.ts`
+     * pins both halves. And this store is on the keystroke path, where
+     * the batching the audit says would hide the cost is Lit's, not
+     * ours: the `requestUpdate()`s are already coalesced one layer
+     * down, so the microtask buys nothing and costs a frame of term
+     * staleness in the one place a frame is visible.
+     */
     private notify(): void {
         this.subscribers.forEach((callback) => callback());
     }
