@@ -13,6 +13,20 @@ const (
 	SeekFailed           = "SeekFailed"
 	VolumeChanged        = "VolumeChanged"
 	MuteChanged          = "MuteChanged"
+
+	// PlaybackPositionChanged carries the player's own position
+	// (payload: player.PositionInfo) once a second while playing and
+	// immediately after any seek, pause, resume or track change.  The
+	// seek bar renders what it is told and interpolates only between
+	// ticks, so it can be at most one tick wrong and can never
+	// accumulate error the way a pure local counter did.
+	PlaybackPositionChanged = "PlaybackPositionChanged"
+
+	// PlaybackFailed (payload: {filePath, reason}) fires when a track
+	// could not be loaded or started — a moved file, an unreadable
+	// one, an unsupported codec.  Without it the failure was a silent
+	// no-op: the queue reverted its index and nothing reached the UI.
+	PlaybackFailed = "PlaybackFailed"
 )
 
 // Queue events (backend → frontend push).
@@ -70,9 +84,29 @@ const (
 )
 
 // Tag writing events.
+//
+// TrackMetadataChanged means "tags on disk were rewritten", and the
+// frontend answers it by throwing the whole library cache away and
+// refetching — which is correct, because a retag can change an album
+// name, an artist, a genre, and therefore every derived collection.
+//
+// It must therefore not be reused for anything cheaper.  Finishing a
+// track used to emit it, so every song cost a full refetch: ~37 MB
+// across the IPC per track at 50 000 tracks, and the user's track
+// selection cleared while music played (audit perf.C1/C2).  That is
+// what TrackPlayCountChanged below exists to separate.
 const (
 	TrackMetadataChanged = "TrackMetadataChanged"
 	BatchWriteProgress   = "BatchWriteProgress"
+)
+
+// Play statistics events.
+//
+// TrackPlayCountChanged carries everything needed to patch the one
+// track in place, precisely so no consumer has any reason to invalidate
+// a collection: {audioFileId, filePath, playCount, lastPlayed}.
+const (
+	TrackPlayCountChanged = "TrackPlayCountChanged"
 )
 
 // Autotag apply events — emitted while an async ApplyAsync job is in flight so the review UI can render per-folder progress.
