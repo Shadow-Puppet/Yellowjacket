@@ -199,6 +199,13 @@ type SearchIndex struct {
 	// Build status tracking — read by GetIndexStatus for the UI.
 	buildStatus IndexStatus
 
+	// lastEmitted is the status most recently pushed to the frontend, so
+	// an unchanged one can be dropped rather than re-rendering the whole
+	// settings page for nothing.  It has its own mutex: emitStatus is
+	// called from paths that already hold mu for reading.
+	emitMu      sync.Mutex
+	lastEmitted *IndexStatus
+
 	// jobs is the background job registry; buildPaused records that the
 	// user paused the build, distinguishing a deliberate stop from a
 	// build that merely finished.  Both are protected by mu.
@@ -267,24 +274,16 @@ func (si *SearchIndex) SetContext(ctx context.Context) {
 	si.mu.Unlock()
 
 	// Load current row counts + last-built timestamp from DB.
+	//
+	// There is deliberately no ticker here.  This used to emit the status
+	// every 3 seconds for the life of the process, with a byte-identical
+	// payload once the index was ready — which re-rendered the whole of
+	// `config-page` on every tick, since it is a cached view that never
+	// unmounts.  Every path that mutates the status already calls
+	// emitStatus, that call now suppresses an unchanged payload, and the
+	// frontend seeds itself with GetIndexStatus() on connect rather than
+	// waiting for the next tick.
 	si.refreshStatusCounts()
-
-	// Start a background ticker that emits status every 3 seconds.
-	// This replaces frontend polling — the Wails binding dispatcher
-	// can be blocked by other calls, but EventsEmit bypasses it.
-	go func() {
-		ticker := time.NewTicker(3 * time.Second)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				si.emitStatus()
-			}
-		}
-	}()
 }
 
 // EnsureArtistDiscography lazily fetches an artist's top release groups
@@ -522,6 +521,14 @@ func (si *SearchIndex) StartBuild(ctx context.Context) {
 			si.cancel = nil
 			si.mu.Unlock()
 
+			// `Building` is derived from si.cancel, so clearing it is a
+			// status change and has to say so.  This is what resolves the
+			// job in the registry — syncIndexJob only finishes a job on a
+			// sync that reports Building false, and without this line the
+			// header badge reads "Building search index" over an index the
+			// settings page calls ready.
+			si.emitStatus()
+
 			close(si.done)
 
 			// The index rows (and their popularities) may have changed, so
@@ -677,7 +684,38 @@ func (si *SearchIndex) setTierDetail(name, state string, total, completed int, d
 	si.emitStatus()
 }
 
-// emitStatus pushes the current index status to the frontend via Wails event.
+// sameStatusAs reports whether two statuses would render identically.
+// IndexStatus holds a slice, so it is not comparable with ==.
+func (s IndexStatus) sameStatusAs(o IndexStatus) bool {
+	if s.Building != o.Building ||
+		s.Ready != o.Ready ||
+		s.LastBuilt != o.LastBuilt ||
+		s.Artists != o.Artists ||
+		s.Recordings != o.Recordings ||
+		s.ReleaseGroups != o.ReleaseGroups ||
+		s.TotalRows != o.TotalRows ||
+		len(s.Tiers) != len(o.Tiers) {
+		return false
+	}
+
+	for i := range s.Tiers {
+		if s.Tiers[i] != o.Tiers[i] {
+			return false
+		}
+	}
+
+	return true
+}
+
+// emitStatus pushes the current index status to the frontend via Wails
+// event — but only when it differs from the last one pushed.
+//
+// The status is emitted from every path that touches it, several of
+// which report progress in a tight loop, and the frontend's handler
+// assigns to a @state field: an identical payload is therefore a full
+// re-render of a 2 000-line template saying nothing.  Deduplicating
+// here rather than at the call sites means no future emitter has to
+// remember (`perf.M6` / `H-14`).
 func (si *SearchIndex) emitStatus() {
 	if si.runtimeCtx == nil {
 		return
@@ -688,6 +726,23 @@ func (si *SearchIndex) emitStatus() {
 	status.Ready = si.ready
 	status.Building = si.cancel != nil
 	si.mu.RUnlock()
+
+	si.emitMu.Lock()
+	unchanged := si.lastEmitted != nil &&
+		si.lastEmitted.sameStatusAs(status)
+
+	if !unchanged {
+		snapshot := status
+		snapshot.Tiers = append(
+			[]TierStatus(nil), status.Tiers...,
+		)
+		si.lastEmitted = &snapshot
+	}
+	si.emitMu.Unlock()
+
+	if unchanged {
+		return
+	}
 
 	events.Emit(si.runtimeCtx, events.IndexStatusChanged, status)
 
@@ -2643,6 +2698,13 @@ func (si *SearchIndex) MarkReadyIfPopulated() {
 	si.mu.Unlock()
 
 	si.logger.Info("search index: using existing index", "entries", count)
+
+	// Becoming ready is a change the UI has to see, and this was the one
+	// path that mutated the status without saying so — the 3 s ticker
+	// carried it, invisibly, which is why removing the ticker without
+	// this line would have left the settings page reading "not ready"
+	// over a fully built index.
+	si.emitStatus()
 
 	if !championBuilt {
 		si.scheduleChampionRebuild()
