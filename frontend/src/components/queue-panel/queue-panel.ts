@@ -11,6 +11,7 @@ import '@awesome.me/webawesome/dist/components/popup/popup.js';
 import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 import { QueueController } from '@store/controllers/queue-controller';
+import { confirmAction } from '@components/confirm-dialog/confirm-dialog';
 import '@components/playlist-picker/playlist-picker.js';
 import type { PlaylistPicker } from '@components/playlist-picker/playlist-picker.js';
 import '@lit-labs/virtualizer';
@@ -41,7 +42,8 @@ import {
 } from '@utils/drag-image';
 import { libraryStore } from '@store/library-store';
 import type { library } from '@go/models';
-import '@components/track-details/track-details.js';
+import { loadTrackDetails } from '@utils/lazy-track-details.js';
+import { tracksByFilePath } from '@utils/track-index.js';
 import type { TrackDetails } from '@components/track-details/track-details.js';
 import type { CoverArtUrls } from '@components/track-details/track-details.js';
 import {
@@ -49,6 +51,9 @@ import {
     trackLink,
     exploreLinkStyles,
 } from '@utils/explore-link';
+/** Above this many tracks, clearing the queue asks first. */
+const CLEAR_CONFIRM_THRESHOLD = 20;
+
 const MIN_WIDTH = 200;
 const MAX_WIDTH = 500;
 const DEFAULT_WIDTH = 320;
@@ -651,6 +656,30 @@ export class QueuePanel
     }
 
     override updated() {
+        // Closed, the panel is `width: 0` — which hides it from the eye
+        // and from nobody else: its Clear and Add buttons still took tab
+        // stops at x=1440 and were still read out (H-5).  `inert` is the
+        // one attribute that means "not there" to both.
+        this.inert = !this.open;
+
+        // ...and a panel that is not there does not render a list
+        // either (perf.m7).  `width: 0` and `contain: layout style
+        // paint` bound the damage but do not stop the work: the
+        // virtualizer inside still had a real height and a
+        // `min-width: 300px`, so it measured its visible window on
+        // every queue change, and `scrollToIndex` below called
+        // `scrollIntoView()` on a laid-out but invisible element every
+        // time the current track changed.  The list body renders
+        // `nothing` while closed; these indices reset so opening the
+        // panel re-syncs the highlight and the scroll position rather
+        // than inheriting stale ones.
+        if (!this.open) {
+            this.lastRenderedIndex = -1;
+            this.lastScrolledIndex = -1;
+
+            return;
+        }
+
         // The virtualizer may not exist on first render
         // (queue empty). Retry hooks here when it appears.
         this.attachVirtualizerHooks();
@@ -680,7 +709,27 @@ export class QueuePanel
         }
     }
 
-    private handleClearQueue = () => {
+    /**
+     * Clearing stops playback and discards the list, and it is the one
+     * mutation in this panel with no way back (errors.m3). A queue you
+     * could rebuild in a second is not worth a prompt; one you spent
+     * the evening on is.
+     */
+    private handleClearQueue = async () => {
+        const count = this.queue.tracks.length;
+
+        if (count > CLEAR_CONFIRM_THRESHOLD) {
+            const ok = await confirmAction({
+                title: 'Clear the queue?',
+                message: `${count} tracks will be removed and playback will stop.`,
+                impact: 'The queue cannot be brought back.',
+                confirmLabel: 'Clear queue',
+                danger: true,
+            });
+
+            if (!ok) return;
+        }
+
         this.queue.clearQueue();
     };
 
@@ -839,9 +888,9 @@ export class QueuePanel
                 break;
             case 'track-details':
                 if (indices.length === 1) {
-                    this.openTrackDetails(indices[0]!);
+                    void this.openTrackDetails(indices[0]!);
                 } else {
-                    this.openBatchTrackDetails(indices);
+                    void this.openBatchTrackDetails(indices);
                 }
                 break;
         }
@@ -870,7 +919,7 @@ export class QueuePanel
         this.ctxMenu.close();
     }
 
-    private openTrackDetails(index: number) {
+    private async openTrackDetails(index: number) {
         const queueTrack =
             this.queue.tracks[index];
 
@@ -878,12 +927,19 @@ export class QueuePanel
 
         const tracks =
             libraryStore.getCachedTracks();
-        const track = tracks?.find(
-            (t) =>
-                t.FilePath === queueTrack.filePath,
-        );
+        const track = tracks
+            ? tracksByFilePath(tracks).get(
+                queueTrack.filePath,
+            )
+            : undefined;
 
         if (!track) return;
+
+        const ready = await loadTrackDetails(
+            () => void this.openTrackDetails(index),
+        );
+
+        if (!ready) return;
 
         const coverArt = track.CoverArtPath
             ? {
@@ -900,7 +956,7 @@ export class QueuePanel
         );
     }
 
-    private openBatchTrackDetails(
+    private async openBatchTrackDetails(
         indices: number[],
     ) {
         const queueTracks = this.queue.tracks;
@@ -909,21 +965,23 @@ export class QueuePanel
 
         if (!cachedTracks) return;
 
+        const byPath = tracksByFilePath(cachedTracks);
         const tracks = indices
             .map((i) => queueTracks[i])
             .filter((qt) => qt != null)
-            .map((qt) =>
-                cachedTracks.find(
-                    (t) =>
-                        t.FilePath === qt.filePath,
-                ),
-            )
+            .map((qt) => byPath.get(qt.filePath))
             .filter(
                 (t): t is library.Track =>
                     t != null,
             );
 
         if (tracks.length === 0) return;
+
+        const ready = await loadTrackDetails(
+            () => void this.openBatchTrackDetails(indices),
+        );
+
+        if (!ready) return;
 
         const first = tracks[0]!;
         const albumNames = new Set(tracks.map((t) => t.Album));
@@ -1456,7 +1514,7 @@ export class QueuePanel
                     <div class="header-actions">
                         <button
                             class="header-action-button"
-                            @click=${this.handleClearQueue}
+                            @click=${() => void this.handleClearQueue()}
                             ?disabled=${tracks.length === 0}
                             title="Clear queue"
                         >
@@ -1504,7 +1562,9 @@ export class QueuePanel
                     @dragleave=${this.onPanelDragLeave}
                     @drop=${this.onPanelDrop}
                 >
-                    ${tracks.length === 0
+                    ${!this.open
+                        ? nothing
+                        : tracks.length === 0
                         ? html`<div class="empty-state">
                               <div class="drop-zone-icon">
                                   <wa-icon

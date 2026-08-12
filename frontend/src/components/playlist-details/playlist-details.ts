@@ -9,6 +9,9 @@ import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
 import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
+import '@lit-labs/virtualizer';
+import type { LitVirtualizer } from '@lit-labs/virtualizer';
+import { flow } from '@lit-labs/virtualizer/layouts/flow.js';
 
 import {
     GetPlaylistTracks,
@@ -17,7 +20,7 @@ import {
     RemovePhantomTracks,
     FindDuplicateTracksInPlaylist,
 } from '@go/playlist/Service';
-import type { playlist, library } from '@go/models';
+import type { playlist } from '@go/models';
 import { EventsOn } from '@runtime/runtime';
 import { Events } from '../../events';
 import { queueStore } from '@store/queue-store';
@@ -31,6 +34,8 @@ import {
 } from '@utils/context-menu-controller.js';
 import type { ContextMenuHost } from '@utils/context-menu-controller.js';
 import { FavoritesController } from '@store/controllers/favorites-controller';
+import { notificationStore } from '@store/notification-store';
+import { describeError } from '@utils/describe-error';
 import {
     hasTrackPayload,
     getDragPayload,
@@ -44,7 +49,8 @@ import {
 } from '@utils/drag-image';
 import { libraryStore } from '@store/library-store';
 import '@components/playlist-picker/playlist-picker.js';
-import '@components/track-details/track-details.js';
+import { loadTrackDetails } from '@utils/lazy-track-details.js';
+import { tracksByFilePath, tracksForPaths } from '@utils/track-index.js';
 import type { TrackDetails } from '@components/track-details/track-details.js';
 import type { CoverArtUrls } from '@components/track-details/track-details.js';
 import '@components/phantom-resolver/phantom-resolver.js';
@@ -59,6 +65,13 @@ import {
     exploreLinkStyles,
 } from '@utils/explore-link';
 import { designTokens } from '../../styles/tokens.css';
+
+/** One playlist row: the track and its position in the *playlist*,
+ *  which is not its position in the filtered view. */
+interface VisibleTrack {
+    track: playlist.Track;
+    trackIndex: number;
+}
 
 @customElement('playlist-details')
 export class PlaylistDetails
@@ -85,6 +98,36 @@ export class PlaylistDetails
 
     private tracksChangedCleanup: (() => void) | null = null;
     private playlistDeletedCleanup: (() => void) | null = null;
+
+    /* `_itemSize` matches the fixed 45 px `.track-item` height, measured
+     * rather than guessed.  Without the hint the flow layout's 100 px
+     * default drives constant scroll-error correction, which reads as
+     * the list jumping under the pointer. */
+    @query('lit-virtualizer')
+    private virtualizer?: LitVirtualizer;
+
+    /* The row templates live inside the virtualizer, not in this
+     * component's own template, so a host re-render alone does not
+     * repaint them: the virtualizer re-renders when its `items` change,
+     * and `items` is now memoised precisely so it does not change when
+     * nothing has. Selection and the playing-track highlight are
+     * therefore pushed to it explicitly, which is what `track-list` has
+     * always done. Costing ~36 rows, not the whole playlist. */
+    private lastActiveTrackPath: string | null = null;
+
+    private flowLayout = flow({
+        _itemSize: { width: 100, height: 45 },
+    } as Parameters<typeof flow>[0]);
+
+    /* The memo behind `getVisibleTracks()`.  Its wrappers used to be
+     * rebuilt on every render, so the array identity changed even when
+     * nothing had — which is the one thing a virtualizer keys its work
+     * on (perf.M5). */
+    private visibleCache: VisibleTrack[] | null = null;
+    private visibleCacheKey: {
+        tracks: playlist.Track[];
+        term: string;
+    } | null = null;
 
     private dragImageEl: HTMLElement | null = null;
 
@@ -137,6 +180,21 @@ export class PlaylistDetails
 
     onSelectionChanged(): void {
         this.requestUpdate();
+        this.virtualizer?.requestUpdate();
+    }
+
+    protected override updated(
+        changed: Map<string, unknown>,
+    ): void {
+        super.updated(changed);
+
+        const currentPath =
+            this.player.currentTrack?.filePath ?? null;
+
+        if (currentPath !== this.lastActiveTrackPath) {
+            this.lastActiveTrackPath = currentPath;
+            this.virtualizer?.requestUpdate();
+        }
     }
 
     // =================================================================
@@ -357,9 +415,9 @@ export class PlaylistDetails
                 break;
             case 'track-details':
                 if (filePaths.length === 1) {
-                    this.openTrackDetails(filePaths[0]!);
+                    void this.openTrackDetails(filePaths[0]!);
                 } else {
-                    this.openBatchTrackDetails(filePaths);
+                    void this.openBatchTrackDetails(filePaths);
                 }
                 break;
             case 'phantom-locate':
@@ -393,6 +451,16 @@ export class PlaylistDetails
         this.ctxMenu.close();
     }
 
+    /** The row is still on screen, so the failure is visible; this
+     *  only says why (errors.m7). */
+    private reportRemoveFailure(what: string, err: unknown): void {
+        notificationStore.transient({
+            key: 'playlist-remove',
+            text: `Could not ${what}. ${describeError(err)}`,
+            detail: String(err),
+        });
+    }
+
     private async removeSelectedTracks() {
         const trackIDs = this.getSelectedTrackIDs();
 
@@ -405,10 +473,8 @@ export class PlaylistDetails
             );
             await this.refreshTracks();
         } catch (err) {
-            console.error(
-                'Failed to remove tracks:',
-                err,
-            );
+            console.error('Failed to remove tracks:', err);
+            this.reportRemoveFailure('remove those tracks', err);
         }
     }
 
@@ -432,20 +498,24 @@ export class PlaylistDetails
             );
             await this.refreshTracks();
         } catch (err) {
-            console.error(
-                'Failed to remove phantom tracks:',
-                err,
-            );
+            console.error('Failed to remove phantom tracks:', err);
+            this.reportRemoveFailure('remove those missing tracks', err);
         }
     }
 
-    private openTrackDetails(filePath: string) {
+    private async openTrackDetails(filePath: string) {
         const tracks = libraryStore.getCachedTracks();
-        const track = tracks?.find(
-            (t) => t.FilePath === filePath,
-        );
+        const track = tracks
+            ? tracksByFilePath(tracks).get(filePath)
+            : undefined;
 
         if (!track) return;
+
+        const ready = await loadTrackDetails(
+            () => void this.openTrackDetails(filePath),
+        );
+
+        if (!ready) return;
 
         const coverArt = track.CoverArtPath
             ? {
@@ -462,7 +532,7 @@ export class PlaylistDetails
         );
     }
 
-    private openBatchTrackDetails(
+    private async openBatchTrackDetails(
         filePaths: string[],
     ) {
         const cachedTracks =
@@ -470,18 +540,18 @@ export class PlaylistDetails
 
         if (!cachedTracks) return;
 
-        const tracks = filePaths
-            .map((fp) =>
-                cachedTracks.find(
-                    (t) => t.FilePath === fp,
-                ),
-            )
-            .filter(
-                (t): t is library.Track =>
-                    t != null,
-            );
+        const tracks = tracksForPaths(
+            cachedTracks,
+            filePaths,
+        );
 
         if (tracks.length === 0) return;
+
+        const ready = await loadTrackDetails(
+            () => void this.openBatchTrackDetails(filePaths),
+        );
+
+        if (!ready) return;
 
         const first = tracks[0]!;
         const albumNames = new Set(tracks.map((t) => t.Album));
@@ -595,10 +665,8 @@ export class PlaylistDetails
             );
             await this.refreshTracks();
         } catch (err) {
-            console.error(
-                'Failed to remove phantom track:',
-                err,
-            );
+            console.error('Failed to remove phantom track:', err);
+            this.reportRemoveFailure('remove that missing track', err);
         }
     }
 
@@ -747,37 +815,57 @@ export class PlaylistDetails
     // Search filtering
     // =================================================================
 
-    private getVisibleTracks(): {
-        track: playlist.Track;
-        trackIndex: number;
-    }[] {
+    private getVisibleTracks(): VisibleTrack[] {
         const term =
             this.searchCtrl.term.toLowerCase();
 
-        if (!term) {
-            return this.tracks.map(
-                (track, trackIndex) => ({
-                    track,
-                    trackIndex,
-                }),
-            );
+        // Keyed on the identity of the tracks array and the term, the
+        // same signal `track-list`'s memoized caches use: the store
+        // replaces the array when its contents change and shares every
+        // unchanged member.
+        if (
+            this.visibleCache &&
+            this.visibleCacheKey &&
+            this.visibleCacheKey.tracks === this.tracks &&
+            this.visibleCacheKey.term === term
+        ) {
+            return this.visibleCache;
         }
 
-        return this.tracks
-            .map((track, trackIndex) => ({
+        const all = this.tracks.map(
+            (track, trackIndex) => ({
                 track,
                 trackIndex,
-            }))
-            .filter(
-                ({ track }) =>
-                    track.Title.toLowerCase().includes(
-                        term,
-                    ) ||
-                    track.Artist.toLowerCase().includes(
-                        term,
-                    ),
-            );
+            }),
+        );
+
+        const visible = term
+            ? all.filter(
+                  ({ track }) =>
+                      track.Title.toLowerCase().includes(
+                          term,
+                      ) ||
+                      track.Artist.toLowerCase().includes(
+                          term,
+                      ),
+              )
+            : all;
+
+        this.visibleCache = visible;
+        this.visibleCacheKey = { tracks: this.tracks, term };
+
+        return visible;
     }
+
+    /** Stable across renders, because `lit-virtualizer` declares both
+     *  `renderItem` and `keyFunction` as plain `@property()` — a fresh
+     *  arrow function marks them dirty and forces the virtualizer's own
+     *  render pass on every host update (perf.m1). */
+    private renderRow = (entry: VisibleTrack) =>
+        this.renderTrackRow(entry);
+
+    private rowKey = (entry: VisibleTrack) =>
+        entry.trackIndex;
 
     // =================================================================
     // Styles
@@ -968,6 +1056,18 @@ export class PlaylistDetails
             grid-template-columns: 40px 36px 1fr 1fr 1fr 80px;
             align-items: center;
             gap: 0;
+        }
+
+        /* The virtualizer positions its children absolutely, so a row
+         * shrinks to fit its content and the columns stop lining up
+         * with the header above them. track-list has always carried the
+         * same declaration for the same reason.
+         *
+         * No backticks in here: this is inside a css tagged template
+         * literal, and one ends it. */
+        .track-item {
+            width: 100%;
+            box-sizing: border-box;
         }
 
         .track-header {
@@ -1262,9 +1362,21 @@ export class PlaylistDetails
                 <div class="header-cell col-album">Album</div>
                 <div class="header-cell col-duration">Duration</div>
             </div>
-            ${visibleTracks.map(
-                ({ track, trackIndex }) => {
-                    const isPhantom = track.Phantom;
+            <lit-virtualizer
+                class="track-scroller"
+                .items=${visibleTracks}
+                .renderItem=${this.renderRow}
+                .keyFunction=${this.rowKey}
+                .layout=${this.flowLayout}
+            ></lit-virtualizer>
+        `;
+    }
+
+    /* One row.  Extracted from `renderTrackList` so it can be a stable
+     * bound field rather than a closure the virtualizer sees as new
+     * every pass. */
+    private renderTrackRow({ track, trackIndex }: VisibleTrack) {
+        const isPhantom = track.Phantom;
                     const active =
                         !isPhantom &&
                         this.isActiveTrack(track);
@@ -1383,7 +1495,14 @@ export class PlaylistDetails
                                 : html`<span class="cell col-number">${trackIndex + 1}</span>
                                   <div class="track-art">
                                       ${track.CoverArtSmall || track.CoverArtMedium
-                                          ? html`<img src="${track.CoverArtSmall || track.CoverArtMedium}" alt="" />`
+                                          ? html`<img
+                                                src="${track.CoverArtSmall || track.CoverArtMedium}"
+                                                alt=""
+                                                loading="lazy"
+                                                decoding="async"
+                                                width="32"
+                                                height="32"
+                                            />`
                                           : nothing}
                                   </div>
                                   <span class="cell col-title" title="${track.Title || track.FilePath}">${trackLink(track.Title, track.Album, track.ReleaseGroupMBID, track.RecordingMBID, undefined, track.Artist) || track.FilePath}</span>
@@ -1392,9 +1511,6 @@ export class PlaylistDetails
                                   <span class="cell col-duration">${formatMilliseconds(track.Duration)}</span>`}
                         </div>
                     `;
-                },
-            )}
-        `;
     }
 
     private renderContextMenu() {

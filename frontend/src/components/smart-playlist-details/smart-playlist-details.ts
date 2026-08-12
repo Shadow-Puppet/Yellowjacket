@@ -5,7 +5,7 @@ import {
     state,
     query,
 } from 'lit/decorators.js';
-import type { playlist, library } from '@go/models';
+import type { playlist } from '@go/models';
 import {
     GetSmartPlaylistTracks,
     RefreshSmartPlaylist,
@@ -38,8 +38,12 @@ import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
 import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
+import '@lit-labs/virtualizer';
+import type { LitVirtualizer } from '@lit-labs/virtualizer';
+import { flow } from '@lit-labs/virtualizer/layouts/flow.js';
 import '@components/playlist-picker/playlist-picker.js';
-import '@components/track-details/track-details.js';
+import { loadTrackDetails } from '@utils/lazy-track-details.js';
+import { tracksByFilePath, tracksForPaths } from '@utils/track-index.js';
 import type { TrackDetails } from '@components/track-details/track-details.js';
 import type { CoverArtUrls } from '@components/track-details/track-details.js';
 import { libraryStore } from '@store/library-store';
@@ -76,6 +80,13 @@ function formatTotalDuration(totalMs: number): string {
     }
 
     return `${seconds}s`;
+}
+
+/** One row: the track and its position in the *playlist*, which is not
+ *  its position in the filtered view. */
+interface VisibleTrack {
+    track: playlist.Track;
+    trackIndex: number;
 }
 
 @customElement('smart-playlist-details')
@@ -117,6 +128,32 @@ export class SmartPlaylistDetails
     private searchCtrl = new SearchController(this);
     private selection = new SelectionController(this);
     private ctxMenu = new ContextMenuController(this);
+
+    /* _itemSize matches the fixed 45 px .track-item height, measured
+     * rather than guessed: without the hint the flow layout's 100 px
+     * default drives constant scroll-error correction, which reads as
+     * the list jumping under the pointer. */
+    @query('lit-virtualizer')
+    private virtualizer?: LitVirtualizer;
+
+    /* The row templates live inside the virtualizer, not in this
+     * component's own template, so a host re-render alone does not
+     * repaint them: the virtualizer re-renders when its `items` change,
+     * and `items` is now memoised precisely so it does not change when
+     * nothing has. Selection and the playing-track highlight are
+     * therefore pushed to it explicitly, which is what `track-list` has
+     * always done. Costing ~36 rows, not the whole playlist. */
+    private lastActiveTrackPath: string | null = null;
+
+    private flowLayout = flow({
+        _itemSize: { width: 100, height: 45 },
+    } as Parameters<typeof flow>[0]);
+
+    private visibleCache: VisibleTrack[] | null = null;
+    private visibleCacheKey: {
+        tracks: playlist.Track[];
+        term: string;
+    } | null = null;
     private favCtrl = new FavoritesController(this);
 
     private playlistDeletedCleanup: (() => void) | null = null;
@@ -167,6 +204,21 @@ export class SmartPlaylistDetails
 
     onSelectionChanged(): void {
         this.requestUpdate();
+        this.virtualizer?.requestUpdate();
+    }
+
+    protected override updated(
+        changed: Map<string, unknown>,
+    ): void {
+        super.updated(changed);
+
+        const currentPath =
+            this.player.currentTrack?.filePath ?? null;
+
+        if (currentPath !== this.lastActiveTrackPath) {
+            this.lastActiveTrackPath = currentPath;
+            this.virtualizer?.requestUpdate();
+        }
     }
 
     // =================================================================
@@ -379,6 +431,18 @@ export class SmartPlaylistDetails
             grid-template-columns: 40px 36px 1fr 1fr 1fr 80px;
             align-items: center;
             gap: 0;
+        }
+
+        /* The virtualizer positions its children absolutely, so a row
+         * shrinks to fit its content and its columns stop lining up
+         * with the header above them. track-list has always carried
+         * the same declaration for the same reason.
+         *
+         * No backticks in here: this is inside a css tagged template
+         * literal, and one ends it. */
+        .track-item {
+            width: 100%;
+            box-sizing: border-box;
         }
 
         .track-header {
@@ -817,9 +881,9 @@ export class SmartPlaylistDetails
                 break;
             case 'track-details':
                 if (filePaths.length === 1) {
-                    this.openTrackDetails(filePaths[0]!);
+                    void this.openTrackDetails(filePaths[0]!);
                 } else {
-                    this.openBatchTrackDetails(filePaths);
+                    void this.openBatchTrackDetails(filePaths);
                 }
                 break;
         }
@@ -847,13 +911,19 @@ export class SmartPlaylistDetails
         this.ctxMenu.close();
     }
 
-    private openTrackDetails(filePath: string) {
+    private async openTrackDetails(filePath: string) {
         const tracks = libraryStore.getCachedTracks();
-        const track = tracks?.find(
-            (t) => t.FilePath === filePath,
-        );
+        const track = tracks
+            ? tracksByFilePath(tracks).get(filePath)
+            : undefined;
 
         if (!track) return;
+
+        const ready = await loadTrackDetails(
+            () => void this.openTrackDetails(filePath),
+        );
+
+        if (!ready) return;
 
         const coverArt = track.CoverArtPath
             ? {
@@ -870,7 +940,7 @@ export class SmartPlaylistDetails
         );
     }
 
-    private openBatchTrackDetails(
+    private async openBatchTrackDetails(
         filePaths: string[],
     ) {
         const cachedTracks =
@@ -878,17 +948,18 @@ export class SmartPlaylistDetails
 
         if (!cachedTracks) return;
 
-        const tracks = filePaths
-            .map((fp) =>
-                cachedTracks.find(
-                    (t) => t.FilePath === fp,
-                ),
-            )
-            .filter(
-                (t): t is library.Track => t != null,
-            );
+        const tracks = tracksForPaths(
+            cachedTracks,
+            filePaths,
+        );
 
         if (tracks.length === 0) return;
+
+        const ready = await loadTrackDetails(
+            () => void this.openBatchTrackDetails(filePaths),
+        );
+
+        if (!ready) return;
 
         const first = tracks[0]!;
         const albumNames = new Set(tracks.map((t) => t.Album));
@@ -971,37 +1042,56 @@ export class SmartPlaylistDetails
     // Search filtering
     // =================================================================
 
-    private getVisibleTracks(): {
-        track: playlist.Track;
-        trackIndex: number;
-    }[] {
+    private getVisibleTracks(): VisibleTrack[] {
         const term =
             this.searchCtrl.term.toLowerCase();
 
-        if (!term) {
-            return this.tracks.map(
-                (track, trackIndex) => ({
-                    track,
-                    trackIndex,
-                }),
-            );
+        // Keyed on the identity of the tracks array and the term. The
+        // wrappers used to be rebuilt every render, so the array
+        // identity always changed — which is the one thing a
+        // virtualizer keys its work on (perf.M5).
+        if (
+            this.visibleCache &&
+            this.visibleCacheKey &&
+            this.visibleCacheKey.tracks === this.tracks &&
+            this.visibleCacheKey.term === term
+        ) {
+            return this.visibleCache;
         }
 
-        return this.tracks
-            .map((track, trackIndex) => ({
+        const all = this.tracks.map(
+            (track, trackIndex) => ({
                 track,
                 trackIndex,
-            }))
-            .filter(
-                ({ track }) =>
-                    track.Title.toLowerCase().includes(
-                        term,
-                    ) ||
-                    track.Artist.toLowerCase().includes(
-                        term,
-                    ),
-            );
+            }),
+        );
+
+        const visible = term
+            ? all.filter(
+                  ({ track }) =>
+                      track.Title.toLowerCase().includes(
+                          term,
+                      ) ||
+                      track.Artist.toLowerCase().includes(
+                          term,
+                      ),
+              )
+            : all;
+
+        this.visibleCache = visible;
+        this.visibleCacheKey = { tracks: this.tracks, term };
+
+        return visible;
     }
+
+    /** Stable across renders: lit-virtualizer declares renderItem and
+     *  keyFunction as plain properties, so a fresh arrow function marks
+     *  them dirty and forces its own render pass every host update
+     *  (perf.m1). */
+    private renderRow = (entry: VisibleTrack) =>
+        this.renderTrackRow(entry);
+
+    private rowKey = (entry: VisibleTrack) => entry.trackIndex;
 
     // =================================================================
     // Helpers
@@ -1173,9 +1263,20 @@ export class SmartPlaylistDetails
                 <div class="header-cell col-album">Album</div>
                 <div class="header-cell col-duration">Duration</div>
             </div>
-            ${visibleTracks.map(
-                ({ track, trackIndex }) => {
-                    const isPhantom = track.Phantom;
+            <lit-virtualizer
+                .items=${visibleTracks}
+                .renderItem=${this.renderRow}
+                .keyFunction=${this.rowKey}
+                .layout=${this.flowLayout}
+            ></lit-virtualizer>
+        `;
+    }
+
+    /* One row. Extracted from renderTrackList so it can be a stable
+     * bound field rather than a closure the virtualizer sees as new on
+     * every pass. */
+    private renderTrackRow({ track, trackIndex }: VisibleTrack) {
+        const isPhantom = track.Phantom;
                     const active =
                         !isPhantom &&
                         this.isActiveTrack(track);
@@ -1242,7 +1343,14 @@ export class SmartPlaylistDetails
                                 : html`<span class="cell col-number">${trackIndex + 1}</span>
                                   <div class="track-art">
                                       ${track.CoverArtSmall || track.CoverArtMedium
-                                          ? html`<img src="${track.CoverArtSmall || track.CoverArtMedium}" alt="" />`
+                                          ? html`<img
+                                                src="${track.CoverArtSmall || track.CoverArtMedium}"
+                                                alt=""
+                                                loading="lazy"
+                                                decoding="async"
+                                                width="32"
+                                                height="32"
+                                            />`
                                           : nothing}
                                   </div>
                                   <span class="cell col-title" title="${track.Title || track.FilePath}">${trackLink(track.Title, track.Album, track.ReleaseGroupMBID, track.RecordingMBID, undefined, track.Artist) || track.FilePath}</span>
@@ -1251,9 +1359,6 @@ export class SmartPlaylistDetails
                                   <span class="cell col-duration">${formatMilliseconds(track.Duration)}</span>`}
                         </div>
                     `;
-                },
-            )}
-        `;
     }
 
     private renderContextMenu() {
