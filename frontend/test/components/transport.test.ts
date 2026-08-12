@@ -6,6 +6,7 @@
  */
 import { describe, expect, it, beforeEach, vi, afterEach } from 'vitest';
 
+import '@components/audio-player/audio-player';
 import '@components/audio-player/controls/player-controls';
 import '@components/audio-player/seekbar/seek-bar';
 import '@components/audio-player/volume-control/volume-control';
@@ -15,11 +16,14 @@ import {
   fixture,
   shadow,
   shadowAll,
+  deepShadow,
+  deepText,
   text,
   click,
   visual,
 } from '@test/support/render';
-import type { TrackInfo } from '@store/player-store';
+import { PlayerRegion, type TrackInfo } from '@store/player-store';
+import { notificationStore } from '@store/notification-store';
 
 const TRACK: TrackInfo = {
   fileName: 'long.mp3',
@@ -205,7 +209,81 @@ describe('<seek-bar>', () => {
     expect([
       text(el, '[data-testid="elapsed-time"]'),
       text(el, '[data-testid="remaining-time"]'),
-    ]).toEqual(['00:00', '01:30']);
+    ]).toEqual(['00:00', '-01:30']);
+  });
+
+  it('says which number the right-hand clock is, and swaps it on click', async () => {
+    const el = await fixture('seek-bar');
+
+    emit(Events.TrackChanged, { ...TRACK, trackChangeId: 21 });
+    await flush();
+    await el.updateComplete;
+
+    // H-16: it read `01:21` next to a track the list called `01:30`,
+    // with no minus sign, no label and no way to see the duration.
+    await click(el, '[data-testid="remaining-time"]');
+    await el.updateComplete;
+
+    expect(text(el, '[data-testid="remaining-time"]')).toBe('01:30');
+  });
+
+  it('renders the position the backend reports rather than its own count', async () => {
+    const el = await fixture('seek-bar');
+
+    emit(Events.TrackChanged, { ...TRACK, trackChangeId: 11 });
+    emit(Events.PlaybackPositionChanged, {
+      positionSeconds: 42,
+      trackLength: 90,
+      trackChangeId: 11,
+      seq: 1,
+      playing: true,
+    });
+    await flush();
+    await el.updateComplete;
+
+    expect(text(el, '[data-testid="elapsed-time"]')).toBe('00:42');
+  });
+
+  it('resets its interpolation on every report, so a seek cannot desync it', async () => {
+    vi.useFakeTimers();
+
+    const el = await fixture('seek-bar');
+
+    emit(Events.TrackChanged, { ...TRACK, trackChangeId: 12 });
+    emit(Events.PlaybackStateChanged, { state: 'playing' });
+    await vi.advanceTimersByTimeAsync(3000);
+    await el.updateComplete;
+
+    // The user seeks; the backend lands somewhere else entirely and
+    // says so.  The local counter must be discarded, not added to.
+    emit(Events.PlaybackPositionChanged, {
+      positionSeconds: 40,
+      trackLength: 90,
+      trackChangeId: 12,
+      seq: 2,
+      playing: true,
+    });
+    await vi.advanceTimersByTimeAsync(1000);
+    await el.updateComplete;
+
+    expect(text(el, '[data-testid="elapsed-time"]')).toBe('00:41');
+  });
+
+  it('ignores a report belonging to a track that is no longer loaded', async () => {
+    const el = await fixture('seek-bar');
+
+    emit(Events.TrackChanged, { ...TRACK, trackChangeId: 13 });
+    emit(Events.PlaybackPositionChanged, {
+      positionSeconds: 60,
+      trackLength: 90,
+      trackChangeId: 12,
+      seq: 3,
+      playing: true,
+    });
+    await flush();
+    await el.updateComplete;
+
+    expect(text(el, '[data-testid="elapsed-time"]')).toBe('00:00');
   });
 
   it('resumes mid-track from the position the backend reported', async () => {
@@ -357,5 +435,86 @@ describe('volume control: mute', () => {
     expect(calls('player.Player.MuteToggle').length).toBe(1);
     // Nothing optimistic: the icon follows the backend's event.
     expect(shadow(el, 'button')?.getAttribute('data-muted')).toBe('false');
+  });
+});
+
+/**
+ * The player says when it could not do what it was told.
+ *
+ * This is the Inline level of plan 007's notification table, and it is
+ * deliberately local to the bottom bar rather than an app-wide surface:
+ * the useful response to a track that will not play is to keep playing,
+ * which the backend already does by skipping it.
+ */
+describe('<audio-player> messages', () => {
+  beforeEach(() => {
+    notificationStore.dismissRegion(PlayerRegion);
+  });
+
+  it('names the track that could not be played', async () => {
+    const el = await fixture('audio-player');
+
+    emit(Events.PlaybackFailed, {
+      filePath: '/music/gone.mp3',
+      title: 'Tideline',
+      artist: 'Aurora Fields',
+      reason: 'no such file or directory',
+    });
+    await flush();
+    await el.updateComplete;
+
+    expect(deepText(el, '[data-testid="player-message"]')).toContain(
+      'Tideline',
+    );
+  });
+
+  it('coalesces a disconnected drive into one message with a count', async () => {
+    const el = await fixture('audio-player');
+
+    for (const title of ['One', 'Two', 'Three']) {
+      emit(Events.PlaybackFailed, {
+        filePath: `/music/${title}.mp3`,
+        title,
+        artist: '',
+        reason: 'no such file or directory',
+      });
+    }
+
+    await flush();
+    await el.updateComplete;
+
+    // Not three messages, and not one message about the last file.
+    expect(deepText(el, '[data-testid="player-message"]')).toContain(
+      'Skipped 3 tracks',
+    );
+  });
+
+  it('explains a failed seek, which used to be emitted into the void', async () => {
+    const el = await fixture('audio-player');
+
+    emit(Events.SeekFailed);
+    await flush();
+    await el.updateComplete;
+
+    expect(deepText(el, '[data-testid="player-message"]')).toContain(
+      'Could not seek',
+    );
+  });
+
+  it('can be dismissed', async () => {
+    const el = await fixture('audio-player');
+
+    emit(Events.SeekFailed);
+    await flush();
+    await el.updateComplete;
+
+    deepShadow<HTMLButtonElement>(
+      el,
+      '[data-testid="player-message"] .notice-dismiss',
+    )!.click();
+    await flush();
+    await el.updateComplete;
+
+    expect(deepShadow(el, '[data-testid="player-message"]')).toBeNull();
   });
 });

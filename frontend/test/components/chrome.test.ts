@@ -25,7 +25,9 @@ describe('<app-sidebar>', () => {
     const el = await fixture('app-sidebar');
 
     expect(
-      shadowAll(el, 'li').map((li) => li.getAttribute('data-testid')),
+      shadowAll(el, 'li button').map((item) =>
+        item.getAttribute('data-testid'),
+      ),
     ).toEqual([
       'nav-home',
       'nav-playlists',
@@ -44,8 +46,8 @@ describe('<app-sidebar>', () => {
   it('marks exactly one item as the current page', async () => {
     const el = await fixture('app-sidebar');
 
-    const current = shadowAll(el, 'li').filter(
-      (li) => li.getAttribute('aria-current') === 'page',
+    const current = shadowAll(el, 'li button').filter(
+      (item) => item.getAttribute('aria-current') === 'page',
     );
 
     expect(current).toHaveLength(1);

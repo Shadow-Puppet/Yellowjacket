@@ -7,7 +7,7 @@ import { describe, expect, it, beforeEach } from 'vitest';
 
 import { searchStore } from '@store/search-store';
 import { trackListStore } from '@store/tracklist-store';
-import { exploreCache } from '@store/explore-cache';
+import { exploreCache, ARTIST_IMAGE_CACHE_LIMIT } from '@store/explore-cache';
 import { Events } from '../../src/events';
 import { emit, lastCall, flush } from '@test/support/harness';
 
@@ -141,14 +141,34 @@ describe('explore cache', () => {
     expect(exploreCache.getArtist('mbid-2')?.imageURL).toBe('http://x/eno.jpg');
   });
 
-  it('caches an artist’s release groups and top tracks separately', () => {
-    exploreCache.setArtistAlbums('mbid-3', [{ mbid: 'rg-1' }] as never);
-    exploreCache.setArtistTopTracks('mbid-3', [{ mbid: 'rec-1' }] as never);
+  // `perf.M8`. An artist entry holds the artist photo's base64 data URL
+  // — ~128 kB measured — so an unbounded map on a view that never
+  // unmounts grows for the life of the process.
+  it('evicts the least recently used artist past its cap', () => {
+    const over = ARTIST_IMAGE_CACHE_LIMIT + 10;
 
-    expect([
-      exploreCache.getArtistAlbums('mbid-3')?.length,
-      exploreCache.getArtistTopTracks('mbid-3')?.length,
-    ]).toEqual([1, 1]);
+    for (let i = 0; i < over; i++) {
+      exploreCache.setArtist(`cap-${i}`, { mbid: `cap-${i}`, name: `A${i}` });
+    }
+
+    expect(exploreCache.stats().artists.entries).toBe(ARTIST_IMAGE_CACHE_LIMIT);
+    // The first inserted is gone; the last is not.
+    expect(exploreCache.getArtist('cap-0')).toBeUndefined();
+    expect(exploreCache.getArtist(`cap-${over - 1}`)?.name).toBe(`A${over - 1}`);
+  });
+
+  it('keeps an artist alive by reading it', () => {
+    // Recency is what makes the cap safe: the entry being rendered must
+    // not be the one evicted, or the render refetches it immediately.
+    for (let i = 0; i < ARTIST_IMAGE_CACHE_LIMIT; i++) {
+      exploreCache.setArtist(`lru-${i}`, { mbid: `lru-${i}`, name: `A${i}` });
+    }
+
+    exploreCache.getArtist('lru-0');
+    exploreCache.setArtist('lru-new', { mbid: 'lru-new', name: 'New' });
+
+    expect(exploreCache.getArtist('lru-0')?.name).toBe('A0');
+    expect(exploreCache.getArtist('lru-1')).toBeUndefined();
   });
 
   it('populates artists and albums from one search result', () => {

@@ -14,12 +14,16 @@ import {
   emit,
   calls,
   stub,
+  stubFailure,
   flush,
   lastArgs,
   resetHarness,
 } from '@test/support/harness';
 
-const TRACKS = [{ ID: 1, Title: 'One' }];
+const TRACKS = [
+  { ID: 1, Title: 'One', FilePath: '/a.mp3', PlayCount: 0, LastPlayed: '' },
+  { ID: 2, Title: 'Two', FilePath: '/b.mp3', PlayCount: 4, LastPlayed: 'x' },
+];
 const ALBUMS = [{ ID: 1, Name: 'Album', ArtistName: 'Artist' }];
 const OTHER_ALBUMS = [{ ID: 2, Name: 'Other', ArtistName: 'Other Artist' }];
 const ARTISTS = [{ ID: 1, Name: 'Artist' }];
@@ -110,6 +114,67 @@ describe('library store: caching', () => {
     expect(calls('library.Library.GetAllTracks')).toHaveLength(1);
   });
 
+  /*
+   * A finished track used to arrive as TrackMetadataChanged, so every
+   * song refetched the whole library: ~37 MB across the IPC and ~0.8 s
+   * of blocked main thread per track at 50 000 tracks (perf.C1).
+   *
+   * The assertion that matters is the negative one. Patching the track
+   * in place is only a fix if nothing is refetched as well.
+   */
+  describe('a play count arriving', () => {
+    beforeEach(async () => {
+      emit(Events.TrackPlayCountChanged, {
+        audioFileId: 1,
+        filePath: '/a.mp3',
+        playCount: 9,
+        lastPlayed: '2026-08-11 10:00:00',
+      });
+      await flush();
+    });
+
+    it('refetches nothing', () => {
+      expect(calls().map((c) => c.path)).toEqual([]);
+    });
+
+    it('patches the one track it names', () => {
+      const tracks = libraryStore.getCachedTracks();
+
+      expect(tracks?.[0]).toMatchObject({
+        FilePath: '/a.mp3',
+        PlayCount: 9,
+        LastPlayed: '2026-08-11 10:00:00',
+      });
+    });
+
+    it('leaves every other track alone', () => {
+      expect(libraryStore.getCachedTracks()?.[1]).toMatchObject({
+        FilePath: '/b.mp3',
+        PlayCount: 4,
+      });
+    });
+
+    it('replaces the array, so memoized consumers notice', () => {
+      // `track-list` keys its filter/sort caches on the array identity;
+      // mutating in place would be invisible to every one of them.
+      expect(libraryStore.getCachedTracks()).not.toBe(TRACKS);
+      expect(libraryStore.changeGeneration).toBeGreaterThan(0);
+    });
+  });
+
+  it('ignores a play count for a track it has never heard of', async () => {
+    const before = libraryStore.getCachedTracks();
+
+    emit(Events.TrackPlayCountChanged, {
+      filePath: '/not-in-this-library.mp3',
+      playCount: 1,
+    });
+    await flush();
+
+    expect(libraryStore.getCachedTracks()).toBe(before);
+    expect(calls()).toEqual([]);
+  });
+
   it('resets scroll positions on invalidation, so a shorter list is not scrolled past its end', async () => {
     libraryStore.setScrollPosition('albums', 4200);
     emit(Events.LibraryScanComplete);
@@ -175,6 +240,63 @@ describe('library store: library filter', () => {
     expect(lastArgs('library.Library.GetAlbumsByArtistByLibrary')).toEqual([
       3, 8,
     ]);
+  });
+});
+
+/**
+ * The reproduction for errors.C4 and errors.M1: two bugs that are the
+ * same bug seen from either end of an in-flight fetch.
+ */
+describe('library store: a fetch that is overtaken', () => {
+  beforeEach(async () => {
+    libraryStore.setSelectedLibrary(null);
+    await reload();
+  });
+
+  it('serves the library that is selected, not the one that was in flight', async () => {
+    const pending: Array<{ id: number; resolve: (v: unknown) => void }> = [];
+    const byLibrary = (id: number) => [{ ID: id, Title: `Library ${id}` }];
+
+    // Only the track fetch is held open; the other three settle at once,
+    // so the test is about the overtaking and nothing else.
+    stub(
+      'library.Library.GetAllTracksByLibrary',
+      (id: number) =>
+        new Promise((resolve) => {
+          pending.push({ id, resolve });
+        }),
+    );
+
+    libraryStore.setSelectedLibrary(7);
+    await flush();
+    libraryStore.setSelectedLibrary(8);
+    await flush();
+
+    // Library 7's answer lands after the user has already moved on.
+    pending.find((p) => p.id === 7)?.resolve(byLibrary(7));
+    await flush();
+    pending.find((p) => p.id === 8)?.resolve(byLibrary(8));
+    await flush();
+
+    expect(libraryStore.getCachedTracks()).toEqual(byLibrary(8));
+  });
+
+  it('settles the waiters when the fetch they are waiting on fails', async () => {
+    stubFailure('library.Library.GetAllTracks', 'sql: database is locked');
+    // Invalidation drops the cache and starts the fetch that fails.
+    emit(Events.LibraryScanComplete);
+
+    // Arrives while that fetch is in flight, so it waits on it rather
+    // than issuing a second one.
+    const waiter = libraryStore.getTracks().then(
+      () => 'resolved',
+      () => 'rejected',
+    );
+    const timeout = new Promise((resolve) => {
+      setTimeout(() => resolve('never settled'), 500);
+    });
+
+    await expect(Promise.race([waiter, timeout])).resolves.toBe('rejected');
   });
 });
 

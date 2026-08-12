@@ -156,6 +156,82 @@ describe('<now-playing>', () => {
     ]);
   });
 
+  // perf.m5. `updated()` used to measure and rewrite the text geometry
+  // on every pass, and the player store notifies while playing — so a
+  // component whose DOM had not changed did six querySelectors and a
+  // read/write interleave several times a second. These two pin the
+  // guard from both sides: it has to skip the work when nothing it
+  // measures changed, and it has to *not* skip it when something did.
+  async function settle(el: HTMLElement & { updateComplete: Promise<unknown> }) {
+    for (let i = 0; i < 3; i++) {
+      await new Promise((r) => {
+        requestAnimationFrame(() => r(null));
+      });
+      await flush();
+      await el.updateComplete;
+    }
+  }
+
+  function countShadowQueries(el: HTMLElement): () => number {
+    const root = el.shadowRoot!;
+    const orig = root.querySelector.bind(root);
+    let n = 0;
+
+    root.querySelector = ((...args: [string]) => {
+      n++;
+
+      return orig(...args);
+    }) as typeof root.querySelector;
+
+    return () => n;
+  }
+
+  it('does not touch the DOM again when a position report changes nothing', async () => {
+    const el = await fixture('now-playing');
+
+    emit(Events.TrackChanged, { ...TRACK, trackChangeId: 7 });
+    await flush();
+    await el.updateComplete;
+    // `observe()` delivers an initial callback of its own, which is one
+    // more legitimate re-measure. Let it land before counting, or the
+    // straggler reads as the thing this is asserting is gone.
+    await settle(el);
+
+    const queries = countShadowQueries(el);
+
+    for (let i = 0; i < 3; i++) {
+      emit(Events.PlaybackPositionChanged, {
+        positionSeconds: i + 1,
+        trackChangeId: 7,
+        seq: i,
+      });
+      await flush();
+      await el.updateComplete;
+    }
+
+    expect(queries()).toBe(0);
+  });
+
+  it('re-measures when the track changes', async () => {
+    const el = await fixture('now-playing');
+
+    emit(Events.TrackChanged, { ...TRACK, trackChangeId: 8 });
+    await flush();
+    await el.updateComplete;
+
+    const queries = countShadowQueries(el);
+
+    emit(Events.TrackChanged, {
+      ...TRACK,
+      title: 'Teenage Wildlife',
+      trackChangeId: 9,
+    });
+    await flush();
+    await el.updateComplete;
+
+    expect(queries()).toBeGreaterThan(0);
+  });
+
   it('looks the way it did last time', async () => {
     const el = await fixture('now-playing');
 
@@ -175,14 +251,21 @@ describe('<queue-panel>', () => {
     setQueue([]);
   });
 
+  // Every case here mounts the panel *open*. A closed panel renders no
+  // list at all (perf.m7) — `width: 0` used to hide a virtualizer that
+  // was still measuring its window on every queue change and still
+  // calling `scrollIntoView()` on an invisible element. These tests
+  // passed against a closed panel before that, which is the finding
+  // rather than a detail of the fixture.
+
   it('says so when the queue is empty', async () => {
-    const el = await fixture('queue-panel');
+    const el = await fixture('queue-panel', { open: true });
 
     expect(text(el, '.empty-state p')).toBe('Queue is empty');
   });
 
   it('renders a row per queued track, tagged with its file path', async () => {
-    const el = await fixture('queue-panel');
+    const el = await fixture('queue-panel', { open: true });
 
     setQueue([queueTrack(1, 'First'), queueTrack(2, 'Second')]);
     await flush();
@@ -200,7 +283,7 @@ describe('<queue-panel>', () => {
   });
 
   it('marks the playing row as active', async () => {
-    const el = await fixture('queue-panel');
+    const el = await fixture('queue-panel', { open: true });
 
     setQueue([queueTrack(1, 'First'), queueTrack(2, 'Second')], 1);
     await flush();
@@ -215,7 +298,7 @@ describe('<queue-panel>', () => {
   });
 
   it('disables the clear button on an empty queue', async () => {
-    const el = await fixture('queue-panel');
+    const el = await fixture('queue-panel', { open: true });
 
     const button = shadow<HTMLButtonElement>(el, '.header-action-button');
 
@@ -223,7 +306,7 @@ describe('<queue-panel>', () => {
   });
 
   it('clears through the backend, not locally', async () => {
-    const el = await fixture('queue-panel');
+    const el = await fixture('queue-panel', { open: true });
 
     setQueue([queueTrack(1, 'First')]);
     await flush();
@@ -240,7 +323,7 @@ describe('<queue-panel>', () => {
   // toMatchScreenshot never gets two identical frames and fails with
   // "could not capture a stable screenshot" rather than a real diff.
   it('keeps rendering rows after the virtualizer settles', async () => {
-    const el = await fixture('queue-panel');
+    const el = await fixture('queue-panel', { open: true });
 
     setQueue([queueTrack(1, 'First'), queueTrack(2, 'Second')], 0);
     await flush();

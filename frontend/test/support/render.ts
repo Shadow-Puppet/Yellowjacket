@@ -67,6 +67,39 @@ export function shadowAll<E extends Element = Element>(
   return [...(host.shadowRoot?.querySelectorAll<E>(selector) ?? [])];
 }
 
+/**
+ * Query through nested shadow roots.
+ *
+ * A component that composes another component is still one thing to the
+ * user, and to Playwright — `shadow()` stops at the first boundary,
+ * which makes an assertion depend on which component happens to own the
+ * markup today.
+ */
+export function deepShadow<E extends Element = Element>(
+  root: Element,
+  selector: string,
+): E | null {
+  const queue: Array<Element | ShadowRoot> = [root.shadowRoot ?? root];
+
+  while (queue.length > 0) {
+    const node = queue.shift()!;
+    const hit = node.querySelector<E>(selector);
+
+    if (hit) return hit;
+
+    for (const el of node.querySelectorAll('*')) {
+      if (el.shadowRoot) queue.push(el.shadowRoot);
+    }
+  }
+
+  return null;
+}
+
+/** Trimmed text content of the first deep match, or null if absent. */
+export function deepText(host: Element, selector: string): string | null {
+  return deepShadow(host, selector)?.textContent?.trim() ?? null;
+}
+
 /** Trimmed text content of the first match, or null if absent. */
 export function text(host: Element, selector: string): string | null {
   return shadow(host, selector)?.textContent?.trim() ?? null;

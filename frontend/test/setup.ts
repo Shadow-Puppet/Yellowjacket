@@ -4,12 +4,16 @@
  *  1. Install the Wails fake. Store singletons call `EventsOn` and load
  *     from the backend *in their constructors*, which run when a test
  *     module imports them — so the globals have to exist first.
- *  2. Point Web Awesome at its assets. Without this every `<wa-icon>`
- *     silently 404s and screenshots come out with holes in them.
+ *  2. Point Web Awesome at its assets, and register the *bundled* icon
+ *     library — the same call `index.ts` makes. Without the second
+ *     one this tier renders icons from fontawesome.com, so a green
+ *     `make ui-test` would depend on the network and the screenshot
+ *     baselines would be of something the app no longer ships.
  */
 import { afterEach, beforeEach } from 'vitest';
 import { setBasePath } from '@awesome.me/webawesome/dist/webawesome.js';
 import '@awesome.me/webawesome/dist/styles/themes/default.css';
+import { registerBundledIcons } from '../src/icons';
 import { installWailsFake, wails } from './support/wails-fake';
 import { resetHarness } from './support/harness';
 import { cleanupFixtures } from './support/render';
@@ -43,10 +47,16 @@ for (const [path, value] of importTimeDefaults) {
   wails.stub(path, value);
 }
 
-// Vite serves the dependency's own directory, so icons resolve from
-// node_modules rather than from the built `dist/webawesome` copy the
-// app uses.
+// Vite serves the dependency's own directory, so Web Awesome's own
+// assets resolve from node_modules rather than from the built
+// `dist/webawesome` copy the app uses.
+//
+// Note this does *not* cover icons: `getBasePath` is read only by the
+// component autoloader, never by the icon resolver, which is the
+// original half of audit finding H-4 and the reason the line below
+// exists rather than being implied by this one.
 setBasePath('/node_modules/@awesome.me/webawesome/dist');
+registerBundledIcons();
 
 // index.ts imports the theme store for its side effect: it derives the
 // --yj-* custom properties and applies them to :root, where every

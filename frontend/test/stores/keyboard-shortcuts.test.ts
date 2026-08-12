@@ -197,14 +197,74 @@ describe('shortcut dispatch: scope', () => {
     expect(calls('queue.Queue.Play')).toHaveLength(0);
   });
 
-  it('lets a checkbox through — it is not a text input', () => {
+  it('leaves Space to a focused checkbox, which owns it', () => {
+    // The global bindings are unmodified single keys, so the service has
+    // to yield to a control that means something by the key itself —
+    // otherwise the checkbox you tabbed to cannot be ticked (H-6).
     const input = mount(document.createElement('input'));
 
     input.type = 'checkbox';
     input.focus();
+
+    expect(press(' ').defaultPrevented).toBe(false);
+    expect(calls('queue.Queue.Play')).toHaveLength(0);
+  });
+
+  it('still fires a key the focused control does not own', () => {
+    bindings({ 'player.playPause': 'Space', 'player.next': 'N' });
+
+    const button = mount(document.createElement('button'));
+
+    button.focus();
+    press('n');
+
+    expect(calls('queue.Queue.Next')).toHaveLength(1);
+  });
+
+  it('leaves the arrow keys to a focused slider', () => {
+    bindings({ 'player.volumeUp': 'Up' });
+
+    const input = mount(document.createElement('input'));
+
+    input.type = 'range';
+    input.focus();
+    press('ArrowUp');
+
+    expect(calls('player.Player.ChangeVolume')).toHaveLength(0);
+  });
+
+  it('leaves every unmodified key to an open dialog', () => {
+    const dialog = mount(document.createElement('div'));
+    const button = document.createElement('button');
+
+    dialog.setAttribute('role', 'dialog');
+    dialog.append(button);
+    button.focus();
     press(' ');
 
-    expect(calls('queue.Queue.Play')).toHaveLength(1);
+    expect(calls('queue.Queue.Play')).toHaveLength(0);
+  });
+
+  it('keeps a modified binding even inside a dialog', () => {
+    bindings({ 'app.selectAll': 'Ctrl+A' });
+
+    const dialog = mount(document.createElement('div'));
+    const button = document.createElement('button');
+
+    dialog.setAttribute('role', 'dialog');
+    dialog.append(button);
+    button.focus();
+
+    let fired = 0;
+    const listener = (): void => {
+      fired += 1;
+    };
+
+    document.addEventListener('shortcut:select-all', listener);
+    press('a', { ctrlKey: true });
+    document.removeEventListener('shortcut:select-all', listener);
+
+    expect(fired).toBe(1);
   });
 
   it('blurs the input on Escape, and only on Escape', () => {
@@ -234,8 +294,11 @@ describe('shortcut dispatch: scope', () => {
 
   it('resolves a panel scope from a data-shortcut-scope ancestor', () => {
     const panel = mount(document.createElement('div'));
-    const button = document.createElement('button');
+    const button = document.createElement('div');
 
+    // Focused on a plain focusable, not a button: a button owns Enter
+    // itself and is meant to keep it.
+    button.tabIndex = 0;
     panel.dataset['shortcutScope'] = 'tracklist';
     panel.append(button);
     button.focus();
@@ -256,8 +319,9 @@ describe('shortcut dispatch: scope', () => {
     const panel = mount(document.createElement('div'));
     const inner = document.createElement('div');
     const root = inner.attachShadow({ mode: 'open' });
-    const button = document.createElement('button');
+    const button = document.createElement('div');
 
+    button.tabIndex = 0;
     panel.dataset['shortcutScope'] = 'tracklist';
     panel.append(inner);
     root.append(button);
