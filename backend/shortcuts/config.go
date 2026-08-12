@@ -35,6 +35,19 @@ func DefaultBindings() map[string]string {
 		// Panel-specific (track list)
 		"tracklist.play":   "Enter",
 		"tracklist.delete": "Delete",
+
+		// Panel-specific (autotag review).  These are the keys the
+		// autotag page used to bind on its own document listener, which
+		// fired from every other page and could not arbitrate with the
+		// global bindings above.  As panel bindings they apply only
+		// while that page is the one on screen.
+		"autotag.apply":    "A",
+		"autotag.skip":     "S",
+		"autotag.leave":    "L",
+		"autotag.paste":    "U",
+		"autotag.search":   "F",
+		"autotag.next":     "Down",
+		"autotag.previous": "Up",
 	}
 }
 
