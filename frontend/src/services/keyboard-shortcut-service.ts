@@ -30,6 +30,14 @@ const KEY_ALIASES: Record<string, string> = {
     ' ': 'Space',
 };
 
+/** Whether a resolved key is a printable character that a Shift press
+ *  produced, rather than a key Shift was held alongside. Letters are
+ *  excluded: `A` and `Shift+A` are the same character, so Shift stays
+ *  meaningful there. */
+function isShiftedCharacter(key: string): boolean {
+    return key.length === 1 && !/[A-Z0-9]/.test(key);
+}
+
 /** Keys that are modifier-only presses and should be ignored. */
 const MODIFIER_KEYS = new Set([
     'Control',
@@ -52,11 +60,6 @@ export function buildKeyString(e: KeyboardEvent): string {
 
     const parts: string[] = [];
 
-    // Modifiers in fixed order. Treat Meta (Cmd on Mac) as Ctrl.
-    if (e.ctrlKey || e.metaKey) parts.push('Ctrl');
-    if (e.altKey) parts.push('Alt');
-    if (e.shiftKey) parts.push('Shift');
-
     // Normalize the key name.
     let key = KEY_ALIASES[e.key] ?? e.key;
 
@@ -64,6 +67,16 @@ export function buildKeyString(e: KeyboardEvent): string {
     if (key.length === 1) {
         key = key.toUpperCase();
     }
+
+    // Modifiers in fixed order. Treat Meta (Cmd on Mac) as Ctrl.
+    if (e.ctrlKey || e.metaKey) parts.push('Ctrl');
+    if (e.altKey) parts.push('Alt');
+
+    // Shift is only a modifier when it did not *produce* the key.
+    // `?` is Shift+/ on a US layout and something else elsewhere, and
+    // "Shift+?" is a binding nobody would write down; the character
+    // already carries the shift.
+    if (e.shiftKey && !isShiftedCharacter(key)) parts.push('Shift');
 
     parts.push(key);
 
@@ -143,6 +156,7 @@ type ShortcutScope =
  */
 const ACTIVATION_KEYS = new Set(['Space', 'Enter']);
 const ARROW_KEYS = new Set(['Up', 'Down', 'Left', 'Right', 'Home', 'End']);
+const VERTICAL_KEYS = new Set(['Up', 'Down', 'Home', 'End']);
 const LIST_KEYS = new Set([...ARROW_KEYS, ...ACTIVATION_KEYS]);
 const SLIDER_KEYS = new Set([...ARROW_KEYS, 'PageUp', 'PageDown']);
 
@@ -160,7 +174,14 @@ function keysOwnedBy(el: Element): ReadonlySet<string> | null {
     }
 
     // A grid row or a listbox option moves with the arrow keys, which is
-    // what makes a track list navigable without a mouse.
+    // what makes a track list navigable without a mouse — but only the
+    // *vertical* ones. Every list in this app (`track-list`'s own
+    // handler, `utils/roving-rows.ts`, the card grids that use it) moves
+    // on Up/Down/Home/End and does nothing with Left/Right, so granting
+    // those took keyboard seeking away from a focused row and gave it to
+    // nobody: two ArrowRights on a focused track row produced zero
+    // `Player.Seek` calls, against one per press with focus on the body.
+    // Grant them back here if a list ever moves horizontally.
     if (
         role === 'row' ||
         role === 'gridcell' ||
@@ -168,7 +189,7 @@ function keysOwnedBy(el: Element): ReadonlySet<string> | null {
         role === 'option' ||
         role === 'treeitem'
     ) {
-        return ARROW_KEYS;
+        return VERTICAL_KEYS;
     }
 
     if (tag === 'INPUT') {
@@ -398,6 +419,12 @@ async function dispatch(action: string): Promise<void> {
         }
 
         // App actions
+        case 'app.shortcuts':
+            document.dispatchEvent(
+                new CustomEvent('shortcut:app-shortcuts'),
+            );
+            break;
+
         case 'app.selectAll':
             document.dispatchEvent(
                 new CustomEvent('shortcut:select-all'),

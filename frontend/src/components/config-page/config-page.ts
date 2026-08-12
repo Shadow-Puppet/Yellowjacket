@@ -25,6 +25,10 @@ import { FavoritesController } from '@store/controllers/favorites-controller';
 import { GetAllPlaylists } from '@go/playlist/Service';
 import type { playlist } from '@go/models';
 import { Events } from '../../events';
+import {
+    SHORTCUT_CATEGORIES,
+    SHORTCUT_META,
+} from '../../services/shortcut-meta';
 import { ViewLifecycleMixin } from '../../utils/view-lifecycle';
 import type { ConfigFieldChangeEvent } from './config-field';
 import type { BackgroundShade } from '@store/theme-store';
@@ -62,150 +66,6 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
 
     // --- Shortcuts controller ---
     private shortcutsCtrl = new ShortcutsController(this);
-
-    // --- Shortcut metadata for UI grouping ---
-    private static readonly SHORTCUT_META: Record<
-        string,
-        {
-            label: string;
-            category: string;
-            scope: string;
-            defaultKey: string;
-        }
-    > = {
-        'player.playPause': {
-            label: 'Play / Pause',
-            category: 'Player',
-            scope: 'global',
-            defaultKey: 'Space',
-        },
-        'player.next': {
-            label: 'Next Track',
-            category: 'Player',
-            scope: 'global',
-            defaultKey: 'N',
-        },
-        'player.previous': {
-            label: 'Previous Track',
-            category: 'Player',
-            scope: 'global',
-            defaultKey: 'P',
-        },
-        'player.volumeUp': {
-            label: 'Volume Up',
-            category: 'Player',
-            scope: 'global',
-            defaultKey: 'Up',
-        },
-        'player.volumeDown': {
-            label: 'Volume Down',
-            category: 'Player',
-            scope: 'global',
-            defaultKey: 'Down',
-        },
-        'player.seekForward': {
-            label: 'Seek Forward',
-            category: 'Player',
-            scope: 'global',
-            defaultKey: 'Right',
-        },
-        'player.seekBack': {
-            label: 'Seek Back',
-            category: 'Player',
-            scope: 'global',
-            defaultKey: 'Left',
-        },
-        'player.shuffle': {
-            label: 'Toggle Shuffle',
-            category: 'Player',
-            scope: 'global',
-            defaultKey: 'S',
-        },
-        'player.repeat': {
-            label: 'Cycle Repeat',
-            category: 'Player',
-            scope: 'global',
-            defaultKey: 'R',
-        },
-        'player.mute': {
-            label: 'Toggle Mute',
-            category: 'Player',
-            scope: 'global',
-            defaultKey: 'M',
-        },
-        'nav.search': {
-            label: 'Focus Search',
-            category: 'Navigation',
-            scope: 'global',
-            defaultKey: '/',
-        },
-        'nav.searchAlt': {
-            label: 'Focus Search (Alt)',
-            category: 'Navigation',
-            scope: 'global',
-            defaultKey: 'Ctrl+F',
-        },
-        'nav.queue': {
-            label: 'Toggle Queue',
-            category: 'Navigation',
-            scope: 'global',
-            defaultKey: 'Q',
-        },
-        'app.selectAll': {
-            label: 'Select All',
-            category: 'App',
-            scope: 'global',
-            defaultKey: 'Ctrl+A',
-        },
-        'tracklist.play': {
-            label: 'Play Selected',
-            category: 'Navigation',
-            scope: 'panel:track-list',
-            defaultKey: 'Enter',
-        },
-        'autotag.apply': {
-            label: 'Apply Match',
-            category: 'Autotag',
-            scope: 'panel:autotag',
-            defaultKey: 'A',
-        },
-        'autotag.skip': {
-            label: 'Skip Folder',
-            category: 'Autotag',
-            scope: 'panel:autotag',
-            defaultKey: 'S',
-        },
-        'autotag.leave': {
-            label: 'Leave As Is',
-            category: 'Autotag',
-            scope: 'panel:autotag',
-            defaultKey: 'L',
-        },
-        'autotag.paste': {
-            label: 'Paste Release URL',
-            category: 'Autotag',
-            scope: 'panel:autotag',
-            defaultKey: 'U',
-        },
-        'autotag.search': {
-            label: 'Search Candidates',
-            category: 'Autotag',
-            scope: 'panel:autotag',
-            defaultKey: 'F',
-        },
-        'autotag.next': {
-            label: 'Next Folder',
-            category: 'Autotag',
-            scope: 'panel:autotag',
-            defaultKey: 'Down',
-        },
-        'autotag.previous': {
-            label: 'Previous Folder',
-            category: 'Autotag',
-            scope: 'panel:autotag',
-            defaultKey: 'Up',
-        },
-    };
 
     // --- Now Playing state ---
     @state() private scrollMode = 'hover';
@@ -1338,7 +1198,7 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
         const { action, key } = e.detail;
 
         // Check for conflict — find any other action with the same key in the same or overlapping scope
-        const meta = ConfigPage.SHORTCUT_META[action];
+        const meta = SHORTCUT_META[action];
         const conflict = shortcutsStore.findConflict(
             key,
             meta?.scope ?? 'global',
@@ -1901,11 +1761,10 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
     private renderShortcutsSection() {
         const bindings =
             this.shortcutsCtrl.state.bindings;
-        const categories = [
-            'Player',
-            'Navigation',
-            'App',
-        ];
+        // All four, from the shared table: the Autotag bindings are
+        // persisted and rebindable like any other, and listing three of
+        // four categories is how they came to be written down nowhere.
+        const categories = SHORTCUT_CATEGORIES;
 
         return html`
             <config-section
@@ -1914,7 +1773,7 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
             >
                 ${categories.map((cat) => {
                     const actions = Object.entries(
-                        ConfigPage.SHORTCUT_META,
+                        SHORTCUT_META,
                     ).filter(
                         ([, meta]) =>
                             meta.category === cat,
@@ -1990,8 +1849,7 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
                                   >
                                   is already bound to
                                   <strong
-                                      >${ConfigPage
-                                          .SHORTCUT_META[
+                                      >${SHORTCUT_META[
                                           this
                                               .shortcutConflict
                                               .existingAction

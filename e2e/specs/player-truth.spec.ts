@@ -77,9 +77,12 @@ async function readClocks(
  * Move focus off the track row.
  *
  * Phase 1 made rows a real grid with roving tabindex, and global
- * single-key bindings yield to a focused control that owns the key —
- * so with a row focused the arrows navigate the list rather than
- * seeking, which is correct and is not what this spec is about.
+ * single-key bindings yield to a focused control that owns the key.
+ * A row owns the *vertical* arrows only now (Phase 5), so Left/Right
+ * seek from a focused row too and this is no longer load-bearing — it
+ * stays because this spec is about the clock, not about scope
+ * resolution, and it should keep measuring the same thing if that
+ * rule changes again.
  */
 async function blurDeepActive(app: Page): Promise<void> {
   await app.evaluate(() => {

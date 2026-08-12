@@ -29,8 +29,9 @@ func DefaultBindings() map[string]string {
 		"nav.searchAlt": "Ctrl+F",
 		"nav.queue":     "Q",
 
-		// App actions (Global scope, Ctrl modifier)
+		// App actions
 		"app.selectAll": "Ctrl+A",
+		"app.shortcuts": "?",
 
 		// Panel-specific (track list).  There is no `tracklist.delete`:
 		// it was bound to Delete and advertised in Settings as

@@ -86,6 +86,20 @@ describe('buildKeyString', () => {
     expect(names).toEqual(['Up', 'Down', 'Left', 'Right', 'Space']);
   });
 
+  it('does not report Shift for a character Shift produced', () => {
+    // `?` is Shift+/ on a US layout and something else elsewhere, so
+    // "Shift+?" is a binding nobody would write down. Letters keep it:
+    // `Shift+A` and `A` are the same character.
+    const question = new KeyboardEvent('keydown', {
+      key: '?',
+      shiftKey: true,
+    });
+    const letter = new KeyboardEvent('keydown', { key: 'A', shiftKey: true });
+
+    expect(buildKeyString(question)).toBe('?');
+    expect(buildKeyString(letter)).toBe('Shift+A');
+  });
+
   it('leaves multi-character named keys alone', () => {
     expect(
       buildKeyString(new KeyboardEvent('keydown', { key: 'Escape' })),
@@ -231,6 +245,37 @@ describe('shortcut dispatch: scope', () => {
     press('ArrowUp');
 
     expect(calls('player.Player.ChangeVolume')).toHaveLength(0);
+  });
+
+  it('leaves Up and Down to a focused row, which moves on them', () => {
+    bindings({ 'player.volumeUp': 'Up' });
+
+    const row = mount(document.createElement('div'));
+
+    row.setAttribute('role', 'row');
+    row.tabIndex = 0;
+    row.focus();
+    press('ArrowUp');
+
+    expect(calls('player.Player.ChangeVolume')).toHaveLength(0);
+  });
+
+  it('still seeks on Left/Right from a focused row', () => {
+    // Phase 1 gave the arrows to the grid, correctly — but all six of
+    // them, and no list in this app moves horizontally, so seeking
+    // stopped working from a focused row and nothing gained the keys.
+    // Reproduced in the app: two ArrowRights on a focused track row,
+    // zero Player.Seek calls, against one per press from the body.
+    bindings({ 'player.seekForward': 'Right' });
+
+    const row = mount(document.createElement('div'));
+
+    row.setAttribute('role', 'row');
+    row.tabIndex = 0;
+    row.focus();
+    press('ArrowRight');
+
+    expect(calls('player.Player.CurrentPositionSeconds')).toHaveLength(1);
   });
 
   it('leaves every unmodified key to an open dialog', () => {

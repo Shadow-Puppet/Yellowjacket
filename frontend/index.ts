@@ -28,6 +28,10 @@ import '@components/first-run-wizard/first-run-wizard.ts';
 import '@components/notifications/notification-host.ts';
 import '@components/notifications/inline-notice.ts';
 import '@components/confirm-dialog/confirm-dialog.ts';
+// The `?` overlay: help, so it is eager for the same reason the failure
+// surface is — the moment it is asked for is the moment the user does
+// not know what is going on. It costs a dialog and a table.
+import '@components/shortcuts-overlay/shortcuts-overlay.ts';
 import '@components/jobs/job-indicator.ts';
 import '@awesome.me/webawesome/dist/styles/themes/default.css';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
