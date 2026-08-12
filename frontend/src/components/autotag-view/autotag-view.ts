@@ -26,6 +26,8 @@ import { libraryStore } from '../../store/library-store';
 import { notificationStore } from '../../store/notification-store';
 import { describeError, explainError } from '../../utils/describe-error';
 import { ViewLifecycleMixin } from '../../utils/view-lifecycle';
+import { confirmAction } from '../confirm-dialog/confirm-dialog';
+import '@awesome.me/webawesome/dist/components/dialog/dialog.js';
 
 type PendingItem = autotagservice.PendingItem;
 type ScoreView = autotagservice.ScoreView;
@@ -1026,44 +1028,19 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
                 border: 1px solid currentColor;
             }
 
-            /* ── Dialogs (carried over) ── */
+            /* ── Dialogs ──
+               The frame, the backdrop, the focus trap and the Escape
+               handling belong to wa-dialog; what is left here is the
+               content these two put inside it. */
 
-            .dialog-overlay {
-                position: fixed;
-                inset: 0;
-                background: rgba(0, 0, 0, 0.5);
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                z-index: 100;
+            wa-dialog::part(dialog) {
+                background: var(--yj-bg-surface, #212529);
+                color: var(--yj-text-primary, #fff);
             }
 
-            .dialog {
-                background: var(--yj-bg-surface, #222);
-                padding: 1.25rem;
-                border-radius: 6px;
-                min-width: 420px;
-                max-width: 560px;
-                border: 1px solid var(--yj-bg-overlay, rgba(255, 255, 255, 0.1));
-            }
+            wa-dialog p { margin: 0 0 1rem 0; font-size: 0.9rem; }
 
-            .dialog-header { display: flex; align-items: center; margin-bottom: 0.75rem; }
-            .dialog-header h3 { margin: 0; }
-
-            .dialog-close {
-                margin-left: auto;
-                background: transparent;
-                color: var(--yj-text-secondary, #b3b3b3);
-                border: 0;
-                font-size: 1.2rem;
-                cursor: pointer;
-                padding: 0 0.25rem;
-            }
-
-            .dialog-close:hover { color: var(--yj-text-primary, #fff); }
-            .dialog p { margin: 0 0 1rem 0; font-size: 0.9rem; }
-
-            .dialog input[type="url"] {
+            .url-input {
                 width: 100%;
                 padding: 0.4rem;
                 font: inherit;
@@ -1074,16 +1051,15 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
                 box-sizing: border-box;
             }
 
-            .dialog .row {
+            .row {
                 display: flex;
                 gap: 0.5rem;
                 justify-content: flex-end;
-                margin-top: 1rem;
             }
 
             /* ── In-app search dialog ── */
 
-            .search-dialog { min-width: 480px; }
+            .search-dialog::part(dialog) { min-width: 480px; }
 
             .search-kind {
                 display: flex;
@@ -1119,8 +1095,15 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
             }
 
             .search-result {
+                display: block;
+                width: 100%;
+                text-align: left;
+                background: transparent;
+                color: inherit;
+                font: inherit;
                 padding: 0.45rem 0.5rem;
                 cursor: pointer;
+                border: 0;
                 border-bottom: 1px solid var(--yj-bg-overlay, rgba(255, 255, 255, 0.05));
                 border-radius: 4px;
             }
@@ -1166,7 +1149,10 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
     @state() private loading = false;
     @state() private foldersLoading = false;
     @state() private errorMessage = '';
-    @state() private dialog: 'none' | 'paste' | 'warning' | 'leave' | 'search' = 'none';
+    // Two of the four dialogs this view used to hand-roll were plain
+    // confirmations and are `confirmAction()` calls now; the two that
+    // remain carry input and so are `<wa-dialog>`s in the template.
+    @state() private dialog: 'none' | 'paste' | 'search' = 'none';
     @state() private pasteURL = '';
 
     // In-app MusicBrainz search ("suggest a candidate") dialog state.
@@ -1175,6 +1161,9 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
     @state() private searchArtist = '';
     @state() private searchResults: SearchHitView[] = [];
     @state() private searchLoading = false;
+    /** Whether a search has actually been run, as opposed to the fields
+     *  merely being seeded from the current folder. */
+    @state() private searchRan = false;
     @state() private searchError = '';
     @state() private queueMenuOpen = false;
     // Collapsible sidebar sections.  Pending stays expanded so the
@@ -1197,7 +1186,11 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
      *  when it is disconnected — which never happens, because the view
      *  is cached (see utils/view-lifecycle.ts). */
     protected override onViewActivate(): void {
-        this.listenWhileActive(document, 'keydown', this.onKeydown as EventListener);
+        // This view owned one last document keydown listener, for Escape,
+        // because its dialogs were hand-rolled and nothing else would
+        // close them. They are `wa-dialog`s now and close themselves, so
+        // the shortcut service is the only thing on this page deciding
+        // what a key means — which is what Phase 1 was for.
         this.listenWhileActive(
             document,
             'mousedown',
@@ -1391,49 +1384,42 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
     private onPasteKeydown = (e: KeyboardEvent) => {
         if (e.key === 'Enter') this.onPasteSubmit();
     };
-    private onWarningCancel = () => { this.dialog = 'none'; };
-    private onWarningContinue = async () => {
-        if (!this.current) return;
+    /** Acknowledge the once-per-library "this rewrites files" warning,
+     *  then apply. Returns without applying if the user backed out. */
+    private async confirmWarningThenApply(): Promise<void> {
+        const current = this.current;
 
-        this.markWarningAcked(this.current.libraryId);
+        if (!current) return;
 
-        // Unwrapped, a rejection here meant the lines after it — the
-        // one that closes the dialog — never ran, and the dialog sat
-        // there forever (errors.m6).
+        const library = current.libraryName || `library #${current.libraryId}`;
+        const ok = await confirmAction({
+            title: 'Heads up: this rewrites audio files',
+            message: `Applying autotag writes new metadata directly to every track in ${current.albumName}. `
+                + 'The change lands on disk and is not automatically reversible. '
+                + 'Files outside this library are not touched.',
+            impact: `This warning shows once per library. Continue to acknowledge for ${library}.`,
+            confirmLabel: 'Continue',
+        });
+
+        if (!ok) return;
+
+        this.markWarningAcked(current.libraryId);
+
+        // Unwrapped, a rejection here meant the lines after it never ran
+        // and the dialog sat there forever (errors.m6). The dialog closes
+        // itself now, but the apply still has to happen either way.
         try {
-            await AckLibraryWarning(this.current.libraryId);
+            await AckLibraryWarning(current.libraryId);
         } catch (err) {
             console.error('autotag: could not record the warning ack', err);
             this.errorMessage = describeError(
                 err,
                 'That acknowledgement could not be saved.',
             );
-        } finally {
-            this.dialog = 'none';
         }
 
         await this.executeApply();
-    };
-    private onLeaveCancel = () => { this.dialog = 'none'; };
-    private onLeaveConfirm = async () => {
-        if (!this.current) return;
-
-        this.dialog = 'none';
-
-        try {
-            await LeaveAsIs(this.current.groupKey);
-        } catch (err) {
-            console.error('autotag: leave-as-is failed', err);
-            this.errorMessage = describeError(
-                err,
-                'That folder could not be left as it is.',
-            );
-
-            return;
-        }
-
-        await this.refreshAfterAction();
-    };
+    }
 
     /** Open the in-app MB search dialog, seeding the query fields from
      *  the current folder's album/artist so the common case is one
@@ -1444,6 +1430,10 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
         this.searchArtist = this.current?.albumArtist ?? '';
         this.searchResults = [];
         this.searchError = '';
+        // The query is seeded from the folder, so "no results" was true of
+        // a search nobody had run yet — visible the moment the dialog
+        // opens, under the fields still being filled in.
+        this.searchRan = false;
         this.dialog = 'search';
     }
 
@@ -1454,6 +1444,7 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
         if (!query) return;
         this.searchLoading = true;
         this.searchError = '';
+        this.searchRan = true;
         try {
             this.searchResults = await SearchCandidates(
                 this.searchKind, query, this.searchArtist.trim(),
@@ -1734,9 +1725,11 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
     private async onApply(): Promise<void> {
         if (!this.current || !this.score || this.score.candidates.length === 0) return;
         if (!this.hasLibraryWarningBeenAcked(this.current.libraryId)) {
-            this.dialog = 'warning';
+            await this.confirmWarningThenApply();
+
             return;
         }
+
         await this.executeApply();
     }
 
@@ -1803,14 +1796,27 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
     private async onLeave(): Promise<void> {
         if (!this.current) return;
 
-        if (this.topScore() < CONFIDENT_SCORE) {
-            this.dialog = 'leave';
+        const groupKey = this.current.groupKey;
 
-            return;
+        if (this.topScore() < CONFIDENT_SCORE) {
+            const top = Math.round(this.topScore() * 100);
+            const ok = await confirmAction({
+                title: 'Keep the current tags?',
+                message: `No candidate scored high enough to trust automatically (top is ${top}%). `
+                    + `“Leave as-is” marks the local tags on ${this.current.albumName} as correct `
+                    + 'and removes this folder from the review queue.',
+                impact: 'If the local tags are wrong, prefer Skip (S) instead — '
+                    + 'that leaves the folder pending for later review.',
+                confirmLabel: 'Mark as correct',
+            });
+
+            // The confirmation is modal, but it is still an await: the
+            // folder we asked about has to be the folder we act on.
+            if (!ok || this.current?.groupKey !== groupKey) return;
         }
 
         try {
-            await LeaveAsIs(this.current.groupKey);
+            await LeaveAsIs(groupKey);
         } catch (err) {
             console.error('autotag: leave-as-is failed', err);
             this.errorMessage = describeError(
@@ -1857,18 +1863,6 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
             await this.selectFolder(target.groupKey);
         }
     }
-
-    /** Escape closes this view's hand-rolled dialogs.  Everything else
-     *  the page binds is a registered shortcut in the `autotag` panel
-     *  scope, so the shortcut service is the only thing deciding what a
-     *  key means — including on the pages this view is not on. */
-    private onKeydown = (e: KeyboardEvent): void => {
-        if (e.key !== 'Escape' || this.dialog === 'none') return;
-
-        e.preventDefault();
-        this.dialog = 'none';
-        this.pasteURL = '';
-    };
 
     /* ── Version clustering ── */
 
@@ -2948,112 +2942,41 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
 
     private renderPasteDialog() {
         return html`
-            <div class="dialog-overlay" @click=${(e: MouseEvent) => {
-                if (e.target === e.currentTarget) this.onPasteCancel();
-            }}>
-                <div class="dialog">
-                    <div class="dialog-header">
-                        <h3>Paste MusicBrainz URL</h3>
-                        <button class="dialog-close" aria-label="Close"
-                                @click=${this.onPasteCancel}>×</button>
-                    </div>
-                    <p>
-                        Paste a MusicBrainz release or release-group URL.
-                        Tracks are aligned automatically when it loads.
-                    </p>
-                    <input type="url"
-                           placeholder="https://musicbrainz.org/release/..."
-                           .value=${this.pasteURL}
-                           @input=${this.onPasteInput}
-                           @keydown=${this.onPasteKeydown}
-                           autofocus>
-                    <div class="row">
-                        <button class="secondary" @click=${this.onPasteCancel}>Cancel</button>
-                        <button @click=${this.onPasteSubmit}>Load</button>
-                    </div>
+            <wa-dialog
+                label="Paste MusicBrainz URL"
+                data-testid="autotag-paste-dialog"
+                ?open=${this.dialog === 'paste'}
+                @wa-hide=${this.onPasteCancel}
+            >
+                <p>
+                    Paste a MusicBrainz release or release-group URL.
+                    Tracks are aligned automatically when it loads.
+                </p>
+                <input type="url"
+                       class="url-input"
+                       aria-label="MusicBrainz release URL"
+                       placeholder="https://musicbrainz.org/release/..."
+                       .value=${this.pasteURL}
+                       @input=${this.onPasteInput}
+                       @keydown=${this.onPasteKeydown}
+                       autofocus>
+                <div class="row" slot="footer">
+                    <button class="secondary" @click=${this.onPasteCancel}>Cancel</button>
+                    <button @click=${this.onPasteSubmit}>Load</button>
                 </div>
-            </div>
-        `;
-    }
-
-    private renderWarningDialog() {
-        if (!this.current) return nothing;
-        return html`
-            <div class="dialog-overlay" @click=${(e: MouseEvent) => {
-                if (e.target === e.currentTarget) this.onWarningCancel();
-            }}>
-                <div class="dialog">
-                    <div class="dialog-header">
-                        <h3>Heads up: this rewrites audio files</h3>
-                        <button class="dialog-close" aria-label="Close"
-                                @click=${this.onWarningCancel}>×</button>
-                    </div>
-                    <p>
-                        Applying autotag writes new metadata directly to every
-                        track in <strong>${this.current.albumName}</strong>.
-                        The change lands on disk and is not automatically
-                        reversible.  Files outside this library are not
-                        touched.
-                    </p>
-                    <p>
-                        This warning shows once per library. Click Continue to
-                        acknowledge for
-                        <strong>${this.current.libraryName || `library #${this.current.libraryId}`}</strong>.
-                    </p>
-                    <div class="row">
-                        <button class="secondary" @click=${this.onWarningCancel}>Cancel</button>
-                        <button @click=${this.onWarningContinue}>Continue</button>
-                    </div>
-                </div>
-            </div>
-        `;
-    }
-
-    private renderLeaveDialog() {
-        if (!this.current) return nothing;
-        const top = this.score?.candidates[0];
-        const topPct = top ? Math.round(top.score * 100) : 0;
-        return html`
-            <div class="dialog-overlay" @click=${(e: MouseEvent) => {
-                if (e.target === e.currentTarget) this.onLeaveCancel();
-            }}>
-                <div class="dialog">
-                    <div class="dialog-header">
-                        <h3>Keep the current tags?</h3>
-                        <button class="dialog-close" aria-label="Close"
-                                @click=${this.onLeaveCancel}>×</button>
-                    </div>
-                    <p>
-                        No candidate scored high enough to trust automatically
-                        (top is ${topPct}%).  "Leave as-is" marks the local
-                        tags on <strong>${this.current.albumName}</strong> as
-                        correct and removes this folder from the review queue.
-                    </p>
-                    <p>
-                        If the local tags are wrong, prefer <kbd>S</kbd> (Skip)
-                        instead — that leaves the folder pending for later
-                        review.
-                    </p>
-                    <div class="row">
-                        <button class="secondary" @click=${this.onLeaveCancel}>Cancel</button>
-                        <button @click=${this.onLeaveConfirm}>Mark as correct</button>
-                    </div>
-                </div>
-            </div>
+            </wa-dialog>
         `;
     }
 
     private renderSearchDialog() {
         return html`
-            <div class="dialog-overlay" @click=${(e: MouseEvent) => {
-                if (e.target === e.currentTarget) this.onSearchCancel();
-            }}>
-                <div class="dialog search-dialog">
-                    <div class="dialog-header">
-                        <h3>Search MusicBrainz</h3>
-                        <button class="dialog-close" aria-label="Close"
-                                @click=${this.onSearchCancel}>×</button>
-                    </div>
+            <wa-dialog
+                label="Search MusicBrainz"
+                class="search-dialog"
+                data-testid="autotag-search-dialog"
+                ?open=${this.dialog === 'search'}
+                @wa-hide=${this.onSearchCancel}
+            >
                     <div class="search-kind">
                         <label>
                             <input type="radio" name="searchKind" value="releasegroup"
@@ -3069,55 +2992,54 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
                         </label>
                     </div>
                     <input type="text" class="search-input"
+                           aria-label=${this.searchKind === 'recording' ? 'Track title' : 'Album name'}
                            placeholder=${this.searchKind === 'recording' ? 'Track title' : 'Album name'}
                            .value=${this.searchQuery}
                            @input=${(e: Event) => { this.searchQuery = (e.target as HTMLInputElement).value; }}
                            @keydown=${(e: KeyboardEvent) => { if (e.key === 'Enter') void this.runSearch(); }}
                            autofocus>
                     <input type="text" class="search-input"
+                           aria-label="Artist (optional)"
                            placeholder="Artist (optional)"
                            .value=${this.searchArtist}
                            @input=${(e: Event) => { this.searchArtist = (e.target as HTMLInputElement).value; }}
                            @keydown=${(e: KeyboardEvent) => { if (e.key === 'Enter') void this.runSearch(); }}>
-                    <div class="row">
-                        <button class="secondary" @click=${this.onSearchCancel}>Cancel</button>
-                        <button @click=${() => { void this.runSearch(); }}
-                                ?disabled=${this.searchLoading || this.searchQuery.trim() === ''}>
-                            ${this.searchLoading ? 'Searching…' : 'Search'}
-                        </button>
-                    </div>
                     ${this.searchError
                         ? html`<div class="error" style="margin-top:0.75rem;">${this.searchError}</div>`
                         : nothing}
                     ${this.searchResults.length > 0 ? html`
-                        <div class="search-results">
+                        <div class="search-results" role="list">
                             ${this.searchResults.map((hit) => html`
-                                <div class="search-result"
+                                <button type="button" class="search-result" role="listitem"
                                      @click=${() => { void this.pickSearchResult(hit); }}>
                                     <div class="sr-title">${hit.title}</div>
                                     <div class="sr-sub">
                                         <span>${hit.artist || '—'}</span>
                                         ${hit.detail ? html`<span class="sr-detail">${hit.detail}</span>` : nothing}
                                     </div>
-                                </div>
+                                </button>
                             `)}
                         </div>
-                    ` : this.searchLoading || this.searchError || this.searchQuery.trim() === ''
-                        ? nothing
-                        : html`<div class="search-empty">No results — try dropping the artist or switching Album/Track.</div>`}
-                </div>
-            </div>
+                    ` : this.searchRan && !this.searchLoading && !this.searchError
+                        ? html`<div class="search-empty">No results — try dropping the artist or switching Album/Track.</div>`
+                        : nothing}
+                    <div class="row" slot="footer">
+                        <button class="secondary" @click=${this.onSearchCancel}>Cancel</button>
+                        <button @click=${() => { void this.runSearch(); }}
+                                ?disabled=${this.searchLoading || this.searchQuery.trim() === ''}>
+                            ${this.searchLoading ? 'Searching…' : 'Search'}
+                        </button>
+                    </div>
+            </wa-dialog>
         `;
     }
 
+    // Both dialogs render unconditionally so `wa-dialog` owns opening and
+    // closing (and therefore the focus trap and the focus restore); the
+    // `open` property is what says which — mounting one on demand would
+    // put the element and its `showModal()` in the same update.
     private renderDialog() {
-        switch (this.dialog) {
-            case 'paste':   return this.renderPasteDialog();
-            case 'warning': return this.renderWarningDialog();
-            case 'leave':   return this.renderLeaveDialog();
-            case 'search':  return this.renderSearchDialog();
-            default:        return nothing;
-        }
+        return html`${this.renderPasteDialog()}${this.renderSearchDialog()}`;
     }
 
     override render() {

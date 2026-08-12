@@ -38,6 +38,7 @@ import './config-field';
 import './config-section';
 import './download-clients';
 import './shortcut-capture';
+import { confirmAction } from '../confirm-dialog/confirm-dialog';
 import { shortcutsStore } from '../../store/shortcuts-store';
 import { ShortcutsController } from '../../store/controllers/shortcuts-controller';
 
@@ -222,9 +223,10 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
     @state() private libraries: library.Info[] = [];
     @state() private editingLibraryId: number | null = null;
     @state() private editingName = '';
+    /** The library a removal is in flight for. The impact is computed
+     *  before the confirmation rather than held here, so this is now
+     *  "which row is busy" and nothing else. */
     @state() private removingLibraryId: number | null = null;
-    @state() private removalImpact: library.RemovalImpact | null = null;
-    @state() private isRemoving = false;
     @state() private activeMenuId: number | null = null;
     @state() private concurrencyMode = 'auto';
     @state() private indexStatus: explore.IndexStatus | null = null;
@@ -627,51 +629,6 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
                 --yj-border-subtle,
                 #333
             );
-        }
-
-        /* Cancel confirmation dialog */
-        .cancel-dialog-overlay {
-            position: fixed;
-            inset: 0;
-            background: rgba(0, 0, 0, 0.6);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 1000;
-        }
-
-        .cancel-dialog {
-            background: var(
-                --yj-bg-surface,
-                #2a2a2a
-            );
-            border: 1px solid
-                var(--yj-border, #444);
-            border-radius: 8px;
-            padding: 24px;
-            max-width: 420px;
-            width: 90%;
-        }
-
-        .cancel-dialog-title {
-            font-size: var(--yj-text-lg, 18px);
-            font-weight: 600;
-            margin-bottom: 12px;
-        }
-
-        .cancel-dialog-message {
-            font-size: var(--yj-text-sm, 14px);
-            color: var(
-                --yj-text-secondary,
-                #aaa
-            );
-            margin-bottom: 20px;
-        }
-
-        .cancel-dialog-actions {
-            display: flex;
-            gap: 8px;
-            justify-content: flex-end;
         }
 
         .btn-primary {
@@ -1158,34 +1115,58 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
         this.editingName = (e.target as HTMLInputElement).value;
     };
 
+    /**
+     * Say what will happen, then ask — through the one confirmation the
+     * app has, which is a `wa-dialog` and so brings the focus trap, the
+     * Escape handler and the focus restore the hand-rolled overlay this
+     * replaces had none of (a11y.16).
+     */
     private handleRemoveClick = async (id: number): Promise<void> => {
         this.activeMenuId = null;
 
-        try {
-            const impact = await GetRemovalImpact(id);
-
-            this.removalImpact = impact;
-            this.removingLibraryId = id;
-        } catch (err) {
-            console.error('Failed to get removal impact:', err);
-        }
-    };
-
-    private handleConfirmRemove = async (): Promise<void> => {
-        if (this.removingLibraryId === null) return;
-
-        const id = this.removingLibraryId;
         const lib = this.libraries.find((l) => l.id === id);
         const libName = lib?.name ?? 'Library';
+        let impact: library.RemovalImpact | null = null;
 
-        this.isRemoving = true;
+        try {
+            impact = await GetRemovalImpact(id);
+        } catch (err) {
+            // Asking without the impact is worse than not asking at all,
+            // so this is a failure the user has to see rather than a
+            // confirmation with a blank consequence.
+            console.error('Failed to get removal impact:', err);
+            notificationStore.persistent({
+                key: 'library-remove',
+                title: 'Library not removed',
+                text: `Could not work out what removing “${libName}” would delete. ${describeError(err)}`,
+                detail: String(err),
+            });
+
+            return;
+        }
+
+        const ok = await confirmAction({
+            title: 'Remove library',
+            message: `Remove “${libName}”?`,
+            impact: `This deletes ${impact.trackCount} tracks, affects `
+                + `${impact.playlistsAffected} playlists and removes `
+                + `${impact.queueItemCount} queue items.`,
+            confirmLabel: 'Remove',
+            danger: true,
+        });
+
+        if (!ok) return;
+
+        await this.removeLibrary(id, libName);
+    };
+
+    private async removeLibrary(id: number, libName: string): Promise<void> {
+        this.removingLibraryId = id;
 
         try {
             const summary = await RemoveLibrary(id);
 
             this.removingLibraryId = null;
-            this.removalImpact = null;
-            this.isRemoving = false;
             notificationStore.transient({
                 tone: 'success',
                 key: 'library-remove',
@@ -1193,9 +1174,7 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
             });
             void this.loadLibraries();
         } catch (err) {
-            this.isRemoving = false;
             this.removingLibraryId = null;
-            this.removalImpact = null;
             console.error('Failed to remove library:', err);
             notificationStore.persistent({
                 key: 'library-remove',
@@ -1204,13 +1183,7 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
                 detail: String(err),
             });
         }
-    };
-
-    private handleCancelRemove = (): void => {
-        this.removingLibraryId = null;
-        this.removalImpact = null;
-        this.isRemoving = false;
-    };
+    }
 
     private toggleOverflowMenu = (id: number, e: Event): void => {
         e.stopPropagation();
@@ -2057,10 +2030,6 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
     // --- Library section ---
 
     private renderLibrarySection() {
-        const removingLib = this.libraries.find(
-            (l) => l.id === this.removingLibraryId,
-        );
-
         return html`
             <config-section
                 heading="Libraries"
@@ -2109,11 +2078,15 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
                                               `}
                                         <span class="library-path">${lib.path}</span>
                                         <span class="library-count">
-                                            ${lib.trackCount} tracks
+                                            ${this.removingLibraryId === lib.id
+                                                ? 'Removing…'
+                                                : html`${lib.trackCount} tracks`}
                                         </span>
                                         <div class="overflow-wrapper">
                                             <button
                                                 class="overflow-btn"
+                                                aria-label=${`Actions for ${lib.name}`}
+                                                ?disabled=${this.removingLibraryId === lib.id}
                                                 @click=${(e: Event) => this.toggleOverflowMenu(lib.id, e)}
                                             >
                                                 \u22EF
@@ -2173,51 +2146,6 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
                     @config-change=${this.handleConcurrencyChange}
                 ></config-field>
 
-                ${this.removingLibraryId !== null && this.removalImpact
-                    ? html`
-                          <div
-                              class="cancel-dialog-overlay"
-                              @click=${this.handleCancelRemove}
-                          >
-                              <div
-                                  class="cancel-dialog"
-                                  @click=${(e: Event) => e.stopPropagation()}
-                              >
-                                  <div class="cancel-dialog-title">
-                                      Remove Library
-                                  </div>
-                                  <div class="cancel-dialog-message">
-                                      Remove '${removingLib?.name}'?
-                                      This will delete
-                                      ${this.removalImpact.trackCount}
-                                      tracks, affect
-                                      ${this.removalImpact.playlistsAffected}
-                                      playlists, and remove
-                                      ${this.removalImpact.queueItemCount}
-                                      queue items.
-                                  </div>
-                                  <div class="cancel-dialog-actions">
-                                      <button
-                                          class="btn-ghost"
-                                          ?disabled=${this.isRemoving}
-                                          @click=${this.handleCancelRemove}
-                                      >
-                                          Cancel
-                                      </button>
-                                      <button
-                                          class="btn-danger"
-                                          ?disabled=${this.isRemoving}
-                                          @click=${this.handleConfirmRemove}
-                                      >
-                                          ${this.isRemoving
-                                              ? html`<span class="spinner"></span> Removing\u2026`
-                                              : 'Remove'}
-                                      </button>
-                                  </div>
-                              </div>
-                          </div>
-                      `
-                    : nothing}
             </config-section>
         `;
     }
