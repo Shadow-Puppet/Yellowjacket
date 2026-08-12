@@ -36,14 +36,25 @@ func (q *Queue) recordPlay(audioFileID int64) {
 		return
 	}
 
-	// Update denormalized columns on audio_files.
-	_, err = q.db.ExecContext(
+	// Update the denormalized columns on audio_files, and read back what
+	// they became in the same statement: the event below has to carry the
+	// new values, and a follow-up SELECT could race another play.
+	//
+	// RETURNING requires the writer connection — the read pool is a
+	// separate sql.DB, and this is a write.
+	var (
+		playCount int64
+		filePath  string
+	)
+
+	err = q.db.QueryRowWriter(
 		`UPDATE audio_files
 		 SET play_count = play_count + 1,
 		     last_played = ?
-		 WHERE id = ?`,
+		 WHERE id = ?
+		 RETURNING play_count, file_path`,
 		now, audioFileID,
-	)
+	).Scan(&playCount, &filePath)
 	if err != nil {
 		q.logger.Error(
 			"failed to update play count",
@@ -57,8 +68,22 @@ func (q *Queue) recordPlay(audioFileID int64) {
 	q.logger.Info(
 		"Play recorded",
 		"audioFileId", audioFileID,
+		"playCount", playCount,
 	)
 
-	// Notify frontend so the track list refreshes play count.
-	events.Emit(q.ctx, events.TrackMetadataChanged)
+	// Deliberately NOT TrackMetadataChanged.  That event means "the tags
+	// on disk were rewritten", which can change an album, an artist or a
+	// genre, so the frontend answers it by discarding its whole library
+	// cache and refetching — measured at ~37 MB across the IPC and ~0.8 s
+	// of blocked main thread, once per finished song, plus clearing
+	// whatever the user had selected in the track list (perf.C1/C2).
+	//
+	// A play count is one integer on one row, and this payload carries
+	// enough for the frontend to patch it in place.
+	events.Emit(q.ctx, events.TrackPlayCountChanged, map[string]any{
+		"audioFileId": audioFileID,
+		"filePath":    filePath,
+		"playCount":   playCount,
+		"lastPlayed":  now,
+	})
 }
