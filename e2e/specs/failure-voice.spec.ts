@@ -33,11 +33,16 @@ test.describe('a failed binding says so', () => {
 
     const page = app.locator('config-page');
 
-    // Config sections start collapsed.
-    await page
+    // Libraries is the one section that starts expanded (H-22), so ask
+    // the disclosure what state it is in rather than assuming one — a
+    // blind click used to expand it and now collapses it.
+    const disclosure = page
       .locator('config-section[heading="Libraries"]')
-      .locator('.header')
-      .click();
+      .locator('.header');
+
+    if ((await disclosure.getAttribute('aria-expanded')) === 'false') {
+      await disclosure.click();
+    }
 
     // Renaming the decoy to its own name is a no-op the backend
     // accepts, so the rename has to happen on the other row.
