@@ -8,6 +8,7 @@ package sqlcgen
 import (
 	"context"
 	"database/sql"
+	"strings"
 )
 
 const countGenreReferences = `-- name: CountGenreReferences :one
@@ -135,6 +136,113 @@ func (q *Queries) GetAllGenresWithCountsByLibrary(ctx context.Context, libraryID
 	for rows.Next() {
 		var i GetAllGenresWithCountsByLibraryRow
 		if err := rows.Scan(&i.Name, &i.TrackCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getFilePathsByGenres = `-- name: GetFilePathsByGenres :many
+
+SELECT g.name AS genre_name, af.file_path
+FROM genres g
+JOIN recording_genres rg ON g.id = rg.genre_id
+JOIN recordings r ON rg.recording_id = r.id
+JOIN audio_files af ON af.recording_id = r.id
+WHERE g.name IN (/*SLICE:genre_names*/?)
+ORDER BY r.name
+`
+
+type GetFilePathsByGenresRow struct {
+	GenreName string
+	FilePath  string
+}
+
+// Same as GetFilePathsByReleaseGroups, for "play these genres" (perf.m2):
+// one query instead of one per genre, and file paths instead of whole
+// track rows, which was 6 MB over the IPC for five genres.
+func (q *Queries) GetFilePathsByGenres(ctx context.Context, genreNames []string) ([]GetFilePathsByGenresRow, error) {
+	query := getFilePathsByGenres
+	var queryParams []interface{}
+	if len(genreNames) > 0 {
+		for _, v := range genreNames {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:genre_names*/?", strings.Repeat(",?", len(genreNames))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:genre_names*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetFilePathsByGenresRow
+	for rows.Next() {
+		var i GetFilePathsByGenresRow
+		if err := rows.Scan(&i.GenreName, &i.FilePath); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getFilePathsByGenresByLibrary = `-- name: GetFilePathsByGenresByLibrary :many
+SELECT g.name AS genre_name, af.file_path
+FROM genres g
+JOIN recording_genres rg ON g.id = rg.genre_id
+JOIN recordings r ON rg.recording_id = r.id
+JOIN audio_files af ON af.recording_id = r.id
+WHERE g.name IN (/*SLICE:genre_names*/?)
+  AND af.library_id = ?
+ORDER BY r.name
+`
+
+type GetFilePathsByGenresByLibraryParams struct {
+	GenreNames []string
+	LibraryID  int64
+}
+
+type GetFilePathsByGenresByLibraryRow struct {
+	GenreName string
+	FilePath  string
+}
+
+func (q *Queries) GetFilePathsByGenresByLibrary(ctx context.Context, arg GetFilePathsByGenresByLibraryParams) ([]GetFilePathsByGenresByLibraryRow, error) {
+	query := getFilePathsByGenresByLibrary
+	var queryParams []interface{}
+	if len(arg.GenreNames) > 0 {
+		for _, v := range arg.GenreNames {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:genre_names*/?", strings.Repeat(",?", len(arg.GenreNames))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:genre_names*/?", "NULL", 1)
+	}
+	queryParams = append(queryParams, arg.LibraryID)
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetFilePathsByGenresByLibraryRow
+	for rows.Next() {
+		var i GetFilePathsByGenresByLibraryRow
+		if err := rows.Scan(&i.GenreName, &i.FilePath); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

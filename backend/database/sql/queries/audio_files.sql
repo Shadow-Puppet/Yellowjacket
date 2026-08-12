@@ -295,3 +295,26 @@ LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
 LEFT JOIN file_types ft ON af.file_type_id = ft.id
 WHERE rgr.release_group_id = ? AND af.library_id = ?
 ORDER BY rgr.disc_number, rgr.track_number;
+
+-- "Play this artist" and "play these albums" wanted file paths and asked
+-- for whole track rows to get them, one round trip per album (perf.m2).
+-- These answer the same question in one query and carry only what the
+-- caller uses; the release group id comes back so the caller can keep
+-- its own album ordering.
+
+-- name: GetFilePathsByReleaseGroups :many
+SELECT rgr.release_group_id, af.file_path
+FROM release_group_recordings rgr
+JOIN recordings r ON rgr.recording_id = r.id
+JOIN audio_files af ON af.recording_id = r.id
+WHERE rgr.release_group_id IN (sqlc.slice('release_group_ids'))
+ORDER BY rgr.disc_number, rgr.track_number;
+
+-- name: GetFilePathsByReleaseGroupsByLibrary :many
+SELECT rgr.release_group_id, af.file_path
+FROM release_group_recordings rgr
+JOIN recordings r ON rgr.recording_id = r.id
+JOIN audio_files af ON af.recording_id = r.id
+WHERE rgr.release_group_id IN (sqlc.slice('release_group_ids'))
+  AND af.library_id = ?
+ORDER BY rgr.disc_number, rgr.track_number;

@@ -125,3 +125,26 @@ JOIN audio_files af ON af.recording_id = r.id
 WHERE af.library_id = ?
 GROUP BY g.id, g.name
 ORDER BY g.name;
+
+-- Same as GetFilePathsByReleaseGroups, for "play these genres" (perf.m2):
+-- one query instead of one per genre, and file paths instead of whole
+-- track rows, which was 6 MB over the IPC for five genres.
+
+-- name: GetFilePathsByGenres :many
+SELECT g.name AS genre_name, af.file_path
+FROM genres g
+JOIN recording_genres rg ON g.id = rg.genre_id
+JOIN recordings r ON rg.recording_id = r.id
+JOIN audio_files af ON af.recording_id = r.id
+WHERE g.name IN (sqlc.slice('genre_names'))
+ORDER BY r.name;
+
+-- name: GetFilePathsByGenresByLibrary :many
+SELECT g.name AS genre_name, af.file_path
+FROM genres g
+JOIN recording_genres rg ON g.id = rg.genre_id
+JOIN recordings r ON rg.recording_id = r.id
+JOIN audio_files af ON af.recording_id = r.id
+WHERE g.name IN (sqlc.slice('genre_names'))
+  AND af.library_id = ?
+ORDER BY r.name;

@@ -43,6 +43,10 @@ export function GetAllTracks():Promise<Array<library.Track>>;
 
 export function GetAllTracksByLibrary(arg1:number):Promise<Array<library.Track>>;
 
+export function GetFilePathsByAlbums(arg1:Array<number>,arg2:number):Promise<Record<number, Array<string>>>;
+
+export function GetFilePathsByGenres(arg1:Array<string>,arg2:number):Promise<Record<string, Array<string>>>;
+
 export function GetRemovalImpact(arg1:number):Promise<library.RemovalImpact>;
 
 export function GetScanQueueLength():Promise<number>;

@@ -1083,3 +1083,124 @@ func (l *Library) GetAllLibrariesWithTrackCounts() ([]Info, error) {
 
 	return result, nil
 }
+
+// GetFilePathsByAlbums returns the file paths of every track in the
+// given albums, grouped by album id.
+//
+// "Play this artist", "play these albums" and the album drag cache each
+// resolved paths with one binding call per album, sequentially, and each
+// asked for whole track rows to read one field off them (perf.m2).  This
+// is that question asked once.  The result is grouped rather than
+// flattened because the caller owns the ordering — an album list is
+// sorted by name, not by id — and because the drag cache stores it per
+// album.
+//
+// A library id of 0 means "every library", matching the caller's
+// selected-library filter being unset.
+func (l *Library) GetFilePathsByAlbums(
+	albumIDs []int64, libraryID int64,
+) (map[int64][]string, error) {
+	paths := make(map[int64][]string, len(albumIDs))
+
+	if len(albumIDs) == 0 {
+		return paths, nil
+	}
+
+	if libraryID > 0 {
+		rows, err := l.db.ReadQueries.GetFilePathsByReleaseGroupsByLibrary(
+			l.ctx, sqlcgen.GetFilePathsByReleaseGroupsByLibraryParams{
+				ReleaseGroupIds: albumIDs,
+				LibraryID:       libraryID,
+			},
+		)
+		if err != nil {
+			l.logger.Error(
+				"could not retrieve album file paths for library",
+				"albums", len(albumIDs),
+				"libraryID", libraryID,
+				"error", err,
+			)
+
+			return nil, fmt.Errorf("could not get album file paths: %w", err)
+		}
+
+		for _, row := range rows {
+			paths[row.ReleaseGroupID] = append(paths[row.ReleaseGroupID], row.FilePath)
+		}
+
+		return paths, nil
+	}
+
+	rows, err := l.db.ReadQueries.GetFilePathsByReleaseGroups(l.ctx, albumIDs)
+	if err != nil {
+		l.logger.Error(
+			"could not retrieve album file paths",
+			"albums", len(albumIDs),
+			"error", err,
+		)
+
+		return nil, fmt.Errorf("could not get album file paths: %w", err)
+	}
+
+	for _, row := range rows {
+		paths[row.ReleaseGroupID] = append(paths[row.ReleaseGroupID], row.FilePath)
+	}
+
+	return paths, nil
+}
+
+// GetFilePathsByGenres returns the file paths of every track tagged with
+// the given genres, grouped by genre name.  See GetFilePathsByAlbums —
+// same finding, same shape, and the caller still owns the de-duplication
+// across genres because it owns the order.
+func (l *Library) GetFilePathsByGenres(
+	genreNames []string, libraryID int64,
+) (map[string][]string, error) {
+	paths := make(map[string][]string, len(genreNames))
+
+	if len(genreNames) == 0 {
+		return paths, nil
+	}
+
+	if libraryID > 0 {
+		rows, err := l.db.ReadQueries.GetFilePathsByGenresByLibrary(
+			l.ctx, sqlcgen.GetFilePathsByGenresByLibraryParams{
+				GenreNames: genreNames,
+				LibraryID:  libraryID,
+			},
+		)
+		if err != nil {
+			l.logger.Error(
+				"could not retrieve genre file paths for library",
+				"genres", len(genreNames),
+				"libraryID", libraryID,
+				"error", err,
+			)
+
+			return nil, fmt.Errorf("could not get genre file paths: %w", err)
+		}
+
+		for _, row := range rows {
+			paths[row.GenreName] = append(paths[row.GenreName], row.FilePath)
+		}
+
+		return paths, nil
+	}
+
+	rows, err := l.db.ReadQueries.GetFilePathsByGenres(l.ctx, genreNames)
+	if err != nil {
+		l.logger.Error(
+			"could not retrieve genre file paths",
+			"genres", len(genreNames),
+			"error", err,
+		)
+
+		return nil, fmt.Errorf("could not get genre file paths: %w", err)
+	}
+
+	for _, row := range rows {
+		paths[row.GenreName] = append(paths[row.GenreName], row.FilePath)
+	}
+
+	return paths, nil
+}

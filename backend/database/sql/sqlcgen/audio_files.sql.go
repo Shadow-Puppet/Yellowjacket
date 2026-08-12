@@ -907,6 +907,113 @@ func (q *Queries) GetAudioFilesNeedingMetadata(ctx context.Context) ([]AudioFile
 	return items, nil
 }
 
+const getFilePathsByReleaseGroups = `-- name: GetFilePathsByReleaseGroups :many
+
+SELECT rgr.release_group_id, af.file_path
+FROM release_group_recordings rgr
+JOIN recordings r ON rgr.recording_id = r.id
+JOIN audio_files af ON af.recording_id = r.id
+WHERE rgr.release_group_id IN (/*SLICE:release_group_ids*/?)
+ORDER BY rgr.disc_number, rgr.track_number
+`
+
+type GetFilePathsByReleaseGroupsRow struct {
+	ReleaseGroupID int64
+	FilePath       string
+}
+
+// "Play this artist" and "play these albums" wanted file paths and asked
+// for whole track rows to get them, one round trip per album (perf.m2).
+// These answer the same question in one query and carry only what the
+// caller uses; the release group id comes back so the caller can keep
+// its own album ordering.
+func (q *Queries) GetFilePathsByReleaseGroups(ctx context.Context, releaseGroupIds []int64) ([]GetFilePathsByReleaseGroupsRow, error) {
+	query := getFilePathsByReleaseGroups
+	var queryParams []interface{}
+	if len(releaseGroupIds) > 0 {
+		for _, v := range releaseGroupIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:release_group_ids*/?", strings.Repeat(",?", len(releaseGroupIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:release_group_ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetFilePathsByReleaseGroupsRow
+	for rows.Next() {
+		var i GetFilePathsByReleaseGroupsRow
+		if err := rows.Scan(&i.ReleaseGroupID, &i.FilePath); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getFilePathsByReleaseGroupsByLibrary = `-- name: GetFilePathsByReleaseGroupsByLibrary :many
+SELECT rgr.release_group_id, af.file_path
+FROM release_group_recordings rgr
+JOIN recordings r ON rgr.recording_id = r.id
+JOIN audio_files af ON af.recording_id = r.id
+WHERE rgr.release_group_id IN (/*SLICE:release_group_ids*/?)
+  AND af.library_id = ?
+ORDER BY rgr.disc_number, rgr.track_number
+`
+
+type GetFilePathsByReleaseGroupsByLibraryParams struct {
+	ReleaseGroupIds []int64
+	LibraryID       int64
+}
+
+type GetFilePathsByReleaseGroupsByLibraryRow struct {
+	ReleaseGroupID int64
+	FilePath       string
+}
+
+func (q *Queries) GetFilePathsByReleaseGroupsByLibrary(ctx context.Context, arg GetFilePathsByReleaseGroupsByLibraryParams) ([]GetFilePathsByReleaseGroupsByLibraryRow, error) {
+	query := getFilePathsByReleaseGroupsByLibrary
+	var queryParams []interface{}
+	if len(arg.ReleaseGroupIds) > 0 {
+		for _, v := range arg.ReleaseGroupIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:release_group_ids*/?", strings.Repeat(",?", len(arg.ReleaseGroupIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:release_group_ids*/?", "NULL", 1)
+	}
+	queryParams = append(queryParams, arg.LibraryID)
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetFilePathsByReleaseGroupsByLibraryRow
+	for rows.Next() {
+		var i GetFilePathsByReleaseGroupsByLibraryRow
+		if err := rows.Scan(&i.ReleaseGroupID, &i.FilePath); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getLibraryMaxModifiedAt = `-- name: GetLibraryMaxModifiedAt :one
 SELECT CAST(COALESCE(MAX(modified_at), 0) AS INTEGER) FROM audio_files
 WHERE library_id = ?
