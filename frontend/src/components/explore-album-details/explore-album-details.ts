@@ -6,7 +6,11 @@ import {
     BrowseReleases,
     GetThumbnail,
 } from '@go/explore/Service';
-import { GetAlbumTracks } from '@go/library/Library';
+import {
+    GetAlbumTracks,
+    GetFilePathsByAlbums,
+    GetFilePathsByRecordingMBIDs,
+} from '@go/library/Library';
 import { library } from '@go/models';
 import type { download, explore } from '@go/models';
 type MBReleaseGroup = explore.MBReleaseGroup;
@@ -25,6 +29,17 @@ import type { CatalogScope } from '../catalog-scope-notice/catalog-scope-notice.
 import '@awesome.me/webawesome/dist/components/button/button.js';
 import '../download-picker/download-picker';
 import { downloadStore } from '../../store/download-store';
+import { queueStore } from '../../store/queue-store';
+import { notificationStore } from '../../store/notification-store';
+import '../notifications/inline-notice';
+
+/**
+ * The region the album header's own failures are rendered in.
+ *
+ * "Inline" says *not global*, not *where* — so the region is named
+ * once, here, rather than spelled at each call site.
+ */
+export const ExploreAlbumRegion = 'explore-album';
 
 /* ── Utility functions (duplicated per Knowledge Pattern #9 — no cross-component imports) ── */
 
@@ -269,6 +284,26 @@ export class ExploreAlbumDetails extends LitElement {
                 flex-shrink: 0;
             }
 
+            .album-actions {
+                display: flex;
+                flex-wrap: wrap;
+                align-items: center;
+                gap: 8px;
+                margin-top: 8px;
+            }
+
+            /*
+             * The sentence under a partial Play button. It repeats the
+             * count on the button on purpose: the button has to be
+             * short and the claim has to be unambiguous, and "Play 7 of
+             * 12" alone does not say whether the other five are missing
+             * or merely unselected.
+             */
+            .album-owned-note {
+                font-size: var(--yj-text-sm);
+                color: var(--yj-text-secondary, #aaa);
+            }
+
             .album-artist {
                 font-size: var(--yj-text-lg);
                 color: var(--yj-text-secondary, #b3b3b3);
@@ -301,6 +336,17 @@ export class ExploreAlbumDetails extends LitElement {
             }
 
             /* ── Section headers ── */
+            .tracklist-legend {
+                display: inline-flex;
+                align-items: center;
+                gap: 4px;
+                margin-left: 10px;
+                font-weight: 400;
+                text-transform: none;
+                letter-spacing: 0;
+                color: var(--yj-text-tertiary, #888);
+            }
+
             .section-header {
                 font-size: 11px;
                 font-weight: 600;
@@ -1399,6 +1445,13 @@ export class ExploreAlbumDetails extends LitElement {
      *     a track marked inLibrary       where releaseGroup may be null)
      *   - else                        → not owned
      *
+     * Four different claims of decreasing confidence, OR'd together and
+     * reported as one tick — the last of which fires when a *single*
+     * recording of a forty-track release matches.  `ownership()` is the
+     * honest version of the same question and is what the header's
+     * actions key off; this stays as it was, because the indicator's
+     * job is "is any of this yours" and that is what it answers.
+     *
      * No queued state for now — that's reserved for future
      * download-client integration.
      */
@@ -1425,6 +1478,56 @@ export class ExploreAlbumDetails extends LitElement {
         }
 
         return 'not-in-library';
+    }
+
+    /**
+     * How much of the shown release the user actually has.
+     *
+     * The tick beside the title is a yes/no answer to "is any of this
+     * mine", and four of its five branches can be true when one track
+     * of forty matches. That is fine for a badge and useless for a
+     * button: "Play" that plays one track of a forty-track release is
+     * worse than no Play button, so the header asks this instead.
+     *
+     * It is counted off the *tracklist being displayed*, which is the
+     * one thing on this page that is not an inference — each track's
+     * `inLibrary` is set by the backend from its recording MBID
+     * (`markReleasesInLibrary`), the same key the file paths are
+     * fetched by.
+     */
+    private ownership(): { owned: number; total: number } {
+        const tracks = this.currentVersion()?.tracks ?? [];
+
+        return {
+            owned: tracks.filter((t) => t.inLibrary).length,
+            total: tracks.length,
+        };
+    }
+
+    /**
+     * Say what the green tick against a track means.
+     *
+     * `H-13` calls the ticks "unexplained". Half of that has aged: the
+     * indicator carries a `title` *and* an `aria-label` reading
+     * "Track \u201cX\u201d is in your library", so a screen reader and a hover
+     * both get a full sentence. What a sighted user scanning the page
+     * gets is a column of green circles and no key, which is what this
+     * is — rendered only when at least one track is actually ticked, so
+     * it never explains a symbol that is not on screen.
+     */
+    private renderTracklistLegend() {
+        const { owned } = this.ownership();
+
+        if (owned === 0) return nothing;
+
+        return html`<span class="tracklist-legend">
+            <library-status-indicator
+                status="in-library"
+                entity-type="track"
+                size="14"
+            ></library-status-indicator>
+            in your library
+        </span>`;
     }
 
     /**
@@ -1542,11 +1645,192 @@ export class ExploreAlbumDetails extends LitElement {
                         ></library-status-indicator>
                     </h1>
                     ${this.renderAlbumMeta()}
+                    ${this.renderPlayActions()}
                     ${this.renderDownloadAction()}
                 </div>
             </div>
             ${this.renderPicker()}
         `;
+    }
+
+    /**
+     * The primary action, and the sentence that says what it will do.
+     *
+     * `H-13`: the album page had no Play, no Shuffle and no Add to
+     * queue. What it could not have is a Play button that means the
+     * same thing in every case — this is a *catalog* page, and the
+     * album on it may be entirely yours, partly yours, or not yours at
+     * all. So the button says which:
+     *
+     *   - all of it       → "Play", and the count is in the meta line
+     *   - some of it      → "Play 7 of 12", because playing seven
+     *                       tracks under a button that says "Play" is
+     *                       the page lying about what you own
+     *   - none of it      → no play button at all; the download and
+     *                       want actions below are the whole answer
+     *
+     * The count is the tracklist's own `inLibrary` flags, which the
+     * backend sets from each recording's MBID — the same key
+     * `GetFilePathsByRecordingMBIDs` resolves the files by, so the
+     * number on the button is the number of tracks that will play.
+     */
+    private renderPlayActions() {
+        const { owned, total } = this.ownership();
+
+        if (owned === 0 || total === 0) return nothing;
+
+        const partial = owned < total;
+        const playLabel = partial ? `Play ${owned} of ${total}` : 'Play';
+
+        return html`
+            <div class="album-actions">
+                <wa-button
+                    size="small"
+                    appearance="filled"
+                    data-testid="album-play"
+                    @click=${() => void this.playOwned(false)}
+                >
+                    <wa-icon slot="start" name="play"></wa-icon>
+                    ${playLabel}
+                </wa-button>
+                <wa-button
+                    size="small"
+                    appearance="outlined"
+                    data-testid="album-shuffle"
+                    @click=${() => void this.playOwned(true)}
+                >
+                    <wa-icon slot="start" name="shuffle"></wa-icon>
+                    Shuffle album
+                </wa-button>
+                <wa-button
+                    size="small"
+                    appearance="outlined"
+                    data-testid="album-queue"
+                    @click=${() => void this.queueOwned()}
+                >
+                    <wa-icon slot="start" name="list"></wa-icon>
+                    Add to queue
+                </wa-button>
+                ${partial
+                    ? html`<span class="album-owned-note">
+                          You have ${owned} of these ${total} tracks.
+                      </span>`
+                    : nothing}
+            </div>
+            <inline-notice
+                region=${ExploreAlbumRegion}
+                testid="album-action-message"
+            ></inline-notice>
+        `;
+    }
+
+    /**
+     * File paths for the tracks of this release the user actually owns,
+     * in the tracklist's order.
+     *
+     * One call. The obvious alternative — ask for the album's tracks
+     * and read `FilePath` off them — is the shape `perf.m2` was about,
+     * and it is not even available here: this page's model is
+     * `MBTrack`, which carries a recording MBID and a `localId` that
+     * nothing in the backend ever writes.
+     */
+    private async ownedFilePaths(): Promise<string[]> {
+        const libraryID = libraryStore.getSelectedLibraryId() ?? 0;
+
+        // The local album id is the better key whenever there is one:
+        // it needs no MBIDs at all, and a library-only album has none —
+        // its tracks are synthesised from `GetAlbumTracks` with
+        // `mbid: RecordingMBID || ''`, so an untagged library resolves
+        // to an empty set and the Play button silently does nothing.
+        // That is exactly what the first version of this did.
+        if (this.localAlbumId > 0) {
+            const byAlbum = await GetFilePathsByAlbums(
+                [this.localAlbumId],
+                libraryID,
+            );
+
+            return byAlbum[this.localAlbumId] ?? [];
+        }
+
+        // Catalog-only: the page knows what is owned as recording MBIDs
+        // and nothing else — which is how the backend decided each
+        // track's `inLibrary` in the first place.
+        const tracks = this.currentVersion()?.tracks ?? [];
+        const mbids = tracks
+            .filter((t) => t.inLibrary && t.mbid)
+            .map((t) => t.mbid);
+
+        if (mbids.length === 0) return [];
+
+        const byMBID = await GetFilePathsByRecordingMBIDs(mbids, libraryID);
+
+        // Walked in tracklist order rather than flattened, because the
+        // grouping is what lets the caller keep its own order. A
+        // recording with more than one file is a duplicate; play the
+        // first and leave the rest to the feature that exists for them.
+        const paths: string[] = [];
+
+        for (const mbid of mbids) {
+            const first = byMBID[mbid]?.[0];
+
+            if (first) paths.push(first);
+        }
+
+        return paths;
+    }
+
+    /** Play what the user owns of this release, optionally shuffled. */
+    private async playOwned(shuffle: boolean): Promise<void> {
+        try {
+            const paths = await this.ownedFilePaths();
+
+            if (paths.length === 0) {
+                notificationStore.inline(ExploreAlbumRegion, {
+                    text: 'None of these tracks could be found in your library.',
+                });
+
+                return;
+            }
+
+            // `shuffleStart` only picks a random first track when
+            // shuffle mode is *already* on — it does not turn it on —
+            // so the mode has to be set before the queue, not after.
+            if (shuffle && !queueStore.getState().shuffleMode) {
+                queueStore.toggleShuffle();
+            }
+
+            queueStore.setQueue(paths, 0, shuffle);
+        } catch (error) {
+            console.error('Could not play album:', error);
+            notificationStore.inline(ExploreAlbumRegion, {
+                text: describeError(error, 'Could not play this album.'),
+            });
+        }
+    }
+
+    /** Append what the user owns of this release to the queue. */
+    private async queueOwned(): Promise<void> {
+        try {
+            const paths = await this.ownedFilePaths();
+
+            if (paths.length === 0) {
+                notificationStore.inline(ExploreAlbumRegion, {
+                    text: 'None of these tracks could be found in your library.',
+                });
+
+                return;
+            }
+
+            queueStore.addTracksToQueue(paths);
+        } catch (error) {
+            console.error('Could not queue album:', error);
+            notificationStore.inline(ExploreAlbumRegion, {
+                text: describeError(
+                    error,
+                    'Could not add this album to the queue.',
+                ),
+            });
+        }
     }
 
     /**
@@ -1959,7 +2243,9 @@ export class ExploreAlbumDetails extends LitElement {
 
         return html`
             <section>
-                <h3 class="section-header">Tracklist</h3>
+                <h3 class="section-header">
+                    Tracklist ${this.renderTracklistLegend()}
+                </h3>
                 <div class="tracklist">
                     ${discNumbers.map((discNum) => {
                         const discTracks = discMap.get(discNum) ?? [];

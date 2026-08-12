@@ -318,3 +318,28 @@ JOIN audio_files af ON af.recording_id = r.id
 WHERE rgr.release_group_id IN (sqlc.slice('release_group_ids'))
   AND af.library_id = ?
 ORDER BY rgr.disc_number, rgr.track_number;
+
+-- Same shape again, keyed on recording MBID, for the catalog side.
+-- An Explore album page knows which of its tracks the user owns only
+-- as a set of recording MBIDs -- that is exactly how the backend
+-- decides `inLibrary` (markReleasesInLibrary -> CheckMBIDs) -- and
+-- MBTrack.LocalID is declared but never written by anything, so there
+-- is no id to ask by. Grouped by MBID because a recording can have
+-- more than one file (the duplicate fixtures are precisely that) and
+-- because the caller owns the order: the tracklist's, not the
+-- database's.
+
+-- name: GetFilePathsByRecordingMBIDs :many
+SELECT r.mbid AS recording_mbid, af.file_path
+FROM recordings r
+JOIN audio_files af ON af.recording_id = r.id
+WHERE r.mbid IN (sqlc.slice('mbids'))
+ORDER BY af.file_path;
+
+-- name: GetFilePathsByRecordingMBIDsByLibrary :many
+SELECT r.mbid AS recording_mbid, af.file_path
+FROM recordings r
+JOIN audio_files af ON af.recording_id = r.id
+WHERE r.mbid IN (sqlc.slice('mbids'))
+  AND af.library_id = ?
+ORDER BY af.file_path;

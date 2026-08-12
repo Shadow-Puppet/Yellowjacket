@@ -907,6 +907,115 @@ func (q *Queries) GetAudioFilesNeedingMetadata(ctx context.Context) ([]AudioFile
 	return items, nil
 }
 
+const getFilePathsByRecordingMBIDs = `-- name: GetFilePathsByRecordingMBIDs :many
+
+SELECT r.mbid AS recording_mbid, af.file_path
+FROM recordings r
+JOIN audio_files af ON af.recording_id = r.id
+WHERE r.mbid IN (/*SLICE:mbids*/?)
+ORDER BY af.file_path
+`
+
+type GetFilePathsByRecordingMBIDsRow struct {
+	RecordingMbid sql.NullString
+	FilePath      string
+}
+
+// Same shape again, keyed on recording MBID, for the catalog side.
+// An Explore album page knows which of its tracks the user owns only
+// as a set of recording MBIDs -- that is exactly how the backend
+// decides `inLibrary` (markReleasesInLibrary -> CheckMBIDs) -- and
+// MBTrack.LocalID is declared but never written by anything, so there
+// is no id to ask by. Grouped by MBID because a recording can have
+// more than one file (the duplicate fixtures are precisely that) and
+// because the caller owns the order: the tracklist's, not the
+// database's.
+func (q *Queries) GetFilePathsByRecordingMBIDs(ctx context.Context, mbids []sql.NullString) ([]GetFilePathsByRecordingMBIDsRow, error) {
+	query := getFilePathsByRecordingMBIDs
+	var queryParams []interface{}
+	if len(mbids) > 0 {
+		for _, v := range mbids {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:mbids*/?", strings.Repeat(",?", len(mbids))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:mbids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetFilePathsByRecordingMBIDsRow
+	for rows.Next() {
+		var i GetFilePathsByRecordingMBIDsRow
+		if err := rows.Scan(&i.RecordingMbid, &i.FilePath); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getFilePathsByRecordingMBIDsByLibrary = `-- name: GetFilePathsByRecordingMBIDsByLibrary :many
+SELECT r.mbid AS recording_mbid, af.file_path
+FROM recordings r
+JOIN audio_files af ON af.recording_id = r.id
+WHERE r.mbid IN (/*SLICE:mbids*/?)
+  AND af.library_id = ?
+ORDER BY af.file_path
+`
+
+type GetFilePathsByRecordingMBIDsByLibraryParams struct {
+	Mbids     []sql.NullString
+	LibraryID int64
+}
+
+type GetFilePathsByRecordingMBIDsByLibraryRow struct {
+	RecordingMbid sql.NullString
+	FilePath      string
+}
+
+func (q *Queries) GetFilePathsByRecordingMBIDsByLibrary(ctx context.Context, arg GetFilePathsByRecordingMBIDsByLibraryParams) ([]GetFilePathsByRecordingMBIDsByLibraryRow, error) {
+	query := getFilePathsByRecordingMBIDsByLibrary
+	var queryParams []interface{}
+	if len(arg.Mbids) > 0 {
+		for _, v := range arg.Mbids {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:mbids*/?", strings.Repeat(",?", len(arg.Mbids))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:mbids*/?", "NULL", 1)
+	}
+	queryParams = append(queryParams, arg.LibraryID)
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetFilePathsByRecordingMBIDsByLibraryRow
+	for rows.Next() {
+		var i GetFilePathsByRecordingMBIDsByLibraryRow
+		if err := rows.Scan(&i.RecordingMbid, &i.FilePath); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getFilePathsByReleaseGroups = `-- name: GetFilePathsByReleaseGroups :many
 
 SELECT rgr.release_group_id, af.file_path

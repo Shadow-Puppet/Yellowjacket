@@ -47,6 +47,8 @@ export function GetFilePathsByAlbums(arg1:Array<number>,arg2:number):Promise<Rec
 
 export function GetFilePathsByGenres(arg1:Array<string>,arg2:number):Promise<Record<string, Array<string>>>;
 
+export function GetFilePathsByRecordingMBIDs(arg1:Array<string>,arg2:number):Promise<Record<string, Array<string>>>;
+
 export function GetRemovalImpact(arg1:number):Promise<library.RemovalImpact>;
 
 export function GetScanQueueLength():Promise<number>;

@@ -229,3 +229,104 @@ func TestGetFilePathsByGenres_Empty(t *testing.T) {
 		t.Errorf("got %v, want empty", got)
 	}
 }
+
+// seedRecordingMBIDs stamps recording MBIDs onto the tracks seeded by
+// seedAlbumsAndGenres, in the shape the catalog side actually meets: two
+// tracks tagged, one deliberately left untagged, and one MBID carried by
+// two files in different libraries — which is what a duplicate is.
+func seedRecordingMBIDs(t *testing.T, lib *Library) (tagged, shared string) {
+	t.Helper()
+
+	ctx := lib.ctx
+	q := lib.db.Queries
+
+	tagged = "11111111-1111-1111-1111-111111111111"
+	shared = "22222222-2222-2222-2222-222222222222"
+
+	byPath := map[string]string{
+		"/music/a1.mp3": tagged,
+		"/music/a2.mp3": shared,
+		"/other/b1.mp3": shared,
+	}
+
+	files, err := q.GetAllAudioFiles(ctx)
+	if err != nil {
+		t.Fatalf("get audio files: %v", err)
+	}
+
+	for _, f := range files {
+		mbid, ok := byPath[f.FilePath]
+		if !ok {
+			continue
+		}
+
+		if err := q.SetRecordingMBID(ctx, sqlcgen.SetRecordingMBIDParams{
+			Mbid: sql.NullString{String: mbid, Valid: true},
+			ID:   f.RecordingID,
+		}); err != nil {
+			t.Fatalf("set recording mbid: %v", err)
+		}
+	}
+
+	return tagged, shared
+}
+
+// The catalog side of the same finding: an Explore album page knows what
+// the user owns only as recording MBIDs, so this is the lookup that
+// turns "you own 7 of these 12" into something playable.
+func TestGetFilePathsByRecordingMBIDs(t *testing.T) {
+	t.Parallel()
+
+	lib, _ := setupTestLibrary(t)
+	_, libraryID := seedAlbumsAndGenres(t, lib)
+	tagged, shared := seedRecordingMBIDs(t, lib)
+
+	got, err := lib.GetFilePathsByRecordingMBIDs([]string{tagged, shared}, 0)
+	if err != nil {
+		t.Fatalf("GetFilePathsByRecordingMBIDs: %v", err)
+	}
+
+	if len(got[tagged]) != 1 || got[tagged][0] != "/music/a1.mp3" {
+		t.Errorf("tagged recording = %v, want [/music/a1.mp3]", got[tagged])
+	}
+
+	// One recording, two files: grouping is what keeps that visible.
+	// A flattened result could not say which was which.
+	if len(got[shared]) != 2 {
+		t.Errorf("shared recording = %v, want two paths", got[shared])
+	}
+
+	// Scoping drops the copy in the other library, and nothing else.
+	scoped, err := lib.GetFilePathsByRecordingMBIDs([]string{tagged, shared}, libraryID)
+	if err != nil {
+		t.Fatalf("GetFilePathsByRecordingMBIDs scoped: %v", err)
+	}
+
+	if len(scoped[shared]) != 1 || scoped[shared][0] != "/music/a2.mp3" {
+		t.Errorf("scoped shared = %v, want [/music/a2.mp3]", scoped[shared])
+	}
+}
+
+// An empty MBID matches every untagged recording in the library, which
+// is the opposite of the question being asked — so an unknown track must
+// contribute nothing rather than everything.
+func TestGetFilePathsByRecordingMBIDs_IgnoresEmpty(t *testing.T) {
+	t.Parallel()
+
+	lib, _ := setupTestLibrary(t)
+	seedAlbumsAndGenres(t, lib)
+	seedRecordingMBIDs(t, lib)
+
+	got, err := lib.GetFilePathsByRecordingMBIDs([]string{"", ""}, 0)
+	if err != nil {
+		t.Fatalf("GetFilePathsByRecordingMBIDs: %v", err)
+	}
+
+	if len(got) != 0 {
+		t.Errorf("empty MBIDs matched %d recordings, want none", len(got))
+	}
+
+	if _, err := lib.GetFilePathsByRecordingMBIDs(nil, 0); err != nil {
+		t.Fatalf("nil MBIDs: %v", err)
+	}
+}

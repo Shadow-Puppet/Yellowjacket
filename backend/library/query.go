@@ -1204,3 +1204,117 @@ func (l *Library) GetFilePathsByGenres(
 
 	return paths, nil
 }
+
+// GetFilePathsByRecordingMBIDs returns the file paths of every track
+// whose recording MBID is in mbids, grouped by MBID.
+//
+// This is the catalog side of GetFilePathsByAlbums.  An Explore album
+// page knows what the user owns as a set of recording MBIDs and nothing
+// else: that is exactly how the backend decides a track's InLibrary
+// flag (markReleasesInLibrary → CheckMBIDs), and MBTrack.LocalID is a
+// declared field that nothing writes, so there is no id to ask by.
+//
+// Grouped rather than flattened for the same two reasons as its
+// siblings — the caller owns the order (the tracklist's, not the
+// database's), and one recording can have more than one file, which is
+// what this app's duplicate detection exists for.
+//
+// A library id of 0 means "every library".
+func (l *Library) GetFilePathsByRecordingMBIDs(
+	mbids []string, libraryID int64,
+) (map[string][]string, error) {
+	paths := make(map[string][]string, len(mbids))
+
+	if len(mbids) == 0 {
+		return paths, nil
+	}
+
+	// recordings.mbid is nullable, so sqlc asks for NullStrings.  An
+	// empty MBID would match every untagged recording in the library,
+	// which is the opposite of the question, so those are dropped here
+	// rather than passed through as NULL.
+	keys := make([]sql.NullString, 0, len(mbids))
+
+	for _, mbid := range mbids {
+		if mbid == "" {
+			continue
+		}
+
+		keys = append(keys, sql.NullString{String: mbid, Valid: true})
+	}
+
+	if len(keys) == 0 {
+		return paths, nil
+	}
+
+	rows, err := l.filePathRowsByMBID(keys, libraryID)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, row := range rows {
+		if !row.mbid.Valid {
+			continue
+		}
+
+		paths[row.mbid.String] = append(paths[row.mbid.String], row.path)
+	}
+
+	return paths, nil
+}
+
+// filePathRowsByMBID runs the scoped or unscoped query behind
+// GetFilePathsByRecordingMBIDs and flattens the two row types into one.
+func (l *Library) filePathRowsByMBID(
+	keys []sql.NullString, libraryID int64,
+) ([]mbidFilePath, error) {
+	if libraryID > 0 {
+		rows, err := l.db.ReadQueries.GetFilePathsByRecordingMBIDsByLibrary(
+			l.ctx, sqlcgen.GetFilePathsByRecordingMBIDsByLibraryParams{
+				Mbids:     keys,
+				LibraryID: libraryID,
+			},
+		)
+		if err != nil {
+			l.logger.Error(
+				"could not retrieve recording file paths for library",
+				"recordings", len(keys),
+				"libraryID", libraryID,
+				"error", err,
+			)
+
+			return nil, fmt.Errorf("could not get recording file paths: %w", err)
+		}
+
+		out := make([]mbidFilePath, 0, len(rows))
+		for _, row := range rows {
+			out = append(out, mbidFilePath{mbid: row.RecordingMbid, path: row.FilePath})
+		}
+
+		return out, nil
+	}
+
+	rows, err := l.db.ReadQueries.GetFilePathsByRecordingMBIDs(l.ctx, keys)
+	if err != nil {
+		l.logger.Error(
+			"could not retrieve recording file paths",
+			"recordings", len(keys),
+			"error", err,
+		)
+
+		return nil, fmt.Errorf("could not get recording file paths: %w", err)
+	}
+
+	out := make([]mbidFilePath, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, mbidFilePath{mbid: row.RecordingMbid, path: row.FilePath})
+	}
+
+	return out, nil
+}
+
+// mbidFilePath is one row of either GetFilePathsByRecordingMBIDs query.
+type mbidFilePath struct {
+	mbid sql.NullString
+	path string
+}

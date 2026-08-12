@@ -86,6 +86,10 @@ export function GetFilePathsByGenres(arg1, arg2) {
   return window['go']['library']['Library']['GetFilePathsByGenres'](arg1, arg2);
 }
 
+export function GetFilePathsByRecordingMBIDs(arg1, arg2) {
+  return window['go']['library']['Library']['GetFilePathsByRecordingMBIDs'](arg1, arg2);
+}
+
 export function GetRemovalImpact(arg1) {
   return window['go']['library']['Library']['GetRemovalImpact'](arg1);
 }
