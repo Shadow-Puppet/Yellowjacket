@@ -1437,3 +1437,95 @@ changed focus management, dialog modality and roles, which is exactly
 the area where the two engines differ. Treat the WebKit half as
 unverified rather than as the known audio-clock flake until someone
 reads the log.
+
+## "Out of reach" is a claim about a tool, not about the information
+
+Plan 007 phase 5, third pass: Settings' keyboard reach, the `?` overlay
+and the arrows, an Album column, and the CI question two sessions had
+recorded as unanswerable.
+
+The generalisation the pass adds: **when a tool says it cannot get
+something, that is a fact about the tool.** `gitea_ci job_logs` returns
+a 404 on this Gitea build and says so clearly, and two sessions read
+that as "the log is out of reach from here" and reasoned from the
+commits instead. The REST API on the same server answers fine, with the
+token that was already in the environment:
+
+```
+GET /api/v1/repos/{owner}/{repo}/actions/runs/{run}/jobs   # per-step status
+GET /api/v1/repos/{owner}/{repo}/actions/jobs/{id}/logs    # the whole log
+```
+
+Ten minutes, after a session and a half of careful hedging about what
+the failure might be. The hedging was correct — it just cost more than
+checking would have.
+
+What the log said, in two parts:
+
+- **The failure is the container's audio clock**, on both engines. Not
+  a regression in the dialog/focus/menu work, which was the live worry.
+  `playback.spec`'s elapsed time and two `player-truth.spec` cases: the
+  UI interpolates while the backend position stays at zero, 17–18 s
+  adrift. `ci.yml` says the ALSA null plugin advances at real time; it
+  was measured once and no longer does.
+- **WebKit had never run.** The step had no `if:`, so a chromium
+  failure skipped it — `conclusion: skipped`, in the same JSON that
+  held the answer. The previous pass's "treat the WebKit half as
+  unverified" was more literally true than intended: the one place
+  WebKit gets any coverage had produced no signal at all for as long
+  as chromium had been red. With `if: !cancelled()` it runs, and both
+  engines pass 48 and fail the same three.
+
+Seven more things worth keeping:
+
+- **A reproduction of the *fix* can be as invalid as one of the bug.**
+  After making `←`/`→` reach the player again, the check measured zero
+  `Player.Seek` calls — the same answer as the broken build, because
+  nothing was playing and the dispatch records nothing with no track
+  loaded. Seventh costume of this plan's most-repeated trap, and the
+  first on the *after* side: "the fix did nothing" and "the probe
+  cannot see anything" produce identical output.
+- **A shortcut a dialog swallows is a promise the shortcut layer
+  cannot keep.** The `?` overlay was written as a toggle. It cannot
+  be: `focusedControlOwnsKey` yields every unmodified key to anything
+  inside an open dialog, so the second `?` never reaches the service.
+  Escape closes it, as it does every dialog here. The rule that
+  protects focused controls is the rule that forbids the toggle, and
+  an e2e spec is what noticed.
+- **Every `wa-dialog` in this app is an unnamed dialog.** `a11y.md`
+  lists them under "what is already correct" and says every one passes
+  a `label` — true, and the label never reaches the accessibility tree.
+  Web Awesome renders it into an `<h2 id="title">` in the same shadow
+  root as the `<dialog>` and never sets `aria-labelledby`. Found by
+  writing `getByRole('dialog', {name})` and getting nothing. Two more
+  facts about locating one, both costing a spec run: the host is
+  `display: contents` so it always reports hidden, and the slotted
+  content lives in the *host's* shadow root, not in the dialog's
+  subtree.
+- **A fix can be right while the finding's stated benefit is wrong.**
+  `H-15` wants an Album column so the three `Tideline / Aurora Fields /
+  00:06` rows can be told apart. They are duplicates of the same
+  album, so they still read identically; what distinguishes them is
+  the duplicate-detection feature or a path column. The column is
+  still the right default for every other row. Visible only in a
+  screenshot — nothing failed, and the finding's sentence would have
+  been ticked off without looking.
+- **A section of controls that do nothing is worse than admitting the
+  section does not exist.** `H-22` asks for a Playback/Audio section;
+  `backend/config` has no output device, gapless, crossfade or replay
+  gain to expose. Same judgement as "Artists cannot have a sort
+  *select*" two passes ago, and the same tell: the audit describes the
+  UI it wants without checking what the model carries.
+- **A default the seed has already persisted is not a default you can
+  see.** Changing `tracklist.DefaultColumns` changed nothing in the
+  running app, because `.dev/seeds/default.tar` carries a `config.toml`
+  from before it — while CI builds its seed by running the app and
+  would have exercised the *new* one. A local run and a CI run testing
+  different defaults is worse than either being wrong. `make
+  sandbox-seed NAME=default`.
+- **`aria-controls` has to name an element that exists**, which decides
+  how a disclosure renders: `config-section`'s body is rendered
+  unconditionally and toggled with `hidden` rather than added and
+  removed. Nothing is paid for it — the slot's light-DOM children are
+  in the DOM either way; a conditional `<slot>` only stops projecting
+  them.

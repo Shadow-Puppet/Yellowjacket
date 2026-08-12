@@ -1817,6 +1817,120 @@ and removing the file is a delete-your-music button one keystroke from
 a focused row. The honest interim is to stop advertising the binding in
 Settings; that is not done yet either.
 
+---
+
+### Phase 5 — the third pass: Settings, the key story, the small ones, and the CI answer
+
+Three independently landable pieces of item 4, plus the question that
+was supposed to be first and turned out to be answerable in ten
+minutes.
+
+- **`a11y.1` / `a11y.2` / `H-22` — Settings is reachable.**
+  Reproduced exactly as written: seven `config-section` headers, seven
+  bare `<div @click>`s, `role` and `tabindex` null on every one, all
+  collapsed. They are `<button aria-expanded aria-controls>` now, on
+  the pattern `explore-artist-details` has had five of the whole time,
+  and the body renders unconditionally toggled with `hidden` because
+  `aria-controls` has to name an element that exists. Downloads' two
+  `<div class="tab">`s are a `role=tablist` with a roving tab stop and
+  Left/Right/Home/End. Libraries is first and the only expanded
+  section; Search Index, configured once if ever, is second to last.
+  Settings also stops advertising `tracklist.delete`.
+- **The key story, told once.** `?` opens a `wa-dialog` listing every
+  binding, read from `services/shortcut-meta.ts` — moved out of
+  `config-page`'s private static, so the overlay and the Settings
+  editor share one table. With it, **keyboard seeking from a focused
+  row**: Phase 1 gave the grid all six arrows, and no list in this app
+  moves horizontally, so `←`/`→` reached nobody. A row owns the
+  vertical keys only now.
+- **`H-15` and the search scope.** Album is a default track-list
+  column, in Go and in the TS fallback. `smart-playlist-details` is in
+  `search-store`'s scope map — checked first, as the handoff asked: it
+  *does* read the term, so the fix is a scope entry rather than a
+  disabled state.
+- **The CI e2e failure is answered and is not ours.** Details below.
+
+#### Where the plan was wrong — the third pass
+
+Eight things, and the first is the one that mattered most:
+
+- **The `e2e` CI failure was readable all along, from a different
+  endpoint.** `gitea_ci job_logs` 404s on this Gitea build, which two
+  sessions took to mean the log was out of reach. The REST API answers
+  fine: `/api/v1/repos/{owner}/{repo}/actions/runs/{run}/jobs` lists
+  per-step status, and `/actions/jobs/{job_id}/logs` returns the whole
+  log. Cost: ten minutes, after two sessions of "cannot check".
+- **And WebKit had never run.** The `E2E — webkit` step had no `if:`,
+  so a chromium failure skipped it — `conclusion: skipped` on every
+  red run. The plan's "CI also runs WebKit, treat that half as
+  unverified" was truer than intended: it had produced no signal at
+  all for as long as chromium had been failing. With `if:
+  !cancelled()` it runs, and the answer is **48 passed on both
+  engines, failing exactly the same three specs** —
+  `playback.spec`'s elapsed clock and two in `player-truth.spec`. No
+  WebKit-specific failure anywhere, so last pass's dialog, focus and
+  role work is clean on the renderer we ship. What is red is the
+  container's audio clock: the UI interpolates while the backend
+  position stays at zero, 17–18 s adrift. `ci.yml`'s claim that the
+  null ALSA plugin advances at real time was measured once and is no
+  longer true.
+- **A reproduction of the *fix* can be as invalid as one of the bug.**
+  The seek-from-a-row fix measured zero `Player.Seek` calls after it
+  landed — because nothing was playing, and with no track loaded the
+  dispatch records nothing on any build. Both the broken and the fixed
+  build answer "no seeks", which is this plan's most-repeated trap in
+  its seventh costume, this time on the *after* side.
+- **`?` cannot be a toggle, and the app is right to stop it.** The
+  overlay was written to toggle; the e2e spec asserting it failed,
+  because `focusedControlOwnsKey` yields every unmodified key to
+  anything inside an open dialog. Escape closes it, as it does every
+  dialog here. A shortcut that a dialog swallows is a promise the
+  shortcut layer cannot keep, and finding that out cost one spec run.
+- **Every `wa-dialog` in this app is an unnamed dialog.** `a11y.md`'s
+  "what is already correct" says all five are modal, restore focus and
+  "every one of them passes a `label`" — all true, and the label never
+  reaches the accessibility tree. Web Awesome renders it into an `<h2
+  id="title">` in the same shadow root as the `<dialog>` and never
+  points `aria-labelledby` at it, so `getByRole('dialog', {name})`
+  matches nothing. Found by writing that locator. Not fixed here: it
+  is eight call sites and a helper, and it should be done on purpose.
+- **`H-15`'s Album column does not do what `H-15` says it will.** The
+  three `Tideline / Aurora Fields / 00:06` rows are duplicates of the
+  *same album*, so with an Album column they read identically. The
+  column is still the right default; what tells those rows apart is
+  the duplicate-detection feature or a path column. Visible only in
+  the screenshot — nothing failed.
+- **`H-22`'s Playback/Audio section cannot be built honestly yet.**
+  There is no output-device, gapless, crossfade or replay-gain setting
+  anywhere in `backend/config`; the whole section would be controls
+  that do nothing. Same judgement as "Artists cannot have a sort
+  *select*" from the first pass. The reorder shipped; the section is a
+  feature, not a consistency fix.
+- **A default that a seed has already persisted needs the seed
+  rebuilt.** Changing `DefaultColumns` changed nothing in the running
+  app, because `.dev/seeds/default.tar` carries a `config.toml` with
+  the old three columns — while CI builds its seed by running the app
+  and would therefore have tested a *different* default from the one
+  measured locally. `make sandbox-seed NAME=default` first.
+
+#### Not done, and still worth doing (after the third pass)
+
+**The album page is the one item of 4 left**: `H-13` (no Play, no
+Shuffle, no Add to queue on `explore-album-details`, and the green ✓
+badges with no legend) together with `cover-grid`'s `renderSplitGrid`,
+which is referenced only to satisfy `noUnusedLocals` and is the only
+route from the albums grid to `track-details`.
+
+And two things this pass found rather than inherited:
+
+- **Name the dialogs.** One helper, eight call sites.
+- **CI's e2e job cannot go green until the container's audio clock
+  does.** Three specs assert on a position that does not advance
+  there. Either the container gets a sink that really consumes, or
+  those three specs learn to skip when it does not — but silently
+  loosening a tolerance would delete the only assertions this repo has
+  that the player tells the truth.
+
 ## Phase 6 — Explore starts the conversation
 
 The only phase that adds rather than repairs.

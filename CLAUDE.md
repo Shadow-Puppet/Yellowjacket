@@ -377,6 +377,31 @@ demand puts the element and its `showModal()` in the same update.
 `autotag-view`'s last document keydown listener died with them; it
 existed only because its dialogs could not close themselves.
 
+**None of them has an accessible name**, which is worth knowing before
+writing a locator or believing the audit's "already correct" list.
+Every call site passes `label`; Web Awesome renders it into an `<h2
+id="title">` in the same shadow root as the native `<dialog>` and never
+points `aria-labelledby` at it, so `getByRole('dialog', {name})`
+matches nothing and a screen reader announces an unnamed dialog. The
+host is also `display: contents`, so the element carrying the testid
+always reports hidden — what is visible is the `<dialog>` inside it,
+and what holds the slotted content is the *host's* shadow root, not the
+dialog's subtree.
+
+**A disclosure is a button, and it says what it controls.**
+`config-section`'s header was a bare `<div @click>` with no `tabindex`,
+no `role` and no `aria-expanded`, and every section defaults to
+collapsed — so every setting in the app sat behind a control that could
+not be tabbed to (the audit's last Critical). It is a
+`<button aria-expanded aria-controls>` now, on the pattern
+`explore-artist-details` has had five of all along, and **the body
+renders unconditionally and is toggled with `hidden`**: `aria-controls`
+has to name an element that is in the DOM, and a conditional `<slot>`
+only stops projecting light-DOM children that exist either way.
+Downloads' two tabs are the same fix one page over — `role=tablist` over
+`role=tab`, one roving tab stop, Left/Right/Home/End, and a
+`role=tabpanel` whose id and `aria-labelledby` swap with the tab.
+
 **A menu has a keyboard model, and it is one model.**
 `utils/context-menu-controller.ts` exports **`MenuKeyboard`** — focus
 the first item on open, Arrow/Home/End to move (wrapping, as a menu
@@ -443,6 +468,24 @@ service resolves focus → panel → global, and yields a key to a focused
 control that owns it (button/select/slider/checkbox, or anything inside
 an open dialog) so the unmodified single-key global bindings do not
 steal Space and the arrows.
+
+**A list owns the arrows it moves on, which is the vertical ones.**
+Granting a `row`/`option`/`grid` all six took `←`/`→` away from seeking
+and gave them to nobody: `track-list`'s own handler and
+`utils/roving-rows.ts` both take Up/Down/Home/End and ignore
+Left/Right, so a focused track row produced zero `Player.Seek` calls
+against one per press from the body. Grant them back in
+`keysOwnedBy` if a list ever moves horizontally.
+
+**The keys are written down in one place and shown in two.**
+`services/shortcut-meta.ts` is the label, category, scope and default
+for every action; `?` opens `<shortcuts-overlay>` and Settings edits
+the same table. It used to be a private static in `config-page`, which
+listed three of the four categories by hand — so the autotag bindings
+were written down nowhere. **The overlay is not a toggle**: a dialog
+owns every unmodified key while it is up, so a second `?` never reaches
+the service; Escape closes it. And a shifted character does not report
+Shift (`?`, not `Shift+?`) — the character already carries it.
 
 Two cross-cutting pieces of that UI are worth knowing before touching
 a list or a detail view:
@@ -519,7 +562,11 @@ what each view searches. It also **keeps its slot everywhere and is
 disabled** where it cannot serve, rather than being hidden: its
 appearing and disappearing is what moved the library filter and the job
 indicator on every navigation. On Explore, which has its own catalog
-search, the disabled box points at it.
+search, the disabled box points at it. **A view that filters on the
+term belongs in that map**, detail views included —
+`smart-playlist-details` narrowed its list as you typed under a
+placeholder saying there was nothing to search here, because its
+sibling was in the map and it was not.
 
 **The window's minimum is measured, not aspirational.** `MinWidth`/
 `MinHeight` are 800×600 because that is where the shell was checked to
@@ -539,6 +586,15 @@ last column was clipped at every size. Both numbers are constants read
 by the three places that need them (the default widths, the
 normaliser, and the resize handles' positions), because they were
 written out separately and that is how they came to disagree.
+
+**The default columns are declared twice and must agree.**
+`tracklist.DefaultColumns` is what a fresh install persists;
+`DEFAULT_COLUMN_IDS` in `track-list/columns.ts` is what the list draws
+until the config arrives. Album is in both (a library manager with
+duplicate detection whose rows are track/artist/duration cannot tell
+its own duplicates apart) — and changing either is invisible against an
+existing `YJ_HOME`, whose `config.toml` already holds the old list, so
+`make sandbox-seed NAME=default` before believing the app.
 
 **Event-driven communication**: Backend emits events via Wails runtime; frontend stores subscribe to them. Event names are constants in `backend/events/`.
 
@@ -766,13 +822,32 @@ Two jobs, both in an `ubuntu:24.04` container:
   against **both** Chromium and WebKit. Playwright's Linux WebKit links
   Ubuntu 24.04 libraries that Arch does not provide, so CI is the only
   place it can run, and it is the closest available approximation of
-  the WebKit2GTK renderer that ships.
+  the WebKit2GTK renderer that ships. The WebKit step carries
+  `if: ${{ !cancelled() }}`, without which a chromium failure skips it
+  — which is how the one source of WebKit signal came to produce none
+  for two sessions while the plan recorded it as "unverified".
+
+**A failing job's log is readable, and `gitea_ci job_logs` is not the
+only way.** That endpoint 404s on this Gitea build; the REST API does
+not. `GET /api/v1/repos/{owner}/{repo}/actions/runs/{run}/jobs` gives
+per-step status (which is how "WebKit was skipped" was found) and
+`GET /api/v1/repos/{owner}/{repo}/actions/jobs/{job_id}/logs` returns
+the whole log, with `Authorization: token $GITEA_TOKEN`.
+
+**The `e2e` job is currently red on both engines, for one reason.**
+48 specs pass under Chromium and 48 under WebKit; the same three fail
+— `playback.spec`'s elapsed clock and two in `player-truth.spec` —
+because playback does not advance in the container: the UI
+interpolates while the backend position stays at zero, 17–18 s adrift.
+It is the audio device, not the renderer and not the app. Which means
+the paragraph below was measured once and is no longer true.
 
 Two things the container needs that a developer machine does not. It
 has no PulseAudio socket, so `/etc/asound.conf` makes ALSA's `null`
-plugin the default device — that plugin advances its pointer on a
-timer, so playback is consumed at real-time rate and the elapsed clock
-moves, which `e2e/specs/playback.spec.ts` asserts. And
+plugin the default device — that plugin is *supposed* to advance its
+pointer on a timer, so playback is consumed at real-time rate and the
+elapsed clock moves, which `e2e/specs/playback.spec.ts` asserts; it no
+longer does. And
 `YJ_CORE_INDEX_URL` points at a dead address so no run fetches the real
 explore artifact, matching what `scripts/seed-sandbox.sh` already does.
 

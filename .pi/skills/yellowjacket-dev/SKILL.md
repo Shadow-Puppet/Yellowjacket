@@ -39,8 +39,28 @@ reference, because you need them *before* the failure, not after.
   `config.toml` and DB rows — a hand-built `YJ_HOME` is a second
   description of a valid one and will drift. `make sandbox-seed` drives
   the real `AddLibrary` binding and waits for the real scan.
+- **…and a seed freezes every default it has already persisted.**
+  Changing a default in `backend/config` (or `backend/tracklist`) is
+  invisible against an existing seed, whose `config.toml` holds the old
+  value — while CI builds its seed by running the app and therefore
+  tests the *new* one. Re-seed before believing either.
+- **A `wa-dialog` is awkward to locate, in three ways.** The host is
+  `display: contents`, so the element carrying your testid always
+  reports hidden; the visible thing is the native `<dialog>` in its
+  shadow root. The slotted content is in the *host's* shadow root, not
+  in that dialog's subtree, so `toContainText` on the dialog sees only
+  its chrome. And the dialog has **no accessible name** — Web Awesome
+  never wires `label` to `aria-labelledby` — so
+  `getByRole('dialog', {name})` matches nothing.
 - **Playwright's WebKit does not run on Arch** (Ubuntu-only libs).
-  `--browser=webkit` is CI-only; local work is Chromium.
+  `--browser=webkit` is CI-only; local work is Chromium. CI runs it
+  with `if: !cancelled()` so a chromium failure does not silently
+  skip it, which it did for two sessions.
+- **CI's `e2e` job is red for a reason that is not yours.** Three
+  playback specs fail in the container on both engines (48 pass on
+  each) because the position never advances there — an audio-device
+  problem, not a renderer or app one. Read the per-step status before
+  assuming your change did it.
 - **`make e2e` needs `SEED=default`.** Its specs assert on fixture
   content — unicode tracks, the fixture artists, a known playable file.
   Run against the `bulk` seed a measurement session left behind and 13
@@ -66,6 +86,14 @@ reference, because you need them *before* the failure, not after.
   old behaviour. `make dev-headless` prints the esbuild error; a
   reload does not. One way to cause one is a stray backtick inside a
   comment in a `css` tagged template literal, which ends the literal.
+- **A failing CI job's log is reachable even when `gitea_ci job_logs`
+  says it is not.** That endpoint 404s on this Gitea build. The REST
+  API answers, with the `GITEA_TOKEN` already in the environment:
+  `/api/v1/repos/yonlu/yellowjacket/actions/runs/<run>/jobs` for
+  per-step status (this is how "the WebKit step was *skipped*" was
+  found) and `/api/v1/repos/yonlu/yellowjacket/actions/jobs/<id>/logs`
+  for the whole log. Two sessions reasoned about the e2e failure from
+  the commit list because the first tool's 404 read as "out of reach".
 - **`npx tsc --noEmit` is part of the gate, and nothing else runs it.**
   CI does (`.gitea/workflows/ci.yml`), and it typechecks
   `frontend/test/` — which `make lint`, `make test`, `make ui-test` and
