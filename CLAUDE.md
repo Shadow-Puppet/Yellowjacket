@@ -405,6 +405,54 @@ result would silently reorder a queue — and because `cover-grid`'s drag
 cache stores them per album. A `libraryID` of 0 means "every library",
 matching an unset library filter.
 
+**A view says what it is, in one component.** `<page-header>`
+(`components/page-header/`) is title, count, sort and actions, and the
+nine primary views use it rather than each writing its own — which is
+how four came to have a heading and four not, and how the same sort
+toolbar came to exist three times with different bugs. Three rules in
+it are load-bearing. **An empty `heading` is a mode, not a missing
+value**: `cover-grid` and `track-list` are also embedded in the artist
+and genre pages, which have a heading already, so there they keep the
+count and the sort and drop the title rather than growing a second
+arrangement. **The header renders while the view loads** — a heading
+that arrives with the data is the shifting layout it exists to stop —
+and the *count* is `null` until there is an answer, because "0 albums"
+that corrects itself a moment later is worse than saying nothing. And
+**the header asks for a sort, it does not perform one**: the host owns
+the field, the direction and their persistence, so the control cannot
+disagree with the list.
+
+**The header search box is view-scoped, and now says so.** It sits in
+the app header and reads as global; typing `tide` on Playlists answered
+"No playlists match your search" with three *Tideline* tracks in the
+library. The scope was always real — the fix is that the placeholder
+names it ("Search albums"), the page header repeats it ("Showing
+artists matching ‘tide’"), and `search-store` holds the one map of
+what each view searches. It also **keeps its slot everywhere and is
+disabled** where it cannot serve, rather than being hidden: its
+appearing and disappearing is what moved the library filter and the job
+indicator on every navigation. On Explore, which has its own catalog
+search, the disabled box points at it.
+
+**The window's minimum is measured, not aspirational.** `MinWidth`/
+`MinHeight` are 800×600 because that is where the shell was checked to
+still work: below ~780 the header subtitle wraps and pushes the title
+out of the 4em bar, and below ~600 tall the eleven sidebar items stop
+fitting at once. The old 512×384 promised a size at which Settings and
+Jobs were unreachable — the sidebar clipped them with `overflow:
+hidden` and nothing scrolled. The sidebar scrolls now, and collapses to
+its (long-existing, previously drag-only) icon mode below 900px, which
+is the same breakpoint that hides the subtitle.
+
+**A row's columns must fit the row.** `track-list`'s
+`computeDefaultWidths` shared out the host's whole `clientWidth` while
+every row spends 24px on the favourite column and 2×8px on its own
+padding first, so the grid was always exactly 40px too wide and the
+last column was clipped at every size. Both numbers are constants read
+by the three places that need them (the default widths, the
+normaliser, and the resize handles' positions), because they were
+written out separately and that is how they came to disagree.
+
 **Event-driven communication**: Backend emits events via Wails runtime; frontend stores subscribe to them. Event names are constants in `backend/events/`.
 
 `frontend/src/events.ts` is **generated** from `backend/events/events.go`

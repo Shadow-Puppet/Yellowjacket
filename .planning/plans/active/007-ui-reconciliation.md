@@ -1557,6 +1557,134 @@ views; an e2e spec asserting no horizontal overflow on any row at
 1440×900, 1024×768 and the new minimum; and a manual pass with a
 screen reader on the four surfaces that gained live regions.
 
+### Phase 5 — the first pass: the arithmetic, the minimum, and the header
+
+Items 1 and 2 of the proposed four, plus one of the seven inherited
+items. Each landed with its reproduction watched failing first, in the
+running app rather than in a test.
+
+- **`H-7` — the track list fits its container.** Reproduced exactly as
+  the audit says: `scrollWidth 1280` against `clientWidth 1240` on the
+  header row and all 31 track rows, and the 40 px is precisely
+  `24 + 2×8`. `computeDefaultWidths`, `normalizeWidths` and
+  `onColResizeMove` now share one `availableColumnWidth`, and the two
+  constants behind it are read by `colBoundaryPositions` and the grid
+  template too — they were written out separately in four places,
+  which is how they came to disagree. **0 of 31 rows overflow after,
+  at every viewport tested.**
+- **`H-11` — the minimum is a size the layout supports.** Reproduced:
+  at 700×480 the sidebar's eleven items need 406 px of a 352 px pane,
+  and Settings rendered at y=420–454 against a pane ending at y=416 —
+  outside its own box, clipped, unreachable. The pane scrolls now, the
+  sidebar collapses to icons below 900 px (its `.collapsed` mode
+  existed and only a manual drag had ever reached it), the subtitle
+  hides at the same breakpoint, and `MinWidth`/`MinHeight` are
+  **800×600**, chosen by walking a ladder of nine viewports and
+  reading what broke where rather than by picking a round number.
+- **`H-19` and `H-10` — one page header, nine views.**
+  `<page-header>` is title, count, sort and actions; Artists and
+  Genres gain the sort they never had, four views gain a heading, and
+  five gain a count. The header search box keeps its slot everywhere,
+  names its scope in the placeholder and in the header's own line, and
+  is disabled with a reason where it cannot serve.
+- **The Settings rename one-liner** (found in Phase 3, routed here):
+  the library name's click bubbled to `config-page`'s document
+  handler, which exists to close the rename editor, so it opened and
+  closed it in the same click.
+
+#### Where the plan was wrong — the first pass
+
+Seven things, and two of them are about how the finding was checked
+rather than about the finding:
+
+- **The two reproductions I wrote first were both invalid, in the same
+  way, and one of them nearly shipped a fix for nothing.** Reading the
+  DOM synchronously after a synthetic `.click()` reports the state
+  *before* Lit renders — so the Settings rename probe returned "not
+  editing" both before and after the fix. The bug is real (verified
+  properly: `false` before, `true` after, with an await), but for
+  twenty minutes the evidence for it was a number that could not move.
+  Same trap as this plan's `0 ms` view-open and its 150 ms debounce,
+  in a third costume, and now also in an e2e spec that read a count
+  before the view had one.
+- **`job-indicator` is `display: none` when no job is running**, which
+  looks exactly like a control squeezed out of an overflowing header.
+  A ladder of viewport measurements said the top bar overflowed by
+  0 px at every size while a screenshot plainly showed the badge cut
+  off at the right edge; the badge was simply *absent* by then,
+  because the index build had finished. The contradiction between the
+  number and the picture was the useful signal, and chasing it saved
+  fixing a layout that was not broken.
+- **`H-11`'s "the app title wraps into the nav" is a subtitle
+  problem, and it is not new at 700 px.** The title block is 80 px
+  tall inside a 64 px bar at *every* width — it merely stops being
+  visible about there, when the subtitle takes a second line and it
+  becomes 98 px. Hiding the subtitle under the breakpoint fixes the
+  visible half; the 16 px of permanent overflow is cosmetic and
+  untouched.
+- **`H-7` is not the only reason Duration looks clipped.** With the
+  arithmetic fixed, at 800 px the column is at its 50 px floor and the
+  *label* still ellipsises to "Durat…", because the saved widths are
+  scaled proportionally from whatever size they were set at. The
+  values fit; the heading does not. Different mechanism, same
+  screenshot, and worth knowing before someone "fixes" the arithmetic
+  again.
+- **The sort toolbar existed three times, not twice.** The audit names
+  Albums and Tracks as the two views with sort controls; `playlist-view`
+  has a third copy of the same twenty lines. All three are now the
+  header's.
+- **Artists cannot have a sort *select*.** `library.Artist` carries a
+  name, an MBID and three image URLs — nothing countable — so "the two
+  missing sort controls" is really one control and one direction
+  toggle. The header renders a label instead of a select with a single
+  option in it.
+- **Two e2e specs were spending state they never gave back**, which is
+  not in any audit and cost most of an hour to attribute.
+  `view-lifecycle.spec.ts` toggled shuffle and left it on, so the
+  *second* `make e2e` against the same app failed `playback.spec`'s
+  shuffle assertion — a failure that reads exactly like a regression
+  in whatever you are holding, and which I first assumed was mine.
+  Stashing the phase's source changes and re-running proved it
+  pre-existing. Shuffle is restored now; the same file also skips an
+  autotag album per run out of the eleven the seed has, which is
+  inherent and is now in the skill instead.
+
+#### Not done, and still worth doing (after the first pass)
+
+Items 3 and 4 of the four, in that order: the dialogs, the context
+menu's keyboard model and the ARIA tail as **one** pass (they are one
+focus/semantics story, and splitting them is how two focus traps get
+built); then the smaller items — landing on Home, the Home card's
+missing-art placeholder, the album page's primary action and its
+unexplained ✓ badges, the `?` overlay, Settings reordered with a
+Playback section, and an Album column in the track list.
+
+Five of the seven inherited items remain: `cover-grid`'s dead album
+dropdown (`perf.p2` — still a missing feature, not housekeeping), the
+context menu's keyboard model, `tracklist.delete` (which needs a
+"remove from library" that does not exist, and a decision about what
+it removes), keyboard seeking from a focused track row, and the
+header search box on `smart-playlist-details` — which is a *detail*
+view and so was outside this pass's nine primary ones.
+
+One finding of my own, not fixed: **the Home shelves' cards render a
+missing cover as nothing at all** (`H-9`), which is plainly visible in
+any Home screenshot now that the page has a header above it.
+
+And two things about CI, neither mine and both pre-existing on
+`main` at `9e92721`:
+
+- **`player-truth.spec.ts` fails in the CI container**, on the elapsed
+  clock (17 s and 11 s adrift, against a tolerance of 1) and
+  intermittently on the auto-advance skip. It passed 18 h earlier and
+  failed on a **docs-only** commit, so it is the container's audio
+  clock rather than a regression. All 44 specs pass locally, twice in
+  a row against one app.
+- **`CLAUDE.md`'s claim that commitlint enforces the commit format in
+  CI is stale** — there is no config and no workflow running it — as
+  is the implication that semantic-release runs. Left alone pending a
+  decision: wire them up, or stop saying it.
+
 ---
 
 ## Phase 6 — Explore starts the conversation

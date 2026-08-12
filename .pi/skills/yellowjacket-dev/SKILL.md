@@ -18,7 +18,7 @@ here has disappeared.
 
 ## Read this part before you fail
 
-Seven things cost a cycle each the first time. They are here, not in a
+Nine things cost a cycle each the first time. They are here, not in a
 reference, because you need them *before* the failure, not after.
 
 - **Time out every binding call.** A bound Go method called with wrong
@@ -46,6 +46,16 @@ reference, because you need them *before* the failure, not after.
   Run against the `bulk` seed a measurement session left behind and 13
   of 36 fail, in a list that reads exactly like a regression in
   whatever you are holding. `make dev-headless SEED=default` first.
+- **…and the suite spends state it cannot always give back.**
+  `view-lifecycle.spec.ts` **skips an autotag album** on every run, out
+  of the eleven the seed has, and does not put it back — so around the
+  eleventh consecutive run against one app it starts failing on an
+  empty queue. Restart between runs (`make dev-stop && make
+  dev-headless SEED=default`) when a spec starts failing that you have
+  not touched, and *before* believing a failure at all. Backend state
+  outlives the page: shuffle used to be left on the same way, which
+  failed `playback.spec` on the next run — that one is fixed, the
+  autotag one is inherent.
 - **A frontend edit is not live until you restart the app.** Vite
   updates the module, but an already-registered custom element class
   cannot be re-registered, so a running page keeps the old one and your

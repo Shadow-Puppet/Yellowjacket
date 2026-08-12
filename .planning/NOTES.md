@@ -1259,3 +1259,73 @@ And three on measuring, all of which produced a wrong number first:
   sidebar click: one highlighted card, `aria-selected="true"` on the
   right one, in both card grids. Check `viewActive` before believing a
   view did not repaint.
+
+## A reproduction read too early is a fix applied to nothing
+
+Plan 007 phase 5, first pass: the track list's arithmetic, a window
+minimum the layout can actually hold, and one page header for nine
+views. Three items, one inherited one-liner, and the pass's own
+contribution to this plan's longest-running theme — *a number that
+cannot move is not evidence* — which appeared twice more here, both
+times in a **reproduction** rather than in a measurement.
+
+`config-page`'s rename bug is real: the library name's click bubbles to
+the document handler that closes the rename editor, so it opens and
+closes it in the same click. But the probe that "reproduced" it read
+`.edit-input` synchronously after a synthetic `.click()`, and Lit
+renders on a microtask — so it reported "not editing" on the broken
+build *and* on the fixed one. The fix looked like it had done nothing,
+which nearly bought a second, unnecessary fix; the real check needed one
+`await`. The same shape then failed an e2e spec of mine, which captured
+a header count immediately after a navigation and got `null`, making
+every assertion after it vacuous.
+
+Seven things worth keeping:
+
+- **A screenshot disagreeing with a number is the useful signal, not a
+  puzzle to explain away.** A viewport ladder reported the top bar
+  overflowing by 0 px at every width while the PNG showed the job
+  indicator cut off at the edge. The badge was `display: none` — no job
+  was running by then — so nothing was overflowing and the "bug" was a
+  rendering of the app working. Two numbers that must agree are worth
+  more than one number you have to be sceptical about, and a picture
+  counts as one of the two.
+- **An audit's symptom can outlive its mechanism.** `H-11` says the app
+  title "wraps into the nav" below 700 px. It does — but the title
+  block is 80 px tall inside a 64 px bar at *every* width, including
+  1440; what changes at 780 px is the *subtitle* taking a second line.
+  Fixing the visible half is a breakpoint on the subtitle. The
+  permanent 16 px was never the finding and is still there.
+- **Fixing the stated cause does not always remove the stated
+  symptom.** With the 40 px arithmetic fixed, Duration still reads
+  "Durat…" at 800 px — because the column is at its 50 px floor and the
+  *label* no longer fits, while the values do. Same screenshot,
+  different mechanism. Worth writing down, or the next reader
+  reasonably concludes the arithmetic fix did not land.
+- **Count the copies before calling something a duplicate pair.** The
+  audit names Albums and Tracks as the two views with a sort toolbar;
+  `playlist-view` had a third copy of the same twenty lines. The fix
+  was worth 1.5× what the finding implied.
+- **What a model carries decides what a control can offer.**
+  "Artists and Genres have no sort control" is one finding and two
+  different fixes: genres have a track count to sort by, and
+  `library.Artist` carries nothing countable at all. A select with one
+  option is a control that does nothing, so that view gets a label and
+  a direction button.
+- **Backend state outlives the page, and a spec that spends it fails
+  the *next* run.** `view-lifecycle.spec.ts` toggled shuffle and never
+  toggled it back, so a second `make e2e` against the same app failed
+  `playback.spec`'s shuffle assertion — in a list that reads exactly
+  like a regression in the change you are holding, which is what I
+  assumed for half an hour. Stashing the phase's source changes and
+  re-running the same specs is what proved it pre-existing; the same
+  file also skips an autotag album per run, out of eleven, which is
+  inherent and now in the skill. **Restart the app before believing an
+  e2e failure you did not cause.**
+- **A header that appears with the data is the layout problem it was
+  meant to fix.** The first version of `<page-header>` rendered only
+  once a view had loaded, and showed "0 playlists" while loading. Both
+  were caught by reading a screenshot rather than by any assertion. The
+  header now renders during load and omits the count until there is an
+  answer — `null` meaning "no answer yet", which is a different thing
+  from zero and has to be a different value.
