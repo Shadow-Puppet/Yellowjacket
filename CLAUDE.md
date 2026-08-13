@@ -505,6 +505,53 @@ first track arrives) and `job-indicator`, whose label swings between
 "Scanning Music", "3 background jobs" and "Finished". The notification
 surface already had one from Phase 3.
 
+**A stated motion preference outranks an app setting, and the state a
+fix lands in is a state nobody has looked at.** `now-playing`'s marquee
+ran for as long as a track played with no way to pause it (WCAG 2.2.2),
+and the guard is in `shouldScroll()` rather than in CSS: the cycle is a
+transition out, a `transitionend` and a transition back, so suppressing
+the animation strands the text off its own box with nothing to bring it
+back. It covers `hover` as well as `always` — `reduce` is a request
+about motion, not about autoplay. The two bugs behind it were both in
+the *fallback*: `text-overflow` sat on the outer span while the box that
+overflows is the inline-block child, so the non-scrolling state had
+never produced an ellipsis **in any mode**, including the default; and
+moving the ellipsis to the child stops the parent overflowing, which
+silently disabled overflow *detection* and would have stopped anything
+scrolling ever again. Both measurements come from the child now. The
+first was found by reading a screenshot, the second by the new test's
+positive case.
+
+**Roles have to be wired to each other.** `combobox`, `listbox` and
+`option` were all present on `<yj-combobox>` and nothing connected them,
+so arrowing through nineteen options moved a highlight and announced
+nothing. Ids on the listbox and every option, `aria-controls`,
+`aria-activedescendant` — and `aria-selected` meaning *chosen*, which is
+the distinction the pattern rests on: the highlight is what
+`activedescendant` points at. Unlike `config-section`'s disclosure this
+IDREF may dangle while closed, because the popup genuinely does not
+exist then and `aria-expanded` says so. Checked against
+`Accessibility.getFullAXTree`, not against a snapshot — and read the
+whole property, since `activedescendant` reports `value.type: "idref"`
+and an extraction expecting a string reports `(none)` on a working
+build.
+
+**The queue's order is reachable from the keyboard.** Alt+ArrowUp/Down
+moves the focused row, with a live region saying where it went. It is
+in `queue-panel`'s own *delegated* keydown beside Enter and the roving
+arrows, not a backend panel binding: it cannot collide with the global
+Up/Down volume bindings, and a reordering key does not belong in a
+user-editable table where it could be rebound onto something
+unmodified. Two things in it are load-bearing. **The index arithmetic
+is not symmetric** — `MoveQueueTracks` takes an index into the array
+*before* the move, so down-by-one asks for `i + 2`, because `i + 1` is
+where the row already is once its own removal is accounted for and the
+backend's contiguous-block guard correctly treats it as a no-op. And
+**the index comes off the row the event came from**: `focusedIndex` was
+only ever moved by an arrow key, so a row reached by a click or by Tab
+left it at 0 and `Enter` played the first track in the queue from any
+focused row.
+
 **A selectable grid is a listbox.** The four grids that ctrl/shift-select
 (`artists-view`, `genres-view`, `cover-grid`, and the queue) are
 `role="listbox" aria-multiselectable` over `role="option"` cards, not

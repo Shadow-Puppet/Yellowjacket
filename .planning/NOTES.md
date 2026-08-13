@@ -1782,3 +1782,93 @@ Nine more things worth keeping, and the first four are all one theme —
   not inherit `box-sizing: border-box` from the UA stylesheet the way a
   `<button>` does, so swapping the tag grew the badge 36→38px. Nothing
   but the stored screenshot would have noticed.
+
+## The state a fix lands in is a state nobody has looked at
+
+Plan 008 phase 1: the three `a11y.md` findings that lose function — a
+marquee that cannot be stopped, a combobox that announces nothing, and a
+queue whose order needs a mouse.
+
+The generalisation, and it is the mirror of "a finding creates the
+conditions for the next one": that note is about the code path a fix
+*opens*. This one is about the code path a fix **sends people to**. A
+guard, a fallback, an empty state, a disabled variant — the branch a fix
+makes people live in has usually never been looked at by anyone,
+precisely because until now nobody arrived there.
+
+The reduced-motion guard is two lines. Both bugs it exposed were in the
+place it sends you:
+
+- **The non-scrolling fallback hard-clipped**, and always had.
+  `text-overflow: ellipsis` was on the outer span while the box that
+  overflows is the `inline-block` child — so it produced an ellipsis in
+  **no mode**, including `hover`, which is the default every user has.
+  A title read "An Exhaustively Overlong Trac|". Found by reading the
+  screenshot of the fix, which is the fourth regression in two plans
+  that only a PNG has caught.
+- **And fixing *that* broke overflow detection.** Giving the child its
+  own `overflow: hidden` stops the parent overflowing, so
+  `titleOverflows` went false and nothing would have scrolled again for
+  anybody. Caught by the new test's *positive* case — which existed
+  only because a guard that suppresses everything passes the negative
+  case for free, which is this repo's oldest rule wearing its eighth
+  costume.
+
+Eight more things worth keeping:
+
+- **A grep triage is a good answer to "is it still there" and no answer
+  to "why".** Checking all 34 findings against the tree took ten
+  minutes and closed at least five the coverage map still showed open,
+  including three (`17`, `19`, `27`) fixed by phases that were not about
+  them. It said nothing about mechanism, and mechanism is what decided
+  that `15`'s obvious CSS-only fix is wrong.
+- **A finding's stated scope can be half-closed by an unrelated phase.**
+  `a11y.11` is "drag-and-drop has no keyboard equivalent anywhere" and
+  its stated symptom is "there is no keyboard path to add a track to
+  the queue or a playlist" — which Phase 5's `MenuKeyboard` closed. What
+  was actually left is the queue's *order*, the one thing a menu cannot
+  express. Fixing the sentence rather than the residue would have built
+  three menu commands that already exist.
+- **A count in an audit is scoped by how it was taken.** `a11y.6` says
+  two buttons are "the only truly unnamed controls" — and says, in the
+  same line, that it scanned every `<button>`. The AX tree has two
+  unnamed `combobox` roles that are native `<select>`s, one of them the
+  page header's sort control on nine views. The claim was never wrong;
+  it was answering a narrower question than it reads as.
+- **The probe was wrong, not the fix — twice more, both on the *after*
+  side.** Reading `activedescendant` out of `getFullAXTree` as
+  `relatedNodes[0].text` reported `(none)` against a working build,
+  because the property carries `value.type: "idref"`. And
+  `__yjEvents.last('QueueChanged')` returned a stale payload, so a
+  reorder that had happened read as one that had not. Dump the whole
+  property; ask `GetState`.
+- **An operation's index convention is part of its contract, and the
+  symmetric-looking version fails silently.** `MoveQueueTracks` takes an
+  index into the array *before* the move, so up-by-one asks for `i - 1`
+  and down-by-one has to ask for `i + 2` — `i + 1` is where the row
+  already is once its own removal is accounted for, and the backend's
+  contiguous-block guard correctly returns without doing anything. The
+  first version moved rows up and did nothing at all downward, with no
+  error anywhere.
+- **A roving tab stop that only moves on arrow keys is not where the
+  focus is.** `focusedIndex` was never synced from a click or a Tab, so
+  `Enter` played the first track in the queue from *any* focused row —
+  pre-existing, invisible for as long as the keys only read state, and
+  obvious the moment a key moved something.
+- **Watch the new spec fail on the old build.** Done for all three
+  landings, by neutering one line rather than by stashing (which
+  reverts every uncommitted change in the file). Two of the three would
+  have passed against the broken build in at least one case if the
+  positive direction had been left out.
+- **CI's concurrency cancels the previous run's `e2e` when you push
+  again**, and `cancelled` sits one line from `success` in the run
+  list. The first landing's e2e never ran; the signal came from the
+  second push's run, read step by step through
+  `/api/v1/repos/{owner}/{repo}/actions/runs/{run}/jobs`. Same family as
+  the `skipped` WebKit step, one layer out.
+
+And the one that is no longer worth calling a lesson: **a backtick
+inside a comment in a `css` tagged template literal ends the literal.**
+Third session running. It is written in `CLAUDE.md`, in the skill, and
+in `NOTES.md`, and it was read twice in the session it then cost a
+cycle in. Knowledge is not working here; it wants a lint rule.

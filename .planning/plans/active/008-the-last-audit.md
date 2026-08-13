@@ -1,6 +1,6 @@
 # 008 — The last audit, and the one binding that outlived six phases
 
-**Status:** active
+**Status:** active — Phase 1 shipped (three landings).
 **Branch:** main
 **Created:** 2026-08-12
 **Follows:** 007-ui-reconciliation
@@ -68,6 +68,7 @@ fixed until it has been reproduced in the running app.
 | `22` | Minor | `queue-panel` gained `aria-current`; `track-list` did not, and neither has a non-colour marker. |
 | `24` | Minor | No `title` on the truncating element in `track-info`, `playlist-view`, `queue-panel` or `track-list`. |
 | `25` | Minor | `<wa-progress-bar value=…>` with no label, verbatim as filed. |
+| — | new | **Two unnamed native `<select>`s**, one of them `page-header`'s sort control on nine views. Not in the audit: `a11y.6` scanned `<button>`. Found in the AX tree while reproducing `14`. Belongs with `26`. |
 | `28` | dropped | Four `@mousedown` `<div>`s with no `role="separator"`. Never measured. |
 | `29` | Polish | `<h3 class="subtitle">` for type size. |
 | `30` | Polish | No skip link anywhere. |
@@ -168,6 +169,93 @@ in the last pass. `make ui-visual` for `15` (it changes what renders).
 An e2e case for `11`, because the queue panel's animated width means a
 click issued while it moves lands on whatever slid under the pointer.
 A manual pass per landing, with a screenshot read.
+
+### Phase 1 — what actually shipped
+
+Three landings, one per finding, each reproduced in the running app
+before anything was written and each watched failing on the pre-fix
+build before being believed.
+
+- **`15`.** `shouldScroll()` returns false under
+  `prefers-reduced-motion: reduce`, live (a `matchMedia` listener, so
+  changing the OS setting is honoured without a reload — verified).
+  It covers `hover` as well as `always`.
+- **`14`.** Ids on the listbox and every option, `aria-controls`,
+  `aria-activedescendant`, and `aria-selected` meaning *chosen* rather
+  than *highlighted*.
+- **`11`.** Alt+ArrowUp/Down moves the focused queue row, with a live
+  region saying where it went.
+
+Pinned by `now-playing.test.ts` (+2), `combobox-aria.test.ts` (5),
+`queue-reorder.test.ts` (7), `e2e/specs/reduced-motion.spec.ts` (2) and
+`e2e/specs/queue-reorder.spec.ts` (4). `make ui-test` 558 → **572**;
+`make e2e` 68 → **74**.
+
+#### Where the plan was wrong — Phase 1
+
+Nine things, and the first group is the triage being right for the
+wrong reason.
+
+- **The grep triage was accurate about *what* is open and wrong about
+  *why* two of them are.** It is a good first pass and it cannot see
+  mechanism. `15` is filed as "no reduced-motion guard", which is true;
+  what makes a CSS-only guard wrong is that the cycle is a transition
+  out, a `transitionend` and a transition back, so suppressing the
+  animation strands the text off its own box with nothing to bring it
+  back. That is only visible by reading the cycle.
+- **A fix routes people into a state nobody has looked at.** With the
+  marquee off, the fallback hard-clipped — "Overlong Trac|", no
+  ellipsis — because `text-overflow` was on the outer span while the
+  overflowing box is the inline-block child. It had never produced an
+  ellipsis **in any mode**, including the default, and no test saw it.
+  Found by reading the screenshot of the fix.
+- **…and fixing that broke the measurement it depends on.** Giving the
+  child its own `overflow: hidden` stops the *parent* overflowing, so
+  `titleOverflows` went false and nothing would ever have scrolled
+  again, for anyone. Caught by the new test's positive case, which is
+  the whole reason it has one.
+- **`a11y.6` scanned `<button>`, and says so.** "The only truly
+  unnamed controls" is a claim about buttons. The AX tree has two
+  unnamed `combobox` roles that are native `<select>`s — one of them
+  the page header's sort control, on nine views. Not fixed here; it is
+  a sweep of every form control, not a one-liner, and it belongs with
+  `a11y.26` in Phase 3.
+- **The reproduction of the *fix* was wrong twice, on the probe side
+  both times.** Reading `activedescendant` out of the AX tree as
+  `relatedNodes[0].text` returned `(none)` on a working build — the
+  property is there, with `value.type: "idref"`. And `last('QueueChanged')`
+  returned a stale payload, so a reorder that had happened looked like
+  one that had not. Ask `GetState`, dump the whole property.
+- **`11`'s stated scope is half done and the other half was already
+  closed.** The finding is "drag-and-drop has no keyboard equivalent
+  anywhere" and lists four sites; its stated *symptom* — "there is no
+  keyboard path to add a track to the queue or a playlist" — was closed
+  by Phase 5's `MenuKeyboard`. What was left is the queue's order, which
+  is the one the menu cannot express. Album→queue drag and
+  drop-on-nav-item remain, and are menu commands, not reorder.
+- **The plan said a backend panel binding; it should not be one.** The
+  queue panel already handles Enter and the roving arrows in its own
+  *delegated* (not document) keydown, which is the sanctioned pattern.
+  Alt+Arrow joins them: it cannot collide with the global Up/Down
+  volume bindings (measured — 0 `VolumeChanged` events from a focused
+  row), and it keeps a reordering key out of a user-editable table
+  where it could be rebound onto something unmodified.
+- **The index arithmetic is not symmetric, and the symmetric version
+  fails silently.** `MoveQueueTracks` takes an index into the array
+  *before* the move, so down-by-one must ask for `i + 2`; `i + 1` is
+  where the row already is once its own removal is accounted for, and
+  the backend's contiguous-block guard correctly returns without doing
+  anything. Pinned in both tiers.
+- **`focusedIndex` was only ever moved by an arrow key.** A row reached
+  by a click or by Tab left it at 0, so `Enter` played the first track
+  in the queue from any focused row. Pre-existing, invisible until a
+  key moved something, fixed by reading the index off the row the event
+  came from.
+
+And one that is not about the audit: **the backtick-in-a-`css`-comment
+trap cost a cycle again**, in the same session as reading the warning
+about it twice. It is worth treating as a lint rule rather than a piece
+of knowledge.
 
 ---
 
