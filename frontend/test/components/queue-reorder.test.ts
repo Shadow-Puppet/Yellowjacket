@@ -194,6 +194,21 @@ describe('a queue row says which track its controls act on', () => {
     ]);
   });
 
+  it('marks the playing row with a shape, not only a colour', async () => {
+    const el = await panelWithQueue();
+
+    const rows = shadowAll(el, '.track-item');
+    const width = (r: Element) =>
+      parseFloat(getComputedStyle(r, '::before').borderLeftWidth) || 0;
+
+    // `a11y.22`, the same rule as track-list one panel over. Both
+    // directions: absent on the rows that are not playing is what
+    // makes the present one mean anything.
+    expect(rows[0]!.getAttribute('aria-current')).toBe('true');
+    expect(width(rows[0]!)).toBeGreaterThan(0);
+    expect(width(rows[1]!)).toBe(0);
+  });
+
   it('gives the title and artist a tooltip, since the panel is resizable', async () => {
     const el = await panelWithQueue();
 

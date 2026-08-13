@@ -1002,6 +1002,7 @@ export class TrackList
     }
 
     .track-row {
+      position: relative;
       display: grid;
       grid-template-columns: var(--grid-cols);
       font-size: var(--yj-text-sm);
@@ -1040,6 +1041,24 @@ export class TrackList
 
     .track-row.active {
       color: var(--yj-accent-text, #ffd43b);
+    }
+
+    /* a11y.22: the playing row was a background tint and a text colour
+       and nothing else, so a colour-blind user could not find it
+       (WCAG 1.4.1). A triangle drawn in the row's own 8px left padding
+       is a *shape* that is present or absent, and it costs no layout:
+       the grid columns are computed from the host width and every one
+       of them would have had to move for a marker in the flow. Sized
+       to that padding rather than to the glyph a font would give. */
+    .track-row.active::before {
+      content: '';
+      position: absolute;
+      left: 1px;
+      top: 50%;
+      transform: translateY(-50%);
+      border-left: 5px solid currentColor;
+      border-top: 4px solid transparent;
+      border-bottom: 4px solid transparent;
     }
 
     .track-row.selected.active {
@@ -1808,6 +1827,7 @@ export class TrackList
         role="row"
         aria-rowindex=${index + 1}
         aria-selected=${selected}
+        aria-current=${active ? 'true' : 'false'}
         tabindex=${index === this.focusedIndex ? 0 : -1}
         draggable="true"
         data-index=${index}

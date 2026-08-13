@@ -141,3 +141,38 @@ test.describe('queue', () => {
     await expect(shuffle).toHaveAttribute('aria-pressed', 'false');
   });
 });
+
+test.describe('the playing row is findable without colour vision', () => {
+  test('the queue marks its current row with a shape and aria-current', async ({
+    app,
+  }) => {
+    await app.getByTestId('nav-tracks').click();
+    await app.getByTestId('track-row').first().dblclick();
+
+    const queueToggle = app.locator('#queue-button');
+
+    await queueToggle.click();
+
+    const row = app.getByTestId('queue-row').first();
+
+    await expect(row).toBeVisible();
+
+    // Played *from the queue*, because a track started from the list
+    // leaves `currentIndex` at -1 — so the panel has no current row at
+    // all in that flow, which is what made this marker look broken the
+    // first time it was checked.
+    await row.dblclick();
+    await expect(row).toHaveAttribute('aria-current', 'true');
+
+    const marker = await row.evaluate(
+      (el) => getComputedStyle(el, '::before').borderLeftWidth,
+    );
+
+    // `a11y.22`: a background tint and a text colour were the only two
+    // signals, and both are hue (WCAG 1.4.1).
+    expect(parseFloat(marker)).toBeGreaterThan(0);
+
+    await queueToggle.click();
+    await expect(app.getByTestId('queue-row')).toHaveCount(0);
+  });
+});

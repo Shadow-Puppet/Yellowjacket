@@ -235,3 +235,87 @@ describe('a clipped value is readable somewhere', () => {
     expect(shadow(el, '.secondary')?.getAttribute('title')).toBeTruthy();
   });
 });
+
+describe('the playing row is more than a colour', () => {
+  beforeEach(async () => {
+    resetHarness();
+    searchStore.setTerm('');
+    stub('library.Library.GetAllTracks', TRACKS);
+    stub('library.Library.GetAllAlbums', []);
+    emit(Events.LibraryScanComplete);
+  });
+
+  /** The row the player says it is on, once the list has settled. */
+  async function listWithPlayingTrack(): Promise<LitElement> {
+    const el = await fixture<LitElement>('track-list');
+
+    sized(el);
+    await settle(el);
+
+    emit(Events.TrackChanged, {
+      fileName: 'a.mp3',
+      filePath: '/m/a.mp3',
+      trackLength: 4,
+      seekPosition: 0,
+      state: 'playing',
+      title: 'Departure',
+      artist: 'Aurora Fields',
+      album: 'Glass Harbour',
+      coverArt: '',
+      coverArtSmall: '',
+      coverArtMedium: '',
+      coverArtLarge: '',
+      trackChangeId: 1,
+      artistMbid: '',
+      releaseGroupMbid: '',
+      recordingMbid: '',
+    });
+    await settle(el);
+
+    return el;
+  }
+
+  it('marks exactly one row aria-current', async () => {
+    const el = await listWithPlayingTrack();
+
+    const current = shadowAll(el, '.track-row[aria-current="true"]');
+
+    // The positive case first: a guard that marks nothing passes
+    // "at most one" for free.
+    expect(current).toHaveLength(1);
+    expect(current[0]!.classList.contains('active')).toBe(true);
+  });
+
+  it('draws a marker that is a shape, not a hue', async () => {
+    const el = await listWithPlayingTrack();
+
+    const active = shadow(el, '.track-row.active');
+    const other = shadowAll(el, '.track-row:not(.active)')[0];
+
+    expect(active, 'no active row rendered').toBeTruthy();
+
+    // `::before` has no box unless it has content, so a width of zero
+    // on the inactive row is the assertion that the marker is *absent*
+    // there — which is the half that makes the present one mean
+    // something (a11y.22, WCAG 1.4.1).
+    const width = (el: Element) =>
+      parseFloat(getComputedStyle(el, '::before').borderLeftWidth) || 0;
+
+    expect(width(active!)).toBeGreaterThan(0);
+    expect(width(other!)).toBe(0);
+  });
+
+  it('does not move the row it marks', async () => {
+    const el = await listWithPlayingTrack();
+
+    const rows = shadowAll(el, '.track-row');
+    const lefts = rows.map(
+      (r) => r.querySelector('.cell')!.getBoundingClientRect().left,
+    );
+
+    // The marker lives in the row's own padding: the grid columns are
+    // computed from the host width, so anything in the flow would move
+    // every cell on the playing row and nothing else.
+    expect(new Set(lefts.map(Math.round)).size).toBe(1);
+  });
+});

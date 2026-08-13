@@ -378,6 +378,22 @@ export class QueuePanel
             color: var(--yj-accent-text, #ffd43b);
         }
 
+        /* a11y.22, the same rule as track-list one panel over: the
+           playing row was a tint and a text colour and nothing else.
+           The triangle lives in the row's own 16px left padding, so it
+           is a shape that is present or absent and the flex row does
+           not move. */
+        .track-item.active::before {
+            content: '';
+            position: absolute;
+            left: 5px;
+            top: 50%;
+            transform: translateY(-50%);
+            border-left: 5px solid var(--yj-accent-text, #ffd43b);
+            border-top: 4px solid transparent;
+            border-bottom: 4px solid transparent;
+        }
+
         .track-art {
             width: 32px;
             height: 32px;
