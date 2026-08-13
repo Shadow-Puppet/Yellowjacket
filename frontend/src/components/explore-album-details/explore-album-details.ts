@@ -1889,9 +1889,14 @@ export class ExploreAlbumDetails extends LitElement {
                 appearance=${this.isRequested ? 'filled' : 'outlined'}
                 @click=${() => void this.toggleRequested(request?.id)}
             >
+                <!-- The requested state used to ask for bookmark-check,
+                     which is a Font Awesome *Pro* name: never bundled,
+                     so this button has rendered the missing-icon
+                     fallback in that state ever since. Outline and solid
+                     of the same Free glyph carry the toggle instead. -->
                 <wa-icon
                     slot="start"
-                    name=${this.isRequested ? 'bookmark-check' : 'bookmark'}
+                    name=${this.isRequested ? 'solid/bookmark' : 'regular/bookmark'}
                 ></wa-icon>
                 ${this.isRequested ? 'Wanted' : 'Want this'}
             </wa-button>
