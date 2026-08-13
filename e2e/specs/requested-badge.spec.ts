@@ -95,9 +95,51 @@ test.describe('the requested badge', () => {
       .poll(() => badgeStatus(app, TITLE), { timeout: 10_000 })
       .toBe('queued');
 
-    // And it says so where it counts. The label is the whole point:
-    // the plus used to be accompanied by "is not in your library".
-    expect(await badgeLabel(app, TITLE)).toContain('queued for download');
+    // And it says so where it counts. The name is the whole point —
+    // the plus used to be accompanied by "is not in your library" —
+    // and since phase 3 it is a control, so the name is the action it
+    // performs rather than the state it is in.
+    expect(await badgeLabel(app, TITLE)).toBe(
+      `Cancel the request for album "${TITLE}"`,
+    );
+  });
+
+  test('clicking the badge wants the album and does not open it', async ({
+    app,
+  }) => {
+    // Only this tier can say this. The badge sits inside a card whose
+    // own click navigates, so the assertion is that a real gesture on
+    // the badge files a request *and* leaves the page where it was —
+    // and a synthetic MouseEvent is not evidence of either.
+    await clearRequest(app);
+    await app.getByTestId('nav-explore').click();
+    await search(app, TITLE);
+
+    // A locator rather than measured coordinates, and the difference
+    // is not style. The first version read a bounding box the moment
+    // the search settled and clicked it — but cover art is still
+    // arriving then, and a card that grows moves the badge, so the
+    // click landed on the card and opened the album. A locator
+    // re-resolves and waits for the element to stop moving.
+    const button = app
+      .locator(`library-status-indicator[label="${TITLE}"] button`)
+      .first();
+
+    // A badge that is not a button makes every assertion below vacuous.
+    await expect(button, 'the badge is not a button').toBeVisible();
+
+    await button.click();
+
+    await expect
+      .poll(() => badgeStatus(app, TITLE), { timeout: 10_000 })
+      .toBe('queued');
+
+    expect(
+      await app.evaluate(() => !!document.querySelector('explore-album-details')),
+      'the click reached the card underneath',
+    ).toBe(false);
+
+    requestId = 1; // so afterAll cleans up regardless of order
   });
 
   test('the requested state renders a real icon', async ({ app }) => {
