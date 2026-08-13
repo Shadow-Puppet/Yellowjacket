@@ -1,5 +1,6 @@
 import { LitElement, html, svg, css, nothing, unsafeCSS } from 'lit';
 import { designTokens } from '../../styles/tokens.css';
+import { srOnly } from '../../styles/sr-only.css';
 import {
     customElement,
     property,
@@ -162,6 +163,16 @@ export class QueuePanel
     /** The row holding the roving tab stop. */
     @state() private focusedIndex = 0;
 
+    /**
+     * What the live region says about the last keyboard reorder.
+     *
+     * Empty until there has been one — the region itself renders
+     * unconditionally, because a screen reader announces a *change* to a
+     * region it is already watching and ignores one that appears with
+     * its text already in it.
+     */
+    @state() private moveAnnouncement = '';
+
     private panelWidth = DEFAULT_WIDTH;
     private scrollbarDragging = false;
 
@@ -221,7 +232,7 @@ export class QueuePanel
         return this.playlistSubmenuPopup;
     }
 
-    static override styles = [designTokens, contextMenuStyles, exploreLinkStyles, css`
+    static override styles = [designTokens, srOnly, contextMenuStyles, exploreLinkStyles, css`
         :host {
             flex-shrink: 0;
             width: 0;
@@ -893,6 +904,19 @@ export class QueuePanel
             '.track-item',
         );
 
+        // `focusedIndex` is the roving tab stop, and until now only the
+        // arrow keys moved it — so a row focused by a click or by Tab
+        // left it saying 0, and every key below acted on the wrong row.
+        // Enter played the first track in the queue from any focused
+        // row, which is a pre-existing bug that Alt+Arrow made visible
+        // by moving something. The key event knows which row it came
+        // from; use that.
+        const rowIndex = Number(row?.dataset.index ?? NaN);
+
+        if (Number.isInteger(rowIndex) && rowIndex !== this.focusedIndex) {
+            this.focusedIndex = rowIndex;
+        }
+
         if (isContextMenuKey(e) && row) {
             e.preventDefault();
             e.stopPropagation();
@@ -907,6 +931,21 @@ export class QueuePanel
             e.stopPropagation();
             this.selection.clear();
             this.queue.playAtIndex(this.focusedIndex);
+
+            return;
+        }
+
+        // a11y.11: reordering the queue was drag-only, so its order
+        // could not be changed without a mouse at all.
+        //
+        // This has to come before `nextRovingIndex`, which switches on
+        // `e.key` and does not look at the modifiers — so Alt+ArrowUp
+        // already moved the roving focus, and would have gone on doing
+        // that *as well* as moving the row.
+        if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+            e.preventDefault();
+            e.stopPropagation();
+            this.moveFocusedRow(e.key === 'ArrowUp' ? -1 : 1, count);
 
             return;
         }
@@ -926,6 +965,48 @@ export class QueuePanel
             (i) => `.track-item[data-index="${i}"]`,
         );
     };
+
+    /**
+     * Move the focused row one position, and say where it went.
+     *
+     * It moves the *focused* row rather than the selection, which the
+     * drag path uses: the keyboard model already keeps those in step
+     * (every roving move re-selects the row it lands on), and "Alt+Down
+     * moved four rows you cannot see" is not a thing to do without an
+     * undo.
+     *
+     * The asymmetry in the target index is `MoveQueueTracks`'s, not
+     * ours. `toIndex` is an index into the array *before* the move, so
+     * moving down by one has to ask for `i + 2`: `i + 1` is where the
+     * row already is once you account for its own removal, and the
+     * backend's contiguous-block guard correctly treats it as a no-op.
+     */
+    private moveFocusedRow(delta: -1 | 1, count: number): void {
+        const from = this.focusedIndex;
+        const to = from + delta;
+
+        if (to < 0 || to >= count) {
+            this.moveAnnouncement =
+                delta < 0
+                    ? 'Already first in the queue'
+                    : 'Already last in the queue';
+
+            return;
+        }
+
+        this.queue.moveTracksInQueue([from], delta < 0 ? to : from + 2);
+
+        this.focusedIndex = to;
+        this.selection.handleContextMenu(String(to));
+        this.moveAnnouncement = `Moved to position ${to + 1} of ${count}`;
+
+        void focusRovingRow(
+            this,
+            this.virtualizer,
+            to,
+            (i) => `.track-item[data-index="${i}"]`,
+        );
+    }
 
     private onContextMenuAction(action: string) {
         const indices =
@@ -1569,6 +1650,9 @@ export class QueuePanel
                         : ''}"
                     @mousedown=${this.handleMouseDown}
                 ></div>
+                <div class="sr-only" role="status" aria-live="polite">
+                    ${this.moveAnnouncement}
+                </div>
                 <div class="header">
                     <h3>Queue</h3>
                     <div class="header-actions">
