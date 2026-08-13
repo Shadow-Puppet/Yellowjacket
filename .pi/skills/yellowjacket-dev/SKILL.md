@@ -97,6 +97,12 @@ reference, because you need them *before* the failure, not after.
   old behaviour. `make dev-headless` prints the esbuild error; a
   reload does not. One way to cause one is a stray backtick inside a
   comment in a `css` tagged template literal, which ends the literal.
+  **That one is a check now** — `make css-check` (instant, a pre-commit
+  hook and a CI step) names the file, the line and the cause, because
+  what you otherwise get is `Property 'scroll' does not exist on type
+  'CSSResult'` pointing at a line of prose, or every test in the suite
+  failing to import. It went in after the trap cost a fourth session in
+  which its own warning had been read twice.
 - **A failing CI job's log is reachable even when `gitea_ci job_logs`
   says it is not.** That endpoint 404s on this Gitea build. The REST
   API answers, with the `GITEA_TOKEN` already in the environment:
@@ -162,7 +168,8 @@ Two rules about climbing:
   do not exist.
 
 Before a commit, the gate is `make lint`, `make test`, `make ui-test`,
-`make bindings-check` and — from `frontend/` — `npx tsc --noEmit`. The
+`make bindings-check`, `make css-check` and — from `frontend/` —
+`npx tsc --noEmit`. The
 first four are lefthook hooks, so skipping them locally only defers the
 failure; the typecheck is a hook too but only CI runs it over the test
 tree, which is where it has actually broken.

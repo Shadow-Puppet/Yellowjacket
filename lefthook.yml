@@ -47,6 +47,15 @@ pre-commit:
       root: "frontend/"
       run: ./node_modules/.bin/tsc --noEmit
 
+    # A backtick in a comment inside a css`` literal ends the literal.
+    # tsc does catch it, as "Class static side incorrectly extends base
+    # class static side" pointing at a line of prose; this says what
+    # actually happened. Instant.
+    css-literals:
+      glob: "frontend/**/*.ts"
+      root: "frontend/"
+      run: node scripts/check-css-literals.mjs
+
 pre-push:
   parallel: true
   commands:

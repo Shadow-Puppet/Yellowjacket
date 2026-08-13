@@ -155,6 +155,16 @@ jobs:
         working-directory: /src/frontend
         run: npx tsc --noEmit
 
+      # A backtick inside a comment in a css`` literal ends the literal.
+      # tsc above does fail on it, with a message about CSSResult
+      # pointing at a line of prose; this one names the cause. It runs
+      # after tsc for exactly that reason — whichever fails, the log has
+      # the sentence in it.
+      - name: CSS template literals are intact
+        if: ${{ !cancelled() }}
+        working-directory: /src
+        run: make css-check
+
       - name: Component and store suite
         working-directory: /src
         run: make ui-test

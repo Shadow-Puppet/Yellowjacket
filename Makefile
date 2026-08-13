@@ -107,6 +107,13 @@ ui-setup: ## Install the Vitest browser provider's own Chromium (once)
 bindings-check: ## Fail if frontend/wailsjs is stale against the Go bindings
 	@./scripts/bindings-check.sh
 
+# A backtick inside a comment in a css`` literal ends the literal, and
+# what you get back is a type error about CSSResult, or every test in
+# the suite failing to import. Four sessions, three plans. Instant.
+.PHONY: css-check
+css-check: ## Fail if a css`` literal was ended early by a backtick in a comment
+	@cd frontend && node scripts/check-css-literals.mjs
+
 # .pi/ documents commands, and a skill that documents a command wrongly
 # is worse than no skill: an agent runs it confidently.  Every command
 # in there is a make target on purpose, so this is checkable.
