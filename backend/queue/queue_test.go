@@ -88,7 +88,7 @@ func TestSetQueue_PopulatesTracks(t *testing.T) {
 	q, db := setupTestQueue(t)
 	paths := seedAudioFiles(t, db, 5)
 
-	q.SetQueue(paths, 0, false)
+	q.SetQueue(paths, 0, false, Source{})
 
 	state := q.GetState()
 	if got := len(state.Tracks); got != 5 {
@@ -100,13 +100,56 @@ func TestSetQueue_PopulatesTracks(t *testing.T) {
 	}
 }
 
+func TestSetQueue_RecordsSource(t *testing.T) {
+	t.Parallel()
+
+	q, db := setupTestQueue(t)
+	paths := seedAudioFiles(t, db, 5)
+	source := Source{Type: "playlist", ID: 42, Label: "Road Trip"}
+
+	q.SetQueue(paths, 0, false, source)
+
+	if got := q.GetState().Source; got != source {
+		t.Errorf("source: got %+v, want %+v", got, source)
+	}
+}
+
+func TestSetQueue_ReplacesPriorSource(t *testing.T) {
+	t.Parallel()
+
+	q, db := setupTestQueue(t)
+	paths := seedAudioFiles(t, db, 5)
+
+	q.SetQueue(paths, 0, false, Source{Type: "album", ID: 1, Label: "First"})
+	q.SetQueue(paths, 0, false, Source{Type: "genre", Label: "Jazz"})
+
+	want := Source{Type: "genre", Label: "Jazz"}
+	if got := q.GetState().Source; got != want {
+		t.Errorf("source: got %+v, want %+v", got, want)
+	}
+}
+
+func TestClear_ResetsSource(t *testing.T) {
+	t.Parallel()
+
+	q, db := setupTestQueue(t)
+	paths := seedAudioFiles(t, db, 5)
+
+	q.SetQueue(paths, 0, false, Source{Type: "album", ID: 1, Label: "Some Album"})
+	q.Clear()
+
+	if got := q.GetState().Source; got != (Source{}) {
+		t.Errorf("source after Clear: got %+v, want zero value", got)
+	}
+}
+
 func TestSetQueue_WithStartIndex(t *testing.T) {
 	t.Parallel()
 
 	q, db := setupTestQueue(t)
 	paths := seedAudioFiles(t, db, 5)
 
-	q.SetQueue(paths, 2, false)
+	q.SetQueue(paths, 2, false, Source{})
 
 	state := q.GetState()
 	if state.CurrentIndex != 2 {
@@ -123,7 +166,7 @@ func TestSetQueue_WithShuffleStart(t *testing.T) {
 	// Enable shuffle mode first.
 	q.ToggleShuffle()
 
-	q.SetQueue(paths, 0, true)
+	q.SetQueue(paths, 0, true, Source{})
 
 	state := q.GetState()
 	if !state.ShuffleMode {
@@ -145,7 +188,7 @@ func TestAddTrack_AppendsToQueue(t *testing.T) {
 	q, db := setupTestQueue(t)
 	paths := seedAudioFiles(t, db, 4)
 
-	q.SetQueue(paths[:3], 0, false)
+	q.SetQueue(paths[:3], 0, false, Source{})
 	q.AddTrack(paths[3])
 
 	state := q.GetState()
@@ -165,7 +208,7 @@ func TestInsertTracksAt_BeforeCurrentIndex(t *testing.T) {
 	q, db := setupTestQueue(t)
 	paths := seedAudioFiles(t, db, 7)
 
-	q.SetQueue(paths[:5], 2, false)
+	q.SetQueue(paths[:5], 2, false, Source{})
 
 	// Insert 2 tracks at index 1 (before currentIndex=2).
 	q.InsertTracksAt(paths[5:7], 1)
@@ -187,7 +230,7 @@ func TestInsertTracksAt_AfterCurrentIndex(t *testing.T) {
 	q, db := setupTestQueue(t)
 	paths := seedAudioFiles(t, db, 7)
 
-	q.SetQueue(paths[:5], 2, false)
+	q.SetQueue(paths[:5], 2, false, Source{})
 
 	// Insert 2 tracks at index 3 (after currentIndex=2).
 	q.InsertTracksAt(paths[5:7], 3)
@@ -205,7 +248,7 @@ func TestMoveQueueTracks_ForwardMove(t *testing.T) {
 	q, db := setupTestQueue(t)
 	paths := seedAudioFiles(t, db, 5)
 
-	q.SetQueue(paths, 0, false)
+	q.SetQueue(paths, 0, false, Source{})
 
 	// Move track at index 1 to index 3.
 	q.MoveQueueTracks([]int{1}, 3)
@@ -224,7 +267,7 @@ func TestMoveQueueTracks_BackwardMove(t *testing.T) {
 	q, db := setupTestQueue(t)
 	paths := seedAudioFiles(t, db, 5)
 
-	q.SetQueue(paths, 0, false)
+	q.SetQueue(paths, 0, false, Source{})
 
 	// Move track at index 3 to index 1.
 	q.MoveQueueTracks([]int{3}, 1)
@@ -242,7 +285,7 @@ func TestMoveQueueTracks_MoveCurrentTrack(t *testing.T) {
 	q, db := setupTestQueue(t)
 	paths := seedAudioFiles(t, db, 5)
 
-	q.SetQueue(paths, 2, false)
+	q.SetQueue(paths, 2, false, Source{})
 
 	// Move the current track (index 2) to index 4.
 	q.MoveQueueTracks([]int{2}, 4)
@@ -261,7 +304,7 @@ func TestRemoveTrack_RemovesCorrectTrack(t *testing.T) {
 	q, db := setupTestQueue(t)
 	paths := seedAudioFiles(t, db, 5)
 
-	q.SetQueue(paths, 0, false)
+	q.SetQueue(paths, 0, false, Source{})
 
 	q.RemoveTrack(2)
 
@@ -284,7 +327,7 @@ func TestRemoveTrack_RemoveCurrentTrack(t *testing.T) {
 	q, db := setupTestQueue(t)
 	paths := seedAudioFiles(t, db, 5)
 
-	q.SetQueue(paths, 2, false)
+	q.SetQueue(paths, 2, false, Source{})
 
 	q.RemoveTrack(2)
 
@@ -308,7 +351,7 @@ func TestClear_EmptiesQueue(t *testing.T) {
 	q, db := setupTestQueue(t)
 	paths := seedAudioFiles(t, db, 5)
 
-	q.SetQueue(paths, 0, false)
+	q.SetQueue(paths, 0, false, Source{})
 	q.Clear()
 
 	state := q.GetState()
@@ -327,7 +370,7 @@ func TestToggleShuffle_TogglesMode(t *testing.T) {
 	q, db := setupTestQueue(t)
 	paths := seedAudioFiles(t, db, 5)
 
-	q.SetQueue(paths, 0, false)
+	q.SetQueue(paths, 0, false, Source{})
 
 	// Toggle on.
 	q.ToggleShuffle()

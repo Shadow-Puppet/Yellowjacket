@@ -6,12 +6,20 @@ import '@awesome.me/webawesome/dist/components/icon/icon.js';
  * Library status for an entity (artist, album, or track).
  *
  *  - `in-library`: the entity is already in the user's local library.
+ *  - `partial`: some of it is here and the rest is known to be missing
+ *    — an album whose files declare twelve tracks where nine are held.
+ *    Only ever correct when that total is *known*; see `owned` /
+ *    `expected` below.
  *  - `queued`: the entity has been handed off to a download client but
  *    hasn't arrived yet.  Reserved for future download-client plumbing.
  *  - `not-in-library` (default): the entity is not owned and has not
  *    been requested.
  */
-export type LibraryStatus = 'in-library' | 'queued' | 'not-in-library';
+export type LibraryStatus =
+    | 'in-library'
+    | 'partial'
+    | 'queued'
+    | 'not-in-library';
 
 /**
  * Tri-state library status indicator: a small circular badge embedded
@@ -65,6 +73,22 @@ export class LibraryStatusIndicator extends LitElement {
     @property({ type: Number })
     size = 20;
 
+    /**
+     * How many of `expected` are held, for `status="partial"`.
+     *
+     * These are only meaningful when the caller *knows* the total. A
+     * tag that never declared one is a third state, and a caller with
+     * no total must pass `in-library`, not a ring at 0% — most of an
+     * untagged library would otherwise wear an incompleteness mark
+     * nothing in the data supports.
+     */
+    @property({ type: Number })
+    owned = 0;
+
+    /** The declared track total behind `owned`. */
+    @property({ type: Number })
+    expected = 0;
+
     static override styles = css`
         :host {
             display: inline-flex;
@@ -84,6 +108,34 @@ export class LibraryStatusIndicator extends LitElement {
         :host([status='queued']) {
             --indicator-bg: #f5a623;
             --indicator-fg: #000;
+        }
+
+        /* The ring draws its own arc, so the badge behind it stays
+         * empty rather than taking a fill that would show through. */
+        :host([status='partial']) {
+            --indicator-bg: transparent;
+            --indicator-fg: #f5a623;
+        }
+
+        svg {
+            width: 100%;
+            height: 100%;
+            /* Start the arc at twelve o'clock; SVG angles start east. */
+            transform: rotate(-90deg);
+        }
+
+        circle {
+            fill: none;
+            stroke-width: 3;
+        }
+
+        .ring-track {
+            stroke: rgba(255, 255, 255, 0.18);
+        }
+
+        .ring-fill {
+            stroke: #f5a623;
+            stroke-linecap: round;
         }
 
         :host([status='not-in-library']) {
@@ -136,6 +188,13 @@ export class LibraryStatusIndicator extends LitElement {
         }
     }
 
+    /** The held fraction, clamped — extras do not overfill the ring. */
+    private fraction(): number {
+        if (this.expected <= 0) return 0;
+
+        return Math.min(1, Math.max(0, this.owned / this.expected));
+    }
+
     private tooltip(): string {
         const kind =
             this.entityType === 'album'
@@ -148,6 +207,10 @@ export class LibraryStatusIndicator extends LitElement {
         switch (this.status) {
             case 'in-library':
                 return `${capitalize(kind)}${name} is in your library`;
+            case 'partial':
+                // The count is the whole point — a ring alone says
+                // "some" to a sighted user and nothing to anyone else.
+                return `${this.owned} of ${this.expected} tracks of ${kind}${name} are in your library`;
             case 'queued':
                 return `${capitalize(kind)}${name} is queued for download`;
             default:
@@ -167,10 +230,37 @@ export class LibraryStatusIndicator extends LitElement {
 
         return html`
             <span class="badge" role="img" title=${title} aria-label=${title}>
-                ${this.iconName()
-                    ? html`<wa-icon name=${this.iconName()} aria-hidden="true"></wa-icon>`
-                    : nothing}
+                ${this.status === 'partial'
+                    ? this.renderRing()
+                    : this.iconName()
+                      ? html`<wa-icon name=${this.iconName()} aria-hidden="true"></wa-icon>`
+                      : nothing}
             </span>
+        `;
+    }
+
+    /**
+     * The progress arc.  Drawn as a stroked circle rather than a conic
+     * gradient so the ring keeps a constant width at every `size` and
+     * the arc's ends stay round.
+     */
+    private renderRing() {
+        const radius = 8;
+        const circumference = 2 * Math.PI * radius;
+        const offset = circumference * (1 - this.fraction());
+
+        return html`
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+                <circle class="ring-track" cx="10" cy="10" r=${radius}></circle>
+                <circle
+                    class="ring-fill"
+                    cx="10"
+                    cy="10"
+                    r=${radius}
+                    stroke-dasharray=${circumference}
+                    stroke-dashoffset=${offset}
+                ></circle>
+            </svg>
         `;
     }
 }

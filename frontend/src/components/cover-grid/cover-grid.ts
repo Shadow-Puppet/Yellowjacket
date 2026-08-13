@@ -21,6 +21,7 @@ import { SearchController } from '@store/controllers/search-controller';
 import { ViewLifecycleMixin } from '@utils/view-lifecycle';
 import { RovingGridController } from '@utils/roving-grid';
 import { queueStore } from '@store/queue-store';
+import type { QueueSource } from '@store/queue-store';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
 import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
@@ -986,6 +987,11 @@ export class CoverGrid
         return null;
     }
 
+    /** The queue source recorded when a full album starts playing. */
+    private albumSource(album: library.Album): QueueSource {
+        return { type: 'album', id: album.ID, label: album.Name };
+    }
+
     /* ====================================================================
      * Delegated album event handlers
      * ==================================================================== */
@@ -1066,7 +1072,7 @@ export class CoverGrid
 
         this.selectedAlbums = new Set();
         this.closeDropdown();
-        queueStore.setQueue(filePaths, 0, true);
+        queueStore.setQueue(filePaths, 0, true, this.albumSource(hit.album));
     };
 
     private onGridAlbumKeydown = (
@@ -1232,7 +1238,17 @@ export class CoverGrid
         if (filePaths.length === 0) return;
 
         this.selectedTracks = new Set();
-        queueStore.setQueue(filePaths, index);
+
+        const album = this.albums.find(
+            (a) => a.ID === this.expandedAlbumId,
+        );
+
+        queueStore.setQueue(
+            filePaths,
+            index,
+            false,
+            album ? this.albumSource(album) : undefined,
+        );
     };
 
     private onTrackContextMenu = (
@@ -1439,6 +1455,7 @@ export class CoverGrid
 
     private async onContextMenuAction(action: string) {
         let filePaths: string[];
+        let source: QueueSource | undefined;
 
         if (this.contextMenuTarget.kind === 'track') {
             filePaths =
@@ -1446,19 +1463,35 @@ export class CoverGrid
                     this.selectedTracks,
                     this.expandedTracks,
                 );
+
+            const album = this.albums.find(
+                (a) => a.ID === this.expandedAlbumId,
+            );
+
+            source = album ? this.albumSource(album) : undefined;
         } else {
             filePaths =
                 await this.selMgr.getContextMenuAlbumFilePaths(
                     this.contextMenuAlbumId,
                     this.selectedAlbums,
                 );
+
+            // A single targeted album has an unambiguous source; a
+            // multi-album selection does not.
+            if (this.selectedAlbums.size <= 1) {
+                const album = this.albums.find(
+                    (a) => a.ID === this.contextMenuAlbumId,
+                );
+
+                source = album ? this.albumSource(album) : undefined;
+            }
         }
 
         if (filePaths.length === 0) return;
 
         switch (action) {
             case 'play':
-                queueStore.setQueue(filePaths, 0, true);
+                queueStore.setQueue(filePaths, 0, true, source);
                 break;
             case 'add-to-queue':
                 queueStore.addTracksToQueue(filePaths);

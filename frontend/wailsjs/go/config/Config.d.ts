@@ -4,6 +4,8 @@ import {download} from '../models';
 import {tracklist} from '../models';
 import {context} from '../models';
 
+export function GetDefaultPage():Promise<string>;
+
 export function GetDownloadPreferences():Promise<download.AutoDownloadPrefs>;
 
 export function GetFavoritesIconStyle():Promise<string>;
@@ -13,6 +15,8 @@ export function GetFavoritesPlaylistID():Promise<number>;
 export function GetLibraryDirectory():Promise<string>;
 
 export function GetPinDefaultPlaylist():Promise<boolean>;
+
+export function GetQueueFallback():Promise<string>;
 
 export function GetScanConcurrency():Promise<string>;
 
@@ -32,6 +36,8 @@ export function Save():Promise<void>;
 
 export function SetContext(arg1:context.Context):Promise<void>;
 
+export function SetDefaultPage(arg1:string):Promise<void>;
+
 export function SetDownloadPreferences(arg1:download.AutoDownloadPrefs):Promise<void>;
 
 export function SetFavoritesIconStyle(arg1:string):Promise<void>;
@@ -41,6 +47,8 @@ export function SetFavoritesPlaylistID(arg1:number):Promise<void>;
 export function SetLibraryDirectory(arg1:string):Promise<void>;
 
 export function SetPinDefaultPlaylist(arg1:boolean):Promise<void>;
+
+export function SetQueueFallback(arg1:string):Promise<void>;
 
 export function SetScanConcurrency(arg1:string):Promise<void>;
 

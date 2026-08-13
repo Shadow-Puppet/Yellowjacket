@@ -1,6 +1,7 @@
 import { avatarBackground } from '@utils/avatar-color';
 import { LitElement, html, css, nothing } from 'lit';
-import { customElement, property, state } from 'lit/decorators.js';
+import { customElement, property, state, query } from 'lit/decorators.js';
+import { classMap } from 'lit/directives/class-map.js';
 import { designTokens } from '../../styles/tokens.css';
 import {
     LookupArtist,
@@ -29,15 +30,35 @@ import { downloadStore } from '../../store/download-store';
 import '@awesome.me/webawesome/dist/components/button/button.js';
 import { trackLink, exploreLinkStyles } from '../../utils/explore-link';
 import { describeError } from '../../utils/describe-error';
-import { GetAlbumsByArtist } from '@go/library/Library';
+import {
+    GetAlbumsByArtist,
+    GetFilePathsByAlbums,
+    GetFilePathsByRecordingMBIDs,
+} from '@go/library/Library';
 import { EventsOn } from '@runtime/runtime';
 import { Events } from '../../events';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '../library-status-indicator/library-status-indicator.js';
 import '../catalog-scope-notice/catalog-scope-notice.js';
 import type { CatalogScope } from '../catalog-scope-notice/catalog-scope-notice.js';
+import { queueStore } from '../../store/queue-store';
+import type { QueueSource } from '../../store/queue-store';
+import { notificationStore } from '../../store/notification-store';
+import '../notifications/inline-notice';
+import {
+    ContextMenuController,
+    contextMenuStyles,
+    isContextMenuKey,
+} from '@utils/context-menu-controller.js';
+import type { ContextMenuHost } from '@utils/context-menu-controller.js';
+import '@awesome.me/webawesome/dist/components/popup/popup.js';
+import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
+import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 
 /* ── Constants ── */
+
+/** The region the artist header's own failures are rendered in. */
+export const ExploreArtistRegion = 'explore-artist';
 
 /** Desired section order for grouping release types. */
 const TYPE_ORDER = ['Albums', 'EP', 'Single', 'Other Albums'];
@@ -75,7 +96,7 @@ function formatListenCount(count: number): string {
 /* ── Component ── */
 
 @customElement('explore-artist-details')
-export class ExploreArtistDetails extends LitElement {
+export class ExploreArtistDetails extends LitElement implements ContextMenuHost {
     /* ── Public attributes ── */
 
     @property({ type: String, attribute: 'artist-mbid' })
@@ -125,11 +146,38 @@ export class ExploreArtistDetails extends LitElement {
     @state() private similarExpanded = false;
     private libraryMBIDs = new Set<string>();
 
+    /* ── Track context menu ── */
+
+    private ctxMenu = new ContextMenuController(this);
+
+    /** The top track the open context menu applies to. */
+    @state() private ctxMenuTrack: LBTopRecording | null = null;
+
+    @query('#track-context-menu')
+    private contextMenuPopup!: WaPopup;
+
+    // -- ContextMenuHost interface --
+    // No playlist submenu here, for the same reason as the album page:
+    // every action resolves one recording's file lazily by MBID.
+
+    getContextMenuPopup(): WaPopup | undefined {
+        return this.contextMenuPopup;
+    }
+
+    getPlaylistSubmenuPopup(): WaPopup | undefined {
+        return undefined;
+    }
+
+    onContextMenuClose(): void {
+        this.ctxMenuTrack = null;
+    }
+
     /* ── Styles ── */
 
     static override styles = [
         designTokens,
         exploreLinkStyles,
+        contextMenuStyles,
         css`
             :host {
                 display: flex;
@@ -307,11 +355,28 @@ export class ExploreArtistDetails extends LitElement {
                 transition: background 0.1s ease;
             }
 
+            .track-item.owned {
+                cursor: pointer;
+            }
+
             .track-item:hover {
                 background: var(
                     --yj-bg-overlay,
                     rgba(255, 255, 255, 0.04)
                 );
+            }
+
+            .track-item:focus-visible {
+                outline: 2px solid var(--yj-accent-text, #ffd43b);
+                outline-offset: -2px;
+            }
+
+            .artist-play-actions {
+                margin-top: 10px;
+                display: flex;
+                gap: 8px;
+                align-items: center;
+                flex-wrap: wrap;
             }
 
             .track-rank {
@@ -1731,6 +1796,209 @@ export class ExploreArtistDetails extends LitElement {
         }
     }
 
+    /* ── Playback ── */
+
+    /**
+     * Local album ids for every release group this page already knows
+     * is owned. `releaseGroups` holds the artist's full discography, so
+     * this covers everything the "Play library tracks" button promises
+     * — not just what is currently expanded on screen.
+     */
+    private ownedLocalAlbumIds(): number[] {
+        const ids = new Set<number>();
+
+        for (const rg of this.releaseGroups) {
+            if (rg.localId && rg.localId > 0) ids.add(rg.localId);
+        }
+
+        return [...ids];
+    }
+
+    /**
+     * File paths for every track this page can show is owned, across
+     * the whole discography. Each id came from a release group the
+     * backend or the library cache already cross-referenced, and
+     * `GetFilePathsByAlbums` only ever returns files that actually
+     * exist for that local album — so this cannot pull in a track the
+     * user does not have, even when the catalog release itself is only
+     * partially owned.
+     */
+    private async libraryFilePaths(): Promise<string[]> {
+        const albumIds = this.ownedLocalAlbumIds();
+
+        if (albumIds.length === 0) return [];
+
+        const libraryID = libraryStore.getSelectedLibraryId() ?? 0;
+        const byAlbum = await GetFilePathsByAlbums(albumIds, libraryID);
+        const paths: string[] = [];
+
+        for (const id of albumIds) paths.push(...(byAlbum[id] ?? []));
+
+        return paths;
+    }
+
+    /**
+     * The local artist id for "Playing from" purposes — the `local-
+     * artist-id` navigation attribute when the caller had one, else a
+     * lookup by MBID against the cached library artists (the same
+     * cross-reference `hydrateFromCache`/`checkLibrary` already use).
+     */
+    private resolveLocalArtistId(): number {
+        if (this.localArtistId > 0) return this.localArtistId;
+
+        if (!this.artistMBID) return 0;
+
+        for (const a of libraryStore.cachedArtists ?? []) {
+            if (a.MBID === this.artistMBID) return a.ID;
+        }
+
+        return 0;
+    }
+
+    private queueSource(): QueueSource | undefined {
+        const id = this.resolveLocalArtistId();
+
+        if (id === 0) return undefined;
+
+        return { type: 'artist', id, label: this.displayName };
+    }
+
+    /** Play every owned track by this artist, optionally shuffled. */
+    private async playLibraryTracks(shuffle: boolean): Promise<void> {
+        try {
+            const paths = await this.libraryFilePaths();
+
+            if (paths.length === 0) {
+                notificationStore.inline(ExploreArtistRegion, {
+                    text: 'None of this artist’s tracks could be found in your library.',
+                });
+
+                return;
+            }
+
+            if (shuffle && !queueStore.getState().shuffleMode) {
+                queueStore.toggleShuffle();
+            }
+
+            queueStore.setQueue(paths, 0, shuffle, this.queueSource());
+        } catch (error) {
+            console.error('Could not play artist:', error);
+            notificationStore.inline(ExploreArtistRegion, {
+                text: describeError(error, 'Could not play this artist’s library tracks.'),
+            });
+        }
+    }
+
+    /**
+     * File path for one top track, resolved by recording MBID — the
+     * same key `inLibrary`/`localId` were set from. Works whether or
+     * not the containing release itself matched a local album.
+     */
+    private async trackFilePath(track: LBTopRecording): Promise<string | null> {
+        if (!(track.inLibrary || track.localId) || !track.recordingMbid) return null;
+
+        const libraryID = libraryStore.getSelectedLibraryId() ?? 0;
+        const byMBID = await GetFilePathsByRecordingMBIDs([track.recordingMbid], libraryID);
+
+        return byMBID[track.recordingMbid]?.[0] ?? null;
+    }
+
+    private async playTrack(track: LBTopRecording): Promise<void> {
+        try {
+            const path = await this.trackFilePath(track);
+
+            if (!path) {
+                notificationStore.inline(ExploreArtistRegion, {
+                    text: 'This track could not be found in your library.',
+                });
+
+                return;
+            }
+
+            queueStore.setQueue([path], 0, false, this.queueSource());
+        } catch (error) {
+            console.error('Could not play track:', error);
+            notificationStore.inline(ExploreArtistRegion, {
+                text: describeError(error, 'Could not play this track.'),
+            });
+        }
+    }
+
+    private async queueTrackNext(track: LBTopRecording): Promise<void> {
+        const path = await this.trackFilePath(track);
+
+        if (path) queueStore.playNext(path);
+    }
+
+    private async addTrackToQueue(track: LBTopRecording): Promise<void> {
+        const path = await this.trackFilePath(track);
+
+        if (path) queueStore.addToQueue(path);
+    }
+
+    private isTrackOwned(track: LBTopRecording): boolean {
+        return Boolean(track.inLibrary || track.localId);
+    }
+
+    private onTrackRowDblClick(track: LBTopRecording): void {
+        if (!this.isTrackOwned(track)) return;
+
+        void this.playTrack(track);
+    }
+
+    private onTrackRowKeydown(e: KeyboardEvent, track: LBTopRecording): void {
+        if (isContextMenuKey(e)) {
+            e.preventDefault();
+            this.ctxMenuTrack = track;
+            this.ctxMenu.openFrom(e.currentTarget as HTMLElement);
+
+            return;
+        }
+
+        if ((e.key === 'Enter' || e.key === ' ') && this.isTrackOwned(track)) {
+            e.preventDefault();
+            void this.playTrack(track);
+        }
+    }
+
+    private onTrackContextMenu(e: MouseEvent, track: LBTopRecording): void {
+        e.preventDefault();
+        e.stopPropagation();
+
+        this.ctxMenuTrack = track;
+        this.ctxMenu.openAt(e.clientX, e.clientY);
+    }
+
+    private onContextMenuAction(action: 'play' | 'add-to-queue' | 'play-next'): void {
+        const track = this.ctxMenuTrack;
+
+        this.ctxMenu.close();
+
+        if (!track || !this.isTrackOwned(track)) return;
+
+        switch (action) {
+            case 'play':
+                void this.playTrack(track);
+                break;
+            case 'add-to-queue':
+                void this.addTrackToQueue(track);
+                break;
+            case 'play-next':
+                void this.queueTrackNext(track);
+                break;
+        }
+    }
+
+    private viewTrackOnMusicBrainz(): void {
+        const track = this.ctxMenuTrack;
+
+        this.ctxMenu.close();
+
+        if (!track?.recordingMbid) return;
+
+        window.open(`https://musicbrainz.org/recording/${track.recordingMbid}`, '_blank', 'noopener');
+    }
+
     /* ── Navigation ── */
 
     private navigateBack() {
@@ -1910,6 +2178,7 @@ export class ExploreArtistDetails extends LitElement {
                     ${this.artist?.popularity && this.artist.popularity > 0
                         ? html`<span class="artist-meta">${formatListenCount(this.artist.popularity)} plays on ListenBrainz</span>`
                         : nothing}
+                    ${this.renderPlayLibraryAction()}
                     ${this.renderFollowAction()}
                 </div>
             </div>
@@ -1922,6 +2191,85 @@ export class ExploreArtistDetails extends LitElement {
                 ${this.renderTopSection()} ${this.renderDiscography()}
                 ${this.renderSimilarArtists()}
             </div>
+            <inline-notice
+                region=${ExploreArtistRegion}
+                testid="artist-action-message"
+            ></inline-notice>
+            ${this.renderTrackContextMenu()}
+        `;
+    }
+
+    /**
+     * The artist-page equivalent of the album page's Play button: play
+     * everything by this artist that is actually in the library. Only
+     * rendered when at least one release group is owned — an artist
+     * page with nothing local has nothing for this button to do.
+     */
+    private renderPlayLibraryAction() {
+        if (this.ownedLocalAlbumIds().length === 0) return nothing;
+
+        return html`
+            <div class="artist-play-actions">
+                <wa-button
+                    size="small"
+                    appearance="filled"
+                    data-testid="artist-play-library"
+                    @click=${() => void this.playLibraryTracks(false)}
+                >
+                    <wa-icon slot="start" name="play"></wa-icon>
+                    Play library tracks
+                </wa-button>
+                <wa-button
+                    size="small"
+                    appearance="outlined"
+                    data-testid="artist-shuffle-library"
+                    @click=${() => void this.playLibraryTracks(true)}
+                >
+                    <wa-icon slot="start" name="shuffle"></wa-icon>
+                    Shuffle
+                </wa-button>
+            </div>
+        `;
+    }
+
+    private renderTrackContextMenu() {
+        const track = this.ctxMenuTrack;
+
+        return html`
+            <wa-popup
+                id="track-context-menu"
+                placement="bottom-start"
+                flip
+                shift
+                .active=${this.ctxMenu.contextMenuOpen}
+            >
+                ${this.ctxMenu.contextMenuOpen && track
+                    ? html`
+                          <div class="context-menu-panel" role="menu" aria-label="Track actions">
+                              ${this.isTrackOwned(track)
+                                  ? html`
+                                        <wa-dropdown-item @click=${() => this.onContextMenuAction('play')}>
+                                            <wa-icon slot="icon" name="play"></wa-icon>
+                                            Play
+                                        </wa-dropdown-item>
+                                        <wa-dropdown-item @click=${() => this.onContextMenuAction('add-to-queue')}>
+                                            <wa-icon slot="icon" name="plus"></wa-icon>
+                                            Add to Queue
+                                        </wa-dropdown-item>
+                                        <wa-dropdown-item @click=${() => this.onContextMenuAction('play-next')}>
+                                            <wa-icon slot="icon" name="forward-step"></wa-icon>
+                                            Play Next
+                                        </wa-dropdown-item>
+                                    `
+                                  : nothing}
+                              <wa-dropdown-item @click=${() => this.viewTrackOnMusicBrainz()}>
+                                  <wa-icon slot="icon" name="globe"></wa-icon>
+                                  View on MusicBrainz
+                              </wa-dropdown-item>
+                          </div>
+                      `
+                    : nothing}
+            </wa-popup>
         `;
     }
 
@@ -2091,7 +2439,17 @@ export class ExploreArtistDetails extends LitElement {
                                     <div class="track-list">
                                         ${tracks.map(
                                             (t, i) => html`
-                                                <div class="track-item">
+                                                <div
+                                                    class=${classMap({ 'track-item': true, owned: this.isTrackOwned(t) })}
+                                                    tabindex="0"
+                                                    role="button"
+                                                    aria-label=${this.isTrackOwned(t)
+                                                        ? `Play “${t.trackName}”`
+                                                        : `${t.trackName} — not in your library`}
+                                                    @dblclick=${() => this.onTrackRowDblClick(t)}
+                                                    @contextmenu=${(e: MouseEvent) => this.onTrackContextMenu(e, t)}
+                                                    @keydown=${(e: KeyboardEvent) => this.onTrackRowKeydown(e, t)}
+                                                >
                                                     <span class="track-rank">${i + 1}</span>
                                                     <div class="track-art">
                                                         ${(() => {

@@ -221,6 +221,10 @@ export class AppSidebar extends LitElement {
             'yj-drag-active',
             this.onDragActive as EventListener,
         );
+        document.addEventListener(
+            'navigate',
+            this.onGlobalNavigate as EventListener,
+        );
     }
 
     override disconnectedCallback() {
@@ -241,6 +245,10 @@ export class AppSidebar extends LitElement {
         document.removeEventListener(
             'yj-drag-active',
             this.onDragActive as EventListener,
+        );
+        document.removeEventListener(
+            'navigate',
+            this.onGlobalNavigate as EventListener,
         );
         this.clearDragHoverTimer();
     }
@@ -356,6 +364,19 @@ export class AppSidebar extends LitElement {
     /** Views that accept track drops. */
     private static readonly DROP_VIEWS: Set<View> =
         new Set(['playlists']);
+
+    /** Keeps the highlighted nav item in sync with navigation that
+     * originates outside the sidebar itself (e.g. the launch-page
+     * dispatch in index.ts). */
+    private onGlobalNavigate = (
+        e: CustomEvent<{ view?: string }>,
+    ) => {
+        const view = e.detail.view;
+
+        if (view && this.navItems.some((item) => item.id === view)) {
+            this.activeView = view as View;
+        }
+    };
 
     private onDragActive = (
         e: CustomEvent<DragActiveDetail>,

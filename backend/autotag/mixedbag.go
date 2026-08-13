@@ -75,50 +75,92 @@ func trackAlbumTags(tracks []LocalTrack) []string {
 	return out
 }
 
-// TrackCluster is a set of local tracks sharing a non-empty (album,
-// album-artist) tag pair — a candidate sub-album hiding inside a
-// mixed-bag folder.
+// TrackCluster is a set of local tracks whose album (and album-artist)
+// tags are close enough to describe the same release — a candidate
+// sub-album hiding inside a mixed-bag folder.
 type TrackCluster struct {
 	AlbumName   string
 	AlbumArtist string
 	Tracks      []LocalTrack
 }
 
-// ClusterByAlbumArtist groups tracks by normalized (album tag,
-// album-artist tag) and returns the clusters with at least
-// clusterMinSize members, in first-seen order (the caller typically
-// passes tracks already ordered by disc/track/path, so this stays
-// deterministic run to run).  Tracks with no album tag, or whose
-// cluster never reaches clusterMinSize, are omitted — they belong in
-// the leftover folder, not a synthetic group of their own.
-func ClusterByAlbumArtist(tracks []LocalTrack) []TrackCluster {
-	type key struct{ album, artist string }
+// clusterFuzzyThreshold is the maximum stringDist between a track's
+// album tag (and, separately, its album-artist tag) and the tags that
+// started a cluster for the two to be considered the same album.
+// Tight enough to keep genuinely different albums by the same artist
+// apart, loose enough to absorb the kind of typo, dropped diacritic,
+// or stray whitespace that exact Normalize()-equality clustering used
+// to split into separate clusters — the same distance function
+// candidate scoring already uses to decide two titles describe the
+// same release (rank.go's albumTitleFit/artistCreditFit), applied to
+// the same question here: do these two tags name the same thing.
+const clusterFuzzyThreshold = 0.15
 
-	index := make(map[key]int, 4) //nolint:mnd
+// clusterTracks groups tracks into candidate sub-albums: a track
+// joins the first existing cluster whose founding track's album tag
+// is within clusterFuzzyThreshold (in stringDist terms), and whose
+// album-artist tag either also matches or is empty on either side —
+// same "empty means unknown, not a mismatch" contract as
+// artistCreditFit — or else it starts a new cluster. Tracks with no
+// album tag are left unassigned (memberOf entry -1).
+//
+// Comparing only against the cluster's founding track, not a running
+// centroid or every member, keeps this O(tracks × clusters) and
+// deterministic in first-seen order — the order ClusterByAlbumArtist
+// and SplitPlan's callers already depend on (they pass tracks ordered
+// by disc/track/path).
+func clusterTracks(tracks []LocalTrack) (clusters []TrackCluster, memberOf []int) {
+	type rep struct{ album, artist string }
 
-	var clusters []TrackCluster
+	var reps []rep
 
-	for _, t := range tracks {
-		album := Normalize(t.AlbumTag)
-		if album == "" {
+	memberOf = make([]int, len(tracks))
+
+	for i, t := range tracks {
+		if Normalize(t.AlbumTag) == "" {
+			memberOf[i] = -1
+
 			continue
 		}
 
-		k := key{album: album, artist: Normalize(t.AlbumArtistTag)}
+		joined := -1
 
-		if i, ok := index[k]; ok {
-			clusters[i].Tracks = append(clusters[i].Tracks, t)
+		for ci, r := range reps {
+			artistMatches := t.AlbumArtistTag == "" || r.artist == "" ||
+				stringDist(t.AlbumArtistTag, r.artist) <= clusterFuzzyThreshold
 
-			continue
+			if artistMatches && stringDist(t.AlbumTag, r.album) <= clusterFuzzyThreshold {
+				joined = ci
+
+				break
+			}
 		}
 
-		index[k] = len(clusters)
-		clusters = append(clusters, TrackCluster{
-			AlbumName:   t.AlbumTag,
-			AlbumArtist: t.AlbumArtistTag,
-			Tracks:      []LocalTrack{t},
-		})
+		if joined < 0 {
+			joined = len(clusters)
+
+			reps = append(reps, rep{album: t.AlbumTag, artist: t.AlbumArtistTag})
+			clusters = append(clusters, TrackCluster{
+				AlbumName:   t.AlbumTag,
+				AlbumArtist: t.AlbumArtistTag,
+			})
+		}
+
+		clusters[joined].Tracks = append(clusters[joined].Tracks, t)
+		memberOf[i] = joined
 	}
+
+	return clusters, memberOf
+}
+
+// ClusterByAlbumArtist groups tracks by album/album-artist tag
+// similarity (see clusterTracks) and returns the clusters with at
+// least clusterMinSize members, in first-seen order.  Tracks with no
+// album tag, or whose cluster never reaches clusterMinSize, are
+// omitted — they belong in the leftover folder, not a synthetic group
+// of their own.
+func ClusterByAlbumArtist(tracks []LocalTrack) []TrackCluster {
+	clusters, _ := clusterTracks(tracks)
 
 	out := clusters[:0]
 
@@ -134,55 +176,19 @@ func ClusterByAlbumArtist(tracks []LocalTrack) []TrackCluster {
 // SplitPlan returns the full set of synthetic groups a mixed-bag
 // folder should be torn into: ClusterByAlbumArtist's tag-matched
 // sub-albums, plus a one-track cluster for every track that didn't
-// share an (album, album-artist) pair with anything else in the
-// folder. Unlike ClusterByAlbumArtist alone — which leaves
-// unclustered tracks behind in the parent group, where they'd still
-// get folded into whatever partial-album match the scorer finds for
-// the rest of the pile — this guarantees every track leaves the
-// parent, so a folder of entirely unrelated singles (no two tracks
-// share an album tag) still gets torn apart instead of being scored
-// as one bogus album with a pile of "extra" tracks. Each singleton's
-// evidence-scaled score (rank.go) keeps it appropriately humble on
-// its own — it just no longer drags an unrelated release's score
-// down, or gets dragged down by one.
+// end up sharing a cluster with anything else in the folder. Unlike
+// ClusterByAlbumArtist alone — which leaves unclustered tracks behind
+// in the parent group, where they'd still get folded into whatever
+// partial-album match the scorer finds for the rest of the pile —
+// this guarantees every track leaves the parent, so a folder of
+// entirely unrelated singles (no two tracks share an album tag) still
+// gets torn apart instead of being scored as one bogus album with a
+// pile of "extra" tracks. Each singleton's evidence-scaled score
+// (rank.go) keeps it appropriately humble on its own — it just no
+// longer drags an unrelated release's score down, or gets dragged
+// down by one.
 func SplitPlan(tracks []LocalTrack) []TrackCluster {
-	type key struct{ album, artist string }
-
-	index := make(map[key]int, 4) //nolint:mnd
-
-	var clusters []TrackCluster
-
-	// memberOf[i] is 1+the cluster index track i was assigned to (by
-	// album/artist tag match), or 0 if it never matched anything.
-	// Tracked by slice position rather than any LocalTrack field —
-	// AudioFileID/FilePath are frequently zero-valued in this
-	// package's own tests and would collide, wrongly treating
-	// distinct untagged tracks as duplicates of one another.
-	memberOf := make([]int, len(tracks))
-
-	for i, t := range tracks {
-		album := Normalize(t.AlbumTag)
-		if album == "" {
-			continue
-		}
-
-		k := key{album: album, artist: Normalize(t.AlbumArtistTag)}
-
-		if ci, ok := index[k]; ok {
-			clusters[ci].Tracks = append(clusters[ci].Tracks, t)
-			memberOf[i] = ci + 1
-
-			continue
-		}
-
-		index[k] = len(clusters)
-		memberOf[i] = len(clusters) + 1
-		clusters = append(clusters, TrackCluster{
-			AlbumName:   t.AlbumTag,
-			AlbumArtist: t.AlbumArtistTag,
-			Tracks:      []LocalTrack{t},
-		})
-	}
+	clusters, memberOf := clusterTracks(tracks)
 
 	// Clusters that never reached clusterMinSize don't survive as a
 	// group; their sole member falls through to the singleton pass
@@ -198,7 +204,7 @@ func SplitPlan(tracks []LocalTrack) []TrackCluster {
 	}
 
 	for i, t := range tracks {
-		if ci := memberOf[i] - 1; ci >= 0 {
+		if ci := memberOf[i]; ci >= 0 {
 			if _, ok := keptIndex[ci]; ok {
 				continue
 			}

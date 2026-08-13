@@ -7,11 +7,11 @@ import (
 // emitQueueChanged emits the full queue state to the frontend.
 func (q *Queue) emitQueueChanged() {
 	state := State{
-		Tracks:           q.tracks,
-		CurrentIndex:     q.currentIndex,
-		ShuffleMode:      q.shuffleMode,
-		RepeatMode:       q.repeatMode,
-		SourcePlaylistID: q.sourcePlaylistID,
+		Tracks:       q.tracks,
+		CurrentIndex: q.currentIndex,
+		ShuffleMode:  q.shuffleMode,
+		RepeatMode:   q.repeatMode,
+		Source:       q.source,
 	}
 
 	// Ensure tracks is never nil in JSON.

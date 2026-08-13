@@ -25,6 +25,7 @@ import type { SortOption } from '@components/page-header/page-header';
 import { TrackListController } from '@store/controllers/tracklist-controller';
 import { FavoritesController } from '@store/controllers/favorites-controller';
 import { queueStore } from '@store/queue-store';
+import type { QueueSource } from '@store/queue-store';
 import { LibraryController } from '@store/controllers/library-controller';
 import {
     COLUMN_DEFS,
@@ -121,6 +122,29 @@ export class TrackList
      */
     @property({ type: Array, attribute: false })
     externalTracks?: library.Track[];
+
+    /**
+     * What a host embedding this list (e.g. `genre-details`) should say
+     * a queue built from it came from. Unset when this list is showing
+     * the whole library — the one case with no host to ask, and where
+     * `effectiveQueueSource` supplies "All Tracks" itself.
+     */
+    @property({ attribute: false })
+    queueSource?: QueueSource;
+
+    /**
+     * The library's own top-level Tracks view has no host to name a
+     * source — it *is* the source. Anything embedding this list with
+     * `externalTracks` is expected to set `queueSource` itself; if it
+     * doesn't, the queue is left undescribed rather than mislabeled.
+     */
+    private get effectiveQueueSource(): QueueSource | undefined {
+        if (this.queueSource) return this.queueSource;
+
+        return this.externalTracks
+            ? undefined
+            : { type: 'tracks', id: 0, label: 'All Tracks' };
+    }
 
     /**
      * Loading, empty and failed are three different things, and this
@@ -1198,7 +1222,7 @@ export class TrackList
 
         if (filePaths.length === 0) return;
 
-        queueStore.setQueue(filePaths, 0, true);
+        queueStore.setQueue(filePaths, 0, true, this.effectiveQueueSource);
     };
 
     override willUpdate(
@@ -1528,7 +1552,7 @@ export class TrackList
 
     private onTrackRowDblClick(track: library.Track) {
         this.selection.clear();
-        queueStore.setQueue([track.FilePath], 0);
+        queueStore.setQueue([track.FilePath], 0, false, this.effectiveQueueSource);
     }
 
     private onTrackContextMenu(e: MouseEvent, track: library.Track) {
@@ -1600,7 +1624,7 @@ export class TrackList
 
         switch (action) {
             case 'play':
-                queueStore.setQueue(filePaths, 0, true);
+                queueStore.setQueue(filePaths, 0, true, this.effectiveQueueSource);
                 break;
             case 'add-to-queue':
                 queueStore.addTracksToQueue(filePaths);

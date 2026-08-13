@@ -78,7 +78,7 @@ func TestEmit_SetQueuePushesFullState(t *testing.T) {
 	q, db, rec := setupRecordedQueue(t)
 	paths := seedAudioFiles(t, db, 5)
 
-	q.SetQueue(paths, 2, false)
+	q.SetQueue(paths, 2, false, Source{})
 
 	if _, ok := rec.Wait(events.QueueChanged, waitFor); !ok {
 		t.Fatalf("no QueueChanged after SetQueue; got %v", rec.Names())
@@ -103,7 +103,7 @@ func TestEmit_ClearSendsEmptyNotNilTrackList(t *testing.T) {
 	q, db, rec := setupRecordedQueue(t)
 	paths := seedAudioFiles(t, db, 3)
 
-	q.SetQueue(paths, 0, false)
+	q.SetQueue(paths, 0, false, Source{})
 	rec.Reset()
 	q.Clear()
 
@@ -156,7 +156,7 @@ func TestEmit_ToggleShuffleReportsBothModes(t *testing.T) {
 	t.Parallel()
 
 	q, db, rec := setupRecordedQueue(t)
-	q.SetQueue(seedAudioFiles(t, db, 5), 0, false)
+	q.SetQueue(seedAudioFiles(t, db, 5), 0, false, Source{})
 	rec.Reset()
 
 	q.ToggleShuffle()
@@ -190,7 +190,7 @@ func TestEmit_AddTrackSendsDeltaNotSnapshot(t *testing.T) {
 	q, db, rec := setupRecordedQueue(t)
 	paths := seedAudioFiles(t, db, 4)
 
-	q.SetQueue(paths[:3], 0, false)
+	q.SetQueue(paths[:3], 0, false, Source{})
 
 	if _, ok := rec.Wait(events.QueueChanged, waitFor); !ok {
 		t.Fatalf("no QueueChanged after SetQueue; got %v", rec.Names())
@@ -223,7 +223,7 @@ func TestEmit_RemoveTracksReportsPositions(t *testing.T) {
 	q, db, rec := setupRecordedQueue(t)
 	paths := seedAudioFiles(t, db, 5)
 
-	q.SetQueue(paths, 0, false)
+	q.SetQueue(paths, 0, false, Source{})
 
 	if _, ok := rec.Wait(events.QueueChanged, waitFor); !ok {
 		t.Fatalf("no QueueChanged after SetQueue; got %v", rec.Names())
@@ -251,7 +251,7 @@ func TestEmit_NextPushesIndexOnly(t *testing.T) {
 	q, db, rec := setupRecordedQueue(t)
 	paths := seedAudioFiles(t, db, 3)
 
-	q.SetQueue(paths, 0, false)
+	q.SetQueue(paths, 0, false, Source{})
 
 	if _, ok := rec.Wait(events.QueueChanged, waitFor); !ok {
 		t.Fatalf("no QueueChanged after SetQueue; got %v", rec.Names())

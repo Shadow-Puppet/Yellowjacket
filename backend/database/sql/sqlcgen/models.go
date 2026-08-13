@@ -267,6 +267,9 @@ type Queue struct {
 	ShuffleMode      bool
 	RepeatMode       string
 	ShuffleOrder     sql.NullString
+	SourceType       string
+	SourceID         int64
+	SourceLabel      string
 }
 
 type QueueTrack struct {
@@ -305,6 +308,7 @@ type ReleaseGroup struct {
 	TotalDiscs          sql.NullInt64
 	Mbid                sql.NullString
 	OriginalYear        sql.NullInt64
+	PendingReleaseMbid  sql.NullString
 }
 
 type ReleaseGroupRecording struct {
@@ -313,6 +317,7 @@ type ReleaseGroupRecording struct {
 	RecordingID    int64
 	TrackNumber    sql.NullInt64
 	DiscNumber     sql.NullInt64
+	TotalTracks    sql.NullInt64
 }
 
 type ReleaseToRg struct {
@@ -363,6 +368,7 @@ type TaggingItem struct {
 	CreatedAt            time.Time
 	Synthetic            int64
 	ParentGroupKey       string
+	AlbumArtistConflict  int64
 }
 
 type TrackMetadatum struct {

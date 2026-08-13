@@ -12,6 +12,11 @@ import '@awesome.me/webawesome/dist/components/popup/popup.js';
 import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 import { QueueController } from '@store/controllers/queue-controller';
+import {
+    describeQueueSource,
+    isQueueSourceNavigable,
+    navigateToQueueSource,
+} from '@utils/queue-source-link';
 import { confirmAction } from '@components/confirm-dialog/confirm-dialog';
 import '@components/playlist-picker/playlist-picker.js';
 import type { PlaylistPicker } from '@components/playlist-picker/playlist-picker.js';
@@ -285,10 +290,33 @@ export class QueuePanel
             flex-shrink: 0;
         }
 
+        .header-title {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            min-width: 0;
+        }
+
         .header h3 {
             margin: 0;
             font-size: var(--yj-text-lg);
             font-weight: 600;
+        }
+
+        .queue-source {
+            font-size: var(--yj-text-xs, 0.75rem);
+            color: var(--yj-text-tertiary, #666);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .queue-source.navigable {
+            cursor: pointer;
+        }
+
+        .queue-source.navigable:hover {
+            text-decoration: underline;
         }
 
         .header-actions {
@@ -1678,7 +1706,23 @@ export class QueuePanel
                     ${this.moveAnnouncement}
                 </div>
                 <div class="header">
-                    <h3>Queue</h3>
+                    <div class="header-title">
+                        <h3>Queue</h3>
+                        ${describeQueueSource(this.queue.source)
+                            ? html`
+                              <span
+                                  class="queue-source ${isQueueSourceNavigable(this.queue.source) ? 'navigable' : ''}"
+                                  @click=${(e: MouseEvent) => {
+                                      if (!isQueueSourceNavigable(this.queue.source)) return;
+                                      navigateToQueueSource(
+                                          e.currentTarget as EventTarget,
+                                          this.queue.source,
+                                      );
+                                  }}
+                              >${describeQueueSource(this.queue.source)}</span>
+                            `
+                            : nothing}
+                    </div>
                     <div class="header-actions">
                         <button
                             class="header-action-button"

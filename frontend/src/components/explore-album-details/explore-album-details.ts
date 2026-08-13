@@ -1,5 +1,6 @@
 import { LitElement, html, css, nothing } from 'lit';
-import { customElement, property, state } from 'lit/decorators.js';
+import { customElement, property, state, query } from 'lit/decorators.js';
+import { classMap } from 'lit/directives/class-map.js';
 import { designTokens } from '../../styles/tokens.css';
 import {
     LookupReleaseGroup,
@@ -8,6 +9,7 @@ import {
 } from '@go/explore/Service';
 import {
     GetAlbumTracks,
+    GetAlbumCompleteness,
     GetFilePathsByAlbums,
     GetFilePathsByRecordingMBIDs,
 } from '@go/library/Library';
@@ -24,14 +26,25 @@ import { EventsOn } from '@runtime/runtime';
 import { Events } from '../../events';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '../library-status-indicator/library-status-indicator.js';
+import type { LibraryStatus } from '../library-status-indicator/library-status-indicator.js';
 import '../catalog-scope-notice/catalog-scope-notice.js';
 import type { CatalogScope } from '../catalog-scope-notice/catalog-scope-notice.js';
 import '@awesome.me/webawesome/dist/components/button/button.js';
 import '../download-picker/download-picker';
 import { downloadStore } from '../../store/download-store';
 import { queueStore } from '../../store/queue-store';
+import type { QueueSource } from '../../store/queue-store';
 import { notificationStore } from '../../store/notification-store';
 import '../notifications/inline-notice';
+import {
+    ContextMenuController,
+    contextMenuStyles,
+    isContextMenuKey,
+} from '@utils/context-menu-controller.js';
+import type { ContextMenuHost } from '@utils/context-menu-controller.js';
+import '@awesome.me/webawesome/dist/components/popup/popup.js';
+import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
+import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 
 /**
  * The region the album header's own failures are rendered in.
@@ -41,7 +54,26 @@ import '../notifications/inline-notice';
  */
 export const ExploreAlbumRegion = 'explore-album';
 
+/**
+ * How long to wait on a background release browse that has reported
+ * neither success nor failure before treating it as gone.  See
+ * `armReleasesFallback` for why this is generous.
+ */
+const RELEASES_FALLBACK_MS = 60000;
+
 /* ── Utility functions (duplicated per Knowledge Pattern #9 — no cross-component imports) ── */
+
+/** The earliest release date in a group, for tie-breaking. */
+function earliestDate(releases: MBRelease[]): string {
+    let earliest = '\uffff';
+
+    for (const r of releases) {
+        const d = r.date || '\uffff';
+        if (d < earliest) earliest = d;
+    }
+
+    return earliest;
+}
 
 function extractYear(dateStr: string): string {
     if (!dateStr) return '';
@@ -71,7 +103,7 @@ interface ReleaseCluster {
 }
 
 /** Synthetic kinds — virtual entries pinned at the top of the dropdown. */
-type SyntheticKind = 'standard' | 'comprehensive' | 'library';
+type SyntheticKind = 'standard' | 'library';
 
 /** Unified version-entry shape covering both synthetic and real clusters. */
 interface VersionEntry {
@@ -90,6 +122,12 @@ interface VersionEntry {
     /** Underlying cluster for real entries; undefined for synthetics. */
     cluster?: ReleaseCluster;
     /**
+     * This real version is the one on disk.  It carries a marker rather
+     * than being replaced by a synthetic "Your Library" entry, so the
+     * user can still see *which* release they own.
+     */
+    inLibrary?: boolean;
+    /**
      * For synthetics: the cluster (or synthetic source) that this entry
      * was *built from*, used for the metadata header.  For real clusters,
      * always equal to `cluster`.
@@ -100,7 +138,7 @@ interface VersionEntry {
 /* ── Component ── */
 
 @customElement('explore-album-details')
-export class ExploreAlbumDetails extends LitElement {
+export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
     /* ── Public attributes ── */
 
     @property({ type: String, attribute: 'release-group-mbid' })
@@ -134,15 +172,29 @@ export class ExploreAlbumDetails extends LitElement {
     /** True once the versions/tracklist on screen came from the catalog
      * rather than standing in from the local library. */
     @state() private catalogReleasesLoaded = false;
-    /** True while a catalog fetch (foreground or background) may still
-     * land.  Distinct from loadingReleases, which goes false as soon as
-     * *something* is renderable — including a library stand-in. */
-    @state() private catalogPending = false;
+    /** True once the catalog has been *shown* not to answer for this
+     * release group — the browse errored, or it came back empty after
+     * the background fetch reported itself done.  Only this puts the
+     * page in `unavailable`; a fetch that is merely slow does not. */
+    @state() private catalogFailed = false;
+    /** How much of this album the local files say is here, or null when
+     * the album is not in the library at all. */
+    @state() private completeness: library.AlbumCompleteness | null = null;
     /** Unified entries shown in the dropdown — synthetics first, then real clusters. */
     @state() private versionEntries: VersionEntry[] = [];
     /** Currently-selected dropdown entry (by VersionEntry.key). */
     @state() private selectedVersionKey: string = '';
     @state() private coverArtURL = '';
+
+    /**
+     * The local album's own tracks — the authoritative answer to "what
+     * is actually on disk," independent of `this.releases`, which
+     * `fetchReleases()` fully replaces with catalog data as soon as it
+     * lands. "Your Library" is built from this, so a slow or wrong
+     * catalog match can never make it show a different release's
+     * tracklist than what the files are actually tagged to.
+     */
+    @state() private localTracks: MBTrack[] = [];
 
     /** Open state of the "find this album" dialog. */
     @state() private pickerOpen = false;
@@ -166,11 +218,39 @@ export class ExploreAlbumDetails extends LitElement {
     /** Unsubscribe handle for the download store. */
     private downloadUnsub: (() => void) | null = null;
 
+    /* ── Track context menu ── */
+
+    private ctxMenu = new ContextMenuController(this);
+
+    /** The track the open context menu applies to. */
+    @state() private ctxMenuTrack: MBTrack | null = null;
+
+    @query('#track-context-menu')
+    private contextMenuPopup!: WaPopup;
+
+    // -- ContextMenuHost interface --
+    // No playlist submenu on this page — every action here resolves a
+    // single track's file lazily by MBID, and the submenu exists for a
+    // caller that already has file paths in hand.
+
+    getContextMenuPopup(): WaPopup | undefined {
+        return this.contextMenuPopup;
+    }
+
+    getPlaylistSubmenuPopup(): WaPopup | undefined {
+        return undefined;
+    }
+
+    onContextMenuClose(): void {
+        this.ctxMenuTrack = null;
+    }
+
     /* ── Styles ── */
 
     static override styles = [
         designTokens,
         exploreLinkStyles,
+        contextMenuStyles,
         css`
             :host {
                 display: flex;
@@ -336,17 +416,6 @@ export class ExploreAlbumDetails extends LitElement {
             }
 
             /* ── Section headers ── */
-            .tracklist-legend {
-                display: inline-flex;
-                align-items: center;
-                gap: 4px;
-                margin-left: 10px;
-                font-weight: 400;
-                text-transform: none;
-                letter-spacing: 0;
-                color: var(--yj-text-tertiary, #888);
-            }
-
             .section-header {
                 font-size: 11px;
                 font-weight: 600;
@@ -489,6 +558,10 @@ export class ExploreAlbumDetails extends LitElement {
                 transition: background 0.1s ease;
             }
 
+            .track-row.owned {
+                cursor: pointer;
+            }
+
             .track-row:hover {
                 background: var(
                     --yj-bg-overlay,
@@ -501,6 +574,11 @@ export class ExploreAlbumDetails extends LitElement {
                     --yj-bg-overlay,
                     rgba(255, 255, 255, 0.04)
                 );
+            }
+
+            .track-row:focus-visible {
+                outline: 2px solid var(--yj-accent-text, #ffd43b);
+                outline-offset: -2px;
             }
 
             .track-position {
@@ -531,8 +609,19 @@ export class ExploreAlbumDetails extends LitElement {
                 white-space: nowrap;
             }
 
-            .track-row library-status-indicator {
-                flex-shrink: 0;
+            /* A track the library does not have, on the pattern a
+             * streaming service uses for something it cannot play: the
+             * row stays, dimmed, so the album reads as the album rather
+             * than as the subset that happens to be here.
+             *
+             * The dimming is a colour, so it cannot be the only signal
+             * — the row also carries aria-disabled, which is what
+             * reaches anyone not seeing it.  Secondary rather than
+             * tertiary because the row's hover background is
+             * bgOverlay, which tertiary does not clear. */
+            .track-row.unowned .track-title {
+                color: var(--yj-text-secondary, #b3b3b3);
+                font-weight: 400;
             }
         `,
     ];
@@ -540,6 +629,7 @@ export class ExploreAlbumDetails extends LitElement {
     /* ── Lifecycle ── */
 
     private unsubReleasesReady?: () => void;
+    private unsubReleasesFailed?: () => void;
     /** Release-group MBIDs whose AlbumReleasesReady event we've handled,
      * so a background BrowseReleases fetch re-hydrates versions once. */
     private releasesReloaded = new Set<string>();
@@ -582,6 +672,23 @@ export class ExploreAlbumDetails extends LitElement {
                 void this.fetchReleases(mbid);
             },
         );
+
+        // The same browse reporting that it failed.  This is the only
+        // prompt reason to say the catalog is unavailable — before it,
+        // the page had to infer a failure from a deadline, which a
+        // browse queued behind PrefetchReleases on a 1 req/s limiter
+        // misses routinely while succeeding.
+        this.unsubReleasesFailed = EventsOn(
+            Events.AlbumReleasesFailed,
+            (mbid: string) => {
+                if (mbid !== this.releaseGroupMBID) return;
+
+                if (this.releasesFallbackTimer) clearTimeout(this.releasesFallbackTimer);
+                this.releasesReloaded.add(mbid);
+                this.catalogFailed = true;
+                this.loadingReleases = false;
+            },
+        );
     }
 
     override disconnectedCallback() {
@@ -589,13 +696,23 @@ export class ExploreAlbumDetails extends LitElement {
         this.downloadUnsub?.();
         this.downloadUnsub = null;
         this.unsubReleasesReady?.();
+        this.unsubReleasesFailed?.();
         if (this.releasesFallbackTimer) clearTimeout(this.releasesFallbackTimer);
     }
 
     /**
-     * Arm a one-shot fallback that stops the versions spinner if
-     * AlbumReleasesReady never arrives (e.g. the background browse stalled
-     * or the release group genuinely has no releases).
+     * Arm a one-shot fallback for the case neither event covers: the
+     * background browse neither finished nor reported an error, because
+     * it hung.  Both outcomes now emit, so this is a backstop rather
+     * than the primary verdict — and it is long, because the thing it
+     * used to cut short was a browse that was going to succeed.
+     *
+     * A cold browse waits on a 1 req/s limiter shared with
+     * PrefetchReleases, which fires up to eight of them when an artist
+     * page renders — and an album is almost always opened from one.  So
+     * eight seconds of queueing before the request starts is the normal
+     * path, not the tail, and the old 12 s deadline was reporting a
+     * healthy fetch as a catalog failure.
      */
     private armReleasesFallback(mbid: string) {
         if (this.releasesFallbackTimer) clearTimeout(this.releasesFallbackTimer);
@@ -604,9 +721,9 @@ export class ExploreAlbumDetails extends LitElement {
             if (this.releasesReloaded.has(mbid)) return;
 
             this.releasesReloaded.add(mbid);
-            this.catalogPending = false;
+            this.catalogFailed = true;
             if (this.releases.length === 0) this.loadingReleases = false;
-        }, 12000);
+        }, RELEASES_FALLBACK_MS);
     }
 
     /** Whether we've already scrolled to the highlight target. */
@@ -704,16 +821,17 @@ export class ExploreAlbumDetails extends LitElement {
         this.loadingInfo = true;
         this.loadingReleases = true;
         this.catalogReleasesLoaded = false;
-        this.catalogPending = Boolean(this.releaseGroupMBID);
+        this.catalogFailed = false;
+        this.completeness = null;
         this.releases = [];
         this.versionEntries = [];
         this.selectedVersionKey = '';
+        this.localTracks = [];
 
         // Local-only album (no MBID) — populate entirely from library.
         if (!mbid && this.localAlbumId) {
-
             await this.hydrateLocalOnly();
-
+            await this.loadCompleteness();
 
             return;
         }
@@ -736,6 +854,37 @@ export class ExploreAlbumDetails extends LitElement {
         // Awaited for the side effect of populating the local
         // tracklist; the return value isn't currently consumed.
         await this.hydrateFromLibrary(mbid);
+
+        // `hydrateFromLibrary` finds the library album by MBID or by a
+        // name+artist match — if the caller already knows the local
+        // album id (the ordinary case, navigated here from the
+        // library) and that lookup still missed it, fetch by id
+        // directly rather than leaving "Your Library" with nothing to
+        // go on.
+        if (this.localTracks.length === 0 && this.localAlbumId > 0) {
+            await this.loadLocalTracks(this.localAlbumId);
+        }
+
+        // Phase 1b: ask the files how much of this album is here.
+        const completeness = await this.loadCompleteness();
+
+        // A complete album needs nothing from the catalog, and this is
+        // the whole point of asking: the release group is MBID-matched
+        // (so the identity is right) and the files' own tags account
+        // for every track (so the tracklist is right), which between
+        // them are the two things a browse was being spent on.  Opening
+        // an owned album is now offline.
+        //
+        // The catalog still has *versions* — other pressings, editions —
+        // and those are not derivable from tags. They stay a click away
+        // rather than a page load away.
+        if (completeness?.complete) {
+            this.loadingReleases = false;
+            void this.fetchReleaseGroup(mbid);
+            this.resolveCoverArt();
+
+            return;
+        }
 
         // Phase 2: fire API calls independently so each section
         // renders as its data arrives.  Allow the versions section one
@@ -800,19 +949,9 @@ export class ExploreAlbumDetails extends LitElement {
             return;
         }
 
-        const localTracks: MBTrack[] = tracks.map((t) => ({
-            mbid: t.RecordingMBID || '',
-            title: t.TrackName,
-            position: t.TrackNumber || 0,
-            length: this.parseDurationMs(t.TrackLength),
-            discNumber: t.DiscNumber || 1,
-            inLibrary: true,
-        } as MBTrack));
+        const localTracks = this.mapLocalTracks(tracks);
 
-        localTracks.sort((a, b) => {
-            const d = (a.discNumber || 1) - (b.discNumber || 1);
-            return d !== 0 ? d : a.position - b.position;
-        });
+        this.localTracks = localTracks;
 
         const localRelease: MBRelease = {
             mbid: '',
@@ -825,6 +964,75 @@ export class ExploreAlbumDetails extends LitElement {
         this.releases = [localRelease];
         this.buildClusters();
         this.loadingReleases = false;
+    }
+
+    /**
+     * Map local track rows to `MBTrack`s and sort them into disc/track
+     * order — the shape every "built from local data" release/entry on
+     * this page is made of.
+     */
+    private mapLocalTracks(
+        tracks: Awaited<ReturnType<typeof GetAlbumTracks>>,
+    ): MBTrack[] {
+        const mapped: MBTrack[] = (tracks ?? []).map((t) => ({
+            mbid: t.RecordingMBID || '',
+            title: t.TrackName,
+            position: t.TrackNumber || 0,
+            length: this.parseDurationMs(t.TrackLength),
+            discNumber: t.DiscNumber || 1,
+            inLibrary: true,
+        } as MBTrack));
+
+        mapped.sort((a, b) => {
+            const d = (a.discNumber || 1) - (b.discNumber || 1);
+            return d !== 0 ? d : a.position - b.position;
+        });
+
+        return mapped;
+    }
+
+    /**
+     * Read how much of this album is present, from the tags the scan
+     * already stored.  No network, one query.
+     *
+     * Silent on failure: this decides whether to *skip* work and how to
+     * draw a badge, so an unanswered question falls back to the old
+     * behaviour rather than surfacing an error the user cannot act on.
+     */
+    private async loadCompleteness(): Promise<library.AlbumCompleteness | null> {
+        if (this.localAlbumId <= 0) {
+            this.completeness = null;
+
+            return null;
+        }
+
+        try {
+            this.completeness = await GetAlbumCompleteness(this.localAlbumId);
+        } catch {
+            this.completeness = null;
+        }
+
+        return this.completeness;
+    }
+
+    /**
+     * Fetch and set `localTracks` directly by local album id — the
+     * definite source of truth, used when nothing else has already
+     * populated it (see the call site in `loadAllData`).
+     */
+    private async loadLocalTracks(albumId: number): Promise<void> {
+        try {
+            const tracks = await GetAlbumTracks(albumId);
+
+            this.localTracks = this.mapLocalTracks(tracks);
+        } catch {
+            this.localTracks = [];
+        }
+
+        // A catalog fetch may have already built the version list
+        // without a "Your Library" entry to point at — rebuild now
+        // that there's local data to match against it.
+        if (this.releases.length > 0) this.buildClusters();
     }
 
     private async hydrateFromLibrary(mbid: string): Promise<boolean> {
@@ -880,20 +1088,9 @@ export class ExploreAlbumDetails extends LitElement {
 
         if (!tracks || tracks.length === 0) return false;
 
-        const localTracks: MBTrack[] = tracks.map((t) => ({
-            mbid: t.RecordingMBID || '',
-            title: t.TrackName,
-            position: t.TrackNumber || 0,
-            length: this.parseDurationMs(t.TrackLength),
-            discNumber: t.DiscNumber || 1,
-            inLibrary: true,
-        } as MBTrack));
+        const localTracks = this.mapLocalTracks(tracks);
 
-        // Sort by disc, then position.
-        localTracks.sort((a, b) => {
-            const d = (a.discNumber || 1) - (b.discNumber || 1);
-            return d !== 0 ? d : a.position - b.position;
-        });
+        this.localTracks = localTracks;
 
         // Wrap into a single MBRelease.
         const localRelease: MBRelease = {
@@ -976,7 +1173,7 @@ export class ExploreAlbumDetails extends LitElement {
                 // Warm cache hit (or the background re-fetch landed):
                 // authoritative MB versions replace any local placeholder.
                 this.catalogReleasesLoaded = true;
-                this.catalogPending = false;
+                this.catalogFailed = false;
                 this.releases = releases;
                 this.buildClusters();
                 this.loadingReleases = false;
@@ -993,9 +1190,10 @@ export class ExploreAlbumDetails extends LitElement {
             }
 
             // A cold miss after the background fetch already signalled
-            // ready is as far as the catalog is going to get.
+            // ready is as far as the catalog is going to get: it
+            // answered, and the answer was nothing.
             if (this.releasesReloaded.has(mbid)) {
-                this.catalogPending = false;
+                this.catalogFailed = true;
             }
         } catch (err) {
             console.error('[explore-album] BrowseReleases error', err);
@@ -1004,7 +1202,7 @@ export class ExploreAlbumDetails extends LitElement {
                 'The catalog did not answer for this album\u2019s versions.',
             );
             this.loadingReleases = false;
-            this.catalogPending = false;
+            this.catalogFailed = true;
         }
     }
 
@@ -1015,22 +1213,226 @@ export class ExploreAlbumDetails extends LitElement {
      * recording MBIDs), scores each cluster, then builds the unified
      * version-entry list (synthetics + clusters) for the dropdown.
      */
+    /**
+     * Fingerprint a tracklist: tracks sorted by (discNumber, position),
+     * recording MBIDs joined. Two tracklists with the same fingerprint
+     * are the same edition for display purposes — this is also how a
+     * local album's own tracks are matched against a catalog cluster
+     * for "Your Library" (`buildLibraryEntry`), so a match here is a
+     * real one, not a guess.
+     */
+    private static fingerprint(tracks: MBTrack[]): string {
+        const sorted = [...tracks].sort((a, b) => {
+            const discDiff = (a.discNumber || 1) - (b.discNumber || 1);
+            if (discDiff !== 0) return discDiff;
+            return a.position - b.position;
+        });
+
+        return sorted.map((t) => t.mbid).join('|');
+    }
+
+    /**
+     * How many genuinely different tracklists the version entries hold.
+     *
+     * Deliberately *not* `fingerprint()`, which keys on recording MBIDs
+     * alone: a library entry built from untagged files has none, so
+     * every such tracklist fingerprints to the same run of empty
+     * strings and would compare equal to any other. Falling back to the
+     * title lets a local copy be recognised as the same tracklist as
+     * the catalog's when that is what it is — which is exactly the case
+     * that decides whether the dropdown is a choice or a decoration.
+     */
+    private distinctTracklistCount(): number {
+        // The basis is chosen for the whole comparison, not per track.
+        // A per-track `mbid || title` fallback is asymmetric: it only
+        // helps when *both* sides lack ids, so an untagged library copy
+        // and the catalog's identical tracklist keyed one by title and
+        // one by MBID and never compared equal — which put a dropdown
+        // on every owned album the moment its catalog data landed, with
+        // two options showing the same songs.
+        const allTagged = this.versionEntries.every((e) =>
+            e.tracks.every((t) => !!t.mbid),
+        );
+
+        const seen = new Set<string>();
+
+        for (const entry of this.versionEntries) {
+            const key = [...entry.tracks]
+                .sort((a, b) => {
+                    const discDiff = (a.discNumber || 1) - (b.discNumber || 1);
+
+                    return discDiff !== 0 ? discDiff : a.position - b.position;
+                })
+                .map(
+                    (t) =>
+                        `${t.discNumber || 1}:${t.position}:${
+                            allTagged ? t.mbid : t.title.trim().toLowerCase()
+                        }`,
+                )
+                .join('|');
+
+            seen.add(key);
+        }
+
+        return seen.size;
+    }
+
+    /** The set of recording MBIDs on a tracklist, order ignored. */
+    private static trackMBIDSet(tracks: MBTrack[]): Set<string> {
+        const set = new Set<string>();
+
+        for (const t of tracks) if (t.mbid) set.add(t.mbid);
+
+        return set;
+    }
+
+    /** How many recordings differ between two MBID sets. */
+    private static symmetricDifferenceSize(a: Set<string>, b: Set<string>): number {
+        let diff = 0;
+
+        for (const x of a) if (!b.has(x)) diff++;
+        for (const x of b) if (!a.has(x)) diff++;
+
+        return diff;
+    }
+
+    /**
+     * How many tracks two clusters may differ by and still count as
+     * the same edition for display purposes. A bonus track present on
+     * one regional pressing and missing from another — or a tagging
+     * gap that drops one recording's MBID — produces a different exact
+     * fingerprint but isn't a meaningfully different "version" to a
+     * listener choosing between them.
+     */
+    private static readonly NEAR_DUPLICATE_TOLERANCE = 2;
+
+    /**
+     * Fold clusters that differ from a larger one by only a couple of
+     * tracks into it, so the "Versions" list reflects meaningfully
+     * different editions rather than every minor pressing variation.
+     * This is the fix for the dropdown getting so long it stopped
+     * being useful — trying to give every pressing its own row was the
+     * over-categorization problem, not a missing feature.
+     *
+     * Largest-tracklist-first, so a cluster only ever merges into
+     * something at least as big as itself: the result keeps the
+     * fuller tracklist and folds the combined release counts into it,
+     * rather than the reverse (which would silently drop tracks from
+     * what's shown). A cluster with no recording MBIDs at all
+     * (unidentifiable) is left alone — there's nothing to compare.
+     */
+    private mergeNearDuplicateClusters(
+        clusters: ReleaseCluster[],
+    ): ReleaseCluster[] {
+        const sets = new Map<ReleaseCluster, Set<string>>(
+            clusters.map((c) => [
+                c,
+                ExploreAlbumDetails.trackMBIDSet(c.representative.tracks ?? []),
+            ]),
+        );
+        const sorted = [...clusters].sort(
+            (a, b) =>
+                (b.representative.tracks?.length ?? 0)
+                - (a.representative.tracks?.length ?? 0),
+        );
+
+        const kept: ReleaseCluster[] = [];
+        const keptSets: Set<string>[] = [];
+
+        candidateLoop: for (const candidate of sorted) {
+            const candSet = sets.get(candidate)!;
+
+            if (candSet.size > 0) {
+                for (let i = 0; i < kept.length; i++) {
+                    const diff = ExploreAlbumDetails.symmetricDifferenceSize(
+                        candSet,
+                        keptSets[i]!,
+                    );
+
+                    if (diff <= ExploreAlbumDetails.NEAR_DUPLICATE_TOLERANCE) {
+                        kept[i]!.allReleases.push(...candidate.allReleases);
+                        continue candidateLoop;
+                    }
+                }
+            }
+
+            kept.push(candidate);
+            keptSets.push(candSet);
+        }
+
+        return kept.map((c) => ExploreAlbumDetails.withConsensusRepresentative(c));
+    }
+
+    /**
+     * Re-pick a merged cluster's representative by consensus.
+     *
+     * Merging compares track *sets*, so a resequenced pressing — same
+     * songs, different running order — folds in correctly. But the
+     * survivor was whichever release happened to be encountered first,
+     * which is browse order and means nothing: one 2021 pressing
+     * arriving ahead of eleven 2013 ones made the cluster wear the 2021
+     * running order. The user's own files then matched no cluster
+     * fingerprint, so the page said their copy "isn't linked to a
+     * MusicBrainz release yet" while showing a tracklist in an order
+     * almost nothing was pressed in.
+     *
+     * The representative is the ordering the most releases agree on,
+     * earliest release breaking the tie — and the cluster's fingerprint
+     * has to move with it, since that is what the library match is
+     * tested against.
+     */
+    private static withConsensusRepresentative(
+        cluster: ReleaseCluster,
+    ): ReleaseCluster {
+        if (cluster.allReleases.length < 2) return cluster;
+
+        const byOrder = new Map<string, MBRelease[]>();
+
+        for (const release of cluster.allReleases) {
+            const fp = ExploreAlbumDetails.fingerprint(release.tracks ?? []);
+            const group = byOrder.get(fp);
+
+            if (group) {
+                group.push(release);
+            } else {
+                byOrder.set(fp, [release]);
+            }
+        }
+
+        let bestFingerprint = cluster.fingerprint;
+        let best: MBRelease[] | null = null;
+
+        for (const [fp, group] of byOrder) {
+            if (
+                best === null
+                || group.length > best.length
+                || (group.length === best.length
+                    && earliestDate(group) < earliestDate(best))
+            ) {
+                best = group;
+                bestFingerprint = fp;
+            }
+        }
+
+        if (!best) return cluster;
+
+        const representative = [...best].sort(
+            (a, b) => (a.date || '￿').localeCompare(b.date || '￿'),
+        )[0]!;
+
+        return { ...cluster, representative, fingerprint: bestFingerprint };
+    }
+
     private buildClusters() {
         const clusterMap = new Map<string, MBRelease[]>();
 
         for (const release of this.releases) {
             const tracks = release.tracks ?? [];
 
-            // Fingerprint: sort tracks by (discNumber, position), join MBIDs.
             // Releases whose tracks have no MBIDs all collapse together
             // under an "empty" fingerprint, which is intentional —
             // unidentifiable releases shouldn't multiply dropdown noise.
-            const sorted = [...tracks].sort((a, b) => {
-                const discDiff = (a.discNumber || 1) - (b.discNumber || 1);
-                if (discDiff !== 0) return discDiff;
-                return a.position - b.position;
-            });
-            const fingerprint = sorted.map((t) => t.mbid).join('|');
+            const fingerprint = ExploreAlbumDetails.fingerprint(tracks);
 
             const existing = clusterMap.get(fingerprint);
             if (existing) {
@@ -1041,7 +1443,7 @@ export class ExploreAlbumDetails extends LitElement {
         }
 
         // Build clusters with earliest-dated representative per group.
-        const clusters: ReleaseCluster[] = [];
+        let clusters: ReleaseCluster[] = [];
         for (const [fingerprint, releases] of clusterMap) {
             // Sort releases inside the cluster by date ascending so the
             // earliest serves as the cluster's representative — this
@@ -1053,14 +1455,23 @@ export class ExploreAlbumDetails extends LitElement {
                 return da.localeCompare(db);
             });
 
-            const cluster: ReleaseCluster = {
+            clusters.push({
                 representative: sorted[0]!,
                 allReleases: sorted,
                 fingerprint,
-                score: 0, // filled in below
-            };
+                score: 0, // filled in below, after merging
+            });
+        }
+
+        // Fold near-duplicate clusters (one bonus track, a tagging
+        // gap) into the closest larger cluster before scoring —
+        // otherwise every minor pressing difference gets counted as
+        // its own "version" and the size bonus below undercounts how
+        // many releases actually agree with each other.
+        clusters = this.mergeNearDuplicateClusters(clusters);
+
+        for (const cluster of clusters) {
             cluster.score = this.scoreCluster(cluster);
-            clusters.push(cluster);
         }
 
         // Sort clusters by score descending so the highest-scoring
@@ -1076,9 +1487,10 @@ export class ExploreAlbumDetails extends LitElement {
         // Build the unified version-entry list (synthetics + clusters).
         this.versionEntries = this.buildVersionEntries(clusters);
 
-        // Default selection: prefer the user's library version when it
-        // exists, otherwise the standard version, otherwise the first
-        // entry available.
+        // Default selection: prefer the user's own version — whether
+        // that is a marked real release or the synthetic fallback —
+        // otherwise the standard version, otherwise the first entry.
+        const ownedEntry = this.versionEntries.find((e) => e.inLibrary);
         const libraryEntry = this.versionEntries.find(
             (e) => e.syntheticKind === 'library',
         );
@@ -1086,7 +1498,8 @@ export class ExploreAlbumDetails extends LitElement {
             (e) => e.syntheticKind === 'standard',
         );
         this.selectedVersionKey =
-            libraryEntry?.key
+            ownedEntry?.key
+            || libraryEntry?.key
             || standardEntry?.key
             || this.versionEntries[0]?.key
             || '';
@@ -1101,8 +1514,13 @@ export class ExploreAlbumDetails extends LitElement {
         let score = 0;
 
         // Earliest-date base score: invert the ISO date so older = higher.
-        // Use year as the integer score component — the rest is fine-grained
-        // tiebreaking handled by the sort comparator, not the score itself.
+        // A secondary signal now — dampened to a ~26-point range across
+        // a century, so it breaks ties among similarly-agreed-upon
+        // clusters rather than outweighing the size bonus below. It
+        // used to be the dominant term (roughly 1 point per year,
+        // undamped), which meant "released a few years earlier" could
+        // beat "the edition 20 physical releases actually agree on" —
+        // backwards for guessing which release someone means.
         const earliestDate = cluster.representative.date || '';
         if (earliestDate.length >= 4) {
             const year = parseInt(earliestDate.slice(0, 4), 10);
@@ -1110,7 +1528,7 @@ export class ExploreAlbumDetails extends LitElement {
                 // Newer albums have larger year values, but we want
                 // older = higher score, so invert against a future
                 // ceiling.  Anything older than ~3000 ranks higher.
-                score += 3000 - year;
+                score += (3000 - year) / 5;
             }
         }
 
@@ -1158,80 +1576,73 @@ export class ExploreAlbumDetails extends LitElement {
             }
         }
 
-        // Cluster size bonus: log-scaled so a cluster of 10 isn't 10x
-        // a cluster of 1, but a cluster of 30 still beats a cluster of
-        // 5 by a meaningful amount.
-        score += Math.log2(1 + cluster.allReleases.length) * 50;
+        // Cluster size bonus: the primary signal among same-status
+        // clusters.  "How many releases agree on this tracklist" is a
+        // much better guess at "the version people mean" than which
+        // one happened to ship first — a reissue with dozens of
+        // regional pressings sharing a tracklist is the canonical
+        // edition even when an obscure early pressing is a few years
+        // older.  Log-scaled so a cluster of 10 isn't 10x a cluster of
+        // 1, but a cluster of 30 still beats a cluster of 5 by a
+        // meaningful amount.
+        score += Math.log2(1 + cluster.allReleases.length) * 150;
 
         return score;
     }
 
     /**
-     * Build the unified version-entry list: synthetic Standard /
-     * Comprehensive / Library entries pinned at the top, followed by
-     * the real clusters in score order.
+     * Build the unified version-entry list: a synthetic Library or
+     * Standard entry pinned at the top (never both — see
+     * `buildLibraryEntry`), followed by the real clusters in score
+     * order.
      */
     private buildVersionEntries(clusters: ReleaseCluster[]): VersionEntry[] {
         const entries: VersionEntry[] = [];
 
-        if (clusters.length === 0) return entries;
+        // No catalog clusters yet (still loading, or none exist) — the
+        // only thing that can possibly be shown is the local tracklist
+        // itself, if there is one.
+        if (clusters.length === 0) {
+            const libraryOnly = this.buildLibraryEntry(clusters);
+
+            if (libraryOnly) entries.push(libraryOnly);
+
+            return entries;
+        }
+
+        // ── Library ─────────────────────────────────────────────────
+        // When the files on disk *are* one of these releases, that
+        // release is marked rather than copied into a separate "Your
+        // Library" entry. The synthetic hid the thing worth knowing:
+        // the user could see that they owned a version but not which
+        // one, and the real release — with its date, country and
+        // release count — was sitting right underneath under a
+        // different name.
+        const owned = this.exactLibraryCluster(clusters);
+
+        // Only when the local tracklist matches no release at all is a
+        // synthetic still needed: there is no version name to mark.
+        const libraryEntry = owned ? null : this.buildLibraryEntry(clusters);
+        if (libraryEntry) entries.push(libraryEntry);
 
         // ── Standard ────────────────────────────────────────────────
         // Highest-scoring cluster is the standard.  We point at the
         // cluster directly so the standard entry is just a labeled
         // alias — selecting it shows the same tracks as selecting that
-        // cluster from the bottom list.
-        const standardCluster = clusters[0]!;
-        entries.push({
-            key: 'synthetic:standard',
-            label: 'Standard',
-            sublabel: this.standardSublabel(standardCluster),
-            group: 'aggregate',
-            syntheticKind: 'standard',
-            tracks: standardCluster.representative.tracks ?? [],
-            backingCluster: standardCluster,
-        });
+        // cluster from the bottom list.  Skipped once the user's own
+        // version is identified, by either route: a guess next to a
+        // known-correct answer is noise, not a choice.
+        if (!libraryEntry && !owned) {
+            const standardCluster = clusters[0]!;
 
-        // ── Comprehensive ───────────────────────────────────────────
-        // Union of every distinct recording across all clusters.
-        // Skip when only one cluster exists or when it would be
-        // identical to standard (no extras to show).
-        if (clusters.length > 1) {
-            const comprehensiveTracks = this.buildComprehensiveTracklist(
-                clusters,
-                standardCluster,
-            );
-            const standardSize = (standardCluster.representative.tracks ?? [])
-                .length;
-            if (comprehensiveTracks.length > standardSize) {
-                entries.push({
-                    key: 'synthetic:comprehensive',
-                    label: 'Comprehensive',
-                    sublabel: `${comprehensiveTracks.length} tracks · all versions combined`,
-                    group: 'aggregate',
-                    syntheticKind: 'comprehensive',
-                    tracks: comprehensiveTracks,
-                    backingCluster: standardCluster,
-                });
-            }
-        }
-
-        // ── Library ─────────────────────────────────────────────────
-        // If the user owns a copy of this album, find the cluster that
-        // best matches their tracklist (by recording-MBID overlap) and
-        // expose it as a synthetic alias.  Falls back to the standard
-        // cluster's track set with whatever inLibrary flags the
-        // backend has populated, which is "show me what I have."
-        const libraryCluster = this.findLibraryCluster(clusters);
-        if (libraryCluster) {
             entries.push({
-                key: 'synthetic:library',
-                label: 'Your Library',
-                sublabel: this.librarySublabel(libraryCluster),
+                key: 'synthetic:standard',
+                label: 'Standard',
+                sublabel: this.standardSublabel(standardCluster),
                 group: 'aggregate',
-                syntheticKind: 'library',
-                tracks: libraryCluster.representative.tracks ?? [],
-                backingCluster: libraryCluster,
+                syntheticKind: 'standard',
+                tracks: standardCluster.representative.tracks ?? [],
+                backingCluster: standardCluster,
             });
         }
 
@@ -1247,6 +1658,7 @@ export class ExploreAlbumDetails extends LitElement {
                 tracks: cluster.representative.tracks ?? [],
                 cluster,
                 backingCluster: cluster,
+                inLibrary: !!owned && cluster === owned,
             });
         }
 
@@ -1254,59 +1666,106 @@ export class ExploreAlbumDetails extends LitElement {
     }
 
     /**
-     * Build the comprehensive (union) tracklist: every distinct
-     * recording across all clusters, in a stable order.  Anchor on
-     * the standard cluster's positions when possible, then append
-     * any extras from other clusters in earliest-cluster order.
+     * Build the "Your Library" entry: the release the local files are
+     * actually tagged to, not a guess.
+     *
+     * `localTracks` (when there is any — the local album's own tracks,
+     * fetched straight from the DB) is fingerprinted the same way a
+     * catalog cluster is, and matched against the clusters on screen.
+     * An exact match means a real MusicBrainz release describes what's
+     * on disk, so that cluster — with its real metadata — is shown. No
+     * match (untagged files, or tags that don't line up with any
+     * single release) falls back to the local tracks themselves, which
+     * is always correct because it came straight from the files
+     * rather than from a description of them.
+     *
+     * Only when there's no local album at all (the user owns some of
+     * this release's tracks without a local album match — e.g.
+     * scattered across a compilation) does this fall back to the old
+     * fractional-overlap heuristic over the catalog's own `inLibrary`
+     * flags, which is a guess by construction and stays one.
      */
-    private buildComprehensiveTracklist(
+    private exactLibraryCluster(
         clusters: ReleaseCluster[],
-        anchor: ReleaseCluster,
-    ): MBTrack[] {
-        const seen = new Set<string>();
-        const result: MBTrack[] = [];
+    ): ReleaseCluster | undefined {
+        if (this.localTracks.length === 0) return undefined;
 
-        // First pass: take the anchor cluster's tracks in order.
-        const anchorTracks = anchor.representative.tracks ?? [];
-        for (const t of anchorTracks) {
-            if (!t.mbid || seen.has(t.mbid)) continue;
-            seen.add(t.mbid);
-            result.push(t);
-        }
+        const localFingerprint = ExploreAlbumDetails.fingerprint(this.localTracks);
+        if (!localFingerprint) return undefined;
 
-        // Second pass: walk other clusters in score order (which
-        // sorts to "best to worst" via the existing comparator) and
-        // append any track whose recording MBID hasn't been seen.
-        // This biases extras toward versions that are themselves
-        // closer to standard, which feels more natural than
-        // pulling from random late-period anniversary editions.
-        for (const cluster of clusters) {
-            if (cluster === anchor) continue;
-            const tracks = cluster.representative.tracks ?? [];
-            for (const t of tracks) {
-                if (!t.mbid || seen.has(t.mbid)) continue;
-                seen.add(t.mbid);
-                // Re-number positions sequentially so the renderer
-                // doesn't show duplicate "track 5" rows from
-                // different clusters.  The original disc/position
-                // metadata is mostly meaningless once we've blended
-                // versions anyway.
-                result.push({
-                    ...t,
-                    position: result.length + 1,
-                    discNumber: 1,
-                });
+        return clusters.find((c) => c.fingerprint === localFingerprint);
+    }
+
+    private buildLibraryEntry(clusters: ReleaseCluster[]): VersionEntry | null {
+        if (this.localTracks.length > 0) {
+
+            // Callers reach this only when no release matches what is
+            // on disk (`exactLibraryCluster` is checked first), so there
+            // is no exact-match branch here — the version list marks
+            // that case instead of synthesising an entry for it.
+            //
+            // A known-incomplete album should show the *release*, not
+            // the subset of it that happens to be on disk — the tracks
+            // that are missing are the useful information, and a
+            // tracklist trimmed to what is owned cannot show them at
+            // all.  So the local files stand in only while the album is
+            // complete or unjudged; once the tags say nine of twelve,
+            // the catalog's twelve are what the page draws, with three
+            // of them dimmed.
+            //
+            // Guarded on `known` rather than on "fewer tracks than the
+            // cluster", which would swap in a catalog tracklist for
+            // every album whose tags simply never declared a total.
+            const incomplete = this.completeness?.known
+                && !this.completeness.complete;
+
+            if (incomplete) {
+                const fullRelease = this.findLibraryCluster(clusters);
+
+                if (fullRelease) {
+                    return {
+                        key: 'synthetic:library',
+                        label: 'Your Library',
+                        sublabel: `${this.completeness?.owned ?? 0} of ${this.completeness?.expected ?? 0} tracks · ${this.clusterLabel(fullRelease)}`,
+                        group: 'aggregate',
+                        syntheticKind: 'library',
+                        tracks: fullRelease.representative.tracks ?? [],
+                        backingCluster: fullRelease,
+                    };
+                }
             }
+
+            return {
+                key: 'synthetic:library',
+                label: 'Your Library',
+                sublabel: `${this.localTracks.length} track${this.localTracks.length === 1 ? '' : 's'} · from your files`,
+                group: 'aggregate',
+                syntheticKind: 'library',
+                tracks: this.localTracks,
+            };
         }
 
-        return result;
+        const libraryCluster = this.findLibraryCluster(clusters);
+
+        if (!libraryCluster) return null;
+
+        return {
+            key: 'synthetic:library',
+            label: 'Your Library',
+            sublabel: this.librarySublabel(libraryCluster),
+            group: 'aggregate',
+            syntheticKind: 'library',
+            tracks: libraryCluster.representative.tracks ?? [],
+            backingCluster: libraryCluster,
+        };
     }
 
     /**
-     * Find the cluster that best matches the user's library tracks
-     * for this album.  Returns the cluster with the highest fraction
-     * of tracks marked inLibrary (i.e. the cluster the user actually
-     * owns).  Returns null when the user has no tracks for this album.
+     * Fallback only: used when there's no local album to anchor on
+     * (see `buildLibraryEntry`). Finds the cluster with the highest
+     * fraction of tracks the *library-wide* `inLibrary` cross-reference
+     * marked owned — a guess, since that flag isn't scoped to this
+     * album and a recording can appear on more than one release.
      */
     private findLibraryCluster(
         clusters: ReleaseCluster[],
@@ -1455,6 +1914,26 @@ export class ExploreAlbumDetails extends LitElement {
      * No queued state for now — that's reserved for future
      * download-client integration.
      */
+    /**
+     * What the badge beside the album title shows.
+     *
+     * `albumLibraryStatus()` answers "is any of this yours", which is
+     * the right question for a tick and the wrong one for a ring. The
+     * ring needs a denominator, and it only exists when the files
+     * declared one — so an owned album with untotalled tags keeps the
+     * plain tick rather than wearing an arc drawn from a guess.
+     */
+    private albumBadgeStatus(): LibraryStatus {
+        const owned = this.albumLibraryStatus();
+
+        if (owned !== 'in-library') return owned;
+
+        const c = this.completeness;
+        if (c?.known && !c.complete) return 'partial';
+
+        return 'in-library';
+    }
+
     private albumLibraryStatus(): 'in-library' | 'not-in-library' {
         if (this.localAlbumId > 0) return 'in-library';
 
@@ -1502,32 +1981,6 @@ export class ExploreAlbumDetails extends LitElement {
             owned: tracks.filter((t) => t.inLibrary).length,
             total: tracks.length,
         };
-    }
-
-    /**
-     * Say what the green tick against a track means.
-     *
-     * `H-13` calls the ticks "unexplained". Half of that has aged: the
-     * indicator carries a `title` *and* an `aria-label` reading
-     * "Track \u201cX\u201d is in your library", so a screen reader and a hover
-     * both get a full sentence. What a sighted user scanning the page
-     * gets is a column of green circles and no key, which is what this
-     * is — rendered only when at least one track is actually ticked, so
-     * it never explains a symbol that is not on screen.
-     */
-    private renderTracklistLegend() {
-        const { owned } = this.ownership();
-
-        if (owned === 0) return nothing;
-
-        return html`<span class="tracklist-legend">
-            <library-status-indicator
-                status="in-library"
-                entity-type="track"
-                size="14"
-            ></library-status-indicator>
-            in your library
-        </span>`;
     }
 
     /**
@@ -1638,7 +2091,9 @@ export class ExploreAlbumDetails extends LitElement {
                     <h1 class="album-title" title="${this.albumName}">
                         <span class="album-title-text">${this.albumName}</span>
                         <library-status-indicator
-                            status=${this.albumLibraryStatus()}
+                            status=${this.albumBadgeStatus()}
+                            .owned=${this.completeness?.owned ?? 0}
+                            .expected=${this.completeness?.expected ?? 0}
                             entity-type="album"
                             label=${this.albumName}
                             size="22"
@@ -1734,6 +2189,19 @@ export class ExploreAlbumDetails extends LitElement {
      * `MBTrack`, which carries a recording MBID and a `localId` that
      * nothing in the backend ever writes.
      */
+    /**
+     * What "Playing from" should say for a queue built here — only when
+     * there's a local album to link back to. A catalog-only album (no
+     * `localAlbumId`) has nowhere in the library for the queue panel's
+     * link to point, so the queue is left undescribed rather than
+     * pointed at a page that doesn't exist for it.
+     */
+    private queueSource(): QueueSource | undefined {
+        if (!(this.localAlbumId > 0)) return undefined;
+
+        return { type: 'album', id: this.localAlbumId, label: this.albumName };
+    }
+
     private async ownedFilePaths(): Promise<string[]> {
         const libraryID = libraryStore.getSelectedLibraryId() ?? 0;
 
@@ -1799,7 +2267,7 @@ export class ExploreAlbumDetails extends LitElement {
                 queueStore.toggleShuffle();
             }
 
-            queueStore.setQueue(paths, 0, shuffle);
+            queueStore.setQueue(paths, 0, shuffle, this.queueSource());
         } catch (error) {
             console.error('Could not play album:', error);
             notificationStore.inline(ExploreAlbumRegion, {
@@ -1831,6 +2299,121 @@ export class ExploreAlbumDetails extends LitElement {
                 ),
             });
         }
+    }
+
+    /**
+     * File path for one owned track, resolved by recording MBID — the
+     * same key the backend used to mark it `inLibrary` in the first
+     * place. Unlike `ownedFilePaths()` this does not special-case
+     * `localAlbumId`: a single track's own MBID is enough, and every
+     * `MBTrack` carries one regardless of how the album itself was
+     * matched.
+     */
+    private async trackFilePath(track: MBTrack): Promise<string | null> {
+        if (!track.inLibrary || !track.mbid) return null;
+
+        const libraryID = libraryStore.getSelectedLibraryId() ?? 0;
+        const byMBID = await GetFilePathsByRecordingMBIDs([track.mbid], libraryID);
+
+        return byMBID[track.mbid]?.[0] ?? null;
+    }
+
+    /** Play a single owned track now. A no-op for a track not in the library. */
+    private async playTrack(track: MBTrack): Promise<void> {
+        try {
+            const path = await this.trackFilePath(track);
+
+            if (!path) {
+                notificationStore.inline(ExploreAlbumRegion, {
+                    text: 'This track could not be found in your library.',
+                });
+
+                return;
+            }
+
+            queueStore.setQueue([path], 0, false, this.queueSource());
+        } catch (error) {
+            console.error('Could not play track:', error);
+            notificationStore.inline(ExploreAlbumRegion, {
+                text: describeError(error, 'Could not play this track.'),
+            });
+        }
+    }
+
+    private async queueTrackNext(track: MBTrack): Promise<void> {
+        const path = await this.trackFilePath(track);
+
+        if (path) queueStore.playNext(path);
+    }
+
+    private async addTrackToQueue(track: MBTrack): Promise<void> {
+        const path = await this.trackFilePath(track);
+
+        if (path) queueStore.addToQueue(path);
+    }
+
+    private onTrackRowDblClick(track: MBTrack): void {
+        if (!track.inLibrary) return;
+
+        void this.playTrack(track);
+    }
+
+    private onTrackRowKeydown(e: KeyboardEvent, track: MBTrack): void {
+        if (isContextMenuKey(e)) {
+            e.preventDefault();
+            this.ctxMenuTrack = track;
+            this.ctxMenu.openFrom(e.currentTarget as HTMLElement);
+
+            return;
+        }
+
+        if ((e.key === 'Enter' || e.key === ' ') && track.inLibrary) {
+            e.preventDefault();
+            void this.playTrack(track);
+        }
+    }
+
+    private onTrackContextMenu(e: MouseEvent, track: MBTrack): void {
+        e.preventDefault();
+        e.stopPropagation();
+
+        this.ctxMenuTrack = track;
+        this.ctxMenu.openAt(e.clientX, e.clientY);
+    }
+
+    private onContextMenuAction(action: 'play' | 'add-to-queue' | 'play-next'): void {
+        const track = this.ctxMenuTrack;
+
+        this.ctxMenu.close();
+
+        if (!track || !track.inLibrary) return;
+
+        switch (action) {
+            case 'play':
+                void this.playTrack(track);
+                break;
+            case 'add-to-queue':
+                void this.addTrackToQueue(track);
+                break;
+            case 'play-next':
+                void this.queueTrackNext(track);
+                break;
+        }
+    }
+
+    /**
+     * Explore's tracks carry a recording MBID whether or not the user
+     * owns them — this is the one context-menu action that works on a
+     * track the library doesn't have, since it needs no file at all.
+     */
+    private viewTrackOnMusicBrainz(): void {
+        const track = this.ctxMenuTrack;
+
+        this.ctxMenu.close();
+
+        if (!track?.mbid) return;
+
+        window.open(`https://musicbrainz.org/recording/${track.mbid}`, '_blank', 'noopener');
     }
 
     /**
@@ -1985,12 +2568,29 @@ export class ExploreAlbumDetails extends LitElement {
     private catalogScope(): CatalogScope {
         if (!this.releaseGroupMBID) return 'library';
         if (this.catalogReleasesLoaded) return 'catalog';
-        if (this.catalogPending) return 'loading';
 
-        // Not pending and no catalog data: the browse errored, came
-        // back empty, or the fallback timer gave up.  Whatever is on
-        // screen is the library copy, and retrying is worth offering.
-        return 'unavailable';
+        // A complete, MBID-matched album is not missing anything the
+        // notice could warn about, so there is nothing to say — and
+        // saying it silently is the point: no browse was made, and a
+        // banner about absent catalog data would be describing a
+        // request the page deliberately did not send.
+        if (this.completeness?.complete) return 'catalog';
+
+        if (this.catalogFailed) return 'unavailable';
+
+        // A fetch is still out there, and the page says nothing about
+        // it.  A banner announcing that details are loading is a line
+        // of text about the page's own plumbing, and it earns its space
+        // only if the alternative is the user misreading what is on
+        // screen — which the tracklist now prevents by itself: rows
+        // that are not in the library are dimmed, so tracks arriving
+        // dimmed reads as the album filling in rather than as anything
+        // needing explanation.
+        //
+        // `unavailable` survives because it is not about plumbing: it
+        // says rows may be missing from the page altogether, which
+        // nothing on screen can show, and it carries a retry.
+        return 'catalog';
     }
 
     /** Ask the catalog again after a failed or empty fetch. */
@@ -2000,7 +2600,7 @@ export class ExploreAlbumDetails extends LitElement {
 
         this.errorReleases = '';
         this.loadingReleases = this.releases.length === 0;
-        this.catalogPending = true;
+        this.catalogFailed = false;
         this.releasesReloaded.delete(mbid);
         this.armReleasesFallback(mbid);
         void this.fetchReleases(mbid);
@@ -2087,10 +2687,16 @@ export class ExploreAlbumDetails extends LitElement {
             `;
         }
 
-        // No selector to show when there are no version entries at all,
-        // or when the only entry is a single real cluster (no synthetics
-        // were added because there's only one tracklist).
-        if (this.versionEntries.length <= 1) return nothing;
+        // A dropdown is only a choice if the choices differ. Counting
+        // *entries* is the wrong test: a release group routinely has
+        // several releases — reissues, regional pressings, a remaster —
+        // whose tracklists are identical, and the synthetic "Your
+        // Library" entry is often a third name for the same one. That
+        // offered a control whose every option showed the same rows.
+        //
+        // Distinct *tracklists* is the real question, and it is already
+        // computed: clusters are keyed by tracklist fingerprint.
+        if (this.distinctTracklistCount() <= 1) return nothing;
 
         const aggregateEntries = this.versionEntries.filter(
             (e) => e.group === 'aggregate',
@@ -2111,37 +2717,45 @@ export class ExploreAlbumDetails extends LitElement {
                         ${aggregateEntries.length > 0
                             ? html`
                                   <optgroup label="Aggregate">
-                                      ${aggregateEntries.map(
-                                          (e) => html`
-                                              <option
-                                                  value=${e.key}
-                                                  ?selected=${e.key
-                                                  === this.selectedVersionKey}
-                                              >
-                                                  ${e.label} — ${e.sublabel}
-                                              </option>
-                                          `,
+                                      ${aggregateEntries.map((e) =>
+                                          this.renderVersionOption(e),
                                       )}
                                   </optgroup>
                               `
                             : nothing}
                         <optgroup label="Versions">
-                            ${clusterEntries.map(
-                                (e) => html`
-                                    <option
-                                        value=${e.key}
-                                        ?selected=${e.key
-                                        === this.selectedVersionKey}
-                                    >
-                                        ${e.label} — ${e.sublabel}
-                                    </option>
-                                `,
+                            ${clusterEntries.map((e) =>
+                                this.renderVersionOption(e),
                             )}
                         </optgroup>
                     </select>
                 </div>
                 ${this.renderVersionMeta()}
             </div>
+        `;
+    }
+
+    /**
+     * One option in the version list.
+     *
+     * The marker is a star *and* the words "in your library": a `<select>`
+     * cannot be styled per option, so the only way to say this is in the
+     * text — and a bare glyph would be a symbol with no key, which is
+     * exactly what the tracklist's green ticks were.
+     */
+    private renderVersionOption(entry: VersionEntry) {
+        const label = entry.inLibrary ? `\u2605 ${entry.label}` : entry.label;
+        const sublabel = entry.inLibrary
+            ? `${entry.sublabel} \u00b7 in your library`
+            : entry.sublabel;
+
+        return html`
+            <option
+                value=${entry.key}
+                ?selected=${entry.key === this.selectedVersionKey}
+            >
+                ${label} — ${sublabel}
+            </option>
         `;
     }
 
@@ -2160,38 +2774,40 @@ export class ExploreAlbumDetails extends LitElement {
                     <div class="version-meta">
                         Showing the standard version — the most likely
                         canonical tracklist for this album, picked by
-                        weighing release date, status, and how many
-                        physical releases share this exact tracklist.
+                        weighing how many physical releases share it,
+                        release status, and release date.
                     </div>
                 `;
-            case 'comprehensive':
-                return html`
-                    <div class="version-meta">
-                        Showing every distinct track that appears on any
-                        version of this album combined into a single
-                        list.  Not a real release.
-                    </div>
-                `;
-            case 'library':
-                return html`
-                    <div class="version-meta">
-                        Showing the version that best matches your
-                        library copy.
-                    </div>
-                `;
-            default:
-                if (current.cluster) {
-                    const releases = current.cluster.allReleases.length;
-                    if (releases > 1) {
-                        return html`
-                            <div class="version-meta">
-                                ${releases} physical releases share this
-                                tracklist.
-                            </div>
-                        `;
-                    }
+            case 'library': {
+                // The exact-match case no longer lands here — it is a
+                // marked real version now, handled below — so what is
+                // left is the two ways of *not* being able to name the
+                // release.
+                const text = this.localTracks.length === 0
+                    ? 'Showing the version that best matches your library, going by which tracks you own — not a specific local album.'
+                    : 'Showing your library copy, built from your local files. It isn’t linked to a MusicBrainz release yet.';
+
+                return html`<div class="version-meta">${text}</div>`;
+            }
+            default: {
+                const releases = current.cluster?.allReleases.length ?? 0;
+                const shared = releases > 1
+                    ? `${releases} physical releases share this tracklist.`
+                    : '';
+
+                if (current.inLibrary) {
+                    return html`
+                        <div class="version-meta">
+                            \u2605 This is the version in your library.
+                            ${shared}
+                        </div>
+                    `;
                 }
-                return nothing;
+
+                return shared
+                    ? html`<div class="version-meta">${shared}</div>`
+                    : nothing;
+            }
         }
     }
 
@@ -2243,9 +2859,7 @@ export class ExploreAlbumDetails extends LitElement {
 
         return html`
             <section>
-                <h3 class="section-header">
-                    Tracklist ${this.renderTracklistLegend()}
-                </h3>
+                <h3 class="section-header">Tracklist</h3>
                 <div class="tracklist">
                     ${discNumbers.map((discNum) => {
                         const discTracks = discMap.get(discNum) ?? [];
@@ -2262,9 +2876,22 @@ export class ExploreAlbumDetails extends LitElement {
                             ${discTracks.map(
                                 (track) => html`
                                     <div
-                                        class="track-row"
+                                        class=${classMap({
+                                            'track-row': true,
+                                            owned: track.inLibrary,
+                                            unowned: !track.inLibrary,
+                                        })}
                                         data-track-mbid="${track.mbid}"
                                         data-track-title="${track.title}"
+                                        tabindex="0"
+                                        role="button"
+                                        aria-disabled=${track.inLibrary ? 'false' : 'true'}
+                                        aria-label=${track.inLibrary
+                                            ? `Play “${track.title}”`
+                                            : `${track.title} — not in your library`}
+                                        @dblclick=${() => this.onTrackRowDblClick(track)}
+                                        @contextmenu=${(e: MouseEvent) => this.onTrackContextMenu(e, track)}
+                                        @keydown=${(e: KeyboardEvent) => this.onTrackRowKeydown(e, track)}
                                     >
                                         <span class="track-position"
                                             >${track.position}</span
@@ -2279,11 +2906,6 @@ export class ExploreAlbumDetails extends LitElement {
                                                 track.length,
                                             )}</span
                                         >
-                                        <library-status-indicator
-                                            status=${track.inLibrary ? 'in-library' : 'not-in-library'}
-                                            entity-type="track"
-                                            label=${track.title}
-                                        ></library-status-indicator>
                                     </div>
                                 `,
                             )}
@@ -2291,6 +2913,48 @@ export class ExploreAlbumDetails extends LitElement {
                     })}
                 </div>
             </section>
+            ${this.renderTrackContextMenu()}
+        `;
+    }
+
+    private renderTrackContextMenu() {
+        const track = this.ctxMenuTrack;
+
+        return html`
+            <wa-popup
+                id="track-context-menu"
+                placement="bottom-start"
+                flip
+                shift
+                .active=${this.ctxMenu.contextMenuOpen}
+            >
+                ${this.ctxMenu.contextMenuOpen && track
+                    ? html`
+                          <div class="context-menu-panel" role="menu" aria-label="Track actions">
+                              ${track.inLibrary
+                                  ? html`
+                                        <wa-dropdown-item @click=${() => this.onContextMenuAction('play')}>
+                                            <wa-icon slot="icon" name="play"></wa-icon>
+                                            Play
+                                        </wa-dropdown-item>
+                                        <wa-dropdown-item @click=${() => this.onContextMenuAction('add-to-queue')}>
+                                            <wa-icon slot="icon" name="plus"></wa-icon>
+                                            Add to Queue
+                                        </wa-dropdown-item>
+                                        <wa-dropdown-item @click=${() => this.onContextMenuAction('play-next')}>
+                                            <wa-icon slot="icon" name="forward-step"></wa-icon>
+                                            Play Next
+                                        </wa-dropdown-item>
+                                    `
+                                  : nothing}
+                              <wa-dropdown-item @click=${() => this.viewTrackOnMusicBrainz()}>
+                                  <wa-icon slot="icon" name="globe"></wa-icon>
+                                  View on MusicBrainz
+                              </wa-dropdown-item>
+                          </div>
+                      `
+                    : nothing}
+            </wa-popup>
         `;
     }
 }

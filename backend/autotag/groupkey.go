@@ -93,10 +93,69 @@ func SyntheticTrackGroupKey(parentGroupKey string, audioFileID int64) string {
 // genuine multi-disc release still separates correctly, since its
 // disc-2-and-up tracks carry an explicit non-zero, non-one disc
 // number.
+//
+// This is the single-file fallback used where a whole directory's
+// disc tags aren't available (e.g. maybeRebindTaggingGroup, which
+// rebinds one changed file at a time).  Where a directory's full set
+// of raw disc numbers IS available, prefer ResolveDirectoryDiscNumbers
+// instead — a hardcoded "1" is the wrong guess for an untagged track
+// sitting alongside siblings that all agree on disc 2.
 func normalizeDiscNumber(discNumber int) int {
 	if discNumber <= 0 {
 		return 1
 	}
 
 	return discNumber
+}
+
+// ResolveDirectoryDiscNumbers returns, for one directory's files, the
+// disc number each should use when computing its GroupKey.
+//
+// normalizeDiscNumber's fixed "fold untagged to disc 1" is only a
+// safe guess when the caller has no other evidence. Given the whole
+// directory's raw disc tags at once, a better guess is available: if
+// every file that DOES carry an explicit disc number agrees on the
+// same value, an untagged sibling is almost certainly the same disc
+// — a partially re-tagged rip, not a stray track from a different
+// one — so it folds to that value instead of a hardcoded 1. If the
+// directory's explicit disc numbers disagree, it's a genuine
+// multi-disc release with no per-disc subfolders, and there's no
+// single disc to guess for the untagged ones, so they fall back to
+// normalizeDiscNumber's default.
+//
+// rawDiscNumbers must be in the same order as the files they belong
+// to; the returned slice mirrors that order 1:1.
+func ResolveDirectoryDiscNumbers(rawDiscNumbers []int) []int {
+	consensus := 0
+	ambiguous := false
+
+	for _, d := range rawDiscNumbers {
+		if d <= 0 {
+			continue
+		}
+
+		switch {
+		case consensus == 0:
+			consensus = d
+		case consensus != d:
+			ambiguous = true
+		}
+	}
+
+	fallback := 1
+	if consensus > 0 && !ambiguous {
+		fallback = consensus
+	}
+
+	out := make([]int, len(rawDiscNumbers))
+
+	for i, d := range rawDiscNumbers {
+		if d <= 0 {
+			out[i] = fallback
+		} else {
+			out[i] = d
+		}
+	}
+
+	return out
 }

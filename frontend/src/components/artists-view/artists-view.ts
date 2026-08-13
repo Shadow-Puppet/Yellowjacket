@@ -974,12 +974,19 @@ export class ArtistsView
 
         if (filePaths.length === 0) return;
 
+        const artist = this.artists.find(
+            (a) => a.ID === this.contextMenuArtistId,
+        );
+
         switch (action) {
             case 'play':
                 queueStore.setQueue(
                     filePaths,
                     0,
                     true,
+                    artist
+                        ? { type: 'artist', id: artist.ID, label: artist.Name }
+                        : undefined,
                 );
                 break;
             case 'add-to-queue':

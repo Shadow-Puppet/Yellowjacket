@@ -369,22 +369,16 @@ func (q *Queue) persistState() {
 		}
 	}
 
-	sourcePlaylistID := sql.NullInt64{}
-	if q.sourcePlaylistID > 0 {
-		sourcePlaylistID = sql.NullInt64{
-			Int64: q.sourcePlaylistID,
-			Valid: true,
-		}
-	}
-
 	err := q.db.Queries.UpdateQueueState(
 		q.db.Ctx,
 		sqlcgen.UpdateQueueStateParams{
-			SourcePlaylistID: sourcePlaylistID,
-			CurrentPosition:  int64(q.currentIndex),
-			ShuffleMode:      q.shuffleMode,
-			RepeatMode:       string(q.repeatMode),
-			ShuffleOrder:     shuffleOrderJSON,
+			CurrentPosition: int64(q.currentIndex),
+			ShuffleMode:     q.shuffleMode,
+			RepeatMode:      string(q.repeatMode),
+			ShuffleOrder:    shuffleOrderJSON,
+			SourceType:      q.source.Type,
+			SourceID:        q.source.ID,
+			SourceLabel:     q.source.Label,
 		},
 	)
 	if err != nil {
@@ -426,8 +420,10 @@ func (q *Queue) RestoreState() {
 	q.shuffleMode = state.ShuffleMode
 	q.repeatMode = RepeatMode(state.RepeatMode)
 
-	if state.SourcePlaylistID.Valid {
-		q.sourcePlaylistID = state.SourcePlaylistID.Int64
+	q.source = Source{
+		Type:  state.SourceType,
+		ID:    state.SourceID,
+		Label: state.SourceLabel,
 	}
 
 	// Restore shuffle order.

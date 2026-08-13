@@ -20,27 +20,31 @@ func (q *Queries) ClearQueueTracks(ctx context.Context) error {
 }
 
 const getQueueState = `-- name: GetQueueState :one
-SELECT source_playlist_id, current_position, shuffle_mode, repeat_mode, shuffle_order
+SELECT current_position, shuffle_mode, repeat_mode, shuffle_order, source_type, source_id, source_label
 FROM queue WHERE id = 1
 `
 
 type GetQueueStateRow struct {
-	SourcePlaylistID sql.NullInt64
-	CurrentPosition  int64
-	ShuffleMode      bool
-	RepeatMode       string
-	ShuffleOrder     sql.NullString
+	CurrentPosition int64
+	ShuffleMode     bool
+	RepeatMode      string
+	ShuffleOrder    sql.NullString
+	SourceType      string
+	SourceID        int64
+	SourceLabel     string
 }
 
 func (q *Queries) GetQueueState(ctx context.Context) (GetQueueStateRow, error) {
 	row := q.db.QueryRowContext(ctx, getQueueState)
 	var i GetQueueStateRow
 	err := row.Scan(
-		&i.SourcePlaylistID,
 		&i.CurrentPosition,
 		&i.ShuffleMode,
 		&i.RepeatMode,
 		&i.ShuffleOrder,
+		&i.SourceType,
+		&i.SourceID,
+		&i.SourceLabel,
 	)
 	return i, err
 }
@@ -200,25 +204,29 @@ func (q *Queries) UpdateQueuePosition(ctx context.Context, currentPosition int64
 
 const updateQueueState = `-- name: UpdateQueueState :exec
 UPDATE queue
-SET source_playlist_id = ?, current_position = ?, shuffle_mode = ?, repeat_mode = ?, shuffle_order = ?
+SET current_position = ?, shuffle_mode = ?, repeat_mode = ?, shuffle_order = ?, source_type = ?, source_id = ?, source_label = ?
 WHERE id = 1
 `
 
 type UpdateQueueStateParams struct {
-	SourcePlaylistID sql.NullInt64
-	CurrentPosition  int64
-	ShuffleMode      bool
-	RepeatMode       string
-	ShuffleOrder     sql.NullString
+	CurrentPosition int64
+	ShuffleMode     bool
+	RepeatMode      string
+	ShuffleOrder    sql.NullString
+	SourceType      string
+	SourceID        int64
+	SourceLabel     string
 }
 
 func (q *Queries) UpdateQueueState(ctx context.Context, arg UpdateQueueStateParams) error {
 	_, err := q.db.ExecContext(ctx, updateQueueState,
-		arg.SourcePlaylistID,
 		arg.CurrentPosition,
 		arg.ShuffleMode,
 		arg.RepeatMode,
 		arg.ShuffleOrder,
+		arg.SourceType,
+		arg.SourceID,
+		arg.SourceLabel,
 	)
 	return err
 }

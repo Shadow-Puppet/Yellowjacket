@@ -137,6 +137,7 @@ describe('home view', () => {
       ['/music/1.mp3', '/music/2.mp3'],
       0,
       true,
+      { type: 'album', id: 1, label: 'Kid A' },
     ]);
   });
 

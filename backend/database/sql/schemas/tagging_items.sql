@@ -39,6 +39,17 @@ CREATE TABLE IF NOT EXISTS tagging_items (
   -- first time; append-only from the second migration on.
   synthetic               INTEGER NOT NULL DEFAULT 0,
   parent_group_key        TEXT NOT NULL DEFAULT '',
+  -- album_artist_conflict latches to 1 the first time two tracks
+  -- added to this group carry different non-empty album_artist tags,
+  -- and never resets. Without it, UpsertTaggingItemOnTrackAdd's
+  -- consensus tracking on album_artist can't tell "no non-empty
+  -- value contributed yet" apart from "conflicting values were
+  -- observed and it was cleared" — both look like ''  — so a later
+  -- track that happens to repeat an earlier, already-disputed value
+  -- would wrongly resurrect trust in it. See IsMixedBag
+  -- (backend/autotag/mixedbag.go), which trusts a non-empty
+  -- album_artist unconditionally.
+  album_artist_conflict   INTEGER NOT NULL DEFAULT 0,
   FOREIGN KEY(library_id) REFERENCES libraries(id)
 );
 

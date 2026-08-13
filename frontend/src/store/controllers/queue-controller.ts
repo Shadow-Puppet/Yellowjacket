@@ -1,5 +1,10 @@
 import type { ReactiveController, ReactiveControllerHost } from 'lit';
-import type { QueueState, QueueTrack, RepeatMode } from '../queue-store';
+import type {
+  QueueSource,
+  QueueState,
+  QueueTrack,
+  RepeatMode,
+} from '../queue-store';
 import { queueStore } from '../queue-store';
 
 /**
@@ -67,6 +72,10 @@ export class QueueController implements ReactiveController {
     return this.state.repeatMode;
   }
 
+  get source(): QueueSource {
+    return this.state.source;
+  }
+
   // ===================================================================
   // ACTIONS
   // ===================================================================
@@ -87,8 +96,9 @@ export class QueueController implements ReactiveController {
     filePaths: string[],
     startIndex: number,
     shuffleStart = false,
+    source?: QueueSource,
   ): void {
-    queueStore.setQueue(filePaths, startIndex, shuffleStart);
+    queueStore.setQueue(filePaths, startIndex, shuffleStart, source);
   }
 
   addToQueue(filePath: string): void {

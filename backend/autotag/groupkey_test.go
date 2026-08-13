@@ -111,6 +111,72 @@ func TestGroupKey_UntaggedDiscFoldsIntoDiscOne(t *testing.T) {
 	}
 }
 
+func TestResolveDirectoryDiscNumbers_UntaggedFoldsToConsensus(t *testing.T) {
+	t.Parallel()
+
+	// A folder that's really disc 2, partially re-tagged: untagged
+	// tracks should join disc 2, not fall back to a hardcoded disc 1.
+	got := autotag.ResolveDirectoryDiscNumbers([]int{2, 0, 2, 0})
+	want := []int{2, 2, 2, 2}
+
+	if !equalInts(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func TestResolveDirectoryDiscNumbers_AllUntaggedFallsBackToOne(t *testing.T) {
+	t.Parallel()
+
+	got := autotag.ResolveDirectoryDiscNumbers([]int{0, 0, 0})
+	want := []int{1, 1, 1}
+
+	if !equalInts(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func TestResolveDirectoryDiscNumbers_GenuineMultiDiscKeepsExplicitValues(t *testing.T) {
+	t.Parallel()
+
+	// Explicit disagreement (disc 1 and disc 2 both present, no
+	// subfolders) means there's no single disc to guess for the
+	// untagged track — it falls back to normalizeDiscNumber's default
+	// rather than being assigned to either disc.
+	got := autotag.ResolveDirectoryDiscNumbers([]int{1, 1, 2, 2, 0})
+	want := []int{1, 1, 2, 2, 1}
+
+	if !equalInts(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func TestResolveDirectoryDiscNumbers_PreservesExplicitValuesEvenWhenUnanimous(t *testing.T) {
+	t.Parallel()
+
+	// Every file already agrees on disc 3 — nothing to resolve, but
+	// the explicit values must pass through unchanged.
+	got := autotag.ResolveDirectoryDiscNumbers([]int{3, 3, 3})
+	want := []int{3, 3, 3}
+
+	if !equalInts(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func equalInts(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+
+	return true
+}
+
 func TestGroupKey_AmbiguityBoundary(t *testing.T) {
 	t.Parallel()
 

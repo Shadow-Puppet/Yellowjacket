@@ -35,6 +35,7 @@ type Config struct {
 	loaded    bool                 // true once Load() succeeds
 	Library   *library.Config      `toml:"Library"`
 	Theme     *theme.Config        `toml:"Theme"`
+	General   *GeneralConfig       `toml:"General"`
 	Window    *WindowConfig        `toml:"Window"`
 	TrackList *tracklist.Config    `toml:"TrackList"`
 	Favorites *favorites.Config    `toml:"Favorites"`
@@ -80,6 +81,12 @@ func (c *Config) Validate() error {
 
 	if c.Theme != nil {
 		if err := c.Theme.Validate(); err != nil {
+			configErrs = errors.Join(configErrs, err)
+		}
+	}
+
+	if c.General != nil {
+		if err := c.General.Validate(); err != nil {
 			configErrs = errors.Join(configErrs, err)
 		}
 	}
@@ -239,6 +246,12 @@ func (c *Config) applyDefaults() {
 	}
 
 	c.Theme.ApplyDefaults()
+
+	if c.General == nil {
+		c.General = &GeneralConfig{}
+	}
+
+	c.General.ApplyDefaults()
 
 	if c.TrackList == nil {
 		c.TrackList = &tracklist.Config{}
@@ -503,6 +516,99 @@ func (c *Config) emitThemeChanged() {
 			"BackgroundShade": string(c.Theme.BackgroundShade),
 		},
 	)
+}
+
+// GetDefaultPage returns the view the app opens to on launch.
+func (c *Config) GetDefaultPage() string {
+	if c.General == nil {
+		return string(DefaultDefaultPage)
+	}
+
+	return string(c.General.DefaultPage)
+}
+
+// SetDefaultPage validates and saves a new launch page.
+func (c *Config) SetDefaultPage(page string) error {
+	if c.General == nil {
+		c.General = &GeneralConfig{}
+		c.General.ApplyDefaults()
+	}
+
+	c.General.DefaultPage = DefaultPage(page)
+
+	if err := c.General.Validate(); err != nil {
+		return fmt.Errorf(
+			"invalid default page: %w", err,
+		)
+	}
+
+	if err := c.Save(); err != nil {
+		return fmt.Errorf(
+			"could not save config: %w", err,
+		)
+	}
+
+	events.Emit(
+		c.ctx,
+		events.GeneralConfigChanged,
+		map[string]any{
+			"DefaultPage": string(c.General.DefaultPage),
+		},
+	)
+
+	c.logger.Info(
+		"default page updated",
+		"page", page,
+	)
+
+	return nil
+}
+
+// GetQueueFallback returns what plays, if anything, once the queue
+// runs out.
+func (c *Config) GetQueueFallback() string {
+	if c.General == nil {
+		return string(DefaultQueueFallback)
+	}
+
+	return string(c.General.QueueFallback)
+}
+
+// SetQueueFallback validates and saves a new queue-fallback mode.
+func (c *Config) SetQueueFallback(mode string) error {
+	if c.General == nil {
+		c.General = &GeneralConfig{}
+		c.General.ApplyDefaults()
+	}
+
+	c.General.QueueFallback = QueueFallback(mode)
+
+	if err := c.General.Validate(); err != nil {
+		return fmt.Errorf(
+			"invalid queue fallback: %w", err,
+		)
+	}
+
+	if err := c.Save(); err != nil {
+		return fmt.Errorf(
+			"could not save config: %w", err,
+		)
+	}
+
+	events.Emit(
+		c.ctx,
+		events.GeneralConfigChanged,
+		map[string]any{
+			"QueueFallback": string(c.General.QueueFallback),
+		},
+	)
+
+	c.logger.Info(
+		"queue fallback updated",
+		"mode", mode,
+	)
+
+	return nil
 }
 
 // GetTrackListColumns returns the configured track-list columns.

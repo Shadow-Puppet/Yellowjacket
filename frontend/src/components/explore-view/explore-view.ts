@@ -1,15 +1,19 @@
 import { avatarBackground } from '@utils/avatar-color';
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state, query as litQuery } from 'lit/decorators.js';
+import { classMap } from 'lit/directives/class-map.js';
 import '@components/page-header/page-header';
 import { designTokens } from '../../styles/tokens.css';
 import { srOnly } from '../../styles/sr-only.css';
 import { SearchLocal, SearchLyrics, GetThumbnail, GetThumbnails, GetArtistImageURL, GetExploreShelves, RecordSearchClick } from '@go/explore/Service';
+import { GetFilePathsByAlbums, GetFilePathsByRecordingMBIDs } from '@go/library/Library';
 import { EventsOn } from '@runtime/runtime';
 import { Events } from '../../events';
 import { libraryStore } from '../../store/library-store';
 import { exploreCache, ARTIST_IMAGE_CACHE_LIMIT } from '../../store/explore-cache';
 import { queueStore } from '../../store/queue-store';
+import { notificationStore } from '../../store/notification-store';
+import '../notifications/inline-notice';
 import { artistLink, trackLink, exploreLinkStyles } from '../../utils/explore-link';
 import { describeError } from '../../utils/describe-error';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
@@ -19,6 +23,28 @@ import { explore } from '@go/models';
 import { ViewLifecycleMixin } from '../../utils/view-lifecycle';
 import { registerCacheProbe } from '../../utils/cache-stats';
 import { LRUMap } from '../../utils/lru-map';
+import {
+    ContextMenuController,
+    contextMenuStyles,
+    isContextMenuKey,
+} from '@utils/context-menu-controller.js';
+import type { ContextMenuHost } from '@utils/context-menu-controller.js';
+import '@awesome.me/webawesome/dist/components/popup/popup.js';
+import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
+import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
+
+/** The region explore's own action failures (play/queue) are rendered in. */
+export const ExploreRegion = 'explore';
+
+/**
+ * A context-menu target: an album card or a track/recording. `localId`
+ * is present only when owned — that's what gates the playback items,
+ * while `mbid` (always present) is what "View on MusicBrainz" uses, so
+ * a catalog-only card still gets a menu with somewhere useful to go.
+ */
+type ExploreMenuTarget =
+    | { kind: 'album'; mbid: string; localId?: number; title: string }
+    | { kind: 'recording'; mbid: string; localId?: number; title: string };
 type ThumbnailRequest = explore.ThumbnailRequest;
 type MBSearchResult = explore.MBSearchResult;
 type LyricsResult = explore.LyricsResult;
@@ -106,7 +132,7 @@ function getArtistAlbumArt(artistName: string): string {
 }
 
 @customElement('explore-view')
-export class ExploreView extends ViewLifecycleMixin(LitElement) {
+export class ExploreView extends ViewLifecycleMixin(LitElement) implements ContextMenuHost {
     /* ── State ── */
 
     @state() private searchQuery = '';
@@ -163,12 +189,38 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) {
 
     @litQuery('input') private inputEl!: HTMLInputElement;
 
+    /* ── Card/track context menu ── */
+
+    private ctxMenu = new ContextMenuController(this);
+
+    @state() private ctxMenuTarget: ExploreMenuTarget | null = null;
+
+    @litQuery('#explore-context-menu')
+    private contextMenuPopup!: WaPopup;
+
+    // -- ContextMenuHost interface --
+    // No playlist submenu — same reason as the album/artist detail
+    // pages: every action here resolves its one file lazily.
+
+    getContextMenuPopup(): WaPopup | undefined {
+        return this.contextMenuPopup;
+    }
+
+    getPlaylistSubmenuPopup(): WaPopup | undefined {
+        return undefined;
+    }
+
+    onContextMenuClose(): void {
+        this.ctxMenuTarget = null;
+    }
+
     /* ── Styles ── */
 
     static override styles = [
         designTokens,
         srOnly,
         exploreLinkStyles,
+        contextMenuStyles,
         css`
             :host {
                 display: block;
@@ -648,6 +700,16 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) {
                 transition: background 0.1s ease;
             }
 
+            .track-item.owned {
+                cursor: pointer;
+            }
+
+            .album-card:focus-visible,
+            .track-item:focus-visible {
+                outline: 2px solid var(--yj-accent-text, #ffd43b);
+                outline-offset: -2px;
+            }
+
             .track-item:hover {
                 background: var(--yj-bg-overlay, rgba(255, 255, 255, 0.04));
             }
@@ -1041,6 +1103,237 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) {
     private playLyricHit(hit: LyricsResult) {
         if (!hit.filePath) return;
         queueStore.setQueue([hit.filePath], 0);
+    }
+
+    /* ── Playback: album cards and track rows ── */
+
+    /**
+     * File paths for an owned album's tracks, keyed by its local album
+     * id — the only album key resolved on this page without a further
+     * fetch. `GetFilePathsByAlbums` only returns files that actually
+     * exist for that local album, so this can never pull in a track
+     * from a release the user does not fully own.
+     */
+    private async albumFilePaths(localId: number): Promise<string[]> {
+        const libraryID = libraryStore.getSelectedLibraryId() ?? 0;
+        const byAlbum = await GetFilePathsByAlbums([localId], libraryID);
+
+        return byAlbum[localId] ?? [];
+    }
+
+    private async recordingFilePath(mbid: string): Promise<string | null> {
+        const libraryID = libraryStore.getSelectedLibraryId() ?? 0;
+        const byMBID = await GetFilePathsByRecordingMBIDs([mbid], libraryID);
+
+        return byMBID[mbid]?.[0] ?? null;
+    }
+
+    private async playAlbum(rg: MBReleaseGroup, shuffle: boolean): Promise<void> {
+        if (!rg.localId) return;
+
+        try {
+            const paths = await this.albumFilePaths(rg.localId);
+
+            if (paths.length === 0) {
+                notificationStore.inline(ExploreRegion, {
+                    text: 'None of these tracks could be found in your library.',
+                });
+
+                return;
+            }
+
+            if (shuffle && !queueStore.getState().shuffleMode) {
+                queueStore.toggleShuffle();
+            }
+
+            queueStore.setQueue(paths, 0, shuffle, { type: 'album', id: rg.localId, label: rg.title });
+        } catch (error) {
+            console.error('Could not play album:', error);
+            notificationStore.inline(ExploreRegion, {
+                text: describeError(error, 'Could not play this album.'),
+            });
+        }
+    }
+
+    private async queueAlbum(rg: MBReleaseGroup): Promise<void> {
+        if (!rg.localId) return;
+
+        const paths = await this.albumFilePaths(rg.localId);
+
+        if (paths.length > 0) queueStore.addTracksToQueue(paths);
+    }
+
+    private async playRecording(mbid: string): Promise<void> {
+        try {
+            const path = await this.recordingFilePath(mbid);
+
+            if (!path) {
+                notificationStore.inline(ExploreRegion, {
+                    text: 'This track could not be found in your library.',
+                });
+
+                return;
+            }
+
+            queueStore.setQueue([path], 0);
+        } catch (error) {
+            console.error('Could not play track:', error);
+            notificationStore.inline(ExploreRegion, {
+                text: describeError(error, 'Could not play this track.'),
+            });
+        }
+    }
+
+    private async queueRecordingNext(mbid: string): Promise<void> {
+        const path = await this.recordingFilePath(mbid);
+
+        if (path) queueStore.playNext(path);
+    }
+
+    private async addRecordingToQueue(mbid: string): Promise<void> {
+        const path = await this.recordingFilePath(mbid);
+
+        if (path) queueStore.addToQueue(path);
+    }
+
+    private onAlbumCardDblClick(rg: MBReleaseGroup): void {
+        if (!rg.localId) return;
+
+        void this.playAlbum(rg, false);
+    }
+
+    private onRecordingRowDblClick(r: { mbid: string; inLibrary: boolean; localId?: number }): void {
+        if (!r.inLibrary && !r.localId) return;
+
+        void this.playRecording(r.mbid);
+    }
+
+    private onCardKeydown(
+        e: KeyboardEvent,
+        onActivate: () => void,
+        target?: ExploreMenuTarget,
+    ): void {
+        if (target && isContextMenuKey(e)) {
+            e.preventDefault();
+            this.ctxMenuTarget = target;
+            this.ctxMenu.openFrom(e.currentTarget as HTMLElement);
+
+            return;
+        }
+
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onActivate();
+        }
+    }
+
+    private onExploreContextMenu(e: MouseEvent, target: ExploreMenuTarget): void {
+        e.preventDefault();
+        e.stopPropagation();
+
+        this.ctxMenuTarget = target;
+        this.ctxMenu.openAt(e.clientX, e.clientY);
+    }
+
+    private onContextMenuAction(action: 'play' | 'add-to-queue' | 'play-next'): void {
+        const target = this.ctxMenuTarget;
+
+        this.ctxMenu.close();
+
+        if (!target || !target.localId) return;
+
+        if (target.kind === 'album') {
+            const localId = target.localId;
+            const rg = { localId, title: target.title } as MBReleaseGroup;
+
+            switch (action) {
+                case 'play':
+                    void this.playAlbum(rg, false);
+                    break;
+                case 'add-to-queue':
+                    void this.queueAlbum(rg);
+                    break;
+                case 'play-next':
+                    void this.albumFilePaths(localId).then((paths) => {
+                        if (paths.length > 0) queueStore.playTracksNext(paths);
+                    });
+                    break;
+            }
+
+            return;
+        }
+
+        switch (action) {
+            case 'play':
+                void this.playRecording(target.mbid);
+                break;
+            case 'add-to-queue':
+                void this.addRecordingToQueue(target.mbid);
+                break;
+            case 'play-next':
+                void this.queueRecordingNext(target.mbid);
+                break;
+        }
+    }
+
+    /**
+     * Explore's cards carry an MBID whether or not the user owns them,
+     * so this is the one action that works on a catalog-only card —
+     * it needs no file, and it's the same URL scheme for a release
+     * group or a recording.
+     */
+    private viewOnMusicBrainz(): void {
+        const target = this.ctxMenuTarget;
+
+        this.ctxMenu.close();
+
+        if (!target?.mbid) return;
+
+        const entity = target.kind === 'album' ? 'release-group' : 'recording';
+
+        window.open(`https://musicbrainz.org/${entity}/${target.mbid}`, '_blank', 'noopener');
+    }
+
+    private renderExploreContextMenu() {
+        const target = this.ctxMenuTarget;
+        const owned = Boolean(target?.localId);
+
+        return html`
+            <wa-popup
+                id="explore-context-menu"
+                placement="bottom-start"
+                flip
+                shift
+                .active=${this.ctxMenu.contextMenuOpen}
+            >
+                ${this.ctxMenu.contextMenuOpen && target
+                    ? html`
+                          <div class="context-menu-panel" role="menu" aria-label="${target.title} actions">
+                              ${owned
+                                  ? html`
+                                        <wa-dropdown-item @click=${() => this.onContextMenuAction('play')}>
+                                            <wa-icon slot="icon" name="play"></wa-icon>
+                                            Play
+                                        </wa-dropdown-item>
+                                        <wa-dropdown-item @click=${() => this.onContextMenuAction('add-to-queue')}>
+                                            <wa-icon slot="icon" name="plus"></wa-icon>
+                                            Add to Queue
+                                        </wa-dropdown-item>
+                                        <wa-dropdown-item @click=${() => this.onContextMenuAction('play-next')}>
+                                            <wa-icon slot="icon" name="forward-step"></wa-icon>
+                                            Play Next
+                                        </wa-dropdown-item>
+                                    `
+                                  : nothing}
+                              <wa-dropdown-item @click=${() => this.viewOnMusicBrainz()}>
+                                  <wa-icon slot="icon" name="globe"></wa-icon>
+                                  View on MusicBrainz
+                              </wa-dropdown-item>
+                          </div>
+                      `
+                    : nothing}
+            </wa-popup>
+        `;
     }
 
     /* ── Thumbnail Loading ── */
@@ -1468,6 +1761,11 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) {
                   </div>`
                 : nothing}
             ${this.renderBody()}
+            <inline-notice
+                region=${ExploreRegion}
+                testid="explore-action-message"
+            ></inline-notice>
+            ${this.renderExploreContextMenu()}
         `;
     }
 
@@ -1790,18 +2088,33 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) {
                         const artURL = this.thumbnailCache.get(rg.mbid) || '';
                         const year = extractYear(rg.firstReleaseDate);
 
+                        const owned = Boolean(rg.localId);
+
                         return html`
                             <div
-                                class="album-card"
+                                class=${classMap({ 'album-card': true, owned })}
                                 @click=${() => this.navigateToAlbum(rg)}
+                                @dblclick=${() => this.onAlbumCardDblClick(rg)}
+                                @contextmenu=${(e: MouseEvent) =>
+                                    this.onExploreContextMenu(e, {
+                                        kind: 'album',
+                                        mbid: rg.mbid,
+                                        localId: rg.localId,
+                                        title: rg.title,
+                                    })}
                                 role="button"
                                 tabindex="0"
-                                @keydown=${(e: KeyboardEvent) => {
-                                    if (e.key === 'Enter' || e.key === ' ') {
-                                        e.preventDefault();
-                                        this.navigateToAlbum(rg);
-                                    }
-                                }}
+                                @keydown=${(e: KeyboardEvent) =>
+                                    this.onCardKeydown(
+                                        e,
+                                        () => this.navigateToAlbum(rg),
+                                        {
+                                            kind: 'album',
+                                            mbid: rg.mbid,
+                                            localId: rg.localId,
+                                            title: rg.title,
+                                        },
+                                    )}
                             >
                                 <div class="album-art-container">
                                     ${artURL
@@ -1853,7 +2166,30 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) {
                 <div class="track-list">
                     ${recordings.map(
                         (r) => html`
-                            <div class="track-item">
+                            <div
+                                class=${classMap({ 'track-item': true, owned: Boolean(r.inLibrary || r.localId) })}
+                                role="button"
+                                tabindex="0"
+                                @dblclick=${() => this.onRecordingRowDblClick(r)}
+                                @contextmenu=${(e: MouseEvent) =>
+                                    this.onExploreContextMenu(e, {
+                                        kind: 'recording',
+                                        mbid: r.mbid,
+                                        localId: r.localId,
+                                        title: r.title,
+                                    })}
+                                @keydown=${(e: KeyboardEvent) =>
+                                    this.onCardKeydown(
+                                        e,
+                                        () => this.onRecordingRowDblClick(r),
+                                        {
+                                            kind: 'recording',
+                                            mbid: r.mbid,
+                                            localId: r.localId,
+                                            title: r.title,
+                                        },
+                                    )}
+                            >
                                 <div class="track-info">
                                     <div class="track-title">
                                         ${trackLink(r.title, r.releaseName ?? '', r.releaseGroupMbid ?? '', r.mbid)}

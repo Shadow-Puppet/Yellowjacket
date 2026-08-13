@@ -330,7 +330,7 @@ export class PlaylistDetails
 
         if (filePaths.length === 0) return;
 
-        queueStore.setQueue(filePaths, 0, true);
+        queueStore.setQueue(filePaths, 0, true, { type: 'playlist', id: this.playlistId, label: this.playlistName });
     }
 
     private handleTrackClick(
@@ -396,7 +396,7 @@ export class PlaylistDetails
             (t) => t.FilePath,
         );
 
-        queueStore.setQueue(filePaths, trackIndex);
+        queueStore.setQueue(filePaths, trackIndex, false, { type: 'playlist', id: this.playlistId, label: this.playlistName });
     }
 
     private handleTrackContextMenu(
@@ -449,7 +449,7 @@ export class PlaylistDetails
 
         switch (action) {
             case 'play':
-                queueStore.setQueue(filePaths, 0, true);
+                queueStore.setQueue(filePaths, 0, true, { type: 'playlist', id: this.playlistId, label: this.playlistName });
                 break;
             case 'add-to-queue':
                 queueStore.addTracksToQueue(filePaths);

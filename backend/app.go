@@ -368,6 +368,11 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 	// Wire queue (created in NewYellowJacketApp for Wails binding)
 	yj.queue.SetContext(ctx)
 	yj.queue.SetPlayer(yj.player)
+	yj.queue.SetFallbackSource(&queueFallbackAdapter{
+		config:   yj.appConfig,
+		playlist: yj.playlist,
+		explore:  yj.explore,
+	})
 	yj.queue.RestoreState()
 
 	// Wire cross-cutting rescan hooks so the library can
@@ -406,6 +411,11 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 			// right after the scan.  Background, bounded, resumable, and a
 			// no-op once every owned artist is covered.
 			yj.explore.BackfillLibraryDiscographies()
+
+			// Resolve any release-group MBIDs the scan could only find a
+			// release-level tag for (see updateMBIDs). Same shape as the
+			// discography backfill above: background, bounded, resumable.
+			yj.explore.BackfillReleaseGroupMBIDs()
 
 			// Start (or resume) the dump-based index build.  Skips
 			// itself once the one-time import has completed, so this
@@ -635,6 +645,9 @@ func (yj *YellowJacketApp) OnDomReady(ctx context.Context) {
 			// discography (e.g. a prior run was capped or interrupted).
 			// Cheap no-op once every owned artist is covered.
 			yj.explore.BackfillLibraryDiscographies()
+
+			// Same continuation for release-group MBID resolution.
+			yj.explore.BackfillReleaseGroupMBIDs()
 		}
 
 		// Kick off the autotag prefetch worker so any unscored

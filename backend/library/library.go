@@ -373,6 +373,7 @@ func (l *Library) scanInternal(
 
 	workChan := make(chan scanWork, 100)
 	resultChan := make(chan importResult, 100)
+	dirDoneChan := make(chan dirClosed, 100)
 
 	var added, skipped, updated atomic.Int64
 
@@ -396,6 +397,24 @@ func (l *Library) scanInternal(
 			close(workChan)
 		}()
 
+		// stack tracks the directories the walk currently has open, so
+		// that once one is fully enumerated (see isWithinDir) its total
+		// scanWork count can be reported to the DB writer as a single
+		// dirClosed event — see the dirClosed doc comment for why.
+		var stack []*openDir
+
+		closeDirsNotContaining := func(path string) {
+			for len(stack) > 0 && !isWithinDir(path, stack[len(stack)-1].relPath) {
+				top := stack[len(stack)-1]
+				stack = stack[:len(stack)-1]
+
+				select {
+				case dirDoneChan <- dirClosed{dir: top.absDir, expected: top.expected}:
+				case <-scanCtx.Done():
+				}
+			}
+		}
+
 		walkErr := fs.WalkDir(
 			os.DirFS(basePath),
 			".",
@@ -409,7 +428,14 @@ func (l *Library) scanInternal(
 					return nil // continue walking
 				}
 
+				closeDirsNotContaining(path)
+
 				if d.IsDir() {
+					stack = append(stack, &openDir{
+						relPath: path,
+						absDir:  filepath.Join(basePath, path),
+					})
+
 					return nil
 				}
 
@@ -467,6 +493,9 @@ func (l *Library) scanInternal(
 							contentChanged: contentChanged,
 							modTime:        diskModTime,
 						}:
+							if len(stack) > 0 {
+								stack[len(stack)-1].expected++
+							}
 						case <-scanCtx.Done():
 							return scanCtx.Err()
 						}
@@ -510,6 +539,9 @@ func (l *Library) scanInternal(
 					fileType:     fileType,
 					modTime:      diskModTime,
 				}:
+					if len(stack) > 0 {
+						stack[len(stack)-1].expected++
+					}
 				case <-scanCtx.Done():
 					return scanCtx.Err()
 				}
@@ -526,6 +558,24 @@ func (l *Library) scanInternal(
 				),
 			)
 		}
+
+		// Close whatever's left on the stack, root included — the walk
+		// ended (normally or via cancellation) without another path
+		// ever coming along to trigger closeDirsNotContaining for
+		// these.  isWithinDir treats "." (root) as containing every
+		// path, so closeDirsNotContaining itself can never pop it;
+		// unwind directly instead.
+		for len(stack) > 0 {
+			top := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+
+			select {
+			case dirDoneChan <- dirClosed{dir: top.absDir, expected: top.expected}:
+			case <-scanCtx.Done():
+			}
+		}
+
+		close(dirDoneChan)
 	}()
 
 	// --- Thumbnail worker pool (async, decoupled from DB writer) ---
@@ -624,19 +674,98 @@ func (l *Library) scanInternal(
 			batch = batch[:0]
 		}
 
-		for result := range resultChan {
-			// Thread library ID into each result for saveAudioFile.
-			result.libraryID = libraryID
+		// pending buffers extracted results by directory (keyed the
+		// same way GroupKey's caller derives it, filepath.Dir on the
+		// absolute path) until that directory's dirClosed event says
+		// no more are coming — see the dirClosed doc comment. Only
+		// then can ResolveDirectoryDiscNumbers see the whole
+		// directory's disc tags at once instead of each file
+		// guessing from its own tag alone.
+		pending := make(map[string][]importResult)
+		expected := make(map[string]int)
+		dirClosedSeen := make(map[string]bool)
 
-			if !dbStarted {
-				dbStartVal = time.Now()
-				dbStarted = true
+		resolveAndBatch := func(dir string) {
+			results := pending[dir]
+			delete(pending, dir)
+			delete(expected, dir)
+			delete(dirClosedSeen, dir)
+
+			if len(results) == 0 {
+				return
 			}
 
-			batch = append(batch, result)
+			discs := make([]int, len(results))
+			for i, r := range results {
+				if r.tags != nil {
+					discs[i] = r.tags.DiscNumber
+				}
+			}
+
+			resolved := autotag.ResolveDirectoryDiscNumbers(discs)
+
+			for i := range results {
+				if results[i].tags != nil {
+					results[i].tags.DiscNumber = resolved[i]
+				}
+
+				// Thread library ID into each result for saveAudioFile.
+				results[i].libraryID = libraryID
+				batch = append(batch, results[i])
+			}
+
 			if len(batch) >= scanBatchSize {
 				flushBatch()
 			}
+		}
+
+		rc, dc := resultChan, dirDoneChan
+
+		for rc != nil || dc != nil {
+			select {
+			case result, ok := <-rc:
+				if !ok {
+					rc = nil
+
+					continue
+				}
+
+				if !dbStarted {
+					dbStartVal = time.Now()
+					dbStarted = true
+				}
+
+				dir := filepath.Dir(result.absolutePath)
+				pending[dir] = append(pending[dir], result)
+
+				if dirClosedSeen[dir] && len(pending[dir]) >= expected[dir] {
+					resolveAndBatch(dir)
+				}
+			case d, ok := <-dc:
+				if !ok {
+					dc = nil
+
+					continue
+				}
+
+				expected[d.dir] = d.expected
+				dirClosedSeen[d.dir] = true
+
+				if len(pending[d.dir]) >= d.expected {
+					resolveAndBatch(d.dir)
+				}
+			}
+		}
+
+		// Anything still buffered here belongs to a directory whose
+		// expected count was never reached — an extraction failure
+		// (see Phase 3: a failed file is warned-and-dropped, never
+		// reaching resultChan) or a dirClosed event lost to
+		// cancellation. Flush it anyway so no extracted file is
+		// silently dropped; it just resolves from whatever subset of
+		// the directory's disc tags actually arrived.
+		for dir := range pending {
+			resolveAndBatch(dir)
 		}
 
 		flushBatch()
@@ -1207,6 +1336,43 @@ type importResult struct {
 	modTime        int64 // mtime baseline to persist (Unix seconds)
 }
 
+// dirClosed reports that the walk has fully enumerated a directory's
+// audio files and will never enqueue another scanWork for it — expected
+// is exactly how many scanWork items were sent for it. The DB writer
+// uses this to know when it has every file it's going to get for that
+// directory, so it can resolve disc-number consensus across the whole
+// directory (autotag.ResolveDirectoryDiscNumbers) instead of each file
+// guessing in isolation.
+type dirClosed struct {
+	dir      string
+	expected int
+}
+
+// openDir is one frame of the walk goroutine's directory stack — see
+// isWithinDir and its use in scanInternal's walk phase.  relPath is
+// the fs.WalkDir-relative path (slash-separated, root as "."), used
+// only to detect when the walk has moved on to something outside this
+// directory; absDir is the OS-native absolute path, which is what
+// dirClosed reports and what the DB writer's importResult.absolutePath
+// values key against via filepath.Dir.
+type openDir struct {
+	relPath  string
+	absDir   string
+	expected int
+}
+
+// isWithinDir reports whether the fs.WalkDir-relative path is dir
+// itself or something inside it. dir == "." (the library root) is
+// always within, since fs.WalkDir's root path is "." and nothing on
+// this stack can ever be outside the tree being walked.
+func isWithinDir(path, dir string) bool {
+	if dir == "." {
+		return true
+	}
+
+	return path == dir || strings.HasPrefix(path, dir+"/")
+}
+
 // extractAudioMetadata reads and extracts metadata from an audio file.
 // It opens the file once, extracting both tags and duration in a
 // single pass, and records per-file timing in the shared metrics.
@@ -1428,7 +1594,7 @@ func (l *Library) saveAudioFile(
 			GroupKey:    groupKey,
 			LibraryID:   result.libraryID,
 			AlbumName:   tags.Album,
-			AlbumArtist: resolveAlbumArtistName(tags),
+			AlbumArtist: tags.AlbumArtist,
 			DiscNumber:  int64(tags.DiscNumber),
 		},
 	); err != nil {
@@ -1669,6 +1835,7 @@ func (l *Library) processMetadata(
 				RecordingID:    recording.ID,
 				TrackNumber:    toNullInt64(tags.TrackNumber),
 				DiscNumber:     toNullInt64(tags.DiscNumber),
+				TotalTracks:    toNullInt64(tags.TotalTracks),
 			},
 		)
 		if err != nil {
@@ -1718,6 +1885,22 @@ func (l *Library) updateMBIDs(
 			"UPDATE release_groups SET mbid = ? WHERE id = ? AND (mbid IS NULL OR mbid = '')",
 			tags.ReleaseGroupMBID, releaseGroupID,
 		)
+	} else if tags.ReleaseMBID != "" && releaseGroupID > 0 {
+		// Many taggers write MUSICBRAINZ_ALBUMID (a specific release)
+		// but not MUSICBRAINZ_RELEASEGROUPID (the abstract release
+		// group everything else on this page is keyed by) — without
+		// this, a genuinely MBID-tagged album shows as "library only"
+		// forever. A scan can't afford a live MusicBrainz call to
+		// resolve release->release-group here, so the release MBID is
+		// stashed for `explore.Service.BackfillReleaseGroupMBIDs` to
+		// resolve in the background, the same way discography
+		// enrichment is deferred out of the scan path.
+		_, _ = tx.ExecContext(l.ctx,
+			"UPDATE release_groups SET pending_release_mbid = ? "+
+				"WHERE id = ? AND (mbid IS NULL OR mbid = '') "+
+				"AND (pending_release_mbid IS NULL OR pending_release_mbid = '')",
+			tags.ReleaseMBID, releaseGroupID,
+		)
 	}
 
 	// Recording MBID.
@@ -1727,17 +1910,6 @@ func (l *Library) updateMBIDs(
 			tags.RecordingMBID, recordingID,
 		)
 	}
-}
-
-// resolveAlbumArtistName returns the album-artist tag for tagging-
-// group bookkeeping, falling back to the track artist when the
-// album-artist field is empty.
-func resolveAlbumArtistName(tags *metadata.TrackMetadata) string {
-	if tags.AlbumArtist != "" {
-		return tags.AlbumArtist
-	}
-
-	return tags.Artist
 }
 
 // maybeRebindTaggingGroup recomputes the group key from the freshly
@@ -1780,7 +1952,7 @@ func (l *Library) maybeRebindTaggingGroup(
 			GroupKey:    newKey,
 			LibraryID:   result.libraryID,
 			AlbumName:   tags.Album,
-			AlbumArtist: resolveAlbumArtistName(tags),
+			AlbumArtist: tags.AlbumArtist,
 			DiscNumber:  int64(tags.DiscNumber),
 		},
 	); err != nil {

@@ -86,12 +86,16 @@ export function SetContext(arg1) {
   return window['go']['queue']['Queue']['SetContext'](arg1);
 }
 
+export function SetFallbackSource(arg1) {
+  return window['go']['queue']['Queue']['SetFallbackSource'](arg1);
+}
+
 export function SetPlayer(arg1) {
   return window['go']['queue']['Queue']['SetPlayer'](arg1);
 }
 
-export function SetQueue(arg1, arg2, arg3) {
-  return window['go']['queue']['Queue']['SetQueue'](arg1, arg2, arg3);
+export function SetQueue(arg1, arg2, arg3, arg4) {
+  return window['go']['queue']['Queue']['SetQueue'](arg1, arg2, arg3, arg4);
 }
 
 export function ToggleShuffle() {

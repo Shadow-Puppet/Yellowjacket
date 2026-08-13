@@ -19,12 +19,26 @@ export interface QueueTrack {
 
 export type RepeatMode = 'off' | 'all' | 'one';
 
+/**
+ * Describes the collection a queue was built from — an album, a
+ * playlist, a genre, an artist — so the UI can offer to navigate back
+ * to it.  An empty `type` means the queue has no single source (the
+ * whole library, or one ad-hoc track).
+ */
+export interface QueueSource {
+  type: string;
+  id: number;
+  label: string;
+}
+
+export const EMPTY_QUEUE_SOURCE: QueueSource = { type: '', id: 0, label: '' };
+
 export interface QueueState {
   tracks: QueueTrack[];
   currentIndex: number;
   shuffleMode: boolean;
   repeatMode: RepeatMode;
-  sourcePlaylistId: number;
+  source: QueueSource;
 }
 
 // Delta event payloads (mirror Go structs in backend/queue/queue.go).
@@ -63,7 +77,7 @@ class QueueStore {
     currentIndex: -1,
     shuffleMode: false,
     repeatMode: 'off',
-    sourcePlaylistId: 0,
+    source: EMPTY_QUEUE_SOURCE,
   };
 
   private subscribers = new Set<Subscriber>();
@@ -86,7 +100,7 @@ class QueueStore {
         currentIndex: queueState.currentIndex,
         shuffleMode: queueState.shuffleMode,
         repeatMode: queueState.repeatMode,
-        sourcePlaylistId: queueState.sourcePlaylistId,
+        source: queueState.source ?? EMPTY_QUEUE_SOURCE,
       };
       this.notify();
     });
@@ -221,8 +235,9 @@ class QueueStore {
     filePaths: string[],
     startIndex: number,
     shuffleStart = false,
+    source: QueueSource = EMPTY_QUEUE_SOURCE,
   ): void {
-    void Queue.SetQueue(filePaths, startIndex, shuffleStart).catch(
+    void Queue.SetQueue(filePaths, startIndex, shuffleStart, source).catch(
       reportBindingFailure('Queue.SetQueue'),
     );
   }

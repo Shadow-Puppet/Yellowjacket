@@ -41,6 +41,7 @@ const (
 const (
 	LibraryConfigChanged   = "LibraryConfigChanged"
 	ThemeConfigChanged     = "ThemeConfigChanged"
+	GeneralConfigChanged   = "GeneralConfigChanged"
 	TrackListConfigChanged = "TrackListConfigChanged"
 	FavoritesConfigChanged = "FavoritesConfigChanged"
 	ShortcutsConfigChanged = "ShortcutsConfigChanged"
@@ -152,6 +153,16 @@ const (
 	// the album detail page can re-fetch its versions / tracklist without
 	// the initial request having blocked on a live MusicBrainz browse.
 	AlbumReleasesReady = "AlbumReleasesReady"
+
+	// AlbumReleasesFailed fires (payload: release-group MBID string) when
+	// that same background browse returns an error, so the album page can
+	// say the catalog did not answer at the moment it did not answer.
+	//
+	// Without it the only signal is the absence of AlbumReleasesReady,
+	// which a slow browse and a failed one produce alike — leaving a
+	// timer to guess between them, and a page queued behind the
+	// prefetch's rate limiter to be reported as a failure.
+	AlbumReleasesFailed = "AlbumReleasesFailed"
 
 	// DownloadProvidersChanged fires after a download client is added,
 	// edited, enabled/disabled or removed, so the settings page and any

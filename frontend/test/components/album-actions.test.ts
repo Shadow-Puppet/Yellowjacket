@@ -2,7 +2,7 @@
  * An album page you can play from.
  *
  * `H-13`: no Play, no Shuffle, no Add to queue on the album header, and
- * green ticks with no legend. The reason it is not simply "add three
+ * green ticks with no explanation. The reason it is not simply "add three
  * buttons" is that this is a **catalog** page — the album on it may be
  * entirely the user's, partly theirs, or not theirs at all — and a Play
  * button that plays 7 of a release's 40 tracks under a label saying
@@ -19,7 +19,7 @@ import type { LitElement } from 'lit';
 
 import '@components/explore-album-details/explore-album-details';
 import { stub, flush, resetHarness, calls } from '@test/support/harness';
-import { fixture, shadow, text } from '@test/support/render';
+import { fixture, shadow, shadowAll, text } from '@test/support/render';
 
 type Version = {
   key: string;
@@ -145,22 +145,47 @@ describe('the album header’s primary action', () => {
   });
 });
 
-describe('the ticks have a legend', () => {
+/**
+ * How a track that is not in the library reads.
+ *
+ * It used to be a green tick against the ones that were, plus a legend
+ * explaining the tick — a positive mark on the common case, which put a
+ * column of circles down an album you own outright. The comparison that
+ * settled it is a streaming service dimming what it cannot play: the
+ * *absence* is the exception, so the absence is what gets marked.
+ *
+ * Dimming is a colour, though, so it cannot be the only signal.
+ * `aria-disabled` is what carries it to anyone not seeing the page.
+ */
+describe('a track the library does not have', () => {
   beforeEach(() => {
     resetHarness();
     stub('library.Library.GetAlbumTracks', []);
     stub('library.Library.GetAllLibrariesWithTrackCounts', []);
   });
 
-  it('names the symbol when at least one track carries it', async () => {
+  it('is dimmed, and the owned ones are not', async () => {
     const el = await withVersion(3, 12);
+    const rows = shadowAll(el, '.track-row');
 
-    expect(text(el, '.tracklist-legend')).toContain('in your library');
+    expect(rows).toHaveLength(12);
+    expect(rows.filter((r) => r.classList.contains('unowned'))).toHaveLength(9);
+    expect(rows.filter((r) => r.classList.contains('owned'))).toHaveLength(3);
   });
 
-  it('does not explain a symbol that is not on screen', async () => {
-    const el = await withVersion(0, 12);
+  it('says so without relying on the colour', async () => {
+    const el = await withVersion(3, 12);
+    const rows = shadowAll(el, '.track-row');
 
+    expect(rows[0]?.getAttribute('aria-disabled')).toBe('false');
+    expect(rows[11]?.getAttribute('aria-disabled')).toBe('true');
+    expect(rows[11]?.getAttribute('aria-label')).toContain('not in your library');
+  });
+
+  it('no longer marks the owned ones with a badge', async () => {
+    const el = await withVersion(3, 12);
+
+    expect(shadowAll(el, '.track-row library-status-indicator')).toHaveLength(0);
     expect(shadow(el, '.tracklist-legend')).toBeNull();
   });
 });

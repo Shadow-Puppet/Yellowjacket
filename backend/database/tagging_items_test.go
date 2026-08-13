@@ -333,6 +333,82 @@ func TestListPendingFolders_SampleFilePathUsesIndex(t *testing.T) {
 	}
 }
 
+// TestUpsertTaggingItemOnTrackAdd_AlbumArtistTracksConsensus guards
+// against regressing to first-write-wins: a folder's album_artist
+// must reflect whether every contributing track actually agreed, not
+// just whichever track happened to be scanned first.  IsMixedBag
+// (backend/autotag) trusts a non-empty album_artist unconditionally,
+// so a stale first-seen value here would silently defeat mixed-bag
+// detection for the rest of the folder's tracks.
+func TestUpsertTaggingItemOnTrackAdd_AlbumArtistTracksConsensus(t *testing.T) {
+	t.Parallel()
+
+	db := database.NewTestDB(t)
+
+	upsert := func(t *testing.T, groupKey, albumArtist string) {
+		t.Helper()
+
+		if err := db.Queries.UpsertTaggingItemOnTrackAdd(
+			db.Ctx, sqlcgen.UpsertTaggingItemOnTrackAddParams{
+				GroupKey:    groupKey,
+				LibraryID:   0,
+				AlbumName:   "",
+				AlbumArtist: albumArtist,
+				DiscNumber:  0,
+			},
+		); err != nil {
+			t.Fatalf("upsert: %v", err)
+		}
+	}
+
+	albumArtist := func(t *testing.T, groupKey string) string {
+		t.Helper()
+
+		return scalarString(t, db,
+			`SELECT album_artist FROM tagging_items WHERE group_key = ?`, groupKey,
+		)
+	}
+
+	// Every contributing track agrees: the value sticks.
+	upsert(t, "agree", "Artist One")
+	upsert(t, "agree", "Artist One")
+	upsert(t, "agree", "Artist One")
+
+	if got := albumArtist(t, "agree"); got != "Artist One" {
+		t.Errorf("unanimous album_artist = %q, want %q", got, "Artist One")
+	}
+
+	// A later track disagrees: the value must clear, not freeze on
+	// whichever track was scanned first.
+	upsert(t, "disagree", "Artist One")
+	upsert(t, "disagree", "Artist Two")
+	upsert(t, "disagree", "Artist One")
+
+	if got := albumArtist(t, "disagree"); got != "" {
+		t.Errorf("disagreeing album_artist = %q, want empty (no consensus)", got)
+	}
+
+	// An untagged track (empty AlbumArtist) must not overwrite an
+	// established consensus value, nor count as disagreement.
+	upsert(t, "partial-tags", "Artist One")
+	upsert(t, "partial-tags", "")
+	upsert(t, "partial-tags", "Artist One")
+
+	if got := albumArtist(t, "partial-tags"); got != "Artist One" {
+		t.Errorf("partial-tags album_artist = %q, want %q", got, "Artist One")
+	}
+
+	// Once cleared by disagreement, a later untagged track must not
+	// resurrect a stale value.
+	upsert(t, "cleared-stays-cleared", "Artist One")
+	upsert(t, "cleared-stays-cleared", "Artist Two")
+	upsert(t, "cleared-stays-cleared", "")
+
+	if got := albumArtist(t, "cleared-stays-cleared"); got != "" {
+		t.Errorf("cleared-stays-cleared album_artist = %q, want empty", got)
+	}
+}
+
 func TestGetTaggingItemAndListAudioFilesInGroup(t *testing.T) {
 	t.Parallel()
 

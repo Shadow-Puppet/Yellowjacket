@@ -985,7 +985,11 @@ export class GenresView
 
         switch (action) {
             case 'play':
-                queueStore.setQueue(filePaths, 0, true);
+                queueStore.setQueue(filePaths, 0, true, {
+                    type: 'genre',
+                    id: 0,
+                    label: this.contextMenuGenreName ?? '',
+                });
                 break;
             case 'add-to-queue':
                 queueStore.addTracksToQueue(

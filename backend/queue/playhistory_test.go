@@ -23,7 +23,7 @@ func TestRecordPlay_EmitsPlayCountNotMetadataChanged(t *testing.T) {
 	q, db, rec := setupRecordedQueue(t)
 	paths := seedAudioFiles(t, db, 2)
 
-	q.SetQueue(paths, 0, false)
+	q.SetQueue(paths, 0, false, Source{})
 	rec.Reset()
 
 	q.recordPlay(1)
@@ -77,7 +77,7 @@ func TestRecordPlay_ReportsTheStoredCount(t *testing.T) {
 	q, db, rec := setupRecordedQueue(t)
 	paths := seedAudioFiles(t, db, 1)
 
-	q.SetQueue(paths, 0, false)
+	q.SetQueue(paths, 0, false, Source{})
 	rec.Reset()
 
 	q.recordPlay(1)

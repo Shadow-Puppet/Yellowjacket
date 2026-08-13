@@ -689,6 +689,123 @@ grouped so the caller keeps the tracklist's order. It exists rather
 than a lookup by track id because **`MBTrack.LocalID` is declared and
 nothing in the backend ever writes it**.
 
+**How much of an album is here is a question the files can answer.**
+`ownership()` above counts the *displayed* tracklist, which for a
+library copy is a tautology — every local track is `inLibrary: true`,
+so owned always equals total and "do I have all of this" had no local
+answer. The album page therefore asked MusicBrainz, and
+`BrowseReleases` is the most expensive call the app makes: releases
+plus every version's full tracklist, on a 1 req/s limiter shared with
+`PrefetchReleases`, which fires up to eight when an artist page
+renders.
+
+The denominator was already on disk. `metadata` has read the "5/12"
+totals off every file since forever (`m.Track()`, `m.Disc()`) and
+discarded them; they persist to
+`release_group_recordings.total_tracks` now, and
+`GetAlbumCompleteness` sums them. **A complete, MBID-matched album
+makes no catalog call at all** — identity from the MBID, tracklist from
+the tags, which between them are what the browse was being spent on.
+
+Three things about it are load-bearing. **Totals are declared per
+disc**, so the expectation is a sum over discs and not one number, and
+a disc whose files declared nothing leaves the whole album unknowable
+rather than being covered by the discs that did. **Unknown is a third
+state and must render as neither** — a great deal of any untagged
+library has no total, and a ring drawn from its absence would mark most
+of a library incomplete on no evidence; `Known` is what guards that,
+and the badge falls back to the plain tick. And **complete is `>=`,
+not `==`**, because bonus and hidden tracks routinely put a folder over
+its declared total and that is a complete album, not a broken one.
+Owned counts *distinct track numbers* for the same reason in reverse:
+this app detects duplicates, and counting two files of track 3 twice
+would report a short album as complete.
+
+What tags cannot give is *which* tracks are missing, only how many — so
+an incomplete album still browses, and that is now the exception rather
+than every album load. Two smaller consequences: existing databases
+read "unknown" until a rescan repopulates the column (which degrades to
+exactly the old behaviour, so nothing breaks), and our own `tagwriter`
+writes track and disc *numbers* but not totals, so autotagging a folder
+currently degrades the field this rests on.
+
+**The absence is what gets marked, not the presence.** The tracklist
+put a green tick against every owned track and a legend underneath
+explaining the tick — a positive mark on the *common* case, so an album
+you own outright wore a column of circles and a key for them. It is the
+streaming-service treatment now: rows not in the library are **dimmed
+in place**, and nothing marks the ones that are. Two things follow.
+Dimming is a colour, so it cannot be the only signal — the row carries
+`aria-disabled`, which is what reaches anyone not seeing it. And the
+dimmed rows are why the `loading` banner could go: tracks arriving
+dimmed reads as the album filling in, so a line of text about the
+page's own plumbing earns nothing. `unavailable` survives because it is
+not about plumbing — it says rows may be missing from the page
+altogether, which nothing on screen can show. (`explore-artist-details`
+still uses `loading`; it has no equivalent per-row signal.)
+
+**A partly-owned album draws the release, not the part.** Once the tags
+say nine of twelve, `buildLibraryEntry` shows the *catalog's* twelve
+with three dimmed, rather than the nine on disk — the missing tracks
+are the useful information and a tracklist trimmed to what is owned
+cannot show them. It is guarded on `completeness.known` rather than on
+"fewer tracks than the cluster", which would swap a catalog tracklist
+in for every album whose tags simply never declared a total. A
+side-effect worth knowing: this is what finally makes `ownership()`
+say something true here, since counting the displayed tracklist of a
+library-only entry could only ever produce "9 of 9".
+
+**A dropdown is only a choice if the choices differ.** The version
+selector tested `versionEntries.length`, but a release group routinely
+has several releases — reissues, regional pressings, a remaster — whose
+tracklists are identical, and the synthetic "Your Library" entry is
+often a third name for the same one, so the control appeared with every
+option showing the same rows. `distinctTracklistCount()` is the real
+test. It deliberately does **not** use `fingerprint()`, which keys on
+recording MBIDs alone: a library entry built from untagged files has
+none, so every such tracklist fingerprints to the same run of empty
+strings and compares equal to every other. It falls back to the title,
+which is what lets a local copy be recognised as the same tracklist the
+catalog is describing.
+
+**Say which version you own, not that you own one.** A synthetic "Your
+Library" entry used to stand in for the matching release, which hid the
+thing worth knowing: you could see that you owned *a* version but not
+*which*, while the real release — its date, country and release count —
+sat underneath under a different name. The matching release carries
+`inLibrary` and is marked (★ **and** the words "in your library", since
+a `<select>` cannot be styled per option and a bare glyph is the
+unexplained symbol the tracklist's green ticks were). The synthetic
+survives only where there is nothing to mark: local files matching no
+release, or the no-local-album overlap guess.
+
+**A merged cluster shows the order the most releases agree on.**
+`mergeNearDuplicateClusters` folds by track *set*, so a resequenced
+pressing — same songs, different running order — merges correctly. But
+the survivor was whichever release came first in the browse response,
+which is meaningless ordering. On a real album one 2021 pressing
+arrived ahead of eleven 2013 ones, so the cluster wore the 2021 running
+order; the user's files then matched no cluster **fingerprint**, and
+the page both called their copy unlinked to MusicBrainz and offered a
+second "version" whose only difference was an ordering almost nothing
+was pressed in. `withConsensusRepresentative` re-picks by how many
+releases share each exact ordering, earliest date breaking the tie —
+**and moves the cluster's fingerprint with it**, since that is what the
+library match is tested against. Note the consequence for the version
+list: a resequence is not a separate version, because the merge folds
+it before any of this runs.
+
+**A slow catalog fetch is not a failed one.** The same page used to
+reach `unavailable` — "No catalog details for this album right now" —
+from a **12-second timer**, which is the only signal it had, because
+`ensureReleasesAsync` emitted `AlbumReleasesReady` on success and
+nothing at all on failure. Against a browse queued behind eight
+prefetches at 1 req/s, that reported healthy fetches as catalog
+failures on correctly-matched albums. `AlbumReleasesFailed` is the
+missing half; `catalogFailed` is the only route to `unavailable` now,
+and the timer is a 60 s backstop for a genuine hang rather than the
+verdict.
+
 **Ask for what the caller uses, once.** "Play this artist" resolved
 file paths with one `GetAlbumTracks` per album, sequentially, and every
 one of the four sites doing that asked for whole track rows to read

@@ -385,7 +385,11 @@ export class HomeView extends ViewLifecycleMixin(LitElement) {
 
             if (paths.length === 0) return;
 
-            queueStore.setQueue(paths, 0, true);
+            queueStore.setQueue(paths, 0, true, {
+                type: 'album',
+                id: album.ID,
+                label: album.Name,
+            });
         } catch (err) {
             console.error('Could not play that album:', err);
         }

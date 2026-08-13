@@ -1155,6 +1155,7 @@ export namespace explore {
 	    status: string;
 	    artistCredit?: string;
 	    tracks?: MBTrack[];
+	    releaseGroupMbid?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new MBRelease(source);
@@ -1169,6 +1170,7 @@ export namespace explore {
 	        this.status = source["status"];
 	        this.artistCredit = source["artistCredit"];
 	        this.tracks = this.convertValues(source["tracks"], MBTrack);
+	        this.releaseGroupMbid = source["releaseGroupMbid"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -1676,6 +1678,24 @@ export namespace library {
 	        this.CoverArtLarge = source["CoverArtLarge"];
 	        this.Year = source["Year"];
 	        this.ReleaseYear = source["ReleaseYear"];
+	    }
+	}
+	export class AlbumCompleteness {
+	    owned: number;
+	    expected: number;
+	    known: boolean;
+	    complete: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new AlbumCompleteness(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.owned = source["owned"];
+	        this.expected = source["expected"];
+	        this.known = source["known"];
+	        this.complete = source["complete"];
 	    }
 	}
 	export class Artist {
@@ -2275,6 +2295,22 @@ export namespace playlist {
 
 export namespace queue {
 	
+	export class Source {
+	    type: string;
+	    id: number;
+	    label: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Source(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.type = source["type"];
+	        this.id = source["id"];
+	        this.label = source["label"];
+	    }
+	}
 	export class Track {
 	    id: number;
 	    audioFileId: number;
@@ -2312,7 +2348,7 @@ export namespace queue {
 	    currentIndex: number;
 	    shuffleMode: boolean;
 	    repeatMode: string;
-	    sourcePlaylistId: number;
+	    source: Source;
 	
 	    static createFrom(source: any = {}) {
 	        return new State(source);
@@ -2324,7 +2360,7 @@ export namespace queue {
 	        this.currentIndex = source["currentIndex"];
 	        this.shuffleMode = source["shuffleMode"];
 	        this.repeatMode = source["repeatMode"];
-	        this.sourcePlaylistId = source["sourcePlaylistId"];
+	        this.source = this.convertValues(source["source"], Source);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

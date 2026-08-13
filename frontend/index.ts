@@ -41,6 +41,7 @@ import { queueStore } from '@store/queue-store';
 import { searchStore } from '@store/search-store';
 import * as Player from '@go/player/Player';
 import * as Queue from '@go/queue/Queue';
+import { GetDefaultPage } from '@go/config/Config';
 // Importing the theme store triggers initialization: it fetches the saved
 // theme from the backend and applies CSS custom properties to :root.
 import '@store/theme-store';
@@ -150,11 +151,16 @@ let currentDetailEl: HTMLElement | null = null;
 /** Navigation history stack for back-button support in detail views. */
 const navStack: Array<{ view: string; [key: string]: any }> = [];
 /** The current navigation detail (so we can push it onto the stack). */
-let currentNavDetail: { view: string; [key: string]: any } = { view: 'tracks' };
+let currentNavDetail: { view: string; [key: string]: any } = { view: 'home' };
 
-// Seed the cache with the default track-list rendered in index.html.
 const mainContent = document.getElementById('main-content');
 
+// Seed the cache with the default track-list rendered in index.html —
+// otherwise the very first navigation (to whatever GetDefaultPage
+// resolves to) creates and shows a second view while this one, never
+// tracked as currentViewEl, is never hidden: two visible primary views
+// splitting the main panel between them regardless of which is
+// selected.
 if (mainContent) {
     const initialTrackList = mainContent.querySelector('track-list');
 
@@ -411,6 +417,24 @@ document.addEventListener('navigate-back', () => {
         }));
     }
 });
+
+// Navigate to the user's configured launch page.  Falls back to 'home'
+// if the backend call fails, matching the config's own default.
+GetDefaultPage()
+    .then((view) => {
+        document.dispatchEvent(new CustomEvent('navigate', {
+            bubbles: true,
+            composed: true,
+            detail: { view: view || 'home' },
+        }));
+    })
+    .catch(() => {
+        document.dispatchEvent(new CustomEvent('navigate', {
+            bubbles: true,
+            composed: true,
+            detail: { view: 'home' },
+        }));
+    });
 
 // Queue panel toggle
 const queueButton = document.getElementById('queue-button');

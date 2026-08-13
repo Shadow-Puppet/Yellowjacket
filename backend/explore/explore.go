@@ -55,6 +55,12 @@ type Service struct {
 	// already in flight) into one MusicBrainz browse + one
 	// AlbumReleasesReady event.
 	releasesSF singleflight.Group
+
+	// mixMu guards mix, the in-progress dynamic-mix queue-fallback
+	// session (see mix.go). There is only ever one — this is a
+	// single-user desktop app with one queue.
+	mixMu sync.Mutex
+	mix   *mixSession
 }
 
 // NewExploreService creates a Service backed by the given
@@ -236,6 +242,79 @@ func (e *Service) PopulateLocalCrossReferencesIfNeeded() {
 // owned artist is covered and safe to call on every scan and launch.
 func (e *Service) BackfillLibraryDiscographies() {
 	go e.index.BackfillLibraryDiscographies(e.ctx)
+}
+
+// releaseGroupMBIDBackfillMaxPerRun bounds how many pending release
+// MBIDs a single run resolves, mirroring discogBackfillMaxPerRun.
+const releaseGroupMBIDBackfillMaxPerRun = 500
+
+// BackfillReleaseGroupMBIDs resolves release groups whose scan only
+// found a release-level MBID (MUSICBRAINZ_ALBUMID — many taggers write
+// this instead of, or in addition to, MUSICBRAINZ_RELEASEGROUPID) into
+// the release-group MBID everything else on the album page is keyed
+// by. Bounded and resumable, in the background: a scan can't afford a
+// live MusicBrainz call, so `library.updateMBIDs` stashes the release
+// MBID in `pending_release_mbid` instead, and this is what resolves it
+// — the same "defer the network call out of the scan path" shape as
+// BackfillLibraryDiscographies.
+func (e *Service) BackfillReleaseGroupMBIDs() {
+	go e.backfillReleaseGroupMBIDs(e.ctx)
+}
+
+func (e *Service) backfillReleaseGroupMBIDs(ctx context.Context) {
+	rows, err := e.db.QueryContext(
+		"SELECT id, pending_release_mbid FROM release_groups "+
+			"WHERE (mbid IS NULL OR mbid = '') "+
+			"AND pending_release_mbid IS NOT NULL AND pending_release_mbid != '' "+
+			"LIMIT ?",
+		releaseGroupMBIDBackfillMaxPerRun,
+	)
+	if err != nil {
+		e.logger.Warn("release-group mbid backfill: query failed", "error", err)
+
+		return
+	}
+
+	type pendingRow struct {
+		id          int64
+		releaseMBID string
+	}
+
+	var pending []pendingRow
+
+	for rows.Next() {
+		var p pendingRow
+
+		if err := rows.Scan(&p.id, &p.releaseMBID); err == nil {
+			pending = append(pending, p)
+		}
+	}
+
+	_ = rows.Close()
+
+	for _, p := range pending {
+		if ctx.Err() != nil {
+			return
+		}
+
+		release, err := e.mb.LookupRelease(ctx, p.releaseMBID)
+		if err != nil || release.ReleaseGroupMBID == "" {
+			// Left alone rather than cleared: LookupRelease caches its
+			// answer (success or a release with no group) for 7 days,
+			// so a retry on the next run is cheap, and a future rescan
+			// that finds a real release-group tag still wins normally.
+			continue
+		}
+
+		_, err = e.db.ExecContext(
+			"UPDATE release_groups SET mbid = ?, pending_release_mbid = NULL "+
+				"WHERE id = ? AND (mbid IS NULL OR mbid = '')",
+			release.ReleaseGroupMBID, p.id,
+		)
+		if err != nil {
+			e.logger.Warn("release-group mbid backfill: update failed", "error", err)
+		}
+	}
 }
 
 // InvalidateLibrarySync clears the "ready" markers guarding the gated
@@ -649,9 +728,17 @@ func (e *Service) ensureReleasesAsync(releaseGroupMBID string) {
 	go func() {
 		_, _, _ = e.releasesSF.Do(releaseGroupMBID, func() (any, error) {
 			_, err := e.mb.BrowseReleases(e.ctx, releaseGroupMBID)
-			if err == nil {
-				events.Emit(e.ctx, events.AlbumReleasesReady, releaseGroupMBID)
+			if err != nil {
+				e.logger.Warn("explore: background browse releases failed",
+					"releaseGroupMBID", releaseGroupMBID,
+					"error", err,
+				)
+				events.Emit(e.ctx, events.AlbumReleasesFailed, releaseGroupMBID)
+
+				return nil, nil
 			}
+
+			events.Emit(e.ctx, events.AlbumReleasesReady, releaseGroupMBID)
 
 			return nil, nil
 		})

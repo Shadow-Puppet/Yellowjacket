@@ -45,8 +45,10 @@ export function SaveState():Promise<void>;
 
 export function SetContext(arg1:context.Context):Promise<void>;
 
+export function SetFallbackSource(arg1:queue.FallbackSource):Promise<void>;
+
 export function SetPlayer(arg1:queue.TrackLoader):Promise<void>;
 
-export function SetQueue(arg1:Array<string>,arg2:number,arg3:boolean):Promise<void>;
+export function SetQueue(arg1:Array<string>,arg2:number,arg3:boolean,arg4:queue.Source):Promise<void>;
 
 export function ToggleShuffle():Promise<void>;

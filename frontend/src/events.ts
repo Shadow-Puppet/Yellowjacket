@@ -20,6 +20,7 @@ export const Events = {
     // Config events
     LibraryConfigChanged: "LibraryConfigChanged",
     ThemeConfigChanged: "ThemeConfigChanged",
+    GeneralConfigChanged: "GeneralConfigChanged",
     TrackListConfigChanged: "TrackListConfigChanged",
     FavoritesConfigChanged: "FavoritesConfigChanged",
     ShortcutsConfigChanged: "ShortcutsConfigChanged",
@@ -90,6 +91,7 @@ export const Events = {
     ArtistDiscographyReady: "ArtistDiscographyReady",
     ArtistSimilarReady: "ArtistSimilarReady",
     AlbumReleasesReady: "AlbumReleasesReady",
+    AlbumReleasesFailed: "AlbumReleasesFailed",
     DownloadProvidersChanged: "DownloadProvidersChanged",
     DownloadsChanged: "DownloadsChanged",
     RequestsChanged: "RequestsChanged",

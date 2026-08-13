@@ -11,9 +11,11 @@ import (
 )
 
 const createReleaseGroupRecording = `-- name: CreateReleaseGroupRecording :one
-INSERT INTO release_group_recordings (release_group_id, recording_id, track_number, disc_number)
-VALUES (?, ?, ?, ?)
-RETURNING id, release_group_id, recording_id, track_number, disc_number
+INSERT INTO release_group_recordings (
+  release_group_id, recording_id, track_number, disc_number, total_tracks
+)
+VALUES (?, ?, ?, ?, ?)
+RETURNING id, release_group_id, recording_id, track_number, disc_number, total_tracks
 `
 
 type CreateReleaseGroupRecordingParams struct {
@@ -21,6 +23,7 @@ type CreateReleaseGroupRecordingParams struct {
 	RecordingID    int64
 	TrackNumber    sql.NullInt64
 	DiscNumber     sql.NullInt64
+	TotalTracks    sql.NullInt64
 }
 
 func (q *Queries) CreateReleaseGroupRecording(ctx context.Context, arg CreateReleaseGroupRecordingParams) (ReleaseGroupRecording, error) {
@@ -29,6 +32,7 @@ func (q *Queries) CreateReleaseGroupRecording(ctx context.Context, arg CreateRel
 		arg.RecordingID,
 		arg.TrackNumber,
 		arg.DiscNumber,
+		arg.TotalTracks,
 	)
 	var i ReleaseGroupRecording
 	err := row.Scan(
@@ -37,6 +41,7 @@ func (q *Queries) CreateReleaseGroupRecording(ctx context.Context, arg CreateRel
 		&i.RecordingID,
 		&i.TrackNumber,
 		&i.DiscNumber,
+		&i.TotalTracks,
 	)
 	return i, err
 }
@@ -85,8 +90,38 @@ func (q *Queries) DeleteReleaseGroupRecordingsByRecording(ctx context.Context, r
 	return err
 }
 
+const getAlbumCompleteness = `-- name: GetAlbumCompleteness :one
+WITH discs AS (
+    SELECT
+        COALESCE(rgr.disc_number, 1) AS disc,
+        MAX(COALESCE(rgr.total_tracks, 0)) AS declared,
+        COUNT(DISTINCT COALESCE(rgr.track_number, -rgr.recording_id)) AS owned
+    FROM release_group_recordings rgr
+    WHERE rgr.release_group_id = ?
+    GROUP BY COALESCE(rgr.disc_number, 1)
+)
+SELECT
+    CAST(COALESCE(SUM(owned), 0) AS INTEGER) AS owned,
+    CAST(COALESCE(SUM(declared), 0) AS INTEGER) AS expected,
+    CAST(COALESCE(SUM(CASE WHEN declared = 0 THEN 1 ELSE 0 END), 0) AS INTEGER) AS discs_untotalled
+FROM discs
+`
+
+type GetAlbumCompletenessRow struct {
+	Owned           int64
+	Expected        int64
+	DiscsUntotalled int64
+}
+
+func (q *Queries) GetAlbumCompleteness(ctx context.Context, releaseGroupID int64) (GetAlbumCompletenessRow, error) {
+	row := q.db.QueryRowContext(ctx, getAlbumCompleteness, releaseGroupID)
+	var i GetAlbumCompletenessRow
+	err := row.Scan(&i.Owned, &i.Expected, &i.DiscsUntotalled)
+	return i, err
+}
+
 const getRecordingReleaseGroups = `-- name: GetRecordingReleaseGroups :many
-SELECT id, release_group_id, recording_id, track_number, disc_number FROM release_group_recordings
+SELECT id, release_group_id, recording_id, track_number, disc_number, total_tracks FROM release_group_recordings
 WHERE recording_id = ?
 `
 
@@ -105,6 +140,7 @@ func (q *Queries) GetRecordingReleaseGroups(ctx context.Context, recordingID int
 			&i.RecordingID,
 			&i.TrackNumber,
 			&i.DiscNumber,
+			&i.TotalTracks,
 		); err != nil {
 			return nil, err
 		}
@@ -120,7 +156,7 @@ func (q *Queries) GetRecordingReleaseGroups(ctx context.Context, recordingID int
 }
 
 const getReleaseGroupRecording = `-- name: GetReleaseGroupRecording :one
-SELECT id, release_group_id, recording_id, track_number, disc_number FROM release_group_recordings 
+SELECT id, release_group_id, recording_id, track_number, disc_number, total_tracks FROM release_group_recordings 
 WHERE id = ? LIMIT 1
 `
 
@@ -133,12 +169,13 @@ func (q *Queries) GetReleaseGroupRecording(ctx context.Context, id int64) (Relea
 		&i.RecordingID,
 		&i.TrackNumber,
 		&i.DiscNumber,
+		&i.TotalTracks,
 	)
 	return i, err
 }
 
 const getReleaseGroupRecordings = `-- name: GetReleaseGroupRecordings :many
-SELECT id, release_group_id, recording_id, track_number, disc_number FROM release_group_recordings
+SELECT id, release_group_id, recording_id, track_number, disc_number, total_tracks FROM release_group_recordings
 WHERE release_group_id = ?
 ORDER BY disc_number, track_number
 `
@@ -158,6 +195,7 @@ func (q *Queries) GetReleaseGroupRecordings(ctx context.Context, releaseGroupID 
 			&i.RecordingID,
 			&i.TrackNumber,
 			&i.DiscNumber,
+			&i.TotalTracks,
 		); err != nil {
 			return nil, err
 		}

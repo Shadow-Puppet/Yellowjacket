@@ -13,6 +13,10 @@ import {
 import {
     GetScanConcurrency,
     SetScanConcurrency,
+    GetDefaultPage,
+    SetDefaultPage,
+    GetQueueFallback,
+    SetQueueFallback,
 } from '@go/config/Config';
 import { GetIndexStatus } from '@go/explore/Service';
 import { DirectoryPicker } from '@go/frontendutil/FrontendUtil';
@@ -83,6 +87,8 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
     @state() private removingLibraryId: number | null = null;
     @state() private activeMenuId: number | null = null;
     @state() private concurrencyMode = 'auto';
+    @state() private defaultPage = 'home';
+    @state() private queueFallback = 'favorites';
     @state() private indexStatus: explore.IndexStatus | null = null;
     /** Three states, not one: the panel used to say "Loading status…"
      *  for the entire session, because the only thing that ever set
@@ -881,13 +887,17 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
 
     private async loadLibraries(): Promise<void> {
         try {
-            const [libs, mode] = await Promise.all([
+            const [libs, mode, defaultPage, queueFallback] = await Promise.all([
                 GetAllLibrariesWithTrackCounts(),
                 GetScanConcurrency(),
+                GetDefaultPage(),
+                GetQueueFallback(),
             ]);
 
             this.libraries = libs ?? [];
             this.concurrencyMode = mode;
+            this.defaultPage = defaultPage;
+            this.queueFallback = queueFallback;
 
         } catch (err) {
             console.error(
@@ -1064,6 +1074,54 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
             this.indexStatusFailed = true;
         }
     }
+
+    private handleDefaultPageChange = (
+        e: CustomEvent<ConfigFieldChangeEvent>,
+    ): void => {
+        const page = String(e.detail.value);
+
+        SetDefaultPage(page)
+            .then(() => {
+                this.defaultPage = page;
+                notificationStore.transient({
+                    tone: 'success',
+                    key: 'default-page',
+                    text: 'Launch page saved.',
+                });
+            })
+            .catch((err: unknown) => {
+                console.error('Failed to save launch page:', err);
+                notificationStore.transient({
+                    key: 'default-page',
+                    text: `Could not save the launch page. ${describeError(err)}`,
+                    detail: String(err),
+                });
+            });
+    };
+
+    private handleQueueFallbackChange = (
+        e: CustomEvent<ConfigFieldChangeEvent>,
+    ): void => {
+        const mode = String(e.detail.value);
+
+        SetQueueFallback(mode)
+            .then(() => {
+                this.queueFallback = mode;
+                notificationStore.transient({
+                    tone: 'success',
+                    key: 'queue-fallback',
+                    text: 'Queue fallback saved.',
+                });
+            })
+            .catch((err: unknown) => {
+                console.error('Failed to save queue fallback:', err);
+                notificationStore.transient({
+                    key: 'queue-fallback',
+                    text: `Could not save the queue fallback. ${describeError(err)}`,
+                    detail: String(err),
+                });
+            });
+    };
 
     private handleConcurrencyChange = (
         e: CustomEvent<ConfigFieldChangeEvent>,
@@ -1361,6 +1419,7 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
               once, if ever — was first and the only expanded one.
             -->
             ${this.renderLibrarySection()}
+            ${this.renderGeneralSection()}
             ${this.renderNowPlayingSection()}
             ${this.renderThemeSection()}
             ${this.renderTrackListSection()}
@@ -1512,6 +1571,57 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
                     }}
                     .value=${this.scrollMode}
                     @config-change=${this.handleScrollModeChange}
+                ></config-field>
+            </config-section>
+        `;
+    }
+
+    // --- General section ---
+
+    private renderGeneralSection() {
+        return html`
+            <config-section
+                heading="General"
+                description="General app behaviour."
+            >
+                <config-field
+                    .schema=${{
+                        key: 'defaultPage',
+                        label: 'Launch Page',
+                        description:
+                            'The page the app opens to on launch.',
+                        type: 'select' as const,
+                        options: [
+                            { value: 'home', label: 'Home' },
+                            { value: 'tracks', label: 'Tracks' },
+                            { value: 'albums', label: 'Albums' },
+                            { value: 'artists', label: 'Artists' },
+                            { value: 'genres', label: 'Genres' },
+                            { value: 'playlists', label: 'Playlists' },
+                            { value: 'explore', label: 'Explore' },
+                            { value: 'downloads', label: 'Downloads' },
+                            { value: 'autotag', label: 'Autotag' },
+                            { value: 'jobs', label: 'Jobs' },
+                        ],
+                    }}
+                    .value=${this.defaultPage}
+                    @config-change=${this.handleDefaultPageChange}
+                ></config-field>
+                <config-field
+                    .schema=${{
+                        key: 'queueFallback',
+                        label: 'When the Queue Ends',
+                        description:
+                            'What plays, if anything, once the queue runs out.',
+                        type: 'select' as const,
+                        options: [
+                            { value: 'favorites', label: 'Play Favorites' },
+                            { value: 'dynamicMix', label: 'Start a Dynamic Mix' },
+                            { value: 'stop', label: 'Stop' },
+                        ],
+                    }}
+                    .value=${this.queueFallback}
+                    @config-change=${this.handleQueueFallbackChange}
                 ></config-field>
             </config-section>
         `;

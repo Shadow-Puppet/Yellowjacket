@@ -1,10 +1,10 @@
 -- name: GetQueueState :one
-SELECT source_playlist_id, current_position, shuffle_mode, repeat_mode, shuffle_order
+SELECT current_position, shuffle_mode, repeat_mode, shuffle_order, source_type, source_id, source_label
 FROM queue WHERE id = 1;
 
 -- name: UpdateQueueState :exec
 UPDATE queue
-SET source_playlist_id = ?, current_position = ?, shuffle_mode = ?, repeat_mode = ?, shuffle_order = ?
+SET current_position = ?, shuffle_mode = ?, repeat_mode = ?, shuffle_order = ?, source_type = ?, source_id = ?, source_label = ?
 WHERE id = 1;
 
 -- name: UpdateQueuePosition :exec

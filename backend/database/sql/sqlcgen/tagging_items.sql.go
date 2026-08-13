@@ -200,7 +200,7 @@ func (q *Queries) GetRecordingReleaseGroupID(ctx context.Context, recordingID in
 }
 
 const getTaggingItem = `-- name: GetTaggingItem :one
-SELECT group_key, library_id, track_count, album_name, album_artist, disc_number, best_match_release_mbid, score, last_checked_at, status, cleared_at, created_at, synthetic, parent_group_key FROM tagging_items
+SELECT group_key, library_id, track_count, album_name, album_artist, disc_number, best_match_release_mbid, score, last_checked_at, status, cleared_at, created_at, synthetic, parent_group_key, album_artist_conflict FROM tagging_items
 WHERE group_key = ?
 LIMIT 1
 `
@@ -223,6 +223,7 @@ func (q *Queries) GetTaggingItem(ctx context.Context, groupKey string) (TaggingI
 		&i.CreatedAt,
 		&i.Synthetic,
 		&i.ParentGroupKey,
+		&i.AlbumArtistConflict,
 	)
 	return i, err
 }
@@ -859,7 +860,27 @@ ON CONFLICT(group_key) DO UPDATE SET
     WHEN tagging_items.album_name = '' THEN excluded.album_name
     ELSE tagging_items.album_name
   END,
+  -- Tracks real consensus, not first-write-wins: stays set only
+  -- while every track that has contributed a non-empty value agrees.
+  -- A later track with a *different* non-empty value clears it back
+  -- to '' and latches album_artist_conflict, since a single
+  -- disagreeing tag means the folder no longer has one authoritative
+  -- album-artist -- IsMixedBag (backend/autotag) treats a non-empty
+  -- value here as trusted, so leaving a stale first-seen value in
+  -- place would let one track's tag silently blind mixed-bag
+  -- detection for the whole folder. The latch (rather than just
+  -- clearing the text column) stops a later track from coincidentally
+  -- repeating an already-disputed value and resurrecting trust in it.
+  album_artist_conflict = CASE
+    WHEN tagging_items.album_artist_conflict = 1 THEN 1
+    WHEN tagging_items.album_artist != '' AND excluded.album_artist != ''
+      AND tagging_items.album_artist != excluded.album_artist THEN 1
+    ELSE 0
+  END,
   album_artist = CASE
+    WHEN tagging_items.album_artist_conflict = 1 THEN ''
+    WHEN tagging_items.album_artist != '' AND excluded.album_artist != ''
+      AND tagging_items.album_artist != excluded.album_artist THEN ''
     WHEN tagging_items.album_artist = '' THEN excluded.album_artist
     ELSE tagging_items.album_artist
   END

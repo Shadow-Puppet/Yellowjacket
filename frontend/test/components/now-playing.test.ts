@@ -54,13 +54,17 @@ function queueTrack(n: number, title: string): QueueTrack {
   };
 }
 
-function setQueue(tracks: QueueTrack[], currentIndex = 0): void {
+function setQueue(
+  tracks: QueueTrack[],
+  currentIndex = 0,
+  source = { type: '', id: 0, label: '' },
+): void {
   emit(Events.QueueChanged, {
     tracks,
     currentIndex,
     shuffleMode: false,
     repeatMode: 'off',
-    sourcePlaylistId: 0,
+    source,
   });
 }
 
@@ -287,6 +291,77 @@ describe('<now-playing>', () => {
     expect(await mountScrolling(true)).not.toContain('will-scroll');
   });
 
+  it('shows no source line when the queue has no known source', async () => {
+    const el = await fixture('now-playing');
+
+    emit(Events.TrackChanged, { ...TRACK, trackChangeId: 10 });
+    setQueue([queueTrack(1, 'Ashes to Ashes')]);
+    await flush();
+    await el.updateComplete;
+
+    expect(shadow(el, '[data-testid="now-playing-source"]')).toBeNull();
+  });
+
+  it('names where the queue came from, and navigates back to it', async () => {
+    const el = await fixture('now-playing');
+
+    emit(Events.TrackChanged, { ...TRACK, trackChangeId: 11 });
+    setQueue([queueTrack(1, 'Ashes to Ashes')], 0, {
+      type: 'album',
+      id: 7,
+      label: 'Scary Monsters',
+    });
+    await flush();
+    await el.updateComplete;
+
+    expect(text(el, '[data-testid="now-playing-source"]')).toBe(
+      'Playing from Scary Monsters',
+    );
+
+    let detail: unknown;
+    el.addEventListener('navigate', (e) => {
+      detail = (e as CustomEvent).detail;
+    });
+
+    shadow<HTMLElement>(el, '[data-testid="now-playing-source"]')?.click();
+
+    expect(detail).toEqual({
+      view: 'explore-album-details',
+      localAlbumId: 7,
+      albumName: 'Scary Monsters',
+    });
+  });
+
+  it('names a dynamic mix as text, not a dead link', async () => {
+    const el = await fixture('now-playing');
+
+    emit(Events.TrackChanged, { ...TRACK, trackChangeId: 12 });
+    setQueue([queueTrack(1, 'Ashes to Ashes')], 0, {
+      type: 'dynamicMix',
+      id: 0,
+      label: 'a dynamic mix',
+    });
+    await flush();
+    await el.updateComplete;
+
+    const sourceEl = shadow<HTMLElement>(
+      el,
+      '[data-testid="now-playing-source"]',
+    );
+
+    expect(sourceEl?.textContent).toBe('Playing from a dynamic mix');
+    expect(sourceEl?.classList.contains('navigable')).toBe(false);
+
+    let navigated = false;
+    el.addEventListener('navigate', () => {
+      navigated = true;
+    });
+
+    sourceEl?.click();
+
+    expect(navigated).toBe(false);
+  });
+
   it('looks the way it did last time', async () => {
     const el = await fixture('now-playing');
 
@@ -377,6 +452,59 @@ describe('<queue-panel>', () => {
   // @lit-labs/virtualizer, which keeps re-measuring, so
   // toMatchScreenshot never gets two identical frames and fails with
   // "could not capture a stable screenshot" rather than a real diff.
+  it('names where the queue came from, and navigates back to it', async () => {
+    const el = await fixture('queue-panel', { open: true });
+
+    setQueue([queueTrack(1, 'First')], 0, {
+      type: 'playlist',
+      id: 3,
+      label: 'Road Trip',
+    });
+    await flush();
+    await el.updateComplete;
+
+    expect(text(el, '.queue-source')).toBe('Playing from Road Trip');
+
+    let detail: unknown;
+    el.addEventListener('navigate', (e) => {
+      detail = (e as CustomEvent).detail;
+    });
+
+    shadow<HTMLElement>(el, '.queue-source')?.click();
+
+    expect(detail).toEqual({
+      view: 'playlist-details',
+      playlistId: 3,
+      playlistName: 'Road Trip',
+    });
+  });
+
+  it('names a dynamic mix as text, not a dead link', async () => {
+    const el = await fixture('queue-panel', { open: true });
+
+    setQueue([queueTrack(1, 'First')], 0, {
+      type: 'dynamicMix',
+      id: 0,
+      label: 'a dynamic mix',
+    });
+    await flush();
+    await el.updateComplete;
+
+    const sourceEl = shadow<HTMLElement>(el, '.queue-source');
+
+    expect(sourceEl?.textContent).toBe('Playing from a dynamic mix');
+    expect(sourceEl?.classList.contains('navigable')).toBe(false);
+
+    let navigated = false;
+    el.addEventListener('navigate', () => {
+      navigated = true;
+    });
+
+    sourceEl?.click();
+
+    expect(navigated).toBe(false);
+  });
+
   it('keeps rendering rows after the virtualizer settles', async () => {
     const el = await fixture('queue-panel', { open: true });
 

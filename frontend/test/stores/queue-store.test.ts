@@ -40,7 +40,7 @@ function sync(tracks: QueueTrack[], currentIndex = 0): void {
     currentIndex,
     shuffleMode: false,
     repeatMode: 'off',
-    sourcePlaylistId: 0,
+    source: { type: '', id: 0, label: '' },
   });
 }
 
@@ -57,7 +57,23 @@ describe('queue store: full-state sync', () => {
       currentIndex: 1,
       shuffleMode: false,
       repeatMode: 'off',
-      sourcePlaylistId: 0,
+      source: { type: '', id: 0, label: '' },
+    });
+  });
+
+  it('carries a non-empty source through from the backend', () => {
+    emit(Events.QueueChanged, {
+      tracks: [track(1)],
+      currentIndex: 0,
+      shuffleMode: false,
+      repeatMode: 'off',
+      source: { type: 'album', id: 7, label: 'Abbey Road' },
+    });
+
+    expect(queueStore.getState().source).toEqual({
+      type: 'album',
+      id: 7,
+      label: 'Abbey Road',
     });
   });
 
@@ -67,7 +83,7 @@ describe('queue store: full-state sync', () => {
       currentIndex: -1,
       shuffleMode: false,
       repeatMode: 'off',
-      sourcePlaylistId: 0,
+      source: { type: '', id: 0, label: '' },
     });
 
     expect(queueStore.getState().tracks).toEqual([]);
@@ -244,13 +260,29 @@ describe('queue store: subscriber notification', () => {
 });
 
 describe('queue store: actions reach the backend', () => {
-  it('forwards setQueue with its default shuffleStart', () => {
+  it('forwards setQueue with its default shuffleStart and no source', () => {
     queueStore.setQueue(['/a.mp3', '/b.mp3'], 1);
 
     expect(lastArgs('queue.Queue.SetQueue')).toEqual([
       ['/a.mp3', '/b.mp3'],
       1,
       false,
+      { type: '', id: 0, label: '' },
+    ]);
+  });
+
+  it('forwards setQueue with the given source', () => {
+    queueStore.setQueue(['/a.mp3'], 0, true, {
+      type: 'playlist',
+      id: 7,
+      label: 'Road Trip',
+    });
+
+    expect(lastArgs('queue.Queue.SetQueue')).toEqual([
+      ['/a.mp3'],
+      0,
+      true,
+      { type: 'playlist', id: 7, label: 'Road Trip' },
     ]);
   });
 

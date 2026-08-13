@@ -11,7 +11,7 @@ func TestSaveState_RestoreState_Roundtrip(t *testing.T) {
 	q, db := setupTestQueue(t)
 	paths := seedAudioFiles(t, db, 5)
 
-	q.SetQueue(paths, 2, false)
+	q.SetQueue(paths, 2, false, Source{Type: "album", ID: 7, Label: "Abbey Road"})
 
 	// Change modes so we test all fields.
 	q.CycleRepeat() // off -> all
@@ -68,6 +68,11 @@ func TestSaveState_RestoreState_Roundtrip(t *testing.T) {
 		t.Errorf("repeatMode: got %q, want %q", s2.RepeatMode, s1.RepeatMode)
 	}
 
+	// Source.
+	if s2.Source != s1.Source {
+		t.Errorf("source: got %+v, want %+v", s2.Source, s1.Source)
+	}
+
 	// ShuffleOrder.
 	q.mu.Lock()
 	q2.mu.Lock()
@@ -113,7 +118,7 @@ func TestSaveState_RestoreState_SingleTrack(t *testing.T) {
 	q, db := setupTestQueue(t)
 	paths := seedAudioFiles(t, db, 1)
 
-	q.SetQueue(paths, 0, false)
+	q.SetQueue(paths, 0, false, Source{})
 	q.SaveState()
 
 	q2 := NewQueue(slog.Default(), db)
@@ -140,7 +145,7 @@ func TestSaveState_RestoreState_PreservesTrackOrder(t *testing.T) {
 	q, db := setupTestQueue(t)
 	paths := seedAudioFiles(t, db, 10)
 
-	q.SetQueue(paths, 0, false)
+	q.SetQueue(paths, 0, false, Source{})
 	q.SaveState()
 
 	q2 := NewQueue(slog.Default(), db)
@@ -182,11 +187,11 @@ func TestSaveState_OverwritesPreviousState(t *testing.T) {
 	paths := seedAudioFiles(t, db, 8)
 
 	// First save: 5 tracks.
-	q.SetQueue(paths[:5], 0, false)
+	q.SetQueue(paths[:5], 0, false, Source{})
 	q.SaveState()
 
 	// Second save: 3 different tracks.
-	q.SetQueue(paths[5:8], 0, false)
+	q.SetQueue(paths[5:8], 0, false, Source{})
 	q.SaveState()
 
 	q2 := NewQueue(slog.Default(), db)

@@ -76,7 +76,7 @@ func TestPlaybackFailed_EmittedForAMissingFile(t *testing.T) {
 	paths := seedAudioFiles(t, db, 3)
 	loader.fails[paths[1]] = true
 
-	q.SetQueue(paths, 0, false)
+	q.SetQueue(paths, 0, false, Source{})
 	q.PlayIndex(1)
 
 	failure := failureOf(t, rec)
@@ -100,7 +100,7 @@ func TestPlaybackFailed_AutoAdvanceSkipsPastIt(t *testing.T) {
 	paths := seedAudioFiles(t, db, 3)
 	loader.fails[paths[1]] = true
 
-	q.SetQueue(paths, 0, false)
+	q.SetQueue(paths, 0, false, Source{})
 	q.Play()
 
 	// The first track finished: auto-advance lands on the missing
@@ -124,7 +124,7 @@ func TestPlaybackFailed_NextSkipsPastIt(t *testing.T) {
 	loader.fails[paths[1]] = true
 	loader.fails[paths[2]] = true
 
-	q.SetQueue(paths, 0, false)
+	q.SetQueue(paths, 0, false, Source{})
 	q.Next()
 
 	if got := q.GetState().CurrentIndex; got != 3 {
@@ -145,7 +145,7 @@ func TestPlaybackFailed_WholeQueueUnplayableStopsOnce(t *testing.T) {
 		loader.fails[p] = true
 	}
 
-	q.SetQueue(paths, 0, false)
+	q.SetQueue(paths, 0, false, Source{})
 	q.repeatMode = RepeatAll
 
 	rec.Reset()
@@ -179,7 +179,7 @@ func TestQueueExhausted_KeepsTheFinishedTrackLoaded(t *testing.T) {
 	q, db, _, loader := setupFailingQueue(t)
 	paths := seedAudioFiles(t, db, 1)
 
-	q.SetQueue(paths, 0, false)
+	q.SetQueue(paths, 0, false, Source{})
 	q.Play()
 	q.OnPlaybackFinished()
 
@@ -203,7 +203,7 @@ func TestQueueExhausted_UnloadsWhenTheTrackIsRemoved(t *testing.T) {
 	q, db, _, loader := setupFailingQueue(t)
 	paths := seedAudioFiles(t, db, 1)
 
-	q.SetQueue(paths, 0, false)
+	q.SetQueue(paths, 0, false, Source{})
 	q.RemoveTrack(0)
 
 	// Nothing left to show, so the bar clears.

@@ -26,6 +26,10 @@ export function FullRescan() {
   return window['go']['library']['Library']['FullRescan']();
 }
 
+export function GetAlbumCompleteness(arg1) {
+  return window['go']['library']['Library']['GetAlbumCompleteness'](arg1);
+}
+
 export function GetAlbumTracks(arg1) {
   return window['go']['library']['Library']['GetAlbumTracks'](arg1);
 }

@@ -302,6 +302,57 @@ func (l *Library) SearchTracks(
 	return tracks, nil
 }
 
+// AlbumCompleteness says how much of an album is present, as the files
+// themselves claim.
+//
+// Known is the part that matters: a tag that never declared a total is
+// not the same as a total that is unmet, and rendering the two alike
+// would put an "incomplete" mark on most of an untagged library.  When
+// Known is false, Expected means nothing and the caller must say
+// nothing.
+type AlbumCompleteness struct {
+	Owned    int  `json:"owned"`
+	Expected int  `json:"expected"`
+	Known    bool `json:"known"`
+	Complete bool `json:"complete"`
+}
+
+// GetAlbumCompleteness answers "do I have all of this album" from the
+// tags read at scan time, with no network.
+//
+// The album page used to ask MusicBrainz, because the only track total
+// it had was the length of whatever tracklist it was already showing —
+// which for a library copy is a tautology.  The denominator in a file's
+// "5/12" is a real answer and it is already on disk; this is where it
+// gets read.
+//
+// Complete is deliberately >= rather than ==: bonus and hidden tracks
+// routinely put a folder over its declared total, and that is a
+// complete album, not a broken one.
+func (l *Library) GetAlbumCompleteness(albumID int64) (AlbumCompleteness, error) {
+	row, err := l.db.ReadQueries.GetAlbumCompleteness(l.ctx, albumID)
+	if err != nil {
+		l.logger.Error("could not read album completeness",
+			"albumID", albumID, "error", err,
+		)
+
+		return AlbumCompleteness{}, fmt.Errorf(
+			"could not get album completeness: %w", err,
+		)
+	}
+
+	// A disc whose files all declared nothing leaves the album's total
+	// unknowable — the discs that did declare cannot stand in for it.
+	known := row.DiscsUntotalled == 0 && row.Expected > 0
+
+	return AlbumCompleteness{
+		Owned:    int(row.Owned),
+		Expected: int(row.Expected),
+		Known:    known,
+		Complete: known && row.Owned >= row.Expected,
+	}, nil
+}
+
 // GetAlbumTracks returns all tracks for a given album (release group), ordered by disc and track number.
 func (l *Library) GetAlbumTracks(albumID int64) ([]Track, error) {
 	rows, err := l.db.ReadQueries.GetAudioFilesByReleaseGroup(l.ctx, albumID)

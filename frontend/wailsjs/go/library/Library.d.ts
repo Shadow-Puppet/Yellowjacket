@@ -17,6 +17,8 @@ export function CancelScan():Promise<void>;
 
 export function FullRescan():Promise<library.ScanMetrics>;
 
+export function GetAlbumCompleteness(arg1:number):Promise<library.AlbumCompleteness>;
+
 export function GetAlbumTracks(arg1:number):Promise<Array<library.Track>>;
 
 export function GetAlbumTracksByLibrary(arg1:number,arg2:number):Promise<Array<library.Track>>;

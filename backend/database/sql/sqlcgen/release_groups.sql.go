@@ -23,7 +23,7 @@ func (q *Queries) CountReleaseGroupRecordings(ctx context.Context, releaseGroupI
 
 const createReleaseGroup = `-- name: CreateReleaseGroup :one
 INSERT INTO release_groups (name) VALUES (?)
-RETURNING id, name, cover_art_id, album_artist_credit_id, year, total_tracks, total_discs, mbid, original_year
+RETURNING id, name, cover_art_id, album_artist_credit_id, year, total_tracks, total_discs, mbid, original_year, pending_release_mbid
 `
 
 func (q *Queries) CreateReleaseGroup(ctx context.Context, name string) (ReleaseGroup, error) {
@@ -39,6 +39,7 @@ func (q *Queries) CreateReleaseGroup(ctx context.Context, name string) (ReleaseG
 		&i.TotalDiscs,
 		&i.Mbid,
 		&i.OriginalYear,
+		&i.PendingReleaseMbid,
 	)
 	return i, err
 }
@@ -47,7 +48,7 @@ const createReleaseGroupFull = `-- name: CreateReleaseGroupFull :one
 INSERT INTO release_groups (
   name, cover_art_id, album_artist_credit_id, year, total_tracks, total_discs
 ) VALUES (?, ?, ?, ?, ?, ?)
-RETURNING id, name, cover_art_id, album_artist_credit_id, year, total_tracks, total_discs, mbid, original_year
+RETURNING id, name, cover_art_id, album_artist_credit_id, year, total_tracks, total_discs, mbid, original_year, pending_release_mbid
 `
 
 type CreateReleaseGroupFullParams struct {
@@ -79,6 +80,7 @@ func (q *Queries) CreateReleaseGroupFull(ctx context.Context, arg CreateReleaseG
 		&i.TotalDiscs,
 		&i.Mbid,
 		&i.OriginalYear,
+		&i.PendingReleaseMbid,
 	)
 	return i, err
 }
@@ -432,7 +434,7 @@ func (q *Queries) GetAllAlbumsWithDetailsByLibrary(ctx context.Context, libraryI
 }
 
 const getAllReleaseGroups = `-- name: GetAllReleaseGroups :many
-SELECT id, name, cover_art_id, album_artist_credit_id, year, total_tracks, total_discs, mbid, original_year FROM release_groups
+SELECT id, name, cover_art_id, album_artist_credit_id, year, total_tracks, total_discs, mbid, original_year, pending_release_mbid FROM release_groups
 ORDER BY name
 `
 
@@ -455,6 +457,7 @@ func (q *Queries) GetAllReleaseGroups(ctx context.Context) ([]ReleaseGroup, erro
 			&i.TotalDiscs,
 			&i.Mbid,
 			&i.OriginalYear,
+			&i.PendingReleaseMbid,
 		); err != nil {
 			return nil, err
 		}
@@ -502,7 +505,7 @@ func (q *Queries) GetOrphanedReleaseGroupIDs(ctx context.Context) ([]int64, erro
 }
 
 const getReleaseGroup = `-- name: GetReleaseGroup :one
-SELECT id, name, cover_art_id, album_artist_credit_id, year, total_tracks, total_discs, mbid, original_year FROM release_groups 
+SELECT id, name, cover_art_id, album_artist_credit_id, year, total_tracks, total_discs, mbid, original_year, pending_release_mbid FROM release_groups 
 WHERE id = ? LIMIT 1
 `
 
@@ -519,12 +522,13 @@ func (q *Queries) GetReleaseGroup(ctx context.Context, id int64) (ReleaseGroup, 
 		&i.TotalDiscs,
 		&i.Mbid,
 		&i.OriginalYear,
+		&i.PendingReleaseMbid,
 	)
 	return i, err
 }
 
 const getReleaseGroupByNameAndArtist = `-- name: GetReleaseGroupByNameAndArtist :one
-SELECT id, name, cover_art_id, album_artist_credit_id, year, total_tracks, total_discs, mbid, original_year FROM release_groups
+SELECT id, name, cover_art_id, album_artist_credit_id, year, total_tracks, total_discs, mbid, original_year, pending_release_mbid FROM release_groups
 WHERE name = ? AND album_artist_credit_id = ? LIMIT 1
 `
 
@@ -546,6 +550,7 @@ func (q *Queries) GetReleaseGroupByNameAndArtist(ctx context.Context, arg GetRel
 		&i.TotalDiscs,
 		&i.Mbid,
 		&i.OriginalYear,
+		&i.PendingReleaseMbid,
 	)
 	return i, err
 }
@@ -606,7 +611,7 @@ VALUES (?, ?, ?)
 ON CONFLICT(name, album_artist_credit_id) DO UPDATE SET
   album_artist_credit_id = COALESCE(excluded.album_artist_credit_id, release_groups.album_artist_credit_id),
   year = COALESCE(excluded.year, release_groups.year)
-RETURNING id, name, cover_art_id, album_artist_credit_id, year, total_tracks, total_discs, mbid, original_year
+RETURNING id, name, cover_art_id, album_artist_credit_id, year, total_tracks, total_discs, mbid, original_year, pending_release_mbid
 `
 
 type UpsertReleaseGroupParams struct {
@@ -628,6 +633,7 @@ func (q *Queries) UpsertReleaseGroup(ctx context.Context, arg UpsertReleaseGroup
 		&i.TotalDiscs,
 		&i.Mbid,
 		&i.OriginalYear,
+		&i.PendingReleaseMbid,
 	)
 	return i, err
 }

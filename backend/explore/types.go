@@ -88,6 +88,12 @@ type MBRelease struct {
 	Status       string    `json:"status"`
 	ArtistCredit string    `json:"artistCredit,omitempty"`
 	Tracks       []MBTrack `json:"tracks,omitempty"`
+	// ReleaseGroupMBID is the parent release group's MBID. Empty unless
+	// the lookup requested the "release-groups" include (LookupRelease
+	// does); used to resolve a release-level MBID (what many taggers
+	// write) back to the release-group MBID everything else on the
+	// album page is keyed by.
+	ReleaseGroupMBID string `json:"releaseGroupMbid,omitempty"`
 }
 
 // MBRecording is a Wails-friendly projection of a MusicBrainz

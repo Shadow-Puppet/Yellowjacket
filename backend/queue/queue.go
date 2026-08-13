@@ -78,6 +78,26 @@ type TrackLoader interface {
 	UnloadTrack()
 }
 
+// FallbackSource resolves what should auto-play, if anything, once the
+// queue is exhausted. Implemented outside this package (see app.go) so
+// the queue does not need to know about config, playlists or
+// similarity data.
+type FallbackSource interface {
+	// ResolveFallback returns the tracks to auto-play next, or an empty
+	// slice if the configured mode is "stop" or nothing is available.
+	ResolveFallback(ctx context.Context, fctx FallbackContext) ([]string, Source, error)
+}
+
+// FallbackContext is what a FallbackSource needs to decide whether to
+// continue an existing fallback (a dynamic mix keeps extending itself)
+// or resolve fresh.
+type FallbackContext struct {
+	// PreviousSource is the source of the queue that just exhausted.
+	PreviousSource Source
+	// SeedPaths are that queue's track paths, in order.
+	SeedPaths []string
+}
+
 // Track represents a track in the queue with its metadata.
 type Track struct {
 	ID               int64  `json:"id"`
@@ -95,11 +115,21 @@ type Track struct {
 
 // State is the full state emitted to the frontend.
 type State struct {
-	Tracks           []Track    `json:"tracks"`
-	CurrentIndex     int        `json:"currentIndex"`
-	ShuffleMode      bool       `json:"shuffleMode"`
-	RepeatMode       RepeatMode `json:"repeatMode"`
-	SourcePlaylistID int64      `json:"sourcePlaylistId"`
+	Tracks       []Track    `json:"tracks"`
+	CurrentIndex int        `json:"currentIndex"`
+	ShuffleMode  bool       `json:"shuffleMode"`
+	RepeatMode   RepeatMode `json:"repeatMode"`
+	Source       Source     `json:"source"`
+}
+
+// Source describes the collection a queue was built from — an album, a
+// playlist, a genre, an artist — so the frontend can offer to navigate
+// back to it. An empty Type means the queue has no single source (the
+// whole library, or one ad-hoc track).
+type Source struct {
+	Type  string `json:"type"`
+	ID    int64  `json:"id"`
+	Label string `json:"label"`
 }
 
 // IndexChanged is the payload for the QueueIndexChanged event.
@@ -134,18 +164,19 @@ type TracksModified struct {
 
 // Queue manages an ordered list of tracks for playback.
 type Queue struct {
-	ctx    context.Context
-	logger *slog.Logger
-	db     *database.DB
-	player TrackLoader
+	ctx            context.Context
+	logger         *slog.Logger
+	db             *database.DB
+	player         TrackLoader
+	fallbackSource FallbackSource
 
-	mu               sync.Mutex
-	tracks           []Track
-	currentIndex     int
-	shuffleMode      bool
-	repeatMode       RepeatMode
-	shuffleOrder     []int
-	sourcePlaylistID int64
+	mu           sync.Mutex
+	tracks       []Track
+	currentIndex int
+	shuffleMode  bool
+	repeatMode   RepeatMode
+	shuffleOrder []int
+	source       Source
 
 	// setQueueGen is incremented each time SetQueue is called. Background
 	// goroutines check this to detect if they have been superseded.
@@ -174,6 +205,13 @@ func (q *Queue) SetPlayer(player TrackLoader) {
 	q.player = player
 }
 
+// SetFallbackSource provides the queue with what to auto-play, if
+// anything, once it runs out. A nil source (the default) leaves
+// today's behavior: the queue just goes idle.
+func (q *Queue) SetFallbackSource(fs FallbackSource) {
+	q.fallbackSource = fs
+}
+
 // SetQueue replaces the entire queue with new tracks and starts playing.
 // When shuffleStart is true and shuffle mode is active, a random first
 // track is chosen instead of the one at startIndex. This is intended for
@@ -187,6 +225,7 @@ func (q *Queue) SetQueue(
 	filePaths []string,
 	startIndex int,
 	shuffleStart bool,
+	source Source,
 ) {
 	defer profiling.TimeOp(q.logger, "queue.SetQueue")()
 
@@ -228,7 +267,7 @@ func (q *Queue) SetQueue(
 	}
 
 	q.tracks = tracks
-	q.sourcePlaylistID = 0
+	q.source = source
 	q.shuffleOrder = nil
 
 	// Find the start track within the initial batch.
@@ -1135,11 +1174,11 @@ func (q *Queue) GetState() State {
 	copy(tracks, q.tracks)
 
 	return State{
-		Tracks:           tracks,
-		CurrentIndex:     q.currentIndex,
-		ShuffleMode:      q.shuffleMode,
-		RepeatMode:       q.repeatMode,
-		SourcePlaylistID: q.sourcePlaylistID,
+		Tracks:       tracks,
+		CurrentIndex: q.currentIndex,
+		ShuffleMode:  q.shuffleMode,
+		RepeatMode:   q.repeatMode,
+		Source:       q.source,
 	}
 }
 
@@ -1155,7 +1194,7 @@ func (q *Queue) Clear() {
 	q.tracks = nil
 	q.currentIndex = -1
 	q.shuffleOrder = nil
-	q.sourcePlaylistID = 0
+	q.source = Source{}
 
 	if q.player != nil {
 		q.player.UnloadTrack()
@@ -1301,6 +1340,11 @@ func (q *Queue) handleCurrentTrackRemoved() {
 // bar blanking while the queue panel still lists what just played
 // (H-18).  When the current track was removed from the queue, or the
 // queue was cleared, there is nothing left to show and it does.
+//
+// Called with q.mu already held by every caller — so the fallback
+// playlist (if any) is only kicked off here, not resolved: resolving
+// one can mean library/similarity queries, which must not run under
+// this lock. See resolveFallback.
 func (q *Queue) onQueueExhausted(unload bool) {
 	q.logger.Info("Queue exhausted", "unload", unload)
 
@@ -1312,6 +1356,57 @@ func (q *Queue) onQueueExhausted(unload bool) {
 
 	q.emitIndexChanged()
 	q.persistState()
+
+	if q.fallbackSource != nil {
+		prevSource := q.source
+		seedPaths := pathsOf(q.tracks)
+		gen := q.setQueueGen.Add(1)
+
+		go q.resolveFallback(gen, prevSource, seedPaths)
+	}
+}
+
+// resolveFallback runs outside q.mu — the fallback source may do
+// library/similarity lookups — and, if it finds something, replaces
+// the queue via the ordinary SetQueue path. gen guards against a user
+// starting something else (or another exhaustion) while this was
+// still resolving: SetQueue itself bumps setQueueGen again, so a stale
+// result here is simply discarded.
+func (q *Queue) resolveFallback(
+	gen int64,
+	prevSource Source,
+	seedPaths []string,
+) {
+	paths, source, err := q.fallbackSource.ResolveFallback(
+		q.ctx,
+		FallbackContext{PreviousSource: prevSource, SeedPaths: seedPaths},
+	)
+	if err != nil {
+		q.logger.Error("Failed to resolve fallback playlist", "err", err)
+
+		return
+	}
+
+	if len(paths) == 0 {
+		return
+	}
+
+	if q.setQueueGen.Load() != gen {
+		return
+	}
+
+	q.SetQueue(paths, 0, false, source)
+}
+
+// pathsOf returns the file paths of a track list, in order.
+func pathsOf(tracks []Track) []string {
+	paths := make([]string, len(tracks))
+
+	for i, t := range tracks {
+		paths[i] = t.FilePath
+	}
+
+	return paths
 }
 
 // CompactAfterLibraryRemoval reloads queue state from the database

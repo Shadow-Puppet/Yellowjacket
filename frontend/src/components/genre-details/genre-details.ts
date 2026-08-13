@@ -311,6 +311,7 @@ export class GenreDetails extends LitElement {
                       </div>`
                     : html`<track-list
                           .externalTracks=${this.tracks}
+                          .queueSource=${{ type: 'genre', id: 0, label: this.genreName }}
                       ></track-list>`}
             </div>
         `;

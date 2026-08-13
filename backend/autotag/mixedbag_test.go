@@ -140,6 +140,84 @@ func TestClusterByAlbumArtist_FindsSubAlbums(t *testing.T) {
 	}
 }
 
+func TestClusterByAlbumArtist_TypoVariantsMergeIntoOneCluster(t *testing.T) {
+	t.Parallel()
+
+	// A dropped diacritic and a stray trailing space are the kind of
+	// noise exact Normalize()-equality clustering used to treat as
+	// two different albums, splitting one real album across clusters
+	// even though a candidate search on either would land on the same
+	// release. Fuzzy clustering absorbs both into one cluster.
+	tracks := []LocalTrack{
+		{
+			Title:          "Song A",
+			Artist:         "Sigur Ros",
+			AlbumTag:       "Agaetis Byrjun",
+			AlbumArtistTag: "Sigur Ros",
+		},
+		{
+			Title:          "Song B",
+			Artist:         "Sigur Ros",
+			AlbumTag:       "Ágætis byrjun",
+			AlbumArtistTag: "Sigur Ros",
+		},
+		{
+			Title:          "Song C",
+			Artist:         "Sigur Ros",
+			AlbumTag:       "Agaetis Byrjun ",
+			AlbumArtistTag: "Sigur Ros",
+		},
+	}
+
+	clusters := ClusterByAlbumArtist(tracks)
+
+	if len(clusters) != 1 {
+		t.Fatalf(
+			"expected typo variants to merge into 1 cluster, got %d: %+v",
+			len(clusters),
+			clusters,
+		)
+	}
+
+	if len(clusters[0].Tracks) != 3 { //nolint:mnd
+		t.Fatalf("expected all 3 tracks in the merged cluster, got %d", len(clusters[0].Tracks))
+	}
+}
+
+func TestClusterByAlbumArtist_DifferentAlbumsBySameArtistStaySeparate(t *testing.T) {
+	t.Parallel()
+
+	// Fuzzy clustering must not blur genuinely different albums by
+	// the same artist into one cluster just because they share an
+	// artist tag — the threshold has to stay tight enough for this.
+	tracks := []LocalTrack{
+		{
+			Title:          "Song A",
+			Artist:         "Radiohead",
+			AlbumTag:       "OK Computer",
+			AlbumArtistTag: "Radiohead",
+		},
+		{
+			Title:          "Song B",
+			Artist:         "Radiohead",
+			AlbumTag:       "OK Computer",
+			AlbumArtistTag: "Radiohead",
+		},
+		{Title: "Song C", Artist: "Radiohead", AlbumTag: "Kid A", AlbumArtistTag: "Radiohead"},
+		{Title: "Song D", Artist: "Radiohead", AlbumTag: "Kid A", AlbumArtistTag: "Radiohead"},
+	}
+
+	clusters := ClusterByAlbumArtist(tracks)
+
+	if len(clusters) != 2 { //nolint:mnd
+		t.Fatalf(
+			"expected OK Computer and Kid A to stay separate, got %d clusters: %+v",
+			len(clusters),
+			clusters,
+		)
+	}
+}
+
 func TestClusterByAlbumArtist_NoAlbumTagStaysUnclustered(t *testing.T) {
 	t.Parallel()
 

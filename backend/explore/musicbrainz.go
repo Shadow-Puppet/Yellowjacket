@@ -623,6 +623,10 @@ func convertRelease(r musicbrainzws2.Release) MBRelease {
 		ArtistCredit: r.ArtistCredit.String(),
 	}
 
+	if r.ReleaseGroup != nil {
+		rel.ReleaseGroupMBID = string(r.ReleaseGroup.ID)
+	}
+
 	for _, m := range r.Media {
 		// Skip video media outright — DVD/Blu-ray bonus discs
 		// inflate track counts and wreck track-count-based scoring

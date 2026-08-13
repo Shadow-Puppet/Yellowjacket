@@ -14,6 +14,10 @@ export function BackfillLibraryLyrics() {
   return window['go']['explore']['Service']['BackfillLibraryLyrics']();
 }
 
+export function BackfillReleaseGroupMBIDs() {
+  return window['go']['explore']['Service']['BackfillReleaseGroupMBIDs']();
+}
+
 export function BrowseReleaseGroups(arg1) {
   return window['go']['explore']['Service']['BrowseReleaseGroups'](arg1);
 }
@@ -40,6 +44,10 @@ export function CoverArtGroupURL(arg1) {
 
 export function CoverArtURL(arg1) {
   return window['go']['explore']['Service']['CoverArtURL'](arg1);
+}
+
+export function GenerateMix(arg1, arg2, arg3) {
+  return window['go']['explore']['Service']['GenerateMix'](arg1, arg2, arg3);
 }
 
 export function GetArtistImageCached(arg1) {

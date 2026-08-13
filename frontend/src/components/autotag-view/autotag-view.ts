@@ -276,6 +276,27 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
                 color: var(--yj-text-primary, #fff);
             }
 
+            .folders-refresh-trigger {
+                display: flex;
+                align-items: center;
+                font-size: 0.95rem;
+            }
+
+            .folders-refresh-trigger:disabled {
+                cursor: default;
+                opacity: 0.6;
+            }
+
+            .folders-refresh-trigger wa-icon.spinning {
+                animation: folders-refresh-spin 0.8s linear infinite;
+            }
+
+            @keyframes folders-refresh-spin {
+                to {
+                    transform: rotate(360deg);
+                }
+            }
+
             .folders-menu {
                 position: absolute;
                 top: calc(100% - 2px);
@@ -1291,6 +1312,21 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
         }, 500);
     }
 
+    /** Manual "refresh" button — re-fetches the folder list (and,
+     *  via reconcileSelection, the current folder's candidates if it
+     *  fell out of the list) without restarting the whole queue the
+     *  way startQueue's StartAutotagQueue call would. */
+    private async onRefreshFolders(): Promise<void> {
+        if (this.foldersLoading) return;
+        this.foldersLoading = true;
+        try {
+            await this.loadFolders();
+            await this.reconcileSelection();
+        } finally {
+            this.foldersLoading = false;
+        }
+    }
+
     /* ── Apply-job event handlers ── */
 
     private updateApplyJob(groupKey: string, patch: Partial<ApplyJobState>): void {
@@ -2067,6 +2103,14 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
                             @click=${() => this.toggleSection('pending')}>
                         ${this.sectionChevron('pending')}
                         <span>Pending (${pending.length})</span>
+                    </button>
+                    <button class="folders-menu-trigger folders-refresh-trigger"
+                            title="Refresh the folder list"
+                            ?disabled=${this.foldersLoading}
+                            @click=${() => void this.onRefreshFolders()}>
+                        <wa-icon
+                            class=${this.foldersLoading ? 'spinning' : ''}
+                            name="arrow-rotate-right"></wa-icon>
                     </button>
                     ${completed.length > 0 ? html`
                         <button class="folders-menu-trigger"

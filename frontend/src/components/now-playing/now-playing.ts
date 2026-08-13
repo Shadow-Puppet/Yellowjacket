@@ -8,7 +8,13 @@ import {
     trackLink,
     exploreLinkStyles,
 } from '@utils/explore-link';
+import {
+    describeQueueSource,
+    isQueueSourceNavigable,
+    navigateToQueueSource,
+} from '@utils/queue-source-link';
 import { PlayerController } from '@store/controllers/player-controller';
+import { QueueController } from '@store/controllers/queue-controller';
 import { FavoritesController } from '@store/controllers/favorites-controller';
 import { designTokens } from '../../styles/tokens.css';
 import { srOnly } from '../../styles/sr-only.css';
@@ -34,6 +40,7 @@ type ScrollMode = 'hover' | 'always' | 'never';
 @customElement('now-playing')
 export class NowPlaying extends LitElement {
     private player = new PlayerController(this);
+    private queue = new QueueController(this);
     private favCtrl = new FavoritesController(this);
 
     @state()
@@ -231,6 +238,22 @@ export class NowPlaying extends LitElement {
       text-overflow: ellipsis;
     }
 
+    .track-source {
+      font-size: var(--yj-text-xs, 0.75rem);
+      color: var(--yj-text-tertiary, #666);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .track-source.navigable {
+      cursor: pointer;
+    }
+
+    .track-source.navigable:hover {
+      text-decoration: underline;
+    }
+
     .scroll-content {
       display: inline-block;
       white-space: nowrap;
@@ -420,6 +443,21 @@ export class NowPlaying extends LitElement {
             >
               <span class="scroll-content">${artistLink(track.artist, track.artistMbid) || 'Unknown Artist'}</span>
             </span>
+            ${describeQueueSource(this.queue.source)
+                ? html`
+                  <span
+                    class="track-source ${isQueueSourceNavigable(this.queue.source) ? 'navigable' : ''}"
+                    data-testid="now-playing-source"
+                    @click=${(e: MouseEvent) => {
+                        if (!isQueueSourceNavigable(this.queue.source)) return;
+                        navigateToQueueSource(
+                            e.currentTarget as EventTarget,
+                            this.queue.source,
+                        );
+                    }}
+                  >${describeQueueSource(this.queue.source)}</span>
+                `
+                : nothing}
           </div>
           ${track.filePath
               ? html`
