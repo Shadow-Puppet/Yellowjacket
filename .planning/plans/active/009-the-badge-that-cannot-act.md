@@ -1,6 +1,6 @@
 # 009 — The badge that cannot act, and the state it already had
 
-**Status:** active — Phase 1 shipped; Phase 2 is a decision, not written yet.
+**Status:** complete — all three phases shipped.
 **Branch:** main
 **Created:** 2026-08-13
 **Follows:** 008-the-last-audit
@@ -165,27 +165,112 @@ Six things, and the first is the plan's own framing.
 
 ## Phase 2 — what a badge click means, per entity
 
-*(decision, before code — not started)*
+*(Decided 2026-08-13, before any code.)*
 
-What Phase 1 leaves for it, now as observations rather than guesses:
+**A badge is a button where it is the only way to act, and what it
+toggles is a request — never a download.**
 
-- On the album page the badge and the "Want this" button now say the
-  same thing twice, four centimetres apart. That is an argument for the
-  badge being **read-only there** and clickable only where there is no
-  button — or for the button going.
-- A requested album shows an amber hourglass while every track in its
-  tracklist shows a plus, which is correct per the rule and reads as
-  busy. Worth deciding whether a track inside a requested album should
-  render *nothing* rather than a plus.
-- An artist badge would mean a discography subscription, which is the
-  heaviest commitment in the download subsystem behind the smallest
-  control in the app.
+Two of the three questions were answered by the code rather than by a
+judgement, which is the point of asking them before writing anything.
+
+**There is no artist badge, and there never was.** The worry that one
+20 px circle would commit a user to a whole discography does not apply:
+`top-results-row` renders `nothing` for an artist, and no other site
+passes `entity-type="artist"` to this component at all. Artist
+subscription already has a home — `explore-artist-details`'s
+`renderFollowAction()`, a labelled button with the scope beside it,
+which is where a commitment that never completes belongs.
+
+**A track badge is honoured end to end.** `EntityRecording` is not a
+placeholder in the request model: `Reconciler.tracklistFor` has a
+deliberate branch for it ("A track request is its own tracklist") whose
+comment explains that the single expected title is what lets filename
+matching score a one-song download at all. So a track badge promises
+something the backend can keep, and it is a button too.
+
+That also disposes of the second observation. An hourglass on an album
+over a row of plusses read as noise while a plus meant nothing; once a
+plus on a track means *want just this one*, the mixed row is the
+interface working. No special case, and none of the four surfaces needs
+to know what contains what.
+
+**The album detail header keeps its badge read-only.** "Want this" sits
+directly below it saying the same thing in words. The rule is not "a
+badge is decorative on detail pages" — it is that a call site **opts in
+by supplying the MBID to act on**, so a redundancy is visible in the
+template rather than hidden in the component.
+
+**And it is a request, not an acquisition.** The old copy said "Add …
+to library", which 007 called the button's promise written into the
+copy — and it would still be a lie, because clicking adds a row to the
+request list and nothing to the library. The name is the action, in the
+words the rest of the app already uses: **"Want …"**, and **"Cancel the
+request for …"** when it is already wanted. No confirmation: the action
+is one click to undo, which is the whole test for whether a dialog is
+owed.
 
 ---
 
 ## Phase 3 — the button
 
-*(scope depends on Phase 2)*
+Ships what Phase 2 decided: `request-mbid` as the opt-in, a `<button>`
+where a call site passes one and the entity is not already owned, and
+`toggleRequest()` beside `libraryStatusFor()` because
+`explore-album-details`'s "Want this" asks the same question and two
+implementations of *what wanting something means* is what Phase 1 was
+about.
+
+### Phase 3 — what actually shipped
+
+Seven of the eight call sites opt in; the album header does not.
+`make ui-test` 685 → **695**; `make e2e` 92 → **93**.
+
+Verified in the running app with a **real mouse gesture and a real
+keyboard path**, not a synthetic event: click the badge → the request
+is filed, the badge becomes an hourglass, the album page does not
+open. Tab → the badge takes focus with its own ring inside the card's;
+Enter → same, and the card's own Enter handler does not fire.
+
+Pinned by `library-status.test.ts` (+10, watched failing on the
+pre-fix build — 8 of 18) and `requested-badge.spec.ts` (+1).
+
+#### Where the plan was wrong — Phase 3
+
+Five things, and the first two are the plan asking questions the code
+had already answered.
+
+- **Two thirds of the Phase 2 decision was not a decision.** "An artist
+  badge would mean a discography subscription" describes a badge that
+  does not exist — `top-results-row` renders `nothing` for an artist
+  and no other site passes `entity-type="artist"` at all. And "should a
+  track inside a requested album show something different" evaporated
+  the moment a plus on a track meant *want just this one*. A decision
+  phase is worth having; two of its three items were answered by
+  reading rather than by choosing, which is the cheaper half of it
+  working.
+- **`EntityRecording` is load-bearing and reads like a placeholder.**
+  It would have been easy to rule tracks out as unsupported; the
+  reconciler has an explicit branch for them whose comment explains
+  that a one-entry expected tracklist is what lets filename matching
+  score a single-track download at all. Ruling it out would have been a
+  feature removed by assumption.
+- **A test that passes on the neutered build is not a test.** "Keeps
+  its click off the card it sits on" asserted that nothing bubbled —
+  which is free when there is no button to click, since `?.click()` on
+  null is a silent no-op. It passed on the neutered build. It asserts
+  the click *did the thing it was swallowed for* as well now, and fails
+  there like the other seven.
+- **A measured coordinate is stale before it is used.** The e2e gesture
+  read a bounding box the moment the search settled; cover art is still
+  arriving then, and a card that grows moves the badge, so the click
+  landed on the card and opened the album — reported as a failure to
+  file a request, which is a different bug entirely. A locator
+  re-resolves and waits for the element to stop moving.
+- **A fix moves its own assertions.** Phase 1's spec asserted the
+  badge's name was "… is queued for download"; a control is named after
+  what activating it does, so it is "Cancel the request for …" now. The
+  spec was right when it was written and wrong two commits later, which
+  is the ordinary cost of naming a thing after its state.
 
 ---
 

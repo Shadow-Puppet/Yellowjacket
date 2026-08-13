@@ -2264,3 +2264,65 @@ Six more things worth keeping:
   question. Same shape as `getCoverUrl()`, `track-index.ts` and
   `page-header` — when a rule is written per call site, the call sites
   do not disagree, they are all incomplete in the same way.
+
+## A decision phase earns its keep by finding it was not a decision
+
+Plan 009 phases 2 and 3: the badge becomes a button where it can act.
+
+The generalisation: **the questions worth taking a phase over are the
+ones the code can answer, and you cannot tell which those are without
+asking them.** Phase 2 was written as three judgement calls. Two turned
+out not to be:
+
+- "An artist badge would commit a user to a whole discography" —
+  describing a badge that **does not exist**. `top-results-row` renders
+  `nothing` for an artist and no other site passes
+  `entity-type="artist"` to the component at all. Artist subscription
+  already had a labelled Follow button.
+- "Should a track inside a requested album show something different" —
+  evaporated. It read as noise only while a plus on a track meant
+  nothing; once it means *want just this one*, the mixed row is the
+  interface working.
+
+The third — whether a track can be requested at all — went the other
+way and is the more useful lesson. **`EntityRecording` reads like a
+placeholder and is load-bearing.** It would have cost nothing to rule
+tracks out as unsupported, and `Reconciler.tracklistFor` has an
+explicit branch for them whose comment explains that a one-entry
+expected tracklist is what lets filename matching score a single-track
+download at all. A feature removed by assumption leaves no trace that
+it was ever there.
+
+Five more things worth keeping:
+
+- **A test that passes on the neutered build is not a test, and the
+  vacuous ones are the negative assertions.** "Keeps its click off the
+  card it sits on" asserted that nothing bubbled — free when there is
+  no button, since `?.click()` on null is a silent no-op. It passed on
+  the neutered build while its seven neighbours failed. It asserts the
+  click *did the thing it was swallowed for* as well now. Same family
+  as `overflow: hidden` permitting programmatic scrolling, and the tell
+  was identical: **it could not fail.**
+- **A measured coordinate is stale before it is used.** The e2e gesture
+  read a bounding box the moment the search settled; cover art is still
+  arriving then and a card that grows moves the badge, so the click
+  landed on the card and opened the album — reported as *a failure to
+  file a request*, which is a different bug. A Playwright locator
+  re-resolves and waits for the element to stop moving. Prefer one to
+  `mouse.click(x, y)` whenever the thing being clicked is in a list
+  that is still loading, which is most lists here.
+- **A fix moves its own assertions, and that is not churn.** Phase 1's
+  spec asserted the badge announced "… is queued for download". A
+  *control* is named after what activating it does, so two commits
+  later it is "Cancel the request for …". Naming a thing after its
+  state is correct right up until it grows an action.
+- **An opt-in makes a redundancy visible.** The badge could have known
+  which pages have a "Want this" button; instead a call site passes
+  `request-mbid` or does not, so `explore-album-details`'s header
+  declines in its own template. The rule is greppable and the component
+  has no list of exceptions to go stale.
+- **Verify a control with the gesture, not with the event.** A synthetic
+  `MouseEvent` does not prove hit-testing, and a `.click()` on a shadow
+  child does not prove the icon inside it is `pointer-events: none`.
+  Both were checked with a real mouse (`mousemove`/`mousedown`/
+  `mouseup`) and a real Tab/Enter before either was believed.

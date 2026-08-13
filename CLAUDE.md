@@ -785,21 +785,57 @@ result would silently reorder a queue — and because `cover-grid`'s drag
 cache stores them per album. A `libraryID` of 0 means "every library",
 matching an unset library filter.
 
-**A badge is not a button, and a control that cannot act is worse than
-none.** `library-status-indicator` — the tick/plus on every Explore
+**A badge is a button only where it can act, and it says which.**
+`library-status-indicator` — the tick/hourglass/plus on every Explore
 card and track row — was a `<button>` whose click handler was a
 `stopPropagation()` and a comment saying to wire up the download client
 later: 20 of the 66 tab stops on a results page announced themselves as
-buttons and did nothing (46 and 0 after). It is `role="img"` with a
-label until there is something to click, and its unowned label says
-"… is not in your library" rather than "Add … to library", which was
-the button's promise written into the copy. When the download client
-lands, the change is a `<button>` *with* a handler — not a handler
-bolted onto something already shaped like one. Two smaller things came
-with it: a `<span>` does not get `box-sizing: border-box` from the UA
-stylesheet the way a `<button>` does (the badge grew 36→38px, caught by
-a stored screenshot), and with no click of its own the badge is part of
-its card, so a click on it means what the card means.
+buttons and did nothing. 007 made it `role="img"` on the rule that a
+control which cannot act is worse than none, and named the condition
+that would change the answer: a `<button>` again *with* a handler,
+never a handler bolted onto something already shaped like one.
+
+It is that now, and three rules hold it up. **A call site opts in** by
+passing `request-mbid`, so a redundancy is visible in the template
+rather than hidden in the component — `explore-album-details`'s header
+has "Want this" in words directly below it and does not opt in. **An
+owned entity is never a button**, because there is nothing left to ask
+for, which is what stops the returned tab stops being spent on nothing.
+And **the name is the action and the action is a request**: "Want album
+X" / "Cancel the request for album X". Clicking adds a row to the
+request list and nothing to the library, which is exactly what made the
+original "Add … to library" a promise the control could not keep.
+
+Two entities and not the third. A track is requestable because
+`EntityRecording` is real work in the backend — `Reconciler.tracklistFor`
+has a branch for it, since one expected title is what lets filename
+matching score a single-track download at all. An artist is not: there
+is no artist badge anywhere (`top-results-row` renders `nothing` for
+one), and a discography subscription — never satisfied, expanding into
+child requests — belongs on `explore-artist-details`'s Follow button,
+which can say what it commits to.
+
+Two smaller things, both still true: a `<span>` does not get
+`box-sizing: border-box` from the UA stylesheet the way a `<button>`
+does (the badge grew 36→38px, caught by a stored screenshot, and both
+branches now set it), and the click is swallowed again — for the
+opposite reason to before. With no action of its own the badge was part
+of its card and a click on it meant what the card means; with one, it
+does not. Enter and Space are stopped for the same reason, since every
+card holding one is a `role="button"` or `role="option"` with its own
+handler.
+
+**Its third state was declared for a year and produced by nothing.**
+`queued` was styled amber, given an hourglass and given the sentence
+"… is queued for download", and all eight call sites were a two-way
+ternary — so an album already on the request list showed a plus and
+said it was not in the library, on the same page as a filled button
+reading "Wanted". `utils/library-status.ts` is that rule written once:
+`libraryStatusFor()` (owning outranks wanting; a *satisfied* request is
+not queued, because nothing is coming; a request is by MBID, so a track
+inside a requested album is not itself requested) and `toggleRequest()`
+beside it, because the "Want this" button asks the same question and
+two definitions of *what wanting means* is the fault this replaced.
 
 **A grid moves by a row, and `offsetTop` cannot tell you how wide a row
 is.** `utils/roving-grid.ts` measured columns by counting cards sharing
