@@ -147,7 +147,7 @@ tree; `make bindings` regenerates it for real.
 `config.toml` and DB rows — the same discipline `sql/schemas/` gets,
 for the same reason.
 
-See `.planning/plans/active/005-agent-development-harness.md`.
+See `.planning/plans/completed/005-agent-development-harness.md`.
 
 ## Architecture
 

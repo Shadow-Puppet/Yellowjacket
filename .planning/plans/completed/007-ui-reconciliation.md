@@ -1,17 +1,51 @@
 # 007 — UI reconciliation: lifecycle, truth, voice, scale, shape, and one thing that was never built
 
-**Status:** active — Phases 1, 2 and 3 shipped, each with one or two
-deliberate deferrals (see the "what actually shipped" sections below).
-**Phase 4 is complete** after six passes; the sixth landed `m5`, `m4`
-and `m2`, which was the whole remaining tail.
-Phase 3 was the plan's own clean cut: stopping here leaves the data-loss
-bug, the lying player and the silent failures all fixed.
-**Branch:** —
+**Status:** implemented — all six phases shipped.
+**Branch:** main
 **Created:** 2026-08-11
 **Follows:** 006-orientation-fixes
+**Followed by:** 008-the-last-audit
 **Source:** `.planning/audits/2026-08-11-ui/` — `hands-on.md` (24
 findings reproduced in the running app), `a11y.md` (34), `perf.md`
 (30), `errors.md` (30).
+
+## Recap
+
+~118 findings, which were five problems each spread by copying. All six
+phases shipped, over eleven passes, and three of the four source audits
+are closed: `hands-on.md`, `perf.md` and `errors.md` have nothing open.
+`a11y.md` does, and is plan 008.
+
+- **Phase 1 — a cached view now has a lifecycle.** `viewActivated` /
+  `viewDeactivated`, the ambient shortcut scope the mechanism was built
+  for and had never had a caller, and keyboard reach for the sidebar,
+  the track rows, the card grids and the closed queue panel.
+- **Phase 2 — the player reports its own position.** 1 Hz from the
+  backend, `PlaybackFailed` from both failure paths, auto-advance that
+  skips, and a bar that no longer counts itself 30 s adrift.
+- **Phase 3 — one notification surface, four levels**, replacing 84
+  `catch` blocks that ended at `console.error` and two private toasts.
+- **Phase 4 — works offline and at 50 000 tracks**, over six passes:
+  bundled icons, route splitting, the `TrackPlayCountChanged` split,
+  bounded caches, `utils/track-index.ts` (3–6 s → 68 ms), and the
+  virtualizer repaint rule.
+- **Phase 5 — one app, not eleven pages**, over four passes: one
+  `<page-header>`, a measured window minimum, every dialog a named
+  `wa-dialog`, one menu keyboard model, the `?` overlay, and an album
+  page with a primary action that means the same thing in three
+  different ownership states.
+- **Phase 6 — Explore opens with shelves**, plus the two inherited
+  one-liners: the badge that was an inert button, and the card grids
+  that moved to the end rather than by a row.
+
+**What it is worth reading for**: the seven "where the plan was wrong"
+lists below, seventy-nine entries across the passes. About a third are
+the audit being wrong rather than the code, and they are the reason
+plan 008 treats every remaining `a11y.md` claim as a hypothesis.
+
+**Inherited, unfinished, and carried into 008**: `tracklist.delete`,
+which survived all six phases because it needs a "remove from library"
+operation that does not exist and a decision about what it removes.
 
 ## Problem
 
