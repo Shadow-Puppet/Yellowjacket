@@ -1693,6 +1693,9 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
                         const isLast =
                             idx === order.length - 1;
 
+                        const columnLabel =
+                            COLUMN_DEFS[id]?.label ?? id;
+
                         return html`
                             <li
                                 class="column-item ${checked ? 'enabled' : 'disabled'}"
@@ -1700,6 +1703,7 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
                                 <input
                                     type="checkbox"
                                     class="column-toggle"
+                                    aria-label="Show the ${columnLabel} column"
                                     .checked=${checked}
                                     ?disabled=${onlyOne}
                                     @change=${() =>
@@ -1710,9 +1714,7 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
                                 <span
                                     class="column-label"
                                 >
-                                    ${COLUMN_DEFS[id]
-                                        ?.label ??
-                                    id}
+                                    ${columnLabel}
                                 </span>
                                 <span
                                     class="column-arrows"
@@ -1723,6 +1725,7 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
                                               <button
                                                   class="column-arrow-btn"
                                                   title="Move up"
+                                                  aria-label="Move ${columnLabel} up"
                                                   @click=${() =>
                                                       this.handleColumnMove(
                                                           id,
@@ -1738,6 +1741,7 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
                                               <button
                                                   class="column-arrow-btn"
                                                   title="Move down"
+                                                  aria-label="Move ${columnLabel} down"
                                                   @click=${() =>
                                                       this.handleColumnMove(
                                                           id,
@@ -1812,6 +1816,7 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
                                         </span>
                                         <shortcut-capture
                                             .action=${action}
+                                            .label=${meta.label}
                                             .currentKey=${bindings.get(
                                                 action,
                                             ) ?? ''}

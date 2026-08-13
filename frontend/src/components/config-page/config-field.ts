@@ -2,6 +2,26 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 
 /**
+ * The id every field's control carries, so its `<label>` can name it.
+ *
+ * The label was a *sibling* of the control with no `for`, which names
+ * nothing — so every select, toggle and text field in Settings computed
+ * an empty accessible name. Measured on the expanded Settings page:
+ * **24 of 93 controls unnamed**, six of them here and the rest the
+ * column toggles in `config-page`. `a11y.6` is not wrong about this;
+ * it says in the same line that it scanned every `<button>`, and none
+ * of these is one.
+ *
+ * A fixed id is safe, and only because each `config-field` is its own
+ * shadow root — the whole page renders a dozen elements with
+ * `id="control"` and each `for` resolves within its own root. It is
+ * preferred over `aria-label` for what it buys beyond the name: a real
+ * label association also makes the label text a click target for the
+ * control, which is behaviour, not annotation.
+ */
+const CONTROL_ID = 'control';
+
+/**
  * Schema describing a single config field.
  *
  * The `type` controls which input widget is rendered:
@@ -225,7 +245,9 @@ export class ConfigField extends LitElement {
                 ${this.schema.type === 'toggle'
                     ? this.renderToggle()
                     : html`
-                          <label>${this.schema.label}</label>
+                          <label for=${CONTROL_ID}>
+                              ${this.schema.label}
+                          </label>
                           ${this.renderInput()}
                       `}
                 ${this.schema.description
@@ -257,6 +279,7 @@ export class ConfigField extends LitElement {
     private renderText() {
         return html`
             <input
+                id=${CONTROL_ID}
                 type="text"
                 .value=${String(this.value ?? '')}
                 ?disabled=${this.schema.disabled}
@@ -268,6 +291,7 @@ export class ConfigField extends LitElement {
     private renderNumber() {
         return html`
             <input
+                id=${CONTROL_ID}
                 type="number"
                 .value=${String(this.value ?? '')}
                 ?disabled=${this.schema.disabled}
@@ -281,6 +305,7 @@ export class ConfigField extends LitElement {
 
         return html`
             <select
+                id=${CONTROL_ID}
                 ?disabled=${this.schema.disabled}
                 @change=${this.onSelectChange}
             >
@@ -304,6 +329,7 @@ export class ConfigField extends LitElement {
         return html`
             <div class="color-wrapper">
                 <input
+                    id=${CONTROL_ID}
                     type="color"
                     .value=${hex}
                     ?disabled=${this.schema.disabled}
@@ -318,11 +344,13 @@ export class ConfigField extends LitElement {
         return html`
             <div class="input-row">
                 <input
+                    id=${CONTROL_ID}
                     type="text"
                     .value=${String(this.value ?? '')}
                     readonly
                 />
                 <button
+                    aria-label="Browse for ${this.schema.label}"
                     ?disabled=${this.schema.disabled}
                     @click=${this.onBrowseClick}
                 >
@@ -337,9 +365,10 @@ export class ConfigField extends LitElement {
 
         return html`
             <div class="toggle-row">
-                <label>${this.schema.label}</label>
+                <label for=${CONTROL_ID}>${this.schema.label}</label>
                 <label class="toggle-switch">
                     <input
+                        id=${CONTROL_ID}
                         type="checkbox"
                         ?checked=${checked}
                         ?disabled=${this.schema.disabled}

@@ -8,6 +8,17 @@ export class ShortcutCapture extends LitElement {
     @property() currentKey = '';
     @property() defaultKey = '';
 
+    /**
+     * What the binding does, for the name.
+     *
+     * The button's text is the *key* — so the shortcuts list rendered
+     * three buttons called "S", two called "Down" and one called "?",
+     * beside a visible label that named none of them (it is a sibling,
+     * in another shadow root, and nothing associated the two). The
+     * label is what a control is for; the key is its value.
+     */
+    @property() label = '';
+
     @state() private recording = false;
 
     static override styles = css`
@@ -134,6 +145,9 @@ export class ShortcutCapture extends LitElement {
                     : this.currentKey
                       ? ''
                       : 'not-set'}
+                aria-label=${this.label
+                    ? `${this.label} shortcut: ${this.currentKey || 'not set'}`
+                    : ''}
                 @click=${this.handleClick}
                 @keydown=${this.handleKeydown}
                 @blur=${this.handleBlur}
@@ -148,6 +162,8 @@ export class ShortcutCapture extends LitElement {
                           class="reset-btn"
                           @click=${this.handleReset}
                           title="Reset to default (${this.defaultKey})"
+                          aria-label="Reset ${this.label ||
+                              this.action} to ${this.defaultKey}"
                       >
                           \u21BA
                       </button>
