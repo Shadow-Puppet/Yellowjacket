@@ -153,7 +153,7 @@ export class JobIndicator extends LitElement {
                 width: 6px;
                 height: 6px;
                 border-radius: 50%;
-                background: #ff6b6b;
+                background: #ff8787;
                 flex-shrink: 0;
             }
 

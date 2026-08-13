@@ -132,7 +132,7 @@ export class JobDetailsDrawer extends LitElement {
             }
 
             .stage.error {
-                color: #ff6b6b;
+                color: #ff8787;
             }
 
             .stage-count {
@@ -144,7 +144,7 @@ export class JobDetailsDrawer extends LitElement {
             .stage-error {
                 grid-column: 2 / -1;
                 font-size: var(--yj-text-sm);
-                color: #ff6b6b;
+                color: #ff8787;
                 overflow-wrap: anywhere;
             }
 

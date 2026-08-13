@@ -180,7 +180,7 @@ export class JobRow extends LitElement {
             .error {
                 margin-top: 0.45em;
                 font-size: var(--yj-text-sm);
-                color: #ff6b6b;
+                color: #ff8787;
                 overflow-wrap: anywhere;
             }
 
@@ -214,7 +214,7 @@ export class JobRow extends LitElement {
             }
 
             button.danger:hover:not(:disabled) {
-                color: #ff6b6b;
+                color: #ff8787;
             }
 
             button:disabled {

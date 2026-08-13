@@ -201,7 +201,7 @@ export class JobsView extends ViewLifecycleMixin(LitElement) {
             }
 
             button.action.danger {
-                color: #ff6b6b;
+                color: #ff8787;
                 border-color: rgba(255, 107, 107, 0.35);
             }
 

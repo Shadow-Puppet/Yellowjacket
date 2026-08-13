@@ -1,3 +1,4 @@
+import { avatarBackground } from '@utils/avatar-color';
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { designTokens } from '../../styles/tokens.css';
@@ -59,14 +60,6 @@ const NON_STUDIO_SECONDARY_TYPES = new Set([
 ]);
 
 /* ── Utility functions (duplicated from explore-view per design decision) ── */
-
-function nameToHue(name: string): number {
-    let hash = 0;
-    for (let i = 0; i < name.length; i++) {
-        hash = name.charCodeAt(i) + ((hash << 5) - hash);
-    }
-    return Math.abs(hash) % 360;
-}
 
 function extractYear(dateStr: string): string {
     if (!dateStr) return '';
@@ -1884,7 +1877,6 @@ export class ExploreArtistDetails extends LitElement {
     /* ── Render ── */
 
     override render() {
-        const hue = nameToHue(this.artistName);
 
         return html`
             <div class="artist-header">
@@ -1898,7 +1890,7 @@ export class ExploreArtistDetails extends LitElement {
                 </button>
                 <div
                     class="artist-avatar"
-                    style="background: hsl(${hue}, 45%, 35%)"
+                    style="background: ${avatarBackground(this.artistName)}"
                 >
                     ${this.artistImageURL
                         ? html`<img
@@ -2392,7 +2384,6 @@ export class ExploreArtistDetails extends LitElement {
                 <h3 class="section-header">Similar Artists</h3>
                 <div class="similar-row ${collapsed ? 'collapsed' : ''}">
                     ${visible.map((a) => {
-                        const hue = nameToHue(a.name);
                         const imgURL = this.similarImageURLs.get(a.artistMbid);
                         return html`
                             <div
@@ -2412,7 +2403,7 @@ export class ExploreArtistDetails extends LitElement {
                             >
                                 <div
                                     class="similar-avatar"
-                                    style="background: hsl(${hue}, 45%, 35%)"
+                                    style="background: ${avatarBackground(a.name)}"
                                 >
                                     ${imgURL
                                         ? html`<img

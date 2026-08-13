@@ -20,7 +20,7 @@ type Subscriber = () => void;
  * Shade palettes keyed by BackgroundShade.
  * Each defines the base grayscale ramp used throughout the UI.
  */
-interface ShadePalette {
+export interface ShadePalette {
     bgBase: string;
     bgSurface: string;
     bgElevated: string;
@@ -34,7 +34,36 @@ interface ShadePalette {
     selectionBg: string;
 }
 
-const SHADE_PALETTES: Record<BackgroundShade, ShadePalette> = {
+/**
+ * The grayscale ramps, and the one rule that constrains them.
+ *
+ * `textTertiary` used to be `#888888` on both dark ramps and `#868e96`
+ * on the light one, which `a11y.md` flagged as "borderline" from a hand
+ * calculation and parked as "worth measuring before planning".
+ * Measured, against the rendered app and then across all three ramps:
+ * it failed WCAG AA in **nine of twelve** text/surface combinations,
+ * as low as 2.31:1 on dark's overlay and 2.55:1 on light's. Not
+ * borderline — the app's most-used secondary text colour, failing on
+ * every view, and the light ramp (which the audit never considered) was
+ * the worst of the three.
+ *
+ * So: **every text colour clears 4.5:1 against every surface it can sit
+ * on**, and `theme-contrast.test.ts` computes that from this table
+ * rather than trusting it. Two things decided the values.
+ *
+ * `bgOverlay` is not a text surface on the dark ramp. Sizing tertiary
+ * to clear 4.5 against `#495057` needs `#c0c0c0`, which is *lighter
+ * than secondary* — an inverted hierarchy is a worse answer than the
+ * problem. Tertiary is sized to `bgElevated` there, and the one place
+ * that did put text on the overlay (the downloads notice) uses
+ * `textPrimary`, which clears 8.18:1.
+ *
+ * And the hue is kept. The light ramp's tertiary is a blue-grey, so it
+ * darkens along its own hue to `#5c636a` rather than flattening to a
+ * neutral that would have passed just as well and looked like a
+ * different palette.
+ */
+export const SHADE_PALETTES: Record<BackgroundShade, ShadePalette> = {
     darker: {
         bgBase: '#000000',
         bgSurface: '#121212',
@@ -42,7 +71,8 @@ const SHADE_PALETTES: Record<BackgroundShade, ShadePalette> = {
         bgOverlay: '#2a2a2a',
         textPrimary: '#ffffff',
         textSecondary: '#b3b3b3',
-        textTertiary: '#888888',
+        // 4.05:1 on bgOverlay at #888888.
+        textTertiary: '#949494',
         border: '#333333',
         borderSubtle: '#222222',
         hoverOverlay: 'rgba(255, 255, 255, 0.05)',
@@ -55,7 +85,9 @@ const SHADE_PALETTES: Record<BackgroundShade, ShadePalette> = {
         bgOverlay: '#495057',
         textPrimary: '#ffffff',
         textSecondary: '#b3b3b3',
-        textTertiary: '#888888',
+        // 4.35:1 on bgSurface and 3.25:1 on bgElevated at #888888 — the
+        // measured version of the audit's estimate, on every view.
+        textTertiary: '#a6a6a6',
         border: '#444444',
         borderSubtle: '#333333',
         hoverOverlay: 'rgba(255, 255, 255, 0.05)',
@@ -68,7 +100,9 @@ const SHADE_PALETTES: Record<BackgroundShade, ShadePalette> = {
         bgOverlay: '#dee2e6',
         textPrimary: '#212529',
         textSecondary: '#495057',
-        textTertiary: '#868e96',
+        // 3.32:1 at best and 2.55:1 at worst at #868e96 — the light ramp
+        // failed on all four of its own surfaces.
+        textTertiary: '#5c636a',
         border: '#ced4da',
         borderSubtle: '#dee2e6',
         hoverOverlay: 'rgba(0, 0, 0, 0.05)',

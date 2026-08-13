@@ -1,3 +1,4 @@
+import { avatarBackground } from '@utils/avatar-color';
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state, query as litQuery } from 'lit/decorators.js';
 import '@components/page-header/page-header';
@@ -60,15 +61,6 @@ const MAX_SECTION_RESULTS = 10;
  */
 const THUMBNAIL_CACHE_LIMIT = 96;
 
-
-/** Hash a string to a hue value 0–360 for avatar coloring. */
-function nameToHue(name: string): number {
-    let hash = 0;
-    for (let i = 0; i < name.length; i++) {
-        hash = name.charCodeAt(i) + ((hash << 5) - hash);
-    }
-    return Math.abs(hash) % 360;
-}
 
 /** Format milliseconds as mm:ss. */
 function formatDuration(ms: number): string {
@@ -1734,7 +1726,6 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) {
                     : nothing}
                 <div class="horizontal-row">
                     ${artists.map((a) => {
-                        const hue = nameToHue(a.name);
                         return html`
                             <div
                                 class="artist-card"
@@ -1750,7 +1741,7 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) {
                             >
                                 <div
                                     class="artist-avatar"
-                                    style="background: hsl(${hue}, 45%, 35%)"
+                                    style="background: ${avatarBackground(a.name)}"
                                 >
                                     ${this.artistImageCache.get(a.mbid)
                                         ? html`<img

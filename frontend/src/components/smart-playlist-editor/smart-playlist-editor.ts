@@ -287,7 +287,7 @@ export class SmartPlaylistEditor extends LitElement {
             }
 
             .remove-btn:hover {
-                color: #ff6b6b;
+                color: #ff8787;
                 background: rgba(255, 107, 107, 0.1);
             }
 
@@ -411,7 +411,7 @@ export class SmartPlaylistEditor extends LitElement {
 
             .preview-error {
                 font-size: var(--yj-text-sm);
-                color: #ff6b6b;
+                color: #ff8787;
                 padding: 6px 0;
             }
 

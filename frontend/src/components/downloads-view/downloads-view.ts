@@ -203,7 +203,11 @@ export class DownloadsView extends ViewLifecycleMixin(LitElement) {
                 border-radius: 6px;
                 font-size: 12px;
                 background: var(--yj-bg-overlay, rgba(255, 255, 255, 0.06));
-                color: var(--yj-text-secondary, #b3b3b3);
+                /* The only place in the app that puts text on bgOverlay,
+                   which is too light on the dark ramp to carry anything
+                   but primary: secondary measured 3.90:1 here. A notice
+                   is the last thing that should be hard to read. */
+                color: var(--yj-text-primary, #fff);
             }
 
             .section-hint {
