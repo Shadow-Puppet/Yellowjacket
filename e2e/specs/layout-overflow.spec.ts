@@ -158,3 +158,93 @@ test.describe('the title block fits its bar', () => {
     expect(fits.bottom).toBe(true);
   });
 });
+
+/**
+ * `a11y.21` (WCAG 1.4.10 Reflow), measured rather than taken as filed.
+ *
+ * The finding's mechanism is vertical — "at high zoom the 4em bars grow
+ * while the viewport does not, and anything that no longer fits is
+ * clipped with no scrollbar" — and that is not what happens. The middle
+ * row is `1fr` and absorbs the bars exactly. What is real is the axis
+ * the finding does not mention.
+ */
+test.describe('the shell reflows rather than hiding what does not fit', () => {
+  test('larger text shrinks the panel instead of clipping the shell', async ({
+    app,
+  }) => {
+    await app.setViewportSize({ width: 800, height: 600 });
+    await app.evaluate(() => {
+      document.documentElement.style.fontSize = '32px';
+    });
+
+    const shell = await app.evaluate(() => {
+      const foot = document.querySelector('.bottom-bar')!.getBoundingClientRect();
+      const main = document.querySelector('#main-content')!.getBoundingClientRect();
+
+      return {
+        footBottom: Math.round(foot.bottom),
+        viewport: document.documentElement.clientHeight,
+        mainHeight: Math.round(main.height),
+      };
+    });
+
+    // 200% text takes the bars from 64px to 128px each and the panel
+    // from 472px to 344px, and the footer still lands exactly on the
+    // bottom of the viewport. Nothing is clipped vertically.
+    expect(shell.footBottom).toBe(shell.viewport);
+    expect(shell.mainHeight).toBeGreaterThan(300);
+
+    await app.evaluate(() => {
+      document.documentElement.style.fontSize = '';
+    });
+  });
+
+  test('what does not fit sideways can be scrolled to', async ({ app }) => {
+    // 320 CSS px is 400% page zoom of a 1280px viewport, which is the
+    // size 1.4.10 names. The shell is 784px wide there, so 464px of the
+    // app — the job indicator and the queue button among it — used to
+    // be behind `overflow: hidden` with no way to reach it.
+    await app.setViewportSize({ width: 320, height: 256 });
+
+    // A *gesture*, not `scrollLeft = 9999`: `overflow: hidden` still
+    // permits programmatic scrolling, so the obvious probe passes on
+    // the build that has the bug. It did, first time.
+    await app.mouse.move(160, 20);
+    await app.mouse.wheel(400, 400);
+    await app.waitForTimeout(200);
+
+    const reach = await app.evaluate(() => {
+      const se = document.scrollingElement!;
+
+      return { left: se.scrollLeft, top: se.scrollTop };
+    });
+
+    expect(reach.left).toBeGreaterThan(0);
+
+    // And the vertical axis stays fixed, which is what keeps the
+    // transport where a desktop player's transport belongs.
+    expect(reach.top).toBe(0);
+
+    await app.evaluate(() => {
+      document.scrollingElement!.scrollLeft = 0;
+    });
+    await app.setViewportSize({ width: 1440, height: 900 });
+  });
+
+  for (const vp of VIEWPORTS) {
+    test(`no scrollbar appears at ${vp.name}`, async ({ app }) => {
+      await app.setViewportSize({ width: vp.width, height: vp.height });
+
+      const excess = await app.evaluate(() => {
+        const de = document.documentElement;
+
+        return de.scrollWidth - de.clientWidth;
+      });
+
+      // The other half: at every size this app promises, the fix costs
+      // nothing. A scrollbar that is always there is a worse answer
+      // than the clipping it replaced.
+      expect(excess).toBe(0);
+    });
+  }
+});

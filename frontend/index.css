@@ -16,7 +16,29 @@ body {
     height: 100vh;
     display: grid;
     grid-template: "top-bar top-bar" 4em "sidebar main-panel" 1fr "bottom-bar bottom-bar" 4em / auto 1fr;
-    overflow: hidden;
+
+    /* a11y.21 (WCAG 1.4.10), measured rather than taken as filed.
+
+       The finding's mechanism is vertical — "the 4em bars grow while
+       the viewport does not, and anything that no longer fits is
+       clipped with no scrollbar" — and that is not what happens. The
+       middle row is `1fr`, so it absorbs the bars exactly: at 200%
+       text on an 800×600 window the bars go 64px → 128px and the main
+       panel goes 472px → 344px, with the footer's bottom still landing
+       on 600. Nothing is clipped, and Settings stays reachable because
+       the sidebar scrolls (007 phase 5).
+
+       What is real is the other axis, which the finding does not
+       mention: at 200% text the shell is 1014px wide in an 800px
+       viewport, and at 320px (400% page zoom of 1280) it is 611px —
+       291px of the app unreachable behind `overflow: hidden`. So the
+       horizontal axis scrolls and the vertical one stays fixed, which
+       is also what keeps the transport bar where a desktop player's
+       transport bar belongs. At every size this app promises
+       (800×600 and up, default text) there is no overflow on either
+       axis and no scrollbar appears. */
+    overflow-x: auto;
+    overflow-y: hidden;
 }
 
 p {
