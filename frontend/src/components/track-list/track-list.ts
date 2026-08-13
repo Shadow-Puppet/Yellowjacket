@@ -62,6 +62,9 @@ import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js'
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import { describeError } from '@utils/describe-error';
+import { notificationStore } from '@store/notification-store';
+import { confirmAction } from '@components/confirm-dialog/confirm-dialog';
+import { RemoveFromLibrary } from '@go/library/Library';
 import { loadTrackDetails } from '@utils/lazy-track-details.js';
 import { tracksByFilePath, tracksForPaths } from '@utils/track-index.js';
 import '@components/playlist-picker/playlist-picker.js';
@@ -1615,10 +1618,77 @@ export class TrackList
                     void this.openBatchTrackDetails(filePaths);
                 }
                 break;
+            case 'remove-from-library':
+                // The only destructive command in this menu: it asks
+                // first, and it keeps the selection until the user has
+                // answered — the dialog names a count, and clearing the
+                // selection under it would make that count a claim
+                // about nothing.
+                this.ctxMenu.close();
+                void this.removeFromLibrary(filePaths);
+
+                return;
         }
 
         this.selection.clear();
         this.ctxMenu.close();
+    }
+
+    /**
+     * "Remove from library", behind a confirmation that says what it
+     * does *and* what it does not.
+     *
+     * The second half is the point. This deletes the database rows and
+     * stops the scanner importing those paths again; the audio files
+     * are left exactly where they are. A user who reads "remove" as
+     * "delete" and finds their music gone would have been failed by the
+     * copy, not by the operation — so the copy says so in the impact
+     * line, where the consequence of every other destructive action in
+     * the app is written.
+     */
+    private async removeFromLibrary(filePaths: string[]) {
+        const count = filePaths.length;
+        const only =
+            count === 1
+                ? tracksByFilePath(this.tracks).get(filePaths[0]!)
+                : undefined;
+
+        const ok = await confirmAction({
+            title:
+                count === 1
+                    ? `Remove “${only?.TrackName ?? filePaths[0]!}” from the library?`
+                    : `Remove ${count.toLocaleString()} tracks from the library?`,
+            message:
+                count === 1
+                    ? 'It is removed from YellowJacket and will not be added' +
+                      ' back by a future scan.'
+                    : 'They are removed from YellowJacket and will not be' +
+                      ' added back by a future scan.',
+            impact:
+                count === 1
+                    ? 'The file is not deleted — it stays on disk exactly' +
+                      ' where it is. A full rescan brings it back.'
+                    : 'The files are not deleted — they stay on disk exactly' +
+                      ' where they are. A full rescan brings them back.',
+            confirmLabel:
+                count === 1
+                    ? 'Remove track'
+                    : `Remove ${count.toLocaleString()} tracks`,
+            danger: true,
+        });
+
+        if (!ok) return;
+
+        try {
+            await RemoveFromLibrary(filePaths);
+            this.selection.clear();
+        } catch (error) {
+            console.error('Error removing tracks from library:', error);
+            notificationStore.persistent({
+                title: 'Could not remove from library',
+                text: `${count === 1 ? 'That track is' : `Those ${count.toLocaleString()} tracks are`} still in your library. ${describeError(error)}`,
+            });
+        }
     }
 
     private onContextMenuFavoriteToggle() {
@@ -2080,6 +2150,20 @@ export class TrackList
                         name="circle-info"
                     ></wa-icon>
                     Track Details
+                </wa-dropdown-item>
+                <wa-dropdown-item
+                    @click=${() =>
+                        this.onContextMenuAction(
+                            'remove-from-library',
+                        )}
+                     @mouseenter=${() =>
+                         this.ctxMenu.closePlaylistSubmenu()}
+                >
+                    <wa-icon
+                        slot="icon"
+                        name="trash"
+                    ></wa-icon>
+                    Remove from Library
                 </wa-dropdown-item>
               </div>
             `

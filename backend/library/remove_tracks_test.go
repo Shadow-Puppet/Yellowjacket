@@ -257,6 +257,32 @@ func TestRemoveFromLibrary_EmitsPatchablePayload(t *testing.T) {
 	}
 }
 
+// TestRemoveFromLibrary_CompactsTheQueue pins the half that is invisible
+// from the track list: deleting an audio_files row cascades to
+// queue_tracks, so the queue's in-memory copy — and the player, if it
+// was the track playing — has to be told.
+func TestRemoveFromLibrary_CompactsTheQueue(t *testing.T) {
+	t.Parallel()
+
+	lib, dir, paths, _, libID := setupScanLibrary(t, 2)
+
+	lib.scanInternal(libID, "Test", dir)
+
+	compacted := 0
+
+	lib.SetRemovalHooks(RemovalHooks{
+		CompactQueue: func() { compacted++ },
+	})
+
+	if _, err := lib.RemoveFromLibrary([]string{paths[0]}); err != nil {
+		t.Fatalf("RemoveFromLibrary: %v", err)
+	}
+
+	if compacted != 1 {
+		t.Errorf("CompactQueue called %d times, want 1", compacted)
+	}
+}
+
 // TestRemoveFromLibrary_RejectsAnEmptyRequest keeps a stray Delete on
 // an empty selection from reaching the database at all.
 func TestRemoveFromLibrary_RejectsAnEmptyRequest(t *testing.T) {

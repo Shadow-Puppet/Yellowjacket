@@ -129,6 +129,15 @@ func (l *Library) RemoveFromLibrary(filePaths []string) (*RemovalResult, error) 
 		}
 	}
 
+	// Deleting an audio_files row cascades to queue_tracks, so the
+	// queue's in-memory copy now holds tracks the database does not —
+	// including, possibly, the one playing.  This is the same reload
+	// RemoveLibrary does, and it unloads the player if the current
+	// track was among them.
+	if l.removalHooks.CompactQueue != nil {
+		l.removalHooks.CompactQueue()
+	}
+
 	// An album, artist or genre whose last track just went is now a row
 	// with nothing behind it, and the album list selects from
 	// release_groups rather than from audio_files — so it would keep

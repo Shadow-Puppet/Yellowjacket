@@ -108,6 +108,9 @@ class LibraryStore {
         EventsOn(Events.TrackPlayCountChanged, (payload: unknown) => {
             this.applyPlayCount(payload);
         });
+        EventsOn(Events.TracksRemovedFromLibrary, (payload: unknown) => {
+            this.applyTracksRemoved(payload);
+        });
 
         this.loadCoverSize();
         this.deferEagerFetch();
@@ -557,6 +560,71 @@ class LibraryStore {
 
         this.changeGen++;
         this.notify();
+    }
+
+    /**
+     * Splice removed tracks out in place, and refetch only the
+     * summaries whose counts changed.
+     *
+     * `invalidate()` would be correct and is the expensive answer: it
+     * nulls `tracks` and eagerly refetches it, which is ~37 MB across
+     * the IPC at 50 000 tracks for an operation that removed three
+     * rows. The event carries the paths precisely so this does not have
+     * to happen — the same bargain `TrackPlayCountChanged` makes.
+     *
+     * The album, artist and genre lists really do change (their track
+     * counts, and the row itself when its last track goes), so they are
+     * dropped and refetched. They are the small collections.
+     */
+    private applyTracksRemoved(payload: unknown): void {
+        const p = payload as { filePaths?: string[] } | null;
+        const removed = p?.filePaths;
+
+        if (!removed || removed.length === 0) return;
+
+        // A tracks fetch already in flight would land holding the rows
+        // that were just deleted, and it captured the cache generation
+        // this patch is about to leave behind. There is no patch that
+        // is equivalent to that, so fall back.
+        if (this.inFlight.has('tracks')) {
+            this.invalidate();
+
+            return;
+        }
+
+        if (this.tracks !== null) {
+            const gone = new Set(removed);
+            const kept = this.tracks.filter((t) => !gone.has(t.FilePath));
+
+            // A new array identity even when nothing matched would
+            // invalidate every memoized filter/sort cache keyed on it
+            // for no reason.
+            if (kept.length !== this.tracks.length) {
+                this.tracks = kept;
+            }
+        }
+
+        this.albums = null;
+        this.artists = null;
+        this.genres = null;
+        // Bumping the cache generation is what stops an album fetch
+        // issued before the removal from committing its pre-removal
+        // answer. Safe for the tracks slot precisely because the guard
+        // above established there is nothing in flight for it.
+        this.cacheGen++;
+        this.inFlight.delete('albums');
+        this.inFlight.delete('artists');
+        this.inFlight.delete('genres');
+
+        this.changeGen++;
+        this.notify();
+
+        const logged = (what: string) => (err: unknown) =>
+            console.error(`library: could not reload ${what}`, err);
+
+        void this.getAlbums().catch(logged('albums'));
+        void this.getArtists().catch(logged('artists'));
+        void this.getGenres().catch(logged('genres'));
     }
 
     private invalidate(): void {
