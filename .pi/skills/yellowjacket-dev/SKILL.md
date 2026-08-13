@@ -18,7 +18,7 @@ here has disappeared.
 
 ## Read this part before you fail
 
-Fourteen things cost a cycle each the first time. They are here, not in a
+Fifteen things cost a cycle each the first time. They are here, not in a
 reference, because you need them *before* the failure, not after.
 
 - **Time out every binding call.** A bound Go method called with wrong
@@ -54,6 +54,16 @@ reference, because you need them *before* the failure, not after.
   `label` to `aria-labelledby` — so a new dialog that forgets to call
   the helper from `updated()` is invisible to
   `getByRole('dialog', {name})`.
+- **A name is computed on the element carrying the *role*, and Web
+  Awesome puts the role in its own shadow root.** `aria-label` on a
+  `<wa-slider>` or a `<wa-dialog>` host never reaches the tree. Use the
+  component's own `label` (plus `styles/wa-slider-label.css.ts`, since
+  a slider's is visible) or `utils/name-dialog.ts`. And in the light
+  DOM, a `<label>` that is a *sibling* of its control with no `for`
+  names nothing — that was 24 of the 93 controls on Settings.
+  **`getFullAXTree` is how you check, and "0 unnamed" is not the whole
+  answer**: a `placeholder` is an accname fallback, so a box labelled
+  only by one reports clean.
 - **The a11y snapshot cannot check an accessible name on a dialog.**
   `playwright-cli snapshot` prints `- dialog [ref=…]` with no name
   whether the dialog is named by `aria-labelledby`, by `aria-label`,
@@ -66,7 +76,7 @@ reference, because you need them *before* the failure, not after.
   `--browser=webkit` is CI-only; local work is Chromium. CI runs it
   with `if: !cancelled()` so a chromium failure does not silently
   skip it, which it did for two sessions.
-- **CI's `e2e` job is green on both engines** (54 specs each) since the
+- **CI's `e2e` job is green on both engines** (88 specs each) since the
   container got an audio device that keeps time. If playback specs
   start failing there again, check the **`The sink plays at real time`**
   step first: ALSA's `null` plugin consumes 3000 ms of audio in 2.96 ms,
@@ -74,9 +84,9 @@ reference, because you need them *before* the failure, not after.
   reads as an app bug and cost two sessions of that suspicion.
 - **`make e2e` needs `SEED=default`.** Its specs assert on fixture
   content — unicode tracks, the fixture artists, a known playable file.
-  Run against the `bulk` seed a measurement session left behind and 13
-  of 36 fail, in a list that reads exactly like a regression in
-  whatever you are holding. `make dev-headless SEED=default` first.
+  Run against the `bulk` seed a measurement session left behind and a
+  third of them fail (13 of 36, when it was measured), in a list that
+  reads exactly like a regression in whatever you are holding. `make dev-headless SEED=default` first.
 - **…and the suite spends state it cannot always give back.**
   `view-lifecycle.spec.ts` **skips an autotag album** on every run, out
   of the eleven the seed has, and does not put it back — so around the
@@ -180,7 +190,7 @@ and a CI step over every commit in a push) rejects a subject that is not
 `--no-verify` commit skips it locally and meets it in CI.
 
 Two things about the e2e tier that are not obvious until they bite.
-**The 36 specs share one backend process in file order**, so a spec
+**The 88 specs share one backend process in file order**, so a spec
 that leaves the app somewhere passes alone and fails the suite — leave
 the UI as you found it, and *wait* for it rather than trusting the
 click to have finished. The queue panel's width is animated and the

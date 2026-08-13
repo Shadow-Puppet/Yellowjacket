@@ -130,7 +130,7 @@ meaningless against the seed's one empty playlist, so it builds ten
 It wraps every bound Go method, so "did that refetch the library" is a
 fact rather than an inference. It is not a spec and does not run in CI.
 
-**The cheapest tier needs none of that.** `make ui-test` runs 480
+**The cheapest tier needs none of that.** `make ui-test` runs 672
 Vitest tests in a real Chromium in ~2 s with no Wails, no backend, no
 seeded library and no virtual display, because `frontend/wailsjs/` is a
 pure passthrough to `window.go` / `window.runtime` and
@@ -585,6 +585,76 @@ backend's contiguous-block guard correctly treats it as a no-op. And
 only ever moved by an arrow key, so a row reached by a click or by Tab
 left it at 0 and `Enter` played the first track in the queue from any
 focused row.
+
+**A name is computed where the role is, and that is rarely where you
+wrote it.** Four surfaces wrote a name somewhere the accessibility tree
+never looked. `wa-slider` puts `role="slider"` on a div in its own
+shadow root pointing `aria-labelledby` at an empty internal `<label>`,
+which outranks the host's `aria-label` — so both sliders computed a
+name of `""`, and `a11y.md` lists both under *what is already correct*.
+The name comes from `label` now, the library's own API, and
+`styles/wa-slider-label.css.ts` hides it: preferred over reaching into
+the shadow root the way `name-dialog.ts` must, because if Web Awesome
+renames the part the label becomes *visible and correctly named*
+rather than silently nameless. Its second rule is load-bearing —
+`#slider` takes an 8px margin the moment a label exists, which grows
+the bar 6px → 14px and moves the transport with it.
+`wa-progress-bar`'s `label` *is* an `aria-label` and is invisible, so
+there it is just the right attribute.
+
+The same thing in the light DOM: `config-field` rendered a `<label>`
+as a **sibling** with no `for`, so **24 of 93 controls on Settings**
+computed an empty name. They use `for`/`id` (a fixed id, safe only
+because each field is its own shadow root) rather than `aria-label`,
+for what it buys beyond the name — the label text becomes a click
+target. And three surfaces are named but identify nothing, which is
+the same fault one step milder: three shortcut buttons announced
+themselves as "S", thirty-six column arrows as "Move up", and every
+queue row's remove button as "Remove from queue".
+
+**Checking any of this needs the browser's own answer, and "0 unnamed"
+is not it.** A `placeholder` is an accname fallback, so an
+`Accessibility.getFullAXTree` sweep of all eleven views reported
+Explore's search box — the audit's own `a11y.26` — as clean. A sweep
+for *empty* names cannot see a *weak* one.
+
+**The shell scrolls sideways and not down.** `body` is
+`overflow-x: auto; overflow-y: hidden`, and both halves are measured.
+Vertically there is nothing to fix: the middle grid row is `1fr` and
+absorbs the 4em bars exactly — at 200% text on an 800×600 window the
+bars go 64 → 128px, the main panel 472 → 344px, and the footer still
+lands on 600. Horizontally the shell is 784px inside a 320px viewport
+(400% page zoom, the width WCAG 1.4.10 names) and 464px of it,
+including the job indicator and the queue button, used to sit behind
+`overflow: hidden`. Keeping the vertical axis fixed is what keeps the
+transport where a desktop player's transport belongs. At every size
+this app promises, no scrollbar appears. Note that `overflow: hidden`
+still permits *programmatic* scrolling, so a probe that sets
+`scrollLeft` passes on the broken build; the spec uses a wheel gesture.
+
+**The playing row is a shape, not a hue.** `track-list` and
+`queue-panel` draw a `::before` triangle in each row's own left
+padding, plus `aria-current` — before, both rows were a background tint
+and a text colour and nothing else (WCAG 1.4.1). It is in the padding
+because the track list's grid columns are computed from the host width,
+so a marker in the flow moves every cell on the playing row and nothing
+else. Both tiers assert it is **absent** on the other rows: a marker
+that renders everywhere satisfies "the playing row has one" for free.
+One thing to know before checking it — a track started from the *track
+list* leaves the queue's `currentIndex` at −1, so the panel has no
+current row at all in that flow, which reads exactly like the marker
+not working.
+
+**The first thing Tab reaches is a skip link.** Two details are
+load-bearing and neither is the link's text. It is `position: absolute`
+in **both** states, because `body` is a grid with named areas and an
+in-flow extra child is auto-placed into one of them. And `<main>`
+carries `tabindex="-1"`, or the fragment moves the scroll, leaves the
+tab sequence exactly where it was, and looks like it worked. The
+subtitle beside it is a `<p>`, which is also what an `hgroup` is
+supposed to contain — and dropping the `<h3>`'s bottom margin shortened
+the flex-centred title block enough to move it down into the 4em bar's
+clip, so `.title` zeroes both margins.
 
 **A selectable grid is a listbox.** The four grids that ctrl/shift-select
 (`artists-view`, `genres-view`, `cover-grid`, and the queue) are

@@ -1,6 +1,7 @@
 # 008 — The last audit, and the one binding that outlived six phases
 
-**Status:** active — Phases 1 and 2 shipped.
+**Status:** active — Phases 1, 2 and 3 shipped. Phase 4 is all that
+remains, and `a11y.md` is closed.
 **Branch:** main
 **Created:** 2026-08-12
 **Follows:** 007-ui-reconciliation
@@ -64,17 +65,20 @@ fixed until it has been reproduced in the running app.
 | `15` | Major | `now-playing` is not among the four files carrying `prefers-reduced-motion`. WCAG 2.2.2: moving content over 5 s with no pause mechanism. |
 | `14` | Major | `combobox.ts` has no `aria-controls`, no `aria-activedescendant`, no option ids. |
 | `11` | Major | No `altKey` handler in `queue-panel`. The *other* half of this finding — "no keyboard path to add a track to the queue or a playlist" — was closed by Phase 5's `MenuKeyboard`. |
-| `21` | Minor | `body { height: 100vh; overflow: hidden }` unchanged. WCAG 1.4.10. |
-| `22` | Minor | `queue-panel` gained `aria-current`; `track-list` did not, and neither has a non-colour marker. |
-| `24` | Minor | No `title` on the truncating element in `track-info`, `playlist-view`, `queue-panel` or `track-list`. |
-| `25` | Minor | `<wa-progress-bar value=…>` with no label, verbatim as filed. |
-| — | new | **Two unnamed native `<select>`s**, one of them `page-header`'s sort control on nine views. Not in the audit: `a11y.6` scanned `<button>`. Found in the AX tree while reproducing `14`. Belongs with `26`. |
+| `21` | Minor | `body { height: 100vh; overflow: hidden }` unchanged. WCAG 1.4.10. **Shipped — and the stated mechanism was wrong; the failure is horizontal.** |
+| `22` | Minor | `queue-panel` gained `aria-current`; `track-list` did not, and neither has a non-colour marker. **Shipped.** |
+| `24` | Minor | No `title` on the truncating element in `track-info`, `playlist-view`, `queue-panel` or `track-list`. **Shipped.** |
+| `25` | Minor | `<wa-progress-bar value=…>` with no label, verbatim as filed. **Shipped — it was named "Progress", not unnamed.** |
+| — | ~~new~~ | ~~**Two unnamed native `<select>`s**, one of them `page-header`'s sort control on nine views.~~ **False.** The sort control is named "Sort: " by its wrapping `<label>` on all nine. The two unnamed roles were **one** `config-field` select and the **seek bar**. See Phase 3's list. |
+| — | new | **24 of 93 controls on Settings unnamed** — every `config-field` select and toggle, all eighteen column checkboxes. **Shipped, 0 of 93.** |
+| — | new | **Both `wa-slider`s have no accessible name**, which `a11y.md` files under *what is already correct*. **Shipped.** |
+| `26` | Minor | Explore's search box is named by its placeholder only — which *is* an accname fallback, so an AX sweep reports it clean. `search-bar` was already fixed. **Shipped.** |
 | `28` | ~~dropped~~ | **Measured, stays dropped.** One header *label* clips at 800×600; zero data cells do. |
-| `29` | Polish | `<h3 class="subtitle">` for type size. |
-| `30` | Polish | No skip link anywhere. |
-| `32` | Polish | `title="Remove from queue"`, not identifying the track. |
-| `34` | Polish | The 10 px sort arrow, unchanged. |
-| — | — | Colour contrast, never measured. |
+| `29` | Polish | `<h3 class="subtitle">` for type size. **Shipped.** |
+| `30` | Polish | No skip link anywhere. **Shipped.** |
+| `32` | Polish | `title="Remove from queue"`, not identifying the track. **Shipped.** |
+| `34` | Polish | The 10 px sort arrow, unchanged. **Shipped — half of it was closed by Phase 1's `aria-sort`.** |
+| — | — | Colour contrast, never measured. **Measured and fixed in Phase 2.** |
 
 ## Ordering principle
 
@@ -399,6 +403,106 @@ Two of them are not one-liners and should be treated as such:
   Phase 2's third pass rather than waiting for this tail.
 - **`22`** asks for a non-colour marker on the playing row, which is a
   visual change to the densest list in the app and moves a baseline.
+
+### Phase 3 — what actually shipped
+
+Six landings rather than one, ordered by risk, each reproduced in the
+running app before anything was written and each watched failing on the
+pre-fix build.
+
+- **Web Awesome's two hidden roles.** `label` on both `wa-slider`s and
+  on `wa-progress-bar` (`25`), plus `styles/wa-slider-label.css.ts`,
+  which hides the slider's visible label by part and puts back the 8px
+  margin `#slider` takes as soon as one exists.
+- **Settings' form controls.** `for`/`id` in `config-field`,
+  `aria-label` on the eighteen column toggles and thirty-six column
+  arrows, and the action's name on every `shortcut-capture`.
+  **24 unnamed of 93 → 0.**
+- **`24` and `32`.** `title` on the four clipping surfaces, on the
+  track-list *cell* rather than on what is inside it; and a queue row's
+  remove button named after its own track.
+- **`29`, `30`, `34`.** A skip link, `<h3>` → `<p>`, and the sort arrow
+  at the type scale's floor. Plus the state that landed in: the hgroup
+  measured 67px in a 64px bar and the subtitle's descenders were
+  clipped once the h3's bottom margin went with it.
+- **`22`.** A triangle in each row's own left padding, in both lists,
+  and `aria-current` on the track-list row.
+- **`21`.** `overflow-x: auto` — measured, and the finding's stated
+  mechanism is not the one that exists.
+
+And `26`'s remaining half, found last: Explore's search box.
+
+Pinned by `wa-control-names.test.ts` (4), `settings-names.test.ts`
+(11), `aria-tail.test.ts` (+5), `queue-reorder.test.ts` (+3),
+`e2e/specs/control-names.spec.ts` (3), `e2e/specs/skip-link.spec.ts`
+(4), `e2e/specs/layout-overflow.spec.ts` (+6) and
+`e2e/specs/playback.spec.ts` (+1). `make ui-test` 649 → **672**;
+`make e2e` 74 → **88**.
+
+#### Where the plan was wrong — Phase 3
+
+Ten things. The first four are the audit or the plan being wrong about
+where a control's name lives.
+
+- **The two unnamed `<select>`s from Phase 1 were one `<select>` and a
+  slider, and neither was the page header's.** `page-header`'s sort
+  control computes "Sort: " from its wrapping `<label>`, on every one
+  of the nine views — checked with `getFullAXTree`, `from:
+  relatedElement`. The other unnamed role was the **seek bar**, which
+  `a11y.md` lists under *what is already correct*. Fourth probe error
+  in two passes, and the same shape as the rest: read at the wrong
+  level.
+- **`aria-label` on a Web Awesome host does not name the control.**
+  `wa-slider` puts `role="slider"` on a div in its own shadow root
+  pointing `aria-labelledby` at an empty internal `<label>`, and that
+  IDREF outranks the host's `aria-label`. Both sliders computed `""`.
+  Exactly `wa-dialog`'s trap one component over, and the audit made
+  exactly the same mistake in the opposite direction — it read the
+  source and credited a name that was never computed.
+  `volume-control` did not even have the `aria-label` it is credited
+  with.
+- **`a11y.25` is not "unnamed".** `wa-progress-bar` falls back to the
+  localised word *progress*, so it announced "Progress, 45%" — named
+  after the widget rather than after the work. Same fix, smaller claim.
+- **Settings was full of unnamed controls and no finding says so.** 24
+  of 93. `a11y.6` is not wrong: it says in its own line that it scanned
+  every `<button>`. Third time this pass that a count in the audit was
+  answering a narrower question than it reads as.
+- **A placeholder is an accessible name.** Explore's search box
+  therefore reported *clean* in an AX sweep of all eleven views, which
+  is why `a11y.26` outlived four phases of people looking for exactly
+  this. A sweep for empty names cannot see a weak one.
+- **`a11y.21`'s mechanism does not exist.** "The 4em bars grow while
+  the viewport does not, and anything that no longer fits is clipped
+  with no scrollbar" — the middle row is `1fr` and absorbs them
+  exactly. At 200% text on 800×600 the bars go 64 → 128 and the panel
+  472 → 344, footer still on 600. The real failure is horizontal, which
+  the finding does not mention: 784px of app in a 320px viewport, 464px
+  of it unreachable.
+- **…and the obvious probe for it passes on the broken build.**
+  `overflow: hidden` still permits *programmatic* scrolling, so
+  `scrollLeft = 9999` returns a healthy number on the build with the
+  bug. It did. The spec is a wheel gesture now.
+- **A fix's own test was pinning the bug.** `transport.test.ts`
+  asserted `aria-label` on the `wa-slider` host and called it "carries
+  an accessible name". Running the existing suite is what found it,
+  for the third plan running.
+- **`a11y.34` was half closed by Phase 1 and nobody had noticed.** "The
+  sort direction is a 10px glyph *or nothing*" — it is announced now,
+  via the `aria-sort` Phase 1 added. What was left is one declaration.
+- **The queue's `aria-current` is dead in the common path.** A track
+  started from the *track list* leaves the queue's `currentIndex` at
+  −1, so the panel has no current row at all — which is why `22`'s
+  marker looked broken the first time it was checked in the running
+  app. Pre-existing, not fixed here, and the reason the e2e case plays
+  from the queue.
+
+And one that is about the harness rather than the audit: **a synthetic
+`MouseEvent` does not reach a delegated handler the way a real gesture
+does.** Three probes in a row reported the queue row as never becoming
+active; `page.getByTestId('queue-row').dblclick()` made it active
+immediately. Same family as everything above — the probe was wrong, not
+the code.
 
 ---
 

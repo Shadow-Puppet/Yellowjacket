@@ -2028,3 +2028,104 @@ Six more things worth keeping:
   palette rewrite, twice, because the component tier has no `:root` and
   renders the fallbacks. The tier that *did* catch things was a unit
   test over the palette table and a probe against the running app.
+
+## A name lives where the role is, and neither the audit nor the sweep looks there
+
+Plan 008 phase 3: the tail of `a11y.md`, which closes it — and with it
+all four audits from 2026-08-11.
+
+The generalisation, and it is the whole of this pass: **an accessible
+name is computed on the element carrying the role, and every way we
+have of checking one looks somewhere else.** The audit read the
+*source* and credited a name that was never computed. My AX sweep read
+the *tree* and reported a weak name as no problem. A component test
+asserted the *attribute* and pinned the bug it was written to prevent.
+Three tiers, three different wrong answers, all about the same
+property.
+
+Concretely, and each of these is a finding:
+
+| where it was written | where the role is | computed name |
+|---|---|---|
+| `aria-label` on `<wa-slider>` | a div in its shadow root, `aria-labelledby="label"` | `""` |
+| `<label>` beside a `<select>` in `config-field` | the select | `""` |
+| `placeholder` on Explore's search input | the input | the placeholder |
+| `label` on `<wa-progress-bar>` | inner div's `aria-label` | correct |
+
+The first is `wa-dialog`'s trap one component over and cost two
+sessions in 007. The fix is different, though, and the difference is
+worth keeping: `wa-progress-bar`'s `label` *is* an `aria-label` and is
+invisible, so it is just the right API; `wa-slider`'s `label` is
+**visible**, so the name comes from the library's own property and
+`styles/wa-slider-label.css.ts` hides it by part. That is preferred
+over `name-dialog.ts`'s reach into the shadow root for one reason —
+if Web Awesome renames the part, the label becomes *visible* and
+correctly named, rather than silently nameless again. Choose the
+failure you would rather have.
+
+Nine more things worth keeping:
+
+- **A sweep for empty names cannot see a weak one.** A `placeholder`
+  is an accname fallback, so `getFullAXTree` reported the whole Explore
+  view *clean* — which is why `a11y.26` survived four phases of people
+  looking for exactly this class of bug. "0 unnamed" answers a
+  narrower question than it reads as, which is the third time in this
+  plan a *count* has done that.
+- **The count that sent Phase 1 hunting was wrong in both halves.**
+  "Two unnamed native `<select>`s, one of them the page header's sort
+  control on nine views": the sort control is named `Sort: ` by its
+  wrapping `<label>` (`from: relatedElement`) on all nine, and the two
+  unnamed roles were one `config-field` select and the *seek bar*.
+  Recorded as a finding in the plan, believed for a phase, false.
+- **…and the thing it was pointing at was nine times bigger.** With
+  Settings' sections expanded: **24 of 93 controls unnamed**, every
+  `config-field` select and toggle and all eighteen column checkboxes.
+  No finding names it, and `a11y.6` is not wrong — it says in its own
+  line that it scanned every `<button>`. Same shape as phase 2's
+  contrast number.
+- **A fix's own test can be pinning the bug.** `transport.test.ts`
+  asserted `aria-label` on the `wa-slider` host under the title
+  "carries an accessible name". It passed for six phases. *Run the
+  existing tests* found it — third plan running that this is the rule
+  that pays.
+- **`a11y.21`'s mechanism does not exist, and the real one is on the
+  other axis.** "The 4em bars grow while the viewport does not and
+  anything that no longer fits is clipped" — the middle grid row is
+  `1fr` and absorbs them exactly: at 200% text on 800×600 the bars go
+  64 → 128px, the panel 472 → 344px, and the footer still lands on 600.
+  Nothing is clipped vertically. Horizontally the shell is 784px inside
+  a 320px viewport (400% page zoom, the width 1.4.10 names) with 464px
+  of it behind `overflow: hidden`. Measure the axis the finding does
+  not mention.
+- **`overflow: hidden` still permits programmatic scrolling**, so
+  `scrollLeft = 9999` returns a healthy 464 on the build that has the
+  bug. My first spec passed against the broken build for that reason.
+  A wheel gesture is the probe. Fifth entry in this plan's "the probe
+  was wrong, not the code" column, and the tell was the oldest one
+  there is: **it could not fail.**
+- **A synthetic `MouseEvent` does not reach a delegated handler.**
+  Three probes in a row reported a queue row as never becoming active;
+  `getByTestId('queue-row').dblclick()` made it active immediately.
+  Delegation reads things a hand-built event does not carry.
+- **A finding can be half-closed by a phase that was not about it,
+  and the half that remains is smaller than the sentence.** `a11y.34`
+  reads "the sort direction is a 10px glyph *or nothing*" — Phase 1's
+  `aria-sort` closed the *or nothing*, leaving one declaration. Second
+  time in this plan (`a11y.11` was the first), and both times reading
+  the sentence rather than the residue would have built something that
+  already existed.
+- **The state a fix lands in, again, and it was three pixels.**
+  `a11y.29` takes the subtitle's bottom margin away with the `<h3>`,
+  which *shortens* the flex-centred title block and moves it **down**
+  into the bar's clip — the hgroup had measured 67px inside a 64px bar
+  since before any of this, and the descenders of "meant to bee." were
+  cut. Found by reading a screenshot of the fix, which is the fifth
+  regression in three plans that only a PNG has caught.
+
+And one thing that went right and is worth copying: **the marker for
+`a11y.22` is a shape drawn in padding the row already had.** The track
+list's grid columns are computed from the host width, so anything in
+the flow moves every cell on the playing row and nothing else. A
+`::before` triangle in the 8px left padding costs no layout, and both
+tiers assert it is *absent* on the other rows — a marker that renders
+everywhere satisfies "the playing row has one" for free.
