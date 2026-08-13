@@ -1518,6 +1518,9 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) {
                 <wa-icon class="search-icon" name="magnifying-glass"></wa-icon>
                 <input
                     type="text"
+                    aria-label=${this.searchMode === 'lyrics'
+                        ? 'Search the catalog by a lyric'
+                        : 'Search the catalog'}
                     placeholder=${placeholder}
                     .value=${this.searchQuery}
                     @input=${this.handleInput}
