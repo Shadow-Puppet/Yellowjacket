@@ -505,6 +505,23 @@ first track arrives) and `job-indicator`, whose label swings between
 "Scanning Music", "3 background jobs" and "Finished". The notification
 surface already had one from Phase 3.
 
+**A colour's role decides whether it can be fixed across themes.** A
+*fill* — `--yj-error`, `--yj-success` — is "what colour is a danger
+button", which is red in every theme and stays fixed. A *text* colour
+— `--yj-error-text` — is "what colour is the word *failed* on this
+background", which cannot be: one value cannot clear 4.5:1 against both
+a near-black and a near-white surface, and the old fixed set measured
+2.31–4.28:1 on nearly all of them. And every fill carries a **computed**
+foreground (`--yj-accent-fg`, `--yj-*-fg`) rather than a written-down
+one, because the accent is a colour picker: white on the default
+`#ffd43b` is 1.43:1. `readableOn()` keeps white where white clears and
+flips to black where it does not, and `accentTextOn()` mixes the accent
+along its own hue until it clears the ramp's surface — returning it
+unchanged on both dark ramps. Two accent buttons used to take their
+foreground from `--yj-bg-base`, which *inverts with the ramp*; that is a
+token used for the wrong meaning, and it only shows in the theme nobody
+looks at.
+
 **Contrast is a property of the ramp, and the ramps are data.**
 `theme-store`'s `SHADE_PALETTES` — not `tokens.css.ts`, which holds only
 the type scale and icon sizes — is where the colours live, applied to

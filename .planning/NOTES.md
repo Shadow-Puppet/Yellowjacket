@@ -1954,3 +1954,77 @@ Nine things worth keeping:
   and every one was a *different* mechanism. A finding at 110 nodes
   hides them; at 3 they are individually obvious. Cheap tail, only
   reachable from the other side of the main fix.
+
+## A role, not a value, decides whether a colour can be fixed
+
+Plan 008 phase 2, third landing: the two findings the contrast pass had
+recorded as too big to fix in it, fixed — plus the check for the trap
+that has now cost four sessions.
+
+The generalisation: **a token that is used for two different jobs will
+be wrong at one of them, and no amount of choosing a better value
+fixes it.** `--yj-error` was "the colour of error", which is two
+questions. As the *background of a danger button* it wants to stay red
+in every theme, and it does. As *the word `failed` on a surface* it
+cannot be one value at all — a single colour cannot clear 4.5:1 against
+both a near-black and a near-white background, which is why the fixed
+set measured 2.31–4.28:1 on nearly every combination. Splitting the
+token by the question it answers made both answerable; picking better
+hexes never would have.
+
+The same shape twice more in the same landing:
+
+- **A fill's foreground cannot be written down**, because the accent is
+  a colour picker. `color: #000` is right for the current default
+  yellow and wrong for a navy one. `readableOn()` computes it — white
+  where white clears 4.5:1, black otherwise — which keeps a red danger
+  button conventional (4.51:1) and flips a green one (3.45:1).
+- **`var(--yj-bg-base)` as a foreground is a token used for the wrong
+  meaning.** Two accent buttons did that. It reads as "the opposite of
+  the accent" and it is not: it inverts with the ramp, so the light
+  theme rendered white on yellow at 1.43:1. The bug is not the value,
+  it is that the *name* did not mean what the call site needed.
+
+Six more things worth keeping:
+
+- **The picture and the number disagreed, and the number was mine —
+  again.** I recorded "the header and player chrome stay dark while the
+  body goes light" as a finding, in the plan and in these notes. It is
+  false: `.top-bar` is `#e9ecef` and `.sidebar` `#f8f9fa` under the
+  light ramp, and a re-taken screenshot agrees with the DOM. The
+  original was captured before the theme had propagated. That is the
+  third time in two passes a screenshot read at the wrong *moment*
+  produced a confident wrong claim, after a spec reading the DOM before
+  a fetch and a sweep that had moved the app to another ramp. **A
+  screenshot has a timestamp and a state; check both before quoting
+  it.**
+- **A `color:` regex matches `border-color:`.** Twice in one landing —
+  3 borders while rewriting semantic text, then 30 more while rewriting
+  accent text. Both caught by grepping the *result*, not by any test,
+  because a border in the wrong shade fails nothing and looks fine.
+  When a mechanical rewrite is the right tool, the review is a grep of
+  what it did, not a run of the suite.
+- **A fix at the ubiquitous case makes the rare ones findable.** The
+  greyscale fix took the dark ramp to 0 and the light ramp from 50 to a
+  list short enough to read individually — at which point every
+  remaining item was a *different* mechanism, and two of them were the
+  findings above. A queue of 110 hides its own structure.
+- **Knowledge that has been ignored three times is not a knowledge
+  problem.** The backtick-in-a-`css`-comment trap is documented in
+  `CLAUDE.md`, in the skill and here; I read it twice in the session it
+  then cost a cycle in. It is `make css-check` now — a pre-commit hook
+  and a CI step. The detection is exact rather than heuristic: if a
+  backtick in a comment closed the literal early, the text the parser
+  took as the literal contains an unterminated `/*`, and nothing else
+  produces that.
+- **The value of that check is the sentence, not the failure.** `tsc`
+  already failed on it — with `Class static side 'typeof NowPlaying'
+  incorrectly extends base class static side` and `Property 'scroll'
+  does not exist on type 'CSSResult'`, pointing at a line of prose. The
+  check was verified by breaking a file on purpose and reading both
+  reports side by side, which is also the only way to know it fires.
+- **A change can be invisible to the tier that looks the most like it
+  covers it.** `make ui-visual` passed unchanged through a whole
+  palette rewrite, twice, because the component tier has no `:root` and
+  renders the fallbacks. The tier that *did* catch things was a unit
+  test over the palette table and a probe against the running app.

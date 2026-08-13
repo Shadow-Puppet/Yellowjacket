@@ -325,23 +325,60 @@ access to any value by not being able to. **Stays dropped.**
 
 #### Two things the measurements found that are not in the audit
 
-Both are bigger than what they were found under, and neither is fixed:
+Both were bigger than what they were found under. Both are now fixed —
+see the third landing below.
 
-- **The semantic colours are fixed across ramps, and a fixed colour
+- **The semantic colours were fixed across ramps, and a fixed colour
   cannot serve a near-black and a near-white background.** `--yj-error`
-  is 3.42:1 on dark's surface and 2.55:1 on its elevated; `--yj-info`
-  is 3.10:1 and 2.31:1; success and warning fail on dark and light
-  both. As *backgrounds* under white text, success (3.45) and warning
-  (3.58) fail too. The fix is a per-ramp semantic palette, which is a
-  decision about the app's colour identity rather than a value.
-- **The light ramp is not a supported theme.** With the greyscale fixed
-  it still has **50 failing nodes**: the accent yellow under white text
-  (1.43:1), the autotag diff's pale greens and reds on white
-  (1.36–2.59:1), and the header and player chrome staying dark while
-  the body goes light. Read in a screenshot — the "Low confidence pick"
-  banner is invisible and the primary button is white-on-yellow. This
-  is a design job, and the honest question it raises is whether the
-  light theme should ship at all in its current state.
+  measured 3.42:1 on dark's surface and 2.55:1 on its elevated;
+  `--yj-info` 3.10:1 and 2.31:1; success and warning failed on dark and
+  light both. As *backgrounds* under white text, success (3.45) and
+  warning (3.58) failed too.
+- **The light ramp was not a usable theme.** With the greyscale fixed
+  it still had **50 failing nodes**: the accent yellow under white text
+  (1.43:1) and the autotag diff's pale greens and reds on white
+  (1.36–2.59:1).
+
+### Phase 2, third landing — the ramp reaches the semantic colours
+
+**2237 nodes across three ramps and twelve views, 0 failing.**
+
+The split is by the question a colour answers. A **fill** is "what
+colour is a danger button" — red in every theme, unchanged. A **text**
+colour is "what colour is the word *failed* on this background" — per
+ramp, because one value cannot clear 4.5:1 against both a near-black and
+a near-white surface. `bgOverlay` keeps the exception it already had on
+the dark ramp.
+
+And every fill now carries a **computed foreground**, because the accent
+is a colour picker and no fixed answer survives one: white if white
+clears 4.5:1, else black. That keeps a red danger button white and
+flips a green or amber one to black. Accent-as-text goes through
+`accentTextOn()`, which mixes along the hue until it clears the ramp's
+surface and stops — returning the accent *unchanged* on both dark
+ramps, so the dark themes are visually untouched by that half.
+
+`make ui-test` 608 → **649**.
+
+#### Where this pass was wrong
+
+- **"The chrome stays dark while the body goes light" was mine, and it
+  was false.** I read it off a screenshot; the DOM says `.top-bar` is
+  `#e9ecef` and `.sidebar` `#f8f9fa` under the light ramp, and a
+  re-taken screenshot agrees. The first one was captured before the
+  theme had propagated. Third time in two passes that a screenshot read
+  at the wrong moment produced a confident wrong claim — and the second
+  time this pass that **the picture and the number disagreed and the
+  number was mine**.
+- **A `color:` regex matches `border-color:`.** Twice: once rewriting
+  semantic text colours (3 borders) and once rewriting accent text (30
+  more). A border is a fill, not text. Caught by grepping the result
+  rather than by any test, because nothing renders differently enough
+  to fail.
+- **Two accent buttons took their foreground from `--yj-bg-base`**,
+  which inverts with the ramp — white on yellow at 1.43:1. That is not
+  a colour that was chosen badly; it is a token used for the wrong
+  meaning, and it only shows up in the theme nobody looks at.
 
 ---
 
@@ -358,10 +395,8 @@ Two of them are not one-liners and should be treated as such:
   minimum at 800×600. Reflow at high zoom is the same question one
   variable over. It may want its own landing.
 - **The unnamed `<select>`s** from Phase 1, with `26`.
-- **The semantic palette** and **the light ramp**, from Phase 2. Both
-  are larger than the rest of this tail put together and may not belong
-  in it at all — the light ramp in particular is a question about
-  whether that theme ships, not a contrast fix.
+- ~~**The semantic palette** and **the light ramp**~~ — both landed in
+  Phase 2's third pass rather than waiting for this tail.
 - **`22`** asks for a non-colour marker on the playing row, which is a
   visual change to the densest list in the app and moves a baseline.
 
