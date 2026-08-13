@@ -57,6 +57,21 @@ export class NowPlaying extends LitElement {
     @state()
     private artistHovered = false;
 
+    /**
+     * `prefers-reduced-motion: reduce`, live (a11y.15).
+     *
+     * It is a `@state` and not a CSS query because suppressing the
+     * *transition* is not enough: the cycle is a transition out, a
+     * `transitionend`, and a transition back, so removing the animation
+     * leaves the text translated off its own box and `onScrollCycleEnd`
+     * never fires to bring it back.  The scroll has to not be armed at
+     * all, which is a decision `shouldScroll()` already owns.
+     */
+    @state()
+    private reduceMotion = false;
+
+    private reduceMotionQuery?: MediaQueryList;
+
     /** Whether each field is actively mid-scroll (class toggle). */
     @state()
     private titleScrolling = false;
@@ -200,9 +215,19 @@ export class NowPlaying extends LitElement {
       color: var(--yj-text-tertiary, #666);
     }
 
-    /* Static ellipsis when not scrolling */
-    .track-title:not(.will-scroll),
-    .track-artist:not(.will-scroll) {
+    /* Static ellipsis when not scrolling.
+
+       It has to be on .scroll-content, not on the outer span: the child
+       is an inline-block, so it is the box that overflows, and
+       text-overflow on an ancestor does not ellipsise an overflowing
+       inline-block descendant — it clips it. The outer rule was there
+       from the start and never produced an ellipsis in any mode; the
+       default mode is hover, so what every user saw when not hovering
+       was a title cut mid-glyph. Only visible in a screenshot. */
+    .track-title:not(.will-scroll) .scroll-content,
+    .track-artist:not(.will-scroll) .scroll-content {
+      display: block;
+      overflow: hidden;
       text-overflow: ellipsis;
     }
 
@@ -248,6 +273,12 @@ export class NowPlaying extends LitElement {
         this.updateWidth(DEFAULT_WIDTH);
         window.addEventListener(SCROLL_CHANGE_EVENT, this.handleScrollModeEvent);
 
+        // Looked up here rather than at module load so a test can install
+        // its own matchMedia before the element is created.
+        this.reduceMotionQuery = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+        this.reduceMotion = this.reduceMotionQuery?.matches ?? false;
+        this.reduceMotionQuery?.addEventListener('change', this.handleReduceMotionChange);
+
         this.resizeObserver = new ResizeObserver(() => {
             this.geometryDirty = true;
             this.requestUpdate();
@@ -259,6 +290,7 @@ export class NowPlaying extends LitElement {
         // A drag interrupted by the bar going away still has to clean up.
         this.attachDragListeners(false);
         window.removeEventListener(SCROLL_CHANGE_EVENT, this.handleScrollModeEvent);
+        this.reduceMotionQuery?.removeEventListener('change', this.handleReduceMotionChange);
         this.resizeObserver?.disconnect();
         this.stopScrollCycle('title');
         this.stopScrollCycle('artist');
@@ -371,6 +403,7 @@ export class NowPlaying extends LitElement {
             <span
               class="track-title ${titleScrolling ? 'will-scroll' : ''} ${this.titleScrolling ? 'scrolling' : ''}"
               data-testid="now-playing-title"
+              title=${track.title}
               @mouseenter=${this.handleTitleMouseEnter}
               @mouseleave=${this.handleTitleMouseLeave}
               @transitionend=${() => this.onScrollCycleEnd('title')}
@@ -380,6 +413,7 @@ export class NowPlaying extends LitElement {
             <span
               class="track-artist ${artistScrolling ? 'will-scroll' : ''} ${this.artistScrolling ? 'scrolling' : ''}"
               data-testid="now-playing-artist"
+              title=${track.artist || 'Unknown Artist'}
               @mouseenter=${this.handleArtistMouseEnter}
               @mouseleave=${this.handleArtistMouseLeave}
               @transitionend=${() => this.onScrollCycleEnd('artist')}
@@ -429,8 +463,20 @@ export class NowPlaying extends LitElement {
         this.loadScrollMode();
     };
 
+    private handleReduceMotionChange = (e: MediaQueryListEvent): void => {
+        this.reduceMotion = e.matches;
+    };
+
     private shouldScroll(field: 'title' | 'artist'): boolean {
         const overflows = field === 'title' ? this.titleOverflows : this.artistOverflows;
+
+        // A stated OS-level preference outranks an app default the user
+        // may never have touched, so this comes before the mode — and it
+        // covers `hover` as well as `always`.  Hover-scrolling is
+        // user-initiated and so arguably passes WCAG 2.2.2 on its own,
+        // but `reduce` is a request about motion, not about autoplay.
+        // The text falls back to the ellipsis every other mode uses.
+        if (this.reduceMotion) return false;
 
         if (!overflows || this.scrollMode === 'never') return false;
         if (this.scrollMode === 'always') return true;
@@ -477,9 +523,18 @@ export class NowPlaying extends LitElement {
             const content = el.querySelector<HTMLElement>('.scroll-content');
             const width = el.clientWidth;
 
+            // Both numbers come from the *child*, which is the box that
+            // holds the text. Asking the outer span whether it overflows
+            // only works while the child is an overflowing inline-block:
+            // once the non-scrolling state gives the child its own
+            // `overflow: hidden` (for the ellipsis), the parent stops
+            // overflowing and nothing ever arms the scroll again.
+            // `scrollWidth` reports the content size either way.
+            const full = content?.scrollWidth ?? 0;
+
             return {
-                overflows: el.scrollWidth > width,
-                distance: content ? content.scrollWidth - width : 0,
+                overflows: full > width,
+                distance: content ? full - width : 0,
             };
         };
 

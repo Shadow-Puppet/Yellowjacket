@@ -232,6 +232,61 @@ describe('<now-playing>', () => {
     expect(queries()).toBeGreaterThan(0);
   });
 
+  // a11y.15 (WCAG 2.2.2). Reproduced in the running app first: under an
+  // emulated `prefers-reduced-motion: reduce` the title still carried
+  // `will-scroll` with a 15s transition and the transform was still
+  // moving — the read landed in the *snap-back* half of the cycle,
+  // which is why suppressing the transition alone is not the fix.
+  //
+  // Both directions are asserted because a guard that suppresses
+  // everything passes the negative case for free, and a component that
+  // never scrolls at this width would too.
+  const LONG =
+    'An Exhaustively Overlong Track Title That Exists Solely To Find Out ' +
+    'Whether The Bottom Bar Truncates Or Overflows';
+
+  async function mountScrolling(reduce: boolean) {
+    const real = window.matchMedia.bind(window);
+
+    window.matchMedia = ((q: string) =>
+      q.includes('prefers-reduced-motion')
+        ? {
+            matches: reduce,
+            media: q,
+            addEventListener() {},
+            removeEventListener() {},
+          }
+        : real(q)) as typeof window.matchMedia;
+
+    try {
+      localStorage.setItem('yj-now-playing-scroll-mode', 'always');
+
+      const el = await fixture('now-playing');
+
+      // The real host is sized by `--now-playing-width` on `.bottom-bar`,
+      // which the fixture does not have — so it is document-width here
+      // and nothing overflows, which made the positive case fail first.
+      el.style.width = '320px';
+
+      emit(Events.TrackChanged, { ...TRACK, title: LONG, trackChangeId: 10 });
+      await flush();
+      await settle(el);
+
+      return shadow(el, '.track-title')?.className ?? '';
+    } finally {
+      window.matchMedia = real;
+      localStorage.removeItem('yj-now-playing-scroll-mode');
+    }
+  }
+
+  it('scrolls an overflowing title when motion is not a problem', async () => {
+    expect(await mountScrolling(false)).toContain('will-scroll');
+  });
+
+  it('does not scroll at all under prefers-reduced-motion', async () => {
+    expect(await mountScrolling(true)).not.toContain('will-scroll');
+  });
+
   it('looks the way it did last time', async () => {
     const el = await fixture('now-playing');
 
