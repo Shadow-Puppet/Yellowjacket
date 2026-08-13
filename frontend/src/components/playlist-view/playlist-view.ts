@@ -1786,6 +1786,7 @@ export class PlaylistView extends ViewLifecycleMixin(LitElement) {
                         : html`
                               <span
                                   class="playlist-name"
+                                  title=${entry.summary.Name}
                               >
                                   ${entry.summary
                                       .Name}

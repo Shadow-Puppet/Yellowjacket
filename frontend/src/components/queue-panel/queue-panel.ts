@@ -1595,6 +1595,13 @@ export class QueuePanel
 
         const artUrl = track.coverArtPath || '';
 
+        // The panel's width is user-resizable down to MIN_WIDTH, so
+        // both of these are routinely clipped (a11y.24) — and the
+        // remove button is one of every row, named identically
+        // (a11y.32).
+        const title = this.getDisplayTitle(track);
+        const artist = track.artist || 'Unknown Artist';
+
         // No inline closures — all events delegated via data-index
         // on the virtualizer element (see firstUpdated).
         return html`
@@ -1620,16 +1627,17 @@ export class QueuePanel
                 </span>
                 ${artUrl ? html`<div class="track-art"><img src="${artUrl}" alt="" loading="lazy" /></div>` : nothing}
                 <div class="track-details">
-                    <span class="track-title">
-                        ${trackLink(this.getDisplayTitle(track), track.album, track.releaseGroupMbid, track.recordingMbid, undefined, track.artist)}
+                    <span class="track-title" title=${title}>
+                        ${trackLink(title, track.album, track.releaseGroupMbid, track.recordingMbid, undefined, track.artist)}
                     </span>
-                    <span class="track-artist">
+                    <span class="track-artist" title=${artist}>
                         ${artistLink(track.artist, track.artistMbid) || 'Unknown Artist'}
                     </span>
                 </div>
                 <button
                     class="remove-button"
                     title="Remove from queue"
+                    aria-label="Remove ${title} from queue"
                 >
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512" width="14" height="14">
                         ${svg`<path fill="currentColor" d="M342.6 150.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0L192 210.7 86.6 105.4c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3L146.7 256 41.4 361.4c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0L192 301.3 297.4 406.6c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L237.3 256 342.6 150.6z"/>`}

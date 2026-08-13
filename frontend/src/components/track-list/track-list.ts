@@ -1839,8 +1839,12 @@ export class TrackList
                     display = albumLink(track.Album, track.ReleaseGroupMBID, display as any, track.ArtistName);
                 }
 
+                // `title` on the cell rather than on whatever is inside
+                // it: the value may be a link, a highlighted match or
+                // plain text, and a tooltip is inherited by descendants
+                // either way (a11y.24).
                 return html`
-                    <div role="gridcell" class=${classMap({
+                    <div role="gridcell" title=${val} class=${classMap({
                         cell: true,
                         'cell-center': centered,
                         'cell-right': !centered && col.align === 'right',

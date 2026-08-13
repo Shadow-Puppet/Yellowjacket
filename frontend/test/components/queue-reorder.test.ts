@@ -19,7 +19,7 @@ import { describe, expect, it, beforeEach } from 'vitest';
 import '@components/queue-panel/queue-panel';
 import type { QueuePanel } from '@components/queue-panel/queue-panel';
 import { Events } from '../../src/events';
-import { emit, calls, flush, lastArgs } from '@test/support/harness';
+import { emit, calls, flush, lastArgs, resetHarness } from '@test/support/harness';
 import { fixture, shadow, shadowAll } from '@test/support/render';
 import type { QueueTrack } from '@store/queue-store';
 
@@ -168,5 +168,38 @@ describe('<queue-panel> keyboard reorder', () => {
     await el.updateComplete;
 
     expect(calls().some((c) => c.path.includes('Move'))).toBe(false);
+  });
+});
+
+describe('a queue row says which track its controls act on', () => {
+  beforeEach(() => {
+    resetHarness();
+  });
+
+  it('names each remove button after its own track', async () => {
+    const el = await panelWithQueue();
+
+    const labels = shadowAll(el, '.remove-button').map((b) =>
+      b.getAttribute('aria-label'),
+    );
+
+    // `a11y.32`: `title="Remove from queue"` on every row is a name
+    // that never identifies which track — four identical buttons in a
+    // list whose whole purpose is the order.
+    expect(labels.slice(0, 4)).toEqual([
+      'Remove First from queue',
+      'Remove Second from queue',
+      'Remove Third from queue',
+      'Remove Fourth from queue',
+    ]);
+  });
+
+  it('gives the title and artist a tooltip, since the panel is resizable', async () => {
+    const el = await panelWithQueue();
+
+    // `a11y.24` calls this one acute: MIN_WIDTH is narrow enough that
+    // both lines clip routinely, and nothing else can show the value.
+    expect(shadow(el, '.track-title')?.getAttribute('title')).toBe('First');
+    expect(shadow(el, '.track-artist')?.getAttribute('title')).toBe('Artist');
   });
 });

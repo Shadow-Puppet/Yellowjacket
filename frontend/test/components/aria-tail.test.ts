@@ -15,6 +15,7 @@ import type { LitElement } from 'lit';
 import '@components/track-list/track-list';
 import '@components/artists-view/artists-view';
 import '@components/genres-view/genres-view';
+import '@components/track-info/track-info';
 import { emit, stub, flush, resetHarness } from '@test/support/harness';
 import { Events } from '../../src/events';
 import { fixture, shadow, shadowAll } from '@test/support/render';
@@ -189,5 +190,48 @@ describe('a selectable grid is a listbox, not a row of buttons', () => {
 
     expect(list, `${tag} has options with no listbox`).toBeTruthy();
     expect(list!.getAttribute('aria-multiselectable')).toBe('true');
+  });
+});
+
+describe('a clipped value is readable somewhere', () => {
+  beforeEach(async () => {
+    resetHarness();
+    searchStore.setTerm('');
+    stub('library.Library.GetAllTracks', TRACKS);
+    stub('library.Library.GetAllAlbums', []);
+    emit(Events.LibraryScanComplete);
+  });
+
+  it('gives every track-list cell the value it may be clipping', async () => {
+    const el = await fixture<LitElement>('track-list');
+
+    sized(el);
+    await settle(el);
+
+    const titles = shadowAll(el, '.track-row [role="gridcell"].cell').map((c) =>
+      c.getAttribute('title'),
+    );
+
+    // `a11y.24`: `text-overflow: ellipsis` in 40+ places, and the
+    // highest-density lists were the ones without a `title`. The
+    // attribute is on the cell rather than on what is inside it,
+    // because the value may be a link or a highlighted match and a
+    // tooltip is inherited by descendants either way.
+    expect(titles.length).toBeGreaterThan(0);
+    expect(titles).toContain('Departure');
+    expect(titles.every((t) => t !== null && t !== '')).toBe(true);
+  });
+
+  it('gives track-info its own title and secondary line', async () => {
+    const el = await fixture<LitElement>('track-info', {
+      trackTitle: 'An Exhaustively Overlong Track Name',
+      artist: 'Aurora Fields',
+    });
+
+    await el.updateComplete;
+
+    expect(shadow(el, '.title')?.getAttribute('title'))
+      .toBe('An Exhaustively Overlong Track Name');
+    expect(shadow(el, '.secondary')?.getAttribute('title')).toBeTruthy();
   });
 });

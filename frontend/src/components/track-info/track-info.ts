@@ -118,10 +118,12 @@ export class TrackInfo extends LitElement {
             ${showCover ? this.renderCoverArt() : nothing}
             <div class="text">
                 ${displayTitle
-                    ? html`<span class="title">${displayTitle}</span>`
+                    ? html`<span class="title" title=${displayTitle}
+                          >${displayTitle}</span
+                      >`
                     : nothing}
                 ${secondaryParts
-                    ? html`<span class="secondary"
+                    ? html`<span class="secondary" title=${secondaryParts}
                           >${secondaryParts}</span
                       >`
                     : nothing}
