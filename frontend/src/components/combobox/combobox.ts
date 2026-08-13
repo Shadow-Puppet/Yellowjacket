@@ -10,6 +10,25 @@ import { designTokens } from '../../styles/tokens.css';
  * Key implementation detail: option `<li>` elements use `@mousedown` with
  * `e.preventDefault()` so that the input's `blur` event does not close the
  * dropdown before the click registers.
+ *
+ * `a11y.14`: the roles were right and the wiring between them was
+ * missing, so arrowing through the list moved a visual highlight and
+ * announced nothing — confirmed against the browser's own computation
+ * (`Accessibility.getFullAXTree` reported no `activedescendant` and no
+ * `controls` on any of the five comboboxes on the page). Three things
+ * carry it now: ids on the listbox and every option, `aria-controls`,
+ * and `aria-activedescendant` naming the highlighted option.
+ *
+ * `aria-selected` used to mean "highlighted", which is the one thing it
+ * does not mean. It is the *chosen* value now; the highlight is what
+ * `aria-activedescendant` points at, which is the distinction the whole
+ * pattern rests on.
+ *
+ * Unlike `config-section`'s disclosure, this `aria-controls` IDREF is
+ * allowed to dangle while the popup is closed: the listbox genuinely
+ * does not exist then, and `aria-expanded="false"` says so. A
+ * disclosure's body exists either way, which is why that one renders
+ * unconditionally and hides with `hidden`.
  */
 @customElement('yj-combobox')
 export class YjCombobox extends LitElement {
@@ -44,6 +63,22 @@ export class YjCombobox extends LitElement {
     /** Index into `filteredOptions` for keyboard highlight (-1 = none). */
     @state()
     private highlightedIndex = -1;
+
+    /**
+     * Per-instance id prefix for the IDREFs below.
+     *
+     * The ids only have to be unique within this shadow root — an IDREF
+     * does not cross one — but two comboboxes render side by side in a
+     * smart-playlist rule row, so a counter costs nothing and keeps the
+     * DOM readable when one of these is being debugged.
+     */
+    private readonly uid = `yj-combobox-${(YjCombobox.instances += 1)}`;
+
+    private static instances = 0;
+
+    private optionId(i: number): string {
+        return `${this.uid}-opt-${i}`;
+    }
 
     // ── Computed ────────────────────────────────────────────────────
 
@@ -291,15 +326,20 @@ export class YjCombobox extends LitElement {
                     role="combobox"
                     aria-expanded=${this.open}
                     aria-autocomplete="list"
+                    aria-controls=${`${this.uid}-listbox`}
+                    aria-activedescendant=${this.open && this.highlightedIndex >= 0
+                        ? this.optionId(this.highlightedIndex)
+                        : nothing}
                 />
                 ${this.open && opts.length > 0
                     ? html`
-                          <ul class="dropdown" role="listbox">
+                          <ul class="dropdown" role="listbox" id=${`${this.uid}-listbox`}>
                               ${opts.map(
                                   (opt, i) => html`
                                       <li
                                           role="option"
-                                          aria-selected=${i === this.highlightedIndex}
+                                          id=${this.optionId(i)}
+                                          aria-selected=${opt === this.value}
                                           class=${i === this.highlightedIndex
                                               ? 'highlighted'
                                               : ''}
