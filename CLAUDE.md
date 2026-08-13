@@ -156,7 +156,7 @@ See `.planning/plans/completed/005-agent-development-harness.md`.
 **Backend packages** (under `backend/`):
 - `player` — Audio playback via beep. `BufferedStreamer` provides a ring buffer for smooth seeking.
 - `queue` — Track queue with shuffle (Fisher-Yates), repeat modes, auto-advance, and session persistence.
-- `library` — Concurrent library scanning, metadata extraction, cover art deduplication, incremental rescan.
+- `library` — Concurrent library scanning, metadata extraction, cover art deduplication, incremental rescan. Also **removal**, below.
 - `database` — SQLite via pure-Go driver. Schema in `database/sql/schemas/`, queries in `database/sql/queries/`. **sqlc** generates Go code into `database/sql/sqlcgen/` — never edit that directory by hand.
 
   **Schema changes need two things, not one.** `sql/schemas/*.sql` is
@@ -212,6 +212,20 @@ See `.planning/plans/completed/005-agent-development-harness.md`.
     `TestNoWritesOnTheReadPool` walks the tree for it, in the same
     spirit as `TestNoDirectRuntimeEmits` and for the same reason — a
     lint pass only sees one build configuration.
+  - **A new table needs one file, not two.** The two-file rule is
+    about a column added to a table that already exists.
+    `applySchema` runs every file in `sql/schemas/` on *every* open,
+    so a `CREATE TABLE IF NOT EXISTS` reaches an existing install
+    verbatim and a migration for it would be a second description of
+    the same table — which is exactly what the third rule forbids.
+    `excluded_paths` is the worked example, index included, since the
+    column and its index arrive together.
+  - **A new table has to say what kind of data it holds.**
+    `backend/datamap` is a catalogue of every table's Kind and
+    Lifetime, and `TestCatalogCoversSchema` fails on a table missing
+    from it. `TestAuthoredCascadesAreDeliberate` then makes an
+    *authored* table that cascades an explicit, argued exemption —
+    authored data is what a user cannot get back.
   - **Squashing is fine pre-1.0.** While this hasn't shipped to real
     users, periodically folding `sql/migrations/` into `sql/schemas/`
     and deleting the migration files (then wiping your own dev/sandbox
@@ -903,6 +917,39 @@ with no subscriber fetches nothing**: `playlist-view` is the only
 reader and is created lazily, so neither the invalidation nor — more
 expensively — the singleton's own construction warms a cache for a page
 that may never open.
+
+**"Remove from library" removes the row and excludes the path, and
+never touches the file.** `RemoveFromLibrary(filePaths)` deletes the
+`audio_files` rows the way the scan's own orphan cleanup does (tagging
+group bookkeeping, FTS entry, `pruneOrphanedMetadata` for an album
+whose last track just went) and records each path in `excluded_paths`.
+The exclusion is not an enhancement — without it the next scan finds
+the file, sees no row and imports it again, so the button undoes itself
+and is worse than no button. It is reached from the track list's
+context menu behind `confirmAction()`, whose **impact line says the
+files are not deleted**, and from `tracklist.delete` (Delete), which is
+bound to *opening that dialog* and nothing else: one keystroke from a
+focused row, a key that asks is defensible and a key that acts is not.
+
+Four things about it are load-bearing, and two are invisible from the
+track list. **The soft scan compares files on disk against rows in the
+database**, so an excluded path — on disk, deliberately not a row —
+makes the two disagree forever and queues a full scan of the whole
+library on *every* launch; `surveyAudioFiles` and `countAudioFiles`
+therefore both take the exclusion set, because they answer "how many
+files would a scan import", not "how many files are there". **Deleting
+an `audio_files` row cascades to `queue_tracks`**, so the removal calls
+the same `CompactQueue` hook `RemoveLibrary` does, which reloads the
+queue and unloads the player if the removed track was the one playing.
+**A full rescan clears the exclusions**, which is the only way back for
+a path removed by mistake until there is a UI for the list. And
+`TracksRemovedFromLibrary` carries `{filePaths, count}` so
+`library-store` splices the tracks array in place and refetches only
+the album/artist/genre summaries — falling back to a full invalidate
+only when a tracks fetch is already in flight.
+
+**Deleting the file from disk is deliberately not this**, and is not
+foreclosed; it needs its own argument.
 
 **An unchanged payload is not an event.** `explore`'s index status used
 to be pushed on a 3 s ticker for the life of the process, byte-identical

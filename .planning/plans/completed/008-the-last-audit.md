@@ -1,7 +1,7 @@
 # 008 — The last audit, and the one binding that outlived six phases
 
-**Status:** active — Phases 1, 2 and 3 shipped. Phase 4 is all that
-remains, and `a11y.md` is closed.
+**Status:** complete — all four phases shipped. `a11y.md` is closed,
+and with it all four audits from 2026-08-11.
 **Branch:** main
 **Created:** 2026-08-12
 **Follows:** 007-ui-reconciliation
@@ -560,6 +560,77 @@ argument.
 A Go test that a removed path survives a rescan; an e2e case that the
 row is gone, the dialog said so, and the file still exists. Both halves
 matter — the second is the promise the copy makes.
+
+### Phase 4 — what actually shipped
+
+Three landings, in the order the plan proposed, each watched failing on
+the pre-fix build by neutering one line rather than stashing.
+
+- **The schema, `RemoveFromLibrary`, and the scanner honouring the
+  list.** `excluded_paths` (one file — see below), rows deleted the way
+  the scan's own orphan cleanup deletes them, `TracksRemovedFromLibrary`
+  carrying `{filePaths, count}`, and both of the scanner's walks taking
+  the exclusion set.
+- **The context-menu command**, behind `confirmAction()` with an impact
+  line that says the files are not deleted, plus `library-store`
+  splicing rather than invalidating.
+- **`tracklist.delete`**, bound to opening that dialog, and the e2e
+  case.
+
+Pinned by `remove_tracks_test.go` (6), `library-store.test.ts` (+4),
+`keyboard-shortcuts.test.ts` (+1) and
+`e2e/specs/remove-from-library.spec.ts` (2). `make ui-test` 672 →
+**677**; `make e2e` 88 → **90**.
+
+#### Where the plan was wrong — Phase 4
+
+Six things, and the first two are the plan asking for work that does
+not exist and skipping work that does.
+
+- **"Following the two-file schema discipline" is wrong for a new
+  table.** `applySchema` runs every file in `sql/schemas/` on every
+  open, so a `CREATE TABLE IF NOT EXISTS` reaches an existing install
+  verbatim; the migration file the plan asked for would have been a
+  *second description of the same table*, which is the one thing the
+  checklist's third rule forbids. Column order and "no index on a
+  migrated column" do not apply either — nothing is being added to an
+  existing table, so the index lives beside its own `CREATE TABLE`.
+- **The half that would have undone the feature is not in the plan.**
+  The startup soft scan decides "library unchanged" by comparing files
+  on disk against rows in the database. An excluded path is on disk and
+  deliberately not a row, so the two counts disagree *forever* and
+  every launch queues a full scan of the whole library. Both walks take
+  the exclusion set now. Nothing in any tier would have caught it: it
+  is not a wrong answer, it is a permanent, invisible re-scan.
+- **…and neither is the queue.** Deleting an `audio_files` row cascades
+  to `queue_tracks`, so the queue's in-memory copy — and possibly the
+  playing track — goes stale. `RemoveLibrary` has had the
+  `CompactQueue` hook for exactly this since it was written; the
+  removal reuses it.
+- **The plan says nothing about undo, and the operation needs one.** An
+  exclusion with no UI to clear it is a one-way door: the file is on
+  disk and the user cannot get it back. A full rescan clears the table,
+  which is the escape hatch until there is a list to manage. Recorded
+  rather than implied, because it is the difference between
+  "reversible" (shape A's stated advantage) and a claim.
+- **A new table has a second gate nobody remembers.**
+  `backend/datamap` catalogues every table's Kind and Lifetime, and two
+  of its tests fail on a new one: `TestCatalogCoversSchema` for the
+  missing entry, then `TestAuthoredCascadesAreDeliberate` because an
+  *authored* table that cascades needs an argued exemption. Both are
+  right to ask; neither is mentioned in `references/schema-change.md`.
+- **The copy was wrong in the first screenshot, and only there.** The
+  title was singular and the body said "**They** are removed" — the
+  message and impact strings were written for the multi-select case and
+  used for both. Nothing failed. Found by reading the PNG, which is now
+  the sixth regression in four plans that only a PNG has caught.
+
+And one about the harness rather than the work: **a hook gets 30
+seconds, not the test's timeout.** The e2e case's `afterAll` restore
+passed in isolation and timed out in the full suite, where earlier
+specs have staged an explore catalog and the restore takes longer than
+the hook's default budget. `test.setTimeout()` inside the hook is what
+raises it.
 
 ---
 

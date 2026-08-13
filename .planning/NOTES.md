@@ -2129,3 +2129,70 @@ the flow moves every cell on the playing row and nothing else. A
 `::before` triangle in the 8px left padding costs no layout, and both
 tiers assert it is *absent* on the other rows — a marker that renders
 everywhere satisfies "the playing row has one" for free.
+
+## A guard is only a feature if everything that counts agrees with it
+
+Plan 008 phase 4: "remove from library" — the row goes, the path is
+excluded from future scans, the file is never touched — and with it
+`tracklist.delete`, which had been advertised in Settings for six
+phases with nothing on the other end of it.
+
+The generalisation: **an operation that changes what counts as "in the
+library" has to be applied everywhere that number is computed, and the
+places that compute it do not look like the feature.** The scan walk is
+the obvious one, and skipping an excluded path there is the whole
+feature as written in the plan. But the *startup soft scan* decides
+whether to scan at all by comparing files on disk against rows in the
+database, and an excluded path is on disk and deliberately not a row —
+so the fix as specified would have left the two counts disagreeing
+forever and queued a full scan of the entire library on **every
+launch**. Nothing fails, nothing renders differently, and no tier looks
+at it; the app is just permanently rescanning. The same shape one step
+over: deleting an `audio_files` row cascades to `queue_tracks`, so the
+queue's in-memory copy — and the playing track — goes stale unless the
+removal calls the reload hook `RemoveLibrary` has had all along.
+
+Six more things worth keeping:
+
+- **A new table needs one schema file, and the two-file discipline is
+  not about it.** `applySchema` runs every file in `sql/schemas/` on
+  every open, so `CREATE TABLE IF NOT EXISTS` reaches an existing
+  install verbatim. The migration the plan asked for would have been a
+  *second description of the same table*, which is precisely what tore
+  out the old 48-step chain. Column order and "no index on a migrated
+  column" are rules about `ALTER TABLE ADD COLUMN`, and neither applies
+  when nothing is being altered.
+- **The repo asked the question the plan did not.** `backend/datamap`
+  failed the build twice for the new table: once for having no entry at
+  all, then again because an *authored* table that cascades needs an
+  argued exemption rather than a default. Two gates, both right, and
+  neither in `references/schema-change.md` until now. A catalogue that
+  fails the build is worth more than a catalogue that is accurate.
+- **Reversibility is a claim until something implements it.** The
+  decision picked shape A over deleting the file partly because it is
+  reversible — and nothing in the plan made it so. An exclusion with no
+  UI to clear it is a one-way door with the file sitting on disk the
+  whole time. A full rescan clears the table, which is the escape hatch
+  until there is a list to manage, and it is now written down instead
+  of assumed.
+- **The copy was wrong for the case it will be used in most.** The
+  confirmation's message and impact were written for a multi-select and
+  used for both, so removing one track said "**They** are removed" under
+  a singular title. Nothing failed. Read in the first screenshot of the
+  dialog — sixth regression in four plans that only a PNG has caught,
+  and the one where it mattered most, since the copy is the only thing
+  standing between this feature and a user's music.
+- **Both halves of a guard need their own test, or one of them is
+  decorative.** The walk's exclusion and the survey's exclusion are two
+  lines in two functions; neutering each in turn failed exactly one
+  test. Had they shared a test, either could have rotted invisibly.
+  Same reason the e2e case asserts a *control* path still returns from
+  the same scan: a guard that excluded everything passes "the removed
+  path did not come back" for free.
+- **A Playwright hook gets 30 seconds regardless of the test's
+  timeout.** A `db/restore` in `afterAll` passed in isolation and timed
+  out in the full suite, where earlier specs have staged an explore
+  catalog and the copy takes longer. `test.setTimeout()` *inside the
+  hook* is what raises it — and a spec that spends the shared database
+  has to give it back, since the 90 specs share one backend in file
+  order.
