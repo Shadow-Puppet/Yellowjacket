@@ -1,6 +1,9 @@
 import { LitElement, html, css, nothing } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
+import { customElement, property, state } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
+import { toggleRequest } from '@utils/library-status';
+import { notificationStore } from '@store/notification-store';
+import { describeError } from '@utils/describe-error';
 
 /**
  * Library status for an entity (artist, album, or track).
@@ -17,18 +20,23 @@ export type LibraryStatus = 'in-library' | 'queued' | 'not-in-library';
  * Tri-state library status indicator: a small circular badge embedded
  * in track rows, album cards, and artist cards.
  *
- * **It is a badge, not a control.**  It was a `<button>` whose click
- * handler was a `stopPropagation()` and a comment saying to wire up
- * the download client later — so an Explore results page offered 20
- * keyboard stops (of 66) that promised an action and performed none,
- * and every one of them announced itself as a button.  A control that
- * cannot act is worse than no control: it costs the keyboard user the
- * tab stop *and* the expectation.
+ * **It is a button only where it can act, and a badge everywhere
+ * else.**  It used to be a `<button>` whose click handler was a
+ * `stopPropagation()` and a comment saying to wire up the download
+ * client later, so an Explore results page offered 20 keyboard stops
+ * (of 66) that promised an action and performed none.  007 made it
+ * `role="img"` for that reason and wrote down what would change the
+ * answer: a `<button>` again *with* a handler, never a handler bolted
+ * onto something already shaped like one.
  *
- * So it is `role="img"` with a label, until there is something to
- * click.  When the download-client integration lands, the right change
- * is to make it a `<button>` again *with a handler* — not to add the
- * handler to something already shaped like a button.
+ * A call site opts in by passing `request-mbid`.  Where it does, this
+ * is a `<button>` that toggles a durable **request** — and the copy
+ * says so, because clicking still adds nothing to the library.  Where
+ * it does not (`explore-album-details`'s header, which has "Want this"
+ * in words directly below it) it stays exactly what it was.
+ *
+ * An `in-library` badge is never a button under either: there is
+ * nothing left to ask for.
  *
  * Colours and glyphs:
  *  - in-library    → green circle, check mark
@@ -65,6 +73,31 @@ export class LibraryStatusIndicator extends LitElement {
     @property({ type: Number })
     size = 20;
 
+    /**
+     * MBID to request when this is clicked.  Supplying it is what makes
+     * this a control; omitting it leaves a badge.  Only `album` and
+     * `track` are requestable — see `utils/library-status.ts`.
+     */
+    @property({ type: String, attribute: 'request-mbid' })
+    requestMbid = '';
+
+    /** Display-cache artist for the request list. Matching is by MBID. */
+    @property({ type: String, attribute: 'request-artist' })
+    requestArtist = '';
+
+    @state()
+    private busy = false;
+
+    /** True when this can act: a call site opted in, and there is
+     *  something left to ask for. */
+    private get actionable(): boolean {
+        return (
+            this.requestMbid !== '' &&
+            this.status !== 'in-library' &&
+            this.entityType !== 'artist'
+        );
+    }
+
     static override styles = css`
         :host {
             display: inline-flex;
@@ -96,7 +129,8 @@ export class LibraryStatusIndicator extends LitElement {
             /* A <button> gets box-sizing: border-box from the UA
              * stylesheet and a <span> does not, so dropping the button
              * grew the badge by its 1px border on each side — 36px to
-             * 38px, caught by the stored screenshot. */
+             * 38px, caught by the stored screenshot. Set explicitly so
+             * the two branches of render() are the same size. */
             box-sizing: border-box;
             width: var(--indicator-size);
             height: var(--indicator-size);
@@ -116,6 +150,29 @@ export class LibraryStatusIndicator extends LitElement {
         wa-icon {
             font-size: calc(var(--indicator-size) * 0.55);
             line-height: 1;
+            pointer-events: none;
+        }
+
+        button.badge {
+            cursor: pointer;
+            font: inherit;
+        }
+
+        button.badge:hover:not(:disabled) {
+            filter: brightness(1.25);
+        }
+
+        button.badge:disabled {
+            cursor: default;
+            opacity: 0.6;
+        }
+
+        /* The card underneath draws its own focus ring, and this sits
+         * inside it — so the badge needs one of its own or a keyboard
+         * user cannot tell which of the two has focus. */
+        button.badge:focus-visible {
+            outline: 2px solid var(--yj-accent, #ffd43b);
+            outline-offset: 2px;
         }
 
         /* Prevent the button from intercepting drag gestures on album
@@ -145,15 +202,78 @@ export class LibraryStatusIndicator extends LitElement {
                   : 'track';
         const name = this.label ? ` "${this.label}"` : '';
 
+        // A control is named after what activating it does; a badge is
+        // named after what it is. Both are still deliberately about the
+        // *request list* rather than the library — clicking this adds a
+        // row to one and nothing to the other, and "Add … to library"
+        // was the old button's promise written into the copy.
+        if (this.actionable) {
+            return this.status === 'queued'
+                ? `Cancel the request for ${kind}${name}`
+                : `Want ${kind}${name}`;
+        }
+
         switch (this.status) {
             case 'in-library':
                 return `${capitalize(kind)}${name} is in your library`;
             case 'queued':
                 return `${capitalize(kind)}${name} is queued for download`;
             default:
-                // Not "Add … to library": nothing here adds anything.
-                // The old copy was the button's promise written out.
                 return `${capitalize(kind)}${name} is not in your library`;
+        }
+    }
+
+    /**
+     * Toggle the request.
+     *
+     * The click is swallowed, which it was before too — but for the
+     * opposite reason. 007 removed a `stopPropagation()` that guarded
+     * nothing, on the rule that with no action of its own the badge is
+     * part of its card and a click on it should mean what the card
+     * means. Now it has one, so it does not.
+     */
+    private async onActivate(event: Event) {
+        event.stopPropagation();
+        event.preventDefault();
+
+        if (this.busy || !this.actionable) return;
+
+        this.busy = true;
+
+        try {
+            await toggleRequest({
+                mbid: this.requestMbid,
+                entity: this.entityType === 'album' ? 'album' : 'track',
+                title: this.label,
+                artist: this.requestArtist,
+            });
+        } catch (err) {
+            console.error('could not update the request list', err);
+
+            // Transient: the badge visibly stayed where it was, so
+            // there is nothing for the user to do about it that they
+            // are not already doing.
+            notificationStore.transient({
+                text: describeError(err, 'That request could not be updated.'),
+                tone: 'error',
+            });
+        } finally {
+            this.busy = false;
+        }
+    }
+
+    /**
+     * Keep Enter and Space from reaching the card underneath.
+     *
+     * A `<button>` fires `click` on both by itself, so this only has to
+     * stop the keydown propagating — every card holding one of these is
+     * a `role="button"` or `role="option"` with its own Enter/Space
+     * handler, and without this a keyboard activation would both file
+     * the request and open the page.
+     */
+    private onKeydown(event: KeyboardEvent) {
+        if (event.key === 'Enter' || event.key === ' ') {
+            event.stopPropagation();
         }
     }
 
@@ -164,12 +284,29 @@ export class LibraryStatusIndicator extends LitElement {
         }
 
         const title = this.tooltip();
+        const icon = this.iconName()
+            ? html`<wa-icon name=${this.iconName()} aria-hidden="true"></wa-icon>`
+            : nothing;
+
+        if (this.actionable) {
+            return html`
+                <button
+                    class="badge"
+                    type="button"
+                    title=${title}
+                    aria-label=${title}
+                    ?disabled=${this.busy}
+                    @click=${this.onActivate}
+                    @keydown=${this.onKeydown}
+                >
+                    ${icon}
+                </button>
+            `;
+        }
 
         return html`
             <span class="badge" role="img" title=${title} aria-label=${title}>
-                ${this.iconName()
-                    ? html`<wa-icon name=${this.iconName()} aria-hidden="true"></wa-icon>`
-                    : nothing}
+                ${icon}
             </span>
         `;
     }

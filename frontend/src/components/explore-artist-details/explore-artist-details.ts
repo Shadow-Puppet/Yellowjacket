@@ -2117,6 +2117,8 @@ export class ExploreArtistDetails extends LitElement {
                                                         status=${libraryStatusFor(Boolean(t.inLibrary || t.localId), t.recordingMbid)}
                                                         entity-type="track"
                                                         label=${t.trackName}
+                                                        request-mbid=${t.recordingMbid}
+                                                        request-artist=${t.artistName ?? ''}
                                                     ></library-status-indicator>
                                                 </div>
                                             `,
@@ -2229,6 +2231,8 @@ export class ExploreArtistDetails extends LitElement {
                             status=${libraryStatusFor(Boolean(rg.inLibrary || rg.localId), rg.releaseGroupMbid)}
                             entity-type="album"
                             label=${rg.title}
+                            request-mbid=${rg.releaseGroupMbid}
+                            request-artist=${this.artist?.name ?? ''}
                             size="18"
                         ></library-status-indicator>
                     </div>
@@ -2358,6 +2362,8 @@ export class ExploreArtistDetails extends LitElement {
                         status=${status}
                         entity-type="album"
                         label=${rg.title}
+                        request-mbid=${rg.mbid}
+                        request-artist=${this.artist?.name ?? ''}
                     ></library-status-indicator>
                 </div>
             </div>

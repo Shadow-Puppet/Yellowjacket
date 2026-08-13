@@ -21,8 +21,16 @@ import '@components/explore-view/explore-view';
 import type { Request } from '@store/download-store';
 import { libraryStatusFor } from '@utils/library-status';
 import { Events } from '../../src/events';
-import { emit, flush, stub } from '@test/support/harness';
-import { fixture, shadow, shadowAll } from '@test/support/render';
+import { notificationStore } from '@store/notification-store';
+import {
+  calls,
+  emit,
+  flush,
+  lastArgs,
+  stub,
+  stubFailure,
+} from '@test/support/harness';
+import { fixture, shadow, shadowAll, update } from '@test/support/render';
 
 const SEARCH = 'explore.Service.SearchLocal';
 
@@ -181,5 +189,173 @@ describe('<explore-view> badges', () => {
     expect(shadow(el, 'library-status-indicator')?.getAttribute('status')).toBe(
       'queued',
     );
+  });
+});
+
+/**
+ * Plan 009 phase 3: the badge becomes a button where it can act.
+ *
+ * 007 made it `role="img"` because a control that cannot act is worse
+ * than none, and wrote down what would change the answer: a `<button>`
+ * *with* a handler. Both halves of that are asserted here — the badge
+ * branch is still a badge (the tests in `chrome.test.ts` pin it, and
+ * they pass unchanged because a call site has to opt in), and the
+ * button branch actually files a request.
+ */
+describe('<library-status-indicator> as a control', () => {
+  beforeEach(async () => {
+    stub('download.Service.ListRequests', []);
+    stub('download.Service.AddRequest', 7);
+    stub('download.Service.RemoveRequest', null);
+    stub('library.Library.GetAllLibrariesWithTrackCounts', [
+      { id: 3, name: 'Music' },
+    ]);
+    notificationStore.clear();
+    await withRequests([]);
+  });
+
+  const badge = (props: Record<string, unknown> = {}) =>
+    fixture('library-status-indicator', {
+      entityType: 'album',
+      label: 'Abbey Road',
+      ...props,
+    });
+
+  it('is a button only where a call site opted in', async () => {
+    const inert = await badge();
+    const control = await badge({ requestMbid: 'rg-1' });
+
+    expect(shadow(inert, 'button')).toBeNull();
+    expect(shadow(inert, '.badge')?.getAttribute('role')).toBe('img');
+    expect(shadow(control, 'button')).not.toBeNull();
+  });
+
+  it('is never a button for something already owned', async () => {
+    // There is nothing left to ask for, so the tab stop would cost the
+    // keyboard user exactly what 007 gave back.
+    const el = await badge({ requestMbid: 'rg-1', status: 'in-library' });
+
+    expect(shadow(el, 'button')).toBeNull();
+  });
+
+  it('is named after what activating it does', async () => {
+    const el = await badge({ requestMbid: 'rg-1' });
+
+    expect(shadow(el, '.badge')?.getAttribute('aria-label')).toBe(
+      'Want album "Abbey Road"',
+    );
+
+    await update(el, { status: 'queued' });
+
+    expect(shadow(el, '.badge')?.getAttribute('aria-label')).toBe(
+      'Cancel the request for album "Abbey Road"',
+    );
+  });
+
+  it('still describes rather than offers where it cannot act', async () => {
+    const el = await badge();
+
+    expect(shadow(el, '.badge')?.getAttribute('aria-label')).toBe(
+      'Album "Abbey Road" is not in your library',
+    );
+  });
+
+  it('files a request for the entity it is on', async () => {
+    const el = await badge({ requestMbid: 'rg-1', requestArtist: 'The Beatles' });
+
+    shadow<HTMLElement>(el, 'button')?.click();
+    await flush();
+
+    expect(lastArgs('download.Service.AddRequest')?.[0]).toMatchObject({
+      mbid: 'rg-1',
+      entity: 'release-group',
+      title: 'Abbey Road',
+      artist: 'The Beatles',
+      libraryId: 3,
+    });
+  });
+
+  it('asks for a recording when it is on a track', async () => {
+    const el = await badge({
+      entityType: 'track',
+      label: 'Come Together',
+      requestMbid: 'rec-1',
+    });
+
+    shadow<HTMLElement>(el, 'button')?.click();
+    await flush();
+
+    expect(lastArgs('download.Service.AddRequest')?.[0]).toMatchObject({
+      entity: 'recording',
+    });
+  });
+
+  it('cancels a request it already made', async () => {
+    await withRequests([request({ id: 42, mbid: 'rg-1' })]);
+
+    const el = await badge({ requestMbid: 'rg-1', status: 'queued' });
+
+    shadow<HTMLElement>(el, 'button')?.click();
+    await flush();
+
+    expect(lastArgs('download.Service.RemoveRequest')).toEqual([42]);
+    expect(calls('download.Service.AddRequest')).toEqual([]);
+  });
+
+  it('keeps its click off the card it sits on', async () => {
+    // The inverse of the badge branch, and for the opposite reason:
+    // with an action of its own, a click on it no longer means what
+    // the card means.
+    const el = await badge({ requestMbid: 'rg-1' });
+    const button = shadow<HTMLElement>(el, 'button');
+    let bubbled = 0;
+
+    el.addEventListener('click', () => {
+      bubbled += 1;
+    });
+
+    button?.click();
+    await flush();
+
+    // Both halves, because "nothing bubbled" is free on a build with
+    // no button to click: `?.click()` on null is a silent no-op and
+    // this passed on the neutered build until it also asserted that
+    // the click did the thing it was swallowed for.
+    expect([button !== null, bubbled, calls('download.Service.AddRequest')
+      .length]).toEqual([true, 0, 1]);
+  });
+
+  it('keeps Enter and Space off it too', async () => {
+    // Every card holding one of these is a role=button or role=option
+    // with its own Enter/Space handler, so without this a keyboard
+    // activation would file the request *and* open the page.
+    const el = await badge({ requestMbid: 'rg-1' });
+    const seen: string[] = [];
+
+    el.addEventListener('keydown', (e) => seen.push((e as KeyboardEvent).key));
+
+    for (const key of ['Enter', ' ', 'ArrowDown']) {
+      shadow<HTMLElement>(el, 'button')?.dispatchEvent(
+        new KeyboardEvent('keydown', { key, bubbles: true, composed: true }),
+      );
+    }
+
+    // ArrowDown is not ours: the grid still moves by it.
+    expect(seen).toEqual(['ArrowDown']);
+  });
+
+  it('says so when the request could not be filed', async () => {
+    stubFailure('download.Service.AddRequest', 'nope');
+
+    const el = await badge({ requestMbid: 'rg-1' });
+
+    shadow<HTMLElement>(el, 'button')?.click();
+    await flush();
+
+    expect(notificationStore.getAll().map((n) => n.level)).toEqual([
+      'transient',
+    ]);
+    // The badge is where it was, which is why the toast is transient.
+    expect(shadow(el, 'button')).not.toBeNull();
   });
 });

@@ -1,4 +1,6 @@
 import { downloadStore } from '@store/download-store';
+import { libraryStore } from '@store/library-store';
+import type { download } from '@go/models';
 import type { LibraryStatus } from '../components/library-status-indicator/library-status-indicator';
 
 /**
@@ -42,4 +44,63 @@ export function libraryStatusFor(
     if (request && request.state !== 'satisfied') return 'queued';
 
     return 'not-in-library';
+}
+
+/** What a badge can ask for. Artists are deliberately absent: a
+ *  discography subscription is `explore-artist-details`'s Follow
+ *  button, which can say what it is committing to. */
+export type RequestableEntity = 'album' | 'track';
+
+const ENTITY: Record<RequestableEntity, string> = {
+    album: 'release-group',
+    track: 'recording',
+};
+
+/**
+ * Add or drop a request for one entity, and report which way it went.
+ *
+ * The counterpart to `libraryStatusFor`, here rather than in the badge
+ * because the badge is one of several things that can ask —
+ * `explore-album-details`'s "Want this" button is the other, and two
+ * implementations of "what does wanting something mean" is exactly what
+ * phase 1 was about.
+ *
+ * Returns `'wanted'` or `'cancelled'` so a caller can announce what
+ * happened; throws if the backend refused, because a badge that
+ * silently does nothing is what this whole plan is about.
+ */
+export async function toggleRequest(input: {
+    mbid: string;
+    entity: RequestableEntity;
+    title: string;
+    artist?: string;
+}): Promise<'wanted' | 'cancelled'> {
+    const existing = downloadStore.requestFor(input.mbid);
+
+    if (existing) {
+        await downloadStore.removeRequest(existing.id);
+
+        return 'cancelled';
+    }
+
+    // A request belongs to a library because that is where its files
+    // will land. There is always at least one by the time anything is
+    // on screen — the first-run wizard blocks every pointer event until
+    // there is — but an explicit failure beats a request filed against
+    // library 0, which no import would ever match.
+    const libraryId = await libraryStore.getDefaultLibraryId();
+
+    if (!libraryId) throw new Error('no library to add this to');
+
+    await downloadStore.addRequest({
+        mbid: input.mbid,
+        entity: ENTITY[input.entity],
+        libraryId,
+        artist: input.artist ?? '',
+        title: input.title,
+        scope: 'future',
+        secondary: false,
+    } as download.RequestInput);
+
+    return 'wanted';
 }

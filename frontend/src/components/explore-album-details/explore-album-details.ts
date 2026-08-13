@@ -2295,6 +2295,8 @@ export class ExploreAlbumDetails extends LitElement {
                                             status=${libraryStatusFor(Boolean(track.inLibrary), track.mbid)}
                                             entity-type="track"
                                             label=${track.title}
+                                            request-mbid=${track.mbid}
+                                            request-artist=${this.artistName}
                                         ></library-status-indicator>
                                     </div>
                                 `,

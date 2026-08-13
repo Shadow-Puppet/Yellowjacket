@@ -1854,6 +1854,8 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) {
                                         status=${libraryStatusFor(this.libraryMBIDs.has(rg.mbid) || Boolean(rg.inLibrary), rg.mbid)}
                                         entity-type="album"
                                         label=${rg.title}
+                                        request-mbid=${rg.mbid}
+                                        request-artist=${rg.artistCredit ?? ''}
                                     ></library-status-indicator>
                                 </div>
                             </div>
@@ -1892,6 +1894,8 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) {
                                     status=${libraryStatusFor(this.libraryMBIDs.has(r.mbid) || Boolean(r.inLibrary), r.mbid)}
                                     entity-type="track"
                                     label=${r.title}
+                                    request-mbid=${r.mbid}
+                                    request-artist=${r.artistCredit ?? ''}
                                 ></library-status-indicator>
                             </div>
                         `,

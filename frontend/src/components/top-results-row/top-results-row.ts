@@ -341,6 +341,8 @@ export class TopResultsRow extends LitElement {
                         status=${status}
                         entity-type=${entityType}
                         label=${r.name}
+                        request-mbid=${r.mbid}
+                        request-artist=${r.artistCredit ?? ''}
                         size="22"
                     ></library-status-indicator>`}
             </div>
