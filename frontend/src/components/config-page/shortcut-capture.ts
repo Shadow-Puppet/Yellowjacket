@@ -66,7 +66,7 @@ export class ShortcutCapture extends LitElement {
             opacity: 1;
         }
         .reset-btn:hover {
-            color: var(--yj-accent, #ffd43b);
+            color: var(--yj-accent-text, #ffd43b);
         }
     `;
 

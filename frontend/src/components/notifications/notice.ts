@@ -43,13 +43,13 @@ export const noticeStyles = css`
     }
 
     .notice[data-tone='success'] {
-        border-left-color: var(--yj-success, #37b24d);
+        border-left-color: var(--yj-success, #2f9e44);
     }
 
     .notice > wa-icon {
         flex-shrink: 0;
         margin-top: 1px;
-        color: var(--yj-warning, #e0a800);
+        color: var(--yj-warning-text, #ffa94d);
     }
 
     .notice[data-tone='error'] > wa-icon {

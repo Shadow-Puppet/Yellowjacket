@@ -939,13 +939,13 @@ export class TrackList
     }
 
     .header-cell:hover {
-      color: var(--yj-accent, #ffd43b);
+      color: var(--yj-accent-text, #ffd43b);
     }
 
     .sort-arrow {
       font-size: 10px; /* intentionally sub-token: tiny sort indicator */
       flex-shrink: 0;
-      color: var(--yj-accent, #ffd43b);
+      color: var(--yj-accent-text, #ffd43b);
     }
 
     .resize-overlay {
@@ -1033,7 +1033,7 @@ export class TrackList
     }
 
     .track-row.active {
-      color: var(--yj-accent, #ffd43b);
+      color: var(--yj-accent-text, #ffd43b);
     }
 
     .track-row.selected.active {
@@ -1072,11 +1072,11 @@ export class TrackList
     }
 
     .fav-icon.favorited {
-      color: var(--yj-accent, #ffd43b);
+      color: var(--yj-accent-text, #ffd43b);
     }
 
     .fav-icon.favorited:hover {
-      color: var(--yj-accent, #ffd43b);
+      color: var(--yj-accent-text, #ffd43b);
       opacity: 0.8;
     }
 

@@ -135,7 +135,7 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
 
         .btn-warning {
             background: var(--yj-warning, #e8590c);
-            color: #fff;
+            color: var(--yj-warning-fg, #fff);
         }
 
         .btn-warning:hover:not(:disabled) {
@@ -144,7 +144,7 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
 
         .btn-danger {
             background: var(--yj-error, #e03131);
-            color: #fff;
+            color: var(--yj-error-fg, #fff);
         }
 
         .btn-danger:hover:not(:disabled) {
@@ -153,7 +153,7 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
 
         .btn-success {
             background: var(--yj-success, #2f9e44);
-            color: #fff;
+            color: var(--yj-success-fg, #fff);
         }
 
         .btn-success:hover:not(:disabled) {
@@ -175,7 +175,7 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
 
         .btn-ghost.copied {
             border-color: var(--yj-success, #2f9e44);
-            color: var(--yj-success, #2f9e44);
+            color: var(--yj-success-text, #51cf66);
         }
 
         /* Scan actions */
@@ -203,7 +203,7 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
         }
 
         .status-bar.active {
-            color: var(--yj-accent, #ffd43b);
+            color: var(--yj-accent-text, #ffd43b);
         }
 
         /* Progress bar */
@@ -269,7 +269,7 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
         .error-title {
             font-size: 0.8em;
             font-weight: 600;
-            color: var(--yj-error, #e03131);
+            color: var(--yj-error-text, #ff8787);
         }
 
         .error-body {
@@ -361,7 +361,7 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
         }
 
         .metric-value.highlight {
-            color: var(--yj-accent, #ffd43b);
+            color: var(--yj-accent-text, #ffd43b);
         }
 
         .metric-note {
@@ -490,7 +490,7 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
                 --yj-accent,
                 #ffd43b
             );
-            color: var(--yj-bg-base, #1a1b1e);
+            color: var(--yj-accent-fg, #000);
             font-weight: 600;
         }
 
@@ -499,7 +499,7 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
         }
 
         .status-bar.paused {
-            color: var(--yj-accent, #ffd43b);
+            color: var(--yj-accent-text, #ffd43b);
         }
 
         /* Library management */
@@ -558,7 +558,7 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
         .library-scan-status {
             font-size: 0.75em;
             font-weight: 400;
-            color: var(--yj-accent, #ffd43b);
+            color: var(--yj-accent-text, #ffd43b);
             white-space: nowrap;
         }
 
@@ -574,7 +574,7 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
         }
 
         .library-name:hover {
-            color: var(--yj-accent, #ffd43b);
+            color: var(--yj-accent-text, #ffd43b);
         }
 
         .library-path {
@@ -651,7 +651,7 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
         }
 
         .overflow-item--danger {
-            color: var(--yj-error, #e03131);
+            color: var(--yj-error-text, #ff8787);
         }
 
         .overflow-item--danger:hover {
@@ -821,7 +821,7 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
         .index-status-failed .link {
             background: none;
             border: none;
-            color: var(--yj-accent, #ffd43b);
+            color: var(--yj-accent-text, #ffd43b);
             cursor: pointer;
             font: inherit;
             padding: 0;

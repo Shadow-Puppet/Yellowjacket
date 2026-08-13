@@ -175,7 +175,7 @@ export class DuplicateTracksDialog extends LitElement {
 
         .btn-primary {
             background: var(--yj-accent, #ffd43b);
-            color: #000;
+            color: var(--yj-accent-fg, #000);
             border-color: var(--yj-accent, #ffd43b);
         }
 

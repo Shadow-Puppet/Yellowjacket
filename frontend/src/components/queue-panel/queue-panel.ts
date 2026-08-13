@@ -308,7 +308,7 @@ export class QueuePanel
         }
 
         .header-action-button:hover {
-            color: var(--yj-accent, #ffd43b);
+            color: var(--yj-accent-text, #ffd43b);
         }
 
         .header-action-button:disabled {
@@ -375,7 +375,7 @@ export class QueuePanel
         }
 
         .track-item.active .track-position {
-            color: var(--yj-accent, #ffd43b);
+            color: var(--yj-accent-text, #ffd43b);
         }
 
         .track-art {
@@ -411,7 +411,7 @@ export class QueuePanel
         }
 
         .track-item.active .track-title {
-            color: var(--yj-accent, #ffd43b);
+            color: var(--yj-accent-text, #ffd43b);
         }
 
         .track-artist {
@@ -438,7 +438,7 @@ export class QueuePanel
         }
 
         .remove-button:hover {
-            color: var(--yj-error, #ff6b6b);
+            color: var(--yj-error-text, #ff8787);
         }
 
         .list-area.drag-over {
@@ -503,7 +503,7 @@ export class QueuePanel
                 --yj-accent-bg-strong,
                 rgba(255, 212, 59, 0.18)
             );
-            color: var(--yj-accent, #ffd43b);
+            color: var(--yj-accent-text, #ffd43b);
             font-size: 28px;
             pointer-events: none;
         }

@@ -326,7 +326,7 @@ export class TrackDetails extends LitElement {
 
         /* MusicBrainz badge + links */
         .mb-verified-badge {
-            color: #1db954;
+            color: var(--yj-success-text, #51cf66);
             font-size: 14px;
             margin-left: 6px;
             vertical-align: middle;
@@ -340,7 +340,7 @@ export class TrackDetails extends LitElement {
         }
 
         .mb-icon {
-            color: #1db954;
+            color: var(--yj-success-text, #51cf66);
             font-size: 14px;
         }
 
@@ -353,7 +353,7 @@ export class TrackDetails extends LitElement {
         }
 
         .mb-link:hover {
-            color: #1db954;
+            color: var(--yj-success-text, #51cf66);
             text-decoration: underline;
         }
 
@@ -445,7 +445,7 @@ export class TrackDetails extends LitElement {
 
         .btn-primary {
             background: var(--yj-accent, #ffd43b);
-            color: #000;
+            color: var(--yj-accent-fg, #000);
             border-color: var(--yj-accent, #ffd43b);
         }
 
@@ -466,13 +466,13 @@ export class TrackDetails extends LitElement {
         }
 
         .btn-danger {
-            color: var(--yj-error, #e03131);
+            color: var(--yj-error-text, #ff8787);
             border-color: var(--yj-error, #e03131);
         }
 
         .btn-danger:hover {
             background: var(--yj-error, #e03131);
-            color: #fff;
+            color: var(--yj-error-fg, #fff);
         }
 
         /* Cover art edit mode */
@@ -532,7 +532,7 @@ export class TrackDetails extends LitElement {
         /* Error message */
         .error-message {
             flex: 1;
-            color: var(--yj-error, #e03131);
+            color: var(--yj-error-text, #ff8787);
             font-size: var(--yj-text-sm);
             padding: 4px 0;
             word-break: break-word;
@@ -683,11 +683,11 @@ export class TrackDetails extends LitElement {
         }
 
         .batch-result .result-success {
-            color: var(--yj-success, #40c057);
+            color: var(--yj-success-text, #51cf66);
         }
 
         .batch-result .result-partial {
-            color: var(--yj-warning, #fab005);
+            color: var(--yj-warning-text, #ffa94d);
         }
 
         .batch-result .result-cancelled {
@@ -701,7 +701,7 @@ export class TrackDetails extends LitElement {
 
         .failure-list summary {
             cursor: pointer;
-            color: var(--yj-error, #e03131);
+            color: var(--yj-error-text, #ff8787);
             font-weight: 500;
             margin-bottom: 8px;
         }
@@ -718,7 +718,7 @@ export class TrackDetails extends LitElement {
         }
 
         .failure-item .failure-error {
-            color: var(--yj-error, #e03131);
+            color: var(--yj-error-text, #ff8787);
             font-style: italic;
         }
     `];

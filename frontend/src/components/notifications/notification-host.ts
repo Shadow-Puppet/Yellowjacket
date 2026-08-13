@@ -78,7 +78,7 @@ export class NotificationHost extends LitElement {
             .blocking-actions .primary {
                 background: var(--yj-accent, #ffd43b);
                 border-color: var(--yj-accent, #ffd43b);
-                color: #000;
+                color: var(--yj-accent-fg, #000);
             }
 
             .blocking-detail {

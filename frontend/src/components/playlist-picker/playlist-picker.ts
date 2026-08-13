@@ -120,7 +120,7 @@ export class PlaylistPicker extends LitElement {
 
         .button-row button.primary {
             background: var(--yj-accent, #ffd43b);
-            color: #000;
+            color: var(--yj-accent-fg, #000);
         }
 
         .button-row button.primary:hover {

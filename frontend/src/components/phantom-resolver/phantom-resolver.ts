@@ -749,7 +749,7 @@ export class PhantomResolver extends LitElement {
                     59,
                     0.15
                 );
-                color: var(--yj-accent, #ffd43b);
+                color: var(--yj-accent-text, #ffd43b);
             }
 
             .candidate-duration {
@@ -862,7 +862,7 @@ export class PhantomResolver extends LitElement {
                     --yj-accent,
                     #ffd43b
                 );
-                color: var(--yj-accent, #ffd43b);
+                color: var(--yj-accent-text, #ffd43b);
             }
 
             .btn-danger {

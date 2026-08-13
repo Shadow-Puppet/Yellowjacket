@@ -168,7 +168,7 @@ export class HomeView extends ViewLifecycleMixin(LitElement) {
                 border: none;
                 border-radius: 50%;
                 background: var(--yj-accent, #ffd43b);
-                color: #000;
+                color: var(--yj-accent-fg, #000);
                 display: flex;
                 align-items: center;
                 justify-content: center;

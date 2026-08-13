@@ -28,6 +28,21 @@ export interface ShadePalette {
     textPrimary: string;
     textSecondary: string;
     textTertiary: string;
+    /**
+     * Semantic colours *as text on this ramp's surfaces*.
+     *
+     * Separate from the fills below because they answer a different
+     * question. A fill is "what colour is a danger button", which is
+     * red in every theme; this is "what colour is the word `failed` on
+     * this background", which cannot be one value — a single fixed
+     * colour cannot clear 4.5:1 against both a near-black and a
+     * near-white surface, and the old fixed set measured 2.31–4.28:1
+     * on nearly all of them.
+     */
+    successText: string;
+    warningText: string;
+    errorText: string;
+    infoText: string;
     border: string;
     borderSubtle: string;
     hoverOverlay: string;
@@ -73,6 +88,10 @@ export const SHADE_PALETTES: Record<BackgroundShade, ShadePalette> = {
         textSecondary: '#b3b3b3',
         // 4.05:1 on bgOverlay at #888888.
         textTertiary: '#949494',
+        successText: '#51cf66',
+        warningText: '#ffa94d',
+        errorText: '#ff8787',
+        infoText: '#91a7ff',
         border: '#333333',
         borderSubtle: '#222222',
         hoverOverlay: 'rgba(255, 255, 255, 0.05)',
@@ -88,6 +107,10 @@ export const SHADE_PALETTES: Record<BackgroundShade, ShadePalette> = {
         // 4.35:1 on bgSurface and 3.25:1 on bgElevated at #888888 — the
         // measured version of the audit's estimate, on every view.
         textTertiary: '#a6a6a6',
+        successText: '#51cf66',
+        warningText: '#ffa94d',
+        errorText: '#ff8787',
+        infoText: '#91a7ff',
         border: '#444444',
         borderSubtle: '#333333',
         hoverOverlay: 'rgba(255, 255, 255, 0.05)',
@@ -103,6 +126,10 @@ export const SHADE_PALETTES: Record<BackgroundShade, ShadePalette> = {
         // 3.32:1 at best and 2.55:1 at worst at #868e96 — the light ramp
         // failed on all four of its own surfaces.
         textTertiary: '#5c636a',
+        successText: '#1f6129',
+        warningText: '#9c3808',
+        errorText: '#b02525',
+        infoText: '#364fc7',
         border: '#ced4da',
         borderSubtle: '#dee2e6',
         hoverOverlay: 'rgba(0, 0, 0, 0.05)',
@@ -151,6 +178,81 @@ function darken(hex: string, amount: number): string {
 /**
  * Derive the full set of CSS custom properties from accent + shade.
  */
+/**
+ * Black or white, whichever is readable on `hex` — preferring white.
+ *
+ * White is the app's foreground on every solid button, so this only
+ * moves when white does not clear 4.5:1. That keeps a red danger button
+ * looking like one (white, 4.51:1) while a green or amber one, where
+ * white measures 3.45:1 and 3.58:1, flips to black rather than staying
+ * conventional and unreadable.
+ */
+/** WCAG relative luminance of a hex colour. */
+function luminance(hex: string): number {
+    const { r, g, b } = hexToRgb(hex);
+
+    const channel = (v: number) => {
+        const c = v / 255;
+
+        return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    };
+
+    return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+}
+
+function contrastRatio(a: string, b: string): number {
+    const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x) as [
+        number,
+        number,
+    ];
+
+    return (hi + 0.05) / (lo + 0.05);
+}
+
+/**
+ * The accent, moved just far enough to be readable *as text* on a
+ * surface — and no further.
+ *
+ * The accent is a colour picker, so this cannot be a table. The default
+ * `#ffd43b` measures 10.82:1 on the dark ramp's surface and **1.35:1**
+ * on the light one, which is what made every accent-coloured label on
+ * the light theme unreadable. Mixing towards the surface's opposite in
+ * small steps keeps the hue and stops at the first value that clears
+ * 4.5:1, so a dark ramp gets the accent back unchanged.
+ */
+function accentTextOn(accent: string, surface: string): string {
+    if (contrastRatio(accent, surface) >= 4.5) return accent;
+
+    const towardsBlack = luminance(surface) > 0.18;
+
+    for (let step = 1; step <= 20; step++) {
+        const candidate = towardsBlack
+            ? darken(accent, step * 0.05)
+            : lighten(accent, step * 0.05);
+
+        if (contrastRatio(candidate, surface) >= 4.5) return candidate;
+    }
+
+    // Nothing along the hue worked; fall back to something that reads.
+    return towardsBlack ? '#000000' : '#ffffff';
+}
+
+function readableOn(hex: string): string {
+    const { r, g, b } = hexToRgb(hex);
+
+    const channel = (v: number) => {
+        const c = v / 255;
+
+        return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    };
+
+    const l =
+        0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+    const onWhite = 1.05 / (l + 0.05);
+
+    return onWhite >= 4.5 ? '#ffffff' : '#000000';
+}
+
 function deriveThemeVariables(
     accent: string,
     shade: BackgroundShade,
@@ -185,7 +287,10 @@ function deriveThemeVariables(
         '--yj-hover-overlay': palette.hoverOverlay,
         '--yj-selection-bg': palette.selectionBg,
 
-        // Semantic colours (fixed across themes)
+        // Semantic *fills* — the background of a solid button or badge.
+        // These stay fixed across ramps on purpose: a danger button is
+        // red in every theme. What cannot be fixed is the text on top,
+        // which is why each has an -fg below.
         '--yj-success': '#2f9e44',
         '--yj-success-hover': '#2b8a3e',
         '--yj-warning': '#e8590c',
@@ -194,6 +299,23 @@ function deriveThemeVariables(
         '--yj-error-hover': '#c92a2a',
         '--yj-info': '#4263eb',
         '--yj-info-hover': '#3b5bdb',
+
+        // Readable foregrounds for every fill in the app, including the
+        // user's accent — which is why they are computed rather than
+        // written down. White on the default #ffd43b is 1.43:1, and the
+        // accent is a colour picker, so no fixed answer survives it.
+        '--yj-accent-fg': readableOn(accent),
+        '--yj-accent-text': accentTextOn(accent, palette.bgSurface),
+        '--yj-success-fg': readableOn('#2f9e44'),
+        '--yj-warning-fg': readableOn('#e8590c'),
+        '--yj-error-fg': readableOn('#e03131'),
+        '--yj-info-fg': readableOn('#4263eb'),
+
+        // Semantic colours as text on this ramp's surfaces.
+        '--yj-success-text': palette.successText,
+        '--yj-warning-text': palette.warningText,
+        '--yj-error-text': palette.errorText,
+        '--yj-info-text': palette.infoText,
     };
 }
 

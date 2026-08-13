@@ -112,7 +112,7 @@ export class ConfigField extends LitElement {
 
         button {
             background: var(--yj-info, #4263eb);
-            color: #fff;
+            color: var(--yj-info-fg, #fff);
             border: none;
             border-radius: 4px;
             padding: 0.4em 0.8em;

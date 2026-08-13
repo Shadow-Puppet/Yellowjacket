@@ -188,11 +188,11 @@ export class NowPlaying extends LitElement {
     }
 
     .fav-btn.favorited {
-      color: var(--yj-accent, #ffd43b);
+      color: var(--yj-accent-text, #ffd43b);
     }
 
     .fav-btn.favorited:hover {
-      color: var(--yj-accent, #ffd43b);
+      color: var(--yj-accent-text, #ffd43b);
       opacity: 0.8;
     }
 

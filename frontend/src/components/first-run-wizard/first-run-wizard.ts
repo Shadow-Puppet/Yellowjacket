@@ -84,7 +84,7 @@ export class FirstRunWizard extends LitElement {
 
         .welcome wa-icon {
             font-size: 40px;
-            color: var(--yj-accent, #f5c518);
+            color: var(--yj-accent-text, #f5c518);
             margin-bottom: 8px;
         }
 
@@ -114,7 +114,7 @@ export class FirstRunWizard extends LitElement {
         }
 
         .chosen wa-icon {
-            color: var(--yj-accent, #f5c518);
+            color: var(--yj-accent-text, #f5c518);
             flex-shrink: 0;
         }
 
@@ -152,7 +152,7 @@ export class FirstRunWizard extends LitElement {
         .btn-primary {
             background: var(--yj-accent, #f5c518);
             border-color: var(--yj-accent, #f5c518);
-            color: #000;
+            color: var(--yj-accent-fg, #000);
         }
 
         .btn-primary:hover:not(:disabled) {

@@ -201,7 +201,7 @@ export class JobsView extends ViewLifecycleMixin(LitElement) {
             }
 
             button.action.danger {
-                color: #ff8787;
+                color: var(--yj-error-text, #ff8787);
                 border-color: rgba(255, 107, 107, 0.35);
             }
 
@@ -212,7 +212,7 @@ export class JobsView extends ViewLifecycleMixin(LitElement) {
             button.link {
                 border: none;
                 background: transparent;
-                color: var(--yj-accent, #ffd43b);
+                color: var(--yj-accent-text, #ffd43b);
                 font-size: var(--yj-text-sm);
                 cursor: pointer;
                 padding: 0.2em 0.4em;

@@ -222,7 +222,7 @@ export class PlaylistView extends ViewLifecycleMixin(LitElement) {
         .new-playlist-button:hover,
         .new-playlist-button.drag-over {
             border-color: var(--yj-accent, #ffd43b);
-            color: var(--yj-accent, #ffd43b);
+            color: var(--yj-accent-text, #ffd43b);
         }
 
         .new-playlist-button.drag-over {
@@ -278,7 +278,7 @@ export class PlaylistView extends ViewLifecycleMixin(LitElement) {
 
         .create-form button.primary {
             background: var(--yj-accent, #ffd43b);
-            color: #000;
+            color: var(--yj-accent-fg, #000);
         }
 
         .create-form button.primary:hover {
@@ -389,7 +389,7 @@ export class PlaylistView extends ViewLifecycleMixin(LitElement) {
                 --yj-accent-bg-strong,
                 rgba(255, 212, 59, 0.18)
             );
-            color: var(--yj-accent, #ffd43b);
+            color: var(--yj-accent-text, #ffd43b);
             font-size: 28px;
             pointer-events: none;
         }
@@ -467,14 +467,14 @@ export class PlaylistView extends ViewLifecycleMixin(LitElement) {
 
         .import-button:hover {
             border-color: var(--yj-accent, #ffd43b);
-            color: var(--yj-accent, #ffd43b);
+            color: var(--yj-accent-text, #ffd43b);
         }
 
         .import-error {
             padding: 0.5em 0.75em;
             margin: 0.5em 16px 0;
             font-size: 0.8em;
-            color: var(--yj-error, #e03131);
+            color: var(--yj-error-text, #ff8787);
             background: color-mix(
                 in srgb,
                 var(--yj-error, #e03131) 10%,

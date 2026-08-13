@@ -211,7 +211,7 @@ export class JobIndicator extends LitElement {
                 text-align: left;
                 border: none;
                 background: transparent;
-                color: var(--yj-accent, #ffd43b);
+                color: var(--yj-accent-text, #ffd43b);
                 font-size: var(--yj-text-sm);
                 cursor: pointer;
                 padding: 0 0.75em 0.6em 3.2em;

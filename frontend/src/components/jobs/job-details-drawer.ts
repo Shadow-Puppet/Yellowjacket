@@ -124,15 +124,15 @@ export class JobDetailsDrawer extends LitElement {
             }
 
             .stage.running .stage-icon {
-                color: var(--yj-accent, #ffd43b);
+                color: var(--yj-accent-text, #ffd43b);
             }
 
             .stage.complete .stage-icon {
-                color: #1db954;
+                color: var(--yj-success-text, #51cf66);
             }
 
             .stage.error {
-                color: #ff8787;
+                color: var(--yj-error-text, #ff8787);
             }
 
             .stage-count {
@@ -144,7 +144,7 @@ export class JobDetailsDrawer extends LitElement {
             .stage-error {
                 grid-column: 2 / -1;
                 font-size: var(--yj-text-sm);
-                color: #ff8787;
+                color: var(--yj-error-text, #ff8787);
                 overflow-wrap: anywhere;
             }
 

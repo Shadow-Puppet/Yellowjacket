@@ -168,7 +168,7 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
 
             button {
                 background: var(--yj-accent, #ffd43b);
-                color: var(--yj-bg-base, #000);
+                color: var(--yj-accent-fg, #000);
                 border: 1px solid transparent;
                 padding: 0.35rem 0.7rem;
                 border-radius: 4px;
@@ -397,7 +397,7 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
 
             .folder-row .match-pill.high {
                 background: var(--yj-accent, #ffd43b);
-                color: var(--yj-bg-base, #000);
+                color: var(--yj-accent-fg, #000);
             }
 
             .folder-row .match-pill.pending {
@@ -515,7 +515,7 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
             .banner {
                 background: rgba(255, 200, 90, 0.12);
                 border: 1px solid rgba(255, 200, 90, 0.4);
-                color: #ffd089;
+                color: var(--yj-warning-text, #ffa94d);
                 padding: 0.5rem 0.75rem;
                 border-radius: 4px;
                 font-size: 0.85rem;
@@ -583,19 +583,19 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
                 text-align: center;
             }
 
-            .md-mark-ok::before   { content: '✓'; color: #9be09b; }
-            .md-mark-warn::before { content: '⚠'; color: #ffd089; }
+            .md-mark-ok::before   { content: '✓'; color: var(--yj-success-text, #51cf66); }
+            .md-mark-warn::before { content: '⚠'; color: var(--yj-warning-text, #ffa94d); }
             .md-mark-info::before { content: '○'; color: var(--yj-text-tertiary, #888); }
 
             .md-text { flex: 1; min-width: 0; }
 
             .md-count {
                 font-variant-numeric: tabular-nums;
-                color: #9be09b;
+                color: var(--yj-success-text, #51cf66);
                 font-weight: 500;
             }
 
-            .md-count.bad { color: #ffd089; }
+            .md-count.bad { color: var(--yj-warning-text, #ffa94d); }
 
             .md-item.ok   { color: var(--yj-text-secondary, #b3b3b3); }
             .md-item.warn { color: var(--yj-text-primary, #fff); }
@@ -752,17 +752,17 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
              * followed by one green char. */
 
             .diff-old {
-                color: #f08080;
+                color: var(--yj-error-text, #ff8787);
                 text-decoration: line-through;
                 text-decoration-thickness: 1.5px;
             }
 
             .diff-new {
-                color: #9be09b;
+                color: var(--yj-success-text, #51cf66);
             }
 
             .diff-changed {
-                color: #ffd089;
+                color: var(--yj-warning-text, #ffa94d);
             }
 
             /* Cosmetic-only difference (case / punctuation): the
@@ -1000,7 +1000,7 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
 
             .score-badge.high {
                 background: var(--yj-accent, #ffd43b);
-                color: var(--yj-bg-base, #000);
+                color: var(--yj-accent-fg, #000);
             }
 
             /* ── Generic states ── */

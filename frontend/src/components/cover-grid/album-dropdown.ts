@@ -142,7 +142,7 @@ export class AlbumDropdown extends LitElement {
                 --yj-accent-bg,
                 rgba(255, 212, 59, 0.1)
             );
-            color: var(--yj-accent, #ffd43b);
+            color: var(--yj-accent-text, #ffd43b);
         }
 
         .track-row.selected.active {
@@ -191,10 +191,10 @@ export class AlbumDropdown extends LitElement {
             color: var(--yj-text-primary, #fff);
         }
         .fav-icon.favorited {
-            color: var(--yj-accent, #ffd43b);
+            color: var(--yj-accent-text, #ffd43b);
         }
         .fav-icon.favorited:hover {
-            color: var(--yj-accent, #ffd43b);
+            color: var(--yj-accent-text, #ffd43b);
             opacity: 0.8;
         }
     `;

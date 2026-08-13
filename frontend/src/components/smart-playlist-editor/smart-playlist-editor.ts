@@ -287,7 +287,7 @@ export class SmartPlaylistEditor extends LitElement {
             }
 
             .remove-btn:hover {
-                color: #ff8787;
+                color: var(--yj-error-text, #ff8787);
                 background: rgba(255, 107, 107, 0.1);
             }
 
@@ -313,7 +313,7 @@ export class SmartPlaylistEditor extends LitElement {
 
             .add-rule-btn:hover {
                 border-color: var(--yj-accent, #ffd43b);
-                color: var(--yj-accent, #ffd43b);
+                color: var(--yj-accent-text, #ffd43b);
             }
 
             /* ── Options row (limit, sort) ────────── */
@@ -411,7 +411,7 @@ export class SmartPlaylistEditor extends LitElement {
 
             .preview-error {
                 font-size: var(--yj-text-sm);
-                color: #ff8787;
+                color: var(--yj-error-text, #ff8787);
                 padding: 6px 0;
             }
 

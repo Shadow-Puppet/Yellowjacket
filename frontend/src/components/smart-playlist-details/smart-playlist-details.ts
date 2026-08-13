@@ -365,7 +365,7 @@ export class SmartPlaylistDetails
 
         .action-button:hover {
             border-color: var(--yj-accent, #ffd43b);
-            color: var(--yj-accent, #ffd43b);
+            color: var(--yj-accent-text, #ffd43b);
         }
 
         .action-button:disabled {
@@ -513,7 +513,7 @@ export class SmartPlaylistDetails
 
         .track-item.active {
             background-color: var(--yj-accent-bg, rgba(255, 212, 59, 0.1));
-            color: var(--yj-accent, #ffd43b);
+            color: var(--yj-accent-text, #ffd43b);
         }
 
         .track-item.selected.active {
@@ -539,7 +539,7 @@ export class SmartPlaylistDetails
         .phantom-caution {
             flex-shrink: 0;
             font-size: 14px;
-            color: var(--yj-warning, #e67700);
+            color: var(--yj-warning-text, #ffa94d);
         }
 
         .phantom-path {

@@ -1093,7 +1093,7 @@ export class PlaylistDetails
 
         .play-all-button:hover {
             border-color: var(--yj-accent, #ffd43b);
-            color: var(--yj-accent, #ffd43b);
+            color: var(--yj-accent-text, #ffd43b);
         }
 
         /* Column grid layout */
@@ -1189,7 +1189,7 @@ export class PlaylistDetails
 
         .track-item.active {
             background-color: var(--yj-accent-bg, rgba(255, 212, 59, 0.1));
-            color: var(--yj-accent, #ffd43b);
+            color: var(--yj-accent-text, #ffd43b);
         }
 
         .track-item.selected.active {
@@ -1226,7 +1226,7 @@ export class PlaylistDetails
         .phantom-caution {
             flex-shrink: 0;
             font-size: 14px;
-            color: var(--yj-warning, #e67700);
+            color: var(--yj-warning-text, #ffa94d);
         }
 
         .phantom-path {
@@ -1273,7 +1273,7 @@ export class PlaylistDetails
         }
 
         .phantom-icon-btn.phantom-icon-remove:hover {
-            color: var(--yj-error, #e03131);
+            color: var(--yj-error-text, #ff8787);
             background: rgba(224, 49, 49, 0.12);
         }
 

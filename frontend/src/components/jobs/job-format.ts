@@ -154,11 +154,11 @@ export const jobStateStyles = css`
     }
 
     .tone-danger {
-        --job-tone: #ff8787;
+        --job-tone: var(--yj-error-text, #ff8787);
     }
 
     .tone-success {
-        --job-tone: #1db954;
+        --job-tone: var(--yj-success-text, #51cf66);
     }
 
     .tone-muted {

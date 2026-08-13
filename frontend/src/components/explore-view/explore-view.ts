@@ -211,7 +211,7 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) {
             }
 
             .search-mode-tab.active {
-                color: var(--yj-bg-base, #1a1a1a);
+                color: var(--yj-accent-fg, #000);
                 background: var(--yj-accent, #ffd43b);
             }
 
@@ -265,7 +265,7 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) {
             }
 
             .lyrics-hit:hover .lyrics-hit-play {
-                color: var(--yj-accent, #ffd43b);
+                color: var(--yj-accent-text, #ffd43b);
             }
 
             .lyrics-hit-main {

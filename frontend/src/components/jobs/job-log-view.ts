@@ -132,7 +132,7 @@ export class JobLogView extends LitElement {
             }
 
             .entry.error .message {
-                color: #ff8787;
+                color: var(--yj-error-text, #ff8787);
             }
 
             .detail {
