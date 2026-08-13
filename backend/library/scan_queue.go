@@ -181,7 +181,12 @@ func (l *Library) SoftScanAllLibraries() error {
 			continue
 		}
 
-		diskCount, diskModTime := surveyAudioFiles(lib.Path)
+		// Excluded paths are on disk and deliberately not in the
+		// database, so the survey must skip them or the two counts
+		// disagree forever and every launch queues a full scan.
+		diskCount, diskModTime := surveyAudioFiles(
+			lib.Path, l.excludedPathSet(lib.ID),
+		)
 
 		// A newer file on disk than anything on record means something
 		// was edited in place since the last scan.  An older newest-mtime

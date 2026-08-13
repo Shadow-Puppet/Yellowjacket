@@ -343,3 +343,7 @@ JOIN audio_files af ON af.recording_id = r.id
 WHERE r.mbid IN (sqlc.slice('mbids'))
   AND af.library_id = ?
 ORDER BY af.file_path;
+
+-- name: GetAudioFilesByPaths :many
+SELECT id, library_id, file_path, group_key FROM audio_files
+WHERE file_path IN (sqlc.slice('paths'));

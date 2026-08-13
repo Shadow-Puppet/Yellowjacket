@@ -648,6 +648,56 @@ func (q *Queries) GetAudioFilesByLibrary(ctx context.Context, libraryID int64) (
 	return items, nil
 }
 
+const getAudioFilesByPaths = `-- name: GetAudioFilesByPaths :many
+SELECT id, library_id, file_path, group_key FROM audio_files
+WHERE file_path IN (/*SLICE:paths*/?)
+`
+
+type GetAudioFilesByPathsRow struct {
+	ID        int64
+	LibraryID int64
+	FilePath  string
+	GroupKey  string
+}
+
+func (q *Queries) GetAudioFilesByPaths(ctx context.Context, paths []string) ([]GetAudioFilesByPathsRow, error) {
+	query := getAudioFilesByPaths
+	var queryParams []interface{}
+	if len(paths) > 0 {
+		for _, v := range paths {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:paths*/?", strings.Repeat(",?", len(paths))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:paths*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetAudioFilesByPathsRow
+	for rows.Next() {
+		var i GetAudioFilesByPathsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.LibraryID,
+			&i.FilePath,
+			&i.GroupKey,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getAudioFilesByReleaseGroup = `-- name: GetAudioFilesByReleaseGroup :many
 SELECT
     af.file_path,

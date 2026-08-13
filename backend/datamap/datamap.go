@@ -194,6 +194,14 @@ var tables = []Table{
 			"tiers, last refresh.",
 	},
 	{
+		Name: "excluded_paths", Kind: Authored, Lifetime: Cascade,
+		Note: "Paths the user removed from the library, which the scanner " +
+			"must not import again. Authored: it is a decision, not " +
+			"derivable from disk. Cascades with its library, and a full " +
+			"rescan clears it \u2014 the only way back for a path removed by " +
+			"mistake.",
+	},
+	{
 		Name: "file_types", Kind: Derived, Lifetime: Retained,
 		Note: "Static lookup rows seeded from code, not user data.",
 	},
