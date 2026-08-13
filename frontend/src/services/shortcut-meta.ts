@@ -121,6 +121,12 @@ export const SHORTCUT_META: Record<string, ShortcutMeta> = {
             scope: 'panel:track-list',
             defaultKey: 'Enter',
         },
+        'tracklist.delete': {
+            label: 'Remove from Library',
+            category: 'Navigation',
+            scope: 'panel:track-list',
+            defaultKey: 'Delete',
+        },
         'autotag.apply': {
             label: 'Apply Match',
             category: 'Autotag',

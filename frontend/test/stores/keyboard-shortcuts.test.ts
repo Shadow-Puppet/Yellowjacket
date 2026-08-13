@@ -383,6 +383,35 @@ describe('shortcut dispatch: scope', () => {
 
     expect(fired).toBe(1);
   });
+
+  /**
+   * `tracklist.delete` was advertised in Settings for six phases with
+   * nothing dispatching for it. What it dispatches now only *opens* a
+   * confirmation, which is what makes a destructive action defensible
+   * on an unmodified key one row from the user's music.
+   */
+  it('dispatches for tracklist.delete, which had nothing on the other end', () => {
+    bindings({ 'tracklist.delete': 'Delete' });
+
+    const panel = mount(document.createElement('div'));
+    const row = document.createElement('div');
+
+    row.tabIndex = 0;
+    panel.dataset['shortcutScope'] = 'tracklist';
+    panel.append(row);
+    row.focus();
+
+    let fired = 0;
+    const listener = (): void => {
+      fired += 1;
+    };
+
+    document.addEventListener('shortcut:tracklist-delete', listener);
+    press('Delete');
+    document.removeEventListener('shortcut:tracklist-delete', listener);
+
+    expect(fired).toBe(1);
+  });
 });
 
 // ===================================================================

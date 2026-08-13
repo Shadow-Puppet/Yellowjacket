@@ -1191,7 +1191,28 @@ export class TrackList
             'shortcut:tracklist-play',
             this.handleShortcutPlay,
         );
+        this.listenWhileActive(
+            document,
+            'shortcut:tracklist-delete',
+            this.handleShortcutDelete,
+        );
     }
+
+    /**
+     * Delete opens the confirmation and does nothing else.
+     *
+     * That is the whole design of the binding: one keystroke from a
+     * focused row, a key that *asks* is defensible and a key that
+     * *acts* is not — so this is the same dialog the menu command
+     * opens, reached by a different route.
+     */
+    private handleShortcutDelete = (): void => {
+        const filePaths = this.selection.getSelectedKeysOrdered();
+
+        if (filePaths.length === 0) return;
+
+        void this.removeFromLibrary(filePaths);
+    };
 
     /** Enter plays the selection — the `tracklist.play` binding, which
      *  has existed in the defaults and in Settings since it was written
