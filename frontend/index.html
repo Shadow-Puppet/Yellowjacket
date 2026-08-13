@@ -10,10 +10,15 @@
 </head>
 
 <body>
+    <!-- a11y.30. First focusable thing in the document, so a keyboard
+         user is not walked through the header, the library filter, the
+         search box and eleven nav items on every navigation. -->
+    <a class="skip-link" href="#main-content">Skip to content</a>
     <header class="top-bar">
         <hgroup>
             <h1 class="title">YellowJacket</h1>
-            <h3 class="subtitle">Music how it was meant to bee.</h3>
+            <!-- a11y.29: a heading level was being used for type size. -->
+            <p class="subtitle">Music how it was meant to bee.</p>
         </hgroup>
         <library-filter></library-filter>
         <search-bar></search-bar>
@@ -23,7 +28,8 @@
         <app-sidebar></app-sidebar>
     </div>
     <div class="content-area">
-        <main class="main-panel" data-active-view="tracks" data-testid="main-content" id="main-content">
+        <main class="main-panel" data-active-view="tracks" data-testid="main-content" id="main-content"
+            tabindex="-1">
             <track-list></track-list>
         </main>
         <queue-panel id="queue-panel"></queue-panel>

@@ -24,6 +24,36 @@ p {
     /* I want to set paragraph margins myself */
 }
 
+/* a11y.30.  Out of flow in both states, because `body` is a grid with
+   named areas and an in-flow extra child is auto-placed into one of
+   them — the link would silently take a row from the shell.  It is not
+   `display: none`: a skip link that is not focusable is not a skip
+   link. */
+.skip-link {
+    position: absolute;
+    left: -9999px;
+    top: 0;
+    z-index: 100;
+    padding: 0.5em 1em;
+    background-color: var(--yj-accent);
+    color: var(--yj-accent-fg);
+    font-weight: 600;
+    text-decoration: none;
+    border-radius: 0 0 4px 0;
+}
+
+.skip-link:focus {
+    left: 0;
+}
+
+/* The target of that link, so it can take focus at all. `main` is not
+   focusable by default, and a fragment link to an unfocusable element
+   moves the scroll and leaves the tab sequence exactly where it was —
+   which is the whole thing the link exists to change. */
+.main-panel:focus {
+    outline: none;
+}
+
 .top-bar {
     grid-area: top-bar;
     height: 100%;
@@ -46,7 +76,14 @@ ul {
 
 .title {
     font-size: 1.5em;
-    margin-bottom: 0;
+    /* Both margins, not just the bottom one. The pair is flex-centred
+       in a 4em bar and the UA gives an h1 a 0.67em top margin, so the
+       hgroup measured 67px inside 64 and the subtitle's descenders were
+       clipped by the bar. That was pre-existing; a11y.29 made it
+       visible by taking the h3's bottom margin away with it, which
+       shortened the block and moved the whole pair down into the clip.
+       This is the state that fix landed in. */
+    margin-block: 0;
 }
 
   .subtitle {

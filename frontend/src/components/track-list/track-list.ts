@@ -943,7 +943,13 @@ export class TrackList
     }
 
     .sort-arrow {
-      font-size: 10px; /* intentionally sub-token: tiny sort indicator */
+      /* a11y.34. Was 10px, below the type scale's own floor, with a
+         comment acknowledging it. The finding's stated harm — "the sort
+         direction is a 10px glyph or nothing" — is half closed already:
+         Phase 1 gave these cells an aria-sort, so it is announced. What
+         is left is a sighted user reading it, and nothing in the header
+         needs it to be smaller than the smallest text in the app. */
+      font-size: var(--yj-text-xs, 11px);
       flex-shrink: 0;
       color: var(--yj-accent-text, #ffd43b);
     }

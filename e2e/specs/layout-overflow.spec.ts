@@ -135,3 +135,26 @@ test.describe('the app fits in its own window', () => {
     expect(reachable).toBe(true);
   });
 });
+
+test.describe('the title block fits its bar', () => {
+  test('the hgroup stays inside the 4em top bar', async ({ app }) => {
+    // The state a11y.29 landed in. The pair is flex-centred and a UA
+    // gives an `h1` a 0.67em top margin, so the block measured 67px
+    // inside 64 — pre-existing, and invisible until dropping the h3's
+    // bottom margin shortened the block and shifted it down into the
+    // clip. The descenders of "meant to bee." were cut.
+    const fits = await app.locator('hgroup').evaluate((el) => {
+      const bar = el.closest('.top-bar')!.getBoundingClientRect();
+      const group = el.getBoundingClientRect();
+
+      return {
+        top: group.top >= Math.floor(bar.top),
+        bottom: group.bottom <= Math.ceil(bar.bottom),
+        height: Math.round(group.height),
+      };
+    });
+
+    expect(fits.top).toBe(true);
+    expect(fits.bottom).toBe(true);
+  });
+});
