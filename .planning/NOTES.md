@@ -2196,3 +2196,71 @@ Six more things worth keeping:
   hook* is what raises it — and a spec that spends the shared database
   has to give it back, since the 90 specs share one backend in file
   order.
+
+## A state nothing produces is a state nobody has checked
+
+Plan 009 phase 1: `library-status-indicator`'s third state, wired.
+
+The generalisation: **an enum whose last value is never constructed is
+not unfinished, it is wrong** — because everything around it has been
+written, reviewed and tested against the two values that do occur, and
+the code reads as complete from every angle except the one that
+produces the third. `LibraryStatus` has had `queued` since it was
+written: styled amber, given an hourglass, given the sentence "… is
+queued for download". All eight call sites were a two-way ternary. So
+an album on the request list rendered a plus and announced "is not in
+your library" — on the same page, forty pixels from a filled button
+reading "Wanted".
+
+Nothing was going to find that. `make ui-test` and `make e2e` both
+covered the badge; both asserted the states it produced. 007 phase 6
+had rewritten this exact component, and the note it left behind
+("when the download-client integration lands…") was itself the reason
+nobody looked: it names a *future* condition for work that was already
+possible, since `backend/download` was 16 541 lines and 20 bound
+methods on the day it was written. **A written-down reason not to look
+ages worse than the code it is about.**
+
+Six more things worth keeping:
+
+- **The second bug was in the screenshot of the first.** The "Wanted"
+  button rendered a question mark — the missing-icon fallback —
+  because `bookmark-check` is Font Awesome **Pro** and has never been
+  bundled. `offline-icons.spec.ts` asserts `__yjIconMisses` is empty
+  and passed the whole time: no spec had ever put the app in a state
+  where an album was requested. The bundled-icon design anticipated
+  exactly this ("twenty call sites compute their icon name from
+  state") and the *sweep* still could not see it, because a sweep only
+  sees the states it visits. Seventh regression in five plans that
+  only a PNG has caught, and the first found in a PNG taken of a
+  different bug.
+- **A property that does not change does not re-render a child.**
+  `top-results-row` reads the request list, and its host handing back
+  the same `results` array means Lit stops at the property — the row
+  keeps its old badges while the store holds the right answer. The
+  virtualizer rule (`requestUpdate()` on host state) one level milder,
+  and the same fix: subscribe where the state is *read*.
+- **A spec that gives state back has to be run twice to know it did.**
+  The `afterAll` cleanup called `callBinding`, which goes through
+  `window.__yjEvents` — installed by the `app` fixture, not by a bare
+  `browser.newPage()`. It threw where nothing was watching, left the
+  request behind and failed the *next* run with a stale `queued`. One
+  run proves the assertions; the second proves the teardown.
+- **A freshly launched app cannot search its own catalog for ~40 s.**
+  The core artifact merge has to land (`core artifact: merge complete`
+  in `.dev/app.log`), and until it does Explore's search returns
+  nothing at all — *including for rows staged directly into
+  `explore_index` a moment earlier*, which makes it look like the
+  staging failed. Cost a cycle here reading as a failure of the neuter
+  the run was under. Budget 60 s, or wait for the log line.
+- **The neuter has to be per line, not per feature.** Two fixes landed
+  together and each got its own one-line neuter, which is what made
+  the two failures distinguishable: one spec reported the wrong badge
+  status, the other reported `["bookmark-check"]`. Neutered together
+  they would both have failed and either could have been decorative.
+- **The fix is where the rule is, and the rule was in eight places.**
+  Every one of the eight sites was individually reasonable; the third
+  state was missing from all of them because no site owns the
+  question. Same shape as `getCoverUrl()`, `track-index.ts` and
+  `page-header` — when a rule is written per call site, the call sites
+  do not disagree, they are all incomplete in the same way.
