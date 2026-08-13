@@ -505,6 +505,23 @@ first track arrives) and `job-indicator`, whose label swings between
 "Scanning Music", "3 background jobs" and "Finished". The notification
 surface already had one from Phase 3.
 
+**Contrast is a property of the ramp, and the ramps are data.**
+`theme-store`'s `SHADE_PALETTES` — not `tokens.css.ts`, which holds only
+the type scale and icon sizes — is where the colours live, applied to
+`:root` at runtime, which is why the `var(--yj-…, #fallback)` at every
+call site is dead in practice. Every text colour clears 4.5:1 against
+every surface it can sit on, and `theme-contrast.test.ts` computes that
+from the table rather than trusting it. Three rules hold it up.
+**`bgOverlay` is not a text surface on the dark ramp** — sizing tertiary
+to clear it needs a grey lighter than *secondary*, and an inverted ramp
+is a worse answer than the problem, so the one component that put text
+there uses primary. **A generated colour is a family, not a colour**:
+`utils/avatar-color.ts` exists because `hsl(hue, 45%, 35%)` behind white
+initials failed for 35 of the 360 hues, so the failure came and went
+with how an artist's name hashed — the test walks all 360. And
+**`make ui-visual` cannot see any of this**: the component tier renders
+the fallbacks, because the theme only reaches `:root` in the real app.
+
 **A stated motion preference outranks an app setting, and the state a
 fix lands in is a state nobody has looked at.** `now-playing`'s marquee
 ran for as long as a track played with no way to pause it (WCAG 2.2.2),

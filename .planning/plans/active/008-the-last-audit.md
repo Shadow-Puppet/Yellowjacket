@@ -1,6 +1,6 @@
 # 008 — The last audit, and the one binding that outlived six phases
 
-**Status:** active — Phase 1 shipped (three landings).
+**Status:** active — Phases 1 and 2 shipped.
 **Branch:** main
 **Created:** 2026-08-12
 **Follows:** 007-ui-reconciliation
@@ -69,7 +69,7 @@ fixed until it has been reproduced in the running app.
 | `24` | Minor | No `title` on the truncating element in `track-info`, `playlist-view`, `queue-panel` or `track-list`. |
 | `25` | Minor | `<wa-progress-bar value=…>` with no label, verbatim as filed. |
 | — | new | **Two unnamed native `<select>`s**, one of them `page-header`'s sort control on nine views. Not in the audit: `a11y.6` scanned `<button>`. Found in the AX tree while reproducing `14`. Belongs with `26`. |
-| `28` | dropped | Four `@mousedown` `<div>`s with no `role="separator"`. Never measured. |
+| `28` | ~~dropped~~ | **Measured, stays dropped.** One header *label* clips at 800×600; zero data cells do. |
 | `29` | Polish | `<h3 class="subtitle">` for type size. |
 | `30` | Polish | No skip link anywhere. |
 | `32` | Polish | `title="Remove from queue"`, not identifying the track. |
@@ -282,6 +282,67 @@ column may be the only way to read a value, which is function.
 is worth as much as one that opens it, and this plan's predecessor got
 about a third of its value from findings that evaporated.
 
+### Phase 2 — what the measurements said
+
+One opened much wider than filed; one closed.
+
+#### Contrast: worse than "borderline", and it was never one token
+
+The audit's ≈ 4.1:1 was a hand calculation from two hex values, and
+plan 007 filed it under "deliberately not planned — worth measuring
+before planning". Measured against the rendered app across twelve views
+and then across all three ramps: **110 failing nodes**, and
+`textTertiary` failing AA in **nine of twelve** text/surface
+combinations — 4.35:1 on dark's surface, 3.25:1 on its elevated,
+2.31:1 on its overlay, and 2.55–3.32:1 on *every* surface of the light
+ramp, which the audit never considered.
+
+Fixed, and now **0 of 659 nodes** on dark and darker. Three mechanisms,
+only the first of which is the finding:
+
+- **The ramps.** `textTertiary` per ramp — `#a6a6a6` / `#949494` /
+  `#5c636a` — sized to the lightest surface it actually sits on and
+  keeping its hue.
+- **The avatar generator**, which is not a colour but a *family* of
+  them: `hsl(hue, 45%, 35%)` behind white initials failed for **35 of
+  360 hues**, so which artists were unreadable depended on how their
+  names hashed. 32% clears every hue.
+- **Jobs' local `#ff6b6b`**, 4.15:1 on elevated.
+
+Pinned by `theme-contrast.test.ts` and `avatar-color.test.ts` — unit
+tests over the data, not sweeps of the DOM. `make ui-test` 572 →
+**608**.
+
+#### `a11y.28`: the drop was right, and now for a measured reason
+
+"Cosmetic preference, no function lost" holds. At the window minimum
+(800×600, which is where the shell was measured in 007) the track list
+clips exactly one thing: the **Duration header label**. Zero data cells
+clip, and the sort that label names has a redundant keyboard-reachable
+dropdown. The queue panel at its default 321px clips nothing either.
+A keyboard-only user cannot change a panel width; they do not lose
+access to any value by not being able to. **Stays dropped.**
+
+#### Two things the measurements found that are not in the audit
+
+Both are bigger than what they were found under, and neither is fixed:
+
+- **The semantic colours are fixed across ramps, and a fixed colour
+  cannot serve a near-black and a near-white background.** `--yj-error`
+  is 3.42:1 on dark's surface and 2.55:1 on its elevated; `--yj-info`
+  is 3.10:1 and 2.31:1; success and warning fail on dark and light
+  both. As *backgrounds* under white text, success (3.45) and warning
+  (3.58) fail too. The fix is a per-ramp semantic palette, which is a
+  decision about the app's colour identity rather than a value.
+- **The light ramp is not a supported theme.** With the greyscale fixed
+  it still has **50 failing nodes**: the accent yellow under white text
+  (1.43:1), the autotag diff's pale greens and reds on white
+  (1.36–2.59:1), and the header and player chrome staying dark while
+  the body goes light. Read in a screenshot — the "Low confidence pick"
+  banner is invisible and the primary button is white-on-yellow. This
+  is a design job, and the honest question it raises is whether the
+  light theme should ship at all in its current state.
+
 ---
 
 ## Phase 3 — The tail
@@ -296,6 +357,11 @@ Two of them are not one-liners and should be treated as such:
   to the app frame, and 007 phase 5 already measured the frame's real
   minimum at 800×600. Reflow at high zoom is the same question one
   variable over. It may want its own landing.
+- **The unnamed `<select>`s** from Phase 1, with `26`.
+- **The semantic palette** and **the light ramp**, from Phase 2. Both
+  are larger than the rest of this tail put together and may not belong
+  in it at all — the light ramp in particular is a question about
+  whether that theme ships, not a contrast fix.
 - **`22`** asks for a non-colour marker on the playing row, which is a
   visual change to the densest list in the app and moves a baseline.
 

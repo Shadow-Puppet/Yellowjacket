@@ -1872,3 +1872,85 @@ inside a comment in a `css` tagged template literal ends the literal.**
 Third session running. It is written in `CLAUDE.md`, in the skill, and
 in `NOTES.md`, and it was read twice in the session it then cost a
 cycle in. Knowledge is not working here; it wants a lint rule.
+
+## A parked measurement is a finding of unknown size, and this one was nine times bigger
+
+Plan 008 phase 2: the two items `a11y.md` never measured. One closed on
+measurement; the other turned out to be nine times the size of its own
+description and to contain two findings larger than itself.
+
+The generalisation: **"worth measuring before planning" is a debt with
+no stated size, and the estimate attached to it is not a bound.** The
+audit said `--yj-text-tertiary` on `--yj-bg-surface` is "≈ 4.1:1,
+borderline", from a hand calculation over two hex values in a file that
+does not contain them. Every part of that sentence was approximately
+true and the conclusion it invited — *borderline, low priority* — was
+wrong by an order of magnitude:
+
+| | audit | measured |
+|---|---|---|
+| pairs considered | 1 | 12 (three ramps × four surfaces) |
+| failing | "borderline" | 9 of 12 |
+| worst ratio | ≈ 4.1 | **2.31** (dark overlay), **2.55** (light) |
+| failing nodes on screen | — | **110** across twelve views |
+
+Nine things worth keeping:
+
+- **A number quoted from the wrong file is still a number, and it
+  travels.** The audit cites the palette as `tokens.css.ts`. That file
+  holds the type scale and icon sizes and no colours at all; the ramps
+  live in `theme-store`, applied to `:root` at runtime — which also
+  means the `var(--yj-…, #fallback)` at ~500 call sites is dead code,
+  and four different fallbacks behind one name never mattered. I spent
+  twenty minutes concluding the tokens "are never defined" before
+  asking the *running app* what `:root` carried. Ask the app.
+- **Measuring one state of three answers one third of the question.**
+  The whole first sweep was the `dark` ramp, because that is the
+  default. `light` was the worst of the three and had never been looked
+  at by the audit or by me. A palette is data — enumerate it.
+- **A generated colour is a family, not a colour.** The avatar
+  background is `hsl(nameToHue(name), 45%, 35%)`, and 35 of the 360
+  hues put white text below 4.5:1. The rendered sweep found *two*,
+  because two artists happened to hash into the yellow-green band. Had
+  I fixed the two, the bug would have returned with the next search.
+  The unit of the fix is the generator; the unit of the test is all 360.
+- **A fix that makes the ramp pass can also destroy the ramp.** Sizing
+  tertiary to clear 4.5:1 on `bgOverlay` needs a grey *lighter than
+  secondary*. Passing an automated check by inverting the visual
+  hierarchy is the kind of accessibility fix that makes the product
+  worse, so `bgOverlay` is documented as not a text surface and the one
+  component using it that way now uses primary. The test encodes the
+  exception rather than pretending it away, and a second case asserts
+  the ramp stays ordered.
+- **My probe was wrong before the code was, twice, and a screenshot
+  caught both.** Source-over compositing that forces `a: 1` makes two
+  stacked `rgba(255,255,255,0.05)` surfaces composite to opaque white —
+  which reported a perfectly readable button as white-on-white at
+  1.00:1. And later I read a screenshot taken *after* a sweep had left
+  the app on a different ramp, and concluded the light theme was not
+  applying at all. Both times the tell was the same: **the picture and
+  the number disagreed**, and both times the number was mine.
+- **The cheapest tier is blind to a whole class of change.** `make
+  ui-visual` passed unchanged across a palette rewrite, because the
+  component tier has no `:root` and renders the fallbacks. Six stored
+  screenshots said nothing at all about the change they most looked
+  like they were about.
+- **A finding that closes on measurement is worth the measurement.**
+  `a11y.28` (mouse-only resize handles) was dropped by reading. At
+  800×600 the track list clips exactly one thing — the *Duration header
+  label* — and zero data cells, and that sort has a keyboard-reachable
+  dropdown anyway. Same conclusion, now with a number, and the next
+  reader does not have to re-derive it.
+- **The measurement found two things larger than what it was measuring.**
+  The semantic colours are fixed across ramps, and one fixed colour
+  cannot serve both a near-black and a near-white surface — `--yj-error`
+  is 2.55:1 on dark's elevated. And with the greyscale fixed the light
+  ramp still fails 50 nodes: an invisible warning banner, a
+  white-on-yellow primary button, chrome that stays dark while the body
+  goes light. Recorded, not fixed. "Does the light theme ship?" is not
+  a question a contrast pass gets to answer on its own.
+- **Fixing the ubiquitous case makes the rare ones visible.** With
+  tertiary raised, the remaining dark-ramp failures were three nodes
+  and every one was a *different* mechanism. A finding at 110 nodes
+  hides them; at 3 they are individually obvious. Cheap tail, only
+  reachable from the other side of the main fix.
