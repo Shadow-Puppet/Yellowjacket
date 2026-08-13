@@ -5,6 +5,7 @@ import '@awesome.me/webawesome/dist/components/slider/slider.js';
 import type WaSlider from '@awesome.me/webawesome/dist/components/slider/slider.js';
 import { PlayerController } from '@store/controllers/player-controller';
 import { designTokens } from '../../../styles/tokens.css';
+import { waSliderLabel } from '../../../styles/wa-slider-label.css';
 
 /** Volume change (0-100) applied per scroll-wheel tick. */
 const WHEEL_STEP = 5;
@@ -28,7 +29,7 @@ export class VolumeControl extends LitElement {
   @state()
   private pendingVolume: number | null = null;
 
-  static override styles = [designTokens, css`
+  static override styles = [designTokens, waSliderLabel, css`
     :host {
       position: relative;
       display: inline-flex;
@@ -209,6 +210,7 @@ export class VolumeControl extends LitElement {
               @click="${this.handlePopupClick}"
             >
               <wa-slider
+                label="Volume"
                 orientation="vertical"
                 min="0"
                 max="100"

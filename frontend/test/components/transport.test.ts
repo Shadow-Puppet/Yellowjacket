@@ -375,7 +375,11 @@ describe('<seek-bar>', () => {
   it('carries an accessible name, since it is otherwise an unlabelled slider', async () => {
     const el = await fixture('seek-bar');
 
-    expect(shadow(el, 'wa-slider')?.getAttribute('aria-label')).toBe('Seek');
+    // This asserted `aria-label` on the host for six phases, and the
+    // host is not what carries `role="slider"` — the name never
+    // reached the accessibility tree. `wa-control-names.test.ts` is
+    // the whole story; the name now comes from `label`.
+    expect(shadow(el, 'wa-slider')?.getAttribute('label')).toBe('Seek');
   });
 
   it('looks the way it did last time', async () => {

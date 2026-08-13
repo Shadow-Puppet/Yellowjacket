@@ -268,6 +268,7 @@ export class JobRow extends LitElement {
 
         return html`
             <wa-progress-bar
+                label=${job.title}
                 value=${progressPercent(job) ?? 0}
             ></wa-progress-bar>
         `;

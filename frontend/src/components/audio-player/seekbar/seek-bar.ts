@@ -5,6 +5,7 @@ import WaSlider from '@awesome.me/webawesome/dist/components/slider/slider.js';
 import { formatSeconds } from '@utils/time';
 import { PlayerController } from '@store/controllers/player-controller';
 import { designTokens } from '../../../styles/tokens.css';
+import { waSliderLabel } from '../../../styles/wa-slider-label.css';
 
 const ProgressIntervalMillis = 1000;
 
@@ -25,7 +26,7 @@ export class SeekBar extends LitElement {
   @state()
   private showRemaining: boolean = true;
 
-  static override styles = [designTokens, css`
+  static override styles = [designTokens, waSliderLabel, css`
     wa-slider {
       --track-size: 6px;
       flex: 1;
@@ -210,7 +211,7 @@ export class SeekBar extends LitElement {
       <div id="seek-bar-container">
         <small data-testid="elapsed-time">${elapsedTime}</small>
         <wa-slider
-          aria-label="Seek"
+          label="Seek"
           .value="${this.seekValue}"
           max="${this.trackLength}"
           ?with-tooltip="${this.hasTrack}"
