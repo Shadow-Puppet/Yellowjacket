@@ -34,6 +34,7 @@ import { EventsOn } from '@runtime/runtime';
 import { Events } from '../../events';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '../library-status-indicator/library-status-indicator.js';
+import { libraryStatusFor } from '@utils/library-status';
 import '../catalog-scope-notice/catalog-scope-notice.js';
 import type { CatalogScope } from '../catalog-scope-notice/catalog-scope-notice.js';
 
@@ -2113,7 +2114,7 @@ export class ExploreArtistDetails extends LitElement {
                                                         ${formatListenCount(t.totalListenCount)} plays
                                                     </span>
                                                     <library-status-indicator
-                                                        status=${t.inLibrary || t.localId ? 'in-library' : 'not-in-library'}
+                                                        status=${libraryStatusFor(Boolean(t.inLibrary || t.localId), t.recordingMbid)}
                                                         entity-type="track"
                                                         label=${t.trackName}
                                                     ></library-status-indicator>
@@ -2225,7 +2226,7 @@ export class ExploreArtistDetails extends LitElement {
                             ${rg.date ? html`<span>${extractYear(rg.date)}</span>` : nothing}
                         </div>
                         <library-status-indicator
-                            status=${rg.inLibrary || rg.localId ? 'in-library' : 'not-in-library'}
+                            status=${libraryStatusFor(Boolean(rg.inLibrary || rg.localId), rg.releaseGroupMbid)}
                             entity-type="album"
                             label=${rg.title}
                             size="18"
@@ -2320,9 +2321,7 @@ export class ExploreArtistDetails extends LitElement {
         const artURL = this.thumbnailURLs.get(rg.mbid) || '';
         const year = extractYear(rg.firstReleaseDate);
         const inLibrary = this.libraryMBIDs.has(rg.mbid) || Boolean(rg.inLibrary);
-        const status: 'in-library' | 'not-in-library' = inLibrary
-            ? 'in-library'
-            : 'not-in-library';
+        const status = libraryStatusFor(inLibrary, rg.mbid);
 
         return html`
             <div

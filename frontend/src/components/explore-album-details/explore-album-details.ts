@@ -24,6 +24,8 @@ import { EventsOn } from '@runtime/runtime';
 import { Events } from '../../events';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '../library-status-indicator/library-status-indicator.js';
+import { libraryStatusFor } from '@utils/library-status';
+import type { LibraryStatus } from '../library-status-indicator/library-status-indicator';
 import '../catalog-scope-notice/catalog-scope-notice.js';
 import type { CatalogScope } from '../catalog-scope-notice/catalog-scope-notice.js';
 import '@awesome.me/webawesome/dist/components/button/button.js';
@@ -1443,7 +1445,7 @@ export class ExploreAlbumDetails extends LitElement {
      *   - cachedAlbums has MBID match → owned
      *   - any selected version has    → owned (covers local-only albums
      *     a track marked inLibrary       where releaseGroup may be null)
-     *   - else                        → not owned
+     *   - else                        → whatever the request list says
      *
      * Four different claims of decreasing confidence, OR'd together and
      * reported as one tick — the last of which fires when a *single*
@@ -1452,10 +1454,11 @@ export class ExploreAlbumDetails extends LitElement {
      * actions key off; this stays as it was, because the indicator's
      * job is "is any of this yours" and that is what it answers.
      *
-     * No queued state for now — that's reserved for future
-     * download-client integration.
+     * When none of them hold the answer is not automatically "no":
+     * the album may be on the request list, which the button directly
+     * below this badge has reported as "Wanted" all along.
      */
-    private albumLibraryStatus(): 'in-library' | 'not-in-library' {
+    private albumLibraryStatus(): LibraryStatus {
         if (this.localAlbumId > 0) return 'in-library';
 
         if (this.releaseGroup?.inLibrary) return 'in-library';
@@ -1477,7 +1480,11 @@ export class ExploreAlbumDetails extends LitElement {
             }
         }
 
-        return 'not-in-library';
+        // None of the five ownership claims held, so the badge falls
+        // through to the one thing this page already knew and never
+        // said: whether the album is on the request list. The button
+        // below it has read "Wanted" all along.
+        return libraryStatusFor(false, this.releaseGroupMBID);
     }
 
     /**
@@ -2280,7 +2287,7 @@ export class ExploreAlbumDetails extends LitElement {
                                             )}</span
                                         >
                                         <library-status-indicator
-                                            status=${track.inLibrary ? 'in-library' : 'not-in-library'}
+                                            status=${libraryStatusFor(Boolean(track.inLibrary), track.mbid)}
                                             entity-type="track"
                                             label=${track.title}
                                         ></library-status-indicator>

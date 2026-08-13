@@ -10,6 +10,8 @@ import {
 import '../library-status-indicator/library-status-indicator.js';
 import type { LibraryStatus } from '../library-status-indicator/library-status-indicator.js';
 import { artistLink, exploreLinkStyles } from '../../utils/explore-link';
+import { libraryStatusFor } from '../../utils/library-status';
+import { downloadStore } from '../../store/download-store';
 
 /** Format milliseconds as m:ss. */
 function formatDuration(ms: number | undefined): string {
@@ -49,6 +51,28 @@ export class TopResultsRow extends LitElement {
 
     // Per-card state: cover images.
     private images = new Map<string, string>();
+
+    private unsubRequests?: () => void;
+
+    /**
+     * The badges here say whether something is already requested, and
+     * this row will not hear about a change from its host: `explore-view`
+     * re-rendering sets the same `results` array back, so Lit stops at
+     * the property and never updates this element. One subscription for
+     * the row, not one per card.
+     */
+    override connectedCallback(): void {
+        super.connectedCallback();
+        this.unsubRequests = downloadStore.subscribe(() =>
+            this.requestUpdate(),
+        );
+    }
+
+    override disconnectedCallback(): void {
+        this.unsubRequests?.();
+        this.unsubRequests = undefined;
+        super.disconnectedCallback();
+    }
 
     static override styles = [
         designTokens,
@@ -255,7 +279,10 @@ export class TopResultsRow extends LitElement {
               ? r.year || ''
               : formatDuration(r.length) || '';
 
-        const status: LibraryStatus = r.inLibrary ? 'in-library' : 'not-in-library';
+        const status: LibraryStatus = libraryStatusFor(
+            Boolean(r.inLibrary),
+            r.mbid,
+        );
         const entityType: 'artist' | 'album' | 'track' =
             r.entityType === 'artist'
                 ? 'artist'
