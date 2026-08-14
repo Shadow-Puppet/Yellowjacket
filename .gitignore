@@ -1,6 +1,6 @@
 frontend/dist
 node_modules
-build
+build/bin/
 test_data
 test.db
 
@@ -42,7 +42,7 @@ Thumbs.db
 node_modules/
 .next/
 dist/
-build/
+# build/ holds v3 build assets and is tracked; only its output is not.
 __pycache__/
 *.pyc
 .venv/
@@ -53,3 +53,4 @@ vendor/
 coverage/
 .cache/
 tmp/
+bin/
