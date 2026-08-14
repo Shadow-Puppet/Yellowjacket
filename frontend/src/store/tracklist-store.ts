@@ -50,6 +50,17 @@ class TrackListStore {
         try {
             const columns = await list(GetTrackListColumns());
 
+            // An empty answer keeps the defaults rather than emptying
+            // the list. `GetTrackListColumns` substitutes
+            // `tracklist.DefaultColumns` only when the whole config
+            // section is missing — a section that exists with no
+            // columns in it returns nothing, and a track list with no
+            // columns is not what that means. Until v3 this was
+            // accidental: the binding's `[]Column` was typed `Column[]`
+            // and an absent answer arrived as `undefined`, so `.map`
+            // threw into the catch below.
+            if (columns.length === 0) return;
+
             this.update({
                 columnIds: columns.map((c) => c.id),
             });

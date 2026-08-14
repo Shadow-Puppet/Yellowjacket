@@ -63,17 +63,25 @@ describe('component-tier harness', () => {
     expect(fired).toBe(1);
   });
 
-  it('notifies local listeners on a frontend-side EventsEmit', async () => {
-    // Wails' own runtime notifies JS listeners before it notifies Go
-    // (desktop/events.js), so a frontend emit is observable in-page.
-    const { EventsEmit } = await import('@runtime/runtime');
+  it('returns a frontend emit to in-page listeners, one round trip later', async () => {
+    // v2 notified JS listeners *before* Go, so a frontend emit was
+    // observable synchronously. v3's Events.Emit does not touch the
+    // local registry at all — it calls the backend, and
+    // EventProcessor.Emit sends the event back out to every window,
+    // including the one that emitted it. So the page still sees it,
+    // just not on the same tick.
+    const { Events } = await import('@wailsio/runtime');
     let seen: unknown;
 
     wails.on('SyntheticEmit', (data) => {
       seen = data;
     }, -1);
 
-    EventsEmit('SyntheticEmit', 42);
+    Events.Emit('SyntheticEmit', 42);
+
+    expect(seen).toBeUndefined();
+
+    await flush();
 
     expect(seen).toBe(42);
   });

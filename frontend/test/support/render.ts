@@ -11,9 +11,23 @@ import { expect } from 'vitest';
 const mounted: HTMLElement[] = [];
 
 /**
- * Create an element, apply properties, mount it and wait for Lit's
- * first render. Properties are set as *properties*, not attributes, so
+ * Create an element, apply properties, mount it and wait for it to
+ * settle. Properties are set as *properties*, not attributes, so
  * non-string values survive.
+ *
+ * "Settle" drains the microtask queue between two renders rather than
+ * awaiting one render. A component that loads from the backend in
+ * `firstUpdated` is only renderable once that call resolves, and under
+ * v3 a binding takes several microtasks longer to settle than v2's
+ * did: the generated function goes through `Call()`, an async
+ * `runtimeCallWithID`, the transport and a `CancellablePromise`, where
+ * v2's `window.go` proxy resolved one promise. Tests were already
+ * written as though `fixture()` meant "mounted and loaded" — it now
+ * does, rather than each of them counting ticks.
+ *
+ * Microtasks, deliberately, and not `setTimeout`: every hop in that
+ * chain is a promise, and a timer would hang forever in the suites
+ * that install fake ones.
  */
 export async function fixture<T extends LitElement>(
   tag: string,
@@ -27,8 +41,21 @@ export async function fixture<T extends LitElement>(
 
   await el.updateComplete;
 
+  for (let hop = 0; hop < MICROTASK_HOPS; hop += 1) {
+    await Promise.resolve();
+  }
+
+  await el.updateComplete;
+
   return el;
 }
+
+/**
+ * How many promise hops to drain before the second render. Generously
+ * over the ~6 a binding actually takes, since an unused hop costs
+ * nothing and a missing one is a flake.
+ */
+const MICROTASK_HOPS = 20;
 
 /** Apply properties to a mounted element and wait for the re-render. */
 export async function update<T extends LitElement>(

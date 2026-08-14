@@ -43,6 +43,13 @@ export default mergeConfig(
     resolve: {
       alias: {
         '@test': path.resolve(__dirname, 'test'),
+        // The runtime's listener registry, which its package exports
+        // map does not expose. wails-fake.ts needs it to answer "did
+        // importing a store subscribe it"; see the note there.
+        '@wailsio/listener': path.resolve(
+          __dirname,
+          'node_modules/@wailsio/runtime/dist/listener.js',
+        ),
       },
     },
     // Pre-bundle what the components pull in, or Vite discovers it
@@ -58,6 +65,11 @@ export default mergeConfig(
         // one the first time a component under test imports it.
         '@awesome.me/webawesome/dist/components/*/*.js',
         '@awesome.me/webawesome/dist/webawesome.js',
+        // The runtime every generated binding imports. Left out, Vite
+        // discovers it from the first binding module a suite touches
+        // and reloads the page — which surfaces as several suites
+        // failing to import at all while each passes on its own.
+        '@wailsio/runtime',
       ],
     },
   }),

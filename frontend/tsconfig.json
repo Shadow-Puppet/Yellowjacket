@@ -30,6 +30,7 @@
       "@assets/*": ["./src/assets/*"],
       "@pages/*": ["./src/pages/*"],
       "@runtime/*": ["./src/wails/*"],
+      "@wailsio/listener": ["./node_modules/@wailsio/runtime/types/listener.d.ts"],
       "@utils/*": ["./src/utils/*"],
       "@store/*": ["./src/store/*"],
       "@test/*": ["./test/*"]
