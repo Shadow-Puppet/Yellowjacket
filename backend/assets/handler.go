@@ -3,15 +3,22 @@ package assets
 
 import (
 	"embed"
+	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 
-	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
+
+// distRoot is where the frontend build lands inside the embedded FS.
+// v2 knew this prefix itself; v3 takes an fs.FS rooted at the assets,
+// so the sub-FS is taken here.
+const distRoot = "frontend/dist"
 
 // Handler serves frontend assets with custom route support.
 type Handler struct {
-	Options            *assetserver.Options
+	Options            application.AssetOptions
 	logger             *slog.Logger
 	frontendDistAssets embed.FS
 	serveMux           *http.ServeMux
@@ -25,8 +32,16 @@ func NewAssetHandler(logger *slog.Logger, frontendDistAssets embed.FS) (*Handler
 		frontendDistAssets: frontendDistAssets,
 		serveMux:           http.NewServeMux(),
 	}
-	handler.Options = &assetserver.Options{
-		Assets:     handler.frontendDistAssets,
+
+	dist, err := fs.Sub(frontendDistAssets, distRoot)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"could not open %s in the embedded assets: %w", distRoot, err,
+		)
+	}
+
+	handler.Options = application.AssetOptions{
+		Handler:    application.AssetFileServerFS(dist),
 		Middleware: handler.Middleware,
 	}
 

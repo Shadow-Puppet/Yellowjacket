@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wailsapp/wails/v3/pkg/application"
+
 	"yellowjacket/backend/database"
 	"yellowjacket/backend/events"
 )
@@ -29,7 +31,7 @@ func setupRecordedQueue(t *testing.T) (*Queue, *database.DB, *events.Recorder) {
 	q.SetPlayer(&mockTrackLoader{})
 
 	rec := events.NewRecorder()
-	q.SetContext(events.WithSink(context.Background(), rec))
+	_ = q.ServiceStartup(events.WithSink(context.Background(), rec), application.ServiceOptions{})
 
 	return q, db, rec
 }

@@ -1,8 +1,11 @@
 # 009 — Wails v3 migration
 
-**Status:** Phase 0 complete — **go**. Phase 1 **partly done** (toolchain
-and build assets landed; Makefile rewrite and the tag swap not started).
-Phases 2–7 not started.
+**Status:** Phases 0–3 complete. The Go side is entirely on v3: nothing
+in the tree imports `wails/v2`, all three lint and test configurations
+are green, and `go build .` produces a running binary. **Phase 4
+(bindings) is next, and until it lands the app builds but the frontend
+cannot talk to it** — `frontend/wailsjs/` is v2's tree and nothing
+regenerates it.
 **Branch:** `wails-v3`, off `main` at `edb13a6`.
 **Created:** 2026-08-13
 **Phase 0 run:** 2026-08-13 against **v3.0.0-beta.8**
@@ -292,20 +295,21 @@ passes; `grep -r webkit2_41` returns nothing.
 
 **Est.** Half a session. Low risk, high churn.
 
-### Phase 1 — what actually landed (`e7873bd`)
+### Phase 1 — what actually landed
 
-Steps 2, 3 (partly), 4 and 7 are done; 1, 5 and 6 are not.
+Split across two commits, because steps 5 and 6 could not land before
+the app was on the v3 API: swapping the build tag before `main.go` was
+ported would have broken the only build that then worked.
 
-- **Done.** `wails/v3 v3.0.0-beta.8` pinned and `wails3` added to the
-  `tool` block beside the v2 CLI. `build/` holds the scaffold's asset
-  tree with `config.yml`'s `info` block filled from `wails.json`.
-  `Taskfile.yml` defaults `PACKAGE_MANAGER` to pnpm.
-- **Not done.** The Makefile still calls `go tool wails` (v2)
-  throughout, `webkit2_41` is still on all ~30 sites, and `wails.json`
-  is still present — deliberately, because the v2 CLI reads it and the
-  app has not moved to the v3 API yet. Steps 5 and 6 are entangled
-  with Phase 2 and should land with it: swapping the tag before
-  `main.go` is ported breaks the only build that currently works.
+- **`e7873bd`** — `wails/v3 v3.0.0-beta.8` pinned, `wails3` added to
+  the `tool` block, `build/` asset tree copied from a scaffold with
+  `config.yml` filled from `wails.json`, `Taskfile.yml` on pnpm.
+- **With Phase 2/3** — the Makefile's six `go tool wails` invocations,
+  every `webkit2_41` site (50 of them, not the ~30 the inventory
+  estimated), `lefthook.yml`, both packaging recipes, and `ci.yml`'s
+  apt lists. `backend/logging` is **deleted**, not ported, answering
+  one of the open questions: v3 takes a `*slog.Logger` directly, so
+  v2's `logger.Logger` adapter had no remaining caller.
 
 **Two things the plan did not anticipate.**
 
@@ -317,18 +321,20 @@ trees (`build/android`, `build/ios`, ~40 files) are not carried — this
 is a desktop player and cannot target them — and their `includes:`
 entries are dropped from `Taskfile.yml`.
 
-**GTK4 is unavailable on the dev machine, so the gtk3 fallback is in
-use.** `webkitgtk-6.0` is not installed and installing it needs sudo.
-The consequence is sharper than the plan's "fallback if GTK4
-misbehaves": **`go tool wails3` does not work at all**, because the
-CLI itself links `internal/operatingsystem`, which `pkg-config`s
-`gtk4 webkitgtk-6.0` under default tags. `go run -tags gtk3
-github.com/wailsapp/wails/v3/cmd/wails3` builds and runs fine
-(`doctor` reports `-tags gtk3` and Webkit2Gtk v2.52.5), so that — not
-`go tool wails3` — is the invocation the Makefile must use until
-`sudo pacman -S webkitgtk-6.0` happens. Phase 0's claim that
-"`wails3 doctor` reports both toolchains" was not true on this
-machine.
+**The v3 CLI needs the GTK4 toolchain to compile at all — not just the
+app.** Before `webkitgtk-6.0` was installed, `go tool wails3` failed
+outright, because the CLI links `internal/operatingsystem`, which
+`pkg-config`s `gtk4 webkitgtk-6.0` under default tags. That is sharper
+than the plan's "fallback if GTK4 misbehaves": the gtk3 fallback
+covers the *app*, and reaching it meant building the CLI by hand with
+`go run -tags gtk3 …/cmd/wails3`.
+
+Resolved — `webkitgtk-6.0` 2.52.5 and `gtk4` 4.22.4 are installed, and
+`go tool wails3 doctor` now reports both toolchains with gtk3 and
+webkit2gtk marked legacy, which is the state Phase 0 described. The
+default (GTK4) path is what the migration targets; the gtk3 escape
+hatch is recorded here only so the next person recognises the failure
+if they meet it on a fresh machine.
 
 ---
 
@@ -401,6 +407,57 @@ services callable, quit-during-writes still vetoes.
 
 **Est.** One session. This is the "1–4 hours" the official guide prices.
 
+### Phase 2 — what actually landed
+
+The shape held, but four things differed from the plan.
+
+**`WebviewGpuPolicy` did not survive where the plan said it would.**
+It is not on v3's `LinuxOptions` at all — it moved to `LinuxWindow`,
+inside `WebviewWindowOptions`, so it is a per-window setting now. The
+NVIDIA/Wayland `WEBKIT_DISABLE_DMABUF_RENDERER` workaround in
+`main.go` is **kept**: v3's `operatingsystem` package detects the
+driver, but nothing in it sets that variable, so removing ours would
+have removed the fix.
+
+**There is no `OnStartup` or `OnDomReady` option.** Both are gone from
+`application.Options`. The app-level wiring is driven from
+`app.Event.OnApplicationEvent(events.Common.ApplicationStarted, …)`,
+which fires after every service's `ServiceStartup`. That ordering is
+what makes the split work: the services take their context from the
+runtime, and `OnStartup` is left holding only the cross-service wiring
+that belongs to no single service.
+
+**Ten services convert, not twelve.** `jobs.Registry` and
+`explore.SearchIndex` have a `SetContext` too, but neither is bound —
+the registry is wrapped by `jobs.NewService` and the index is internal
+to `explore.Service` — so both keep it. Converting them would have
+been churn for no binding removed. The ten that are bound now
+implement `ServiceStartup`, and each therefore imports
+`wails/v3/pkg/application`, which is a real cost: five files imported
+wails before, fifteen do now.
+
+**`application.NewService` is generic over a concrete pointer type**,
+so `FEBindings []any` could not survive as a slice of values — the
+binding generator is a static analyser that reads those call sites, so
+a `[]any` would have generated nothing at all. It is
+`[]application.Service` built from explicit `NewService` calls.
+
+**The quit veto changed shape, and this is the part to test
+deliberately.** v2's `MessageDialog` blocked and returned the button;
+v3's `Show()` returns immediately and the answer arrives on a
+`Button.OnClick` callback — on GTK4 `gtkDispatch` runs the dialog in a
+goroutine. So `ShouldQuit` cannot ask and answer in one call. It
+vetoes the quit, shows the dialog, and calls `app.Quit()` from the
+callback if the user says quit; `quitConfirmed` is what stops that
+second `Quit()` coming straight back and asking again, and
+`quitAsking` stops a second close attempt stacking dialogs.
+
+**Window state moved off the quit path entirely.** It was `OnBeforeClose`'s
+other job; it is now a `Common.WindowClosing` hook, because the size
+has to be read while the window still exists and v3's `OnShutdown`
+takes no context and no window. The sub-minimum guard is kept for the
+reason it was written.
+
 ---
 
 ## Phase 3 — Events
@@ -450,6 +507,28 @@ note it as follow-up work so a port doesn't become a redesign.
 push-driven views.
 
 **Est.** Half a session.
+
+### Phase 3 — what actually landed
+
+Exactly as designed, and it is the migration's whole point: the
+`ctx.Value("events")` probe of a **v2-private context key** is gone,
+replaced by `application.Get() == nil`. D1 held — `events.Emit` keeps
+its `ctx`, all 45 call sites and all 7 test files are untouched, and
+one production file changed.
+
+Two adjustments. `Deliver` no longer rejects a nil context outright:
+a nil context cannot carry a sink, but it is no longer a reason not to
+deliver, because delivery does not go through the context any more.
+And `TestNoDirectRuntimeEmits`'s needle moved from `.EventsEmit(` to
+`.Event.Emit(` — the test is kept, but its justification is now the
+weaker one written into its doc comment: not "a direct call can kill
+the process" (v3's emit cannot), but "one emit path is what lets
+`emitStatus` drop an unchanged payload for every caller at once".
+
+The six test files that called `SetContext` on a converted service now
+call `ServiceStartup(ctx, application.ServiceOptions{})`. That is the
+one place the plan's "zero test edits" ambition does not apply — it is
+Phase 2's rename reaching the tests, not Phase 5's fake.
 
 ---
 

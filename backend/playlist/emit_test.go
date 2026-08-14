@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"testing"
 
+	"github.com/wailsapp/wails/v3/pkg/application"
+
 	"yellowjacket/backend/database"
 	"yellowjacket/backend/events"
 )
@@ -30,7 +32,7 @@ func setupRecordedService(
 	svc.dataDirOverride = t.TempDir()
 
 	rec := events.NewRecorder()
-	svc.SetContext(events.WithSink(context.Background(), rec))
+	_ = svc.ServiceStartup(events.WithSink(context.Background(), rec), application.ServiceOptions{})
 
 	return svc, db, rec
 }

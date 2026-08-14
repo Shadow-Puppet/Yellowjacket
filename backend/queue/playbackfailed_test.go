@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"testing"
 
+	"github.com/wailsapp/wails/v3/pkg/application"
+
 	"yellowjacket/backend/database"
 	"yellowjacket/backend/events"
 )
@@ -44,7 +46,7 @@ func setupFailingQueue(
 	q.SetPlayer(loader)
 
 	rec := events.NewRecorder()
-	q.SetContext(events.WithSink(context.Background(), rec))
+	_ = q.ServiceStartup(events.WithSink(context.Background(), rec), application.ServiceOptions{})
 
 	return q, db, rec, loader
 }

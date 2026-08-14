@@ -3,11 +3,17 @@ package frontendutil
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
+
+// ErrNoRuntime is returned when a dialog is asked for with no running
+// application to parent it to — under test, or after shutdown.
+var ErrNoRuntime = errors.New("no Wails runtime to show a dialog")
 
 // FrontendUtil provides frontend-bound Go functions.
 type FrontendUtil struct {
@@ -19,18 +25,35 @@ func NewFrontendUtil() (*FrontendUtil, error) {
 	return &FrontendUtil{}, nil
 }
 
-// SetContext sets the Wails runtime context.
-func (fe *FrontendUtil) SetContext(ctx context.Context) {
+// ServiceStartup is v3's service lifecycle hook: it runs once the
+// runtime exists, and ctx is cancelled when the app shuts down.  It
+// replaces v2's SetContext, which had to be called by hand from
+// OnStartup and was exported, so it was also bound to the frontend.
+func (fe *FrontendUtil) ServiceStartup(
+	ctx context.Context,
+	_ application.ServiceOptions,
+) error {
 	fe.ctx = ctx
+
+	return nil
 }
 
 // DirectoryPicker opens a directory selection dialog.
+//
+// v3 has no separate directory dialog: it is the file dialog told to
+// choose directories and not files.
 func (fe *FrontendUtil) DirectoryPicker() (string, error) {
-	runtime.LogInfo(fe.ctx, "selecting a directory")
+	app := application.Get()
+	if app == nil {
+		return "", ErrNoRuntime
+	}
 
-	dir, err := runtime.OpenDirectoryDialog(
-		fe.ctx,
-		runtime.OpenDialogOptions{})
+	slog.Default().Info("selecting a directory")
+
+	dir, err := app.Dialog.OpenFile().
+		CanChooseDirectories(true).
+		CanChooseFiles(false).
+		PromptForSingleSelection()
 	if err != nil {
 		return "", fmt.Errorf(
 			"could not open directory dialog\n%w", err,
@@ -46,20 +69,17 @@ func (fe *FrontendUtil) PlaylistFilePicker() (
 	[]string,
 	error,
 ) {
-	runtime.LogInfo(fe.ctx, "selecting playlist files")
+	app := application.Get()
+	if app == nil {
+		return nil, ErrNoRuntime
+	}
 
-	files, err := runtime.OpenMultipleFilesDialog(
-		fe.ctx,
-		runtime.OpenDialogOptions{
-			Title: "Import Playlist",
-			Filters: []runtime.FileFilter{
-				{
-					DisplayName: "Playlist Files (*.m3u, *.m3u8)",
-					Pattern:     "*.m3u;*.m3u8",
-				},
-			},
-		},
-	)
+	slog.Default().Info("selecting playlist files")
+
+	files, err := app.Dialog.OpenFile().
+		SetTitle("Import Playlist").
+		AddFilter("Playlist Files (*.m3u, *.m3u8)", "*.m3u;*.m3u8").
+		PromptForMultipleSelection()
 	if err != nil {
 		return nil, fmt.Errorf(
 			"could not open file dialog: %w", err,
@@ -73,18 +93,15 @@ func (fe *FrontendUtil) PlaylistFilePicker() (
 // files (JPEG, PNG).  Returns the selected file path, or empty
 // string if the user cancelled.
 func (fe *FrontendUtil) ImageFilePicker() (string, error) {
-	file, err := runtime.OpenFileDialog(
-		fe.ctx,
-		runtime.OpenDialogOptions{
-			Title: "Select Cover Art",
-			Filters: []runtime.FileFilter{
-				{
-					DisplayName: "Image Files (*.jpg, *.jpeg, *.png)",
-					Pattern:     "*.jpg;*.jpeg;*.png",
-				},
-			},
-		},
-	)
+	app := application.Get()
+	if app == nil {
+		return "", ErrNoRuntime
+	}
+
+	file, err := app.Dialog.OpenFile().
+		SetTitle("Select Cover Art").
+		AddFilter("Image Files (*.jpg, *.jpeg, *.png)", "*.jpg;*.jpeg;*.png").
+		PromptForSingleSelection()
 	if err != nil {
 		return "", fmt.Errorf("could not open file dialog: %w", err)
 	}

@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/wailsapp/wails/v3/pkg/application"
+
 	"yellowjacket/backend/database"
 	"yellowjacket/backend/events"
 )
@@ -76,10 +78,17 @@ func NewTagWriter(
 	}
 }
 
-// SetContext stores the Wails runtime context for event emission.
-// Called during the two-phase init pattern in OnStartup.
-func (tw *TagWriter) SetContext(ctx context.Context) {
+// ServiceStartup is v3's service lifecycle hook: it runs once the
+// runtime exists, and ctx is cancelled when the app shuts down.  It
+// replaces v2's SetContext, which had to be called by hand from
+// OnStartup and was exported, so it was also bound to the frontend.
+func (tw *TagWriter) ServiceStartup(
+	ctx context.Context,
+	_ application.ServiceOptions,
+) error {
 	tw.ctx = ctx
+
+	return nil
 }
 
 // WriteTrackTags is the single entry point for writing metadata to

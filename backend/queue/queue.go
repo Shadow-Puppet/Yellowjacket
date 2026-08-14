@@ -8,6 +8,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/wailsapp/wails/v3/pkg/application"
+
 	"yellowjacket/backend/coverart"
 	"yellowjacket/backend/database"
 	"yellowjacket/backend/profiling"
@@ -198,12 +200,20 @@ func NewQueue(logger *slog.Logger, db *database.DB) *Queue {
 	}
 }
 
-// SetContext sets the Wails runtime context for event emission.
-func (q *Queue) SetContext(ctx context.Context) {
+// ServiceStartup is v3's service lifecycle hook: it runs once the
+// runtime exists, and ctx is cancelled when the app shuts down.  It
+// replaces v2's SetContext, which had to be called by hand from
+// OnStartup and was exported, so it was also bound to the frontend.
+func (q *Queue) ServiceStartup(
+	ctx context.Context,
+	_ application.ServiceOptions,
+) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
 	q.ctx = ctx
+
+	return nil
 }
 
 // SetPlayer provides the queue with a reference to the player for auto-advance.

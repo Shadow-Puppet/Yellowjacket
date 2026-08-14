@@ -16,6 +16,13 @@ var allowedEmitters = map[string]bool{
 // TestNoDirectRuntimeEmits fails if anything outside backend/events
 // calls the Wails runtime's event emitter directly.
 //
+// The original reason was survival: v2's runtime.EventsEmit called
+// log.Fatalf on a context that did not carry the runtime, so a direct
+// call from a background worker could take the process down.  v3's
+// emit takes no context and cannot do that, and the rule is kept for
+// the weaker but still real reason — one emit path is what lets
+// emitStatus drop an unchanged payload for every caller at once.
+//
 // This is a text walk rather than a golangci-lint rule because
 // golangci-lint runs once per build configuration, so a call in an
 // indexbuild- or dev-tagged file is only seen by the pass that compiles
@@ -23,10 +30,11 @@ var allowedEmitters = map[string]bool{
 // entirely.
 func TestNoDirectRuntimeEmits(t *testing.T) {
 	// A selector, not a bare name: built at runtime so this file does
-	// not match itself, and qualified so it catches every import alias
-	// the tree uses (plain runtime., and wailsruntime.) without also
-	// matching an identifier that merely ends in the same letters.
-	needle := ".Events" + "Emit("
+	// not match itself, and qualified so it catches the call however
+	// the application value is named (app.Event.Emit, a.Event.Emit,
+	// application.Get().Event.Emit) without matching an identifier
+	// that merely ends in the same letters.
+	needle := ".Event" + ".Emit("
 
 	root := filepath.Join("..", "..")
 

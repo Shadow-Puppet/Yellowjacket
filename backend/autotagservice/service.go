@@ -19,6 +19,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/wailsapp/wails/v3/pkg/application"
+
 	"yellowjacket/backend/autotag"
 	"yellowjacket/backend/database"
 	"yellowjacket/backend/database/sql/sqlcgen"
@@ -199,13 +201,20 @@ func NewService(
 	}
 }
 
-// SetContext stores the Wails runtime context (called from
-// OnStartup).
-func (s *Service) SetContext(ctx context.Context) {
+// ServiceStartup is v3's service lifecycle hook: it runs once the
+// runtime exists, and ctx is cancelled when the app shuts down.  It
+// replaces v2's SetContext, which had to be called by hand from
+// OnStartup and was exported, so it was also bound to the frontend.
+func (s *Service) ServiceStartup(
+	ctx context.Context,
+	_ application.ServiceOptions,
+) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.ctx = ctx
+
+	return nil
 }
 
 // emitEvent emits a Wails runtime event under the service lock, which

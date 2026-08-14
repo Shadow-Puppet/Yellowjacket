@@ -15,6 +15,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/wailsapp/wails/v3/pkg/application"
+
 	"yellowjacket/backend/coverart"
 	"yellowjacket/backend/database"
 	"yellowjacket/backend/database/sql/sqlcgen"
@@ -161,15 +163,21 @@ func (s *Service) SetFavoritesConfig(
 	s.favoritesConf = provider
 }
 
-// SetContext sets the Wails runtime context and runs the
-// one-time startup migration to bootstrap M3U8 files for
-// existing playlists.
-func (s *Service) SetContext(ctx context.Context) {
+// ServiceStartup is v3's service lifecycle hook: it runs once the
+// runtime exists, and ctx is cancelled when the app shuts down.  It
+// replaces v2's SetContext, which had to be called by hand from
+// OnStartup and was exported, so it was also bound to the frontend.
+func (s *Service) ServiceStartup(
+	ctx context.Context,
+	_ application.ServiceOptions,
+) error {
 	s.mu.Lock()
 	s.ctx = ctx
 	s.mu.Unlock()
 
 	s.migrateExistingPlaylists()
+
+	return nil
 }
 
 // GetAllPlaylists returns all playlists ordered by most recently

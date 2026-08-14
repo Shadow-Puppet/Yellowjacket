@@ -5,11 +5,11 @@ import (
 	"errors"
 	"log/slog"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
-// ErrNoRuntime is returned by Deliver when the context carries neither
-// a test Sink nor a live Wails runtime, so the event went nowhere.
+// ErrNoRuntime is returned by Deliver when there is neither a test Sink
+// in the context nor a running application, so the event went nowhere.
 var ErrNoRuntime = errors.New(
 	"no Wails runtime or event sink in context",
 )
@@ -46,14 +46,16 @@ func sinkFrom(ctx context.Context) Sink {
 // Emit publishes a Wails event, tolerating any context.
 //
 // This is the only supported way to emit an event: nothing outside this
-// package may call runtime.EventsEmit, which TestNoDirectEventsEmit
-// enforces.
+// package may call app.Event.Emit, which TestNoDirectRuntimeEmits
+// enforces.  That rule outlived its original reason — v2's
+// runtime.EventsEmit called log.Fatalf on a context that did not carry
+// the runtime, taking the process down from any background worker —
+// and is kept because one emit path is what keeps emitStatus-style
+// deduplication honest.
 //
-// runtime.EventsEmit calls log.Fatalf when the context is nil or lacks
-// the runtime's "events" value, terminating the process rather than
-// returning an error.  Background workers that outlive a context, and
-// any test that constructs a service directly, both hit that path — so
-// an event with nowhere to go is dropped and logged here instead.
+// The context is no longer a delivery mechanism: v3's emit takes none.
+// It stays because WithSink travels in it, which is what makes a
+// service that emits events testable in-process.
 func Emit(ctx context.Context, name string, data ...any) {
 	if err := Deliver(ctx, name, data...); err != nil {
 		slog.Default().Debug(
@@ -70,21 +72,26 @@ func Emit(ctx context.Context, name string, data ...any) {
 //
 // Ordinary emitters want Emit.
 func Deliver(ctx context.Context, name string, data ...any) error {
-	if ctx == nil {
+	// A nil context cannot carry a sink, but it is no longer a reason
+	// not to deliver: v3 emits through the application, not the context.
+	if ctx != nil {
+		if sink := sinkFrom(ctx); sink != nil {
+			sink.Emit(name, data...)
+
+			return nil
+		}
+	}
+
+	// application.Get() returns nil when no app is running — under test,
+	// before Run, and after shutdown.  It does not terminate the
+	// process, which is what the v2 probe of the private "events"
+	// context key existed to avoid.
+	app := application.Get()
+	if app == nil {
 		return ErrNoRuntime
 	}
 
-	if sink := sinkFrom(ctx); sink != nil {
-		sink.Emit(name, data...)
-
-		return nil
-	}
-
-	if ctx.Value("events") == nil {
-		return ErrNoRuntime
-	}
-
-	runtime.EventsEmit(ctx, name, data...)
+	app.Event.Emit(name, data...)
 
 	return nil
 }

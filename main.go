@@ -8,14 +8,12 @@ import (
 	"strings"
 
 	"github.com/golang-cz/devslog"
-	"github.com/wailsapp/wails/v2"
-	"github.com/wailsapp/wails/v2/pkg/options"
-	"github.com/wailsapp/wails/v2/pkg/options/linux"
+	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 
 	"yellowjacket/backend"
 	"yellowjacket/backend/assets"
 	"yellowjacket/backend/config"
-	"yellowjacket/backend/logging"
 	"yellowjacket/backend/profiling"
 	"yellowjacket/internal/dev"
 )
@@ -69,32 +67,51 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Create application with options
 	winCfg := yjApp.WindowConfig()
 
-	err = wails.Run(&options.App{
-		Title:  "yellowjacket",
-		Width:  winCfg.Width,
-		Height: winCfg.Height,
-		Logger: logging.NewLogger(
-			sLogger,
-			[]string{},
-		),
-		AssetServer:      assetHandler.Options,
-		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
-		OnStartup:        yjApp.OnStartup,
-		OnDomReady:       yjApp.OnDomReady,
-		OnBeforeClose:    yjApp.OnBeforeClose,
-		OnShutdown:       yjApp.OnShutdown,
-		Bind:             yjApp.FEBindings,
+	app := application.New(application.Options{
+		Name:        "yellowjacket",
+		Description: "A cross-platform desktop music player",
+		Services:    yjApp.Services,
+		Assets:      assetHandler.Options,
+		// v3 logs through slog directly, so v2's logger.Logger adapter
+		// (backend/logging) is gone rather than ported.
+		Logger:     sLogger,
+		ShouldQuit: yjApp.ShouldQuit,
+		OnShutdown: yjApp.OnShutdown,
+	})
+
+	// The services' own ServiceStartup hooks have run by the time this
+	// fires; what is left is the wiring between them.
+	app.Event.OnApplicationEvent(
+		events.Common.ApplicationStarted,
+		func(*application.ApplicationEvent) {
+			yjApp.OnStartup(app.Context())
+			yjApp.OnDomReady(app.Context())
+		},
+	)
+
+	window := app.Window.NewWithOptions(application.WebviewWindowOptions{
+		Title:            "yellowjacket",
+		Width:            winCfg.Width,
+		Height:           winCfg.Height,
 		MinWidth:         config.MinWidth,
 		MinHeight:        config.MinHeight,
-		MaxWidth:         0,
-		MaxHeight:        0,
-		Linux: &linux.Options{
-			WebviewGpuPolicy: linux.WebviewGpuPolicyAlways,
+		BackgroundColour: application.NewRGB(27, 38, 54),
+		URL:              "/",
+		Linux: application.LinuxWindow{
+			WebviewGpuPolicy: application.WebviewGpuPolicyAlways,
 		},
 	})
+
+	// The window's size has to be read while the window still exists,
+	// which OnShutdown is too late for.
+	window.OnWindowEvent(
+		events.Common.WindowClosing,
+		func(*application.WindowEvent) { yjApp.SaveWindowState(window) },
+	)
+
+	err = app.Run()
 
 	stopProfiler()
 

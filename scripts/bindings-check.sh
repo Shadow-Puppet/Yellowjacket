@@ -23,7 +23,7 @@ if [ -n "$(git status --porcelain -- "$TARGET")" ]; then
 	exit 1
 fi
 
-go tool wails generate module -tags webkit2_41 >/dev/null 2>&1
+go tool wails generate module >/dev/null 2>&1
 
 # `wails generate module` rewrites the three runtime files as 755 every
 # time.  That is not drift, so compare content only.

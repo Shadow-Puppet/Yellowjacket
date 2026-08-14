@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/wailsapp/wails/v3/pkg/application"
+
 	"yellowjacket/backend/events"
 )
 
@@ -28,7 +30,10 @@ func setupRecordedConfig(t *testing.T) (*Config, *events.Recorder) {
 	}
 
 	rec := events.NewRecorder()
-	conf.SetContext(events.WithSink(context.Background(), rec))
+	_ = conf.ServiceStartup(
+		events.WithSink(context.Background(), rec),
+		application.ServiceOptions{},
+	)
 
 	return conf, rec
 }

@@ -6,7 +6,7 @@ pkgdesc="Cross-platform desktop music player — local library, MusicBrainz expl
 arch=('x86_64')
 url="https://git.ljones.me/yonlu/yellowjacket"
 license=('custom')
-depends=('webkit2gtk-4.1' 'gtk3' 'alsa-lib' 'hicolor-icon-theme')
+depends=('webkitgtk-6.0' 'gtk4' 'alsa-lib' 'hicolor-icon-theme')
 makedepends=('go>=1.25' 'nodejs>=22' 'pnpm' 'git')
 options=('!lto')
 
@@ -49,7 +49,7 @@ build() {
   # `go tool wails/sqlc/templ` resolve from the tool directives in go.mod, so no
   # extra CLIs are needed. Wails runs the frontend install+build itself.
   go generate ./...
-  go tool wails build -tags webkit2_41 -clean -trimpath \
+  go tool wails3 build -clean -trimpath \
     -ldflags "-s -w -X 'main.version=v$pkgver' -X 'main.commit=$commit'"
 }
 

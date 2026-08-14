@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/wailsapp/wails/v3/pkg/application"
 	"golang.org/x/sync/errgroup"
 
 	"yellowjacket/backend/autotag"
@@ -183,13 +184,21 @@ func (l *Library) AcquirePipelineLock() { l.pipelineMu.Lock() }
 // ReleasePipelineLock releases the pipeline mutex after a tag write.
 func (l *Library) ReleasePipelineLock() { l.pipelineMu.Unlock() }
 
-// SetContext sets the Wails runtime context and registers event handlers.
-func (l *Library) SetContext(ctx context.Context) {
+// ServiceStartup is v3's service lifecycle hook: it runs once the
+// runtime exists, and ctx is cancelled when the app shuts down.  It
+// replaces v2's SetContext, which had to be called by hand from
+// OnStartup and was exported, so it was also bound to the frontend.
+func (l *Library) ServiceStartup(
+	ctx context.Context,
+	_ application.ServiceOptions,
+) error {
 	l.mu.Lock()
 	l.ctx = ctx
 	l.mu.Unlock()
 
 	l.registerEventHandlers()
+
+	return nil
 }
 
 // emit publishes a Wails event under the library lock, which the

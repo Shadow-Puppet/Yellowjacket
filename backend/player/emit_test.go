@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wailsapp/wails/v3/pkg/application"
+
 	"yellowjacket/backend/events"
 )
 
@@ -17,7 +19,7 @@ func recordedPlayer(t *testing.T) (*Player, *events.Recorder) {
 
 	p := NewPlayer(slog.Default(), nil)
 	rec := events.NewRecorder()
-	p.SetContext(events.WithSink(t.Context(), rec))
+	_ = p.ServiceStartup(events.WithSink(t.Context(), rec), application.ServiceOptions{})
 
 	return p, rec
 }

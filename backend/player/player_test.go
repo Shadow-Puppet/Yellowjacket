@@ -5,6 +5,8 @@ import (
 	"os"
 	"testing"
 
+	"github.com/wailsapp/wails/v3/pkg/application"
+
 	"yellowjacket/internal/testfixtures"
 )
 
@@ -40,7 +42,7 @@ func TestPlayer(t *testing.T) {
 	}
 
 	// SetContext restores persisted state; only works with a real Wails context.
-	p.SetContext(t.Context())
+	_ = p.ServiceStartup(t.Context(), application.ServiceOptions{})
 	t.Logf("initializing player")
 
 	for _, track := range testQueue {

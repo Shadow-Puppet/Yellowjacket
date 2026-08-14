@@ -40,8 +40,7 @@ class Yellowjacket < Formula
     ldflags = "-s -w -X 'main.version=v#{version}' -X 'main.commit=#{commit}'"
 
     system "go", "generate", "./..."
-    system "go", "tool", "wails", "build",
-           "-tags", "webkit2_41",
+    system "go", "tool", "wails3", "build",
            "-clean", "-trimpath",
            "-ldflags", ldflags
 

@@ -10,9 +10,10 @@ import (
 	"log/slog"
 	"net/http"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
-	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 
 	"yellowjacket/backend/assets"
 	"yellowjacket/backend/autotagservice"
@@ -39,7 +40,9 @@ import (
 
 // YellowJacketApp is the main application struct for Wails.
 type YellowJacketApp struct {
-	FEBindings   []any
+	// Services is what v3 binds to the frontend.  Each entry's
+	// ServiceStartup runs before the app-level wiring in OnStartup.
+	Services     []application.Service
 	FrontendUtil *frontendutil.FrontendUtil
 
 	logger        *slog.Logger
@@ -61,6 +64,12 @@ type YellowJacketApp struct {
 	appContext    context.Context
 	appConfig     *config.Config
 	startupErr    error
+
+	// quitAsking guards the one quit-confirmation dialog; quitConfirmed
+	// records that the user already answered "quit anyway", so the
+	// Quit() issued from that callback is not questioned again.
+	quitAsking    atomic.Bool
+	quitConfirmed atomic.Bool
 }
 
 // NewYellowJacketApp creates and initializes the application.
@@ -211,26 +220,31 @@ func NewYellowJacketApp(
 		)
 	}
 
-	yjApp.FEBindings = []any{
-		yjApp.FrontendUtil,
-		yjApp.appConfig,
-		yjApp.library,
-		yjApp.playlist,
-		yjApp.queue,
-		yjApp.player,
-		yjApp.tagWriter,
-		yjApp.explore,
-		yjApp.autotag,
-		jobs.NewService(yjApp.jobs),
-		home.NewService(
+	// application.NewService is generic over a concrete pointer type —
+	// the static analyser that generates bindings reads these calls, so
+	// a []any of the same values would generate nothing.
+	yjApp.Services = []application.Service{
+		application.NewService(yjApp.FrontendUtil),
+		application.NewService(yjApp.appConfig),
+		application.NewService(yjApp.library),
+		application.NewService(yjApp.playlist),
+		application.NewService(yjApp.queue),
+		application.NewService(yjApp.player),
+		application.NewService(yjApp.tagWriter),
+		application.NewService(yjApp.explore),
+		application.NewService(yjApp.autotag),
+		application.NewService(jobs.NewService(yjApp.jobs)),
+		application.NewService(home.NewService(
 			yjApp.logger.WithGroup("home"),
 			yjApp.database,
 			yjApp.library,
-		),
+		)),
 	}
 
 	if yjApp.downloadSvc != nil {
-		yjApp.FEBindings = append(yjApp.FEBindings, yjApp.downloadSvc)
+		yjApp.Services = append(
+			yjApp.Services, application.NewService(yjApp.downloadSvc),
+		)
 	}
 
 	return yjApp, nil
@@ -329,19 +343,18 @@ func (yj *YellowJacketApp) WindowConfig() *config.WindowConfig {
 	return yj.appConfig.Window
 }
 
-// OnStartup initializes components that require the Wails runtime context.
+// OnStartup wires the services to each other once the runtime exists.
+//
+// It is no longer where each service *gets* the context: every bound
+// service implements v3's ServiceStartup, which the runtime calls
+// before this runs.  What is left here is the cross-service wiring —
+// hooks, adapters and the callbacks that make one package drive
+// another — which has no home inside any single service.
 func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 	defer profiling.TimeOp(yj.logger, "app.OnStartup")()
 
-	// initialize anything that needs to use the wails runtime AFTER its been initialized
-	// you CANNOT use the wails runtime during this function
 	yj.appContext = ctx
 
-	// Set context for components that need Wails runtime for events
-	yj.appConfig.SetContext(ctx)
-	yj.FrontendUtil.SetContext(ctx)
-	yj.library.SetContext(ctx)
-	yj.playlist.SetContext(ctx)
 	yj.playlist.EnsureDefaultPlaylist()
 	// Recover playlists that lost tracks from a pre-fix FullRescan.
 	go yj.playlist.RepopulateFromM3U()
@@ -358,14 +371,11 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 		)
 	}
 
-	yj.player.SetContext(ctx)
-	yj.tagWriter.SetContext(ctx)
-	yj.explore.SetContext(ctx)
-	yj.autotag.SetContext(ctx)
+	// The job registry is not a bound service — it is wrapped by
+	// jobs.NewService for that — so it still takes the context by hand.
 	yj.jobs.SetContext(ctx)
 
 	if yj.downloadSvc != nil {
-		yj.downloadSvc.SetContext(ctx)
 		yj.initDownloadRuntime(ctx)
 	}
 
@@ -375,8 +385,6 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 	yj.library.RestorePausedScans()
 	yj.explore.AdoptPausedIndexBuild()
 
-	// Wire queue (created in NewYellowJacketApp for Wails binding)
-	yj.queue.SetContext(ctx)
 	yj.queue.SetPlayer(yj.player)
 	yj.queue.SetFallbackSource(&queueFallbackAdapter{
 		config:   yj.appConfig,
@@ -515,37 +523,32 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 	yj.player.SetMediaControls(yj.mediaControls)
 }
 
-// OnBeforeClose captures window state while the window is still alive,
-// and asks first when quitting would abandon a job that is writing to
-// the user's files.
-//
-// Returning true keeps the window open.  Quitting mid-apply cancels the
-// service context and leaves a folder half-retagged with nothing
-// recording where it stopped (errors.p4), which is the one case worth
-// interrupting a quit for.
-func (yj *YellowJacketApp) OnBeforeClose(ctx context.Context) bool {
-	if yj.confirmQuitDuringWrites(ctx) {
-		return true
+// SaveWindowState captures the window's size while the window is still
+// alive.  It is registered on the WindowClosing event, because at
+// shutdown there is no window left to measure.
+func (yj *YellowJacketApp) SaveWindowState(window application.Window) {
+	if window == nil {
+		return
 	}
 
-	w, h := wailsruntime.WindowGetSize(ctx)
+	w, h := window.Size()
 
 	// Guard against a bogus size clobbering a good saved one.  During
 	// teardown / hot-reload the runtime can report a zero or below-
 	// minimum size; persisting that would shrink the window to the
 	// minimum on next launch.  Keep the previously-saved size instead.
 	if w < config.MinWidth || h < config.MinHeight {
-		yj.logger.Warn("OnBeforeClose: ignoring bogus window size",
+		yj.logger.Warn("window close: ignoring bogus window size",
 			"width", w,
 			"height", h,
 			"kept_width", yj.appConfig.Window.Width,
 			"kept_height", yj.appConfig.Window.Height,
 		)
 
-		return false
+		return
 	}
 
-	yj.logger.Info("OnBeforeClose: saving window state",
+	yj.logger.Info("window close: saving window state",
 		"width", w,
 		"height", h,
 		"accentColor", yj.appConfig.Theme.AccentColor,
@@ -561,39 +564,69 @@ func (yj *YellowJacketApp) OnBeforeClose(ctx context.Context) bool {
 			"err", err,
 		)
 	}
+}
+
+// ShouldQuit answers v3's quit veto: false keeps the app running.
+//
+// Quitting mid-apply cancels the service context and leaves a folder
+// half-retagged with nothing recording where it stopped (errors.p4),
+// which is the one case worth interrupting a quit for.
+//
+// The shape differs from v2's OnBeforeClose because v3's dialog is
+// asynchronous — Show() returns immediately and the answer arrives on
+// a button callback — so this cannot ask and answer in one call.  It
+// vetoes the quit, asks, and quits again from the callback if the user
+// says so.  quitConfirmed is what stops that second Quit() coming
+// straight back here and asking a second time.
+func (yj *YellowJacketApp) ShouldQuit() bool {
+	if yj.quitConfirmed.Load() {
+		return true
+	}
+
+	if yj.autotag == nil || !yj.autotag.WritesInFlight() {
+		return true
+	}
+
+	// A dialog already up must not spawn another on every close attempt.
+	if !yj.quitAsking.CompareAndSwap(false, true) {
+		return false
+	}
+
+	app := application.Get()
+	if app == nil {
+		// No runtime to ask through: never trap the user in the app.
+		return true
+	}
+
+	dialog := app.Dialog.Question()
+	dialog.SetTitle("Tags are still being written")
+	dialog.SetMessage(
+		"YellowJacket is rewriting tags on your files. " +
+			"Quitting now leaves that folder holding a mix of old and " +
+			"new tags.\n\nQuit anyway?",
+	)
+
+	quit := dialog.AddButton("Quit anyway")
+	quit.OnClick(func() {
+		yj.quitConfirmed.Store(true)
+		yj.quitAsking.Store(false)
+		app.Quit()
+	})
+
+	stay := dialog.AddButton("Keep writing")
+	stay.OnClick(func() { yj.quitAsking.Store(false) })
+	stay.SetAsDefault()
+	stay.SetAsCancel()
+
+	dialog.Show()
 
 	return false
 }
 
-// confirmQuitDuringWrites returns true when the user chose to stay.
-// A dialog that cannot be shown is not allowed to trap anyone in the
-// app, so any error here quits.
-func (yj *YellowJacketApp) confirmQuitDuringWrites(ctx context.Context) bool {
-	if yj.autotag == nil || !yj.autotag.WritesInFlight() {
-		return false
-	}
-
-	answer, err := wailsruntime.MessageDialog(ctx, wailsruntime.MessageDialogOptions{
-		Type:  wailsruntime.QuestionDialog,
-		Title: "Tags are still being written",
-		Message: "YellowJacket is rewriting tags on your files. " +
-			"Quitting now leaves that folder holding a mix of old and " +
-			"new tags.\n\nQuit anyway?",
-		Buttons:       []string{"Quit anyway", "Keep writing"},
-		DefaultButton: "Keep writing",
-		CancelButton:  "Keep writing",
-	})
-	if err != nil {
-		yj.logger.Warn("could not ask about quitting mid-write", "err", err)
-
-		return false
-	}
-
-	return answer == "Keep writing" || answer == "No"
-}
-
-// OnShutdown saves player state and cleans up resources before the application exits.
-func (yj *YellowJacketApp) OnShutdown(_ context.Context) {
+// OnShutdown saves player state and cleans up resources before the
+// application exits.  v3 passes no context — the app is going away, so
+// there is nothing left to scope work to.
+func (yj *YellowJacketApp) OnShutdown() {
 	if yj.player != nil {
 		yj.player.SaveState()
 	}
@@ -612,10 +645,17 @@ func (yj *YellowJacketApp) OnShutdown(_ context.Context) {
 // driven by the frontend: once its stores have registered their event
 // listeners, index.ts calls Player.EmitCurrentState() and
 // Queue.EmitCurrentState() via Wails bindings.
-func (yj *YellowJacketApp) OnDomReady(ctx context.Context) {
+func (yj *YellowJacketApp) OnDomReady(_ context.Context) {
 	if yj.startupErr != nil {
 		yj.logger.Error("startup error", "err", yj.startupErr.Error())
-		wailsruntime.Quit(ctx)
+
+		// A startup failure is not a mid-write quit, so go straight out
+		// rather than through the ShouldQuit question.
+		yj.quitConfirmed.Store(true)
+
+		if app := application.Get(); app != nil {
+			app.Quit()
+		}
 
 		return
 	}

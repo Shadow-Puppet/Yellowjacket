@@ -12,7 +12,7 @@
 #
 #   * We run the dev *binary*, not `wails dev`.  app_dev.go parses
 #     -devserver / -assetdir / -loglevel straight from os.Args, so a
-#     `go build -tags "dev webkit2_41"` binary serves the identical
+#     `go build -tags "dev"` binary serves the identical
 #     devserver with no file watcher, no rebuild supervisor and no
 #     reload broadcast: one process, one PID, deterministic startup.
 #
@@ -131,7 +131,7 @@ echo "$YJ_HOME" >"$HOME_FILE"
 if [ "$BUILD" = 1 ]; then
 	echo "dev-headless: building frontend + dev binary..."
 	(cd frontend && pnpm install --silent && pnpm build >/dev/null)
-	go build -tags "dev webkit2_41" -o "$BIN" .
+	go build -tags "dev" -o "$BIN" .
 fi
 
 if [ ! -x "$BIN" ]; then
