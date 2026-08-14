@@ -26,6 +26,7 @@ import { EventsOn } from '@runtime/runtime';
 import { Events } from '../../events';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '../library-status-indicator/library-status-indicator.js';
+import { libraryStatusFor } from '@utils/library-status';
 import type { LibraryStatus } from '../library-status-indicator/library-status-indicator.js';
 import '../catalog-scope-notice/catalog-scope-notice.js';
 import type { CatalogScope } from '../catalog-scope-notice/catalog-scope-notice.js';
@@ -622,6 +623,36 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
             .track-row.unowned .track-title {
                 color: var(--yj-text-secondary, #b3b3b3);
                 font-weight: 400;
+            }
+
+            /* The request control is only offered where there is
+             * something to request, and only when the row is being
+             * attended to — a column of plus signs down a mostly-owned
+             * album is the clutter the green ticks were.
+             *
+             * Hidden with opacity, never display:none or visibility,
+             * so it keeps its place in the layout (rows do not reflow
+             * as the pointer moves) and stays in the tab order and the
+             * accessibility tree.  focus-within is what makes it
+             * reachable without a mouse: tabbing to the button reveals
+             * it, and the row's own focus reveals it before you get
+             * there. */
+            .track-row .track-request {
+                flex-shrink: 0;
+                opacity: 0;
+                transition: opacity 0.12s ease;
+            }
+
+            .track-row:hover .track-request,
+            .track-row:focus-within .track-request,
+            .track-row .track-request:focus-visible {
+                opacity: 1;
+            }
+
+            @media (prefers-reduced-motion: reduce) {
+                .track-row .track-request {
+                    transition: none;
+                }
             }
         `,
     ];
@@ -1902,7 +1933,7 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
      *   - cachedAlbums has MBID match → owned
      *   - any selected version has    → owned (covers local-only albums
      *     a track marked inLibrary       where releaseGroup may be null)
-     *   - else                        → not owned
+     *   - else                        → whatever the request list says
      *
      * Four different claims of decreasing confidence, OR'd together and
      * reported as one tick — the last of which fires when a *single*
@@ -1911,8 +1942,9 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
      * actions key off; this stays as it was, because the indicator's
      * job is "is any of this yours" and that is what it answers.
      *
-     * No queued state for now — that's reserved for future
-     * download-client integration.
+     * When none of them hold the answer is not automatically "no":
+     * the album may be on the request list, which the button directly
+     * below this badge has reported as "Wanted" all along.
      */
     /**
      * What the badge beside the album title shows.
@@ -1934,7 +1966,7 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
         return 'in-library';
     }
 
-    private albumLibraryStatus(): 'in-library' | 'not-in-library' {
+    private albumLibraryStatus(): LibraryStatus {
         if (this.localAlbumId > 0) return 'in-library';
 
         if (this.releaseGroup?.inLibrary) return 'in-library';
@@ -1956,7 +1988,11 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
             }
         }
 
-        return 'not-in-library';
+        // None of the five ownership claims held, so the badge falls
+        // through to the one thing this page already knew and never
+        // said: whether the album is on the request list. The button
+        // below it has read "Wanted" all along.
+        return libraryStatusFor(false, this.releaseGroupMBID);
     }
 
     /**
@@ -2465,9 +2501,14 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
                 appearance=${this.isRequested ? 'filled' : 'outlined'}
                 @click=${() => void this.toggleRequested(request?.id)}
             >
+                <!-- The requested state used to ask for bookmark-check,
+                     which is a Font Awesome *Pro* name: never bundled,
+                     so this button has rendered the missing-icon
+                     fallback in that state ever since. Outline and solid
+                     of the same Free glyph carry the toggle instead. -->
                 <wa-icon
                     slot="start"
-                    name=${this.isRequested ? 'bookmark-check' : 'bookmark'}
+                    name=${this.isRequested ? 'solid/bookmark' : 'regular/bookmark'}
                 ></wa-icon>
                 ${this.isRequested ? 'Wanted' : 'Want this'}
             </wa-button>
@@ -2906,6 +2947,21 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
                                                 track.length,
                                             )}</span
                                         >
+                                        ${track.inLibrary
+                                            ? nothing
+                                            : html`
+                                                  <library-status-indicator
+                                                      class="track-request"
+                                                      status=${libraryStatusFor(
+                                                          false,
+                                                          track.mbid,
+                                                      )}
+                                                      entity-type="track"
+                                                      label=${track.title}
+                                                      request-mbid=${track.mbid}
+                                                      request-artist=${this.artistName}
+                                                  ></library-status-indicator>
+                                              `}
                                     </div>
                                 `,
                             )}

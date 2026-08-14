@@ -175,6 +175,55 @@ describe('library store: caching', () => {
     expect(calls()).toEqual([]);
   });
 
+  /**
+   * Removing tracks is the same bargain the play count makes, one
+   * collection wider: the event carries the paths so the tracks array
+   * — the expensive one — is patched rather than refetched, while the
+   * album/artist/genre summaries, whose counts really did change, are
+   * dropped and reloaded.
+   */
+  describe('tracks removed from the library', () => {
+    beforeEach(async () => {
+      emit(Events.TracksRemovedFromLibrary, {
+        filePaths: ['/a.mp3'],
+        count: 1,
+      });
+      await flush();
+    });
+
+    it('does not refetch the tracks', () => {
+      expect(calls('library.Library.GetAllTracks')).toHaveLength(0);
+    });
+
+    it('splices the removed track out in place', () => {
+      expect(libraryStore.getCachedTracks()?.map((t) => t.FilePath)).toEqual([
+        '/b.mp3',
+      ]);
+    });
+
+    it('reloads the summaries, whose counts changed', () => {
+      expect(
+        [
+          'library.Library.GetAllAlbums',
+          'library.Library.GetAllArtists',
+          'library.Library.GetAllGenresWithCounts',
+        ].map((path) => calls(path).length),
+      ).toEqual([1, 1, 1]);
+    });
+  });
+
+  it('ignores a removal naming a track it does not hold, without dropping the array', async () => {
+    const before = libraryStore.getCachedTracks();
+
+    emit(Events.TracksRemovedFromLibrary, {
+      filePaths: ['/not-in-this-library.mp3'],
+      count: 1,
+    });
+    await flush();
+
+    expect(libraryStore.getCachedTracks()).toBe(before);
+  });
+
   it('resets scroll positions on invalidation, so a shorter list is not scrolled past its end', async () => {
     libraryStore.setScrollPosition('albums', 4200);
     emit(Events.LibraryScanComplete);

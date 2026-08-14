@@ -1,4 +1,6 @@
 import { avatarBackground } from '@utils/avatar-color';
+import { libraryStatusFor } from '@utils/library-status';
+import { downloadStore } from '@store/download-store';
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state, query as litQuery } from 'lit/decorators.js';
 import { classMap } from 'lit/directives/class-map.js';
@@ -786,6 +788,19 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
         this.cancelIndexStatus = EventsOn(Events.IndexStatusChanged, () => {
             if (this.shelves?.state !== 'ready') void this.loadShelves();
         });
+
+        // The badges on every result card say whether something is
+        // already requested, which a background reconcile pass changes
+        // without this page doing anything. Registered `whileActive`
+        // rather than on connect: this view is cached and never
+        // unmounts, so a connect-time subscription would run for the
+        // life of the session from pages it is not on.
+        //
+        // `init()` is four fetches, and it happens on arrival for the
+        // same reason `loadShelves()` does — a user who never opens
+        // Explore should not pay for it.
+        this.whileActive(downloadStore.subscribe(() => this.requestUpdate()));
+        void downloadStore.init().then(() => this.requestUpdate());
     }
 
     /** A debounced search that lands after the user has left the page is
@@ -1816,6 +1831,9 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
                 <wa-icon class="search-icon" name="magnifying-glass"></wa-icon>
                 <input
                     type="text"
+                    aria-label=${this.searchMode === 'lyrics'
+                        ? 'Search the catalog by a lyric'
+                        : 'Search the catalog'}
                     placeholder=${placeholder}
                     .value=${this.searchQuery}
                     @input=${this.handleInput}
@@ -2146,9 +2164,11 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
                                         ${year ? html`<span>${year}</span>` : nothing}
                                     </div>
                                     <library-status-indicator
-                                        status=${this.libraryMBIDs.has(rg.mbid) || rg.inLibrary ? 'in-library' : 'not-in-library'}
+                                        status=${libraryStatusFor(this.libraryMBIDs.has(rg.mbid) || Boolean(rg.inLibrary), rg.mbid)}
                                         entity-type="album"
                                         label=${rg.title}
+                                        request-mbid=${rg.mbid}
+                                        request-artist=${rg.artistCredit ?? ''}
                                     ></library-status-indicator>
                                 </div>
                             </div>
@@ -2207,9 +2227,11 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
                                         : nothing}
                                 </div>
                                 <library-status-indicator
-                                    status=${this.libraryMBIDs.has(r.mbid) || r.inLibrary ? 'in-library' : 'not-in-library'}
+                                    status=${libraryStatusFor(this.libraryMBIDs.has(r.mbid) || Boolean(r.inLibrary), r.mbid)}
                                     entity-type="track"
                                     label=${r.title}
+                                    request-mbid=${r.mbid}
+                                    request-artist=${r.artistCredit ?? ''}
                                 ></library-status-indicator>
                             </div>
                         `,

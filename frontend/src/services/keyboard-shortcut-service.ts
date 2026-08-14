@@ -438,9 +438,14 @@ async function dispatch(action: string): Promise<void> {
             );
             break;
 
-        // No `tracklist.delete`: it dispatched an event nothing
-        // listened for, from a binding Settings advertised as
-        // configurable.  See backend/shortcuts/config.go.
+        // `tracklist.delete` opens the confirmation and nothing else:
+        // the key is a request, not an action.  See
+        // backend/shortcuts/config.go.
+        case 'tracklist.delete':
+            document.dispatchEvent(
+                new CustomEvent('shortcut:tracklist-delete'),
+            );
+            break;
 
         // Panel-specific: autotag review.  The view listens for these
         // while it is the view on screen, and for nothing while it is

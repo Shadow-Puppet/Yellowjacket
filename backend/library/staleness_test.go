@@ -130,7 +130,7 @@ func TestSurveyAudioFiles(t *testing.T) {
 	// the result, or every artwork change would trigger a rescan.
 	setModTime(t, filepath.Join(dir, "cover.jpg"), time.Now())
 
-	count, maxMod := surveyAudioFiles(dir)
+	count, maxMod := surveyAudioFiles(dir, nil)
 
 	if count != 2 {
 		t.Errorf("count = %d, want 2", count)
@@ -145,7 +145,7 @@ func TestSurveyAudioFiles(t *testing.T) {
 	touched := time.Now()
 	setModTime(t, filepath.Join(dir, "a.mp3"), touched)
 
-	_, afterMod := surveyAudioFiles(dir)
+	_, afterMod := surveyAudioFiles(dir, nil)
 
 	if afterMod != touched.Unix() {
 		t.Errorf(
@@ -158,7 +158,7 @@ func TestSurveyAudioFiles(t *testing.T) {
 func TestSurveyAudioFiles_EmptyDir(t *testing.T) {
 	t.Parallel()
 
-	count, maxMod := surveyAudioFiles(t.TempDir())
+	count, maxMod := surveyAudioFiles(t.TempDir(), nil)
 
 	if count != 0 || maxMod != 0 {
 		t.Errorf(

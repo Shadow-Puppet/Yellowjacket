@@ -62,8 +62,8 @@ export function GetArtistImageURL(arg1) {
   return window['go']['explore']['Service']['GetArtistImageURL'](arg1);
 }
 
-export function GetArtistImages(arg1) {
-  return window['go']['explore']['Service']['GetArtistImages'](arg1);
+export function GetArtistImagesCachedPaths(arg1) {
+  return window['go']['explore']['Service']['GetArtistImagesCachedPaths'](arg1);
 }
 
 export function GetArtistMBID(arg1) {
@@ -88,10 +88,6 @@ export function GetIndexStatus() {
 
 export function GetLibrarySimilarArtists(arg1) {
   return window['go']['explore']['Service']['GetLibrarySimilarArtists'](arg1);
-}
-
-export function GetPopularityBatch(arg1) {
-  return window['go']['explore']['Service']['GetPopularityBatch'](arg1);
 }
 
 export function GetThumbnail(arg1, arg2, arg3) {
@@ -196,6 +192,10 @@ export function SearchLocal(arg1) {
 
 export function SearchLyrics(arg1) {
   return window['go']['explore']['Service']['SearchLyrics'](arg1);
+}
+
+export function SetAlbumComplete(arg1) {
+  return window['go']['explore']['Service']['SetAlbumComplete'](arg1);
 }
 
 export function SetContext(arg1) {

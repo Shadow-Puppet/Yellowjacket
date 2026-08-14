@@ -35,7 +35,7 @@ export function GetArtistImageCachedPath(arg1:string):Promise<string>;
 
 export function GetArtistImageURL(arg1:string):Promise<string>;
 
-export function GetArtistImages(arg1:Array<string>):Promise<Record<string, string>>;
+export function GetArtistImagesCachedPaths(arg1:Array<string>):Promise<Record<string, string>>;
 
 export function GetArtistMBID(arg1:string):Promise<string>;
 
@@ -48,8 +48,6 @@ export function GetExploreShelves():Promise<explore.ShelfPage>;
 export function GetIndexStatus():Promise<explore.IndexStatus>;
 
 export function GetLibrarySimilarArtists(arg1:string):Promise<Array<explore.LBSimilarArtist>>;
-
-export function GetPopularityBatch(arg1:Array<string>):Promise<Record<string, explore.PersonalizationResult>>;
 
 export function GetThumbnail(arg1:string,arg2:string,arg3:string):Promise<string>;
 
@@ -102,6 +100,8 @@ export function ResolveReleaseGroupMBIDs(arg1:Array<string>):Promise<Record<stri
 export function SearchLocal(arg1:string):Promise<explore.MBSearchResult>;
 
 export function SearchLyrics(arg1:string):Promise<Array<explore.LyricsResult>>;
+
+export function SetAlbumComplete(arg1:explore.AlbumCompleteFunc):Promise<void>;
 
 export function SetContext(arg1:context.Context):Promise<void>;
 

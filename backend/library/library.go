@@ -334,7 +334,13 @@ func (l *Library) scanInternal(
 	// --- Pre-walk: count audio files for progress reporting ---
 	emitProgress(mkProgress("counting", 0, 0, 0, 0, 0))
 
-	totalFiles := countAudioFiles(basePath)
+	// Paths the user has removed from the library.  Loaded once per
+	// scan: the walk consults it per file, and the counts above and
+	// below must agree with it or the progress bar and the soft scan
+	// both describe a library that is not the one being built.
+	excluded := l.excludedPathSet(libraryID)
+
+	totalFiles := countAudioFiles(basePath, excluded)
 
 	l.logger.Debug(
 		"pre-walk file count complete",
@@ -446,6 +452,20 @@ func (l *Library) scanInternal(
 
 				fileType, isSupportedAudioFile := metadata.GetSupportedFileType(fileExt)
 				if !isSupportedAudioFile {
+					return nil
+				}
+
+				// The user removed this path from the library.  Leaving
+				// it out of existingPaths' LoadAndDelete as well is
+				// deliberate: if a row somehow exists for an excluded
+				// path, orphan cleanup below deletes it, which is the
+				// state the user asked for.
+				if isExcluded(excluded, absoluteFilePath) {
+					l.logger.Debug(
+						"skipping excluded path",
+						"path", absoluteFilePath,
+					)
+
 					return nil
 				}
 
@@ -1217,20 +1237,26 @@ func (l *Library) pruneOrphanedMetadata() {
 // countAudioFiles performs a fast walk of the library directory,
 // counting only files with supported audio extensions.  No per-file
 // I/O is performed — this reads only directory entries.
-func countAudioFiles(basePath string) int64 {
+func countAudioFiles(basePath string, excluded map[string]struct{}) int64 {
 	var count int64
 
 	_ = fs.WalkDir(
 		os.DirFS(basePath), ".",
-		func(_ string, d fs.DirEntry, err error) error {
+		func(path string, d fs.DirEntry, err error) error {
 			if err != nil || d.IsDir() {
 				return nil
 			}
 
 			ext := filepath.Ext(d.Name())
-			if _, ok := metadata.GetSupportedFileType(ext); ok {
-				count++
+			if _, ok := metadata.GetSupportedFileType(ext); !ok {
+				return nil
 			}
+
+			if isExcluded(excluded, filepath.Join(basePath, path)) {
+				return nil
+			}
+
+			count++
 
 			return nil
 		},
@@ -1248,16 +1274,31 @@ func countAudioFiles(basePath string) int64 {
 // Unlike countAudioFiles this stats every entry, so it is the more
 // expensive of the two walks.  Only the startup soft scan uses it —
 // the in-scan progress total does not need mtimes.
-func surveyAudioFiles(basePath string) (count, maxModTime int64) {
+//
+// Both walks take the library's excluded paths and skip them, because
+// both answer "how many files would a scan import", not "how many
+// files are there".
+func surveyAudioFiles(
+	basePath string,
+	excluded map[string]struct{},
+) (count, maxModTime int64) {
 	_ = fs.WalkDir(
 		os.DirFS(basePath), ".",
-		func(_ string, d fs.DirEntry, err error) error {
+		func(path string, d fs.DirEntry, err error) error {
 			if err != nil || d.IsDir() {
 				return nil
 			}
 
 			ext := filepath.Ext(d.Name())
 			if _, ok := metadata.GetSupportedFileType(ext); !ok {
+				return nil
+			}
+
+			// An excluded path is not a file this scan would import,
+			// so it must not be counted: the soft scan compares this
+			// count against the database's, and a permanent
+			// disagreement queues a full scan on every launch.
+			if isExcluded(excluded, filepath.Join(basePath, path)) {
 				return nil
 			}
 

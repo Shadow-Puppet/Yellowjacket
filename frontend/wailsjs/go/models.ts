@@ -1780,6 +1780,20 @@ export namespace library {
 	        this.queueItemCount = source["queueItemCount"];
 	    }
 	}
+	export class RemovalResult {
+	    tracksRemoved: number;
+	    pathsExcluded: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new RemovalResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.tracksRemoved = source["tracksRemoved"];
+	        this.pathsExcluded = source["pathsExcluded"];
+	    }
+	}
 	export class RemovalSummary {
 	    tracksDeleted: number;
 	    artistsRemoved: number;

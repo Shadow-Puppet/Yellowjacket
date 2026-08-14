@@ -240,6 +240,14 @@ func TestAuthoredCascadesAreDeliberate(t *testing.T) {
 		// unsubscribing from an artist must stop the albums it queued
 		// on the user's behalf.
 		"download_requests": true,
+
+		// An exclusion says "do not import this path into library 3".
+		// Remove that library and no scan will ever visit the path
+		// again, so the row has nothing left to exclude it from — and
+		// the data it protects is the *absence* of a row, which the
+		// library removal has already achieved for everything.  Adding
+		// the library back is the user asking to import it afresh.
+		"excluded_paths": true,
 	}
 
 	for _, entry := range datamap.ByKind(datamap.Authored) {

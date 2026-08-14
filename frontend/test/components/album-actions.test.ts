@@ -182,10 +182,26 @@ describe('a track the library does not have', () => {
     expect(rows[11]?.getAttribute('aria-label')).toContain('not in your library');
   });
 
-  it('no longer marks the owned ones with a badge', async () => {
+  /**
+   * The badge is only on rows that can act on it. An owned track has
+   * nothing to request, so it carries no mark at all — the undimmed row
+   * already says it is yours, which is what retired the green tick.
+   * An unowned one keeps the badge, because it is now a request
+   * control rather than a decoration, revealed on hover or focus so a
+   * mostly-owned album is not a column of plus signs.
+   */
+  it('marks only the rows with something left to ask for', async () => {
     const el = await withVersion(3, 12);
+    const rows = shadowAll(el, '.track-row');
 
-    expect(shadowAll(el, '.track-row library-status-indicator')).toHaveLength(0);
+    const badgeIn = (row: Element) =>
+      row.querySelector('library-status-indicator');
+
+    expect(badgeIn(rows[0]!)).toBeNull();
+    expect(badgeIn(rows[11]!)).not.toBeNull();
+    expect(
+      shadowAll(el, '.track-row library-status-indicator'),
+    ).toHaveLength(9);
     expect(shadow(el, '.tracklist-legend')).toBeNull();
   });
 });

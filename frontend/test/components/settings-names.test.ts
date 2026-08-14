@@ -9,15 +9,20 @@
  * checkboxes. In each case a `<label>` sat right beside the control
  * with nothing associating the two.
  *
- * Two of the fixes here are about a name that exists and does not
+ * Three of the fixes here are about a name that *exists* and does not
  * identify anything, which is `a11y.32`'s complaint one page over:
- * three shortcut buttons announced themselves as "S", and thirty-six
- * column arrows as "Move up" or "Move down".
+ * three shortcut buttons announced themselves as "S", thirty-six column
+ * arrows as "Move up" or "Move down", and — `a11y.26`, the audit's own
+ * finding — Explore's search box by a placeholder that disappears the
+ * moment anyone types into it. That last one is why the finding
+ * survived four phases: a placeholder is an accname fallback, so the
+ * AX sweep reported the view clean.
  */
 import { describe, expect, it } from 'vitest';
 
 import '@components/config-page/config-field';
 import '@components/config-page/shortcut-capture';
+import '@components/explore-view/explore-view';
 import { fixture, shadow } from '@test/support/render';
 
 /** What the `<label>` in this shadow root actually points at. */
@@ -112,5 +117,22 @@ describe('a shortcut button says what it binds', () => {
 
     expect(shadow(el, '.reset-btn')?.getAttribute('aria-label'))
       .toBe('Reset Next Track to N');
+  });
+});
+
+describe('a search box is labelled by more than its placeholder', () => {
+  it('names the catalog search, which loses its placeholder on typing', async () => {
+    const el = await fixture('explore-view');
+
+    await el.updateComplete;
+
+    // `a11y.26`. A placeholder *is* an accname fallback, so this box
+    // was never unnamed and the AX sweep reported the view clean —
+    // which is why the finding survived four phases. It is a weak name:
+    // it disappears the moment the user types, and it is the only
+    // thing distinguishing catalog search from lyric search.
+    const input = shadow(el, '.search-container input');
+
+    expect(input?.getAttribute('aria-label')).toBe('Search the catalog');
   });
 });

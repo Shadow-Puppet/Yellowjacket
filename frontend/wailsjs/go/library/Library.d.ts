@@ -73,6 +73,8 @@ export function QueuedLibraryNames():Promise<Array<string>>;
 
 export function ReleasePipelineLock():Promise<void>;
 
+export function RemoveFromLibrary(arg1:Array<string>):Promise<library.RemovalResult>;
+
 export function RemoveLibrary(arg1:number):Promise<library.RemovalSummary>;
 
 export function RenameLibrary(arg1:number,arg2:string):Promise<void>;

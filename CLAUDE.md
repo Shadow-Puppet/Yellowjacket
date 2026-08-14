@@ -130,7 +130,7 @@ meaningless against the seed's one empty playlist, so it builds ten
 It wraps every bound Go method, so "did that refetch the library" is a
 fact rather than an inference. It is not a spec and does not run in CI.
 
-**The cheapest tier needs none of that.** `make ui-test` runs 480
+**The cheapest tier needs none of that.** `make ui-test` runs 672
 Vitest tests in a real Chromium in ~2 s with no Wails, no backend, no
 seeded library and no virtual display, because `frontend/wailsjs/` is a
 pure passthrough to `window.go` / `window.runtime` and
@@ -156,7 +156,7 @@ See `.planning/plans/completed/005-agent-development-harness.md`.
 **Backend packages** (under `backend/`):
 - `player` — Audio playback via beep. `BufferedStreamer` provides a ring buffer for smooth seeking.
 - `queue` — Track queue with shuffle (Fisher-Yates), repeat modes, auto-advance, and session persistence.
-- `library` — Concurrent library scanning, metadata extraction, cover art deduplication, incremental rescan.
+- `library` — Concurrent library scanning, metadata extraction, cover art deduplication, incremental rescan. Also **removal**, below.
 - `database` — SQLite via pure-Go driver. Schema in `database/sql/schemas/`, queries in `database/sql/queries/`. **sqlc** generates Go code into `database/sql/sqlcgen/` — never edit that directory by hand.
 
   **Schema changes need two things, not one.** `sql/schemas/*.sql` is
@@ -212,6 +212,20 @@ See `.planning/plans/completed/005-agent-development-harness.md`.
     `TestNoWritesOnTheReadPool` walks the tree for it, in the same
     spirit as `TestNoDirectRuntimeEmits` and for the same reason — a
     lint pass only sees one build configuration.
+  - **A new table needs one file, not two.** The two-file rule is
+    about a column added to a table that already exists.
+    `applySchema` runs every file in `sql/schemas/` on *every* open,
+    so a `CREATE TABLE IF NOT EXISTS` reaches an existing install
+    verbatim and a migration for it would be a second description of
+    the same table — which is exactly what the third rule forbids.
+    `excluded_paths` is the worked example, index included, since the
+    column and its index arrive together.
+  - **A new table has to say what kind of data it holds.**
+    `backend/datamap` is a catalogue of every table's Kind and
+    Lifetime, and `TestCatalogCoversSchema` fails on a table missing
+    from it. `TestAuthoredCascadesAreDeliberate` then makes an
+    *authored* table that cascades an explicit, argued exemption —
+    authored data is what a user cannot get back.
   - **Squashing is fine pre-1.0.** While this hasn't shipped to real
     users, periodically folding `sql/migrations/` into `sql/schemas/`
     and deleting the migration files (then wiping your own dev/sandbox
@@ -586,6 +600,76 @@ only ever moved by an arrow key, so a row reached by a click or by Tab
 left it at 0 and `Enter` played the first track in the queue from any
 focused row.
 
+**A name is computed where the role is, and that is rarely where you
+wrote it.** Four surfaces wrote a name somewhere the accessibility tree
+never looked. `wa-slider` puts `role="slider"` on a div in its own
+shadow root pointing `aria-labelledby` at an empty internal `<label>`,
+which outranks the host's `aria-label` — so both sliders computed a
+name of `""`, and `a11y.md` lists both under *what is already correct*.
+The name comes from `label` now, the library's own API, and
+`styles/wa-slider-label.css.ts` hides it: preferred over reaching into
+the shadow root the way `name-dialog.ts` must, because if Web Awesome
+renames the part the label becomes *visible and correctly named*
+rather than silently nameless. Its second rule is load-bearing —
+`#slider` takes an 8px margin the moment a label exists, which grows
+the bar 6px → 14px and moves the transport with it.
+`wa-progress-bar`'s `label` *is* an `aria-label` and is invisible, so
+there it is just the right attribute.
+
+The same thing in the light DOM: `config-field` rendered a `<label>`
+as a **sibling** with no `for`, so **24 of 93 controls on Settings**
+computed an empty name. They use `for`/`id` (a fixed id, safe only
+because each field is its own shadow root) rather than `aria-label`,
+for what it buys beyond the name — the label text becomes a click
+target. And three surfaces are named but identify nothing, which is
+the same fault one step milder: three shortcut buttons announced
+themselves as "S", thirty-six column arrows as "Move up", and every
+queue row's remove button as "Remove from queue".
+
+**Checking any of this needs the browser's own answer, and "0 unnamed"
+is not it.** A `placeholder` is an accname fallback, so an
+`Accessibility.getFullAXTree` sweep of all eleven views reported
+Explore's search box — the audit's own `a11y.26` — as clean. A sweep
+for *empty* names cannot see a *weak* one.
+
+**The shell scrolls sideways and not down.** `body` is
+`overflow-x: auto; overflow-y: hidden`, and both halves are measured.
+Vertically there is nothing to fix: the middle grid row is `1fr` and
+absorbs the 4em bars exactly — at 200% text on an 800×600 window the
+bars go 64 → 128px, the main panel 472 → 344px, and the footer still
+lands on 600. Horizontally the shell is 784px inside a 320px viewport
+(400% page zoom, the width WCAG 1.4.10 names) and 464px of it,
+including the job indicator and the queue button, used to sit behind
+`overflow: hidden`. Keeping the vertical axis fixed is what keeps the
+transport where a desktop player's transport belongs. At every size
+this app promises, no scrollbar appears. Note that `overflow: hidden`
+still permits *programmatic* scrolling, so a probe that sets
+`scrollLeft` passes on the broken build; the spec uses a wheel gesture.
+
+**The playing row is a shape, not a hue.** `track-list` and
+`queue-panel` draw a `::before` triangle in each row's own left
+padding, plus `aria-current` — before, both rows were a background tint
+and a text colour and nothing else (WCAG 1.4.1). It is in the padding
+because the track list's grid columns are computed from the host width,
+so a marker in the flow moves every cell on the playing row and nothing
+else. Both tiers assert it is **absent** on the other rows: a marker
+that renders everywhere satisfies "the playing row has one" for free.
+One thing to know before checking it — a track started from the *track
+list* leaves the queue's `currentIndex` at −1, so the panel has no
+current row at all in that flow, which reads exactly like the marker
+not working.
+
+**The first thing Tab reaches is a skip link.** Two details are
+load-bearing and neither is the link's text. It is `position: absolute`
+in **both** states, because `body` is a grid with named areas and an
+in-flow extra child is auto-placed into one of them. And `<main>`
+carries `tabindex="-1"`, or the fragment moves the scroll, leaves the
+tab sequence exactly where it was, and looks like it worked. The
+subtitle beside it is a `<p>`, which is also what an `hgroup` is
+supposed to contain — and dropping the `<h3>`'s bottom margin shortened
+the flex-centred title block enough to move it down into the 4em bar's
+clip, so `.title` zeroes both margins.
+
 **A selectable grid is a listbox.** The four grids that ctrl/shift-select
 (`artists-view`, `genres-view`, `cover-grid`, and the queue) are
 `role="listbox" aria-multiselectable` over `role="option"` cards, not
@@ -818,21 +902,57 @@ result would silently reorder a queue — and because `cover-grid`'s drag
 cache stores them per album. A `libraryID` of 0 means "every library",
 matching an unset library filter.
 
-**A badge is not a button, and a control that cannot act is worse than
-none.** `library-status-indicator` — the tick/plus on every Explore
+**A badge is a button only where it can act, and it says which.**
+`library-status-indicator` — the tick/hourglass/plus on every Explore
 card and track row — was a `<button>` whose click handler was a
 `stopPropagation()` and a comment saying to wire up the download client
 later: 20 of the 66 tab stops on a results page announced themselves as
-buttons and did nothing (46 and 0 after). It is `role="img"` with a
-label until there is something to click, and its unowned label says
-"… is not in your library" rather than "Add … to library", which was
-the button's promise written into the copy. When the download client
-lands, the change is a `<button>` *with* a handler — not a handler
-bolted onto something already shaped like one. Two smaller things came
-with it: a `<span>` does not get `box-sizing: border-box` from the UA
-stylesheet the way a `<button>` does (the badge grew 36→38px, caught by
-a stored screenshot), and with no click of its own the badge is part of
-its card, so a click on it means what the card means.
+buttons and did nothing. 007 made it `role="img"` on the rule that a
+control which cannot act is worse than none, and named the condition
+that would change the answer: a `<button>` again *with* a handler,
+never a handler bolted onto something already shaped like one.
+
+It is that now, and three rules hold it up. **A call site opts in** by
+passing `request-mbid`, so a redundancy is visible in the template
+rather than hidden in the component — `explore-album-details`'s header
+has "Want this" in words directly below it and does not opt in. **An
+owned entity is never a button**, because there is nothing left to ask
+for, which is what stops the returned tab stops being spent on nothing.
+And **the name is the action and the action is a request**: "Want album
+X" / "Cancel the request for album X". Clicking adds a row to the
+request list and nothing to the library, which is exactly what made the
+original "Add … to library" a promise the control could not keep.
+
+Two entities and not the third. A track is requestable because
+`EntityRecording` is real work in the backend — `Reconciler.tracklistFor`
+has a branch for it, since one expected title is what lets filename
+matching score a single-track download at all. An artist is not: there
+is no artist badge anywhere (`top-results-row` renders `nothing` for
+one), and a discography subscription — never satisfied, expanding into
+child requests — belongs on `explore-artist-details`'s Follow button,
+which can say what it commits to.
+
+Two smaller things, both still true: a `<span>` does not get
+`box-sizing: border-box` from the UA stylesheet the way a `<button>`
+does (the badge grew 36→38px, caught by a stored screenshot, and both
+branches now set it), and the click is swallowed again — for the
+opposite reason to before. With no action of its own the badge was part
+of its card and a click on it meant what the card means; with one, it
+does not. Enter and Space are stopped for the same reason, since every
+card holding one is a `role="button"` or `role="option"` with its own
+handler.
+
+**Its third state was declared for a year and produced by nothing.**
+`queued` was styled amber, given an hourglass and given the sentence
+"… is queued for download", and all eight call sites were a two-way
+ternary — so an album already on the request list showed a plus and
+said it was not in the library, on the same page as a filled button
+reading "Wanted". `utils/library-status.ts` is that rule written once:
+`libraryStatusFor()` (owning outranks wanting; a *satisfied* request is
+not queued, because nothing is coming; a request is by MBID, so a track
+inside a requested album is not itself requested) and `toggleRequest()`
+beside it, because the "Want this" button asks the same question and
+two definitions of *what wanting means* is the fault this replaced.
 
 **A grid moves by a row, and `offsetTop` cannot tell you how wide a row
 is.** `utils/roving-grid.ts` measured columns by counting cards sharing
@@ -950,6 +1070,39 @@ with no subscriber fetches nothing**: `playlist-view` is the only
 reader and is created lazily, so neither the invalidation nor — more
 expensively — the singleton's own construction warms a cache for a page
 that may never open.
+
+**"Remove from library" removes the row and excludes the path, and
+never touches the file.** `RemoveFromLibrary(filePaths)` deletes the
+`audio_files` rows the way the scan's own orphan cleanup does (tagging
+group bookkeeping, FTS entry, `pruneOrphanedMetadata` for an album
+whose last track just went) and records each path in `excluded_paths`.
+The exclusion is not an enhancement — without it the next scan finds
+the file, sees no row and imports it again, so the button undoes itself
+and is worse than no button. It is reached from the track list's
+context menu behind `confirmAction()`, whose **impact line says the
+files are not deleted**, and from `tracklist.delete` (Delete), which is
+bound to *opening that dialog* and nothing else: one keystroke from a
+focused row, a key that asks is defensible and a key that acts is not.
+
+Four things about it are load-bearing, and two are invisible from the
+track list. **The soft scan compares files on disk against rows in the
+database**, so an excluded path — on disk, deliberately not a row —
+makes the two disagree forever and queues a full scan of the whole
+library on *every* launch; `surveyAudioFiles` and `countAudioFiles`
+therefore both take the exclusion set, because they answer "how many
+files would a scan import", not "how many files are there". **Deleting
+an `audio_files` row cascades to `queue_tracks`**, so the removal calls
+the same `CompactQueue` hook `RemoveLibrary` does, which reloads the
+queue and unloads the player if the removed track was the one playing.
+**A full rescan clears the exclusions**, which is the only way back for
+a path removed by mistake until there is a UI for the list. And
+`TracksRemovedFromLibrary` carries `{filePaths, count}` so
+`library-store` splices the tracks array in place and refetches only
+the album/artist/genre summaries — falling back to a full invalidate
+only when a tracks fetch is already in flight.
+
+**Deleting the file from disk is deliberately not this**, and is not
+foreclosed; it needs its own argument.
 
 **An unchanged payload is not an event.** `explore`'s index status used
 to be pushed on a 3 s ticker for the life of the process, byte-identical

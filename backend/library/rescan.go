@@ -124,6 +124,15 @@ func (l *Library) clearLibraryTables() error {
 		return fmt.Errorf("could not clear queue tracks: %w", err)
 	}
 
+	// A full rescan is the "start over" button, and it is the only way
+	// back for a path removed from the library by mistake: the file is
+	// still on disk, but nothing else will ever import it again while
+	// its exclusion stands.  Until there is a UI for managing the list,
+	// clearing it here is the escape hatch.
+	if err := txq.ClearExcludedPaths(l.ctx); err != nil {
+		return fmt.Errorf("could not clear excluded paths: %w", err)
+	}
+
 	// Preserve playlist tracks across rescan: populate phantom
 	// metadata for all linked tracks before audio_files are deleted.
 	// ON DELETE SET NULL will null out audio_file_id, converting them

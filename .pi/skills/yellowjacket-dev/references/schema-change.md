@@ -5,7 +5,21 @@ chain got wrong, and when squashing is legitimate — is in `CLAUDE.md`
 under *Backend packages → database*. Read it once. This is the
 checklist.
 
-A schema change needs **two** files, not one:
+**A brand-new table needs one file, not two.** The rule below is about
+a *column added to a table that already exists*. `applySchema` runs
+every file in `sql/schemas/` on every open, so a
+`CREATE TABLE IF NOT EXISTS` reaches an existing install verbatim and a
+migration for it would be a second description of the same table — the
+thing the third rule forbids. Its indexes go in the schema file too,
+because the column and the index arrive together.
+
+A new table has a second gate: **`backend/datamap`**. Add an entry
+stating its Kind and Lifetime, or `TestCatalogCoversSchema` fails — and
+if it is `Authored` and cascades, `TestAuthoredCascadesAreDeliberate`
+wants an explicit exemption with a note, because authored data is what
+a user cannot get back.
+
+Adding a **column** to an existing table needs **two** files, not one:
 
 1. **`backend/database/sql/schemas/*.sql`** — `CREATE TABLE ... IF NOT
    EXISTS`, the literal target shape, what sqlc reads and what a fresh

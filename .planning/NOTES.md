@@ -2028,3 +2028,301 @@ Six more things worth keeping:
   palette rewrite, twice, because the component tier has no `:root` and
   renders the fallbacks. The tier that *did* catch things was a unit
   test over the palette table and a probe against the running app.
+
+## A name lives where the role is, and neither the audit nor the sweep looks there
+
+Plan 008 phase 3: the tail of `a11y.md`, which closes it — and with it
+all four audits from 2026-08-11.
+
+The generalisation, and it is the whole of this pass: **an accessible
+name is computed on the element carrying the role, and every way we
+have of checking one looks somewhere else.** The audit read the
+*source* and credited a name that was never computed. My AX sweep read
+the *tree* and reported a weak name as no problem. A component test
+asserted the *attribute* and pinned the bug it was written to prevent.
+Three tiers, three different wrong answers, all about the same
+property.
+
+Concretely, and each of these is a finding:
+
+| where it was written | where the role is | computed name |
+|---|---|---|
+| `aria-label` on `<wa-slider>` | a div in its shadow root, `aria-labelledby="label"` | `""` |
+| `<label>` beside a `<select>` in `config-field` | the select | `""` |
+| `placeholder` on Explore's search input | the input | the placeholder |
+| `label` on `<wa-progress-bar>` | inner div's `aria-label` | correct |
+
+The first is `wa-dialog`'s trap one component over and cost two
+sessions in 007. The fix is different, though, and the difference is
+worth keeping: `wa-progress-bar`'s `label` *is* an `aria-label` and is
+invisible, so it is just the right API; `wa-slider`'s `label` is
+**visible**, so the name comes from the library's own property and
+`styles/wa-slider-label.css.ts` hides it by part. That is preferred
+over `name-dialog.ts`'s reach into the shadow root for one reason —
+if Web Awesome renames the part, the label becomes *visible* and
+correctly named, rather than silently nameless again. Choose the
+failure you would rather have.
+
+Nine more things worth keeping:
+
+- **A sweep for empty names cannot see a weak one.** A `placeholder`
+  is an accname fallback, so `getFullAXTree` reported the whole Explore
+  view *clean* — which is why `a11y.26` survived four phases of people
+  looking for exactly this class of bug. "0 unnamed" answers a
+  narrower question than it reads as, which is the third time in this
+  plan a *count* has done that.
+- **The count that sent Phase 1 hunting was wrong in both halves.**
+  "Two unnamed native `<select>`s, one of them the page header's sort
+  control on nine views": the sort control is named `Sort: ` by its
+  wrapping `<label>` (`from: relatedElement`) on all nine, and the two
+  unnamed roles were one `config-field` select and the *seek bar*.
+  Recorded as a finding in the plan, believed for a phase, false.
+- **…and the thing it was pointing at was nine times bigger.** With
+  Settings' sections expanded: **24 of 93 controls unnamed**, every
+  `config-field` select and toggle and all eighteen column checkboxes.
+  No finding names it, and `a11y.6` is not wrong — it says in its own
+  line that it scanned every `<button>`. Same shape as phase 2's
+  contrast number.
+- **A fix's own test can be pinning the bug.** `transport.test.ts`
+  asserted `aria-label` on the `wa-slider` host under the title
+  "carries an accessible name". It passed for six phases. *Run the
+  existing tests* found it — third plan running that this is the rule
+  that pays.
+- **`a11y.21`'s mechanism does not exist, and the real one is on the
+  other axis.** "The 4em bars grow while the viewport does not and
+  anything that no longer fits is clipped" — the middle grid row is
+  `1fr` and absorbs them exactly: at 200% text on 800×600 the bars go
+  64 → 128px, the panel 472 → 344px, and the footer still lands on 600.
+  Nothing is clipped vertically. Horizontally the shell is 784px inside
+  a 320px viewport (400% page zoom, the width 1.4.10 names) with 464px
+  of it behind `overflow: hidden`. Measure the axis the finding does
+  not mention.
+- **`overflow: hidden` still permits programmatic scrolling**, so
+  `scrollLeft = 9999` returns a healthy 464 on the build that has the
+  bug. My first spec passed against the broken build for that reason.
+  A wheel gesture is the probe. Fifth entry in this plan's "the probe
+  was wrong, not the code" column, and the tell was the oldest one
+  there is: **it could not fail.**
+- **A synthetic `MouseEvent` does not reach a delegated handler.**
+  Three probes in a row reported a queue row as never becoming active;
+  `getByTestId('queue-row').dblclick()` made it active immediately.
+  Delegation reads things a hand-built event does not carry.
+- **A finding can be half-closed by a phase that was not about it,
+  and the half that remains is smaller than the sentence.** `a11y.34`
+  reads "the sort direction is a 10px glyph *or nothing*" — Phase 1's
+  `aria-sort` closed the *or nothing*, leaving one declaration. Second
+  time in this plan (`a11y.11` was the first), and both times reading
+  the sentence rather than the residue would have built something that
+  already existed.
+- **The state a fix lands in, again, and it was three pixels.**
+  `a11y.29` takes the subtitle's bottom margin away with the `<h3>`,
+  which *shortens* the flex-centred title block and moves it **down**
+  into the bar's clip — the hgroup had measured 67px inside a 64px bar
+  since before any of this, and the descenders of "meant to bee." were
+  cut. Found by reading a screenshot of the fix, which is the fifth
+  regression in three plans that only a PNG has caught.
+
+And one thing that went right and is worth copying: **the marker for
+`a11y.22` is a shape drawn in padding the row already had.** The track
+list's grid columns are computed from the host width, so anything in
+the flow moves every cell on the playing row and nothing else. A
+`::before` triangle in the 8px left padding costs no layout, and both
+tiers assert it is *absent* on the other rows — a marker that renders
+everywhere satisfies "the playing row has one" for free.
+
+## A guard is only a feature if everything that counts agrees with it
+
+Plan 008 phase 4: "remove from library" — the row goes, the path is
+excluded from future scans, the file is never touched — and with it
+`tracklist.delete`, which had been advertised in Settings for six
+phases with nothing on the other end of it.
+
+The generalisation: **an operation that changes what counts as "in the
+library" has to be applied everywhere that number is computed, and the
+places that compute it do not look like the feature.** The scan walk is
+the obvious one, and skipping an excluded path there is the whole
+feature as written in the plan. But the *startup soft scan* decides
+whether to scan at all by comparing files on disk against rows in the
+database, and an excluded path is on disk and deliberately not a row —
+so the fix as specified would have left the two counts disagreeing
+forever and queued a full scan of the entire library on **every
+launch**. Nothing fails, nothing renders differently, and no tier looks
+at it; the app is just permanently rescanning. The same shape one step
+over: deleting an `audio_files` row cascades to `queue_tracks`, so the
+queue's in-memory copy — and the playing track — goes stale unless the
+removal calls the reload hook `RemoveLibrary` has had all along.
+
+Six more things worth keeping:
+
+- **A new table needs one schema file, and the two-file discipline is
+  not about it.** `applySchema` runs every file in `sql/schemas/` on
+  every open, so `CREATE TABLE IF NOT EXISTS` reaches an existing
+  install verbatim. The migration the plan asked for would have been a
+  *second description of the same table*, which is precisely what tore
+  out the old 48-step chain. Column order and "no index on a migrated
+  column" are rules about `ALTER TABLE ADD COLUMN`, and neither applies
+  when nothing is being altered.
+- **The repo asked the question the plan did not.** `backend/datamap`
+  failed the build twice for the new table: once for having no entry at
+  all, then again because an *authored* table that cascades needs an
+  argued exemption rather than a default. Two gates, both right, and
+  neither in `references/schema-change.md` until now. A catalogue that
+  fails the build is worth more than a catalogue that is accurate.
+- **Reversibility is a claim until something implements it.** The
+  decision picked shape A over deleting the file partly because it is
+  reversible — and nothing in the plan made it so. An exclusion with no
+  UI to clear it is a one-way door with the file sitting on disk the
+  whole time. A full rescan clears the table, which is the escape hatch
+  until there is a list to manage, and it is now written down instead
+  of assumed.
+- **The copy was wrong for the case it will be used in most.** The
+  confirmation's message and impact were written for a multi-select and
+  used for both, so removing one track said "**They** are removed" under
+  a singular title. Nothing failed. Read in the first screenshot of the
+  dialog — sixth regression in four plans that only a PNG has caught,
+  and the one where it mattered most, since the copy is the only thing
+  standing between this feature and a user's music.
+- **Both halves of a guard need their own test, or one of them is
+  decorative.** The walk's exclusion and the survey's exclusion are two
+  lines in two functions; neutering each in turn failed exactly one
+  test. Had they shared a test, either could have rotted invisibly.
+  Same reason the e2e case asserts a *control* path still returns from
+  the same scan: a guard that excluded everything passes "the removed
+  path did not come back" for free.
+- **A Playwright hook gets 30 seconds regardless of the test's
+  timeout.** A `db/restore` in `afterAll` passed in isolation and timed
+  out in the full suite, where earlier specs have staged an explore
+  catalog and the copy takes longer. `test.setTimeout()` *inside the
+  hook* is what raises it — and a spec that spends the shared database
+  has to give it back, since the 90 specs share one backend in file
+  order.
+
+## A state nothing produces is a state nobody has checked
+
+Plan 009 phase 1: `library-status-indicator`'s third state, wired.
+
+The generalisation: **an enum whose last value is never constructed is
+not unfinished, it is wrong** — because everything around it has been
+written, reviewed and tested against the two values that do occur, and
+the code reads as complete from every angle except the one that
+produces the third. `LibraryStatus` has had `queued` since it was
+written: styled amber, given an hourglass, given the sentence "… is
+queued for download". All eight call sites were a two-way ternary. So
+an album on the request list rendered a plus and announced "is not in
+your library" — on the same page, forty pixels from a filled button
+reading "Wanted".
+
+Nothing was going to find that. `make ui-test` and `make e2e` both
+covered the badge; both asserted the states it produced. 007 phase 6
+had rewritten this exact component, and the note it left behind
+("when the download-client integration lands…") was itself the reason
+nobody looked: it names a *future* condition for work that was already
+possible, since `backend/download` was 16 541 lines and 20 bound
+methods on the day it was written. **A written-down reason not to look
+ages worse than the code it is about.**
+
+Six more things worth keeping:
+
+- **The second bug was in the screenshot of the first.** The "Wanted"
+  button rendered a question mark — the missing-icon fallback —
+  because `bookmark-check` is Font Awesome **Pro** and has never been
+  bundled. `offline-icons.spec.ts` asserts `__yjIconMisses` is empty
+  and passed the whole time: no spec had ever put the app in a state
+  where an album was requested. The bundled-icon design anticipated
+  exactly this ("twenty call sites compute their icon name from
+  state") and the *sweep* still could not see it, because a sweep only
+  sees the states it visits. Seventh regression in five plans that
+  only a PNG has caught, and the first found in a PNG taken of a
+  different bug.
+- **A property that does not change does not re-render a child.**
+  `top-results-row` reads the request list, and its host handing back
+  the same `results` array means Lit stops at the property — the row
+  keeps its old badges while the store holds the right answer. The
+  virtualizer rule (`requestUpdate()` on host state) one level milder,
+  and the same fix: subscribe where the state is *read*.
+- **A spec that gives state back has to be run twice to know it did.**
+  The `afterAll` cleanup called `callBinding`, which goes through
+  `window.__yjEvents` — installed by the `app` fixture, not by a bare
+  `browser.newPage()`. It threw where nothing was watching, left the
+  request behind and failed the *next* run with a stale `queued`. One
+  run proves the assertions; the second proves the teardown.
+- **A freshly launched app cannot search its own catalog for ~40 s.**
+  The core artifact merge has to land (`core artifact: merge complete`
+  in `.dev/app.log`), and until it does Explore's search returns
+  nothing at all — *including for rows staged directly into
+  `explore_index` a moment earlier*, which makes it look like the
+  staging failed. Cost a cycle here reading as a failure of the neuter
+  the run was under. Budget 60 s, or wait for the log line.
+- **The neuter has to be per line, not per feature.** Two fixes landed
+  together and each got its own one-line neuter, which is what made
+  the two failures distinguishable: one spec reported the wrong badge
+  status, the other reported `["bookmark-check"]`. Neutered together
+  they would both have failed and either could have been decorative.
+- **The fix is where the rule is, and the rule was in eight places.**
+  Every one of the eight sites was individually reasonable; the third
+  state was missing from all of them because no site owns the
+  question. Same shape as `getCoverUrl()`, `track-index.ts` and
+  `page-header` — when a rule is written per call site, the call sites
+  do not disagree, they are all incomplete in the same way.
+
+## A decision phase earns its keep by finding it was not a decision
+
+Plan 009 phases 2 and 3: the badge becomes a button where it can act.
+
+The generalisation: **the questions worth taking a phase over are the
+ones the code can answer, and you cannot tell which those are without
+asking them.** Phase 2 was written as three judgement calls. Two turned
+out not to be:
+
+- "An artist badge would commit a user to a whole discography" —
+  describing a badge that **does not exist**. `top-results-row` renders
+  `nothing` for an artist and no other site passes
+  `entity-type="artist"` to the component at all. Artist subscription
+  already had a labelled Follow button.
+- "Should a track inside a requested album show something different" —
+  evaporated. It read as noise only while a plus on a track meant
+  nothing; once it means *want just this one*, the mixed row is the
+  interface working.
+
+The third — whether a track can be requested at all — went the other
+way and is the more useful lesson. **`EntityRecording` reads like a
+placeholder and is load-bearing.** It would have cost nothing to rule
+tracks out as unsupported, and `Reconciler.tracklistFor` has an
+explicit branch for them whose comment explains that a one-entry
+expected tracklist is what lets filename matching score a single-track
+download at all. A feature removed by assumption leaves no trace that
+it was ever there.
+
+Five more things worth keeping:
+
+- **A test that passes on the neutered build is not a test, and the
+  vacuous ones are the negative assertions.** "Keeps its click off the
+  card it sits on" asserted that nothing bubbled — free when there is
+  no button, since `?.click()` on null is a silent no-op. It passed on
+  the neutered build while its seven neighbours failed. It asserts the
+  click *did the thing it was swallowed for* as well now. Same family
+  as `overflow: hidden` permitting programmatic scrolling, and the tell
+  was identical: **it could not fail.**
+- **A measured coordinate is stale before it is used.** The e2e gesture
+  read a bounding box the moment the search settled; cover art is still
+  arriving then and a card that grows moves the badge, so the click
+  landed on the card and opened the album — reported as *a failure to
+  file a request*, which is a different bug. A Playwright locator
+  re-resolves and waits for the element to stop moving. Prefer one to
+  `mouse.click(x, y)` whenever the thing being clicked is in a list
+  that is still loading, which is most lists here.
+- **A fix moves its own assertions, and that is not churn.** Phase 1's
+  spec asserted the badge announced "… is queued for download". A
+  *control* is named after what activating it does, so two commits
+  later it is "Cancel the request for …". Naming a thing after its
+  state is correct right up until it grows an action.
+- **An opt-in makes a redundancy visible.** The badge could have known
+  which pages have a "Want this" button; instead a call site passes
+  `request-mbid` or does not, so `explore-album-details`'s header
+  declines in its own template. The rule is greppable and the component
+  has no list of exceptions to go stale.
+- **Verify a control with the gesture, not with the event.** A synthetic
+  `MouseEvent` does not prove hit-testing, and a `.click()` on a shadow
+  child does not prove the icon inside it is `pointer-events: none`.
+  Both were checked with a real mouse (`mousemove`/`mousedown`/
+  `mouseup`) and a real Tab/Enter before either was believed.

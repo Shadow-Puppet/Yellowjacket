@@ -138,6 +138,10 @@ export function ReleasePipelineLock() {
   return window['go']['library']['Library']['ReleasePipelineLock']();
 }
 
+export function RemoveFromLibrary(arg1) {
+  return window['go']['library']['Library']['RemoveFromLibrary'](arg1);
+}
+
 export function RemoveLibrary(arg1) {
   return window['go']['library']['Library']['RemoveLibrary'](arg1);
 }

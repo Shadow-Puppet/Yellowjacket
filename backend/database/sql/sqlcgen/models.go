@@ -139,6 +139,13 @@ type DownloadRequest struct {
 	UpdatedAt   time.Time
 }
 
+type ExcludedPath struct {
+	ID         int64
+	LibraryID  int64
+	FilePath   string
+	ExcludedAt time.Time
+}
+
 type ExploreChampionFt struct {
 	Title      string
 	ArtistName string

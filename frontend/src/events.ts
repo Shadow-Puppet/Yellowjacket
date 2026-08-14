@@ -67,6 +67,17 @@ export const Events = {
     TrackMetadataChanged: "TrackMetadataChanged",
     BatchWriteProgress: "BatchWriteProgress",
 
+    // Track removal events.
+    //
+    // TracksRemovedFromLibrary means "these rows are gone and these paths
+    // will not be imported again", and like TrackPlayCountChanged it
+    // carries everything a consumer needs to patch rather than invalidate:
+    // {filePaths: []string, count: int}.  The library store splices those
+    // paths out of its tracks array — which is the expensive collection —
+    // and refetches only the album/artist/genre summaries, whose counts
+    // really did change
+    TracksRemovedFromLibrary: "TracksRemovedFromLibrary",
+
     // Play statistics events.
     //
     // TrackPlayCountChanged carries everything needed to patch the one
