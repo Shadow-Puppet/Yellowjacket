@@ -1,11 +1,12 @@
 # 009 — Wails v3 migration
 
-**Status:** Phases 0–4 complete. The Go side is entirely on v3 and the
-frontend now imports real v3 bindings: `go build .` and
-`pnpm build` both succeed, `make bindings-check` passes, and `src/`
-typechecks clean. **Phase 5 (the Vitest fake) is next, and until it and
-Phase 6 land the branch is not mergeable** — `make ui-test` and
-`make e2e` both drive a harness written against `window.go`, which v3
+**Status:** Phases 0–5 complete. The Go side is entirely on v3, the
+frontend imports real v3 bindings, and the component tier is green:
+`go build .` and `pnpm build` both succeed, `make bindings-check`
+passes, `tsc --noEmit` is clean, and the 757 Vitest tests pass across
+all 63 files. **Phase 6 (the e2e harness) is next, and until it lands
+the branch is not mergeable** — `.playwright/init-events.js` and
+`e2e/perf/measure.mjs` are both written against `window.go`, which v3
 does not have.
 **Branch:** `wails-v3`, off `main` at `edb13a6`.
 **Created:** 2026-08-13
@@ -693,6 +694,93 @@ that needs changing is evidence the fake is wrong, not the test.
 **Est.** One session. This is where the official estimate stops
 applying.
 
+### Phase 5 — what actually landed
+
+**757 tests pass across all 63 files, and one test file changed.** The
+plan's design survived and got smaller, because v3 has a seam v2 did
+not.
+
+**`setTransport()` is the whole fake.** v3 routes *every* runtime call
+— bindings, event emits, window, dialogs, clipboard, screens — through
+one IPC transport, and replacing it is public, documented API. So the
+fake covers strictly more than v2's two globals did while being
+shorter, and the tests still exercise the real generated bindings, the
+real runtime and the real store code.
+
+**The dispatcher is deleted rather than re-derived.** The plan said to
+re-derive `Listener`/`notify()` against v3 instead of porting them; the
+better answer is that neither is needed. `emit()` goes through
+`window._wails.dispatchWailsEvent`, the exact entry point the backend's
+push uses, so delivery, `maxCallbacks` expiry and the post-dispatch
+filter are the runtime's own code; registration and unregistration are
+`Events.OnMultiple` / `Off` / `OffAll`. What *is* mirrored is one line
+of Go — how `EventManager.Emit` packs variadic data into an event's
+single `data` field (none is null, one is the value, more is the
+slice), which is invisible when wrong and shows up as a store reading
+`undefined` off its payload.
+
+One thing stayed non-public: the listener registry, for
+`listenerNames()`. `listener.js` has no entry in the package's exports
+map, so `vitest.config.mts` aliases it. It buys the one question the
+public surface cannot answer — did importing a store subscribe it —
+and if Wails moves the file the import throws at setup, which is loud.
+
+**A binding carries an ID, not a name, and the map has to be
+complete.** `$Call.ByID(2822423495)` is FNV-1a over
+`yellowjacket/backend/home.Service.GetShelves`, so the fake computes the
+same hash — deriving the FQN from the generated tree rather than
+writing it down. The Go type's casing survives in exactly one place,
+each package's `index.ts` (`export { Library }`); the filename cannot
+tell you `frontendutil.ts` is `FrontendUtil`. Building the map lazily
+as paths are mentioned does not work: 21 assertions read `calls()` with
+no argument and compare the whole list of paths, including methods no
+test stubs. An unmapped ID records as `#<id>`, which fails the
+assertion naming it.
+
+**Two things had to change that are not the fake**, and both are
+findings rather than accommodations:
+
+- **`fixture()` drains microtasks between two renders.** A v3 binding
+  settles several hops later than v2's — `Call()`, an async
+  `runtimeCallWithID`, the transport, a `CancellablePromise`, against
+  v2's one resolved promise — and the tests were already written as
+  though `fixture()` meant "mounted *and loaded*". Fixing it there
+  rather than in each test is what kept this to one test-file edit.
+  Microtasks and **not** `setTimeout`: the first attempt used a timer,
+  which hung `transport.test.ts` for 45 s because it installs fake ones.
+- **`tracklist-store` keeps its defaults on an empty answer.**
+  `GetTrackListColumns` substitutes `tracklist.DefaultColumns` only when
+  the whole config section is missing — a section that exists with no
+  columns returns nothing, and a track list with no columns is not what
+  that means. Until v3 this was accidental: the binding was typed
+  `Column[]`, an absent answer arrived as `undefined`, and `.map` threw
+  into the `catch` that restores the defaults. Phase 4's `list()` turned
+  that into an honest empty list and the accident stopped working.
+
+**The one test file edited was `harness.test.ts`, and it was asserting
+something no longer true.** v2's `EventsEmit` notified in-page listeners
+*before* Go, so a frontend emit was observable synchronously. v3's
+`Events.Emit` does not touch the local registry at all: it calls the
+backend, and `EventProcessor.Emit` sends the event back out to every
+window, including the emitting one. The page still sees its own emit,
+one round trip later. The test says that now, and the fake reproduces
+it with a microtask. That is the "re-derive, don't port" risk paying
+off — ported blindly, this would have looked like a store bug.
+
+**`make ui-test` still cannot complete in one run on this machine, and
+that is not this migration.** A single browser session dies partway
+through the 58 files it queues, with "Cannot connect to the iframe"
+after ~5 s. It reproduces **unchanged at `c9905fb`**, the commit before
+Phase 4 — checked in a worktree, not assumed — so it is a resource
+limit here (6 GB available, 9 GB already in swap), not a regression.
+Run in batches of six it is 757 passed, 0 failed. If CI is green on the
+single run, nothing needs doing; if it is not, that is a pre-existing
+problem to file separately rather than something Phase 5 introduced.
+
+**Not verified: `make ui-visual`.** Screenshot baselines only mean
+anything on the machine that recorded them, and nothing here changes
+what a component renders.
+
 ---
 
 ## Phase 6 — E2E harness and testctl
@@ -822,7 +910,8 @@ Listed so nobody smuggles them into the port and calls it a migration.
 | Binding generation analyses the wrong build config | ~~high~~ | **Retired.** Default tags *are* the shipped configuration since Phase 1; recorded in `scripts/bindings-check.sh` |
 | Beta churn mid-migration | high | Pin `beta.8`. `beta.3`→`beta.8` in one app's lifetime |
 | E2E rewrite silently weakens coverage | high | Acceptance = `make e2e` green, **zero spec edits** |
-| v3 event ordering differs from v2's | **high** | *Confirmed, worse than assumed.* v3's frontend `Events.Emit` does not notify in-page listeners at all; `harness.test.ts` asserts that it does |
+| `make ui-test` cannot complete in one browser session here | low | *New.* Pre-existing — reproduces at `c9905fb`. A resource limit on this machine; batched runs are green. Watch CI |
+| v3 event ordering differs from v2's | ~~high~~ | **Retired.** Confirmed and handled in Phase 5: v3's frontend `Events.Emit` round-trips through Go instead of notifying locally first. One test asserted the old behaviour and now asserts the new |
 | `ServiceShutdown()` signature trap | medium | Silent no-call; grep after Phase 2c |
 | Quit-during-writes veto breaks | medium | Data-safety path; test deliberately in 2d |
 | Regression no tier covers | medium | `make perf` before/after on the same seed |
