@@ -182,6 +182,16 @@ func NewYellowJacketApp(
 	yjApp.library.SetJobRegistry(yjApp.jobs)
 	yjApp.explore.SetJobRegistry(yjApp.jobs)
 
+	// Let the release prefetch skip albums the user already owns in
+	// full — those open with no catalog call at all, so warming their
+	// tracklists spends the most expensive request in the app on
+	// nothing.  Injected because neither package imports the other.
+	yjApp.explore.SetAlbumComplete(func(albumID int64) bool {
+		c, err := yjApp.library.GetAlbumCompleteness(albumID)
+
+		return err == nil && c.Known && c.Complete
+	})
+
 	// create autotag service (depends on explore + tagWriter)
 	yjApp.autotag = autotagservice.NewService(
 		yjApp.logger.WithGroup("autotag"),
@@ -697,7 +707,13 @@ func (yj *YellowJacketApp) startJanitor() {
 		yj.database, coversDir, library.CoverArtFileSet,
 	))
 	yj.janitor.Register(maintenance.OrphanedArtistImagesJob(
-		yj.database, filepath.Join(dataDir, explore.ArtistImageDirName),
+		yj.database,
+		filepath.Join(dataDir, explore.ArtistImageDirName),
+		explore.ArtistImageDir,
+	))
+	yj.janitor.Register(maintenance.StrayArtistImageFilesJob(
+		filepath.Join(dataDir, explore.ArtistImageDirName),
+		explore.ArtistImageKeepNames(),
 	))
 	yj.janitor.Register(maintenance.ExpiredProxyCacheJob(
 		filepath.Join(dataDir, explore.CoverArtCacheDirName),

@@ -133,6 +133,18 @@ func (e *Service) BackfillLibraryLyrics() {
 func (e *Service) backfillLibraryLyrics(ctx context.Context) {
 	total := 0
 
+	// LRCLIB has its own limiter, so this starves nothing — but it is
+	// still work nobody asked for, and it was the last background pass
+	// with no way to see or stop it.  The job is registered lazily,
+	// after the first batch proves there is something to do, because on
+	// a covered library every launch would otherwise put an empty job
+	// in the indicator.
+	ctx = WithBackgroundPriority(ctx)
+
+	var job *backfillJob
+
+	defer func() { job.finish(ctx) }()
+
 	for range lyricsBackfillMaxPasses {
 		if ctx.Err() != nil {
 			return
@@ -149,12 +161,23 @@ func (e *Service) backfillLibraryLyrics(ctx context.Context) {
 			break
 		}
 
+		if job == nil {
+			job, ctx = startBackfillJob(
+				ctx, e.index.jobRegistry(), lyricsBackfillJobID,
+				"Looking up lyrics",
+				"Tracks in your library with no lyrics yet",
+				len(candidates),
+			)
+		}
+
 		filled := 0
 
-		for _, c := range candidates {
+		for i, c := range candidates {
 			if ctx.Err() != nil {
 				return
 			}
+
+			job.progress(i, len(candidates))
 
 			if e.fetchAndStoreLyrics(ctx, c) != nil {
 				filled++

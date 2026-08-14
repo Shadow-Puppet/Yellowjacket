@@ -193,7 +193,26 @@ var exploreIndexFTSTriggers = []string{
 		INSERT INTO explore_index_fts(explore_index_fts, rowid, title, artist_name, aliases)
 		VALUES ('delete', old.id, old.title, old.artist_name, old.aliases);
 	END`,
-	`CREATE TRIGGER explore_index_au AFTER UPDATE ON explore_index BEGIN
+	// Narrowed to the three columns the FTS table actually indexes, and
+	// guarded on them having changed.  An UPDATE that leaves all three
+	// alone has nothing to re-index, and re-indexing it is not free: an
+	// FTS5 delete has to find the old row's postings in a multi-million
+	// row index, which is the ~31 rows/s figure below.
+	//
+	// This is not a micro-optimisation.  Every writer here upserts, and
+	// the merge rules keep existing values (`CASE WHEN excluded.title
+	// != '' ...`), so the common write is a row arriving unchanged: the
+	// discography backfill re-browsing a known artist, the incremental
+	// dump refreshing popularity.  Each of those used to pay a full
+	// delete + insert against the FTS index while holding the single
+	// writer connection — measured at 91% of the app's CPU, with the
+	// play path queued behind it.
+	`CREATE TRIGGER explore_index_au AFTER UPDATE OF title, artist_name, aliases
+	ON explore_index
+	WHEN old.title IS NOT new.title
+		OR old.artist_name IS NOT new.artist_name
+		OR old.aliases IS NOT new.aliases
+	BEGIN
 		INSERT INTO explore_index_fts(explore_index_fts, rowid, title, artist_name, aliases)
 		VALUES ('delete', old.id, old.title, old.artist_name, old.aliases);
 		INSERT INTO explore_index_fts(rowid, title, artist_name, aliases)
@@ -203,11 +222,38 @@ var exploreIndexFTSTriggers = []string{
 
 // createExploreIndexFTSTriggers installs the sync triggers.  Safe to
 // call on a database that already has them.
+//
+// It drops first rather than tolerating "already exists", because a
+// trigger is a definition and not a row: an install that already has
+// the old one would otherwise keep it forever, and these definitions
+// are exactly where this table's write cost is decided.  Three DDL
+// statements against a table with no rows to rewrite, on open.
 func createExploreIndexFTSTriggers(ctx context.Context, db *sql.DB) error {
+	if err := dropExploreIndexFTSTriggers(ctx, db); err != nil {
+		return err
+	}
+
 	for _, stmt := range exploreIndexFTSTriggers {
 		if _, err := db.ExecContext(ctx, stmt); err != nil &&
 			!strings.Contains(err.Error(), "already exists") {
 			return fmt.Errorf("create explore FTS trigger: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// exploreIndexFTSTriggerNames is what both the drop paths remove.
+var exploreIndexFTSTriggerNames = []string{
+	"explore_index_ai", "explore_index_ad", "explore_index_au",
+}
+
+func dropExploreIndexFTSTriggers(ctx context.Context, db *sql.DB) error {
+	for _, name := range exploreIndexFTSTriggerNames {
+		if _, err := db.ExecContext(
+			ctx, "DROP TRIGGER IF EXISTS "+name,
+		); err != nil {
+			return fmt.Errorf("drop explore FTS trigger %s: %w", name, err)
 		}
 	}
 
@@ -227,12 +273,8 @@ func createExploreIndexFTSTriggers(ctx context.Context, db *sql.DB) error {
 // Callers MUST pair this with ResumeExploreIndexFTS — while suspended,
 // explore_index_fts stops tracking the table and search goes stale.
 func (d *DB) SuspendExploreIndexFTS() error {
-	for _, name := range []string{
-		"explore_index_ai", "explore_index_ad", "explore_index_au",
-	} {
-		if _, err := d.db.ExecContext(d.Ctx, "DROP TRIGGER IF EXISTS "+name); err != nil {
-			return fmt.Errorf("suspend explore FTS: drop %s: %w", name, err)
-		}
+	if err := dropExploreIndexFTSTriggers(d.Ctx, d.db); err != nil {
+		return fmt.Errorf("suspend explore FTS: %w", err)
 	}
 
 	return nil

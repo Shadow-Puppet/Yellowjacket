@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"yellowjacket/backend/database"
+	"yellowjacket/backend/explore"
 )
 
 // errTestJobFailed stands in for a job returning an error.
@@ -287,6 +288,12 @@ func TestOrphanedCoverFilesJob_EmptyLiveSetIsNoOp(t *testing.T) {
 
 // Artwork for an artist in the library is kept regardless of age;
 // artwork for a browsed artist ages out.
+//
+// The directories are laid out by explore.ArtistImageDir rather than by
+// this test, which is the point: the job used to join the bare MBID,
+// name a path that has never existed, delete the rows and leave every
+// file on disk.  A test that invents its own flat layout agrees with
+// the bug.
 func TestOrphanedArtistImagesJob(t *testing.T) {
 	t.Parallel()
 
@@ -300,7 +307,7 @@ func TestOrphanedArtistImagesJob(t *testing.T) {
 	)
 
 	for _, mbid := range []string{ownedMBID, browsedMBID, recentMBID} {
-		artistDir := filepath.Join(dir, mbid)
+		artistDir := explore.ArtistImageDir(dir, mbid)
 		if err := os.MkdirAll(artistDir, 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", mbid, err)
 		}
@@ -334,27 +341,27 @@ func TestOrphanedArtistImagesJob(t *testing.T) {
 			   (artist_mbid, source, source_url, file_path, created_at)
 			 VALUES (?, 'test', 'http://x', ?, ?)`,
 			tc.mbid,
-			filepath.Join(dir, tc.mbid, "primary.jpg"),
+			filepath.Join(explore.ArtistImageDir(dir, tc.mbid), "primary.jpg"),
 			tc.created,
 		); err != nil {
 			t.Fatalf("seed artist_images for %s: %v", tc.mbid, err)
 		}
 	}
 
-	if _, err := OrphanedArtistImagesJob(db, dir).
+	if _, err := OrphanedArtistImagesJob(db, dir, explore.ArtistImageDir).
 		Run(context.Background()); err != nil {
 		t.Fatalf("run job: %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(dir, ownedMBID)); err != nil {
+	if _, err := os.Stat(explore.ArtistImageDir(dir, ownedMBID)); err != nil {
 		t.Error("artwork for a library artist was evicted")
 	}
 
-	if _, err := os.Stat(filepath.Join(dir, recentMBID)); err != nil {
+	if _, err := os.Stat(explore.ArtistImageDir(dir, recentMBID)); err != nil {
 		t.Error("recently fetched artwork was evicted")
 	}
 
-	if _, err := os.Stat(filepath.Join(dir, browsedMBID)); !os.IsNotExist(err) {
+	if _, err := os.Stat(explore.ArtistImageDir(dir, browsedMBID)); !os.IsNotExist(err) {
 		t.Error("stale browsed artwork survived the sweep")
 	}
 
@@ -430,5 +437,87 @@ func TestSweepMissingDirectory(t *testing.T) {
 
 	if result.FilesDeleted != 0 {
 		t.Errorf("FilesDeleted = %d, want 0", result.FilesDeleted)
+	}
+}
+
+// A directory holding an artist's portrait plus the candidates an older
+// version downloaded keeps the portrait and loses the candidates.
+func TestStrayArtistImageFilesJob(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	const mbid = "44444444-4444-4444-4444-444444444444"
+
+	artistDir := explore.ArtistImageDir(dir, mbid)
+	if err := os.MkdirAll(artistDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	keep := []string{
+		"primary.jpg", "primary_sm.jpg", "primary_md.jpg",
+		"primary_lg.jpg", ".miss",
+	}
+	strays := []string{"audiodb_0.jpg", "fanart_1.jpg", "wikidata_3.jpg"}
+
+	for _, name := range append(append([]string{}, keep...), strays...) {
+		if err := os.WriteFile(
+			filepath.Join(artistDir, name), []byte("xx"), 0o600,
+		); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	result, err := StrayArtistImageFilesJob(dir, explore.ArtistImageKeepNames()).
+		Run(context.Background())
+	if err != nil {
+		t.Fatalf("run job: %v", err)
+	}
+
+	if result.FilesDeleted != int64(len(strays)) {
+		t.Errorf("FilesDeleted = %d, want %d", result.FilesDeleted, len(strays))
+	}
+
+	for _, name := range keep {
+		if _, err := os.Stat(filepath.Join(artistDir, name)); err != nil {
+			t.Errorf("%s was swept and should not have been", name)
+		}
+	}
+
+	for _, name := range strays {
+		if _, err := os.Stat(
+			filepath.Join(artistDir, name),
+		); !os.IsNotExist(err) {
+			t.Errorf("%s survived the sweep", name)
+		}
+	}
+}
+
+// An empty keep set would condemn every file, which is never what a
+// caller means — it is a failed lookup, not an empty live set.
+func TestStrayArtistImageFilesJobRefusesEmptyKeepSet(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	const mbid = "55555555-5555-5555-5555-555555555555"
+
+	artistDir := explore.ArtistImageDir(dir, mbid)
+	if err := os.MkdirAll(artistDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	primary := filepath.Join(artistDir, "primary.jpg")
+	if err := os.WriteFile(primary, []byte("xx"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	if _, err := StrayArtistImageFilesJob(dir, nil).
+		Run(context.Background()); err != nil {
+		t.Fatalf("run job: %v", err)
+	}
+
+	if _, err := os.Stat(primary); err != nil {
+		t.Error("an empty keep set emptied the directory")
 	}
 }

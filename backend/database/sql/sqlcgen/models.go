@@ -26,6 +26,12 @@ type ArtistCreditArtist struct {
 	CreditID int64
 }
 
+type ArtistEnrichment struct {
+	ArtistMbid string
+	BrowsedAt  sql.NullTime
+	SimilarAt  sql.NullTime
+}
+
 type ArtistImage struct {
 	ID         int64
 	ArtistMbid string

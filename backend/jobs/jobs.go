@@ -26,6 +26,14 @@ const (
 	KindIndexBuild   Kind = "index-build"
 	KindDownload     Kind = "download"
 	KindAutotagApply Kind = "autotag-apply"
+
+	// KindCatalogEnrich is background catalog work for content the user
+	// already owns — the discography backfills.  It is distinct from
+	// KindIndexBuild because the two differ in what cancelling costs:
+	// an index build discards hours of downloading and the frontend
+	// confirms before stopping one, where a backfill is resumable per
+	// artist and stopping it is free.
+	KindCatalogEnrich Kind = "catalog-enrich"
 )
 
 // State is the lifecycle position of a job.

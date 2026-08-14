@@ -16,6 +16,12 @@ import (
 	"yellowjacket/backend/jobs"
 )
 
+// backgroundMBRate is the sustained requests-per-second granted to
+// post-scan backfills on the MusicBrainz limiters.  It is MB's own
+// documented ceiling rather than the interactive lane's burst rate,
+// because a backfill is the one caller that sustains it for an hour.
+const backgroundMBRate = 1.0
+
 // Service is the Wails-bound service for the explore feature.
 // It owns the lifecycle of all explore-related components: the
 // MusicBrainz client, ListenBrainz client, rate limiter, and
@@ -31,9 +37,12 @@ type Service struct {
 	artistImg  *ArtistImageProvider
 	libMBID    *LibraryMBIDIndex
 	caaLimiter *RateLimiter
-	db         *database.DB
-	logger     *slog.Logger
-	ctx        context.Context
+	// albumComplete answers whether a local album is complete; see
+	// SetAlbumComplete.  Nil until wired, which every path tolerates.
+	albumComplete AlbumCompleteFunc
+	db            *database.DB
+	logger        *slog.Logger
+	ctx           context.Context
 
 	// searchMu guards searchCancel, which cancels the currently
 	// in-flight SearchLocal so a superseded query releases the shared
@@ -79,9 +88,14 @@ func NewExploreService(logger *slog.Logger, db *database.DB) *Service {
 	// which triggers the library's retry loop (up to 5 × 1s waits).
 	// Staggering avoids the 503 entirely while keeping total phase-1
 	// latency under 1.5s (333ms stagger + ~1s MB response).
-	mbSearchLimiter := NewRateLimiterBurst(3, 1)
+	// The background lane paces post-scan backfills at MusicBrainz's
+	// own documented 1/sec and, more importantly, makes them yield: an
+	// artist page opened mid-backfill is not queued behind it.
+	mbSearchLimiter := NewRateLimiterBurst(3, 1).
+		WithBackgroundLane(backgroundMBRate)
 	// MB background limiter: strict 1/sec for sustained image resolution calls.
-	mbBackgroundLimiter := NewRateLimiter()
+	mbBackgroundLimiter := NewRateLimiter().
+		WithBackgroundLane(backgroundMBRate)
 	mb := NewMusicBrainzClient(cache, mbSearchLimiter, logger.WithGroup("musicbrainz"))
 	lb := NewListenBrainzClient(lbLimiter, cache, logger.WithGroup("listenbrainz"))
 	lrclib := NewLRCLibClient(cache, logger.WithGroup("lrclib"))
@@ -90,6 +104,7 @@ func NewExploreService(logger *slog.Logger, db *database.DB) *Service {
 		db, cache, mbBackgroundLimiter, logger.WithGroup("artist-image"),
 	)
 	index := NewSearchIndex(db, lb, artistImg, logger.WithGroup("search-index"))
+	index.SetMusicBrainz(mb)
 	index.MarkReadyIfPopulated() // make index queryable immediately if data exists
 
 	libMBID := NewLibraryMBIDIndex(db)
@@ -292,10 +307,30 @@ func (e *Service) backfillReleaseGroupMBIDs(ctx context.Context) {
 
 	_ = rows.Close()
 
-	for _, p := range pending {
+	if len(pending) == 0 {
+		return
+	}
+
+	// Same two rules as the discography backfill: nobody is waiting on
+	// this, so it yields the MB limiter, and it is visible and
+	// stoppable while it runs.
+	ctx = WithBackgroundPriority(ctx)
+
+	job, ctx := startBackfillJob(
+		ctx, e.index.jobRegistry(), rgMBIDBackfillJobID,
+		"Matching albums to the catalog",
+		"Resolving release MBIDs found while scanning",
+		len(pending),
+	)
+
+	defer func() { job.finish(ctx) }()
+
+	for i, p := range pending {
 		if ctx.Err() != nil {
 			return
 		}
+
+		job.progress(i, len(pending))
 
 		release, err := e.mb.LookupRelease(ctx, p.releaseMBID)
 		if err != nil || release.ReleaseGroupMBID == "" {
@@ -555,18 +590,10 @@ func (e *Service) BrowseReleaseGroups(artistMBID string) ([]MBReleaseGroup, erro
 	if indexed := e.index.TopReleaseGroupsByArtist(artistMBID, 200); len(indexed) > 0 {
 		out := make([]MBReleaseGroup, 0, len(indexed))
 
-		// Check if ANY row has secondary types — if none do, we need
-		// to refresh from MB to pick them up.  This typically happens
-		// on the first visit after an artist's discography was indexed
-		// from the LB top-release-groups endpoint (which doesn't
-		// return secondary types).
-		hasSecondaryTypes := false
-
 		for _, r := range indexed {
 			var secondary []string
 			if r.SecondaryTypes != "" {
 				secondary = strings.Split(r.SecondaryTypes, ",")
-				hasSecondaryTypes = true
 			}
 
 			out = append(out, MBReleaseGroup{
@@ -584,16 +611,15 @@ func (e *Service) BrowseReleaseGroups(artistMBID string) ([]MBReleaseGroup, erro
 			})
 		}
 
-		// Fire MB browse in background if we're missing secondary types
-		// so the next visit gets them.
-		if !hasSecondaryTypes {
-			go func() {
-				rgs, err := e.mb.BrowseReleaseGroups(e.ctx, artistMBID)
-				if err == nil && len(rgs) > 0 {
-					artistName := e.resolveArtistName(artistMBID, rgs)
-					e.index.AddFromCache(artistName, artistMBID, rgs)
-				}
-			}()
+		// Complete the discography in the background if the full browse
+		// has never run for this artist, so the next visit has the tail
+		// and the secondary types.  Marked per artist rather than
+		// inferred from "does any row carry a secondary type", which is
+		// permanently false for an artist whose releases are all plain
+		// albums — that test re-browsed such an artist on every visit,
+		// forever.
+		if !e.index.artistBrowsed(artistMBID) {
+			go func() { e.index.browseFullDiscography(e.ctx, artistMBID) }()
 		}
 
 		return out, nil
@@ -608,61 +634,6 @@ func (e *Service) BrowseReleaseGroups(artistMBID string) ([]MBReleaseGroup, erro
 	e.ensureDiscographyAsync(artistMBID)
 
 	return nil, nil
-}
-
-// resolveArtistName picks the best available artist name for a list
-// of release groups returned from MB browse-by-artist.  MB browse
-// doesn't echo back the artist credit on each item (since the artist
-// is the query parameter), so we need to find a name from somewhere:
-//  1. First non-empty ArtistCredit on any release group
-//  2. The local explore_index (if the artist was previously indexed)
-//  3. A LookupArtist call to MB (last resort)
-//  4. The MBID itself (worst case fallback)
-//
-// looksLikeFeaturingCredit reports whether a credit string carries a
-// "featuring" clause — i.e. it names a collaboration rather than a
-// single artist.  Only true "featuring" markers count; "&", "x", and
-// "," are excluded because they appear inside real artist names.
-func looksLikeFeaturingCredit(credit string) bool {
-	lower := strings.ToLower(credit)
-	for _, sep := range []string{" feat. ", " feat ", " featuring ", " ft. ", " ft "} {
-		if strings.Contains(lower, sep) {
-			return true
-		}
-	}
-
-	return false
-}
-
-func (e *Service) resolveArtistName(artistMBID string, rgs []MBReleaseGroup) string {
-	// Try the first single-artist credit from the release groups.  A
-	// credit carrying a "featuring" clause names a collaboration, not
-	// the artist whose page this is, so skip those and fall through to
-	// the index / MB lookup for the canonical single-artist name — this
-	// is what AddFromCache stamps onto every release group.
-	for _, rg := range rgs {
-		if rg.ArtistCredit != "" && !looksLikeFeaturingCredit(rg.ArtistCredit) {
-			return rg.ArtistCredit
-		}
-	}
-
-	// Check the index for a previously-indexed artist row.
-	if indexed := e.index.LookupArtistByMBID(
-		artistMBID,
-	); indexed != nil && indexed.Title != "" {
-		return indexed.Title
-	}
-
-	// Last resort: hit MB lookup.
-	if artist, err := e.mb.LookupArtist(
-		e.ctx,
-		artistMBID,
-	); err == nil && artist != nil &&
-		artist.Name != "" {
-		return artist.Name
-	}
-
-	return artistMBID
 }
 
 // BrowseReleases fetches releases for a given release group MBID.
@@ -751,6 +722,12 @@ func (e *Service) ensureReleasesAsync(releaseGroupMBID string) {
 // navigation almost always originates there.  Already-cached groups are
 // skipped; a cap bounds how many live fetches a single artist view can
 // trigger so the MusicBrainz rate limiter isn't flooded.
+// A release group the user owns *completely* is skipped outright: since
+// tag-derived completeness landed, such an album opens with no catalog
+// call at all — identity from its MBID, tracklist from its own files —
+// so warming the most expensive request in the app on its behalf buys
+// nothing. The skip is not merely an optimisation; those slots go to
+// albums that will actually need the browse.
 func (e *Service) PrefetchReleases(releaseGroupMBIDs []string) {
 	const maxPrefetch = 8
 
@@ -765,6 +742,10 @@ func (e *Service) PrefetchReleases(releaseGroupMBIDs []string) {
 			continue
 		}
 
+		if e.ownedAndComplete(mbid) {
+			continue
+		}
+
 		e.ensureReleasesAsync(mbid)
 
 		fired++
@@ -772,6 +753,36 @@ func (e *Service) PrefetchReleases(releaseGroupMBIDs []string) {
 			return
 		}
 	}
+}
+
+// AlbumCompleteFunc answers "is the local album with this id complete",
+// i.e. do its files declare a track total the library actually has.
+type AlbumCompleteFunc func(albumID int64) bool
+
+// SetAlbumComplete injects the completeness check.  It is injected
+// rather than imported because `library` and `explore` do not depend on
+// each other in either direction today, and one prefetch heuristic is
+// not a reason to introduce that edge — the alternative, re-deriving
+// "complete" from SQL here, would be a second definition of it.
+func (e *Service) SetAlbumComplete(fn AlbumCompleteFunc) {
+	e.albumComplete = fn
+}
+
+// ownedAndComplete reports whether a release group is one the user owns
+// in full.  Unknown completeness is not complete: an untagged library
+// declares no totals at all, and treating that as complete would skip
+// the prefetch for the libraries that need it most.
+func (e *Service) ownedAndComplete(releaseGroupMBID string) bool {
+	if e.albumComplete == nil {
+		return false
+	}
+
+	indexed := e.index.LookupReleaseGroupByMBID(releaseGroupMBID)
+	if indexed == nil || indexed.LocalReleaseGroupID == 0 {
+		return false
+	}
+
+	return e.albumComplete(indexed.LocalReleaseGroupID)
 }
 
 // ---------------------------------------------------------------------------
@@ -937,6 +948,11 @@ func (e *Service) SimilarArtists(artistMBID string) ([]LBSimilarArtist, error) {
 // labs API into similar_artist_map in the background and emits
 // ArtistSimilarReady when done.  Concurrent calls for the same artist
 // collapse into one fetch and one event via the singleflight.
+//
+// This is the *only* thing that fills similar_artist_map now — the
+// owned-artist backfill used to do it for every artist up front, which
+// is a request each for a section nobody had asked to see.  Marking
+// similar_at here is what keeps that mark meaning what it says.
 func (e *Service) ensureSimilarArtistsAsync(artistMBID string) {
 	if artistMBID == "" {
 		return
@@ -947,6 +963,7 @@ func (e *Service) ensureSimilarArtistsAsync(artistMBID string) {
 			similar, err := e.lb.SimilarArtists(e.ctx, artistMBID)
 			if err == nil {
 				e.index.PersistSimilarArtists(artistMBID, similar)
+				e.index.markArtistSimilar(artistMBID)
 
 				events.Emit(e.ctx, events.ArtistSimilarReady, artistMBID)
 			}
@@ -1130,7 +1147,9 @@ func (e *Service) GetThumbnails(requests []ThumbnailRequest) map[string]string {
 // fetches from Wikimedia Commons, subsequent calls are instant.
 // Returns "" if no image is available.
 func (e *Service) GetArtistImageURL(artistMBID string) string {
-	return e.artistImg.GetArtistImage(artistMBID)
+	// Bound method: someone is looking at this artist right now, so it
+	// takes the interactive lane.
+	return e.artistImg.GetArtistImage(e.ctx, artistMBID)
 }
 
 // GetArtistImageCached returns a base64 data URL for the artist's
@@ -1154,54 +1173,11 @@ func (e *Service) GetArtistImageCachedPath(artistMBID string) string {
 // CheckLibraryMBIDs returns which of the given MBIDs exist in the
 // local music library.  Returns a map of MBID → entity type
 // ("artist", "release_group", "recording").
+//
+// It has no frontend caller — `downloadcatalog.go` is the one consumer,
+// asking about a single MBID at a time.
 func (e *Service) CheckLibraryMBIDs(mbids []string) map[string]string {
 	return e.libMBID.CheckMBIDs(mbids)
-}
-
-// PersonalizationResult holds popularity and personalization signals
-// for a single MBID.  Exported for Wails binding.
-type PersonalizationResult struct {
-	Popularity      int  `json:"popularity"`
-	ListenerCount   int  `json:"listenerCount"`
-	InLibrary       bool `json:"inLibrary"`
-	SimilarityScore int  `json:"similarityScore"`
-}
-
-// GetPopularityBatch returns LB popularity and personalization
-// signals for a batch of MBIDs from the local search index.
-func (e *Service) GetPopularityBatch(mbids []string) map[string]PersonalizationResult {
-	batch := e.index.GetPopularityBatch(mbids)
-	if batch == nil {
-		return make(map[string]PersonalizationResult)
-	}
-
-	out := make(map[string]PersonalizationResult, len(batch.Popularity))
-	for mbid, pop := range batch.Popularity {
-		out[mbid] = PersonalizationResult{
-			Popularity:      pop,
-			ListenerCount:   batch.ListenerCount[mbid],
-			InLibrary:       batch.InLibrary[mbid],
-			SimilarityScore: batch.SimilarityScores[mbid],
-		}
-	}
-
-	// Include entries that have library/similar flags but no popularity.
-	for mbid := range batch.InLibrary {
-		if _, ok := out[mbid]; !ok {
-			out[mbid] = PersonalizationResult{
-				InLibrary:       true,
-				SimilarityScore: batch.SimilarityScores[mbid],
-			}
-		}
-	}
-
-	for mbid, score := range batch.SimilarityScores {
-		if _, ok := out[mbid]; !ok {
-			out[mbid] = PersonalizationResult{SimilarityScore: score}
-		}
-	}
-
-	return out
 }
 
 // GetArtistMBID returns the MusicBrainz ID for a local library
@@ -1210,26 +1186,33 @@ func (e *Service) GetArtistMBID(artistName string) string {
 	return e.libMBID.GetArtistMBID(artistName)
 }
 
-// GetArtistImages resolves artist images for multiple artists by
-// name in one call.  Returns a map of artist name → base64 data
-// URL.  Only artists with cached images are returned — no network
-// fetches are triggered (use GetArtistImageURL for on-demand fetch).
-func (e *Service) GetArtistImages(names []string) map[string]string {
-	result := make(map[string]string, len(names))
+// GetArtistImagesCachedPaths resolves artist portraits for many MBIDs
+// in one call, returning MBID → asset-handler path for the medium
+// thumbnail.  Disk existence checks only: no MusicBrainz, no Wikidata,
+// no Wikimedia, no network of any kind.  MBIDs with no cached portrait
+// are omitted rather than returned empty.
+//
+// It exists because the resolving entry point (GetArtistImageURL) was
+// being used where a cache check belonged: a page rendering a dozen
+// search results paid a full MB → Wikidata → Wikipedia → Wikimedia
+// resolution for every artist whose portrait was already on disk.  Its
+// predecessor could not serve that — it keyed on artist *name* through
+// the library's own MBID map, so it only ever answered for artists the
+// user already owned, which on a catalog search is nearly none of them.
+//
+// Paths rather than base64: a portrait is ~128 kB as a data URL, and
+// the asset handler serves the same bytes without crossing the IPC
+// boundary or being retained by a JS string.
+func (e *Service) GetArtistImagesCachedPaths(mbids []string) map[string]string {
+	result := make(map[string]string, len(mbids))
 
-	// Batch resolve all names → MBIDs from the library DB.
-	allMBIDs := e.libMBID.AllArtistMBIDs()
-
-	for _, name := range names {
-		mbid, ok := allMBIDs[name]
-		if !ok || mbid == "" {
+	for _, mbid := range mbids {
+		if mbid == "" {
 			continue
 		}
 
-		// Only return already-cached images — don't trigger fetches.
-		img := e.artistImg.GetCachedImage(mbid)
-		if img != "" {
-			result[name] = img
+		if _, medium, _, _ := e.artistImg.GetImageURLs(mbid); medium != "" {
+			result[mbid] = medium
 		}
 	}
 

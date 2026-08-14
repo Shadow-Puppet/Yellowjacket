@@ -40,6 +40,11 @@ const (
 	artistImageMaxBytes     = 2 * 1024 * 1024
 	artistImageMaxSize      = 500 // max dimension for stored full-res images
 	maxImagesPerArtist      = 10
+
+	// artistMissFile marks an artist directory as having been resolved
+	// with no artwork found, so the sources are not asked again until
+	// the marker ages out.
+	artistMissFile = ".miss"
 )
 
 // fanartTVProjectKey is the project API key for fanart.tv.
@@ -118,7 +123,14 @@ func NewArtistImageProvider(
 
 // GetArtistImage returns the primary image as a base64 data URL.
 // Resolves from all sources if not yet cached.
-func (p *ArtistImageProvider) GetArtistImage(artistMBID string) string {
+//
+// The context is carried purely for its priority marking: the MB
+// relations fetch below shares a limiter with the rest of the app, and
+// a backfill resolving a thousand artists' photos has to yield to the
+// page a user is looking at (see WithBackgroundPriority).
+func (p *ArtistImageProvider) GetArtistImage(
+	ctx context.Context, artistMBID string,
+) string {
 	if artistMBID == "" || p.baseDir == "" {
 		return ""
 	}
@@ -135,7 +147,7 @@ func (p *ArtistImageProvider) GetArtistImage(artistMBID string) string {
 	}
 
 	// Resolve from all sources and select primary.
-	p.resolveAllSources(artistMBID)
+	p.resolveAllSources(ctx, artistMBID)
 
 	// Try again after resolution.
 	if data := readFileData(primaryPath); data != "" {
@@ -146,6 +158,26 @@ func (p *ArtistImageProvider) GetArtistImage(artistMBID string) string {
 	p.writeMiss(artistMBID)
 
 	return ""
+}
+
+// EnsureArtistRels caches the MusicBrainz artist lookup — type,
+// country, sort name, aliases and the URL relations — without
+// resolving or downloading a single image.
+//
+// It exists because that lookup is all the discography backfill ever
+// wanted from the image provider: it calls GetArtistDetails, which
+// reads the cache this fills.  Going through GetArtistImage to get it
+// meant every owned artist also paid five upstream lookups and an
+// image download, which is the bulk of what made that pass take hours.
+// Portraits resolve when a page that shows one asks for them.
+func (p *ArtistImageProvider) EnsureArtistRels(
+	ctx context.Context, artistMBID string,
+) {
+	if artistMBID == "" {
+		return
+	}
+
+	p.fetchMBRels(ctx, artistMBID)
 }
 
 // GetCachedImage returns the primary image from disk cache only.
@@ -342,11 +374,47 @@ type mbRelation struct {
 	} `json:"url"`
 }
 
-func (p *ArtistImageProvider) resolveAllSources(artistMBID string) {
-	type imageSource struct {
-		source string
-		url    string
+// artistImageCandidate is one image an upstream offered for an artist,
+// before anything has been downloaded.
+type artistImageCandidate struct {
+	source string
+	url    string
+}
+
+// resolveAllSources resolves an artist's image candidates and downloads
+// exactly one of them.
+//
+// It used to download every candidate — up to maxImagesPerArtist, full
+// size, serially — and keep them all, while nothing in the app has ever
+// read anything but the primary.  Measured on a real cache that was
+// 4.1 GB of the 5.3 GB on disk, and several seconds of the per-artist
+// cost the discography backfill pays for every owned artist.
+//
+// The candidates that are not downloaded are still *recorded*, with an
+// empty file_path, so replacing the primary later is one download
+// rather than a re-resolution of five upstreams.
+func (p *ArtistImageProvider) resolveAllSources(
+	ctx context.Context, artistMBID string,
+) {
+	candidates := p.resolveCandidates(ctx, artistMBID)
+	if len(candidates) == 0 {
+		return
 	}
+
+	if len(candidates) > maxImagesPerArtist {
+		candidates = candidates[:maxImagesPerArtist]
+	}
+
+	p.fetchPrimary(artistMBID, candidates)
+}
+
+// resolveCandidates asks every upstream what images it has for an
+// artist, in priority order.  It downloads no image bytes — only the
+// metadata lookups happen here.
+func (p *ArtistImageProvider) resolveCandidates(
+	ctx context.Context, artistMBID string,
+) []artistImageCandidate {
+	type imageSource = artistImageCandidate
 
 	var urls []imageSource
 
@@ -366,7 +434,7 @@ func (p *ArtistImageProvider) resolveAllSources(artistMBID string) {
 		}
 	}
 
-	rels := p.fetchMBRels(artistMBID)
+	rels := p.fetchMBRels(ctx, artistMBID)
 
 	// Source 2: MB direct image relations (Wikimedia Commons).
 	for _, rel := range rels {
@@ -424,46 +492,71 @@ func (p *ArtistImageProvider) resolveAllSources(artistMBID string) {
 		}
 	}
 
-	if len(urls) == 0 {
-		return
-	}
+	return urls
+}
 
-	// Cap at maxImagesPerArtist.
-	if len(urls) > maxImagesPerArtist {
-		urls = urls[:maxImagesPerArtist]
-	}
-
-	// Fetch and store each image.
+// fetchPrimary downloads candidates in priority order until one
+// succeeds, makes that one the primary, and records the rest as
+// known-but-unfetched.
+//
+// Taking the *first that succeeds* rather than the first outright is
+// also a fix: the old loop keyed is_primary on the index, so a failed
+// download of candidate 0 left the artist with a stored image, no
+// primary.jpg, and — because GetArtistImage looks for primary.jpg —
+// a `.miss` marker claiming the artist has no art at all.
+func (p *ArtistImageProvider) fetchPrimary(
+	artistMBID string, candidates []artistImageCandidate,
+) {
 	dir := p.artistDir(artistMBID)
 	_ = os.MkdirAll(dir, 0o755)
 
-	for i, u := range urls {
-		imgData, err := p.fetchImageBytes(u.url)
-		if err != nil || len(imgData) == 0 {
+	primaryPath := filepath.Join(dir, "primary.jpg")
+	found := false
+
+	for i, c := range candidates {
+		if found {
+			p.recordCandidate(artistMBID, c, "", false, 0, i)
+
 			continue
 		}
 
-		filename := fmt.Sprintf("%s_%d.jpg", u.source, i)
-		path := filepath.Join(dir, filename)
-		_ = os.WriteFile(path, imgData, 0o644)
+		imgData, err := p.fetchImageBytes(c.url)
+		if err != nil || len(imgData) == 0 {
+			p.recordCandidate(artistMBID, c, "", false, 0, i)
 
-		// Store in DB.
-		isPrimary := 0
-		if i == 0 {
-			isPrimary = 1
+			continue
 		}
 
-		_, _ = p.db.ExecContext(`
-			INSERT OR REPLACE INTO artist_images
-				(artist_mbid, source, source_url, file_path, is_primary, sort_order, file_size)
-			VALUES (?, ?, ?, ?, ?, ?, ?)
-		`, artistMBID, u.source, u.url, path, isPrimary, i, len(imgData))
+		// setPrimary writes primary.jpg itself, so the candidate is not
+		// also written under its own name — that second copy was a
+		// straight duplicate of the largest file in the directory.
+		p.setPrimary(artistMBID, dir, imgData)
+		p.recordCandidate(artistMBID, c, primaryPath, true, len(imgData), i)
 
-		// Generate thumbnails for the primary image.
-		if i == 0 {
-			p.setPrimary(artistMBID, dir, imgData)
-		}
+		found = true
 	}
+}
+
+// recordCandidate stores one candidate.  An empty filePath means the
+// image was offered but never downloaded, which is the ordinary state
+// for everything but the primary.
+func (p *ArtistImageProvider) recordCandidate(
+	artistMBID string,
+	c artistImageCandidate,
+	filePath string,
+	isPrimary bool,
+	size, order int,
+) {
+	primary := 0
+	if isPrimary {
+		primary = 1
+	}
+
+	_, _ = p.db.ExecContext(`
+		INSERT OR REPLACE INTO artist_images
+			(artist_mbid, source, source_url, file_path, is_primary, sort_order, file_size)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, artistMBID, c.source, c.url, filePath, primary, order, size)
 }
 
 // setPrimary copies image data to primary.jpg and generates thumbnails.
@@ -664,7 +757,9 @@ func (p *ArtistImageProvider) fetchAudioDB(artistMBID string) []string {
 // Source 2-4: MB rels + Wikidata + Wikipedia
 // ---------------------------------------------------------------------------
 
-func (p *ArtistImageProvider) fetchMBRels(artistMBID string) []mbRelation {
+func (p *ArtistImageProvider) fetchMBRels(
+	ctx context.Context, artistMBID string,
+) []mbRelation {
 	cacheKey := "mb:artist-rels:" + artistMBID
 
 	if data, ok := p.cache.Get(cacheKey); ok {
@@ -682,7 +777,7 @@ func (p *ArtistImageProvider) fetchMBRels(artistMBID string) []mbRelation {
 		artistMBID,
 	)
 
-	if err := p.mbLimiter.Wait(context.Background()); err != nil {
+	if err := p.mbLimiter.Wait(ctx); err != nil {
 		return nil
 	}
 
@@ -849,11 +944,7 @@ func (p *ArtistImageProvider) fetchWikipediaLeadImage(qid string) string {
 // ---------------------------------------------------------------------------
 
 func (p *ArtistImageProvider) artistDir(mbid string) string {
-	if len(mbid) < 2 {
-		return filepath.Join(p.baseDir, "xx", mbid)
-	}
-
-	return filepath.Join(p.baseDir, mbid[:2], mbid)
+	return ArtistImageDir(p.baseDir, mbid)
 }
 
 func (p *ArtistImageProvider) primaryPath(mbid string) string {
@@ -861,7 +952,7 @@ func (p *ArtistImageProvider) primaryPath(mbid string) string {
 }
 
 func (p *ArtistImageProvider) isMiss(mbid string) bool {
-	missPath := filepath.Join(p.artistDir(mbid), ".miss")
+	missPath := filepath.Join(p.artistDir(mbid), artistMissFile)
 	_, err := os.Stat(missPath)
 
 	return err == nil
@@ -870,7 +961,7 @@ func (p *ArtistImageProvider) isMiss(mbid string) bool {
 func (p *ArtistImageProvider) writeMiss(mbid string) {
 	dir := p.artistDir(mbid)
 	_ = os.MkdirAll(dir, 0o755)
-	_ = os.WriteFile(filepath.Join(dir, ".miss"), []byte{}, 0o644)
+	_ = os.WriteFile(filepath.Join(dir, artistMissFile), []byte{}, 0o644)
 }
 
 // ---------------------------------------------------------------------------

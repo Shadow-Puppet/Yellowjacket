@@ -114,6 +114,14 @@ var tables = []Table{
 		Note: "Join table between credits and artists.",
 	},
 	{
+		Name: "artist_enrichment", Kind: Derived, Lifetime: Retained,
+		Note: "Which catalog enrichment passes have run for an artist. " +
+			"Derived: losing it re-runs the fetches, which cost time and " +
+			"someone else's rate limit but no data. Retained because a " +
+			"stale mark for an artist no longer owned is harmless — the " +
+			"backfill only ever asks about artists the library has.",
+	},
+	{
 		Name: "artist_images", Kind: Cache, Lifetime: Swept,
 		Note: "Artist photos from fanart.tv/MusicBrainz. Rows point at " +
 			"files under the artist-images directory; the janitor sweeps " +

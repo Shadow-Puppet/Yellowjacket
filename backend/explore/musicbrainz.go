@@ -328,6 +328,83 @@ func (c *MusicBrainzClient) BrowseReleaseGroups(
 	return out, nil
 }
 
+// browseMaxPages bounds BrowseReleaseGroupsAll.  At MaxLimit per page
+// that is 1 000 release groups, which no real artist reaches — it is a
+// runaway guard for a server that stops honouring the offset, not a
+// coverage decision.
+const browseMaxPages = 10
+
+// BrowseReleaseGroupsAll is BrowseReleaseGroups paged to exhaustion.
+//
+// The single-page call above asks for MaxLimit (100) and takes whatever
+// comes back, which silently truncates a prolific artist's discography
+// at 100 release groups — invisible unless you count, since a hundred
+// albums looks like a complete page. This is the call to use when the
+// answer is meant to be the whole discography rather than a page of it.
+//
+// The result is cached under the same key the single-page call reads,
+// so a later interactive browse is served the complete list.
+func (c *MusicBrainzClient) BrowseReleaseGroupsAll(
+	ctx context.Context, artistMBID string,
+) ([]MBReleaseGroup, error) {
+	cacheKey := "mb:browse:release-groups:" + artistMBID
+
+	if data, ok := c.cache.Get(cacheKey); ok {
+		var out []MBReleaseGroup
+		if err := json.Unmarshal(data, &out); err == nil {
+			return out, nil
+		}
+	}
+
+	var out []MBReleaseGroup
+
+	for page := range browseMaxPages {
+		if err := c.limiter.Wait(ctx); err != nil {
+			return nil, err
+		}
+
+		offset := page * musicbrainzws2.MaxLimit
+
+		c.logger.Info("musicbrainz browse release groups",
+			"artistMBID", artistMBID,
+			"offset", offset,
+		)
+
+		result, err := c.mb.BrowseReleaseGroups(ctx,
+			musicbrainzws2.ReleaseGroupFilter{
+				ArtistMBID: mbtypes.MBID(artistMBID),
+			},
+			musicbrainzws2.Paginator{
+				Limit:  musicbrainzws2.MaxLimit,
+				Offset: offset,
+			},
+		)
+		if err != nil {
+			// Pages already fetched are still worth keeping if there are
+			// any: a partial discography beats none, and the caller's
+			// mark is only set on a nil error, so the rest is retried.
+			if len(out) > 0 {
+				return out, nil
+			}
+
+			return nil, err
+		}
+
+		out = append(out, convertReleaseGroups(result.ReleaseGroups)...)
+
+		// A short page is the last page.  MB reports the full count too,
+		// but a short page is the condition that terminates correctly
+		// even when the count and the pages disagree.
+		if len(result.ReleaseGroups) < musicbrainzws2.MaxLimit {
+			break
+		}
+	}
+
+	c.cacheJSON(cacheKey, out, cacheTTLEntity, artistMBID, "artist")
+
+	return out, nil
+}
+
 // LookupRelease fetches a single release by MBID (with media +
 // recordings).  Used by the autotag paste-URL escape hatch.
 // Cached for 7 days.

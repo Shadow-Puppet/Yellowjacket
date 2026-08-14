@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/singleflight"
@@ -93,6 +94,27 @@ const (
 	// across launches instead of running for the better part of an hour.
 	discogBackfillMaxPerRun = 2000
 
+	// discogBackfillWorkers is how many owned artists the backfill has
+	// in flight at once.
+	//
+	// The pass was strictly serial, so an artist's ListenBrainz calls,
+	// its MusicBrainz browse pages and every upstream's latency were
+	// paid end to end before the next artist began — while the limiters
+	// that actually keep us polite are per-host and were idle for most
+	// of it.  Concurrency here does not raise the request rate against
+	// any origin; it stops one artist's slowest upstream deciding how
+	// fast the whole run goes.
+	discogBackfillWorkers = 6
+
+	// discogBackfillArtistTimeout bounds one artist's share of a run.
+	//
+	// The MusicBrainz client retries a 503 up to five times, honouring
+	// the server's Retry-After (which it caps at a minute), so a single
+	// throttled artist can otherwise hold a worker for longer than a
+	// hundred healthy ones take.  A timed-out artist goes unmarked and
+	// is retried next run, which is what every other failure here does.
+	discogBackfillArtistTimeout = 90 * time.Second
+
 	// labsBaseURL is the base URL for the ListenBrainz labs API.
 	labsBaseURL = "https://labs.api.listenbrainz.org"
 
@@ -167,8 +189,12 @@ type lbSitewideArtist struct {
 //   - Post-scan: API discographies for new library artists
 //   - Ongoing: organic growth from user browsing (AddFromCache)
 type SearchIndex struct {
-	db         *database.DB
-	lb         *ListenBrainzClient
+	db *database.DB
+	lb *ListenBrainzClient
+	// mb is wired after construction (SetMusicBrainz) because the MB
+	// client is built alongside this one; it is only used by the
+	// owned-artist backfill, which tolerates its absence.  Guarded by mu.
+	mb         *MusicBrainzClient
 	artistImg  *ArtistImageProvider
 	logger     *slog.Logger
 	runtimeCtx context.Context // Wails runtime context for event emission
@@ -345,23 +371,36 @@ func (si *SearchIndex) artistDiscogFetched(mbid string) bool {
 
 // unenrichedLibraryArtistMBIDs returns MBIDs for owned artists whose
 // discography has not yet been fetched — either they have no index row
-// or their row is still discog_fetched = 0.  The LEFT JOIN keys off the
-// persistent flag, so an artist enriched on a prior run (interactively or
-// by an earlier backfill) never reappears, giving "new artists only" for
-// free.  Ordered by owned-track count so the artists the user has most of
-// are enriched first.  The limit bounds a single run (see
+// or their row is still discog_fetched = 0, or the full MusicBrainz
+// browse has not run.  The LEFT JOINs key off
+// persistent marks, so an artist enriched on a prior run (interactively
+// or by an earlier backfill) never reappears, giving "new artists only"
+// for free.  Ordered by owned-track count so the artists the user has
+// most of are enriched first.  The limit bounds a single run (see
 // discogBackfillMaxPerRun).
+//
+// The conditions are OR'd because they are different fetches: an
+// artist covered by the downloaded catalog artifact arrives with
+// discog_fetched = 1 and has still never been browsed, and the
+// artifact's own per-artist coverage is graded — so "the artifact knows
+// this artist" is not "we have their discography".
+//
+// similar_at is deliberately not one of them.  The backfill no longer
+// fetches similar artists, so testing the mark it does not set would
+// make every owned artist a candidate on every run, forever.
 func (si *SearchIndex) unenrichedLibraryArtistMBIDs(limit int) []string {
 	rows, err := si.db.QueryContext(`
 		SELECT a.mbid
 		FROM artists a
 		LEFT JOIN explore_index ei
 		  ON ei.entity_type = 'artist' AND ei.mbid = a.mbid
+		LEFT JOIN artist_enrichment ae ON ae.artist_mbid = a.mbid
 		LEFT JOIN artist_credit_artist aca ON aca.artist_id = a.id
 		LEFT JOIN recordings r ON r.artist_credit_id = aca.credit_id
 		LEFT JOIN audio_files af ON af.recording_id = r.id
 		WHERE a.mbid IS NOT NULL AND a.mbid != ''
-		  AND (ei.id IS NULL OR ei.discog_fetched = 0)
+		  AND (ei.id IS NULL OR ei.discog_fetched = 0
+		       OR ae.browsed_at IS NULL)
 		GROUP BY a.mbid
 		ORDER BY COUNT(DISTINCT af.id) DESC
 		LIMIT ?
@@ -386,14 +425,31 @@ func (si *SearchIndex) unenrichedLibraryArtistMBIDs(limit int) []string {
 	return mbids
 }
 
-// BackfillLibraryDiscographies fetches top release groups and recordings
-// for every owned artist that has not been enriched yet, so an artist's
-// wider catalogue is searchable offline right after a scan instead of
-// only on first artist-page view.  It is bounded (discogBackfillMaxPerRun)
-// and resumable — each artist is marked discog_fetched on success, so a
-// cancelled or capped run simply continues on the next call.  Runs through
-// discogSF so it never double-fetches an artist a concurrent interactive
-// EnsureArtistDiscography is already handling.
+// BackfillLibraryDiscographies makes an owned artist's page renderable
+// offline, so their catalogue is there right after a scan instead of
+// only on first view.  Two fetches per artist, each skipped by its own
+// persistent mark:
+//
+//   - the ListenBrainz top release groups and recordings (marked by
+//     explore_index.discog_fetched), which is what popularity ordering
+//     and the top-tracks section need;
+//   - the full MusicBrainz browse (artist_enrichment.browsed_at), which
+//     is what makes the discography complete and typed — see
+//     browseFullDiscography.
+//
+// Similar artists are deliberately *not* fetched here.  Nothing shows
+// them until someone opens an artist page, and that page already
+// resolves them on demand through Service.SimilarArtists →
+// ensureSimilarArtistsAsync, which stamps the same similar_at mark.
+// Fetching them for every owned artist bought a third of the run's
+// requests for a section most of those artists will never have shown.
+//
+// It is bounded (discogBackfillMaxPerRun) and resumable: a cancelled or
+// capped run continues on the next call, and each artist's marks are
+// set as they complete rather than at the end.  Each artist runs
+// through discogSF so it never double-fetches one a concurrent
+// interactive EnsureArtistDiscography is already handling, and under
+// its own deadline so no single artist can stall the run.
 func (si *SearchIndex) BackfillLibraryDiscographies(ctx context.Context) {
 	if si.lb == nil {
 		return
@@ -404,38 +460,100 @@ func (si *SearchIndex) BackfillLibraryDiscographies(ctx context.Context) {
 		return
 	}
 
+	// Everything below is work nobody is waiting on, so it yields the
+	// shared MusicBrainz limiters to whatever the user is looking at.
+	ctx = WithBackgroundPriority(ctx)
+
+	job, ctx := startBackfillJob(
+		ctx, si.jobRegistry(), discogBackfillJobID,
+		"Filling in artist details",
+		"Discographies for artists in your library",
+		len(mbids),
+	)
+
+	defer func() { job.finish(ctx) }()
+
 	// One shared rate limiter paces the whole run, unlike the per-call
 	// client EnsureArtistDiscography builds for interactive fetches.
 	indexLB := NewListenBrainzClient(
 		NewRateLimiterN(indexerRate), si.lb.cache, si.logger.WithGroup("indexer"),
 	)
 
-	done := 0
+	var (
+		wg   sync.WaitGroup
+		done atomic.Int64
+		work = make(chan string)
+	)
+
+	wg.Add(discogBackfillWorkers)
+
+	for range discogBackfillWorkers {
+		go func() {
+			defer wg.Done()
+
+			for mbid := range work {
+				si.backfillOneArtist(ctx, indexLB, mbid)
+
+				job.progress(int(done.Add(1)), len(mbids))
+			}
+		}()
+	}
 
 	for _, mbid := range mbids {
 		if ctx.Err() != nil {
-			return
+			break
 		}
 
-		_, _, _ = si.discogSF.Do(mbid, func() (any, error) {
-			// Re-check under the singleflight: an interactive fetch may
-			// have enriched this artist since the query above.
-			if si.artistDiscogFetched(mbid) {
-				return nil, nil
-			}
+		work <- mbid
+	}
 
-			si.indexOneArtist(ctx, indexLB, lbSitewideArtist{
+	close(work)
+	wg.Wait()
+
+	total := int(done.Load())
+
+	if ctx.Err() != nil {
+		si.logger.Info("discography backfill stopped",
+			"artists", total, "of", len(mbids),
+		)
+
+		return
+	}
+
+	job.logf(jobs.LevelInfo, "Filled in "+strconv.Itoa(total)+" artists")
+
+	si.logger.Info("discography backfill complete", "artists", total)
+}
+
+// backfillOneArtist runs one owned artist's fetches, under the
+// singleflight that keeps it from racing an interactive fetch and under
+// a deadline of its own (see discogBackfillArtistTimeout).
+func (si *SearchIndex) backfillOneArtist(
+	ctx context.Context, lb *ListenBrainzClient, mbid string,
+) {
+	if ctx.Err() != nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, discogBackfillArtistTimeout)
+	defer cancel()
+
+	_, _, _ = si.discogSF.Do(mbid, func() (any, error) {
+		// Re-checked under the singleflight: an interactive fetch may
+		// have done either of these since the query above.
+		if !si.artistDiscogFetched(mbid) {
+			si.indexOneArtist(ctx, lb, lbSitewideArtist{
 				ArtistMBID: mbid,
 				ArtistName: si.artistDisplayName(mbid),
 			})
+		}
 
-			return nil, nil
-		})
+		if !si.enrichmentFor(mbid).Browsed {
+			si.browseFullDiscography(ctx, mbid)
+		}
 
-		done++
-	}
-
-	si.logger.Info("discography backfill complete", "artists", done)
+		return nil, nil
+	})
 }
 
 // artistDisplayName resolves a human-readable name for an artist MBID,
@@ -1937,14 +2055,23 @@ func (si *SearchIndex) indexOneArtist(
 		recs = si.fetchTopRecordings(ctx, lb, artist, recLimit)
 	}()
 
-	// MB pipeline: resolve + cache artist image (uses MB rate limiter).
+	// MB pipeline: cache the artist lookup, which is what the details
+	// below are read from (uses MB rate limiter).
+	//
+	// Deliberately *not* GetArtistImage.  This function wants the MB
+	// artist response; that entry point additionally queried fanart.tv,
+	// TheAudioDB, Wikidata and Wikipedia and downloaded up to ten
+	// full-size portraits per artist, none of which any caller here
+	// reads.  A portrait is resolved when a view asks for one.
 	wg.Add(1)
 
 	go func() {
 		defer wg.Done()
 
 		if si.artistImg != nil {
-			si.artistImg.GetArtistImage(artist.ArtistMBID)
+			// Carries the caller's priority: interactive from
+			// EnsureArtistDiscography, background from the backfill.
+			si.artistImg.EnsureArtistRels(ctx, artist.ArtistMBID)
 		}
 	}()
 

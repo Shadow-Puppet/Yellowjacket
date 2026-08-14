@@ -140,7 +140,20 @@ func liveCoverFiles(
 // an artist the user owns is kept indefinitely, and everything else ages
 // out. Rows whose file has vanished are dropped so the table matches
 // what is actually on disk.
-func OrphanedArtistImagesJob(db *database.DB, artistImagesDir string) Job {
+//
+// dirFor maps an artist MBID to its directory.  It is a parameter, as
+// OrphanedCoverFilesJob's expandVariants is, because that layout is the
+// image provider's business and this job had been guessing it: artist
+// directories are sharded under a two-character prefix, so joining the
+// bare MBID named a path that has never existed.  RemoveAll succeeds on
+// a missing path, so the job reported success, freed nothing, and
+// deleted the rows that were the only record of the files it left
+// behind.
+func OrphanedArtistImagesJob(
+	db *database.DB,
+	artistImagesDir string,
+	dirFor func(baseDir, mbid string) string,
+) Job {
 	return Job{
 		Name:        "artist-images-sweep",
 		MinInterval: dailyInterval,
@@ -162,7 +175,7 @@ func OrphanedArtistImagesJob(db *database.DB, artistImagesDir string) Job {
 					return result, nil
 				}
 
-				dir := filepath.Join(artistImagesDir, mbid)
+				dir := dirFor(artistImagesDir, mbid)
 
 				freed, files := dirSize(dir)
 
@@ -181,6 +194,82 @@ func OrphanedArtistImagesJob(db *database.DB, artistImagesDir string) Job {
 				}
 
 				result.RowsDeleted += rows
+			}
+
+			return result, nil
+		},
+	}
+}
+
+// StrayArtistImageFilesJob removes downloaded image candidates that
+// were never the artist's portrait.
+//
+// The image provider used to download every candidate an upstream
+// offered — up to ten, full size — and keep them all, while nothing in
+// the app has ever read anything but primary.jpg and its three size
+// tiers.  It now downloads candidates in priority order until one
+// succeeds and records the rest as URLs, so nothing new lands here;
+// this reclaims what earlier versions left, which on a real cache was
+// about four fifths of it.
+//
+// keep is the set of names an artist directory is allowed to hold.  It
+// is a parameter for the same reason dirFor above is: the provider owns
+// the naming, and a sweep that guesses it deletes the wrong files.
+func StrayArtistImageFilesJob(artistImagesDir string, keep map[string]bool) Job {
+	return Job{
+		Name:        "artist-images-strays",
+		MinInterval: dailyInterval,
+		Run: func(ctx context.Context) (Result, error) {
+			// An empty keep set would mean "every file is garbage",
+			// which is never the intent — refuse, as the covers sweep
+			// refuses an empty live set.
+			if len(keep) == 0 {
+				return Result{}, nil
+			}
+
+			var result Result
+
+			shards, err := os.ReadDir(artistImagesDir)
+			if err != nil {
+				if os.IsNotExist(err) {
+					return Result{}, nil
+				}
+
+				return Result{}, fmt.Errorf("read %s: %w", artistImagesDir, err)
+			}
+
+			for _, shard := range shards {
+				if !shard.IsDir() {
+					continue
+				}
+
+				shardDir := filepath.Join(artistImagesDir, shard.Name())
+
+				artists, err := os.ReadDir(shardDir)
+				if err != nil {
+					continue
+				}
+
+				for _, artist := range artists {
+					if ctx.Err() != nil {
+						return result, nil
+					}
+
+					if !artist.IsDir() {
+						continue
+					}
+
+					swept, err := sweepDir(ctx,
+						filepath.Join(shardDir, artist.Name()),
+						func(name string) bool { return !keep[name] },
+					)
+					if err != nil {
+						continue
+					}
+
+					result.FilesDeleted += swept.FilesDeleted
+					result.BytesFreed += swept.BytesFreed
+				}
 			}
 
 			return result, nil
