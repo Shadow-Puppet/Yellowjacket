@@ -181,6 +181,12 @@ type Queue struct {
 	// setQueueGen is incremented each time SetQueue is called. Background
 	// goroutines check this to detect if they have been superseded.
 	setQueueGen atomic.Int64
+
+	// persistCh carries database writes to the single goroutine that
+	// runs them, so no mutation path waits on the writer connection
+	// while holding mu. See persistwriter.go.
+	persistOnce sync.Once
+	persistCh   chan func()
 }
 
 // NewQueue creates a new queue manager.
@@ -1061,6 +1067,13 @@ func (q *Queue) Play() {
 				"Resume requested but player not ready",
 				"err", err,
 			)
+
+			// A play button that does nothing and says nothing is the
+			// fault PlaybackFailed exists for (errors.C1); this was the
+			// one press path still ending at a log line.
+			if q.currentIndex < len(q.tracks) {
+				q.emitPlaybackFailed(q.tracks[q.currentIndex], err)
+			}
 		}
 
 		return
@@ -1427,6 +1440,13 @@ func (q *Queue) CompactAfterLibraryRemoval() {
 	// Reload surviving tracks from the database. The CASCADE delete
 	// already removed the rows from queue_tracks — we just need to
 	// reload and reindex.
+	//
+	// This is one of the two places that reads back what it wrote, so
+	// it waits for the pending writes first: a queue built moments ago
+	// may still be in flight, and reloading from rows it has not
+	// reached yet would replace the queue with the previous one.
+	q.flushWrites()
+
 	rows, err := q.db.Queries.GetQueueTracks(q.db.Ctx)
 	if err != nil {
 		q.logger.Error("could not reload queue tracks after library removal", "err", err)

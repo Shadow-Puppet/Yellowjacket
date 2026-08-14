@@ -70,6 +70,12 @@ type Player struct {
 	// consumer can tell "the same second, again" from "a fresh
 	// reading" and reset its interpolation on both.
 	positionSeq uint64
+
+	// persistCh carries state writes to the single goroutine that runs
+	// them, so no path holds mu while waiting on SQLite's writer
+	// connection.  See persistwriter.go.
+	persistOnce sync.Once
+	persistCh   chan func()
 }
 
 // PositionInfo is the payload of the PlaybackPositionChanged event:
@@ -1180,17 +1186,25 @@ func (p *Player) buildMediaMetadata(
 // State persistence
 // ---------------------------------------------------------------
 
-// SaveState persists the current player state to the database.
-// This is called during shutdown to capture the final state.
+// SaveState persists the current player state to the database and
+// waits for the write.  This is called during shutdown to capture the
+// final state, which is the one case that cannot be deferred.
 func (p *Player) SaveState() {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	p.saveState()
+	p.mu.Unlock()
+
+	p.flushWrites()
 }
 
-// saveState is the internal helper that writes the current player
-// state to the database. Must be called with p.mu held.
+// saveState snapshots the current player state and hands it to the
+// persistence goroutine.  Must be called with p.mu held.
+//
+// It does not write here: every caller holds p.mu (LoadFile, Play,
+// Pause, Seek, the volume paths), the write goes through SQLite's
+// single writer connection, and a background pass can hold that for
+// seconds — which is how loading a track came to block the whole
+// player behind a durability write. See persistwriter.go.
 func (p *Player) saveState() {
 	if p.db == nil {
 		p.logger.Warn(
@@ -1215,29 +1229,29 @@ func (p *Player) saveState() {
 
 	positionSeconds := int64(p.displayPositionSecsLocked())
 
-	err := p.db.Queries.UpdatePlayerState(
-		p.db.Ctx,
-		sqlcgen.UpdatePlayerStateParams{
-			Volume:              volume,
-			Muted:               muted,
-			LastTrackPath:       trackPath,
-			LastPositionSeconds: positionSeconds,
-		},
-	)
-	if err != nil {
-		p.logger.Error(
-			"Failed to save player state", "err", err,
-		)
-
-		return
+	params := sqlcgen.UpdatePlayerStateParams{
+		Volume:              volume,
+		Muted:               muted,
+		LastTrackPath:       trackPath,
+		LastPositionSeconds: positionSeconds,
 	}
 
-	p.logger.Info("Player state saved",
-		"volume", volume,
-		"muted", muted,
-		"trackPath", trackPath,
-		"positionSeconds", positionSeconds,
-	)
+	p.submitWrite(func() {
+		if err := p.db.Queries.UpdatePlayerState(p.db.Ctx, params); err != nil {
+			p.logger.Error(
+				"Failed to save player state", "err", err,
+			)
+
+			return
+		}
+
+		p.logger.Info("Player state saved",
+			"volume", volume,
+			"muted", muted,
+			"trackPath", trackPath,
+			"positionSeconds", positionSeconds,
+		)
+	})
 }
 
 // ---------------------------------------------------------------
@@ -1253,6 +1267,10 @@ func (p *Player) RestoreState() {
 }
 
 func (p *Player) restoreStateLocked() {
+	// Reads back what saveState wrote, so it waits for anything still
+	// in flight rather than restoring the state before last.
+	p.flushWrites()
+
 	defer profiling.TimeOp(p.logger, "player.RestoreState")()
 
 	if p.db == nil {

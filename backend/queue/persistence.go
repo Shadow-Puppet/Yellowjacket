@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"yellowjacket/backend/coverart"
@@ -15,13 +16,15 @@ import (
 // No position shifting is needed because this is always an append.
 // The caller must hold q.mu.
 func (q *Queue) persistAddTrack(track Track) {
-	_, err := q.db.Queries.InsertQueueTrack(q.db.Ctx, sqlcgen.InsertQueueTrackParams{
-		AudioFileID: track.AudioFileID,
-		Position:    track.Position,
+	q.submitWrite(func() {
+		_, err := q.db.Queries.InsertQueueTrack(q.db.Ctx, sqlcgen.InsertQueueTrackParams{
+			AudioFileID: track.AudioFileID,
+			Position:    track.Position,
+		})
+		if err != nil {
+			q.logger.Error("Failed to persist added track", "err", err)
+		}
 	})
-	if err != nil {
-		q.logger.Error("Failed to persist added track", "err", err)
-	}
 }
 
 // persistAddTracks inserts multiple tracks at the end of the queue
@@ -33,6 +36,14 @@ func (q *Queue) persistAddTracks(tracks []Track) {
 		return
 	}
 
+	// Cloned because the caller's slice is usually a window onto
+	// q.tracks, which mutates the moment the lock is released.
+	snapshot := slices.Clone(tracks)
+
+	q.submitWrite(func() { q.writeAddTracks(snapshot) })
+}
+
+func (q *Queue) writeAddTracks(tracks []Track) {
 	tx, err := q.db.BeginTx()
 	if err != nil {
 		q.logger.Error("Failed to begin transaction", "err", err)
@@ -84,6 +95,12 @@ func (q *Queue) persistInsertTracks(tracks []Track, insertPos int) {
 		return
 	}
 
+	snapshot := slices.Clone(tracks)
+
+	q.submitWrite(func() { q.writeInsertTracks(snapshot, insertPos) })
+}
+
+func (q *Queue) writeInsertTracks(tracks []Track, insertPos int) {
 	tx, err := q.db.BeginTx()
 	if err != nil {
 		q.logger.Error("Failed to begin transaction", "err", err)
@@ -145,6 +162,10 @@ func (q *Queue) persistInsertTracks(tracks []Track, insertPos int) {
 // shifts subsequent positions down to close the gap.
 // The caller must hold q.mu.
 func (q *Queue) persistRemoveTrack(position int) {
+	q.submitWrite(func() { q.writeRemoveTrack(position) })
+}
+
+func (q *Queue) writeRemoveTrack(position int) {
 	tx, err := q.db.BeginTx()
 	if err != nil {
 		q.logger.Error("Failed to begin transaction", "err", err)
@@ -262,6 +283,12 @@ func (q *Queue) lookupChunk(
 // persistTracks writes the current queue tracks to the database atomically
 // using a transaction with batched multi-row inserts.
 func (q *Queue) persistTracks() {
+	snapshot := slices.Clone(q.tracks)
+
+	q.submitWrite(func() { q.writeTracks(snapshot) })
+}
+
+func (q *Queue) writeTracks(tracks []Track) {
 	tx, err := q.db.BeginTx()
 	if err != nil {
 		q.logger.Error("Failed to begin transaction", "err", err)
@@ -296,13 +323,13 @@ func (q *Queue) persistTracks() {
 
 	batchSize := maxSQLiteVars / varsPerRow
 
-	for i := 0; i < len(q.tracks); i += batchSize {
+	for i := 0; i < len(tracks); i += batchSize {
 		end := i + batchSize
-		if end > len(q.tracks) {
-			end = len(q.tracks)
+		if end > len(tracks) {
+			end = len(tracks)
 		}
 
-		batch := q.tracks[i:end]
+		batch := tracks[i:end]
 
 		if insertErr := q.insertTrackBatch(tx, batch); insertErr != nil {
 			q.logger.Error(
@@ -369,30 +396,33 @@ func (q *Queue) persistState() {
 		}
 	}
 
-	err := q.db.Queries.UpdateQueueState(
-		q.db.Ctx,
-		sqlcgen.UpdateQueueStateParams{
-			CurrentPosition: int64(q.currentIndex),
-			ShuffleMode:     q.shuffleMode,
-			RepeatMode:      string(q.repeatMode),
-			ShuffleOrder:    shuffleOrderJSON,
-			SourceType:      q.source.Type,
-			SourceID:        q.source.ID,
-			SourceLabel:     q.source.Label,
-		},
-	)
-	if err != nil {
-		q.logger.Error("Failed to persist queue state", "err", err)
+	params := sqlcgen.UpdateQueueStateParams{
+		CurrentPosition: int64(q.currentIndex),
+		ShuffleMode:     q.shuffleMode,
+		RepeatMode:      string(q.repeatMode),
+		ShuffleOrder:    shuffleOrderJSON,
+		SourceType:      q.source.Type,
+		SourceID:        q.source.ID,
+		SourceLabel:     q.source.Label,
 	}
+
+	q.submitWrite(func() {
+		if err := q.db.Queries.UpdateQueueState(q.db.Ctx, params); err != nil {
+			q.logger.Error("Failed to persist queue state", "err", err)
+		}
+	})
 }
 
-// SaveState persists the queue state to the database.
+// SaveState persists the queue state to the database.  Unlike every
+// other write here it waits for the writer: its callers are shutdown
+// and the tests, both of which need the row to exist on return.
 func (q *Queue) SaveState() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
 	q.persistTracks()
 	q.persistState()
+	q.flushWrites()
 	q.logger.Info("Queue state saved",
 		"trackCount", len(q.tracks),
 		"currentIndex", q.currentIndex,
@@ -407,6 +437,10 @@ func (q *Queue) RestoreState() {
 
 	q.mu.Lock()
 	defer q.mu.Unlock()
+
+	// The other read-back: at startup there is nothing pending, but a
+	// restore after any mutation must see it.
+	q.flushWrites()
 
 	// Restore queue metadata.
 	state, err := q.db.ReadQueries.GetQueueState(q.db.Ctx)
