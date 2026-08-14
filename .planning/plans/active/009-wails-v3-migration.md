@@ -1,7 +1,9 @@
 # 009 — Wails v3 migration
 
-**Status:** Phase 0 complete — **go**. Phases 1–7 not started.
-**Branch:** none yet (the spike ran in a scratchpad; the repo was not touched)
+**Status:** Phase 0 complete — **go**. Phase 1 **partly done** (toolchain
+and build assets landed; Makefile rewrite and the tag swap not started).
+Phases 2–7 not started.
+**Branch:** `wails-v3`, off `main` at `edb13a6`.
 **Created:** 2026-08-13
 **Phase 0 run:** 2026-08-13 against **v3.0.0-beta.8**
 **Target version:** pin `v3.0.0-beta.8` for the whole migration
@@ -289,6 +291,44 @@ Taskfile tree — a genuinely larger and more visible build surface.
 passes; `grep -r webkit2_41` returns nothing.
 
 **Est.** Half a session. Low risk, high churn.
+
+### Phase 1 — what actually landed (`e7873bd`)
+
+Steps 2, 3 (partly), 4 and 7 are done; 1, 5 and 6 are not.
+
+- **Done.** `wails/v3 v3.0.0-beta.8` pinned and `wails3` added to the
+  `tool` block beside the v2 CLI. `build/` holds the scaffold's asset
+  tree with `config.yml`'s `info` block filled from `wails.json`.
+  `Taskfile.yml` defaults `PACKAGE_MANAGER` to pnpm.
+- **Not done.** The Makefile still calls `go tool wails` (v2)
+  throughout, `webkit2_41` is still on all ~30 sites, and `wails.json`
+  is still present — deliberately, because the v2 CLI reads it and the
+  app has not moved to the v3 API yet. Steps 5 and 6 are entangled
+  with Phase 2 and should land with it: swapping the tag before
+  `main.go` is ported breaks the only build that currently works.
+
+**Two things the plan did not anticipate.**
+
+**`build/` was already taken.** This repo used it as *ignored* build
+output (`build/bin/` held three v2 binaries), and v3 wants it for
+*tracked* build assets. `.gitignore` now names `build/bin/` and `bin/`
+rather than `build`, and the assets are committed. The mobile platform
+trees (`build/android`, `build/ios`, ~40 files) are not carried — this
+is a desktop player and cannot target them — and their `includes:`
+entries are dropped from `Taskfile.yml`.
+
+**GTK4 is unavailable on the dev machine, so the gtk3 fallback is in
+use.** `webkitgtk-6.0` is not installed and installing it needs sudo.
+The consequence is sharper than the plan's "fallback if GTK4
+misbehaves": **`go tool wails3` does not work at all**, because the
+CLI itself links `internal/operatingsystem`, which `pkg-config`s
+`gtk4 webkitgtk-6.0` under default tags. `go run -tags gtk3
+github.com/wailsapp/wails/v3/cmd/wails3` builds and runs fine
+(`doctor` reports `-tags gtk3` and Webkit2Gtk v2.52.5), so that — not
+`go tool wails3` — is the invocation the Makefile must use until
+`sudo pacman -S webkitgtk-6.0` happens. Phase 0's claim that
+"`wails3 doctor` reports both toolchains" was not true on this
+machine.
 
 ---
 
