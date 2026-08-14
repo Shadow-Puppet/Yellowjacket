@@ -17,8 +17,8 @@ import {
     GetTrackThumbnails,
     ResolveReleaseGroupMBIDs,
     PrefetchReleases,
-} from '@go/explore/Service';
-import type { explore } from '@go/models';
+} from '@go/explore/service.js';
+import type * as explore from '@go/explore/models.js';
 type MBArtist = explore.MBArtist;
 type MBReleaseGroup = explore.MBReleaseGroup;
 type LBTopRecording = explore.LBTopRecording;
@@ -34,7 +34,7 @@ import {
     GetAlbumsByArtist,
     GetFilePathsByAlbums,
     GetFilePathsByRecordingMBIDs,
-} from '@go/library/Library';
+} from '@go/library/library.js';
 import { EventsOn } from '@runtime/runtime';
 import { Events } from '../../events';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
@@ -55,6 +55,7 @@ import type { ContextMenuHost } from '@utils/context-menu-controller.js';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
 import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
+import { dict, dictByName } from '@utils/binding';
 
 /* ── Constants ── */
 
@@ -1423,7 +1424,7 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
             let mapping: Record<string, string> = {};
             if (caaMbids.length > 0) {
                 try {
-                    mapping = (await ResolveReleaseGroupMBIDs(caaMbids)) || {};
+                    mapping = await dictByName(ResolveReleaseGroupMBIDs(caaMbids));
                 } catch (err) {
                     console.warn('[explore-artist] failed to resolve release groups for tracks:', err);
                 }
@@ -1475,7 +1476,7 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
         // Phase 1: batched cached lookup.
         let cached: Record<string, string> = {};
         try {
-            cached = (await GetTrackThumbnails(requests)) || {};
+            cached = await dictByName(GetTrackThumbnails(requests));
             if (Object.keys(cached).length > 0) {
                 const updated = new Map(this.trackThumbnails);
                 for (const [key, url] of Object.entries(cached)) {
@@ -1684,7 +1685,7 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
                 artistName: i.artistName,
             }));
 
-            cached = (await GetThumbnails(requests)) || {};
+            cached = await dictByName(GetThumbnails(requests));
             if (Object.keys(cached).length > 0) {
                 const updated = new Map(this.thumbnailURLs);
                 for (const [mbid, url] of Object.entries(cached)) {
@@ -1927,7 +1928,7 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
         if (albumIds.length === 0) return [];
 
         const libraryID = libraryStore.getSelectedLibraryId() ?? 0;
-        const byAlbum = await GetFilePathsByAlbums(albumIds, libraryID);
+        const byAlbum = await dict(GetFilePathsByAlbums(albumIds, libraryID));
         const paths: string[] = [];
 
         for (const id of albumIds) paths.push(...(byAlbum[id] ?? []));
@@ -1996,7 +1997,9 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
         if (!(track.inLibrary || track.localId) || !track.recordingMbid) return null;
 
         const libraryID = libraryStore.getSelectedLibraryId() ?? 0;
-        const byMBID = await GetFilePathsByRecordingMBIDs([track.recordingMbid], libraryID);
+        const byMBID = await dictByName(
+            GetFilePathsByRecordingMBIDs([track.recordingMbid], libraryID),
+        );
 
         return byMBID[track.recordingMbid]?.[0] ?? null;
     }
@@ -2145,7 +2148,9 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
         if (release.localId <= 0) return [];
 
         const libraryID = libraryStore.getSelectedLibraryId() ?? 0;
-        const byAlbum = await GetFilePathsByAlbums([release.localId], libraryID);
+        const byAlbum = await dict(
+            GetFilePathsByAlbums([release.localId], libraryID),
+        );
 
         return byAlbum[release.localId] ?? [];
     }

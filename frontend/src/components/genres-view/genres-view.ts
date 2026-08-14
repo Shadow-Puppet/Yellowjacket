@@ -12,8 +12,8 @@ import type {
 import { grid } from '@lit-labs/virtualizer/layouts/grid.js';
 import {
     GetFilePathsByGenres,
-} from '@go/library/Library';
-import type { library } from '@go/models';
+} from '@go/library/library.js';
+import type * as library from '@go/library/models.js';
 import { LibraryController } from '@store/controllers/library-controller';
 import { SearchController } from '@store/controllers/search-controller';
 import '@components/page-header/page-header';
@@ -33,6 +33,7 @@ import '@awesome.me/webawesome/dist/components/popup/popup.js';
 import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 import '@components/playlist-picker/playlist-picker.js';
+import { dictByName } from '@utils/binding';
 
 /** Pixels to change card width per scroll tick. */
 const ZOOM_STEP = 16;
@@ -831,9 +832,8 @@ export class GenresView
         // read off them — 6 MB over the IPC for five
         // genres of a 50 000-track library.
         const names = Array.from(genreNames);
-        const byGenre = await GetFilePathsByGenres(
-            names,
-            libId ?? 0,
+        const byGenre = await dictByName(
+            GetFilePathsByGenres(names, libId ?? 0),
         );
 
         // Still de-duplicated here: a track with two of

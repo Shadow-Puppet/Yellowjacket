@@ -14,8 +14,8 @@ import { grid } from '@lit-labs/virtualizer/layouts/grid.js';
 import {
     GetAlbumTracks,
     GetAlbumTracksByLibrary,
-} from '@go/library/Library';
-import { library } from '@go/models';
+} from '@go/library/library.js';
+import * as library from '@go/library/models.js';
 import { LibraryController } from '@store/controllers/library-controller';
 import { SearchController } from '@store/controllers/search-controller';
 import { ViewLifecycleMixin } from '@utils/view-lifecycle';
@@ -74,6 +74,7 @@ import type {
     GridEntry,
     SortDirection,
 } from './cover-grid-types.js';
+import { list } from '@utils/binding';
 
 @customElement('cover-grid')
 export class CoverGrid
@@ -933,12 +934,14 @@ export class CoverGrid
             const libId =
                 this.libraryCtrl.selectedLibraryId;
 
-            const tracks = libId !== null
-                ? await GetAlbumTracksByLibrary(
-                      album.ID,
-                      libId,
-                  )
-                : await GetAlbumTracks(album.ID);
+            const tracks = await list(
+                libId !== null
+                    ? GetAlbumTracksByLibrary(
+                          album.ID,
+                          libId,
+                      )
+                    : GetAlbumTracks(album.ID),
+            );
 
             if (this.expandedAlbumId === album.ID) {
                 this.expandedTracks = tracks;

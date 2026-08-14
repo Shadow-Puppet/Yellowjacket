@@ -2,10 +2,11 @@ import { EventsOn } from '@runtime/runtime';
 import {
     GetTrackListColumns,
     SetTrackListColumns,
-} from '@go/config/Config';
-import { tracklist } from '@go/models';
+} from '@go/config/config.js';
+import * as tracklist from '@go/tracklist/models.js';
 import { Events } from '../events';
 import { DEFAULT_COLUMN_IDS } from '@components/track-list/columns';
+import { list } from '@utils/binding';
 
 export interface TrackListState {
     /** Ordered list of visible column IDs. */
@@ -47,12 +48,10 @@ class TrackListStore {
 
     private async loadFromBackend(): Promise<void> {
         try {
-            const columns = await GetTrackListColumns();
+            const columns = await list(GetTrackListColumns());
 
             this.update({
-                columnIds: columns.map(
-                    (c: tracklist.Column) => c.id,
-                ),
+                columnIds: columns.map((c) => c.id),
             });
         } catch {
             // Use defaults on failure.
@@ -72,12 +71,9 @@ class TrackListStore {
     // ===============================================================
 
     async setColumns(columnIds: string[]): Promise<void> {
-        const columns = columnIds.map((id) => {
-            const col = new tracklist.Column();
-            col.id = id;
-
-            return col;
-        });
+        const columns: tracklist.Column[] = columnIds.map((id) => ({
+            id: id as tracklist.ColumnID,
+        }));
 
         await SetTrackListColumns(columns);
     }

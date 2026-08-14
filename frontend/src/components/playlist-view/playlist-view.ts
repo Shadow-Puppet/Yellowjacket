@@ -14,9 +14,9 @@ import {
     RenamePlaylist,
     ImportPlaylists,
     FindDuplicateTracksInPlaylist,
-} from '@go/playlist/Service';
-import { PlaylistFilePicker } from '@go/frontendutil/FrontendUtil';
-import type { playlist } from '@go/models';
+} from '@go/playlist/service.js';
+import { PlaylistFilePicker } from '@go/frontendutil/frontendutil.js';
+import type * as playlist from '@go/playlist/models.js';
 import { PlaylistController } from '@store/controllers/playlist-controller';
 import { SearchController } from '@store/controllers/search-controller';
 import {

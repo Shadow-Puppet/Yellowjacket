@@ -11,8 +11,9 @@ import {
     GetAllGenresWithCountsByLibrary,
     GetAlbumsByArtistByLibrary,
     GetAllLibrariesWithTrackCounts,
-} from '@go/library/Library';
-import type { library } from '@go/models';
+} from '@go/library/library.js';
+import type * as library from '@go/library/models.js';
+import { list } from '@utils/binding';
 import { Events } from '../events';
 
 type ViewName = 'tracks' | 'albums' | 'artists' | 'genres';
@@ -231,7 +232,7 @@ class LibraryStore {
 
         return this.track(
             'tracks',
-            id !== null ? GetAllTracksByLibrary(id) : GetAllTracks(),
+            list(id !== null ? GetAllTracksByLibrary(id) : GetAllTracks()),
             (tracks) => {
                 this.tracks = tracks;
             },
@@ -252,7 +253,7 @@ class LibraryStore {
 
         return this.track(
             'albums',
-            id !== null ? GetAllAlbumsByLibrary(id) : GetAllAlbums(),
+            list(id !== null ? GetAllAlbumsByLibrary(id) : GetAllAlbums()),
             (albums) => {
                 this.albums = albums;
             },
@@ -273,7 +274,7 @@ class LibraryStore {
 
         return this.track(
             'artists',
-            id !== null ? GetAllArtistsByLibrary(id) : GetAllArtists(),
+            list(id !== null ? GetAllArtistsByLibrary(id) : GetAllArtists()),
             (artists) => {
                 this.artists = artists;
             },
@@ -294,9 +295,11 @@ class LibraryStore {
 
         return this.track(
             'genres',
-            id !== null
-                ? GetAllGenresWithCountsByLibrary(id)
-                : GetAllGenresWithCounts(),
+            list(
+                id !== null
+                    ? GetAllGenresWithCountsByLibrary(id)
+                    : GetAllGenresWithCounts(),
+            ),
             (genres) => {
                 this.genres = genres;
             },
@@ -309,9 +312,11 @@ class LibraryStore {
     ): Promise<library.Album[]> {
         const id = this.selectedLibraryIdValue;
 
-        return id !== null
-            ? GetAlbumsByArtistByLibrary(artistID, id)
-            : GetAlbumsByArtist(artistID);
+        return list(
+            id !== null
+                ? GetAlbumsByArtistByLibrary(artistID, id)
+                : GetAlbumsByArtist(artistID),
+        );
     }
 
     /**
@@ -410,8 +415,7 @@ class LibraryStore {
             return this.libraries;
         }
 
-        const libs =
-            await GetAllLibrariesWithTrackCounts();
+        const libs = await list(GetAllLibrariesWithTrackCounts());
 
         this.libraries = libs;
 

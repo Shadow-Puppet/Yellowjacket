@@ -17,8 +17,8 @@ import {
     ClearCompletedEntries,
     SearchCandidates,
     SelectSearchCandidate,
-} from '@go/autotagservice/Service';
-import type { autotagservice } from '@go/models';
+} from '@go/autotagservice/service.js';
+import type * as autotagservice from '@go/autotagservice/models.js';
 import { EventsOn } from '@runtime/runtime';
 import { Events } from '../../events';
 import { inlineDiff, normalizeStrict, isCosmeticDiff } from '../../utils/text-diff';
@@ -29,6 +29,7 @@ import { nameDialogsIn } from '../../utils/name-dialog';
 import { ViewLifecycleMixin } from '../../utils/view-lifecycle';
 import { confirmAction } from '../confirm-dialog/confirm-dialog';
 import '@awesome.me/webawesome/dist/components/dialog/dialog.js';
+import { list } from '@utils/binding';
 
 type PendingItem = autotagservice.PendingItem;
 type ScoreView = autotagservice.ScoreView;
@@ -1483,8 +1484,10 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
         this.searchError = '';
         this.searchRan = true;
         try {
-            this.searchResults = await SearchCandidates(
-                this.searchKind, query, this.searchArtist.trim(),
+            this.searchResults = await list(
+                SearchCandidates(
+                    this.searchKind, query, this.searchArtist.trim(),
+                ),
             );
         } catch (err) {
             console.error('autotag: candidate search failed', err);
@@ -1755,12 +1758,12 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
     }
 
     private topScore(): number {
-        if (!this.score || this.score.candidates.length === 0) return 0;
-        return this.score.candidates[0]?.score ?? 0;
+        if (!this.score || (this.score.candidates ?? []).length === 0) return 0;
+        return (this.score.candidates ?? [])[0]?.score ?? 0;
     }
 
     private async onApply(): Promise<void> {
-        if (!this.current || !this.score || this.score.candidates.length === 0) return;
+        if (!this.current || !this.score || (this.score.candidates ?? []).length === 0) return;
         if (!this.hasLibraryWarningBeenAcked(this.current.libraryId)) {
             await this.confirmWarningThenApply();
 
@@ -1773,7 +1776,7 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
     private async executeApply(): Promise<void> {
         if (!this.current || !this.score) return;
 
-        const cand = this.score.candidates[this.selectedCandidateIdx];
+        const cand = (this.score.candidates ?? [])[this.selectedCandidateIdx];
         if (!cand) {
             this.errorMessage = 'No candidate selected.';
             return;
@@ -1781,7 +1784,7 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
 
         const groupKey = this.current.groupKey;
         const mbid = cand.releaseMbid || cand.releaseGroupMbid;
-        const total = this.score.localTracks.length;
+        const total = (this.score.localTracks ?? []).length;
 
         // Pre-mark the folder as running so the sidebar icon flips
         // to the progress ring immediately — the Started event will
@@ -1955,16 +1958,16 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
      */
     private currentCandidate(): CandidateView | null {
         if (!this.score) return null;
-        return this.score.candidates[this.selectedCandidateIdx] ?? null;
+        return (this.score.candidates ?? [])[this.selectedCandidateIdx] ?? null;
     }
 
     private async selectCandidateByIdx(idx: number): Promise<void> {
-        if (!this.score || idx < 0 || idx >= this.score.candidates.length) return;
+        if (!this.score || idx < 0 || idx >= (this.score.candidates ?? []).length) return;
         this.selectedCandidateIdx = idx;
         // Lazy-load cover art for non-top candidates.  The backend
         // populates art for the top one eagerly; everything else
         // arrives empty until the user picks it.
-        const cand = this.score.candidates[idx]!;
+        const cand = (this.score.candidates ?? [])[idx]!;
         if (!cand.coverArtUrl) {
             try {
                 const url = await GetCandidateCoverArt(
@@ -2252,7 +2255,7 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
         if (!cluster || cluster.candidates.length <= 1) return nothing;
 
         const editions = cluster.candidates
-            .map((c) => ({ cand: c, idx: this.score?.candidates.indexOf(c) ?? -1 }))
+            .map((c) => ({ cand: c, idx: (this.score?.candidates ?? []).indexOf(c) ?? -1 }))
             .filter((e) => e.idx >= 0);
 
         return html`
@@ -2316,11 +2319,11 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
         // the score forgives, the UI mutes.
         const SUBTLE_LENGTH_MAX_MS = 5000;
 
-        for (const a of cand.alignments) {
+        for (const a of (cand.alignments ?? [])) {
             if (a.status === 'matched' || a.status === 'mismatched') {
                 paired++;
                 const local = a.localIndex >= 0
-                    ? this.score?.localTracks[a.localIndex] ?? null
+                    ? (this.score?.localTracks ?? [])[a.localIndex] ?? null
                     : null;
                 if (local) {
                     if (local.title !== a.candidateTitle) {
@@ -2374,7 +2377,7 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
                 missingTitles.push(a.candidateTitle || '(untitled)');
             } else if (a.status === 'unmatched') {
                 const local = a.localIndex >= 0
-                    ? this.score?.localTracks[a.localIndex] ?? null
+                    ? (this.score?.localTracks ?? [])[a.localIndex] ?? null
                     : null;
                 extraTitles.push(a.localTitle || local?.title || '(untitled)');
             }
@@ -2659,7 +2662,7 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
     }
 
     private renderLowConfidenceBanner(clusters: VersionCluster[]) {
-        const top = this.score?.candidates[0];
+        const top = (this.score?.candidates ?? [])[0];
         if (!top) return nothing;
         if (top.score >= LOW_CONFIDENCE_THRESHOLD) return nothing;
         if (clusters.length < 2) return nothing;
@@ -2695,18 +2698,18 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
      * renderMatchDetails, so each column shows its own values plainly.
      */
     private renderComparison(cand: CandidateView, clusters: VersionCluster[] = []) {
-        const locals = this.score?.localTracks ?? [];
+        const locals = (this.score?.localTracks ?? []) ?? [];
 
         // localIndex -> its alignment, so a folder row knows whether it
         // paired and (if so) how confidently.
         const alignByLocal = new Map<number, AlignmentView>();
-        for (const a of cand.alignments) {
+        for (const a of (cand.alignments ?? [])) {
             if (a.localIndex >= 0) alignByLocal.set(a.localIndex, a);
         }
 
         // Candidate side: every alignment that has a candidate track
         // (paired or missing-from-folder), in candidate order.
-        const candRows = cand.alignments
+        const candRows = (cand.alignments ?? [])
             .filter((a) => a.status !== 'unmatched' && a.candidatePosition > 0)
             .slice()
             .sort((x, y) =>
@@ -2856,7 +2859,7 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
                 ${clusters.map((cluster) => {
                     const best = cluster.candidates[cluster.bestIdx]!;
                     const active = cluster.candidates.includes(activeCand);
-                    const idx = this.score?.candidates.indexOf(best) ?? -1;
+                    const idx = (this.score?.candidates ?? []).indexOf(best) ?? -1;
                     return html`
                         <div class="cand-chip ${active ? 'selected' : ''}"
                              title=${cluster.label}
@@ -2949,7 +2952,7 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
             `;
         }
 
-        if (!this.score || this.score.candidates.length === 0) {
+        if (!this.score || (this.score.candidates ?? []).length === 0) {
             return html`
                 <div class="main">
                     <div class="empty">
@@ -2965,7 +2968,7 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
             return html`<div class="main"><div class="empty">Candidate index out of range.</div></div>`;
         }
 
-        const clusters = this.clusterVersions(this.score.candidates);
+        const clusters = this.clusterVersions((this.score.candidates ?? []));
 
         return html`
             <div class="main">

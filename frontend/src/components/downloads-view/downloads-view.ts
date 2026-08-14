@@ -686,7 +686,7 @@ export class DownloadsView extends ViewLifecycleMixin(LitElement) {
     /** Provider/progress summary for a download's second line. */
     private downloadDetail(view: DownloadRecord): string {
         const providers = [
-            ...new Set(view.items.map((item) => item.candidate?.origin).filter(Boolean)),
+            ...new Set((view.items ?? []).map((item) => item.candidate?.origin).filter(Boolean)),
         ];
 
         const parts: string[] = [];

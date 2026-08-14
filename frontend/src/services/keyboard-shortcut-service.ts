@@ -14,7 +14,7 @@ import { shortcutsStore } from '@store/shortcuts-store';
 import { ambientShortcutScope } from './shortcut-scope';
 import { playerStore } from '@store/player-store';
 import { queueStore } from '@store/queue-store';
-import * as Player from '@go/player/Player';
+import * as Player from '@go/player/player.js';
 import type { SearchBar } from '@components/search-bar/search-bar';
 
 // ===================================================================

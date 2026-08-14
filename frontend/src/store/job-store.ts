@@ -7,8 +7,8 @@ import {
     CancelJob,
     DismissJob,
     ClearFinishedJobs,
-} from '@go/jobs/Service';
-import type { jobs } from '@go/models';
+} from '@go/jobs/service.js';
+import type * as jobs from '@go/jobs/models.js';
 import { Events } from '../events';
 
 export type Job = jobs.Job;

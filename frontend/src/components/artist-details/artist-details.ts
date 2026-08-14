@@ -4,13 +4,13 @@ import {
     property,
     state,
 } from 'lit/decorators.js';
-import { library } from '@go/models';
+import * as library from '@go/library/models.js';
 import { LibraryController } from '@store/controllers/library-controller';
 import {
     GetArtistImageURL,
     GetArtistImageCachedPath,
     GetArtistMBID,
-} from '@go/explore/Service';
+} from '@go/explore/service.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@components/cover-grid/cover-grid.js';
 import { designTokens } from '../../styles/tokens.css';

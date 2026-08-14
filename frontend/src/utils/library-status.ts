@@ -1,6 +1,6 @@
 import { downloadStore } from '@store/download-store';
 import { libraryStore } from '@store/library-store';
-import type { download } from '@go/models';
+import type * as download from '@go/download/models.js';
 import type { LibraryStatus } from '../components/library-status-indicator/library-status-indicator';
 
 /**

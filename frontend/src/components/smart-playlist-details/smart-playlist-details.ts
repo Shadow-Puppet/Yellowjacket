@@ -5,13 +5,13 @@ import {
     state,
     query,
 } from 'lit/decorators.js';
-import type { playlist } from '@go/models';
+import type * as playlist from '@go/playlist/models.js';
 import {
     GetSmartPlaylistTracks,
     RefreshSmartPlaylist,
     GetSmartPlaylistRules,
     UpdateSmartPlaylistRules,
-} from '@go/playlist/Service';
+} from '@go/playlist/service.js';
 import { EventsOn } from '@runtime/runtime';
 import { Events } from '../../events';
 import { queueStore } from '@store/queue-store';
@@ -58,6 +58,7 @@ import {
 } from '@utils/explore-link';
 import '@components/smart-playlist-editor/smart-playlist-editor.js';
 import { designTokens } from '../../styles/tokens.css';
+import { list } from '@utils/binding';
 
 
 /**
@@ -700,8 +701,8 @@ export class SmartPlaylistDetails
         if (!this.playlistId) return;
 
         try {
-            this.tracks = await GetSmartPlaylistTracks(
-                this.playlistId,
+            this.tracks = await list(
+                GetSmartPlaylistTracks(this.playlistId),
             );
         } catch (error) {
             console.error(

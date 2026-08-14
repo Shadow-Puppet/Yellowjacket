@@ -1,12 +1,12 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { designTokens } from '../../styles/tokens.css';
-import type { explore } from '@go/models';
+import type * as explore from '@go/explore/models.js';
 import {
     GetArtistImageURL,
     GetThumbnail,
     RecordSearchClick,
-} from '@go/explore/Service';
+} from '@go/explore/service.js';
 import '../library-status-indicator/library-status-indicator.js';
 import type { LibraryStatus } from '../library-status-indicator/library-status-indicator.js';
 import { artistLink, exploreLinkStyles } from '../../utils/explore-link';

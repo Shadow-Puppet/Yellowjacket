@@ -1,6 +1,6 @@
 import type { LitElement } from 'lit';
 import type { LitVirtualizer } from '@lit-labs/virtualizer';
-import type { library } from '@go/models';
+import type * as library from '@go/library/models.js';
 import type { LibraryController } from '@store/controllers/library-controller';
 
 import type { GridEntry } from './cover-grid-types.js';

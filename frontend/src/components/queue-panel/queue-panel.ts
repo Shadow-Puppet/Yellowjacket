@@ -49,7 +49,7 @@ import {
     removeDragImage,
 } from '@utils/drag-image';
 import { libraryStore } from '@store/library-store';
-import type { library } from '@go/models';
+import type * as library from '@go/library/models.js';
 import { loadTrackDetails } from '@utils/lazy-track-details.js';
 import { tracksByFilePath } from '@utils/track-index.js';
 import type { TrackDetails } from '@components/track-details/track-details.js';

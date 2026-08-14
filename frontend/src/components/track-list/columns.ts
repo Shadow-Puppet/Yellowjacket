@@ -1,4 +1,4 @@
-import type { library } from '@go/models';
+import type * as library from '@go/library/models.js';
 import {
     formatSampleRate,
     formatBitDepth,

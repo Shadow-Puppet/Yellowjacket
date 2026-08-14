@@ -5,8 +5,8 @@ import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import {
     AddLibrary,
     GetAllLibrariesWithTrackCounts,
-} from '@go/library/Library';
-import { DirectoryPicker } from '@go/frontendutil/FrontendUtil';
+} from '@go/library/library.js';
+import { DirectoryPicker } from '@go/frontendutil/frontendutil.js';
 import { describeError, explainError } from '@utils/describe-error';
 import { nameDialogsIn } from '@utils/name-dialog';
 

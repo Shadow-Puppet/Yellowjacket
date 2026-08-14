@@ -1,7 +1,7 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
-import { library } from '@go/models';
-import { PreviewSmartPlaylist } from '@go/playlist/Service';
+import * as library from '@go/library/models.js';
+import { PreviewSmartPlaylist } from '@go/playlist/service.js';
 import { libraryStore } from '@store/library-store';
 import { describeError } from '@utils/describe-error';
 import { designTokens } from '../../styles/tokens.css';

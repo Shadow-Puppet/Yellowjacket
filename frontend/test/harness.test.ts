@@ -22,7 +22,7 @@ describe('component-tier harness', () => {
   it('routes generated bindings through the fake, not a module mock', async () => {
     // The import path under test is the real generated stub, which does
     // window['go']['queue']['Queue']['GetState']().
-    const Queue = await import('@go/queue/Queue');
+    const Queue = await import('@go/queue/queue.js');
 
     wails.stub('queue.Queue.GetState', { currentIndex: 4 });
 
@@ -31,7 +31,7 @@ describe('component-tier harness', () => {
   });
 
   it('resolves an unstubbed binding instead of hanging', async () => {
-    const Queue = await import('@go/queue/Queue');
+    const Queue = await import('@go/queue/queue.js');
 
     // The real trap this pays for is the reverse: a *real* binding
     // called with wrong argument types never settles. Here, silence is

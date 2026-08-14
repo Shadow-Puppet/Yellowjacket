@@ -1,4 +1,4 @@
-import type { library } from '@go/models';
+import type * as library from '@go/library/models.js';
 
 /**
  * Discriminated context menu target so we know whether the

@@ -4,7 +4,7 @@ import {
     state,
     query,
 } from 'lit/decorators.js';
-import type { library } from '@go/models';
+import type * as library from '@go/library/models.js';
 import {
     formatSampleRate,
     formatBitDepth,
@@ -14,14 +14,14 @@ import {
 } from '@utils/format';
 import { formatMilliseconds } from '@utils/time';
 import { nameDialogsIn } from '@utils/name-dialog';
-import { WriteTrackTagsByPath } from '@go/tagwriter/TagWriter';
+import { WriteTrackTagsByPath } from '@go/tagwriter/tagwriter.js';
 import {
     BatchWriteTrackTags,
     CancelBatchWrite,
-} from '@go/tagwriter/TagWriter';
-import { GetTrackMBIDs } from '@go/library/Library';
+} from '@go/tagwriter/tagwriter.js';
+import { GetTrackMBIDs } from '@go/library/library.js';
 type TrackMBIDs = library.TrackMBIDs;
-import { ImageFilePicker, ReadFile } from '@go/frontendutil/FrontendUtil';
+import { ImageFilePicker, ReadFile } from '@go/frontendutil/frontendutil.js';
 import { libraryStore } from '../../store/library-store';
 import { EventsOn } from '@runtime/runtime';
 import { Events } from '../../events';

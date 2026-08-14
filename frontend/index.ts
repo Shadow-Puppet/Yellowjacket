@@ -39,9 +39,9 @@ import { setBasePath } from '@awesome.me/webawesome/dist/webawesome.js';
 import { registerBundledIcons } from './src/icons';
 import { queueStore } from '@store/queue-store';
 import { searchStore } from '@store/search-store';
-import * as Player from '@go/player/Player';
-import * as Queue from '@go/queue/Queue';
-import { GetDefaultPage } from '@go/config/Config';
+import * as Player from '@go/player/player.js';
+import * as Queue from '@go/queue/queue.js';
+import { GetDefaultPage } from '@go/config/config.js';
 // Importing the theme store triggers initialization: it fetches the saved
 // theme from the backend and applies CSS custom properties to :root.
 import '@store/theme-store';

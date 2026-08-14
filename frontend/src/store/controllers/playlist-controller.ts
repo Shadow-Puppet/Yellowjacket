@@ -1,5 +1,5 @@
 import type { ReactiveController, ReactiveControllerHost } from 'lit';
-import type { playlist } from '@go/models';
+import type * as playlist from '@go/playlist/models.js';
 import { playlistStore } from '../playlist-store';
 
 /**

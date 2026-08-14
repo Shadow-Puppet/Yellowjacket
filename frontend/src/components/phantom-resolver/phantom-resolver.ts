@@ -13,10 +13,11 @@ import {
     SearchLibrary,
     ResolvePhantomTracks,
     RemovePhantomTracks,
-} from '@go/playlist/Service';
-import type { playlist } from '@go/models';
+} from '@go/playlist/service.js';
+import type * as playlist from '@go/playlist/models.js';
 import { formatMilliseconds } from '@utils/time';
 import { nameDialogsIn } from '@utils/name-dialog';
+import { list } from '@utils/binding';
 
 const SEARCH_DEBOUNCE_MS = 400;
 
@@ -143,11 +144,12 @@ export class PhantomResolver extends LitElement {
         this.candidatesLoading = true;
 
         try {
-            this.candidates =
-                await GetPhantomCandidates(
+            this.candidates = await list(
+                GetPhantomCandidates(
                     this.playlistId,
                     this.selectedPhantom,
-                );
+                ),
+            );
         } catch (err) {
             console.error(
                 'Failed to load candidates:',
@@ -171,8 +173,7 @@ export class PhantomResolver extends LitElement {
         this.searching = true;
 
         try {
-            this.searchResults =
-                await SearchLibrary(query);
+            this.searchResults = await list(SearchLibrary(query));
         } catch (err) {
             console.error(
                 'Library search failed:',

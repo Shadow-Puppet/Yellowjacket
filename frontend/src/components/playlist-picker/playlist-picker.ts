@@ -10,13 +10,14 @@ import {
     AddTracksToPlaylist,
     CreatePlaylistWithTracks,
     FindDuplicateTracksInPlaylist,
-} from '@go/playlist/Service';
+} from '@go/playlist/service.js';
 import { Events } from '../../events';
-import type { playlist } from '@go/models';
+import type * as playlist from '@go/playlist/models.js';
 import '@components/duplicate-tracks-dialog/duplicate-tracks-dialog.js';
 import { notificationStore } from '@store/notification-store';
 import { describeError } from '@utils/describe-error';
 import type { DuplicateTracksDialog } from '@components/duplicate-tracks-dialog/duplicate-tracks-dialog.js';
+import { list } from '@utils/binding';
 
 /**
  * A reusable playlist picker that displays existing playlists
@@ -156,7 +157,7 @@ export class PlaylistPicker extends LitElement {
 
     private async loadPlaylists() {
         try {
-            this.playlists = await GetAllPlaylists();
+            this.playlists = await list(GetAllPlaylists());
         } catch (err) {
             console.error('Failed to load playlists:', err);
             this.playlists = [];

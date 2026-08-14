@@ -14,10 +14,12 @@ import type {
     ProviderField,
 } from '@store/download-store';
 import { downloadStore } from '@store/download-store';
-import { DirectoryPicker } from '@go/frontendutil/FrontendUtil';
-import { GetDownloadPreferences, SetDownloadPreferences } from '@go/config/Config';
-import { SetPreferences } from '@go/download/Service';
-import type { download } from '@go/models';
+import { DirectoryPicker } from '@go/frontendutil/frontendutil.js';
+import { GetDownloadPreferences, SetDownloadPreferences } from '@go/config/config.js';
+import { SetPreferences } from '@go/download/service.js';
+import type * as download from '@go/download/models.js';
+import { Format } from '@go/download/models.js';
+import { compact } from '@utils/binding';
 import { describeError, explainError } from '@utils/describe-error';
 import { confirmAction } from '@components/confirm-dialog/confirm-dialog';
 import './config-section';
@@ -28,15 +30,15 @@ import './config-section';
  * deliberately excluded — it names "no format detected", not a format a
  * user could opt into.
  */
-const AUTO_DOWNLOAD_FORMATS: { value: string; label: string }[] = [
-    { value: 'flac', label: 'FLAC' },
-    { value: 'alac', label: 'ALAC' },
-    { value: 'wav', label: 'WAV' },
-    { value: 'mp3', label: 'MP3' },
-    { value: 'aac', label: 'AAC' },
-    { value: 'ogg', label: 'OGG' },
-    { value: 'opus', label: 'Opus' },
-    { value: 'wma', label: 'WMA' },
+const AUTO_DOWNLOAD_FORMATS: { value: Format; label: string }[] = [
+    { value: Format.FormatFLAC, label: 'FLAC' },
+    { value: Format.FormatALAC, label: 'ALAC' },
+    { value: Format.FormatWAV, label: 'WAV' },
+    { value: Format.FormatMP3, label: 'MP3' },
+    { value: Format.FormatAAC, label: 'AAC' },
+    { value: Format.FormatOGG, label: 'OGG' },
+    { value: Format.FormatOpus, label: 'Opus' },
+    { value: Format.FormatWMA, label: 'WMA' },
 ];
 
 /**
@@ -607,7 +609,7 @@ export class DownloadClients extends LitElement {
         // Secrets are never sent back to the frontend, so their fields
         // start blank; a blank secret on save means "leave it alone"
         // rather than "clear it".
-        this.draft = { ...(provider.settings ?? {}) };
+        this.draft = compact(provider.settings);
     }
 
     private cancelEdit = () => {
@@ -748,7 +750,7 @@ export class DownloadClients extends LitElement {
         }
     }
 
-    private toggleFormat(format: string, checked: boolean): void {
+    private toggleFormat(format: Format, checked: boolean): void {
         const current = this.prefs.allowedFormats ?? [];
         const allowedFormats = checked
             ? [...current, format]

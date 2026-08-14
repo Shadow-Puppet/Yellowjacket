@@ -7,7 +7,7 @@ import '@awesome.me/webawesome/dist/components/callout/callout.js';
 import { designTokens } from '../../styles/tokens.css';
 import type { DownloadCandidate } from '@store/download-store';
 import { downloadStore } from '@store/download-store';
-import type { download } from '@go/models';
+import type * as download from '@go/download/models.js';
 import './candidate-row';
 import { explainError } from '@utils/describe-error';
 import { nameDialogsIn } from '@utils/name-dialog';

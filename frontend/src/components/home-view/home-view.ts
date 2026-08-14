@@ -2,9 +2,10 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@awesome.me/webawesome/dist/components/button/button.js';
-import { GetShelves } from '@go/home/Service';
-import { GetAlbumTracks } from '@go/library/Library';
-import type { home, library } from '@go/models';
+import { GetShelves } from '@go/home/service.js';
+import { GetAlbumTracks } from '@go/library/library.js';
+import type * as home from '@go/home/models.js';
+import type * as library from '@go/library/models.js';
 import { queueStore } from '@store/queue-store';
 import { libraryStore } from '@store/library-store';
 import { EventsOn } from '@runtime/runtime';
@@ -311,7 +312,7 @@ export class HomeView extends ViewLifecycleMixin(LitElement) {
                 </div>
                 <p class="shelf-sub">${shelf.subtitle}</p>
                 <div class="row">
-                    ${shelf.albums.map((album) => this.renderCard(album))}
+                    ${(shelf.albums ?? []).map((album) => this.renderCard(album))}
                 </div>
             </section>
         `;

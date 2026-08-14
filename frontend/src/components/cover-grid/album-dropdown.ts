@@ -1,7 +1,7 @@
 import { LitElement, html, svg, css } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { classMap } from 'lit/directives/class-map.js';
-import type { library } from '@go/models';
+import type * as library from '@go/library/models.js';
 import { PlayerController } from '@store/controllers/player-controller';
 import { FavoritesController } from '@store/controllers/favorites-controller';
 import { formatMilliseconds } from '@utils/time';

@@ -3,7 +3,7 @@ import { customElement, state, query } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/dialog/dialog.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@awesome.me/webawesome/dist/components/switch/switch.js';
-import { AddTracksToPlaylist } from '@go/playlist/Service';
+import { AddTracksToPlaylist } from '@go/playlist/service.js';
 import { formatMilliseconds } from '@utils/time';
 import { nameDialogsIn } from '@utils/name-dialog';
 

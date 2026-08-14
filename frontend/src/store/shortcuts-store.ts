@@ -4,8 +4,9 @@ import {
     SetShortcut,
     SetShortcuts,
     ResetShortcuts,
-} from '@go/config/Config';
+} from '@go/config/config.js';
 import { Events } from '../events';
+import { dictByName } from '@utils/binding';
 
 export interface ShortcutsState {
     bindings: Map<string, string>; // action → key combo
@@ -56,7 +57,7 @@ class ShortcutsStore {
 
     private async loadFromBackend(): Promise<void> {
         try {
-            const raw = await GetShortcuts();
+            const raw = await dictByName(GetShortcuts());
             this.state = {
                 bindings: new Map(Object.entries(raw)),
                 loaded: true,

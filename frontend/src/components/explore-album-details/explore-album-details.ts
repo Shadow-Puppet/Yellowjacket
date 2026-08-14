@@ -6,15 +6,16 @@ import {
     LookupReleaseGroup,
     BrowseReleases,
     GetThumbnail,
-} from '@go/explore/Service';
+} from '@go/explore/service.js';
 import {
     GetAlbumTracks,
     GetAlbumCompleteness,
     GetFilePathsByAlbums,
     GetFilePathsByRecordingMBIDs,
-} from '@go/library/Library';
-import { library } from '@go/models';
-import type { download, explore } from '@go/models';
+} from '@go/library/library.js';
+import * as library from '@go/library/models.js';
+import type * as download from '@go/download/models.js';
+import type * as explore from '@go/explore/models.js';
 type MBReleaseGroup = explore.MBReleaseGroup;
 type MBRelease = explore.MBRelease;
 type MBTrack = explore.MBTrack;
@@ -46,6 +47,7 @@ import type { ContextMenuHost } from '@utils/context-menu-controller.js';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
 import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
+import { dict, dictByName } from '@utils/binding';
 
 /**
  * The region the album header's own failures are rendered in.
@@ -2248,9 +2250,8 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
         // to an empty set and the Play button silently does nothing.
         // That is exactly what the first version of this did.
         if (this.localAlbumId > 0) {
-            const byAlbum = await GetFilePathsByAlbums(
-                [this.localAlbumId],
-                libraryID,
+            const byAlbum = await dict(
+                GetFilePathsByAlbums([this.localAlbumId], libraryID),
             );
 
             return byAlbum[this.localAlbumId] ?? [];
@@ -2266,7 +2267,9 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
 
         if (mbids.length === 0) return [];
 
-        const byMBID = await GetFilePathsByRecordingMBIDs(mbids, libraryID);
+        const byMBID = await dictByName(
+            GetFilePathsByRecordingMBIDs(mbids, libraryID),
+        );
 
         // Walked in tracklist order rather than flattened, because the
         // grouping is what lets the caller keep its own order. A
@@ -2349,7 +2352,9 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
         if (!track.inLibrary || !track.mbid) return null;
 
         const libraryID = libraryStore.getSelectedLibraryId() ?? 0;
-        const byMBID = await GetFilePathsByRecordingMBIDs([track.mbid], libraryID);
+        const byMBID = await dictByName(
+            GetFilePathsByRecordingMBIDs([track.mbid], libraryID),
+        );
 
         return byMBID[track.mbid]?.[0] ?? null;
     }

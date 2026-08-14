@@ -5,7 +5,7 @@ import {
     ToggleDefaultPlaylistTrack,
     AddToDefaultPlaylist,
     RemoveFromDefaultPlaylist,
-} from '@go/playlist/Service';
+} from '@go/playlist/service.js';
 import {
     GetFavoritesIconStyle,
     GetFavoritesPlaylistID,
@@ -13,7 +13,7 @@ import {
     SetFavoritesIconStyle,
     SetFavoritesPlaylistID,
     SetPinDefaultPlaylist,
-} from '@go/config/Config';
+} from '@go/config/config.js';
 import { Events } from '../events';
 import { describeError } from '@utils/describe-error';
 import { notificationStore } from './notification-store';

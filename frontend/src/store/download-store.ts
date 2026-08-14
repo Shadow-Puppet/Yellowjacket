@@ -19,8 +19,8 @@ import {
     StartDownload,
     TestProvider,
     UpdateProvider,
-} from '@go/download/Service';
-import type { download } from '@go/models';
+} from '@go/download/service.js';
+import type * as download from '@go/download/models.js';
 import { Events } from '../events';
 
 export type DownloadCandidate = download.Candidate;

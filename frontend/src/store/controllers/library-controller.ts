@@ -1,5 +1,5 @@
 import type { ReactiveController, ReactiveControllerHost } from 'lit';
-import type { library } from '@go/models';
+import type * as library from '@go/library/models.js';
 import { libraryStore } from '../library-store';
 
 type ViewName = 'tracks' | 'albums' | 'artists' | 'genres';

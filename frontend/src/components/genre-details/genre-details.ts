@@ -4,11 +4,11 @@ import {
     property,
     state,
 } from 'lit/decorators.js';
-import { library } from '@go/models';
+import * as library from '@go/library/models.js';
 import {
     GetTracksByGenre,
     GetTracksByGenreByLibrary,
-} from '@go/library/Library';
+} from '@go/library/library.js';
 import { EventsOn } from '@runtime/runtime';
 import { Events } from '../../events';
 import { libraryStore } from '@store/library-store';
@@ -16,6 +16,7 @@ import { describeError } from '@utils/describe-error';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@components/track-list/track-list.js';
 import { designTokens } from '../../styles/tokens.css';
+import { list } from '@utils/binding';
 
 @customElement('genre-details')
 export class GenreDetails extends LitElement {
@@ -207,14 +208,14 @@ export class GenreDetails extends LitElement {
             const libId =
                 libraryStore.getSelectedLibraryId();
 
-            this.tracks = libId !== null
-                ? await GetTracksByGenreByLibrary(
-                      this.genreName,
-                      libId,
-                  )
-                : await GetTracksByGenre(
-                      this.genreName,
-                  );
+            this.tracks = await list(
+                libId !== null
+                    ? GetTracksByGenreByLibrary(
+                          this.genreName,
+                          libId,
+                      )
+                    : GetTracksByGenre(this.genreName),
+            );
         } catch (error) {
             console.error('Error loading genre tracks:', error);
             this.tracks = [];

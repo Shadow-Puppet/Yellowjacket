@@ -1,4 +1,4 @@
-import { library } from '@go/models';
+import * as library from '@go/library/models.js';
 import { LitElement, html, svg, css, nothing } from 'lit';
 import { designTokens } from '../../styles/tokens.css';
 import { srOnly } from '../../styles/sr-only.css';
@@ -65,7 +65,7 @@ import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import { describeError } from '@utils/describe-error';
 import { notificationStore } from '@store/notification-store';
 import { confirmAction } from '@components/confirm-dialog/confirm-dialog';
-import { RemoveFromLibrary } from '@go/library/Library';
+import { RemoveFromLibrary } from '@go/library/library.js';
 import { loadTrackDetails } from '@utils/lazy-track-details.js';
 import { tracksByFilePath, tracksForPaths } from '@utils/track-index.js';
 import '@components/playlist-picker/playlist-picker.js';

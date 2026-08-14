@@ -2,14 +2,14 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 import { EventsOn } from '@runtime/runtime';
-import type { explore } from '@go/models';
+import type * as explore from '@go/explore/models.js';
 import {
     AddLibrary,
     RenameLibrary,
     RemoveLibrary,
     GetRemovalImpact,
     GetAllLibrariesWithTrackCounts,
-} from '@go/library/Library';
+} from '@go/library/library.js';
 import {
     GetScanConcurrency,
     SetScanConcurrency,
@@ -17,17 +17,17 @@ import {
     SetDefaultPage,
     GetQueueFallback,
     SetQueueFallback,
-} from '@go/config/Config';
-import { GetIndexStatus } from '@go/explore/Service';
-import { DirectoryPicker } from '@go/frontendutil/FrontendUtil';
+} from '@go/config/config.js';
+import { GetIndexStatus } from '@go/explore/service.js';
+import { DirectoryPicker } from '@go/frontendutil/frontendutil.js';
 import { notificationStore } from '@store/notification-store';
 import { describeError, explainError } from '@utils/describe-error';
-import type { library } from '@go/models';
+import type * as library from '@go/library/models.js';
 import { ThemeController } from '@store/controllers/theme-controller';
 import { TrackListController } from '@store/controllers/tracklist-controller';
 import { FavoritesController } from '@store/controllers/favorites-controller';
-import { GetAllPlaylists } from '@go/playlist/Service';
-import type { playlist } from '@go/models';
+import { GetAllPlaylists } from '@go/playlist/service.js';
+import type * as playlist from '@go/playlist/models.js';
 import { Events } from '../../events';
 import {
     SHORTCUT_CATEGORIES,
@@ -49,6 +49,7 @@ import './shortcut-capture';
 import { confirmAction } from '../confirm-dialog/confirm-dialog';
 import { shortcutsStore } from '../../store/shortcuts-store';
 import { ShortcutsController } from '../../store/controllers/shortcuts-controller';
+import { list } from '@utils/binding';
 
 const SCROLL_STORAGE_KEY = 'yj-now-playing-scroll-mode';
 const SCROLL_CHANGE_EVENT = 'yj-scroll-mode-changed';
@@ -1012,9 +1013,9 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
         const ok = await confirmAction({
             title: 'Remove library',
             message: `Remove “${libName}”?`,
-            impact: `This deletes ${impact.trackCount} tracks, affects `
-                + `${impact.playlistsAffected} playlists and removes `
-                + `${impact.queueItemCount} queue items.`,
+            impact: `This deletes ${impact?.trackCount ?? 0} tracks, affects `
+                + `${impact?.playlistsAffected ?? 0} playlists and removes `
+                + `${impact?.queueItemCount ?? 0} queue items.`,
             confirmLabel: 'Remove',
             danger: true,
         });
@@ -1187,8 +1188,7 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
 
     private async loadPlaylists(): Promise<void> {
         try {
-            this.playlists =
-                await GetAllPlaylists();
+            this.playlists = await list(GetAllPlaylists());
         } catch (err) {
             console.error(
                 'Failed to load playlists:',
@@ -1456,10 +1456,10 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
                                            <span class="index-stat">updated ${this.timeAgo(s.lastBuilt)}</span>`
                                     : nothing}
                             </div>
-                            ${s.tiers?.length > 0 && s.tiers.some((t) => t.state === 'running' || t.state === 'pending' || t.state === 'error')
+                            ${(s.tiers?.length ?? 0) > 0 && (s.tiers ?? []).some((t) => t.state === 'running' || t.state === 'pending' || t.state === 'error')
                                 ? html`
                                     <div class="index-tiers">
-                                        ${s.tiers.map(
+                                        ${(s.tiers ?? []).map(
                                             (t) => html`
                                                 <div class="index-tier">
                                                     <span class="tier-icon">${this.tierIcon(t.state)}</span>

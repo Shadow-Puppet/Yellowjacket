@@ -1,6 +1,6 @@
 import { EventsOn } from '@runtime/runtime';
 import { Events } from '../events';
-import * as Player from '@go/player/Player';
+import * as Player from '@go/player/player.js';
 import { notificationStore } from './notification-store';
 
 /** The region `<inline-notice>` renders these in: the player bar. */

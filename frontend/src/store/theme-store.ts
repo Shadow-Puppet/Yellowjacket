@@ -4,7 +4,7 @@ import {
     GetThemeBackgroundShade,
     SetThemeAccentColor,
     SetThemeBackgroundShade,
-} from '@go/config/Config';
+} from '@go/config/config.js';
 import { Events } from '../events';
 
 export type BackgroundShade = 'darker' | 'dark' | 'light';

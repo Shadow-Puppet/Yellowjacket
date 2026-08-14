@@ -7,8 +7,8 @@ import { classMap } from 'lit/directives/class-map.js';
 import '@components/page-header/page-header';
 import { designTokens } from '../../styles/tokens.css';
 import { srOnly } from '../../styles/sr-only.css';
-import { SearchLocal, SearchLyrics, GetThumbnail, GetThumbnails, GetArtistImageURL, GetArtistImagesCachedPaths, GetExploreShelves, RecordSearchClick } from '@go/explore/Service';
-import { GetFilePathsByAlbums, GetFilePathsByRecordingMBIDs } from '@go/library/Library';
+import { SearchLocal, SearchLyrics, GetThumbnail, GetThumbnails, GetArtistImageURL, GetArtistImagesCachedPaths, GetExploreShelves, RecordSearchClick } from '@go/explore/service.js';
+import { GetFilePathsByAlbums, GetFilePathsByRecordingMBIDs } from '@go/library/library.js';
 import { EventsOn } from '@runtime/runtime';
 import { Events } from '../../events';
 import { libraryStore } from '../../store/library-store';
@@ -21,7 +21,7 @@ import { describeError } from '../../utils/describe-error';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '../library-status-indicator/library-status-indicator.js';
 import '../top-results-row/top-results-row.js';
-import { explore } from '@go/models';
+import * as explore from '@go/explore/models.js';
 import { ViewLifecycleMixin } from '../../utils/view-lifecycle';
 import { registerCacheProbe } from '../../utils/cache-stats';
 import { LRUMap } from '../../utils/lru-map';
@@ -34,6 +34,7 @@ import type { ContextMenuHost } from '@utils/context-menu-controller.js';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
 import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
+import { dict, dictByName } from '@utils/binding';
 
 /** The region explore's own action failures (play/queue) are rendered in. */
 export const ExploreRegion = 'explore';
@@ -833,10 +834,10 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
             // a state this view already renders honestly. A *rejected*
             // call still reaches the catch below.
             if (!page || !Array.isArray(page.shelves)) {
-                this.shelves = explore.ShelfPage.createFrom({
+                this.shelves = {
                     shelves: [],
                     state: 'no-index',
-                });
+                };
 
                 return;
             }
@@ -853,10 +854,10 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
             // Inline, and quietly: the search box above still works, so
             // this is a panel that could not fill itself rather than
             // something the user asked for and did not get.
-            this.shelves = explore.ShelfPage.createFrom({
+            this.shelves = {
                 shelves: [],
                 state: 'no-index',
-            });
+            };
         } finally {
             this.shelvesPending = false;
         }
@@ -1043,13 +1044,12 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
             // index has no hits, in which case we keep the owned-library
             // matches already displayed.
             const result =
-                (await SearchLocal(query)) ??
-                explore.MBSearchResult.createFrom({
+                (await SearchLocal(query)) ?? {
                     artists: [],
                     releaseGroups: [],
                     recordings: [],
                     topResults: [],
-                });
+                };
 
             // Discard stale response
             if (version !== this.searchVersion) {
@@ -1131,14 +1131,16 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
      */
     private async albumFilePaths(localId: number): Promise<string[]> {
         const libraryID = libraryStore.getSelectedLibraryId() ?? 0;
-        const byAlbum = await GetFilePathsByAlbums([localId], libraryID);
+        const byAlbum = await dict(GetFilePathsByAlbums([localId], libraryID));
 
         return byAlbum[localId] ?? [];
     }
 
     private async recordingFilePath(mbid: string): Promise<string | null> {
         const libraryID = libraryStore.getSelectedLibraryId() ?? 0;
-        const byMBID = await GetFilePathsByRecordingMBIDs([mbid], libraryID);
+        const byMBID = await dictByName(
+            GetFilePathsByRecordingMBIDs([mbid], libraryID),
+        );
 
         return byMBID[mbid]?.[0] ?? null;
     }
@@ -2018,7 +2020,7 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
         // of nothing.
         if (!page) return nothing;
 
-        if (page.shelves.length === 0) {
+        if (!page.shelves?.length) {
             return html`
                 <div class="shelves-empty">
                     <wa-icon
@@ -2048,7 +2050,7 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
                           to come.
                       </p>`
                     : nothing}
-                ${page.shelves.map((shelf) =>
+                ${(page.shelves ?? []).map((shelf) =>
                     shelf.artists?.length
                         ? this.renderArtistsSection(
                               shelf.artists,

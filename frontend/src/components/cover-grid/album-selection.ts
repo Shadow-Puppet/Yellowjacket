@@ -2,9 +2,10 @@ import {
     GetAlbumTracks,
     GetAlbumTracksByLibrary,
     GetFilePathsByAlbums,
-} from '@go/library/Library';
+} from '@go/library/library.js';
 import { libraryStore } from '@store/library-store';
-import type { library } from '@go/models';
+import { dict, list } from '@utils/binding';
+import type * as library from '@go/library/models.js';
 import type { CoverArtUrls } from '@components/track-details/track-details.js';
 
 /**
@@ -58,9 +59,11 @@ export class AlbumSelectionManager {
         const libId =
             libraryStore.getSelectedLibraryId();
 
-        return libId !== null
-            ? GetAlbumTracksByLibrary(albumId, libId)
-            : GetAlbumTracks(albumId);
+        return list(
+            libId !== null
+                ? GetAlbumTracksByLibrary(albumId, libId)
+                : GetAlbumTracks(albumId),
+        );
     }
 
     /**
@@ -85,7 +88,7 @@ export class AlbumSelectionManager {
         const libId =
             libraryStore.getSelectedLibraryId();
 
-        return GetFilePathsByAlbums(ids, libId ?? 0);
+        return dict(GetFilePathsByAlbums(ids, libId ?? 0));
     }
 
     // ================================================================

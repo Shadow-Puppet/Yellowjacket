@@ -19,8 +19,8 @@ import {
     RemoveTracksFromPlaylist,
     RemovePhantomTracks,
     FindDuplicateTracksInPlaylist,
-} from '@go/playlist/Service';
-import type { playlist } from '@go/models';
+} from '@go/playlist/service.js';
+import type * as playlist from '@go/playlist/models.js';
 import { EventsOn } from '@runtime/runtime';
 import { Events } from '../../events';
 import { queueStore } from '@store/queue-store';
@@ -67,6 +67,7 @@ import {
     exploreLinkStyles,
 } from '@utils/explore-link';
 import { designTokens } from '../../styles/tokens.css';
+import { list } from '@utils/binding';
 
 /** One playlist row: the track and its position in the *playlist*,
  *  which is not its position in the filtered view. */
@@ -276,8 +277,8 @@ export class PlaylistDetails
         if (!this.playlistId) return;
 
         try {
-            this.tracks = await GetPlaylistTracks(
-                this.playlistId,
+            this.tracks = await list(
+                GetPlaylistTracks(this.playlistId),
             );
         } catch (error) {
             console.error(
@@ -294,8 +295,8 @@ export class PlaylistDetails
         if (!this.playlistId) return;
 
         try {
-            this.tracks = await GetPlaylistTracks(
-                this.playlistId,
+            this.tracks = await list(
+                GetPlaylistTracks(this.playlistId),
             );
         } catch (error) {
             console.error(

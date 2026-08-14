@@ -25,11 +25,11 @@
     // module resolution
     "moduleResolution": "bundler",
     "paths": { // path aliases to find modules
-      "@go/*": ["./wailsjs/go/*"],
+      "@go/*": ["./bindings/yellowjacket/backend/*"],
       "@components/*": ["./src/components/*"],
       "@assets/*": ["./src/assets/*"],
       "@pages/*": ["./src/pages/*"],
-      "@runtime/*": ["./wailsjs/runtime/*"],
+      "@runtime/*": ["./src/wails/*"],
       "@utils/*": ["./src/utils/*"],
       "@store/*": ["./src/store/*"],
       "@test/*": ["./test/*"]
@@ -44,8 +44,5 @@
       {"name": "typescript-lit-html-plugin"}
     ]
   },
-  "include": ["src", "wailsjs", "test"],
-  // Wails-generated JS stubs use @ts-check with untyped patterns that
-  // violate strict mode. The companion .d.ts files provide the types.
-  "exclude": ["wailsjs/go/**/*.js"]
+  "include": ["src", "bindings", "test"]
 }

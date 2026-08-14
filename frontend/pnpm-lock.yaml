@@ -17,6 +17,9 @@ importers:
       '@lit-labs/virtualizer':
         specifier: ^2.1.1
         version: 2.1.1
+      '@wailsio/runtime':
+        specifier: 3.0.0-beta.8
+        version: 3.0.0-beta.8
       lit:
         specifier: ^3.2.1
         version: 3.3.2
@@ -542,6 +545,9 @@ packages:
 
   '@vscode/web-custom-data@0.4.13':
     resolution: {integrity: sha512-2ZUIRfhofZ/npLlf872EBnPmn27Kt4M2UssmQIfnJvgGgMYZJ5fvtHEDnttBBf2hnVtBgNCqZMVHJA+wsFVqTA==}
+
+  '@wailsio/runtime@3.0.0-beta.8':
+    resolution: {integrity: sha512-c9PZJcOR9z1a6cxtBS2q5cygNajlxDE8Oxv/vvcTFYRbZSoOGBszq4uzlkPTOd0Bot1xkM81jnpaBgKWRpBh2g==}
 
   ajv@8.18.0:
     resolution: {integrity: sha512-PlXPeEWMXMZ7sPYOHqmDyCJzcfNrUr3fGNKtezX14ykXOEIvyK81d+qydx89KY5O71FKMPaQ2vBfBFI5NHR63A==}
@@ -1733,6 +1739,8 @@ snapshots:
       tinyrainbow: 3.1.1
 
   '@vscode/web-custom-data@0.4.13': {}
+
+  '@wailsio/runtime@3.0.0-beta.8': {}
 
   ajv@8.18.0:
     dependencies:

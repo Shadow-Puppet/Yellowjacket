@@ -3,8 +3,8 @@ import {
     GetAllPlaylists,
     GetAllPlaylistsWithTracks,
     GetPlaylistTracks,
-} from '@go/playlist/Service';
-import type { playlist } from '@go/models';
+} from '@go/playlist/service.js';
+import type * as playlist from '@go/playlist/models.js';
 import { Events } from '../events';
 
 type Subscriber = () => void;

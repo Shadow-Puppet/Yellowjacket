@@ -20,7 +20,7 @@
  * given array and never again.
  */
 
-import type { library } from '@go/models';
+import type * as library from '@go/library/models.js';
 
 const byArray = new WeakMap<
     readonly library.Track[],

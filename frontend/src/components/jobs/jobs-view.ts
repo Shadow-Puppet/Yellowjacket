@@ -8,8 +8,8 @@ import {
     ScanLibrary,
     ScanAllLibraries,
     FullRescan,
-} from '@go/library/Library';
-import type { library } from '@go/models';
+} from '@go/library/library.js';
+import type * as library from '@go/library/models.js';
 import { EventsOn } from '@runtime/runtime';
 import { Events } from '../../events';
 import { jobStore } from '@store/job-store';

@@ -33,10 +33,22 @@ function view(id: string, state: string): DownloadView {
 }
 
 function provider(id: number, enabled: boolean): DownloadProvider {
-  return { id, name: `p${id}`, enabled, kind: 'test' } as DownloadProvider;
+  return {
+    id,
+    name: `p${id}`,
+    enabled,
+    kind: 'test',
+  } as unknown as DownloadProvider;
 }
 
-function request(overrides: Partial<Request>): Request {
+// v3's bindings type `state` and `entity` as real enums where v2 typed
+// them as strings; the fixture widens both back to their value unions.
+type RequestOverrides = Partial<Omit<Request, 'state' | 'entity'>> & {
+  state?: `${Request['state']}`;
+  entity?: `${Request['entity']}`;
+};
+
+function request(overrides: RequestOverrides): Request {
   return {
     id: 1,
     mbid: 'abc',

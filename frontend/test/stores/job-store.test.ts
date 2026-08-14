@@ -17,7 +17,16 @@ import {
 import { Events } from '../../src/events';
 import { emit, calls, stub, flush } from '@test/support/harness';
 
-function job(overrides: Partial<Job> & { id: string }): Job {
+// v3's bindings type `state` and `kind` as real enums where v2 typed
+// them as strings, so the fixture widens both back to their value
+// unions — which is still literal-checked, just not enum-checked.
+type JobOverrides = Partial<Omit<Job, 'state' | 'kind'>> & {
+  id: string;
+  state?: `${Job['state']}`;
+  kind?: `${Job['kind']}`;
+};
+
+function job(overrides: JobOverrides): Job {
   return {
     kind: 'library-scan',
     state: 'running',
@@ -43,7 +52,7 @@ describe('job predicates', () => {
   });
 
   it('treats every in-flight state, including paused, as active', () => {
-    const states = ['queued', 'running', 'pausing', 'paused', 'cancelling'];
+    const states = ['queued', 'running', 'pausing', 'paused', 'cancelling'] as const;
 
     expect(states.map((state) => isActive(job({ id: state, state })))).toEqual([
       true,

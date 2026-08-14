@@ -2,7 +2,7 @@ import { LitElement, html, css } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { LibraryController } from '@store/controllers/library-controller';
 import { libraryStore } from '@store/library-store';
-import type { library } from '@go/models';
+import type * as library from '@go/library/models.js';
 import { designTokens } from '../../styles/tokens.css';
 
 /**

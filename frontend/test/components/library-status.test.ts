@@ -34,7 +34,14 @@ import { fixture, shadow, shadowAll, update } from '@test/support/render';
 
 const SEARCH = 'explore.Service.SearchLocal';
 
-function request(overrides: Partial<Request>): Request {
+// v3's bindings type `state` and `entity` as real enums where v2 typed
+// them as strings; the fixture widens both back to their value unions.
+type RequestOverrides = Partial<Omit<Request, 'state' | 'entity'>> & {
+  state?: `${Request['state']}`;
+  entity?: `${Request['entity']}`;
+};
+
+function request(overrides: RequestOverrides): Request {
   return {
     id: 1,
     mbid: 'rg-wanted',

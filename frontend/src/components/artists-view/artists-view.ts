@@ -14,8 +14,8 @@ import {
     GetAlbumsByArtist,
     GetAlbumsByArtistByLibrary,
     GetFilePathsByAlbums,
-} from '@go/library/Library';
-import { library } from '@go/models';
+} from '@go/library/library.js';
+import * as library from '@go/library/models.js';
 import { LibraryController } from '@store/controllers/library-controller';
 import { libraryStore } from '@store/library-store';
 import { SearchController } from '@store/controllers/search-controller';
@@ -36,6 +36,7 @@ import '@awesome.me/webawesome/dist/components/popup/popup.js';
 import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 import '@components/playlist-picker/playlist-picker.js';
+import { dict, list } from '@utils/binding';
 
 /** Pixels to change card width per scroll tick. */
 const ZOOM_STEP = 16;
@@ -1055,18 +1056,21 @@ export class ArtistsView
             const libId =
                 this.libraryCtrl.selectedLibraryId;
 
-            const albums = libId !== null
-                ? await GetAlbumsByArtistByLibrary(
-                      artist.ID,
-                      libId,
-                  )
-                : await GetAlbumsByArtist(artist.ID);
+            const albums = await list(
+                libId !== null
+                    ? GetAlbumsByArtistByLibrary(
+                          artist.ID,
+                          libId,
+                      )
+                    : GetAlbumsByArtist(artist.ID),
+            );
 
-            const byAlbum =
-                await GetFilePathsByAlbums(
+            const byAlbum = await dict(
+                GetFilePathsByAlbums(
                     albums.map((a) => a.ID),
                     libId ?? 0,
-                );
+                ),
+            );
 
             const allPaths: string[] = [];
 

@@ -1,6 +1,6 @@
 import { EventsOn } from '@runtime/runtime';
 import { Events } from '../events';
-import * as Queue from '@go/queue/Queue';
+import * as Queue from '@go/queue/queue.js';
 
 // Types
 export interface QueueTrack {
