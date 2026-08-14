@@ -387,10 +387,10 @@ never get the shell back.
 when iterating on a single package:
 
 ```bash
-go test -tags webkit2_41 ./backend/player/                        # the app build
-go test -tags webkit2_41 -run TestName ./backend/player/
-go test -tags "webkit2_41 indexbuild" ./backend/explore/... ./cmd/...   # dump importer
-go test -tags "webkit2_41 dev" ./backend/testctl/...              # control surface
+go test ./backend/player/                        # the app build
+go test -run TestName ./backend/player/
+go test -tags indexbuild ./backend/explore/... ./cmd/...   # dump importer
+go test -tags dev ./backend/testctl/...              # control surface
 ```
 
 Forgetting the tag gives a build error that looks like a missing

@@ -50,12 +50,15 @@ make setup            # Install go tools, frontend deps, git hooks (lefthook)
 
 ### Running tests
 
-All Go test commands require the `-tags webkit2_41` build tag:
+Go test commands need no build tag for the app configuration. The
+`webkit2_41` tag every command here used to carry is gone with wails
+v2: v3 builds against GTK4 + WebKitGTK 6.0 by default, which both Arch
+and ubuntu:24.04 ship.
 
 ```bash
-go test -tags webkit2_41 ./...                           # All tests
-go test -tags webkit2_41 ./backend/player/               # Single package
-go test -tags webkit2_41 -run TestName ./backend/player/  # Single test
+go test ./...                           # All tests
+go test ./backend/player/               # Single package
+go test -run TestName ./backend/player/  # Single test
 ```
 
 The central index builder is behind a second tag and is **not** covered
@@ -63,14 +66,14 @@ by the command above — `make test` runs both passes, but a manual run
 needs it spelled out:
 
 ```bash
-go test -tags "webkit2_41 indexbuild" ./backend/explore/... ./cmd/...
+go test -tags indexbuild ./backend/explore/... ./cmd/...
 ```
 
 `backend/testctl` is behind a third tag and needs its own pass too
 (`make test` runs all three):
 
 ```bash
-go test -tags "webkit2_41 dev" ./backend/testctl/...
+go test -tags dev ./backend/testctl/...
 ```
 
 Audio playback integration tests require `YELLOWJACKET_INTEGRATION=1`.
@@ -1518,8 +1521,10 @@ And
 `YJ_CORE_INDEX_URL` points at a dead address so no run fetches the real
 explore artifact, matching what `scripts/seed-sandbox.sh` already does.
 
-**`make lint`'s tag sets must stay identical to `make test`'s.**
-Without `webkit2_41` wails resolves `webkit2gtk-4.0`, which Arch still
-ships and Ubuntu 24.04 does not — so a mismatch lints a configuration
-that only builds on one developer's distro, and says nothing about what
-ships.
+**`make lint`'s tag sets must stay identical to `make test`'s**, or
+lint is checking configurations nothing builds. There are three, and
+the app's is now the *default* tag set: v3 resolves GTK4 +
+WebKitGTK 6.0, which Arch and ubuntu:24.04 both ship, so the
+`webkit2_41` tag that used to be mandatory everywhere is gone. A
+machine without `webkitgtk-6.0` can still build with `-tags gtk3`, but
+that is an escape hatch, not what CI or a release builds.

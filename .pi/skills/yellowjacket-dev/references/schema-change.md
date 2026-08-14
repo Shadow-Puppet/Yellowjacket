@@ -35,7 +35,7 @@ Then:
 
 ```bash
 make generate                                        # sqlc + templ
-go test -tags webkit2_41 ./backend/database/         # migration + column-order tests
+go test ./backend/database/         # migration + column-order tests
 make test
 ```
 
