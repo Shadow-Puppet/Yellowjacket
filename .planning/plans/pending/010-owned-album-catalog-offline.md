@@ -110,6 +110,18 @@ Sketch:
 
 ### The rate limiter is the whole design constraint
 
+> **Update (2026-08-13): the priority half is built, and the sentence
+> below is wrong on a detail.** `e.mb` runs on `mbSearchLimiter`
+> (`NewRateLimiterBurst(3, 1)`); the 1 req/s `NewRateLimiter()` cited
+> here is the *artist image* limiter. Both are shared and both were
+> FIFO. `RateLimiter.WithBackgroundLane` + `WithBackgroundPriority(ctx)`
+> now make a marked caller yield to interactive work and pace at 1/s,
+> and `jobs.KindCatalogEnrich` + `startBackfillJob` give the existing
+> backfills progress and cancel. **"Do not start until the priority
+> question has an answer" is satisfied** — mark this backfill's context
+> and register it the way `BackfillLibraryDiscographies` now is.
+> `PrefetchReleases`' cap of 8 is still unrevisited.
+
 One shared `NewRateLimiter()` at 1 req/s (`explore.go:84`) serves this,
 `PrefetchReleases`, and every interactive browse. A backfill over a
 few thousand owned albums is *hours* of wall clock at that rate — which

@@ -7,7 +7,7 @@ import { classMap } from 'lit/directives/class-map.js';
 import '@components/page-header/page-header';
 import { designTokens } from '../../styles/tokens.css';
 import { srOnly } from '../../styles/sr-only.css';
-import { SearchLocal, SearchLyrics, GetThumbnail, GetThumbnails, GetArtistImageURL, GetExploreShelves, RecordSearchClick } from '@go/explore/Service';
+import { SearchLocal, SearchLyrics, GetThumbnail, GetThumbnails, GetArtistImageURL, GetArtistImagesCachedPaths, GetExploreShelves, RecordSearchClick } from '@go/explore/Service';
 import { GetFilePathsByAlbums, GetFilePathsByRecordingMBIDs } from '@go/library/Library';
 import { EventsOn } from '@runtime/runtime';
 import { Events } from '../../events';
@@ -1517,8 +1517,19 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
     }
 
     /**
-     * Load artist images for all visible artist cards.  Each call
-     * is async and updates the cache + re-renders on success.
+     * Load artist images for all visible artist cards.
+     *
+     * The order matters, because the three sources cost wildly
+     * different things. The library store is free. `GetArtistImages‐
+     * CachedPaths` is one call that asks the disk about every remaining
+     * artist at once — a portrait already downloaded costs no network
+     * at all, which on a catalog search is most of them, and seeding
+     * only from the library (owned artists, nearly none of a search's
+     * results) is what sent them to the resolver instead.
+     * `GetArtistImageURL` is the *resolving* entry point — MusicBrainz
+     * rels → Wikidata → Wikipedia → a download — so only what the disk
+     * did not answer reaches it, and those run together rather than one
+     * `await` at a time.
      */
     private async loadArtistImages(
         artists: MBArtist[],
@@ -1529,23 +1540,50 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
         // Seed from library store first (instant, no API).
         this.seedArtistImagesFromLibrary(artists);
 
-        // Fetch remaining from API (only artists not yet resolved).
-        for (const a of artists) {
-            if (this.artistImageCache.has(a.mbid)) continue;
+        // One disk existence check for everything still unresolved.
+        const unresolved = artists
+            .filter((a) => a.mbid && !this.artistImageCache.has(a.mbid))
+            .map((a) => a.mbid);
 
-            this.artistImageCache.set(a.mbid, '');
-
+        if (unresolved.length > 0) {
             try {
-                const url = await GetArtistImageURL(a.mbid);
+                const cached = (await GetArtistImagesCachedPaths(unresolved)) || {};
+                let seeded = false;
 
-                if (url) {
-                    this.artistImageCache.set(a.mbid, url);
-                    this.requestUpdate();
+                for (const [mbid, path] of Object.entries(cached)) {
+                    if (path) {
+                        this.artistImageCache.set(mbid, path);
+                        seeded = true;
+                    }
                 }
+
+                if (seeded) this.requestUpdate();
             } catch {
-                // No image — leave empty string.
+                // The disk check is an optimisation; fall through.
             }
         }
+
+        // Whatever the disk did not answer goes to the resolver, in
+        // parallel — these are independent lookups against different
+        // upstreams and nothing about them is ordered.
+        await Promise.all(
+            artists.map(async (a) => {
+                if (!a.mbid || this.artistImageCache.has(a.mbid)) return;
+
+                this.artistImageCache.set(a.mbid, '');
+
+                try {
+                    const url = await GetArtistImageURL(a.mbid);
+
+                    if (url) {
+                        this.artistImageCache.set(a.mbid, url);
+                        this.requestUpdate();
+                    }
+                } catch {
+                    // No image — leave empty string.
+                }
+            }),
+        );
 
         // Final fallback: album art for artists the API couldn't resolve.
         // Try library store first, then search-result release groups.

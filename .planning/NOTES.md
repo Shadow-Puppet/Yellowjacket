@@ -157,6 +157,34 @@ would be two copies free to drift.
 Bulk loads must suspend them: measured on a real import, assembly runs at
 ~31 rows/s with the triggers attached and ~4,700 rows/s without.
 
+They are now **dropped and recreated** on every open rather than created
+with "already exists" tolerated, because a trigger is a definition: an
+existing install would otherwise keep the first one it ever got, and
+these definitions are where this table's write cost is decided.
+`explore_index_au` is scoped to `UPDATE OF title, artist_name, aliases`
+with a `WHEN` guard on them having changed, so the common write — an
+upsert whose merge rules keep every existing value — re-indexes nothing.
+
+## The writer stall that broke playback is only half explained (2026-08-14)
+
+The user's report — play an album, the track changes, the transport
+stays paused, nothing appears in the queue, the play button does
+nothing — was diagnosed on the running app: 91% of its CPU was
+`BackfillLibraryDiscographies` → `upsertBatch`, with four of its six
+workers parked in `sql.(*DB).conn` waiting for the single write
+connection, while the play path did its writes inline under `q.mu` and
+`p.mu`. The locking half is fixed and tested (see CLAUDE.md, "Playing a
+track does not wait for the database to hear about it").
+
+**What is not explained is why those upserts were so expensive.**
+
+> **Recovered note, 2026-08-14.** The rest of this section was lost to a
+> mishandled `git stash --keep-index` before it was ever committed; what
+> survives above is verbatim, and the two arguments that followed
+> "Two things argue against the obvious answer" are gone. Re-derive them
+> from a profile before acting on this — do not treat the question as
+> answered.
+
 ## Explore "library only" toggle was removed (2026-08-06)
 
 The Explore UI used to have a "library only" mode toggle

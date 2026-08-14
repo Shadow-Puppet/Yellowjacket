@@ -11,6 +11,11 @@ export function jobIcon(job: Job): string {
             return 'database';
         case 'autotag-apply':
             return 'tags';
+        case 'catalog-enrich':
+            // The globe rather than the database: this is catalog data
+            // arriving from the network, not the local index being
+            // rebuilt from it.
+            return 'globe';
         default:
             return 'gear';
     }

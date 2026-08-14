@@ -27,7 +27,11 @@ export type JobState =
     | 'error';
 
 /** Job kinds. Mirrors backend/jobs.Kind. */
-export type JobKind = 'library-scan' | 'index-build' | 'autotag-apply';
+export type JobKind =
+    | 'library-scan'
+    | 'index-build'
+    | 'autotag-apply'
+    | 'catalog-enrich';
 
 type Subscriber = () => void;
 

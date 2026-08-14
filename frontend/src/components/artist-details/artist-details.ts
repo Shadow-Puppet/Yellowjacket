@@ -6,7 +6,11 @@ import {
 } from 'lit/decorators.js';
 import { library } from '@go/models';
 import { LibraryController } from '@store/controllers/library-controller';
-import { GetArtistImageURL, GetArtistMBID } from '@go/explore/Service';
+import {
+    GetArtistImageURL,
+    GetArtistImageCachedPath,
+    GetArtistMBID,
+} from '@go/explore/Service';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@components/cover-grid/cover-grid.js';
 import { designTokens } from '../../styles/tokens.css';
@@ -204,6 +208,17 @@ export class ArtistDetails extends LitElement {
         if (!mbid) return;
 
         try {
+            // Disk cache first — the resolving call below is MB →
+            // Wikidata → Wikipedia → Wikimedia, and most artists this
+            // page renders have been resolved once already.
+            const cached = await GetArtistImageCachedPath(mbid);
+
+            if (cached) {
+                this.artistImageURL = cached;
+
+                return;
+            }
+
             const url = await GetArtistImageURL(mbid);
 
             if (url) {

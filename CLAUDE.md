@@ -327,6 +327,120 @@ work happens **once, centrally**, and users download the result:
   (`dumpincremental.go`), and resolves artists outside the artifact's
   coverage lazily on first view.
 
+**Background work yields, and says so in the context.** The post-scan
+backfills share MusicBrainz's rate limiters with every page the user
+can open, and both were FIFO — so a thousand-artist enrichment put an
+album page behind an hour of queued work.
+`RateLimiter.WithBackgroundLane(perSecond)` adds a second, slower lane
+and `WithBackgroundPriority(ctx)` marks a caller as belonging to it: a
+marked wait takes no token at all while any interactive wait is
+outstanding, and is then paced at MB's own 1/s rather than the
+interactive burst rate. It is a **context marker rather than a
+parameter** because a backfill calls the same `MusicBrainzClient`
+methods a detail page does — `GetArtistImage` takes a `ctx` for no
+other reason than to carry it. One request of slippage is accepted and
+documented at `waitBackground`: cancelling an already-granted
+reservation is not something a token bucket can express, and the cost
+is one request-time.
+
+The other half is that a long backfill has to be **visible and
+stoppable**: `jobs.KindCatalogEnrich` and `startBackfillJob`
+(`backfilljob.go`) register both backfills with progress and cancel.
+Two rules in it are load-bearing. The job is registered *after* the
+work is counted, because these passes are a no-op on every launch once
+the library is covered and an empty job in the indicator is noise. And
+the kind is distinct from `index-build` rather than reused, because
+`job-controls.ts` keys its "you will discard hours of downloading"
+confirmation on that kind — wrong prompt for a pass that is resumable
+per artist and free to stop.
+
+**An owned artist's discography is fetched, not sampled.**
+`BackfillLibraryDiscographies` is two fetches per owned artist, each
+skipped by its own persistent mark, because they fail independently and
+one boolean covering both either over-claims or forces repeats:
+the ListenBrainz top release groups and recordings
+(`explore_index.discog_fetched`) and the **full** MusicBrainz browse
+(`artist_enrichment.browsed_at`).
+
+**What it does not fetch is the point.** It ran for hours against a
+900-artist library and marked nothing, because three of the four things
+it did per artist were work nobody had asked for. Similar artists were
+fetched for every owned artist, when the artist page already resolves
+them on view through `SimilarArtists` → `ensureSimilarArtistsAsync` —
+which is what stamps `similar_at` now. And `indexOneArtist` reached the
+MB artist lookup it wants (`GetArtistDetails` reads that cache) by
+calling `GetArtistImage`, which additionally queried fanart.tv,
+TheAudioDB, Wikidata and Wikipedia and downloaded up to ten full-size
+portraits; `EnsureArtistRels` is the lookup on its own. The corollary
+is written into the query: **`similar_at` must not be one of the
+conditions** in `unenrichedLibraryArtistMBIDs`, because testing a mark
+this pass no longer sets makes every owned artist a candidate on every
+run, forever.
+
+The rest is that the pass was **serial across artists** while every
+limiter that keeps us polite is per-host and idle — so one artist's
+slowest upstream set the pace for the whole run. It runs
+`discogBackfillWorkers` artists at once (concurrency here raises no
+origin's request rate), each under `discogBackfillArtistTimeout`,
+because the MB client retries a 503 five times honouring Retry-After
+and one throttled artist could otherwise outlast a hundred healthy
+ones. A timed-out artist goes unmarked and is retried next run, which
+is what every other failure here already does. SQLite's writer pool is
+`MaxOpenConns(1)`, so the workers queue at the Go level rather than
+racing for the file.
+
+Four things about the marks are load-bearing. The marks are **a table, not
+more `explore_index` columns**, because `artifactimport.go` merges the
+downloaded catalog by column list — a flag added there is a second
+place to remember, and forgetting it silently wipes every mark on the
+next catalog update. `discog_fetched` stays in `explore_index` for the
+opposite reason: the artifact legitimately answers it for artists it
+covers. **The artifact answering it is not "we have their
+discography"** — its per-artist coverage is graded, so an artist can
+arrive `discog_fetched = 1` and never have been browsed, which is why
+the unenriched query ORs its conditions instead of testing the
+first. **`BrowseReleaseGroupsAll` pages to exhaustion** where
+`BrowseReleaseGroups` asks for `MaxLimit` once and takes what comes
+back — a prolific artist was silently cut at 100 release groups, and a
+hundred albums looks like a complete answer unless you count. And the
+per-artist mark **replaced a heuristic that could never be satisfied**:
+`BrowseReleaseGroups` used to re-browse whenever no indexed row carried
+a secondary type, which is permanently true for an artist whose
+releases are all plain albums.
+
+**One artist portrait is downloaded; the rest are remembered as URLs.**
+`resolveAllSources` asked five upstreams what images they had for an
+artist and then downloaded **every** candidate, up to ten, full size,
+serially — while nothing in the app has ever read anything but
+`primary.jpg` and its three tiers. Measured on a real cache: 5.3 GB,
+of which 4.1 GB was candidates no code path can reach, ~940 kB per
+artist against the ~217 kB that is actually used.
+
+It is split now. `resolveCandidates` does the metadata lookups and
+returns an ordered list; `fetchPrimary` walks that list downloading
+until one **succeeds**, makes that the primary, and records the rest
+with an empty `file_path` — known, not fetched — so replacing a
+portrait later is one download rather than five lookups again. Taking
+the first that succeeds rather than the first outright is also a fix:
+the old loop keyed `is_primary` on the index, so a failed candidate 0
+left the artist with a stored image, no `primary.jpg`, and a `.miss`
+marker claiming there was no artwork at all. The winning candidate is
+no longer also written under its own name, since `setPrimary` writes
+the same bytes to `primary.jpg`.
+
+Two janitor jobs go with it, and the first is why the waste survived.
+`OrphanedArtistImagesJob` joined the bare MBID onto the images
+directory — but artist directories are **sharded** under a two-character
+prefix, so it named a path that has never existed, `RemoveAll`
+succeeded on it, and the job deleted the rows that were the only record
+of the files it left behind. `explore.ArtistImageDir` is that layout's
+one definition, passed in the way `OrphanedCoverFilesJob` takes
+`expandVariants`, and the test lays its fixtures out with it — a test
+that invents its own flat layout agrees with the bug.
+`StrayArtistImageFilesJob` reclaims what earlier versions downloaded,
+keeping only `explore.ArtistImageKeepNames()` and refusing an empty
+keep set for the reason the covers sweep refuses an empty live set.
+
 **Frontend** (`frontend/`): Lit 3.2 web components + Web Awesome UI library + HTMX. State management via singleton reactive stores in `src/store/`. Wails bindings auto-generated in `frontend/wailsjs/` — don't edit by hand.
 
 **A view is a chunk, and three components are not.** `index.ts` holds a
@@ -505,6 +619,29 @@ and both playlist detail views — and gained a roving tab stop through
 its equivalent predates this, carries selection semantics (shift-extend,
 ctrl-toggle) the other three do not have, and is pinned by its own
 tests.
+
+**A shared panel computes its own name, and its items ask what the
+target can do.** `explore-artist-details` had a menu for its top
+*tracks* and none on the release cards, which are most of the page. It
+has one now on both release shapes — the top section's
+`LBTopReleaseGroup` and the discography's `MBReleaseGroup` — normalised
+to a `ReleaseMenuTarget` at the moment the menu opens, so the union
+does not reach five action handlers. `ctxMenuTarget` is a discriminated
+union rather than one nullable field per kind **because the panel is
+shared**: that is what keeps `aria-label` moving with the target, which
+is the fault `cover-grid` shipped (every menu announced as "Album
+actions").
+
+Which items appear is decided by what the release can actually do, and
+those are three different questions. Playback is gated on a **local
+album id**, not on the badge's "owned": a release matched by MBID with
+no local album behind it has nothing to queue, and `GetFilePathsBy‐
+Albums` is keyed on the id for the reason the album page is — an owned
+but untagged release has no recording MBIDs, so an MBID-keyed lookup
+returns nothing while looking entirely correct. The request item needs
+the opposite, a catalog MBID, so it is absent for a library-only
+release (`local:<n>`, unwrapped the same way `navigateToAlbum` does) —
+which is also the one case where wanting it makes no sense.
 
 **Async surfaces say what they are doing.** `styles/sr-only.css.ts`
 carries the visually-hidden class and the rule that comes with it: a
@@ -1070,6 +1207,38 @@ with no subscriber fetches nothing**: `playlist-view` is the only
 reader and is created lazily, so neither the invalidation nor — more
 expensively — the singleton's own construction warms a cache for a page
 that may never open.
+
+**Playing a track does not wait for the database to hear about it.**
+Every write in this app goes through one connection —
+`database.DB` is `MaxOpenConns(1)`, because SQLite has one writer — and
+a background pass can hold it for a long time. The player and the queue
+used to write inline from paths that hold their own mutexes, so a
+contended writer did not merely slow persistence down: `SetQueue`
+blocked in `LoadFile`'s `saveState` and then in `persistState`, **while
+holding `q.mu` and `p.mu`**. The user's report is the exact shape of
+that — the track changed and the transport sat at paused (`LoadFile`
+had emitted `TrackChanged` and `PlaybackStateChanged(paused)`, and
+`p.Play()` is *after* the writes), nothing appeared in the queue
+(`emitQueueChanged` is after them too), and the play button did nothing
+because `Queue.Play` was waiting on the same held `q.mu`. It was
+diagnosed by profiling the running app: 91% of its CPU was
+`explore.BackfillLibraryDiscographies` → `upsertBatch`, with four more
+of its six workers parked in `sql.(*DB).conn`.
+
+So a write is **submitted, not performed**
+(`queue/persistwriter.go`, `player/persistwriter.go`): jobs run in
+submission order on one goroutine per component, each carrying its own
+snapshot — which is what keeps "clear and rewrite the queue" and
+"insert three tracks at 4" meaning what they meant when they were
+called. Two rules come with it. A job **must not touch the component's
+fields**: it holds no lock and the state has moved on, which is why
+`persistTracks` clones. And `SaveState` — shutdown, and the tests —
+still flushes and waits, because that is the one caller for which the
+row has to exist on return.
+
+The corollary for anything new: **a durability write is not a step in a
+user action**. If a mutation path needs the database to have finished
+before it returns, that is a claim worth arguing for, not a default.
 
 **"Remove from library" removes the row and excludes the path, and
 never touches the file.** `RemoveFromLibrary(filePaths)` deletes the

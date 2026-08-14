@@ -39,7 +39,7 @@ import { EventsOn } from '@runtime/runtime';
 import { Events } from '../../events';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '../library-status-indicator/library-status-indicator.js';
-import { libraryStatusFor } from '@utils/library-status';
+import { libraryStatusFor, toggleRequest } from '@utils/library-status';
 import '../catalog-scope-notice/catalog-scope-notice.js';
 import type { CatalogScope } from '../catalog-scope-notice/catalog-scope-notice.js';
 import { queueStore } from '../../store/queue-store';
@@ -60,6 +60,29 @@ import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 
 /** The region the artist header's own failures are rendered in. */
 export const ExploreArtistRegion = 'explore-artist';
+
+/**
+ * A release the context menu can act on, whichever shape it came from.
+ *
+ * The page shows release groups in two forms — the top section's
+ * `LBTopReleaseGroup` and the discography's `MBReleaseGroup` — and the
+ * three questions the menu asks are not the same question: playback
+ * needs a *local album id*, a request needs a *catalog MBID*, and
+ * "owned" is neither on its own.
+ */
+interface ReleaseMenuTarget {
+    /** The catalog release-group MBID, or '' for a library-only release. */
+    mbid: string;
+    /** The local album id, or 0 when nothing local backs it. */
+    localId: number;
+    title: string;
+    owned: boolean;
+}
+
+/** What the shared context menu panel is currently about. */
+type ContextMenuTarget =
+    | { kind: 'track'; track: LBTopRecording }
+    | { kind: 'release'; release: ReleaseMenuTarget };
 
 /** Desired section order for grouping release types. */
 const TYPE_ORDER = ['Albums', 'EP', 'Single', 'Other Albums'];
@@ -147,14 +170,32 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
     @state() private similarExpanded = false;
     private libraryMBIDs = new Set<string>();
 
-    /* ── Track context menu ── */
+    /* ── Release prefetch ── */
+
+    /** Top-section mbids awaiting the next coalesced prefetch. */
+    private pendingTopPrefetch = new Set<string>();
+    /** Discography mbids awaiting the next coalesced prefetch. */
+    private pendingPrefetch = new Set<string>();
+    private prefetchScheduled = false;
+    /** Every mbid already sent, so a refetch does not re-ask. */
+    private prefetchRequested = new Set<string>();
+
+    /* ── Context menu ── */
 
     private ctxMenu = new ContextMenuController(this);
 
-    /** The top track the open context menu applies to. */
-    @state() private ctxMenuTrack: LBTopRecording | null = null;
+    /**
+     * What the open context menu applies to.
+     *
+     * A discriminated union rather than one nullable field per kind,
+     * because the panel is shared between the top-tracks list and the
+     * release cards: that is what keeps `aria-label` moving with the
+     * target, which is the fault `cover-grid` shipped — every menu
+     * announced as "Album actions".
+     */
+    @state() private ctxMenuTarget: ContextMenuTarget | null = null;
 
-    @query('#track-context-menu')
+    @query('#context-menu')
     private contextMenuPopup!: WaPopup;
 
     // -- ContextMenuHost interface --
@@ -170,7 +211,21 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
     }
 
     onContextMenuClose(): void {
-        this.ctxMenuTrack = null;
+        this.ctxMenuTarget = null;
+    }
+
+    /** The open menu's track, or null when it is not a track menu. */
+    private get ctxMenuTrack(): LBTopRecording | null {
+        return this.ctxMenuTarget?.kind === 'track'
+            ? this.ctxMenuTarget.track
+            : null;
+    }
+
+    /** The open menu's release, or null when it is not a release menu. */
+    private get ctxMenuRelease(): ReleaseMenuTarget | null {
+        return this.ctxMenuTarget?.kind === 'release'
+            ? this.ctxMenuTarget.release
+            : null;
     }
 
     /* ── Styles ── */
@@ -1464,7 +1519,7 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
 
             // Warm the release/tracklist cache for the top albums — these
             // are the most likely to be clicked from the artist page.
-            this.prefetchReleases(rgs?.map((r) => r.releaseGroupMbid) ?? []);
+            this.prefetchReleases(rgs?.map((r) => r.releaseGroupMbid) ?? [], true);
         } catch (err) {
             console.error('[explore-artist] TopReleaseGroupsForArtist error', err);
             this.topReleaseGroups = [];
@@ -1525,14 +1580,56 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
 
     /**
      * Warm the backend's release/tracklist cache for a set of release
-     * groups so opening an album from this page is instant.  Fire-and-forget.
+     * groups so opening an album from this page is instant.
+     * Fire-and-forget.
+     *
+     * The page's two sections resolve independently and both want this,
+     * so the mbids are collected and sent once on a microtask rather
+     * than once per section — `BrowseReleases` is the most expensive
+     * call the app makes, on a 1 req/s limiter, and asking twice for an
+     * overlapping set spends that limiter on nothing.
+     *
+     * `prefetchRequested` is what stops the cold-artist refetch — which
+     * re-runs every fetch on `ArtistDiscographyReady` — asking again for
+     * everything it already asked for.
      */
-    private prefetchReleases(mbids: string[]) {
-        const filtered = mbids.filter((m) => m);
-        if (filtered.length === 0) return;
+    private prefetchReleases(mbids: string[], top = false) {
+        const pending = top ? this.pendingTopPrefetch : this.pendingPrefetch;
 
-        void PrefetchReleases(filtered).catch(() => {
-            /* best-effort cache warming — ignore failures */
+        for (const mbid of mbids) {
+            if (mbid) pending.add(mbid);
+        }
+
+        if (this.pendingTopPrefetch.size + this.pendingPrefetch.size === 0) {
+            return;
+        }
+
+        if (this.prefetchScheduled) return;
+
+        this.prefetchScheduled = true;
+
+        queueMicrotask(() => {
+            this.prefetchScheduled = false;
+
+            // Top releases lead: they are what the page shows first, and
+            // the backend takes the list in order.
+            const batch = [
+                ...new Set([
+                    ...this.pendingTopPrefetch,
+                    ...this.pendingPrefetch,
+                ]),
+            ].filter((mbid) => !this.prefetchRequested.has(mbid));
+
+            this.pendingTopPrefetch.clear();
+            this.pendingPrefetch.clear();
+
+            if (batch.length === 0) return;
+
+            for (const mbid of batch) this.prefetchRequested.add(mbid);
+
+            void PrefetchReleases(batch).catch(() => {
+                /* best-effort cache warming — ignore failures */
+            });
         });
     }
 
@@ -1950,7 +2047,7 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
     private onTrackRowKeydown(e: KeyboardEvent, track: LBTopRecording): void {
         if (isContextMenuKey(e)) {
             e.preventDefault();
-            this.ctxMenuTrack = track;
+            this.ctxMenuTarget = { kind: 'track', track };
             this.ctxMenu.openFrom(e.currentTarget as HTMLElement);
 
             return;
@@ -1966,8 +2063,167 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
         e.preventDefault();
         e.stopPropagation();
 
-        this.ctxMenuTrack = track;
+        this.ctxMenuTarget = { kind: 'track', track };
         this.ctxMenu.openAt(e.clientX, e.clientY);
+    }
+
+    /* ── Release context menu ── */
+
+    // The two release shapes on this page are normalised at the moment
+    // the menu opens, so the union does not reach the action handlers.
+
+    /** Normalise a top-section release group. */
+    private topReleaseTarget(rg: LBTopReleaseGroup): ReleaseMenuTarget {
+        return {
+            mbid: rg.releaseGroupMbid || '',
+            localId: rg.localId ?? 0,
+            title: rg.title,
+            owned: Boolean(rg.inLibrary || rg.localId),
+        };
+    }
+
+    /**
+     * Normalise a discography release group.
+     *
+     * A library-only release arrives as `local:<n>`, which names nothing
+     * upstream — so its catalog MBID is empty and the local id is
+     * unwrapped from it, the same way `navigateToAlbum` does.
+     */
+    private albumTarget(rg: MBReleaseGroup): ReleaseMenuTarget {
+        const isLocal =
+            typeof rg.mbid === 'string' && rg.mbid.startsWith('local:');
+        const localId = rg.localId || (isLocal ? Number(rg.mbid.slice(6)) : 0);
+
+        return {
+            mbid: isLocal ? '' : rg.mbid || '',
+            localId: Number.isFinite(localId) ? localId : 0,
+            title: rg.title,
+            owned:
+                this.libraryMBIDs.has(rg.mbid) ||
+                Boolean(rg.inLibrary) ||
+                localId > 0,
+        };
+    }
+
+    private onReleaseContextMenu(e: MouseEvent, release: ReleaseMenuTarget): void {
+        e.preventDefault();
+        e.stopPropagation();
+
+        this.ctxMenuTarget = { kind: 'release', release };
+        this.ctxMenu.openAt(e.clientX, e.clientY);
+    }
+
+    private onReleaseKeydown(
+        e: KeyboardEvent,
+        release: ReleaseMenuTarget,
+        activate: () => void,
+    ): void {
+        if (isContextMenuKey(e)) {
+            e.preventDefault();
+            this.ctxMenuTarget = { kind: 'release', release };
+            this.ctxMenu.openFrom(e.currentTarget as HTMLElement);
+
+            return;
+        }
+
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            activate();
+        }
+    }
+
+    /**
+     * The release's files, keyed on the local album id.
+     *
+     * Keyed on the id rather than the MBID for the reason the album page
+     * is: an owned but untagged release has no recording MBIDs, so an
+     * MBID-keyed lookup returns nothing while looking entirely correct.
+     */
+    private async releaseFilePaths(
+        release: ReleaseMenuTarget,
+    ): Promise<string[]> {
+        if (release.localId <= 0) return [];
+
+        const libraryID = libraryStore.getSelectedLibraryId() ?? 0;
+        const byAlbum = await GetFilePathsByAlbums([release.localId], libraryID);
+
+        return byAlbum[release.localId] ?? [];
+    }
+
+    private async onReleaseAction(
+        action: 'play' | 'add-to-queue' | 'play-next',
+    ): Promise<void> {
+        const release = this.ctxMenuRelease;
+
+        this.ctxMenu.close();
+
+        if (!release) return;
+
+        try {
+            const paths = await this.releaseFilePaths(release);
+
+            if (paths.length === 0) {
+                notificationStore.inline(ExploreArtistRegion, {
+                    text: `No files for ${release.title} were found in your library.`,
+                });
+
+                return;
+            }
+
+            switch (action) {
+                case 'play':
+                    queueStore.setQueue(paths, 0, false, this.queueSource());
+                    break;
+                case 'add-to-queue':
+                    for (const path of paths) queueStore.addToQueue(path);
+                    break;
+                case 'play-next':
+                    for (const path of [...paths].reverse())
+                        queueStore.playNext(path);
+                    break;
+            }
+        } catch (err) {
+            console.error('Could not queue release:', err);
+            notificationStore.inline(ExploreArtistRegion, {
+                text: describeError(err, `Could not play ${release.title}.`),
+            });
+        }
+    }
+
+    private async onReleaseRequestToggle(): Promise<void> {
+        const release = this.ctxMenuRelease;
+
+        this.ctxMenu.close();
+
+        if (!release?.mbid) return;
+
+        try {
+            await toggleRequest({
+                mbid: release.mbid,
+                entity: 'album',
+                title: release.title,
+                artist: this.artist?.name ?? this.artistName,
+            });
+        } catch (err) {
+            console.error('Could not change the request:', err);
+            notificationStore.inline(ExploreArtistRegion, {
+                text: describeError(err, `Could not request ${release.title}.`),
+            });
+        }
+    }
+
+    private viewReleaseOnMusicBrainz(): void {
+        const release = this.ctxMenuRelease;
+
+        this.ctxMenu.close();
+
+        if (!release?.mbid) return;
+
+        window.open(
+            `https://musicbrainz.org/release-group/${release.mbid}`,
+            '_blank',
+            'noopener',
+        );
     }
 
     private onContextMenuAction(action: 'play' | 'add-to-queue' | 'play-next'): void {
@@ -2196,7 +2452,7 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
                 region=${ExploreArtistRegion}
                 testid="artist-action-message"
             ></inline-notice>
-            ${this.renderTrackContextMenu()}
+            ${this.renderContextMenu()}
         `;
     }
 
@@ -2233,44 +2489,118 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
         `;
     }
 
-    private renderTrackContextMenu() {
-        const track = this.ctxMenuTrack;
+    /**
+     * The one context menu panel, shared by the top tracks and the
+     * release cards.
+     *
+     * The label is computed from the target rather than written down,
+     * which is the fault `cover-grid` shipped — a shared panel that
+     * announced every menu as "Album actions".
+     */
+    private renderContextMenu() {
+        const target = this.ctxMenuTarget;
 
         return html`
             <wa-popup
-                id="track-context-menu"
+                id="context-menu"
                 placement="bottom-start"
                 flip
                 shift
                 .active=${this.ctxMenu.contextMenuOpen}
             >
-                ${this.ctxMenu.contextMenuOpen && track
+                ${this.ctxMenu.contextMenuOpen && target
                     ? html`
-                          <div class="context-menu-panel" role="menu" aria-label="Track actions">
-                              ${this.isTrackOwned(track)
-                                  ? html`
-                                        <wa-dropdown-item @click=${() => this.onContextMenuAction('play')}>
-                                            <wa-icon slot="icon" name="play"></wa-icon>
-                                            Play
-                                        </wa-dropdown-item>
-                                        <wa-dropdown-item @click=${() => this.onContextMenuAction('add-to-queue')}>
-                                            <wa-icon slot="icon" name="plus"></wa-icon>
-                                            Add to Queue
-                                        </wa-dropdown-item>
-                                        <wa-dropdown-item @click=${() => this.onContextMenuAction('play-next')}>
-                                            <wa-icon slot="icon" name="forward-step"></wa-icon>
-                                            Play Next
-                                        </wa-dropdown-item>
-                                    `
-                                  : nothing}
-                              <wa-dropdown-item @click=${() => this.viewTrackOnMusicBrainz()}>
-                                  <wa-icon slot="icon" name="globe"></wa-icon>
-                                  View on MusicBrainz
-                              </wa-dropdown-item>
+                          <div
+                              class="context-menu-panel"
+                              role="menu"
+                              aria-label=${target.kind === 'track'
+                                  ? 'Track actions'
+                                  : 'Release actions'}
+                          >
+                              ${target.kind === 'track'
+                                  ? this.renderTrackMenuItems(target.track)
+                                  : this.renderReleaseMenuItems(target.release)}
                           </div>
                       `
                     : nothing}
             </wa-popup>
+        `;
+    }
+
+    private renderTrackMenuItems(track: LBTopRecording) {
+        return html`
+            ${this.isTrackOwned(track)
+                ? html`
+                      <wa-dropdown-item @click=${() => this.onContextMenuAction('play')}>
+                          <wa-icon slot="icon" name="play"></wa-icon>
+                          Play
+                      </wa-dropdown-item>
+                      <wa-dropdown-item @click=${() => this.onContextMenuAction('add-to-queue')}>
+                          <wa-icon slot="icon" name="plus"></wa-icon>
+                          Add to Queue
+                      </wa-dropdown-item>
+                      <wa-dropdown-item @click=${() => this.onContextMenuAction('play-next')}>
+                          <wa-icon slot="icon" name="forward-step"></wa-icon>
+                          Play Next
+                      </wa-dropdown-item>
+                  `
+                : nothing}
+            <wa-dropdown-item @click=${() => this.viewTrackOnMusicBrainz()}>
+                <wa-icon slot="icon" name="globe"></wa-icon>
+                View on MusicBrainz
+            </wa-dropdown-item>
+        `;
+    }
+
+    /**
+     * Which items a release gets, decided by what it can actually do.
+     *
+     * Playback is gated on a local album id rather than on "owned": a
+     * release matched by MBID with no local album behind it has nothing
+     * to queue. The request needs the opposite — a catalog MBID — so it
+     * is absent for a library-only release, which is also the one case
+     * where wanting it makes no sense.
+     */
+    private renderReleaseMenuItems(release: ReleaseMenuTarget) {
+        const requested =
+            libraryStatusFor(release.owned, release.mbid) === 'queued';
+
+        return html`
+            ${release.localId > 0
+                ? html`
+                      <wa-dropdown-item @click=${() => void this.onReleaseAction('play')}>
+                          <wa-icon slot="icon" name="play"></wa-icon>
+                          Play
+                      </wa-dropdown-item>
+                      <wa-dropdown-item @click=${() => void this.onReleaseAction('add-to-queue')}>
+                          <wa-icon slot="icon" name="plus"></wa-icon>
+                          Add to Queue
+                      </wa-dropdown-item>
+                      <wa-dropdown-item @click=${() => void this.onReleaseAction('play-next')}>
+                          <wa-icon slot="icon" name="forward-step"></wa-icon>
+                          Play Next
+                      </wa-dropdown-item>
+                  `
+                : nothing}
+            ${!release.owned && release.mbid
+                ? html`
+                      <wa-dropdown-item @click=${() => void this.onReleaseRequestToggle()}>
+                          <wa-icon
+                              slot="icon"
+                              name=${requested ? 'xmark' : 'bookmark'}
+                          ></wa-icon>
+                          ${requested ? 'Cancel Request' : 'Want This'}
+                      </wa-dropdown-item>
+                  `
+                : nothing}
+            ${release.mbid
+                ? html`
+                      <wa-dropdown-item @click=${() => this.viewReleaseOnMusicBrainz()}>
+                          <wa-icon slot="icon" name="globe"></wa-icon>
+                          View on MusicBrainz
+                      </wa-dropdown-item>
+                  `
+                : nothing}
         `;
     }
 
@@ -2550,6 +2880,7 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
 
     private renderTopReleaseCard(rg: LBTopReleaseGroup) {
         const artURL = this.thumbnailURLs.get(rg.releaseGroupMbid) || '';
+        const target = this.topReleaseTarget(rg);
 
         return html`
             <div
@@ -2557,12 +2888,12 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
                 @click=${() => this.navigateToTopRelease(rg)}
                 role="button"
                 tabindex="0"
-                @keydown=${(e: KeyboardEvent) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        this.navigateToTopRelease(rg);
-                    }
-                }}
+                @contextmenu=${(e: MouseEvent) =>
+                    this.onReleaseContextMenu(e, target)}
+                @keydown=${(e: KeyboardEvent) =>
+                    this.onReleaseKeydown(e, target, () =>
+                        this.navigateToTopRelease(rg),
+                    )}
             >
                 <div class="top-release-art">
                     ${artURL
@@ -2685,18 +3016,20 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
         const inLibrary = this.libraryMBIDs.has(rg.mbid) || Boolean(rg.inLibrary);
         const status = libraryStatusFor(inLibrary, rg.mbid);
 
+        const target = this.albumTarget(rg);
+
         return html`
             <div
                 class="album-card"
                 @click=${() => this.navigateToAlbum(rg)}
                 role="button"
                 tabindex="0"
-                @keydown=${(e: KeyboardEvent) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        this.navigateToAlbum(rg);
-                    }
-                }}
+                @contextmenu=${(e: MouseEvent) =>
+                    this.onReleaseContextMenu(e, target)}
+                @keydown=${(e: KeyboardEvent) =>
+                    this.onReleaseKeydown(e, target, () =>
+                        this.navigateToAlbum(rg),
+                    )}
             >
                 <div class="album-art-container">
                     ${artURL

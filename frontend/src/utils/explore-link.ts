@@ -80,7 +80,7 @@ async function findLocalAlbum(
 /** Find the library artist row for a name, loading the cache if needed. */
 async function findLocalArtist(
     artistName: string,
-): Promise<{ ID: number; Name: string } | null> {
+): Promise<{ ID: number; Name: string; MBID: string } | null> {
     let artists = libraryStore.cachedArtists;
 
     if (!artists) {
@@ -176,9 +176,12 @@ export function artistLink(
             const local = await findLocalArtist(artistName);
             if (!local) return;
 
+            // The caller's row had no MBID, but the library row for the
+            // same artist may — the grid routes by exactly this field,
+            // so reading it here is what keeps the two paths agreeing.
             navigate(target, {
                 view: 'explore-artist-details',
-                artistMBID: '',
+                artistMBID: local.MBID || '',
                 artistName,
                 localArtistId: local.ID,
             });
