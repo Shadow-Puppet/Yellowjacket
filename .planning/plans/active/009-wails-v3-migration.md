@@ -1,11 +1,12 @@
 # 009 — Wails v3 migration
 
-**Status:** Phases 0–3 complete. The Go side is entirely on v3: nothing
-in the tree imports `wails/v2`, all three lint and test configurations
-are green, and `go build .` produces a running binary. **Phase 4
-(bindings) is next, and until it lands the app builds but the frontend
-cannot talk to it** — `frontend/wailsjs/` is v2's tree and nothing
-regenerates it.
+**Status:** Phases 0–4 complete. The Go side is entirely on v3 and the
+frontend now imports real v3 bindings: `go build .` and
+`pnpm build` both succeed, `make bindings-check` passes, and `src/`
+typechecks clean. **Phase 5 (the Vitest fake) is next, and until it and
+Phase 6 land the branch is not mergeable** — `make ui-test` and
+`make e2e` both drive a harness written against `window.go`, which v3
+does not have.
 **Branch:** `wails-v3`, off `main` at `edb13a6`.
 **Created:** 2026-08-13
 **Phase 0 run:** 2026-08-13 against **v3.0.0-beta.8**
@@ -568,6 +569,99 @@ is still a pre-commit hook and a CI step (`ci.yml:176`); the 12
 
 **Est.** One session, mostly codemod-and-verify.
 
+### Phase 4 — what actually landed
+
+`frontend/wailsjs/` is deleted; `frontend/bindings/` is committed in
+its place. **272 methods across 12 services**, and the acceptance
+criteria hold: no `SetContext` binding survives and there is no
+`context` model, which is Phase 2c's `ServiceStartup` port showing up
+where it was predicted to.
+
+**The alias absorbs the prefix, so the codemod was one line per site.**
+`@go/*` points at `bindings/yellowjacket/backend/*` rather than at
+`bindings/`, so `@go/library/Library` became `@go/library/library.js`
+— the same shape, lowercased, plus the extension the generated tree
+uses internally. The models cluster was the only structural change:
+v2's single `models.ts` of namespaces became one module per package, so
+`import type { library } from '@go/models'` is
+`import type * as library from '@go/library/models.js'` and every
+`library.Track` usage is untouched. **Two sites the plan's inventory
+missed**, both because they are outside `src/`: `frontend/index.ts`'s
+three imports, found by the vite build rather than by `tsc` (the alias
+resolves for the compiler and not for the bundler when the path's case
+is wrong on a case-sensitive filesystem).
+
+**The 102 type errors were not migration damage. They were v2's
+generator being caught lying**, and that is worth stating because the
+temptation is to suppress them. A Go `nil` slice marshals to JSON
+`null` and always has; v2 typed it `T[]`. A Go named string type is a
+closed set; v2 typed it `string`. v3 types them `T[] | null` and as a
+real TS `enum`, and there is no generator flag to turn either off —
+correctly, since both are true.
+
+So the fix is one seam rather than 78 patches: **`utils/binding.ts`
+states the app's actual contract at the only place it is true.** `list`
+yields `[]` for a nil slice, `dict`/`dictByName` yield `{}` for a nil
+map and drop null-valued keys (which loses nothing —
+`noUncheckedIndexedAccess` already makes every read `V | undefined`, so
+an absent key and a nil value are indistinguishable downstream), and
+`compact` is the same thing for a map arriving as a *field*. All three
+also return a plain `Promise`: v3 bindings return a
+`CancellablePromise` and nothing in this app cancels one, so letting it
+inward would put a Wails type in every store signature for a capability
+none of them use.
+
+Where a nullable slice is a model *field* rather than a return value
+there is no boundary to put it at, and those are `?? []` at the point
+of use — `score.candidates`, `shelf.albums`, `page.shelves`,
+`view.items`.
+
+Four smaller consequences, all of them v3 being stricter:
+
+- **`createFrom` is gone.** v3 emits interfaces (`-i`), so the three
+  `explore.ShelfPage.createFrom({…})` sites are object literals and
+  `new tracklist.Column()` is one too.
+- **An enum needs a value import.** `import type * as download` cannot
+  reach `Format`, so `download-clients.ts` imports it separately — and
+  its local format list is now `Format[]` rather than `string[]`, which
+  is a small win v2 could not have given.
+- **Four test fixtures widen an enum field back to its value union**
+  (`` state?: `${Job['state']}` ``) rather than casting, so the
+  fixtures stay literal-checked.
+- `job-store.ts` still hand-mirrors `JobState`/`JobKind` as string
+  unions beside the generated enums. Left alone deliberately; folding
+  them together is a redesign, not a port.
+
+**`bindings-check` got simpler and slower.** The `chmod` dance and
+`core.fileMode=false` diff are gone with v2's generator (which wrote
+three runtime files 755); a check for added or removed *files* is new,
+because a renamed service is now a renamed module rather than a changed
+line. It runs in ~3.5 s warm against v2's ~1.5 s, ~20 s on a cold build
+cache — v3's generator is a static analyser over the whole package
+graph.
+
+**On step 6 (the tag set): the answer is "no flag", and that is the
+deliberate answer.** The generator sees only the configuration it is
+told about, and the one that matters is the one users run — which,
+since Phase 1, is the *default* tag set. Neither of this repo's other
+two configurations (`indexbuild`, `dev`) adds a bound service, so
+generating under them would only widen the API past what ships. Written
+into `scripts/bindings-check.sh` so it is not re-derived. Note this is
+*not* what Wails' own Taskfile does (`-tags server,production`), for
+the good reason that its shipped artifact is the Docker image.
+
+**One error is left, and it is Phase 5's.**
+`test/harness.test.ts:69` imports `EventsEmit` from the shim, which
+does not export one — because nothing in `src/` emits from the
+frontend, and adding an export to production code to satisfy a test
+would be the wrong way round. The test underneath it is a bigger
+problem than its import: it asserts that a frontend emit notifies
+in-page listeners before reaching Go, which v2 did and **v3 does
+not** — `Events.Emit` in `@wailsio/runtime` calls the backend and
+touches no local listener. That is exactly the "re-derive the fake,
+don't port it" risk the plan flagged, arriving early. `make ui-test`
+is broken regardless: the fake still fakes `window.go`.
+
 ---
 
 ## Phase 5 — The Vitest fake (`make ui-test`, 480 tests)
@@ -723,12 +817,12 @@ Listed so nobody smuggles them into the port and calls it a migration.
 |---|---|---|
 | v3 can't drive the headless harness | ~~fatal~~ | **Retired.** `-tags server` verified: calls + events, no display |
 | Arch/Ubuntu need different webkit tags | ~~high~~ | **Retired.** Both ship webkitgtk-6.0; default builds in the CI container |
-| No `window.go` → e2e/perf lose binding enumeration | **high** | *New, confirmed.* Decide 6b option (1)/(2) |
-| 93 `@go` sites need editing after all | **high** | *Confirmed.* Bindings nest by import path; codemod required |
-| Binding generation analyses the wrong build config | **high** | *New.* Pin tags in Phase 4 step 6 |
+| No `window.go` → e2e/perf lose binding enumeration | **high** | *New, confirmed.* Decide 6b option (1)/(2) — note `frontend/bindings/` is now a real module tree, so option (1) is available |
+| 93 `@go` sites need editing after all | ~~high~~ | **Retired.** Codemod done in Phase 4; the alias absorbed the prefix, so it was a specifier rewrite |
+| Binding generation analyses the wrong build config | ~~high~~ | **Retired.** Default tags *are* the shipped configuration since Phase 1; recorded in `scripts/bindings-check.sh` |
 | Beta churn mid-migration | high | Pin `beta.8`. `beta.3`→`beta.8` in one app's lifetime |
 | E2E rewrite silently weakens coverage | high | Acceptance = `make e2e` green, **zero spec edits** |
-| v3 event ordering differs from v2's | medium | Re-derive the fake; don't port it |
+| v3 event ordering differs from v2's | **high** | *Confirmed, worse than assumed.* v3's frontend `Events.Emit` does not notify in-page listeners at all; `harness.test.ts` asserts that it does |
 | `ServiceShutdown()` signature trap | medium | Silent no-call; grep after Phase 2c |
 | Quit-during-writes veto breaks | medium | Data-safety path; test deliberately in 2d |
 | Regression no tier covers | medium | `make perf` before/after on the same seed |
