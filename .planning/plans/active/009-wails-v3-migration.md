@@ -1,12 +1,15 @@
 # 009 — Wails v3 migration
 
-**Status:** Phases 0–6 complete; **Phase 7 (CI and packaging) is all
-that is left**, and most of it rode along. Locally green: `make lint`
-and `make test` (all three build configurations), `tsc --noEmit`, 757
-Vitest tests across all 63 files, `make e2e` 92/92 on chromium,
-`make bindings-check`, `make skill-check`, and `make perf` runs and
-reports real binding counts again. **WebKit is unverified** — it is
-CI-only by design — so the merge waits on a green CI run.
+**Status:** Phases 0–7 complete. CI needed nothing (it had ridden along
+with Phases 1–6); **packaging needed everything** — both recipes still
+called v2's CLI, installed from v2's output path, and built from a
+scaffold's `yjref` metadata. Locally green: `make lint` and `make test`
+(all three build configurations), `tsc --noEmit`, `make build-prod`,
+757 Vitest tests across all 58 files, `make e2e` 92/92 on chromium,
+`make bindings-check`, `make skill-check`, `make commit-check`,
+`make css-check`, and `make perf` runs and reports real binding counts
+again. **WebKit is unverified** — it is CI-only by design — so the
+merge waits on a green CI run.
 **Branch:** `wails-v3`, off `main` at `edb13a6`.
 **Created:** 2026-08-13
 **Phase 0 run:** 2026-08-13 against **v3.0.0-beta.8**
@@ -993,6 +996,83 @@ matters.
 **Acceptance:** a green CI run on both jobs.
 
 **Est.** Half a session.
+
+### Phase 7 — what actually landed
+
+Most of the bullets above had already ridden along with Phases 1–6:
+`ci.yml`'s apt lists were `libwebkitgtk-6.0-dev libgtk-4-dev` on both
+jobs, Xvfb and `@playwright/cli` were gone from it, the PKGBUILD's
+`depends=()` was `webkitgtk-6.0 gtk4`, and `nfpm.yaml` shipped the GTK4
+dependency set. **What had not been checked is whether any of the
+packaging recipes still work**, and neither did.
+
+**Both of them were still calling v2's CLI.** `go tool wails3 build
+-clean -trimpath -ldflags …` fails outright — `flag provided but not
+defined: -clean`. v3's `build` takes `-tags`, `-obfuscated` and
+`-garbleargs` and nothing else, because the build is a Taskfile tree
+now and `-trimpath`/`-w -s` live in the production task's own flags.
+Both recipes also installed from `build/bin/`, which is v2's output
+path; v3 writes to `bin/`, and `build/` is *tracked build assets*.
+Neither had been run since Phase 1 — the same gap the corrected note
+under Phase 1 records about `make build-dev`.
+
+**The version stamp needed a seam, and it is this repo's one edit to
+the scaffold Taskfiles.** `wails3 build` has no `-ldflags`, and
+`build:native` computes `BUILD_FLAGS` in its own `vars:`, so a CLI
+variable cannot override it. `LDFLAGS_EXTRA` is appended *inside* the
+production `-ldflags` string in `build/linux/Taskfile.yml` and
+`build/darwin/Taskfile.yml` (identical on both, so the Homebrew formula
+has one invocation rather than two), empty by default so `make
+build-dev` and `make build-prod` are unchanged. Verified end to end,
+not by reading the template: `wails3 task build LDFLAGS_EXTRA="-X
+'main.version=v9.9.9' …"` produces a binary that logs `version: v9.9.9`
+on startup.
+
+**The tasks invoke `wails3` by bare name**, which is why the Makefile
+has `scripts/toolbin` — and neither packaging recipe had it, so both
+would have died at the first sub-task even with correct flags. Both
+prepend it now.
+
+**Bundling is a separate step from building in v3**, which the formula
+did not know: `task build` produces a bare binary on *both* platforms,
+and the macOS `.app` is `task package`. The formula's `Dir["build/bin/
+*.app"]` would have found nothing and `odie`'d.
+
+**The build assets were a scaffold's, not this app's** — and this is
+the find that mattered most. `build/darwin/Info.plist` named
+`CFBundleExecutable` **`yjref`** (the scratchpad app Phase 1 scaffolded
+from) and `com.example.yjref`; `nfpm.yaml` packaged `./bin/yjref` to
+`/usr/local/bin/yjref`; the `.desktop` template said "A yjref
+application"; the Windows manifest said `com.example.yjref`. A macOS
+`.app` built from that plist would not have launched. They are
+generated from `build/config.yml`, so the fix is
+`wails3 task common:update:build-assets` and filling that file's `info`
+block — which had also never been filled from `wails.json`, contrary to
+Phase 1 step 3. Two consequences recorded in place: nfpm's `homepage`
+and `license` are **not** derived from `config.yml` and survive the
+refresh (they were `wails.io` / `MIT`), and the refresh regenerates
+`build/ios/` and `build/android/`, which are gitignored rather than
+deleted-and-rediscovered on every run.
+
+**Documentation.** `make skill-check` passes; `.pi/` needed no changes
+(Phase 6 had already retired `window.go` and Xvfb from it). `README.md`
+still told a contributor to `go install wails/v2/cmd/wails` and
+`apt-get install libgtk-3-dev libwebkit2gtk-4.1-dev`. CLAUDE.md gained
+a **Packaging** section for the four Taskfile facts above, and its
+lifecycle, bindings, harness, events and CI sections were rewritten
+onto v3 — including the point of the whole migration, that
+`TestNoDirectRuntimeEmits`'s justification is now the *weaker* one.
+
+**Locally green after the change:** `make lint` and `make test` (all
+three build configurations), `tsc --noEmit`, `make css-check`,
+`make bindings-check`, `make skill-check`, `make commit-check`,
+`make build-prod`, 757 Vitest tests across all 58 files (batched — the
+single-run failure still reproduces and is still this machine's
+resource limit, unchanged from Phase 5), and `make e2e` **92/92 on
+chromium**.
+
+**Still unverified: WebKit**, and it is CI-only by design. That is the
+one thing standing between this branch and a merge.
 
 ---
 

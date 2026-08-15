@@ -78,16 +78,25 @@ YellowJacket is built with [Go](https://go.dev/) and a
 | Go | 1.25+ |
 | Node.js | 22+ |
 | pnpm | 10+ |
-| Wails CLI | v2 (`go install github.com/wailsapp/wails/v2/cmd/wails@latest`) |
+| Wails CLI | v3 — vendored, no install needed (`go tool wails3`) |
 
-On Linux, install the system libraries Wails needs:
+The Wails v3 CLI resolves from the `tool` block in `go.mod`, so there is nothing
+to install globally; `make setup` fetches it with the rest of the tooling.
+
+On Linux, install the system libraries Wails needs. v3 builds against GTK4 +
+WebKitGTK 6.0 by default:
 
 ```bash
-sudo apt-get install libasound2-dev libgtk-3-dev libwebkit2gtk-4.1-dev
+sudo apt-get install libasound2-dev libgtk-4-dev libwebkitgtk-6.0-dev   # Debian/Ubuntu
+sudo pacman -S alsa-lib gtk4 webkitgtk-6.0                              # Arch
 ```
 
-macOS and Windows need no extra system packages. Run `wails doctor` to check your
-environment.
+A machine without `webkitgtk-6.0` can still build with `-tags gtk3` against the
+older WebKit2GTK 4.1 stack, but that is an escape hatch, not what CI or a
+release builds.
+
+macOS and Windows need no extra system packages. Run `go tool wails3 doctor` to
+check your environment.
 
 **Build**
 

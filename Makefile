@@ -21,10 +21,11 @@ dev-debug: setup generate clean
 	if [ -f .env ]; then set -a; . ./.env; set +a; fi; : "$${YJ_HOME:=$(DEV_YJ_HOME)}"; export YJ_HOME; YJ_LOG_LEVEL=debug PATH="$(TOOLBIN):$$PATH" go tool wails3 dev -config ./build/config.yml
 
 # ── Headless harness (plan 005) ──────────────────────────────────────
-# The same dev server `make dev` runs, minus the blocking GTK window:
-# Xvfb gives it the display it insists on, and the script returns once
-# :34115 answers.  This is the only entry point an agent can use, since
-# every other one blocks the terminal forever.
+# The same app `make dev` runs, minus the window: v3's `-tags server`
+# is a first-class headless mode that needs no display at all, so the
+# Xvfb this used to require is gone.  The script returns once :34115
+# answers.  This is the only entry point an agent can use, since every
+# other one blocks the terminal forever.
 dev-headless: ## Start the app headless in the background (SEED=<name> to seed)
 	@./scripts/dev-headless.sh $(if $(SEED),--seed $(SEED),) $(HEADLESS_ARGS)
 
