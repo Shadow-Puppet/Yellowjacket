@@ -1,13 +1,12 @@
 # 009 — Wails v3 migration
 
-**Status:** Phases 0–5 complete. The Go side is entirely on v3, the
-frontend imports real v3 bindings, and the component tier is green:
-`go build .` and `pnpm build` both succeed, `make bindings-check`
-passes, `tsc --noEmit` is clean, and the 757 Vitest tests pass across
-all 63 files. **Phase 6 (the e2e harness) is next, and until it lands
-the branch is not mergeable** — `.playwright/init-events.js` and
-`e2e/perf/measure.mjs` are both written against `window.go`, which v3
-does not have.
+**Status:** Phases 0–6 complete; **Phase 7 (CI and packaging) is all
+that is left**, and most of it rode along. Locally green: `make lint`
+and `make test` (all three build configurations), `tsc --noEmit`, 757
+Vitest tests across all 63 files, `make e2e` 92/92 on chromium,
+`make bindings-check`, `make skill-check`, and `make perf` runs and
+reports real binding counts again. **WebKit is unverified** — it is
+CI-only by design — so the merge waits on a green CI run.
 **Branch:** `wails-v3`, off `main` at `edb13a6`.
 **Created:** 2026-08-13
 **Phase 0 run:** 2026-08-13 against **v3.0.0-beta.8**
@@ -848,6 +847,118 @@ spec edits.
 
 **Est.** One to two sessions. The largest and riskiest phase.
 
+### Phase 6 — what actually landed
+
+**`make e2e` is green on chromium: 92 passed, 0 failed.** Three of the
+four things this phase replaced came out better than what they
+replaced, and the fourth — `window.go` enumeration — turned out not to
+be needed at all.
+
+**6d decided itself.** The plan asked whether `-tags server` was worth
+adopting; it was not optional. `dev-headless.sh` ran a `-tags dev`
+binary whose `app_dev.go` parsed `-devserver` / `-assetdir` straight
+out of `os.Args`, and that file went with v2 — so the harness had **no
+server at all**, not a worse one. `-tags dev,server` is a first-class
+mode, it needs no display, and testctl mounts on it unchanged. **Xvfb
+is gone** from the script and from CI, which retires the "Xvfb is not
+optional" note the script had carried since plan 005. `dbus-run-session`
+stays, for MPRIS, exactly as before.
+
+**6a hooks two places, and the outbound one is the good surprise.**
+Inbound is `window._wails.dispatchWailsEvent` — the entry point the
+backend's own push uses. It is wrapped by *pre-creating* the object the
+runtime keeps (`window._wails = window._wails || {}`) and putting an
+accessor on the one property, which is simpler than v2's
+accessor-on-`window`, where the whole object was replaced.
+
+Outbound is **`fetch`**. v3 routes every runtime call — bindings, event
+emits, window, dialogs, clipboard — through one POST to
+`/wails/runtime`. There is no global to wrap the way v2's
+`window.runtime` could be, and it does not matter: one hook sees calls
+from any module, needs no walk of an object graph, and cannot miss a
+call made before the harness looked, which is what v2's "runs twice"
+dance in `measure.mjs` existed to work around.
+
+**`__yjEvents.call` is now HTTP, and that is what unblocked everything
+else.** It posts by *method name*, so it depends on nothing in the
+app's bundle and works on a page with no init script. That is what lets
+`seed-sandbox.sh` **drop `playwright-cli` entirely** — it drove
+`AddLibrary` through a real browser only because `window.go` was v2's
+one way in — taking with it a global npm install, a second Chromium,
+and the `PLAYWRIGHT_BROWSERS_PATH` revision dance in CI. A seed is
+`curl` now and still produced by running the app.
+
+**6b: option (1), and it costs less than feared.**
+`e2e/support/method-ids.mjs` derives `methodID → pkg.Type.Method` from
+`frontend/bindings/` by reading the id literal beside the function that
+sends it — no hashing, nothing to drift. Plain `.mjs` rather than `.ts`
+because `measure.mjs` runs under bare `node`, and one derivation is
+better than two that can disagree. `harness.spec`'s enumeration was not
+worth replacing in kind: "is this the real app" is now asked of the
+runtime (`_wails.clientId`, `dispatchWailsEvent`) and of the backend
+(a real method answers, an invented one is refused), which is a better
+question than `Object.keys`.
+
+**6c: nothing to do.** testctl's mount on the asset handler works in
+both modes and is shared with `/artist-images/`; `ServiceOptions{Route}`
+would be churn. `Deps.Context` stays a function, because
+`testctl.Register` still runs in `NewYellowJacketApp`, before any
+context exists.
+
+**Four bugs, and the migration is how each surfaced.**
+
+- **The cross-service wiring never ran headless.** Phase 2 hung it off
+  `Common.ApplicationStarted`, which is the right *moment* and the
+  wrong *mechanism*: server mode emits no application events at all
+  (`setupCommonEvents` is an explicit no-op under `-tags server`). So
+  the desktop build wired itself and the harness build did not — "No
+  player set, cannot load track", the queue with no `TrackLoader`, a
+  track that changed the queue and then silently did nothing. It is a
+  service registered last now (`backend/startup.go`), which gets the
+  ordering from the mechanism rather than from an event: services start
+  in registration order, on the main goroutine, in every mode.
+- **Six specs called `SetQueue` with three of its four arguments.** v2
+  accepted the call and filled the gap with a zero value; v3 answers
+  `expects 4 arguments, got 3`. `NO_QUEUE_SOURCE` says explicitly what
+  was being supplied silently.
+- **`requested-badge`'s cleanup was a no-op.** It read `window.go`
+  inside a type assertion and `return`ed on `if (!svc)` — the silent
+  cleanup its own comment was written to prevent, one migration later,
+  which is why the spec failed against its own leftovers. It posts to
+  the runtime endpoint now, which needs no bridge and no global.
+- **`SearchIndex.Search` trusted a startup latch.** `IsReady()` is set
+  once, so rows staged by a spec afterwards were unsearchable, and
+  three specs passed only when an earlier one happened to flip it —
+  order-dependent, and reproducibly red in isolation. `shelves.go` had
+  already fixed exactly this and left `hasCatalogRows` behind; the
+  search path uses it as the fallback, with the latch still the fast
+  path.
+
+**Two spec edits, both deletions of assertions about v2.**
+`harness.spec` checked `Object.keys(window.go)` and that a bad call
+*hung* — the second being a test that the harness's own invented
+deadline fired, since v2 gave it nothing else. And `album-actions`
+asserted a `.tracklist-legend` that **`dcc40b1` deleted on `main`**:
+that spec has been failing since, verified in a worktree, and what
+replaced it (the dimming and its `aria-disabled`) is covered in
+`frontend/test/components/album-actions.test.ts`.
+
+**One thing to know before trusting a local run.** `dev-headless.sh`
+does not set `YJ_CORE_INDEX_URL`, so a local `make e2e` fetches the
+real 1.1 M-row explore artifact and then behaves differently from CI
+(which points it at a dead address at the job level) — slower, and with
+testctl's snapshot/restore copying an enormous table set. Run it the
+way CI does:
+
+```
+YJ_CORE_INDEX_URL="http://127.0.0.1:1/none.tar.zst" make dev-headless SEED=default
+```
+
+**Not verified: WebKit.** Playwright's Linux WebKit links Ubuntu
+libraries Arch does not provide, so it remains CI-only — which is
+precisely why `ci.yml`'s `if: ${{ !cancelled() }}` on that step still
+matters.
+
 ---
 
 ## Phase 7 — CI and packaging
@@ -905,16 +1016,17 @@ Listed so nobody smuggles them into the port and calls it a migration.
 |---|---|---|
 | v3 can't drive the headless harness | ~~fatal~~ | **Retired.** `-tags server` verified: calls + events, no display |
 | Arch/Ubuntu need different webkit tags | ~~high~~ | **Retired.** Both ship webkitgtk-6.0; default builds in the CI container |
-| No `window.go` → e2e/perf lose binding enumeration | **high** | *New, confirmed.* Decide 6b option (1)/(2) — note `frontend/bindings/` is now a real module tree, so option (1) is available |
+| No `window.go` → e2e/perf lose binding enumeration | ~~high~~ | **Retired.** 6b option (1): `e2e/support/method-ids.mjs` derives id → name from `frontend/bindings/`. The fetch hook made enumeration unnecessary for *wrapping*; only labelling needed the map |
 | 93 `@go` sites need editing after all | ~~high~~ | **Retired.** Codemod done in Phase 4; the alias absorbed the prefix, so it was a specifier rewrite |
 | Binding generation analyses the wrong build config | ~~high~~ | **Retired.** Default tags *are* the shipped configuration since Phase 1; recorded in `scripts/bindings-check.sh` |
 | Beta churn mid-migration | high | Pin `beta.8`. `beta.3`→`beta.8` in one app's lifetime |
-| E2E rewrite silently weakens coverage | high | Acceptance = `make e2e` green, **zero spec edits** |
+| E2E rewrite silently weakens coverage | ~~high~~ | **Retired.** 92/92 on chromium. Two spec edits, both deleting assertions about v2 behaviour that is gone; one deletion of a spec already failing on `main` |
 | `make ui-test` cannot complete in one browser session here | low | *New.* Pre-existing — reproduces at `c9905fb`. A resource limit on this machine; batched runs are green. Watch CI |
 | v3 event ordering differs from v2's | ~~high~~ | **Retired.** Confirmed and handled in Phase 5: v3's frontend `Events.Emit` round-trips through Go instead of notifying locally first. One test asserted the old behaviour and now asserts the new |
 | `ServiceShutdown()` signature trap | medium | Silent no-call; grep after Phase 2c |
+| An app-level event that a headless mode never emits | — | *Found in Phase 6, not predicted.* Server mode emits **no** application events; the cross-service wiring is a service now. Anything else keyed on `Common.*` is suspect |
 | Quit-during-writes veto breaks | medium | Data-safety path; test deliberately in 2d |
-| Regression no tier covers | medium | `make perf` before/after on the same seed |
+| Regression no tier covers | medium | `make perf` before/after on the same seed. Note the fixture seed leaves the bulk-library rows blank; a real comparison wants `make sandbox-seed-bulk` |
 | GTK4 changes rendering vs GTK3 | low | Unmeasured; visual check on first run |
 
 ---
