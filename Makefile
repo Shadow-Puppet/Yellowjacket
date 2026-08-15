@@ -7,11 +7,18 @@ LDFLAGS := -X 'main.version=$(VERSION)' -X 'main.commit=$(COMMIT)'
 # point elsewhere (or unset it there to share the real user dirs).
 DEV_YJ_HOME ?= $(HOME)/.local/share/yellowjacket-dev
 
+# `wails3 dev` and `wails3 task` run the scaffold's Taskfile tree, which
+# invokes `wails3` by bare name.  The CLI is a vendored Go tool, so the
+# name only exists on PATH via this shim -- see scripts/toolbin/wails3.
+# Without it every supervisor target dies with
+# "/bin/sh: wails3: command not found" at its first sub-task.
+TOOLBIN := $(CURDIR)/scripts/toolbin
+
 dev: setup generate clean
-	if [ -f .env ]; then set -a; . ./.env; set +a; fi; : "$${YJ_HOME:=$(DEV_YJ_HOME)}"; export YJ_HOME; go tool wails3 dev -config ./build/config.yml
+	if [ -f .env ]; then set -a; . ./.env; set +a; fi; : "$${YJ_HOME:=$(DEV_YJ_HOME)}"; export YJ_HOME; PATH="$(TOOLBIN):$$PATH" go tool wails3 dev -config ./build/config.yml
 
 dev-debug: setup generate clean
-	if [ -f .env ]; then set -a; . ./.env; set +a; fi; : "$${YJ_HOME:=$(DEV_YJ_HOME)}"; export YJ_HOME; YJ_LOG_LEVEL=debug go tool wails3 dev -config ./build/config.yml
+	if [ -f .env ]; then set -a; . ./.env; set +a; fi; : "$${YJ_HOME:=$(DEV_YJ_HOME)}"; export YJ_HOME; YJ_LOG_LEVEL=debug PATH="$(TOOLBIN):$$PATH" go tool wails3 dev -config ./build/config.yml
 
 # ── Headless harness (plan 005) ──────────────────────────────────────
 # The same dev server `make dev` runs, minus the blocking GTK window:
@@ -162,7 +169,7 @@ fresh-install: setup generate clean
 	case "$$(findmnt -no FSTYPE -T "$$YJ_HOME" 2>/dev/null)" in \
 	  tmpfs|ramfs) echo "==> WARNING: $$YJ_HOME is RAM-backed; the search index import needs ~6GB of real disk. Set FRESH_HOME_BASE to a disk-backed path." ;; \
 	esac; \
-	go tool wails3 dev -config ./build/config.yml
+	PATH="$(TOOLBIN):$$PATH" go tool wails3 dev -config ./build/config.yml
 
 # Named, persistent sandboxes: `make sandbox foo` runs dev against
 # $(FRESH_HOME_BASE)/yellowjacket-sandbox-foo, creating it on first use
@@ -222,7 +229,7 @@ sandbox-%: setup generate clean
 	case "$$(findmnt -no FSTYPE -T "$$YJ_HOME" 2>/dev/null)" in \
 	  tmpfs|ramfs) echo "==> WARNING: $$YJ_HOME is RAM-backed; the search index import needs ~6GB of real disk. Set FRESH_HOME_BASE to a disk-backed path." ;; \
 	esac; \
-	go tool wails3 dev -config ./build/config.yml
+	PATH="$(TOOLBIN):$$PATH" go tool wails3 dev -config ./build/config.yml
 
 sandboxes: ## List existing named sandboxes
 	@ls -d "$(SANDBOX_DIR)"-* 2>/dev/null \
@@ -232,10 +239,10 @@ sandboxes: ## List existing named sandboxes
 .PHONY: sandbox sandbox-rm sandboxes
 
 build-dev: generate
-	go tool wails3 task build DEV=true
+	PATH="$(TOOLBIN):$$PATH" go tool wails3 task build DEV=true
 
 build-prod: generate
-	go tool wails3 task build
+	PATH="$(TOOLBIN):$$PATH" go tool wails3 task build
 
 build-frontend:
 	cd frontend && pnpm install && pnpm build

@@ -294,6 +294,14 @@ Taskfile tree — a genuinely larger and more visible build surface.
 `make build-prod` still strips and UPX-compresses; `make skill-check`
 passes; `grep -r webkit2_41` returns nothing.
 
+> **Corrected after the fact.** `make build-prod` strips and trims
+> (`-trimpath -ldflags="-w -s"`, 28.8 MB against the dev build's
+> 38 MB) but **does not UPX-compress**: that was v2's `wails build
+> -upx` flag, and v3's Taskfile has no equivalent. Neither `make
+> build-dev` nor `make build-prod` was actually run when Phase 1 was
+> recorded — both were broken until the shim below. Whether to
+> reintroduce UPX is a packaging decision for Phase 7, not a port.
+
 **Est.** Half a session. Low risk, high churn.
 
 ### Phase 1 — what actually landed

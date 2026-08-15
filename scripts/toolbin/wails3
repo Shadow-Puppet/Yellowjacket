@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+#
+# `wails3`, for the Taskfiles that shell out to it by bare name.
+#
+# The CLI is a vendored Go tool (go.mod's `tool` block), invoked as
+# `go tool wails3` — deliberately, so the build declares its own
+# dependencies rather than assuming a global install (plan 009, D3).
+# But `wails3 dev` and `wails3 task` are supervisors: they run the
+# scaffold's Taskfile tree, which invokes `wails3` by name in 54 places
+# across build/Taskfile.yml and the three per-platform ones.  Those are
+# scaffold files, and rewriting every call site is churn that would
+# have to be redone whenever they are refreshed from a newer scaffold.
+#
+# So the name is put on PATH instead, pointing back at the vendored
+# tool.  The Makefile prepends this directory for the targets that
+# start a supervisor; nothing else needs it, and nothing global is
+# installed.
+#
+# Two details are load-bearing.
+#
+# `exec` rather than a call, so signals and the exit status reach the
+# real tool: `make dev` is stopped with Ctrl-C, and a wrapper that ate
+# SIGINT would leave the app running.
+#
+# And the working directory is left alone.  An earlier version cd'd to
+# the repo root to be sure `go tool` found the module -- it does not
+# need that, `go tool` resolves from anywhere inside it -- and the cd
+# silently discarded the `dir:` a task had set, so `generate:icons`
+# (dir: build) failed with "open appicon.png: no such file or
+# directory" against a file that was right there.
+set -euo pipefail
+
+exec go tool wails3 "$@"

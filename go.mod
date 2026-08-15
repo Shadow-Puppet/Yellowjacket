@@ -406,7 +406,6 @@ require (
 	mvdan.cc/unparam v0.0.0-20251027182757-5beb8c8f8f15 // indirect
 )
 
-
 tool (
 	github.com/a-h/templ/cmd/templ
 	github.com/evilmartians/lefthook

@@ -32,7 +32,7 @@ make sandbox-seed-bulk # Same, from the bulk library (minutes; it is a real scan
 make perf LABEL=<n>   # Measure a running app; writes .dev/perf/<n>.json
 make perf-compare BEFORE=<a> AFTER=<b>  # Print the before/after table
 make build-dev        # Debug build with symbols
-make build-prod       # Production build (stripped, UPX-compressed)
+make build-prod       # Production build (stripped and trimmed; no UPX)
 make generate         # Run code generators (sqlc + templ via go generate)
 make e2e              # Playwright smoke suite against a running dev-headless app
 make e2e-setup        # Install the e2e runner + its browser (once)

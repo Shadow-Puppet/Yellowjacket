@@ -33,6 +33,12 @@ export default defineConfig({
         },
     },
     server: {
+        // IPv4, explicitly. Vite's default binds `localhost`, which on
+        // this machine resolves to `[::1]` *only* — and wails3 dev's
+        // asset proxy dials 127.0.0.1, so the app's first request for
+        // the dev server was answered with "connection refused" and the
+        // first paint raced a retry.
+        host: '127.0.0.1',
         hmr: {
             host: 'localhost',
             protocol: 'ws',
