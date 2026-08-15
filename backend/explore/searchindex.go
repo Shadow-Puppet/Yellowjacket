@@ -1414,7 +1414,18 @@ func (si *SearchIndex) ExactMatches(query string, perCategory int) []SearchIndex
 // by relevance (popularity-blended).  Returns nil when the index
 // hasn't finished its initial build.
 func (si *SearchIndex) Search(ctx context.Context, query string, limit int) []SearchIndexResult {
-	if !si.IsReady() {
+	// IsReady is latched once at startup, so it is right in the app and
+	// wrong for anything that fills the table afterwards — including the
+	// e2e suite staging a catalog, which is how search gets tested in
+	// CI, where the artifact URL points at a dead address on purpose.
+	// shelves.go learned this already; the search path did not, and the
+	// symptom was three specs that passed only when an earlier one
+	// happened to flip the flag first.
+	//
+	// The latch stays as the fast path — once it is true nothing can
+	// make it false — and the probe is one indexed `SELECT 1 … LIMIT 1`
+	// on the only path that could otherwise answer "no catalog" wrongly.
+	if !si.IsReady() && !si.hasCatalogRows(ctx) {
 		return nil
 	}
 

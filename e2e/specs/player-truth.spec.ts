@@ -7,6 +7,7 @@ import {
   resetEvents,
   waitForEvent,
   LONG_TRACK,
+  NO_QUEUE_SOURCE,
 } from '../support/fixtures.js';
 import type { Page } from '@playwright/test';
 
@@ -161,6 +162,7 @@ test.describe('a finished queue keeps its context', () => {
       [rows[0].file_path],
       0,
       false,
+      NO_QUEUE_SOURCE,
     ]);
     await waitForEvent(app, 'QueueChanged');
     await callBinding(app, 'queue.Queue.Play');
@@ -199,7 +201,7 @@ test.describe('a track that will not play says so', () => {
     try {
       await callBinding(app, 'queue.Queue.Clear');
       await resetEvents(app);
-      await callBinding(app, 'queue.Queue.SetQueue', [paths, 0, false]);
+      await callBinding(app, 'queue.Queue.SetQueue', [paths, 0, false, NO_QUEUE_SOURCE]);
       await waitForEvent(app, 'QueueChanged');
       await callBinding(app, 'queue.Queue.Play');
 

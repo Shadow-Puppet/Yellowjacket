@@ -199,39 +199,49 @@ function addRequest(
 }
 
 /**
- * Drop any request for this album, through the raw binding.
+ * Drop any request for this album, over the runtime endpoint.
  *
- * Deliberately not `callBinding`: that goes through `window.__yjEvents`,
- * which only exists on a page the `app` fixture created — a bare
- * `browser.newPage()` has no init script, so the bridge is undefined and
- * the cleanup throws where nobody is looking. The first version of this
- * did exactly that and left the request behind, which failed the *next*
- * run of this same spec.
+ * Deliberately not `callBinding`: that goes through
+ * `window.__yjEvents`, which only exists on a page the `app` fixture
+ * created — a bare `browser.newPage()` has no init script, so the
+ * bridge is undefined and the cleanup throws where nobody is looking.
+ * The first version of this did exactly that and left the request
+ * behind, which failed the *next* run of this same spec.
+ *
+ * v2's answer was `window.go`, which every page had.  v3 has no such
+ * global, and the version of this that kept reading it did not throw —
+ * it returned early on `if (!svc)`, which is the same silent cleanup
+ * with a different cause.  A POST to `/wails/runtime` needs neither:
+ * it is the same request the bundle makes, and any page can make it.
  */
 async function clearRequest(page: import('@playwright/test').Page) {
   await page.evaluate(async (mbid) => {
-    const go = (
-      window as unknown as {
-        go?: {
-          download?: {
-            Service?: {
-              ListRequests(): Promise<{ id: number; mbid: string }[]>;
-              RemoveRequest(id: number): Promise<void>;
-            };
-          };
-        };
-      }
-    ).go;
+    const call = async (method: string, args: unknown[]) => {
+      const res = await fetch('/wails/runtime', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          object: 0,
+          method: 0,
+          args: {
+            'call-id': `clear-${method}`,
+            methodName: `yellowjacket/backend/${method}`,
+            args,
+          },
+        }),
+      });
 
-    const svc = go?.download?.Service;
+      if (!res.ok) throw new Error(`${method}: ${await res.text()}`);
 
-    if (!svc) return;
+      return res.json();
+    };
 
-    const rows = (await svc.ListRequests()) ?? [];
+    const rows: { id: number; mbid: string }[] =
+      (await call('download.Service.ListRequests', [])) ?? [];
 
     for (const row of rows) {
       if (row.mbid?.toLowerCase() === mbid.toLowerCase()) {
-        await svc.RemoveRequest(row.id);
+        await call('download.Service.RemoveRequest', [row.id]);
       }
     }
   }, MBID);

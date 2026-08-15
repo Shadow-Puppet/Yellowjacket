@@ -56,12 +56,24 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from '@playwright/test';
 
+import { methodIDs } from '../support/method-ids.mjs';
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '../..');
 const OUT_DIR = resolve(REPO, '.dev/perf');
 const BRIDGE = resolve(REPO, '.playwright/init-events.js');
 
 const BASE_URL = process.env.YJ_URL ?? 'http://localhost:34115';
+
+/**
+ * methodID -> 'pkg.Type.Method', derived from frontend/bindings/.
+ *
+ * A binding call carries only the id, so this is what turns a
+ * measurement's "which bindings did that provoke" back into names.  It
+ * is derived rather than written down for the reason plan 009 phase 6b
+ * gives: a hand-maintained list goes stale silently.
+ */
+const METHOD_NAMES = Object.fromEntries(methodIDs());
 
 // The browse script visited for the heap measurement.  Deliberately the
 // views the audit named as retaining: explore (two unbounded caches),
@@ -123,63 +135,40 @@ function parseArgs(argv) {
 /* -------------------------------------------------------------------- */
 
 /**
- * Wrap every bound Go method so a measurement can say which bindings a
- * user action provoked and how much they returned.
+ * Say which bindings a user action provoked, and how much they
+ * returned.
  *
- * Post-hoc wrapping is safe because `frontend/wailsjs` looks its target
- * up at call time (`window['go']['library']['Library']['GetAllTracks']()`),
- * so a store holding an imported wrapper still lands here.
+ * This used to walk `window.go` and wrap every bound method in place,
+ * which worked because v2's generated stubs looked their target up at
+ * call time.  v3 has no such object — the bindings are bundled modules
+ * — so `.playwright/init-events.js` records every call off the single
+ * POST v3 routes them all through, and this reads that log.  It is
+ * strictly better: it needs no walk, sees calls from any module, and
+ * cannot miss one made before a wrapper was installed, which is what
+ * the old "runs twice" dance was working around.
+ *
+ * `bytes` is the response size, so `measureBytes` is turned on here —
+ * only a measurement wants to pay for a clone-and-read of every body.
  */
-const INSTRUMENT = `() => {
-	// Runs twice: once as an initScript (before window.go exists, which
-	// is the only moment early enough to catch the long-task observer's
-	// first entries) and once after the bridge reports ready.  So the
-	// state is created at most once and the *walk* happens every time —
-	// getting that backwards silently measures zero binding calls.
-	const first = !window.__yjPerf;
+const INSTRUMENT = `(names) => {
+	if (window.__yjPerf) return;
 
-	if (first) {
-		const calls = [];
-		window.__yjPerf = {
-			calls,
-			reset: () => { calls.length = 0; },
-			since: (t) => calls.filter((c) => c.start >= t),
-			longtasks: [],
-		};
-	}
+	window.__yjEvents.measureBytes = true;
 
-	const calls = window.__yjPerf.calls;
-
-	const wrap = (obj, key, path) => {
-		const fn = obj[key];
-		if (typeof fn !== 'function' || fn.__yjPerfWrapped) return;
-		const wrapped = function (...args) {
-			const start = performance.now();
-			let out;
-			try { out = fn.apply(this, args); } catch (e) { throw e; }
-			return Promise.resolve(out).then((v) => {
-				let bytes = 0;
-				try { bytes = JSON.stringify(v ?? null).length; } catch { bytes = -1; }
-				calls.push({ path, start, ms: performance.now() - start, bytes });
-				return v;
-			});
-		};
-		wrapped.__yjPerfWrapped = true;
-		obj[key] = wrapped;
+	window.__yjPerf = {
+		get calls() {
+			return window.__yjEvents.bindings.map((c) => ({
+				path: names[c.methodID] || ('#' + c.methodID),
+				methodID: c.methodID,
+				start: c.start,
+				ms: c.ms,
+				bytes: c.bytes,
+			}));
+		},
+		reset: () => { window.__yjEvents.reset(); },
+		since: (t) => window.__yjPerf.calls.filter((c) => c.start >= t),
+		longtasks: [],
 	};
-
-	const walk = (obj, prefix, depth) => {
-		if (!obj || depth > 4) return;
-		for (const key of Object.keys(obj)) {
-			const v = obj[key];
-			if (typeof v === 'function') wrap(obj, key, prefix + key);
-			else if (v && typeof v === 'object') walk(v, prefix + key + '.', depth + 1);
-		}
-	};
-
-	walk(window.go, '', 0);
-
-	if (!first) return;
 
 	// Long tasks are the honest form of "the app stalls": a 25 MB JSON
 	// parse on the main thread shows up here and nowhere else.
@@ -352,7 +341,15 @@ async function measureTrackChange(page) {
 		const paths = (tracks ?? []).slice(0, 4).map((t) => t.FilePath);
 		if (paths.length < 2) return { error: 'library too small to measure' };
 
-		await ev.call('queue.Queue.SetQueue', [paths, 0, false], 15000);
+		await ev.call(
+			'queue.Queue.SetQueue',
+			// The fourth argument is the queue's source; these are
+			// ad-hoc tracks, so it is the empty one.  v3 rejects a
+			// call with the wrong argument count where v2 filled the
+			// gap with a zero value.
+			[paths, 0, false, { type: '', id: 0, label: '' }],
+			15000,
+		);
 		await ev.call('queue.Queue.PlayIndex', [0], 15000);
 
 		// Settle mid-track before starting to record.  Starting playback
@@ -1046,14 +1043,15 @@ const SCROLL_SETTLE_MS = 260;
 async function measureScroll(page) {
 	// -- M3: the track list, with the Art column staged on. --
 	const priorColumns = await page.evaluate(async () => {
-		const prior = await window.go.config.Config.GetTrackListColumns();
+		const ev = window.__yjEvents;
+		const prior = await ev.call('config.Config.GetTrackListColumns', [], 15000);
 
-		await window.go.config.Config.SetTrackListColumns(
+		await ev.call('config.Config.SetTrackListColumns', [
 			[{ id: 'albumArt' }, { id: 'trackName' },
 				{ id: 'artistName' }, { id: 'trackLength' }],
-		);
+		], 15000);
 
-		return prior.map((c) => ({ id: c.id }));
+		return (prior ?? []).map((c) => ({ id: c.id }));
 	});
 
 	const scrollView = async (view, tag) => {
@@ -1141,7 +1139,9 @@ async function measureScroll(page) {
 	const artists = await scrollView('artists', 'artists-view');
 
 	await page.evaluate(
-		(cols) => window.go.config.Config.SetTrackListColumns(cols),
+		(cols) => window.__yjEvents.call(
+			'config.Config.SetTrackListColumns', [cols], 15000,
+		),
 		priorColumns,
 	);
 
@@ -1605,7 +1605,15 @@ async function measurePlayerBarPass(page) {
 
 		if (paths.length < 2) return { error: 'library too small to measure' };
 
-		await ev.call('queue.Queue.SetQueue', [paths, 0, false], 15000);
+		await ev.call(
+			'queue.Queue.SetQueue',
+			// The fourth argument is the queue's source; these are
+			// ad-hoc tracks, so it is the empty one.  v3 rejects a
+			// call with the wrong argument count where v2 filled the
+			// gap with a zero value.
+			[paths, 0, false, { type: '', id: 0, label: '' }],
+			15000,
+		);
 		await ev.call('queue.Queue.PlayIndex', [0], 15000);
 		await ev.call('player.Player.Pause', [], 5000).catch(() => {});
 		await new Promise((r) => setTimeout(r, 600));
@@ -1804,7 +1812,9 @@ async function run(label) {
 	const browser = await chromium.launch();
 	const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
 	await context.addInitScript({ path: BRIDGE });
-	await context.addInitScript(`(${INSTRUMENT})()`);
+	await context.addInitScript(
+		`(${INSTRUMENT})(${JSON.stringify(METHOD_NAMES)})`,
+	);
 
 	const page = await context.newPage();
 	const client = await context.newCDPSession(page);
@@ -1813,8 +1823,10 @@ async function run(label) {
 	const t0 = Date.now();
 	await page.goto(BASE_URL, { waitUntil: 'load' });
 	await page.evaluate(() => window.__yjEvents.ready(30000));
-	// Wrapping runs before `window.go` exists; re-run now that it does.
-	await page.evaluate(`(${INSTRUMENT})()`);
+	// No second instrumentation pass.  The old one existed because
+	// wrapping had to happen after `window.go` appeared, yet the long
+	// task observer had to start before it; the bridge now records every
+	// binding call from the initScript onward, so one pass does both.
 
 	const report = {
 		label,

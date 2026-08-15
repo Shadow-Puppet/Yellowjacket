@@ -247,6 +247,15 @@ func NewYellowJacketApp(
 		)
 	}
 
+	// Last, deliberately: services start in registration order, so this
+	// runs once every service above has taken its context.  See
+	// startup.go for why the wiring is a service rather than an
+	// application-event hook.
+	yjApp.Services = append(
+		yjApp.Services,
+		application.NewService(&startupService{app: yjApp}),
+	)
+
 	return yjApp, nil
 }
 

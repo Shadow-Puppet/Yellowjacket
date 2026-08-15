@@ -1,4 +1,13 @@
-import { test, expect, resetEvents, callBinding } from '../support/fixtures.js';
+import type { Page } from '@playwright/test';
+
+import {
+  test,
+  expect,
+  resetEvents,
+  callBinding,
+  bindingCalls,
+  NO_QUEUE_SOURCE,
+} from '../support/fixtures.js';
 
 /**
  * Finishing a track is cheap, and does not disturb the user.
@@ -19,23 +28,17 @@ import { test, expect, resetEvents, callBinding } from '../support/fixtures.js';
 /** Long enough for a fixture track (2–6 s) to finish by itself. */
 const FINISH_TIMEOUT = 60_000;
 
-/** Instrument the library bindings so "was anything refetched" is a fact. */
-const COUNT_LIBRARY_CALLS = `(() => {
-	const w = window;
-	if (w.__yjCalls) { w.__yjCalls.length = 0; return; }
-	w.__yjCalls = [];
-	const lib = w.go.library.Library;
-	for (const key of Object.keys(lib)) {
-		const fn = lib[key];
-		if (typeof fn !== 'function' || fn.__counted) continue;
-		const wrapped = function (...args) {
-			w.__yjCalls.push(key);
-			return fn.apply(this, args);
-		};
-		wrapped.__counted = true;
-		lib[key] = wrapped;
-	}
-})()`;
+/**
+ * "Was anything refetched" is a fact, not an inference.
+ *
+ * This used to wrap every method on `window.go.library.Library` in
+ * place.  v3 has no such object, and does not need one: the harness
+ * bridge records every binding call off the single POST they all go
+ * through, so the question is answered by reading that log rather than
+ * by instrumenting a target first.  `resetEvents` clears it.
+ */
+const libraryCalls = async (app: Page): Promise<string[]> =>
+  (await bindingCalls(app)).filter((c) => c.startsWith('library.Library.'));
 
 /**
  * Select rows by dispatching on the row rather than clicking it.
@@ -82,8 +85,7 @@ test.describe('a finished track', () => {
 
     expect(paths.length).toBeGreaterThanOrEqual(2);
 
-    await callBinding(app, 'queue.Queue.SetQueue', [paths, 0, false]);
-    await app.evaluate(COUNT_LIBRARY_CALLS);
+    await callBinding(app, 'queue.Queue.SetQueue', [paths, 0, false, NO_QUEUE_SOURCE]);
     await resetEvents(app);
 
     await callBinding(app, 'queue.Queue.PlayIndex', [0]);
@@ -111,12 +113,10 @@ test.describe('a finished track', () => {
       'a play emitted the retag event, which invalidates every cache',
     ).toBe(0);
 
-    const refetched = await app.evaluate(
-      () => (window as unknown as { __yjCalls: string[] }).__yjCalls,
-    );
+    const refetched = await libraryCalls(app);
 
     expect(
-      refetched.filter((c) => c.startsWith('GetAll')),
+      refetched.filter((c) => c.startsWith('library.Library.GetAll')),
       'a play refetched a collection',
     ).toEqual([]);
 
@@ -136,7 +136,7 @@ test.describe('a finished track', () => {
 
     const paths = await app.evaluate(firstPaths, 2);
 
-    await callBinding(app, 'queue.Queue.SetQueue', [paths, 0, false]);
+    await callBinding(app, 'queue.Queue.SetQueue', [paths, 0, false, NO_QUEUE_SOURCE]);
     await resetEvents(app);
     await callBinding(app, 'queue.Queue.PlayIndex', [0]);
 

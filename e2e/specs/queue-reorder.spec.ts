@@ -1,4 +1,9 @@
-import { test, expect, callBinding } from '../support/fixtures.js';
+import {
+  test,
+  expect,
+  callBinding,
+  NO_QUEUE_SOURCE,
+} from '../support/fixtures.js';
 import type { Page } from '@playwright/test';
 
 /**
@@ -35,7 +40,7 @@ async function queueFourAndOpen(app: Page): Promise<string[]> {
     return (tracks as { FilePath: string }[]).slice(0, 4).map((t) => t.FilePath);
   });
 
-  await callBinding(app, 'queue.Queue.SetQueue', [paths, 0, false]);
+  await callBinding(app, 'queue.Queue.SetQueue', [paths, 0, false, NO_QUEUE_SOURCE]);
 
   // A closed panel renders no list at all, so there is no row to focus.
   await app.locator('#queue-button').click();

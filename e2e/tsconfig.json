@@ -8,7 +8,13 @@
     "noEmit": true,
     "skipLibCheck": true,
     "types": ["node"],
-    "allowImportingTsExtensions": true
+    "allowImportingTsExtensions": true,
+    "allowJs": true
   },
-  "include": ["specs/**/*.ts", "support/**/*.ts", "playwright.config.ts"]
+  "include": [
+    "specs/**/*.ts",
+    "support/**/*.ts",
+    "support/**/*.mjs",
+    "playwright.config.ts"
+  ]
 }

@@ -1,4 +1,10 @@
-import { test, expect, callBinding, waitForEvent } from '../support/fixtures.js';
+import {
+  test,
+  expect,
+  callBinding,
+  waitForEvent,
+  NO_QUEUE_SOURCE,
+} from '../support/fixtures.js';
 import type { Page } from '@playwright/test';
 
 /**
@@ -64,7 +70,7 @@ async function playTheLongOne(app: Page): Promise<void> {
 
   expect(paths.length).toBeGreaterThan(0);
 
-  await callBinding(app, 'queue.Queue.SetQueue', [paths, 0, false]);
+  await callBinding(app, 'queue.Queue.SetQueue', [paths, 0, false, NO_QUEUE_SOURCE]);
   await waitForEvent(app, 'TrackChanged');
 
   // The scroll cycle is armed 1500 ms after the geometry is measured,

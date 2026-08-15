@@ -15,12 +15,18 @@ import {
  */
 test.describe('harness', () => {
   test('the app is the real app, not a mock', async ({ app }) => {
-    // All 11 bound services land on window.go through the dev server.
-    const services = await app.evaluate(() => Object.keys(window.go));
+    // v2 landed every bound service on `window.go`, so "is this real"
+    // could be asked of an object.  v3 has no such global — the
+    // bindings are ordinary bundled modules — so the question is asked
+    // of the runtime instead, which is a better question anyway: the
+    // real runtime is loaded, and it answers for real methods and
+    // refuses invented ones.
+    const runtime = await app.evaluate(() => ({
+      dispatch: typeof window._wails?.dispatchWailsEvent,
+      client: typeof window._wails?.clientId,
+    }));
 
-    expect(services).toEqual(
-      expect.arrayContaining(['queue', 'player', 'library', 'explore']),
-    );
+    expect(runtime).toEqual({ dispatch: 'function', client: 'string' });
 
     const state = await callBinding<{ tracks: unknown[] }>(
       app,
@@ -28,6 +34,12 @@ test.describe('harness', () => {
     );
 
     expect(state).toHaveProperty('tracks');
+
+    const unknown = await app
+      .evaluate(() => window.__yjEvents.call('queue.Queue.Nope', [], 2_000))
+      .catch((err: Error) => err.message);
+
+    expect(unknown).toContain('unknown bound method');
   });
 
   test('backend events are recorded, in order, with payloads', async ({
@@ -58,10 +70,12 @@ test.describe('harness', () => {
   });
 
   test('a binding called with wrong types fails fast', async ({ app }) => {
-    // player.UserVolume is an int.  Passing a float makes the backend
-    // log "error parsing arguments" and never fire the callback; without
-    // a timeout the promise never settles and the spec hangs until the
-    // suite gives up.
+    // player.UserVolume is an int.  Under v2 a float made the backend
+    // log "error parsing arguments" and never fire the callback, so
+    // this asserted that the harness's own timeout fired — the failure
+    // was visible only because the harness invented a deadline.  v3
+    // answers 422 with a TypeError naming the argument, so the
+    // assertion is now on the backend's own words.
     const failure = await app.evaluate(async () => {
       try {
         await window.__yjEvents.call(
@@ -76,7 +90,8 @@ test.describe('harness', () => {
       }
     });
 
-    expect(failure).toContain('did not settle');
+    expect(failure).toContain('TypeError');
+    expect(failure).toContain('player.UserVolume');
   });
 
   test('the control surface is mounted and seeded', async ({ testctl }) => {

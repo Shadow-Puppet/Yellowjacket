@@ -3,11 +3,25 @@ import { dirname, resolve } from 'node:path';
 
 import { test as base, expect, type Page } from '@playwright/test';
 
+import { nameOf } from './method-ids.mjs';
+
 const here = dirname(fileURLToPath(import.meta.url));
 
 /** The same bridge `playwright-cli` loads, so an exploratory session and
  *  a committed spec see an identical page. */
 const INIT_SCRIPT = resolve(here, '../../.playwright/init-events.js');
+
+/**
+ * The fourth argument to `queue.Queue.SetQueue`, for a queue with no
+ * single source — the whole library, or a handful of ad-hoc tracks,
+ * which is what every spec here builds.
+ *
+ * It is passed explicitly because v3 rejects a call with the wrong
+ * argument count (`expects 4 arguments, got 3`) where v2 accepted one
+ * and filled the gap with a zero value.  The specs had been three-arg
+ * since the parameter was added; nothing said so.
+ */
+export const NO_QUEUE_SOURCE = { type: '', id: 0, label: '' };
 
 /**
  * The 90-second fixture track (`cmd/gentestdata`, case `edge-lengths`).
@@ -61,12 +75,13 @@ export async function eventNames(
 }
 
 /**
- * Call a bound Go method with a timeout.
+ * Call a bound Go method by name, over the runtime's own endpoint.
  *
- * Wrong argument types make the backend log "error parsing arguments"
- * and never fire the callback, so an unguarded call hangs until the
- * whole spec times out with no clue why.  This fails in seconds and
- * says where to look.
+ * v3 rejects a bad call rather than never firing its callback the way
+ * v2 did: a wrong argument type comes back as a TypeError naming the
+ * argument, a wrong count as `expects 4 arguments, got 3`, an unknown
+ * method as a ReferenceError.  The timeout is a backstop for a hung
+ * request, not the mechanism that makes a mistake visible.
  */
 export async function callBinding<T = unknown>(
   page: Page,
@@ -79,6 +94,21 @@ export async function callBinding<T = unknown>(
       window.__yjEvents.call(p as string, a as unknown[], t as number),
     [path, args, timeoutMs] as const,
   ) as Promise<T>;
+}
+
+/**
+ * The binding calls the *app* made, newest last, as `pkg.Type.Method`.
+ *
+ * This is what replaces v2's trick of wrapping `window.go` in place:
+ * `.playwright/init-events.js` records every call off the one POST v3
+ * routes them all through, and `method-ids.ts` names them from the
+ * generated tree.  It sees calls from any module and cannot miss one
+ * made before a wrapper was installed.
+ */
+export async function bindingCalls(page: Page): Promise<string[]> {
+  const calls = await page.evaluate(() => window.__yjEvents.bindings);
+
+  return calls.map(nameOf);
 }
 
 /** Thin client for the dev-only /__test/ surface (backend/testctl). */
@@ -166,7 +196,20 @@ declare global {
       ): Promise<YjEvent>;
       ready(timeoutMs?: number): Promise<boolean>;
       call(path: string, args?: unknown[], timeoutMs?: number): Promise<any>;
+      /** Every binding call the app itself made; see init-events.js. */
+      bindings: {
+        methodID: number | null;
+        methodName: string | null;
+        start: number;
+        ms: number;
+        bytes: number;
+      }[];
+      measureBytes: boolean;
     };
-    go: Record<string, Record<string, Record<string, (...a: any[]) => any>>>;
+    /** The v3 runtime's own namespace, installed by @wailsio/runtime. */
+    _wails?: {
+      dispatchWailsEvent?: (event: unknown) => void;
+      clientId?: string;
+    };
   }
 }

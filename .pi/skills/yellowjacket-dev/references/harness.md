@@ -74,9 +74,14 @@ behind `YJ_TESTCTL=1`, which `scripts/dev-headless.sh` sets and
 - **`snapshot` writes a file, it does not print the tree.** The
   command prints a path under `outputDir`; read that. Only the tail
   is echoed.
-- **Three separate browser caches.** `playwright-cli`, `@playwright/test`
+- **Two separate browser caches.** `@playwright/test`
   (`make e2e-setup`) and the Vitest provider (`make ui-setup`) each
-  download their own Chromium. One working is no guarantee for the next.
+  download their own Chromium. One working is no guarantee for the
+  other. There used to be a third: `playwright-cli` was a *required*
+  dependency because `scripts/seed-sandbox.sh` drove `AddLibrary`
+  through a real page, `window.go` being v2's only way in. v3 answers
+  the same call over HTTP, so the seed is `curl` now and the CLI is
+  only an exploratory convenience.
 - **`getByRole('button', { name })` matches substrings.** "Play" also
   matches "Add queue to playlist"; transport controls need
   `exact: true`.

@@ -220,7 +220,7 @@ jobs:
           apt-get install -y -qq --no-install-recommends \
             ca-certificates curl git jq build-essential pkg-config \
             libwebkitgtk-6.0-dev libgtk-4-dev libasound2-dev \
-            xvfb dbus dbus-x11 ffmpeg libasound2t64 \
+            dbus dbus-x11 ffmpeg libasound2t64 \
             alsa-utils libasound2-plugins pulseaudio pulseaudio-utils
 
       - name: Clone repo at this commit
@@ -247,24 +247,17 @@ jobs:
           apt-get install -y -qq --no-install-recommends nodejs
           corepack enable
 
-      # scripts/seed-sandbox.sh drives the real AddLibrary binding
-      # through playwright-cli, so the CLI has to be on PATH.
-      - name: Playwright CLI
-        run: npm install -g @playwright/cli
-
+      # @playwright/cli is gone with v2.  seed-sandbox.sh drove the real
+      # AddLibrary binding through a browser because `window.go` was the
+      # only way in; v3 answers the same call over HTTP, so the seed is
+      # curl now and needs no CLI, no second Chromium and no shared
+      # PLAYWRIGHT_BROWSERS_PATH revision dance.
       - name: Browsers
         working-directory: /src/e2e
         run: |
           set -eu
-          # PLAYWRIGHT_BROWSERS_PATH unifies the *location*, not the
-          # *revisions*: @playwright/cli bundles its own playwright-core
-          # pinned to a different Chromium build than @playwright/test,
-          # so each installs its own into the shared directory.  Drop
-          # either line and the other fails with "Browser chromium is
-          # not installed; expected executable at ...".
           pnpm install --frozen-lockfile
           npx playwright install --with-deps chromium webkit
-          playwright-cli install-browser chromium
 
       # oto/v3 talks to libasound directly, and a container has no
       # PulseAudio socket to fall back on — so it needs a default device
@@ -287,10 +280,10 @@ jobs:
       #
       # PulseAudio's null sink is timer-scheduled and does pace — the
       # 0.76 s over is the buffer draining, not a rate error; 12 s of
-      # audio takes 13.5 s.  Verified under the private session bus and
-      # Xvfb that dev-headless.sh runs the app in.  It needs no system
-      # D-Bus and no kernel module, which is why it is reachable from a
-      # container at all.
+      # audio takes 13.5 s.  Verified under the private session bus
+      # dev-headless.sh runs the app in.  It needs no system D-Bus and
+      # no kernel module, which is why it is reachable from a container
+      # at all.
       - name: Real-time audio sink
         run: |
           set -eu

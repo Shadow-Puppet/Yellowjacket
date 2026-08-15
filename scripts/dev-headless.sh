@@ -2,27 +2,35 @@
 #
 # Start YellowJacket headless, in the background, and return.
 #
-# `wails dev` binds an HTTP + WebSocket dev server on :34115 that serves
-# the real frontend with the real generated bindings on `window.go` and
-# bridges every call and every runtime.EventsEmit to the *same* Go
-# backend the desktop window uses.  A browser pointed at it is not a
-# mock.  That is what makes this app drivable by a coding agent.
+# Wails v3's server mode binds an HTTP server on :34115 that serves the
+# real frontend with the real generated bindings and bridges every call
+# and every event to the *same* Go backend a desktop window would use.
+# A browser pointed at it is not a mock.  That is what makes this app
+# drivable by a coding agent.
 #
 # Three details are load-bearing:
 #
-#   * We run the dev *binary*, not `wails dev`.  app_dev.go parses
-#     -devserver / -assetdir / -loglevel straight from os.Args, so a
-#     `go build -tags "dev"` binary serves the identical
-#     devserver with no file watcher, no rebuild supervisor and no
-#     reload broadcast: one process, one PID, deterministic startup.
+#   * We build with `-tags dev,server` and run the binary.  This is a
+#     first-class Wails mode ("a pure HTTP server without native GUI
+#     dependencies"), not something hand-rolled: v2 had no such thing,
+#     so this script used to run a dev binary whose app_dev.go parsed
+#     -devserver / -assetdir out of os.Args.  That file is gone with v2.
+#     The port comes from WAILS_SERVER_PORT.
 #
-#   * Xvfb is not optional.  devserver.Run ends in Frontend.Run(ctx),
-#     which opens the GTK window and blocks; no flag suppresses it.
+#   * Xvfb is gone, and that is the point of server mode.  v2's
+#     devserver.Run ended in Frontend.Run(ctx), which opened the GTK
+#     window and blocked with no flag to suppress it; server mode opens
+#     no window, so there is no display to fake.
 #
 #   * dbus-run-session is not incidental.  A private session bus makes
 #     backend/mediacontrols register MPRIS for real, so it becomes
 #     assertable with busctl.  It replaces the bus, not /run/user, so
 #     PulseAudio still works and InitSpeaker succeeds.
+#
+#   * The frontend is *embedded*, not served from disk.  main.go has
+#     //go:embed all:frontend/dist, so a frontend change needs the
+#     rebuild this script does anyway; there is no -assetdir to point
+#     at a live directory.
 #
 # Usage:
 #   scripts/dev-headless.sh [--seed NAME|--fresh] [--port N] [--no-build]
@@ -47,7 +55,7 @@ LOG_LEVEL="${YJ_LOG_LEVEL:-debug}"
 STARTUP_TIMEOUT=60
 
 usage() {
-	sed -n '3,28p' "$0" | sed 's/^# \{0,1\}//'
+	sed -n '3,38p' "$0" | sed 's/^# \{0,1\}//'
 	exit "${1:-0}"
 }
 
@@ -129,9 +137,9 @@ echo "$YJ_HOME" >"$HOME_FILE"
 
 # ── Build ────────────────────────────────────────────────────────────
 if [ "$BUILD" = 1 ]; then
-	echo "dev-headless: building frontend + dev binary..."
+	echo "dev-headless: building frontend + dev server binary..."
 	(cd frontend && pnpm install --silent && pnpm build >/dev/null)
-	go build -tags "dev" -o "$BIN" .
+	go build -tags "dev,server" -o "$BIN" .
 fi
 
 if [ ! -x "$BIN" ]; then
@@ -141,7 +149,7 @@ fi
 
 # ── Launch ───────────────────────────────────────────────────────────
 # setsid puts the app in its own process group so dev-stop can kill the
-# whole tree (xvfb-run, dbus-daemon, the app) by group id.  Never
+# whole tree (dbus-daemon, the app) by group id.  Never
 # `pkill -f`: the pattern matches the invoking shell's own command line
 # and silently drops the rest of the chain.
 : >"$LOG_FILE"
@@ -150,11 +158,9 @@ fi
 # rather than implied by the dev build so that a human's `make dev` does
 # not carry an arbitrary-SQL endpoint on a listening port.
 YJ_TESTCTL=1 \
-	YJ_LOG_LEVEL="$LOG_LEVEL" setsid dbus-run-session -- xvfb-run -a \
+	WAILS_SERVER_PORT="$PORT" \
+	YJ_LOG_LEVEL="$LOG_LEVEL" setsid dbus-run-session -- \
 	"$BIN" \
-	-devserver "localhost:$PORT" \
-	-assetdir "$REPO_ROOT/frontend/dist" \
-	-loglevel Debug \
 	>>"$LOG_FILE" 2>&1 &
 
 APP_PID=$!
@@ -191,7 +197,8 @@ Drive it with:
   playwright-cli -s=yj snapshot
   playwright-cli -s=yj eval "() => window.__yjEvents.call('queue.Queue.GetState', [], 5000)"
 
-A binding call that never settles means wrong argument types: the
-backend logs 'error parsing arguments' and never fires the callback.
-The app log is the only place that shows up, so always use a timeout.
+A bad binding call now rejects rather than hanging: v3 answers wrong
+argument types with a TypeError naming the argument and an unknown
+method with a ReferenceError. The timeout in __yjEvents.call is a
+backstop for a hung request, not how a mistake becomes visible.
 EOF

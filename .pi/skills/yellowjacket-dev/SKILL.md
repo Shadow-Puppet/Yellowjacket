@@ -21,12 +21,21 @@ here has disappeared.
 Fifteen things cost a cycle each the first time. They are here, not in a
 reference, because you need them *before* the failure, not after.
 
-- **Time out every binding call.** A bound Go method called with wrong
-  argument types makes the backend log `error parsing arguments` and
-  **never fire the callback**, so the promise hangs forever. Use
-  `window.__yjEvents.call(path, args, ms)` (browser) or `callBinding`
-  (specs), never a bare `window.go.…`. When one hangs anyway,
-  `make dev-logs` — `.dev/app.log` is the only place the reason appears.
+- **Call a binding through the bridge.** `window.go` does not exist
+  under Wails v3 — the bindings are bundled modules, not a global — so
+  use `window.__yjEvents.call(path, args, ms)` (browser) or
+  `callBinding` (specs). Both post to the runtime's own endpoint by
+  method name, so they work on any page, including one with no init
+  script.
+
+  A bad call now *rejects*, and says why: a wrong type comes back as a
+  TypeError naming the argument, a wrong count as
+  `expects 4 arguments, got 3`, an unknown method as a ReferenceError.
+  Under v2 the backend logged `error parsing arguments` and never fired
+  the callback, so `.dev/app.log` was the only place the reason
+  appeared and the timeout was the only thing that made the mistake
+  visible. The timeout is still there, but now it means a genuinely
+  hung request.
 - **Nothing is clickable on a fresh `YJ_HOME`.** `<first-run-wizard>`
   intercepts all pointer events until a library exists, and the click
   fails with a Playwright interception error that reads like a selector

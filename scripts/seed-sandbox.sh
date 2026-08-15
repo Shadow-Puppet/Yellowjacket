@@ -36,7 +36,6 @@ MANIFEST="$REPO_ROOT/test_data/music_library_test.manifest.json"
 
 NAME="default"
 PORT=34115
-SESSION="yj-seed"
 BUILD_ARGS=()
 # Replaced below once the manifest says how many tracks are coming: a
 # 50 000-track scan is minutes, and a fixed 180 s deadline would abort
@@ -74,7 +73,7 @@ need() {
 		exit 1
 	}
 }
-need playwright-cli
+need curl
 need jq
 
 if [ ! -f "$MANIFEST" ]; then
@@ -89,7 +88,6 @@ SCAN_TIMEOUT=$((180 + WANT_TRACKS / 50))
 FIXTURE_HASH="$(jq -r .hash "$MANIFEST")"
 
 cleanup() {
-	playwright-cli -s="$SESSION" close >/dev/null 2>&1 || true
 	./scripts/dev-stop.sh >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
@@ -108,24 +106,34 @@ YJ_CORE_INDEX_URL="http://127.0.0.1:1/none.tar.zst" \
 
 YJ_HOME="$(cat "$RUN_DIR/app.home")"
 
-playwright-cli -s="$SESSION" open "http://localhost:$PORT" >/dev/null
-
-# Every binding call gets a timeout.  A call with wrong argument types
-# makes the backend log 'error parsing arguments' and never fire the
-# callback, so the in-page promise never settles and a naive await
-# hangs forever.
+# A binding is called over the runtime's own HTTP endpoint, by method
+# name — the same request the bundle makes, minus the browser.
+#
+# This used to drive a real page through playwright-cli, because v2's
+# only way in was `window.go`.  v3 answers the same call over HTTP, so a
+# browser (and a global npm install of the CLI, in CI) buys nothing
+# here: seeding needs the *app* to run and the *real* scanner to finish,
+# which it still does. It also fails properly now — v3 answers a bad
+# argument with a 422 and a TypeError naming it, where v2 logged
+# "error parsing arguments" and never fired the callback.
 call() {
-	playwright-cli -s="$SESSION" eval "async () => {
-		const timeout = new Promise((_, reject) =>
-			setTimeout(() => reject(new Error('binding timeout')), 15000));
-		return await Promise.race([(async () => { $1 })(), timeout]);
-	}"
+	local method="$1"
+	local args="${2:-[]}"
+	local body
+
+	body="$(jq -nc --arg m "yellowjacket/backend/$method" --argjson a "$args" \
+		'{object: 0, method: 0, args: {"call-id": "seed", methodName: $m, args: $a}}')"
+
+	curl -sS --fail-with-body --max-time 30 \
+		-X POST "http://localhost:$PORT/wails/runtime" \
+		-H 'Content-Type: application/json' \
+		-d "$body"
 }
 
 echo "seed-sandbox: registering library $LIBRARY_DIR"
 
-if ! call "return await window.go.library.Library.AddLibrary(
-	${LIBRARY_DIR@Q});" >/dev/null; then
+if ! call library.Library.AddLibrary \
+	"$(jq -nc --arg d "$LIBRARY_DIR" '[$d]')" >/dev/null; then
 	echo "seed-sandbox: AddLibrary failed; app log:" >&2
 	tail -n 40 "$LOG_FILE" >&2
 	exit 1
@@ -137,19 +145,12 @@ fi
 # a fixture is not being ingested and the seed is wrong.
 echo "seed-sandbox: waiting for the scan to reach $WANT_TRACKS tracks"
 
-# The result is tagged rather than scraped for bare digits:
-# playwright-cli echoes the evaluated source back, and that source
-# contains numbers of its own (the binding timeout, for one).
 deadline=$((SECONDS + SCAN_TIMEOUT))
 got=0
 
 while [ "$SECONDS" -lt "$deadline" ]; do
-	got="$(call "const libs =
-		await window.go.library.Library.GetAllLibrariesWithTrackCounts();
-		const total = (libs ?? []).reduce(
-			(n, l) => n + (l.trackCount ?? 0), 0);
-		return 'YJTRACKS' + '=' + total;" |
-		grep -oE 'YJTRACKS=[0-9]+' | head -n 1 | cut -d= -f2)"
+	got="$(call library.Library.GetAllLibrariesWithTrackCounts |
+		jq '[(. // [])[].trackCount // 0] | add // 0')"
 	got="${got:-0}"
 
 	[ "$got" = "$WANT_TRACKS" ] && break
@@ -169,8 +170,6 @@ if [ "$got" != "$WANT_TRACKS" ]; then
 	tail -n 40 "$LOG_FILE" >&2
 	exit 1
 fi
-
-playwright-cli -s="$SESSION" close >/dev/null 2>&1 || true
 
 # SIGTERM, so OnBeforeClose / OnShutdown persist window, player and
 # queue state.  A seed built from a killed app is missing exactly the

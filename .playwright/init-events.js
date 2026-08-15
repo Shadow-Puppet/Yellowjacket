@@ -7,31 +7,34 @@
  * other events arrive from Go whenever they arrive.  An assertion that
  * sleeps and hopes is flaky; an assertion that awaits the event is not.
  *
- * Three things it provides on `window.__yjEvents`:
+ * Four things it provides on `window.__yjEvents`:
  *
  *   record   every backend -> frontend event, in order, with payloads
  *   wait     a promise that settles on a matching event (or rejects
  *            with the list of events that *did* arrive, which is the
  *            single most useful failure message this harness can give)
- *   call     a bound Go method that is guaranteed to settle: a binding
- *            invoked with wrong argument types makes the backend log
- *            "error parsing arguments" and never fire the callback, so
- *            the in-page promise hangs forever.  Timing out here fixes
- *            that once instead of in every eval.
+ *   call     a bound Go method, by name, over the runtime's own HTTP
+ *            endpoint — no dependence on the app's bundle
+ *   bindings every binding call the *app* made, which is what turns
+ *            "did that refetch the library" from an inference into a
+ *            fact (e2e/perf/measure.mjs labels and reads these)
  *
- * WHERE IT HOOKS.  Not EventsOn.  Every backend event enters the page
- * at exactly one place — wails' ipc_websocket.js does
+ * WHERE IT HOOKS.  Two places, and neither is `EventsOn`.
  *
- *     case "n": window.wails.EventsNotify(message)
+ * Inbound, `window._wails.dispatchWailsEvent`: v3's runtime assigns it
+ * at module scope and it is the single point every backend event enters
+ * the page through, so wrapping it captures all 46 whether or not the
+ * app subscribes to them.  The runtime does
+ * `window._wails = window._wails || {}`, so this script creates that
+ * object first and puts an accessor on the *property*, wrapping at
+ * assignment time — v2 needed the accessor on `window` itself, because
+ * there the whole object was replaced.
  *
- * and EventsNotify fans out to listeners from there.  Wrapping that
- * single choke point captures all 46 events whether or not the app
- * subscribes to them, and needs one wrap rather than 46.
- *
- * `window.wails` does not exist yet when this script runs, so we install
- * an accessor on `window` and wrap at assignment time (wails' main.js
- * does a plain `window.wails = {...}`), then collapse the accessor back
- * to a data property so nothing downstream can tell.
+ * Outbound, `fetch`: v3 routes every runtime call — binding calls, event
+ * emits, window and dialog calls — through one POST to /wails/runtime.
+ * There is no global to wrap the way v2's `window.runtime` could be, and
+ * this is better anyway: it sees calls from any module, needs no walk of
+ * an object graph, and cannot miss one made before the harness looked.
  *
  * INSTALL EXACTLY ONCE.  Listeners registered by one `eval` survive into
  * the next, so a recorder that re-registers double-counts.  Tests call
@@ -44,8 +47,27 @@
 
 	const LIMIT = 2000;
 
+	// Every bound service in this app lives under this Go module path,
+	// so specs name a binding the short way — 'queue.Queue.GetState' —
+	// and this is what makes that the same thing the backend calls
+	// 'yellowjacket/backend/queue.Queue.GetState'.
+	const FQN_PREFIX = "yellowjacket/backend/";
+
+	// The runtime's own object and method ids (objectNames in
+	// @wailsio/runtime): 0 is Call, 3 is Events, and method 0 on each is
+	// CallBinding and Emit respectively.
+	const OBJECT_CALL = 0;
+	const OBJECT_EVENTS = 3;
+
+	// Captured before the wrap below, and used for the harness's own
+	// calls: `__yjEvents.call` is this file talking to the backend, not
+	// the app, and counting it would make "did that action refetch the
+	// library" answer for the question as well as the app.
+	const nativeFetch = window.fetch.bind(window);
+
 	let seq = 0;
 	const log = [];
+	const bindings = [];
 	const waiters = new Set();
 
 	const summarize = () => {
@@ -54,6 +76,25 @@
 			counts[e.name] = (counts[e.name] || 0) + 1;
 		}
 		return counts;
+	};
+
+	/*
+	 * `data` is recorded as the argument list Go emitted, which is the
+	 * shape every spec reads (`ev.data[0]`).
+	 *
+	 * v3's EventManager.Emit packs a variadic call into one field: no
+	 * arguments is null, one is the value itself, more than one is the
+	 * slice.  Unpacking that back into a list is exact except for a
+	 * single argument that is itself an array, which is indistinguishable
+	 * from several arguments — an ambiguity v3 introduced and no
+	 * assertion here depends on, since nothing in backend/events emits
+	 * more than one value.
+	 */
+	const argsOf = (data) => {
+		if (data === null || data === undefined) {
+			return [];
+		}
+		return Array.isArray(data) ? data : [data];
 	};
 
 	const record = (name, data, dir) => {
@@ -89,7 +130,7 @@
 	};
 
 	const api = {
-		version: 1,
+		version: 2,
 
 		/** Every recorded event, oldest first. */
 		get log() {
@@ -101,10 +142,30 @@
 			return seq;
 		},
 
-		/** Drop the buffer.  Does NOT touch the recorder or waiters. */
+		/**
+		 * Every binding call the app made, oldest first.  Each is
+		 * { methodID, methodName, start, ms, bytes } — the id is what the
+		 * generated bindings send, and turning it back into a name is
+		 * e2e/perf/measure.mjs's job, which derives the map from
+		 * frontend/bindings/.
+		 */
+		get bindings() {
+			return bindings.slice();
+		},
+
+		/**
+		 * Read the size of every binding response.  Off by default: it
+		 * costs a clone-and-read of each body, which only a measurement
+		 * wants to pay.  With it off, `bytes` is the Content-Length when
+		 * the server sent one and -1 otherwise.
+		 */
+		measureBytes: false,
+
+		/** Drop the buffers.  Does NOT touch the recorder or waiters. */
 		reset() {
 			const n = log.length;
 			log.length = 0;
+			bindings.length = 0;
 			return n;
 		},
 
@@ -177,13 +238,11 @@
 		async ready(timeoutMs) {
 			const deadline = Date.now() + (timeoutMs || 15000);
 			for (;;) {
-				if (window.go?.queue?.Queue?.GetState) {
-					try {
-						await api.call("queue.Queue.GetState", [], 2000);
-						return true;
-					} catch {
-						/* backend not up yet */
-					}
+				try {
+					await api.call("queue.Queue.GetState", [], 2000);
+					return true;
+				} catch {
+					/* backend not up yet */
 				}
 				if (Date.now() > deadline) {
 					throw new Error("__yjEvents.ready timed out");
@@ -193,38 +252,66 @@
 		},
 
 		/**
-		 * Call a bound Go method by dotted path, with a timeout.
+		 * Call a bound Go method by dotted path.
 		 *
 		 *   await __yjEvents.call('player.Player.SetVolume', [42])
 		 *
-		 * A binding called with the wrong argument types never fires its
-		 * callback — the reason appears only in .dev/app.log.  Without a
-		 * timeout the caller waits forever; with one it gets told where
-		 * to look.
+		 * This posts to the runtime's own endpoint rather than reaching
+		 * into the page for a binding function, because v3 has no
+		 * `window.go` and the generated bindings are ordinary bundled
+		 * modules an initScript cannot import.  It calls *by name*, which
+		 * the backend resolves the same way it resolves the id the
+		 * bundle sends.
+		 *
+		 * v3 rejects a bad call rather than silently never firing its
+		 * callback the way v2 did — wrong argument types come back as a
+		 * TypeError naming the argument, an unknown method as a
+		 * ReferenceError.  The timeout below is therefore a backstop for
+		 * a genuinely hung request, not the mechanism that makes a
+		 * mistake visible.
 		 */
 		call(path, args, timeoutMs) {
-			const parts = String(path).split(".");
-			let fn = window.go;
-			for (const p of parts) {
-				fn = fn?.[p];
-			}
-			if (typeof fn !== "function") {
-				return Promise.reject(
-					new Error(`__yjEvents.call: no such binding: ${path}`),
-				);
-			}
+			const request = nativeFetch("/wails/runtime", {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					"x-wails-client-id": window._wails?.clientId ?? "",
+				},
+				body: JSON.stringify({
+					object: OBJECT_CALL,
+					method: 0,
+					args: {
+						"call-id": `yj-${Math.random().toString(36).slice(2)}`,
+						methodName: FQN_PREFIX + String(path),
+						args: args || [],
+					},
+				}),
+			}).then(async (res) => {
+				const type = res.headers.get("Content-Type") || "";
+				const json = type.includes("application/json");
+
+				if (!res.ok) {
+					const body = json ? await res.json() : { message: await res.text() };
+					throw new Error(
+						`__yjEvents.call(${path}) failed: ` +
+							`${body.kind || "Error"}: ${body.message}`,
+					);
+				}
+
+				return json ? res.json() : res.text();
+			});
 
 			return Promise.race([
-				Promise.resolve(fn(...(args || []))),
+				request,
 				new Promise((_, reject) =>
 					setTimeout(
 						() =>
 							reject(
 								new Error(
 									`__yjEvents.call(${path}) did not settle in ` +
-										`${timeoutMs || 10000}ms — almost always wrong ` +
-										`argument types; check .dev/app.log for ` +
-										`"error parsing arguments"`,
+										`${timeoutMs || 10000}ms — the runtime endpoint ` +
+										`hung, which is not how a bad argument fails; ` +
+										`check .dev/app.log`,
 								),
 							),
 						timeoutMs || 10000,
@@ -241,62 +328,92 @@
 		writable: false,
 	});
 
-	// Wrap `obj[method]` once, routing every invocation through `tap`.
-	const wrap = (obj, method, tap) => {
-		const original = obj[method];
-		if (typeof original !== "function" || original.__yjWrapped) {
-			return;
-		}
-		const wrapped = function (...args) {
-			try {
-				tap(args);
-			} catch {
-				/* a broken recorder must never break the app */
-			}
-			return original.apply(this, args);
-		};
-		wrapped.__yjWrapped = true;
-		obj[method] = wrapped;
-	};
+	// ── Inbound ──────────────────────────────────────────────────────
+	//
+	// The runtime keeps whatever `window._wails` already is, so creating
+	// it here and defining an accessor on the one property we care about
+	// means the wrap happens the moment the runtime module is evaluated.
+	window._wails = window._wails || {};
 
-	// Install an accessor that wraps on first assignment, then collapses
-	// back into an ordinary property.
-	const hookOnAssign = (name, onAssign) => {
-		let value;
-		Object.defineProperty(window, name, {
-			configurable: true,
-			enumerable: true,
-			get: () => value,
-			set: (v) => {
-				value = v;
+	let dispatch;
+
+	Object.defineProperty(window._wails, "dispatchWailsEvent", {
+		configurable: true,
+		enumerable: true,
+		get: () => dispatch,
+		set: (fn) => {
+			dispatch = function (event) {
 				try {
-					onAssign(v);
+					record(event?.name, argsOf(event?.data), "in");
 				} catch {
-					/* ditto */
+					/* a broken recorder must never break the app */
 				}
-				Object.defineProperty(window, name, {
-					value: v,
-					configurable: true,
-					enumerable: true,
-					writable: true,
-				});
-			},
+				return fn.apply(this, arguments);
+			};
+		},
+	});
+
+	// ── Outbound ─────────────────────────────────────────────────────
+	//
+	// One POST per runtime call.  Only two of the thirteen object ids
+	// are interesting here; the rest (window, dialogs, clipboard) pass
+	// through untouched and unrecorded.
+	window.fetch = function (input, init) {
+		let call = null;
+
+		try {
+			// The runtime passes a **URL object**, not a string — it
+			// builds `new URL(runtimeURL())` — and a URL has no `.url`,
+			// only a Request does.  Reading the wrong one matched
+			// nothing and recorded no calls at all, which looks
+			// identical to an app that made none.
+			const url =
+				input && typeof input === "object" && "url" in input
+					? input.url
+					: String(input ?? "");
+
+			if (
+				url.includes("/wails/runtime") &&
+				init?.method === "POST" &&
+				typeof init.body === "string"
+			) {
+				const body = JSON.parse(init.body);
+
+				if (body.object === OBJECT_EVENTS && body.method === 0) {
+					record(body.args?.name, argsOf(body.args?.data), "out");
+				} else if (body.object === OBJECT_CALL && body.method === 0) {
+					call = {
+						methodID: body.args?.methodID ?? null,
+						methodName: body.args?.methodName ?? null,
+						start: performance.now(),
+					};
+				}
+			}
+		} catch {
+			/* ditto */
+		}
+
+		const response = nativeFetch(input, init);
+
+		if (!call) {
+			return response;
+		}
+
+		return response.then(async (res) => {
+			try {
+				call.ms = performance.now() - call.start;
+				call.bytes = api.measureBytes
+					? (await res.clone().text()).length
+					: Number(res.headers.get("Content-Length") ?? -1);
+				bindings.push(call);
+				if (bindings.length > LIMIT) {
+					bindings.splice(0, bindings.length - LIMIT);
+				}
+			} catch {
+				/* ditto */
+			}
+
+			return res;
 		});
 	};
-
-	// Inbound: every backend -> frontend event.
-	hookOnAssign("wails", (w) => {
-		wrap(w, "EventsNotify", ([message]) => {
-			const parsed = JSON.parse(message);
-			record(parsed.name, parsed.data, "in");
-		});
-	});
-
-	// Outbound: events the frontend emits, so a flow that round-trips
-	// through Go is legible from one buffer.
-	hookOnAssign("runtime", (r) => {
-		wrap(r, "EventsEmit", (args) => {
-			record(args[0], args.slice(1), "out");
-		});
-	});
 })();

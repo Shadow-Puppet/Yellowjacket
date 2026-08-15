@@ -1,8 +1,8 @@
 import { defineConfig, devices } from '@playwright/test';
 
 /**
- * These specs drive the *real* application: the Wails dev server on
- * :34115 serves the real frontend with real bindings on `window.go`,
+ * These specs drive the *real* application: Wails v3's server mode on
+ * :34115 serves the real frontend with the real generated bindings,
  * bridged to the same Go backend a desktop window would use.  Nothing
  * here is mocked.
  *

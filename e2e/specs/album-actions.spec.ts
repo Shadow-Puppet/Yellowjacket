@@ -16,6 +16,14 @@ import type { Page } from '@playwright/test';
  * none, so Play was wired, labelled correctly, clicked cleanly and
  * queued **nothing**. Every component test still passed.
  */
+// There is no test for the tracklist legend, and there should not be:
+// `dcc40b1` inverted the mark — rows *not* in the library are dimmed in
+// place and nothing marks the ones that are — and deleted
+// `.tracklist-legend` with it. The spec asserting it survived that
+// commit and has been failing on main ever since. What replaced it
+// (the dimming, and the `aria-disabled` that carries it to anyone not
+// seeing the page) is covered at the component tier, in
+// frontend/test/components/album-actions.test.ts.
 test.describe('playing an album from its page', () => {
   test.beforeEach(async ({ app }) => {
     await openFirstAlbum(app);
@@ -53,16 +61,6 @@ test.describe('playing an album from its page', () => {
     await details.locator('[data-testid="album-queue"]').click();
 
     await expect.poll(() => queueLength(app)).toBe(before * 2);
-  });
-
-  test('the ticks against the tracks have a legend', async ({ app }) => {
-    // `H-13` calls them unexplained. They were never *unlabelled* — the
-    // indicator has carried a title and an aria-label reading
-    // "Track “X” is in your library" all along — but a sighted user
-    // scanning the page got a column of green circles and no key.
-    await expect(
-      app.locator('explore-album-details').locator('.tracklist-legend'),
-    ).toContainText('in your library');
   });
 
   test('the ticks are badges, not keyboard stops', async ({ app }) => {

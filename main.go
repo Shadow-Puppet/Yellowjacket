@@ -81,16 +81,6 @@ func main() {
 		OnShutdown: yjApp.OnShutdown,
 	})
 
-	// The services' own ServiceStartup hooks have run by the time this
-	// fires; what is left is the wiring between them.
-	app.Event.OnApplicationEvent(
-		events.Common.ApplicationStarted,
-		func(*application.ApplicationEvent) {
-			yjApp.OnStartup(app.Context())
-			yjApp.OnDomReady(app.Context())
-		},
-	)
-
 	window := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:            "yellowjacket",
 		Width:            winCfg.Width,
