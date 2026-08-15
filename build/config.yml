@@ -4,14 +4,19 @@
 version: '3'
 
 # This information is used to generate the build assets.
+# The version here is the one baked into the platform *metadata* assets
+# (Info.plist, the .desktop file, nfpm). It is not what the app reports:
+# main.version is stamped at link time from the packaging recipes, which
+# derive it from the git tag. Keep it in step with packaging/arch/PKGBUILD's
+# pkgver and the Homebrew formula's version when cutting a release.
 info:
   companyName: "yellowjacket" # The name of the company
   productName: "yellowjacket" # The name of the application
   productIdentifier: "app.yellowjacket" # The unique product identifier
-  description: "A cross-platform desktop music player" # The application description
+  description: "Cross-platform desktop music player — local library, MusicBrainz explore & auto-tag" # The application description
   copyright: "(c) 2026, yellowjacket" # Copyright text
   comments: "yj@yellowjacket.app" # Comments
-  version: "0.0.1" # The application version
+  version: "1.3.0" # The application version
   # cfBundleIconName: "appicon" # The macOS icon name in Assets.car icon bundles (optional)
   #                               # Should match the name of your .icon file without the extension
   #                               # If not set and Assets.car exists, defaults to "appicon"

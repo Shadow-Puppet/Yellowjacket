@@ -65,12 +65,15 @@ authenticated `brew install`) for brew to fetch the release tarball.
 
 - **License**: declared as `license :cannot_represent` (custom license). Replace
   with the correct SPDX identifier once the license is finalized.
-- **macOS vs Linux**: `wails build` produces a `YellowJacket.app` bundle on
-  macOS (installed under the Cellar with an `exec` shim in `bin`) and a bare
-  `yellowjacket` binary on Linux (installed to `bin`).
+- **macOS vs Linux**: under Wails v3 the bundling is a separate step from the
+  build. `wails3 task build` produces a bare `yellowjacket` binary in `bin/` on
+  both platforms; on macOS the formula runs `wails3 task package` instead, which
+  wraps that binary in a `yellowjacket.app` (installed under the Cellar with an
+  `exec` shim in `bin`).
 - **Linuxbrew**: building on Linux additionally needs the system WebKitGTK/GTK
-  stack (`webkit2gtk-4.1`, `gtk3`, `alsa-lib`) — OS packages, not Homebrew deps.
-  macOS needs only the Xcode Command Line Tools.
+  stack (`webkitgtk-6.0`, `gtk4`, `alsa-lib`) — OS packages, not Homebrew deps.
+  v2's `webkit2gtk-4.1`/`gtk3` is now only the `-tags gtk3` escape hatch. macOS
+  needs only the Xcode Command Line Tools.
 - **Cask alternative**: if you later ship prebuilt macOS `.dmg`/`.zip` artifacts,
   a Homebrew *cask* pointing at those installs faster than this source build.
   This formula is the source-build path.

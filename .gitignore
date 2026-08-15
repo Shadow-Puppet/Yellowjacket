@@ -62,3 +62,11 @@ bin/
 # build/config.yml on every build, and consumed by the deb/rpm/AppImage
 # packaging tasks that depend on it. A derived file with one source.
 build/linux/yellowjacket.desktop
+
+# `wails3 task common:update:build-assets` regenerates the mobile trees
+# whether or not anything asks for them. This is a desktop player and
+# cannot target iOS/Android, so their includes: entries are dropped from
+# Taskfile.yml and the trees themselves are not carried — ignored rather
+# than deleted-and-rediscovered on every asset refresh.
+build/ios/
+build/android/

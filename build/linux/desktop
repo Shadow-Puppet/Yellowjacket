@@ -1,13 +1,13 @@
 [Desktop Entry]
 Version=1.0
-Name=My Product
-Comment=A yjref application
+Name=yellowjacket
+Comment=Cross-platform desktop music player — local library, MusicBrainz explore & auto-tag
 # The Exec line includes %u to pass the URL to the application
-Exec=/usr/local/bin/yjref %u
+Exec=/usr/local/bin/yellowjacket %u
 Terminal=false
 Type=Application
-Icon=yjref
+Icon=yellowjacket
 Categories=Utility;
-StartupWMClass=yjref
+StartupWMClass=yellowjacket
 
  

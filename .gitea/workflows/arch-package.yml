@@ -22,9 +22,13 @@ jobs:
     steps:
       - name: Install build dependencies
         run: |
+          # Wails v3 resolves GTK4 + WebKitGTK 6.0 by default; webkit2gtk-4.1 +
+          # gtk3 was v2's stack and is now only the `-tags gtk3` escape hatch.
+          # These must match the PKGBUILD's depends=() — makepkg installs
+          # nothing itself, so a mismatch fails at link time, not at check time.
           pacman -Syu --noconfirm --needed \
             base-devel git go nodejs pnpm curl sudo \
-            webkit2gtk-4.1 gtk3 alsa-lib
+            webkitgtk-6.0 gtk4 alsa-lib
 
       - name: Create unprivileged build user
         run: |

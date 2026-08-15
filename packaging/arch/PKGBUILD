@@ -46,17 +46,30 @@ build() {
   local commit
   commit="$(git rev-parse --short HEAD)"
 
-  # `go tool wails/sqlc/templ` resolve from the tool directives in go.mod, so no
-  # extra CLIs are needed. Wails runs the frontend install+build itself.
+  # `go tool wails3/sqlc/templ` resolve from the tool directives in go.mod, so
+  # no extra CLIs are needed. Wails runs the frontend install+build itself.
+  #
+  # v3's build is a Taskfile tree, and the tasks in it invoke `wails3` by bare
+  # name — so the vendored tool has to be on PATH under that name or the build
+  # dies at its first sub-task with "wails3: command not found". scripts/toolbin
+  # is the shim the Makefile uses for the same reason; see the header there.
+  export PATH="$srcdir/$pkgname/scripts/toolbin:$PATH"
+
+  # `wails3 build` has no -ldflags flag of its own (that was v2), so the version
+  # stamp goes through the LDFLAGS_EXTRA task variable this repo added to
+  # build/linux/Taskfile.yml. -trimpath and -w -s are already in the production
+  # task's own flags, which is where -clean's frontend rebuild went too.
   go generate ./...
-  go tool wails3 build -clean -trimpath \
-    -ldflags "-s -w -X 'main.version=v$pkgver' -X 'main.commit=$commit'"
+  go tool wails3 task build \
+    LDFLAGS_EXTRA="-X 'main.version=v$pkgver' -X 'main.commit=$commit'"
 }
 
 package() {
   cd "$srcdir/$pkgname"
 
-  install -Dm755 build/bin/yellowjacket "$pkgdir/usr/bin/yellowjacket"
+  # v3 writes to bin/, not v2's build/bin/ — build/ is tracked build *assets*
+  # now (build/config.yml, the icon, the platform Taskfiles).
+  install -Dm755 bin/yellowjacket "$pkgdir/usr/bin/yellowjacket"
   install -Dm644 "$srcdir/yellowjacket.desktop" \
     "$pkgdir/usr/share/applications/yellowjacket.desktop"
 
