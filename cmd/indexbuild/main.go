@@ -32,6 +32,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -125,6 +126,13 @@ func run(o opts) error {
 	dataDir, err := system.GetUserDataDirPath()
 	if err != nil {
 		return fmt.Errorf("resolve data dir: %w", err)
+	}
+
+	// Before the schema is applied, not after: applying it over a table
+	// whose shape has since changed is what fails, and this database's
+	// non-catalog half is disposable.  See retireLibraryTables.
+	if err := retireLibraryTables(context.Background(), logger); err != nil {
+		return fmt.Errorf("retire stale tables: %w", err)
 	}
 
 	db, err := database.NewDB(logger)

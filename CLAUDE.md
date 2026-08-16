@@ -233,6 +233,19 @@ rather than renaming them.
   the drift it caused before — `sql/schemas/` and the migrations
   disagreed, and sqlc generated against the stale one.
 
+  **What that costs an existing database is that it does not open**, and
+  "delete and rescan" is the answer (plan 013, open question 1) — free
+  for everyone except one machine. The index job's `/cache` volume is a
+  real `YJ_HOME` that survives between runs, and half of it is the
+  catalog: deleting it means re-downloading ~205 GB. So `cmd/indexbuild`
+  repairs it instead (`staleschema.go`), dropping every table `datamap`
+  does not classify as `Cache` **before** the schema is applied. Nothing
+  scans, plays or authors in that database, so its non-catalog half is
+  empty by construction and a shape left over from an older schema is
+  pure liability. 013's reshaped `audio_files` failed every run of that
+  job on `CREATE INDEX ... album_id` against the old table until this;
+  `TestRetireLibraryTables` reproduces exactly that, symptom first.
+
   **The local library is shaped like files, not like MusicBrainz.**
   `audio_files` carries its own tags — title, artist credit, track and
   disc numbers, year, composer, the recording MBID — and points at two
