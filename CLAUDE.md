@@ -1701,6 +1701,21 @@ frontend would receive (`backend/queue/emit_test.go` is the model).
 `events.Deliver` is the same call returning an error instead of
 dropping, and has one legitimate caller — `/__test/emit`.
 
+**Naming the Wails application costs cgo, so exactly two files may.**
+v3's `application` package is GTK/WebKit bindings on Linux, and
+`cmd/indexbuild` / `cmd/indexexport` are built in a plain `golang`
+container with `CGO_ENABLED=0` — the index workflow says so and it is
+the one job that must not fail, since it owns the ~205 GB checkpoint.
+So the single `app.Event.Emit` lives in `backend/events/runtime_wails.go`
+under `//go:build !indexbuild` (with `runtime_indexbuild.go` returning
+`ErrNoRuntime`, which is what the app itself returns before Run), and
+`explore`'s `ServiceStartup` — the only other thing in that dependency
+tree naming `application` — sits in `backend/explore/servicestartup.go`
+under the same tag. `TestIndexToolsDoNotImportWails` walks the dependency
+graph with `go list -deps -tags indexbuild` and is what keeps it that
+way; a `ServiceStartup` hook added to a package the index tools import
+is the way this comes back.
+
 ## Code Generation
 
 Two generators run via `go generate ./...` (or `make generate`):

@@ -42,7 +42,10 @@ jobs:
     runs-on: ubuntu-latest
     container:
       # CGO is not needed: the project uses the pure-Go modernc sqlite
-      # driver, and neither command imports the Wails app.
+      # driver, and neither command imports the Wails app — which is a
+      # claim with a test behind it now (cmd/indexbuild/deps_test.go),
+      # because the v3 migration quietly broke it and this job was where
+      # that surfaced.
       image: golang:1.25
       # This host path must exist on the runner and be listed verbatim in
       # act_runner's container.valid_volumes. It holds explore-staging/

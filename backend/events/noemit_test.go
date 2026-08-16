@@ -8,9 +8,12 @@ import (
 )
 
 // allowedEmitters are the only files permitted to call the Wails
-// runtime's event emitter directly.
+// runtime's event emitter directly.  There is one call and it lives in
+// runtime_wails.go rather than emit.go because naming the application
+// package is what forces cgo, and cmd/indexbuild builds this package
+// without it.
 var allowedEmitters = map[string]bool{
-	filepath.Join("backend", "events", "emit.go"): true,
+	filepath.Join("backend", "events", "runtime_wails.go"): true,
 }
 
 // TestNoDirectRuntimeEmits fails if anything outside backend/events

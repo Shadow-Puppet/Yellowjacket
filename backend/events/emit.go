@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-
-	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 // ErrNoRuntime is returned by Deliver when there is neither a test Sink
@@ -82,16 +80,7 @@ func Deliver(ctx context.Context, name string, data ...any) error {
 		}
 	}
 
-	// application.Get() returns nil when no app is running — under test,
-	// before Run, and after shutdown.  It does not terminate the
-	// process, which is what the v2 probe of the private "events"
-	// context key existed to avoid.
-	app := application.Get()
-	if app == nil {
-		return ErrNoRuntime
-	}
-
-	app.Event.Emit(name, data...)
-
-	return nil
+	// emitRuntime is the only place the Wails application is touched,
+	// and it is behind a build tag: see runtime_wails.go.
+	return emitRuntime(name, data...)
 }

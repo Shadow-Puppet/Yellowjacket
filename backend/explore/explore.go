@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/wailsapp/wails/v3/pkg/application"
 	"golang.org/x/sync/singleflight"
 
 	"yellowjacket/backend/database"
@@ -144,19 +143,9 @@ func (e *Service) CAALimiter() *RateLimiter {
 	return e.caaLimiter
 }
 
-// ServiceStartup is v3's service lifecycle hook: it runs once the
-// runtime exists, and ctx is cancelled when the app shuts down.  It
-// replaces v2's SetContext, which had to be called by hand from
-// OnStartup and was exported, so it was also bound to the frontend.
-func (e *Service) ServiceStartup(
-	ctx context.Context,
-	_ application.ServiceOptions,
-) error {
-	e.ctx = ctx
-	e.index.SetContext(ctx)
-
-	return nil
-}
+// The v3 service lifecycle hook that fills e.ctx lives in
+// servicestartup.go, behind a build tag: naming
+// application.ServiceOptions is what would drag cgo into cmd/indexbuild.
 
 // StartIndexBuild kicks off the background search index build.
 // Call this after the library scan completes so the indexer doesn't
