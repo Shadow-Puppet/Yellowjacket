@@ -144,7 +144,7 @@ meaningless against the seed's one empty playlist, so it builds ten
 It wraps every bound Go method, so "did that refetch the library" is a
 fact rather than an inference. It is not a spec and does not run in CI.
 
-**The cheapest tier needs none of that.** `make ui-test` runs 757
+**The cheapest tier needs none of that.** `make ui-test` runs 776
 Vitest tests in a real Chromium with no Wails, no backend, no seeded
 library and no virtual display, because **v3 routes every runtime call
 — bindings, event emits, window, dialogs, clipboard — through one IPC
@@ -298,12 +298,15 @@ rather than renaming them.
     `DB.QueryContext`/`QueryContextWith`/`QueryRow` route to a
     *query-only* read pool (a second `sql.DB` over the same file), so
     an `INSERT ... RETURNING` issued through one fails at runtime with
-    "attempt to write a readonly database (8)". Use `ExecContext`, or
-    `QueryRowWriter` when the statement really does return a row.
-    Nothing caught this because `NewTestDB` shares one in-memory
-    connection and leaves `readDB` nil, so `reader()` returns the
-    *writer* under test. `TestNoWritesOnTheReadPool` walks the tree for
-    it, in the same spirit as `TestNoDirectRuntimeEmits`.
+    "attempt to write a readonly database (8)" — which is exactly what
+    `CreateSmartPlaylist` did, meaning no smart playlist could be
+    created at all. Use `ExecContext`, or `QueryRowWriter` when the
+    statement really does return a row. Nothing caught this because
+    `NewTestDB` shares one in-memory connection and leaves `readDB`
+    nil, so `reader()` returns the *writer* under test.
+    `TestNoWritesOnTheReadPool` walks the tree for it, in the same
+    spirit as `TestNoDirectRuntimeEmits` and for the same reason — a
+    lint pass only sees one build configuration.
   - **A new table has to say what kind of data it holds.**
     `backend/datamap` is a catalogue of every table's Kind and
     Lifetime, and `TestCatalogCoversSchema` fails on a table missing

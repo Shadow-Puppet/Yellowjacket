@@ -354,6 +354,25 @@ export class LibraryStatusIndicator extends LitElement {
         }
 
         const title = this.tooltip();
+        const icon = this.iconName()
+            ? html`<wa-icon name=${this.iconName()} aria-hidden="true"></wa-icon>`
+            : nothing;
+
+        if (this.actionable) {
+            return html`
+                <button
+                    class="badge"
+                    type="button"
+                    title=${title}
+                    aria-label=${title}
+                    ?disabled=${this.busy}
+                    @click=${this.onActivate}
+                    @keydown=${this.onKeydown}
+                >
+                    ${icon}
+                </button>
+            `;
+        }
 
         // The ring stands in for the icon wherever the icon would go —
         // including inside the button, because a partly-held album is
