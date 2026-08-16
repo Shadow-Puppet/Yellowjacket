@@ -1,5 +1,13 @@
 # 016 — What Android parity would actually take
 
+> **Status: A1, A2 and A3 are done** (commit "let the app reach the
+> user's music"). The direction taken is **option 1, the full
+> librarian**: `MANAGE_EXTERNAL_STORAGE` plus an in-app folder browser,
+> which keeps the path-keyed model intact. A4 (MediaSession and audio
+> focus) and B1/B2 remain. The sections below are kept as written,
+> because they are the argument the decision rests on — see "What is
+> left" at the end for the current state.
+
 Plan 015 shipped a *pipeline*: the app cross-compiles, is signed and
 versioned, and publishes from CI. This is the assessment of what stands
 between that and an Android app worth installing.
@@ -202,3 +210,39 @@ Cheap, independently useful, and each unblocks measurement:
    wizard still blocks pointer events, so an Android user sees a dead
    screen rather than a sentence. Even under option 3 this is the right
    behaviour.
+
+
+## What is left (updated after A1-A3)
+
+**A4, playback that survives the screen locking.** The manifest and the
+service are typed `mediaPlayback` now and the permission is declared,
+so the foundation is in place; what is missing is a `MediaSession`, a
+transport notification and audio-focus handling. The plumbing for it
+exists and needs no new JNI: Go can call
+`application.Android.StartForegroundService(json)` (exported by Wails),
+and Java can call `WailsBridge.emitEvent(name, json)` back into the
+application event bus, which Go subscribes to. So the shape is a JSON
+payload of title/artist/state going out and transport commands coming
+back, with `backend/mediacontrols` gaining an Android handler beside
+the MPRIS one — the interface it already defines is the right shape.
+
+Audio focus is the half that is easy to forget and the more important
+one: pause on a phone call, duck for a notification, pause on headphone
+unplug. `oto` will happily keep writing to a stream nobody can hear.
+
+**B1, the x86_64 half of the APK**, which cannot run on any Android
+because of the modernc `lstat` seccomp trap. Still undecided; dropping
+it is a five-minute change that halves the artifact.
+
+**B2, the desktop shell.** Untouched and the largest remaining piece.
+
+**B3/B4** are unchanged, and B3 is now *possible* where it was not:
+with all-files access, `tagwriter` can write in place.
+
+### What A1-A3 did not answer
+
+Nothing here has been observed on a device. The permission flow in
+particular is the kind of thing that behaves differently across OEM
+builds — `ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION` is
+implemented inconsistently, which is why there is a fallback to the
+global list, and neither path has been exercised.
