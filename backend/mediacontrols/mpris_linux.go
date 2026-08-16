@@ -1,4 +1,11 @@
-//go:build linux
+//go:build linux && !android
+
+// MPRIS is a D-Bus desktop specification, and `android` implies the
+// `linux` build tag -- so without the `!android` this file compiled
+// into the Android app and went looking for a session bus that does
+// not exist. Desktop-Linux-only files need both halves; see Wails'
+// mobile guide, which names this as the Android analogue of
+// ios/darwin.
 
 package mediacontrols
 

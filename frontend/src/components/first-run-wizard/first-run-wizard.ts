@@ -6,9 +6,9 @@ import {
     AddLibrary,
     GetAllLibrariesWithTrackCounts,
 } from '@go/library/library.js';
-import { DirectoryPicker } from '@go/frontendutil/frontendutil.js';
 import { describeError, explainError } from '@utils/describe-error';
 import { nameDialogsIn } from '@utils/name-dialog';
+import { pickDirectory } from '../../utils/pick-directory';
 
 /**
  * First-run setup wizard.
@@ -243,7 +243,7 @@ export class FirstRunWizard extends LitElement {
         this.errorMessage = '';
 
         try {
-            const dir = await DirectoryPicker();
+            const dir = await pickDirectory();
 
             if (dir) this.selectedDirectory = dir;
         } catch (err) {

@@ -19,7 +19,6 @@ import {
     SetQueueFallback,
 } from '@go/config/config.js';
 import { GetIndexStatus } from '@go/explore/service.js';
-import { DirectoryPicker } from '@go/frontendutil/frontendutil.js';
 import { notificationStore } from '@store/notification-store';
 import { describeError, explainError } from '@utils/describe-error';
 import type * as library from '@go/library/models.js';
@@ -50,6 +49,7 @@ import { confirmAction } from '../confirm-dialog/confirm-dialog';
 import { shortcutsStore } from '../../store/shortcuts-store';
 import { ShortcutsController } from '../../store/controllers/shortcuts-controller';
 import { list } from '@utils/binding';
+import { pickDirectory } from '../../utils/pick-directory';
 
 const SCROLL_STORAGE_KEY = 'yj-now-playing-scroll-mode';
 const SCROLL_CHANGE_EVENT = 'yj-scroll-mode-changed';
@@ -916,7 +916,7 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
         let dir = '';
 
         try {
-            dir = await DirectoryPicker();
+            dir = (await pickDirectory()) ?? '';
 
             if (!dir) return;
 

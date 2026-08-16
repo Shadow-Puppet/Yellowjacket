@@ -15,6 +15,48 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
+    <!--
+      Playback has to survive the screen locking, and that needs a
+      foreground service typed mediaPlayback rather than dataSync. The
+      type in the <service> element and the permission here must agree,
+      or startForeground throws at runtime.
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+
+    <!--
+      Reading the user's music.
+
+      READ_MEDIA_AUDIO is the Android 13+ grant and READ_EXTERNAL_STORAGE
+      is its predecessor, capped so it is not requested where it no
+      longer applies. Both give access through **MediaStore**.
+
+      MANAGE_EXTERNAL_STORAGE is what gives access through the
+      *filesystem*, and this app needs it rather than merely preferring
+      it: `audio_files.file_path` is the primary key of ownership, the
+      scanner walks a directory the user chose, and every
+      GetFilePathsBy... query exists to hand a path to the player.
+      MediaStore offers no stable directory to walk and no way to write
+      a tag back in place, so the alternative is not "more work" but a
+      different application.
+
+      It is a Play-restricted permission, granted on a Settings screen
+      rather than in a dialog. That is acceptable *here* only because
+      this app is distributed as an APK through the package registry and
+      not through Play — see docs/android-release.md. If it ever targets
+      Play, this is the line that has to go, and plan 016 says what
+      would replace it.
+    -->
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
+    <uses-permission
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
+
     <queries>
         <intent>
             <action android:name="android.media.action.IMAGE_CAPTURE" />
@@ -54,10 +96,16 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
+        <!--
+          mediaPlayback, not the scaffold's dataSync: this app's reason
+          for staying alive in the background is that a song is
+          playing, and Android matches the declared type against what
+          the service actually does.
+        -->
         <service
             android:name=".WailsForegroundService"
             android:exported="false"
-            android:foregroundServiceType="dataSync" />
+            android:foregroundServiceType="mediaPlayback" />
     </application>
 
 </manifest>

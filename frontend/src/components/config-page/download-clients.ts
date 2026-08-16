@@ -14,7 +14,6 @@ import type {
     ProviderField,
 } from '@store/download-store';
 import { downloadStore } from '@store/download-store';
-import { DirectoryPicker } from '@go/frontendutil/frontendutil.js';
 import { GetDownloadPreferences, SetDownloadPreferences } from '@go/config/config.js';
 import { SetPreferences } from '@go/download/service.js';
 import type * as download from '@go/download/models.js';
@@ -23,6 +22,7 @@ import { compact } from '@utils/binding';
 import { describeError, explainError } from '@utils/describe-error';
 import { confirmAction } from '@components/confirm-dialog/confirm-dialog';
 import './config-section';
+import { pickDirectory } from '../../utils/pick-directory';
 
 /**
  * Allowed audio formats for auto-download, mirrored from
@@ -580,7 +580,7 @@ export class DownloadClients extends LitElement {
 
     private browseForFolder = async (field: ProviderField) => {
         try {
-            const dir = await DirectoryPicker();
+            const dir = await pickDirectory();
 
             if (dir) {
                 this.draft = { ...this.draft, [field.key]: dir };

@@ -58,7 +58,12 @@ public class WailsForegroundService extends android.app.Service {
                 .build();
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+            // MEDIA_PLAYBACK, not the scaffold's DATA_SYNC.  It must match
+            // android:foregroundServiceType in the manifest, or
+            // startForeground throws; and on Android 14+ the declared type
+            // is what decides whether the service may start from the
+            // background at all.
+            startForeground(NOTIFICATION_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
         } else {
             startForeground(NOTIFICATION_ID, n);
         }

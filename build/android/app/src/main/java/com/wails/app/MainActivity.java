@@ -11,10 +11,13 @@ import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.Uri;
+import android.Manifest;
 import android.os.BatteryManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.PowerManager;
+import android.provider.Settings;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -89,11 +92,87 @@ public class MainActivity extends AppCompatActivity {
         bridge = new WailsBridge(this);
         bridge.initialize();
 
+        // Ask for access to the user's music before the frontend has
+        // anything to say about it.  See ensureStorageAccess().
+        ensureStorageAccess();
+
         // Set up WebView
         setupWebView();
 
         // Load the application
         loadApplication();
+    }
+
+    /**
+     * Obtain access to the user's music.
+     *
+     * <p>This app is a library manager: its database is keyed on file
+     * paths, its scanner walks a directory the user chose, and its tag
+     * writer rewrites files in place. MediaStore offers none of those,
+     * so the app holds MANAGE_EXTERNAL_STORAGE — which is granted on a
+     * Settings screen rather than in a dialog, and therefore cannot be
+     * requested with requestPermissions().
+     *
+     * <p>The screen is opened on every cold start until access exists,
+     * because without it the app can see nothing at all and there is no
+     * degraded mode worth offering. Returning from it lands in
+     * onResume, which re-checks and tells the frontend.
+     *
+     * <p>Below Android 11 there is no all-files concept and plain
+     * READ_EXTERNAL_STORAGE is both sufficient and a normal dialog.
+     */
+    private void ensureStorageAccess() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if (Environment.isExternalStorageManager()) {
+                return;
+            }
+            // The per-app screen is the one that can actually grant it.
+            // A few OEM builds do not implement it, so fall back to the
+            // global list rather than leaving the user with nothing.
+            try {
+                startActivity(new Intent(
+                        Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                        Uri.parse("package:" + getPackageName())));
+            } catch (Exception e) {
+                Log.w(TAG, "per-app all-files screen unavailable: " + e.getMessage());
+                try {
+                    startActivity(new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION));
+                } catch (Exception e2) {
+                    Log.w(TAG, "no all-files settings screen at all: " + e2.getMessage());
+                }
+            }
+            return;
+        }
+
+        if (checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE)
+                != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.READ_EXTERNAL_STORAGE}, 1010);
+        }
+    }
+
+    /**
+     * Whether the app can currently read the user's music, by the same
+     * test the Go side uses.
+     */
+    private boolean hasStorageAccess() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            return Environment.isExternalStorageManager();
+        }
+        return checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE)
+                == PackageManager.PERMISSION_GRANTED;
+    }
+
+    /**
+     * Tell the frontend whether music is readable. Emitted on resume
+     * rather than only at startup, because the grant happens on a
+     * Settings screen in another task and the way back is a resume.
+     */
+    private void emitStorageAccess() {
+        if (bridge == null) {
+            return;
+        }
+        bridge.emitEvent("android:storageAccess",
+                "{\"granted\":" + (hasStorageAccess() ? "true" : "false") + "}");
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -768,6 +847,9 @@ public class MainActivity extends AppCompatActivity {
         if (bridge != null) {
             bridge.onResume();
         }
+        // The all-files grant happens on a Settings screen in another
+        // task, so a resume is how the app finds out it was given.
+        emitStorageAccess();
     }
 
     @Override

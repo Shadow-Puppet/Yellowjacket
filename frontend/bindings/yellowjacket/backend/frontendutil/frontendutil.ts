@@ -10,6 +10,35 @@
 // @ts-ignore: Unused imports
 import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wailsio/runtime";
 
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as $models from "./models.js";
+
+/**
+ * CheckStorageAccess asks the filesystem rather than the permission
+ * system.
+ * 
+ * On Android this app holds MANAGE_EXTERNAL_STORAGE, which the user
+ * grants on a Settings screen rather than in a dialog — so it can be
+ * refused, revoked later, or simply never answered, and the permission
+ * API is one more thing that can disagree with reality. Reading the
+ * directory is the question the library scanner will actually ask, so
+ * it is the one worth answering.
+ * 
+ * It is deliberately not an error return: "we cannot read your music
+ * yet" is a state the UI renders, not a failure of the call.
+ */
+export function CheckStorageAccess(): $CancellablePromise<$models.StorageAccess> {
+    return $Call.ByID(1661980006);
+}
+
+/**
+ * DefaultBrowseRoot is where a folder picker should open.
+ */
+export function DefaultBrowseRoot(): $CancellablePromise<string> {
+    return $Call.ByID(497852148);
+}
+
 /**
  * DirectoryPicker opens a directory selection dialog.
  * 
@@ -21,12 +50,52 @@ export function DirectoryPicker(): $CancellablePromise<string> {
 }
 
 /**
+ * HasNativeDirectoryPicker reports whether this platform can open a
+ * directory dialog at all.
+ * 
+ * It is asked of the backend rather than tested in the frontend with
+ * `System.IsAndroid()`, for three reasons. The dialog *is* backend code
+ * — `DirectoryPicker` above — so this is the same package saying what
+ * it can do. It answers for iOS too without the frontend enumerating
+ * platforms. And it makes the frontend's fallback testable through the
+ * ordinary transport fake instead of a module mock of the Wails
+ * runtime, whose platform helpers read build constants.
+ */
+export function HasNativeDirectoryPicker(): $CancellablePromise<boolean> {
+    return $Call.ByID(1028901937);
+}
+
+/**
  * ImageFilePicker opens a file selection dialog filtered to image
  * files (JPEG, PNG).  Returns the selected file path, or empty
  * string if the user cancelled.
  */
 export function ImageFilePicker(): $CancellablePromise<string> {
     return $Call.ByID(3408786006);
+}
+
+/**
+ * ListDirectories returns the directories directly inside path, so the
+ * frontend can draw a folder picker.
+ * 
+ * **It exists because Android has no directory picker.** Wails' file
+ * dialog can choose directories on every desktop platform, and on
+ * Android it returns an error: the Storage Access Framework yields tree
+ * URIs rather than filesystem paths, and a path is what this app's
+ * entire library model is keyed on. Rather than teach the backend about
+ * tree URIs, the app browses the filesystem itself — which it can do
+ * because it holds all-files access (see the manifest).
+ * 
+ * Three rules, each of which a picker gets wrong if it is not stated:
+ * only directories are returned, because the caller is choosing a
+ * library root and files are noise; unreadable children are skipped
+ * rather than failing the whole listing, since Android's storage root
+ * contains directories no app may enter; and hidden directories are
+ * omitted, because a music library is not in one and `.thumbnails`
+ * alone would swamp the list.
+ */
+export function ListDirectories(path: string): $CancellablePromise<$models.DirListing> {
+    return $Call.ByID(692624856, path);
 }
 
 /**
