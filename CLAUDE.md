@@ -1768,10 +1768,24 @@ Feature branches and PRs are the norm, but direct pushes to `main` are allowed. 
 
 ## CI
 
-Four workflows in `.gitea/workflows/`. Three of them package and
-publish (`arch-package`, `homebrew-formula`, `index-artifact`); only
-`ci.yml` gates, and it is the one to look at when deciding whether a
-push was healthy.
+Five workflows in `.gitea/workflows/`. Four of them package and
+publish (`arch-package`, `homebrew-formula`, `index-artifact`,
+`android-apk`); only `ci.yml` gates, and it is the one to look at when
+deciding whether a push was healthy.
+
+**`android-apk.yml` is the only one keyed on a tag and the only one
+that can lose something irrecoverable.** It builds the signed fat APK
+on every `v*` tag and publishes it to the *generic* registry, which is
+readable without credentials — the reason Obtainium can poll a plain
+URL. Android refuses to update an app whose signing certificate
+changed, and the only remedy is an uninstall that takes the user's
+library with it, so the job **refuses to build** without the keystore
+secret rather than falling through to Gradle's debug-key default, and
+**refuses to publish** an artifact whose certificate says `CN=Android
+Debug`. It is deliberately not a job in `ci.yml`: that workflow runs on
+every branch push, this one takes tens of minutes on a cold cache, and
+the runner has capacity 1. `docs/android-release.md` is the operating
+document.
 
 Two jobs, both in an `ubuntu:24.04` container:
 
@@ -1853,11 +1867,20 @@ four bit the packaging recipes:
 **`build/`'s platform metadata is generated from `build/config.yml`.**
 `wails3 task common:update:build-assets` rewrites `Info.plist`, the
 `.desktop` template, `nfpm.yaml` and the Windows manifest from that
-one file — so a hand edit to any of them is lost on the next refresh,
-and the two fields it does *not* own (nfpm's `homepage` and `license`)
-say so in place. That refresh also regenerates `build/ios/` and
-`build/android/`, which this repo does not carry: they are gitignored
-rather than deleted-and-rediscovered, and their `includes:` entries
-are dropped from `Taskfile.yml`. `build/config.yml`'s `version` is the
+one file — so a hand edit to any of them is lost on the next refresh.
+nfpm's `homepage` and `license` say in place that the refresh does not
+own them, and **that comment is wrong**: a refresh reset them to
+`https://wails.io` and `MIT`. Re-check those two after any refresh.
+
+**That refresh does not touch the mobile trees**, contrary to what this
+file said for five phases. `update build-assets` extracts only
+`updatable_build_assets` (darwin/ios/linux/windows); `build/android/`
+and `build/ios/` come from `generate build-assets`, which rewrites the
+whole of `build/`. So `build/android/` is **committed and hand-edited
+like source** — it was generated once into a scratch directory and
+copied across (plan 015), it carries one deliberate edit to its
+`Taskfile.yml`, and only its output is gitignored. `build/ios/` is
+still not carried and its `includes:` entry is still dropped.
+`build/config.yml`'s `version` is the
 *metadata* version and is not what the app reports — `main.version` is
 stamped at link time from the packaging recipe's git-derived version.

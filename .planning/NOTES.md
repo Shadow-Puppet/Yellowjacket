@@ -2394,3 +2394,196 @@ And `tag_status` was only ever written by the *insert* path, so a file
 another tagger stamped after import kept `untagged` for ever and its
 folder kept asking; `updateAudioFile` promotes it now, guarded on
 `untagged` so a deliberate `user_skipped_permanent` survives a rescan.
+
+## Android cross-compiles, unchanged (measured 2026-08-16)
+
+Plan 015's phase 0 gate, and it passed further than it was asked to: the
+whole app builds for Android and produces a working 27 MB fat APK with
+**no source changes at all**.
+
+Environment: Arch's `android-ndk-26` (`/opt/android-ndk`, r26d /
+26.3.11579264 — the pinned version), platform `android-35` and
+build-tools 34.0.0 from `~/Android/Sdk`. Note that Arch's
+`/opt/android-sdk` carries *no* platforms, so `ANDROID_HOME` has to
+point at `~/Android/Sdk` for the Gradle half while `ANDROID_NDK_HOME`
+points at `/opt/android-ndk` for the Go half.
+
+```
+export ANDROID_NDK_HOME=/opt/android-ndk
+export ANDROID_HOME="$HOME/Android/Sdk" ANDROID_SDK_ROOT="$HOME/Android/Sdk"
+cd frontend && pnpm build && cd ..          # main.go embeds frontend/dist
+PATH="$PWD/scripts/toolbin:$PATH" go tool wails3 task android:package:fat
+```
+
+Results, all first-try:
+
+| | |
+|---|---|
+| `libwails.so` arm64-v8a | 29.9 MB, production, stripped |
+| `libwails.so` x86_64 | 31.8 MB, production, stripped |
+| `bin/yellowjacket.apk` | 27.3 MB, both ABIs |
+| Go compile, per ABI | ~9 s |
+| Gradle assemble | ~13 s cold |
+
+**The dependency that looked fatal is fine.** A `CGO_ENABLED=0` probe of
+`./backend/... ./internal/...` for `android/arm64` compiles *everything*
+except two packages, and both fail only because their Android
+implementation is cgo: `ebitengine/oto/v3` (`driver_android.go` needs its
+bundled **oboe** C++ backend) and `wails/v3/pkg/application` (the JNI
+bridge). Both are exactly what the NDK supplies. `modernc.org/sqlite` —
+the whole database layer, and the thing most likely to have no Android
+target — is clean. Confirmed in the linked object rather than inferred:
+`nm -D` shows `oto_oboe_Play` and the `oboe::` symbols, `readelf -d`
+shows `libOpenSLES.so` as NEEDED, and the
+`Java_com_wails_app_WailsBridge_native*` exports are present. The audio
+backend is genuinely linked, not stubbed.
+
+Four things found on the way that are not obvious:
+
+- **`wails3 update build-assets` does not generate `build/android/`.** In
+  beta.8 it extracts only `internal/commands/updatable_build_assets`,
+  which is darwin/ios/linux/windows. The android tree comes from
+  `generate build-assets`, which extracts the *whole* asset FS and would
+  rewrite all of `build/`. So it was generated into a scratch dir and
+  `android/` copied across. CLAUDE.md claimed the refresh regenerates it;
+  that was wrong, and is corrected.
+- **`update build-assets` does clobber nfpm's `homepage` and
+  `license`**, which `build/linux/nfpm/nfpm.yaml` says in a comment it
+  leaves alone. It reset them to `https://wails.io` and `MIT`. The
+  comment is wrong; those two fields need re-checking after any refresh.
+- **The scaffold's `package:fat` shipped a debug arm64 library.**
+  `build` forwards `ARCH` to `compile:go:shared` but not `PRODUCTION`,
+  so the arm64 leg recomputed `BUILD_FLAGS` against an unset
+  `.PRODUCTION` and took the debug branch — while amd64, which
+  `package:fat` calls directly with `PRODUCTION: "true"`, was correct.
+  A release APK therefore carried a 40 MB unstripped debug library for
+  the phone ABI and a 31 MB production one for the emulator. Fixed in
+  `build/android/Taskfile.yml`, which is this repo's one edit to that
+  scaffold file and is commented as such. 34 MB APK before, 27 after.
+- **The generated APK is not yet an identity.** `com.wails.app`,
+  `versionCode 1`, `versionName 1.0`, signed `CN=Android Debug`. That is
+  plan 015 phase 2 and none of it is a surprise, but it is worth knowing
+  that the scaffold happily produces an installable-once,
+  never-updatable APK by default.
+
+**Not established:** that it *runs*. There is no AVD or system image on
+this machine and no device attached, so nothing has launched the APK.
+Every runtime concern plan 015 lists as out of scope is still out of
+scope and still real — MPRIS in particular is compiled *in*, because
+Go's `android` GOOS implies the `linux` build tag.
+
+## The Android build runs, and stops on one line (measured 2026-08-16)
+
+The APK installs and launches on an emulator. `libwails.so` loads, the
+JNI bridge comes up — and the process is gone six milliseconds later.
+
+**The cause is `backend/system/buildUserDirPath`.** It switches on
+`runtime.GOOS` with cases for `darwin`, `linux` and `windows` and a
+`default:` returning `errUnsupportedOS`. `runtime.GOOS` is `"android"`,
+so it takes the default, `NewYellowJacketApp` fails, and `main()` calls
+`os.Exit(1)`. `YJ_HOME` overrides that path on every OS, so an
+`android` case pointing at the app-private directory is the shape of
+the fix. It is the *first* thing that stops it, not the only one.
+
+**What cost the time was not finding the bug, it was that the failure
+is invisible in all three places you would look.** Worth knowing before
+meeting it:
+
+- **Go's stdout does not reach logcat.** An app's fd 1 and 2 go to
+  `/dev/null`, so the `slog` line naming the error is discarded.
+  `setprop log.redirect-stdio true` does not help — that redirects the
+  *Java* runtime's `System.out`, not a c-shared native library's.
+- **`os.Exit` leaves no evidence.** No panic, no `AndroidRuntime`
+  stack, nothing in `/data/tombstones`, nothing in `logcat -b crash` or
+  dropbox. The only signal present is `Zygote: exited due to signal 9`,
+  which reads as "the system killed it" and sends you looking at the
+  low-memory killer.
+- **ActivityManager restarts it faster than you can observe it.**
+  `pidof` always answers and `am start` always says `Status: ok`, so
+  the app looks alive while crash-looping several times a second. The
+  honest check is whether it is the *same pid* a few seconds later,
+  which is what `make android-smoke` asserts.
+
+The tell is `I/WailsBridge: Wails bridge initialized` followed
+immediately by a new pid doing the same thing.
+
+**Emulator environment**, which is not the obvious one on Arch: Gradle
+needs a *platform*, and `/opt/android-sdk` (the `android-sdk` package)
+has an NDK and build-tools but an empty `platforms/`. So `ANDROID_HOME`
+points at `~/Android/Sdk` (user-owned, where sdkmanager writes) while
+`ANDROID_NDK_HOME` points at `/opt/android-ndk` — two SDKs, one for
+each half of the build. The image is
+`system-images;android-35;google_apis;x86_64` (~3.5 GB with the
+emulator sdkmanager pulls alongside it): `google_apis` rather than
+`default` because this is a WebView app and that image carries the
+Chrome-based WebView. KVM is present and usable here; without it a 30 s
+boot becomes tens of minutes, which reads as a hung target.
+
+Operating all of this is `scripts/android-emulator.sh` and the
+`make android-*` targets, documented in
+`.pi/skills/yellowjacket-dev/references/android-tier.md`.
+
+## What the Wails v3 Android docs say, and where they are wrong (2026-08-16)
+
+Read after phase 0, before phase 2. Sources: `ANDROID.md` shipped inside
+`wails/v3@v3.0.0-beta.8` (authoritative for our exact version) and
+`v3.wails.io/guides/mobile/*`.
+
+**Two claims in `ANDROID.md` are wrong for beta.8, and both were
+checked.** Its Configuration section says to put `APP_ID: com.example.
+myapp` in `build/config.yml` and that this "controls the package name".
+Neither half holds. `wails3 task` builds its variable set from CLI
+`KEY=VALUE` arguments and the Taskfile tree and **never reads
+`config.yml`** (`internal/commands/task.go`); adding `APP_ID` there and
+running `android:run:device --dry` still emits
+`am start -n com.wails.app/`. And `APP_ID` feeds only the adb commands
+in the android Taskfile — uninstall, launch, log filter — never Gradle,
+whose `applicationId` is a literal in `app/build.gradle`. So the
+identity is necessarily declared **twice** and nothing enforces
+agreement. Both are set now, each with a comment pointing at the other.
+
+**The fix for the crash we found is a documented API.**
+`application.Mobile.StoragePath()` returns the app's private internal
+files directory (`getFilesDir()` on Android, Application Support on
+iOS) and — the useful part — is **build-tag-free**: `mobile.go` declares
+the interface and `mobile_stub.go` returns `""` on desktop. Since
+`resolveUserDirPath` already lets `YJ_HOME` override the path on every
+OS, the whole fix is to set that override from `StoragePath()` early in
+`main()` when it is non-empty. No `//go:build` split, no new import in
+`backend/system` (which must stay Wails-free — the `indexbuild` tag
+split exists for exactly that), and desktop behaviour is untouched
+because the stub returns empty.
+
+The same section gives the general rule: branch on
+`application.System.IsMobile()` / `IsPlatform(application.PlatformAndroid)`
+rather than build tags, because it compiles everywhere.
+
+**`android` implies `linux` is documented**, which confirms rather than
+discovers the MPRIS problem: `//go:build linux` files are in the Android
+build and desktop-Linux-only ones need `linux && !android`.
+
+**A finding for the runtime plan, not this one: the folder picker does
+not exist on Android.** Open-*directory* dialogs "return an error — SAF
+yields tree URIs, not filesystem paths", and save-file dialogs likewise.
+This app's entire first run is "choose your music folder", and its
+library model is filesystem paths. That is a design problem, not a
+porting detail, and it is larger than the data-directory one.
+
+**The scaffold ships its own android tasks**, and they are worth knowing
+before writing anything: `android:run`, `run:device`, `deploy-emulator`,
+`deploy-device`, `package`, `package:fat`, `bundle`/`bundle:fat` (AAB
+for Play), `studio`, `device:list`, `logs`, `logs:all`, `clean`, and an
+internal `ensure-emulator`. `make android-*` deliberately does not wrap
+most of them. Two reasons it does not just use `android:logs`: that task
+greps logcat for `(Wails|yellowjacket)`, which matches the `WailsBridge`
+tag but **not** the app's own process tag (`app.yellowjacket`, lowercase)
+and **not** `ActivityManager`'s "has died" line — the one that tells you
+it crashed. And `ensure-emulator` takes whatever `-list-avds | tail -1`
+returns, with no pidfile and no boot wait, so it cannot be stopped or
+sequenced by a Makefile.
+
+Two smaller things. Debug builds log framework diagnostics to logcat
+under the `Wails` tag and are inspectable from `chrome://inspect`;
+production builds compile that out — so a debug APK is the more
+informative one when something is wrong. And the docs recommend
+`build-tools;35.0.0`; 34.0.0 is what is installed here and builds fine.
