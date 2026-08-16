@@ -2643,3 +2643,19 @@ Three consequences:
 Worth knowing for anything else that reaches for a pure-Go C library:
 this class of bug is invisible to every build and every desktop test,
 and appears only under a platform's syscall filter.
+
+### …and the arm64 emulator is not an option on an x86_64 host
+
+Emulator 37.1.11 refuses outright, after the 3.8 GB image download:
+
+```
+FATAL | Avd's CPU Architecture 'arm64' is not supported by the QEMU2
+        emulator on x86_64 host. System image must match the host
+        architecture.
+```
+
+Google dropped cross-architecture emulation and there is no flag for
+it. So the arm64 claim above rests on reading modernc's two code paths,
+not on having run it: verifying the shipped ABI needs an arm64 host, a
+physical device, or `adb connect` to one. The image was deleted again;
+do not re-download it.

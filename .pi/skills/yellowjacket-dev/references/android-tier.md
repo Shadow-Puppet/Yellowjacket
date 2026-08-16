@@ -118,10 +118,22 @@ Android permits. `grep -c SYS_LSTAT ccgo_linux_arm64.go` is 0. Go's own
 `syscall` package already uses `fstatat` on both architectures, which
 is why this is *only* the modernc path.
 
-So: **verify on arm64, not on the default emulator.** Use an
-`arm64-v8a` system image (slow on an x86_64 host — it is full software
-emulation) or a real device. `make android-smoke` on an x86_64 AVD will
-report a `SIGSYS` tombstone that says nothing about your change.
+So: **verify on arm64, and on this machine that means a real device.**
+`make android-smoke` on an x86_64 AVD reports a `SIGSYS` tombstone that
+says nothing about your change.
+
+**Do not reach for an arm64 system image — it will not run here, and
+finding that out costs a 3.8 GB download.** Emulator 37 refuses
+outright:
+
+```
+FATAL | Avd's CPU Architecture 'arm64' is not supported by the QEMU2
+        emulator on x86_64 host. System image must match the host
+        architecture.
+```
+
+Google dropped cross-architecture emulation; there is no flag. The
+options are an arm64 host, a physical device, or `adb connect` to one.
 
 Two consequences worth holding onto. The x86_64 half of the fat APK is
 *only* useful for emulators, and cannot work on any Android until
