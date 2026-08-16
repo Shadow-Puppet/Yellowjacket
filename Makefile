@@ -38,6 +38,46 @@ dev-stop: ## Stop the headless app (SIGTERM, so shutdown hooks run)
 dev-logs: ## Tail the headless app log
 	@tail -f .dev/app.log
 
+# ---------------------------------------------------------------- #
+# The Android tier.  See .pi/skills/yellowjacket-dev/references/     #
+# android-tier.md for which of these to reach for and why a failure  #
+# here looks like nothing at all.                                    #
+# ---------------------------------------------------------------- #
+
+# The NDK is pinned: r26d is what the pipeline is built and checked
+# against, and newer NDKs have broken Wails' Android build before.
+# ANDROID_HOME must carry a *platform*, which Arch's /opt/android-sdk
+# does not — hence the separate default.
+ANDROID_SDK ?= $(HOME)/Android/Sdk
+ANDROID_NDK ?= /opt/android-ndk
+ANDROID_ENV := ANDROID_HOME=$(ANDROID_SDK) ANDROID_SDK_ROOT=$(ANDROID_SDK) ANDROID_NDK_HOME=$(ANDROID_NDK)
+
+android: build-frontend ## Build the fat APK (arm64 + x86_64) into bin/
+	@$(ANDROID_ENV) PATH="$(TOOLBIN):$$PATH" go tool wails3 task android:package:fat
+
+android-setup: ## Install the SDK pieces and create the AVD (once, ~3.5GB)
+	@$(ANDROID_ENV) ./scripts/android-emulator.sh setup
+
+android-emulator: ## Boot the emulator headless in the background and wait for it
+	@$(ANDROID_ENV) ./scripts/android-emulator.sh start
+
+android-emulator-stop: ## Shut the emulator down (console kill, then saved PID)
+	@$(ANDROID_ENV) ./scripts/android-emulator.sh stop
+
+android-install: ## Install bin/yellowjacket.apk onto the running emulator
+	@$(ANDROID_ENV) ./scripts/android-emulator.sh install
+
+android-launch: ## Force-stop, clear logcat, and start the app
+	@$(ANDROID_ENV) ./scripts/android-emulator.sh launch
+
+android-logs: ## Tail logcat, filtered to the app's own tags
+	@$(ANDROID_ENV) ./scripts/android-emulator.sh logs
+
+# "Did it start" is the wrong question — a crash-looping app starts
+# several times a second.  This asserts the *same pid* is still there.
+android-smoke: ## Launch and assert the app is still alive (SECONDS=<n>)
+	@$(ANDROID_ENV) ./scripts/android-emulator.sh smoke $(if $(SECONDS),$(SECONDS),10)
+
 # Seeds are produced by *running the app* — driving the real AddLibrary
 # binding and waiting for the real scan — never by hand-writing a
 # config.toml and DB rows.  A hand-built seed is a second description

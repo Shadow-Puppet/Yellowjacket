@@ -151,6 +151,7 @@ only climb when it cannot.
 | Something you cannot predict — exploring | `make dev-headless SEED=default` + `playwright-cli` | interactive |
 | Something whose answer is a *number*, not a pass | `make perf` against a bulk-seeded app | ~1 min + setup |
 | A `.sql` or `.templ` file | `make generate`, then the checklist in [references/schema-change.md](references/schema-change.md) | |
+| Anything that has to survive on a phone | `make android-smoke` against a booted emulator | ~1 min + setup |
 
 Two targets are once-per-clone prerequisites that are **not**
 dependencies of the targets needing them, so on a fresh checkout each
@@ -426,3 +427,9 @@ fails the build otherwise, including in files no lint pass compiles.
   and what breaks in it.
 - [schema-change.md](references/schema-change.md) — the two-file
   schema/migration checklist.
+- [android-tier.md](references/android-tier.md) — the emulator tier,
+  and the three reasons a failure there looks like a success. **Read
+  its first section before running anything on Android**: Go's stdout
+  does not reach logcat, `os.Exit` leaves no panic and no tombstone,
+  and ActivityManager restarts a dying app fast enough that `pidof`
+  always answers.
