@@ -76,8 +76,8 @@ describe('the track list says how it is sorted', () => {
   beforeEach(async () => {
     resetHarness();
     searchStore.setTerm('');
-    stub('library.Library.GetAllTracks', TRACKS);
-    stub('library.Library.GetAllAlbums', []);
+    stub('library.Library.GetTracks', TRACKS);
+    stub('library.Library.GetAlbums', []);
     emit(Events.LibraryScanComplete);
   });
 
@@ -128,11 +128,11 @@ describe('the track list has a voice for its own state', () => {
   beforeEach(() => {
     resetHarness();
     searchStore.setTerm('');
-    stub('library.Library.GetAllAlbums', []);
+    stub('library.Library.GetAlbums', []);
   });
 
   it('announces the result of a search that matches nothing', async () => {
-    stub('library.Library.GetAllTracks', TRACKS);
+    stub('library.Library.GetTracks', TRACKS);
     emit(Events.LibraryScanComplete);
 
     const el = await fixture<LitElement>('track-list');
@@ -161,10 +161,10 @@ describe('a selectable grid is a listbox, not a row of buttons', () => {
   beforeEach(() => {
     resetHarness();
     searchStore.setTerm('');
-    stub('library.Library.GetAllArtists', ARTISTS);
-    stub('library.Library.GetAllGenresWithCounts', GENRES);
-    stub('library.Library.GetAllTracks', []);
-    stub('library.Library.GetAllAlbums', []);
+    stub('library.Library.GetArtists', ARTISTS);
+    stub('library.Library.GetGenres', GENRES);
+    stub('library.Library.GetTracks', []);
+    stub('library.Library.GetAlbums', []);
     emit(Events.LibraryScanComplete);
   });
 
@@ -197,8 +197,8 @@ describe('a clipped value is readable somewhere', () => {
   beforeEach(async () => {
     resetHarness();
     searchStore.setTerm('');
-    stub('library.Library.GetAllTracks', TRACKS);
-    stub('library.Library.GetAllAlbums', []);
+    stub('library.Library.GetTracks', TRACKS);
+    stub('library.Library.GetAlbums', []);
     emit(Events.LibraryScanComplete);
   });
 
@@ -240,8 +240,8 @@ describe('the playing row is more than a colour', () => {
   beforeEach(async () => {
     resetHarness();
     searchStore.setTerm('');
-    stub('library.Library.GetAllTracks', TRACKS);
-    stub('library.Library.GetAllAlbums', []);
+    stub('library.Library.GetTracks', TRACKS);
+    stub('library.Library.GetAlbums', []);
     emit(Events.LibraryScanComplete);
   });
 

@@ -20,7 +20,6 @@ type ScanMetrics struct {
 	ExtractionWallClock time.Duration `json:"extractionWallClock"`
 	DBWritesWallClock   time.Duration `json:"dbWritesWallClock"`
 	OrphanCleanup       time.Duration `json:"orphanCleanup"`
-	PostScanVariants    time.Duration `json:"postScanVariants"`
 
 	// Per-format extraction (cumulative across workers).
 	FormatExtraction map[string]int64 `json:"formatExtraction"`
@@ -137,7 +136,6 @@ func (m *ScanMetrics) timingBreakdown() string {
 	line("      Medium", m.ThumbnailMedium)
 	line("      Large", m.ThumbnailLarge)
 	line("  Orphan cleanup", m.OrphanCleanup)
-	line("  Post-scan variants", m.PostScanVariants)
 
 	return b.String()
 }

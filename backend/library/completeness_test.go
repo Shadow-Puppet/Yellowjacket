@@ -1,12 +1,15 @@
 package library
 
 import (
+	"fmt"
 	"testing"
+
+	"yellowjacket/backend/database"
 )
 
-// track is one row of release_group_recordings as the scan would write
-// it: a position on a disc, and whatever total the file's tag declared
-// (0 meaning the tag did not say).
+// track is one file as the scan would write it: a position on a disc,
+// and whatever total the file's tag declared (0 meaning the tag did not
+// say).
 type track struct {
 	recordingID int
 	disc        int
@@ -14,58 +17,37 @@ type track struct {
 	total       int
 }
 
-// stageAlbum writes an album's tracks straight into
-// release_group_recordings.  The completeness query reads only that
-// table, so this exercises the arithmetic without standing up a scan.
+// stageAlbum writes an album's files straight in.  The completeness
+// query reads only audio_files now - the totals used to live on a join
+// table - so this exercises the arithmetic without standing up a scan.
 func stageAlbum(t *testing.T, lib *Library, albumID int, tracks []track) {
 	t.Helper()
 
-	// The foreign keys are enforced, so the album and its recordings
-	// have to exist before they can be linked.
-	if _, err := lib.db.ExecContext(
-		`INSERT INTO artist_credit (id, text) VALUES (1, 'Test Artist')`,
-	); err != nil {
-		t.Fatalf("staging artist credit: %v", err)
-	}
-
-	if _, err := lib.db.ExecContext(
-		`INSERT INTO release_groups (id, name, album_artist_credit_id)
-		 VALUES (?, ?, 1)`,
-		albumID, "Test Album",
-	); err != nil {
-		t.Fatalf("staging album: %v", err)
-	}
-
 	for _, tr := range tracks {
-		if _, err := lib.db.ExecContext(
-			`INSERT INTO recordings (id, name, artist_credit_id) VALUES (?, ?, 1)`,
-			tr.recordingID, "Test Track",
-		); err != nil {
-			t.Fatalf("staging recording %d: %v", tr.recordingID, err)
-		}
+		database.InsertTestTrack(t, lib.db, database.TestTrack{
+			FilePath:    fmt.Sprintf("/music/album%d/%d.mp3", albumID, tr.recordingID),
+			Title:       "Test Track",
+			Artist:      "Test Artist",
+			Album:       fmt.Sprintf("Test Album %d", albumID),
+			TrackNumber: int64(tr.number),
+			DiscNumber:  int64(tr.disc),
+			TotalTracks: int64(tr.total),
+		})
+	}
+}
+
+// albumIDFor reads back the id stageAlbum's files were filed under.
+func albumIDFor(t *testing.T, lib *Library, albumID int) int64 {
+	t.Helper()
+
+	var id int64
+	if err := lib.db.QueryRowWriter(
+		"SELECT id FROM albums WHERE name = ?", fmt.Sprintf("Test Album %d", albumID),
+	).Scan(&id); err != nil {
+		t.Fatalf("read album id: %v", err)
 	}
 
-	for _, tr := range tracks {
-		var total any
-		if tr.total > 0 {
-			total = tr.total
-		}
-
-		var number any
-		if tr.number > 0 {
-			number = tr.number
-		}
-
-		_, err := lib.db.ExecContext(
-			`INSERT INTO release_group_recordings
-			   (release_group_id, recording_id, track_number, disc_number, total_tracks)
-			 VALUES (?, ?, ?, ?, ?)`,
-			albumID, tr.recordingID, number, tr.disc, total,
-		)
-		if err != nil {
-			t.Fatalf("staging track %d: %v", tr.recordingID, err)
-		}
-	}
+	return id
 }
 
 // disc builds a run of tracks on one disc, each declaring the same
@@ -210,7 +192,7 @@ func TestGetAlbumCompleteness(t *testing.T) {
 
 			stageAlbum(t, lib, albumID, tc.tracks)
 
-			got, err := lib.GetAlbumCompleteness(int64(albumID))
+			got, err := lib.GetAlbumCompleteness(albumIDFor(t, lib, albumID))
 			if err != nil {
 				t.Fatalf("GetAlbumCompleteness: %v", err)
 			}

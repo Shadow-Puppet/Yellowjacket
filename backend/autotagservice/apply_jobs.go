@@ -19,6 +19,8 @@ const applyJobPrefix = "autotag:"
 // registry gets progress, cancel and the global indicator for free; the
 // three subsystems that lacked them were the three that were not
 // registered.
+//
+//wails:ignore // internal wiring, not part of the app's IPC surface.
 func (s *Service) SetJobRegistry(reg *jobs.Registry) {
 	s.mu.Lock()
 	s.jobsReg = reg

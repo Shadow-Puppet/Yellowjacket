@@ -277,7 +277,10 @@ func (si *SearchIndex) commitListenDeltas(
 	defer func() { _ = tx.Rollback() }()
 
 	if _, err := tx.Exec(
-		"CREATE TEMP TABLE IF NOT EXISTS incr_delta (mbid TEXT, kind TEXT, delta INTEGER)",
+		// mbid and kind are stored the way explore_index stores them,
+		// so the join below is a plain equality rather than a
+		// conversion per row.
+		"CREATE TEMP TABLE IF NOT EXISTS incr_delta (mbid BLOB, kind INTEGER, delta INTEGER)",
 	); err != nil {
 		return fmt.Errorf("incremental temp table: %w", err)
 	}
@@ -357,8 +360,10 @@ func insertDeltas(tx *sql.Tx, kind string, deltas map[string]uint32) error {
 		return nil
 	}
 
+	code := entityCode(kind)
+
 	for mbid, d := range deltas {
-		rowArgs = append(rowArgs, mbid, kind, int64(d))
+		rowArgs = append(rowArgs, mbidBytes(mbid), code, int64(d))
 		pending++
 
 		if pending >= deltaInsertBatch {

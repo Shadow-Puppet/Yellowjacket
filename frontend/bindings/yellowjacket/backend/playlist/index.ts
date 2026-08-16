@@ -10,7 +10,6 @@ export type {
     CandidateTrack,
     DuplicateCheckResult,
     DuplicateTrackInfo,
-    FavoritesConfigProvider,
     PhantomMatch,
     PhantomSearchResult,
     Summary,

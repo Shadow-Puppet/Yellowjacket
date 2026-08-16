@@ -1034,6 +1034,39 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
                 font-size: 0.9rem;
             }
 
+            /* The "nothing to tag" state.  A finished queue is the
+               normal resting state of this page on a tagged library,
+               not a failure, so it gets a settled look rather than
+               the bare sentence the other .empty slots use. */
+            .empty-state {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                gap: 0.6rem;
+                text-align: center;
+                padding: 4rem 1.5rem;
+                color: var(--yj-text-secondary, #b3b3b3);
+            }
+
+            .empty-state wa-icon {
+                font-size: 2.5rem;
+                color: var(--yj-text-tertiary, #888);
+            }
+
+            .empty-state h3 {
+                margin: 0;
+                font-size: 1.05rem;
+                font-weight: 600;
+                color: var(--yj-text-primary, #f1f3f5);
+            }
+
+            .empty-state p {
+                margin: 0;
+                max-width: 34ch;
+                font-size: 0.9rem;
+                line-height: 1.5;
+            }
+
             .error {
                 background: rgba(200, 90, 90, 0.15);
                 color: #f99;
@@ -2918,6 +2951,33 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
         `;
     }
 
+    /** The queue came back with nothing in it — every folder the
+     *  scan found already carries tags.  This is the resting state
+     *  of the page on a tagged library, so it says so in words
+     *  rather than leaving the skeleton up: an endless shimmer reads
+     *  as a page that is still working. */
+    private renderEmptyQueue(): TemplateResult {
+        const filtered = this.currentLibraryFilter !== null;
+
+        return html`
+            <div class="main">
+                <div class="empty-state">
+                    <wa-icon name="circle-check"></wa-icon>
+                    <h3>Nothing to tag</h3>
+                    <p>
+                        ${filtered
+                            ? html`No untagged files in the selected library.
+                                   Switch the library filter, or add new music
+                                   and it will appear here after the next scan.`
+                            : html`No untagged files. Add new music to your
+                                   library and it will appear here after the
+                                   next scan.`}
+                    </p>
+                </div>
+            </div>
+        `;
+    }
+
     private renderMain() {
         // A scoring error on the selected folder surfaces as an error,
         // not an endless skeleton.
@@ -2939,14 +2999,29 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
         }
 
         if (!this.current) {
+            // A folder list that failed to load is not an empty
+            // queue.  Without this the one message the page cannot
+            // honestly show — "there is nothing to tag" — is exactly
+            // what a failed ListPendingFolders renders.
+            if (this.folders.length === 0 && this.errorMessage) {
+                return html`
+                    <div class="main">
+                        <div class="error">
+                            <span>${this.errorMessage}</span>
+                            <button @click=${this.onDismissError}>Dismiss</button>
+                        </div>
+                    </div>
+                `;
+            }
+
+            if (this.folders.length === 0) {
+                return this.renderEmptyQueue();
+            }
+
             return html`
                 <div class="main">
                     <div class="empty">
-                        ${this.folders.length === 0
-                            ? (this.currentLibraryFilter !== null
-                                ? 'No pending folders in the selected library. Switch the library filter or scan to find untagged albums.'
-                                : 'No pending folders. Untagged albums appear here after a library scan.')
-                            : 'Pick a folder from the list on the left to review.'}
+                        Pick a folder from the list on the left to review.
                     </div>
                 </div>
             `;

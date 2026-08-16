@@ -181,22 +181,6 @@ export function SaveState(): $CancellablePromise<void> {
 }
 
 /**
- * SetFallbackSource provides the queue with what to auto-play, if
- * anything, once it runs out. A nil source (the default) leaves
- * today's behavior: the queue just goes idle.
- */
-export function SetFallbackSource(fs: $models.FallbackSource): $CancellablePromise<void> {
-    return $Call.ByID(1344903240, fs);
-}
-
-/**
- * SetPlayer provides the queue with a reference to the player for auto-advance.
- */
-export function SetPlayer(player: $models.TrackLoader): $CancellablePromise<void> {
-    return $Call.ByID(2806250342, player);
-}
-
-/**
  * SetQueue replaces the entire queue with new tracks and starts playing.
  * When shuffleStart is true and shuffle mode is active, a random first
  * track is chosen instead of the one at startIndex. This is intended for

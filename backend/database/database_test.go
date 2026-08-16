@@ -312,31 +312,13 @@ func TestPhantomPlaylistTracksAreCleaned(t *testing.T) {
 
 	// Create prerequisite data: artist_credit, recording,
 	// audio_file.
-	_, err := db.ExecContext(
-		"INSERT INTO artist_credit (id, text) VALUES (1, 'Test Artist')",
-	)
-	if err != nil {
-		t.Fatalf("insert artist_credit: %v", err)
-	}
-
-	_, err = db.ExecContext(
-		"INSERT INTO recordings (id, name, artist_credit_id) " +
-			"VALUES (1, 'Test Song', 1)",
-	)
-	if err != nil {
-		t.Fatalf("insert recording: %v", err)
-	}
-
-	_, err = db.ExecContext(
-		"INSERT INTO audio_files "+
-			"(id, file_path, length_milliseconds, file_type_id, "+
-			"recording_id, library_id) "+
-			"VALUES (1, '/test/music/song.mp3', 180000, 0, 1, ?)",
-		libID,
-	)
-	if err != nil {
-		t.Fatalf("insert audio_file: %v", err)
-	}
+	InsertTestTrack(t, db, TestTrack{
+		FilePath:  "/test/music/song.mp3",
+		Title:     "Test Song",
+		Artist:    "Test Artist",
+		LengthMs:  180000,
+		LibraryID: libID,
+	})
 
 	// Create playlist.
 	playlist, err := db.Queries.CreatePlaylist(
@@ -442,39 +424,18 @@ func TestAudioFilesLibraryForeignKey(t *testing.T) {
 	db, libID := NewTestDBWithLibrary(t, "Test", "/test/fk-lib")
 
 	// Insert prerequisite recording.
+	InsertTestTrack(t, db, TestTrack{
+		FilePath:  "/test/track.mp3",
+		Title:     "Track",
+		Artist:    "Test",
+		LibraryID: libID,
+	})
+
+	// Insert audio file with invalid library_id - should fail FK.
 	_, err := db.ExecContext(
-		"INSERT INTO artist_credit (id, text) VALUES (1, 'Test')",
-	)
-	if err != nil {
-		t.Fatalf("insert artist_credit: %v", err)
-	}
-
-	_, err = db.ExecContext(
-		"INSERT INTO recordings (id, name, artist_credit_id) " +
-			"VALUES (1, 'Track', 1)",
-	)
-	if err != nil {
-		t.Fatalf("insert recording: %v", err)
-	}
-
-	// Insert audio file with valid library_id — should succeed.
-	_, err = db.ExecContext(
-		"INSERT INTO audio_files "+
-			"(id, file_path, length_milliseconds, file_type_id, "+
-			"recording_id, library_id) "+
-			"VALUES (1, '/test/song.mp3', 180000, 0, 1, ?)",
-		libID,
-	)
-	if err != nil {
-		t.Fatalf("insert audio_file with valid library: %v", err)
-	}
-
-	// Insert audio file with invalid library_id — should fail FK.
-	_, err = db.ExecContext(
 		"INSERT INTO audio_files " +
-			"(id, file_path, length_milliseconds, file_type_id, " +
-			"recording_id, library_id) " +
-			"VALUES (2, '/test/song2.mp3', 200000, 0, 1, 999)",
+			"(id, file_path, length_milliseconds, file_type_id, library_id) " +
+			"VALUES (2, '/test/song2.mp3', 200000, 0, 999)",
 	)
 	if err == nil {
 		t.Error(
@@ -483,16 +444,16 @@ func TestAudioFilesLibraryForeignKey(t *testing.T) {
 	}
 
 	// Count files by library.
-	count, err := db.Queries.CountAudioFilesByLibrary(
+	count, err := db.Queries.CountAudioFiles(
 		db.Ctx, libID,
 	)
 	if err != nil {
-		t.Fatalf("CountAudioFilesByLibrary: %v", err)
+		t.Fatalf("CountAudioFiles: %v", err)
 	}
 
 	if count != 1 {
 		t.Errorf(
-			"CountAudioFilesByLibrary = %d, want 1", count,
+			"CountAudioFiles = %d, want 1", count,
 		)
 	}
 }
@@ -503,31 +464,13 @@ func TestTrackMetadataViewHasLibraryID(t *testing.T) {
 	db, libID := NewTestDBWithLibrary(t, "Test", "/test/view-lib")
 
 	// Insert prerequisites.
-	_, err := db.ExecContext(
-		"INSERT INTO artist_credit (id, text) VALUES (1, 'View Artist')",
-	)
-	if err != nil {
-		t.Fatalf("insert artist_credit: %v", err)
-	}
-
-	_, err = db.ExecContext(
-		"INSERT INTO recordings (id, name, artist_credit_id) " +
-			"VALUES (1, 'View Track', 1)",
-	)
-	if err != nil {
-		t.Fatalf("insert recording: %v", err)
-	}
-
-	_, err = db.ExecContext(
-		"INSERT INTO audio_files "+
-			"(id, file_path, length_milliseconds, file_type_id, "+
-			"recording_id, library_id) "+
-			"VALUES (1, '/test/view.mp3', 200000, 0, 1, ?)",
-		libID,
-	)
-	if err != nil {
-		t.Fatalf("insert audio_file: %v", err)
-	}
+	InsertTestTrack(t, db, TestTrack{
+		FilePath:  "/test/view.mp3",
+		Title:     "View Track",
+		Artist:    "View Artist",
+		LengthMs:  200000,
+		LibraryID: libID,
+	})
 
 	// Query track_metadata VIEW and verify library_id is present
 	// with the correct value.
@@ -842,29 +785,13 @@ func TestPlayHistoryTable(t *testing.T) {
 
 	// Round-trip: insert a play_history row and verify play_count update.
 	// First, set up test data. The test DB already has library id=0.
-	_, err = db.ExecContext(
-		"INSERT OR IGNORE INTO artist_credit (id, text) VALUES (1, 'Test Artist')",
-	)
-	if err != nil {
-		t.Fatalf("insert artist_credit: %v", err)
-	}
-
-	_, err = db.ExecContext(
-		`INSERT OR IGNORE INTO recordings (id, name, artist_credit_id, track_number, disc_number)
-		 VALUES (1, 'Test Track', 1, 1, 1)`,
-	)
-	if err != nil {
-		t.Fatalf("insert recording: %v", err)
-	}
-
-	_, err = db.ExecContext(
-		`INSERT INTO audio_files
-		 (id, file_path, length_milliseconds, file_type_id, recording_id, library_id)
-		 VALUES (1, '/test/track.mp3', 180000, 0, 1, 0)`,
-	)
-	if err != nil {
-		t.Fatalf("insert audio_file: %v", err)
-	}
+	InsertTestTrack(t, db, TestTrack{
+		FilePath:    "/test/play_history.mp3",
+		Title:       "Test Track",
+		Artist:      "Test Artist",
+		TrackNumber: 1,
+		DiscNumber:  1,
+	})
 
 	// Verify default play_count is 0.
 	var playCount int64

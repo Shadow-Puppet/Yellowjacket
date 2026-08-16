@@ -54,7 +54,7 @@ func (imp *dumpImporter) runPatchPasses(ctx context.Context) {
 func (imp *dumpImporter) patchArtistMetadata(ctx context.Context) {
 	rows, err := imp.si.db.QueryContext(`
 		SELECT mbid FROM explore_index
-		WHERE entity_type = 'artist'
+		WHERE entity_type = 1 /* artist */
 		  AND (artist_type = '' OR country = '' OR title = '' OR title = mbid)
 	`)
 	if err != nil {
@@ -152,7 +152,7 @@ func (imp *dumpImporter) patchSimilarArtists(ctx context.Context) {
 			for _, s := range similar {
 				_, _ = imp.si.db.ExecContext(
 					"UPDATE explore_index SET is_similar = 1 WHERE artist_mbid = ?",
-					s.ArtistMBID,
+					dbMBID(s.ArtistMBID),
 				)
 			}
 		}
@@ -219,7 +219,7 @@ func (imp *dumpImporter) topMBIDs(entityType string, limit int) []string {
 		WHERE entity_type = ? AND listener_count = 0
 		ORDER BY popularity DESC
 		LIMIT ?
-	`, entityType, limit)
+	`, dbEntityType(entityType), limit)
 	if err != nil {
 		return nil
 	}
@@ -229,9 +229,9 @@ func (imp *dumpImporter) topMBIDs(entityType string, limit int) []string {
 	var mbids []string
 
 	for rows.Next() {
-		var m string
+		var m dbMBID
 		if err := rows.Scan(&m); err == nil {
-			mbids = append(mbids, m)
+			mbids = append(mbids, string(m))
 		}
 	}
 
@@ -264,7 +264,7 @@ func (si *SearchIndex) updateListenerCounts(updates map[string]PopularityData) i
 			`UPDATE explore_index
 			 SET listener_count = ?
 			 WHERE mbid = ? AND listener_count < ?`,
-			data.ListenerCount, strings.ToLower(mbid), data.ListenerCount,
+			data.ListenerCount, dbMBID(strings.ToLower(mbid)), data.ListenerCount,
 		)
 		if err != nil {
 			continue

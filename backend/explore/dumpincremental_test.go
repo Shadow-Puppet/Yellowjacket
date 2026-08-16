@@ -36,7 +36,7 @@ func popularityOf(t *testing.T, db *database.DB, mbid string) (int, bool) {
 	t.Helper()
 
 	rows, err := db.QueryContext(
-		"SELECT popularity FROM explore_index WHERE mbid = ?", mbid,
+		"SELECT popularity FROM explore_index WHERE mbid = ?", dbMBID(mbid),
 	)
 	if err != nil {
 		t.Fatalf("query popularity: %v", err)

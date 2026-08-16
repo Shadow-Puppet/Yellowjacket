@@ -6,6 +6,7 @@ import {
 } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/dialog/dialog.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
+import '../notifications/inline-notice';
 
 import {
     FindPhantomMatches,
@@ -18,8 +19,15 @@ import type * as playlist from '@go/playlist/models.js';
 import { formatMilliseconds } from '@utils/time';
 import { nameDialogsIn } from '@utils/name-dialog';
 import { list } from '@utils/binding';
+import { notificationStore } from '@store/notification-store';
+import { describeError } from '@utils/describe-error';
+import { srOnly } from '../../styles/sr-only.css';
 
 const SEARCH_DEBOUNCE_MS = 400;
+
+/** Failures here render inside the dialog: it is modal, so an
+ *  app-level notification would sit behind it. */
+export const PhantomResolverRegion = 'phantom-resolver';
 
 /**
  * A modal dialog for resolving phantom (unmatched) tracks
@@ -129,6 +137,17 @@ export class PhantomResolver extends LitElement {
                 'Failed to find phantom matches:',
                 err,
             );
+            notificationStore.inline(
+                PhantomResolverRegion,
+                {
+                    text: describeError(
+                        err,
+                        'These tracks could not be matched against the library.',
+                    ),
+                    key: 'phantom-find',
+                    detail: String(err),
+                },
+            );
         } finally {
             this.loading = false;
         }
@@ -156,6 +175,17 @@ export class PhantomResolver extends LitElement {
                 err,
             );
             this.candidates = [];
+            notificationStore.inline(
+                PhantomResolverRegion,
+                {
+                    text: describeError(
+                        err,
+                        'No candidates could be looked up for that track.',
+                    ),
+                    key: 'phantom-candidates',
+                    detail: String(err),
+                },
+            );
         } finally {
             this.candidatesLoading = false;
         }
@@ -180,6 +210,17 @@ export class PhantomResolver extends LitElement {
                 err,
             );
             this.searchResults = [];
+            notificationStore.inline(
+                PhantomResolverRegion,
+                {
+                    text: describeError(
+                        err,
+                        'The library could not be searched.',
+                    ),
+                    key: 'phantom-search',
+                    detail: String(err),
+                },
+            );
         } finally {
             this.searching = false;
         }
@@ -194,10 +235,83 @@ export class PhantomResolver extends LitElement {
         void this.loadCandidatesForSelected();
     }
 
-    private handleCandidateDblClick(
+    /**
+     * The unmatched list is a single-select listbox and selection
+     * follows focus: choosing a track is what fills the panel beside
+     * it, so there is nothing to "activate" separately.
+     */
+    private handlePhantomKeydown(
+        e: KeyboardEvent,
+        path: string,
+    ): void {
+        const items = this.unmatched;
+        const current = items.indexOf(path);
+
+        let next = current;
+
+        switch (e.key) {
+            case 'ArrowDown':
+                next = Math.min(current + 1, items.length - 1);
+                break;
+            case 'ArrowUp':
+                next = Math.max(current - 1, 0);
+                break;
+            case 'Home':
+                next = 0;
+                break;
+            case 'End':
+                next = items.length - 1;
+                break;
+            case 'Enter':
+            case ' ':
+                e.preventDefault();
+                this.handlePhantomClick(path);
+
+                return;
+            default:
+                return;
+        }
+
+        e.preventDefault();
+
+        const target = items[next];
+        if (target === undefined || next === current) return;
+
+        this.handlePhantomClick(target);
+        void this.focusPhantomItem(next);
+    }
+
+    /** The row is re-rendered with a new tabindex, so focus is taken
+     *  after that update rather than on the element that had it. */
+    private async focusPhantomItem(index: number): Promise<void> {
+        await this.updateComplete;
+
+        const items =
+            this.shadowRoot?.querySelectorAll<HTMLElement>(
+                '.phantom-item',
+            );
+
+        items?.[index]?.focus();
+    }
+
+    private chooseCandidate(
         candidate: playlist.CandidateTrack,
     ): void {
         if (!this.selectedPhantom) return;
+
+        if (this.claimedPaths.has(candidate.FilePath)) {
+            notificationStore.inline(
+                PhantomResolverRegion,
+                {
+                    text:
+                        'That track is already standing in for another ' +
+                        'unmatched track.',
+                    key: 'phantom-claimed',
+                },
+            );
+
+            return;
+        }
 
         this.confirmedMatches.set(
             this.selectedPhantom,
@@ -308,6 +422,17 @@ export class PhantomResolver extends LitElement {
                 'Failed to remove phantom tracks:',
                 err,
             );
+            notificationStore.inline(
+                PhantomResolverRegion,
+                {
+                    text: describeError(
+                        err,
+                        'Those tracks could not be removed from the playlist.',
+                    ),
+                    key: 'phantom-remove',
+                    detail: String(err),
+                },
+            );
         }
     };
 
@@ -338,6 +463,20 @@ export class PhantomResolver extends LitElement {
             console.error(
                 'Failed to resolve phantom tracks:',
                 err,
+            );
+            // The dialog stays open on this path, so the message has to
+            // be in it: nothing else would tell the user why Apply did
+            // nothing.
+            notificationStore.inline(
+                PhantomResolverRegion,
+                {
+                    text: describeError(
+                        err,
+                        'Those matches could not be applied to the playlist.',
+                    ),
+                    key: 'phantom-apply',
+                    detail: String(err),
+                },
             );
 
             return;
@@ -376,6 +515,74 @@ export class PhantomResolver extends LitElement {
         ).length;
     }
 
+    /**
+     * Library files already standing in for some *other* phantom track.
+     * One file cannot resolve two of them — it would be added to the
+     * playlist twice — which is the rule `FindPhantomMatches` applies to
+     * its own auto-matches and the backend now enforces on apply.
+     */
+    private get claimedPaths(): Set<string> {
+        const claimed = new Set<string>();
+
+        for (const m of this.effectiveAutoMatched) {
+            claimed.add(m.Candidate.FilePath);
+        }
+
+        for (const [phantom, resolved] of this.confirmedMatches) {
+            if (phantom !== this.selectedPhantom) claimed.add(resolved);
+        }
+
+        return claimed;
+    }
+
+    /**
+     * Search results the candidate list is not already showing.
+     *
+     * The two lists are rendered one under the other in the same panel,
+     * and a search for the obvious title returns exactly what scoring
+     * already found — so without this the same track appears twice, once
+     * with its score and once without.
+     */
+    /** What the live region says: this dialog's work is all async and
+     *  none of it is announced by the lists changing under it. */
+    private get liveStatus(): string {
+        if (this.loading) return 'Searching for matches.';
+        if (this.candidatesLoading) return 'Loading candidates.';
+        if (this.searching) return 'Searching the library.';
+
+        const extra = this.extraSearchResults.length;
+
+        if (this.searchQuery.trim() && this.searchResults.length > 0) {
+            return extra === 0
+                ? 'Every match for that search is already listed.'
+                : `${extra} further ${
+                      extra === 1 ? 'result' : 'results'
+                  } from the library.`;
+        }
+
+        if (!this.selectedPhantom) return '';
+
+        return `${this.candidates.length} ${
+            this.candidates.length === 1 ? 'candidate' : 'candidates'
+        } for the selected track.`;
+    }
+
+    private get extraSearchResults(): playlist.CandidateTrack[] {
+        if (this.searchResults.length === 0) return [];
+
+        const shown = new Set(
+            this.candidates.map((c) => c.FilePath),
+        );
+
+        return this.searchResults.filter((c) => {
+            if (shown.has(c.FilePath)) return false;
+
+            shown.add(c.FilePath);
+
+            return true;
+        });
+    }
+
     // ─── Formatting helpers ─────────────────────────
 
     private formatDuration(ms: string): string {
@@ -395,9 +602,29 @@ export class PhantomResolver extends LitElement {
     // ─── Rendering ──────────────────────────────────
 
     static override styles = [
+        srOnly,
         css`
             wa-dialog {
                 --width: 860px;
+            }
+
+            /* The disclosure is a <button> now; it keeps the header's
+               own look rather than the UA's. */
+            button.auto-match-header {
+                width: 100%;
+                border: none;
+                font: inherit;
+                color: inherit;
+                text-align: left;
+            }
+
+            /* A file already standing in for another unmatched track:
+               shown, so the user can see where it went, but not
+               selectable. Dimming is a colour, so aria-disabled carries
+               the same fact to anyone not seeing it. */
+            .candidate-item.claimed {
+                opacity: 0.45;
+                cursor: not-allowed;
             }
 
             wa-dialog::part(dialog) {
@@ -950,6 +1177,15 @@ export class PhantomResolver extends LitElement {
 
     private renderContent() {
         return html`
+            <inline-notice
+                region=${PhantomResolverRegion}
+                testid="phantom-resolver-message"
+            ></inline-notice>
+            <!-- Rendered empty and always present: a live region added
+                 with its text already in it is not announced. -->
+            <div class="sr-only" role="status" aria-live="polite">
+                ${this.liveStatus}
+            </div>
             ${this.renderAutoMatchSection()}
             ${this.unmatched.length > 0 ||
             this.confirmedMatches.size > 0
@@ -964,9 +1200,17 @@ export class PhantomResolver extends LitElement {
 
         if (matches.length === 0) return nothing;
 
+        // A disclosure is a button and says what it controls, or the
+        // review list behind it cannot be reached from the keyboard —
+        // the same fix `config-section` carries.
         return html`
-            <div
+            <button
+                type="button"
                 class="auto-match-header"
+                aria-expanded=${this.autoMatchExpanded
+                    ? 'true'
+                    : 'false'}
+                aria-controls="auto-match-list"
                 @click=${() => {
                     this.autoMatchExpanded =
                         !this.autoMatchExpanded;
@@ -991,11 +1235,12 @@ export class PhantomResolver extends LitElement {
                 >
                     (click to review)
                 </span>
-            </div>
-            ${this.autoMatchExpanded
-                ? html`<div
-                      class="auto-match-list"
-                  >
+            </button>
+            <div
+                id="auto-match-list"
+                class="auto-match-list"
+                ?hidden=${!this.autoMatchExpanded}
+            >
                       ${matches.map(
                           (m) => html`
                               <div
@@ -1062,8 +1307,7 @@ export class PhantomResolver extends LitElement {
                               </div>
                           `,
                       )}
-                  </div>`
-                : nothing}
+            </div>
         `;
     }
 
@@ -1075,9 +1319,13 @@ export class PhantomResolver extends LitElement {
                         Unmatched
                         (${this.unresolvedCount})
                     </div>
-                    <div class="panel-body">
+                    <div
+                        class="panel-body"
+                        role="listbox"
+                        aria-label="Unmatched tracks"
+                    >
                         ${this.unmatched.map(
-                            (path) => {
+                            (path, index) => {
                                 const isSelected =
                                     this
                                         .selectedPhantom ===
@@ -1105,8 +1353,24 @@ export class PhantomResolver extends LitElement {
                                             : ''} ${isMatched
                                             ? 'matched'
                                             : ''}"
+                                        role="option"
+                                        tabindex=${isSelected ||
+                                        (!this.selectedPhantom &&
+                                            index === 0)
+                                            ? '0'
+                                            : '-1'}
+                                        aria-selected=${isSelected
+                                            ? 'true'
+                                            : 'false'}
                                         @click=${() =>
                                             this.handlePhantomClick(
+                                                path,
+                                            )}
+                                        @keydown=${(
+                                            e: KeyboardEvent,
+                                        ) =>
+                                            this.handlePhantomKeydown(
+                                                e,
                                                 path,
                                             )}
                                         title=${path}
@@ -1188,7 +1452,7 @@ export class PhantomResolver extends LitElement {
                             found. Try
                             searching below.
                         </div>`}
-                ${this.searchResults.length > 0
+                ${this.extraSearchResults.length > 0
                     ? html`
                           <div
                               class="dbl-click-hint"
@@ -1197,13 +1461,20 @@ export class PhantomResolver extends LitElement {
                               Library search
                               results
                           </div>
-                          ${this.searchResults.map(
+                          ${this.extraSearchResults.map(
                               (c) =>
                                   this.renderCandidateItem(
                                       c,
                                   ),
                           )}
                       `
+                    : nothing}
+                ${this.searchResults.length > 0 &&
+                this.extraSearchResults.length === 0
+                    ? html`<div class="empty-message">
+                          Every match for that search is already
+                          listed above.
+                      </div>`
                     : nothing}
                 ${this.searching
                     ? html`<div
@@ -1240,14 +1511,26 @@ export class PhantomResolver extends LitElement {
         const meta = [c.Artist, c.Album]
             .filter(Boolean)
             .join(' \u2014 ');
+        const claimed = this.claimedPaths.has(c.FilePath);
 
+        // A double-click is the pointer shortcut, not the only way in:
+        // the row is a button, so Enter and Space match it too.
         return html`
             <div
-                class="candidate-item"
-                @dblclick=${() =>
-                    this.handleCandidateDblClick(
-                        c,
-                    )}
+                class="candidate-item ${claimed ? 'claimed' : ''}"
+                role="button"
+                tabindex="0"
+                aria-disabled=${claimed ? 'true' : 'false'}
+                aria-label=${`Match with ${title}${
+                    meta ? `, ${meta}` : ''
+                }${claimed ? ' (already used)' : ''}`}
+                @dblclick=${() => this.chooseCandidate(c)}
+                @keydown=${(e: KeyboardEvent) => {
+                    if (e.key !== 'Enter' && e.key !== ' ') return;
+
+                    e.preventDefault();
+                    this.chooseCandidate(c);
+                }}
                 title=${c.FilePath}
             >
                 <div class="candidate-info">

@@ -101,7 +101,7 @@ const (
 // purpose: the home page needs one list of albums, not the library
 // package.
 type Library interface {
-	GetAllAlbums() ([]library.Album, error)
+	GetAlbums(libraryID int64) ([]library.Album, error)
 }
 
 // Service builds the home page's shelves.
@@ -132,7 +132,7 @@ func (s *Service) GetShelves() ([]Shelf, error) {
 		ctx = context.Background()
 	}
 
-	albums, err := s.lib.GetAllAlbums()
+	albums, err := s.lib.GetAlbums(0)
 	if err != nil {
 		return nil, err
 	}

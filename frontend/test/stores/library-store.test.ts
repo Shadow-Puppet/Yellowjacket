@@ -33,16 +33,16 @@ const LIBRARIES = [{ id: 7, name: 'Music' }, { id: 8, name: 'Field' }];
 /** Stub every read binding the store can reach. Unstubbed bindings
  *  resolve undefined, which the store would cache as if it were data. */
 function stubReads(): void {
-  stub('library.Library.GetAllTracks', TRACKS);
-  stub('library.Library.GetAllAlbums', ALBUMS);
-  stub('library.Library.GetAllArtists', ARTISTS);
-  stub('library.Library.GetAllGenresWithCounts', GENRES);
-  stub('library.Library.GetAllTracksByLibrary', TRACKS);
-  stub('library.Library.GetAllAlbumsByLibrary', ALBUMS);
-  stub('library.Library.GetAllArtistsByLibrary', ARTISTS);
-  stub('library.Library.GetAllGenresWithCountsByLibrary', GENRES);
+  stub('library.Library.GetTracks', TRACKS);
+  stub('library.Library.GetAlbums', ALBUMS);
+  stub('library.Library.GetArtists', ARTISTS);
+  stub('library.Library.GetGenres', GENRES);
+  stub('library.Library.GetTracks', TRACKS);
+  stub('library.Library.GetAlbums', ALBUMS);
+  stub('library.Library.GetArtists', ARTISTS);
+  stub('library.Library.GetGenres', GENRES);
   stub('library.Library.GetAlbumsByArtist', ALBUMS);
-  stub('library.Library.GetAlbumsByArtistByLibrary', ALBUMS);
+  stub('library.Library.GetAlbumsByArtist', ALBUMS);
   stub('library.Library.GetAllLibrariesWithTrackCounts', LIBRARIES);
 }
 
@@ -69,7 +69,7 @@ describe('library store: caching', () => {
   it('serves a second read from cache without touching the backend', async () => {
     await libraryStore.getTracks();
 
-    expect(calls('library.Library.GetAllTracks')).toHaveLength(0);
+    expect(calls('library.Library.GetTracks')).toHaveLength(0);
   });
 
   it('deduplicates concurrent first reads into one backend call', async () => {
@@ -79,7 +79,7 @@ describe('library store: caching', () => {
       libraryStore.getArtists(),
     ]);
 
-    expect([a, b, calls('library.Library.GetAllArtists').length]).toEqual([
+    expect([a, b, calls('library.Library.GetArtists').length]).toEqual([
       ARTISTS,
       ARTISTS,
       1,
@@ -100,10 +100,10 @@ describe('library store: caching', () => {
     await flush();
 
     expect(calls().map((c) => c.path).sort()).toEqual([
-      'library.Library.GetAllAlbums',
-      'library.Library.GetAllArtists',
-      'library.Library.GetAllGenresWithCounts',
-      'library.Library.GetAllTracks',
+      'library.Library.GetAlbums',
+      'library.Library.GetArtists',
+      'library.Library.GetGenres',
+      'library.Library.GetTracks',
     ]);
   });
 
@@ -111,7 +111,7 @@ describe('library store: caching', () => {
     emit(Events.TrackMetadataChanged, { filePath: '/a.mp3' });
     await flush();
 
-    expect(calls('library.Library.GetAllTracks')).toHaveLength(1);
+    expect(calls('library.Library.GetTracks')).toHaveLength(1);
   });
 
   /*
@@ -192,7 +192,7 @@ describe('library store: caching', () => {
     });
 
     it('does not refetch the tracks', () => {
-      expect(calls('library.Library.GetAllTracks')).toHaveLength(0);
+      expect(calls('library.Library.GetTracks')).toHaveLength(0);
     });
 
     it('splices the removed track out in place', () => {
@@ -204,9 +204,9 @@ describe('library store: caching', () => {
     it('reloads the summaries, whose counts changed', () => {
       expect(
         [
-          'library.Library.GetAllAlbums',
-          'library.Library.GetAllArtists',
-          'library.Library.GetAllGenresWithCounts',
+          'library.Library.GetAlbums',
+          'library.Library.GetArtists',
+          'library.Library.GetGenres',
         ].map((path) => calls(path).length),
       ).toEqual([1, 1, 1]);
     });
@@ -258,7 +258,7 @@ describe('library store: library filter', () => {
     libraryStore.setSelectedLibrary(7);
     await flush();
 
-    expect(lastArgs('library.Library.GetAllTracksByLibrary')).toEqual([7]);
+    expect(lastArgs('library.Library.GetTracks')).toEqual([7]);
   });
 
   it('ignores a redundant selection instead of invalidating', async () => {
@@ -284,10 +284,10 @@ describe('library store: library filter', () => {
 
   it('scopes an artist drill-down to the selected library', async () => {
     libraryStore.setSelectedLibrary(8);
-    await libraryStore.getAlbumsByArtist(3);
+    await libraryStore.getAlbumsByArtist('Artist');
 
-    expect(lastArgs('library.Library.GetAlbumsByArtistByLibrary')).toEqual([
-      3, 8,
+    expect(lastArgs('library.Library.GetAlbumsByArtist')).toEqual([
+      'Artist', 8,
     ]);
   });
 });
@@ -309,7 +309,7 @@ describe('library store: a fetch that is overtaken', () => {
     // Only the track fetch is held open; the other three settle at once,
     // so the test is about the overtaking and nothing else.
     stub(
-      'library.Library.GetAllTracksByLibrary',
+      'library.Library.GetTracks',
       (id: number) =>
         new Promise((resolve) => {
           pending.push({ id, resolve });
@@ -331,7 +331,7 @@ describe('library store: a fetch that is overtaken', () => {
   });
 
   it('settles the waiters when the fetch they are waiting on fails', async () => {
-    stubFailure('library.Library.GetAllTracks', 'sql: database is locked');
+    stubFailure('library.Library.GetTracks', 'sql: database is locked');
     // Invalidation drops the cache and starts the fetch that fails.
     emit(Events.LibraryScanComplete);
 
@@ -447,7 +447,7 @@ describe('library store: albums by artist name', () => {
   });
 
   it('filters the album cache by artist name', () => {
-    stub('library.Library.GetAllAlbums', [...ALBUMS, ...OTHER_ALBUMS]);
+    stub('library.Library.GetAlbums', [...ALBUMS, ...OTHER_ALBUMS]);
 
     expect(libraryStore.getAlbumsByArtistNameCached('Artist')).toEqual(ALBUMS);
   });

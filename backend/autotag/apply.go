@@ -328,43 +328,42 @@ func (a *Applier) Apply(
 func (a *Applier) syncDBMBIDs(
 	ctx context.Context, tr TrackApply, cand Candidate,
 ) error {
-	// Look up recording row via audio_file.
-	af, err := a.q.GetAudioFile(ctx, tr.Local.AudioFileID)
-	if err != nil {
-		return fmt.Errorf("get audio_file: %w", err)
-	}
-
 	if tr.CandidateTrack.MBID != "" {
-		if err := a.q.SetRecordingMBID(ctx, sqlcgen.SetRecordingMBIDParams{
-			Mbid: sql.NullString{String: tr.CandidateTrack.MBID, Valid: true},
-			ID:   af.RecordingID,
+		if err := a.q.SetFileRecordingMBID(ctx, sqlcgen.SetFileRecordingMBIDParams{
+			RecordingMbid: sql.NullString{String: tr.CandidateTrack.MBID, Valid: true},
+			ID:            tr.Local.AudioFileID,
 		}); err != nil {
 			return fmt.Errorf("set recording mbid: %w", err)
 		}
 	}
 
-	if cand.ReleaseGroupMBID != "" {
-		rgID, err := a.q.GetRecordingReleaseGroupID(ctx, af.RecordingID)
-		if err == nil && rgID > 0 {
-			if err := a.q.SetReleaseGroupMBID(ctx, sqlcgen.SetReleaseGroupMBIDParams{
-				Mbid: sql.NullString{String: cand.ReleaseGroupMBID, Valid: true},
-				ID:   rgID,
-			}); err != nil {
-				return fmt.Errorf("set release group mbid: %w", err)
-			}
+	if cand.ReleaseGroupMBID == "" {
+		return nil
+	}
 
-			// Stamp the release-group's original-release year too —
-			// this is what the tracklist / smart-playlist year rule
-			// surfaces by default once the user accepts a candidate.
-			if year := parseYear(cand.OriginalDate); year > 0 {
-				if err := a.q.SetReleaseGroupOriginalYear(
-					ctx, sqlcgen.SetReleaseGroupOriginalYearParams{
-						OriginalYear: sql.NullInt64{Int64: int64(year), Valid: true},
-						ID:           rgID,
-					},
-				); err != nil {
-					return fmt.Errorf("set release group original year: %w", err)
-				}
+	// The album is reached through the file rather than through two
+	// join tables; SetFileAlbumMBID takes the file id and does the
+	// lookup in one statement.
+	if err := a.q.SetFileAlbumMBID(ctx, sqlcgen.SetFileAlbumMBIDParams{
+		Mbid: sql.NullString{String: cand.ReleaseGroupMBID, Valid: true},
+		ID:   tr.Local.AudioFileID,
+	}); err != nil {
+		return fmt.Errorf("set album mbid: %w", err)
+	}
+
+	// Stamp the album's original-release year too - this is what the
+	// tracklist and the smart-playlist year rule surface by default
+	// once the user accepts a candidate.
+	if year := parseYear(cand.OriginalDate); year > 0 {
+		af, err := a.q.GetAudioFile(ctx, tr.Local.AudioFileID)
+		if err == nil && af.AlbumID.Valid {
+			if err := a.q.SetAlbumOriginalYear(
+				ctx, sqlcgen.SetAlbumOriginalYearParams{
+					OriginalYear: sql.NullInt64{Int64: int64(year), Valid: true},
+					ID:           af.AlbumID.Int64,
+				},
+			); err != nil {
+				return fmt.Errorf("set album original year: %w", err)
 			}
 		}
 	}

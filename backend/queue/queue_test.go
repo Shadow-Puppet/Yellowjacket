@@ -44,39 +44,22 @@ func setupTestQueue(t *testing.T) (*Queue, *database.DB) {
 func seedAudioFiles(t *testing.T, db *database.DB, count int) []string {
 	t.Helper()
 
-	// Shared artist credit.
-	_, err := db.ExecContext(
-		"INSERT OR IGNORE INTO artist_credit (id, text) VALUES (1, 'Test Artist')",
-	)
-	if err != nil {
-		t.Fatalf("insert artist_credit: %v", err)
-	}
-
 	paths := make([]string, count)
 
 	for i := range count {
-		recID := i + 1
-		afID := i + 1
-		fp := fmt.Sprintf("/test/track%d.mp3", i+1)
-		paths[i] = fp
+		paths[i] = fmt.Sprintf("/test/track%d.mp3", i+1)
 
-		_, err := db.ExecContext(
-			"INSERT OR IGNORE INTO recordings (id, name, artist_credit_id) VALUES (?, ?, 1)",
-			recID, fmt.Sprintf("Track %d", i+1),
-		)
-		if err != nil {
-			t.Fatalf("insert recording %d: %v", recID, err)
+		// Some tests seed overlapping ranges to build a fallback set.
+		if _, err := db.Queries.GetAudioFileByPath(db.Ctx, paths[i]); err == nil {
+			continue
 		}
 
-		_, err = db.ExecContext(
-			"INSERT OR IGNORE INTO audio_files (id, file_path, "+
-				"length_milliseconds, file_type_id, recording_id) "+
-				"VALUES (?, ?, 180000, 0, ?)",
-			afID, fp, recID,
-		)
-		if err != nil {
-			t.Fatalf("insert audio_file %d: %v", afID, err)
-		}
+		database.InsertTestTrack(t, db, database.TestTrack{
+			FilePath: paths[i],
+			Title:    fmt.Sprintf("Track %d", i+1),
+			Artist:   "Test Artist",
+			LengthMs: 180000,
+		})
 	}
 
 	return paths

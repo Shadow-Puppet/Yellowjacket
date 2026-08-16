@@ -35,10 +35,10 @@ const importTimeDefaults: Array<[string, unknown]> = [
   // libraryStore and playlistStore fetch eagerly at import. Left
   // unstubbed they would cache `undefined` — not the empty list Go
   // sends — and every consumer would then crash on `.length`.
-  ['library.Library.GetAllTracks', []],
-  ['library.Library.GetAllAlbums', []],
-  ['library.Library.GetAllArtists', []],
-  ['library.Library.GetAllGenresWithCounts', []],
+  ['library.Library.GetTracks', []],
+  ['library.Library.GetAlbums', []],
+  ['library.Library.GetArtists', []],
+  ['library.Library.GetGenres', []],
   ['library.Library.GetAllLibrariesWithTrackCounts', []],
   ['playlist.Service.GetAllPlaylistsWithTracks', []],
 ];

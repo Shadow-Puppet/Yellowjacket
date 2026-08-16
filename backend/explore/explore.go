@@ -130,12 +130,16 @@ func NewExploreService(logger *slog.Logger, db *database.DB) *Service {
 
 // MusicBrainz returns the shared cached MB client so other services
 // (e.g. autotag) can reuse it without spinning up a second limiter.
+//
+//wails:ignore // internal wiring, not part of the app's IPC surface.
 func (e *Service) MusicBrainz() *MusicBrainzClient {
 	return e.mb
 }
 
 // CAALimiter returns the shared Cover Art Archive rate limiter.
 // Consumers must respect it for any fresh CAA HTTP GETs.
+//
+//wails:ignore // internal wiring, not part of the app's IPC surface.
 func (e *Service) CAALimiter() *RateLimiter {
 	return e.caaLimiter
 }
@@ -185,6 +189,8 @@ func (e *Service) CoreCatalogImported() bool {
 
 // SetJobRegistry wires the background job registry into the search
 // index so its build reports progress and controls to the frontend.
+//
+//wails:ignore // internal wiring, not part of the app's IPC surface.
 func (e *Service) SetJobRegistry(reg *jobs.Registry) {
 	e.index.SetJobRegistry(reg)
 }
@@ -561,6 +567,7 @@ func (e *Service) LookupReleaseGroup(mbid string) (*MBReleaseGroup, error) {
 			FirstReleaseDate: indexed.ReleaseDate,
 			InLibrary:        indexed.InLibrary || indexed.LocalReleaseGroupID > 0,
 			LocalID:          indexed.LocalReleaseGroupID,
+			TotalTracks:      indexed.TotalTracks,
 		}
 
 		// Background: fetch full MB data once per RG to fill in fields

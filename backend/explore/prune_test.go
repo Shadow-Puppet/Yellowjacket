@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"yellowjacket/backend/database"
-	"yellowjacket/backend/database/sql/sqlcgen"
 )
 
 // TestPruneStaleLocalCrossReferences verifies that an explore_index row
@@ -21,10 +20,17 @@ func TestPruneStaleLocalCrossReferences(t *testing.T) {
 	db := database.NewTestDB(t)
 	si := NewSearchIndex(db, nil, nil, slog.Default())
 
-	// A library artist that still exists.
-	artist, err := db.Queries.UpsertArtist(t.Context(), "Still Owned")
+	// A library artist that still exists - which now means one with a
+	// file behind it.  An artist row on its own is not ownership; that
+	// was the whole bug.
+	database.InsertTestTrack(t, db, database.TestTrack{
+		FilePath: "/music/still-owned.mp3",
+		Artist:   "Still Owned",
+	})
+
+	artist, err := db.Queries.GetArtistByName(t.Context(), "Still Owned")
 	if err != nil {
-		t.Fatalf("upsert artist: %v", err)
+		t.Fatalf("read seeded artist: %v", err)
 	}
 
 	// Two explore_index artist rows: one pointing at the still-existing
@@ -33,19 +39,15 @@ func TestPruneStaleLocalCrossReferences(t *testing.T) {
 	seedArtist := func(mbid, title string, localID int64) {
 		t.Helper()
 
-		if _, err := db.ExecContext(
-			upsertIndexSQL,
-			"artist", mbid, title, title, mbid, "",
-			0, 0,
-			0, "", "",
-			"", "", "",
-			"", "", "", "",
-			1, 0,
-			localID, 0, 0,
-			0,
-		); err != nil {
-			t.Fatalf("seed explore_index row for %q: %v", mbid, err)
-		}
+		seedIndexResult(t, db, SearchIndexResult{
+			EntityType:    EntityArtist,
+			MBID:          testMBID(mbid),
+			Title:         title,
+			ArtistName:    title,
+			ArtistMBID:    testMBID(mbid),
+			InLibrary:     true,
+			LocalArtistID: localID,
+		})
 	}
 
 	seedArtist("still-owned-mbid", "Still Owned", artist.ID)
@@ -53,7 +55,7 @@ func TestPruneStaleLocalCrossReferences(t *testing.T) {
 
 	si.pruneStaleLocalCrossReferences()
 
-	stillOwned := si.LookupArtistByMBID("still-owned-mbid")
+	stillOwned := si.LookupArtistByMBID(testMBID("still-owned-mbid"))
 	if stillOwned == nil {
 		t.Fatal("expected still-owned artist row to survive pruning")
 	}
@@ -67,7 +69,7 @@ func TestPruneStaleLocalCrossReferences(t *testing.T) {
 		)
 	}
 
-	removed := si.LookupArtistByMBID("removed-mbid")
+	removed := si.LookupArtistByMBID(testMBID("removed-mbid"))
 	if removed == nil {
 		t.Fatal("expected removed-artist row to still exist (only cross-references cleared)")
 	}
@@ -90,51 +92,18 @@ func TestUnenrichedLibraryArtistMBIDs_OrdersByOwnedTrackCount(t *testing.T) {
 
 	db := database.NewTestDB(t)
 	si := NewSearchIndex(db, nil, nil, slog.Default())
-	q := db.Queries
-	ctx := t.Context()
 
 	seedArtistWithTracks := func(name, mbid string, trackCount int) {
 		t.Helper()
 
-		artist, err := q.UpsertArtist(ctx, name)
-		if err != nil {
-			t.Fatalf("upsert artist %q: %v", name, err)
-		}
-
-		_, err = db.ExecContext("UPDATE artists SET mbid = ? WHERE id = ?", mbid, artist.ID)
-		if err != nil {
-			t.Fatalf("set mbid for %q: %v", name, err)
-		}
-
-		ac, err := q.UpsertArtistCredit(ctx, name)
-		if err != nil {
-			t.Fatalf("upsert artist credit %q: %v", name, err)
-		}
-
-		if _, err := q.CreateArtistCreditArtist(ctx, sqlcgen.CreateArtistCreditArtistParams{
-			ArtistID: artist.ID,
-			CreditID: ac.ID,
-		}); err != nil {
-			t.Fatalf("link artist credit artist %q: %v", name, err)
-		}
-
 		for i := range trackCount {
-			rec, err := q.CreateRecordingFull(ctx, sqlcgen.CreateRecordingFullParams{
-				Name:           name,
-				ArtistCreditID: ac.ID,
+			database.InsertTestTrack(t, db, database.TestTrack{
+				FilePath:   name + "/" + string(rune('a'+i)) + ".mp3",
+				Title:      name,
+				Artist:     name,
+				ArtistMBID: mbid,
+				LengthMs:   180000,
 			})
-			if err != nil {
-				t.Fatalf("create recording for %q: %v", name, err)
-			}
-
-			if _, err := q.CreateAudioFile(ctx, sqlcgen.CreateAudioFileParams{
-				FilePath:           name + "/" + string(rune('a'+i)) + ".mp3",
-				LengthMilliseconds: 180000,
-				RecordingID:        rec.ID,
-				Basename:           string(rune('a'+i)) + ".mp3",
-			}); err != nil {
-				t.Fatalf("create audio file for %q: %v", name, err)
-			}
 		}
 	}
 

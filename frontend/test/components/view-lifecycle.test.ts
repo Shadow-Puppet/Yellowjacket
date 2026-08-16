@@ -233,10 +233,10 @@ const CACHED_VIEWS = [
  *  binding resolves undefined, which is not what Go sends. */
 function stubEmptyBackend(): void {
   for (const path of [
-    'library.Library.GetAllTracks',
-    'library.Library.GetAllAlbums',
-    'library.Library.GetAllArtists',
-    'library.Library.GetAllGenresWithCounts',
+    'library.Library.GetTracks',
+    'library.Library.GetAlbums',
+    'library.Library.GetArtists',
+    'library.Library.GetGenres',
     'library.Library.GetAllLibrariesWithTrackCounts',
     'playlist.Service.GetAllPlaylists',
     'playlist.Service.GetAllPlaylistsWithTracks',

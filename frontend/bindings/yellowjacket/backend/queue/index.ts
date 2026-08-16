@@ -11,9 +11,7 @@ export {
 } from "./models.js";
 
 export type {
-    FallbackSource,
     Source,
     State,
-    Track,
-    TrackLoader
+    Track
 } from "./models.js";

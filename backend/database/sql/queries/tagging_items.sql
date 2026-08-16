@@ -87,10 +87,7 @@ LIMIT 1;
 SELECT ti.group_key
 FROM tagging_items ti
 JOIN audio_files af ON af.group_key = ti.group_key
-LEFT JOIN recordings r ON af.recording_id = r.id
-LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
-LEFT JOIN release_group_recordings rgr ON rgr.recording_id = r.id
-LEFT JOIN release_groups rg ON rg.id = rgr.release_group_id
+LEFT JOIN albums rg ON rg.id = af.album_id
 WHERE ti.synthetic = 0
   AND ti.track_count >= 4
   AND (
@@ -98,13 +95,23 @@ WHERE ti.synthetic = 0
     OR LOWER(TRIM(ti.album_artist)) IN ('various artists', 'various', 'va', 'v.a.', 'v a', 'unknown')
   )
 GROUP BY ti.group_key
-HAVING COUNT(DISTINCT CASE WHEN ac.text != '' THEN LOWER(TRIM(ac.text)) END) > 1
+HAVING COUNT(DISTINCT CASE WHEN af.artist_credit != '' THEN LOWER(TRIM(af.artist_credit)) END) > 1
    AND COUNT(DISTINCT CASE WHEN rg.name != '' THEN LOWER(TRIM(rg.name)) END) > 1;
 
 -- name: CountPendingTaggingItems :one
-SELECT COUNT(*) FROM tagging_items
-WHERE status = 'pending'
-  AND (CAST(@library_id AS INTEGER) = 0 OR library_id = @library_id);
+-- "Needs tagging" is a question about the files, not about the row:
+-- every scanned folder gets a tagging_items row (see
+-- UpsertTaggingItemOnTrackAdd), including one whose files all arrived
+-- carrying a recording MBID.  Without the EXISTS a fully MB-tagged
+-- library reports its entire album count as pending work.  See the
+-- same predicate on the three list queries below.
+SELECT COUNT(*) FROM tagging_items ti
+WHERE ti.status = 'pending'
+  AND (CAST(@library_id AS INTEGER) = 0 OR ti.library_id = @library_id)
+  AND EXISTS (
+    SELECT 1 FROM audio_files af
+    WHERE af.group_key = ti.group_key AND af.tag_status = 'untagged'
+  );
 
 -- name: ListPendingTaggingItemsAlphabetical :many
 SELECT
@@ -125,6 +132,18 @@ LEFT JOIN libraries lb ON lb.id = ti.library_id
 WHERE (CAST(@library_id AS INTEGER) = 0 OR ti.library_id = @library_id)
   AND (CAST(@status_filter AS TEXT) = 'all' OR ti.status = @status_filter)
   AND ti.cleared_at IS NULL
+  -- Actionable rows must have something to act on: see
+  -- CountPendingTaggingItems.  Reviewed rows (confirmed/skipped) are
+  -- exempt because they are history, not work -- an applied folder is
+  -- fully tagged by definition and would otherwise vanish from the
+  -- sidebar's Completed section the instant it succeeded.
+  AND (
+    ti.status IN ('confirmed', 'skipped')
+    OR EXISTS (
+      SELECT 1 FROM audio_files af
+      WHERE af.group_key = ti.group_key AND af.tag_status = 'untagged'
+    )
+  )
 ORDER BY LOWER(ti.album_artist), LOWER(ti.album_name), ti.disc_number
 LIMIT @row_limit OFFSET @row_offset;
 
@@ -150,6 +169,14 @@ LEFT JOIN libraries lb ON lb.id = ti.library_id
 WHERE (CAST(@library_id AS INTEGER) = 0 OR ti.library_id = @library_id)
   AND (CAST(@status_filter AS TEXT) = 'all' OR ti.status = @status_filter)
   AND ti.cleared_at IS NULL
+  -- See ListPendingTaggingItemsAlphabetical.
+  AND (
+    ti.status IN ('confirmed', 'skipped')
+    OR EXISTS (
+      SELECT 1 FROM audio_files af
+      WHERE af.group_key = ti.group_key AND af.tag_status = 'untagged'
+    )
+  )
 ORDER BY ti.score IS NULL, ti.score DESC, LOWER(ti.album_artist), LOWER(ti.album_name)
 LIMIT @row_limit OFFSET @row_offset;
 
@@ -204,61 +231,53 @@ ORDER BY ti.created_at DESC, ti.group_key
 LIMIT @row_limit OFFSET @row_offset;
 
 -- name: ListAudioFilesInTaggingGroup :many
--- album_name/album_artist are the PER-TRACK tags (via each track's
--- own release_group link), not the folder-level tagging_items
--- values.  SplitMixedFolder clusters on these to find sub-albums
--- hiding inside a folder full of unrelated tracks.
+-- album_name/album_artist are the PER-TRACK tags (each file's own
+-- album link), not the folder-level tagging_items values.
+-- SplitMixedFolder clusters on these to find sub-albums hiding inside
+-- a folder full of unrelated tracks.
 SELECT
   af.id,
   af.file_path,
   af.basename,
   af.length_milliseconds,
   af.tag_status,
-  COALESCE(r.track_number, 0) AS track_number,
-  COALESCE(r.disc_number, 0) AS disc_number,
-  COALESCE(r.name, '') AS title,
-  COALESCE(ac.text, '') AS artist_name,
-  COALESCE(r.mbid, '') AS recording_mbid,
-  COALESCE(rg.name, '') AS album_name,
-  COALESCE(rgac.text, '') AS album_artist
+  COALESCE(af.track_number, 0) AS track_number,
+  COALESCE(af.disc_number, 0) AS disc_number,
+  af.title,
+  af.artist_credit AS artist_name,
+  COALESCE(af.recording_mbid, '') AS recording_mbid,
+  COALESCE(al.name, '') AS album_name,
+  COALESCE(al.artist_credit, '') AS album_artist
 FROM audio_files af
-LEFT JOIN recordings r ON af.recording_id = r.id
-LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
-LEFT JOIN release_group_recordings rgr ON rgr.recording_id = r.id
-LEFT JOIN release_groups rg ON rg.id = rgr.release_group_id
-LEFT JOIN artist_credit rgac ON rg.album_artist_credit_id = rgac.id
+LEFT JOIN albums al ON al.id = af.album_id
 WHERE af.group_key = ?
-ORDER BY COALESCE(r.disc_number, 0),
-         COALESCE(r.track_number, 0),
+ORDER BY COALESCE(af.disc_number, 0),
+         COALESCE(af.track_number, 0),
          af.file_path;
 
--- name: ListLocalReleaseGroupCandidates :many
--- Returns one row per (release_group, track) combination for any
--- local release_group that has an MBID.  Callers group these in Go
--- and filter by normalized album-name match.  Joined case-insensitive
--- on name to pre-filter cheaply; Go does the real normalization.
+-- name: ListLocalAlbumCandidates :many
+-- One row per (album, track) for any local album carrying an MBID.
+-- Callers group these in Go and filter by normalized album-name match;
+-- the join is case-insensitive on name to pre-filter cheaply.
 SELECT
-  rg.id AS release_group_id,
-  rg.mbid AS release_group_mbid,
-  rg.name AS album_name,
-  COALESCE(rg.year, 0) AS year,
-  COALESCE(ac.text, '') AS artist_credit,
-  COALESCE(rgr.track_number, 0) AS track_number,
-  COALESCE(rgr.disc_number, 0) AS disc_number,
-  COALESCE(r.name, '') AS track_title,
-  COALESCE(r.mbid, '') AS recording_mbid,
-  COALESCE(local_af.length_milliseconds, 0) AS length_milliseconds
-FROM release_groups rg
-JOIN release_group_recordings rgr ON rgr.release_group_id = rg.id
-JOIN recordings r ON r.id = rgr.recording_id
-LEFT JOIN artist_credit ac ON rg.album_artist_credit_id = ac.id
-LEFT JOIN audio_files local_af ON local_af.recording_id = r.id
-WHERE rg.mbid IS NOT NULL
-  AND rg.mbid != ''
-  AND r.mbid IS NOT NULL
-  AND r.mbid != ''
-  AND rg.name = ? COLLATE NOCASE
-ORDER BY rg.id, rgr.disc_number, rgr.track_number;
+  al.id AS album_id,
+  al.mbid AS album_mbid,
+  al.name AS album_name,
+  COALESCE(al.year, 0) AS year,
+  al.artist_credit,
+  COALESCE(af.track_number, 0) AS track_number,
+  COALESCE(af.disc_number, 0) AS disc_number,
+  af.title AS track_title,
+  COALESCE(af.recording_mbid, '') AS recording_mbid,
+  af.length_milliseconds
+FROM albums al
+JOIN audio_files af ON af.album_id = al.id
+WHERE al.mbid IS NOT NULL
+  AND al.mbid != ''
+  AND af.recording_mbid IS NOT NULL
+  AND af.recording_mbid != ''
+  AND al.name = ? COLLATE NOCASE
+ORDER BY al.id, af.disc_number, af.track_number;
 
 -- name: SetTaggingItemBestMatch :exec
 UPDATE tagging_items
@@ -284,17 +303,16 @@ WHERE group_key = ?;
 -- name: SetAudioFileTagStatus :exec
 UPDATE audio_files SET tag_status = ? WHERE id = ?;
 
--- name: SetRecordingMBID :exec
-UPDATE recordings SET mbid = ? WHERE id = ?;
+-- name: SetFileRecordingMBID :exec
+UPDATE audio_files SET recording_mbid = ? WHERE id = ?;
 
--- name: SetReleaseGroupMBID :exec
-UPDATE release_groups SET mbid = ? WHERE id = ?;
-
--- name: GetRecordingReleaseGroupID :one
-SELECT COALESCE(rgr.release_group_id, 0) AS release_group_id
-FROM release_group_recordings rgr
-WHERE rgr.recording_id = ?
-LIMIT 1;
+-- name: SetFileAlbumMBID :exec
+-- The album MBID for the album a file belongs to.  Keyed by file
+-- because that is what the autotag apply path holds; under the old
+-- schema it had to look the release group up through two join tables
+-- first (GetRecordingReleaseGroupID), which is gone.
+UPDATE albums SET mbid = ?
+WHERE albums.id = (SELECT af.album_id FROM audio_files af WHERE af.id = ?);
 
 -- name: GetNextPendingTaggingItem :one
 SELECT
@@ -315,5 +333,12 @@ LEFT JOIN libraries lb ON lb.id = ti.library_id
 WHERE ti.status = 'pending'
   AND (CAST(@library_id AS INTEGER) = 0 OR ti.library_id = @library_id)
   AND ti.group_key > @after_group_key
+  -- See CountPendingTaggingItems: the cursor must not stop on a
+  -- folder the list query no longer shows, or "next" walks folders
+  -- that are not in the sidebar.
+  AND EXISTS (
+    SELECT 1 FROM audio_files af
+    WHERE af.group_key = ti.group_key AND af.tag_status = 'untagged'
+  )
 ORDER BY ti.group_key
 LIMIT 1;

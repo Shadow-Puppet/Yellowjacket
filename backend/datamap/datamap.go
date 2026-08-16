@@ -105,13 +105,10 @@ var internalTables = map[string]bool{
 // tables is the catalog.  Keep it alphabetical.
 var tables = []Table{
 	{
-		Name: "artist_credit", Kind: Owned, Lifetime: Swept,
-		Note: "Credit strings parsed from file tags. Orphan-swept when " +
-			"no recording references them.",
-	},
-	{
-		Name: "artist_credit_artist", Kind: Owned, Lifetime: Swept,
-		Note: "Join table between credits and artists.",
+		Name: "albums", Kind: Owned, Lifetime: Swept,
+		Note: "Albums as named by file tags — the local counterpart of a " +
+			"catalog release group, which is a different thing and lives " +
+			"in explore_index. Swept when the last file on one goes.",
 	},
 	{
 		Name: "artist_enrichment", Kind: Derived, Lifetime: Retained,
@@ -138,11 +135,12 @@ var tables = []Table{
 	},
 	{
 		Name: "audio_files", Kind: Owned, Lifetime: Swept,
-		Note: "MIXED KIND. Mostly an owned projection of files on disk, " +
-			"but play_count, last_played and tag_status are authored and " +
-			"exist nowhere else. Deleting a row to rebuild it destroys " +
-			"that authored state — which is why a file rename currently " +
-			"loses play counts. See the data architecture plan.",
+		Note: "MIXED KIND. One row per file, carrying its tags: mostly an " +
+			"owned projection of what is on disk, but play_count, " +
+			"last_played and tag_status are authored and exist nowhere " +
+			"else. Deleting a row to rebuild it destroys that authored " +
+			"state — which is why a file rename currently loses play " +
+			"counts. See the data architecture plan.",
 	},
 	{
 		Name: "cover_art", Kind: Owned, Lifetime: Swept,
@@ -210,6 +208,15 @@ var tables = []Table{
 			"mistake.",
 	},
 	{
+		Name: "file_genres", Kind: Owned, Lifetime: Swept,
+		Note: "Genres per file. The one many-to-many in the local library " +
+			"that really is one. It cascades with the *file*, but the " +
+			"genre_id key is NO ACTION, so a genre cannot be deleted " +
+			"while a link survives — the genre sweep runs after the file " +
+			"sweep for that reason, and only deletes genres nothing " +
+			"references.",
+	},
+	{
 		Name: "file_types", Kind: Derived, Lifetime: Retained,
 		Note: "Static lookup rows seeded from code, not user data.",
 	},
@@ -231,6 +238,15 @@ var tables = []Table{
 		Name: "libraries", Kind: Authored, Lifetime: Retained,
 		Note: "The directories the user chose. Removed only by explicit " +
 			"user action via RemoveLibrary.",
+	},
+	{
+		Name: "lyrics", Kind: Cache, Lifetime: Cascade,
+		Note: "MIXED KIND, and it says which: source='tag' is Owned (any " +
+			"rescan reads it back off the file) and source='lrclib' is " +
+			"Cache (re-fetching it is network traffic and someone else's " +
+			"rate limit). These used to be one untyped column on " +
+			"recordings, in a table classified Owned, so 24,294 rows in a " +
+			"real library could not say which of the two they were.",
 	},
 	{
 		Name: "lyrics_index", Kind: Derived, Lifetime: Retained, FTS: true,
@@ -267,31 +283,10 @@ var tables = []Table{
 			"compacted afterwards.",
 	},
 	{
-		Name: "recording_genres", Kind: Owned, Lifetime: Swept,
-		Note: "Join table between recordings and genres.",
-	},
-	{
-		Name: "recordings", Kind: Owned, Lifetime: Swept,
-		Note: "Tracks as parsed from file tags. Orphan-swept.",
-	},
-	{
-		Name: "release_group_recordings", Kind: Owned, Lifetime: Swept,
-		Note: "Join table between release groups and recordings.",
-	},
-	{
-		Name: "release_groups", Kind: Owned, Lifetime: Swept,
-		Note: "Albums as parsed from file tags. Orphan-swept.",
-	},
-	{
 		Name: "release_to_rg", Kind: Cache, Lifetime: Retained,
-		Note: "Release to release-group mapping from the dump.",
-	},
-	{
-		Name: "schema_migrations", Kind: Derived, Lifetime: Retained,
-		Note: "Bookkeeping for sql/migrations: which numbered files have " +
-			"run. Safe to lose — replaying an already-applied migration " +
-			"tolerates its ALTER TABLE ADD COLUMN as a no-op and just " +
-			"re-records it.",
+		Note: "Release to release-group mapping, captured during a local " +
+			"dump import and read by the incremental listen-count " +
+			"refresh. Empty unless this install built its own index.",
 	},
 	{
 		Name: "search_clicks", Kind: Authored, Lifetime: Retained,

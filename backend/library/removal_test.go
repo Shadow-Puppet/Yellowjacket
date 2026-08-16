@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"yellowjacket/backend/coverart"
+	"yellowjacket/backend/database"
 	"yellowjacket/backend/database/sql/sqlcgen"
 )
 
@@ -30,19 +31,6 @@ func seedRemovableLibrary(
 		t.Fatalf("create library: %v", err)
 	}
 
-	ac, err := q.UpsertArtistCredit(ctx, "Test Artist")
-	if err != nil {
-		t.Fatalf("upsert artist credit: %v", err)
-	}
-
-	rec, err := q.CreateRecordingFull(ctx, sqlcgen.CreateRecordingFullParams{
-		Name:           "Test Song",
-		ArtistCreditID: ac.ID,
-	})
-	if err != nil {
-		t.Fatalf("create recording: %v", err)
-	}
-
 	if _, err := lib.db.ExecContext(
 		`INSERT INTO cover_art (is_embedded, file_path, mime_type)
 		 VALUES (0, ?, 'image/jpeg')`, coverPath,
@@ -50,15 +38,14 @@ func seedRemovableLibrary(
 		t.Fatalf("insert cover art: %v", err)
 	}
 
-	if _, err := q.CreateAudioFile(ctx, sqlcgen.CreateAudioFileParams{
-		FilePath:           "/music/song.mp3",
-		LengthMilliseconds: 180000,
-		RecordingID:        rec.ID,
-		LibraryID:          library.ID,
-		Basename:           "song.mp3",
-	}); err != nil {
-		t.Fatalf("create audio file: %v", err)
-	}
+	database.InsertTestTrack(t, lib.db, database.TestTrack{
+		FilePath:  "/music/song.mp3",
+		Title:     "Test Song",
+		Artist:    "Test Artist",
+		Album:     "Test Album",
+		LengthMs:  180000,
+		LibraryID: library.ID,
+	})
 
 	// Every scanned library gets tagging_items rows, one per album
 	// folder.  These FK-reference libraries.
@@ -137,9 +124,9 @@ func TestRemoveLibrary_WithTaggingItems(t *testing.T) {
 
 	for _, table := range []string{
 		"audio_files",
-		"recordings",
-		"artist_credit",
+		"albums",
 		"artists",
+		"file_genres",
 		"tagging_items",
 		"tagging_candidates",
 		"cover_art",
@@ -158,18 +145,16 @@ func TestRemoveLibrary_DeletesCoverArtVariants(t *testing.T) {
 	lib, _ := setupTestLibrary(t)
 
 	dir := t.TempDir()
-	original := filepath.Join(dir, "abc123.jpg")
 
-	paths := []string{original}
+	var paths []string
 	for _, tier := range thumbnailTiers {
 		paths = append(paths, filepath.Join(
 			dir, coverart.SizedFilename("abc123.jpg", tier.Suffix),
 		))
 	}
 
-	paths = append(paths, filepath.Join(
-		dir, coverart.SizedFilename("abc123.jpg", legacyThumbSuffix),
-	))
+	// The largest tier is what cover_art.file_path names.
+	cover := filepath.Join(dir, coverart.SizedFilename("abc123.jpg", "_lg"))
 
 	for _, p := range paths {
 		if err := os.WriteFile(p, []byte("img"), 0o600); err != nil {
@@ -177,7 +162,7 @@ func TestRemoveLibrary_DeletesCoverArtVariants(t *testing.T) {
 		}
 	}
 
-	library := seedRemovableLibrary(t, lib, original)
+	library := seedRemovableLibrary(t, lib, cover)
 
 	if _, err := lib.RemoveLibrary(library.ID); err != nil {
 		t.Fatalf("RemoveLibrary: %v", err)
@@ -190,19 +175,17 @@ func TestRemoveLibrary_DeletesCoverArtVariants(t *testing.T) {
 	}
 }
 
-// CoverArtFileSet must cover the original, every generated tier, and
-// the legacy _thumb name.
+// CoverArtFileSet must cover every generated tier, from any of them:
+// cover_art.file_path names the largest, and the others are derived.
 func TestCoverArtFileSet(t *testing.T) {
 	t.Parallel()
 
-	got := CoverArtFileSet("/covers/abc123.jpg")
+	got := CoverArtFileSet("/covers/abc123_lg.jpg")
 
 	want := []string{
-		"/covers/abc123.jpg",
 		"/covers/abc123_sm.jpg",
 		"/covers/abc123_md.jpg",
 		"/covers/abc123_lg.jpg",
-		"/covers/abc123_thumb.jpg",
 	}
 
 	if len(got) != len(want) {

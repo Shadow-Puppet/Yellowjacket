@@ -18,7 +18,7 @@ import { describe, expect, it, beforeEach } from 'vitest';
 import type { LitElement } from 'lit';
 
 import '@components/explore-album-details/explore-album-details';
-import { stub, flush, resetHarness, calls } from '@test/support/harness';
+import { stub, flush, resetHarness, calls, lastArgs } from '@test/support/harness';
 import { fixture, shadow, shadowAll, text } from '@test/support/render';
 
 type Version = {
@@ -52,6 +52,12 @@ function track(n: number, owned: boolean) {
  * The component builds its versions from fetched releases; this reaches
  * past that and sets the state the header actually reads, which is the
  * only part under test here.
+ *
+ * Owning a track means the library has a *file* for it — the page
+ * resolves the displayed tracklist's paths once and every action, badge
+ * and dimmed row reads that one answer. So the fixture says which
+ * tracks have files rather than setting an `inLibrary` flag, which is
+ * what used to be able to claim ownership of something unplayable.
  */
 async function withVersion(
   owned: number,
@@ -61,11 +67,20 @@ async function withVersion(
     albumName: 'Glass Harbour',
   });
 
+  const tracks = Array.from({ length: total }, (_, i) => track(i + 1, i < owned));
+
+  const paths: Record<string, string[]> = {};
+  for (const t of tracks.filter((t) => t.inLibrary)) {
+    paths[t.mbid] = [`/music/${t.mbid}.mp3`];
+  }
+
+  stub('library.Library.GetFilePathsByRecordingMBIDs', paths);
+
   const version: Version = {
     key: 'v1',
     label: '2019',
     sublabel: `${total} tracks`,
-    tracks: Array.from({ length: total }, (_, i) => track(i + 1, i < owned)),
+    tracks,
   };
 
   Object.assign(el, {
@@ -125,23 +140,28 @@ describe('the album header’s primary action', () => {
     expect(shadow(el, '[data-testid="album-queue"]')).toBeNull();
   });
 
-  it('asks for the owned tracks’ paths once, by the key it owns them by', async () => {
-    // `perf.m2`'s rule: ask for what the caller uses, once. The caller
-    // here uses file paths and knows its tracks only as recording
-    // MBIDs — `MBTrack.localId` is declared and never written by
-    // anything in the backend.
+  it('asks for the tracklist’s paths once, on load, and not on click', async () => {
+    // `perf.m2`'s rule — ask for what the caller uses, once — and the
+    // ownership rule with it. The page asks about the *whole* displayed
+    // tracklist when it settles, because whether a track is owned is
+    // that query's answer and not something to be inferred first. Every
+    // action, badge and dimmed row then reads the one result, so a
+    // click asks nothing and cannot fail.
     const el = await withVersion(7, 12);
+
+    const onLoad = calls('library.Library.GetFilePathsByRecordingMBIDs');
+
+    expect(onLoad).toHaveLength(1);
+    expect(onLoad[0]!.args[0]).toHaveLength(12);
+    // No empty MBID — an empty string matches every untagged recording
+    // in the library.
+    expect(onLoad[0]!.args[0]).not.toContain('');
 
     shadow<HTMLElement>(el, '[data-testid="album-play"]')!.click();
     await flush();
 
-    const asked = calls('library.Library.GetFilePathsByRecordingMBIDs');
-
-    expect(asked).toHaveLength(1);
-    // Only the owned ones, and no empty MBID — an empty string matches
-    // every untagged recording in the library.
-    expect(asked[0]!.args[0]).toHaveLength(7);
-    expect(asked[0]!.args[0]).not.toContain('');
+    expect(calls('library.Library.GetFilePathsByRecordingMBIDs')).toHaveLength(1);
+    expect(lastArgs('queue.Queue.SetQueue')?.[0]).toHaveLength(7);
   });
 });
 

@@ -56,6 +56,9 @@ import '@awesome.me/webawesome/dist/components/popup/popup.js';
 import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 import { dict, dictByName } from '@utils/binding';
+import type { TrackDetails } from '@components/track-details/track-details.js';
+import { showTrackDetailsForPath } from '@utils/track-details-opener.js';
+import '@components/playlist-picker/playlist-picker.js';
 
 /* ── Constants ── */
 
@@ -199,20 +202,33 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
     @query('#context-menu')
     private contextMenuPopup!: WaPopup;
 
+    @query('#playlist-submenu')
+    private playlistSubmenuPopup?: WaPopup;
+
+    @query('track-details')
+    private trackDetailsDialog?: TrackDetails;
+
+    /**
+     * The open menu's file paths, resolved once per open — see the same
+     * field on the album page. Only a track menu ever has any: a
+     * release's tracks are a different question, and adding a whole
+     * album to a playlist from here is not what this item says.
+     */
+    private ctxMenuPaths: Promise<string[]> | null = null;
+
     // -- ContextMenuHost interface --
-    // No playlist submenu here, for the same reason as the album page:
-    // every action resolves one recording's file lazily by MBID.
 
     getContextMenuPopup(): WaPopup | undefined {
         return this.contextMenuPopup;
     }
 
     getPlaylistSubmenuPopup(): WaPopup | undefined {
-        return undefined;
+        return this.playlistSubmenuPopup;
     }
 
     onContextMenuClose(): void {
         this.ctxMenuTarget = null;
+        this.ctxMenuPaths = null;
     }
 
     /** The open menu's track, or null when it is not a track menu. */
@@ -1313,10 +1329,13 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
             }
         }
 
-        // Discography: fetch albums by artist ID and seed thumbnails
+        // Discography: fetch the artist's albums and seed thumbnails
         // directly from library cover art.
         try {
-            const albums = await GetAlbumsByArtist(this.localArtistId);
+            const albums = await GetAlbumsByArtist(
+                this.artistName,
+                libraryStore.libraryFilter(),
+            );
             const thumbUpdates = new Map(this.thumbnailURLs);
             let thumbsChanged = false;
 
@@ -2231,7 +2250,9 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
         );
     }
 
-    private onContextMenuAction(action: 'play' | 'add-to-queue' | 'play-next'): void {
+    private onContextMenuAction(
+        action: 'play' | 'add-to-queue' | 'play-next' | 'track-details',
+    ): void {
         const track = this.ctxMenuTrack;
 
         this.ctxMenu.close();
@@ -2248,6 +2269,88 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
             case 'play-next':
                 void this.queueTrackNext(track);
                 break;
+            case 'track-details':
+                void this.openTrackDetails(track);
+                break;
+        }
+    }
+
+    /**
+     * Open the "Add to Playlist" submenu for the track the menu is on.
+     *
+     * The path is resolved on demand rather than at menu-open time —
+     * the release menus that share this panel never need one, and a
+     * right-click on a track is not a statement that a playlist is
+     * coming. A menu closed while the lookup was in flight must not
+     * sprout a submenu afterwards.
+     */
+    private async openPlaylistSubmenu(explicit: boolean): Promise<void> {
+        const track = this.ctxMenuTrack;
+
+        if (!track || !this.isTrackOwned(track)) return;
+
+        this.ctxMenu.clearSubmenuCloseTimer();
+        this.ctxMenuPaths ??= this.trackFilePath(track).then((p) =>
+            p ? [p] : []);
+
+        let paths: string[] = [];
+
+        try {
+            paths = await this.ctxMenuPaths;
+        } catch (error) {
+            console.error('Could not resolve the track’s file:', error);
+            this.ctxMenuPaths = null;
+        }
+
+        if (!this.ctxMenu.contextMenuOpen) return;
+
+        if (paths.length === 0) {
+            // Only an explicit activation gets an answer. A hover is how
+            // a submenu is *reached*, including on the way to the item
+            // below it — reporting a failure from one would put an error
+            // on screen for a menu the user was only passing through,
+            // and closing the menu under the pointer is worse still.
+            if (!explicit) return;
+
+            this.ctxMenu.close();
+            notificationStore.inline(ExploreArtistRegion, {
+                text: 'This track could not be found in your library.',
+            });
+
+            return;
+        }
+
+        await this.ctxMenu.showPlaylistSubmenu(paths);
+    }
+
+    /**
+     * The details dialog for an owned top track.
+     *
+     * The dialog wants the library's `Track` and this page has the
+     * catalog's recording, so the route in is the same MBID → file path
+     * resolution the playback actions use.
+     */
+    private async openTrackDetails(track: LBTopRecording): Promise<void> {
+        try {
+            const path = await this.trackFilePath(track);
+            const outcome = path
+                ? await showTrackDetailsForPath(
+                    () => this.trackDetailsDialog,
+                    path,
+                    () => void this.openTrackDetails(track),
+                )
+                : 'not-in-library';
+
+            if (outcome === 'not-in-library') {
+                notificationStore.inline(ExploreArtistRegion, {
+                    text: 'This track could not be found in your library.',
+                });
+            }
+        } catch (error) {
+            console.error('Could not open track details:', error);
+            notificationStore.inline(ExploreArtistRegion, {
+                text: describeError(error, 'Could not open track details.'),
+            });
         }
     }
 
@@ -2458,6 +2561,7 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
                 testid="artist-action-message"
             ></inline-notice>
             ${this.renderContextMenu()}
+            <track-details></track-details>
         `;
     }
 
@@ -2529,6 +2633,29 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
                       `
                     : nothing}
             </wa-popup>
+
+            <wa-popup
+                id="playlist-submenu"
+                placement="right-start"
+                flip
+                shift
+                .active=${this.ctxMenu.playlistSubmenuOpen}
+            >
+                ${this.ctxMenu.playlistSubmenuOpen
+                    ? html`
+                          <div
+                              @mouseenter=${() => this.ctxMenu.clearSubmenuCloseTimer()}
+                              @mouseleave=${this.ctxMenu.scheduleSubmenuClose}
+                          >
+                              <playlist-picker
+                                  .filePaths=${this.ctxMenu.playlistFilePaths}
+                                  @playlist-action-complete=${this.ctxMenu.onPlaylistActionComplete}
+                                  @click=${(e: Event) => e.stopPropagation()}
+                              ></playlist-picker>
+                          </div>
+                      `
+                    : nothing}
+            </wa-popup>
         `;
     }
 
@@ -2536,21 +2663,53 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
         return html`
             ${this.isTrackOwned(track)
                 ? html`
-                      <wa-dropdown-item @click=${() => this.onContextMenuAction('play')}>
+                      <wa-dropdown-item
+                          @click=${() => this.onContextMenuAction('play')}
+                          @mouseenter=${() => this.ctxMenu.closePlaylistSubmenu()}
+                      >
                           <wa-icon slot="icon" name="play"></wa-icon>
                           Play
                       </wa-dropdown-item>
-                      <wa-dropdown-item @click=${() => this.onContextMenuAction('add-to-queue')}>
+                      <wa-dropdown-item
+                          @click=${() => this.onContextMenuAction('add-to-queue')}
+                          @mouseenter=${() => this.ctxMenu.closePlaylistSubmenu()}
+                      >
                           <wa-icon slot="icon" name="plus"></wa-icon>
                           Add to Queue
                       </wa-dropdown-item>
-                      <wa-dropdown-item @click=${() => this.onContextMenuAction('play-next')}>
+                      <wa-dropdown-item
+                          @click=${() => this.onContextMenuAction('play-next')}
+                          @mouseenter=${() => this.ctxMenu.closePlaylistSubmenu()}
+                      >
                           <wa-icon slot="icon" name="forward-step"></wa-icon>
                           Play Next
                       </wa-dropdown-item>
+                      <wa-dropdown-item
+                          class="submenu-item"
+                          @mouseenter=${() => void this.openPlaylistSubmenu(false)}
+                          @mouseleave=${this.ctxMenu.scheduleSubmenuClose}
+                          @click=${(e: Event) => {
+                              e.stopPropagation();
+                              void this.openPlaylistSubmenu(true);
+                          }}
+                      >
+                          <wa-icon slot="icon" name="plus"></wa-icon>
+                          Add to Playlist
+                          <span class="submenu-arrow">&#9654;</span>
+                      </wa-dropdown-item>
+                      <wa-dropdown-item
+                          @click=${() => this.onContextMenuAction('track-details')}
+                          @mouseenter=${() => this.ctxMenu.closePlaylistSubmenu()}
+                      >
+                          <wa-icon slot="icon" name="circle-info"></wa-icon>
+                          Track Details
+                      </wa-dropdown-item>
                   `
                 : nothing}
-            <wa-dropdown-item @click=${() => this.viewTrackOnMusicBrainz()}>
+            <wa-dropdown-item
+                @click=${() => this.viewTrackOnMusicBrainz()}
+                @mouseenter=${() => this.ctxMenu.closePlaylistSubmenu()}
+            >
                 <wa-icon slot="icon" name="globe"></wa-icon>
                 View on MusicBrainz
             </wa-dropdown-item>

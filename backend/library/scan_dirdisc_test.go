@@ -81,7 +81,7 @@ func scanTestGroupKeys(t *testing.T, lib *Library, root string) map[string]strin
 		t.Fatal("scanInternal returned nil metrics")
 	}
 
-	rows, err := lib.db.Queries.GetAudioFilesByLibrary(lib.ctx, library.ID)
+	rows, err := lib.db.Queries.GetAudioFilesInLibrary(lib.ctx, library.ID)
 	if err != nil {
 		t.Fatalf("list audio files: %v", err)
 	}

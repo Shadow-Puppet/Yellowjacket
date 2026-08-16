@@ -132,8 +132,8 @@ describe('<explore-view> badges', () => {
     stub('explore.Service.GetThumbnail', '');
     stub('explore.Service.GetArtistImageURL', '');
     stub('explore.Service.GetExploreShelves', { shelves: [], state: 'ready' });
-    stub('library.Library.GetAllAlbums', []);
-    stub('library.Library.GetAllTracks', []);
+    stub('library.Library.GetAlbums', []);
+    stub('library.Library.GetTracks', []);
     await withRequests([]);
   });
 

@@ -63,5 +63,24 @@ Never hand-write one. Seeding points `YJ_CORE_INDEX_URL` at a dead
 address on purpose, so no seed depends on what the explore artifact
 server happened to be serving.
 
-Rebuild a seed after any schema change, or the restored database is
-migrated on open in a way the seed's author never saw.
+Rebuild a seed after any schema change. Nothing migrates a restored
+database: `applySchema` is `CREATE TABLE IF NOT EXISTS`, so an old seed
+keeps its old columns, the app starts, and the first query dies on
+`no such column`.
+
+**Restoring the seed does not disable the artifact fetch — only
+*building* it does.** `dev-headless` leaves `YJ_CORE_INDEX_URL` alone,
+so on a developer machine the restored app immediately downloads and
+imports the real ~1.1M-row catalog, through the one writer connection,
+while whatever you started it for is running. A full `make e2e` against
+that reported **14 failures** that were all contention; the same suite
+against the same seed with
+
+```bash
+YJ_CORE_INDEX_URL='http://127.0.0.1:1/none.tar.zst' make dev-headless SEED=default
+```
+
+is the configuration CI runs (`ci.yml` sets exactly that address) and is
+what to use before believing a failure. The tell is in `.dev/app.log` —
+an import logging progress — and in how the failures look: timeouts
+spread across unrelated specs rather than one surface being wrong.

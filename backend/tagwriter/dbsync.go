@@ -22,21 +22,26 @@ import (
 	"yellowjacket/backend/metadata"
 )
 
-// dbSyncParams holds the context needed by syncDatabase to update
-// all database entities after a successful file tag write.
+// dbSyncParams holds the context needed by syncDatabase to update the
+// database after a successful file tag write.
 type dbSyncParams struct {
-	audioFileID  int64
-	recordingID  int64
-	filePath     string
-	changes      TagChanges
-	oldRecording sqlcgen.Recording
-	oldRGLinks   []sqlcgen.ReleaseGroupRecording
+	audioFileID int64
+	filePath    string
+	changes     TagChanges
+	oldFile     sqlcgen.AudioFile
 }
 
-// syncDatabase runs all database updates for a tag write inside a
-// single transaction: entity upsert-and-relink, FTS5 update, and
-// orphan cleanup.  If anything fails the entire transaction is
-// rolled back, leaving the database at its previous state.
+// syncDatabase runs the database updates for a tag write inside a
+// single transaction: the file's own tag columns, its album and artist
+// links, its genres, its cover art, and the FTS row.  If anything fails
+// the whole transaction rolls back.
+//
+// This used to be four times longer, and three of the four parts were
+// bookkeeping for tables that no longer exist: relinking a recording to
+// a new artist_credit, unlinking and relinking release_group_recordings,
+// and then three orphan sweeps to delete whichever of those rows the
+// relink had stranded.  Tags live on the file now, so changing a tag is
+// an UPDATE, and nothing can be stranded by one.
 func syncDatabase(
 	ctx context.Context,
 	logger *slog.Logger,
@@ -51,288 +56,182 @@ func syncDatabase(
 	defer func() { _ = tx.Rollback() }() // no-op after commit
 
 	txq := db.Queries.WithTx(tx)
+	old := params.oldFile
 
 	// ------------------------------------------------------------------
-	// Track old entity IDs for orphan cleanup after relinking.
+	// 1. Resolve the artist, if it changed.
 	// ------------------------------------------------------------------
-	oldArtistCreditID := params.oldRecording.ArtistCreditID
+	artistCredit := old.ArtistCredit
+	artistID := old.ArtistID
 
-	oldRGIDs := make([]int64, 0, len(params.oldRGLinks))
-	for _, link := range params.oldRGLinks {
-		oldRGIDs = append(oldRGIDs, link.ReleaseGroupID)
-	}
-
-	// newArtistCreditID starts as old; overwritten if artist changes.
-	newArtistCreditID := oldArtistCreditID
-
-	// ------------------------------------------------------------------
-	// 1. Handle artist change.
-	// ------------------------------------------------------------------
 	if v, ok := params.changes[FieldArtist].(string); ok {
-		newAC, acErr := txq.UpsertArtistCredit(ctx, v)
-		if acErr != nil {
-			return fmt.Errorf("upsert artist credit: %w", acErr)
-		}
+		artistCredit = v
 
-		newArtistCreditID = newAC.ID
-
-		newArtist, artErr := txq.UpsertArtist(ctx, v)
+		artist, artErr := txq.UpsertArtist(ctx, sqlcgen.UpsertArtistParams{Name: v})
 		if artErr != nil {
 			return fmt.Errorf("upsert artist: %w", artErr)
 		}
 
-		// Link artist → credit (INSERT OR IGNORE handles dupes).
-		if _, linkErr := txq.CreateArtistCreditArtist(ctx,
-			sqlcgen.CreateArtistCreditArtistParams{
-				ArtistID: newArtist.ID,
-				CreditID: newAC.ID,
-			},
-		); linkErr != nil && !database.IsUniqueViolation(linkErr) {
-			return fmt.Errorf("link artist to credit: %w", linkErr)
-		}
+		artistID = sql.NullInt64{Int64: artist.ID, Valid: true}
 	}
 
 	// ------------------------------------------------------------------
-	// 2. Handle album change.
+	// 2. Resolve the album, if it changed.
 	// ------------------------------------------------------------------
+	albumID := old.AlbumID
+
 	if newAlbumName, ok := params.changes[FieldAlbum].(string); ok {
-		// Determine album-artist credit ID.
-		albumArtistCreditID := sql.NullInt64{
-			Int64: newArtistCreditID, Valid: true,
-		}
+		albumCredit := artistCredit
+		albumArtistID := artistID
 
 		if aav, aaOK := params.changes[FieldAlbumArtist].(string); aaOK && aav != "" {
-			aaCredit, aaErr := txq.UpsertArtistCredit(ctx, aav)
+			albumCredit = aav
+
+			aaArtist, aaErr := txq.UpsertArtist(ctx, sqlcgen.UpsertArtistParams{Name: aav})
 			if aaErr != nil {
-				return fmt.Errorf("upsert album artist credit: %w", aaErr)
+				return fmt.Errorf("upsert album artist: %w", aaErr)
 			}
 
-			albumArtistCreditID = sql.NullInt64{
-				Int64: aaCredit.ID, Valid: true,
-			}
-
-			aaArtist, aaArtErr := txq.UpsertArtist(ctx, aav)
-			if aaArtErr != nil {
-				return fmt.Errorf("upsert album artist: %w", aaArtErr)
-			}
-
-			if _, aaLinkErr := txq.CreateArtistCreditArtist(ctx,
-				sqlcgen.CreateArtistCreditArtistParams{
-					ArtistID: aaArtist.ID,
-					CreditID: aaCredit.ID,
-				},
-			); aaLinkErr != nil && !database.IsUniqueViolation(aaLinkErr) {
-				return fmt.Errorf("link album artist to credit: %w", aaLinkErr)
-			}
+			albumArtistID = sql.NullInt64{Int64: aaArtist.ID, Valid: true}
 		}
 
-		// Determine year value.
-		yearVal := params.oldRecording.Year
+		year := old.Year
 		if yv, yOK := asInt(params.changes[FieldYear]); yOK {
-			yearVal = toNullInt64(yv)
+			year = toNullInt64(yv)
 		}
 
-		// Upsert new release group.
-		newRG, rgErr := txq.UpsertReleaseGroup(ctx,
-			sqlcgen.UpsertReleaseGroupParams{
-				Name:                newAlbumName,
-				AlbumArtistCreditID: albumArtistCreditID,
-				Year:                yearVal,
-			},
-		)
-		if rgErr != nil {
-			return fmt.Errorf("upsert release group: %w", rgErr)
+		album, albErr := txq.UpsertAlbum(ctx, sqlcgen.UpsertAlbumParams{
+			Name:         newAlbumName,
+			ArtistCredit: albumCredit,
+			ArtistID:     albumArtistID,
+			Year:         year,
+		})
+		if albErr != nil {
+			return fmt.Errorf("upsert album: %w", albErr)
 		}
 
-		// Unlink old release_group_recordings.
-		for _, oldLink := range params.oldRGLinks {
-			if unlinkErr := txq.DeleteReleaseGroupRecordingByFK(ctx,
-				sqlcgen.DeleteReleaseGroupRecordingByFKParams{
-					ReleaseGroupID: oldLink.ReleaseGroupID,
-					RecordingID:    params.recordingID,
-				},
-			); unlinkErr != nil {
-				return fmt.Errorf("unlink old rg recording: %w", unlinkErr)
-			}
-		}
-
-		// Determine track/disc numbers.
-		trackNum := params.oldRecording.TrackNumber
-		if tn, tnOK := asInt(params.changes[FieldTrackNumber]); tnOK {
-			trackNum = toNullInt64(tn)
-		}
-
-		discNum := params.oldRecording.DiscNumber
-		if dn, dnOK := asInt(params.changes[FieldDiscNumber]); dnOK {
-			discNum = toNullInt64(dn)
-		}
-
-		// Create new link.
-		if _, linkErr := txq.CreateReleaseGroupRecording(ctx,
-			sqlcgen.CreateReleaseGroupRecordingParams{
-				ReleaseGroupID: newRG.ID,
-				RecordingID:    params.recordingID,
-				TrackNumber:    trackNum,
-				DiscNumber:     discNum,
-			},
-		); linkErr != nil {
-			return fmt.Errorf("create rg recording link: %w", linkErr)
-		}
+		albumID = sql.NullInt64{Int64: album.ID, Valid: true}
 	}
 
 	// ------------------------------------------------------------------
-	// 3. Handle genre change.
+	// 3. Genres, if they changed.
 	// ------------------------------------------------------------------
 	if newGenre, ok := params.changes[FieldGenre].(string); ok {
-		// Delete all existing recording_genres for this recording.
-		if delErr := txq.DeleteRecordingGenres(ctx, params.recordingID); delErr != nil {
-			return fmt.Errorf("delete recording genres: %w", delErr)
+		if delErr := txq.DeleteFileGenres(ctx, params.audioFileID); delErr != nil {
+			return fmt.Errorf("delete file genres: %w", delErr)
 		}
 
-		// Parse and link new genres.
-		genres := metadata.ParseGenres(newGenre)
-		for _, gName := range genres {
+		for _, gName := range metadata.ParseGenres(newGenre) {
 			g, gErr := txq.UpsertGenre(ctx, gName)
 			if gErr != nil {
 				return fmt.Errorf("upsert genre %q: %w", gName, gErr)
 			}
 
-			if rgErr := txq.CreateRecordingGenre(ctx,
-				sqlcgen.CreateRecordingGenreParams{
-					RecordingID: params.recordingID,
-					GenreID:     g.ID,
-				},
-			); rgErr != nil {
-				return fmt.Errorf("create recording genre: %w", rgErr)
+			if linkErr := txq.LinkFileGenre(ctx, sqlcgen.LinkFileGenreParams{
+				AudioFileID: params.audioFileID,
+				GenreID:     g.ID,
+			}); linkErr != nil {
+				return fmt.Errorf("link file genre: %w", linkErr)
 			}
 		}
 	}
 
 	// ------------------------------------------------------------------
-	// 4. Handle cover art change — save image to covers cache,
-	//    upsert cover_art row, and update release_groups.cover_art_id.
+	// 4. Cover art, if it changed.  It belongs to the album, so a file
+	//    with no album has nowhere to put it.
 	// ------------------------------------------------------------------
-	if _, hasCoverArt := params.changes[FieldCoverArt]; hasCoverArt {
-		coverArtData, isBytes := asBytes(params.changes[FieldCoverArt])
+	if _, hasCoverArt := params.changes[FieldCoverArt]; hasCoverArt && albumID.Valid {
+		coverArtID := sql.NullInt64{}
 
-		if isBytes && len(coverArtData) > 0 {
-			// Save to covers dir and upsert DB row.
-			newCoverArtID, caErr := saveCoverArtAndSync(
-				ctx, logger, txq, coverArtData,
-			)
+		if data, isBytes := asBytes(params.changes[FieldCoverArt]); isBytes && len(data) > 0 {
+			newID, caErr := saveCoverArtAndSync(ctx, logger, txq, data)
 			if caErr != nil {
 				logger.Warn("cover art sync failed", "err", caErr)
 			} else {
-				// Update all release groups linked to this recording.
-				for _, rgLink := range params.oldRGLinks {
-					if upErr := txq.UpdateReleaseGroupCoverArt(ctx,
-						sqlcgen.UpdateReleaseGroupCoverArtParams{
-							CoverArtID: sql.NullInt64{Int64: newCoverArtID, Valid: true},
-							ID:         rgLink.ReleaseGroupID,
-						},
-					); upErr != nil {
-						logger.Warn("update rg cover art failed",
-							"err", upErr,
-							"releaseGroupID", rgLink.ReleaseGroupID)
-					}
-				}
+				coverArtID = sql.NullInt64{Int64: newID, Valid: true}
 			}
-		} else {
-			// Clear: set cover_art_id to NULL on all linked release groups.
-			for _, rgLink := range params.oldRGLinks {
-				if upErr := txq.UpdateReleaseGroupCoverArt(ctx,
-					sqlcgen.UpdateReleaseGroupCoverArtParams{
-						CoverArtID: sql.NullInt64{},
-						ID:         rgLink.ReleaseGroupID,
-					},
-				); upErr != nil {
-					logger.Warn("clear rg cover art failed",
-						"err", upErr,
-						"releaseGroupID", rgLink.ReleaseGroupID)
-				}
-			}
+		}
+
+		if upErr := txq.SetAlbumCoverArt(ctx, sqlcgen.SetAlbumCoverArtParams{
+			CoverArtID: coverArtID,
+			ID:         albumID.Int64,
+		}); upErr != nil {
+			logger.Warn("update album cover art failed", "err", upErr, "albumID", albumID.Int64)
 		}
 	}
 
 	// ------------------------------------------------------------------
-	// 5. Update recording with all changed fields.
+	// 5. The file's own tag columns.
 	// ------------------------------------------------------------------
-	rec := params.oldRecording
-
-	newName := rec.Name
+	title := old.Title
 	if v, ok := params.changes[FieldTitle].(string); ok {
-		newName = v
+		title = v
 	}
 
-	newYear := rec.Year
+	year := old.Year
 	if v, ok := asInt(params.changes[FieldYear]); ok {
-		newYear = toNullInt64(v)
+		year = toNullInt64(v)
 	}
 
-	newTrackNum := rec.TrackNumber
+	trackNum := old.TrackNumber
 	if v, ok := asInt(params.changes[FieldTrackNumber]); ok {
-		newTrackNum = toNullInt64(v)
+		trackNum = toNullInt64(v)
 	}
 
-	newDiscNum := rec.DiscNumber
+	discNum := old.DiscNumber
 	if v, ok := asInt(params.changes[FieldDiscNumber]); ok {
-		newDiscNum = toNullInt64(v)
+		discNum = toNullInt64(v)
 	}
 
-	newGenreStr := rec.Genre
-	if v, ok := params.changes[FieldGenre].(string); ok {
-		newGenreStr = toNullString(v)
-	}
-
-	newComposer := rec.Composer
+	composer := old.Composer
 	if v, ok := params.changes[FieldComposer].(string); ok {
-		newComposer = toNullString(v)
+		composer = v
 	}
 
-	if updErr := txq.UpdateRecordingFull(ctx, sqlcgen.UpdateRecordingFullParams{
-		Name:           newName,
-		ArtistCreditID: newArtistCreditID,
-		TrackNumber:    newTrackNum,
-		DiscNumber:     newDiscNum,
-		Year:           newYear,
-		Genre:          newGenreStr,
-		Composer:       newComposer,
-		Lyrics:         rec.Lyrics,
-		Comment:        rec.Comment,
-		ID:             params.recordingID,
+	// Writing tags rewrites the file, changing its mtime and possibly
+	// its size.  Recording the new values keeps the scan from mistaking
+	// YellowJacket's own edit for an external one and re-importing.
+	modifiedAt, fileSize := old.ModifiedAt, old.FileSize
+
+	if info, statErr := os.Stat(params.filePath); statErr != nil {
+		logger.Warn("could not stat file after tag write",
+			"path", params.filePath, "err", statErr)
+	} else {
+		modifiedAt, fileSize = info.ModTime().Unix(), info.Size()
+	}
+
+	if updErr := txq.UpdateAudioFileTags(ctx, sqlcgen.UpdateAudioFileTagsParams{
+		Title:              title,
+		ArtistCredit:       artistCredit,
+		ArtistID:           artistID,
+		AlbumID:            albumID,
+		TrackNumber:        trackNum,
+		DiscNumber:         discNum,
+		TotalTracks:        old.TotalTracks,
+		Year:               year,
+		Composer:           composer,
+		Comment:            old.Comment,
+		RecordingMbid:      old.RecordingMbid,
+		SampleRate:         old.SampleRate,
+		BitDepth:           old.BitDepth,
+		Channels:           old.Channels,
+		Bitrate:            old.Bitrate,
+		FileSize:           fileSize,
+		LengthMilliseconds: old.LengthMilliseconds,
+		ModifiedAt:         modifiedAt,
+		ID:                 params.audioFileID,
 	}); updErr != nil {
-		return fmt.Errorf("update recording: %w", updErr)
+		return fmt.Errorf("update audio file tags: %w", updErr)
 	}
 
 	// ------------------------------------------------------------------
-	// 6. Update FTS5 search index (within the transaction).
+	// 6. The FTS row.
 	// ------------------------------------------------------------------
-	newTitle := newName
+	album := ""
 
-	newArtist := params.changes[FieldArtist]
-	artistStr := ""
-
-	if newArtist != nil {
-		artistStr, _ = newArtist.(string)
-	}
-
-	if artistStr == "" {
-		// Look up current artist credit text from the old recording
-		// if the artist hasn't changed.
-		ac, acErr := txq.GetArtistCredit(ctx, newArtistCreditID)
-		if acErr == nil {
-			artistStr = ac.Text
-		}
-	}
-
-	newAlbum := ""
-	if v, ok := params.changes[FieldAlbum].(string); ok {
-		newAlbum = v
-	} else if len(params.oldRGLinks) > 0 {
-		// Look up current album from release groups if unchanged.
-		rg, rgErr := txq.GetReleaseGroup(ctx, params.oldRGLinks[0].ReleaseGroupID)
-		if rgErr == nil {
-			newAlbum = rg.Name
+	if albumID.Valid {
+		if row, albErr := txq.GetAlbum(ctx, albumID.Int64); albErr == nil {
+			album = row.Name
 		}
 	}
 
@@ -349,97 +248,14 @@ func syncDatabase(
 	if _, ftsInsErr := tx.ExecContext(ctx,
 		`INSERT INTO search_index(rowid, file_path, title, artist, album)
 		 VALUES (?, ?, ?, ?, ?)`,
-		params.audioFileID, params.filePath, newTitle, artistStr, newAlbum,
+		params.audioFileID, params.filePath, title, artistCredit, album,
 	); ftsInsErr != nil {
 		logger.Warn("FTS5 insert failed", "err", ftsInsErr,
 			"audioFileID", params.audioFileID)
 	}
 
-	// ------------------------------------------------------------------
-	// 7. Orphan cleanup (within same transaction).
-	// ------------------------------------------------------------------
-
-	// 7a. Artist credit orphan cleanup.
-	if newArtistCreditID != oldArtistCreditID {
-		refCount, refErr := txq.CountArtistCreditReferences(ctx, oldArtistCreditID)
-		if refErr != nil {
-			logger.Warn("count artist credit refs failed", "err", refErr)
-		} else if refCount == 0 {
-			// Delete artist_credit_artist entries for the orphaned credit,
-			// then the credit itself.
-			// SAFETY: Hand-crafted DELETE for orphan artist_credit_artist rows.
-			// Parameterized credit_id. No sqlc query exists for this specific
-			// delete-by-credit pattern.
-			if _, acaErr := tx.ExecContext(ctx,
-				"DELETE FROM artist_credit_artist WHERE credit_id = ?",
-				oldArtistCreditID,
-			); acaErr != nil {
-				logger.Warn("delete orphan aca failed", "err", acaErr)
-			}
-
-			if delErr := txq.DeleteArtistCredit(ctx, oldArtistCreditID); delErr != nil {
-				logger.Warn("delete orphan artist credit failed", "err", delErr)
-			}
-		}
-	}
-
-	// 7b. Release group orphan cleanup.
-	if _, albumChanged := params.changes[FieldAlbum]; albumChanged {
-		for _, oldRGID := range oldRGIDs {
-			rgCount, rgErr := txq.CountReleaseGroupRecordings(ctx, oldRGID)
-			if rgErr != nil {
-				logger.Warn("count rg recordings failed", "err", rgErr,
-					"releaseGroupID", oldRGID)
-
-				continue
-			}
-
-			if rgCount == 0 {
-				if delErr := txq.DeleteReleaseGroup(ctx, oldRGID); delErr != nil {
-					logger.Warn("delete orphan release group failed",
-						"err", delErr, "releaseGroupID", oldRGID)
-				}
-			}
-		}
-	}
-
-	// 7c. Genre orphan cleanup — delete genres with no remaining
-	//     recording_genres references.  This is safe because genres
-	//     are only referenced via recording_genres.
-	if _, genreChanged := params.changes[FieldGenre]; genreChanged {
-		// SAFETY: Hand-crafted DELETE for orphan genres. No user input.
-		// Matches the global orphan pattern from library/crud.go.
-		if _, gErr := tx.ExecContext(ctx,
-			`DELETE FROM genres WHERE id NOT IN
-			 (SELECT DISTINCT genre_id FROM recording_genres)`,
-		); gErr != nil {
-			logger.Warn("genre orphan cleanup failed", "err", gErr)
-		}
-	}
-
-	// ------------------------------------------------------------------
-	// 7d. Re-baseline the staleness fields.  Writing tags rewrites the
-	//     file, changing its mtime and possibly its size.  Recording the
-	//     new values here keeps the scan from mistaking YellowJacket's
-	//     own edit for an external one and re-importing the track.
-	// ------------------------------------------------------------------
-	if info, statErr := os.Stat(params.filePath); statErr != nil {
-		logger.Warn("could not stat file after tag write",
-			"path", params.filePath, "err", statErr)
-	} else if updErr := txq.UpdateAudioFileStat(ctx,
-		sqlcgen.UpdateAudioFileStatParams{
-			ModifiedAt: info.ModTime().Unix(),
-			FileSize:   info.Size(),
-			ID:         params.audioFileID,
-		},
-	); updErr != nil {
-		logger.Warn("could not update file stat after tag write",
-			"path", params.filePath, "err", updErr)
-	}
-
-	// ------------------------------------------------------------------
-	// 8. Commit.
-	// ------------------------------------------------------------------
+	// Albums and artists left empty by this write are swept by the
+	// library's own cleanup, which is one query each now.
 	return tx.Commit()
 }
 
@@ -450,15 +266,6 @@ func toNullInt64(v int) sql.NullInt64 {
 	}
 
 	return sql.NullInt64{Int64: int64(v), Valid: true}
-}
-
-// toNullString converts a string to sql.NullString, treating empty as null.
-func toNullString(v string) sql.NullString {
-	if v == "" {
-		return sql.NullString{}
-	}
-
-	return sql.NullString{String: v, Valid: true}
 }
 
 // saveCoverArtAndSync saves cover art bytes to the covers cache
@@ -479,27 +286,18 @@ func saveCoverArtAndSync(
 		return 0, fmt.Errorf("create covers dir: %w", err)
 	}
 
-	// Content-hash filename (same scheme as library/coverart.go).
+	// Content-hash filename (same scheme as library/coverart.go): the
+	// tiers are the only thing stored, and the largest is the cover's
+	// canonical path.  The full-resolution bytes stay in the file the
+	// user just wrote them to.
 	hash := sha256.Sum256(data)
 	hashStr := hex.EncodeToString(hash[:8])
 	mime := detectMIME(data)
 
-	ext := "jpg"
-	if mime == "image/png" {
-		ext = "png"
-	}
+	filePath := filepath.Join(
+		coverDir, coverart.SizedFilename(hashStr, largestTierSuffix),
+	)
 
-	filename := fmt.Sprintf("%s.%s", hashStr, ext)
-	filePath := filepath.Join(coverDir, filename)
-
-	// Write original if not already present.
-	if _, statErr := os.Stat(filePath); statErr != nil {
-		if writeErr := os.WriteFile(filePath, data, 0o644); writeErr != nil {
-			return 0, fmt.Errorf("write cover art: %w", writeErr)
-		}
-	}
-
-	// Generate sized variants (thumbnails).
 	generateSizedVariants(logger, data, coverDir, hashStr)
 
 	// Upsert cover_art DB row.
@@ -521,6 +319,9 @@ type thumbnailTier struct {
 	maxSize int
 	quality int
 }
+
+// largestTierSuffix is the tier stored as a cover's canonical path.
+const largestTierSuffix = "_lg"
 
 // thumbnailTiers matches the tiers in library/coverart.go.
 var thumbnailTiers = []thumbnailTier{

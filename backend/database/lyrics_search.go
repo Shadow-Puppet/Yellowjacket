@@ -1,15 +1,26 @@
 package database
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"unicode"
 )
 
+// toNullString treats an empty string as NULL.
+func toNullString(v string) sql.NullString {
+	if v == "" {
+		return sql.NullString{}
+	}
+
+	return sql.NullString{String: v, Valid: true}
+}
+
 // LyricsHit is a single result from a lyric-fragment search: the
-// matched recording plus enough metadata to render and play it.
+// matched file plus enough metadata to render and play it.
 type LyricsHit struct {
-	RecordingID        int64
+	AudioFileID        int64
 	FilePath           string
 	LengthMilliseconds int64
 	Title              string
@@ -37,27 +48,22 @@ func (d *DB) SearchLyrics(query string, limit int) ([]LyricsHit, error) {
 		return nil, nil
 	}
 
-	// Map the matched recording (lyrics_index.rowid == recordings.id)
-	// to a representative playable file via the lowest audio_files id,
-	// then to the track_metadata VIEW for display fields.
+	// lyrics_index.rowid is the audio file's id, so the hit is already
+	// a playable file - it used to be a recording id, which then had to
+	// be mapped back to "some file of that recording" by a grouped
+	// subquery.
 	//
 	// SAFETY: FTS5 MATCH syntax unsupported by sqlc. Query is parameterized; no string interpolation.
-	rows, err := d.db.QueryContext(d.Ctx, `
+	rows, err := d.reader().QueryContext(d.Ctx, `
 		SELECT
-			r.id,
+			tm.id,
 			tm.file_path,
 			tm.length_milliseconds,
 			tm.title,
 			tm.artist_name,
 			tm.album
 		FROM lyrics_index li
-		JOIN recordings r ON r.id = li.rowid
-		JOIN (
-			SELECT recording_id, MIN(id) AS af_id
-			FROM audio_files
-			GROUP BY recording_id
-		) af ON af.recording_id = r.id
-		JOIN track_metadata tm ON tm.id = af.af_id
+		JOIN track_metadata tm ON tm.id = li.rowid
 		WHERE lyrics_index MATCH ?
 		ORDER BY rank
 		LIMIT ?
@@ -73,7 +79,7 @@ func (d *DB) SearchLyrics(query string, limit int) ([]LyricsHit, error) {
 	for rows.Next() {
 		var h LyricsHit
 		if err := rows.Scan(
-			&h.RecordingID,
+			&h.AudioFileID,
 			&h.FilePath,
 			&h.LengthMilliseconds,
 			&h.Title,
@@ -93,43 +99,64 @@ func (d *DB) SearchLyrics(query string, limit int) ([]LyricsHit, error) {
 	return results, nil
 }
 
-// GetRecordingLyrics returns the stored lyrics for a recording, or
-// an empty string if none are stored.
-func (d *DB) GetRecordingLyrics(recordingID int64) (string, error) {
+// GetLyrics returns the stored lyrics for a file, or "" if none.
+func (d *DB) GetLyrics(audioFileID int64) (string, error) {
 	var lyrics string
 
-	err := d.db.QueryRowContext(d.Ctx,
-		"SELECT COALESCE(lyrics, '') FROM recordings WHERE id = ?",
-		recordingID,
+	err := d.reader().QueryRowContext(d.Ctx,
+		"SELECT text FROM lyrics WHERE audio_file_id = ?", audioFileID,
 	).Scan(&lyrics)
+
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+
 	if err != nil {
-		return "", fmt.Errorf("could not read recording lyrics: %w", err)
+		return "", fmt.Errorf("could not read lyrics: %w", err)
 	}
 
 	return lyrics, nil
 }
 
-// SetRecordingLyrics writes lyrics onto a recording and keeps the FTS
-// lyrics_index in sync (delete + reinsert the single row).  Used by
-// the LRCLIB backfill to persist fetched lyrics.  Passing an empty
-// string clears both the column and the index entry.
-func (d *DB) SetRecordingLyrics(recordingID int64, lyrics string) error {
-	if _, err := d.db.ExecContext(d.Ctx,
-		"UPDATE recordings SET lyrics = ? WHERE id = ?",
-		lyrics, recordingID,
-	); err != nil {
-		return fmt.Errorf("could not update recording lyrics: %w", err)
+// SetLyrics writes lyrics for a file and keeps the FTS index in sync.
+//
+// `source` says where they came from, which is the question the old
+// column could not answer: lyrics read from a USLT frame are rebuilt
+// free by any rescan, and lyrics fetched from LRCLIB are network
+// traffic nobody wants to repeat.  Passing an empty string clears both
+// the row and the index entry.
+func (d *DB) SetLyrics(audioFileID int64, lyrics, source, recordingMBID string) error {
+	if strings.TrimSpace(lyrics) == "" {
+		if _, err := d.db.ExecContext(d.Ctx,
+			"DELETE FROM lyrics WHERE audio_file_id = ?", audioFileID,
+		); err != nil {
+			return fmt.Errorf("could not delete lyrics: %w", err)
+		}
+
+		return d.upsertLyricsIndex(audioFileID, "")
 	}
 
-	return d.upsertLyricsIndex(recordingID, lyrics)
+	if _, err := d.db.ExecContext(d.Ctx, `
+		INSERT INTO lyrics (audio_file_id, text, source, recording_mbid)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(audio_file_id) DO UPDATE SET
+			text = excluded.text,
+			source = excluded.source,
+			recording_mbid = COALESCE(excluded.recording_mbid, lyrics.recording_mbid),
+			fetched_at = CURRENT_TIMESTAMP
+	`, audioFileID, lyrics, source, toNullString(recordingMBID)); err != nil {
+		return fmt.Errorf("could not write lyrics: %w", err)
+	}
+
+	return d.upsertLyricsIndex(audioFileID, lyrics)
 }
 
-// upsertLyricsIndex refreshes a single recording's entry in the
-// contentless lyrics_index.  contentless_delete=1 makes the DELETE
-// valid; an empty lyrics string leaves the row deleted.
-func (d *DB) upsertLyricsIndex(recordingID int64, lyrics string) error {
+// upsertLyricsIndex refreshes a single file's entry in the contentless
+// lyrics_index.  contentless_delete=1 makes the DELETE valid; an empty
+// lyrics string leaves the row deleted.
+func (d *DB) upsertLyricsIndex(audioFileID int64, lyrics string) error {
 	if _, err := d.db.ExecContext(d.Ctx,
-		"DELETE FROM lyrics_index WHERE rowid = ?", recordingID,
+		"DELETE FROM lyrics_index WHERE rowid = ?", audioFileID,
 	); err != nil {
 		return fmt.Errorf("could not delete lyrics_index row: %w", err)
 	}
@@ -141,7 +168,7 @@ func (d *DB) upsertLyricsIndex(recordingID int64, lyrics string) error {
 	// SAFETY: FTS5 virtual table INSERT unsupported by sqlc. All values parameterized.
 	if _, err := d.db.ExecContext(d.Ctx,
 		"INSERT INTO lyrics_index(rowid, lyrics) VALUES (?, ?)",
-		recordingID, lyrics,
+		audioFileID, lyrics,
 	); err != nil {
 		return fmt.Errorf("could not insert lyrics_index row: %w", err)
 	}
@@ -149,22 +176,16 @@ func (d *DB) upsertLyricsIndex(recordingID int64, lyrics string) error {
 	return nil
 }
 
-// RebuildLyricsIndex repopulates lyrics_index from scratch using the
-// current recordings table.  Cheap for a personal library and safe to
-// run after every scan.
+// RebuildLyricsIndex repopulates lyrics_index from the lyrics table.
 func (d *DB) RebuildLyricsIndex() error {
-	if _, err := d.db.ExecContext(d.Ctx,
-		"DELETE FROM lyrics_index",
-	); err != nil {
+	if _, err := d.db.ExecContext(d.Ctx, "DELETE FROM lyrics_index"); err != nil {
 		return fmt.Errorf("could not clear lyrics_index: %w", err)
 	}
 
-	// SAFETY: FTS5 virtual table INSERT unsupported by sqlc. Values sourced from recordings; no user input.
+	// SAFETY: FTS5 virtual table INSERT. Values sourced from lyrics; no user input.
 	if _, err := d.db.ExecContext(d.Ctx, `
 		INSERT INTO lyrics_index(rowid, lyrics)
-		SELECT id, lyrics
-		FROM recordings
-		WHERE lyrics IS NOT NULL AND lyrics != ''
+		SELECT audio_file_id, text FROM lyrics WHERE text != ''
 	`); err != nil {
 		return fmt.Errorf("could not rebuild lyrics_index: %w", err)
 	}
@@ -172,39 +193,35 @@ func (d *DB) RebuildLyricsIndex() error {
 	return nil
 }
 
-// RecordingsMissingLyrics returns recordings that have no stored
-// lyrics but do carry the artist/title/duration needed to look them
-// up from an external provider.  Used by the LRCLIB backfill.  The
-// limit bounds each batch so the backfill can be run incrementally.
-func (d *DB) RecordingsMissingLyrics(limit int) ([]LyricsCandidate, error) {
+// LyricsCandidate identifies a file that needs its lyrics fetched and
+// carries the fields an external provider matches on.
+type LyricsCandidate struct {
+	AudioFileID        int64
+	Title              string
+	Artist             string
+	Album              string
+	RecordingMBID      string
+	LengthMilliseconds int64
+}
+
+// FilesMissingLyrics returns files with no stored lyrics that carry
+// the artist/title/duration needed to look them up.  Used by the
+// LRCLIB backfill; the limit bounds each batch.
+func (d *DB) FilesMissingLyrics(limit int) ([]LyricsCandidate, error) {
 	if limit <= 0 {
 		limit = 200
 	}
 
-	rows, err := d.db.QueryContext(d.Ctx, `
-		SELECT
-			r.id,
-			COALESCE(r.name, ''),
-			COALESCE(ac.text, ''),
-			COALESCE(rg.name, ''),
-			MIN(af.length_milliseconds)
-		FROM recordings r
-		JOIN audio_files af ON af.recording_id = r.id
-		LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
-		LEFT JOIN (
-			SELECT recording_id, MIN(release_group_id) AS release_group_id
-			FROM release_group_recordings
-			GROUP BY recording_id
-		) rgr ON rgr.recording_id = r.id
-		LEFT JOIN release_groups rg ON rg.id = rgr.release_group_id
-		WHERE (r.lyrics IS NULL OR r.lyrics = '')
-		  AND r.name IS NOT NULL AND r.name != ''
-		  AND ac.text IS NOT NULL AND ac.text != ''
-		GROUP BY r.id
+	rows, err := d.reader().QueryContext(d.Ctx, `
+		SELECT tm.id, tm.title, tm.artist_name, tm.album,
+		       tm.recording_mbid, tm.length_milliseconds
+		FROM track_metadata tm
+		WHERE NOT EXISTS (SELECT 1 FROM lyrics l WHERE l.audio_file_id = tm.id)
+		  AND tm.title != '' AND tm.artist_name != ''
 		LIMIT ?
 	`, limit)
 	if err != nil {
-		return nil, fmt.Errorf("could not query recordings missing lyrics: %w", err)
+		return nil, fmt.Errorf("could not query files missing lyrics: %w", err)
 	}
 
 	defer func() { _ = rows.Close() }()
@@ -214,7 +231,8 @@ func (d *DB) RecordingsMissingLyrics(limit int) ([]LyricsCandidate, error) {
 	for rows.Next() {
 		var c LyricsCandidate
 		if err := rows.Scan(
-			&c.RecordingID, &c.Title, &c.Artist, &c.Album, &c.LengthMilliseconds,
+			&c.AudioFileID, &c.Title, &c.Artist, &c.Album,
+			&c.RecordingMBID, &c.LengthMilliseconds,
 		); err != nil {
 			return nil, fmt.Errorf("could not scan lyrics candidate: %w", err)
 		}
@@ -229,44 +247,23 @@ func (d *DB) RecordingsMissingLyrics(limit int) ([]LyricsCandidate, error) {
 	return out, nil
 }
 
-// LyricsCandidate identifies a recording that needs its lyrics fetched
-// and carries the fields an external provider matches on.
-type LyricsCandidate struct {
-	RecordingID        int64
-	Title              string
-	Artist             string
-	Album              string
-	LengthMilliseconds int64
-}
-
-// RecordingLyricLookup returns the provider-match fields (artist,
-// title, album, duration) for a single recording, so lyrics can be
-// fetched on demand.  Returns nil if the recording has no audio file
-// or no artist/title to match on.
-func (d *DB) RecordingLyricLookup(recordingID int64) (*LyricsCandidate, error) {
+// FileLyricLookup returns the provider-match fields for one file, so
+// lyrics can be fetched on demand.  Returns nil if the file has no
+// artist/title to match on.
+func (d *DB) FileLyricLookup(audioFileID int64) (*LyricsCandidate, error) {
 	var c LyricsCandidate
 
-	err := d.db.QueryRowContext(d.Ctx, `
-		SELECT
-			r.id,
-			COALESCE(r.name, ''),
-			COALESCE(ac.text, ''),
-			COALESCE(rg.name, ''),
-			COALESCE(MIN(af.length_milliseconds), 0)
-		FROM recordings r
-		JOIN audio_files af ON af.recording_id = r.id
-		LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
-		LEFT JOIN (
-			SELECT recording_id, MIN(release_group_id) AS release_group_id
-			FROM release_group_recordings
-			GROUP BY recording_id
-		) rgr ON rgr.recording_id = r.id
-		LEFT JOIN release_groups rg ON rg.id = rgr.release_group_id
-		WHERE r.id = ?
-		GROUP BY r.id
-	`, recordingID).Scan(&c.RecordingID, &c.Title, &c.Artist, &c.Album, &c.LengthMilliseconds)
+	err := d.reader().QueryRowContext(d.Ctx, `
+		SELECT tm.id, tm.title, tm.artist_name, tm.album,
+		       tm.recording_mbid, tm.length_milliseconds
+		FROM track_metadata tm
+		WHERE tm.id = ?
+	`, audioFileID).Scan(
+		&c.AudioFileID, &c.Title, &c.Artist, &c.Album,
+		&c.RecordingMBID, &c.LengthMilliseconds,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("could not look up recording for lyrics: %w", err)
+		return nil, fmt.Errorf("could not look up file for lyrics: %w", err)
 	}
 
 	if c.Title == "" || c.Artist == "" {

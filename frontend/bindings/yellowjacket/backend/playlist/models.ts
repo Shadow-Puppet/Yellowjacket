@@ -36,12 +36,6 @@ export interface DuplicateTrackInfo {
 }
 
 /**
- * FavoritesConfigProvider is a narrow interface for reading and
- * writing the default-playlist configuration.
- */
-export type FavoritesConfigProvider = any;
-
-/**
  * PhantomMatch represents a high-confidence pairing of a phantom
  * track to a library track.
  */

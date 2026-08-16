@@ -250,7 +250,7 @@ export class ArtistDetails extends LitElement {
         try {
             const albums =
                 await this.libraryCtrl.getAlbumsByArtist(
-                    this.artistId,
+                    this.artistName,
                 );
 
             const result = albums ?? [];

@@ -277,6 +277,12 @@ func canonicalDataCSV(t *testing.T) []byte {
 			"3", "11", "{" + artA + "," + artB + "}", "Solo Star feat. Guest",
 			relB, "Duet Album", recC, "Duet Song", "x", "1",
 		},
+		// Unplayed, so it survives no popularity floor and is not
+		// indexed -- but it is still a track on Big Album.
+		{
+			"4", "10", "{" + artA + "}", "Solo Star",
+			relA, "Big Album", recD, "Album Filler", "x", "1",
+		},
 	}
 
 	return csvBytes(t, rows)
@@ -594,7 +600,7 @@ func TestDumpImportEndToEnd(t *testing.T) {
 
 		rows, err := db.QueryContext(
 			"SELECT title, popularity FROM explore_index WHERE mbid = ? AND entity_type = ?",
-			mbid, entityType,
+			dbMBID(mbid), dbEntityType(entityType),
 		)
 		if err != nil {
 			t.Fatalf("query: %v", err)
@@ -627,11 +633,51 @@ func TestDumpImportEndToEnd(t *testing.T) {
 	assertRow(rgB, "release_group", "Duet Album", 12)
 	assertRow(artA, "artist", "Solo Star", 35)
 
+	// The per-release-group denominator: how many tracks the release
+	// has, counted from the canonical dump *before* the popularity
+	// filter.  Big Album has three, one of which nobody has played and
+	// which is therefore not indexed as a recording at all -- a
+	// denominator built from the kept recordings would say two, and
+	// "you have 2 of 2" about a three-track album is worse than saying
+	// nothing.
+	assertTotalTracks := func(mbid string, want int) {
+		t.Helper()
+
+		var got int
+
+		if err := db.QueryRowWriter(
+			"SELECT total_tracks FROM explore_index WHERE mbid = ? AND entity_type = 2",
+			dbMBID(mbid),
+		).Scan(&got); err != nil {
+			t.Fatalf("read total_tracks for %s: %v", mbid, err)
+		}
+
+		if got != want {
+			t.Errorf("total_tracks for %s = %d, want %d", mbid, got, want)
+		}
+	}
+
+	assertTotalTracks(rgA, 3)
+	assertTotalTracks(rgB, 1)
+
+	// And the unplayed track is still not an indexed recording.
+	var fillerRows int
+
+	if err := db.QueryRowWriter(
+		"SELECT COUNT(*) FROM explore_index WHERE mbid = ?", dbMBID(recD),
+	).Scan(&fillerRows); err != nil {
+		t.Fatalf("count recD rows: %v", err)
+	}
+
+	if fillerRows != 0 {
+		t.Errorf("unplayed track was indexed as a recording (%d rows)", fillerRows)
+	}
+
 	// artB only ever appears in a multi-artist credit: no name is
 	// derivable from the dump, so it must be queued for the API
 	// metadata patch instead of being written nameless.
 	rows, err := db.QueryContext(
-		"SELECT COUNT(*) FROM explore_index WHERE mbid = ?", artB,
+		"SELECT COUNT(*) FROM explore_index WHERE mbid = ?", dbMBID(artB),
 	)
 	if err != nil {
 		t.Fatalf("query artB: %v", err)
@@ -1006,7 +1052,7 @@ func TestListenerCountUpdateDoesNotTouchPopularity(t *testing.T) {
 	}
 
 	rows, err := db.QueryContext(
-		"SELECT popularity, listener_count FROM explore_index WHERE mbid = ?", recA,
+		"SELECT popularity, listener_count FROM explore_index WHERE mbid = ?", dbMBID(recA),
 	)
 	if err != nil {
 		t.Fatalf("query: %v", err)

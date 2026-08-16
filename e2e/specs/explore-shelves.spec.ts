@@ -139,14 +139,25 @@ test.describe('Explore before anyone has typed', () => {
 async function stageCatalogIfEmpty(app: Page): Promise<void> {
   if ((await catalogRows(app)) > 0) return;
 
+  // The catalog stores an MBID as its 16 raw bytes and an entity type
+  // as a small integer, so a staged row has to be spelled the way the
+  // app spells one: a real UUID, converted at the boundary, and a code
+  // rather than the word.  `'e2e-ar-a'` is 8 characters and fails
+  // `CHECK(length(mbid) = 16)` -- which `INSERT OR IGNORE` then
+  // swallows, so the staging step looked exactly like a staging step
+  // and the page had nothing to draw.  That is the same fault this
+  // helper's own comment below describes, one layer down.
+  const ARTIST = 1;
+  const RELEASE_GROUP = 2;
+
   const rows = [
-    ['artist', 'e2e-ar-a', 'Staged Alpha', 'Staged Alpha', 'e2e-ar-a', 9000],
-    ['artist', 'e2e-ar-b', 'Staged Beta', 'Staged Beta', 'e2e-ar-b', 500],
-    ['artist', 'e2e-ar-c', 'Staged Gamma', 'Staged Gamma', 'e2e-ar-c', 300],
-    ['release_group', 'e2e-rg-a1', 'Alpha One', 'Staged Alpha', 'e2e-ar-a', 8000],
-    ['release_group', 'e2e-rg-a2', 'Alpha Two', 'Staged Alpha', 'e2e-ar-a', 7000],
-    ['release_group', 'e2e-rg-a3', 'Alpha Three', 'Staged Alpha', 'e2e-ar-a', 6000],
-    ['release_group', 'e2e-rg-b1', 'Beta One', 'Staged Beta', 'e2e-ar-b', 400],
+    [ARTIST, uuid('ar-a'), 'Staged Alpha', 'Staged Alpha', uuid('ar-a'), 9000],
+    [ARTIST, uuid('ar-b'), 'Staged Beta', 'Staged Beta', uuid('ar-b'), 500],
+    [ARTIST, uuid('ar-c'), 'Staged Gamma', 'Staged Gamma', uuid('ar-c'), 300],
+    [RELEASE_GROUP, uuid('rg-a1'), 'Alpha One', 'Staged Alpha', uuid('ar-a'), 8000],
+    [RELEASE_GROUP, uuid('rg-a2'), 'Alpha Two', 'Staged Alpha', uuid('ar-a'), 7000],
+    [RELEASE_GROUP, uuid('rg-a3'), 'Alpha Three', 'Staged Alpha', uuid('ar-a'), 6000],
+    [RELEASE_GROUP, uuid('rg-b1'), 'Beta One', 'Staged Beta', uuid('ar-b'), 400],
   ];
 
   for (const row of rows) {
@@ -158,7 +169,8 @@ async function stageCatalogIfEmpty(app: Page): Promise<void> {
           sql: `INSERT OR IGNORE INTO explore_index
                   (entity_type, mbid, title, artist_name, artist_mbid,
                    popularity, listener_count, primary_type)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'Album')`,
+                VALUES (?, unhex(replace(?, '-', '')), ?, ?,
+                        unhex(replace(?, '-', '')), ?, ?, 'Album')`,
           args: [...args, 10],
         }),
       });
@@ -171,12 +183,52 @@ async function stageCatalogIfEmpty(app: Page): Promise<void> {
     // and the staging step looked exactly like a staging step. A setup
     // whose failure is not checked is not setup.
     expect(result.status, `staging failed: ${result.body}`).toBe(200);
+
+    // …and `OR IGNORE` means a 200 is not a write. A CHECK the row
+    // violates is *ignored*, not reported, so the count below is the
+    // only thing that can tell staging from silence.
+    expect(
+      (JSON.parse(result.body) as { rowsAffected?: number }).rowsAffected,
+      `staged nothing: ${result.body}`,
+    ).toBe(1);
   }
 
   expect(await catalogRows(app)).toBeGreaterThan(0);
 }
 
-/** How many catalog rows this environment has. CI has none. */
+/**
+ * A stable, valid MBID from a short label.
+ *
+ * The column is `CHECK(length(mbid) = 16)` after `unhex`, so a fixture
+ * id has to be a real UUID rather than a readable string -- the same
+ * trade the Go fixtures make with `testMBID()`, and for the same
+ * reason: a readable id that cannot be stored is not readable, it is
+ * absent.
+ */
+function uuid(label: string): string {
+  const hex = [...label]
+    .map((c) => c.charCodeAt(0).toString(16).padStart(2, '0'))
+    .join('')
+    .padEnd(32, '0')
+    .slice(0, 32);
+
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    hex.slice(12, 16),
+    hex.slice(16, 20),
+    hex.slice(20),
+  ].join('-');
+}
+
+/**
+ * Whether this environment has a catalog at all. CI has none.
+ *
+ * `exploreIndex` is deliberately 0-or-1 rather than a row count: a real
+ * catalog is ~1.1M rows, and a cold `COUNT(*)` over it took 65 seconds
+ * on the first call after a seed was extracted -- which timed out
+ * whichever spec ran first and looked like flake.
+ */
 async function catalogRows(app: Page): Promise<number> {
   const health = await app.evaluate(async () => {
     const res = await fetch('/__test/health');

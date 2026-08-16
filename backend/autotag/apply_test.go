@@ -2,7 +2,6 @@ package autotag_test
 
 import (
 	"context"
-	"database/sql"
 	"log/slog"
 	"sync"
 	"testing"
@@ -87,51 +86,22 @@ func seedAudioFiles(
 	q := db.Queries
 	ctx := db.Ctx
 
-	ac, err := q.UpsertArtistCredit(ctx, "Test Artist")
-	if err != nil {
-		t.Fatalf("upsert artist credit: %v", err)
-	}
-
-	rg, err := q.UpsertReleaseGroup(ctx, sqlcgen.UpsertReleaseGroupParams{
-		Name:                "Test Album",
-		AlbumArtistCreditID: sql.NullInt64{Int64: ac.ID, Valid: true},
-	})
-	if err != nil {
-		t.Fatalf("upsert rg: %v", err)
-	}
-
 	out := make([]sqlcgen.AudioFile, 0, len(paths))
 
 	for i, p := range paths {
-		rec, err := q.CreateRecordingFull(ctx, sqlcgen.CreateRecordingFullParams{
-			Name:           p,
-			ArtistCreditID: ac.ID,
-			TrackNumber:    sql.NullInt64{Int64: int64(i + 1), Valid: true},
+		id := database.InsertTestTrack(t, db, database.TestTrack{
+			FilePath:    p,
+			Title:       p,
+			Artist:      "Test Artist",
+			Album:       "Test Album",
+			TrackNumber: int64(i + 1),
+			LengthMs:    100000,
+			GroupKey:    groupKey,
 		})
-		if err != nil {
-			t.Fatalf("create recording: %v", err)
-		}
 
-		if _, err := q.CreateReleaseGroupRecording(ctx, sqlcgen.CreateReleaseGroupRecordingParams{
-			ReleaseGroupID: rg.ID,
-			RecordingID:    rec.ID,
-			TrackNumber:    sql.NullInt64{Int64: int64(i + 1), Valid: true},
-		}); err != nil {
-			t.Fatalf("link rg recording: %v", err)
-		}
-
-		af, err := q.CreateAudioFileWithGroupKey(ctx, sqlcgen.CreateAudioFileWithGroupKeyParams{
-			FilePath:           p,
-			LengthMilliseconds: 100000,
-			FileTypeID:         0,
-			RecordingID:        rec.ID,
-			Basename:           p,
-			LibraryID:          0,
-			GroupKey:           groupKey,
-			TagStatus:          "untagged",
-		})
+		af, err := q.GetAudioFile(ctx, id)
 		if err != nil {
-			t.Fatalf("create audio file: %v", err)
+			t.Fatalf("read seeded audio file: %v", err)
 		}
 
 		out = append(out, af)

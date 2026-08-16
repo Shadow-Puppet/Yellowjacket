@@ -47,6 +47,13 @@ const (
 	// canonicalProgressRows controls progress reporting during the
 	// canonical CSV scan (~30M rows total).
 	canonicalProgressRows = 2_000_000
+
+	// maxReleaseTracks caps the per-release track count, so a malformed
+	// row cannot turn the denominator into nonsense.  Well above the
+	// longest real release, and it is a cap rather than a rejection
+	// because a box set reporting 999 is still a better answer than one
+	// reporting nothing.
+	maxReleaseTracks = 999
 )
 
 // Per-artist discography coverage (S2).  The global budgets above keep
@@ -329,6 +336,18 @@ type canonicalScan struct {
 	releaseToRG  map[uuid16]rgTarget
 	artistNames  map[uuid16]string
 
+	// releaseTracks counts the canonical dump's rows per kept release,
+	// which is that release's track count: the dump carries one row per
+	// recording per canonical release.
+	//
+	// It is counted *before* the popularity filter below, unlike almost
+	// everything else here, because a denominator built from the kept
+	// recordings would say "9" about a twelve-track album whose other
+	// three are unpopular - which is worse than saying nothing, and is
+	// exactly the confident lie that kept whole tracklists out of the
+	// artifact.  Bounded by the kept release set, not by MusicBrainz.
+	releaseTracks map[uuid16]uint16
+
 	// artistTracks accumulates each target artist's top recordings for
 	// S2 coverage; merged into recordings before assembly.
 	artistTracks *perArtistTracks
@@ -454,10 +473,11 @@ func (imp *dumpImporter) scanCanonicalDump(
 	defer zr.Close()
 
 	scan := &canonicalScan{
-		releaseInfos: make(map[uuid16]releaseInfo, len(ks.releases)),
-		releaseToRG:  make(map[uuid16]rgTarget, len(ks.releases)),
-		artistNames:  make(map[uuid16]string, len(ks.artists)),
-		artistTracks: newPerArtistTracks(),
+		releaseInfos:  make(map[uuid16]releaseInfo, len(ks.releases)),
+		releaseToRG:   make(map[uuid16]rgTarget, len(ks.releases)),
+		artistNames:   make(map[uuid16]string, len(ks.artists)),
+		releaseTracks: make(map[uuid16]uint16, len(ks.releases)),
+		artistTracks:  newPerArtistTracks(),
 	}
 
 	sawData, sawRedirect := false, false
@@ -614,9 +634,17 @@ func (imp *dumpImporter) scanCanonicalData(
 			}
 		}
 
-		// Release display info for release-group titling.
+		// Release display info for release-group titling, and the
+		// release's track count.  Both are for kept releases only, and
+		// the count is taken here rather than below because every row
+		// of this dump is one track of its release regardless of how
+		// often anyone played it.
 		if relOK {
 			if _, kept := ks.releases[relMBID]; kept {
+				if n := scan.releaseTracks[relMBID]; n < maxReleaseTracks {
+					scan.releaseTracks[relMBID] = n + 1
+				}
+
 				if _, seen := scan.releaseInfos[relMBID]; !seen {
 					firstArtist := ""
 					if len(artistMBIDs) > 0 {
@@ -1004,6 +1032,7 @@ func (imp *dumpImporter) assembleIndex(
 			ArtistName:     info.artistName,
 			ArtistMBID:     info.artistMBID,
 			Popularity:     int(agg.listens),
+			TotalTracks:    int(scan.releaseTracks[agg.bestRel]),
 			CAAReleaseMBID: formatUUID(agg.canonical[:]),
 		})
 

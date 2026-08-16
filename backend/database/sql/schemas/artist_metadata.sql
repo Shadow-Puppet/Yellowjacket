@@ -12,4 +12,6 @@ CREATE TABLE IF NOT EXISTS artist_metadata (
     PRIMARY KEY (mbid, source)
 );
 
-CREATE INDEX IF NOT EXISTS idx_artist_metadata_mbid ON artist_metadata(mbid);
+-- No index on mbid alone: PRIMARY KEY (mbid, source) already has it as
+-- its leftmost column, so a second one costs a write per row and serves
+-- no read.

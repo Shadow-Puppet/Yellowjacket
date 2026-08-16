@@ -175,6 +175,8 @@ func (p *Player) InitSpeaker() error {
 // SetPlaybackFinishedHandler sets a callback invoked when a track
 // finishes naturally. This allows the queue to drive auto-advance
 // without circular imports.
+//
+//wails:ignore // internal wiring, not part of the app's IPC surface.
 func (p *Player) SetPlaybackFinishedHandler(handler func()) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -185,6 +187,8 @@ func (p *Player) SetPlaybackFinishedHandler(handler func()) {
 // SetMediaControls provides an OS media controls handler. When set,
 // the player pushes metadata, playback state, volume, and seek
 // notifications to the OS media overlay.
+//
+//wails:ignore // internal wiring, not part of the app's IPC surface.
 func (p *Player) SetMediaControls(h mediacontrols.Handler) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -1038,7 +1042,7 @@ func (p *Player) getCurrentTrackInfoLocked() TrackInfo {
 
 	// Try to get metadata from database.
 	if p.db != nil {
-		meta, err := p.db.ReadQueries.GetTrackMetadataByPath(
+		meta, err := p.db.ReadQueries.GetTrackByPath(
 			p.ctx, info.FilePath,
 		)
 		if err == nil {
@@ -1046,7 +1050,7 @@ func (p *Player) getCurrentTrackInfoLocked() TrackInfo {
 				info.Title = meta.Title
 			}
 
-			info.Artist = meta.Artist
+			info.Artist = meta.ArtistName
 			info.Album = meta.Album
 			info.ArtistMBID = meta.ArtistMbid
 			info.ReleaseGroupMBID = meta.ReleaseGroupMbid
@@ -1179,7 +1183,7 @@ func (p *Player) buildMediaMetadata(
 	// full path; ResolveURLs converts it to relative HTTP paths
 	// for the frontend, but MPRIS needs the actual file path.
 	if p.db != nil && info.FilePath != "" {
-		dbMeta, err := p.db.ReadQueries.GetTrackMetadataByPath(
+		dbMeta, err := p.db.ReadQueries.GetTrackByPath(
 			p.ctx, info.FilePath,
 		)
 		if err == nil && dbMeta.CoverArtPath != "" {

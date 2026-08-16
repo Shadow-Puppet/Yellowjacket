@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite" // SQLite driver for reading the artifact file.
@@ -91,8 +92,89 @@ type artifactInfo struct {
 // TestArtifactColumnsMatchExporter.
 const artifactCatalogColumns = `entity_type, mbid, title, artist_name, artist_mbid,
 	aliases, popularity, listener_count, duration, caa_release_mbid,
-	release_name, primary_type, secondary_types, release_date,
+	release_name, primary_type, secondary_types, release_date, total_tracks,
 	artist_type, country, disambiguation, sort_name, discog_fetched`
+
+// artifactSelectColumns is the same list as read *from an artifact*,
+// converting the two columns whose storage this app changed.
+//
+// The local table stores an MBID as 16 raw bytes and an entity type as a
+// small integer, which took the catalog and its indexes from 677 MB to
+// 389 MB.  A published artifact still carries the text form, and there
+// is no reason it should not: converting on the way in costs one
+// `unhex` per row on a once-a-month import, and it means a new build
+// reads the artifact that is already out there rather than requiring
+// one to be rebuilt and re-downloaded first.
+//
+// An artifact that already carries the compact form is copied straight
+// through - `artifactStoresText` decides which, by asking the artifact
+// rather than by trusting a version number.
+func artifactSelectColumns(text, totals bool) string {
+	totalTracks := "total_tracks"
+	if !totals {
+		// An artifact built before the column existed. Zero is what the
+		// column means by "the catalog does not say", so an older
+		// artifact imports as one that declines to answer rather than
+		// failing to import at all.
+		totalTracks = "0"
+	}
+
+	if !text {
+		return strings.Replace(
+			artifactCatalogColumns, "total_tracks", totalTracks, 1,
+		)
+	}
+
+	return `CASE entity_type
+			WHEN 'artist' THEN 1
+			WHEN 'release_group' THEN 2
+			WHEN 'recording' THEN 3
+			ELSE 0 END,
+		unhex(replace(mbid, '-', '')),
+		title, artist_name,
+		CASE WHEN artist_mbid = '' THEN x''
+			ELSE unhex(replace(artist_mbid, '-', '')) END,
+		aliases, popularity, listener_count, duration,
+		CASE WHEN caa_release_mbid = '' THEN x''
+			ELSE unhex(replace(caa_release_mbid, '-', '')) END,
+		release_name, primary_type, secondary_types, release_date, ` +
+		totalTracks + `,
+		artist_type, country, disambiguation, sort_name, discog_fetched`
+}
+
+// artifactHasTotals reports whether the attached artifact carries the
+// per-release-group track denominator.  An artifact published before
+// that column existed is still a perfectly good catalog, so it is asked
+// rather than assumed - the same rule, and the same handle, as
+// artifactStoresText below.
+func (si *SearchIndex) artifactHasTotals() bool {
+	var n int
+
+	err := si.db.QueryRowWriter(
+		`SELECT COUNT(*) FROM pragma_table_info('explore_index', 'core')
+		 WHERE name = 'total_tracks'`,
+	).Scan(&n)
+
+	return err == nil && n > 0
+}
+
+// artifactStoresText reports whether the attached artifact carries the
+// old text encoding.
+func (si *SearchIndex) artifactStoresText() bool {
+	// The writer, not QueryContext: "core" is attached to that one
+	// connection and does not exist on the read pool.  Asking the wrong
+	// handle errors, and the fallback would then convert an artifact
+	// that needs no conversion.
+	var kind string
+
+	if err := si.db.QueryRowWriter(
+		"SELECT typeof(mbid) FROM core.explore_index LIMIT 1",
+	).Scan(&kind); err != nil {
+		return true
+	}
+
+	return kind == "text"
+}
 
 // inspectArtifact opens the artifact read-only and reports what it
 // declares, without touching the live index.  Validation happens here so
@@ -263,9 +345,13 @@ func (si *SearchIndex) analyzeIndex() {
 // is an index range scan and a cancelled import leaves committed work
 // behind rather than rolling it all back.
 func (si *SearchIndex) mergeArtifactRows(ctx context.Context, total int) (int, error) {
+	selectColumns := artifactSelectColumns(
+		si.artifactStoresText(), si.artifactHasTotals(),
+	)
+
 	insertSQL := `
 		INSERT INTO explore_index (` + artifactCatalogColumns + `)
-		SELECT ` + artifactCatalogColumns + `
+		SELECT ` + selectColumns + `
 		FROM core.explore_index
 		WHERE mbid > ?` + upsertIndexConflictSQL
 
@@ -273,7 +359,7 @@ func (si *SearchIndex) mergeArtifactRows(ctx context.Context, total int) (int, e
 	// appended only while one exists.
 	insertRangeSQL := `
 		INSERT INTO explore_index (` + artifactCatalogColumns + `)
-		SELECT ` + artifactCatalogColumns + `
+		SELECT ` + selectColumns + `
 		FROM core.explore_index
 		WHERE mbid > ? AND mbid <= ?` + upsertIndexConflictSQL
 

@@ -7,19 +7,8 @@ package sqlcgen
 
 import (
 	"context"
+	"database/sql"
 )
-
-const createArtist = `-- name: CreateArtist :one
-INSERT INTO artists (name) VALUES (?)
-RETURNING id, name, mbid
-`
-
-func (q *Queries) CreateArtist(ctx context.Context, name string) (Artist, error) {
-	row := q.db.QueryRowContext(ctx, createArtist, name)
-	var i Artist
-	err := row.Scan(&i.ID, &i.Name, &i.Mbid)
-	return i, err
-}
 
 const deleteAllArtists = `-- name: DeleteAllArtists :exec
 DELETE FROM artists
@@ -31,8 +20,7 @@ func (q *Queries) DeleteAllArtists(ctx context.Context) error {
 }
 
 const deleteArtist = `-- name: DeleteArtist :exec
-DELETE FROM artists 
-WHERE id = ?
+DELETE FROM artists WHERE id = ?
 `
 
 func (q *Queries) DeleteArtist(ctx context.Context, id int64) error {
@@ -43,56 +31,17 @@ func (q *Queries) DeleteArtist(ctx context.Context, id int64) error {
 const getAlbumArtists = `-- name: GetAlbumArtists :many
 SELECT DISTINCT a.id, a.name, a.mbid
 FROM artists a
-JOIN artist_credit_artist aca ON aca.artist_id = a.id
-JOIN artist_credit ac ON ac.id = aca.credit_id
-JOIN release_groups rg ON rg.album_artist_credit_id = ac.id
-ORDER BY a.name
-`
-
-func (q *Queries) GetAlbumArtists(ctx context.Context) ([]Artist, error) {
-	rows, err := q.db.QueryContext(ctx, getAlbumArtists)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []Artist
-	for rows.Next() {
-		var i Artist
-		if err := rows.Scan(&i.ID, &i.Name, &i.Mbid); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const getAlbumArtistsByLibrary = `-- name: GetAlbumArtistsByLibrary :many
-SELECT DISTINCT a.id, a.name, a.mbid
-FROM artists a
-JOIN artist_credit_artist aca ON aca.artist_id = a.id
-JOIN artist_credit ac ON ac.id = aca.credit_id
-JOIN release_groups rg ON rg.album_artist_credit_id = ac.id
-WHERE a.id IN (
-    SELECT DISTINCT aca2.artist_id
-    FROM artist_credit_artist aca2
-    JOIN artist_credit ac2 ON ac2.id = aca2.credit_id
-    JOIN release_groups rg2 ON rg2.album_artist_credit_id = ac2.id
-    JOIN release_group_recordings rgr2 ON rgr2.release_group_id = rg2.id
-    JOIN recordings r2 ON r2.id = rgr2.recording_id
-    JOIN audio_files af2 ON af2.recording_id = r2.id
-    WHERE af2.library_id = ?
+JOIN albums al ON al.artist_id = a.id
+WHERE EXISTS (
+    SELECT 1 FROM audio_files af
+    WHERE af.album_id = al.id
+      AND af.library_id = COALESCE(NULLIF(CAST(?1 AS INTEGER), 0), af.library_id)
 )
 ORDER BY a.name
 `
 
-func (q *Queries) GetAlbumArtistsByLibrary(ctx context.Context, libraryID int64) ([]Artist, error) {
-	rows, err := q.db.QueryContext(ctx, getAlbumArtistsByLibrary, libraryID)
+func (q *Queries) GetAlbumArtists(ctx context.Context, libraryID int64) ([]Artist, error) {
+	rows, err := q.db.QueryContext(ctx, getAlbumArtists, libraryID)
 	if err != nil {
 		return nil, err
 	}
@@ -115,8 +64,7 @@ func (q *Queries) GetAlbumArtistsByLibrary(ctx context.Context, libraryID int64)
 }
 
 const getAllArtists = `-- name: GetAllArtists :many
-SELECT id, name, mbid FROM artists
-ORDER BY name
+SELECT id, name, mbid FROM artists ORDER BY name
 `
 
 func (q *Queries) GetAllArtists(ctx context.Context) ([]Artist, error) {
@@ -143,8 +91,7 @@ func (q *Queries) GetAllArtists(ctx context.Context) ([]Artist, error) {
 }
 
 const getArtist = `-- name: GetArtist :one
-SELECT id, name, mbid FROM artists 
-WHERE id = ? LIMIT 1
+SELECT id, name, mbid FROM artists WHERE id = ? LIMIT 1
 `
 
 func (q *Queries) GetArtist(ctx context.Context, id int64) (Artist, error) {
@@ -154,9 +101,28 @@ func (q *Queries) GetArtist(ctx context.Context, id int64) (Artist, error) {
 	return i, err
 }
 
+const getArtistByFilePath = `-- name: GetArtistByFilePath :one
+SELECT COALESCE(a.name, '') AS artist_name, COALESCE(a.mbid, '') AS artist_mbid
+FROM audio_files af
+LEFT JOIN artists a ON a.id = af.artist_id
+WHERE af.file_path = ?
+LIMIT 1
+`
+
+type GetArtistByFilePathRow struct {
+	ArtistName string
+	ArtistMbid string
+}
+
+func (q *Queries) GetArtistByFilePath(ctx context.Context, filePath string) (GetArtistByFilePathRow, error) {
+	row := q.db.QueryRowContext(ctx, getArtistByFilePath, filePath)
+	var i GetArtistByFilePathRow
+	err := row.Scan(&i.ArtistName, &i.ArtistMbid)
+	return i, err
+}
+
 const getArtistByName = `-- name: GetArtistByName :one
-SELECT id, name, mbid FROM artists
-WHERE name = ? LIMIT 1
+SELECT id, name, mbid FROM artists WHERE name = ? LIMIT 1
 `
 
 func (q *Queries) GetArtistByName(ctx context.Context, name string) (Artist, error) {
@@ -166,18 +132,15 @@ func (q *Queries) GetArtistByName(ctx context.Context, name string) (Artist, err
 	return i, err
 }
 
-const getOrphanedArtistIDs = `-- name: GetOrphanedArtistIDs :many
-SELECT a.id FROM artists a
-WHERE NOT EXISTS (
-    SELECT 1 FROM artist_credit_artist aca WHERE aca.artist_id = a.id
-)
+const getUnreferencedArtistIDs = `-- name: GetUnreferencedArtistIDs :many
+SELECT id FROM artists a
+WHERE NOT EXISTS (SELECT 1 FROM audio_files af WHERE af.artist_id = a.id)
+  AND NOT EXISTS (SELECT 1 FROM albums al WHERE al.artist_id = a.id)
 `
 
-// Artists no longer credited on any recording or release group - left
-// behind when a scan's orphan cleanup removes the audio_files that used
-// to justify them, since deleting an audio_files row doesn't cascade.
-func (q *Queries) GetOrphanedArtistIDs(ctx context.Context) ([]int64, error) {
-	rows, err := q.db.QueryContext(ctx, getOrphanedArtistIDs)
+// Artists no file and no album points at any more.
+func (q *Queries) GetUnreferencedArtistIDs(ctx context.Context) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, getUnreferencedArtistIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -199,30 +162,42 @@ func (q *Queries) GetOrphanedArtistIDs(ctx context.Context) ([]int64, error) {
 	return items, nil
 }
 
-const updateArtist = `-- name: UpdateArtist :exec
-UPDATE artists 
-SET name = ?
-WHERE id = ?
+const setArtistMBID = `-- name: SetArtistMBID :exec
+UPDATE artists SET mbid = ? WHERE id = ?
 `
 
-type UpdateArtistParams struct {
-	Name string
+type SetArtistMBIDParams struct {
+	Mbid sql.NullString
 	ID   int64
 }
 
-func (q *Queries) UpdateArtist(ctx context.Context, arg UpdateArtistParams) error {
-	_, err := q.db.ExecContext(ctx, updateArtist, arg.Name, arg.ID)
+func (q *Queries) SetArtistMBID(ctx context.Context, arg SetArtistMBIDParams) error {
+	_, err := q.db.ExecContext(ctx, setArtistMBID, arg.Mbid, arg.ID)
 	return err
 }
 
 const upsertArtist = `-- name: UpsertArtist :one
-INSERT INTO artists (name) VALUES (?)
-ON CONFLICT(name) DO UPDATE SET name = excluded.name
+
+INSERT INTO artists (name, mbid) VALUES (?, ?)
+ON CONFLICT(name) DO UPDATE SET
+    mbid = COALESCE(excluded.mbid, artists.mbid)
 RETURNING id, name, mbid
 `
 
-func (q *Queries) UpsertArtist(ctx context.Context, name string) (Artist, error) {
-	row := q.db.QueryRowContext(ctx, upsertArtist, name)
+type UpsertArtistParams struct {
+	Name string
+	Mbid sql.NullString
+}
+
+// Queries over artists.
+//
+// An artist row is reachable two ways: as a file's primary artist
+// (audio_files.artist_id) and as an album's artist (albums.artist_id).
+// Both used to route through artist_credit + artist_credit_artist,
+// which is how "which album artists are in library 2" came to be a
+// five-join subquery inside a three-join query.
+func (q *Queries) UpsertArtist(ctx context.Context, arg UpsertArtistParams) (Artist, error) {
+	row := q.db.QueryRowContext(ctx, upsertArtist, arg.Name, arg.Mbid)
 	var i Artist
 	err := row.Scan(&i.ID, &i.Name, &i.Mbid)
 	return i, err

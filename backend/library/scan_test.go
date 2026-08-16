@@ -1,9 +1,7 @@
 package library
 
 import (
-	"context"
 	"database/sql"
-	"fmt"
 	"log/slog"
 	"sync/atomic"
 	"testing"
@@ -188,35 +186,28 @@ func TestSplitGenres(t *testing.T) {
 	}
 }
 
-func TestMapTrackRow(t *testing.T) {
+func TestTrackFromRow(t *testing.T) {
 	t.Parallel()
 
-	track := mapTrackRow(
-		"/music/queen/bohemian.flac",         // filePath
-		180000,                               // lengthMs
-		"Bohemian Rhapsody",                  // title
-		"Queen",                              // artistName
-		sql.NullInt64{Int64: 1, Valid: true}, // trackNumber
-		sql.NullInt64{Int64: 1, Valid: true}, // discNumber
-		"A Night at the Opera",               // album
-		"Rock||Progressive Rock",             // genre
-		1975,                                 // year
-		"Freddie Mercury",                    // composer
-		".flac",                              // fileType
-		44100,                                // sampleRate
-		16,                                   // bitDepth
-		2,                                    // channels
-		1411,                                 // bitrate
-		35000000,                             // fileSize
-		0,                                    // playCount
-		sql.NullTime{},                       // lastPlayed
-		"",                                   // coverArtPath
-		"",                                   // artistMBID
-		"",                                   // releaseGroupMBID
-		"",                                   // recordingMBID
-	)
+	track := trackFromRow(sqlcgen.TrackMetadatum{
+		FilePath:           "/music/queen/bohemian.flac",
+		LengthMilliseconds: 180000,
+		Title:              "Bohemian Rhapsody",
+		ArtistName:         "Queen",
+		TrackNumber:        sql.NullInt64{Int64: 1, Valid: true},
+		DiscNumber:         sql.NullInt64{Int64: 1, Valid: true},
+		Album:              "A Night at the Opera",
+		Genre:              "Rock||Progressive Rock",
+		Year:               1975,
+		Composer:           "Freddie Mercury",
+		FileType:           ".flac",
+		SampleRate:         44100,
+		BitDepth:           16,
+		Channels:           2,
+		Bitrate:            1411,
+		FileSize:           35000000,
+	})
 
-	// Verify all 16 fields.
 	if track.TrackName != "Bohemian Rhapsody" {
 		t.Errorf("TrackName = %q, want %q", track.TrackName, "Bohemian Rhapsody")
 	}
@@ -225,48 +216,17 @@ func TestMapTrackRow(t *testing.T) {
 		t.Errorf("ArtistName = %q, want %q", track.ArtistName, "Queen")
 	}
 
-	// TrackLength is string-formatted milliseconds.
 	if track.TrackLength != "180000" {
 		t.Errorf("TrackLength = %q, want %q", track.TrackLength, "180000")
 	}
 
-	if track.FilePath != "/music/queen/bohemian.flac" {
-		t.Errorf("FilePath = %q, want %q", track.FilePath, "/music/queen/bohemian.flac")
-	}
-
-	if track.TrackNumber != 1 {
-		t.Errorf("TrackNumber = %d, want %d", track.TrackNumber, 1)
-	}
-
-	if track.DiscNumber != 1 {
-		t.Errorf("DiscNumber = %d, want %d", track.DiscNumber, 1)
-	}
-
-	if track.Album != "A Night at the Opera" {
-		t.Errorf("Album = %q, want %q", track.Album, "A Night at the Opera")
-	}
-
-	wantGenres := []string{"Rock", "Progressive Rock"}
-	if len(track.Genre) != len(wantGenres) {
-		t.Fatalf("Genre length = %d, want %d", len(track.Genre), len(wantGenres))
-	}
-
-	for i, g := range track.Genre {
-		if g != wantGenres[i] {
-			t.Errorf("Genre[%d] = %q, want %q", i, g, wantGenres[i])
-		}
+	if len(track.Genre) != 2 || track.Genre[0] != "Rock" ||
+		track.Genre[1] != "Progressive Rock" {
+		t.Errorf("Genre = %v, want [Rock, Progressive Rock]", track.Genre)
 	}
 
 	if track.Year != 1975 {
 		t.Errorf("Year = %d, want %d", track.Year, 1975)
-	}
-
-	if track.Composer != "Freddie Mercury" {
-		t.Errorf("Composer = %q, want %q", track.Composer, "Freddie Mercury")
-	}
-
-	if track.FileType != ".flac" {
-		t.Errorf("FileType = %q, want %q", track.FileType, ".flac")
 	}
 
 	if track.SampleRate != 44100 {
@@ -289,16 +249,12 @@ func TestMapTrackRow(t *testing.T) {
 		t.Errorf("FileSize = %d, want %d", track.FileSize, 35000000)
 	}
 
-	// Verify NullInt64 with Valid=false yields 0.
-	trackNull := mapTrackRow(
-		"/music/unknown.mp3", 0, "Test", "Artist",
-		sql.NullInt64{}, sql.NullInt64{}, // invalid (null)
-		"", "", 0, "", "", 0, 0, 0, 0, 0,
-		0,              // playCount
-		sql.NullTime{}, // lastPlayed
-		"",             // coverArtPath
-		"", "", "",     // artistMBID, releaseGroupMBID, recordingMBID
-	)
+	// A NULL track/disc number yields 0, not a panic.
+	trackNull := trackFromRow(sqlcgen.TrackMetadatum{
+		FilePath:   "/music/unknown.mp3",
+		Title:      "Test",
+		ArtistName: "Artist",
+	})
 
 	if trackNull.TrackNumber != 0 {
 		t.Errorf("null TrackNumber = %d, want 0", trackNull.TrackNumber)
@@ -307,11 +263,11 @@ func TestMapTrackRow(t *testing.T) {
 	if trackNull.DiscNumber != 0 {
 		t.Errorf("null DiscNumber = %d, want 0", trackNull.DiscNumber)
 	}
-}
 
-// ---------------------------------------------------------------------------
-// Test helper — constructs a Library backed by an in-memory test DB
-// ---------------------------------------------------------------------------
+	if trackNull.Genre != nil {
+		t.Errorf("empty Genre = %v, want nil", trackNull.Genre)
+	}
+}
 
 func setupTestLibrary(t *testing.T) (*Library, *database.DB) {
 	t.Helper()
@@ -335,129 +291,111 @@ func setupTestLibrary(t *testing.T) (*Library, *database.DB) {
 // Entity cache tests — DB-backed
 // ---------------------------------------------------------------------------
 
-func TestCachedUpsertArtistCredit(t *testing.T) {
+func TestCachedUpsertArtist(t *testing.T) {
 	t.Parallel()
 
 	lib, _ := setupTestLibrary(t)
 	cache := newEntityCache()
 	q := lib.db.Queries
 
-	// First call — hits DB.
-	ac1, err := lib.cachedUpsertArtistCredit(q, cache, "Queen")
-	if err != nil {
-		t.Fatalf("first cachedUpsertArtistCredit: %v", err)
+	first := lib.cachedUpsertArtist(q, cache, "Queen", "")
+	if first.ID == 0 {
+		t.Fatal("expected non-zero artist ID")
 	}
 
-	if ac1.ID == 0 {
-		t.Fatal("expected non-zero ArtistCredit ID")
+	// Second call is a cache hit and returns the same row.
+	if second := lib.cachedUpsertArtist(q, cache, "Queen", ""); second.ID != first.ID {
+		t.Errorf("cache miss: got ID %d, want %d", second.ID, first.ID)
 	}
 
-	// Second call — cache hit, same ID.
-	ac2, err := lib.cachedUpsertArtistCredit(q, cache, "Queen")
-	if err != nil {
-		t.Fatalf("second cachedUpsertArtistCredit: %v", err)
+	if other := lib.cachedUpsertArtist(q, cache, "Beyonce", ""); other.ID == first.ID {
+		t.Errorf("different name returned same ID %d", other.ID)
 	}
 
-	if ac2.ID != ac1.ID {
-		t.Errorf("cache miss: got ID %d, want %d", ac2.ID, ac1.ID)
+	if len(cache.artists) != 2 {
+		t.Errorf("cache entries = %d, want 2", len(cache.artists))
 	}
 
-	// Different name — different ID.
-	ac3, err := lib.cachedUpsertArtistCredit(q, cache, "Beyoncé")
-	if err != nil {
-		t.Fatalf("cachedUpsertArtistCredit(Beyoncé): %v", err)
+	// An MBID arriving on a later file is written to the cached row -
+	// the first file of an album often has no MBID and a later one does.
+	withMBID := lib.cachedUpsertArtist(q, cache, "Queen", "mbid-queen")
+	if !withMBID.Mbid.Valid || withMBID.Mbid.String != "mbid-queen" {
+		t.Errorf("artist mbid = %v, want mbid-queen", withMBID.Mbid)
 	}
 
-	if ac3.ID == ac1.ID {
-		t.Errorf("different name returned same ID %d", ac3.ID)
-	}
-
-	// Cache should have 2 entries.
-	if len(cache.artistCredits) != 2 {
-		t.Errorf("cache entries = %d, want 2", len(cache.artistCredits))
+	// An empty name is not a missing row: it becomes "Unknown Artist",
+	// because a file with no artist tag still has to belong somewhere.
+	unknown := lib.cachedUpsertArtist(q, cache, "", "")
+	if unknown.Name != "Unknown Artist" {
+		t.Errorf("empty artist name = %q, want %q", unknown.Name, "Unknown Artist")
 	}
 }
 
-func TestCachedLinkArtist(t *testing.T) {
+func TestCachedUpsertAlbum(t *testing.T) {
 	t.Parallel()
 
 	lib, _ := setupTestLibrary(t)
 	cache := newEntityCache()
 	q := lib.db.Queries
-	metrics := newScanMetrics()
 
-	// Create an artist credit first.
-	ac, err := lib.cachedUpsertArtistCredit(q, cache, "Queen")
-	if err != nil {
-		t.Fatalf("upsert artist credit: %v", err)
+	first := lib.cachedUpsertAlbum(q, cache, albumParams{
+		name:   "A Night at the Opera",
+		credit: "Queen",
+	})
+	if first.ID == 0 {
+		t.Fatal("expected non-zero album ID")
 	}
 
-	// First link — creates artist + artist-credit-artist link.
-	lib.cachedLinkArtist(q, cache, metrics, "Queen", ac.ID)
-
-	if len(cache.artists) != 1 {
-		t.Errorf("artists cache = %d, want 1", len(cache.artists))
+	same := lib.cachedUpsertAlbum(q, cache, albumParams{
+		name:   "A Night at the Opera",
+		credit: "Queen",
+	})
+	if same.ID != first.ID {
+		t.Errorf("cache miss: got ID %d, want %d", same.ID, first.ID)
 	}
 
-	if len(cache.linkedCredits) != 1 {
-		t.Errorf("linkedCredits cache = %d, want 1", len(cache.linkedCredits))
-	}
-
-	// Second call with same args — should skip (cache hit).
-	lib.cachedLinkArtist(q, cache, metrics, "Queen", ac.ID)
-
-	if len(cache.linkedCredits) != 1 {
-		t.Errorf(
-			"linkedCredits after duplicate = %d, want 1 (should skip)",
-			len(cache.linkedCredits),
-		)
+	// Album identity is (name, credit), so the same title by someone
+	// else is a different album.
+	other := lib.cachedUpsertAlbum(q, cache, albumParams{
+		name:   "A Night at the Opera",
+		credit: "Blind Guardian",
+	})
+	if other.ID == first.ID {
+		t.Error("same album name by a different artist collapsed into one album")
 	}
 }
 
-func TestCachedLinkArtist_MultiCredit(t *testing.T) {
+func TestCachedUpsertAlbum_FillsCoverArtLater(t *testing.T) {
 	t.Parallel()
 
 	lib, _ := setupTestLibrary(t)
 	cache := newEntityCache()
 	q := lib.db.Queries
-	metrics := newScanMetrics()
 
-	// Two different artist credits referencing the same artist name.
-	ac1, err := lib.cachedUpsertArtistCredit(q, cache, "Queen")
+	album := lib.cachedUpsertAlbum(q, cache, albumParams{name: "Art", credit: "A"})
+
+	ca, err := q.UpsertCoverArt(lib.ctx, sqlcgen.UpsertCoverArtParams{
+		FilePath: "/covers/art.jpg",
+		MimeType: "image/jpeg",
+	})
 	if err != nil {
-		t.Fatalf("upsert credit 1: %v", err)
+		t.Fatalf("upsert cover art: %v", err)
 	}
 
-	ac2, err := lib.cachedUpsertArtistCredit(q, cache, "Queen feat. David Bowie")
-	if err != nil {
-		t.Fatalf("upsert credit 2: %v", err)
+	// The first file of an album often carries no embedded art and a
+	// later one does; the album has to pick it up.
+	withArt := lib.cachedUpsertAlbum(q, cache, albumParams{
+		name:       "Art",
+		credit:     "A",
+		coverArtID: sql.NullInt64{Int64: ca.ID, Valid: true},
+	})
+
+	if withArt.ID != album.ID {
+		t.Fatalf("album ID changed: got %d, want %d", withArt.ID, album.ID)
 	}
 
-	// Link "Queen" artist to both credits.
-	lib.cachedLinkArtist(q, cache, metrics, "Queen", ac1.ID)
-	lib.cachedLinkArtist(q, cache, metrics, "Queen", ac2.ID)
-
-	// Artist cached once.
-	if len(cache.artists) != 1 {
-		t.Errorf("artists cache = %d, want 1 (same artist name)", len(cache.artists))
-	}
-
-	// Two distinct linked-credit entries.
-	if len(cache.linkedCredits) != 2 {
-		t.Errorf("linkedCredits = %d, want 2", len(cache.linkedCredits))
-	}
-
-	// Verify link keys are correct format.
-	queenArtist := cache.artists["Queen"]
-	key1 := fmt.Sprintf("%d:%d", queenArtist.ID, ac1.ID)
-	key2 := fmt.Sprintf("%d:%d", queenArtist.ID, ac2.ID)
-
-	if _, ok := cache.linkedCredits[key1]; !ok {
-		t.Errorf("missing linked credit key %q", key1)
-	}
-
-	if _, ok := cache.linkedCredits[key2]; !ok {
-		t.Errorf("missing linked credit key %q", key2)
+	if !withArt.CoverArtID.Valid || withArt.CoverArtID.Int64 != ca.ID {
+		t.Errorf("cover art = %v, want %d", withArt.CoverArtID, ca.ID)
 	}
 }
 
@@ -468,459 +406,82 @@ func TestCachedUpsertGenre(t *testing.T) {
 	cache := newEntityCache()
 	q := lib.db.Queries
 
-	// First call — creates genre.
-	g1, err := lib.cachedUpsertGenre(q, cache, "Rock")
+	first, err := lib.cachedUpsertGenre(q, cache, "Rock")
 	if err != nil {
-		t.Fatalf("first cachedUpsertGenre: %v", err)
+		t.Fatalf("cachedUpsertGenre: %v", err)
 	}
 
-	if g1.ID == 0 {
-		t.Fatal("expected non-zero Genre ID")
-	}
-
-	// Second call — cache hit.
-	g2, err := lib.cachedUpsertGenre(q, cache, "Rock")
+	second, err := lib.cachedUpsertGenre(q, cache, "Rock")
 	if err != nil {
-		t.Fatalf("second cachedUpsertGenre: %v", err)
+		t.Fatalf("cachedUpsertGenre (cached): %v", err)
 	}
 
-	if g2.ID != g1.ID {
-		t.Errorf("cache miss: got ID %d, want %d", g2.ID, g1.ID)
-	}
-
-	if len(cache.genres) != 1 {
-		t.Errorf("genre cache entries = %d, want 1", len(cache.genres))
+	if second.ID != first.ID {
+		t.Errorf("cache miss: got ID %d, want %d", second.ID, first.ID)
 	}
 }
 
-func TestResolveReleaseGroup(t *testing.T) {
-	t.Parallel()
-
-	lib, _ := setupTestLibrary(t)
-	cache := newEntityCache()
-	q := lib.db.Queries
-
-	// Need an album artist credit for the release group.
-	ac, err := lib.cachedUpsertArtistCredit(q, cache, "Queen")
-	if err != nil {
-		t.Fatalf("upsert artist credit: %v", err)
-	}
-
-	albumArtistCreditID := sql.NullInt64{Int64: ac.ID, Valid: true}
-
-	// First call — no cover art.
-	tags := &metadata.TrackMetadata{
-		Album: "A Night at the Opera",
-		Year:  1975,
-	}
-
-	rgID := lib.resolveReleaseGroup(q, cache, tags, albumArtistCreditID, sql.NullInt64{})
-	if !rgID.Valid {
-		t.Fatal("expected valid release group ID")
-	}
-
-	if rgID.Int64 == 0 {
-		t.Fatal("expected non-zero release group ID")
-	}
-
-	// Verify cached.
-	if len(cache.releaseGroups) != 1 {
-		t.Errorf("releaseGroups cache = %d, want 1", len(cache.releaseGroups))
-	}
-
-	// Second call — same album with cover art → should update cover art on cached entry.
-	// First, create a cover art record in the DB.
-	coverArt, err := q.UpsertCoverArt(lib.ctx, sqlcgen.UpsertCoverArtParams{
-		IsEmbedded: true,
-		FilePath:   "/covers/opera.jpg",
-		MimeType:   "image/jpeg",
-	})
-	if err != nil {
-		t.Fatalf("create cover art: %v", err)
-	}
-
-	coverArtID := sql.NullInt64{Int64: coverArt.ID, Valid: true}
-	rgID2 := lib.resolveReleaseGroup(q, cache, tags, albumArtistCreditID, coverArtID)
-
-	if rgID2.Int64 != rgID.Int64 {
-		t.Errorf("cache miss: got ID %d, want %d", rgID2.Int64, rgID.Int64)
-	}
-
-	// Cover art should be updated on the cached release group.
-	// Cache key is composite: "albumName\x00artistCreditID".
-	cacheKey := fmt.Sprintf("%s\x00%d", "A Night at the Opera", ac.ID)
-	cachedRG := cache.releaseGroups[cacheKey]
-
-	if !cachedRG.CoverArtID.Valid {
-		t.Error("expected CoverArtID to be set after update")
-	}
-
-	if cachedRG.CoverArtID.Int64 != coverArt.ID {
-		t.Errorf("CoverArtID = %d, want %d", cachedRG.CoverArtID.Int64, coverArt.ID)
-	}
-
-	// Empty album → invalid NullInt64.
-	emptyTags := &metadata.TrackMetadata{Album: ""}
-	rgEmpty := lib.resolveReleaseGroup(q, cache, emptyTags, albumArtistCreditID, sql.NullInt64{})
-
-	if rgEmpty.Valid {
-		t.Errorf("empty album should return invalid NullInt64, got valid with ID %d", rgEmpty.Int64)
-	}
-}
-
-func TestResolveReleaseGroup_CacheHit(t *testing.T) {
-	t.Parallel()
-
-	lib, _ := setupTestLibrary(t)
-	cache := newEntityCache()
-	q := lib.db.Queries
-
-	// Pre-populate cache with a known release group.
-	// Cache key is composite: "albumName\x00artistCreditID" (use -1 for no artist).
-	cache.releaseGroups[fmt.Sprintf("%s\x00%d", "Cached Album", int64(-1))] = sqlcgen.ReleaseGroup{
-		ID:   42,
-		Name: "Cached Album",
-	}
-
-	tags := &metadata.TrackMetadata{Album: "Cached Album"}
-	rgID := lib.resolveReleaseGroup(q, cache, tags, sql.NullInt64{}, sql.NullInt64{})
-
-	if !rgID.Valid {
-		t.Fatal("expected valid release group ID from cache")
-	}
-
-	if rgID.Int64 != 42 {
-		t.Errorf("resolveReleaseGroup() = %d, want 42 (cached)", rgID.Int64)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Orphan cleanup test — DB-level
-// ---------------------------------------------------------------------------
-
-func TestOrphanDeletion(t *testing.T) {
-	t.Parallel()
-
-	_, db := setupTestLibrary(t)
-	ctx := context.Background()
-	q := db.Queries
-
-	// Seed an artist credit → recording → audio file chain.
-	ac, err := q.UpsertArtistCredit(ctx, "Test Artist")
-	if err != nil {
-		t.Fatalf("upsert artist credit: %v", err)
-	}
-
-	rec, err := q.CreateRecordingFull(ctx, sqlcgen.CreateRecordingFullParams{
-		Name:           "Test Song",
-		ArtistCreditID: ac.ID,
-	})
-	if err != nil {
-		t.Fatalf("create recording: %v", err)
-	}
-
-	af, err := q.CreateAudioFile(ctx, sqlcgen.CreateAudioFileParams{
-		FilePath:           "/music/test.mp3",
-		LengthMilliseconds: 180000,
-		FileTypeID:         0,
-		RecordingID:        rec.ID,
-		Basename:           "test.mp3",
-	})
-	if err != nil {
-		t.Fatalf("create audio file: %v", err)
-	}
-
-	// Add FTS search index entry.
-	if err := db.InsertSearchIndex(
-		af.ID, "/music/test.mp3", "Test Song", "Test Artist", "",
-	); err != nil {
-		t.Fatalf("insert search index: %v", err)
-	}
-
-	// Verify the search index entry exists before deletion.
-	results, err := db.SearchFTS("Test Song", 10)
-	if err != nil {
-		t.Fatalf("search before delete: %v", err)
-	}
-
-	if len(results) != 1 {
-		t.Fatalf("search results before delete = %d, want 1", len(results))
-	}
-
-	// Delete audio file — this is the primary orphan cleanup step.
-	if err := q.DeleteAudioFile(ctx, af.ID); err != nil {
-		t.Fatalf("delete audio file: %v", err)
-	}
-
-	// Verify audio file is gone by attempting to query all audio files.
-	allFiles, err := q.GetAllAudioFiles(ctx)
-	if err != nil {
-		t.Fatalf("get all audio files: %v", err)
-	}
-
-	if len(allFiles) != 0 {
-		t.Errorf("audio files after delete = %d, want 0", len(allFiles))
-	}
-
-	// DeleteSearchIndex on contentless FTS5 table (content='') is
-	// expected to error.  The production orphan cleanup code in
-	// library.go logs this as a warning — the search index entries
-	// become stale but harmless (they reference a non-existent
-	// audio_file ID, so JOINs return no results).
-	// ClearSearchIndex (used during full rescan) handles bulk cleanup.
-	// DeleteSearchIndex on contentless FTS5 is expected to error.
-	// Not a fatal error — documents the contentless FTS5 limitation.
-	err = db.DeleteSearchIndex(af.ID)
-	if err == nil {
-		t.Log("DeleteSearchIndex succeeded (unexpected for contentless FTS5)")
-	}
-}
-
-func TestPruneOrphanedMetadata(t *testing.T) {
+// TestPruneEmptyEntities is what is left of four orphan-sweep tests.
+//
+// Three of the tables they covered are gone, and with them the bug they
+// were guarding: a file used to create a recording, a credit, a
+// credit-artist link and a release-group link, none of which were
+// deleted when the file was, so a real library accumulated 812
+// recordings, 216 release groups and 260 artists with nothing behind
+// them.  Two tables can still be left empty by a removal, and this is
+// that.
+func TestPruneEmptyEntities(t *testing.T) {
 	t.Parallel()
 
 	lib, db := setupTestLibrary(t)
-	ctx := context.Background()
-	q := db.Queries
 
-	// Seed a full chain: artist -> artist_credit -> recording -> audio_file,
-	// plus a release group crediting the same artist.
-	artist, err := q.UpsertArtist(ctx, "Orphaned Artist")
-	if err != nil {
-		t.Fatalf("upsert artist: %v", err)
-	}
-
-	ac, err := q.UpsertArtistCredit(ctx, "Orphaned Artist")
-	if err != nil {
-		t.Fatalf("upsert artist credit: %v", err)
-	}
-
-	if _, err := q.CreateArtistCreditArtist(ctx, sqlcgen.CreateArtistCreditArtistParams{
-		ArtistID: artist.ID,
-		CreditID: ac.ID,
-	}); err != nil {
-		t.Fatalf("link artist credit artist: %v", err)
-	}
-
-	rec, err := q.CreateRecordingFull(ctx, sqlcgen.CreateRecordingFullParams{
-		Name:           "Orphaned Song",
-		ArtistCreditID: ac.ID,
+	kept := database.InsertTestTrack(t, db, database.TestTrack{
+		FilePath: "/music/kept.mp3",
+		Title:    "Kept",
+		Artist:   "Kept Artist",
+		Album:    "Kept Album",
+		Genres:   []string{"Kept Genre"},
 	})
-	if err != nil {
-		t.Fatalf("create recording: %v", err)
-	}
-
-	rg, err := q.CreateReleaseGroupFull(ctx, sqlcgen.CreateReleaseGroupFullParams{
-		Name:                "Orphaned Album",
-		AlbumArtistCreditID: sql.NullInt64{Int64: ac.ID, Valid: true},
+	gone := database.InsertTestTrack(t, db, database.TestTrack{
+		FilePath: "/music/gone.mp3",
+		Title:    "Gone",
+		Artist:   "Gone Artist",
+		Album:    "Gone Album",
+		Genres:   []string{"Gone Genre"},
 	})
-	if err != nil {
-		t.Fatalf("create release group: %v", err)
-	}
 
-	if _, err := q.CreateReleaseGroupRecording(ctx, sqlcgen.CreateReleaseGroupRecordingParams{
-		ReleaseGroupID: rg.ID,
-		RecordingID:    rec.ID,
-	}); err != nil {
-		t.Fatalf("link release group recording: %v", err)
-	}
+	_ = kept
 
-	af, err := q.CreateAudioFile(ctx, sqlcgen.CreateAudioFileParams{
-		FilePath:           "/music/orphaned.mp3",
-		LengthMilliseconds: 180000,
-		FileTypeID:         0,
-		RecordingID:        rec.ID,
-		Basename:           "orphaned.mp3",
-	})
-	if err != nil {
-		t.Fatalf("create audio file: %v", err)
-	}
-
-	// Simulate a rescan removing the file: delete the audio_files row
-	// (what the existing Phase 5 orphan cleanup does), then run the new
-	// metadata cleanup that's supposed to cascade the rest.
-	if err := q.DeleteAudioFile(ctx, af.ID); err != nil {
+	if err := db.Queries.DeleteAudioFile(lib.ctx, gone); err != nil {
 		t.Fatalf("delete audio file: %v", err)
 	}
 
-	lib.pruneOrphanedMetadata()
+	lib.pruneEmptyEntities()
 
-	if _, err := q.GetRecording(ctx, rec.ID); err == nil {
-		t.Error("expected orphaned recording to be deleted")
-	}
+	for _, c := range []struct {
+		table string
+		name  string
+		want  int
+	}{
+		{"albums", "Gone Album", 0},
+		{"albums", "Kept Album", 1},
+		{"artists", "Gone Artist", 0},
+		{"artists", "Kept Artist", 1},
+		{"genres", "Gone Genre", 0},
+		{"genres", "Kept Genre", 1},
+	} {
+		var n int
+		if err := db.QueryRowWriter(
+			"SELECT COUNT(*) FROM "+c.table+" WHERE name = ?", c.name,
+		).Scan(&n); err != nil {
+			t.Fatalf("count %s %q: %v", c.table, c.name, err)
+		}
 
-	if _, err := q.GetReleaseGroup(ctx, rg.ID); err == nil {
-		t.Error("expected orphaned release group to be deleted")
-	}
-
-	if _, err := q.GetArtistCredit(ctx, ac.ID); err == nil {
-		t.Error("expected orphaned artist credit to be deleted")
-	}
-
-	if _, err := q.GetArtist(ctx, artist.ID); err == nil {
-		t.Error("expected orphaned artist to be deleted")
-	}
-}
-
-// TestPruneOrphanedMetadata_KeepsStillOwnedEntities verifies that pruning
-// only removes rows with no remaining audio_files, leaving an artist who
-// still owns other tracks untouched.
-func TestPruneOrphanedMetadata_KeepsStillOwnedEntities(t *testing.T) {
-	t.Parallel()
-
-	lib, db := setupTestLibrary(t)
-	ctx := context.Background()
-	q := db.Queries
-
-	artist, err := q.UpsertArtist(ctx, "Still Owned Artist")
-	if err != nil {
-		t.Fatalf("upsert artist: %v", err)
-	}
-
-	ac, err := q.UpsertArtistCredit(ctx, "Still Owned Artist")
-	if err != nil {
-		t.Fatalf("upsert artist credit: %v", err)
-	}
-
-	if _, err := q.CreateArtistCreditArtist(ctx, sqlcgen.CreateArtistCreditArtistParams{
-		ArtistID: artist.ID,
-		CreditID: ac.ID,
-	}); err != nil {
-		t.Fatalf("link artist credit artist: %v", err)
-	}
-
-	// Two recordings under the same artist credit; only one loses its file.
-	recGone, err := q.CreateRecordingFull(ctx, sqlcgen.CreateRecordingFullParams{
-		Name:           "Removed Song",
-		ArtistCreditID: ac.ID,
-	})
-	if err != nil {
-		t.Fatalf("create recording (removed): %v", err)
-	}
-
-	recKept, err := q.CreateRecordingFull(ctx, sqlcgen.CreateRecordingFullParams{
-		Name:           "Kept Song",
-		ArtistCreditID: ac.ID,
-	})
-	if err != nil {
-		t.Fatalf("create recording (kept): %v", err)
-	}
-
-	afGone, err := q.CreateAudioFile(ctx, sqlcgen.CreateAudioFileParams{
-		FilePath:           "/music/gone.mp3",
-		LengthMilliseconds: 180000,
-		FileTypeID:         0,
-		RecordingID:        recGone.ID,
-		Basename:           "gone.mp3",
-	})
-	if err != nil {
-		t.Fatalf("create audio file (gone): %v", err)
-	}
-
-	if _, err := q.CreateAudioFile(ctx, sqlcgen.CreateAudioFileParams{
-		FilePath:           "/music/kept.mp3",
-		LengthMilliseconds: 180000,
-		FileTypeID:         0,
-		RecordingID:        recKept.ID,
-		Basename:           "kept.mp3",
-	}); err != nil {
-		t.Fatalf("create audio file (kept): %v", err)
-	}
-
-	if err := q.DeleteAudioFile(ctx, afGone.ID); err != nil {
-		t.Fatalf("delete audio file: %v", err)
-	}
-
-	lib.pruneOrphanedMetadata()
-
-	if _, err := q.GetRecording(ctx, recGone.ID); err == nil {
-		t.Error("expected orphaned recording to be deleted")
-	}
-
-	if _, err := q.GetRecording(ctx, recKept.ID); err != nil {
-		t.Errorf("expected still-owned recording to survive, got: %v", err)
-	}
-
-	if _, err := q.GetArtistCredit(ctx, ac.ID); err != nil {
-		t.Errorf("expected still-referenced artist credit to survive, got: %v", err)
-	}
-
-	if _, err := q.GetArtist(ctx, artist.ID); err != nil {
-		t.Errorf("expected still-referenced artist to survive, got: %v", err)
+		if n != c.want {
+			t.Errorf("%s %q rows = %d, want %d", c.table, c.name, n, c.want)
+		}
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Empty/missing metadata tests
-// ---------------------------------------------------------------------------
-
-func TestEntityCache_EmptyFields(t *testing.T) {
-	t.Parallel()
-
-	lib, _ := setupTestLibrary(t)
-	cache := newEntityCache()
-	q := lib.db.Queries
-	metrics := newScanMetrics()
-
-	// Empty artist credit name — documents behavior (creates "" credit).
-	ac, err := lib.cachedUpsertArtistCredit(q, cache, "")
-	if err != nil {
-		t.Fatalf("cachedUpsertArtistCredit with empty name: %v", err)
-	}
-
-	if ac.ID == 0 {
-		t.Error("expected non-zero ID even for empty artist credit name")
-	}
-
-	// Empty album → resolveReleaseGroup returns invalid NullInt64.
-	tags := &metadata.TrackMetadata{Album: ""}
-	rgID := lib.resolveReleaseGroup(q, cache, tags, sql.NullInt64{}, sql.NullInt64{})
-
-	if rgID.Valid {
-		t.Errorf("empty album should return invalid NullInt64, got valid ID %d", rgID.Int64)
-	}
-
-	// resolveAlbumArtistCredit with empty AlbumArtist reuses track artist credit.
-	trackTags := &metadata.TrackMetadata{
-		Artist:      "Queen",
-		AlbumArtist: "",
-	}
-
-	trackAC, err := lib.cachedUpsertArtistCredit(q, cache, "Queen")
-	if err != nil {
-		t.Fatalf("upsert track artist credit: %v", err)
-	}
-
-	albumACID := lib.resolveAlbumArtistCredit(q, cache, metrics, trackTags, trackAC.ID)
-	if !albumACID.Valid {
-		t.Fatal("expected valid album artist credit ID when AlbumArtist is empty")
-	}
-
-	if albumACID.Int64 != trackAC.ID {
-		t.Errorf(
-			"empty AlbumArtist should reuse track credit: got %d, want %d",
-			albumACID.Int64, trackAC.ID,
-		)
-	}
-
-	// resolveAlbumArtistCredit when AlbumArtist matches Artist also reuses.
-	sameTags := &metadata.TrackMetadata{
-		Artist:      "Queen",
-		AlbumArtist: "Queen",
-	}
-
-	sameACID := lib.resolveAlbumArtistCredit(q, cache, metrics, sameTags, trackAC.ID)
-	if sameACID.Int64 != trackAC.ID {
-		t.Errorf(
-			"matching AlbumArtist should reuse track credit: got %d, want %d",
-			sameACID.Int64, trackAC.ID,
-		)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// commitBatch + tagging_items bookkeeping (phase 008.3)
-// ---------------------------------------------------------------------------
 
 func TestCommitBatch_TaggingItemsBookkeeping(t *testing.T) {
 	t.Parallel()
@@ -1144,6 +705,122 @@ func TestCommitBatch_AlbumTagChangeKeepsGroup(t *testing.T) {
 	if afterGroup != originalGroup {
 		t.Errorf("group_key changed across album tag edit: %q → %q", originalGroup, afterGroup)
 	}
+}
+
+func TestCommitBatch_RescanPromotesTagStatus(t *testing.T) {
+	t.Parallel()
+
+	// Only the insert path stamps tag_status, so a file another
+	// tagger stamped with MBIDs after import used to keep 'untagged'
+	// for ever — and its folder kept asking to be tagged, since that
+	// column is what the autotag queue reads.
+	lib, db := setupTestLibrary(t)
+	cache := newEntityCache()
+	metrics := newScanMetrics()
+
+	var added, updated, skipped atomic.Int64
+
+	const path = "/music/Artist/Album Folder/01.mp3"
+
+	initial := []importResult{
+		{
+			absolutePath: path,
+			fileType:     metadata.MP3,
+			lengthMillis: 200000,
+			tags: &metadata.TrackMetadata{
+				Title: "Track", Artist: "Artist", AlbumArtist: "Artist",
+				Album: "Album",
+			},
+			libraryID: 0,
+		},
+	}
+
+	if err := lib.commitBatch(
+		initial, cache, metrics, &added, &updated, &skipped, nil,
+	); err != nil {
+		t.Fatalf("initial commitBatch: %v", err)
+	}
+
+	fileID := queryInt(t, db,
+		`SELECT id FROM audio_files WHERE file_path = ?`, path,
+	)
+
+	if got := queryString(t, db,
+		`SELECT tag_status FROM audio_files WHERE id = ?`, fileID,
+	); got != "untagged" {
+		t.Fatalf("tag_status after import = %q, want %q", got, "untagged")
+	}
+
+	update := []importResult{
+		{
+			absolutePath:   path,
+			fileType:       metadata.MP3,
+			lengthMillis:   200000,
+			existingFileID: fileID,
+			needsUpdate:    true,
+			tags: &metadata.TrackMetadata{
+				Title: "Track", Artist: "Artist", AlbumArtist: "Artist",
+				Album:         "Album",
+				RecordingMBID: "11111111-2222-3333-4444-555555555555",
+			},
+			libraryID: 0,
+		},
+	}
+
+	if err := lib.commitBatch(
+		update, cache, metrics, &added, &updated, &skipped, nil,
+	); err != nil {
+		t.Fatalf("update commitBatch: %v", err)
+	}
+
+	if got := queryString(t, db,
+		`SELECT tag_status FROM audio_files WHERE id = ?`, fileID,
+	); got != "user_confirmed" {
+		t.Errorf("tag_status after rescan = %q, want %q", got, "user_confirmed")
+	}
+
+	// A deliberate "never ask me about this file again" outranks the
+	// promotion: the guard is on 'untagged', not on the MBID.
+	if _, err := db.ExecContext(
+		`UPDATE audio_files SET tag_status = 'user_skipped_permanent' WHERE id = ?`,
+		fileID,
+	); err != nil {
+		t.Fatalf("mark skipped: %v", err)
+	}
+
+	if err := lib.commitBatch(
+		update, cache, metrics, &added, &updated, &skipped, nil,
+	); err != nil {
+		t.Fatalf("second update commitBatch: %v", err)
+	}
+
+	if got := queryString(t, db,
+		`SELECT tag_status FROM audio_files WHERE id = ?`, fileID,
+	); got != "user_skipped_permanent" {
+		t.Errorf("tag_status = %q, want the skip to survive a rescan", got)
+	}
+}
+
+// queryString is queryInt's text counterpart.
+func queryString(t *testing.T, db *database.DB, query string, args ...any) string {
+	t.Helper()
+
+	rows, err := db.QueryContext(query, args...)
+	if err != nil {
+		t.Fatalf("query %q: %v", query, err)
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	var out string
+
+	if rows.Next() {
+		if scanErr := rows.Scan(&out); scanErr != nil {
+			t.Fatalf("scan: %v", scanErr)
+		}
+	}
+
+	return out
 }
 
 // queryInt runs a single-column scalar query and returns the first

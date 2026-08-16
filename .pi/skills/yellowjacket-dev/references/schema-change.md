@@ -1,66 +1,76 @@
 # Changing the database schema
 
-The reasoning — why there are two files, what the old 48-step migration
-chain got wrong, and when squashing is legitimate — is in `CLAUDE.md`
-under *Backend packages → database*. Read it once. This is the
-checklist.
+The reasoning — why the local library is shaped like files rather than
+like MusicBrainz, and what the metadata tables cost before they went —
+is in `CLAUDE.md` under *Backend packages → database*. Read it once.
+This is the checklist.
 
-**A brand-new table needs one file, not two.** The rule below is about
-a *column added to a table that already exists*. `applySchema` runs
-every file in `sql/schemas/` on every open, so a
-`CREATE TABLE IF NOT EXISTS` reaches an existing install verbatim and a
-migration for it would be a second description of the same table — the
-thing the third rule forbids. Its indexes go in the schema file too,
-because the column and the index arrive together.
+**There is one description of the schema and no migration chain.**
+`sql/schemas/*.sql` declares the current shape; `applySchema` runs every
+file on every open, and `CREATE ... IF NOT EXISTS` makes that idempotent.
+`sql/migrations/`, `applyMigrations` and `schema_migrations` were
+squashed away with plan 013. So:
+
+**Adding a table or a column is one edit to one file.**
+
+```bash
+make generate            # sqlc + templ
+go test ./backend/database/ ./backend/datamap/
+make test
+```
 
 A new table has a second gate: **`backend/datamap`**. Add an entry
 stating its Kind and Lifetime, or `TestCatalogCoversSchema` fails — and
 if it is `Authored` and cascades, `TestAuthoredCascadesAreDeliberate`
-wants an explicit exemption with a note, because authored data is what
-a user cannot get back.
+wants an explicit exemption with a note, because authored data is what a
+user cannot get back. If a *column* holds a different Kind from its
+table (an authored flag on an owned projection, a fetched value beside a
+tag-derived one), say so in the entry's note; `audio_files` and `lyrics`
+are the worked examples.
 
-Adding a **column** to an existing table needs **two** files, not one:
+**Existing databases are not migrated.** Nothing upgrades a database
+from an older shape — delete your dev `YJ_HOME` and rescan, and rebuild
+any seed you rely on (`make sandbox-seed NAME=default`). Revisit this
+once real user databases exist in the wild.
 
-1. **`backend/database/sql/schemas/*.sql`** — `CREATE TABLE ... IF NOT
-   EXISTS`, the literal target shape, what sqlc reads and what a fresh
-   install gets verbatim. Add the new column **last** in the
-   `CREATE TABLE`.
-2. **`backend/database/sql/migrations/NNNN_description.sql`** — the
-   `ALTER TABLE ... ADD COLUMN` (and any index on it) that gets an
-   existing database to the same shape. Schema files are a no-op against
-   a table that already exists, so without this an upgrade never gets
-   the column.
+**A stale one fails at the first query, not at open**, which is worth
+knowing before you read the error. `applySchema` is
+`CREATE TABLE IF NOT EXISTS`, so an old database keeps its old columns
+and gains nothing; the app then starts fine and dies on
+`no such column: title`. Every tier that does not *run the app* — unit
+tests, `make ui-test`, `tsc` — is green while this is true, because
+they build their database from the current schema. `make e2e` and
+`make dev` are the two that will tell you, and only after the seed has
+been rebuilt.
 
-Then:
+## The four ways this goes wrong
 
-```bash
-make generate                                        # sqlc + templ
-go test ./backend/database/         # migration + column-order tests
-make test
-```
+- **A query file must be ASCII.** sqlc's parameter rewriter works on
+  byte offsets, so a single non-ASCII character in a *query* comment
+  (an em dash, a curly quote) shifts every placeholder and generates
+  garbage like `SELECid` — a parse error a long way from its cause.
+  Schema files are not rewritten and may contain anything.
+- **A slice and a named parameter do not compose.** `sqlc.slice`
+  expands to N placeholders, but `sqlc.arg` is numbered independently,
+  so the two in one query bind the wrong values —
+  `GetFilePathsByAlbums([1,2], 0)` read album id 2 as the library id.
+  Where a query needs both, return the column and filter in Go.
+- **A write wearing a query's shape still needs the writer.**
+  `QueryContext`/`QueryRow` route to the query-only read pool, so an
+  `INSERT ... RETURNING` through one fails at runtime with "attempt to
+  write a readonly database (8)". Use `ExecContext`, or
+  `QueryRowWriter`. `TestNoWritesOnTheReadPool` walks the tree for it.
+- **A view is dropped and recreated.** `CREATE VIEW IF NOT EXISTS`
+  no-ops against a database holding the old definition, so
+  `track_metadata.sql` opens with `DROP VIEW IF EXISTS`.
 
-Rebuild any seed you rely on (`make sandbox-seed NAME=default`) and
-delete your own dev `YJ_HOME` if you want to see the fresh-install path
-rather than the migrated one.
-
-## The three ways this goes wrong
-
-- **Column order must match between the two paths.** `ADD COLUMN`
-  always appends, so a migrated column declared anywhere but last in
-  `CREATE TABLE` leaves fresh and upgraded installs disagreeing on
-  order — and sqlc binds `SELECT *` positionally, so one of them
-  silently reads the wrong field.
-  `TestMigrations_ColumnOrderMatchesFreshInstall` is the regression test.
-- **Do not put an index on a migrated column in `sql/schemas/`.**
-  Schema files run *before* migrations, against a database that may not
-  have the column yet, and the predicate fails. Declare the index in the
-  migration, after the `ALTER TABLE`.
-- **Do not add a third description of the schema anywhere.** A
-  migration's `ADD COLUMN` failing with "duplicate column name" against
-  an already-current database is expected and tolerated, not an error to
-  route around.
+## Where things go
 
 New queries go in `backend/database/sql/queries/`; generated Go lands in
-`backend/database/sql/sqlcgen/`, which is never edited by hand. Tests
-use `database.NewTestDB(t)`, built by the same `applySchema` production
-uses, so the two cannot diverge.
+`backend/database/sql/sqlcgen/`, which is never edited by hand. Anything
+returning a track selects from the `track_metadata` view rather than
+re-joining — that is why there is one row type and one mapper.
+
+Tests use `database.NewTestDB(t)`, built by the same `applySchema`
+production uses, and seed rows with `database.InsertTestTrack(t, db,
+database.TestTrack{...})` rather than assembling inserts by hand.

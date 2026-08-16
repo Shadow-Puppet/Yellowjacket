@@ -310,14 +310,6 @@ export function SearchLibrary(query: string): $CancellablePromise<$models.Candid
 }
 
 /**
- * SetFavoritesConfig sets the provider used to read and write
- * the default-playlist configuration.
- */
-export function SetFavoritesConfig(provider: $models.FavoritesConfigProvider): $CancellablePromise<void> {
-    return $Call.ByID(2117418507, provider);
-}
-
-/**
  * ToggleDefaultPlaylistTrack adds or removes a single track
  * from the default playlist.  Returns true if the track is now
  * in the playlist (was added), false if it was removed.

@@ -499,12 +499,6 @@ export interface QualityScore {
 }
 
 /**
- * Reconciler works the request list.
- */
-export interface Reconciler {
-}
-
-/**
  * Request is one row of the durable request list.
  */
 export interface Request {

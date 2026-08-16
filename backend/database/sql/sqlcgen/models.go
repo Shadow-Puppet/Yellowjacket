@@ -9,21 +9,22 @@ import (
 	"time"
 )
 
+type Album struct {
+	ID                 int64
+	Name               string
+	ArtistCredit       string
+	ArtistID           sql.NullInt64
+	Mbid               sql.NullString
+	Year               sql.NullInt64
+	OriginalYear       sql.NullInt64
+	CoverArtID         sql.NullInt64
+	PendingReleaseMbid sql.NullString
+}
+
 type Artist struct {
 	ID   int64
 	Name string
 	Mbid sql.NullString
-}
-
-type ArtistCredit struct {
-	ID   int64
-	Text string
-}
-
-type ArtistCreditArtist struct {
-	ID       int64
-	ArtistID int64
-	CreditID int64
 }
 
 type ArtistEnrichment struct {
@@ -56,21 +57,31 @@ type ArtistMetadatum struct {
 type AudioFile struct {
 	ID                 int64
 	FilePath           string
-	LengthMilliseconds int64
+	LibraryID          int64
 	FileTypeID         int64
-	RecordingID        int64
+	LengthMilliseconds int64
 	SampleRate         int64
 	BitDepth           int64
 	Channels           int64
 	Bitrate            int64
 	FileSize           int64
+	Title              string
+	ArtistCredit       string
+	ArtistID           sql.NullInt64
+	AlbumID            sql.NullInt64
+	TrackNumber        sql.NullInt64
+	DiscNumber         sql.NullInt64
+	TotalTracks        sql.NullInt64
+	Year               sql.NullInt64
+	Composer           string
+	Comment            string
+	RecordingMbid      sql.NullString
 	Basename           string
-	LibraryID          int64
+	GroupKey           string
+	ModifiedAt         int64
 	PlayCount          int64
 	LastPlayed         sql.NullTime
 	TagStatus          string
-	GroupKey           string
-	ModifiedAt         int64
 }
 
 type CoverArt struct {
@@ -160,20 +171,21 @@ type ExploreChampionFt struct {
 
 type ExploreIndex struct {
 	ID                  int64
-	EntityType          string
-	Mbid                string
+	EntityType          int64
+	Mbid                []byte
 	Title               string
 	ArtistName          string
-	ArtistMbid          string
+	ArtistMbid          []byte
 	Aliases             string
 	Popularity          int64
 	ListenerCount       int64
 	Duration            int64
-	CaaReleaseMbid      string
+	CaaReleaseMbid      []byte
 	ReleaseName         string
 	PrimaryType         string
 	SecondaryTypes      string
 	ReleaseDate         string
+	TotalTracks         int64
 	ArtistType          string
 	Country             string
 	Disambiguation      string
@@ -195,6 +207,11 @@ type ExploreIndexFt struct {
 type ExploreIndexMetum struct {
 	Key   string
 	Value string
+}
+
+type FileGenre struct {
+	AudioFileID int64
+	GenreID     int64
 }
 
 type FileType struct {
@@ -229,6 +246,14 @@ type Library struct {
 	Path                string
 	CreatedAt           time.Time
 	AutotagWarningAcked int64
+}
+
+type Lyric struct {
+	AudioFileID   int64
+	Text          string
+	Source        string
+	RecordingMbid sql.NullString
+	FetchedAt     time.Time
 }
 
 type LyricsIndex struct {
@@ -289,48 +314,6 @@ type QueueTrack struct {
 	ID          int64
 	AudioFileID int64
 	Position    int64
-}
-
-type Recording struct {
-	ID             int64
-	Name           string
-	ArtistCreditID int64
-	TrackNumber    sql.NullInt64
-	DiscNumber     sql.NullInt64
-	Year           sql.NullInt64
-	Genre          sql.NullString
-	Composer       sql.NullString
-	Lyrics         sql.NullString
-	Comment        sql.NullString
-	Mbid           sql.NullString
-}
-
-type RecordingGenre struct {
-	ID          int64
-	RecordingID int64
-	GenreID     int64
-}
-
-type ReleaseGroup struct {
-	ID                  int64
-	Name                string
-	CoverArtID          sql.NullInt64
-	AlbumArtistCreditID sql.NullInt64
-	Year                sql.NullInt64
-	TotalTracks         sql.NullInt64
-	TotalDiscs          sql.NullInt64
-	Mbid                sql.NullString
-	OriginalYear        sql.NullInt64
-	PendingReleaseMbid  sql.NullString
-}
-
-type ReleaseGroupRecording struct {
-	ID             int64
-	ReleaseGroupID int64
-	RecordingID    int64
-	TrackNumber    sql.NullInt64
-	DiscNumber     sql.NullInt64
-	TotalTracks    sql.NullInt64
 }
 
 type ReleaseToRg struct {
@@ -410,4 +393,6 @@ type TrackMetadatum struct {
 	ArtistMbid         string
 	ReleaseGroupMbid   string
 	RecordingMbid      string
+	AlbumID            sql.NullInt64
+	ArtistID           sql.NullInt64
 }

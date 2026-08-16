@@ -1,9 +1,9 @@
 package library
 
 import (
-	"database/sql"
 	"testing"
 
+	"yellowjacket/backend/database"
 	"yellowjacket/backend/database/sql/sqlcgen"
 )
 
@@ -32,22 +32,6 @@ func seedAlbumsAndGenres(t *testing.T, lib *Library) (albumIDs []int64, libraryI
 		t.Fatalf("create other library: %v", err)
 	}
 
-	ac, err := q.UpsertArtistCredit(ctx, "Test Artist")
-	if err != nil {
-		t.Fatalf("upsert artist credit: %v", err)
-	}
-
-	genreIDs := map[string]int64{}
-
-	for _, name := range []string{"Ambient", "Baroque"} {
-		g, err := q.UpsertGenre(ctx, name)
-		if err != nil {
-			t.Fatalf("upsert genre %s: %v", name, err)
-		}
-
-		genreIDs[name] = g.ID
-	}
-
 	// Two albums; the second lives in the other library so the
 	// library-scoped variants have something to exclude.
 	type spec struct {
@@ -66,63 +50,32 @@ func seedAlbumsAndGenres(t *testing.T, lib *Library) (albumIDs []int64, libraryI
 		{"Second", "B1", "/other/b1.mp3", other.ID, 1, 1, []string{"Baroque"}},
 	}
 
-	byAlbum := map[string]int64{}
+	seen := map[string]bool{}
 
 	for _, s := range specs {
-		rec, err := q.CreateRecordingFull(ctx, sqlcgen.CreateRecordingFullParams{
-			Name:           s.track,
-			ArtistCreditID: ac.ID,
+		database.InsertTestTrack(t, lib.db, database.TestTrack{
+			FilePath:    s.path,
+			Title:       s.track,
+			Artist:      "Test Artist",
+			Album:       s.album,
+			Genres:      s.genres,
+			TrackNumber: s.number,
+			DiscNumber:  s.disc,
+			LibraryID:   s.library,
+			LengthMs:    1000,
 		})
-		if err != nil {
-			t.Fatalf("create recording: %v", err)
-		}
 
-		rgID, ok := byAlbum[s.album]
+		if !seen[s.album] {
+			seen[s.album] = true
 
-		if !ok {
-			rg, err := q.UpsertReleaseGroup(ctx, sqlcgen.UpsertReleaseGroupParams{
-				Name:                s.album,
-				AlbumArtistCreditID: sql.NullInt64{Int64: ac.ID, Valid: true},
-			})
-			if err != nil {
-				t.Fatalf("upsert release group: %v", err)
+			var id int64
+			if err := lib.db.QueryRowWriter(
+				"SELECT id FROM albums WHERE name = ?", s.album,
+			).Scan(&id); err != nil {
+				t.Fatalf("album id for %q: %v", s.album, err)
 			}
 
-			rgID = rg.ID
-			byAlbum[s.album] = rgID
-			albumIDs = append(albumIDs, rgID)
-		}
-
-		if _, err := q.CreateReleaseGroupRecording(
-			ctx, sqlcgen.CreateReleaseGroupRecordingParams{
-				ReleaseGroupID: rgID,
-				RecordingID:    rec.ID,
-				TrackNumber:    sql.NullInt64{Int64: s.number, Valid: true},
-				DiscNumber:     sql.NullInt64{Int64: s.disc, Valid: true},
-			},
-		); err != nil {
-			t.Fatalf("link recording: %v", err)
-		}
-
-		if _, err := q.CreateAudioFile(ctx, sqlcgen.CreateAudioFileParams{
-			FilePath:           s.path,
-			LengthMilliseconds: 1000,
-			RecordingID:        rec.ID,
-			LibraryID:          s.library,
-			Basename:           s.track + ".mp3",
-		}); err != nil {
-			t.Fatalf("create audio file: %v", err)
-		}
-
-		for _, g := range s.genres {
-			if err := q.CreateRecordingGenre(
-				ctx, sqlcgen.CreateRecordingGenreParams{
-					RecordingID: rec.ID,
-					GenreID:     genreIDs[g],
-				},
-			); err != nil {
-				t.Fatalf("link genre: %v", err)
-			}
+			albumIDs = append(albumIDs, id)
 		}
 	}
 
@@ -237,9 +190,6 @@ func TestGetFilePathsByGenres_Empty(t *testing.T) {
 func seedRecordingMBIDs(t *testing.T, lib *Library) (tagged, shared string) {
 	t.Helper()
 
-	ctx := lib.ctx
-	q := lib.db.Queries
-
 	tagged = "11111111-1111-1111-1111-111111111111"
 	shared = "22222222-2222-2222-2222-222222222222"
 
@@ -249,22 +199,12 @@ func seedRecordingMBIDs(t *testing.T, lib *Library) (tagged, shared string) {
 		"/other/b1.mp3": shared,
 	}
 
-	files, err := q.GetAllAudioFiles(ctx)
-	if err != nil {
-		t.Fatalf("get audio files: %v", err)
-	}
-
-	for _, f := range files {
-		mbid, ok := byPath[f.FilePath]
-		if !ok {
-			continue
-		}
-
-		if err := q.SetRecordingMBID(ctx, sqlcgen.SetRecordingMBIDParams{
-			Mbid: sql.NullString{String: mbid, Valid: true},
-			ID:   f.RecordingID,
-		}); err != nil {
-			t.Fatalf("set recording mbid: %v", err)
+	for path, mbid := range byPath {
+		if _, err := lib.db.ExecContext(
+			"UPDATE audio_files SET recording_mbid = ? WHERE file_path = ?",
+			mbid, path,
+		); err != nil {
+			t.Fatalf("set recording mbid for %s: %v", path, err)
 		}
 	}
 

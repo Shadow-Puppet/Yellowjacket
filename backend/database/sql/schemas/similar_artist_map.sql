@@ -6,5 +6,5 @@ CREATE TABLE IF NOT EXISTS similar_artist_map (
   PRIMARY KEY (source_artist_mbid, similar_artist_mbid)
     );
 
-CREATE INDEX IF NOT EXISTS idx_similar_artist_map_source
-    ON similar_artist_map(source_artist_mbid);
+-- No index on source_artist_mbid alone: the PRIMARY KEY has it as its
+-- leftmost column.

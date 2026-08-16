@@ -7,7 +7,6 @@ import {
 import * as library from '@go/library/models.js';
 import {
     GetTracksByGenre,
-    GetTracksByGenreByLibrary,
 } from '@go/library/library.js';
 import { EventsOn } from '@runtime/runtime';
 import { Events } from '../../events';
@@ -209,12 +208,7 @@ export class GenreDetails extends LitElement {
                 libraryStore.getSelectedLibraryId();
 
             this.tracks = await list(
-                libId !== null
-                    ? GetTracksByGenreByLibrary(
-                          this.genreName,
-                          libId,
-                      )
-                    : GetTracksByGenre(this.genreName),
+                GetTracksByGenre(this.genreName, libId ?? 0),
             );
         } catch (error) {
             console.error('Error loading genre tracks:', error);

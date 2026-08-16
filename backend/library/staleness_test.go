@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"yellowjacket/backend/database"
 	"yellowjacket/backend/database/sql/sqlcgen"
 )
 
@@ -179,50 +180,36 @@ func TestFlushStatBackfill(t *testing.T) {
 	ctx := lib.ctx
 	q := db.Queries
 
-	ac, err := q.UpsertArtistCredit(ctx, "Test Artist")
-	if err != nil {
-		t.Fatalf("upsert artist credit: %v", err)
-	}
-
-	rec, err := q.CreateRecordingFull(ctx, sqlcgen.CreateRecordingFullParams{
-		Name:           "Test Song",
-		ArtistCreditID: ac.ID,
+	// Seed two rows with no staleness baseline, as an older install
+	// leaves them.
+	first := database.InsertTestTrack(t, db, database.TestTrack{
+		FilePath: "/music/first.mp3",
+		Title:    "Test Song",
+		Artist:   "Test Artist",
+		LengthMs: 180000,
 	})
-	if err != nil {
-		t.Fatalf("create recording: %v", err)
-	}
-
-	// Seed two rows with no baseline, as migration 47 leaves them.
-	first, err := q.CreateAudioFile(ctx, sqlcgen.CreateAudioFileParams{
-		FilePath:           "/music/first.mp3",
-		LengthMilliseconds: 180000,
-		RecordingID:        rec.ID,
-		Basename:           "first.mp3",
+	second := database.InsertTestTrack(t, db, database.TestTrack{
+		FilePath: "/music/second.mp3",
+		Title:    "Test Song",
+		Artist:   "Test Artist",
+		LengthMs: 200000,
 	})
+
+	seeded, err := q.GetAudioFile(ctx, first)
 	if err != nil {
-		t.Fatalf("create first audio file: %v", err)
+		t.Fatalf("get seeded file: %v", err)
 	}
 
-	second, err := q.CreateAudioFile(ctx, sqlcgen.CreateAudioFileParams{
-		FilePath:           "/music/second.mp3",
-		LengthMilliseconds: 200000,
-		RecordingID:        rec.ID,
-		Basename:           "second.mp3",
-	})
-	if err != nil {
-		t.Fatalf("create second audio file: %v", err)
-	}
-
-	if first.ModifiedAt != 0 {
-		t.Fatalf("seeded ModifiedAt = %d, want 0", first.ModifiedAt)
+	if seeded.ModifiedAt != 0 {
+		t.Fatalf("seeded ModifiedAt = %d, want 0", seeded.ModifiedAt)
 	}
 
 	lib.flushStatBackfill([]sqlcgen.UpdateAudioFileStatParams{
-		{ModifiedAt: 1700000000, FileSize: 4096, ID: first.ID},
-		{ModifiedAt: 1700000500, FileSize: 8192, ID: second.ID},
+		{ModifiedAt: 1700000000, FileSize: 4096, ID: first},
+		{ModifiedAt: 1700000500, FileSize: 8192, ID: second},
 	})
 
-	got, err := q.GetAudioFile(ctx, first.ID)
+	got, err := q.GetAudioFile(ctx, first)
 	if err != nil {
 		t.Fatalf("get first audio file: %v", err)
 	}

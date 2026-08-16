@@ -4,59 +4,33 @@ import (
 	"testing"
 )
 
-// seedLyricsTrack inserts the minimal FK chain (artist_credit →
-// recording → audio_file → release_group link) for one track with the
-// given lyrics, so lyric-search tests have realistic joins.
+// seedLyricsTrack inserts one file with the given lyrics, so lyric
+// searches have something realistic to join against.  It used to
+// insert a four-row FK chain by hand.
 func seedLyricsTrack(
 	t *testing.T,
 	db *DB,
 	id int64,
 	title, artist, album, lyrics string,
 	lenMs int64,
-) {
+) int64 {
 	t.Helper()
 
-	if _, err := db.ExecContext(
-		"INSERT OR IGNORE INTO artist_credit (id, text) VALUES (?, ?)", id, artist,
-	); err != nil {
-		t.Fatalf("insert artist_credit: %v", err)
+	fileID := InsertTestTrack(t, db, TestTrack{
+		FilePath: "/music/track" + itoa(id) + ".mp3",
+		Title:    title,
+		Artist:   artist,
+		Album:    album,
+		LengthMs: lenMs,
+	})
+
+	if lyrics != "" {
+		if err := db.SetLyrics(fileID, lyrics, "tag", ""); err != nil {
+			t.Fatalf("seed lyrics: %v", err)
+		}
 	}
 
-	if _, err := db.ExecContext(
-		"INSERT OR IGNORE INTO release_groups (id, name) VALUES (?, ?)", id, album,
-	); err != nil {
-		t.Fatalf("insert release_group: %v", err)
-	}
-
-	if _, err := db.ExecContext(
-		"INSERT INTO recordings (id, name, artist_credit_id, lyrics) VALUES (?, ?, ?, ?)",
-		id, title, id, nullableLyrics(lyrics),
-	); err != nil {
-		t.Fatalf("insert recording: %v", err)
-	}
-
-	if _, err := db.ExecContext(
-		"INSERT INTO audio_files (id, file_path, length_milliseconds, file_type_id, recording_id) "+
-			"VALUES (?, ?, ?, ?, ?)",
-		id, "/music/track"+itoa(id)+".mp3", lenMs, 0, id,
-	); err != nil {
-		t.Fatalf("insert audio_file: %v", err)
-	}
-
-	if _, err := db.ExecContext(
-		"INSERT INTO release_group_recordings (release_group_id, recording_id) VALUES (?, ?)",
-		id, id,
-	); err != nil {
-		t.Fatalf("insert release_group_recordings: %v", err)
-	}
-}
-
-func nullableLyrics(l string) any {
-	if l == "" {
-		return nil
-	}
-
-	return l
+	return fileID
 }
 
 func itoa(v int64) string {
@@ -111,8 +85,8 @@ func TestSearchLyrics(t *testing.T) {
 		}
 
 		h := hits[0]
-		if h.RecordingID != 1 {
-			t.Errorf("RecordingID = %d, want 1", h.RecordingID)
+		if h.AudioFileID != 1 {
+			t.Errorf("RecordingID = %d, want 1", h.AudioFileID)
 		}
 
 		if h.Title != "The Sound of Silence" {
@@ -191,11 +165,11 @@ func TestSetRecordingLyricsUpdatesIndex(t *testing.T) {
 
 	// Backfill lyrics — should update both the column and the FTS index.
 	const lyrics = "Yesterday all my troubles seemed so far away"
-	if err := db.SetRecordingLyrics(1, lyrics); err != nil {
+	if err := db.SetLyrics(1, lyrics, "lrclib", ""); err != nil {
 		t.Fatalf("SetRecordingLyrics: %v", err)
 	}
 
-	stored, err := db.GetRecordingLyrics(1)
+	stored, err := db.GetLyrics(1)
 	if err != nil {
 		t.Fatalf("GetRecordingLyrics: %v", err)
 	}
@@ -209,7 +183,7 @@ func TestSetRecordingLyricsUpdatesIndex(t *testing.T) {
 		t.Fatalf("SearchLyrics: %v", err)
 	}
 
-	if len(hits) != 1 || hits[0].RecordingID != 1 {
+	if len(hits) != 1 || hits[0].AudioFileID != 1 {
 		t.Fatalf("expected recording 1 after backfill, got %+v", hits)
 	}
 }
@@ -222,7 +196,7 @@ func TestRecordingsMissingLyrics(t *testing.T) {
 	seedLyricsTrack(t, db, 1, "Has Lyrics", "Artist A", "Album A", "some words here", 100000)
 	seedLyricsTrack(t, db, 2, "No Lyrics", "Artist B", "Album B", "", 200000)
 
-	missing, err := db.RecordingsMissingLyrics(50)
+	missing, err := db.FilesMissingLyrics(50)
 	if err != nil {
 		t.Fatalf("RecordingsMissingLyrics: %v", err)
 	}
@@ -232,7 +206,7 @@ func TestRecordingsMissingLyrics(t *testing.T) {
 	}
 
 	c := missing[0]
-	if c.RecordingID != 2 || c.Title != "No Lyrics" || c.Artist != "Artist B" {
+	if c.AudioFileID != 2 || c.Title != "No Lyrics" || c.Artist != "Artist B" {
 		t.Errorf("unexpected candidate: %+v", c)
 	}
 
@@ -241,7 +215,7 @@ func TestRecordingsMissingLyrics(t *testing.T) {
 	}
 
 	// Single-recording lookup mirrors the batch fields.
-	one, err := db.RecordingLyricLookup(2)
+	one, err := db.FileLyricLookup(2)
 	if err != nil {
 		t.Fatalf("RecordingLyricLookup: %v", err)
 	}

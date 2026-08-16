@@ -149,7 +149,7 @@ func (l *Library) SoftScanAllLibraries() error {
 			continue
 		}
 
-		dbCount, countErr := l.db.Queries.CountAudioFilesByLibrary(
+		dbCount, countErr := l.db.Queries.CountAudioFiles(
 			l.ctx, lib.ID,
 		)
 		if countErr != nil {

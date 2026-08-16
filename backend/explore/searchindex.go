@@ -2,6 +2,7 @@ package explore
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -145,6 +146,15 @@ type SearchIndexResult struct {
 	PrimaryType    string `json:"primaryType"`
 	SecondaryTypes string `json:"secondaryTypes"` // comma-separated
 	ReleaseDate    string `json:"releaseDate"`
+
+	// TotalTracks is the canonical release's track count, or 0 for
+	// "the catalog does not say".  It is the denominator the album
+	// page cannot get from the files when the library holds no tags
+	// for the album, and it is deliberately only a denominator: the
+	// tracklist itself is not shipped, because the per-artist track
+	// budget truncates it and a truncated tracklist is a confident
+	// lie about which tracks exist.
+	TotalTracks int `json:"totalTracks"`
 
 	// Artist-specific fields (from MB lookup).
 	ArtistType     string `json:"artistType"`
@@ -357,8 +367,9 @@ func (si *SearchIndex) EnsureArtistDiscography(ctx context.Context, artistMBID s
 // discography fetched, so EnsureArtistDiscography can skip the network.
 func (si *SearchIndex) artistDiscogFetched(mbid string) bool {
 	rows, err := si.db.QueryContext(
-		"SELECT 1 FROM explore_index WHERE entity_type = 'artist' AND mbid = ? AND discog_fetched = 1 LIMIT 1",
-		mbid,
+		"SELECT 1 FROM explore_index WHERE entity_type = 1 /* artist */ "+
+			"AND mbid = ? AND discog_fetched = 1 LIMIT 1",
+		dbMBID(mbid),
 	)
 	if err != nil {
 		return false
@@ -393,11 +404,9 @@ func (si *SearchIndex) unenrichedLibraryArtistMBIDs(limit int) []string {
 		SELECT a.mbid
 		FROM artists a
 		LEFT JOIN explore_index ei
-		  ON ei.entity_type = 'artist' AND ei.mbid = a.mbid
+		  ON ei.entity_type = 1 /* artist */ AND ei.mbid = unhex(replace(a.mbid, '-', ''))
 		LEFT JOIN artist_enrichment ae ON ae.artist_mbid = a.mbid
-		LEFT JOIN artist_credit_artist aca ON aca.artist_id = a.id
-		LEFT JOIN recordings r ON r.artist_credit_id = aca.credit_id
-		LEFT JOIN audio_files af ON af.recording_id = r.id
+		LEFT JOIN audio_files af ON af.artist_id = a.id
 		WHERE a.mbid IS NOT NULL AND a.mbid != ''
 		  AND (ei.id IS NULL OR ei.discog_fetched = 0
 		       OR ae.browsed_at IS NULL)
@@ -560,11 +569,17 @@ func (si *SearchIndex) backfillOneArtist(
 // preferring the index title, then the local library, then the MBID
 // itself.  Used to seed the discography fetch's artist entry.
 func (si *SearchIndex) artistDisplayName(mbid string) string {
-	for _, q := range []string{
-		"SELECT title FROM explore_index WHERE entity_type = 'artist' AND mbid = ? AND title != '' LIMIT 1",
-		"SELECT name FROM artists WHERE mbid = ? AND name != '' LIMIT 1",
+	// The two tables spell an MBID differently: the catalog stores raw
+	// bytes, the library stores text.  Each query brings its own form.
+	for _, q := range []struct {
+		sql string
+		arg any
+	}{
+		{"SELECT title FROM explore_index WHERE entity_type = 1 /* artist */ " +
+			"AND mbid = ? AND title != '' LIMIT 1", dbMBID(mbid)},
+		{"SELECT name FROM artists WHERE mbid = ? AND name != '' LIMIT 1", mbid},
 	} {
-		rows, err := si.db.QueryContext(q, mbid)
+		rows, err := si.db.QueryContext(q.sql, q.arg)
 		if err != nil {
 			continue
 		}
@@ -721,17 +736,17 @@ func (si *SearchIndex) refreshStatusCounts() {
 
 		for rows.Next() {
 			var (
-				et    string
+				et    dbEntityType
 				count int
 			)
 
 			if err := rows.Scan(&et, &count); err == nil {
-				switch et {
-				case "artist":
+				switch string(et) {
+				case EntityArtist:
 					artists = count
-				case "recording":
+				case EntityRecording:
 					recordings = count
-				case "release_group":
+				case EntityReleaseGroup:
 					rgs = count
 				}
 			}
@@ -878,7 +893,7 @@ func (si *SearchIndex) GetPopularity(mbid string) int {
 
 	rows, err := si.db.QueryContext(
 		"SELECT popularity FROM explore_index WHERE mbid = ? LIMIT 1",
-		mbid,
+		dbMBID(mbid),
 	)
 	if err != nil {
 		return 0
@@ -917,7 +932,7 @@ func (si *SearchIndex) GetPopularityBatch(mbids []string) *PopularityBatchResult
 
 	for i, m := range mbids {
 		placeholders[i] = "?"
-		args[i] = m
+		args[i] = dbMBID(m)
 	}
 
 	query := "SELECT mbid, popularity, listener_count, in_library FROM explore_index WHERE mbid IN (" +
@@ -942,13 +957,15 @@ func (si *SearchIndex) GetPopularityBatch(mbids []string) *PopularityBatchResult
 
 	for rows.Next() {
 		var (
-			mbid      string
+			id        dbMBID
 			pop       int
 			listeners int
 			inLib     int
 		)
 
-		if err := rows.Scan(&mbid, &pop, &listeners, &inLib); err == nil {
+		if err := rows.Scan(&id, &pop, &listeners, &inLib); err == nil {
+			mbid := string(id)
+
 			existing, ok := result.Popularity[mbid]
 			if !ok || pop > existing {
 				result.Popularity[mbid] = pop
@@ -979,7 +996,7 @@ func (si *SearchIndex) IsInLibrary(mbid string) bool {
 
 	rows, err := si.db.QueryContext(
 		"SELECT in_library FROM explore_index WHERE mbid = ? AND in_library = 1 LIMIT 1",
-		mbid,
+		dbMBID(mbid),
 	)
 	if err != nil {
 		return false
@@ -999,8 +1016,8 @@ func (si *SearchIndex) LookupArtistByMBID(mbid string) *SearchIndexResult {
 		        artist_type, country, disambiguation, sort_name, aliases,
 		        in_library, is_similar, COALESCE(local_artist_id, 0)
 		 FROM explore_index
-		 WHERE mbid = ? AND entity_type = 'artist' LIMIT 1`,
-		mbid,
+		 WHERE mbid = ? AND entity_type = 1 /* artist */ LIMIT 1`,
+		dbMBID(mbid),
 	)
 	if err != nil {
 		return nil
@@ -1013,17 +1030,21 @@ func (si *SearchIndex) LookupArtistByMBID(mbid string) *SearchIndexResult {
 	}
 
 	r := SearchIndexResult{
-		EntityType: "artist",
+		EntityType: EntityArtist,
 		MBID:       mbid,
 	}
 
+	var artist dbMBID
+
 	if err := rows.Scan(
-		&r.Title, &r.ArtistName, &r.ArtistMBID, &r.Popularity, &r.ListenerCount,
+		&r.Title, &r.ArtistName, &artist, &r.Popularity, &r.ListenerCount,
 		&r.ArtistType, &r.Country, &r.Disambiguation, &r.SortName, &r.Aliases,
 		&r.InLibrary, &r.IsSimilar, &r.LocalArtistID,
 	); err != nil {
 		return nil
 	}
+
+	r.ArtistMBID = string(artist)
 
 	return &r
 }
@@ -1070,13 +1091,13 @@ func (si *SearchIndex) ReleaseGroupMBIDsForCAAReleaseMBIDs(
 
 	for i, m := range filtered {
 		placeholders[i] = "?"
-		args[i] = m
+		args[i] = dbMBID(m)
 	}
 
 	query := `SELECT caa_release_mbid, mbid
 	          FROM explore_index
-	          WHERE entity_type = 'release_group'
-	            AND caa_release_mbid != ''
+	          WHERE entity_type = 2 /* release_group */
+	            AND caa_release_mbid != x''
 	            AND caa_release_mbid IN (` + strings.Join(placeholders, ",") + `)`
 
 	rows, err := si.db.QueryContext(query, args...)
@@ -1089,9 +1110,9 @@ func (si *SearchIndex) ReleaseGroupMBIDsForCAAReleaseMBIDs(
 	out := make(map[string]string, len(filtered))
 
 	for rows.Next() {
-		var caaMBID, rgMBID string
+		var caaMBID, rgMBID dbMBID
 		if err := rows.Scan(&caaMBID, &rgMBID); err == nil {
-			out[caaMBID] = rgMBID
+			out[string(caaMBID)] = string(rgMBID)
 		}
 	}
 
@@ -1102,11 +1123,11 @@ func (si *SearchIndex) ReleaseGroupMBIDsForCAAReleaseMBIDs(
 func (si *SearchIndex) LookupReleaseGroupByMBID(mbid string) *SearchIndexResult {
 	rows, err := si.db.QueryContext(
 		`SELECT title, artist_name, artist_mbid, popularity, listener_count,
-		        primary_type, secondary_types, release_date,
+		        primary_type, secondary_types, release_date, total_tracks,
 		        in_library, COALESCE(local_release_group_id, 0), discog_fetched
 		 FROM explore_index
-		 WHERE mbid = ? AND entity_type = 'release_group' LIMIT 1`,
-		mbid,
+		 WHERE mbid = ? AND entity_type = 2 /* release_group */ LIMIT 1`,
+		dbMBID(mbid),
 	)
 	if err != nil {
 		return nil
@@ -1119,13 +1140,15 @@ func (si *SearchIndex) LookupReleaseGroupByMBID(mbid string) *SearchIndexResult 
 	}
 
 	r := SearchIndexResult{
-		EntityType: "release_group",
+		EntityType: EntityReleaseGroup,
 		MBID:       mbid,
 	}
 
+	var artist dbMBID
+
 	if err := rows.Scan(
-		&r.Title, &r.ArtistName, &r.ArtistMBID, &r.Popularity, &r.ListenerCount,
-		&r.PrimaryType, &r.SecondaryTypes, &r.ReleaseDate,
+		&r.Title, &r.ArtistName, &artist, &r.Popularity, &r.ListenerCount,
+		&r.PrimaryType, &r.SecondaryTypes, &r.ReleaseDate, &r.TotalTracks,
 		&r.InLibrary, &r.LocalReleaseGroupID, &r.DiscogFetched,
 	); err != nil {
 		return nil
@@ -1166,10 +1189,10 @@ func (si *SearchIndex) TopRecordingsByArtist(artistMBID string, limit int) []Sea
 		        duration, caa_release_mbid, release_name,
 		        in_library, COALESCE(local_recording_id, 0)
 		 FROM explore_index
-		 WHERE artist_mbid = ? AND entity_type = 'recording'
+		 WHERE artist_mbid = ? AND entity_type = 3 /* recording */
 		 ORDER BY popularity DESC
 		 LIMIT ?`,
-		artistMBID, limit,
+		dbMBID(artistMBID), limit,
 	)
 	if err != nil {
 		return nil
@@ -1180,13 +1203,19 @@ func (si *SearchIndex) TopRecordingsByArtist(artistMBID string, limit int) []Sea
 	var results []SearchIndexResult
 
 	for rows.Next() {
-		var r SearchIndexResult
+		var (
+			r       SearchIndexResult
+			id, caa dbMBID
+		)
+
 		if err := rows.Scan(
-			&r.MBID, &r.Title, &r.ArtistName, &r.Popularity, &r.ListenerCount,
-			&r.Duration, &r.CAAReleaseMBID, &r.ReleaseName,
+			&id, &r.Title, &r.ArtistName, &r.Popularity, &r.ListenerCount,
+			&r.Duration, &caa, &r.ReleaseName,
 			&r.InLibrary, &r.LocalRecordingID,
 		); err == nil {
-			r.EntityType = "recording"
+			r.MBID = string(id)
+			r.CAAReleaseMBID = string(caa)
+			r.EntityType = EntityRecording
 			r.ArtistMBID = artistMBID
 			results = append(results, r)
 		}
@@ -1205,10 +1234,10 @@ func (si *SearchIndex) TopReleaseGroupsByArtist(artistMBID string, limit int) []
 		        primary_type, secondary_types, release_date,
 		        in_library, COALESCE(local_release_group_id, 0)
 		 FROM explore_index
-		 WHERE artist_mbid = ? AND entity_type = 'release_group'
+		 WHERE artist_mbid = ? AND entity_type = 2 /* release_group */
 		 ORDER BY popularity DESC
 		 LIMIT ?`,
-		artistMBID, limit,
+		dbMBID(artistMBID), limit,
 	)
 	if err != nil {
 		return nil
@@ -1219,13 +1248,18 @@ func (si *SearchIndex) TopReleaseGroupsByArtist(artistMBID string, limit int) []
 	var results []SearchIndexResult
 
 	for rows.Next() {
-		var r SearchIndexResult
+		var (
+			r  SearchIndexResult
+			id dbMBID
+		)
+
 		if err := rows.Scan(
-			&r.MBID, &r.Title, &r.ArtistName, &r.Popularity, &r.ListenerCount,
+			&id, &r.Title, &r.ArtistName, &r.Popularity, &r.ListenerCount,
 			&r.PrimaryType, &r.SecondaryTypes, &r.ReleaseDate,
 			&r.InLibrary, &r.LocalReleaseGroupID,
 		); err == nil {
-			r.EntityType = "release_group"
+			r.MBID = string(id)
+			r.EntityType = EntityReleaseGroup
 			r.ArtistMBID = artistMBID
 			results = append(results, r)
 		}
@@ -1315,29 +1349,21 @@ func (si *SearchIndex) ExactMatches(query string, perCategory int) []SearchIndex
 	// its partial expression index (idx_explore_title_lower /
 	// idx_explore_artist_lower).  Ordering is done in Go below since
 	// an ORDER BY here would also defeat the index seek.
+	//
+	// The popularity clause **must match those indexes' predicate** or
+	// the seek becomes a scan of two million rows.  It is the champion
+	// set: what the user owns, plus what is popular enough to be worth
+	// an exact-match boost.  Anything below the floor is still found by
+	// the FTS tiers; it just does not jump the queue.
 	rows, err := si.db.QueryContext(`
-		SELECT entity_type, mbid, title, artist_name, artist_mbid,
-		       popularity, listener_count, duration, primary_type,
-		       secondary_types, release_date, caa_release_mbid,
-		       release_name, artist_type, country, disambiguation,
-		       sort_name, in_library, is_similar,
-		       COALESCE(local_artist_id, 0),
-		       COALESCE(local_release_group_id, 0),
-		       COALESCE(local_recording_id, 0)
+		SELECT `+indexRowColumns+`
 		FROM explore_index
-		WHERE LOWER(title) = ? AND popularity > 0
+		WHERE LOWER(title) = ? AND (popularity >= ? OR in_library = 1)
 		UNION
-		SELECT entity_type, mbid, title, artist_name, artist_mbid,
-		       popularity, listener_count, duration, primary_type,
-		       secondary_types, release_date, caa_release_mbid,
-		       release_name, artist_type, country, disambiguation,
-		       sort_name, in_library, is_similar,
-		       COALESCE(local_artist_id, 0),
-		       COALESCE(local_release_group_id, 0),
-		       COALESCE(local_recording_id, 0)
+		SELECT `+indexRowColumns+`
 		FROM explore_index
-		WHERE LOWER(artist_name) = ? AND popularity > 0
-	`, q, q)
+		WHERE LOWER(artist_name) = ? AND (popularity >= ? OR in_library = 1)
+	`, q, championPopThreshold, q, championPopThreshold)
 	if err != nil {
 		return nil
 	}
@@ -1349,14 +1375,7 @@ func (si *SearchIndex) ExactMatches(query string, perCategory int) []SearchIndex
 	for rows.Next() {
 		var r SearchIndexResult
 
-		if err := rows.Scan(
-			&r.EntityType, &r.MBID, &r.Title, &r.ArtistName, &r.ArtistMBID,
-			&r.Popularity, &r.ListenerCount, &r.Duration, &r.PrimaryType,
-			&r.SecondaryTypes, &r.ReleaseDate, &r.CAAReleaseMBID,
-			&r.ReleaseName, &r.ArtistType, &r.Country, &r.Disambiguation,
-			&r.SortName, &r.InLibrary, &r.IsSimilar,
-			&r.LocalArtistID, &r.LocalReleaseGroupID, &r.LocalRecordingID,
-		); err != nil {
+		if err := scanIndexRow(rows, &r); err != nil {
 			continue
 		}
 
@@ -1623,14 +1642,7 @@ func (si *SearchIndex) rowsByIDs(ctx context.Context, ids []int64) []SearchIndex
 	}
 
 	query := `
-		SELECT id, entity_type, mbid, title, artist_name, artist_mbid,
-		       popularity, listener_count, duration, primary_type,
-		       secondary_types, release_date, caa_release_mbid,
-		       release_name, artist_type, country, disambiguation,
-		       sort_name, in_library, is_similar,
-		       COALESCE(local_artist_id, 0),
-		       COALESCE(local_release_group_id, 0),
-		       COALESCE(local_recording_id, 0)
+		SELECT id, ` + indexRowColumns + `
 		FROM explore_index
 		WHERE id IN (` + strings.Join(placeholders, ",") + `)`
 
@@ -1653,14 +1665,7 @@ func (si *SearchIndex) rowsByIDs(ctx context.Context, ids []int64) []SearchIndex
 			r  SearchIndexResult
 		)
 
-		if err := rows.Scan(
-			&id, &r.EntityType, &r.MBID, &r.Title, &r.ArtistName, &r.ArtistMBID,
-			&r.Popularity, &r.ListenerCount, &r.Duration, &r.PrimaryType,
-			&r.SecondaryTypes, &r.ReleaseDate, &r.CAAReleaseMBID,
-			&r.ReleaseName, &r.ArtistType, &r.Country, &r.Disambiguation,
-			&r.SortName, &r.InLibrary, &r.IsSimilar,
-			&r.LocalArtistID, &r.LocalReleaseGroupID, &r.LocalRecordingID,
-		); err != nil {
+		if err := scanIndexRow(rows, &r, &id); err != nil {
 			continue
 		}
 
@@ -1742,15 +1747,7 @@ func (si *SearchIndex) queryFTS(
 ) []SearchIndexResult {
 	// ftsTable is a trusted in-package constant, never user input.
 	sqlText := fmt.Sprintf(`
-		SELECT i.entity_type, i.mbid, i.title, i.artist_name,
-		       i.artist_mbid, i.popularity, i.listener_count,
-		       i.duration, i.primary_type, i.secondary_types, i.release_date,
-		       i.caa_release_mbid, i.release_name,
-		       i.artist_type, i.country, i.disambiguation, i.sort_name,
-		       i.in_library, i.is_similar,
-		       COALESCE(i.local_artist_id, 0),
-		       COALESCE(i.local_release_group_id, 0),
-		       COALESCE(i.local_recording_id, 0)
+		SELECT `+indexRowColumnsFor("i")+`
 		FROM explore_index i
 		JOIN %[1]s f ON f.rowid = i.id
 		WHERE %[1]s MATCH ?
@@ -1783,15 +1780,7 @@ func (si *SearchIndex) queryFTS(
 	for rows.Next() {
 		var r SearchIndexResult
 
-		if err := rows.Scan(
-			&r.EntityType, &r.MBID, &r.Title, &r.ArtistName,
-			&r.ArtistMBID, &r.Popularity, &r.ListenerCount,
-			&r.Duration, &r.PrimaryType, &r.SecondaryTypes, &r.ReleaseDate,
-			&r.CAAReleaseMBID, &r.ReleaseName,
-			&r.ArtistType, &r.Country, &r.Disambiguation, &r.SortName,
-			&r.InLibrary, &r.IsSimilar,
-			&r.LocalArtistID, &r.LocalReleaseGroupID, &r.LocalRecordingID,
-		); err != nil {
+		if err := scanIndexRow(rows, &r); err != nil {
 			si.logger.Warn("search index scan error", "error", err)
 
 			continue
@@ -2051,9 +2040,11 @@ func (si *SearchIndex) indexOneArtist(
 	// concurrently — they use different rate limiters so they
 	// don't block each other.
 	var (
-		rgs  []SearchIndexResult
-		recs []SearchIndexResult
-		wg   sync.WaitGroup
+		rgs    []SearchIndexResult
+		recs   []SearchIndexResult
+		rgErr  error
+		recErr error
+		wg     sync.WaitGroup
 	)
 
 	// LB pipeline: top release groups + top recordings.
@@ -2062,8 +2053,8 @@ func (si *SearchIndex) indexOneArtist(
 	go func() {
 		defer wg.Done()
 
-		rgs = si.fetchTopReleaseGroups(ctx, lb, artist, rgLimit)
-		recs = si.fetchTopRecordings(ctx, lb, artist, recLimit)
+		rgs, rgErr = si.fetchTopReleaseGroups(ctx, lb, artist, rgLimit)
+		recs, recErr = si.fetchTopRecordings(ctx, lb, artist, recLimit)
 	}()
 
 	// MB pipeline: cache the artist lookup, which is what the details
@@ -2090,14 +2081,19 @@ func (si *SearchIndex) indexOneArtist(
 
 	// Write the artist entry into the index so indexedArtistMBIDs()
 	// recognises this artist as processed on subsequent builds.
-	// Only mark DiscogFetched=true if at least one of the discography
-	// fetches actually returned data — a transient API failure should
-	// allow a retry on the next build, not permanently claim the
-	// artist as indexed.  Also stores aliases and detail fields from
-	// the now-cached MB rels (populated by the image resolution above)
-	// for FTS search.
+	// Also stores aliases and detail fields from the now-cached MB rels
+	// (populated by the image resolution above) for FTS search.
+	//
+	// DiscogFetched records that both LB endpoints were *asked*, not
+	// that they had anything to say.  A transient failure still leaves
+	// the artist unmarked so the next run retries it — but an artist LB
+	// has no popularity data for (or none above indexMinPopularity,
+	// which is most of a long-tail library) answers empty every single
+	// time, and keying the mark on emptiness made those artists
+	// permanent candidates: the owned-artist backfill re-ran for them
+	// on every launch, forever, which is the bug this replaces.
 	if si.artistImg != nil {
-		gotData := len(rgs) > 0 || len(recs) > 0
+		gotData := rgErr == nil && recErr == nil
 		artistEntry := SearchIndexResult{
 			EntityType:    "artist",
 			MBID:          artist.ArtistMBID,
@@ -2139,10 +2135,10 @@ func (si *SearchIndex) fetchTopReleaseGroups(
 	lb *ListenBrainzClient,
 	artist lbSitewideArtist,
 	maxCount int,
-) []SearchIndexResult {
+) ([]SearchIndexResult, error) {
 	url := fmt.Sprintf(
 		"%s/1/popularity/top-release-groups-for-artist/%s",
-		listenBrainzBaseURL, artist.ArtistMBID,
+		lb.baseURL, artist.ArtistMBID,
 	)
 
 	body, err := lb.doGet(ctx, url)
@@ -2152,7 +2148,7 @@ func (si *SearchIndex) fetchTopReleaseGroups(
 			"error", err,
 		)
 
-		return nil
+		return nil, err
 	}
 
 	var raw []struct {
@@ -2173,7 +2169,7 @@ func (si *SearchIndex) fetchTopReleaseGroups(
 	}
 
 	if err := json.Unmarshal(body, &raw); err != nil {
-		return nil
+		return nil, err
 	}
 
 	limit := maxCount
@@ -2209,7 +2205,7 @@ func (si *SearchIndex) fetchTopReleaseGroups(
 		})
 	}
 
-	return results
+	return results, nil
 }
 
 func (si *SearchIndex) fetchTopRecordings(
@@ -2217,20 +2213,20 @@ func (si *SearchIndex) fetchTopRecordings(
 	lb *ListenBrainzClient,
 	artist lbSitewideArtist,
 	maxCount int,
-) []SearchIndexResult {
+) ([]SearchIndexResult, error) {
 	url := fmt.Sprintf(
 		"%s/1/popularity/top-recordings-for-artist/%s",
-		listenBrainzBaseURL, artist.ArtistMBID,
+		lb.baseURL, artist.ArtistMBID,
 	)
 
 	body, err := lb.doGet(ctx, url)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 
 	var raw []lbTopRecordingWire
 	if err := json.Unmarshal(body, &raw); err != nil {
-		return nil
+		return nil, err
 	}
 
 	limit := maxCount
@@ -2258,7 +2254,7 @@ func (si *SearchIndex) fetchTopRecordings(
 		})
 	}
 
-	return results
+	return results, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -2276,6 +2272,89 @@ func (si *SearchIndex) fetchTopRecordings(
 // empty values, and numeric fields use "highest wins" for popularity/
 // listener_count/duration so older richer data survives refreshes.
 
+// indexRowColumns is the full explore_index projection, and
+// scanIndexRow is the only thing that reads it.
+//
+// There were four copies of this column list and four matching Scan
+// calls, which is what makes the storage encoding dangerous: a blob
+// column scanned into a string yields sixteen bytes of garbage rather
+// than an error, and it would have had to be got right four times.
+// dbMBID and dbEntityType do the decoding, and they refuse anything
+// that is not what they expect.
+var indexRowFields = []string{
+	"entity_type", "mbid", "title", "artist_name", "artist_mbid",
+	"popularity", "listener_count", "duration", "primary_type",
+	"secondary_types", "release_date", "total_tracks", "caa_release_mbid",
+	"release_name", "artist_type", "country", "disambiguation",
+	"sort_name", "in_library", "is_similar",
+	"local_artist_id", "local_release_group_id", "local_recording_id",
+}
+
+// nullableIndexRowFields are the ones a caller wants zero rather than
+// NULL for.
+var nullableIndexRowFields = map[string]bool{
+	"local_artist_id":        true,
+	"local_release_group_id": true,
+	"local_recording_id":     true,
+}
+
+// indexRowColumns is the projection unqualified; indexRowColumnsFor
+// qualifies it with a table alias, for the joins where the other side
+// also has a `title`.
+var indexRowColumns = indexRowColumnsFor("")
+
+func indexRowColumnsFor(alias string) string {
+	if alias != "" {
+		alias += "."
+	}
+
+	cols := make([]string, 0, len(indexRowFields))
+
+	for _, f := range indexRowFields {
+		if nullableIndexRowFields[f] {
+			cols = append(cols, "COALESCE("+alias+f+", 0)")
+
+			continue
+		}
+
+		cols = append(cols, alias+f)
+	}
+
+	return strings.Join(cols, ", ")
+}
+
+// scanIndexRow reads one indexRowColumns row into a result.
+func scanIndexRow(rows *sql.Rows, r *SearchIndexResult, before ...any) error {
+	var (
+		entity dbEntityType
+		id     dbMBID
+		artist dbMBID
+		caa    dbMBID
+	)
+
+	dest := make([]any, 0, len(before)+len(indexRowFields))
+	dest = append(dest, before...)
+	dest = append(dest,
+		&entity, &id, &r.Title, &r.ArtistName, &artist,
+		&r.Popularity, &r.ListenerCount, &r.Duration, &r.PrimaryType,
+		&r.SecondaryTypes, &r.ReleaseDate, &r.TotalTracks, &caa,
+		&r.ReleaseName, &r.ArtistType, &r.Country, &r.Disambiguation,
+		&r.SortName, &r.InLibrary, &r.IsSimilar,
+		&r.LocalArtistID, &r.LocalReleaseGroupID, &r.LocalRecordingID,
+	)
+
+	if err := rows.Scan(dest...); err != nil {
+		return fmt.Errorf("scan index row: %w", err)
+	}
+
+	r.EntityType = string(entity)
+	r.MBID = string(id)
+	r.ArtistMBID = string(artist)
+	r.CAAReleaseMBID = string(caa)
+
+	return nil
+}
+
 // upsertIndexSQL is the single index write statement.  It is kept as
 // a const so assembly can prepare it once per transaction instead of
 // re-parsing this large upsert for every row.
@@ -2284,7 +2363,7 @@ const upsertIndexSQL = `
 		entity_type, mbid, title, artist_name, artist_mbid, aliases,
 		popularity, listener_count,
 		duration, caa_release_mbid, release_name,
-		primary_type, secondary_types, release_date,
+		primary_type, secondary_types, release_date, total_tracks,
 		artist_type, country, disambiguation, sort_name,
 		in_library, is_similar,
 		local_artist_id, local_release_group_id, local_recording_id,
@@ -2293,7 +2372,7 @@ const upsertIndexSQL = `
 		?, ?, ?, ?, ?, ?,
 		?, ?,
 		?, ?, ?,
-		?, ?, ?,
+		?, ?, ?, ?,
 		?, ?, ?, ?,
 		?, ?,
 		NULLIF(?, 0), NULLIF(?, 0), NULLIF(?, 0),
@@ -2311,7 +2390,7 @@ const upsertIndexConflictSQL = `
 		-- as a name; AddFromCache is the path that used to.
 		title       = CASE WHEN excluded.title != '' THEN excluded.title ELSE title END,
 		artist_name = CASE WHEN excluded.artist_name != '' THEN excluded.artist_name ELSE artist_name END,
-		artist_mbid = CASE WHEN excluded.artist_mbid != '' THEN excluded.artist_mbid ELSE artist_mbid END,
+		artist_mbid = CASE WHEN excluded.artist_mbid != x'' THEN excluded.artist_mbid ELSE artist_mbid END,
 		aliases     = CASE WHEN excluded.aliases != '' THEN excluded.aliases ELSE aliases END,
 
 		-- Highest wins for popularity + listener_count (refreshes can go up).
@@ -2320,11 +2399,12 @@ const upsertIndexConflictSQL = `
 
 		-- Non-empty wins for all other optional fields (never clobber with empty).
 		duration         = CASE WHEN excluded.duration > 0 THEN excluded.duration ELSE duration END,
-		caa_release_mbid = CASE WHEN excluded.caa_release_mbid != '' THEN excluded.caa_release_mbid ELSE caa_release_mbid END,
+		caa_release_mbid = CASE WHEN excluded.caa_release_mbid != x'' THEN excluded.caa_release_mbid ELSE caa_release_mbid END,
 		release_name     = CASE WHEN excluded.release_name != '' THEN excluded.release_name ELSE release_name END,
 		primary_type     = CASE WHEN excluded.primary_type != '' THEN excluded.primary_type ELSE primary_type END,
 		secondary_types  = CASE WHEN excluded.secondary_types != '' THEN excluded.secondary_types ELSE secondary_types END,
 		release_date     = CASE WHEN excluded.release_date != '' THEN excluded.release_date ELSE release_date END,
+		total_tracks     = CASE WHEN excluded.total_tracks > 0 THEN excluded.total_tracks ELSE total_tracks END,
 		artist_type      = CASE WHEN excluded.artist_type != '' THEN excluded.artist_type ELSE artist_type END,
 		country          = CASE WHEN excluded.country != '' THEN excluded.country ELSE country END,
 		disambiguation   = CASE WHEN excluded.disambiguation != '' THEN excluded.disambiguation ELSE disambiguation END,
@@ -2387,10 +2467,11 @@ func (si *SearchIndex) upsertBatch(entries []SearchIndexResult) {
 		}
 
 		if _, err := stmt.Exec(
-			e.EntityType, e.MBID, e.Title, e.ArtistName, e.ArtistMBID, e.Aliases,
+			dbEntityType(e.EntityType), dbMBID(e.MBID),
+			e.Title, e.ArtistName, dbMBID(e.ArtistMBID), e.Aliases,
 			e.Popularity, e.ListenerCount,
-			e.Duration, e.CAAReleaseMBID, e.ReleaseName,
-			e.PrimaryType, e.SecondaryTypes, e.ReleaseDate,
+			e.Duration, dbMBID(e.CAAReleaseMBID), e.ReleaseName,
+			e.PrimaryType, e.SecondaryTypes, e.ReleaseDate, e.TotalTracks,
 			e.ArtistType, e.Country, e.Disambiguation, e.SortName,
 			inLib, isSim,
 			e.LocalArtistID, e.LocalReleaseGroupID, e.LocalRecordingID,
@@ -2480,42 +2561,48 @@ func (si *SearchIndex) pruneStaleLocalCrossReferences() {
 	type prune struct {
 		entityType string
 		column     string
-		table      string
+		// exists is the test for "this local id still refers to
+		// something the user owns".  It is a file test in every case -
+		// the version that tested the metadata table left 129 rows in
+		// a real catalog claiming to be owned by files that were gone.
+		exists string
 	}
 
 	for _, p := range []prune{
-		{"artist", "local_artist_id", "artists"},
-		{"release_group", "local_release_group_id", "release_groups"},
-		{"recording", "local_recording_id", "recordings"},
+		{"artist", "local_artist_id", `
+			SELECT 1 FROM artists a WHERE a.id = explore_index.local_artist_id
+			AND (
+				EXISTS (SELECT 1 FROM audio_files af WHERE af.artist_id = a.id)
+				OR EXISTS (
+					SELECT 1 FROM albums al
+					JOIN audio_files af2 ON af2.album_id = al.id
+					WHERE al.artist_id = a.id
+				)
+			)`},
+		{"release_group", "local_release_group_id", `
+			SELECT 1 FROM audio_files af
+			WHERE af.album_id = explore_index.local_release_group_id`},
+		{"recording", "local_recording_id", `
+			SELECT 1 FROM audio_files af
+			WHERE af.id = explore_index.local_recording_id`},
 	} {
 		result, err := si.db.ExecContext(
 			`UPDATE explore_index
 			 SET in_library = 0, `+p.column+` = NULL
-			 WHERE entity_type = ?
-			   AND `+p.column+` IS NOT NULL
-			   AND `+p.column+` NOT IN (SELECT id FROM `+p.table+`)`,
-			p.entityType,
+			 WHERE entity_type = ? AND `+p.column+` IS NOT NULL
+			   AND NOT EXISTS (`+p.exists+`)`,
+			dbEntityType(p.entityType),
 		)
 		if err != nil {
-			si.logger.Warn(
-				"library sync: prune stale cross-references failed",
-				"entityType",
-				p.entityType,
-				"error",
-				err,
-			)
+			si.logger.Warn("library sync: prune stale cross-references failed",
+				"entityType", p.entityType, "error", err)
 
 			continue
 		}
 
-		if n, err := result.RowsAffected(); err == nil && n > 0 {
-			si.logger.Info(
-				"library sync: cleared stale cross-references",
-				"entityType",
-				p.entityType,
-				"count",
-				n,
-			)
+		if n, _ := result.RowsAffected(); n > 0 {
+			si.logger.Info("library sync: cleared stale cross-references",
+				"entityType", p.entityType, "count", n)
 		}
 	}
 }
@@ -2527,118 +2614,85 @@ func (si *SearchIndex) pruneStaleLocalCrossReferences() {
 func (si *SearchIndex) collectLibraryEntities() []SearchIndexResult {
 	var entries []SearchIndexResult
 
-	// Artists.
-	artistRows, err := si.db.QueryContext(
-		"SELECT id, name, mbid FROM artists WHERE mbid IS NOT NULL AND mbid != ''",
-	)
-	if err == nil {
-		for artistRows.Next() {
-			var (
-				id         int64
-				name, mbid string
-			)
-
-			if err := artistRows.Scan(&id, &name, &mbid); err != nil {
-				continue
-			}
-
-			entries = append(entries, SearchIndexResult{
-				EntityType:    "artist",
-				MBID:          mbid,
-				Title:         name,
-				ArtistName:    name,
-				ArtistMBID:    mbid,
-				InLibrary:     true,
-				LocalArtistID: id,
-			})
-		}
-
-		_ = artistRows.Close()
-	} else {
-		si.logger.Warn("library sync: query artists failed", "error", err)
+	// Every one of these is gated on a file existing.  They used to
+	// select straight from the metadata tables, so an artist, album or
+	// recording whose files were gone stayed flagged "in library" in
+	// the catalog until something noticed - and nothing did.
+	type entityQuery struct {
+		kind  string
+		query string
 	}
 
-	// Release groups.  The correlated subquery picks the primary
-	// credited artist's MBID (if it has one).
-	rgRows, err := si.db.QueryContext(`
-		SELECT rg.id, rg.name, rg.mbid, COALESCE(ac.text, ''),
-		       COALESCE((
-		           SELECT a.mbid FROM artist_credit_artist aca
-		           JOIN artists a ON a.id = aca.artist_id
-		           WHERE aca.credit_id = rg.album_artist_credit_id
-		             AND a.mbid IS NOT NULL AND a.mbid != ''
-		           LIMIT 1
-		       ), '')
-		FROM release_groups rg
-		LEFT JOIN artist_credit ac ON ac.id = rg.album_artist_credit_id
-		WHERE rg.mbid IS NOT NULL AND rg.mbid != ''
-	`)
-	if err == nil {
-		for rgRows.Next() {
+	queries := []entityQuery{
+		{"artist", `
+			SELECT DISTINCT a.id, a.name, a.mbid, a.name, a.mbid
+			FROM artists a
+			WHERE a.mbid IS NOT NULL AND a.mbid != ''
+			  AND (
+				EXISTS (SELECT 1 FROM audio_files af WHERE af.artist_id = a.id)
+				OR EXISTS (
+					SELECT 1 FROM albums al
+					JOIN audio_files af2 ON af2.album_id = al.id
+					WHERE al.artist_id = a.id
+				)
+			  )`},
+		{"release_group", `
+			SELECT DISTINCT al.id, al.name, al.mbid, al.artist_credit,
+			       COALESCE(ar.mbid, '')
+			FROM albums al
+			JOIN audio_files af ON af.album_id = al.id
+			LEFT JOIN artists ar ON ar.id = al.artist_id
+			WHERE al.mbid IS NOT NULL AND al.mbid != ''`},
+		{"recording", `
+			SELECT af.id, af.title, af.recording_mbid, af.artist_credit,
+			       COALESCE(ar.mbid, '')
+			FROM audio_files af
+			LEFT JOIN artists ar ON ar.id = af.artist_id
+			WHERE af.recording_mbid IS NOT NULL AND af.recording_mbid != ''`},
+	}
+
+	for _, eq := range queries {
+		rows, err := si.db.QueryContext(eq.query)
+		if err != nil {
+			si.logger.Warn("library sync: query failed", "kind", eq.kind, "error", err)
+
+			continue
+		}
+
+		for rows.Next() {
 			var (
 				id                           int64
 				name, mbid, credit, artistMB string
 			)
 
-			if err := rgRows.Scan(&id, &name, &mbid, &credit, &artistMB); err != nil {
+			if err := rows.Scan(&id, &name, &mbid, &credit, &artistMB); err != nil {
 				continue
 			}
 
-			entries = append(entries, SearchIndexResult{
-				EntityType:          "release_group",
-				MBID:                mbid,
-				Title:               name,
-				ArtistName:          credit,
-				ArtistMBID:          artistMB,
-				InLibrary:           true,
-				LocalReleaseGroupID: id,
-			})
-		}
-
-		_ = rgRows.Close()
-	} else {
-		si.logger.Warn("library sync: query release groups failed", "error", err)
-	}
-
-	// Recordings.
-	recRows, err := si.db.QueryContext(`
-		SELECT r.id, r.name, r.mbid, COALESCE(ac.text, ''),
-		       COALESCE((
-		           SELECT a.mbid FROM artist_credit_artist aca
-		           JOIN artists a ON a.id = aca.artist_id
-		           WHERE aca.credit_id = r.artist_credit_id
-		             AND a.mbid IS NOT NULL AND a.mbid != ''
-		           LIMIT 1
-		       ), '')
-		FROM recordings r
-		LEFT JOIN artist_credit ac ON ac.id = r.artist_credit_id
-		WHERE r.mbid IS NOT NULL AND r.mbid != ''
-	`)
-	if err == nil {
-		for recRows.Next() {
-			var (
-				id                           int64
-				name, mbid, credit, artistMB string
-			)
-
-			if err := recRows.Scan(&id, &name, &mbid, &credit, &artistMB); err != nil {
-				continue
+			entry := SearchIndexResult{
+				EntityType: eq.kind,
+				MBID:       mbid,
+				Title:      name,
+				ArtistName: credit,
+				ArtistMBID: artistMB,
+				InLibrary:  true,
 			}
 
-			entries = append(entries, SearchIndexResult{
-				EntityType:       "recording",
-				MBID:             mbid,
-				Title:            name,
-				ArtistName:       credit,
-				ArtistMBID:       artistMB,
-				InLibrary:        true,
-				LocalRecordingID: id,
-			})
+			switch eq.kind {
+			case "artist":
+				entry.LocalArtistID = id
+			case "release_group":
+				entry.LocalReleaseGroupID = id
+			case "recording":
+				// The local id of a "recording" is the file's, which is
+				// what every caller wants: it is the thing that plays.
+				entry.LocalRecordingID = id
+			}
+
+			entries = append(entries, entry)
 		}
 
-		_ = recRows.Close()
-	} else {
-		si.logger.Warn("library sync: query recordings failed", "error", err)
+		_ = rows.Close()
 	}
 
 	return entries
@@ -2710,7 +2764,7 @@ func (si *SearchIndex) BackfillPopularity(updates map[string]PopularityData) {
 			 WHERE mbid = ?`,
 			data.ListenCount, data.ListenCount,
 			data.ListenerCount, data.ListenerCount,
-			mbid,
+			dbMBID(mbid),
 		)
 	}
 

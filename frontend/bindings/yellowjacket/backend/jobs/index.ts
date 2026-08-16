@@ -16,7 +16,6 @@ export type {
     Caps,
     Job,
     LogEntry,
-    Registry,
     Stage,
     Stat
 } from "./models.js";

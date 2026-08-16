@@ -22,8 +22,8 @@ func seedIndexRow(
 	_, err := db.ExecContext(`
 		INSERT INTO explore_index
 			(entity_type, mbid, title, artist_name, artist_mbid, popularity, listener_count)
-		VALUES (?, ?, ?, ?, '', ?, ?)
-	`, entityType, mbid, title, artist, popularity, popularity/10)
+		VALUES (?, ?, ?, ?, x'', ?, ?)
+	`, dbEntityType(entityType), dbMBID(testMBID(mbid)), title, artist, popularity, popularity/10)
 	if err != nil {
 		t.Fatalf("seed %s/%s: %v", entityType, mbid, err)
 	}
@@ -73,12 +73,12 @@ func TestEvalHarnessIndexRanking(t *testing.T) {
 		{
 			Query:  "radiohead",
 			Note:   "popular exact artist match",
-			Expect: []eval.Expected{{Type: "artist", MBID: "rh"}},
+			Expect: []eval.Expected{{Type: "artist", MBID: testMBID("rh")}},
 		},
 		{
 			Query:  "the teenagers",
 			Note:   "low-popularity exact match must beat high-popularity article match",
-			Expect: []eval.Expected{{Type: "artist", MBID: "teenagers"}},
+			Expect: []eval.Expected{{Type: "artist", MBID: testMBID("teenagers")}},
 		},
 	}
 
@@ -123,8 +123,13 @@ func TestExploreFTSDiacriticFolding(t *testing.T) {
 				t.Fatalf("query %q returned no hits", tc.query)
 			}
 
-			if hits[0].MBID != tc.wantMBID {
-				t.Errorf("query %q: top hit = %q, want %q", tc.query, hits[0].MBID, tc.wantMBID)
+			if hits[0].MBID != testMBID(tc.wantMBID) {
+				t.Errorf(
+					"query %q: top hit = %q, want %q",
+					tc.query,
+					hits[0].MBID,
+					testMBID(tc.wantMBID),
+				)
 			}
 		})
 	}
@@ -146,5 +151,32 @@ func TestEvalFixtureFileParses(t *testing.T) {
 		if len(fx.Expect) == 0 {
 			t.Errorf("fixture %q has no expectations", fx.Query)
 		}
+	}
+}
+
+// seedIndexResult writes one explore_index row through the same
+// upsertBatch every other writer uses.
+//
+// The three seeders that used to bind upsertIndexSQL's parameters by
+// hand said, in a comment, that this was on purpose: a schema change
+// should break the tests where it breaks the app.  It did not - it
+// broke them at "missing argument with index 25", one file at a time,
+// for a column none of them cares about.  Going through the one writer
+// keeps the property they wanted (a field written to the wrong column
+// still fails here) without three copies of a 24-argument list.
+func seedIndexResult(t *testing.T, db *database.DB, r SearchIndexResult) {
+	t.Helper()
+
+	NewSearchIndex(db, nil, nil, slog.Default()).
+		upsertBatch([]SearchIndexResult{r})
+
+	// upsertBatch logs and swallows, which is right for a background
+	// merge and useless for a fixture, so the row is checked for.
+	var n int
+
+	if err := db.QueryRowWriter(
+		"SELECT COUNT(*) FROM explore_index WHERE mbid = ?", dbMBID(r.MBID),
+	).Scan(&n); err != nil || n == 0 {
+		t.Fatalf("seed explore_index row %q: not written (%v)", r.MBID, err)
 	}
 }

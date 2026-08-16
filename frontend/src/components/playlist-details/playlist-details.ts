@@ -450,7 +450,19 @@ export class PlaylistDetails
 
         switch (action) {
             case 'play':
-                queueStore.setQueue(filePaths, 0, true, { type: 'playlist', id: this.playlistId, label: this.playlistName });
+                // One row is a position in the playlist, so it queues
+                // the playlist from there - the same thing
+                // double-clicking the row does. Several rows are an
+                // explicit choice of *those* tracks and become the
+                // queue on their own.
+                if (filePaths.length === 1) {
+                    this.handleTrackDblClick(
+                        this.selection.getSelectedIndices()[0]!,
+                    );
+                } else {
+                    queueStore.setQueue(filePaths, 0, true, { type: 'playlist', id: this.playlistId, label: this.playlistName });
+                }
+
                 break;
             case 'add-to-queue':
                 queueStore.addTracksToQueue(filePaths);

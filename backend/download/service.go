@@ -486,6 +486,8 @@ func (s *Service) ClearFinished() error {
 // SetReconciler wires the request-list loop.  Optional: without it the
 // request list still stores and lists requests, it just never acts on
 // them.
+//
+//wails:ignore // internal wiring, not part of the app's IPC surface.
 func (s *Service) SetReconciler(r *Reconciler) {
 	s.reconciler = r
 }

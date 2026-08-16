@@ -2,13 +2,11 @@ package autotag_test
 
 import (
 	"context"
-	"database/sql"
 	"log/slog"
 	"testing"
 
 	"yellowjacket/backend/autotag"
 	"yellowjacket/backend/database"
-	"yellowjacket/backend/database/sql/sqlcgen"
 )
 
 // seedAlbum drops a minimal release_group + recordings + audio_files
@@ -33,70 +31,19 @@ type seededTrack struct {
 func seed(t *testing.T, db *database.DB, album seededAlbum) {
 	t.Helper()
 
-	ctx := db.Ctx
-	q := db.Queries
-
-	ac, err := q.UpsertArtistCredit(ctx, "Test Artist")
-	if err != nil {
-		t.Fatalf("upsert ac: %v", err)
-	}
-
-	rg, err := q.UpsertReleaseGroup(ctx, sqlcgen.UpsertReleaseGroupParams{
-		Name:                album.albumName,
-		AlbumArtistCreditID: sql.NullInt64{Int64: ac.ID, Valid: true},
-	})
-	if err != nil {
-		t.Fatalf("upsert rg: %v", err)
-	}
-
-	if album.releaseMBID != "" {
-		if _, err := db.ExecContext(
-			`UPDATE release_groups SET mbid = ? WHERE id = ?`,
-			album.releaseMBID, rg.ID,
-		); err != nil {
-			t.Fatalf("set rg mbid: %v", err)
-		}
-	}
-
 	for _, tr := range album.tracks {
-		rec, err := q.CreateRecordingFull(ctx, sqlcgen.CreateRecordingFullParams{
-			Name:           tr.title,
-			ArtistCreditID: ac.ID,
-			TrackNumber:    sql.NullInt64{Int64: int64(tr.trackNumber), Valid: true},
+		database.InsertTestTrack(t, db, database.TestTrack{
+			FilePath:      tr.filePath,
+			Title:         tr.title,
+			Artist:        "Test Artist",
+			Album:         album.albumName,
+			AlbumMBID:     album.releaseMBID,
+			RecordingMBID: tr.recordingMBID,
+			TrackNumber:   int64(tr.trackNumber),
+			LengthMs:      tr.lengthMillis,
+			LibraryID:     album.libraryID,
+			GroupKey:      album.groupKey,
 		})
-		if err != nil {
-			t.Fatalf("create recording: %v", err)
-		}
-
-		if tr.recordingMBID != "" {
-			if _, err := db.ExecContext(
-				`UPDATE recordings SET mbid = ? WHERE id = ?`,
-				tr.recordingMBID, rec.ID,
-			); err != nil {
-				t.Fatalf("set recording mbid: %v", err)
-			}
-		}
-
-		if _, err := q.CreateReleaseGroupRecording(ctx, sqlcgen.CreateReleaseGroupRecordingParams{
-			ReleaseGroupID: rg.ID,
-			RecordingID:    rec.ID,
-			TrackNumber:    sql.NullInt64{Int64: int64(tr.trackNumber), Valid: true},
-		}); err != nil {
-			t.Fatalf("link rg recording: %v", err)
-		}
-
-		if _, err := q.CreateAudioFileWithGroupKey(ctx, sqlcgen.CreateAudioFileWithGroupKeyParams{
-			FilePath:           tr.filePath,
-			LengthMilliseconds: tr.lengthMillis,
-			FileTypeID:         0,
-			RecordingID:        rec.ID,
-			Basename:           tr.filePath,
-			LibraryID:          album.libraryID,
-			GroupKey:           album.groupKey,
-			TagStatus:          "untagged",
-		}); err != nil {
-			t.Fatalf("create audio file: %v", err)
-		}
 	}
 
 	if _, err := db.ExecContext(`

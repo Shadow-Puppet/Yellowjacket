@@ -117,10 +117,10 @@ const TAGS = [
  */
 function stubEmptyBackend(): void {
   const emptyLists = [
-    'library.Library.GetAllTracks',
-    'library.Library.GetAllAlbums',
-    'library.Library.GetAllArtists',
-    'library.Library.GetAllGenresWithCounts',
+    'library.Library.GetTracks',
+    'library.Library.GetAlbums',
+    'library.Library.GetArtists',
+    'library.Library.GetGenres',
     'library.Library.GetAllLibrariesWithTrackCounts',
     'playlist.Service.GetAllPlaylists',
     'playlist.Service.GetAllPlaylistsWithTracks',

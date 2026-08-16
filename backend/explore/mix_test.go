@@ -23,69 +23,14 @@ func seedMixTrack(
 
 	fp := fmt.Sprintf("/music/%s/track%d.mp3", artistName, id)
 
-	_, err := db.ExecContext(
-		"INSERT INTO artists (id, name, mbid) VALUES (?, ?, ?) "+
-			"ON CONFLICT(name) DO NOTHING",
-		id, artistName, artistMBID,
-	)
-	if err != nil {
-		t.Fatalf("insert artist: %v", err)
-	}
-
-	_, err = db.ExecContext(
-		"INSERT INTO artist_credit (id, text) VALUES (?, ?) "+
-			"ON CONFLICT(text) DO NOTHING",
-		id, artistName,
-	)
-	if err != nil {
-		t.Fatalf("insert artist_credit: %v", err)
-	}
-
-	_, err = db.ExecContext(
-		"INSERT OR IGNORE INTO artist_credit_artist (artist_id, credit_id) VALUES (?, ?)",
-		id, id,
-	)
-	if err != nil {
-		t.Fatalf("insert artist_credit_artist: %v", err)
-	}
-
-	_, err = db.ExecContext(
-		"INSERT INTO recordings (id, name, artist_credit_id) VALUES (?, ?, ?)",
-		id, fmt.Sprintf("Track %d", id), id,
-	)
-	if err != nil {
-		t.Fatalf("insert recording: %v", err)
-	}
-
-	_, err = db.ExecContext(
-		"INSERT INTO audio_files (id, file_path, length_milliseconds, file_type_id, recording_id) "+
-			"VALUES (?, ?, 180000, 0, ?)",
-		id, fp, id,
-	)
-	if err != nil {
-		t.Fatalf("insert audio_file: %v", err)
-	}
-
-	for _, g := range genreNames {
-		var genreID int64
-
-		row := db.QueryRowWriter(
-			"INSERT INTO genres (name) VALUES (?) "+
-				"ON CONFLICT(name) DO UPDATE SET name = name RETURNING id",
-			g,
-		)
-		if err := row.Scan(&genreID); err != nil {
-			t.Fatalf("upsert genre %q: %v", g, err)
-		}
-
-		_, err = db.ExecContext(
-			"INSERT OR IGNORE INTO recording_genres (recording_id, genre_id) VALUES (?, ?)",
-			id, genreID,
-		)
-		if err != nil {
-			t.Fatalf("insert recording_genre: %v", err)
-		}
-	}
+	database.InsertTestTrack(t, db, database.TestTrack{
+		FilePath:   fp,
+		Title:      fmt.Sprintf("Track %d", id),
+		Artist:     artistName,
+		ArtistMBID: artistMBID,
+		Genres:     genreNames,
+		LengthMs:   180000,
+	})
 
 	return fp
 }

@@ -210,6 +210,17 @@ describe('an album the library holds part of', () => {
   });
 
   it('draws the whole release, with the missing tracks dimmed', async () => {
+    // Ownership is a *file*, not the catalog row's `inLibrary` flag —
+    // nine of the twelve recordings resolve to a path, so three rows
+    // dim.  Stating it as flags is what let the page claim an album it
+    // could not play a note of.
+    stub(
+      'library.Library.GetFilePathsByRecordingMBIDs',
+      Object.fromEntries(
+        Array.from({ length: 9 }, (_, i) => [`rec-${i + 1}`, [`/music/0${i + 1}.mp3`]]),
+      ),
+    );
+
     const el = await albumWith(
       [release('rel-1', '2019-04-01', 12, 9)],
       { owned: 9, expected: 12, known: true, complete: false },

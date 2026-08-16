@@ -47,29 +47,18 @@ SELECT
     pt.playlist_id,
     pt.audio_file_id,
     pt.position,
-    COALESCE(af.file_path, '') AS file_path,
-    COALESCE(af.length_milliseconds, 0) AS length_milliseconds,
-    COALESCE(r.name, pt.phantom_title, '') AS title,
-    COALESCE(ac.text, pt.phantom_artist, '') AS artist,
-    COALESCE(rg.name, pt.phantom_album, '') AS album,
-    COALESCE(ca.file_path, pt.phantom_cover_art_path, '') AS cover_art_path,
+    COALESCE(tm.file_path, '') AS file_path,
+    COALESCE(tm.length_milliseconds, 0) AS length_milliseconds,
+    COALESCE(tm.title, pt.phantom_title, '') AS title,
+    COALESCE(tm.artist_name, pt.phantom_artist, '') AS artist,
+    COALESCE(tm.album, pt.phantom_album, '') AS album,
+    COALESCE(NULLIF(tm.cover_art_path, ''), pt.phantom_cover_art_path, '') AS cover_art_path,
     CASE WHEN pt.audio_file_id IS NULL THEN 1 ELSE 0 END AS is_phantom,
-    COALESCE(a.mbid, '') AS artist_mbid,
-    COALESCE(rg.mbid, '') AS release_group_mbid,
-    COALESCE(r.mbid, '') AS recording_mbid
+    CAST(COALESCE(tm.artist_mbid, '') AS TEXT) AS artist_mbid,
+    COALESCE(tm.release_group_mbid, '') AS release_group_mbid,
+    COALESCE(tm.recording_mbid, '') AS recording_mbid
 FROM playlist_tracks pt
-LEFT JOIN audio_files af ON pt.audio_file_id = af.id
-LEFT JOIN recordings r ON af.recording_id = r.id
-LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
-LEFT JOIN artist_credit_artist aca ON aca.credit_id = ac.id
-LEFT JOIN artists a ON a.id = aca.artist_id
-LEFT JOIN (
-    SELECT recording_id, MIN(release_group_id) AS release_group_id
-    FROM release_group_recordings
-    GROUP BY recording_id
-) rgr ON r.id = rgr.recording_id
-LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
-LEFT JOIN cover_art ca ON rg.cover_art_id = ca.id
+LEFT JOIN track_metadata tm ON tm.id = pt.audio_file_id
 WHERE pt.playlist_id = ?
 ORDER BY pt.position;
 
@@ -79,29 +68,18 @@ SELECT
     pt.playlist_id,
     pt.audio_file_id,
     pt.position,
-    COALESCE(af.file_path, '') AS file_path,
-    COALESCE(af.length_milliseconds, 0) AS length_milliseconds,
-    COALESCE(r.name, pt.phantom_title, '') AS title,
-    COALESCE(ac.text, pt.phantom_artist, '') AS artist,
-    COALESCE(rg.name, pt.phantom_album, '') AS album,
-    COALESCE(ca.file_path, pt.phantom_cover_art_path, '') AS cover_art_path,
+    COALESCE(tm.file_path, '') AS file_path,
+    COALESCE(tm.length_milliseconds, 0) AS length_milliseconds,
+    COALESCE(tm.title, pt.phantom_title, '') AS title,
+    COALESCE(tm.artist_name, pt.phantom_artist, '') AS artist,
+    COALESCE(tm.album, pt.phantom_album, '') AS album,
+    COALESCE(NULLIF(tm.cover_art_path, ''), pt.phantom_cover_art_path, '') AS cover_art_path,
     CASE WHEN pt.audio_file_id IS NULL THEN 1 ELSE 0 END AS is_phantom,
-    COALESCE(a.mbid, '') AS artist_mbid,
-    COALESCE(rg.mbid, '') AS release_group_mbid,
-    COALESCE(r.mbid, '') AS recording_mbid
+    CAST(COALESCE(tm.artist_mbid, '') AS TEXT) AS artist_mbid,
+    COALESCE(tm.release_group_mbid, '') AS release_group_mbid,
+    COALESCE(tm.recording_mbid, '') AS recording_mbid
 FROM playlist_tracks pt
-LEFT JOIN audio_files af ON pt.audio_file_id = af.id
-LEFT JOIN recordings r ON af.recording_id = r.id
-LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
-LEFT JOIN artist_credit_artist aca ON aca.credit_id = ac.id
-LEFT JOIN artists a ON a.id = aca.artist_id
-LEFT JOIN (
-    SELECT recording_id, MIN(release_group_id) AS release_group_id
-    FROM release_group_recordings
-    GROUP BY recording_id
-) rgr ON r.id = rgr.recording_id
-LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
-LEFT JOIN cover_art ca ON rg.cover_art_id = ca.id
+LEFT JOIN track_metadata tm ON tm.id = pt.audio_file_id
 ORDER BY pt.playlist_id, pt.position;
 
 -- name: DeleteAllPlaylistTracks :exec
@@ -132,27 +110,8 @@ WHERE playlist_id = ? AND audio_file_id = (
 );
 
 -- name: GetTrackPhantomMetadata :one
-SELECT
-    COALESCE(r.name, '') AS title,
-    COALESCE(ac.text, '') AS artist,
-    COALESCE(rg.name, '') AS album,
-    af.length_milliseconds AS duration_ms,
-    CAST(COALESCE(
-        (SELECT GROUP_CONCAT(g.name, '||')
-         FROM recording_genres rg_sub
-         JOIN genres g ON rg_sub.genre_id = g.id
-         WHERE rg_sub.recording_id = r.id),
-        ''
-    ) AS TEXT) AS genre,
-    COALESCE(ca.file_path, '') AS cover_art_path
-FROM audio_files af
-LEFT JOIN recordings r ON af.recording_id = r.id
-LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
-LEFT JOIN (
-    SELECT recording_id, MIN(release_group_id) AS release_group_id
-    FROM release_group_recordings
-    GROUP BY recording_id
-) rgr ON r.id = rgr.recording_id
-LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
-LEFT JOIN cover_art ca ON rg.cover_art_id = ca.id
-WHERE af.id = ?;
+-- The display fields a playlist row keeps after its file goes away.
+SELECT title, artist_name AS artist, album,
+       length_milliseconds AS duration_ms, genre, cover_art_path
+FROM track_metadata
+WHERE id = ?;

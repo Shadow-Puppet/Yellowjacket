@@ -8,11 +8,10 @@ import * as time$0 from "../../../time/models.js";
 /**
  * Album represents an album for the cover grid display.
  * 
- * Year is the album's preferred display year — the release-group's
- * original-release-date (MusicBrainz first-release-date) when known,
- * falling back to the file-tag year.  ReleaseYear is the file-tag
- * year of the specific release in the library; for a 2010 remaster
- * of a 1973 album, Year=1973 and ReleaseYear=2010.
+ * Year is the album's preferred display year - MusicBrainz's
+ * first-release-date when known, falling back to the file-tag year.
+ * ReleaseYear is the file-tag year of the specific copy in the library;
+ * for a 2010 remaster of a 1973 album, Year=1973 and ReleaseYear=2010.
  */
 export interface Album {
     "ID": number;
@@ -58,7 +57,7 @@ export interface Artist {
 }
 
 /**
- * GenreWithCount holds a genre name and its associated track count.
+ * GenreWithCount is a genre and how many tracks carry it.
  */
 export interface GenreWithCount {
     "Name": string;
@@ -66,37 +65,13 @@ export interface GenreWithCount {
 }
 
 /**
- * Info contains library metadata enriched with track count
- * for the frontend settings UI.
+ * Info is one library and how many files are in it.
  */
 export interface Info {
     "id": number;
     "name": string;
     "path": string;
     "trackCount": number;
-}
-
-/**
- * RemovalHooks contains callbacks invoked during library removal.
- * These break circular dependencies between the library, player,
- * and queue packages.
- */
-export interface RemovalHooks {
-    /**
-     * StopPlayback stops the currently-playing track.
-     */
-    "StopPlayback": any;
-
-    /**
-     * CompactQueue reloads queue state after cascade deletes.
-     */
-    "CompactQueue": any;
-
-    /**
-     * PostRemove runs after the removal commits, for cross-cutting
-     * invalidation (e.g. clearing library-sync "ready" markers).
-     */
-    "PostRemove": any;
 }
 
 /**
@@ -137,53 +112,6 @@ export interface RemovalSummary {
 }
 
 /**
- * RescanHooks holds optional callbacks that run before and after
- * the library-clear-and-scan phase of a full rescan.  The app
- * layer sets these to coordinate cross-cutting concerns (e.g.
- * clearing the queue, restoring playlists) without the library
- * needing to know about those packages.
- */
-export interface RescanHooks {
-    /**
-     * PreClear runs before library data is wiped
-     * (e.g. clear queue and stop playback).
-     */
-    "PreClear": any;
-
-    /**
-     * PostScan runs after the scan completes
-     * (e.g. restore playlists from M3U8 files).
-     */
-    "PostScan": any;
-}
-
-/**
- * ScanHooks contains callbacks invoked after a library scan
- * completes.  The app layer wires these so the library package
- * does not depend on the playlist package directly.
- */
-export interface ScanHooks {
-    /**
-     * RepopulatePlaylists re-imports tracks for playlists that
-     * lost their playlist_tracks rows (e.g., from a pre-fix
-     * FullRescan).  Runs before ResolvePhantoms.
-     */
-    "RepopulatePlaylists": any;
-
-    /**
-     * ResolvePhantoms re-links phantom playlist tracks whose
-     * files now exist in the library after scanning.
-     */
-    "ResolvePhantoms": any;
-
-    /**
-     * OnAllScansComplete runs after ALL queued scans finish
-     * (queue drained).
-     */
-    "OnAllScansComplete": any;
-}
-
-/**
  * ScanMetrics holds timing and count data collected during a library scan.
  * Worker-pool fields are protected by a mutex; DB-writer fields are
  * single-threaded and use plain addition.
@@ -198,7 +126,6 @@ export interface ScanMetrics {
     "extractionWallClock": time$0.Duration;
     "dbWritesWallClock": time$0.Duration;
     "orphanCleanup": time$0.Duration;
-    "postScanVariants": time$0.Duration;
 
     /**
      * Per-format extraction (cumulative across workers).
@@ -274,7 +201,7 @@ export interface ScanWarning {
 }
 
 /**
- * Track represents a playable audio file in the library.
+ * Track is one audio file with everything a list needs to draw it.
  */
 export interface Track {
     "TrackName": string;
@@ -305,8 +232,7 @@ export interface Track {
 }
 
 /**
- * TrackMBIDs holds MusicBrainz identifiers for a track, resolved
- * from the recording, release group, and artist tables.
+ * TrackMBIDs are the MusicBrainz ids a file's tags carry.
  */
 export interface TrackMBIDs {
     "recordingMbid": string;

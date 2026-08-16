@@ -30,12 +30,24 @@ func handleHealth(d Deps, _ *http.Request) (any, error) {
 
 	counts := map[string]int64{}
 
+	// The catalog is asked whether it has rows, not how many.  A real
+	// one is ~1.1M rows over ~400 MB, and a cold `COUNT(*)` on it is a
+	// full scan off disk: **65 seconds** on the first call after a seed
+	// is extracted, then 7 ms once the page cache is warm.  That is a
+	// health endpoint every spec gates on, so the first spec to run
+	// timed out and the rest passed - which reads as one flaky spec.
+	//
+	// This is the same rule the app itself follows for this table
+	// (`GetIndexStatus().TotalRows` is stale and `IsReady()` is set
+	// once, so the shelves ask `SELECT 1 ... LIMIT 1`).  Nothing wants
+	// the exact number: the only caller asks whether it is > 0.
 	for table, query := range map[string]string{
-		"tracks":       "SELECT COUNT(*) FROM audio_files",
-		"libraries":    "SELECT COUNT(*) FROM libraries",
-		"playlists":    "SELECT COUNT(*) FROM playlists",
-		"queueTracks":  "SELECT COUNT(*) FROM queue_tracks",
-		"exploreIndex": "SELECT COUNT(*) FROM explore_index",
+		"tracks":      "SELECT COUNT(*) FROM audio_files",
+		"libraries":   "SELECT COUNT(*) FROM libraries",
+		"playlists":   "SELECT COUNT(*) FROM playlists",
+		"queueTracks": "SELECT COUNT(*) FROM queue_tracks",
+		"exploreIndex": "SELECT COUNT(*) FROM " +
+			"(SELECT 1 FROM explore_index LIMIT 1)",
 	} {
 		var n int64
 		if err := d.DB.QueryRowWriter(query).Scan(&n); err != nil {

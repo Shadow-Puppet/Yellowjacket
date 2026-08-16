@@ -332,7 +332,7 @@ func (si *SearchIndex) topByPopularity(
 	// The artist rows *are* the artists, so they partition by their own
 	// mbid; release groups partition by whoever made them.
 	partition := "artist_mbid"
-	if entityType == "artist" {
+	if entityType == EntityArtist {
 		partition = "mbid"
 	}
 
@@ -350,14 +350,14 @@ func (si *SearchIndex) topByPopularity(
 		 WHERE rank = 1
 		 ORDER BY popularity DESC
 		 LIMIT ?`,
-		entityType, limit+len(skip),
+		dbEntityType(entityType), limit+len(skip),
 	))
 
 	out := make([]SearchIndexResult, 0, limit)
 
 	for _, row := range rows {
 		key := row.ArtistMBID
-		if entityType == "artist" {
+		if entityType == EntityArtist {
 			key = row.MBID
 		}
 
@@ -393,13 +393,13 @@ func (si *SearchIndex) unownedAlbumsBySinglyOwnedArtists(
 	return si.rowsByIDs(ctx, si.shelfIDs(
 		ctx,
 		`SELECT id FROM explore_index
-		 WHERE entity_type = 'release_group'
+		 WHERE entity_type = 2 /* release_group */
 		   AND in_library = 0
 		   AND artist_mbid IN (
 		       SELECT artist_mbid FROM explore_index
-		       WHERE entity_type = 'release_group'
+		       WHERE entity_type = 2 /* release_group */
 		         AND in_library = 1
-		         AND artist_mbid != ''
+		         AND artist_mbid != x''
 		       GROUP BY artist_mbid
 		       HAVING COUNT(*) = 1
 		       ORDER BY MAX(popularity) DESC

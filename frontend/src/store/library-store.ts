@@ -1,15 +1,10 @@
 import { EventsOn } from '@runtime/runtime';
 import {
-    GetAllTracks,
-    GetAllAlbums,
-    GetAllArtists,
-    GetAllGenresWithCounts,
+    GetTracks,
+    GetAlbums,
+    GetArtists,
+    GetGenres,
     GetAlbumsByArtist,
-    GetAllTracksByLibrary,
-    GetAllAlbumsByLibrary,
-    GetAllArtistsByLibrary,
-    GetAllGenresWithCountsByLibrary,
-    GetAlbumsByArtistByLibrary,
     GetAllLibrariesWithTrackCounts,
 } from '@go/library/library.js';
 import type * as library from '@go/library/models.js';
@@ -228,11 +223,9 @@ class LibraryStore {
 
         if (pending) return pending;
 
-        const id = this.selectedLibraryIdValue;
-
         return this.track(
             'tracks',
-            list(id !== null ? GetAllTracksByLibrary(id) : GetAllTracks()),
+            list(GetTracks(this.libraryFilter())),
             (tracks) => {
                 this.tracks = tracks;
             },
@@ -249,11 +242,9 @@ class LibraryStore {
 
         if (pending) return pending;
 
-        const id = this.selectedLibraryIdValue;
-
         return this.track(
             'albums',
-            list(id !== null ? GetAllAlbumsByLibrary(id) : GetAllAlbums()),
+            list(GetAlbums(this.libraryFilter())),
             (albums) => {
                 this.albums = albums;
             },
@@ -270,11 +261,9 @@ class LibraryStore {
 
         if (pending) return pending;
 
-        const id = this.selectedLibraryIdValue;
-
         return this.track(
             'artists',
-            list(id !== null ? GetAllArtistsByLibrary(id) : GetAllArtists()),
+            list(GetArtists(this.libraryFilter())),
             (artists) => {
                 this.artists = artists;
             },
@@ -291,15 +280,9 @@ class LibraryStore {
 
         if (pending) return pending;
 
-        const id = this.selectedLibraryIdValue;
-
         return this.track(
             'genres',
-            list(
-                id !== null
-                    ? GetAllGenresWithCountsByLibrary(id)
-                    : GetAllGenresWithCounts(),
-            ),
+            list(GetGenres(this.libraryFilter())),
             (genres) => {
                 this.genres = genres;
             },
@@ -308,15 +291,21 @@ class LibraryStore {
     }
 
     async getAlbumsByArtist(
-        artistID: number,
+        artist: string,
     ): Promise<library.Album[]> {
-        const id = this.selectedLibraryIdValue;
+        return list(GetAlbumsByArtist(artist, this.libraryFilter()));
+    }
 
-        return list(
-            id !== null
-                ? GetAlbumsByArtistByLibrary(artistID, id)
-                : GetAlbumsByArtist(artistID),
-        );
+    /**
+     * The library id every backend query takes, where 0 means "all of
+     * them".
+     *
+     * Each of these used to be two bindings and a branch here, because
+     * the backend had a scoped and an unscoped query for every list.
+     * One query answers both now, so the branch is a `?? 0`.
+     */
+    libraryFilter(): number {
+        return this.selectedLibraryIdValue ?? 0;
     }
 
     /**

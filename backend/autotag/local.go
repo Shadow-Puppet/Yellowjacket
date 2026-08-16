@@ -56,7 +56,7 @@ func (r *LocalResolver) LocalTracksForGroup(
 }
 
 // ResolveLocal returns candidate releases sourced from the local
-// DB's release_groups rows (filtered to those carrying an MBID)
+// DB's albums (filtered to those carrying an MBID)
 // whose normalized name matches the tagging item's album name.
 // No network calls.  Candidates carry all tracks flat; caller runs
 // AlignTracks on each to produce per-track alignments.
@@ -67,7 +67,7 @@ func (r *LocalResolver) ResolveLocal(
 		return nil, nil
 	}
 
-	rows, err := r.q.ListLocalReleaseGroupCandidates(ctx, albumName)
+	rows, err := r.q.ListLocalAlbumCandidates(ctx, albumName)
 	if err != nil {
 		return nil, fmt.Errorf("list local candidates: %w", err)
 	}
@@ -84,12 +84,12 @@ func (r *LocalResolver) ResolveLocal(
 			continue
 		}
 
-		if _, ok := byID[row.ReleaseGroupID]; !ok {
-			byID[row.ReleaseGroupID] = localCandidate(row)
+		if _, ok := byID[row.AlbumID]; !ok {
+			byID[row.AlbumID] = localCandidate(row)
 		}
 
-		tracksByID[row.ReleaseGroupID] = append(
-			tracksByID[row.ReleaseGroupID],
+		tracksByID[row.AlbumID] = append(
+			tracksByID[row.AlbumID],
 			CandidateTrack{
 				Position:     int(row.TrackNumber),
 				DiscNumber:   int(row.DiscNumber),
@@ -113,15 +113,15 @@ func (r *LocalResolver) ResolveLocal(
 // localCandidate converts one sqlc row (minus track-level fields)
 // into a Candidate shell.  Track fields and alignments are filled
 // in by the caller.
-func localCandidate(row sqlcgen.ListLocalReleaseGroupCandidatesRow) *Candidate {
+func localCandidate(row sqlcgen.ListLocalAlbumCandidatesRow) *Candidate {
 	date := ""
 	if row.Year > 0 {
 		date = fmt.Sprintf("%04d", row.Year)
 	}
 
 	mbid := ""
-	if row.ReleaseGroupMbid.Valid {
-		mbid = row.ReleaseGroupMbid.String
+	if row.AlbumMbid.Valid {
+		mbid = row.AlbumMbid.String
 	}
 
 	return &Candidate{

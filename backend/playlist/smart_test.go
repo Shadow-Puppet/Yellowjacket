@@ -51,116 +51,16 @@ func seedSmartTestTracks(t *testing.T, db *database.DB) {
 		},
 	}
 
-	// Build unique sets for artist_credit and release_groups.
-	artistMap := map[string]int64{}
-	albumMap := map[string]int64{}
-
-	var artistID, albumID int64
-
 	for _, tr := range tracks {
-		if _, ok := artistMap[tr.artist]; !ok {
-			artistID++
-			artistMap[tr.artist] = artistID
-		}
-
-		if _, ok := albumMap[tr.album]; !ok {
-			albumID++
-			albumMap[tr.album] = albumID
-		}
-	}
-
-	// Insert artist_credit rows.
-	for text, id := range artistMap {
-		_, err := db.ExecContext(
-			"INSERT INTO artist_credit (id, text) VALUES (?, ?)",
-			id, text,
-		)
-		if err != nil {
-			t.Fatalf("insert artist_credit %q: %v", text, err)
-		}
-	}
-
-	// Insert release_groups.
-	for name, id := range albumMap {
-		_, err := db.ExecContext(
-			"INSERT INTO release_groups (id, name) VALUES (?, ?)",
-			id, name,
-		)
-		if err != nil {
-			t.Fatalf("insert release_group %q: %v", name, err)
-		}
-	}
-
-	// Insert genres.
-	genreMap := map[string]int64{}
-
-	var genreID int64
-
-	for _, tr := range tracks {
-		if _, ok := genreMap[tr.genre]; !ok {
-			genreID++
-			genreMap[tr.genre] = genreID
-
-			_, err := db.ExecContext(
-				"INSERT INTO genres (id, name) VALUES (?, ?)",
-				genreID, tr.genre,
-			)
-			if err != nil {
-				t.Fatalf("insert genre %q: %v", tr.genre, err)
-			}
-		}
-	}
-
-	// Insert tracks with full FK chain.
-	for _, tr := range tracks {
-		acID := artistMap[tr.artist]
-		rgID := albumMap[tr.album]
-
-		// Insert recording.
-		_, err := db.ExecContext(
-			"INSERT INTO recordings (id, name, artist_credit_id, year) "+
-				"VALUES (?, ?, ?, ?)",
-			tr.id, tr.title, acID, tr.year,
-		)
-		if err != nil {
-			t.Fatalf("insert recording %d %q: %v", tr.id, tr.title, err)
-		}
-
-		// Insert audio_file.
-		_, err = db.ExecContext(
-			"INSERT INTO audio_files (id, file_path, "+
-				"length_milliseconds, file_type_id, recording_id, "+
-				"sample_rate, bit_depth, channels, bitrate, file_size) "+
-				"VALUES (?, ?, ?, 0, ?, 44100, 16, 2, 320000, 5000000)",
-			tr.id, tr.filePath, tr.lenMs, tr.id,
-		)
-		if err != nil {
-			t.Fatalf("insert audio_file %d: %v", tr.id, err)
-		}
-
-		// Link recording to release_group.
-		_, err = db.ExecContext(
-			"INSERT INTO release_group_recordings "+
-				"(release_group_id, recording_id) VALUES (?, ?)",
-			rgID, tr.id,
-		)
-		if err != nil {
-			t.Fatalf("insert release_group_recordings %d→%d: %v",
-				rgID, tr.id, err)
-		}
-
-		// Insert recording_genres link.
-		gID := genreMap[tr.genre]
-
-		_, err = db.ExecContext(
-			"INSERT INTO recording_genres "+
-				"(recording_id, genre_id) VALUES (?, ?)",
-			tr.id, gID,
-		)
-		if err != nil {
-			t.Fatalf("insert recording_genres %d→%d: %v",
-				tr.id, gID, err)
-		}
+		database.InsertTestTrack(t, db, database.TestTrack{
+			FilePath: tr.filePath,
+			Title:    tr.title,
+			Artist:   tr.artist,
+			Album:    tr.album,
+			Genres:   []string{tr.genre},
+			Year:     tr.year,
+			LengthMs: tr.lenMs,
+		})
 	}
 }
 
@@ -467,27 +367,18 @@ func TestSmartPlaylistEvaluateNonSmartPlaylist(t *testing.T) {
 	svc := newTestService(t, db)
 
 	// Create a regular playlist via direct SQL.
-	// SAFETY: Test-only insert for regular playlist.
-	rows, err := db.QueryContext(
-		`INSERT INTO playlists (name) VALUES (?)
-		 RETURNING id`,
+	// An INSERT ... RETURNING is a write, so it needs the writer:
+	// QueryContext routes to the query-only read pool.
+	var regularID int64
+	if err := db.QueryRowWriter(
+		`INSERT INTO playlists (name) VALUES (?) RETURNING id`,
 		"Regular PL",
-	)
-	if err != nil {
+	).Scan(&regularID); err != nil {
 		t.Fatalf("insert regular playlist: %v", err)
 	}
 
-	var regularID int64
-	if rows.Next() {
-		if err := rows.Scan(&regularID); err != nil {
-			t.Fatalf("scan regular playlist id: %v", err)
-		}
-	}
-
-	_ = rows.Close()
-
 	// Evaluate should fail — not a smart playlist.
-	_, err = svc.EvaluateSmartPlaylist(regularID)
+	_, err := svc.EvaluateSmartPlaylist(regularID)
 	if err == nil {
 		t.Fatal("expected error evaluating non-smart playlist, got nil")
 	}
@@ -512,24 +403,15 @@ func TestSmartPlaylistUpdateNonSmartPlaylist(t *testing.T) {
 	db := database.NewTestDB(t)
 	svc := newTestService(t, db)
 
-	// Create a regular playlist.
-	rows, err := db.QueryContext(
-		`INSERT INTO playlists (name) VALUES (?)
-		 RETURNING id`,
+	// Create a regular playlist.  An INSERT ... RETURNING is a write,
+	// so it needs the writer: QueryContext routes to the read pool.
+	var regularID int64
+	if err := db.QueryRowWriter(
+		`INSERT INTO playlists (name) VALUES (?) RETURNING id`,
 		"Regular PL",
-	)
-	if err != nil {
+	).Scan(&regularID); err != nil {
 		t.Fatalf("insert regular playlist: %v", err)
 	}
-
-	var regularID int64
-	if rows.Next() {
-		if err := rows.Scan(&regularID); err != nil {
-			t.Fatalf("scan regular playlist id: %v", err)
-		}
-	}
-
-	_ = rows.Close()
 
 	rulesJSON := makeRulesJSON(t, smartplaylist.RuleSet{
 		Rules: []smartplaylist.Rule{
@@ -538,7 +420,7 @@ func TestSmartPlaylistUpdateNonSmartPlaylist(t *testing.T) {
 	})
 
 	// Update should fail — not a smart playlist.
-	err = svc.UpdateSmartPlaylistRules(regularID, rulesJSON)
+	err := svc.UpdateSmartPlaylistRules(regularID, rulesJSON)
 	if err == nil {
 		t.Fatal("expected error updating non-smart playlist, got nil")
 	}
@@ -765,27 +647,18 @@ func TestSmartPlaylistGetRulesRegularPlaylist(t *testing.T) {
 	svc := newTestService(t, db)
 
 	// Create a regular playlist via direct SQL.
-	// SAFETY: Test-only insert for regular playlist.
-	rows, err := db.QueryContext(
-		`INSERT INTO playlists (name) VALUES (?)
-		 RETURNING id`,
+	// An INSERT ... RETURNING is a write, so it needs the writer:
+	// QueryContext routes to the query-only read pool.
+	var regularID int64
+	if err := db.QueryRowWriter(
+		`INSERT INTO playlists (name) VALUES (?) RETURNING id`,
 		"Regular PL For GetRules",
-	)
-	if err != nil {
+	).Scan(&regularID); err != nil {
 		t.Fatalf("insert regular playlist: %v", err)
 	}
 
-	var regularID int64
-	if rows.Next() {
-		if err := rows.Scan(&regularID); err != nil {
-			t.Fatalf("scan regular playlist id: %v", err)
-		}
-	}
-
-	_ = rows.Close()
-
 	// GetSmartPlaylistRules should fail — not a smart playlist.
-	_, err = svc.GetSmartPlaylistRules(regularID)
+	_, err := svc.GetSmartPlaylistRules(regularID)
 	if err == nil {
 		t.Fatal(
 			"expected error for regular playlist, got nil",

@@ -67,7 +67,7 @@ describe('<queue-panel> when closed', () => {
 
 describe('<track-list> roving tabindex', () => {
   beforeEach(() => {
-    stub('library.Library.GetAllTracks', TRACKS);
+    stub('library.Library.GetTracks', TRACKS);
   });
 
   it('offers exactly one tab stop, however many rows there are', async () => {

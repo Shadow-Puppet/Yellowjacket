@@ -13,7 +13,6 @@ import type {
 import { grid } from '@lit-labs/virtualizer/layouts/grid.js';
 import {
     GetAlbumTracks,
-    GetAlbumTracksByLibrary,
 } from '@go/library/library.js';
 import * as library from '@go/library/models.js';
 import { LibraryController } from '@store/controllers/library-controller';
@@ -935,12 +934,7 @@ export class CoverGrid
                 this.libraryCtrl.selectedLibraryId;
 
             const tracks = await list(
-                libId !== null
-                    ? GetAlbumTracksByLibrary(
-                          album.ID,
-                          libId,
-                      )
-                    : GetAlbumTracks(album.ID),
+                GetAlbumTracks(album.ID, libId ?? 0),
             );
 
             if (this.expandedAlbumId === album.ID) {
@@ -1494,6 +1488,33 @@ export class CoverGrid
 
         switch (action) {
             case 'play':
+                // One track row is a position in the expanded album, so
+                // it queues that album from there - the same thing
+                // double-clicking the row does. Anything else (several
+                // rows, or an album card) is already an explicit choice
+                // of exactly what to play.
+                if (
+                    this.contextMenuTarget.kind === 'track' &&
+                    filePaths.length === 1
+                ) {
+                    const start = this.expandedTracks.findIndex(
+                        (t) => t.FilePath === filePaths[0],
+                    );
+
+                    if (start >= 0) {
+                        queueStore.setQueue(
+                            this.expandedTracks.map(
+                                (t) => t.FilePath,
+                            ),
+                            start,
+                            false,
+                            source,
+                        );
+
+                        break;
+                    }
+                }
+
                 queueStore.setQueue(filePaths, 0, true, source);
                 break;
             case 'add-to-queue':

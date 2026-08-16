@@ -127,126 +127,36 @@ func seedSmartPlaylistData(t *testing.T, db *database.DB) {
 		},
 	}
 
-	// Build unique sets for artist_credit and release_groups.
-	artistMap := map[string]int64{}
-	albumMap := map[string]int64{}
-
-	var artistID, albumID int64
-
 	for _, tr := range tracks {
-		if _, ok := artistMap[tr.artist]; !ok {
-			artistID++
-			artistMap[tr.artist] = artistID
+		var trackNum, discNum int64
+		if tr.trackNum != nil {
+			trackNum = *tr.trackNum
 		}
 
-		if _, ok := albumMap[tr.album]; !ok {
-			albumID++
-			albumMap[tr.album] = albumID
-		}
-	}
-
-	// Insert artist_credit rows.
-	for text, id := range artistMap {
-		_, err := db.ExecContext(
-			"INSERT INTO artist_credit (id, text) VALUES (?, ?)",
-			id, text,
-		)
-		if err != nil {
-			t.Fatalf("insert artist_credit %q: %v", text, err)
-		}
-	}
-
-	// Insert release_groups.
-	for name, id := range albumMap {
-		_, err := db.ExecContext(
-			"INSERT INTO release_groups (id, name) VALUES (?, ?)",
-			id, name,
-		)
-		if err != nil {
-			t.Fatalf("insert release_group %q: %v", name, err)
-		}
-	}
-
-	// Insert genres.
-	genreMap := map[string]int64{}
-
-	var genreID int64
-
-	for _, tr := range tracks {
-		for _, g := range tr.genres {
-			if _, ok := genreMap[g]; !ok {
-				genreID++
-				genreMap[g] = genreID
-
-				_, err := db.ExecContext(
-					"INSERT INTO genres (id, name) VALUES (?, ?)",
-					genreID, g,
-				)
-				if err != nil {
-					t.Fatalf("insert genre %q: %v", g, err)
-				}
-			}
-		}
-	}
-
-	// Insert tracks with full FK chain.
-	for _, tr := range tracks {
-		acID := artistMap[tr.artist]
-		rgID := albumMap[tr.album]
-
-		// Insert recording.
-		_, err := db.ExecContext(
-			"INSERT INTO recordings (id, name, artist_credit_id, "+
-				"track_number, disc_number, year, composer) "+
-				"VALUES (?, ?, ?, ?, ?, ?, ?)",
-			tr.id, tr.title, acID, tr.trackNum, tr.discNum,
-			tr.year, tr.composer,
-		)
-		if err != nil {
-			t.Fatalf("insert recording %d %q: %v",
-				tr.id, tr.title, err)
+		if tr.discNum != nil {
+			discNum = *tr.discNum
 		}
 
-		// Insert audio_files.
-		_, err = db.ExecContext(
-			"INSERT INTO audio_files (id, file_path, "+
-				"length_milliseconds, file_type_id, recording_id, "+
-				"sample_rate, bit_depth, channels, bitrate, file_size) "+
-				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-			tr.id, tr.filePath, tr.lenMs, tr.ftID, tr.id,
-			tr.sr, tr.bd, tr.ch, tr.br, tr.fsize,
-		)
-		if err != nil {
-			t.Fatalf("insert audio_file %d: %v", tr.id, err)
-		}
+		id := database.InsertTestTrack(t, db, database.TestTrack{
+			FilePath:    tr.filePath,
+			Title:       tr.title,
+			Artist:      tr.artist,
+			Album:       tr.album,
+			Genres:      tr.genres,
+			TrackNumber: trackNum,
+			DiscNumber:  discNum,
+			Year:        tr.year,
+			LengthMs:    tr.lenMs,
+		})
 
-		// Link recording to release_group.
-		_, err = db.ExecContext(
-			"INSERT INTO release_group_recordings "+
-				"(release_group_id, recording_id, track_number, disc_number) "+
-				"VALUES (?, ?, ?, ?)",
-			rgID, tr.id, tr.trackNum, tr.discNum,
-		)
-		if err != nil {
-			t.Fatalf("insert release_group_recordings %d→%d: %v",
-				rgID, tr.id, err)
-		}
-
-		// Insert recording_genres links (supports multi-genre).
-		for _, g := range tr.genres {
-			gID := genreMap[g]
-
-			_, err = db.ExecContext(
-				"INSERT INTO recording_genres "+
-					"(recording_id, genre_id) VALUES (?, ?)",
-				tr.id, gID,
-			)
-			if err != nil {
-				t.Fatalf(
-					"insert recording_genres %d→%d: %v",
-					tr.id, gID, err,
-				)
-			}
+		if _, err := db.ExecContext(
+			`UPDATE audio_files
+			 SET file_type_id = ?, sample_rate = ?, bit_depth = ?,
+			     channels = ?, bitrate = ?, file_size = ?, composer = ?
+			 WHERE id = ?`,
+			tr.ftID, tr.sr, tr.bd, tr.ch, tr.br, tr.fsize, tr.composer, id,
+		); err != nil {
+			t.Fatalf("set audio properties for %q: %v", tr.filePath, err)
 		}
 	}
 }
@@ -537,8 +447,8 @@ func TestBuildWhereClause_GenreIsProducesSubquery(t *testing.T) {
 		)
 	}
 
-	if !strings.Contains(clause, "recording_genres") {
-		t.Errorf("genre 'is' should reference recording_genres: %q",
+	if !strings.Contains(clause, "file_genres") {
+		t.Errorf("genre 'is' should reference file_genres: %q",
 			clause)
 	}
 
@@ -565,9 +475,9 @@ func TestBuildWhereClause_GenreIsNotProducesSubquery(t *testing.T) {
 		t.Errorf("genre 'is_not' should use NOT IN: %q", clause)
 	}
 
-	if !strings.Contains(clause, "recording_genres") {
+	if !strings.Contains(clause, "file_genres") {
 		t.Errorf(
-			"genre 'is_not' should reference recording_genres: %q",
+			"genre 'is_not' should reference file_genres: %q",
 			clause,
 		)
 	}
@@ -590,9 +500,9 @@ func TestBuildWhereClause_GenreIsAnyOfProducesSubquery(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !strings.Contains(clause, "recording_genres") {
+	if !strings.Contains(clause, "file_genres") {
 		t.Errorf(
-			"genre 'is_any_of' should reference recording_genres: %q",
+			"genre 'is_any_of' should reference file_genres: %q",
 			clause,
 		)
 	}
@@ -620,11 +530,11 @@ func TestBuildWhereClause_GenreContainsUsesSubquery(t *testing.T) {
 	}
 
 	// Since the smart playlist query no longer projects a concatenated
-	// genre column, "contains" filters genres via recording_genres
+	// genre column, "contains" filters genres via file_genres
 	// with g.name LIKE applied to individual genre rows.
-	if !strings.Contains(clause, "recording_genres") {
+	if !strings.Contains(clause, "file_genres") {
 		t.Errorf(
-			"genre 'contains' should use recording_genres subquery: %q",
+			"genre 'contains' should use file_genres subquery: %q",
 			clause,
 		)
 	}
@@ -677,16 +587,16 @@ func TestBuildWhereClause_SameFieldMultipleTimes(t *testing.T) {
 	}
 
 	// Genre text ops combine via AND across subqueries against
-	// recording_genres; the exact SQL shape is asserted elsewhere.
+	// file_genres; the exact SQL shape is asserted elsewhere.
 	if !strings.Contains(clause, " AND ") {
 		t.Errorf("clause should combine rules with AND: %q", clause)
 	}
 
-	if !strings.Contains(clause, "af.recording_id IN") {
+	if !strings.Contains(clause, "af.id IN") {
 		t.Errorf("clause should include positive IN subquery: %q", clause)
 	}
 
-	if !strings.Contains(clause, "af.recording_id NOT IN") {
+	if !strings.Contains(clause, "af.id NOT IN") {
 		t.Errorf("clause should include NOT IN subquery: %q", clause)
 	}
 
@@ -822,34 +732,31 @@ func TestEvaluate_ArtworkEnrichment(t *testing.T) {
 
 	db := database.NewTestDB(t)
 
-	// Minimal FK chain: cover_art → release_group(mbid) →
-	// release_group_recordings → recording(mbid) → audio_file, plus
-	// artist_credit → artist_credit_artist → artist(mbid).
-	exec := func(query string, args ...any) {
-		t.Helper()
+	// One file, fully identified: cover art on its album, MBIDs on the
+	// album, the artist and the file itself.
+	database.InsertTestTrack(t, db, database.TestTrack{
+		FilePath:      "/music/bohemian.mp3",
+		Title:         "Bohemian Rhapsody",
+		Artist:        "Queen",
+		ArtistMBID:    "artist-mbid-1",
+		Album:         "A Night at the Opera",
+		AlbumMBID:     "rg-mbid-1",
+		RecordingMBID: "rec-mbid-1",
+		LengthMs:      354000,
+	})
 
-		if _, err := db.ExecContext(query, args...); err != nil {
-			t.Fatalf("seed %q: %v", query, err)
-		}
+	if _, err := db.ExecContext(
+		"INSERT INTO cover_art (id, file_path, mime_type) " +
+			"VALUES (1, '/covers/abc123.jpg', 'image/jpeg')",
+	); err != nil {
+		t.Fatalf("seed cover art: %v", err)
 	}
 
-	// file_types are pre-seeded by the schema (id 0 = .mp3).
-	exec("INSERT INTO cover_art (id, file_path, mime_type) " +
-		"VALUES (1, '/covers/abc123.jpg', 'image/jpeg')")
-	exec("INSERT INTO artists (id, name, mbid) " +
-		"VALUES (1, 'Queen', 'artist-mbid-1')")
-	exec("INSERT INTO artist_credit (id, text) VALUES (1, 'Queen')")
-	exec("INSERT INTO artist_credit_artist (credit_id, artist_id) " +
-		"VALUES (1, 1)")
-	exec("INSERT INTO release_groups (id, name, cover_art_id, mbid) " +
-		"VALUES (1, 'A Night at the Opera', 1, 'rg-mbid-1')")
-	exec("INSERT INTO recordings (id, name, artist_credit_id, mbid) " +
-		"VALUES (1, 'Bohemian Rhapsody', 1, 'rec-mbid-1')")
-	exec("INSERT INTO release_group_recordings " +
-		"(release_group_id, recording_id) VALUES (1, 1)")
-	exec("INSERT INTO audio_files (id, file_path, " +
-		"length_milliseconds, recording_id, file_type_id) " +
-		"VALUES (1, '/music/bohemian.mp3', 354000, 1, 0)")
+	if _, err := db.ExecContext(
+		"UPDATE albums SET cover_art_id = 1 WHERE name = 'A Night at the Opera'",
+	); err != nil {
+		t.Fatalf("attach cover art: %v", err)
+	}
 
 	tracks, err := Evaluate(db, RuleSet{
 		Rules: []Rule{
@@ -864,31 +771,22 @@ func TestEvaluate_ArtworkEnrichment(t *testing.T) {
 		t.Fatalf("got %d tracks, want 1", len(tracks))
 	}
 
-	tr := tracks[0]
+	got := tracks[0]
 
-	if tr.ArtistMBID != "artist-mbid-1" {
-		t.Errorf("ArtistMBID = %q, want artist-mbid-1", tr.ArtistMBID)
+	if got.CoverArtPath != coverart.ResolveURLs("/covers/abc123.jpg").Original {
+		t.Errorf("cover art = %q, want the resolved original", got.CoverArtPath)
 	}
 
-	if tr.ReleaseGroupMBID != "rg-mbid-1" {
-		t.Errorf("ReleaseGroupMBID = %q, want rg-mbid-1",
-			tr.ReleaseGroupMBID)
+	if got.ArtistMBID != "artist-mbid-1" {
+		t.Errorf("artist mbid = %q, want artist-mbid-1", got.ArtistMBID)
 	}
 
-	if tr.RecordingMBID != "rec-mbid-1" {
-		t.Errorf("RecordingMBID = %q, want rec-mbid-1",
-			tr.RecordingMBID)
+	if got.ReleaseGroupMBID != "rg-mbid-1" {
+		t.Errorf("release group mbid = %q, want rg-mbid-1", got.ReleaseGroupMBID)
 	}
 
-	wantURLs := coverart.ResolveURLs("/covers/abc123.jpg")
-	if tr.CoverArtPath != wantURLs.Original {
-		t.Errorf("CoverArtPath = %q, want %q",
-			tr.CoverArtPath, wantURLs.Original)
-	}
-
-	if tr.CoverArtSmall != wantURLs.Small {
-		t.Errorf("CoverArtSmall = %q, want %q",
-			tr.CoverArtSmall, wantURLs.Small)
+	if got.RecordingMBID != "rec-mbid-1" {
+		t.Errorf("recording mbid = %q, want rec-mbid-1", got.RecordingMBID)
 	}
 }
 
@@ -1710,37 +1608,23 @@ func TestEvaluate_YearUsesOriginalReleaseYear(t *testing.T) {
 
 	db := database.NewTestDB(t)
 
-	// One track: a 1977 album the user owns as a 2013 reissue. The file
-	// tag / recording year is 2013, but the release group's original
-	// (first-release) year is 1977.
-	exec := func(query string, args ...any) {
-		t.Helper()
+	// One track: a 1977 album the user owns as a 2013 reissue.  The
+	// file's own year is 2013; the album's original-release year is
+	// 1977, and that is what a year filter means.
+	database.InsertTestTrack(t, db, database.TestTrack{
+		FilePath: "/music/b52s/rock_lobster.mp3",
+		Title:    "Rock Lobster",
+		Artist:   "The B-52's",
+		Album:    "Reissue Compilation",
+		Year:     2013,
+		LengthMs: 300000,
+	})
 
-		if _, err := db.ExecContext(query, args...); err != nil {
-			t.Fatalf("exec %q: %v", query, err)
-		}
+	if _, err := db.ExecContext(
+		"UPDATE albums SET year = 2013, original_year = 1977",
+	); err != nil {
+		t.Fatalf("set album years: %v", err)
 	}
-
-	exec("INSERT INTO artist_credit (id, text) VALUES (1, ?)", "The B-52's")
-	exec(
-		"INSERT INTO release_groups (id, name, year, original_year) "+
-			"VALUES (1, ?, 2013, 1977)",
-		"Reissue Compilation",
-	)
-	exec(
-		"INSERT INTO recordings (id, name, artist_credit_id, year) "+
-			"VALUES (1, ?, 1, 2013)",
-		"Rock Lobster",
-	)
-	exec(
-		"INSERT INTO audio_files (id, file_path, length_milliseconds, "+
-			"file_type_id, recording_id) VALUES (1, ?, 300000, 1, 1)",
-		"/music/b52s/rock_lobster.mp3",
-	)
-	exec(
-		"INSERT INTO release_group_recordings " +
-			"(release_group_id, recording_id) VALUES (1, 1)",
-	)
 
 	// A "2010s" filter must NOT match — the album is originally from 1977.
 	tracks, err := Evaluate(db, RuleSet{

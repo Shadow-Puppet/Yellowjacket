@@ -381,7 +381,7 @@ export class HomeView extends ViewLifecycleMixin(LitElement) {
 
     private async playAlbum(album: library.Album): Promise<void> {
         try {
-            const tracks = await GetAlbumTracks(album.ID);
+            const tracks = await GetAlbumTracks(album.ID, libraryStore.libraryFilter());
             const paths = (tracks ?? []).map((t) => t.FilePath).filter(Boolean);
 
             if (paths.length === 0) return;

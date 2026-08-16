@@ -164,15 +164,6 @@ export function SetPreferences(prefs: $models.AutoDownloadPrefs): $CancellablePr
 }
 
 /**
- * SetReconciler wires the request-list loop.  Optional: without it the
- * request list still stores and lists requests, it just never acts on
- * them.
- */
-export function SetReconciler(r: $models.Reconciler | null): $CancellablePromise<void> {
-    return $Call.ByID(2390832784, r);
-}
-
-/**
  * StartDownload searches for a release and either auto-picks a clear
  * winner or returns ranked candidates for the user to choose from.
  * 

@@ -33,30 +33,24 @@ import (
 // SQLite's fsync cost but increase the blast radius of a failed commit.
 const scanBatchSize = 300
 
-// entityCache holds recently resolved database entities so that
-// repeated upserts for the same artist/album/cover art within a scan
-// can be served from memory instead of hitting the database.
+// entityCache holds recently resolved database rows so repeated
+// upserts for the same artist/album/cover art within a scan can be
+// served from memory instead of hitting the database.
 // It is only accessed from the single DB-writer goroutine and
 // therefore needs no synchronisation.
 type entityCache struct {
-	artistCredits map[string]sqlcgen.ArtistCredit
-	artists       map[string]sqlcgen.Artist
-	releaseGroups map[string]sqlcgen.ReleaseGroup
-	coverArt      map[string]sqlcgen.CoverArt
-	genres        map[string]sqlcgen.Genre
-	// linkedCredits tracks artist-credit-artist links already created
-	// so we skip the duplicate INSERT.  Key is "artistID:creditID".
-	linkedCredits map[string]struct{}
+	artists  map[string]sqlcgen.Artist
+	albums   map[string]sqlcgen.Album
+	coverArt map[string]sqlcgen.CoverArt
+	genres   map[string]sqlcgen.Genre
 }
 
 func newEntityCache() *entityCache {
 	return &entityCache{
-		artistCredits: make(map[string]sqlcgen.ArtistCredit),
-		artists:       make(map[string]sqlcgen.Artist),
-		releaseGroups: make(map[string]sqlcgen.ReleaseGroup),
-		coverArt:      make(map[string]sqlcgen.CoverArt),
-		genres:        make(map[string]sqlcgen.Genre),
-		linkedCredits: make(map[string]struct{}),
+		artists:  make(map[string]sqlcgen.Artist),
+		albums:   make(map[string]sqlcgen.Album),
+		coverArt: make(map[string]sqlcgen.CoverArt),
+		genres:   make(map[string]sqlcgen.Genre),
 	}
 }
 
@@ -132,6 +126,8 @@ type Library struct {
 
 // SetRescanHooks provides optional hooks for cross-cutting
 // orchestration during FullRescan.
+//
+//wails:ignore // internal wiring, not part of the app's IPC surface.
 func (l *Library) SetRescanHooks(h RescanHooks) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -141,6 +137,8 @@ func (l *Library) SetRescanHooks(h RescanHooks) {
 
 // SetScanHooks provides optional hooks for cross-cutting
 // orchestration after each library scan.
+//
+//wails:ignore // internal wiring, not part of the app's IPC surface.
 func (l *Library) SetScanHooks(h ScanHooks) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -179,9 +177,13 @@ func NewLibrary(
 // operation.  The caller must call ReleasePipelineLock when done.
 // If a scan is currently in progress, AcquirePipelineLock blocks
 // until it completes (and vice versa).
+//
+//wails:ignore // internal wiring, not part of the app's IPC surface.
 func (l *Library) AcquirePipelineLock() { l.pipelineMu.Lock() }
 
 // ReleasePipelineLock releases the pipeline mutex after a tag write.
+//
+//wails:ignore // internal wiring, not part of the app's IPC surface.
 func (l *Library) ReleasePipelineLock() { l.pipelineMu.Unlock() }
 
 // ServiceStartup is v3's service lifecycle hook: it runs once the
@@ -359,7 +361,7 @@ func (l *Library) scanInternal(
 	// --- Phase 1: load existing files from DB (per-library) ---
 	loadStart := time.Now()
 
-	existingFiles, err := l.db.Queries.GetAudioFilesByLibrary(
+	existingFiles, err := l.db.Queries.GetAudioFilesInLibrary(
 		l.ctx, libraryID,
 	)
 	if err != nil {
@@ -505,7 +507,11 @@ func (l *Library) scanInternal(
 						audioFile, diskModTime, diskSize,
 					)
 
-					if audioFile.RecordingID == 0 || contentChanged {
+					// A file with no title has never had its tags read
+					// (the row exists, the metadata pass did not run),
+					// which is the same "needs metadata" signal the
+					// recording_id == 0 test used to be.
+					if audioFile.Title == "" || contentChanged {
 						l.logger.Debug(
 							"file needs metadata update",
 							"path", absoluteFilePath,
@@ -979,7 +985,7 @@ func (l *Library) scanInternal(
 		// last owner of — clean those up too, so a swapped-out artist
 		// doesn't leave stale rows behind for the Explore index to
 		// keep pointing at.
-		l.pruneOrphanedMetadata()
+		l.pruneEmptyEntities()
 	}
 
 	// --- Phase 6: repopulate + resolve phantom playlist tracks ---
@@ -991,22 +997,6 @@ func (l *Library) scanInternal(
 	// Then resolve: re-links phantom tracks to audio_files.
 	if !cancelled && l.scanHooks.ResolvePhantoms != nil {
 		l.scanHooks.ResolvePhantoms()
-	}
-
-	// --- Phase 7: post-scan variant generation ---
-	if !cancelled {
-		variantStart := time.Now()
-
-		if err := l.generateMissingSizedVariants(); err != nil {
-			l.logger.Warn(
-				"could not generate missing sized variants",
-				"err", err,
-			)
-
-			metrics.addWarning("", "variant", err)
-		}
-
-		metrics.PostScanVariants = time.Since(variantStart)
 	}
 
 	// --- Finalize ---
@@ -1129,18 +1119,22 @@ func (l *Library) flushStatBackfill(
 	)
 }
 
-// pruneOrphanedMetadata removes recording/release_group/artist_credit/
-// artist rows left behind once the audio_files rows that justified them
-// are gone — deleting an audio_files row doesn't cascade to any of
-// these.  Runs in dependency order: recordings first (and their
-// release_group_recordings/recording_genres rows), then release groups
-// left with no recordings, then artist credits left with no
-// recordings/release groups, then artists left with no credits.  Best
-// effort — logs and continues on error rather than failing the scan.
-func (l *Library) pruneOrphanedMetadata() {
+// pruneEmptyEntities removes albums and artists left with nothing
+// pointing at them.
+//
+// This used to be four sweeps in dependency order - recordings and
+// their two link tables, then release groups with no recordings, then
+// artist credits, then artists - because deleting an audio_files row
+// cascaded to none of them.  Two of those tables are gone and the third
+// (file_genres) cascades, so what is left is the two tables that
+// genuinely outlive a file: an album whose last track was removed, and
+// an artist whose last album was.
+//
+// Best effort: logs and continues rather than failing the scan.
+func (l *Library) pruneEmptyEntities() {
 	tx, err := l.db.BeginTx()
 	if err != nil {
-		l.logger.Warn("could not begin orphaned metadata cleanup transaction", "err", err)
+		l.logger.Warn("could not begin entity cleanup transaction", "err", err)
 
 		return
 	}
@@ -1149,96 +1143,58 @@ func (l *Library) pruneOrphanedMetadata() {
 
 	txq := l.db.Queries.WithTx(tx)
 
-	recordingIDs, err := txq.GetOrphanedRecordingIDs(l.ctx)
+	albumIDs, err := txq.GetEmptyAlbumIDs(l.ctx)
 	if err != nil {
-		l.logger.Warn("could not find orphaned recordings", "err", err)
+		l.logger.Warn("could not find empty albums", "err", err)
 
 		return
 	}
 
-	for _, id := range recordingIDs {
-		if err := txq.DeleteReleaseGroupRecordingsByRecording(l.ctx, id); err != nil {
-			l.logger.Warn(
-				"could not delete release group links for orphaned recording",
-				"id",
-				id,
-				"err",
-				err,
-			)
-		}
-
-		if err := txq.DeleteRecordingGenres(l.ctx, id); err != nil {
-			l.logger.Warn("could not delete genres for orphaned recording", "id", id, "err", err)
-		}
-
-		if err := txq.DeleteRecording(l.ctx, id); err != nil {
-			l.logger.Warn("could not delete orphaned recording", "id", id, "err", err)
+	for _, id := range albumIDs {
+		if err := txq.DeleteAlbum(l.ctx, id); err != nil {
+			l.logger.Warn("could not delete empty album", "id", id, "err", err)
 		}
 	}
 
-	releaseGroupIDs, err := txq.GetOrphanedReleaseGroupIDs(l.ctx)
+	// Artists after albums: an artist is unreferenced only once the
+	// albums pointing at it are gone.
+	artistIDs, err := txq.GetUnreferencedArtistIDs(l.ctx)
 	if err != nil {
-		l.logger.Warn("could not find orphaned release groups", "err", err)
-
-		return
-	}
-
-	for _, id := range releaseGroupIDs {
-		if err := txq.DeleteReleaseGroup(l.ctx, id); err != nil {
-			l.logger.Warn("could not delete orphaned release group", "id", id, "err", err)
-		}
-	}
-
-	artistCreditIDs, err := txq.GetOrphanedArtistCreditIDs(l.ctx)
-	if err != nil {
-		l.logger.Warn("could not find orphaned artist credits", "err", err)
-
-		return
-	}
-
-	for _, id := range artistCreditIDs {
-		if err := txq.DeleteArtistCreditArtistByCredit(l.ctx, id); err != nil {
-			l.logger.Warn(
-				"could not delete artist links for orphaned artist credit",
-				"id",
-				id,
-				"err",
-				err,
-			)
-		}
-
-		if err := txq.DeleteArtistCredit(l.ctx, id); err != nil {
-			l.logger.Warn("could not delete orphaned artist credit", "id", id, "err", err)
-		}
-	}
-
-	artistIDs, err := txq.GetOrphanedArtistIDs(l.ctx)
-	if err != nil {
-		l.logger.Warn("could not find orphaned artists", "err", err)
+		l.logger.Warn("could not find unreferenced artists", "err", err)
 
 		return
 	}
 
 	for _, id := range artistIDs {
 		if err := txq.DeleteArtist(l.ctx, id); err != nil {
-			l.logger.Warn("could not delete orphaned artist", "id", id, "err", err)
+			l.logger.Warn("could not delete unreferenced artist", "id", id, "err", err)
 		}
 	}
 
-	if err := tx.Commit(); err != nil {
-		l.logger.Warn("could not commit orphaned metadata cleanup", "err", err)
+	genreIDs, err := txq.GetUnusedGenreIDs(l.ctx)
+	if err != nil {
+		l.logger.Warn("could not find unused genres", "err", err)
 
 		return
 	}
 
-	if len(recordingIDs) > 0 || len(releaseGroupIDs) > 0 || len(artistCreditIDs) > 0 ||
-		len(artistIDs) > 0 {
-		l.logger.Info(
-			"pruned orphaned library metadata",
-			"recordings", len(recordingIDs),
-			"releaseGroups", len(releaseGroupIDs),
-			"artistCredits", len(artistCreditIDs),
+	for _, id := range genreIDs {
+		if err := txq.DeleteGenre(l.ctx, id); err != nil {
+			l.logger.Warn("could not delete unused genre", "id", id, "err", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		l.logger.Warn("could not commit entity cleanup", "err", err)
+
+		return
+	}
+
+	if len(albumIDs) > 0 || len(artistIDs) > 0 || len(genreIDs) > 0 {
+		l.logger.Info("pruned empty library entities",
+			"albums", len(albumIDs),
 			"artists", len(artistIDs),
+			"genres", len(genreIDs),
 		)
 	}
 }
@@ -1580,13 +1536,9 @@ func (l *Library) saveAudioFile(
 		),
 	)
 
-	// Process metadata and create related records.
-	recordingID, err := l.processMetadata(
-		q, tx, cache, metrics, result, thumbChan,
-	)
-	if err != nil {
-		return fmt.Errorf("could not process metadata: %w", err)
-	}
+	// Resolve the rows this file shares with others: its artist and
+	// its album.  Everything else about it is a column on the file.
+	entities := l.resolveTagEntities(q, cache, metrics, result, thumbChan)
 
 	props := result.audioProps
 	if props == nil {
@@ -1597,8 +1549,6 @@ func (l *Library) saveAudioFile(
 	if tags == nil {
 		tags = &metadata.TrackMetadata{}
 	}
-
-	basename := filepath.Base(result.absolutePath)
 
 	groupKey := autotag.GroupKey(
 		result.libraryID,
@@ -1611,33 +1561,52 @@ func (l *Library) saveAudioFile(
 		tagStatus = "user_confirmed"
 	}
 
-	af, err := q.CreateAudioFileWithGroupKey(
-		l.ctx, sqlcgen.CreateAudioFileWithGroupKeyParams{
-			FilePath:           result.absolutePath,
-			LengthMilliseconds: result.lengthMillis,
+	artistCredit := tags.Artist
+	if artistCredit == "" {
+		artistCredit = "Unknown Artist"
+	}
+
+	title := l.getRecordingName(tags, result.absolutePath)
+
+	af, err := q.CreateAudioFile(
+		l.ctx, sqlcgen.CreateAudioFileParams{
+			FilePath:  result.absolutePath,
+			LibraryID: result.libraryID,
 			FileTypeID: int64(
 				slices.Index(
 					metadata.SupportedFileExtensions,
 					result.fileType,
 				),
 			),
-			RecordingID: recordingID,
-			SampleRate:  int64(props.SampleRate),
-			BitDepth:    int64(props.BitDepth),
-			Channels:    int64(props.Channels),
-			Bitrate:     int64(props.Bitrate),
-			FileSize:    props.FileSize,
-			Basename:    basename,
-			LibraryID:   result.libraryID,
-			GroupKey:    groupKey,
-			TagStatus:   tagStatus,
-			ModifiedAt:  result.modTime,
+			LengthMilliseconds: result.lengthMillis,
+			SampleRate:         int64(props.SampleRate),
+			BitDepth:           int64(props.BitDepth),
+			Channels:           int64(props.Channels),
+			Bitrate:            int64(props.Bitrate),
+			FileSize:           props.FileSize,
+			Title:              title,
+			ArtistCredit:       artistCredit,
+			ArtistID:           entities.artistID,
+			AlbumID:            entities.albumID,
+			TrackNumber:        toNullInt64(tags.TrackNumber),
+			DiscNumber:         toNullInt64(tags.DiscNumber),
+			TotalTracks:        toNullInt64(tags.TotalTracks),
+			Year:               toNullInt64(tags.Year),
+			Composer:           tags.Composer,
+			Comment:            tags.Comment,
+			RecordingMbid:      toNullString(tags.RecordingMBID),
+			Basename:           filepath.Base(result.absolutePath),
+			GroupKey:           groupKey,
+			ModifiedAt:         result.modTime,
+			TagStatus:          tagStatus,
 		})
 	if err != nil {
 		return fmt.Errorf(
 			"could not save audio file to db: %w", err,
 		)
 	}
+
+	l.linkFileGenres(q, cache, tags.Genre, af.ID)
 
 	if err := q.UpsertTaggingItemOnTrackAdd(
 		l.ctx, sqlcgen.UpsertTaggingItemOnTrackAddParams{
@@ -1658,21 +1627,12 @@ func (l *Library) saveAudioFile(
 	}
 
 	// Index in FTS5 search_index.
-	title := l.getRecordingName(tags, result.absolutePath)
-
-	artistName := tags.Artist
-	if artistName == "" {
-		artistName = "Unknown Artist"
-	}
-
-	album := tags.Album
-
 	// SAFETY: FTS5 virtual table, see search.go:InsertSearchIndex. All values parameterized.
 	if _, err := tx.ExecContext(
 		l.ctx,
 		`INSERT INTO search_index(rowid, file_path, title, artist, album)
 		 VALUES (?, ?, ?, ?, ?)`,
-		af.ID, result.absolutePath, title, artistName, album,
+		af.ID, result.absolutePath, title, artistCredit, tags.Album,
 	); err != nil {
 		l.logger.Warn(
 			"could not index audio file in FTS",
@@ -1706,22 +1666,42 @@ func (l *Library) updateAudioFileMetadata(
 		"file-id", result.existingFileID,
 	)
 
-	// Process metadata and create related records.
-	recordingID, err := l.processMetadata(
-		q, tx, cache, metrics, result, thumbChan,
-	)
-	if err != nil {
-		return fmt.Errorf("could not process metadata: %w", err)
+	tags := result.tags
+	if tags == nil {
+		tags = &metadata.TrackMetadata{}
 	}
+
+	// Resolve the file's artist and album from the tags as they are
+	// now.  This used to create a *new* recording row and repoint the
+	// file at it, abandoning the old one - which is where 812 orphaned
+	// rows and every phantom "you own this" in a real library came
+	// from.  The file's tags are its own columns, so a retag is an
+	// UPDATE and there is nothing left behind to strand.
+	entities := l.resolveTagEntities(q, cache, metrics, result, thumbChan)
 
 	props := result.audioProps
 	if props == nil {
 		props = &metadata.AudioProperties{}
 	}
 
-	if err := q.UpdateAudioFileRecording(
-		l.ctx, sqlcgen.UpdateAudioFileRecordingParams{
-			RecordingID:        recordingID,
+	artistCredit := tags.Artist
+	if artistCredit == "" {
+		artistCredit = "Unknown Artist"
+	}
+
+	if err := q.UpdateAudioFileTags(
+		l.ctx, sqlcgen.UpdateAudioFileTagsParams{
+			Title:              l.getRecordingName(tags, result.absolutePath),
+			ArtistCredit:       artistCredit,
+			ArtistID:           entities.artistID,
+			AlbumID:            entities.albumID,
+			TrackNumber:        toNullInt64(tags.TrackNumber),
+			DiscNumber:         toNullInt64(tags.DiscNumber),
+			TotalTracks:        toNullInt64(tags.TotalTracks),
+			Year:               toNullInt64(tags.Year),
+			Composer:           tags.Composer,
+			Comment:            tags.Comment,
+			RecordingMbid:      toNullString(tags.RecordingMBID),
 			SampleRate:         int64(props.SampleRate),
 			BitDepth:           int64(props.BitDepth),
 			Channels:           int64(props.Channels),
@@ -1732,18 +1712,39 @@ func (l *Library) updateAudioFileMetadata(
 			ID:                 result.existingFileID,
 		}); err != nil {
 		return fmt.Errorf(
-			"could not update audio file recording: %w", err,
+			"could not update audio file tags: %w", err,
 		)
 	}
+
+	// Genres are relinked wholesale: the tag is the whole truth about
+	// which genres a file carries, so a genre dropped from the tag has
+	// to be dropped from the link table too.
+	if err := q.DeleteFileGenres(l.ctx, result.existingFileID); err != nil {
+		l.logger.Warn("could not clear file genres",
+			"path", result.absolutePath, "err", err)
+	}
+
+	l.linkFileGenres(q, cache, tags.Genre, result.existingFileID)
 
 	// Re-index in FTS5 search_index.
 	// With contentless_delete=1 (migration 8), DeleteSearchIndex
 	// now works for individual row removal.  For scan updates we
 	// still do delete + reinsert; Phase 16 will use the same
 	// pattern for inline tag edits.
-	tags := result.tags
-	if tags == nil {
-		tags = &metadata.TrackMetadata{}
+	// A file another tagger stamped with MBIDs since import is only
+	// discovered here — the insert path is what sets tag_status, so
+	// without this the file stays 'untagged' forever and its folder
+	// keeps asking to be tagged.
+	if tags.RecordingMBID != "" {
+		if err := q.PromoteAudioFileTagStatusIfUntagged(
+			l.ctx, result.existingFileID,
+		); err != nil {
+			l.logger.Warn(
+				"could not promote tag status after metadata update",
+				"path", result.absolutePath,
+				"err", err,
+			)
+		}
 	}
 
 	if err := l.maybeRebindTaggingGroup(q, result, tags); err != nil {
@@ -1793,172 +1794,245 @@ func (l *Library) updateAudioFileMetadata(
 	return nil
 }
 
-// processMetadata creates all related database records for metadata
-// and returns the recording ID.  It uses the provided queries object
-// (which may be transaction-scoped) and the entity cache to avoid
-// redundant upserts for repeated artist/album/cover-art values.
-// When thumbChan is non-nil, thumbnail generation is dispatched
-// asynchronously.
-func (l *Library) processMetadata(
+// trackEntities are the shared rows a file's tags resolve to: the
+// artist and album it belongs to, and the cover art of that album.
+//
+// This replaced processMetadata, which created a `recordings` row per
+// file plus an artist_credit, an artist_credit_artist link and a
+// release_group_recordings link, then wrote MBIDs onto three of them
+// with raw SQL.  A file's tags are columns on the file now, so the only
+// rows that still have to be *shared* are the two that genuinely are:
+// the album several files belong to, and the artist several albums do.
+type trackEntities struct {
+	artistID sql.NullInt64
+	albumID  sql.NullInt64
+}
+
+// resolveTagEntities upserts the artist and album a file's tags name,
+// and returns their ids for the file row.
+func (l *Library) resolveTagEntities(
 	q *sqlcgen.Queries,
-	tx *sql.Tx,
 	cache *entityCache,
 	metrics *ScanMetrics,
 	result importResult,
 	thumbChan chan<- thumbnailWork,
-) (int64, error) {
+) trackEntities {
 	tags := result.tags
 	if tags == nil {
 		tags = &metadata.TrackMetadata{}
 	}
 
-	// 1. Handle cover art (if present).
-	coverArtID := l.processCoverArt(
-		q, cache, metrics, tags, thumbChan,
-	)
+	coverArtID := l.processCoverArt(q, cache, metrics, tags, thumbChan)
 
-	// 2. Get or create the artist credit for the track.  The credit
-	// text is the full tagged string (e.g. "Lana Del Rey ft. Sean
-	// Lennon") and is kept only for display; the artist *entity* it
-	// links to is the primary artist, resolved cleanly by primaryArtist
-	// so featured-artist credits don't fork into their own bogus artist
-	// rows (all sharing the primary's single MBID).
-	creditText := tags.Artist
-	if creditText == "" {
-		creditText = "Unknown Artist"
-	}
-
-	artistCredit, err := l.cachedUpsertArtistCredit(
-		q, cache, creditText,
-	)
-	if err != nil {
-		return 0, fmt.Errorf(
-			"could not upsert artist credit: %w", err,
-		)
-	}
-
+	// The track artist.  primaryArtist collapses a featured-artist
+	// credit to the artist the MBIDs actually identify, so "A feat. B"
+	// does not fork into its own artist row sharing A's MBID.
 	primaryName, primaryMBID := primaryArtist(tags)
+	artist := l.cachedUpsertArtist(q, cache, primaryName, primaryMBID)
 
-	l.cachedLinkArtist(q, cache, metrics, primaryName, artistCredit.ID)
-
-	// 3. Get or create artist credit for album artist.
-	albumArtistCreditID := l.resolveAlbumArtistCredit(
-		q, cache, metrics, tags, artistCredit.ID,
-	)
-
-	// 4. Get or create release group (album).
-	releaseGroupID := l.resolveReleaseGroup(
-		q, cache, tags, albumArtistCreditID, coverArtID,
-	)
-
-	// 5. Create recording.
-	recording, err := q.CreateRecordingFull(
-		l.ctx, sqlcgen.CreateRecordingFullParams{
-			Name: l.getRecordingName(
-				tags, result.absolutePath,
-			),
-			ArtistCreditID: artistCredit.ID,
-			TrackNumber:    toNullInt64(tags.TrackNumber),
-			DiscNumber:     toNullInt64(tags.DiscNumber),
-			Year:           toNullInt64(tags.Year),
-			Genre:          toNullString(tags.Genre),
-			Composer:       toNullString(tags.Composer),
-			Lyrics:         toNullString(tags.Lyrics),
-			Comment:        toNullString(tags.Comment),
-		},
-	)
-	if err != nil {
-		return 0, fmt.Errorf(
-			"could not create recording: %w", err,
-		)
+	entities := trackEntities{}
+	if artist.ID > 0 {
+		entities.artistID = sql.NullInt64{Int64: artist.ID, Valid: true}
 	}
 
-	// 6. Link recording to genres.
-	l.linkRecordingGenres(q, cache, tags.Genre, recording.ID)
+	if tags.Album == "" {
+		return entities
+	}
 
-	// 7. Link recording to release group.
-	if releaseGroupID.Valid {
-		_, err = q.CreateReleaseGroupRecording(
-			l.ctx,
-			sqlcgen.CreateReleaseGroupRecordingParams{
-				ReleaseGroupID: releaseGroupID.Int64,
-				RecordingID:    recording.ID,
-				TrackNumber:    toNullInt64(tags.TrackNumber),
-				DiscNumber:     toNullInt64(tags.DiscNumber),
-				TotalTracks:    toNullInt64(tags.TotalTracks),
-			},
-		)
-		if err != nil {
-			l.logger.Warn(
-				"could not link recording to release group",
-				"err", err,
-			)
+	// The album artist, which is the track artist unless the tags say
+	// otherwise.
+	albumCredit := tags.AlbumArtist
+	albumArtistID := entities.artistID
+
+	if albumCredit == "" || albumCredit == tags.Artist {
+		albumCredit = tags.Artist
+	} else {
+		albumArtist := l.cachedUpsertArtist(q, cache, albumCredit, tags.AlbumArtistMBID)
+		if albumArtist.ID > 0 {
+			albumArtistID = sql.NullInt64{Int64: albumArtist.ID, Valid: true}
 		}
 	}
 
-	// 7. Update MusicBrainz IDs (if present in tags).
-	if releaseGroupID.Valid {
-		l.updateMBIDs(tx, cache, tags, primaryName, primaryMBID, releaseGroupID.Int64, recording.ID)
-	} else {
-		l.updateMBIDs(tx, cache, tags, primaryName, primaryMBID, 0, recording.ID)
+	album := l.cachedUpsertAlbum(q, cache, albumParams{
+		name:       tags.Album,
+		credit:     albumCredit,
+		artistID:   albumArtistID,
+		year:       toNullInt64(tags.Year),
+		coverArtID: coverArtID,
+	})
+	if album.ID == 0 {
+		return entities
 	}
 
-	return recording.ID, nil
+	entities.albumID = sql.NullInt64{Int64: album.ID, Valid: true}
+	l.stampAlbumMBID(q, cache, album, tags)
+
+	return entities
 }
 
-// updateMBIDs writes MusicBrainz IDs from audio file tags to the
-// corresponding database entities.  Uses raw SQL since the sqlc
-// queries predate the mbid columns.  Skips silently if tags have
-// no MBIDs.
-func (l *Library) updateMBIDs(
-	tx *sql.Tx,
+// albumParams is what an album upsert needs from a file's tags.
+type albumParams struct {
+	name       string
+	credit     string
+	artistID   sql.NullInt64
+	year       sql.NullInt64
+	coverArtID sql.NullInt64
+}
+
+// cachedUpsertArtist returns the artist row for a name, upserting it
+// once per scan.  The MBID is written on the way in rather than by a
+// separate UPDATE afterwards.
+func (l *Library) cachedUpsertArtist(
+	q *sqlcgen.Queries,
 	cache *entityCache,
+	name, mbid string,
+) sqlcgen.Artist {
+	if name == "" {
+		name = "Unknown Artist"
+	}
+
+	if cached, ok := cache.artists[name]; ok {
+		if mbid != "" && !cached.Mbid.Valid {
+			if err := q.SetArtistMBID(l.ctx, sqlcgen.SetArtistMBIDParams{
+				Mbid: sql.NullString{String: mbid, Valid: true},
+				ID:   cached.ID,
+			}); err == nil {
+				cached.Mbid = sql.NullString{String: mbid, Valid: true}
+				cache.artists[name] = cached
+			}
+		}
+
+		return cached
+	}
+
+	artist, err := q.UpsertArtist(l.ctx, sqlcgen.UpsertArtistParams{
+		Name: name,
+		Mbid: toNullString(mbid),
+	})
+	if err != nil {
+		l.logger.Warn("could not upsert artist", "artist", name, "err", err)
+
+		return sqlcgen.Artist{}
+	}
+
+	cache.artists[name] = artist
+
+	return artist
+}
+
+// cachedUpsertAlbum returns the album row for (name, credit), upserting
+// it once per scan and filling in cover art the first time a file
+// carries some.
+func (l *Library) cachedUpsertAlbum(
+	q *sqlcgen.Queries,
+	cache *entityCache,
+	p albumParams,
+) sqlcgen.Album {
+	// The key is the album's identity - name and credit - so two
+	// albums of the same name by different artists do not collide.
+	cacheKey := p.name + "\x00" + p.credit
+
+	if cached, ok := cache.albums[cacheKey]; ok {
+		if p.coverArtID.Valid && !cached.CoverArtID.Valid {
+			if err := q.SetAlbumCoverArt(l.ctx, sqlcgen.SetAlbumCoverArtParams{
+				CoverArtID: p.coverArtID,
+				ID:         cached.ID,
+			}); err != nil {
+				l.logger.Warn("could not update album cover art", "err", err)
+			} else {
+				cached.CoverArtID = p.coverArtID
+				cache.albums[cacheKey] = cached
+			}
+		}
+
+		return cached
+	}
+
+	album, err := q.UpsertAlbum(l.ctx, sqlcgen.UpsertAlbumParams{
+		Name:         p.name,
+		ArtistCredit: p.credit,
+		ArtistID:     p.artistID,
+		Year:         p.year,
+		CoverArtID:   p.coverArtID,
+	})
+	if err != nil {
+		l.logger.Warn("could not upsert album", "album", p.name, "err", err)
+
+		return sqlcgen.Album{}
+	}
+
+	cache.albums[cacheKey] = album
+
+	return album
+}
+
+// stampAlbumMBID writes the album's MusicBrainz identity from the tags.
+//
+// Many taggers write MUSICBRAINZ_ALBUMID (a specific release) but not
+// MUSICBRAINZ_RELEASEGROUPID (the abstract release group everything
+// else is keyed by) - without the second branch, a genuinely MBID-
+// tagged album shows as "library only" forever.  A scan cannot afford a
+// live MusicBrainz call to resolve release -> release group, so the
+// release MBID is stashed for BackfillReleaseGroupMBIDs to resolve in
+// the background.
+func (l *Library) stampAlbumMBID(
+	q *sqlcgen.Queries,
+	cache *entityCache,
+	album sqlcgen.Album,
 	tags *metadata.TrackMetadata,
-	artistName string,
-	artistMBID string,
-	releaseGroupID int64,
-	recordingID int64,
 ) {
-	// Artist MBID (the primary artist's, resolved by primaryArtist).
-	if artistMBID != "" {
-		if artist, ok := cache.artists[artistName]; ok {
-			_, _ = tx.ExecContext(l.ctx,
-				"UPDATE artists SET mbid = ? WHERE id = ? AND (mbid IS NULL OR mbid = '')",
-				artistMBID, artist.ID,
-			)
+	if album.Mbid.Valid && album.Mbid.String != "" {
+		return
+	}
+
+	switch {
+	case tags.ReleaseGroupMBID != "":
+		if err := q.SetAlbumMBID(l.ctx, sqlcgen.SetAlbumMBIDParams{
+			Mbid: sql.NullString{String: tags.ReleaseGroupMBID, Valid: true},
+			ID:   album.ID,
+		}); err != nil {
+			l.logger.Warn("could not set album mbid", "err", err)
+
+			return
+		}
+
+		album.Mbid = sql.NullString{String: tags.ReleaseGroupMBID, Valid: true}
+		cache.albums[album.Name+"\x00"+album.ArtistCredit] = album
+	case tags.ReleaseMBID != "" && !album.PendingReleaseMbid.Valid:
+		if err := q.SetAlbumPendingReleaseMBID(
+			l.ctx, sqlcgen.SetAlbumPendingReleaseMBIDParams{
+				PendingReleaseMbid: sql.NullString{String: tags.ReleaseMBID, Valid: true},
+				ID:                 album.ID,
+			},
+		); err != nil {
+			l.logger.Warn("could not set pending release mbid", "err", err)
 		}
 	}
+}
 
-	// Release group MBID.
-	if tags.ReleaseGroupMBID != "" && releaseGroupID > 0 {
-		_, _ = tx.ExecContext(l.ctx,
-			"UPDATE release_groups SET mbid = ? WHERE id = ? AND (mbid IS NULL OR mbid = '')",
-			tags.ReleaseGroupMBID, releaseGroupID,
-		)
-	} else if tags.ReleaseMBID != "" && releaseGroupID > 0 {
-		// Many taggers write MUSICBRAINZ_ALBUMID (a specific release)
-		// but not MUSICBRAINZ_RELEASEGROUPID (the abstract release
-		// group everything else on this page is keyed by) — without
-		// this, a genuinely MBID-tagged album shows as "library only"
-		// forever. A scan can't afford a live MusicBrainz call to
-		// resolve release->release-group here, so the release MBID is
-		// stashed for `explore.Service.BackfillReleaseGroupMBIDs` to
-		// resolve in the background, the same way discography
-		// enrichment is deferred out of the scan path.
-		_, _ = tx.ExecContext(l.ctx,
-			"UPDATE release_groups SET pending_release_mbid = ? "+
-				"WHERE id = ? AND (mbid IS NULL OR mbid = '') "+
-				"AND (pending_release_mbid IS NULL OR pending_release_mbid = '')",
-			tags.ReleaseMBID, releaseGroupID,
-		)
-	}
+// linkFileGenres parses the raw genre string and links the file to each
+// genre it names.
+func (l *Library) linkFileGenres(
+	q *sqlcgen.Queries,
+	cache *entityCache,
+	rawGenre string,
+	audioFileID int64,
+) {
+	for _, name := range metadata.ParseGenres(rawGenre) {
+		genre, err := l.cachedUpsertGenre(q, cache, name)
+		if err != nil {
+			l.logger.Warn("could not upsert genre", "genre", name, "err", err)
 
-	// Recording MBID.
-	if tags.RecordingMBID != "" && recordingID > 0 {
-		_, _ = tx.ExecContext(l.ctx,
-			"UPDATE recordings SET mbid = ? WHERE id = ? AND (mbid IS NULL OR mbid = '')",
-			tags.RecordingMBID, recordingID,
-		)
+			continue
+		}
+
+		if err := q.LinkFileGenre(l.ctx, sqlcgen.LinkFileGenreParams{
+			AudioFileID: audioFileID,
+			GenreID:     genre.ID,
+		}); err != nil {
+			l.logger.Warn("could not link file to genre",
+				"genre", name, "audioFileID", audioFileID, "err", err)
+		}
 	}
 }
 
@@ -2072,91 +2146,6 @@ func (l *Library) processCoverArt(
 	return sql.NullInt64{Int64: ca.ID, Valid: true}
 }
 
-// cachedUpsertArtistCredit returns the artist credit for the given
-// name, using the cache when possible.
-func (l *Library) cachedUpsertArtistCredit(
-	q *sqlcgen.Queries,
-	cache *entityCache,
-	name string,
-) (sqlcgen.ArtistCredit, error) {
-	if cached, ok := cache.artistCredits[name]; ok {
-		return cached, nil
-	}
-
-	ac, err := q.UpsertArtistCredit(l.ctx, name)
-	if err != nil {
-		return sqlcgen.ArtistCredit{}, err
-	}
-
-	cache.artistCredits[name] = ac
-
-	return ac, nil
-}
-
-// cachedLinkArtist upserts the artist record and creates the
-// artist-credit-artist link, skipping work already done.
-// UNIQUE constraint violations are silently ignored (link already
-// exists in the database).  Other errors are recorded as scan warnings.
-func (l *Library) cachedLinkArtist(
-	q *sqlcgen.Queries,
-	cache *entityCache,
-	metrics *ScanMetrics,
-	name string,
-	creditID int64,
-) {
-	artist, ok := cache.artists[name]
-	if !ok {
-		var err error
-
-		artist, err = q.UpsertArtist(l.ctx, name)
-		if err != nil {
-			l.logger.Warn(
-				"could not upsert artist", "err", err,
-			)
-
-			return
-		}
-
-		cache.artists[name] = artist
-	}
-
-	linkKey := fmt.Sprintf("%d:%d", artist.ID, creditID)
-	if _, done := cache.linkedCredits[linkKey]; done {
-		return
-	}
-
-	_, err := q.CreateArtistCreditArtist(
-		l.ctx,
-		sqlcgen.CreateArtistCreditArtistParams{
-			ArtistID: artist.ID,
-			CreditID: creditID,
-		},
-	)
-	if err != nil {
-		if !database.IsUniqueViolation(err) {
-			l.logger.Warn(
-				"could not link artist to credit",
-				"artist", name,
-				"creditID", creditID,
-				"err", err,
-			)
-
-			metrics.addWarning(
-				name, "commit",
-				fmt.Errorf(
-					"artist-credit link failed for %q: %w",
-					name, err,
-				),
-			)
-		}
-
-		// UNIQUE violation: link already exists in DB, not an error.
-		return
-	}
-
-	cache.linkedCredits[linkKey] = struct{}{}
-}
-
 // cachedUpsertGenre returns the genre for the given name, using
 // the cache when possible.
 func (l *Library) cachedUpsertGenre(
@@ -2176,170 +2165,6 @@ func (l *Library) cachedUpsertGenre(
 	cache.genres[name] = genre
 
 	return genre, nil
-}
-
-// linkRecordingGenres parses the raw genre string, upserts each
-// individual genre, and creates the recording-genre associations.
-func (l *Library) linkRecordingGenres(
-	q *sqlcgen.Queries,
-	cache *entityCache,
-	rawGenre string,
-	recordingID int64,
-) {
-	genres := metadata.ParseGenres(rawGenre)
-
-	for _, name := range genres {
-		genre, err := l.cachedUpsertGenre(q, cache, name)
-		if err != nil {
-			l.logger.Warn(
-				"could not upsert genre",
-				"genre", name,
-				"err", err,
-			)
-
-			continue
-		}
-
-		err = q.CreateRecordingGenre(
-			l.ctx,
-			sqlcgen.CreateRecordingGenreParams{
-				RecordingID: recordingID,
-				GenreID:     genre.ID,
-			},
-		)
-		if err != nil {
-			l.logger.Warn(
-				"could not link recording to genre",
-				"genre", name,
-				"recordingID", recordingID,
-				"err", err,
-			)
-		}
-	}
-}
-
-// resolveAlbumArtistCredit returns the album artist credit ID.
-// When the AlbumArtist tag is absent or matches the track artist,
-// the track artist credit is reused.
-func (l *Library) resolveAlbumArtistCredit(
-	q *sqlcgen.Queries,
-	cache *entityCache,
-	metrics *ScanMetrics,
-	tags *metadata.TrackMetadata,
-	trackArtistCreditID int64,
-) sql.NullInt64 {
-	if tags.AlbumArtist == "" || tags.AlbumArtist == tags.Artist {
-		return sql.NullInt64{
-			Int64: trackArtistCreditID, Valid: true,
-		}
-	}
-
-	albumArtistCredit, err := l.cachedUpsertArtistCredit(
-		q, cache, tags.AlbumArtist,
-	)
-	if err != nil {
-		l.logger.Warn(
-			"could not upsert album artist credit", "err", err,
-		)
-
-		return sql.NullInt64{}
-	}
-
-	l.cachedLinkArtist(
-		q, cache, metrics, tags.AlbumArtist, albumArtistCredit.ID,
-	)
-
-	return sql.NullInt64{
-		Int64: albumArtistCredit.ID, Valid: true,
-	}
-}
-
-// resolveReleaseGroup returns the release group ID for the album,
-// using the cache when possible.
-func (l *Library) resolveReleaseGroup(
-	q *sqlcgen.Queries,
-	cache *entityCache,
-	tags *metadata.TrackMetadata,
-	albumArtistCreditID sql.NullInt64,
-	coverArtID sql.NullInt64,
-) sql.NullInt64 {
-	if tags.Album == "" {
-		return sql.NullInt64{}
-	}
-
-	// Build composite cache key: "albumName\x00artistCreditID"
-	// (or "albumName\x00-1" if no artist).  This prevents albums
-	// with the same name by different artists from colliding.
-	artistID := int64(-1)
-	if albumArtistCreditID.Valid {
-		artistID = albumArtistCreditID.Int64
-	}
-
-	cacheKey := fmt.Sprintf("%s\x00%d", tags.Album, artistID)
-
-	// Check cache first.
-	if cached, ok := cache.releaseGroups[cacheKey]; ok {
-		// If the cached release group lacks cover art and we now
-		// have it, update it.
-		if coverArtID.Valid && !cached.CoverArtID.Valid {
-			err := q.UpdateReleaseGroupCoverArt(
-				l.ctx,
-				sqlcgen.UpdateReleaseGroupCoverArtParams{
-					CoverArtID: coverArtID,
-					ID:         cached.ID,
-				},
-			)
-			if err != nil {
-				l.logger.Warn(
-					"could not update release group cover art",
-					"err", err,
-				)
-			} else {
-				cached.CoverArtID = coverArtID
-				cache.releaseGroups[cacheKey] = cached
-			}
-		}
-
-		return sql.NullInt64{Int64: cached.ID, Valid: true}
-	}
-
-	rg, err := q.UpsertReleaseGroup(
-		l.ctx, sqlcgen.UpsertReleaseGroupParams{
-			Name:                tags.Album,
-			AlbumArtistCreditID: albumArtistCreditID,
-			Year:                toNullInt64(tags.Year),
-		},
-	)
-	if err != nil {
-		l.logger.Warn(
-			"could not upsert release group", "err", err,
-		)
-
-		return sql.NullInt64{}
-	}
-
-	// Update cover art if this album doesn't have one yet.
-	if coverArtID.Valid && !rg.CoverArtID.Valid {
-		err := q.UpdateReleaseGroupCoverArt(
-			l.ctx,
-			sqlcgen.UpdateReleaseGroupCoverArtParams{
-				CoverArtID: coverArtID,
-				ID:         rg.ID,
-			},
-		)
-		if err != nil {
-			l.logger.Warn(
-				"could not update release group cover art",
-				"err", err,
-			)
-		} else {
-			rg.CoverArtID = coverArtID
-		}
-	}
-
-	cache.releaseGroups[cacheKey] = rg
-
-	return sql.NullInt64{Int64: rg.ID, Valid: true}
 }
 
 // getRecordingName returns the track title, or falls back to the filename.

@@ -18,9 +18,20 @@ const (
 	// survives after it was fetched.
 	browsedArtRetention = 90 * 24 * time.Hour
 
+	// browsedArtBudget bounds what browsing costs on disk.  Age alone
+	// is not a ceiling: a real install had portraits for 5,770 artists
+	// in a 1,301-artist library - 1.2 GB - because every artist page
+	// opened in Explore fetches one and nothing was counting.  Art for
+	// artists the user owns is not in this budget and is never evicted.
+	browsedArtBudget = 256 << 20 // 256 MB
+
 	// proxyCacheRetention is how long an Explore cover-art thumbnail
 	// survives after it was last written.
 	proxyCacheRetention = 30 * 24 * time.Hour
+
+	// httpCacheBudget bounds the response cache.  Entity answers are
+	// kept for a year, so expiry no longer bounds anything.
+	httpCacheBudget = 128 << 20 // 128 MB
 )
 
 // Default intervals.  These are minimums, not schedules — the runner
@@ -30,11 +41,18 @@ const (
 	dailyInterval    = 24 * time.Hour
 )
 
-// ExpiredHTTPCacheJob deletes HTTP cache rows past their TTL.
+// ExpiredHTTPCacheJob deletes HTTP cache rows past their TTL, then
+// enforces a size ceiling on what is left.
 //
 // Reads already filter on expires_at, so expired rows are inert — but
 // nothing was deleting them, so the table grew without bound for the
 // life of the install.
+//
+// The ceiling is the other half, and it is what makes a long TTL safe:
+// MusicBrainz entity data is cached for a year now, because it does not
+// change and re-fetching it spends someone else's rate limit for
+// nothing. Expiry therefore stops being a bound, and something has to
+// be.
 func ExpiredHTTPCacheJob(db *database.DB) Job {
 	return Job{
 		Name:        "http-cache-evict",
@@ -51,9 +69,54 @@ func ExpiredHTTPCacheJob(db *database.DB) Job {
 
 			rows, _ := res.RowsAffected()
 
-			return Result{RowsDeleted: rows}, nil
+			trimmed, err := trimHTTPCache(db)
+			if err != nil {
+				return Result{RowsDeleted: rows}, err
+			}
+
+			return Result{RowsDeleted: rows + trimmed}, nil
 		},
 	}
+}
+
+// trimHTTPCache evicts the oldest responses until the cache fits
+// httpCacheBudget, and returns how many rows it removed.
+//
+// "Oldest" is by expiry, which orders by fetch time within a TTL class
+// and puts the shortest-lived answers first across classes — a search
+// result before an entity lookup, which is the right order to lose them
+// in.
+func trimHTTPCache(db *database.DB) (int64, error) {
+	var total int64
+
+	if err := db.QueryRowWriter(
+		"SELECT COALESCE(SUM(LENGTH(response)), 0) FROM http_cache",
+	).Scan(&total); err != nil {
+		return 0, fmt.Errorf("measure http_cache: %w", err)
+	}
+
+	if total <= httpCacheBudget {
+		return 0, nil
+	}
+
+	res, err := db.ExecContext(`
+		DELETE FROM http_cache WHERE url_key IN (
+			SELECT url_key FROM (
+				SELECT url_key,
+				       SUM(LENGTH(response)) OVER (
+				           ORDER BY expires_at DESC
+				           ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+				       ) AS running
+				FROM http_cache
+			) WHERE running > ?
+		)`, httpCacheBudget)
+	if err != nil {
+		return 0, fmt.Errorf("trim http_cache: %w", err)
+	}
+
+	rows, _ := res.RowsAffected()
+
+	return rows, nil
 }
 
 // OrphanedCoverFilesJob removes files from the covers directory that no
@@ -196,9 +259,84 @@ func OrphanedArtistImagesJob(
 				result.RowsDeleted += rows
 			}
 
+			// Then the ceiling.  Age alone bounds nothing: a browsing
+			// session can fetch hundreds of portraits in an afternoon,
+			// and all of them are within the retention window.
+			evicted, err := evictOverBudget(ctx, db, artistImagesDir, dirFor, &result)
+			if err != nil {
+				return result, err
+			}
+
+			if len(evicted) > 0 {
+				rows, delErr := deleteArtistImageRows(db, evicted)
+				if delErr != nil {
+					return result, delErr
+				}
+
+				result.RowsDeleted += rows
+			}
+
 			return result, nil
 		},
 	}
+}
+
+// evictOverBudget removes the least recently fetched non-library artist
+// art until what is left fits browsedArtBudget, and returns the MBIDs it
+// removed so their rows can go too.
+func evictOverBudget(
+	ctx context.Context,
+	db *database.DB,
+	artistImagesDir string,
+	dirFor func(baseDir, mbid string) string,
+	result *Result,
+) ([]string, error) {
+	browsed, err := browsedArtistsByAge(db)
+	if err != nil {
+		return nil, err
+	}
+
+	sizes := make([]int64, len(browsed))
+
+	var total int64
+
+	for i, mbid := range browsed {
+		bytes, _ := dirSize(dirFor(artistImagesDir, mbid))
+		sizes[i] = bytes
+		total += bytes
+	}
+
+	if total <= browsedArtBudget {
+		return nil, nil
+	}
+
+	var evicted []string
+
+	// browsed is oldest first, so this drops the least recently wanted.
+	for i, mbid := range browsed {
+		if total <= browsedArtBudget {
+			break
+		}
+
+		if ctx.Err() != nil {
+			return evicted, nil
+		}
+
+		dir := dirFor(artistImagesDir, mbid)
+
+		bytes, files := dirSize(dir)
+		if err := os.RemoveAll(dir); err != nil && !os.IsNotExist(err) {
+			continue
+		}
+
+		total -= sizes[i]
+		result.FilesDeleted += files
+		result.BytesFreed += bytes
+
+		evicted = append(evicted, mbid)
+	}
+
+	return evicted, nil
 }
 
 // StrayArtistImageFilesJob removes downloaded image candidates that
@@ -279,6 +417,56 @@ func StrayArtistImageFilesJob(artistImagesDir string, keep map[string]bool) Job 
 
 // staleArtistMBIDs returns artist MBIDs whose cached artwork may be
 // evicted: fetched before the cutoff and not an artist in the library.
+// ownedArtistMBIDs is the ownership test, asked the way every other one
+// is: an artist is the user's if a *file* says so.  An artists row on
+// its own is not ownership - that was the bug the file-shaped schema
+// removed, and this is the same rule one table over.
+const ownedArtistMBIDs = `
+	SELECT a.mbid FROM artists a
+	WHERE a.mbid IS NOT NULL AND a.mbid != ''
+	  AND (
+	    EXISTS (SELECT 1 FROM audio_files af WHERE af.artist_id = a.id)
+	    OR EXISTS (
+	      SELECT 1 FROM albums al
+	      JOIN audio_files af2 ON af2.album_id = al.id
+	      WHERE al.artist_id = a.id
+	    )
+	  )`
+
+// browsedArtistsByAge lists non-library artists with cached art, oldest
+// first, so the budget pass evicts the least recently wanted.
+func browsedArtistsByAge(db *database.DB) ([]string, error) {
+	rows, err := db.QueryContext(
+		`SELECT artist_mbid FROM artist_images
+		 WHERE artist_mbid NOT IN (` + ownedArtistMBIDs + `)
+		 GROUP BY artist_mbid
+		 ORDER BY MAX(created_at) ASC`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query browsed artist images: %w", err)
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	var mbids []string
+
+	for rows.Next() {
+		var mbid string
+
+		if err := rows.Scan(&mbid); err != nil {
+			return nil, fmt.Errorf("scan artist mbid: %w", err)
+		}
+
+		mbids = append(mbids, mbid)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate browsed artist images: %w", err)
+	}
+
+	return mbids, nil
+}
+
 func staleArtistMBIDs(
 	db *database.DB,
 	cutoff time.Time,
@@ -286,10 +474,7 @@ func staleArtistMBIDs(
 	rows, err := db.QueryContext(
 		`SELECT DISTINCT artist_mbid FROM artist_images
 		 WHERE created_at < ?
-		   AND artist_mbid NOT IN (
-		       SELECT mbid FROM artists
-		       WHERE mbid IS NOT NULL AND mbid != ''
-		   )`,
+		   AND artist_mbid NOT IN (`+ownedArtistMBIDs+`)`,
 		cutoff,
 	)
 	if err != nil {

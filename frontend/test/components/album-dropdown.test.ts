@@ -81,10 +81,10 @@ async function expandFirstCard(el: LitElement): Promise<void> {
 describe('the album dropdown', () => {
   beforeEach(() => {
     resetHarness();
-    stub('library.Library.GetAllAlbums', ALBUMS);
-    stub('library.Library.GetAllTracks', []);
+    stub('library.Library.GetAlbums', ALBUMS);
+    stub('library.Library.GetTracks', []);
     stub('library.Library.GetAlbumTracks', TRACKS);
-    stub('library.Library.GetAlbumTracksByLibrary', TRACKS);
+    stub('library.Library.GetAlbumTracks', TRACKS);
     emit(Events.LibraryScanComplete);
   });
 
@@ -154,8 +154,8 @@ describe('the album dropdown', () => {
 describe('the albums grid scrolls', () => {
   beforeEach(() => {
     resetHarness();
-    stub('library.Library.GetAllAlbums', ALBUMS);
-    stub('library.Library.GetAllTracks', []);
+    stub('library.Library.GetAlbums', ALBUMS);
+    stub('library.Library.GetTracks', []);
     emit(Events.LibraryScanComplete);
   });
 

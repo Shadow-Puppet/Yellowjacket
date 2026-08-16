@@ -47,26 +47,13 @@ func TestRestoreRoundTrip(t *testing.T) {
 		t.Fatalf("seed library: %v", err)
 	}
 
-	if _, err := d.DB.ExecContext(
-		`INSERT INTO artist_credit (id, text) VALUES (1, 'Fixture Artist')`,
-	); err != nil {
-		t.Fatalf("seed artist credit: %v", err)
-	}
-
-	if _, err := d.DB.ExecContext(
-		`INSERT INTO recordings (id, name, artist_credit_id)
-		 VALUES (1, 'A', 1)`,
-	); err != nil {
-		t.Fatalf("seed recording: %v", err)
-	}
-
-	if _, err := d.DB.ExecContext(
-		`INSERT INTO audio_files
-		   (file_path, length_milliseconds, file_type_id, recording_id, library_id)
-		 VALUES ('/music/a.mp3', 2000, 1, 1, 1)`,
-	); err != nil {
-		t.Fatalf("seed track: %v", err)
-	}
+	database.InsertTestTrack(t, d.DB, database.TestTrack{
+		FilePath:  "/music/a.mp3",
+		Title:     "A",
+		Artist:    "Fixture Artist",
+		LengthMs:  2000,
+		LibraryID: 1,
+	})
 
 	snapReq := httptest.NewRequest(http.MethodPost, "/__test/db/snapshot?name=unit", nil)
 

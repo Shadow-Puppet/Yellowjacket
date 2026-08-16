@@ -10,7 +10,6 @@ import {
 import {
     GetAlbumTracks,
     GetAlbumCompleteness,
-    GetFilePathsByAlbums,
     GetFilePathsByRecordingMBIDs,
 } from '@go/library/library.js';
 import * as library from '@go/library/models.js';
@@ -47,7 +46,10 @@ import type { ContextMenuHost } from '@utils/context-menu-controller.js';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
 import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
-import { dict, dictByName } from '@utils/binding';
+import { dictByName } from '@utils/binding';
+import type { TrackDetails } from '@components/track-details/track-details.js';
+import { showTrackDetailsForPath } from '@utils/track-details-opener.js';
+import '@components/playlist-picker/playlist-picker.js';
 
 /**
  * The region the album header's own failures are rendered in.
@@ -199,6 +201,35 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
      */
     @state() private localTracks: MBTrack[] = [];
 
+    /**
+     * The file behind each displayed track, resolved once when the
+     * tracklist settles rather than per click.
+     *
+     * This is the page's one answer to "do I own this". It used to be
+     * asked three different ways — a local album id, the backend's
+     * cross-reference, a cached MBID match, or *any* track flagged
+     * inLibrary — none of which is "there is a file", and then answered
+     * a fourth way at the moment the user clicked something. So a row
+     * could render owned, offer Play, and fail; on a real library 129
+     * catalog rows were in exactly that state.
+     *
+     * A path here means the track plays. Nothing else on this page is
+     * allowed to mean it.
+     */
+    @state() private filePaths = new Map<string, string>();
+
+    /**
+     * Which MBIDs have been *asked* about, which is not the same as
+     * which resolved.
+     *
+     * A track the library does not have never lands in `filePaths`, so
+     * a guard keyed on the answer asks about it again on every render —
+     * an unbounded query loop for exactly the tracks the user does not
+     * own. This is not `@state`: it records work done, and changing it
+     * must not schedule a render.
+     */
+    private askedFor = new Set<string>();
+
     /** Open state of the "find this album" dialog. */
     @state() private pickerOpen = false;
 
@@ -231,17 +262,20 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
     @query('#track-context-menu')
     private contextMenuPopup!: WaPopup;
 
+    @query('#playlist-submenu')
+    private playlistSubmenuPopup?: WaPopup;
+
+    @query('track-details')
+    private trackDetailsDialog?: TrackDetails;
+
     // -- ContextMenuHost interface --
-    // No playlist submenu on this page — every action here resolves a
-    // single track's file lazily by MBID, and the submenu exists for a
-    // caller that already has file paths in hand.
 
     getContextMenuPopup(): WaPopup | undefined {
         return this.contextMenuPopup;
     }
 
     getPlaylistSubmenuPopup(): WaPopup | undefined {
-        return undefined;
+        return this.playlistSubmenuPopup;
     }
 
     onContextMenuClose(): void {
@@ -763,6 +797,14 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
     private hasScrolledToHighlight = false;
 
     override updated() {
+        // Whatever is displayed needs its files known, and the
+        // tracklist can change from four directions - the local
+        // hydrate, the catalog browse, the cluster build, the version
+        // dropdown. Asking here covers all of them; resolveFilePaths
+        // returns immediately once every displayed MBID is in the map,
+        // so this settles after one pass.
+        void this.resolveFilePaths();
+
         if (
             (this.highlightTrackMBID || this.highlightTrackTitle) &&
             !this.hasScrolledToHighlight &&
@@ -860,6 +902,8 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
         this.versionEntries = [];
         this.selectedVersionKey = '';
         this.localTracks = [];
+        this.filePaths = new Map();
+        this.askedFor = new Set();
 
         // Local-only album (no MBID) — populate entirely from library.
         if (!mbid && this.localAlbumId) {
@@ -935,7 +979,7 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
 
     /**
      * Hydrate album info and tracklist from the local library store.
-     * Uses GetAlbumTracks(album.ID) — same local DB call as cover-grid.
+     * Uses GetAlbumTracks(album.ID, libraryStore.libraryFilter()) — same local DB call as cover-grid.
      * Returns true if a tracklist was populated from local data.
      */
     /**
@@ -971,7 +1015,7 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
         // Fetch tracks via the same local DB call the cover-grid uses.
         let tracks: Awaited<ReturnType<typeof GetAlbumTracks>>;
         try {
-            tracks = await GetAlbumTracks(this.localAlbumId);
+            tracks = await GetAlbumTracks(this.localAlbumId, libraryStore.libraryFilter());
         } catch {
             this.loadingReleases = false;
             return;
@@ -1007,6 +1051,10 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
     private mapLocalTracks(
         tracks: Awaited<ReturnType<typeof GetAlbumTracks>>,
     ): MBTrack[] {
+        // The rows carry the file paths; this is where they stop being
+        // thrown away.
+        this.rememberLocalPaths(tracks);
+
         const mapped: MBTrack[] = (tracks ?? []).map((t) => ({
             mbid: t.RecordingMBID || '',
             title: t.TrackName,
@@ -1055,7 +1103,7 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
      */
     private async loadLocalTracks(albumId: number): Promise<void> {
         try {
-            const tracks = await GetAlbumTracks(albumId);
+            const tracks = await GetAlbumTracks(albumId, libraryStore.libraryFilter());
 
             this.localTracks = this.mapLocalTracks(tracks);
         } catch {
@@ -1065,7 +1113,14 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
         // A catalog fetch may have already built the version list
         // without a "Your Library" entry to point at — rebuild now
         // that there's local data to match against it.
-        if (this.releases.length > 0) this.buildClusters();
+        //
+        // Unconditionally, including when the catalog returned nothing:
+        // `buildVersionEntries` synthesises the library entry *from*
+        // these tracks, so the no-releases case is exactly the one that
+        // needs this. Guarded on `releases.length` before, an album the
+        // catalog could not answer for showed "No release data
+        // available" over a tracklist it was holding in memory.
+        this.buildClusters();
     }
 
     private async hydrateFromLibrary(mbid: string): Promise<boolean> {
@@ -1114,7 +1169,7 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
         // Fetch tracks via the same local DB call the cover-grid uses.
         let tracks: Awaited<ReturnType<typeof GetAlbumTracks>>;
         try {
-            tracks = await GetAlbumTracks(libraryAlbum.ID);
+            tracks = await GetAlbumTracks(libraryAlbum.ID, libraryStore.libraryFilter());
         } catch {
             return false;
         }
@@ -1749,8 +1804,8 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
             // Guarded on `known` rather than on "fewer tracks than the
             // cluster", which would swap in a catalog tracklist for
             // every album whose tags simply never declared a total.
-            const incomplete = this.completeness?.known
-                && !this.completeness.complete;
+            const answer = this.completenessAnswer();
+            const incomplete = answer?.known && !answer.complete;
 
             if (incomplete) {
                 const fullRelease = this.findLibraryCluster(clusters);
@@ -1759,7 +1814,7 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
                     return {
                         key: 'synthetic:library',
                         label: 'Your Library',
-                        sublabel: `${this.completeness?.owned ?? 0} of ${this.completeness?.expected ?? 0} tracks · ${this.clusterLabel(fullRelease)}`,
+                        sublabel: `${answer?.owned ?? 0} of ${answer?.expected ?? 0} tracks · ${this.clusterLabel(fullRelease)}`,
                         group: 'aggregate',
                         syntheticKind: 'library',
                         tracks: fullRelease.representative.tracks ?? [],
@@ -1949,74 +2004,182 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
      * below this badge has reported as "Wanted" all along.
      */
     /**
+     * How much of this album is here, from whichever side can say.
+     *
+     * The files answer first: `GetAlbumCompleteness` reads the "5/12"
+     * totals off the tags, which is exact and costs no network. A great
+     * deal of any library declares no total at all, and for those the
+     * *catalog* carries one — a per-release-group track count in
+     * `explore_index`, shipped in the artifact for the price of about
+     * two bytes a row.
+     *
+     * The numerator stays the local one either way: how many distinct
+     * track numbers are on disk. Only the denominator is borrowed, and
+     * only when the tags have none — a catalog total is a statement
+     * about the canonical release, and the files' own total, where they
+     * declare one, is a statement about the release the user actually
+     * has.
+     *
+     * Zero still means "the catalog does not say", so an album neither
+     * side can total stays `known: false` and wears no ring.
+     */
+    private completenessAnswer(): library.AlbumCompleteness | null {
+        const local = this.completeness;
+
+        if (local?.known) return local;
+
+        const expected = this.releaseGroup?.totalTracks ?? 0;
+        if (expected <= 0 || !local) return local;
+
+        return {
+            ...local,
+            expected,
+            known: true,
+            complete: local.owned >= expected,
+        };
+    }
+
+    /**
      * What the badge beside the album title shows.
      *
      * `albumLibraryStatus()` answers "is any of this yours", which is
      * the right question for a tick and the wrong one for a ring. The
-     * ring needs a denominator, and it only exists when the files
-     * declared one — so an owned album with untotalled tags keeps the
-     * plain tick rather than wearing an arc drawn from a guess.
+     * ring needs a denominator, and an album neither the files nor the
+     * catalog can total keeps the plain tick rather than wearing an arc
+     * drawn from a guess.
      */
     private albumBadgeStatus(): LibraryStatus {
         const owned = this.albumLibraryStatus();
 
         if (owned !== 'in-library') return owned;
 
-        const c = this.completeness;
+        const c = this.completenessAnswer();
         if (c?.known && !c.complete) return 'partial';
 
         return 'in-library';
     }
 
+    /**
+     * How a displayed track is identified in `filePaths`.
+     *
+     * A recording MBID where there is one, and disc/track/title where
+     * there is not — a library-only album's tracks are synthesised from
+     * the files' own tags and may carry no MBID at all, which is the
+     * case an MBID-keyed lookup silently misses.
+     */
+    private static trackKey(t: MBTrack): string {
+        if (t.mbid) return t.mbid;
+
+        return `${t.discNumber || 1}:${t.position}:${t.title.toLowerCase()}`;
+    }
+
+    /** The file behind a displayed track, or '' if the user has none. */
+    private filePathFor(t: MBTrack): string {
+        return this.filePaths.get(ExploreAlbumDetails.trackKey(t)) ?? '';
+    }
+
+    /**
+     * Record the files behind the local album's own tracks.
+     *
+     * These cost nothing: `GetAlbumTracks` already returned the paths,
+     * and this is the one place they were being thrown away.
+     */
+    private rememberLocalPaths(
+        rows: Awaited<ReturnType<typeof GetAlbumTracks>>,
+    ): void {
+        const paths = new Map(this.filePaths);
+
+        for (const row of rows ?? []) {
+            if (!row.FilePath) continue;
+
+            const key = ExploreAlbumDetails.trackKey({
+                mbid: row.RecordingMBID || '',
+                title: row.TrackName,
+                position: row.TrackNumber || 0,
+                discNumber: row.DiscNumber || 1,
+            } as MBTrack);
+
+            paths.set(key, row.FilePath);
+        }
+
+        this.filePaths = paths;
+    }
+
+    /**
+     * Resolve the catalog tracklist's files in one query.
+     *
+     * Called when the displayed tracklist changes rather than when a
+     * user clicks: the answer decides what the rows look like and which
+     * menu items exist, so it has to be known before either is drawn.
+     */
+    private async resolveFilePaths(): Promise<void> {
+        const tracks = this.currentVersion()?.tracks ?? [];
+        const wanted = tracks
+            .map((t) => t.mbid)
+            .filter((mbid) => mbid && !this.askedFor.has(mbid));
+
+        if (wanted.length === 0) return;
+
+        for (const mbid of wanted) this.askedFor.add(mbid);
+
+        try {
+            const byMBID = await dictByName(
+                GetFilePathsByRecordingMBIDs(wanted, libraryStore.libraryFilter()),
+            );
+
+            const paths = new Map(this.filePaths);
+
+            for (const [mbid, forMBID] of Object.entries(byMBID)) {
+                const first = forMBID?.[0];
+                if (first) paths.set(mbid, first);
+            }
+
+            this.filePaths = paths;
+        } catch (error) {
+            // A failure here means the page cannot say what is owned, so
+            // it says nothing rather than guessing: rows stay dimmed and
+            // the actions that need a file stay absent.
+            console.error('Could not resolve library files for this album:', error);
+        }
+    }
+
+    /**
+     * Whether any of this album is the user's.
+     *
+     * One question, asked once: does any displayed track have a file.
+     * It used to be four claims of decreasing confidence OR'd into a
+     * single tick — a local album id, the backend's cross-reference, a
+     * cached MBID match, and finally *any* track flagged `inLibrary` —
+     * none of which is "there is a file", which is why the badge could
+     * say yes about an album whose every action failed.
+     *
+     * When it is not owned the answer is not automatically "no": the
+     * album may be on the request list, which the button below the
+     * badge has reported as "Wanted" all along.
+     */
     private albumLibraryStatus(): LibraryStatus {
-        if (this.localAlbumId > 0) return 'in-library';
+        if (this.ownership().owned > 0) return 'in-library';
 
-        if (this.releaseGroup?.inLibrary) return 'in-library';
-
-        const mbid = this.releaseGroupMBID;
-        if (mbid) {
-            const cachedAlbums = libraryStore.cachedAlbums;
-            if (cachedAlbums) {
-                for (const a of cachedAlbums) {
-                    if (a.MBID === mbid) return 'in-library';
-                }
-            }
-        }
-
-        const current = this.currentVersion();
-        if (current) {
-            for (const t of current.tracks) {
-                if (t.inLibrary) return 'in-library';
-            }
-        }
-
-        // None of the five ownership claims held, so the badge falls
-        // through to the one thing this page already knew and never
-        // said: whether the album is on the request list. The button
-        // below it has read "Wanted" all along.
         return libraryStatusFor(false, this.releaseGroupMBID);
     }
 
     /**
      * How much of the shown release the user actually has.
      *
-     * The tick beside the title is a yes/no answer to "is any of this
-     * mine", and four of its five branches can be true when one track
-     * of forty matches. That is fine for a badge and useless for a
-     * button: "Play" that plays one track of a forty-track release is
-     * worse than no Play button, so the header asks this instead.
+     * Counted off the tracklist being displayed, by how many of its
+     * tracks resolved to a file. That is the only claim on this page
+     * that is not an inference: a path means the track plays.
      *
-     * It is counted off the *tracklist being displayed*, which is the
-     * one thing on this page that is not an inference — each track's
-     * `inLibrary` is set by the backend from its recording MBID
-     * (`markReleasesInLibrary`), the same key the file paths are
-     * fetched by.
+     * It is what the header's buttons key off, because "Play" that
+     * plays one track of a forty-track release is worse than no Play
+     * button — and it is now also what the badge above them uses, so
+     * the two can no longer disagree.
      */
     private ownership(): { owned: number; total: number } {
         const tracks = this.currentVersion()?.tracks ?? [];
 
         return {
-            owned: tracks.filter((t) => t.inLibrary).length,
+            owned: tracks.filter((t) => this.filePathFor(t) !== '').length,
             total: tracks.length,
         };
     }
@@ -2064,6 +2227,7 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
                 ${this.renderVersionSelector()}
                 ${this.renderTracklist()}
             </div>
+            <track-details></track-details>
         `;
     }
 
@@ -2130,8 +2294,8 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
                         <span class="album-title-text">${this.albumName}</span>
                         <library-status-indicator
                             status=${this.albumBadgeStatus()}
-                            .owned=${this.completeness?.owned ?? 0}
-                            .expected=${this.completeness?.expected ?? 0}
+                            .owned=${this.completenessAnswer()?.owned ?? 0}
+                            .expected=${this.completenessAnswer()?.expected ?? 0}
                             entity-type="album"
                             label=${this.albumName}
                             size="22"
@@ -2181,7 +2345,7 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
                     size="small"
                     appearance="filled"
                     data-testid="album-play"
-                    @click=${() => void this.playOwned(false)}
+                    @click=${() => this.playOwned(false)}
                 >
                     <wa-icon slot="start" name="play"></wa-icon>
                     ${playLabel}
@@ -2190,7 +2354,7 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
                     size="small"
                     appearance="outlined"
                     data-testid="album-shuffle"
-                    @click=${() => void this.playOwned(true)}
+                    @click=${() => this.playOwned(true)}
                 >
                     <wa-icon slot="start" name="shuffle"></wa-icon>
                     Shuffle album
@@ -2199,7 +2363,7 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
                     size="small"
                     appearance="outlined"
                     data-testid="album-queue"
-                    @click=${() => void this.queueOwned()}
+                    @click=${() => this.queueOwned()}
                 >
                     <wa-icon slot="start" name="list"></wa-icon>
                     Add to queue
@@ -2240,163 +2404,103 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
         return { type: 'album', id: this.localAlbumId, label: this.albumName };
     }
 
-    private async ownedFilePaths(): Promise<string[]> {
-        const libraryID = libraryStore.getSelectedLibraryId() ?? 0;
-
-        // The local album id is the better key whenever there is one:
-        // it needs no MBIDs at all, and a library-only album has none —
-        // its tracks are synthesised from `GetAlbumTracks` with
-        // `mbid: RecordingMBID || ''`, so an untagged library resolves
-        // to an empty set and the Play button silently does nothing.
-        // That is exactly what the first version of this did.
-        if (this.localAlbumId > 0) {
-            const byAlbum = await dict(
-                GetFilePathsByAlbums([this.localAlbumId], libraryID),
-            );
-
-            return byAlbum[this.localAlbumId] ?? [];
-        }
-
-        // Catalog-only: the page knows what is owned as recording MBIDs
-        // and nothing else — which is how the backend decided each
-        // track's `inLibrary` in the first place.
-        const tracks = this.currentVersion()?.tracks ?? [];
-        const mbids = tracks
-            .filter((t) => t.inLibrary && t.mbid)
-            .map((t) => t.mbid);
-
-        if (mbids.length === 0) return [];
-
-        const byMBID = await dictByName(
-            GetFilePathsByRecordingMBIDs(mbids, libraryID),
-        );
-
-        // Walked in tracklist order rather than flattened, because the
-        // grouping is what lets the caller keep its own order. A
-        // recording with more than one file is a duplicate; play the
-        // first and leave the rest to the feature that exists for them.
+    /**
+     * The files behind the displayed tracklist, in its order.
+     *
+     * No query: the paths were resolved when the tracklist settled.
+     * This used to be two different lookups chosen by a branch - by
+     * local album id, or by recording MBID for a catalog-only album -
+     * and the second silently returned nothing for an untagged library,
+     * because those tracks carry no MBID at all.
+     */
+    private ownedFilePaths(): string[] {
         const paths: string[] = [];
 
-        for (const mbid of mbids) {
-            const first = byMBID[mbid]?.[0];
+        for (const track of this.currentVersion()?.tracks ?? []) {
+            const path = this.filePathFor(track);
 
-            if (first) paths.push(first);
+            // A recording with more than one file is a duplicate; the
+            // map holds the first and the rest are the duplicate
+            // feature's business.
+            if (path) paths.push(path);
         }
 
         return paths;
     }
 
     /** Play what the user owns of this release, optionally shuffled. */
-    private async playOwned(shuffle: boolean): Promise<void> {
-        try {
-            const paths = await this.ownedFilePaths();
+    private playOwned(shuffle: boolean): void {
+        const paths = this.ownedFilePaths();
 
-            if (paths.length === 0) {
-                notificationStore.inline(ExploreAlbumRegion, {
-                    text: 'None of these tracks could be found in your library.',
-                });
+        // The button is only rendered when there is something to play,
+        // so an empty set here is not a state the user can reach.
+        if (paths.length === 0) return;
 
-                return;
-            }
-
-            // `shuffleStart` only picks a random first track when
-            // shuffle mode is *already* on — it does not turn it on —
-            // so the mode has to be set before the queue, not after.
-            if (shuffle && !queueStore.getState().shuffleMode) {
-                queueStore.toggleShuffle();
-            }
-
-            queueStore.setQueue(paths, 0, shuffle, this.queueSource());
-        } catch (error) {
-            console.error('Could not play album:', error);
-            notificationStore.inline(ExploreAlbumRegion, {
-                text: describeError(error, 'Could not play this album.'),
-            });
+        // `shuffleStart` only picks a random first track when shuffle
+        // mode is *already* on — it does not turn it on — so the mode
+        // has to be set before the queue, not after.
+        if (shuffle && !queueStore.getState().shuffleMode) {
+            queueStore.toggleShuffle();
         }
+
+        queueStore.setQueue(paths, 0, shuffle, this.queueSource());
     }
 
     /** Append what the user owns of this release to the queue. */
-    private async queueOwned(): Promise<void> {
-        try {
-            const paths = await this.ownedFilePaths();
+    private queueOwned(): void {
+        const paths = this.ownedFilePaths();
 
-            if (paths.length === 0) {
-                notificationStore.inline(ExploreAlbumRegion, {
-                    text: 'None of these tracks could be found in your library.',
-                });
+        if (paths.length === 0) return;
 
-                return;
-            }
-
-            queueStore.addTracksToQueue(paths);
-        } catch (error) {
-            console.error('Could not queue album:', error);
-            notificationStore.inline(ExploreAlbumRegion, {
-                text: describeError(
-                    error,
-                    'Could not add this album to the queue.',
-                ),
-            });
-        }
+        queueStore.addTracksToQueue(paths);
     }
 
     /**
-     * File path for one owned track, resolved by recording MBID — the
-     * same key the backend used to mark it `inLibrary` in the first
-     * place. Unlike `ownedFilePaths()` this does not special-case
-     * `localAlbumId`: a single track's own MBID is enough, and every
-     * `MBTrack` carries one regardless of how the album itself was
-     * matched.
+     * Play an owned track *in the context of the release it is on*:
+     * the whole owned tracklist is queued and playback starts at that
+     * track. Activating a row is a position in an album, not a request
+     * to throw the album away - "Add to Queue" and "Play Next" are what
+     * a caller reaches for when it wants the one track.
      */
-    private async trackFilePath(track: MBTrack): Promise<string | null> {
-        if (!track.inLibrary || !track.mbid) return null;
+    private playTrack(track: MBTrack): void {
+        const path = this.filePathFor(track);
 
-        const libraryID = libraryStore.getSelectedLibraryId() ?? 0;
-        const byMBID = await dictByName(
-            GetFilePathsByRecordingMBIDs([track.mbid], libraryID),
-        );
+        // Every path into this is gated on the row having a file: the
+        // row is not activatable without one and the menu offers
+        // nothing that needs one. There is no "could not be found in
+        // your library" any more, because the page no longer offers an
+        // action it cannot perform.
+        if (!path) return;
 
-        return byMBID[track.mbid]?.[0] ?? null;
-    }
+        const paths = this.ownedFilePaths();
+        const start = paths.indexOf(path);
 
-    /** Play a single owned track now. A no-op for a track not in the library. */
-    private async playTrack(track: MBTrack): Promise<void> {
-        try {
-            const path = await this.trackFilePath(track);
-
-            if (!path) {
-                notificationStore.inline(ExploreAlbumRegion, {
-                    text: 'This track could not be found in your library.',
-                });
-
-                return;
-            }
-
+        // `start` is only -1 if the row is not in the version currently
+        // displayed, which no gesture on this page can produce; playing
+        // the one track is the honest answer to it either way.
+        if (start < 0) {
             queueStore.setQueue([path], 0, false, this.queueSource());
-        } catch (error) {
-            console.error('Could not play track:', error);
-            notificationStore.inline(ExploreAlbumRegion, {
-                text: describeError(error, 'Could not play this track.'),
-            });
+
+            return;
         }
+
+        queueStore.setQueue(paths, start, false, this.queueSource());
     }
 
-    private async queueTrackNext(track: MBTrack): Promise<void> {
-        const path = await this.trackFilePath(track);
+    private queueTrackNext(track: MBTrack): void {
+        const path = this.filePathFor(track);
 
         if (path) queueStore.playNext(path);
     }
 
-    private async addTrackToQueue(track: MBTrack): Promise<void> {
-        const path = await this.trackFilePath(track);
+    private addTrackToQueue(track: MBTrack): void {
+        const path = this.filePathFor(track);
 
         if (path) queueStore.addToQueue(path);
     }
 
     private onTrackRowDblClick(track: MBTrack): void {
-        if (!track.inLibrary) return;
-
-        void this.playTrack(track);
+        this.playTrack(track);
     }
 
     private onTrackRowKeydown(e: KeyboardEvent, track: MBTrack): void {
@@ -2408,9 +2512,9 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
             return;
         }
 
-        if ((e.key === 'Enter' || e.key === ' ') && track.inLibrary) {
+        if ((e.key === 'Enter' || e.key === ' ') && this.filePathFor(track)) {
             e.preventDefault();
-            void this.playTrack(track);
+            this.playTrack(track);
         }
     }
 
@@ -2422,30 +2526,81 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
         this.ctxMenu.openAt(e.clientX, e.clientY);
     }
 
-    private onContextMenuAction(action: 'play' | 'add-to-queue' | 'play-next'): void {
+    private onContextMenuAction(
+        action: 'play' | 'add-to-queue' | 'play-next' | 'track-details',
+    ): void {
         const track = this.ctxMenuTrack;
 
         this.ctxMenu.close();
 
-        if (!track || !track.inLibrary) return;
+        if (!track || !this.filePathFor(track)) return;
 
         switch (action) {
             case 'play':
-                void this.playTrack(track);
+                this.playTrack(track);
                 break;
             case 'add-to-queue':
-                void this.addTrackToQueue(track);
+                this.addTrackToQueue(track);
                 break;
             case 'play-next':
-                void this.queueTrackNext(track);
+                this.queueTrackNext(track);
                 break;
+            case 'track-details':
+                void this.openTrackDetails(track);
+                break;
+        }
+    }
+
+    /**
+     * Open the "Add to Playlist" submenu for the track the menu is on.
+     *
+     * No await and no guards: the file was resolved when the tracklist
+     * settled, so the submenu opens or the item was never rendered.
+     * This used to resolve on demand, which meant a hover could report
+     * a failure for a menu the user was passing through.
+     */
+    private openPlaylistSubmenu(): void {
+        const track = this.ctxMenuTrack;
+        if (!track) return;
+
+        const path = this.filePathFor(track);
+        if (!path) return;
+
+        this.ctxMenu.clearSubmenuCloseTimer();
+        void this.ctxMenu.showPlaylistSubmenu([path]);
+    }
+
+    /**
+     * The details dialog for an owned track.
+     *
+     * It needs the library's own `Track`, which this page never has —
+     * its rows are the catalog's — so the file path is the way in, and
+     * the shared opener turns it back into a track.
+     */
+    private async openTrackDetails(track: MBTrack): Promise<void> {
+        const path = this.filePathFor(track);
+        if (!path) return;
+
+        const outcome = await showTrackDetailsForPath(
+            () => this.trackDetailsDialog,
+            path,
+            () => void this.openTrackDetails(track),
+        );
+
+        // The file exists but the library store does not know it: a
+        // rescan removed it since the page loaded, which is the one
+        // case the resolved map cannot rule out.
+        if (outcome === 'not-in-library') {
+            notificationStore.inline(ExploreAlbumRegion, {
+                text: 'This track is no longer in your library.',
+            });
         }
     }
 
     /**
      * Explore's tracks carry a recording MBID whether or not the user
      * owns them — this is the one context-menu action that works on a
-     * track the library doesn't have, since it needs no file at all.
+     * track the library does not have, since it needs no file at all.
      */
     private viewTrackOnMusicBrainz(): void {
         const track = this.ctxMenuTrack;
@@ -2612,7 +2767,12 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
      * to `unavailable`.
      */
     private catalogScope(): CatalogScope {
-        if (!this.releaseGroupMBID) return 'library';
+        // A library-only album says nothing: the header names it, the
+        // badge says it is yours, and the tracklist is the files'
+        // own — there is nothing absent for a notice to warn about.
+        // The artist page keeps its 'library' state because there a
+        // missing catalog means missing *sections*.
+        if (!this.releaseGroupMBID) return 'catalog';
         if (this.catalogReleasesLoaded) return 'catalog';
 
         // A complete, MBID-matched album is not missing anything the
@@ -2919,20 +3079,27 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
                                       </div>
                                   `
                                 : nothing}
-                            ${discTracks.map(
-                                (track) => html`
+                            ${discTracks.map((track) => {
+                                // A row is owned if a file is behind it.
+                                // It used to be the backend's inLibrary
+                                // flag, which was set from a metadata
+                                // row and could be true for a track
+                                // that could not be played.
+                                const owned = this.filePathFor(track) !== '';
+
+                                return html`
                                     <div
                                         class=${classMap({
                                             'track-row': true,
-                                            owned: track.inLibrary,
-                                            unowned: !track.inLibrary,
+                                            owned,
+                                            unowned: !owned,
                                         })}
                                         data-track-mbid="${track.mbid}"
                                         data-track-title="${track.title}"
                                         tabindex="0"
                                         role="button"
-                                        aria-disabled=${track.inLibrary ? 'false' : 'true'}
-                                        aria-label=${track.inLibrary
+                                        aria-disabled=${owned ? 'false' : 'true'}
+                                        aria-label=${owned
                                             ? `Play “${track.title}”`
                                             : `${track.title} — not in your library`}
                                         @dblclick=${() => this.onTrackRowDblClick(track)}
@@ -2952,7 +3119,7 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
                                                 track.length,
                                             )}</span
                                         >
-                                        ${track.inLibrary
+                                        ${owned
                                             ? nothing
                                             : html`
                                                   <library-status-indicator
@@ -2968,8 +3135,8 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
                                                   ></library-status-indicator>
                                               `}
                                     </div>
-                                `,
-                            )}
+                                `;
+                            })}
                         `;
                     })}
                 </div>
@@ -2992,26 +3159,81 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
                 ${this.ctxMenu.contextMenuOpen && track
                     ? html`
                           <div class="context-menu-panel" role="menu" aria-label="Track actions">
-                              ${track.inLibrary
+                              ${this.filePathFor(track) !== ''
                                   ? html`
-                                        <wa-dropdown-item @click=${() => this.onContextMenuAction('play')}>
+                                        <wa-dropdown-item
+                                            @click=${() => this.onContextMenuAction('play')}
+                                            @mouseenter=${() => this.ctxMenu.closePlaylistSubmenu()}
+                                        >
                                             <wa-icon slot="icon" name="play"></wa-icon>
                                             Play
                                         </wa-dropdown-item>
-                                        <wa-dropdown-item @click=${() => this.onContextMenuAction('add-to-queue')}>
+                                        <wa-dropdown-item
+                                            @click=${() => this.onContextMenuAction('add-to-queue')}
+                                            @mouseenter=${() => this.ctxMenu.closePlaylistSubmenu()}
+                                        >
                                             <wa-icon slot="icon" name="plus"></wa-icon>
                                             Add to Queue
                                         </wa-dropdown-item>
-                                        <wa-dropdown-item @click=${() => this.onContextMenuAction('play-next')}>
+                                        <wa-dropdown-item
+                                            @click=${() => this.onContextMenuAction('play-next')}
+                                            @mouseenter=${() => this.ctxMenu.closePlaylistSubmenu()}
+                                        >
                                             <wa-icon slot="icon" name="forward-step"></wa-icon>
                                             Play Next
                                         </wa-dropdown-item>
+                                        <wa-dropdown-item
+                                            class="submenu-item"
+                                            @mouseenter=${() => this.openPlaylistSubmenu()}
+                                            @mouseleave=${this.ctxMenu.scheduleSubmenuClose}
+                                            @click=${(e: Event) => {
+                                                e.stopPropagation();
+                                                this.openPlaylistSubmenu();
+                                            }}
+                                        >
+                                            <wa-icon slot="icon" name="plus"></wa-icon>
+                                            Add to Playlist
+                                            <span class="submenu-arrow">&#9654;</span>
+                                        </wa-dropdown-item>
+                                        <wa-dropdown-item
+                                            @click=${() => this.onContextMenuAction('track-details')}
+                                            @mouseenter=${() => this.ctxMenu.closePlaylistSubmenu()}
+                                        >
+                                            <wa-icon slot="icon" name="circle-info"></wa-icon>
+                                            Track Details
+                                        </wa-dropdown-item>
                                     `
                                   : nothing}
-                              <wa-dropdown-item @click=${() => this.viewTrackOnMusicBrainz()}>
+                              <wa-dropdown-item
+                                  @click=${() => this.viewTrackOnMusicBrainz()}
+                                  @mouseenter=${() => this.ctxMenu.closePlaylistSubmenu()}
+                              >
                                   <wa-icon slot="icon" name="globe"></wa-icon>
                                   View on MusicBrainz
                               </wa-dropdown-item>
+                          </div>
+                      `
+                    : nothing}
+            </wa-popup>
+
+            <wa-popup
+                id="playlist-submenu"
+                placement="right-start"
+                flip
+                shift
+                .active=${this.ctxMenu.playlistSubmenuOpen}
+            >
+                ${this.ctxMenu.playlistSubmenuOpen
+                    ? html`
+                          <div
+                              @mouseenter=${() => this.ctxMenu.clearSubmenuCloseTimer()}
+                              @mouseleave=${this.ctxMenu.scheduleSubmenuClose}
+                          >
+                              <playlist-picker
+                                  .filePaths=${this.ctxMenu.playlistFilePaths}
+                                  @playlist-action-complete=${this.ctxMenu.onPlaylistActionComplete}
+                                  @click=${(e: Event) => e.stopPropagation()}
+                              ></playlist-picker>
                           </div>
                       `
                     : nothing}

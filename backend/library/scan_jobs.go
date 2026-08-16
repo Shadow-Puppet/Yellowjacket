@@ -21,6 +21,8 @@ var scanPhaseLabels = map[string]string{
 
 // SetJobRegistry wires the background job registry so scans report
 // progress, logs, and pause/cancel controls to the frontend.
+//
+//wails:ignore // internal wiring, not part of the app's IPC surface.
 func (l *Library) SetJobRegistry(reg *jobs.Registry) {
 	l.mu.Lock()
 	l.jobs = reg

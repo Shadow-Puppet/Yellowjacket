@@ -12,145 +12,130 @@ import (
 )
 
 const countAudioFiles = `-- name: CountAudioFiles :one
-SELECT count(*) FROM audio_files
+SELECT COUNT(*) AS count FROM audio_files
+WHERE library_id = COALESCE(NULLIF(CAST(?1 AS INTEGER), 0), library_id)
 `
 
-func (q *Queries) CountAudioFiles(ctx context.Context) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countAudioFiles)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
-const countAudioFilesByLibrary = `-- name: CountAudioFilesByLibrary :one
-SELECT COUNT(*) AS count FROM audio_files WHERE library_id = ?
-`
-
-func (q *Queries) CountAudioFilesByLibrary(ctx context.Context, libraryID int64) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countAudioFilesByLibrary, libraryID)
+func (q *Queries) CountAudioFiles(ctx context.Context, libraryID int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countAudioFiles, libraryID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
 }
 
 const createAudioFile = `-- name: CreateAudioFile :one
-INSERT INTO audio_files (file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size, basename, library_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size, basename, library_id, play_count, last_played, tag_status, group_key, modified_at
+
+
+INSERT INTO audio_files (
+  file_path, library_id, file_type_id,
+  length_milliseconds, sample_rate, bit_depth, channels, bitrate, file_size,
+  title, artist_credit, artist_id, album_id,
+  track_number, disc_number, total_tracks, year, composer, comment,
+  recording_mbid, basename, group_key, modified_at, tag_status
+) VALUES (
+  ?, ?, ?,
+  ?, ?, ?, ?, ?, ?,
+  ?, ?, ?, ?,
+  ?, ?, ?, ?, ?, ?,
+  ?, ?, ?, ?, ?
+)
+RETURNING id, file_path, library_id, file_type_id, length_milliseconds, sample_rate, bit_depth, channels, bitrate, file_size, title, artist_credit, artist_id, album_id, track_number, disc_number, total_tracks, year, composer, comment, recording_mbid, basename, group_key, modified_at, play_count, last_played, tag_status
 `
 
 type CreateAudioFileParams struct {
 	FilePath           string
-	LengthMilliseconds int64
+	LibraryID          int64
 	FileTypeID         int64
-	RecordingID        int64
+	LengthMilliseconds int64
 	SampleRate         int64
 	BitDepth           int64
 	Channels           int64
 	Bitrate            int64
 	FileSize           int64
+	Title              string
+	ArtistCredit       string
+	ArtistID           sql.NullInt64
+	AlbumID            sql.NullInt64
+	TrackNumber        sql.NullInt64
+	DiscNumber         sql.NullInt64
+	TotalTracks        sql.NullInt64
+	Year               sql.NullInt64
+	Composer           string
+	Comment            string
+	RecordingMbid      sql.NullString
 	Basename           string
-	LibraryID          int64
+	GroupKey           string
+	ModifiedAt         int64
+	TagStatus          string
 }
 
+// Queries over audio_files and the track_metadata view above it.
+//
+// Every query that returns "a track" selects from `track_metadata`,
+// which is the one place the projection is defined.  The scoped and
+// unscoped variants that used to be written twice are one query now:
+// library_id 0 means "every library", and `(:id = 0 OR library_id = :id)`
+// costs nothing measurable (23 ms vs 21 ms over 26k rows) because these
+// queries scan either way.
+// ---------------------------------------------------------------------
+// Writes
+// ---------------------------------------------------------------------
 func (q *Queries) CreateAudioFile(ctx context.Context, arg CreateAudioFileParams) (AudioFile, error) {
 	row := q.db.QueryRowContext(ctx, createAudioFile,
 		arg.FilePath,
-		arg.LengthMilliseconds,
+		arg.LibraryID,
 		arg.FileTypeID,
-		arg.RecordingID,
+		arg.LengthMilliseconds,
 		arg.SampleRate,
 		arg.BitDepth,
 		arg.Channels,
 		arg.Bitrate,
 		arg.FileSize,
+		arg.Title,
+		arg.ArtistCredit,
+		arg.ArtistID,
+		arg.AlbumID,
+		arg.TrackNumber,
+		arg.DiscNumber,
+		arg.TotalTracks,
+		arg.Year,
+		arg.Composer,
+		arg.Comment,
+		arg.RecordingMbid,
 		arg.Basename,
-		arg.LibraryID,
-	)
-	var i AudioFile
-	err := row.Scan(
-		&i.ID,
-		&i.FilePath,
-		&i.LengthMilliseconds,
-		&i.FileTypeID,
-		&i.RecordingID,
-		&i.SampleRate,
-		&i.BitDepth,
-		&i.Channels,
-		&i.Bitrate,
-		&i.FileSize,
-		&i.Basename,
-		&i.LibraryID,
-		&i.PlayCount,
-		&i.LastPlayed,
-		&i.TagStatus,
-		&i.GroupKey,
-		&i.ModifiedAt,
-	)
-	return i, err
-}
-
-const createAudioFileWithGroupKey = `-- name: CreateAudioFileWithGroupKey :one
-INSERT INTO audio_files (
-  file_path, length_milliseconds, file_type_id, recording_id,
-  sample_rate, bit_depth, channels, bitrate, file_size, basename,
-  library_id, group_key, tag_status, modified_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size, basename, library_id, play_count, last_played, tag_status, group_key, modified_at
-`
-
-type CreateAudioFileWithGroupKeyParams struct {
-	FilePath           string
-	LengthMilliseconds int64
-	FileTypeID         int64
-	RecordingID        int64
-	SampleRate         int64
-	BitDepth           int64
-	Channels           int64
-	Bitrate            int64
-	FileSize           int64
-	Basename           string
-	LibraryID          int64
-	GroupKey           string
-	TagStatus          string
-	ModifiedAt         int64
-}
-
-func (q *Queries) CreateAudioFileWithGroupKey(ctx context.Context, arg CreateAudioFileWithGroupKeyParams) (AudioFile, error) {
-	row := q.db.QueryRowContext(ctx, createAudioFileWithGroupKey,
-		arg.FilePath,
-		arg.LengthMilliseconds,
-		arg.FileTypeID,
-		arg.RecordingID,
-		arg.SampleRate,
-		arg.BitDepth,
-		arg.Channels,
-		arg.Bitrate,
-		arg.FileSize,
-		arg.Basename,
-		arg.LibraryID,
 		arg.GroupKey,
-		arg.TagStatus,
 		arg.ModifiedAt,
+		arg.TagStatus,
 	)
 	var i AudioFile
 	err := row.Scan(
 		&i.ID,
 		&i.FilePath,
-		&i.LengthMilliseconds,
+		&i.LibraryID,
 		&i.FileTypeID,
-		&i.RecordingID,
+		&i.LengthMilliseconds,
 		&i.SampleRate,
 		&i.BitDepth,
 		&i.Channels,
 		&i.Bitrate,
 		&i.FileSize,
+		&i.Title,
+		&i.ArtistCredit,
+		&i.ArtistID,
+		&i.AlbumID,
+		&i.TrackNumber,
+		&i.DiscNumber,
+		&i.TotalTracks,
+		&i.Year,
+		&i.Composer,
+		&i.Comment,
+		&i.RecordingMbid,
 		&i.Basename,
-		&i.LibraryID,
+		&i.GroupKey,
+		&i.ModifiedAt,
 		&i.PlayCount,
 		&i.LastPlayed,
 		&i.TagStatus,
-		&i.GroupKey,
-		&i.ModifiedAt,
 	)
 	return i, err
 }
@@ -165,8 +150,7 @@ func (q *Queries) DeleteAllAudioFiles(ctx context.Context) error {
 }
 
 const deleteAudioFile = `-- name: DeleteAudioFile :exec
-DELETE FROM audio_files 
-WHERE id = ?
+DELETE FROM audio_files WHERE id = ?
 `
 
 func (q *Queries) DeleteAudioFile(ctx context.Context, id int64) error {
@@ -206,364 +190,51 @@ func (q *Queries) GetAllAudioFilePaths(ctx context.Context) ([]GetAllAudioFilePa
 	return items, nil
 }
 
-const getAllAudioFiles = `-- name: GetAllAudioFiles :many
-SELECT id, file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size, basename, library_id, play_count, last_played, tag_status, group_key, modified_at FROM audio_files
-`
-
-func (q *Queries) GetAllAudioFiles(ctx context.Context) ([]AudioFile, error) {
-	rows, err := q.db.QueryContext(ctx, getAllAudioFiles)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []AudioFile
-	for rows.Next() {
-		var i AudioFile
-		if err := rows.Scan(
-			&i.ID,
-			&i.FilePath,
-			&i.LengthMilliseconds,
-			&i.FileTypeID,
-			&i.RecordingID,
-			&i.SampleRate,
-			&i.BitDepth,
-			&i.Channels,
-			&i.Bitrate,
-			&i.FileSize,
-			&i.Basename,
-			&i.LibraryID,
-			&i.PlayCount,
-			&i.LastPlayed,
-			&i.TagStatus,
-			&i.GroupKey,
-			&i.ModifiedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const getAllAudioFilesWithArtist = `-- name: GetAllAudioFilesWithArtist :many
-SELECT 
-    af.id,
-    af.file_path,
-    af.length_milliseconds,
-    af.file_type_id,
-    af.recording_id,
-    COALESCE(ac.text, '') AS artist_name,
-    COALESCE(r.name, '') AS title
-FROM audio_files af
-JOIN recordings r ON af.recording_id = r.id
-JOIN artist_credit ac ON r.artist_credit_id = ac.id
-`
-
-type GetAllAudioFilesWithArtistRow struct {
-	ID                 int64
-	FilePath           string
-	LengthMilliseconds int64
-	FileTypeID         int64
-	RecordingID        int64
-	ArtistName         string
-	Title              string
-}
-
-func (q *Queries) GetAllAudioFilesWithArtist(ctx context.Context) ([]GetAllAudioFilesWithArtistRow, error) {
-	rows, err := q.db.QueryContext(ctx, getAllAudioFilesWithArtist)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []GetAllAudioFilesWithArtistRow
-	for rows.Next() {
-		var i GetAllAudioFilesWithArtistRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.FilePath,
-			&i.LengthMilliseconds,
-			&i.FileTypeID,
-			&i.RecordingID,
-			&i.ArtistName,
-			&i.Title,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const getAllTracksWithFullMetadata = `-- name: GetAllTracksWithFullMetadata :many
-SELECT
-    af.file_path,
-    af.length_milliseconds,
-    COALESCE(r.name, '') AS title,
-    COALESCE(ac.text, '') AS artist_name,
-    r.track_number,
-    r.disc_number,
-    COALESCE(rg.name, '') AS album,
-    CAST(COALESCE(
-        (SELECT GROUP_CONCAT(g.name, '||')
-         FROM recording_genres rg_sub
-         JOIN genres g ON rg_sub.genre_id = g.id
-         WHERE rg_sub.recording_id = r.id),
-        ''
-    ) AS TEXT) AS genre,
-    COALESCE(r.year, 0) AS year,
-    COALESCE(r.composer, '') AS composer,
-    COALESCE(ft.extension, '') AS file_type,
-    af.sample_rate,
-    af.bit_depth,
-    af.channels,
-    af.bitrate,
-    af.file_size,
-    af.play_count,
-    af.last_played,
-    COALESCE(ca.file_path, '') AS cover_art_path,
-    COALESCE(a.mbid, '') AS artist_mbid,
-    COALESCE(rg.mbid, '') AS release_group_mbid,
-    COALESCE(r.mbid, '') AS recording_mbid
-FROM audio_files af
-JOIN recordings r ON af.recording_id = r.id
-JOIN artist_credit ac ON r.artist_credit_id = ac.id
-LEFT JOIN artist_credit_artist aca ON aca.credit_id = ac.id
-LEFT JOIN artists a ON a.id = aca.artist_id
-LEFT JOIN release_group_recordings rgr ON r.id = rgr.recording_id
-LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
-LEFT JOIN cover_art ca ON rg.cover_art_id = ca.id
-LEFT JOIN file_types ft ON af.file_type_id = ft.id
-`
-
-type GetAllTracksWithFullMetadataRow struct {
-	FilePath           string
-	LengthMilliseconds int64
-	Title              string
-	ArtistName         string
-	TrackNumber        sql.NullInt64
-	DiscNumber         sql.NullInt64
-	Album              string
-	Genre              string
-	Year               int64
-	Composer           string
-	FileType           string
-	SampleRate         int64
-	BitDepth           int64
-	Channels           int64
-	Bitrate            int64
-	FileSize           int64
-	PlayCount          int64
-	LastPlayed         sql.NullTime
-	CoverArtPath       string
-	ArtistMbid         string
-	ReleaseGroupMbid   string
-	RecordingMbid      string
-}
-
-func (q *Queries) GetAllTracksWithFullMetadata(ctx context.Context) ([]GetAllTracksWithFullMetadataRow, error) {
-	rows, err := q.db.QueryContext(ctx, getAllTracksWithFullMetadata)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []GetAllTracksWithFullMetadataRow
-	for rows.Next() {
-		var i GetAllTracksWithFullMetadataRow
-		if err := rows.Scan(
-			&i.FilePath,
-			&i.LengthMilliseconds,
-			&i.Title,
-			&i.ArtistName,
-			&i.TrackNumber,
-			&i.DiscNumber,
-			&i.Album,
-			&i.Genre,
-			&i.Year,
-			&i.Composer,
-			&i.FileType,
-			&i.SampleRate,
-			&i.BitDepth,
-			&i.Channels,
-			&i.Bitrate,
-			&i.FileSize,
-			&i.PlayCount,
-			&i.LastPlayed,
-			&i.CoverArtPath,
-			&i.ArtistMbid,
-			&i.ReleaseGroupMbid,
-			&i.RecordingMbid,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const getAllTracksWithFullMetadataByLibrary = `-- name: GetAllTracksWithFullMetadataByLibrary :many
-SELECT
-    af.file_path,
-    af.length_milliseconds,
-    COALESCE(r.name, '') AS title,
-    COALESCE(ac.text, '') AS artist_name,
-    r.track_number,
-    r.disc_number,
-    COALESCE(rg.name, '') AS album,
-    CAST(COALESCE(
-        (SELECT GROUP_CONCAT(g.name, '||')
-         FROM recording_genres rg_sub
-         JOIN genres g ON rg_sub.genre_id = g.id
-         WHERE rg_sub.recording_id = r.id),
-        ''
-    ) AS TEXT) AS genre,
-    COALESCE(r.year, 0) AS year,
-    COALESCE(r.composer, '') AS composer,
-    COALESCE(ft.extension, '') AS file_type,
-    af.sample_rate,
-    af.bit_depth,
-    af.channels,
-    af.bitrate,
-    af.file_size,
-    af.play_count,
-    af.last_played,
-    COALESCE(ca.file_path, '') AS cover_art_path,
-    COALESCE(a.mbid, '') AS artist_mbid,
-    COALESCE(rg.mbid, '') AS release_group_mbid,
-    COALESCE(r.mbid, '') AS recording_mbid
-FROM audio_files af
-JOIN recordings r ON af.recording_id = r.id
-JOIN artist_credit ac ON r.artist_credit_id = ac.id
-LEFT JOIN artist_credit_artist aca ON aca.credit_id = ac.id
-LEFT JOIN artists a ON a.id = aca.artist_id
-LEFT JOIN release_group_recordings rgr ON r.id = rgr.recording_id
-LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
-LEFT JOIN cover_art ca ON rg.cover_art_id = ca.id
-LEFT JOIN file_types ft ON af.file_type_id = ft.id
-WHERE af.library_id = ?
-`
-
-type GetAllTracksWithFullMetadataByLibraryRow struct {
-	FilePath           string
-	LengthMilliseconds int64
-	Title              string
-	ArtistName         string
-	TrackNumber        sql.NullInt64
-	DiscNumber         sql.NullInt64
-	Album              string
-	Genre              string
-	Year               int64
-	Composer           string
-	FileType           string
-	SampleRate         int64
-	BitDepth           int64
-	Channels           int64
-	Bitrate            int64
-	FileSize           int64
-	PlayCount          int64
-	LastPlayed         sql.NullTime
-	CoverArtPath       string
-	ArtistMbid         string
-	ReleaseGroupMbid   string
-	RecordingMbid      string
-}
-
-func (q *Queries) GetAllTracksWithFullMetadataByLibrary(ctx context.Context, libraryID int64) ([]GetAllTracksWithFullMetadataByLibraryRow, error) {
-	rows, err := q.db.QueryContext(ctx, getAllTracksWithFullMetadataByLibrary, libraryID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []GetAllTracksWithFullMetadataByLibraryRow
-	for rows.Next() {
-		var i GetAllTracksWithFullMetadataByLibraryRow
-		if err := rows.Scan(
-			&i.FilePath,
-			&i.LengthMilliseconds,
-			&i.Title,
-			&i.ArtistName,
-			&i.TrackNumber,
-			&i.DiscNumber,
-			&i.Album,
-			&i.Genre,
-			&i.Year,
-			&i.Composer,
-			&i.FileType,
-			&i.SampleRate,
-			&i.BitDepth,
-			&i.Channels,
-			&i.Bitrate,
-			&i.FileSize,
-			&i.PlayCount,
-			&i.LastPlayed,
-			&i.CoverArtPath,
-			&i.ArtistMbid,
-			&i.ReleaseGroupMbid,
-			&i.RecordingMbid,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const getAudioFile = `-- name: GetAudioFile :one
-SELECT id, file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size, basename, library_id, play_count, last_played, tag_status, group_key, modified_at FROM audio_files 
-WHERE id = ? LIMIT 1
+
+SELECT id, file_path, library_id, file_type_id, length_milliseconds, sample_rate, bit_depth, channels, bitrate, file_size, title, artist_credit, artist_id, album_id, track_number, disc_number, total_tracks, year, composer, comment, recording_mbid, basename, group_key, modified_at, play_count, last_played, tag_status FROM audio_files WHERE id = ? LIMIT 1
 `
 
+// ---------------------------------------------------------------------
+// Reads: the file row itself
+// ---------------------------------------------------------------------
 func (q *Queries) GetAudioFile(ctx context.Context, id int64) (AudioFile, error) {
 	row := q.db.QueryRowContext(ctx, getAudioFile, id)
 	var i AudioFile
 	err := row.Scan(
 		&i.ID,
 		&i.FilePath,
-		&i.LengthMilliseconds,
+		&i.LibraryID,
 		&i.FileTypeID,
-		&i.RecordingID,
+		&i.LengthMilliseconds,
 		&i.SampleRate,
 		&i.BitDepth,
 		&i.Channels,
 		&i.Bitrate,
 		&i.FileSize,
+		&i.Title,
+		&i.ArtistCredit,
+		&i.ArtistID,
+		&i.AlbumID,
+		&i.TrackNumber,
+		&i.DiscNumber,
+		&i.TotalTracks,
+		&i.Year,
+		&i.Composer,
+		&i.Comment,
+		&i.RecordingMbid,
 		&i.Basename,
-		&i.LibraryID,
+		&i.GroupKey,
+		&i.ModifiedAt,
 		&i.PlayCount,
 		&i.LastPlayed,
 		&i.TagStatus,
-		&i.GroupKey,
-		&i.ModifiedAt,
 	)
 	return i, err
 }
 
 const getAudioFileByPath = `-- name: GetAudioFileByPath :one
-SELECT id, file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size, basename, library_id, play_count, last_played, tag_status, group_key, modified_at FROM audio_files
-WHERE file_path = ? LIMIT 1
+SELECT id, file_path, library_id, file_type_id, length_milliseconds, sample_rate, bit_depth, channels, bitrate, file_size, title, artist_credit, artist_id, album_id, track_number, disc_number, total_tracks, year, composer, comment, recording_mbid, basename, group_key, modified_at, play_count, last_played, tag_status FROM audio_files WHERE file_path = ? LIMIT 1
 `
 
 func (q *Queries) GetAudioFileByPath(ctx context.Context, filePath string) (AudioFile, error) {
@@ -572,28 +243,37 @@ func (q *Queries) GetAudioFileByPath(ctx context.Context, filePath string) (Audi
 	err := row.Scan(
 		&i.ID,
 		&i.FilePath,
-		&i.LengthMilliseconds,
+		&i.LibraryID,
 		&i.FileTypeID,
-		&i.RecordingID,
+		&i.LengthMilliseconds,
 		&i.SampleRate,
 		&i.BitDepth,
 		&i.Channels,
 		&i.Bitrate,
 		&i.FileSize,
+		&i.Title,
+		&i.ArtistCredit,
+		&i.ArtistID,
+		&i.AlbumID,
+		&i.TrackNumber,
+		&i.DiscNumber,
+		&i.TotalTracks,
+		&i.Year,
+		&i.Composer,
+		&i.Comment,
+		&i.RecordingMbid,
 		&i.Basename,
-		&i.LibraryID,
+		&i.GroupKey,
+		&i.ModifiedAt,
 		&i.PlayCount,
 		&i.LastPlayed,
 		&i.TagStatus,
-		&i.GroupKey,
-		&i.ModifiedAt,
 	)
 	return i, err
 }
 
 const getAudioFileGroupKey = `-- name: GetAudioFileGroupKey :one
-SELECT group_key FROM audio_files
-WHERE id = ? LIMIT 1
+SELECT group_key FROM audio_files WHERE id = ? LIMIT 1
 `
 
 func (q *Queries) GetAudioFileGroupKey(ctx context.Context, id int64) (string, error) {
@@ -601,51 +281,6 @@ func (q *Queries) GetAudioFileGroupKey(ctx context.Context, id int64) (string, e
 	var group_key string
 	err := row.Scan(&group_key)
 	return group_key, err
-}
-
-const getAudioFilesByLibrary = `-- name: GetAudioFilesByLibrary :many
-SELECT id, file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size, basename, library_id, play_count, last_played, tag_status, group_key, modified_at FROM audio_files WHERE library_id = ?
-`
-
-func (q *Queries) GetAudioFilesByLibrary(ctx context.Context, libraryID int64) ([]AudioFile, error) {
-	rows, err := q.db.QueryContext(ctx, getAudioFilesByLibrary, libraryID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []AudioFile
-	for rows.Next() {
-		var i AudioFile
-		if err := rows.Scan(
-			&i.ID,
-			&i.FilePath,
-			&i.LengthMilliseconds,
-			&i.FileTypeID,
-			&i.RecordingID,
-			&i.SampleRate,
-			&i.BitDepth,
-			&i.Channels,
-			&i.Bitrate,
-			&i.FileSize,
-			&i.Basename,
-			&i.LibraryID,
-			&i.PlayCount,
-			&i.LastPlayed,
-			&i.TagStatus,
-			&i.GroupKey,
-			&i.ModifiedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const getAudioFilesByPaths = `-- name: GetAudioFilesByPaths :many
@@ -698,226 +333,12 @@ func (q *Queries) GetAudioFilesByPaths(ctx context.Context, paths []string) ([]G
 	return items, nil
 }
 
-const getAudioFilesByReleaseGroup = `-- name: GetAudioFilesByReleaseGroup :many
-SELECT
-    af.file_path,
-    af.length_milliseconds,
-    COALESCE(r.name, '') AS title,
-    COALESCE(ac.text, '') AS artist_name,
-    rgr.track_number,
-    rgr.disc_number,
-    COALESCE(rg.name, '') AS album,
-    CAST(COALESCE(
-        (SELECT GROUP_CONCAT(g.name, '||')
-         FROM recording_genres rg_sub
-         JOIN genres g ON rg_sub.genre_id = g.id
-         WHERE rg_sub.recording_id = r.id),
-        ''
-    ) AS TEXT) AS genre,
-    COALESCE(r.year, 0) AS year,
-    COALESCE(r.composer, '') AS composer,
-    COALESCE(ft.extension, '') AS file_type,
-    af.sample_rate,
-    af.bit_depth,
-    af.channels,
-    af.bitrate,
-    af.file_size,
-    COALESCE(a.mbid, '') AS artist_mbid,
-    COALESCE(rg.mbid, '') AS release_group_mbid,
-    COALESCE(r.mbid, '') AS recording_mbid
-FROM release_group_recordings rgr
-JOIN recordings r ON rgr.recording_id = r.id
-JOIN audio_files af ON af.recording_id = r.id
-LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
-LEFT JOIN artist_credit_artist aca ON aca.credit_id = ac.id
-LEFT JOIN artists a ON a.id = aca.artist_id
-LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
-LEFT JOIN file_types ft ON af.file_type_id = ft.id
-WHERE rgr.release_group_id = ?
-ORDER BY rgr.disc_number, rgr.track_number
+const getAudioFilesInLibrary = `-- name: GetAudioFilesInLibrary :many
+SELECT id, file_path, library_id, file_type_id, length_milliseconds, sample_rate, bit_depth, channels, bitrate, file_size, title, artist_credit, artist_id, album_id, track_number, disc_number, total_tracks, year, composer, comment, recording_mbid, basename, group_key, modified_at, play_count, last_played, tag_status FROM audio_files WHERE library_id = ?
 `
 
-type GetAudioFilesByReleaseGroupRow struct {
-	FilePath           string
-	LengthMilliseconds int64
-	Title              string
-	ArtistName         string
-	TrackNumber        sql.NullInt64
-	DiscNumber         sql.NullInt64
-	Album              string
-	Genre              string
-	Year               int64
-	Composer           string
-	FileType           string
-	SampleRate         int64
-	BitDepth           int64
-	Channels           int64
-	Bitrate            int64
-	FileSize           int64
-	ArtistMbid         string
-	ReleaseGroupMbid   string
-	RecordingMbid      string
-}
-
-func (q *Queries) GetAudioFilesByReleaseGroup(ctx context.Context, releaseGroupID int64) ([]GetAudioFilesByReleaseGroupRow, error) {
-	rows, err := q.db.QueryContext(ctx, getAudioFilesByReleaseGroup, releaseGroupID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []GetAudioFilesByReleaseGroupRow
-	for rows.Next() {
-		var i GetAudioFilesByReleaseGroupRow
-		if err := rows.Scan(
-			&i.FilePath,
-			&i.LengthMilliseconds,
-			&i.Title,
-			&i.ArtistName,
-			&i.TrackNumber,
-			&i.DiscNumber,
-			&i.Album,
-			&i.Genre,
-			&i.Year,
-			&i.Composer,
-			&i.FileType,
-			&i.SampleRate,
-			&i.BitDepth,
-			&i.Channels,
-			&i.Bitrate,
-			&i.FileSize,
-			&i.ArtistMbid,
-			&i.ReleaseGroupMbid,
-			&i.RecordingMbid,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const getAudioFilesByReleaseGroupByLibrary = `-- name: GetAudioFilesByReleaseGroupByLibrary :many
-SELECT
-    af.file_path,
-    af.length_milliseconds,
-    COALESCE(r.name, '') AS title,
-    COALESCE(ac.text, '') AS artist_name,
-    rgr.track_number,
-    rgr.disc_number,
-    COALESCE(rg.name, '') AS album,
-    CAST(COALESCE(
-        (SELECT GROUP_CONCAT(g.name, '||')
-         FROM recording_genres rg_sub
-         JOIN genres g ON rg_sub.genre_id = g.id
-         WHERE rg_sub.recording_id = r.id),
-        ''
-    ) AS TEXT) AS genre,
-    COALESCE(r.year, 0) AS year,
-    COALESCE(r.composer, '') AS composer,
-    COALESCE(ft.extension, '') AS file_type,
-    af.sample_rate,
-    af.bit_depth,
-    af.channels,
-    af.bitrate,
-    af.file_size,
-    COALESCE(a.mbid, '') AS artist_mbid,
-    COALESCE(rg.mbid, '') AS release_group_mbid,
-    COALESCE(r.mbid, '') AS recording_mbid
-FROM release_group_recordings rgr
-JOIN recordings r ON rgr.recording_id = r.id
-JOIN audio_files af ON af.recording_id = r.id
-LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
-LEFT JOIN artist_credit_artist aca ON aca.credit_id = ac.id
-LEFT JOIN artists a ON a.id = aca.artist_id
-LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
-LEFT JOIN file_types ft ON af.file_type_id = ft.id
-WHERE rgr.release_group_id = ? AND af.library_id = ?
-ORDER BY rgr.disc_number, rgr.track_number
-`
-
-type GetAudioFilesByReleaseGroupByLibraryParams struct {
-	ReleaseGroupID int64
-	LibraryID      int64
-}
-
-type GetAudioFilesByReleaseGroupByLibraryRow struct {
-	FilePath           string
-	LengthMilliseconds int64
-	Title              string
-	ArtistName         string
-	TrackNumber        sql.NullInt64
-	DiscNumber         sql.NullInt64
-	Album              string
-	Genre              string
-	Year               int64
-	Composer           string
-	FileType           string
-	SampleRate         int64
-	BitDepth           int64
-	Channels           int64
-	Bitrate            int64
-	FileSize           int64
-	ArtistMbid         string
-	ReleaseGroupMbid   string
-	RecordingMbid      string
-}
-
-func (q *Queries) GetAudioFilesByReleaseGroupByLibrary(ctx context.Context, arg GetAudioFilesByReleaseGroupByLibraryParams) ([]GetAudioFilesByReleaseGroupByLibraryRow, error) {
-	rows, err := q.db.QueryContext(ctx, getAudioFilesByReleaseGroupByLibrary, arg.ReleaseGroupID, arg.LibraryID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []GetAudioFilesByReleaseGroupByLibraryRow
-	for rows.Next() {
-		var i GetAudioFilesByReleaseGroupByLibraryRow
-		if err := rows.Scan(
-			&i.FilePath,
-			&i.LengthMilliseconds,
-			&i.Title,
-			&i.ArtistName,
-			&i.TrackNumber,
-			&i.DiscNumber,
-			&i.Album,
-			&i.Genre,
-			&i.Year,
-			&i.Composer,
-			&i.FileType,
-			&i.SampleRate,
-			&i.BitDepth,
-			&i.Channels,
-			&i.Bitrate,
-			&i.FileSize,
-			&i.ArtistMbid,
-			&i.ReleaseGroupMbid,
-			&i.RecordingMbid,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const getAudioFilesNeedingMetadata = `-- name: GetAudioFilesNeedingMetadata :many
-SELECT id, file_path, length_milliseconds, file_type_id, recording_id, sample_rate, bit_depth, channels, bitrate, file_size, basename, library_id, play_count, last_played, tag_status, group_key, modified_at FROM audio_files
-WHERE recording_id = 0
-`
-
-func (q *Queries) GetAudioFilesNeedingMetadata(ctx context.Context) ([]AudioFile, error) {
-	rows, err := q.db.QueryContext(ctx, getAudioFilesNeedingMetadata)
+func (q *Queries) GetAudioFilesInLibrary(ctx context.Context, libraryID int64) ([]AudioFile, error) {
+	rows, err := q.db.QueryContext(ctx, getAudioFilesInLibrary, libraryID)
 	if err != nil {
 		return nil, err
 	}
@@ -928,22 +349,167 @@ func (q *Queries) GetAudioFilesNeedingMetadata(ctx context.Context) ([]AudioFile
 		if err := rows.Scan(
 			&i.ID,
 			&i.FilePath,
-			&i.LengthMilliseconds,
+			&i.LibraryID,
 			&i.FileTypeID,
-			&i.RecordingID,
+			&i.LengthMilliseconds,
 			&i.SampleRate,
 			&i.BitDepth,
 			&i.Channels,
 			&i.Bitrate,
 			&i.FileSize,
+			&i.Title,
+			&i.ArtistCredit,
+			&i.ArtistID,
+			&i.AlbumID,
+			&i.TrackNumber,
+			&i.DiscNumber,
+			&i.TotalTracks,
+			&i.Year,
+			&i.Composer,
+			&i.Comment,
+			&i.RecordingMbid,
 			&i.Basename,
-			&i.LibraryID,
+			&i.GroupKey,
+			&i.ModifiedAt,
 			&i.PlayCount,
 			&i.LastPlayed,
 			&i.TagStatus,
-			&i.GroupKey,
-			&i.ModifiedAt,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getFilePathsByAlbums = `-- name: GetFilePathsByAlbums :many
+
+SELECT album_id, library_id, file_path FROM audio_files
+WHERE album_id IN (/*SLICE:album_ids*/?)
+ORDER BY disc_number, track_number
+`
+
+type GetFilePathsByAlbumsRow struct {
+	AlbumID   sql.NullInt64
+	LibraryID int64
+	FilePath  string
+}
+
+// ---------------------------------------------------------------------
+// Reads: file paths, grouped by whatever the caller asked about
+// ---------------------------------------------------------------------
+// These answer "what can I play" and they all ask audio_files, because
+// that is the only table whose rows are files.  Grouped rather than
+// flattened because the caller owns the order.
+// The library filter is applied in Go rather than here: sqlc numbers a
+// named parameter (?2) but expands a slice into N placeholders, so the
+// two together bind the wrong values - GetFilePathsByAlbums([1,2], 0)
+// read album id 2 as the library id.  Returning library_id and
+// filtering the (small) result is the version that cannot be wrong.
+func (q *Queries) GetFilePathsByAlbums(ctx context.Context, albumIds []sql.NullInt64) ([]GetFilePathsByAlbumsRow, error) {
+	query := getFilePathsByAlbums
+	var queryParams []interface{}
+	if len(albumIds) > 0 {
+		for _, v := range albumIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:album_ids*/?", strings.Repeat(",?", len(albumIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:album_ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetFilePathsByAlbumsRow
+	for rows.Next() {
+		var i GetFilePathsByAlbumsRow
+		if err := rows.Scan(&i.AlbumID, &i.LibraryID, &i.FilePath); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getFilePathsByArtistMBID = `-- name: GetFilePathsByArtistMBID :many
+SELECT DISTINCT af.file_path
+FROM audio_files af
+JOIN artists a ON a.id = af.artist_id
+WHERE a.mbid = ?
+`
+
+func (q *Queries) GetFilePathsByArtistMBID(ctx context.Context, mbid sql.NullString) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, getFilePathsByArtistMBID, mbid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var file_path string
+		if err := rows.Scan(&file_path); err != nil {
+			return nil, err
+		}
+		items = append(items, file_path)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getFilePathsByGenres = `-- name: GetFilePathsByGenres :many
+SELECT g.name AS genre, af.library_id, af.file_path
+FROM audio_files af
+JOIN file_genres fg ON fg.audio_file_id = af.id
+JOIN genres g ON g.id = fg.genre_id
+WHERE g.name IN (/*SLICE:genres*/?)
+ORDER BY af.disc_number, af.track_number
+`
+
+type GetFilePathsByGenresRow struct {
+	Genre     string
+	LibraryID int64
+	FilePath  string
+}
+
+func (q *Queries) GetFilePathsByGenres(ctx context.Context, genres []string) ([]GetFilePathsByGenresRow, error) {
+	query := getFilePathsByGenres
+	var queryParams []interface{}
+	if len(genres) > 0 {
+		for _, v := range genres {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:genres*/?", strings.Repeat(",?", len(genres))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:genres*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetFilePathsByGenresRow
+	for rows.Next() {
+		var i GetFilePathsByGenresRow
+		if err := rows.Scan(&i.Genre, &i.LibraryID, &i.FilePath); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -958,28 +524,20 @@ func (q *Queries) GetAudioFilesNeedingMetadata(ctx context.Context) ([]AudioFile
 }
 
 const getFilePathsByRecordingMBIDs = `-- name: GetFilePathsByRecordingMBIDs :many
-
-SELECT r.mbid AS recording_mbid, af.file_path
-FROM recordings r
-JOIN audio_files af ON af.recording_id = r.id
-WHERE r.mbid IN (/*SLICE:mbids*/?)
-ORDER BY af.file_path
+SELECT recording_mbid, library_id, file_path FROM audio_files
+WHERE recording_mbid IN (/*SLICE:mbids*/?)
+ORDER BY file_path
 `
 
 type GetFilePathsByRecordingMBIDsRow struct {
 	RecordingMbid sql.NullString
+	LibraryID     int64
 	FilePath      string
 }
 
-// Same shape again, keyed on recording MBID, for the catalog side.
-// An Explore album page knows which of its tracks the user owns only
-// as a set of recording MBIDs -- that is exactly how the backend
-// decides `inLibrary` (markReleasesInLibrary -> CheckMBIDs) -- and
-// MBTrack.LocalID is declared but never written by anything, so there
-// is no id to ask by. Grouped by MBID because a recording can have
-// more than one file (the duplicate fixtures are precisely that) and
-// because the caller owns the order: the tracklist's, not the
-// database's.
+// The ownership question in its only honest form: which of these
+// catalog recordings has a *file* behind it.  Asked of audio_files, so
+// a metadata row with no file cannot answer yes.
 func (q *Queries) GetFilePathsByRecordingMBIDs(ctx context.Context, mbids []sql.NullString) ([]GetFilePathsByRecordingMBIDsRow, error) {
 	query := getFilePathsByRecordingMBIDs
 	var queryParams []interface{}
@@ -999,167 +557,7 @@ func (q *Queries) GetFilePathsByRecordingMBIDs(ctx context.Context, mbids []sql.
 	var items []GetFilePathsByRecordingMBIDsRow
 	for rows.Next() {
 		var i GetFilePathsByRecordingMBIDsRow
-		if err := rows.Scan(&i.RecordingMbid, &i.FilePath); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const getFilePathsByRecordingMBIDsByLibrary = `-- name: GetFilePathsByRecordingMBIDsByLibrary :many
-SELECT r.mbid AS recording_mbid, af.file_path
-FROM recordings r
-JOIN audio_files af ON af.recording_id = r.id
-WHERE r.mbid IN (/*SLICE:mbids*/?)
-  AND af.library_id = ?
-ORDER BY af.file_path
-`
-
-type GetFilePathsByRecordingMBIDsByLibraryParams struct {
-	Mbids     []sql.NullString
-	LibraryID int64
-}
-
-type GetFilePathsByRecordingMBIDsByLibraryRow struct {
-	RecordingMbid sql.NullString
-	FilePath      string
-}
-
-func (q *Queries) GetFilePathsByRecordingMBIDsByLibrary(ctx context.Context, arg GetFilePathsByRecordingMBIDsByLibraryParams) ([]GetFilePathsByRecordingMBIDsByLibraryRow, error) {
-	query := getFilePathsByRecordingMBIDsByLibrary
-	var queryParams []interface{}
-	if len(arg.Mbids) > 0 {
-		for _, v := range arg.Mbids {
-			queryParams = append(queryParams, v)
-		}
-		query = strings.Replace(query, "/*SLICE:mbids*/?", strings.Repeat(",?", len(arg.Mbids))[1:], 1)
-	} else {
-		query = strings.Replace(query, "/*SLICE:mbids*/?", "NULL", 1)
-	}
-	queryParams = append(queryParams, arg.LibraryID)
-	rows, err := q.db.QueryContext(ctx, query, queryParams...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []GetFilePathsByRecordingMBIDsByLibraryRow
-	for rows.Next() {
-		var i GetFilePathsByRecordingMBIDsByLibraryRow
-		if err := rows.Scan(&i.RecordingMbid, &i.FilePath); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const getFilePathsByReleaseGroups = `-- name: GetFilePathsByReleaseGroups :many
-
-SELECT rgr.release_group_id, af.file_path
-FROM release_group_recordings rgr
-JOIN recordings r ON rgr.recording_id = r.id
-JOIN audio_files af ON af.recording_id = r.id
-WHERE rgr.release_group_id IN (/*SLICE:release_group_ids*/?)
-ORDER BY rgr.disc_number, rgr.track_number
-`
-
-type GetFilePathsByReleaseGroupsRow struct {
-	ReleaseGroupID int64
-	FilePath       string
-}
-
-// "Play this artist" and "play these albums" wanted file paths and asked
-// for whole track rows to get them, one round trip per album (perf.m2).
-// These answer the same question in one query and carry only what the
-// caller uses; the release group id comes back so the caller can keep
-// its own album ordering.
-func (q *Queries) GetFilePathsByReleaseGroups(ctx context.Context, releaseGroupIds []int64) ([]GetFilePathsByReleaseGroupsRow, error) {
-	query := getFilePathsByReleaseGroups
-	var queryParams []interface{}
-	if len(releaseGroupIds) > 0 {
-		for _, v := range releaseGroupIds {
-			queryParams = append(queryParams, v)
-		}
-		query = strings.Replace(query, "/*SLICE:release_group_ids*/?", strings.Repeat(",?", len(releaseGroupIds))[1:], 1)
-	} else {
-		query = strings.Replace(query, "/*SLICE:release_group_ids*/?", "NULL", 1)
-	}
-	rows, err := q.db.QueryContext(ctx, query, queryParams...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []GetFilePathsByReleaseGroupsRow
-	for rows.Next() {
-		var i GetFilePathsByReleaseGroupsRow
-		if err := rows.Scan(&i.ReleaseGroupID, &i.FilePath); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const getFilePathsByReleaseGroupsByLibrary = `-- name: GetFilePathsByReleaseGroupsByLibrary :many
-SELECT rgr.release_group_id, af.file_path
-FROM release_group_recordings rgr
-JOIN recordings r ON rgr.recording_id = r.id
-JOIN audio_files af ON af.recording_id = r.id
-WHERE rgr.release_group_id IN (/*SLICE:release_group_ids*/?)
-  AND af.library_id = ?
-ORDER BY rgr.disc_number, rgr.track_number
-`
-
-type GetFilePathsByReleaseGroupsByLibraryParams struct {
-	ReleaseGroupIds []int64
-	LibraryID       int64
-}
-
-type GetFilePathsByReleaseGroupsByLibraryRow struct {
-	ReleaseGroupID int64
-	FilePath       string
-}
-
-func (q *Queries) GetFilePathsByReleaseGroupsByLibrary(ctx context.Context, arg GetFilePathsByReleaseGroupsByLibraryParams) ([]GetFilePathsByReleaseGroupsByLibraryRow, error) {
-	query := getFilePathsByReleaseGroupsByLibrary
-	var queryParams []interface{}
-	if len(arg.ReleaseGroupIds) > 0 {
-		for _, v := range arg.ReleaseGroupIds {
-			queryParams = append(queryParams, v)
-		}
-		query = strings.Replace(query, "/*SLICE:release_group_ids*/?", strings.Repeat(",?", len(arg.ReleaseGroupIds))[1:], 1)
-	} else {
-		query = strings.Replace(query, "/*SLICE:release_group_ids*/?", "NULL", 1)
-	}
-	queryParams = append(queryParams, arg.LibraryID)
-	rows, err := q.db.QueryContext(ctx, query, queryParams...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []GetFilePathsByReleaseGroupsByLibraryRow
-	for rows.Next() {
-		var i GetFilePathsByReleaseGroupsByLibraryRow
-		if err := rows.Scan(&i.ReleaseGroupID, &i.FilePath); err != nil {
+		if err := rows.Scan(&i.RecordingMbid, &i.LibraryID, &i.FilePath); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -1188,9 +586,7 @@ func (q *Queries) GetLibraryMaxModifiedAt(ctx context.Context, libraryID int64) 
 }
 
 const getRandomAudioFilePath = `-- name: GetRandomAudioFilePath :one
-SELECT file_path FROM audio_files
-ORDER BY RANDOM()
-LIMIT 1
+SELECT file_path FROM audio_files ORDER BY RANDOM() LIMIT 1
 `
 
 func (q *Queries) GetRandomAudioFilePath(ctx context.Context) (string, error) {
@@ -1200,60 +596,235 @@ func (q *Queries) GetRandomAudioFilePath(ctx context.Context) (string, error) {
 	return file_path, err
 }
 
-const getTrackMetadataByPath = `-- name: GetTrackMetadataByPath :one
-SELECT 
-    af.file_path,
-    af.length_milliseconds,
-    COALESCE(r.name, '') AS title,
-    COALESCE(ac.text, '') AS artist,
-    COALESCE(rg.name, '') AS album,
-    COALESCE(ca.file_path, '') AS cover_art_path,
-    COALESCE(a.mbid, '') AS artist_mbid,
-    COALESCE(rg.mbid, '') AS release_group_mbid,
-    COALESCE(r.mbid, '') AS recording_mbid
-FROM audio_files af
-LEFT JOIN recordings r ON af.recording_id = r.id
-LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
-LEFT JOIN artist_credit_artist aca ON aca.credit_id = ac.id
-LEFT JOIN artists a ON a.id = aca.artist_id
-LEFT JOIN release_group_recordings rgr ON r.id = rgr.recording_id
-LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
-LEFT JOIN cover_art ca ON rg.cover_art_id = ca.id
-WHERE af.file_path = ?
-LIMIT 1
+const getTrackByPath = `-- name: GetTrackByPath :one
+SELECT id, file_path, length_milliseconds, title, artist_name, track_number, disc_number, album, genre, year, release_year, composer, file_type, sample_rate, bit_depth, channels, bitrate, file_size, library_id, play_count, last_played, cover_art_path, artist_mbid, release_group_mbid, recording_mbid, album_id, artist_id FROM track_metadata WHERE file_path = ? LIMIT 1
 `
 
-type GetTrackMetadataByPathRow struct {
-	FilePath           string
-	LengthMilliseconds int64
-	Title              string
-	Artist             string
-	Album              string
-	CoverArtPath       string
-	ArtistMbid         string
-	ReleaseGroupMbid   string
-	RecordingMbid      string
-}
-
-func (q *Queries) GetTrackMetadataByPath(ctx context.Context, filePath string) (GetTrackMetadataByPathRow, error) {
-	row := q.db.QueryRowContext(ctx, getTrackMetadataByPath, filePath)
-	var i GetTrackMetadataByPathRow
+func (q *Queries) GetTrackByPath(ctx context.Context, filePath string) (TrackMetadatum, error) {
+	row := q.db.QueryRowContext(ctx, getTrackByPath, filePath)
+	var i TrackMetadatum
 	err := row.Scan(
+		&i.ID,
 		&i.FilePath,
 		&i.LengthMilliseconds,
 		&i.Title,
-		&i.Artist,
+		&i.ArtistName,
+		&i.TrackNumber,
+		&i.DiscNumber,
 		&i.Album,
+		&i.Genre,
+		&i.Year,
+		&i.ReleaseYear,
+		&i.Composer,
+		&i.FileType,
+		&i.SampleRate,
+		&i.BitDepth,
+		&i.Channels,
+		&i.Bitrate,
+		&i.FileSize,
+		&i.LibraryID,
+		&i.PlayCount,
+		&i.LastPlayed,
 		&i.CoverArtPath,
 		&i.ArtistMbid,
 		&i.ReleaseGroupMbid,
 		&i.RecordingMbid,
+		&i.AlbumID,
+		&i.ArtistID,
 	)
 	return i, err
 }
 
+const getTracks = `-- name: GetTracks :many
+
+SELECT id, file_path, length_milliseconds, title, artist_name, track_number, disc_number, album, genre, year, release_year, composer, file_type, sample_rate, bit_depth, channels, bitrate, file_size, library_id, play_count, last_played, cover_art_path, artist_mbid, release_group_mbid, recording_mbid, album_id, artist_id FROM track_metadata
+WHERE library_id = COALESCE(NULLIF(CAST(?1 AS INTEGER), 0), library_id)
+`
+
+// ---------------------------------------------------------------------
+// Reads: tracks
+// ---------------------------------------------------------------------
+func (q *Queries) GetTracks(ctx context.Context, libraryID int64) ([]TrackMetadatum, error) {
+	rows, err := q.db.QueryContext(ctx, getTracks, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TrackMetadatum
+	for rows.Next() {
+		var i TrackMetadatum
+		if err := rows.Scan(
+			&i.ID,
+			&i.FilePath,
+			&i.LengthMilliseconds,
+			&i.Title,
+			&i.ArtistName,
+			&i.TrackNumber,
+			&i.DiscNumber,
+			&i.Album,
+			&i.Genre,
+			&i.Year,
+			&i.ReleaseYear,
+			&i.Composer,
+			&i.FileType,
+			&i.SampleRate,
+			&i.BitDepth,
+			&i.Channels,
+			&i.Bitrate,
+			&i.FileSize,
+			&i.LibraryID,
+			&i.PlayCount,
+			&i.LastPlayed,
+			&i.CoverArtPath,
+			&i.ArtistMbid,
+			&i.ReleaseGroupMbid,
+			&i.RecordingMbid,
+			&i.AlbumID,
+			&i.ArtistID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getTracksByAlbum = `-- name: GetTracksByAlbum :many
+SELECT id, file_path, length_milliseconds, title, artist_name, track_number, disc_number, album, genre, year, release_year, composer, file_type, sample_rate, bit_depth, channels, bitrate, file_size, library_id, play_count, last_played, cover_art_path, artist_mbid, release_group_mbid, recording_mbid, album_id, artist_id FROM track_metadata
+WHERE album_id = ?1
+  AND library_id = COALESCE(NULLIF(CAST(?2 AS INTEGER), 0), library_id)
+ORDER BY disc_number, track_number
+`
+
+type GetTracksByAlbumParams struct {
+	AlbumID   sql.NullInt64
+	LibraryID int64
+}
+
+func (q *Queries) GetTracksByAlbum(ctx context.Context, arg GetTracksByAlbumParams) ([]TrackMetadatum, error) {
+	rows, err := q.db.QueryContext(ctx, getTracksByAlbum, arg.AlbumID, arg.LibraryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TrackMetadatum
+	for rows.Next() {
+		var i TrackMetadatum
+		if err := rows.Scan(
+			&i.ID,
+			&i.FilePath,
+			&i.LengthMilliseconds,
+			&i.Title,
+			&i.ArtistName,
+			&i.TrackNumber,
+			&i.DiscNumber,
+			&i.Album,
+			&i.Genre,
+			&i.Year,
+			&i.ReleaseYear,
+			&i.Composer,
+			&i.FileType,
+			&i.SampleRate,
+			&i.BitDepth,
+			&i.Channels,
+			&i.Bitrate,
+			&i.FileSize,
+			&i.LibraryID,
+			&i.PlayCount,
+			&i.LastPlayed,
+			&i.CoverArtPath,
+			&i.ArtistMbid,
+			&i.ReleaseGroupMbid,
+			&i.RecordingMbid,
+			&i.AlbumID,
+			&i.ArtistID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getTracksByGenre = `-- name: GetTracksByGenre :many
+SELECT tm.id, tm.file_path, tm.length_milliseconds, tm.title, tm.artist_name, tm.track_number, tm.disc_number, tm.album, tm.genre, tm.year, tm.release_year, tm.composer, tm.file_type, tm.sample_rate, tm.bit_depth, tm.channels, tm.bitrate, tm.file_size, tm.library_id, tm.play_count, tm.last_played, tm.cover_art_path, tm.artist_mbid, tm.release_group_mbid, tm.recording_mbid, tm.album_id, tm.artist_id FROM track_metadata tm
+JOIN file_genres fg ON fg.audio_file_id = tm.id
+JOIN genres g ON g.id = fg.genre_id
+WHERE g.name = ?1
+  AND tm.library_id = COALESCE(NULLIF(CAST(?2 AS INTEGER), 0), tm.library_id)
+`
+
+type GetTracksByGenreParams struct {
+	Genre     string
+	LibraryID int64
+}
+
+func (q *Queries) GetTracksByGenre(ctx context.Context, arg GetTracksByGenreParams) ([]TrackMetadatum, error) {
+	rows, err := q.db.QueryContext(ctx, getTracksByGenre, arg.Genre, arg.LibraryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TrackMetadatum
+	for rows.Next() {
+		var i TrackMetadatum
+		if err := rows.Scan(
+			&i.ID,
+			&i.FilePath,
+			&i.LengthMilliseconds,
+			&i.Title,
+			&i.ArtistName,
+			&i.TrackNumber,
+			&i.DiscNumber,
+			&i.Album,
+			&i.Genre,
+			&i.Year,
+			&i.ReleaseYear,
+			&i.Composer,
+			&i.FileType,
+			&i.SampleRate,
+			&i.BitDepth,
+			&i.Channels,
+			&i.Bitrate,
+			&i.FileSize,
+			&i.LibraryID,
+			&i.PlayCount,
+			&i.LastPlayed,
+			&i.CoverArtPath,
+			&i.ArtistMbid,
+			&i.ReleaseGroupMbid,
+			&i.RecordingMbid,
+			&i.AlbumID,
+			&i.ArtistID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lookupTrackMetaByPaths = `-- name: LookupTrackMetaByPaths :many
-SELECT id, file_path, title, artist_name, album, cover_art_path, artist_mbid, release_group_mbid, recording_mbid
+SELECT id, file_path, title, artist_name, album, cover_art_path,
+       artist_mbid, release_group_mbid, recording_mbid
 FROM track_metadata
 WHERE file_path IN (/*SLICE:paths*/?)
 `
@@ -1313,53 +884,186 @@ func (q *Queries) LookupTrackMetaByPaths(ctx context.Context, paths []string) ([
 	return items, nil
 }
 
-const searchAudioFilesByBasename = `-- name: SearchAudioFilesByBasename :many
-SELECT
-    af.file_path,
-    af.length_milliseconds,
-    COALESCE(r.name, '') AS title,
-    COALESCE(ac.text, '') AS artist,
-    COALESCE(rg.name, '') AS album
-FROM audio_files af
-LEFT JOIN recordings r ON af.recording_id = r.id
-LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
-LEFT JOIN (
-    SELECT recording_id, MIN(release_group_id) AS release_group_id
-    FROM release_group_recordings
-    GROUP BY recording_id
-) rgr ON r.id = rgr.recording_id
-LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
-WHERE af.basename = ?
-LIMIT ?
+const ownedAlbumMBIDs = `-- name: OwnedAlbumMBIDs :many
+SELECT DISTINCT al.mbid FROM albums al
+JOIN audio_files af ON af.album_id = al.id
+WHERE al.mbid IN (/*SLICE:mbids*/?)
 `
 
-type SearchAudioFilesByBasenameParams struct {
-	Basename string
-	Limit    int64
-}
-
-type SearchAudioFilesByBasenameRow struct {
-	FilePath           string
-	LengthMilliseconds int64
-	Title              string
-	Artist             string
-	Album              string
-}
-
-func (q *Queries) SearchAudioFilesByBasename(ctx context.Context, arg SearchAudioFilesByBasenameParams) ([]SearchAudioFilesByBasenameRow, error) {
-	rows, err := q.db.QueryContext(ctx, searchAudioFilesByBasename, arg.Basename, arg.Limit)
+func (q *Queries) OwnedAlbumMBIDs(ctx context.Context, mbids []sql.NullString) ([]sql.NullString, error) {
+	query := ownedAlbumMBIDs
+	var queryParams []interface{}
+	if len(mbids) > 0 {
+		for _, v := range mbids {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:mbids*/?", strings.Repeat(",?", len(mbids))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:mbids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []SearchAudioFilesByBasenameRow
+	var items []sql.NullString
 	for rows.Next() {
-		var i SearchAudioFilesByBasenameRow
+		var mbid sql.NullString
+		if err := rows.Scan(&mbid); err != nil {
+			return nil, err
+		}
+		items = append(items, mbid)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const ownedArtistMBIDs = `-- name: OwnedArtistMBIDs :many
+SELECT DISTINCT a.mbid FROM artists a
+JOIN audio_files af ON af.artist_id = a.id
+WHERE a.mbid IN (/*SLICE:mbids*/?)
+`
+
+func (q *Queries) OwnedArtistMBIDs(ctx context.Context, mbids []sql.NullString) ([]sql.NullString, error) {
+	query := ownedArtistMBIDs
+	var queryParams []interface{}
+	if len(mbids) > 0 {
+		for _, v := range mbids {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:mbids*/?", strings.Repeat(",?", len(mbids))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:mbids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []sql.NullString
+	for rows.Next() {
+		var mbid sql.NullString
+		if err := rows.Scan(&mbid); err != nil {
+			return nil, err
+		}
+		items = append(items, mbid)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const ownedRecordingMBIDs = `-- name: OwnedRecordingMBIDs :many
+
+SELECT DISTINCT recording_mbid FROM audio_files
+WHERE recording_mbid IN (/*SLICE:mbids*/?)
+`
+
+// ---------------------------------------------------------------------
+// Ownership, asked in bulk
+// ---------------------------------------------------------------------
+// Which of these recording MBIDs are actually in the library.  This is
+// what marks a catalog tracklist owned; it used to be
+// `SELECT mbid FROM recordings`, which answered yes for 129 tracks in a
+// real library that had no file at all.
+func (q *Queries) OwnedRecordingMBIDs(ctx context.Context, mbids []sql.NullString) ([]sql.NullString, error) {
+	query := ownedRecordingMBIDs
+	var queryParams []interface{}
+	if len(mbids) > 0 {
+		for _, v := range mbids {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:mbids*/?", strings.Repeat(",?", len(mbids))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:mbids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []sql.NullString
+	for rows.Next() {
+		var recording_mbid sql.NullString
+		if err := rows.Scan(&recording_mbid); err != nil {
+			return nil, err
+		}
+		items = append(items, recording_mbid)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const promoteAudioFileTagStatusIfUntagged = `-- name: PromoteAudioFileTagStatusIfUntagged :exec
+UPDATE audio_files
+SET tag_status = 'user_confirmed'
+WHERE id = ? AND tag_status = 'untagged'
+`
+
+// A rescan re-reads the tags of a file whose mtime moved, so a file
+// another tagger stamped with MBIDs since import arrives here still
+// carrying the 'untagged' status it was created with (only the insert
+// path sets it).  Promote it the same way saveAudioFile does.
+// Guarded on 'untagged' so it cannot overwrite a deliberate
+// 'user_skipped_permanent', and so a file losing its MBIDs is left
+// alone -- demotion is the scan's judgement, not this statement's.
+func (q *Queries) PromoteAudioFileTagStatusIfUntagged(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, promoteAudioFileTagStatusIfUntagged, id)
+	return err
+}
+
+const searchTracksByBasename = `-- name: SearchTracksByBasename :many
+SELECT id, file_path, length_milliseconds, title, artist_name, album
+FROM track_metadata
+WHERE file_path IN (
+    SELECT file_path FROM audio_files WHERE basename = ?1
+)
+LIMIT ?2
+`
+
+type SearchTracksByBasenameParams struct {
+	Basename string
+	Lim      int64
+}
+
+type SearchTracksByBasenameRow struct {
+	ID                 int64
+	FilePath           string
+	LengthMilliseconds int64
+	Title              string
+	ArtistName         string
+	Album              string
+}
+
+func (q *Queries) SearchTracksByBasename(ctx context.Context, arg SearchTracksByBasenameParams) ([]SearchTracksByBasenameRow, error) {
+	rows, err := q.db.QueryContext(ctx, searchTracksByBasename, arg.Basename, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SearchTracksByBasenameRow
+	for rows.Next() {
+		var i SearchTracksByBasenameRow
 		if err := rows.Scan(
+			&i.ID,
 			&i.FilePath,
 			&i.LengthMilliseconds,
 			&i.Title,
-			&i.Artist,
+			&i.ArtistName,
 			&i.Album,
 		); err != nil {
 			return nil, err
@@ -1389,73 +1093,17 @@ func (q *Queries) SetAudioFileGroupKey(ctx context.Context, arg SetAudioFileGrou
 	return err
 }
 
-const updateAudioFile = `-- name: UpdateAudioFile :exec
-UPDATE audio_files 
-SET file_path = ?, length_milliseconds = ?, file_type_id = ?, recording_id = ?, sample_rate = ?, bit_depth = ?, channels = ?, bitrate = ?, file_size = ?, basename = ?
-WHERE id = ?
+const setAudioFileRecordingMBID = `-- name: SetAudioFileRecordingMBID :exec
+UPDATE audio_files SET recording_mbid = ? WHERE id = ?
 `
 
-type UpdateAudioFileParams struct {
-	FilePath           string
-	LengthMilliseconds int64
-	FileTypeID         int64
-	RecordingID        int64
-	SampleRate         int64
-	BitDepth           int64
-	Channels           int64
-	Bitrate            int64
-	FileSize           int64
-	Basename           string
-	ID                 int64
+type SetAudioFileRecordingMBIDParams struct {
+	RecordingMbid sql.NullString
+	ID            int64
 }
 
-func (q *Queries) UpdateAudioFile(ctx context.Context, arg UpdateAudioFileParams) error {
-	_, err := q.db.ExecContext(ctx, updateAudioFile,
-		arg.FilePath,
-		arg.LengthMilliseconds,
-		arg.FileTypeID,
-		arg.RecordingID,
-		arg.SampleRate,
-		arg.BitDepth,
-		arg.Channels,
-		arg.Bitrate,
-		arg.FileSize,
-		arg.Basename,
-		arg.ID,
-	)
-	return err
-}
-
-const updateAudioFileRecording = `-- name: UpdateAudioFileRecording :exec
-UPDATE audio_files
-SET recording_id = ?, sample_rate = ?, bit_depth = ?, channels = ?, bitrate = ?, file_size = ?, length_milliseconds = ?, modified_at = ?
-WHERE id = ?
-`
-
-type UpdateAudioFileRecordingParams struct {
-	RecordingID        int64
-	SampleRate         int64
-	BitDepth           int64
-	Channels           int64
-	Bitrate            int64
-	FileSize           int64
-	LengthMilliseconds int64
-	ModifiedAt         int64
-	ID                 int64
-}
-
-func (q *Queries) UpdateAudioFileRecording(ctx context.Context, arg UpdateAudioFileRecordingParams) error {
-	_, err := q.db.ExecContext(ctx, updateAudioFileRecording,
-		arg.RecordingID,
-		arg.SampleRate,
-		arg.BitDepth,
-		arg.Channels,
-		arg.Bitrate,
-		arg.FileSize,
-		arg.LengthMilliseconds,
-		arg.ModifiedAt,
-		arg.ID,
-	)
+func (q *Queries) SetAudioFileRecordingMBID(ctx context.Context, arg SetAudioFileRecordingMBIDParams) error {
+	_, err := q.db.ExecContext(ctx, setAudioFileRecordingMBID, arg.RecordingMbid, arg.ID)
 	return err
 }
 
@@ -1476,5 +1124,67 @@ type UpdateAudioFileStatParams struct {
 // re-baseline after YellowJacket's own tag writer rewrites a file.
 func (q *Queries) UpdateAudioFileStat(ctx context.Context, arg UpdateAudioFileStatParams) error {
 	_, err := q.db.ExecContext(ctx, updateAudioFileStat, arg.ModifiedAt, arg.FileSize, arg.ID)
+	return err
+}
+
+const updateAudioFileTags = `-- name: UpdateAudioFileTags :exec
+UPDATE audio_files
+SET title = ?, artist_credit = ?, artist_id = ?, album_id = ?,
+    track_number = ?, disc_number = ?, total_tracks = ?, year = ?,
+    composer = ?, comment = ?, recording_mbid = ?,
+    sample_rate = ?, bit_depth = ?, channels = ?, bitrate = ?,
+    file_size = ?, length_milliseconds = ?, modified_at = ?
+WHERE id = ?
+`
+
+type UpdateAudioFileTagsParams struct {
+	Title              string
+	ArtistCredit       string
+	ArtistID           sql.NullInt64
+	AlbumID            sql.NullInt64
+	TrackNumber        sql.NullInt64
+	DiscNumber         sql.NullInt64
+	TotalTracks        sql.NullInt64
+	Year               sql.NullInt64
+	Composer           string
+	Comment            string
+	RecordingMbid      sql.NullString
+	SampleRate         int64
+	BitDepth           int64
+	Channels           int64
+	Bitrate            int64
+	FileSize           int64
+	LengthMilliseconds int64
+	ModifiedAt         int64
+	ID                 int64
+}
+
+// A rescan of a file whose mtime moved: the tags are re-read and
+// written over the same row.  Under the old schema this created a
+// *new* recording and repointed the file at it, abandoning the old one
+// -- which is where 812 orphaned rows and every phantom "you own this"
+// came from.  There is nothing to orphan now.
+func (q *Queries) UpdateAudioFileTags(ctx context.Context, arg UpdateAudioFileTagsParams) error {
+	_, err := q.db.ExecContext(ctx, updateAudioFileTags,
+		arg.Title,
+		arg.ArtistCredit,
+		arg.ArtistID,
+		arg.AlbumID,
+		arg.TrackNumber,
+		arg.DiscNumber,
+		arg.TotalTracks,
+		arg.Year,
+		arg.Composer,
+		arg.Comment,
+		arg.RecordingMbid,
+		arg.SampleRate,
+		arg.BitDepth,
+		arg.Channels,
+		arg.Bitrate,
+		arg.FileSize,
+		arg.LengthMilliseconds,
+		arg.ModifiedAt,
+		arg.ID,
+	)
 	return err
 }

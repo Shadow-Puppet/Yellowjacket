@@ -42,35 +42,17 @@ func setupRecordedService(
 func seedPlaylistTracks(t *testing.T, db *database.DB, count int) []string {
 	t.Helper()
 
-	_, err := db.ExecContext(
-		"INSERT OR IGNORE INTO artist_credit (id, text) VALUES (1, 'Test Artist')",
-	)
-	if err != nil {
-		t.Fatalf("insert artist_credit: %v", err)
-	}
-
 	paths := make([]string, count)
 
 	for i := range count {
-		id := i + 1
-		paths[i] = fmt.Sprintf("/test/pl-track%d.mp3", id)
+		paths[i] = fmt.Sprintf("/test/pl-track%d.mp3", i+1)
 
-		if _, err := db.ExecContext(
-			"INSERT OR IGNORE INTO recordings (id, name, artist_credit_id) "+
-				"VALUES (?, ?, 1)",
-			id, fmt.Sprintf("Track %d", id),
-		); err != nil {
-			t.Fatalf("insert recording %d: %v", id, err)
-		}
-
-		if _, err := db.ExecContext(
-			"INSERT OR IGNORE INTO audio_files (id, file_path, "+
-				"length_milliseconds, file_type_id, recording_id) "+
-				"VALUES (?, ?, 180000, 0, ?)",
-			id, paths[i], id,
-		); err != nil {
-			t.Fatalf("insert audio_file %d: %v", id, err)
-		}
+		database.InsertTestTrack(t, db, database.TestTrack{
+			FilePath: paths[i],
+			Title:    fmt.Sprintf("Track %d", i+1),
+			Artist:   "Test Artist",
+			LengthMs: 180000,
+		})
 	}
 
 	return paths

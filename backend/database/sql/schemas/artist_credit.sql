@@ -1,4 +1,0 @@
-CREATE TABLE IF NOT EXISTS artist_credit (
-  id   INTEGER PRIMARY KEY,
-  text TEXT NOT NULL UNIQUE
-);

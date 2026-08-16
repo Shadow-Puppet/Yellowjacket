@@ -12,7 +12,6 @@ import type {
 import { grid } from '@lit-labs/virtualizer/layouts/grid.js';
 import {
     GetAlbumsByArtist,
-    GetAlbumsByArtistByLibrary,
     GetFilePathsByAlbums,
 } from '@go/library/library.js';
 import * as library from '@go/library/models.js';
@@ -1057,12 +1056,7 @@ export class ArtistsView
                 this.libraryCtrl.selectedLibraryId;
 
             const albums = await list(
-                libId !== null
-                    ? GetAlbumsByArtistByLibrary(
-                          artist.ID,
-                          libId,
-                      )
-                    : GetAlbumsByArtist(artist.ID),
+                GetAlbumsByArtist(artist.Name, libId ?? 0),
             );
 
             const byAlbum = await dict(

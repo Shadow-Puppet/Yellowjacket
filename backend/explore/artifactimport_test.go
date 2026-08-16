@@ -202,7 +202,7 @@ func TestImportCoreArtifactPreservesLocalData(t *testing.T) {
 
 	if err := db.QueryRowWriter(`
 		SELECT popularity, duration, in_library, discog_fetched
-		FROM explore_index WHERE mbid = ?`, recA,
+		FROM explore_index WHERE mbid = ?`, dbMBID(recA),
 	).Scan(&popularity, &duration, &inLibrary, &discogFetched); err != nil {
 		t.Fatalf("read merged row: %v", err)
 	}
@@ -376,7 +376,7 @@ func TestAddFromCacheNeverStoresMBIDAsName(t *testing.T) {
 
 	var artistName string
 	if err := db.QueryRowWriter(
-		`SELECT artist_name FROM explore_index WHERE mbid = ?`, rgA,
+		`SELECT artist_name FROM explore_index WHERE mbid = ?`, dbMBID(rgA),
 	).Scan(&artistName); err != nil {
 		t.Fatalf("read release group: %v", err)
 	}
@@ -391,7 +391,7 @@ func TestAddFromCacheNeverStoresMBIDAsName(t *testing.T) {
 	})
 
 	if err := db.QueryRowWriter(
-		`SELECT artist_name FROM explore_index WHERE mbid = ?`, rgA,
+		`SELECT artist_name FROM explore_index WHERE mbid = ?`, dbMBID(rgA),
 	).Scan(&artistName); err != nil {
 		t.Fatalf("re-read release group: %v", err)
 	}
@@ -440,5 +440,160 @@ func TestArtifactColumnsMatchExporter(t *testing.T) {
 	if exporter != importer {
 		t.Errorf("column lists have drifted:\n exporter: %s\n importer: %s",
 			exporter, importer)
+	}
+}
+
+// TestImportCoreArtifactAcceptsBothEncodings is the compatibility half
+// of the storage change.
+//
+// The catalog stores an MBID as 16 raw bytes and an entity type as a
+// code, which took the table and its indexes from 677 MB to 389 MB. A
+// published artifact carries whichever form the exporter that built it
+// used, and there is one already out there in the older text form — so
+// the importer decides by asking the artifact, not by trusting a
+// version number, and both must land identically.
+func TestImportCoreArtifactAcceptsBothEncodings(t *testing.T) {
+	compact := filepath.Join(t.TempDir(), "core-index.db")
+
+	db, err := sql.Open("sqlite", "file:"+compact)
+	if err != nil {
+		t.Fatalf("open artifact: %v", err)
+	}
+
+	if _, err := db.Exec(`CREATE TABLE explore_index (
+		entity_type      INTEGER NOT NULL,
+		mbid             BLOB NOT NULL,
+		title            TEXT NOT NULL,
+		artist_name      TEXT NOT NULL,
+		artist_mbid      BLOB NOT NULL,
+		aliases          TEXT NOT NULL DEFAULT '',
+		popularity       INTEGER NOT NULL DEFAULT 0,
+		listener_count   INTEGER NOT NULL DEFAULT 0,
+		duration         INTEGER NOT NULL DEFAULT 0,
+		caa_release_mbid BLOB NOT NULL DEFAULT x'',
+		release_name     TEXT NOT NULL DEFAULT '',
+		primary_type     TEXT NOT NULL DEFAULT '',
+		secondary_types  TEXT NOT NULL DEFAULT '',
+		release_date     TEXT NOT NULL DEFAULT '',
+		artist_type      TEXT NOT NULL DEFAULT '',
+		country          TEXT NOT NULL DEFAULT '',
+		disambiguation   TEXT NOT NULL DEFAULT '',
+		sort_name        TEXT NOT NULL DEFAULT '',
+		discog_fetched   INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY (mbid)
+	)`); err != nil {
+		t.Fatalf("create artifact table: %v", err)
+	}
+
+	if _, err := db.Exec(
+		`CREATE TABLE artifact_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
+	); err != nil {
+		t.Fatalf("create artifact meta: %v", err)
+	}
+
+	for k, v := range validMeta() {
+		if _, err := db.Exec(
+			"INSERT INTO artifact_meta (key, value) VALUES (?, ?)", k, v,
+		); err != nil {
+			t.Fatalf("write artifact meta: %v", err)
+		}
+	}
+
+	if _, err := db.Exec(`
+		INSERT INTO explore_index (entity_type, mbid, title, artist_name, artist_mbid, popularity)
+		VALUES (1, ?, 'Artist A', 'Artist A', ?, 5000)`,
+		mbidBytes(artA), mbidBytes(artA),
+	); err != nil {
+		t.Fatalf("write artifact row: %v", err)
+	}
+
+	_ = db.Close()
+
+	live := database.NewTestDB(t)
+	si := NewSearchIndex(live, nil, nil, testLogger())
+
+	if err := si.importCoreArtifact(context.Background(), compact); err != nil {
+		t.Fatalf("importCoreArtifact (compact): %v", err)
+	}
+
+	got := si.LookupArtistByMBID(artA)
+	if got == nil {
+		t.Fatal("artist from a compact artifact was not imported")
+	}
+
+	if got.Title != "Artist A" || got.MBID != artA {
+		t.Errorf("imported %+v, want Artist A / %s", got, artA)
+	}
+}
+
+// TestImportCoreArtifactReadsTotalsWhenPresent covers both halves of the
+// denominator's arrival: an artifact that carries total_tracks imports
+// it, and one built before the column existed still imports at all.
+//
+// The second half is the one worth a test.  Adding a column to the
+// importer's SELECT list is how you break every artifact already
+// published - "no such column: total_tracks", on a file nobody can
+// re-cut retroactively - so the importer asks the artifact what it has,
+// the same way it asks which encoding it uses.
+func TestImportCoreArtifactReadsTotalsWhenPresent(t *testing.T) {
+	path := writeTestArtifact(t, validMeta(), []artifactRow{
+		{"release_group", rgA, "Big Album", "Solo Star", artA, 5000},
+	})
+
+	// The exporter writes the column; writeTestArtifact builds the older
+	// shape, so add it here rather than changing every other test's
+	// fixture to carry a value they do not use.
+	artifact, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatalf("reopen artifact: %v", err)
+	}
+
+	for _, stmt := range []string{
+		`ALTER TABLE explore_index ADD COLUMN total_tracks INTEGER NOT NULL DEFAULT 0`,
+		`UPDATE explore_index SET total_tracks = 12`,
+	} {
+		if _, err := artifact.Exec(stmt); err != nil {
+			t.Fatalf("add total_tracks: %v", err)
+		}
+	}
+
+	_ = artifact.Close()
+
+	live := database.NewTestDB(t)
+	si := NewSearchIndex(live, nil, nil, testLogger())
+
+	if err := si.importCoreArtifact(context.Background(), path); err != nil {
+		t.Fatalf("importCoreArtifact: %v", err)
+	}
+
+	rg := si.LookupReleaseGroupByMBID(rgA)
+	if rg == nil {
+		t.Fatal("release group was not imported")
+	}
+
+	if rg.TotalTracks != 12 {
+		t.Errorf("TotalTracks = %d, want 12", rg.TotalTracks)
+	}
+
+	// And the shape that predates the column: the same import, from an
+	// artifact that has no total_tracks at all.
+	older := writeTestArtifact(t, validMeta(), []artifactRow{
+		{"release_group", rgB, "Duet Album", "Solo Star", artA, 4000},
+	})
+
+	live2 := database.NewTestDB(t)
+	si2 := NewSearchIndex(live2, nil, nil, testLogger())
+
+	if err := si2.importCoreArtifact(context.Background(), older); err != nil {
+		t.Fatalf("importCoreArtifact (no total_tracks column): %v", err)
+	}
+
+	old := si2.LookupReleaseGroupByMBID(rgB)
+	if old == nil {
+		t.Fatal("release group from a column-less artifact was not imported")
+	}
+
+	if old.TotalTracks != 0 {
+		t.Errorf("TotalTracks = %d, want 0 (the catalog does not say)", old.TotalTracks)
 	}
 }

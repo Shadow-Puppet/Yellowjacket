@@ -7,35 +7,8 @@ package sqlcgen
 
 import (
 	"context"
-	"database/sql"
 	"strings"
 )
-
-const countGenreReferences = `-- name: CountGenreReferences :one
-SELECT COUNT(*) FROM recording_genres WHERE genre_id = ?
-`
-
-func (q *Queries) CountGenreReferences(ctx context.Context, genreID int64) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countGenreReferences, genreID)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
-const createRecordingGenre = `-- name: CreateRecordingGenre :exec
-INSERT OR IGNORE INTO recording_genres (recording_id, genre_id)
-VALUES (?, ?)
-`
-
-type CreateRecordingGenreParams struct {
-	RecordingID int64
-	GenreID     int64
-}
-
-func (q *Queries) CreateRecordingGenre(ctx context.Context, arg CreateRecordingGenreParams) error {
-	_, err := q.db.ExecContext(ctx, createRecordingGenre, arg.RecordingID, arg.GenreID)
-	return err
-}
 
 const deleteAllGenres = `-- name: DeleteAllGenres :exec
 DELETE FROM genres
@@ -46,12 +19,12 @@ func (q *Queries) DeleteAllGenres(ctx context.Context) error {
 	return err
 }
 
-const deleteAllRecordingGenres = `-- name: DeleteAllRecordingGenres :exec
-DELETE FROM recording_genres
+const deleteFileGenres = `-- name: DeleteFileGenres :exec
+DELETE FROM file_genres WHERE audio_file_id = ?
 `
 
-func (q *Queries) DeleteAllRecordingGenres(ctx context.Context) error {
-	_, err := q.db.ExecContext(ctx, deleteAllRecordingGenres)
+func (q *Queries) DeleteFileGenres(ctx context.Context, audioFileID int64) error {
+	_, err := q.db.ExecContext(ctx, deleteFileGenres, audioFileID)
 	return err
 }
 
@@ -64,20 +37,12 @@ func (q *Queries) DeleteGenre(ctx context.Context, id int64) error {
 	return err
 }
 
-const deleteRecordingGenres = `-- name: DeleteRecordingGenres :exec
-DELETE FROM recording_genres
-WHERE recording_id = ?
-`
-
-func (q *Queries) DeleteRecordingGenres(ctx context.Context, recordingID int64) error {
-	_, err := q.db.ExecContext(ctx, deleteRecordingGenres, recordingID)
-	return err
-}
-
 const getAllGenresWithCounts = `-- name: GetAllGenresWithCounts :many
-SELECT g.name, COUNT(rg.recording_id) AS track_count
+SELECT g.name, COUNT(fg.audio_file_id) AS track_count
 FROM genres g
-JOIN recording_genres rg ON g.id = rg.genre_id
+JOIN file_genres fg ON fg.genre_id = g.id
+JOIN audio_files af ON af.id = fg.audio_file_id
+WHERE af.library_id = COALESCE(NULLIF(CAST(?1 AS INTEGER), 0), af.library_id)
 GROUP BY g.id, g.name
 ORDER BY g.name
 `
@@ -87,8 +52,8 @@ type GetAllGenresWithCountsRow struct {
 	TrackCount int64
 }
 
-func (q *Queries) GetAllGenresWithCounts(ctx context.Context) ([]GetAllGenresWithCountsRow, error) {
-	rows, err := q.db.QueryContext(ctx, getAllGenresWithCounts)
+func (q *Queries) GetAllGenresWithCounts(ctx context.Context, libraryID int64) ([]GetAllGenresWithCountsRow, error) {
+	rows, err := q.db.QueryContext(ctx, getAllGenresWithCounts, libraryID)
 	if err != nil {
 		return nil, err
 	}
@@ -110,35 +75,25 @@ func (q *Queries) GetAllGenresWithCounts(ctx context.Context) ([]GetAllGenresWit
 	return items, nil
 }
 
-const getAllGenresWithCountsByLibrary = `-- name: GetAllGenresWithCountsByLibrary :many
-SELECT g.name, COUNT(rg.recording_id) AS track_count
-FROM genres g
-JOIN recording_genres rg ON g.id = rg.genre_id
-JOIN recordings r ON rg.recording_id = r.id
-JOIN audio_files af ON af.recording_id = r.id
-WHERE af.library_id = ?
-GROUP BY g.id, g.name
-ORDER BY g.name
+const getGenreNamesByFile = `-- name: GetGenreNamesByFile :many
+SELECT g.name FROM genres g
+JOIN file_genres fg ON fg.genre_id = g.id
+WHERE fg.audio_file_id = ?
 `
 
-type GetAllGenresWithCountsByLibraryRow struct {
-	Name       string
-	TrackCount int64
-}
-
-func (q *Queries) GetAllGenresWithCountsByLibrary(ctx context.Context, libraryID int64) ([]GetAllGenresWithCountsByLibraryRow, error) {
-	rows, err := q.db.QueryContext(ctx, getAllGenresWithCountsByLibrary, libraryID)
+func (q *Queries) GetGenreNamesByFile(ctx context.Context, audioFileID int64) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, getGenreNamesByFile, audioFileID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []GetAllGenresWithCountsByLibraryRow
+	var items []string
 	for rows.Next() {
-		var i GetAllGenresWithCountsByLibraryRow
-		if err := rows.Scan(&i.Name, &i.TrackCount); err != nil {
+		var name string
+		if err := rows.Scan(&name); err != nil {
 			return nil, err
 		}
-		items = append(items, i)
+		items = append(items, name)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -149,45 +104,42 @@ func (q *Queries) GetAllGenresWithCountsByLibrary(ctx context.Context, libraryID
 	return items, nil
 }
 
-const getFilePathsByGenres = `-- name: GetFilePathsByGenres :many
-
-SELECT g.name AS genre_name, af.file_path
-FROM genres g
-JOIN recording_genres rg ON g.id = rg.genre_id
-JOIN recordings r ON rg.recording_id = r.id
-JOIN audio_files af ON af.recording_id = r.id
-WHERE g.name IN (/*SLICE:genre_names*/?)
-ORDER BY r.name
+const getGenreNamesByFilePaths = `-- name: GetGenreNamesByFilePaths :many
+SELECT af.file_path, g.name
+FROM audio_files af
+JOIN file_genres fg ON fg.audio_file_id = af.id
+JOIN genres g ON g.id = fg.genre_id
+WHERE af.file_path IN (/*SLICE:paths*/?)
 `
 
-type GetFilePathsByGenresRow struct {
-	GenreName string
-	FilePath  string
+type GetGenreNamesByFilePathsRow struct {
+	FilePath string
+	Name     string
 }
 
-// Same as GetFilePathsByReleaseGroups, for "play these genres" (perf.m2):
-// one query instead of one per genre, and file paths instead of whole
-// track rows, which was 6 MB over the IPC for five genres.
-func (q *Queries) GetFilePathsByGenres(ctx context.Context, genreNames []string) ([]GetFilePathsByGenresRow, error) {
-	query := getFilePathsByGenres
+// Genres for many files at once.  The mix builder asked this one file
+// at a time, inside two nested loops -- twelve thousand single-row
+// queries to assemble one mix.
+func (q *Queries) GetGenreNamesByFilePaths(ctx context.Context, paths []string) ([]GetGenreNamesByFilePathsRow, error) {
+	query := getGenreNamesByFilePaths
 	var queryParams []interface{}
-	if len(genreNames) > 0 {
-		for _, v := range genreNames {
+	if len(paths) > 0 {
+		for _, v := range paths {
 			queryParams = append(queryParams, v)
 		}
-		query = strings.Replace(query, "/*SLICE:genre_names*/?", strings.Repeat(",?", len(genreNames))[1:], 1)
+		query = strings.Replace(query, "/*SLICE:paths*/?", strings.Repeat(",?", len(paths))[1:], 1)
 	} else {
-		query = strings.Replace(query, "/*SLICE:genre_names*/?", "NULL", 1)
+		query = strings.Replace(query, "/*SLICE:paths*/?", "NULL", 1)
 	}
 	rows, err := q.db.QueryContext(ctx, query, queryParams...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []GetFilePathsByGenresRow
+	var items []GetGenreNamesByFilePathsRow
 	for rows.Next() {
-		var i GetFilePathsByGenresRow
-		if err := rows.Scan(&i.GenreName, &i.FilePath); err != nil {
+		var i GetGenreNamesByFilePathsRow
+		if err := rows.Scan(&i.FilePath, &i.Name); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -201,51 +153,24 @@ func (q *Queries) GetFilePathsByGenres(ctx context.Context, genreNames []string)
 	return items, nil
 }
 
-const getFilePathsByGenresByLibrary = `-- name: GetFilePathsByGenresByLibrary :many
-SELECT g.name AS genre_name, af.file_path
-FROM genres g
-JOIN recording_genres rg ON g.id = rg.genre_id
-JOIN recordings r ON rg.recording_id = r.id
-JOIN audio_files af ON af.recording_id = r.id
-WHERE g.name IN (/*SLICE:genre_names*/?)
-  AND af.library_id = ?
-ORDER BY r.name
+const getUnusedGenreIDs = `-- name: GetUnusedGenreIDs :many
+SELECT id FROM genres g
+WHERE NOT EXISTS (SELECT 1 FROM file_genres fg WHERE fg.genre_id = g.id)
 `
 
-type GetFilePathsByGenresByLibraryParams struct {
-	GenreNames []string
-	LibraryID  int64
-}
-
-type GetFilePathsByGenresByLibraryRow struct {
-	GenreName string
-	FilePath  string
-}
-
-func (q *Queries) GetFilePathsByGenresByLibrary(ctx context.Context, arg GetFilePathsByGenresByLibraryParams) ([]GetFilePathsByGenresByLibraryRow, error) {
-	query := getFilePathsByGenresByLibrary
-	var queryParams []interface{}
-	if len(arg.GenreNames) > 0 {
-		for _, v := range arg.GenreNames {
-			queryParams = append(queryParams, v)
-		}
-		query = strings.Replace(query, "/*SLICE:genre_names*/?", strings.Repeat(",?", len(arg.GenreNames))[1:], 1)
-	} else {
-		query = strings.Replace(query, "/*SLICE:genre_names*/?", "NULL", 1)
-	}
-	queryParams = append(queryParams, arg.LibraryID)
-	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+func (q *Queries) GetUnusedGenreIDs(ctx context.Context) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, getUnusedGenreIDs)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []GetFilePathsByGenresByLibraryRow
+	var items []int64
 	for rows.Next() {
-		var i GetFilePathsByGenresByLibraryRow
-		if err := rows.Scan(&i.GenreName, &i.FilePath); err != nil {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
 			return nil, err
 		}
-		items = append(items, i)
+		items = append(items, id)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -256,247 +181,32 @@ func (q *Queries) GetFilePathsByGenresByLibrary(ctx context.Context, arg GetFile
 	return items, nil
 }
 
-const getGenresByRecordingID = `-- name: GetGenresByRecordingID :many
-SELECT g.id, g.name
-FROM genres g
-JOIN recording_genres rg ON g.id = rg.genre_id
-WHERE rg.recording_id = ?
+const linkFileGenre = `-- name: LinkFileGenre :exec
+INSERT OR IGNORE INTO file_genres (audio_file_id, genre_id) VALUES (?, ?)
 `
 
-func (q *Queries) GetGenresByRecordingID(ctx context.Context, recordingID int64) ([]Genre, error) {
-	rows, err := q.db.QueryContext(ctx, getGenresByRecordingID, recordingID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []Genre
-	for rows.Next() {
-		var i Genre
-		if err := rows.Scan(&i.ID, &i.Name); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+type LinkFileGenreParams struct {
+	AudioFileID int64
+	GenreID     int64
 }
 
-const getTracksByGenre = `-- name: GetTracksByGenre :many
-SELECT
-    af.file_path,
-    af.length_milliseconds,
-    COALESCE(r.name, '') AS title,
-    COALESCE(ac.text, '') AS artist_name,
-    r.track_number,
-    r.disc_number,
-    COALESCE(rlg.name, '') AS album,
-    CAST(COALESCE(
-        (SELECT GROUP_CONCAT(g2.name, '||')
-         FROM recording_genres rg2
-         JOIN genres g2 ON rg2.genre_id = g2.id
-         WHERE rg2.recording_id = r.id),
-        ''
-    ) AS TEXT) AS genre,
-    COALESCE(r.year, 0) AS year,
-    COALESCE(r.composer, '') AS composer,
-    COALESCE(ft.extension, '') AS file_type,
-    af.sample_rate,
-    af.bit_depth,
-    af.channels,
-    af.bitrate,
-    af.file_size
-FROM genres g
-JOIN recording_genres rg ON g.id = rg.genre_id
-JOIN recordings r ON rg.recording_id = r.id
-JOIN audio_files af ON af.recording_id = r.id
-JOIN artist_credit ac ON r.artist_credit_id = ac.id
-LEFT JOIN (
-    SELECT recording_id,
-        MIN(release_group_id) AS release_group_id
-    FROM release_group_recordings
-    GROUP BY recording_id
-) rgr ON r.id = rgr.recording_id
-LEFT JOIN release_groups rlg ON rgr.release_group_id = rlg.id
-LEFT JOIN file_types ft ON af.file_type_id = ft.id
-WHERE g.name = ?
-ORDER BY r.name
-`
-
-type GetTracksByGenreRow struct {
-	FilePath           string
-	LengthMilliseconds int64
-	Title              string
-	ArtistName         string
-	TrackNumber        sql.NullInt64
-	DiscNumber         sql.NullInt64
-	Album              string
-	Genre              string
-	Year               int64
-	Composer           string
-	FileType           string
-	SampleRate         int64
-	BitDepth           int64
-	Channels           int64
-	Bitrate            int64
-	FileSize           int64
-}
-
-func (q *Queries) GetTracksByGenre(ctx context.Context, name string) ([]GetTracksByGenreRow, error) {
-	rows, err := q.db.QueryContext(ctx, getTracksByGenre, name)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []GetTracksByGenreRow
-	for rows.Next() {
-		var i GetTracksByGenreRow
-		if err := rows.Scan(
-			&i.FilePath,
-			&i.LengthMilliseconds,
-			&i.Title,
-			&i.ArtistName,
-			&i.TrackNumber,
-			&i.DiscNumber,
-			&i.Album,
-			&i.Genre,
-			&i.Year,
-			&i.Composer,
-			&i.FileType,
-			&i.SampleRate,
-			&i.BitDepth,
-			&i.Channels,
-			&i.Bitrate,
-			&i.FileSize,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const getTracksByGenreByLibrary = `-- name: GetTracksByGenreByLibrary :many
-SELECT
-    af.file_path,
-    af.length_milliseconds,
-    COALESCE(r.name, '') AS title,
-    COALESCE(ac.text, '') AS artist_name,
-    r.track_number,
-    r.disc_number,
-    COALESCE(rlg.name, '') AS album,
-    CAST(COALESCE(
-        (SELECT GROUP_CONCAT(g2.name, '||')
-         FROM recording_genres rg2
-         JOIN genres g2 ON rg2.genre_id = g2.id
-         WHERE rg2.recording_id = r.id),
-        ''
-    ) AS TEXT) AS genre,
-    COALESCE(r.year, 0) AS year,
-    COALESCE(r.composer, '') AS composer,
-    COALESCE(ft.extension, '') AS file_type,
-    af.sample_rate,
-    af.bit_depth,
-    af.channels,
-    af.bitrate,
-    af.file_size
-FROM genres g
-JOIN recording_genres rg ON g.id = rg.genre_id
-JOIN recordings r ON rg.recording_id = r.id
-JOIN audio_files af ON af.recording_id = r.id
-JOIN artist_credit ac ON r.artist_credit_id = ac.id
-LEFT JOIN (
-    SELECT recording_id,
-        MIN(release_group_id) AS release_group_id
-    FROM release_group_recordings
-    GROUP BY recording_id
-) rgr ON r.id = rgr.recording_id
-LEFT JOIN release_groups rlg ON rgr.release_group_id = rlg.id
-LEFT JOIN file_types ft ON af.file_type_id = ft.id
-WHERE g.name = ? AND af.library_id = ?
-ORDER BY r.name
-`
-
-type GetTracksByGenreByLibraryParams struct {
-	Name      string
-	LibraryID int64
-}
-
-type GetTracksByGenreByLibraryRow struct {
-	FilePath           string
-	LengthMilliseconds int64
-	Title              string
-	ArtistName         string
-	TrackNumber        sql.NullInt64
-	DiscNumber         sql.NullInt64
-	Album              string
-	Genre              string
-	Year               int64
-	Composer           string
-	FileType           string
-	SampleRate         int64
-	BitDepth           int64
-	Channels           int64
-	Bitrate            int64
-	FileSize           int64
-}
-
-func (q *Queries) GetTracksByGenreByLibrary(ctx context.Context, arg GetTracksByGenreByLibraryParams) ([]GetTracksByGenreByLibraryRow, error) {
-	rows, err := q.db.QueryContext(ctx, getTracksByGenreByLibrary, arg.Name, arg.LibraryID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []GetTracksByGenreByLibraryRow
-	for rows.Next() {
-		var i GetTracksByGenreByLibraryRow
-		if err := rows.Scan(
-			&i.FilePath,
-			&i.LengthMilliseconds,
-			&i.Title,
-			&i.ArtistName,
-			&i.TrackNumber,
-			&i.DiscNumber,
-			&i.Album,
-			&i.Genre,
-			&i.Year,
-			&i.Composer,
-			&i.FileType,
-			&i.SampleRate,
-			&i.BitDepth,
-			&i.Channels,
-			&i.Bitrate,
-			&i.FileSize,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+func (q *Queries) LinkFileGenre(ctx context.Context, arg LinkFileGenreParams) error {
+	_, err := q.db.ExecContext(ctx, linkFileGenre, arg.AudioFileID, arg.GenreID)
+	return err
 }
 
 const upsertGenre = `-- name: UpsertGenre :one
+
 INSERT INTO genres (name) VALUES (?)
-ON CONFLICT(name) DO UPDATE SET name = name
+ON CONFLICT(name) DO UPDATE SET name = excluded.name
 RETURNING id, name
 `
 
+// Queries over genres and file_genres.
+//
+// The track-returning ones live in audio_files.sql with the rest of the
+// track_metadata reads; what is left here is the genre list itself and
+// the link table's writes.
 func (q *Queries) UpsertGenre(ctx context.Context, name string) (Genre, error) {
 	row := q.db.QueryRowContext(ctx, upsertGenre, name)
 	var i Genre

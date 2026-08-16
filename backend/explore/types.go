@@ -77,6 +77,14 @@ type MBReleaseGroup struct {
 	ListenerCount    int      `json:"listenerCount"`
 	InLibrary        bool     `json:"inLibrary"`         // true if the user owns this album
 	LocalID          int64    `json:"localId,omitempty"` // local release_group row ID
+
+	// TotalTracks is the catalog's track count for this release group,
+	// or 0 for "the catalog does not say".  It answers "how much of
+	// this album do I have" for an album whose files declared no total
+	// -- the case GetAlbumCompleteness cannot answer -- and it is not
+	// filled by the MusicBrainz path below, which has the real
+	// tracklist and does not need a denominator.
+	TotalTracks int `json:"totalTracks"`
 }
 
 // MBRelease is a Wails-friendly projection of a MusicBrainz release.

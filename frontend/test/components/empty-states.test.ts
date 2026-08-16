@@ -15,10 +15,10 @@ import { fixture, shadow, text } from '@test/support/render';
 /** Drop the library store's cache so the list has to fetch. */
 async function emptyLibrary(): Promise<void> {
   resetHarness();
-  stub('library.Library.GetAllTracks', []);
-  stub('library.Library.GetAllAlbums', []);
-  stub('library.Library.GetAllArtists', []);
-  stub('library.Library.GetAllGenresWithCounts', []);
+  stub('library.Library.GetTracks', []);
+  stub('library.Library.GetAlbums', []);
+  stub('library.Library.GetArtists', []);
+  stub('library.Library.GetGenres', []);
   emit(Events.LibraryScanComplete);
   await flush();
 }
@@ -40,7 +40,7 @@ describe('<track-list> empty, loading and failed', () => {
   });
 
   it('says the query failed, and offers to try again', async () => {
-    stubFailure('library.Library.GetAllTracks', 'sql: database is locked');
+    stubFailure('library.Library.GetTracks', 'sql: database is locked');
     emit(Events.LibraryScanComplete);
     await flush();
 

@@ -109,12 +109,16 @@ func scoreCandidate(
 	)
 	dirScore := scorePathDirs(pp, candidatePath)
 
-	// If duration is unknown, redistribute its weight to
-	// filename.
+	// If duration is unknown, redistribute its weight to filename.
+	// Either side can be the one that does not know: an M3U8 written
+	// without EXTINF lines carries no duration, and neither does a
+	// library file whose length was never read.  Scoring a candidate
+	// out of 0.9 for the *library's* gap made an otherwise exact
+	// filename match unable to reach the auto-match threshold.
 	fnWeight := weightFilename
 	durWeight := weightDuration
 
-	if pp.durationSec == 0 {
+	if pp.durationSec == 0 || candidateDurationMs == 0 {
 		fnWeight += durWeight
 		durWeight = 0
 	}

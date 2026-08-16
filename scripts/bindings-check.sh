@@ -22,8 +22,13 @@ cd "$(dirname "$0")/.."
 
 TARGET="frontend/bindings"
 
-if [ -n "$(git status --porcelain -- "$TARGET")" ]; then
-	echo "bindings-check: $TARGET has uncommitted changes; stage or stash them first" >&2
+# Only *unstaged* work is in the way.  Generating overwrites the working
+# tree, so an unstaged edit here would be destroyed; a staged one is
+# precisely what this is being asked about, and rejecting it made the
+# hook unsatisfiable — every bindings change is staged by the time the
+# commit that carries it runs this.
+if ! git diff --quiet -- "$TARGET"; then
+	echo "bindings-check: $TARGET has unstaged changes; stage or stash them first" >&2
 	git status --short -- "$TARGET" >&2
 	exit 1
 fi
@@ -37,11 +42,12 @@ if ! git diff --quiet -- "$TARGET"; then
 	exit 1
 fi
 
-# An added or removed *file* is a rename or a new service, which a diff
-# of tracked paths alone does not see.
-if [ -n "$(git status --porcelain -- "$TARGET")" ]; then
-	echo "bindings-check: $TARGET gained or lost files." >&2
-	git status --short -- "$TARGET" >&2
+# A *new* file is a new service or a rename, which a diff of tracked
+# paths cannot see.  (A deleted one it can: the diff above compares the
+# working tree against the index, where the file still is.)
+if [ -n "$(git ls-files --others --exclude-standard -- "$TARGET")" ]; then
+	echo "bindings-check: $TARGET gained files." >&2
+	git ls-files --others --exclude-standard -- "$TARGET" >&2
 	exit 1
 fi
 

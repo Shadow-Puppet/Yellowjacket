@@ -223,80 +223,101 @@ rather than renaming them.
 - `library` — Concurrent library scanning, metadata extraction, cover art deduplication, incremental rescan. Also **removal**, below.
 - `database` — SQLite via pure-Go driver. Schema in `database/sql/schemas/`, queries in `database/sql/queries/`. **sqlc** generates Go code into `database/sql/sqlcgen/` — never edit that directory by hand.
 
-  **Schema changes need two things, not one.** `sql/schemas/*.sql` is
-  `CREATE ... IF NOT EXISTS` and is what sqlc reads — it's the single
-  source of truth for "what the schema looks like right now", and it's
-  what a fresh install gets verbatim. But it's a no-op against a
-  database that already has the table, so an existing install needs a
-  matching file in `sql/schemas/../migrations/` (e.g.
-  `NNNN_description.sql`, `ALTER TABLE ... ADD COLUMN ...` /
-  `CREATE INDEX ...`) to actually reach that shape. Both run on every
-  open, migrations after schema files, tracked in `schema_migrations`
-  so each applies once; a migration's `ALTER TABLE ADD COLUMN` failing
-  with "duplicate column name" on an already-current database is
-  expected and tolerated, not an error.
+  **The schema is one description, and there is no migration chain.**
+  `sql/schemas/*.sql` is `CREATE ... IF NOT EXISTS`, declares the
+  current shape of every table, and is what sqlc reads and what an
+  install gets verbatim. That is the whole mechanism: `sql/migrations/`,
+  `applyMigrations` and `schema_migrations` were squashed away with the
+  file-shaped rewrite (plan 013). A schema change is one edit to one
+  file plus `make generate`. Reintroducing a chain means reintroducing
+  the drift it caused before — `sql/schemas/` and the migrations
+  disagreed, and sqlc generated against the stale one.
 
-  A few things that bite if forgotten:
-  - **Column order must match between the two paths.** `ALTER TABLE
-    ADD COLUMN` always appends at the end, so a migrated column must
-    also be declared *last* in the `CREATE TABLE` in `sql/schemas/`
-    — otherwise a fresh install and an upgraded install disagree on
-    column order, and a `SELECT *` query (sqlc binds those
-    positionally) silently reads the wrong field on one of them. See
-    `backend/database/migrations_test.go`'s
-    `TestMigrations_ColumnOrderMatchesFreshInstall`, which is the
-    regression test for exactly this.
-  - **Don't put an index on a migrated column in `sql/schemas/`.**
-    Schema files run before migrations, against a database that may
-    not have that column yet — the index's predicate would fail
-    (this is precisely the bug an earlier session shipped and a user
-    hit at `make sandbox`). Declare it in the migration file instead,
-    after the `ALTER TABLE` that adds the column.
-  - This project **had** a 48-step migration chain before and tore it
-    out (see `.planning/NOTES.md`, "No migration chain") because
-    `sql/schemas/` had drifted from what the migrations actually
-    produced and sqlc silently generated against the stale version.
-    The design here avoids that by keeping `sql/schemas/` as the
-    literal target shape (not a hand-maintained description of it)
-    and letting migrations replay tolerantly against it — but the
-    same drift is possible again if a schema change ships without
-    updating both files. Don't reintroduce a *second* description of
-    the schema anywhere else.
+  **The local library is shaped like files, not like MusicBrainz.**
+  `audio_files` carries its own tags — title, artist credit, track and
+  disc numbers, year, composer, the recording MBID — and points at two
+  shared rows: `albums` (many files to one) and `artists` (many albums
+  to one). `file_genres` is the one genuine many-to-many. That is the
+  entire local model.
+
+  It used to be MusicBrainz's: `recordings`, `release_group_recordings`,
+  `artist_credit` and `artist_credit_artist` sat between a file and its
+  own tags. Measured on a real 25,966-file library, **every**
+  many-to-many that model expressed was 1:1 in the data — no recording
+  had two files, none belonged to two release groups, and 3 credits of
+  2,823 listed more than one artist. What it cost was a six-way join in
+  every read, a `MIN(release_group_id)` subquery in eleven queries and a
+  first-credited-artist subquery in nine to undo fan-outs that never
+  happened, and a class of bugs where a metadata row **outlived the file
+  that created it**: retagging a file created a new recording and
+  abandoned the old one, so that library carried 812 orphaned
+  recordings, 216 release groups and 260 artists — and 129 catalog rows
+  that confidently claimed to be owned by files that no longer existed.
+
+  A few things that follow, and bite if forgotten:
+  - **Ownership is a file.** "Do I own this" is asked of `audio_files`
+    and nothing else — `GetFilePathsByRecordingMBIDs`,
+    `LibraryMBIDIndex.CheckMBIDs`, `collectLibraryEntities` and
+    `pruneStaleLocalCrossReferences` all join it. A metadata row is not
+    ownership; that was the bug, and it is now structurally impossible
+    for a row to exist without its file.
+  - **The projection is defined once, in the `track_metadata` view.**
+    Every query that returns a track selects from it, which is why
+    there is one row type (`sqlcgen.TrackMetadatum`) and one mapper
+    (`trackFromRow`). It existed before and only the raw-SQL search
+    paths used it, so nine hand-rolled copies had already drifted: the
+    view preferred the album's original year and one copy used the
+    track's, and the same library reported different years on different
+    screens. The FTS searches cannot be sqlc queries (MATCH is not in
+    its grammar) and spell the column list out in `search.go` — that is
+    the one exception and it is one constant.
+  - **`library_id = 0` means every library.** Each list query used to
+    exist twice, scoped and unscoped, with a branch at every call site
+    and a separate binding for each. One query answers both, and the
+    scoped form costs nothing measurable (23 ms against 21 ms over 26k
+    rows).
+  - **A slice and a named parameter do not compose in sqlc.**
+    `sqlc.slice` expands to N placeholders but a named argument is
+    numbered independently, so `GetFilePathsByAlbums([1,2], 0)` read
+    album id 2 as the library id. Where a query needs both, return
+    `library_id` and filter in Go (`inLibrary`).
+  - **A cache without a ceiling is a leak with a schedule.** Every
+    store that grows with use declares a budget beside its retention
+    (`browsedArtBudget`, `httpCacheBudget`), because an age bound does
+    not bound anything a user can outrun in an afternoon.
+  - **A query file must be ASCII.** sqlc's parameter rewriter works on
+    byte offsets, so one non-ASCII character in a *query* comment
+    corrupts the generated Go into garbage like `SELECid`. Schema files
+    are not rewritten and may contain anything.
+  - **A view is dropped and recreated, not migrated.**
+    `CREATE VIEW IF NOT EXISTS` no-ops against a database holding the
+    old definition, so `track_metadata.sql` opens with
+    `DROP VIEW IF EXISTS`; a view holds no data, so rebuilding it on
+    every open costs nothing.
   - **A write wearing a query's shape still needs the writer.**
     `DB.QueryContext`/`QueryContextWith`/`QueryRow` route to a
     *query-only* read pool (a second `sql.DB` over the same file), so
     an `INSERT ... RETURNING` issued through one fails at runtime with
-    "attempt to write a readonly database (8)" — which is exactly what
-    `CreateSmartPlaylist` did, meaning no smart playlist could be
-    created at all. Use `ExecContext`, or `QueryRowWriter` when the
-    statement really does return a row. Nothing caught this because
-    `NewTestDB` shares one in-memory connection and leaves `readDB`
-    nil, so `reader()` returns the *writer* under test and the unit
-    tests exercised a handle the app does not have.
-    `TestNoWritesOnTheReadPool` walks the tree for it, in the same
-    spirit as `TestNoDirectRuntimeEmits` and for the same reason — a
-    lint pass only sees one build configuration.
-  - **A new table needs one file, not two.** The two-file rule is
-    about a column added to a table that already exists.
-    `applySchema` runs every file in `sql/schemas/` on *every* open,
-    so a `CREATE TABLE IF NOT EXISTS` reaches an existing install
-    verbatim and a migration for it would be a second description of
-    the same table — which is exactly what the third rule forbids.
-    `excluded_paths` is the worked example, index included, since the
-    column and its index arrive together.
+    "attempt to write a readonly database (8)". Use `ExecContext`, or
+    `QueryRowWriter` when the statement really does return a row.
+    Nothing caught this because `NewTestDB` shares one in-memory
+    connection and leaves `readDB` nil, so `reader()` returns the
+    *writer* under test. `TestNoWritesOnTheReadPool` walks the tree for
+    it, in the same spirit as `TestNoDirectRuntimeEmits`.
   - **A new table has to say what kind of data it holds.**
     `backend/datamap` is a catalogue of every table's Kind and
     Lifetime, and `TestCatalogCoversSchema` fails on a table missing
     from it. `TestAuthoredCascadesAreDeliberate` then makes an
     *authored* table that cascades an explicit, argued exemption —
-    authored data is what a user cannot get back.
-  - **Squashing is fine pre-1.0.** While this hasn't shipped to real
-    users, periodically folding `sql/migrations/` into `sql/schemas/`
-    and deleting the migration files (then wiping your own dev/sandbox
-    DB) is a legitimate way to keep the migrations directory from
-    accumulating dev-only churn — same effect as the old "just nuke
-    it" workflow, opt-in instead of mandatory. Stop doing that once
-    real user databases exist in the wild.
+    authored data is what a user cannot get back. Two entries say
+    **MIXED KIND** and mean it: `audio_files` is an owned projection
+    except for `play_count`, `last_played` and `tag_status`, which are
+    authored; `lyrics` carries a `source` column because a lyric read
+    from a tag is free to rebuild and one fetched from LRCLIB is not.
+  - **Test data has one seeder.** `database.InsertTestTrack` inserts a
+    file with its artist, album and genres. Twenty test files used to
+    carry their own, each assembling the old FK chain in a slightly
+    different order.
 - `metadata` — Tag extraction (ID3v2, Vorbis Comments, FLAC).
 - `jobs` — The registry every long-running operation reports through:
   progress, pause/cancel, a global indicator and (for scans) a pause
@@ -391,6 +412,67 @@ work happens **once, centrally**, and users download the result:
   (`dumpincremental.go`), and resolves artists outside the artifact's
   coverage lazily on first view.
 
+**The catalog stores ids as bytes, and that is a size decision.**
+`explore_index` is 2,052,200 rows, and its MBIDs and entity types were
+half of it: three 36-character text columns and one storing the words
+"artist", "release_group", "recording" two million times. They are 16
+raw bytes and a small integer now. Measured on a real catalog, the
+table and its six indexes went **780 MB to 405 MB** — the largest
+single saving available in this app, and the reason a fresh install is
+~0.6 GB rather than ~1.0 GB.
+
+`backend/explore/mbid.go` is the only place that encoding is known.
+Everything above it speaks dashed strings and entity names —
+`SearchIndexResult`, the bindings, the frontend — and `dbMBID` /
+`dbEntityType` convert at the SQL boundary. That confinement is the
+point: the alternative is blobs reaching code that has no use for them.
+
+Four things about it are load-bearing, and they exist because of *how*
+this fails when it fails: **SQLite does not coerce between TEXT and
+BLOB**, so a query comparing the column against a 36-character string
+returns no rows rather than an error, and a scan into a plain string
+yields sixteen bytes of mojibake. Neither is visible except as a result
+that is quietly empty.
+
+- **The column checks itself.** `CHECK(length(mbid) = 16)` means a
+  stringly *write* fails at the insert that made it. It also caught
+  every fixture that had been using `"rh"` as an MBID; `testMBID()`
+  hashes a label into a real one so they stay readable.
+- **The projection is one constant and one scanner.**
+  `indexRowColumns` / `scanIndexRow` replaced four copies of a 22-column
+  list and four matching `Scan` calls — four chances to decode wrongly.
+  `indexRowColumnsFor("i")` is the same list qualified, for the FTS join
+  where both sides have a `title`.
+- **A query that names an entity type inline writes the code with the
+  name beside it** — `entity_type = 1 /* artist */`. Splicing a Go
+  constant in would keep them in step automatically but makes every such
+  query a concatenation; `TestEntityCodesAreStable` pins the mapping
+  instead, because it is a storage format and changing one is not a
+  refactor.
+- **`TestStoredEncodingRoundTrips` sweeps every read path** — lookup,
+  top-N, exact match, FTS search, popularity batch, the CAA map — and
+  asserts each returns something with a dashed id. A missed conversion
+  site shows up there and essentially nowhere else.
+
+**The artifact is read in either encoding.** A published artifact
+carries whichever form the exporter that built it used, and there is one
+already out there in the old text form. `artifactStoresText` asks the
+artifact (`typeof(mbid)`) rather than trusting a version number, and
+`artifactSelectColumns` converts on the way in — one `unhex` per row on
+a once-a-month import, against requiring a rebuilt artifact before a new
+build can read anything. That probe **must** run on the writer:
+`core` is attached to that one connection, so `QueryContext` asks a
+pool where the artifact does not exist, and the error would silently
+select the conversion path for an artifact that needs none.
+
+**Its shape is the pattern for every column added after the fact.**
+`artifactHasTotals` is the same question about `total_tracks`, on the
+same handle: an artifact built before a column existed is still a
+perfectly good catalog, so it is *asked* and the missing column is
+selected as a literal `0`. Adding the column to the importer's SELECT
+list without that is how a published artifact — which nobody can re-cut
+retroactively — starts failing with `no such column`.
+
 **Background work yields, and says so in the context.** The post-scan
 backfills share MusicBrainz's rate limiters with every page the user
 can open, and both were FIFO — so a thousand-artist enrichment put an
@@ -453,7 +535,20 @@ is what every other failure here already does. SQLite's writer pool is
 `MaxOpenConns(1)`, so the workers queue at the Go level rather than
 racing for the file.
 
-Four things about the marks are load-bearing. The marks are **a table, not
+Five things about the marks are load-bearing. **A mark records that the
+upstream was asked, not that it answered with something.** ListenBrainz
+returns 200 and `[]` for an artist it has no popularity data for — which
+is most of a long-tail library, and the same is true of an artist whose
+every row falls under `indexMinPopularity` — and keying
+`discog_fetched` on "did rows come back" made those artists permanent
+candidates: "Filling in artist details" re-ran for up to
+`discogBackfillMaxPerRun` of them on **every launch**, forever, doing
+the same two fetches to the same empty answer. So `indexOneArtist` sets
+the mark when both fetches *succeeded* (`fetchTopReleaseGroups` and
+`fetchTopRecordings` return an error for that reason), and only a real
+failure — transport, non-2xx, unreadable body — leaves the artist for
+the next run. `browseFullDiscography` already had this right: an artist
+with genuinely no release groups is still marked browsed. The marks are **a table, not
 more `explore_index` columns**, because `artifactimport.go` merges the
 downloaded catalog by column list — a flag added there is a second
 place to remember, and forgetting it silently wipes every mark on the
@@ -504,6 +599,33 @@ that invents its own flat layout agrees with the bug.
 `StrayArtistImageFilesJob` reclaims what earlier versions downloaded,
 keeping only `explore.ArtistImageKeepNames()` and refusing an empty
 keep set for the reason the covers sweep refuses an empty live set.
+
+**An age is not a ceiling, and a cache needs one.** Art for an artist
+the user owns is kept indefinitely; everything else aged out after 90
+days and nothing counted it, so the same install held portraits for
+**5,770 artists in a 1,301-artist library** — every artist page opened
+in Explore fetches one, and a browsing afternoon is entirely inside the
+retention window. `browsedArtBudget` (256 MB) is the second pass:
+oldest browsed artist first, until what is left fits, with owned
+artists outside the budget entirely. `httpCacheBudget` is the same rule
+one cache over, and it is what makes the year-long entity TTL below
+safe — once answers stop expiring, expiry stops being a bound.
+
+**"Owned" is a file here too.** The sweep's live set used to be "there
+is an `artists` row", which the file-shaped schema made meaningless;
+it joins `audio_files` now, like every other ownership question. Its
+test had seeded an artists row with no file and called it owned — the
+exact phantom, in the fixture of the test that guards it.
+
+**Only the tiers of a cover are stored.** `saveCoverArt` writes
+`_sm`/`_md`/`_lg` and records the largest as `cover_art.file_path`;
+`coverart.ResolveURLs` reports that one as `Original` too, because it
+is the largest kept. The full-resolution image used to be written
+beside them and was **1,134 MB of a 1.4 GB covers directory** against
+110 MB for all three tiers — with nothing rendering it, since the grid
+caps at 350 px and the largest tier is 400. The bytes are still in the
+audio file, which is where they came from, so the repair pass that
+regenerated tiers *from the stored original* went with it.
 
 **Frontend** (`frontend/`): Lit 3.2 web components + Web Awesome UI library + HTMX. State management via singleton reactive stores in `src/store/`. Wails bindings auto-generated as TypeScript in `frontend/bindings/`, nested by Go import path — don't edit by hand. The `@go` alias absorbs the constant prefix, so a call site imports `@go/library/library.js`.
 
@@ -958,31 +1080,47 @@ when the whole release is owned, **Play 7 of 12** when some of it is,
 and **no play button at all** when none is, because a Play button that
 plays nothing (or seven tracks of forty) is worse than none.
 
-`albumLibraryStatus()` is deliberately *not* what decides that. It is
-four claims of decreasing confidence OR'd into one tick — a local album
-id, the backend's cross-reference, a cached MBID match, and finally
-*any single track* marked `inLibrary` — which is a fine answer to "is
-any of this mine" and a useless basis for a button. `ownership()`
-counts the displayed tracklist instead, whose `inLibrary` flags the
-backend sets per recording MBID.
+**The page asks one question, once, and it is "is there a file".**
+Ownership used to be several claims of decreasing confidence OR'd
+together — a local album id, the backend's cross-reference, a cached
+MBID match, and finally *any single track* flagged `inLibrary` — none
+of which is "there is a file to play", which is why the tick could be
+green on an album whose every action did nothing, and why the
+tracklist's context menu asked the backend on **hover** whether the row
+it was drawing was owned. `filePaths` is the one answer: a map from a
+displayed track to its path, filled once from `updated()` by a single
+batched `GetFilePathsByRecordingMBIDs`, and read by the badge, the Play
+button's count, the dimmed rows and every menu item. `askedFor` is a
+separate set from `filePaths` because the guard has to be *asked*, not
+*answered* — an unowned MBID never lands in the map, so guarding on the
+map re-requests it on every render, forever.
+
+The other half is that the *displayed* tracklist is also one thing.
+`buildVersionEntries` synthesises the "Your Library" entry from
+`localTracks`, so an album the catalog cannot answer for is exactly the
+case that needs the version list rebuilt — `loadLocalTracks` guarded
+that rebuild on `releases.length > 0` and so rendered "No release data
+available" over a tracklist it was holding in memory.
 
 **And the key it plays by is not the key it looks owned by.** The local
 album id is used wherever there is one, because a library-only album
 has *no* recording MBIDs — its tracks are synthesised from
 `GetAlbumTracks` with `mbid: RecordingMBID || ''` — so an MBID-keyed
 lookup on an untagged library resolves to nothing and Play queues
-nothing while looking entirely correct.
-`GetFilePathsByRecordingMBIDs` is the catalog-only fallback and the
-third member of the `GetFilePathsBy…` family: one query, paths only,
-grouped so the caller keeps the tracklist's order. It exists rather
-than a lookup by track id because **`MBTrack.LocalID` is declared and
-nothing in the backend ever writes it**.
+nothing while looking entirely correct. Those synthesised tracks carry
+their `FilePath` from the same rows, so they populate `filePaths`
+directly and cost no lookup at all; the batched
+`GetFilePathsByRecordingMBIDs` is what answers for a *catalog*
+tracklist. It is the third member of the `GetFilePathsBy…` family: one
+query, paths only, grouped so the caller keeps the tracklist's order.
+It exists rather than a lookup by track id because **`MBTrack.LocalID`
+is declared and nothing in the backend ever writes it**.
 
 **How much of an album is here is a question the files can answer.**
 `ownership()` above counts the *displayed* tracklist, which for a
-library copy is a tautology — every local track is `inLibrary: true`,
-so owned always equals total and "do I have all of this" had no local
-answer. The album page therefore asked MusicBrainz, and
+library copy is a tautology — every local track has a file, so owned
+always equals total and "do I have all of this" had no local answer.
+The album page therefore asked MusicBrainz, and
 `BrowseReleases` is the most expensive call the app makes: releases
 plus every version's full tracklist, on a 1 req/s limiter shared with
 `PrefetchReleases`, which fires up to eight when an artist page
@@ -990,8 +1128,7 @@ renders.
 
 The denominator was already on disk. `metadata` has read the "5/12"
 totals off every file since forever (`m.Track()`, `m.Disc()`) and
-discarded them; they persist to
-`release_group_recordings.total_tracks` now, and
+discarded them; they persist to `audio_files.total_tracks` now, and
 `GetAlbumCompleteness` sums them. **A complete, MBID-matched album
 makes no catalog call at all** — identity from the MBID, tracklist from
 the tags, which between them are what the browse was being spent on.
@@ -1010,9 +1147,30 @@ Owned counts *distinct track numbers* for the same reason in reverse:
 this app detects duplicates, and counting two files of track 3 twice
 would report a short album as complete.
 
-What tags cannot give is *which* tracks are missing, only how many — so
-an incomplete album still browses, and that is now the exception rather
-than every album load. Two smaller consequences: existing databases
+**Where the tags have no total, the catalog does.** `explore_index`
+carries a per-release-group `total_tracks` — ~2 bytes across 400,677
+rows, about 800 kB of artifact — and `completenessAnswer()` merges the
+two: the numerator stays local (distinct track numbers on disk) and
+only the denominator is borrowed, because a catalog total describes the
+canonical release while the files' own total, where they declare one,
+describes the release the user actually has. Zero still means "the
+catalog does not say", so an album neither side can total keeps the
+plain tick.
+
+Two rules hold up the column itself. **It is counted before the
+popularity filter**: `cmd/indexbuild` counts the canonical dump's rows
+per kept release, and counting only the *kept recordings* would say "9"
+about a twelve-track album whose other three nobody has played — the
+same confident lie that kept whole tracklists out of the artifact.
+And **adding a column to the importer's SELECT is how you break every
+artifact already published**, so `artifactHasTotals()` asks the
+attached artifact whether the column is there (on the writer, where
+`core` is attached) and selects a literal `0` when it is not — the same
+shape as the encoding probe beside it.
+
+What neither side can give is *which* tracks are missing, only how many
+— so an incomplete album still browses, and that is now the exception
+rather than every album load. Two smaller consequences: existing databases
 read "unknown" until a rescan repopulates the column (which degrades to
 exactly the old behaviour, so nothing breaks), and our own `tagwriter`
 writes track and disc *numbers* but not totals, so autotagging a folder
@@ -1094,6 +1252,27 @@ failures on correctly-matched albums. `AlbumReleasesFailed` is the
 missing half; `catalogFailed` is the only route to `unavailable` now,
 and the timer is a 60 s backstop for a genuine hang rather than the
 verdict.
+
+**Activating a row plays the list the row is in, from that row.** A
+double-click — and Play on a single row's context menu — queues the
+list as *displayed* with `startIndex` on that row, not a queue of one
+track that stops when the song ends. The two playlist views and
+`cover-grid`'s album dropdown always did this; the album page and
+`track-list` did not, so playing anything from the two largest
+tracklists in the app discarded the album around it. Three rules come
+with it. **A menu asks how much is selected**: one row is a position
+and means "from here", several rows are an explicit choice of *those*
+tracks and become the queue on their own (which is also the only case
+where `shuffleStart` still applies, since no one row was named as the
+place to start). **The index is into the paths, not into the rows** —
+`explore-album-details` queues `ownedFilePaths()` and its dimmed rows
+are not in it, so an index taken from the tracklist starts an album
+somewhere else entirely, or past its end. And **the index is looked up
+when it is used, not remembered**: selection keys are file paths
+because those survive a re-sort, a re-filter and a refetch, and an
+index survives none of the three — `displayIndexOf` is that lookup,
+against `cachedSortedTracks`, which is the only order the user can see
+and therefore the only one they can mean.
 
 **Ask for what the caller uses, once.** "Play this artist" resolved
 file paths with one `GetAlbumTracks` per album, sequentially, and every

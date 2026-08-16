@@ -56,10 +56,10 @@ async function settle(el: LitElement): Promise<void> {
 describe('a card grid shows its selection', () => {
   beforeEach(() => {
     resetHarness();
-    stub('library.Library.GetAllArtists', ARTISTS);
-    stub('library.Library.GetAllGenresWithCounts', GENRES);
-    stub('library.Library.GetAllTracks', []);
-    stub('library.Library.GetAllAlbums', []);
+    stub('library.Library.GetArtists', ARTISTS);
+    stub('library.Library.GetGenres', GENRES);
+    stub('library.Library.GetTracks', []);
+    stub('library.Library.GetAlbums', []);
     // The views read through LibraryController, whose cache is only
     // primed by a scan-complete; without it they render nothing and the
     // assertion below fails for the wrong reason.

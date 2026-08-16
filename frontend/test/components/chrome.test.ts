@@ -128,7 +128,7 @@ describe('<library-filter>', () => {
     select?.dispatchEvent(new Event('change'));
     await flush();
 
-    expect(lastArgs('library.Library.GetAllTracksByLibrary')).toEqual([8]);
+    expect(lastArgs('library.Library.GetTracks')).toEqual([8]);
   });
 
   it('picks up a library added while it was on screen', async () => {

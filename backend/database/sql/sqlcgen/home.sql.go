@@ -12,10 +12,10 @@ import (
 
 const homeAlbumsByGenre = `-- name: HomeAlbumsByGenre :many
 SELECT rg.id AS album_id
-FROM release_groups rg
-JOIN release_group_recordings rgr ON rgr.release_group_id = rg.id
-JOIN recording_genres rgen ON rgen.recording_id = rgr.recording_id
-JOIN genres g ON g.id = rgen.genre_id
+FROM albums rg
+JOIN audio_files af ON af.album_id = rg.id
+JOIN file_genres fg ON fg.audio_file_id = af.id
+JOIN genres g ON g.id = fg.genre_id
 WHERE g.name = ?
 GROUP BY rg.id
 ORDER BY RANDOM()
@@ -54,9 +54,8 @@ func (q *Queries) HomeAlbumsByGenre(ctx context.Context, arg HomeAlbumsByGenrePa
 
 const homeMostPlayedAlbums = `-- name: HomeMostPlayedAlbums :many
 SELECT rg.id AS album_id
-FROM release_groups rg
-JOIN release_group_recordings rgr ON rgr.release_group_id = rg.id
-JOIN audio_files af ON af.recording_id = rgr.recording_id
+FROM albums rg
+JOIN audio_files af ON af.album_id = rg.id
 GROUP BY rg.id
 HAVING SUM(af.play_count) > 0
 ORDER BY SUM(af.play_count) DESC
@@ -89,9 +88,8 @@ func (q *Queries) HomeMostPlayedAlbums(ctx context.Context, limit int64) ([]int6
 
 const homeRandomAlbums = `-- name: HomeRandomAlbums :many
 SELECT rg.id AS album_id
-FROM release_groups rg
-JOIN release_group_recordings rgr ON rgr.release_group_id = rg.id
-JOIN audio_files af ON af.recording_id = rgr.recording_id
+FROM albums rg
+JOIN audio_files af ON af.album_id = rg.id
 GROUP BY rg.id
 ORDER BY RANDOM()
 LIMIT ?
@@ -122,9 +120,8 @@ func (q *Queries) HomeRandomAlbums(ctx context.Context, limit int64) ([]int64, e
 
 const homeRecentlyAddedAlbums = `-- name: HomeRecentlyAddedAlbums :many
 SELECT rg.id AS album_id
-FROM release_groups rg
-JOIN release_group_recordings rgr ON rgr.release_group_id = rg.id
-JOIN audio_files af ON af.recording_id = rgr.recording_id
+FROM albums rg
+JOIN audio_files af ON af.album_id = rg.id
 GROUP BY rg.id
 ORDER BY MAX(af.id) DESC
 LIMIT ?
@@ -159,9 +156,8 @@ func (q *Queries) HomeRecentlyAddedAlbums(ctx context.Context, limit int64) ([]i
 const homeRecentlyPlayedAlbums = `-- name: HomeRecentlyPlayedAlbums :many
 
 SELECT rg.id AS album_id
-FROM release_groups rg
-JOIN release_group_recordings rgr ON rgr.release_group_id = rg.id
-JOIN audio_files af ON af.recording_id = rgr.recording_id
+FROM albums rg
+JOIN audio_files af ON af.album_id = rg.id
 WHERE af.last_played IS NOT NULL
 GROUP BY rg.id
 ORDER BY MAX(af.last_played) DESC
@@ -172,7 +168,7 @@ LIMIT ?
 //
 // Every one of these returns album ids and nothing else.  The display
 // columns (cover art, artist credit, year) already have exactly one
-// correct expression of them, in GetAllAlbumsWithDetails, and a second
+// correct expression of them, in GetAlbums, and a second
 // copy per shelf would be six more places for that to drift.  The home
 // service joins the ids back to that one album list in Go.
 // Albums with the most recent play, newest first.
@@ -201,9 +197,8 @@ func (q *Queries) HomeRecentlyPlayedAlbums(ctx context.Context, limit int64) ([]
 
 const homeStaleAlbums = `-- name: HomeStaleAlbums :many
 SELECT rg.id AS album_id
-FROM release_groups rg
-JOIN release_group_recordings rgr ON rgr.release_group_id = rg.id
-JOIN audio_files af ON af.recording_id = rgr.recording_id
+FROM albums rg
+JOIN audio_files af ON af.album_id = rg.id
 WHERE af.last_played IS NOT NULL
 GROUP BY rg.id
 HAVING MAX(af.last_played) < datetime('now', ?)
@@ -242,14 +237,12 @@ func (q *Queries) HomeStaleAlbums(ctx context.Context, arg HomeStaleAlbumsParams
 
 const homeTopArtists = `-- name: HomeTopArtists :many
 SELECT
-    COALESCE(ac.text, '') AS artist_name,
+    rg.artist_credit AS artist_name,
     SUM(af.play_count) AS plays
-FROM release_groups rg
-JOIN artist_credit ac ON ac.id = rg.album_artist_credit_id
-JOIN release_group_recordings rgr ON rgr.release_group_id = rg.id
-JOIN audio_files af ON af.recording_id = rgr.recording_id
-WHERE ac.text <> ''
-GROUP BY ac.text
+FROM albums rg
+JOIN audio_files af ON af.album_id = rg.id
+WHERE rg.artist_credit <> ''
+GROUP BY rg.artist_credit
 HAVING plays > 0
 ORDER BY plays DESC
 LIMIT ?
@@ -288,10 +281,10 @@ func (q *Queries) HomeTopArtists(ctx context.Context, limit int64) ([]HomeTopArt
 const homeTopGenres = `-- name: HomeTopGenres :many
 SELECT
     g.name AS genre,
-    COUNT(DISTINCT rgr.release_group_id) AS album_count
+    COUNT(DISTINCT af.album_id) AS album_count
 FROM genres g
-JOIN recording_genres rgen ON rgen.genre_id = g.id
-JOIN release_group_recordings rgr ON rgr.recording_id = rgen.recording_id
+JOIN file_genres fg ON fg.genre_id = g.id
+JOIN audio_files af ON af.id = fg.audio_file_id
 GROUP BY g.id
 HAVING album_count >= 3
 ORDER BY album_count DESC
@@ -331,9 +324,8 @@ func (q *Queries) HomeTopGenres(ctx context.Context, limit int64) ([]HomeTopGenr
 
 const homeUnplayedAlbums = `-- name: HomeUnplayedAlbums :many
 SELECT rg.id AS album_id
-FROM release_groups rg
-JOIN release_group_recordings rgr ON rgr.release_group_id = rg.id
-JOIN audio_files af ON af.recording_id = rgr.recording_id
+FROM albums rg
+JOIN audio_files af ON af.album_id = rg.id
 GROUP BY rg.id
 HAVING SUM(af.play_count) = 0
 ORDER BY RANDOM()

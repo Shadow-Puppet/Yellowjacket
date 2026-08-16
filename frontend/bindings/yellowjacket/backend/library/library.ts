@@ -13,23 +13,10 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
 import * as sqlcgen$0 from "../database/sql/sqlcgen/models.js";
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore: Unused imports
-import * as jobs$0 from "../jobs/models.js";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
 import * as $models from "./models.js";
-
-/**
- * AcquirePipelineLock acquires the pipeline mutex for a tag write
- * operation.  The caller must call ReleasePipelineLock when done.
- * If a scan is currently in progress, AcquirePipelineLock blocks
- * until it completes (and vice versa).
- */
-export function AcquirePipelineLock(): $CancellablePromise<void> {
-    return $Call.ByID(2056761494);
-}
 
 /**
  * AddLibrary creates a new library from a directory path, emits a
@@ -82,12 +69,6 @@ export function FullRescan(): $CancellablePromise<$models.ScanMetrics | null> {
  * GetAlbumCompleteness answers "do I have all of this album" from the
  * tags read at scan time, with no network.
  * 
- * The album page used to ask MusicBrainz, because the only track total
- * it had was the length of whatever tracklist it was already showing —
- * which for a library copy is a tautology.  The denominator in a file's
- * "5/12" is a real answer and it is already on disk; this is where it
- * gets read.
- * 
  * Complete is deliberately >= rather than ==: bonus and hidden tracks
  * routinely put a folder over its declared total, and that is a
  * complete album, not a broken one.
@@ -97,99 +78,38 @@ export function GetAlbumCompleteness(albumID: number): $CancellablePromise<$mode
 }
 
 /**
- * GetAlbumTracks returns all tracks for a given album (release group), ordered by disc and track number.
+ * GetAlbumTracks returns one album's tracks in disc/track order.
  */
-export function GetAlbumTracks(albumID: number): $CancellablePromise<$models.Track[] | null> {
-    return $Call.ByID(300451334, albumID);
+export function GetAlbumTracks(albumID: number, libraryID: number): $CancellablePromise<$models.Track[] | null> {
+    return $Call.ByID(300451334, albumID, libraryID);
 }
 
 /**
- * GetAlbumTracksByLibrary returns tracks for the given album,
- * scoped to the given library.
+ * GetAlbums returns every album, or those with a file in one library.
  */
-export function GetAlbumTracksByLibrary(albumID: number, libraryID: number): $CancellablePromise<$models.Track[] | null> {
-    return $Call.ByID(3304485554, albumID, libraryID);
+export function GetAlbums(libraryID: number): $CancellablePromise<$models.Album[] | null> {
+    return $Call.ByID(2870789667, libraryID);
 }
 
 /**
- * GetAlbumsByArtist returns all albums where the given artist is the album artist.
+ * GetAlbumsByArtist returns the albums credited to an artist by name.
  */
-export function GetAlbumsByArtist(artistID: number): $CancellablePromise<$models.Album[] | null> {
-    return $Call.ByID(1456840721, artistID);
+export function GetAlbumsByArtist(artist: string, libraryID: number): $CancellablePromise<$models.Album[] | null> {
+    return $Call.ByID(1456840721, artist, libraryID);
 }
 
 /**
- * GetAlbumsByArtistByLibrary returns albums for the given artist
- * that have tracks in the given library.
- */
-export function GetAlbumsByArtistByLibrary(artistID: number, libraryID: number): $CancellablePromise<$models.Album[] | null> {
-    return $Call.ByID(2809291, artistID, libraryID);
-}
-
-/**
- * GetAllAlbums returns all albums with cover art and artist info for the cover grid.
- */
-export function GetAllAlbums(): $CancellablePromise<$models.Album[] | null> {
-    return $Call.ByID(2015458954);
-}
-
-/**
- * GetAllAlbumsByLibrary returns albums that have tracks in the given library.
- */
-export function GetAllAlbumsByLibrary(libraryID: number): $CancellablePromise<$models.Album[] | null> {
-    return $Call.ByID(4023050470, libraryID);
-}
-
-/**
- * GetAllArtists returns artists that are credited as album artists, ordered by name.
- */
-export function GetAllArtists(): $CancellablePromise<$models.Artist[] | null> {
-    return $Call.ByID(2529088294);
-}
-
-/**
- * GetAllArtistsByLibrary returns artists that have albums with tracks
- * in the given library.
- */
-export function GetAllArtistsByLibrary(libraryID: number): $CancellablePromise<$models.Artist[] | null> {
-    return $Call.ByID(1170594642, libraryID);
-}
-
-/**
- * GetAllGenresWithCounts returns all genres with their track counts.
- */
-export function GetAllGenresWithCounts(): $CancellablePromise<$models.GenreWithCount[] | null> {
-    return $Call.ByID(602231298);
-}
-
-/**
- * GetAllGenresWithCountsByLibrary returns genres with track counts
- * scoped to the given library.
- */
-export function GetAllGenresWithCountsByLibrary(libraryID: number): $CancellablePromise<$models.GenreWithCount[] | null> {
-    return $Call.ByID(772684334, libraryID);
-}
-
-/**
- * GetAllLibrariesWithTrackCounts returns all libraries with their
- * audio file counts. Typically 1-5 libraries so the loop is trivial.
+ * GetAllLibrariesWithTrackCounts lists the libraries and their sizes.
  */
 export function GetAllLibrariesWithTrackCounts(): $CancellablePromise<$models.Info[] | null> {
     return $Call.ByID(3420301148);
 }
 
 /**
- * GetAllTracks returns an array of track structs of every file in the library.
+ * GetArtists returns the album artists in a library.
  */
-export function GetAllTracks(): $CancellablePromise<$models.Track[] | null> {
-    return $Call.ByID(2991050010);
-}
-
-/**
- * GetAllTracksByLibrary returns tracks scoped to a specific library.
- */
-export function GetAllTracksByLibrary(libraryID: number): $CancellablePromise<$models.Track[] | null> {
-    return $Call.ByID(3882999766, libraryID);
+export function GetArtists(libraryID: number): $CancellablePromise<$models.Artist[] | null> {
+    return $Call.ByID(2231116965, libraryID);
 }
 
 /**
@@ -200,8 +120,8 @@ export function GetAllTracksByLibrary(libraryID: number): $CancellablePromise<$m
  * resolved paths with one binding call per album, sequentially, and each
  * asked for whole track rows to read one field off them (perf.m2).  This
  * is that question asked once.  The result is grouped rather than
- * flattened because the caller owns the ordering — an album list is
- * sorted by name, not by id — and because the drag cache stores it per
+ * flattened because the caller owns the ordering - an album list is
+ * sorted by name, not by id - and because the drag cache stores it per
  * album.
  * 
  * A library id of 0 means "every library", matching the caller's
@@ -212,34 +132,31 @@ export function GetFilePathsByAlbums(albumIDs: number[] | null, libraryID: numbe
 }
 
 /**
- * GetFilePathsByGenres returns the file paths of every track tagged with
- * the given genres, grouped by genre name.  See GetFilePathsByAlbums —
- * same finding, same shape, and the caller still owns the de-duplication
- * across genres because it owns the order.
+ * GetFilePathsByGenres returns file paths grouped by genre name.
  */
 export function GetFilePathsByGenres(genreNames: string[] | null, libraryID: number): $CancellablePromise<{ [_ in string]?: string[] | null } | null> {
     return $Call.ByID(1180707302, genreNames, libraryID);
 }
 
 /**
- * GetFilePathsByRecordingMBIDs returns the file paths of every track
- * whose recording MBID is in mbids, grouped by MBID.
+ * GetFilePathsByRecordingMBIDs answers "which of these catalog
+ * recordings do I actually have a file for", grouped by MBID.
  * 
- * This is the catalog side of GetFilePathsByAlbums.  An Explore album
- * page knows what the user owns as a set of recording MBIDs and nothing
- * else: that is exactly how the backend decides a track's InLibrary
- * flag (markReleasesInLibrary → CheckMBIDs), and MBTrack.LocalID is a
- * declared field that nothing writes, so there is no id to ask by.
- * 
- * Grouped rather than flattened for the same two reasons as its
- * siblings — the caller owns the order (the tracklist's, not the
- * database's), and one recording can have more than one file, which is
- * what this app's duplicate detection exists for.
- * 
- * A library id of 0 means "every library".
+ * It asks audio_files, which is the only table whose rows are files.
+ * The version of this question that asked the metadata tables said yes
+ * for 129 tracks in a real library that had no file at all - a
+ * retagged file left its old recording row behind, the catalog matched
+ * it, and every action on the row then failed.
  */
 export function GetFilePathsByRecordingMBIDs(mbids: string[] | null, libraryID: number): $CancellablePromise<{ [_ in string]?: string[] | null } | null> {
     return $Call.ByID(2789061644, mbids, libraryID);
+}
+
+/**
+ * GetGenres returns every genre with its track count.
+ */
+export function GetGenres(libraryID: number): $CancellablePromise<$models.GenreWithCount[] | null> {
+    return $Call.ByID(2817241511, libraryID);
 }
 
 /**
@@ -259,26 +176,30 @@ export function GetScanQueueLength(): $CancellablePromise<number> {
 }
 
 /**
- * GetTrackMBIDs returns the MusicBrainz IDs for the track at the
- * given file path.  Returns empty strings for entities without MBIDs.
+ * GetTrackMBIDs returns the MusicBrainz ids for one file.
  */
 export function GetTrackMBIDs(filePath: string): $CancellablePromise<$models.TrackMBIDs> {
     return $Call.ByID(56752473, filePath);
 }
 
 /**
- * GetTracksByGenre returns all tracks tagged with the given genre.
+ * GetTracks returns every track in a library, or in all of them when
+ * libraryID is 0.
+ * 
+ * The library id is a parameter rather than a second method because the
+ * two used to be separate queries, separate bindings and a branch at
+ * every call site - and the scoped form costs nothing (measured: 23 ms
+ * against 21 ms over 26k rows).
  */
-export function GetTracksByGenre(genreName: string): $CancellablePromise<$models.Track[] | null> {
-    return $Call.ByID(1674220245, genreName);
+export function GetTracks(libraryID: number): $CancellablePromise<$models.Track[] | null> {
+    return $Call.ByID(933082923, libraryID);
 }
 
 /**
- * GetTracksByGenreByLibrary returns tracks tagged with the given
- * genre, scoped to the given library.
+ * GetTracksByGenre returns every track carrying a genre.
  */
-export function GetTracksByGenreByLibrary(genreName: string, libraryID: number): $CancellablePromise<$models.Track[] | null> {
-    return $Call.ByID(4240564783, genreName, libraryID);
+export function GetTracksByGenre(genre: string, libraryID: number): $CancellablePromise<$models.Track[] | null> {
+    return $Call.ByID(1674220245, genre, libraryID);
 }
 
 /**
@@ -316,13 +237,6 @@ export function PauseScan(): $CancellablePromise<void> {
  */
 export function QueuedLibraryNames(): $CancellablePromise<string[] | null> {
     return $Call.ByID(2036951097);
-}
-
-/**
- * ReleasePipelineLock releases the pipeline mutex after a tag write.
- */
-export function ReleasePipelineLock(): $CancellablePromise<void> {
-    return $Call.ByID(2053843147);
 }
 
 /**
@@ -392,51 +306,10 @@ export function ScanLibrary(id: number): $CancellablePromise<void> {
 }
 
 /**
- * SearchTracks performs an FTS5 full-text search and returns
- * matching tracks with full metadata.
+ * SearchTracks runs the library's FTS index and returns whole tracks.
  */
-export function SearchTracks(query: string): $CancellablePromise<$models.Track[] | null> {
-    return $Call.ByID(3848515709, query);
-}
-
-/**
- * SearchTracksByLibrary performs an FTS5 search scoped to a specific
- * library and returns matching tracks with full metadata.
- */
-export function SearchTracksByLibrary(query: string, libraryID: number): $CancellablePromise<$models.Track[] | null> {
-    return $Call.ByID(152384327, query, libraryID);
-}
-
-/**
- * SetJobRegistry wires the background job registry so scans report
- * progress, logs, and pause/cancel controls to the frontend.
- */
-export function SetJobRegistry(reg: jobs$0.Registry | null): $CancellablePromise<void> {
-    return $Call.ByID(4271773525, reg);
-}
-
-/**
- * SetRemovalHooks provides optional hooks for cross-cutting
- * orchestration during RemoveLibrary.
- */
-export function SetRemovalHooks(h: $models.RemovalHooks): $CancellablePromise<void> {
-    return $Call.ByID(3190933207, h);
-}
-
-/**
- * SetRescanHooks provides optional hooks for cross-cutting
- * orchestration during FullRescan.
- */
-export function SetRescanHooks(h: $models.RescanHooks): $CancellablePromise<void> {
-    return $Call.ByID(1944064333, h);
-}
-
-/**
- * SetScanHooks provides optional hooks for cross-cutting
- * orchestration after each library scan.
- */
-export function SetScanHooks(h: $models.ScanHooks): $CancellablePromise<void> {
-    return $Call.ByID(520513414, h);
+export function SearchTracks(query: string, libraryID: number): $CancellablePromise<$models.Track[] | null> {
+    return $Call.ByID(3848515709, query, libraryID);
 }
 
 /**

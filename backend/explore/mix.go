@@ -107,12 +107,11 @@ func (e *Service) mixSeedProfile(
 			artistCounts[artist.ArtistMbid]++
 			artistNames[artist.ArtistMbid] = artist.ArtistName
 		}
+	}
 
-		names, err := e.db.ReadQueries.GetGenreNamesByFilePath(ctx, p)
-		if err == nil {
-			for _, g := range names {
-				genres[g] = true
-			}
+	for _, names := range e.genresByPath(ctx, seedPaths) {
+		for _, g := range names {
+			genres[g] = true
 		}
 	}
 
@@ -148,6 +147,12 @@ func (e *Service) mixCandidates(
 
 	candidates := map[string]float64{}
 
+	// Every candidate path's genres, in one query.  This used to be a
+	// single-row lookup *per candidate* inside two nested loops -
+	// twenty seed artists by twenty similar artists by thirty paths is
+	// twelve thousand queries to assemble one mix.
+	pathGenres := e.genresByPath(ctx, e.similarArtistPaths(ctx, artistCounts))
+
 	for seedArtistMBID, count := range artistCounts {
 		similar, err := e.SimilarArtists(seedArtistMBID)
 		if err != nil {
@@ -178,13 +183,11 @@ func (e *Service) mixCandidates(
 					continue
 				}
 
-				if names, err := e.db.ReadQueries.GetGenreNamesByFilePath(ctx, p); err == nil {
-					for _, g := range names {
-						if seedGenres[g] {
-							weight += mixGenreBoost
+				for _, g := range pathGenres[p] {
+					if seedGenres[g] {
+						weight += mixGenreBoost
 
-							break
-						}
+						break
 					}
 				}
 
@@ -194,6 +197,64 @@ func (e *Service) mixCandidates(
 	}
 
 	return candidates
+}
+
+// genresByPath returns the genres of many files in one query.
+func (e *Service) genresByPath(
+	ctx context.Context, paths []string,
+) map[string][]string {
+	out := make(map[string][]string, len(paths))
+
+	if len(paths) == 0 {
+		return out
+	}
+
+	rows, err := e.db.ReadQueries.GetGenreNamesByFilePaths(ctx, paths)
+	if err != nil {
+		return out
+	}
+
+	for _, row := range rows {
+		out[row.FilePath] = append(out[row.FilePath], row.Name)
+	}
+
+	return out
+}
+
+// similarArtistPaths collects every owned file by an artist similar to
+// one of the seeds, so their genres can be fetched in one go.
+func (e *Service) similarArtistPaths(
+	ctx context.Context, artistCounts map[string]int,
+) []string {
+	var paths []string
+
+	for seedArtistMBID := range artistCounts {
+		similar, err := e.SimilarArtists(seedArtistMBID)
+		if err != nil {
+			continue
+		}
+
+		if len(similar) > mixSimilarArtistsPerSeed {
+			similar = similar[:mixSimilarArtistsPerSeed]
+		}
+
+		for _, sim := range similar {
+			if sim.ArtistMBID == "" {
+				continue
+			}
+
+			p, err := e.db.ReadQueries.GetFilePathsByArtistMBID(
+				ctx, sql.NullString{String: sim.ArtistMBID, Valid: true},
+			)
+			if err != nil {
+				continue
+			}
+
+			paths = append(paths, p...)
+		}
+	}
+
+	return paths
 }
 
 // weightedSample picks up to n distinct keys from weights without

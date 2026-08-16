@@ -118,16 +118,6 @@ func (tw *TagWriter) WriteTrackTags(trackID int64, changes TagChanges) error {
 		return fmt.Errorf("get audio file %d: %w", trackID, err)
 	}
 
-	recording, err := tw.db.Queries.GetRecording(ctx, audioFile.RecordingID)
-	if err != nil {
-		return fmt.Errorf("get recording %d: %w", audioFile.RecordingID, err)
-	}
-
-	rgLinks, err := tw.db.Queries.GetRecordingReleaseGroups(ctx, recording.ID)
-	if err != nil {
-		return fmt.Errorf("get recording rg links: %w", err)
-	}
-
 	// 2. Detect format.
 	format, err := DetectFormat(audioFile.FilePath)
 	if err != nil {
@@ -165,12 +155,10 @@ func (tw *TagWriter) WriteTrackTags(trackID int64, changes TagChanges) error {
 
 	// 6. Sync database.
 	if syncErr := syncDatabase(ctx, tw.logger, tw.db, dbSyncParams{
-		audioFileID:  audioFile.ID,
-		recordingID:  recording.ID,
-		filePath:     audioFile.FilePath,
-		changes:      changes,
-		oldRecording: recording,
-		oldRGLinks:   rgLinks,
+		audioFileID: audioFile.ID,
+		filePath:    audioFile.FilePath,
+		changes:     changes,
+		oldFile:     audioFile,
 	}); syncErr != nil {
 		tw.logger.Error("db sync failed after successful file write",
 			"err", syncErr,

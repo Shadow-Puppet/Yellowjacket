@@ -141,23 +141,16 @@ func (l *Library) clearLibraryTables() error {
 		UPDATE playlist_tracks
 		SET
 			phantom_title = COALESCE(phantom_title, (
-				SELECT r.name FROM audio_files af
-				JOIN recordings r ON af.recording_id = r.id
-				WHERE af.id = playlist_tracks.audio_file_id
+				SELECT tm.title FROM track_metadata tm
+				WHERE tm.id = playlist_tracks.audio_file_id
 			)),
 			phantom_artist = COALESCE(phantom_artist, (
-				SELECT ac.text FROM audio_files af
-				JOIN recordings r ON af.recording_id = r.id
-				JOIN artist_credit ac ON r.artist_credit_id = ac.id
-				WHERE af.id = playlist_tracks.audio_file_id
+				SELECT tm.artist_name FROM track_metadata tm
+				WHERE tm.id = playlist_tracks.audio_file_id
 			)),
 			phantom_album = COALESCE(phantom_album, (
-				SELECT rg.name FROM audio_files af
-				JOIN recordings r ON af.recording_id = r.id
-				LEFT JOIN release_group_recordings rgr ON r.id = rgr.recording_id
-				LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
-				WHERE af.id = playlist_tracks.audio_file_id
-				LIMIT 1
+				SELECT tm.album FROM track_metadata tm
+				WHERE tm.id = playlist_tracks.audio_file_id
 			)),
 			phantom_duration_ms = COALESCE(phantom_duration_ms, (
 				SELECT af.length_milliseconds FROM audio_files af
@@ -174,40 +167,16 @@ func (l *Library) clearLibraryTables() error {
 		)
 	}
 
-	if err := txq.DeleteAllRecordingGenres(l.ctx); err != nil {
-		return fmt.Errorf(
-			"could not clear recording genres: %w", err,
-		)
-	}
-
-	if err := txq.DeleteAllReleaseGroupRecordings(l.ctx); err != nil {
-		return fmt.Errorf(
-			"could not clear release group recordings: %w", err,
-		)
-	}
-
-	if err := txq.DeleteAllArtistCreditArtists(l.ctx); err != nil {
-		return fmt.Errorf(
-			"could not clear artist credit artists: %w", err,
-		)
-	}
-
-	// Phase 2: mid-level tables.
+	// Phase 2: the files.  file_genres cascades with them.
 	if err := txq.DeleteAllAudioFiles(l.ctx); err != nil {
 		return fmt.Errorf(
 			"could not clear audio files: %w", err,
 		)
 	}
 
-	if err := txq.DeleteAllReleaseGroups(l.ctx); err != nil {
+	if err := txq.DeleteAllAlbums(l.ctx); err != nil {
 		return fmt.Errorf(
-			"could not clear release groups: %w", err,
-		)
-	}
-
-	if err := txq.DeleteAllRecordings(l.ctx); err != nil {
-		return fmt.Errorf(
-			"could not clear recordings: %w", err,
+			"could not clear albums: %w", err,
 		)
 	}
 
@@ -215,12 +184,6 @@ func (l *Library) clearLibraryTables() error {
 	if err := txq.DeleteAllCoverArt(l.ctx); err != nil {
 		return fmt.Errorf(
 			"could not clear cover art: %w", err,
-		)
-	}
-
-	if err := txq.DeleteAllArtistCredits(l.ctx); err != nil {
-		return fmt.Errorf(
-			"could not clear artist credits: %w", err,
 		)
 	}
 

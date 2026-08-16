@@ -23,8 +23,6 @@ export type {
     MBReleaseGroup,
     MBSearchResult,
     MBTrack,
-    MusicBrainzClient,
-    RateLimiter,
     Shelf,
     ShelfPage,
     ThumbnailRequest,

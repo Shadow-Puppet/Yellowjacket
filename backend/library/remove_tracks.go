@@ -142,7 +142,7 @@ func (l *Library) RemoveFromLibrary(filePaths []string) (*RemovalResult, error) 
 	// with nothing behind it, and the album list selects from
 	// release_groups rather than from audio_files — so it would keep
 	// rendering an album the user has no tracks of.
-	l.pruneOrphanedMetadata()
+	l.pruneEmptyEntities()
 
 	l.emit(events.TracksRemovedFromLibrary, map[string]any{
 		"filePaths": filePaths,

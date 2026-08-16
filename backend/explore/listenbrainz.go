@@ -33,6 +33,12 @@ type ListenBrainzClient struct {
 	limiter *RateLimiter
 	cache   *Cache
 	logger  *slog.Logger
+
+	// baseURL is listenBrainzBaseURL unless a test redirects it.  It is
+	// per-client rather than a package variable — the MB client's
+	// SetBaseURL shape — so a test that points one client at an
+	// httptest server does not stop being parallel-safe.
+	baseURL string
 }
 
 // NewListenBrainzClient creates a ListenBrainz API client.
@@ -46,7 +52,13 @@ func NewListenBrainzClient(
 		limiter: limiter,
 		cache:   cache,
 		logger:  logger,
+		baseURL: listenBrainzBaseURL,
 	}
+}
+
+// SetBaseURL redirects this client at another host.  Tests only.
+func (c *ListenBrainzClient) SetBaseURL(url string) {
+	c.baseURL = strings.TrimSuffix(url, "/")
 }
 
 // TopRecordingsForArtist returns the most-listened recordings for
@@ -56,7 +68,7 @@ func (c *ListenBrainzClient) TopRecordingsForArtist(
 ) ([]LBTopRecording, error) {
 	url := fmt.Sprintf(
 		"%s/1/popularity/top-recordings-for-artist/%s",
-		listenBrainzBaseURL,
+		c.baseURL,
 		artistMBID,
 	)
 	cacheKey := "lb:top-recordings:" + artistMBID
@@ -104,7 +116,7 @@ func (c *ListenBrainzClient) TopReleaseGroupsForArtist(
 ) ([]LBTopReleaseGroup, error) {
 	url := fmt.Sprintf(
 		"%s/1/popularity/top-release-groups-for-artist/%s",
-		listenBrainzBaseURL,
+		c.baseURL,
 		artistMBID,
 	)
 	cacheKey := "lb:top-release-groups:" + artistMBID
@@ -234,7 +246,7 @@ func (c *ListenBrainzClient) ArtistPopularity(
 		return nil, nil //nolint:nilnil
 	}
 
-	url := listenBrainzBaseURL + "/1/popularity/artist"
+	url := c.baseURL + "/1/popularity/artist"
 	cacheKey := "lb:pop:artist:" + hashMBIDs(mbids)
 
 	if data, ok := c.cache.Get(cacheKey); ok {
@@ -265,7 +277,7 @@ func (c *ListenBrainzClient) RecordingPopularity(
 		return nil, nil //nolint:nilnil
 	}
 
-	url := listenBrainzBaseURL + "/1/popularity/recording"
+	url := c.baseURL + "/1/popularity/recording"
 	cacheKey := "lb:pop:recording:" + hashMBIDs(mbids)
 
 	if data, ok := c.cache.Get(cacheKey); ok {
@@ -296,7 +308,7 @@ func (c *ListenBrainzClient) ReleaseGroupPopularity(
 		return nil, nil //nolint:nilnil
 	}
 
-	url := listenBrainzBaseURL + "/1/popularity/release-group"
+	url := c.baseURL + "/1/popularity/release-group"
 	cacheKey := "lb:pop:release-group:" + hashMBIDs(mbids)
 
 	if data, ok := c.cache.Get(cacheKey); ok {
@@ -342,7 +354,7 @@ func (c *ListenBrainzClient) BatchArtistMetadata(
 		return nil, nil //nolint:nilnil
 	}
 
-	url := listenBrainzBaseURL + "/1/metadata/artist/?artist_mbids=" + strings.Join(mbids, ",")
+	url := c.baseURL + "/1/metadata/artist/?artist_mbids=" + strings.Join(mbids, ",")
 	cacheKey := "lb:meta:artist:" + hashMBIDs(mbids)
 
 	if data, ok := c.cache.Get(cacheKey); ok {

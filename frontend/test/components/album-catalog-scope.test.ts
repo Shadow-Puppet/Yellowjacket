@@ -164,8 +164,17 @@ describe('an album the library already holds in full', () => {
     stub('explore.Service.GetThumbnail', '');
     stub('library.Library.GetAllLibrariesWithTrackCounts', []);
     stub('library.Library.GetFilePathsByRecordingMBIDs', {});
+    // A local album's rows carry their file paths, and that is what
+    // "the library holds this" means now — the page records them as it
+    // maps the tracks, so nothing has to be asked again later.
     stub('library.Library.GetAlbumTracks', [
-      { TrackName: 'Track 1', TrackNumber: 1, DiscNumber: 1, TrackLength: '3:20' },
+      {
+        TrackName: 'Track 1',
+        TrackNumber: 1,
+        DiscNumber: 1,
+        TrackLength: '3:20',
+        FilePath: '/music/glass-harbour/01.mp3',
+      },
     ]);
   });
 
@@ -252,5 +261,73 @@ describe('an album the library already holds in full', () => {
 
     const badge = shadow(el, 'library-status-indicator');
     expect(badge?.getAttribute('status')).toBe('partial');
+  });
+
+  /**
+   * The denominator the files could not supply.
+   *
+   * A great deal of any library declares no track total at all, and
+   * "unknown" is a third state that must render as neither complete nor
+   * incomplete — so an album like this used to wear a plain tick no
+   * matter how much of it was missing. The catalog carries a per-
+   * release-group total in the artifact for about two bytes a row, and
+   * that is what fills the gap: the numerator stays local (how many
+   * distinct track numbers are on disk), only the denominator is
+   * borrowed.
+   */
+  it('borrows the catalog total when the tags declared none', async () => {
+    stub('explore.Service.LookupReleaseGroup', {
+      mbid: MBID,
+      title: 'Glass Harbour',
+      artistCredit: 'Tideline',
+      totalTracks: 12,
+    });
+    stub('library.Library.GetAlbumCompleteness', {
+      owned: 9,
+      expected: 0,
+      known: false,
+      complete: false,
+    });
+
+    const el = await fixture<LitElement>('explore-album-details', {
+      releaseGroupMBID: MBID,
+      localAlbumId: 7,
+      albumName: 'Glass Harbour',
+    });
+
+    await flush();
+    await el.updateComplete;
+
+    const badge = shadow(el, 'library-status-indicator');
+    expect(badge?.getAttribute('status')).toBe('partial');
+    expect((badge as unknown as { expected: number }).expected).toBe(12);
+    expect((badge as unknown as { owned: number }).owned).toBe(9);
+  });
+
+  /**
+   * And when neither side can total it, nothing is invented: zero means
+   * "the catalog does not say", which is the same third state the local
+   * answer has, so the badge stays a plain tick.
+   */
+  it('draws no ring when neither the tags nor the catalog say', async () => {
+    stub('library.Library.GetAlbumCompleteness', {
+      owned: 9,
+      expected: 0,
+      known: false,
+      complete: false,
+    });
+
+    const el = await fixture<LitElement>('explore-album-details', {
+      releaseGroupMBID: MBID,
+      localAlbumId: 7,
+      albumName: 'Glass Harbour',
+    });
+
+    await flush();
+    await el.updateComplete;
+
+    expect(
+      shadow(el, 'library-status-indicator')?.getAttribute('status'),
+    ).toBe('in-library');
   });
 });

@@ -13,18 +13,27 @@ import (
 	"go.uploadedlobster.com/musicbrainzws2"
 )
 
+// How long a MusicBrainz answer is kept.
+//
+// The rule is what the answer is *about*, not how big it is.  A search
+// is a ranking and shifts; an entity is a fact about a record that was
+// published years ago and does not.  Entity data used to expire after a
+// week, which meant a fully-populated artist page re-fetched itself
+// every week forever - on a real install, 251 of 2,930 cached rows were
+// already expired and waiting to be paid for again.  The bytes are
+// already on disk; re-fetching them buys nothing and spends someone
+// else's rate limit.
 const (
 	// cacheTTLSearch is the TTL for search results (results may shift).
 	cacheTTLSearch = 24 * time.Hour
-	// cacheTTLEntity is the TTL for lookup/browse results (entity data
-	// changes rarely).
-	cacheTTLEntity = 7 * 24 * time.Hour
+	// cacheTTLEntity is the TTL for lookup/browse results.  An artist's
+	// name, country and relations, a release group's title and date:
+	// these change on the order of never, and a wrong one is corrected
+	// by the next catalog artifact rather than by an expiry.
+	cacheTTLEntity = 365 * 24 * time.Hour
 	// cacheTTLReleases is the TTL for a release group's releases +
-	// tracklists.  This data is effectively immutable once published, so
-	// it's cached far longer than other entities: it's the local store
-	// that keeps an album page's cold fetch a once-per-quarter event
-	// rather than a weekly one.
-	cacheTTLReleases = 90 * 24 * time.Hour
+	// tracklists.  Effectively immutable once published.
+	cacheTTLReleases = 365 * 24 * time.Hour
 )
 
 // MusicBrainzClient wraps the musicbrainzws2 library with a local

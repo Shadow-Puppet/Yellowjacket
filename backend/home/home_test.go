@@ -17,7 +17,7 @@ type fakeLibrary struct {
 	err    error
 }
 
-func (f fakeLibrary) GetAllAlbums() ([]library.Album, error) {
+func (f fakeLibrary) GetAlbums(int64) ([]library.Album, error) {
 	return f.albums, f.err
 }
 
@@ -34,59 +34,37 @@ func seed(
 ) int64 {
 	t.Helper()
 
-	exec := func(query string, args ...any) {
-		t.Helper()
-
-		if _, err := db.ExecContext(query, args...); err != nil {
-			t.Fatalf("seed %q: %v", query, err)
-		}
+	var genres []string
+	if genre != "" {
+		genres = []string{genre}
 	}
 
-	exec(`INSERT INTO artist_credit (text) VALUES (?)
-	      ON CONFLICT DO NOTHING`, artist)
-	exec(`INSERT INTO release_groups (name, album_artist_credit_id)
-	      VALUES (?, (SELECT id FROM artist_credit WHERE text = ?))`,
-		name, artist)
-	exec(`INSERT INTO recordings (name, artist_credit_id)
-	      VALUES (?, (SELECT id FROM artist_credit WHERE text = ?))`,
-		name+" track", artist)
-	exec(`INSERT INTO release_group_recordings (release_group_id, recording_id)
-	      VALUES ((SELECT MAX(id) FROM release_groups),
-	              (SELECT MAX(id) FROM recordings))`)
-	exec(`INSERT INTO file_types (extension) VALUES ('mp3')
-	      ON CONFLICT DO NOTHING`)
-	exec(`INSERT INTO audio_files
-	        (file_path, length_milliseconds, file_type_id, recording_id,
-	         play_count, last_played)
-	      VALUES (?, 1000,
-	              (SELECT MAX(id) FROM file_types),
-	              (SELECT MAX(id) FROM recordings),
-	              ?, ?)`,
-		"/music/"+name+".mp3", playCount, nullable(lastPlayed))
+	fileID := database.InsertTestTrack(t, db, database.TestTrack{
+		FilePath:  "/music/" + name + ".mp3",
+		Title:     name + " track",
+		Artist:    artist,
+		Album:     name,
+		Genres:    genres,
+		LengthMs:  1000,
+		PlayCount: int64(playCount),
+	})
 
-	if genre != "" {
-		exec(`INSERT INTO genres (name) VALUES (?) ON CONFLICT DO NOTHING`, genre)
-		exec(`INSERT INTO recording_genres (recording_id, genre_id)
-		      VALUES ((SELECT MAX(id) FROM recordings),
-		              (SELECT id FROM genres WHERE name = ?))`, genre)
+	if lastPlayed != "" {
+		if _, err := db.ExecContext(
+			"UPDATE audio_files SET last_played = ? WHERE id = ?", lastPlayed, fileID,
+		); err != nil {
+			t.Fatalf("seed last_played: %v", err)
+		}
 	}
 
 	var id int64
 	if err := db.QueryRowWriter(
-		`SELECT MAX(id) FROM release_groups`,
+		"SELECT album_id FROM audio_files WHERE id = ?", fileID,
 	).Scan(&id); err != nil {
 		t.Fatalf("seed: read album id: %v", err)
 	}
 
 	return id
-}
-
-func nullable(s string) any {
-	if s == "" {
-		return nil
-	}
-
-	return s
 }
 
 func shelfKinds(shelves []home.Shelf) []home.Kind {

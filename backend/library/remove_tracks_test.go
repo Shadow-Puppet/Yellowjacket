@@ -169,7 +169,7 @@ func TestRemoveFromLibrary_SoftScanSeesNoChange(t *testing.T) {
 		t.Fatalf("RemoveFromLibrary: %v", err)
 	}
 
-	dbCount, err := lib.db.Queries.CountAudioFilesByLibrary(t.Context(), libID)
+	dbCount, err := lib.db.Queries.CountAudioFiles(t.Context(), libID)
 	if err != nil {
 		t.Fatalf("count rows: %v", err)
 	}

@@ -17,9 +17,6 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
 import * as time$0 from "../../../time/models.js";
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore: Unused imports
-import * as jobs$0 from "../jobs/models.js";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -91,14 +88,6 @@ export function BrowseReleaseGroups(artistMBID: string): $CancellablePromise<$mo
  */
 export function BrowseReleases(releaseGroupMBID: string): $CancellablePromise<$models.MBRelease[] | null> {
     return $Call.ByID(2551207897, releaseGroupMBID);
-}
-
-/**
- * CAALimiter returns the shared Cover Art Archive rate limiter.
- * Consumers must respect it for any fresh CAA HTTP GETs.
- */
-export function CAALimiter(): $CancellablePromise<$models.RateLimiter | null> {
-    return $Call.ByID(1239092428);
 }
 
 /**
@@ -293,14 +282,14 @@ export function GetThumbnails(requests: $models.ThumbnailRequest[] | null): $Can
 }
 
 /**
- * GetTrackLyrics returns lyrics for a recording.  If the library
+ * GetTrackLyrics returns lyrics for a file.  If the library
  * already has them (from embedded tags) they're returned as-is;
  * otherwise it fetches from LRCLIB, persists them (updating the FTS
  * index), and returns them.  Never returns an error to the frontend —
  * a miss just yields an empty result.
  */
-export function GetTrackLyrics(recordingID: number): $CancellablePromise<$models.TrackLyrics> {
-    return $Call.ByID(1131284622, recordingID);
+export function GetTrackLyrics(audioFileID: number): $CancellablePromise<$models.TrackLyrics> {
+    return $Call.ByID(1131284622, audioFileID);
 }
 
 /**
@@ -394,14 +383,6 @@ export function LookupArtist(mbid: string): $CancellablePromise<$models.MBArtist
  */
 export function LookupReleaseGroup(mbid: string): $CancellablePromise<$models.MBReleaseGroup | null> {
     return $Call.ByID(2946174711, mbid);
-}
-
-/**
- * MusicBrainz returns the shared cached MB client so other services
- * (e.g. autotag) can reuse it without spinning up a second limiter.
- */
-export function MusicBrainz(): $CancellablePromise<$models.MusicBrainzClient | null> {
-    return $Call.ByID(3453528034);
 }
 
 /**
@@ -540,14 +521,6 @@ export function SearchLyrics(query: string): $CancellablePromise<$models.LyricsR
  */
 export function SetAlbumComplete(fn: $models.AlbumCompleteFunc): $CancellablePromise<void> {
     return $Call.ByID(942474493, fn);
-}
-
-/**
- * SetJobRegistry wires the background job registry into the search
- * index so its build reports progress and controls to the frontend.
- */
-export function SetJobRegistry(reg: jobs$0.Registry | null): $CancellablePromise<void> {
-    return $Call.ByID(4291900709, reg);
 }
 
 /**

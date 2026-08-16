@@ -203,18 +203,17 @@ func validateOperator(op string, isNumeric bool) error {
 }
 
 // buildGenreCondition generates a subquery condition against
-// recording_genres JOIN genres for every supported text operator.
-// The outer query is expected to expose the `recording_id` column of
-// the audio file (aliased through the smart playlist query), which is
-// compared against recording_genres.recording_id.
+// file_genres JOIN genres for every supported text operator.  The outer
+// query exposes the audio file's `id`, which is what file_genres is
+// keyed by.
 func buildGenreCondition(rule Rule) (string, []any, error) {
-	inHead := `af.recording_id IN (
-  SELECT rg_sub.recording_id FROM recording_genres rg_sub
-  JOIN genres g ON rg_sub.genre_id = g.id
+	inHead := `af.id IN (
+  SELECT fg.audio_file_id FROM file_genres fg
+  JOIN genres g ON fg.genre_id = g.id
   WHERE `
-	notInHead := `af.recording_id NOT IN (
-  SELECT rg_sub.recording_id FROM recording_genres rg_sub
-  JOIN genres g ON rg_sub.genre_id = g.id
+	notInHead := `af.id NOT IN (
+  SELECT fg.audio_file_id FROM file_genres fg
+  JOIN genres g ON fg.genre_id = g.id
   WHERE `
 
 	switch rule.Operator {
@@ -538,7 +537,7 @@ func parseBetweenValue(
 // so the runtime cost is equivalent to querying the underlying tables
 // directly.
 const leanTrackQuery = `SELECT
-	af.recording_id,
+	af.id,
 	af.file_path,
 	af.length_milliseconds,
 	af.title,
@@ -559,26 +558,21 @@ const leanTrackQuery = `SELECT
 FROM (
 	SELECT
 		af.id,
-		af.recording_id,
 		af.file_path,
 		af.length_milliseconds,
-		COALESCE(r.name, '') AS title,
-		COALESCE(ac.text, '') AS artist_name,
-		r.track_number,
-		r.disc_number,
-		COALESCE(rg.name, '') AS album,
+		af.title,
+		af.artist_credit AS artist_name,
+		af.track_number,
+		af.disc_number,
+		COALESCE(al.name, '') AS album,
 		-- Two year fields, matching the canonical track_metadata view:
-		--   year         — the album's original (first-release) year,
+		--   year         - the album's original (first-release) year,
 		--                  the default users filter on. A 1977 album owned
 		--                  as a 2010s reissue still filters as 1977.
-		--   release_year — the year of the specific release in the library
-		--                  (the file/release-group tag), e.g. 2013 for that
-		--                  reissue.
-		-- Both fall back through rg.year → r.year so a track without full
-		-- MusicBrainz data still gets a sensible year.
-		COALESCE(rg.original_year, rg.year, r.year, 0) AS year,
-		COALESCE(rg.year, r.year, 0) AS release_year,
-		COALESCE(r.composer, '') AS composer,
+		--   release_year - the year of the specific copy in the library.
+		COALESCE(al.original_year, al.year, af.year, 0) AS year,
+		COALESCE(al.year, af.year, 0) AS release_year,
+		af.composer,
 		COALESCE(ft.extension, '') AS file_type,
 		af.sample_rate,
 		af.bit_depth,
@@ -589,16 +583,8 @@ FROM (
 		af.play_count,
 		af.last_played
 	FROM audio_files af
-	LEFT JOIN recordings r ON af.recording_id = r.id
-	LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
-	LEFT JOIN (
-		SELECT recording_id,
-			MIN(release_group_id) AS release_group_id
-		FROM release_group_recordings
-		GROUP BY recording_id
-	) rgr ON r.id = rgr.recording_id
-	LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
-	LEFT JOIN file_types ft ON af.file_type_id = ft.id
+	LEFT JOIN albums al ON al.id = af.album_id
+	LEFT JOIN file_types ft ON ft.id = af.file_type_id
 ) af`
 
 // Evaluate runs the rule set against the library and returns matching
@@ -679,7 +665,7 @@ func Evaluate(
 		)
 	}
 
-	tracks, recordingIDs, err := scanTracks(rows)
+	tracks, fileIDs, err := scanTracks(rows)
 
 	_ = rows.Close()
 
@@ -689,17 +675,17 @@ func Evaluate(
 
 	mainDuration := time.Since(mainStart)
 
-	// Batch-load genres for every matched recording_id in one query
+	// Batch-load genres for every matched file id in one query
 	// instead of the per-row correlated subquery the view used.
 	genreStart := time.Now()
 
-	genresByRecording, err := fetchGenres(db, recordingIDs)
+	genresByFile, err := fetchGenres(db, fileIDs)
 	if err != nil {
 		return nil, err
 	}
 
-	for i, rid := range recordingIDs {
-		if g, ok := genresByRecording[rid]; ok {
+	for i, rid := range fileIDs {
+		if g, ok := genresByFile[rid]; ok {
 			tracks[i].Genre = splitGenres(g)
 		}
 	}
@@ -712,13 +698,13 @@ func Evaluate(
 	// and cover-art join over the whole library before WHERE/LIMIT.
 	artStart := time.Now()
 
-	artworkByRecording, err := fetchArtwork(db, recordingIDs)
+	artworkByFile, err := fetchArtwork(db, fileIDs)
 	if err != nil {
 		return nil, err
 	}
 
-	for i, rid := range recordingIDs {
-		art, ok := artworkByRecording[rid]
+	for i, rid := range fileIDs {
+		art, ok := artworkByFile[rid]
 		if !ok {
 			continue
 		}
@@ -771,16 +757,16 @@ func Evaluate(
 
 // scanTracks reads all rows from a lean-query result into parallel
 // slices: the Track values (minus genres, which are attached later)
-// and the recording_id for each, used for the batched genre fetch.
+// and the audio file id for each, used for the batched genre fetch.
 func scanTracks(rows *sql.Rows) ([]library.Track, []int64, error) {
 	var (
-		tracks       []library.Track
-		recordingIDs []int64
+		tracks  []library.Track
+		fileIDs []int64
 	)
 
 	for rows.Next() {
 		var (
-			recordingID sql.NullInt64
+			fileID      sql.NullInt64
 			filePath    string
 			lengthMs    int64
 			title       string
@@ -801,7 +787,7 @@ func scanTracks(rows *sql.Rows) ([]library.Track, []int64, error) {
 		)
 
 		if err := rows.Scan(
-			&recordingID, &filePath, &lengthMs, &title, &artistName,
+			&fileID, &filePath, &lengthMs, &title, &artistName,
 			&trackNumber, &discNumber,
 			&album, &year, &composer, &fileType,
 			&sampleRate, &bitDepth, &channels,
@@ -834,7 +820,7 @@ func scanTracks(rows *sql.Rows) ([]library.Track, []int64, error) {
 		}
 
 		tracks = append(tracks, track)
-		recordingIDs = append(recordingIDs, recordingID.Int64)
+		fileIDs = append(fileIDs, fileID.Int64)
 	}
 
 	if err := rows.Err(); err != nil {
@@ -843,12 +829,12 @@ func scanTracks(rows *sql.Rows) ([]library.Track, []int64, error) {
 		)
 	}
 
-	return tracks, recordingIDs, nil
+	return tracks, fileIDs, nil
 }
 
 // fetchGenres batch-loads the GROUP_CONCAT-joined genre string for
-// every recording_id in ids using a single IN-list query. Returns a
-// map from recording_id to the concatenated genre string.
+// every file id in ids using a single IN-list query. Returns a
+// map from file id to the concatenated genre string.
 func fetchGenres(
 	db *database.DB, ids []int64,
 ) (map[int64]string, error) {
@@ -888,13 +874,13 @@ func fetchGenres(
 
 	// SAFETY: placeholders are static "?" tokens; every value is
 	// parameterized.
-	query := `SELECT rg_sub.recording_id,
+	query := `SELECT fg.audio_file_id,
 		GROUP_CONCAT(g.name, '` + genreDelimiter + `')
-	FROM recording_genres rg_sub
-	JOIN genres g ON rg_sub.genre_id = g.id
-	WHERE rg_sub.recording_id IN (` +
+	FROM file_genres fg
+	JOIN genres g ON fg.genre_id = g.id
+	WHERE fg.audio_file_id IN (` +
 		strings.Join(placeholders, ", ") + `)
-	GROUP BY rg_sub.recording_id`
+	GROUP BY fg.audio_file_id`
 
 	rows, err := db.QueryContext(query, args...)
 	if err != nil {
@@ -933,7 +919,7 @@ func fetchGenres(
 
 // trackArtwork holds the presentation-only cover-art path and
 // MusicBrainz identifiers attached to a matched track after the main
-// filter query, keyed by recording_id.
+// filter query, keyed by audio file id.
 type trackArtwork struct {
 	coverArtPath     string
 	artistMBID       string
@@ -942,7 +928,7 @@ type trackArtwork struct {
 }
 
 // fetchArtwork batch-loads cover-art paths and MusicBrainz IDs for the
-// given recording_ids in a single IN-list query. These fields drive
+// given file ids in a single IN-list query. These fields drive
 // track-row styling only, so scoping them to the matched result set
 // keeps the cost proportional to results rather than library size.
 func fetchArtwork(
@@ -982,37 +968,22 @@ func fetchArtwork(
 
 	inList := strings.Join(placeholders, ", ")
 
-	// A recording's artist credit can name several artists; the old
-	// correlated subquery picked one via LIMIT 1. GROUP BY r.id with
-	// MIN() reproduces a single stable value without multiplying rows.
 	// SAFETY: placeholders are static "?" tokens; every value is
-	// parameterized. The IN list is bound twice (subquery + outer).
-	query := `SELECT r.id,
-		COALESCE(MIN(ca.file_path), '') AS cover_art_path,
-		COALESCE(MIN(a.mbid), '') AS artist_mbid,
-		COALESCE(MIN(rg.mbid), '') AS release_group_mbid,
-		COALESCE(r.mbid, '') AS recording_mbid
-	FROM recordings r
-	LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
-	LEFT JOIN artist_credit_artist aca ON aca.credit_id = ac.id
-	LEFT JOIN artists a ON a.id = aca.artist_id
-	LEFT JOIN (
-		SELECT recording_id,
-			MIN(release_group_id) AS release_group_id
-		FROM release_group_recordings
-		WHERE recording_id IN (` + inList + `)
-		GROUP BY recording_id
-	) rgr ON r.id = rgr.recording_id
-	LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
-	LEFT JOIN cover_art ca ON rg.cover_art_id = ca.id
-	WHERE r.id IN (` + inList + `)
-	GROUP BY r.id`
+	// parameterized.
+	query := `SELECT af.id,
+		COALESCE(ca.file_path, '') AS cover_art_path,
+		COALESCE(ar.mbid, '') AS artist_mbid,
+		COALESCE(al.mbid, '') AS release_group_mbid,
+		COALESCE(af.recording_mbid, '') AS recording_mbid
+	FROM audio_files af
+	LEFT JOIN artists ar ON ar.id = af.artist_id
+	LEFT JOIN albums al ON al.id = af.album_id
+	LEFT JOIN cover_art ca ON ca.id = al.cover_art_id
+	WHERE af.id IN (` + inList + `)`
 
-	args := make([]any, 0, len(unique)*2)
-	for range 2 {
-		for _, id := range unique {
-			args = append(args, id)
-		}
+	args := make([]any, 0, len(unique))
+	for _, id := range unique {
+		args = append(args, id)
 	}
 
 	rows, err := db.QueryContext(query, args...)

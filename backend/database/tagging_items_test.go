@@ -69,10 +69,7 @@ func TestTagStatusBackfillFromRecordingMBID(t *testing.T) {
 		UPDATE audio_files
 		SET tag_status = 'user_confirmed'
 		WHERE tag_status = 'untagged'
-		  AND recording_id IN (
-		    SELECT id FROM recordings
-		    WHERE mbid IS NOT NULL AND mbid != ''
-		  )
+		  AND recording_mbid IS NOT NULL AND recording_mbid != ''
 	`); err != nil {
 		t.Fatalf("backfill: %v", err)
 	}
@@ -205,6 +202,12 @@ func TestTaggingItems_ListPendingAndCount(t *testing.T) {
 	seedTaggingItem(t, db, "g2", 0, "Album B", "Artist B", 1, "pending")
 	seedTaggingItem(t, db, "g3", 0, "Album C", "Artist C", 3, "confirmed")
 
+	// A pending group is only listed while it still holds untagged
+	// files — see TestTaggingItems_FullyTaggedGroupIsNotPending.
+	seedGroupFile(t, db, "g1", "/music/a1.mp3", "untagged")
+	seedGroupFile(t, db, "g2", "/music/b1.mp3", "untagged")
+	seedGroupFile(t, db, "g3", "/music/c1.mp3", "user_confirmed")
+
 	count, err := db.Queries.CountPendingTaggingItems(db.Ctx, 0)
 	if err != nil {
 		t.Fatalf("count: %v", err)
@@ -239,6 +242,62 @@ func TestTaggingItems_ListPendingAndCount(t *testing.T) {
 	}
 }
 
+// TestClearUnreviewedConfirmedTaggingItems mirrors migration 0007 the
+// way TestTagStatusBackfillFromRecordingMBID mirrors the tag_status
+// backfill: NewTestDB applies migrations to an empty database, so the
+// only way to exercise one that rewrites existing rows is to seed the
+// shapes and re-issue its statement.  Keep the two in step.
+func TestClearUnreviewedConfirmedTaggingItems(t *testing.T) {
+	t.Parallel()
+
+	db := database.NewTestDB(t)
+
+	// Stamped 'confirmed' by the old backfill: never scored, never
+	// checked, never matched — the app has not touched it.
+	seedTaggingItem(t, db, "g-backfill", 0, "Bulk", "Artist A", 2, "confirmed")
+
+	// Confirmed by a real apply, which stamps last_checked_at.
+	seedTaggingItem(t, db, "g-applied", 0, "Applied", "Artist B", 2, "confirmed")
+
+	if _, err := db.ExecContext(
+		`UPDATE tagging_items SET last_checked_at = CURRENT_TIMESTAMP, score = 0.98
+		 WHERE group_key = 'g-applied'`,
+	); err != nil {
+		t.Fatalf("mark applied: %v", err)
+	}
+
+	// A skipped row is not confirmed and must be left alone.
+	seedTaggingItem(t, db, "g-skipped", 0, "Skipped", "Artist C", 1, "skipped")
+
+	if _, err := db.ExecContext(`
+		UPDATE tagging_items
+		SET cleared_at = CURRENT_TIMESTAMP
+		WHERE status = 'confirmed'
+		  AND cleared_at IS NULL
+		  AND last_checked_at IS NULL
+		  AND score IS NULL
+		  AND (best_match_release_mbid IS NULL OR best_match_release_mbid = '')
+	`); err != nil {
+		t.Fatalf("migration: %v", err)
+	}
+
+	cases := map[string]bool{
+		"g-backfill": true,
+		"g-applied":  false,
+		"g-skipped":  false,
+	}
+
+	for key, wantCleared := range cases {
+		got := scalarInt(t, db,
+			`SELECT cleared_at IS NOT NULL FROM tagging_items WHERE group_key = ?`,
+			key,
+		)
+		if (got == 1) != wantCleared {
+			t.Errorf("%s cleared = %v, want %v", key, got == 1, wantCleared)
+		}
+	}
+}
+
 func TestCountPendingTaggingItems_UsesPartialIndex(t *testing.T) {
 	t.Parallel()
 
@@ -248,9 +307,13 @@ func TestCountPendingTaggingItems_UsesPartialIndex(t *testing.T) {
 
 	rows, err := db.QueryContext(`
 		EXPLAIN QUERY PLAN
-		SELECT COUNT(*) FROM tagging_items
-		WHERE status = 'pending'
-		  AND (CAST(0 AS INTEGER) = 0 OR library_id = 0)
+		SELECT COUNT(*) FROM tagging_items ti
+		WHERE ti.status = 'pending'
+		  AND (CAST(0 AS INTEGER) = 0 OR ti.library_id = 0)
+		  AND EXISTS (
+		    SELECT 1 FROM audio_files af
+		    WHERE af.group_key = ti.group_key AND af.tag_status = 'untagged'
+		  )
 	`)
 	if err != nil {
 		t.Fatalf("explain: %v", err)
@@ -280,6 +343,97 @@ func TestCountPendingTaggingItems_UsesPartialIndex(t *testing.T) {
 			"badge query plan does not use idx_tagging_items_status_pending:\n%s",
 			plan.String(),
 		)
+	}
+
+	// The untagged-files existence check is asked once per candidate
+	// row, so it has to be a seek.  idx_audio_files_tag_status_untagged
+	// is keyed on library_id and cannot serve it; the group_key one
+	// can, and covers the query outright.
+	if !strings.Contains(plan.String(), "idx_audio_files_untagged_group_key") {
+		t.Errorf(
+			"untagged-files check does not use idx_audio_files_untagged_group_key:\n%s",
+			plan.String(),
+		)
+	}
+}
+
+// TestTaggingItems_FullyTaggedGroupIsNotPending pins the rule that
+// decides what the autotag review page shows: every scanned folder
+// gets a tagging_items row, so "pending" has to mean "still holds
+// untagged files" rather than "has a row".  Without it a fully
+// MB-tagged library queues its entire album count for review — and
+// the background prefetch scores every one of them against
+// MusicBrainz.
+func TestTaggingItems_FullyTaggedGroupIsNotPending(t *testing.T) {
+	t.Parallel()
+
+	db := database.NewTestDB(t)
+
+	seedTaggingItem(t, db, "g-partial", 0, "Half Tagged", "Artist A", 2, "pending")
+	seedGroupFile(t, db, "g-partial", "/music/partial-1.mp3", "user_confirmed")
+	seedGroupFile(t, db, "g-partial", "/music/partial-2.mp3", "untagged")
+
+	seedTaggingItem(t, db, "g-done", 0, "Already Tagged", "Artist B", 2, "pending")
+	seedGroupFile(t, db, "g-done", "/music/done-1.mp3", "user_confirmed")
+	seedGroupFile(t, db, "g-done", "/music/done-2.mp3", "user_confirmed")
+
+	// Reviewed rows are history, not work: an applied folder is fully
+	// tagged by definition and must stay in the Completed section.
+	seedTaggingItem(t, db, "g-applied", 0, "Applied Here", "Artist C", 1, "confirmed")
+	seedGroupFile(t, db, "g-applied", "/music/applied-1.mp3", "user_confirmed")
+
+	count, err := db.Queries.CountPendingTaggingItems(db.Ctx, 0)
+	if err != nil {
+		t.Fatalf("count: %v", err)
+	}
+
+	if count != 1 {
+		t.Errorf("pending count = %d, want 1 (only the part-tagged folder)", count)
+	}
+
+	items, err := db.Queries.ListPendingTaggingItemsByScore(
+		db.Ctx,
+		sqlcgen.ListPendingTaggingItemsByScoreParams{
+			LibraryID:    0,
+			StatusFilter: "all",
+			RowLimit:     50,
+			RowOffset:    0,
+		},
+	)
+	if err != nil {
+		t.Fatalf("list by score: %v", err)
+	}
+
+	listed := make(map[string]bool, len(items))
+	for _, it := range items {
+		listed[it.GroupKey] = true
+	}
+
+	if !listed["g-partial"] {
+		t.Error("expected g-partial (one untagged file left) to be listed")
+	}
+
+	if listed["g-done"] {
+		t.Error("expected g-done (nothing left to tag) to be filtered out")
+	}
+
+	if !listed["g-applied"] {
+		t.Error("expected g-applied (confirmed by a real apply) to stay listed")
+	}
+
+	next, err := db.Queries.GetNextPendingTaggingItem(
+		db.Ctx,
+		sqlcgen.GetNextPendingTaggingItemParams{LibraryID: 0, AfterGroupKey: ""},
+	)
+	if err != nil {
+		t.Fatalf("next pending: %v", err)
+	}
+
+	// The cursor must not stop on a folder the sidebar no longer
+	// shows: alphabetically g-done sorts before g-partial, so a
+	// missing predicate here surfaces as "next" landing on nothing.
+	if next.GroupKey != "g-partial" {
+		t.Errorf("next pending = %q, want %q", next.GroupKey, "g-partial")
 	}
 }
 
@@ -450,9 +604,7 @@ func TestGetTaggingItemAndListAudioFilesInGroup(t *testing.T) {
 // helpers
 // ---------------------------------------------------------------------------
 
-// seedAF inserts a minimal recording + audio_files pair and returns
-// the new audio_files id.  All FK-satisfying rows (artist_credit,
-// recordings, file_types[0]) are created inline.
+// seedAF inserts one file and returns its audio_files id.
 func seedAF(
 	t *testing.T,
 	db *database.DB,
@@ -462,49 +614,32 @@ func seedAF(
 ) int64 {
 	t.Helper()
 
-	ac, err := db.Queries.UpsertArtistCredit(db.Ctx, "Test Artist")
-	if err != nil {
-		t.Fatalf("upsert artist credit: %v", err)
-	}
+	return database.InsertTestTrack(t, db, database.TestTrack{
+		FilePath:      filePath,
+		Title:         recordingName,
+		RecordingMBID: recordingMBID,
+		DiscNumber:    discNumber,
+		LibraryID:     libraryID,
+		LengthMs:      1000,
+	})
+}
 
-	rec, err := db.Queries.CreateRecordingFull(
-		db.Ctx,
-		sqlcgen.CreateRecordingFullParams{
-			Name:           recordingName,
-			ArtistCreditID: ac.ID,
-		},
-	)
-	if err != nil {
-		t.Fatalf("create recording: %v", err)
-	}
+// seedGroupFile attaches one file to a tagging group with an explicit
+// tag_status - the thing the queue's "is there anything left to tag
+// here" predicate reads.
+func seedGroupFile(
+	t *testing.T,
+	db *database.DB,
+	groupKey, filePath, tagStatus string,
+) {
+	t.Helper()
 
-	if recordingMBID != "" {
-		if _, err := db.ExecContext(
-			`UPDATE recordings SET mbid = ? WHERE id = ?`,
-			recordingMBID, rec.ID,
-		); err != nil {
-			t.Fatalf("set mbid: %v", err)
-		}
-	}
-
-	af, err := db.Queries.CreateAudioFile(
-		db.Ctx,
-		sqlcgen.CreateAudioFileParams{
-			FilePath:           filePath,
-			LengthMilliseconds: 1000,
-			FileTypeID:         0,
-			RecordingID:        rec.ID,
-			Basename:           filePath,
-			LibraryID:          libraryID,
-		},
-	)
-	if err != nil {
-		t.Fatalf("create audio file: %v", err)
-	}
-
-	_ = discNumber // reserved for callers that want specific disc values
-
-	return af.ID
+	database.InsertTestTrack(t, db, database.TestTrack{
+		FilePath:  filePath,
+		Title:     filePath,
+		GroupKey:  groupKey,
+		TagStatus: tagStatus,
+	})
 }
 
 func seedTaggingItem(

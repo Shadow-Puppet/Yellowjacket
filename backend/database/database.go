@@ -5,13 +5,10 @@ import (
 	"context"
 	"database/sql"
 	"embed"
-	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
 	"path"
-	"sort"
-	"strconv"
 	"strings"
 
 	_ "modernc.org/sqlite" // Register sqlite driver.
@@ -25,9 +22,6 @@ import (
 
 //go:embed sql/schemas/*.sql
 var schemas embed.FS
-
-//go:embed sql/migrations/*.sql
-var migrations embed.FS
 
 // DB wraps the SQLite database connection and queries.
 //
@@ -301,20 +295,19 @@ func (d *DB) ResumeExploreIndexFTS() error {
 	return nil
 }
 
-// applySchema creates the full schema on a fresh database and brings
-// an existing one up to date via sql/migrations.
+// applySchema creates the full schema.
 //
-// The schema files under sql/schemas are CREATE ... IF NOT EXISTS,
-// so on a genuinely new database they create every table already at
-// its current, latest shape — that's the fast path new installs
-// take.  A database that already has an older shape (e.g. a
-// tagging_items missing a column a later build added) needs the gap
-// closed, which IF NOT EXISTS can't do: it silently no-ops on a
-// table that already exists, columns and all.  sql/migrations holds
-// small, additive, numbered files (ALTER TABLE, CREATE INDEX, etc.)
-// for exactly that gap, tracked in schema_migrations so each applies
-// at most once — see applyMigrations for how a fresh database's
-// already-current tables tolerate replaying them anyway.
+// The schema files under sql/schemas are CREATE ... IF NOT EXISTS and
+// declare the current, latest shape of every table — so running them
+// against a fresh database produces exactly that shape, and running
+// them against a database already at that shape does nothing.  That is
+// the whole mechanism; there is no migration chain and no
+// schema_migrations table.
+//
+// There was one, and it was squashed (see .planning/plans/013): a chain
+// only earns its keep once real user databases exist in the wild, and
+// until then it is a second description of the schema that can drift
+// from the first — which this project has already been bitten by once.
 func applySchema(ctx context.Context, db *sql.DB) error {
 	dirEntries, err := schemas.ReadDir("sql/schemas")
 	if err != nil {
@@ -344,169 +337,7 @@ func applySchema(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("could not create explore FTS triggers: %w", err)
 	}
 
-	if err := applyMigrations(ctx, db); err != nil {
-		return fmt.Errorf("could not apply migrations: %w", err)
-	}
-
-	// The download subsystem's Want/Request rename reuses table names
-	// (download_requests names a different table before and after), so
-	// it cannot be a plain sql/migrations file the way an ADD COLUMN
-	// migration can; see download_rename_migration.go for why.
-	if err := migrateDownloadRename(ctx, db); err != nil {
-		return fmt.Errorf("could not migrate download rename: %w", err)
-	}
-
 	return nil
-}
-
-// schemaMigrationsTable tracks which sql/migrations files have run,
-// by their leading numeric prefix.
-const schemaMigrationsTable = `
-CREATE TABLE IF NOT EXISTS schema_migrations (
-  version    INTEGER PRIMARY KEY,
-  applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-)`
-
-// applyMigrations runs every sql/migrations file not yet recorded in
-// schema_migrations, in filename order (numeric prefix), one
-// statement at a time.
-//
-// Every migration runs on EVERY database, fresh or old — there is no
-// "skip on fresh install" branch. A fresh database's tables already
-// carry a migration's effect (sql/schemas declares the target shape
-// directly), so its statements are expected to sometimes be no-ops
-// there: "duplicate column name" from an ALTER TABLE ADD COLUMN is
-// tolerated and treated as "already applied", the same way
-// createExploreIndexFTSTriggers tolerates "already exists". Any
-// other error is fatal. This is deliberately simpler than detecting
-// "is this database fresh" — every migration converges both a fresh
-// and an upgraded database to the identical final schema (including
-// column order — ALTER TABLE ADD COLUMN always appends at the end,
-// so sql/schemas must declare a migrated column last too; see the
-// comment on tagging_items.sql and the regression test in
-// migrations_test.go).
-func applyMigrations(ctx context.Context, db *sql.DB) error {
-	if _, err := db.ExecContext(ctx, schemaMigrationsTable); err != nil {
-		return fmt.Errorf("create schema_migrations: %w", err)
-	}
-
-	dirEntries, err := migrations.ReadDir("sql/migrations")
-	if err != nil {
-		return fmt.Errorf("could not read migrations directory: %w", err)
-	}
-
-	sort.Slice(dirEntries, func(i, j int) bool {
-		return dirEntries[i].Name() < dirEntries[j].Name()
-	})
-
-	for _, dirEntry := range dirEntries {
-		if dirEntry.IsDir() {
-			continue
-		}
-
-		version, err := migrationVersion(dirEntry.Name())
-		if err != nil {
-			return err
-		}
-
-		applied, err := migrationApplied(ctx, db, version)
-		if err != nil {
-			return err
-		}
-
-		if applied {
-			continue
-		}
-
-		filePath := path.Join("sql/migrations", dirEntry.Name())
-
-		sqlContent, err := fs.ReadFile(migrations, filePath)
-		if err != nil {
-			return fmt.Errorf("could not read file %s: %w", filePath, err)
-		}
-
-		if err := execMigrationStatements(ctx, db, string(sqlContent)); err != nil {
-			return fmt.Errorf("error executing migration %s: %w", dirEntry.Name(), err)
-		}
-
-		if _, err := db.ExecContext(
-			ctx, `INSERT INTO schema_migrations (version) VALUES (?)`, version,
-		); err != nil {
-			return fmt.Errorf("record migration %d applied: %w", version, err)
-		}
-	}
-
-	return nil
-}
-
-// execMigrationStatements runs a migration file one statement at a
-// time — NOT as one multi-statement Exec — so that one statement
-// being a tolerable no-op (ALTER TABLE ADD COLUMN on a fresh
-// database) doesn't abort the statements after it in the same file
-// (e.g. a trailing CREATE INDEX that a fresh database still needs,
-// since sql/schemas deliberately doesn't declare an index on a
-// migrated column — see the comment on tagging_items.sql).
-//
-// Splitting on ";" is safe for the simple ALTER/CREATE TABLE/CREATE
-// INDEX statements migrations are expected to contain; it is NOT
-// safe for statements embedding a literal semicolon (e.g. a CREATE
-// TRIGGER body) — write those with executeContext calls in Go
-// instead of a sql/migrations file, the same way the explore FTS
-// triggers already are.
-func execMigrationStatements(ctx context.Context, db *sql.DB, script string) error {
-	for stmt := range strings.SplitSeq(script, ";") {
-		stmt = strings.TrimSpace(stmt)
-		if stmt == "" {
-			continue
-		}
-
-		if _, err := db.ExecContext(ctx, stmt); err != nil {
-			if strings.Contains(err.Error(), "duplicate column name") {
-				continue
-			}
-
-			return fmt.Errorf("statement %q: %w", stmt, err)
-		}
-	}
-
-	return nil
-}
-
-// migrationVersion extracts the leading integer prefix from a
-// migration filename, e.g. "0001_tagging_items_synthetic.sql" -> 1.
-func migrationVersion(filename string) (int, error) {
-	prefix, _, ok := strings.Cut(filename, "_")
-	if !ok {
-		return 0, fmt.Errorf("%w: %s", errMigrationFilename, filename)
-	}
-
-	version, err := strconv.Atoi(prefix)
-	if err != nil {
-		return 0, fmt.Errorf("%w: %s", errMigrationFilename, filename)
-	}
-
-	return version, nil
-}
-
-var errMigrationFilename = errors.New(
-	"migration filename must start with a numeric prefix followed by '_' (e.g. 0001_description.sql)",
-)
-
-func migrationApplied(ctx context.Context, db *sql.DB, version int) (bool, error) {
-	var v int
-
-	err := db.QueryRowContext(
-		ctx, `SELECT version FROM schema_migrations WHERE version = ?`, version,
-	).Scan(&v)
-
-	switch {
-	case errors.Is(err, sql.ErrNoRows):
-		return false, nil
-	case err != nil:
-		return false, fmt.Errorf("check migration %d: %w", version, err)
-	default:
-		return true, nil
-	}
 }
 
 // applyPRAGMAs configures SQLite connection settings. Called by both

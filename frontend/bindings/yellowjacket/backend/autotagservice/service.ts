@@ -13,10 +13,6 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as jobs$0 from "../jobs/models.js";
-
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore: Unused imports
 import * as $models from "./models.js";
 
 /**
@@ -195,21 +191,6 @@ export function SearchCandidates(kind: string, query: string, artist: string): $
  */
 export function SelectSearchCandidate(groupKey: string, kind: string, mbid: string): $CancellablePromise<$models.ScoreView | null> {
     return $Call.ByID(2540832563, groupKey, kind, mbid);
-}
-
-/**
- * SetJobRegistry wires the background job registry so an apply reports
- * progress and offers a cancel like every other long-running operation.
- * 
- * Before this, apply was a bare goroutine whose progress lived in a
- * component field that navigation discarded, with no cancel and no
- * record of where it stopped (errors.C3). Everything routed through the
- * registry gets progress, cancel and the global indicator for free; the
- * three subsystems that lacked them were the three that were not
- * registered.
- */
-export function SetJobRegistry(reg: jobs$0.Registry | null): $CancellablePromise<void> {
-    return $Call.ByID(3755409662, reg);
 }
 
 /**

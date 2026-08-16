@@ -2354,3 +2354,43 @@ Five more things worth keeping:
   child does not prove the icon inside it is `pointer-events: none`.
   Both were checked with a real mouse (`mousemove`/`mousedown`/
   `mouseup`) and a real Tab/Enter before either was believed.
+
+## A queue of work has to ask whether there is work
+
+Reported as "the autotag page has every album in it, even the MB-tagged
+ones". Both halves of that were true and they were two different bugs,
+which is why the first answer found (the pending list) accounted for
+nine rows out of 2172.
+
+**Every scanned folder gets a `tagging_items` row.**
+`UpsertTaggingItemOnTrackAdd` runs per track with `status = 'pending'`
+and no condition, so the table is a row per album folder, not a queue.
+`saveAudioFile` *does* record the answer — `audio_files.tag_status` is
+`user_confirmed` on import for any file carrying a recording MBID, and
+`idx_audio_files_tag_status_untagged` was declared for the filter — but
+no query in the app read the column. Pending therefore meant "has a
+row". The four queue queries ask the files now
+(`EXISTS … tag_status = 'untagged'`), which matters most where it is
+least visible: `startPrefetch` was scoring every album in a tagged
+library against MusicBrainz.
+
+**The 2094 were the Completed section, and nobody completed them.** A
+backfill stamped `status = 'confirmed'` on every folder whose files
+already had MBIDs, and the sidebar keeps confirmed rows deliberately —
+so the review page's history became a list of the library. They are
+distinguishable without new state: every status flip the app performs
+goes through `SetTaggingItemStatus` or `SetTaggingItemBestMatch` and
+both stamp `last_checked_at`, so *confirmed with no `last_checked_at`,
+no score and no best match* is the backfill's row and not the user's.
+All 2094 were that shape; the two the app had actually applied were
+not. Migration 0007 sets `cleared_at` on them — the column exists for
+exactly this, and it keeps the row so a rescan cannot reset review
+state.
+
+Two smaller things fell out. The reviewed states are **exempt** from
+the untagged-files predicate, or an applied folder would vanish from
+Completed the instant it succeeded — the section is history, not work.
+And `tag_status` was only ever written by the *insert* path, so a file
+another tagger stamped after import kept `untagged` for ever and its
+folder kept asking; `updateAudioFile` promotes it now, guarded on
+`untagged` so a deliberate `user_skipped_permanent` survives a rescan.

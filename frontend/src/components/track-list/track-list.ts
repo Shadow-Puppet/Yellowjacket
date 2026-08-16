@@ -1242,12 +1242,32 @@ export class TrackList
      *  has existed in the defaults and in Settings since it was written
      *  and has never had anything on the other end of it. */
     private handleShortcutPlay = (): void => {
-        const filePaths = this.selection.getSelectedKeysOrdered();
+        this.playSelection(this.selection.getSelectedKeysOrdered());
+    };
 
+    /**
+     * "Play" means the same thing from the menu and from Enter, and it
+     * asks how much the user selected. One row is a position in the
+     * list - it queues the list from there, exactly as double-clicking
+     * does. Several rows are an explicit choice of *those* tracks, so
+     * they become the queue on their own (and `shuffleStart` applies,
+     * since no one row was named as the place to start).
+     */
+    private playSelection(filePaths: string[]): void {
         if (filePaths.length === 0) return;
 
+        if (filePaths.length === 1) {
+            const index = this.displayIndexOf(filePaths[0]!);
+
+            if (index >= 0) {
+                this.playFromRow(index);
+
+                return;
+            }
+        }
+
         queueStore.setQueue(filePaths, 0, true, this.effectiveQueueSource);
-    };
+    }
 
     override willUpdate(
         changed: Map<PropertyKey, unknown>,
@@ -1544,7 +1564,7 @@ export class TrackList
     private onDelegatedDblClick = (e: MouseEvent) => {
         const hit = this.resolveTrackFromEvent(e);
 
-        if (hit) this.onTrackRowDblClick(hit.track);
+        if (hit) this.onTrackRowDblClick(hit.track, hit.index);
     };
 
     private onDelegatedContextMenu = (e: MouseEvent) => {
@@ -1574,9 +1594,45 @@ export class TrackList
         this.selection.handleItemClick(e, track.FilePath, index);
     }
 
-    private onTrackRowDblClick(track: library.Track) {
+    private onTrackRowDblClick(_track: library.Track, index: number) {
         this.selection.clear();
-        queueStore.setQueue([track.FilePath], 0, false, this.effectiveQueueSource);
+        this.playFromRow(index);
+    }
+
+    /**
+     * Activating one row plays the list that row is in, from that row -
+     * the library, the artist or the genre the user is looking at, not
+     * a queue of one. The paths come from `cachedSortedTracks`, so it
+     * is the list as *displayed*: whatever the current sort, search and
+     * library filter have made of it, which is the only order the user
+     * can see and therefore the only one they can mean.
+     */
+    private playFromRow(index: number) {
+        const filePaths = this.cachedSortedTracks.map(
+            (t) => t.FilePath,
+        );
+
+        if (filePaths.length === 0 || index < 0) return;
+
+        queueStore.setQueue(
+            filePaths,
+            index,
+            false,
+            this.effectiveQueueSource,
+        );
+    }
+
+    /**
+     * Where a "play this" command lands in the displayed list, or -1.
+     *
+     * Selection keys are file paths, which survive the re-sorts and
+     * refetches an index does not - so the index is looked up at the
+     * moment it is used rather than remembered.
+     */
+    private displayIndexOf(filePath: string): number {
+        return this.cachedSortedTracks.findIndex(
+            (t) => t.FilePath === filePath,
+        );
     }
 
     private onTrackContextMenu(e: MouseEvent, track: library.Track) {
@@ -1648,7 +1704,7 @@ export class TrackList
 
         switch (action) {
             case 'play':
-                queueStore.setQueue(filePaths, 0, true, this.effectiveQueueSource);
+                this.playSelection(filePaths);
                 break;
             case 'add-to-queue':
                 queueStore.addTracksToQueue(filePaths);

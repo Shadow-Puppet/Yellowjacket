@@ -2,6 +2,7 @@
 package playlist
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
@@ -154,6 +155,8 @@ func NewService(
 
 // SetFavoritesConfig sets the provider used to read and write
 // the default-playlist configuration.
+//
+//wails:ignore // internal wiring, not part of the app's IPC surface.
 func (s *Service) SetFavoritesConfig(
 	provider FavoritesConfigProvider,
 ) {
@@ -1845,6 +1848,142 @@ type phantomTrackRow struct {
 	phantomFilePath string
 }
 
+// phantomRowSet is a playlist's unresolved rows plus the ones a
+// resolution pass has already consumed, so two matches cannot land on
+// the same row.
+type phantomRowSet struct {
+	rows  []phantomTrackRow
+	taken map[int64]struct{}
+}
+
+// loadPhantomRows reads the playlist's phantom rows — the tracks whose
+// file was missing when the M3U8 was imported.
+func (s *Service) loadPhantomRows(playlistID int64) *phantomRowSet {
+	set := &phantomRowSet{taken: map[int64]struct{}{}}
+
+	// SAFETY: Hand-crafted SELECT for phantom tracks with position and
+	// phantom_file_path. Parameterized by playlist ID.
+	rows, err := s.db.QueryContext(
+		`SELECT id, position, COALESCE(phantom_file_path, '')
+		 FROM playlist_tracks
+		 WHERE playlist_id = ? AND audio_file_id IS NULL`,
+		playlistID,
+	)
+	if err != nil {
+		s.logger.Warn(
+			"could not query phantom tracks",
+			"playlistId", playlistID,
+			"err", err,
+		)
+
+		return set
+	}
+
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			s.logger.Warn(
+				"could not close phantom track rows",
+				"err", closeErr,
+			)
+		}
+	}()
+
+	for rows.Next() {
+		var pt phantomTrackRow
+		if err := rows.Scan(
+			&pt.id, &pt.position, &pt.phantomFilePath,
+		); err != nil {
+			continue
+		}
+
+		set.rows = append(set.rows, pt)
+	}
+
+	return set
+}
+
+// takePhantomRow finds the phantom row standing for phantomAbs and
+// marks it consumed.  It matches on phantom_file_path first and falls
+// back to the row sitting at that entry's index in the M3U8, which is
+// the same two-step resolvePlaylistPhantoms uses: rows imported before
+// migration 7 carry no phantom_file_path at all.
+func takePhantomRow(
+	set *phantomRowSet,
+	phantomAbs string,
+	entries []m3uEntry,
+	libraryRoots []string,
+) (int64, bool) {
+	_, idx := findM3UEntry(entries, phantomAbs, libraryRoots)
+
+	return takePhantomRowAt(set, phantomAbs, idx)
+}
+
+// takePhantomRowAt is takePhantomRow for a caller that already knows
+// the entry's index.  A negative index means "no positional fallback":
+// positions are non-negative, so it simply never matches.
+func takePhantomRowAt(
+	set *phantomRowSet, phantomAbs string, index int,
+) (int64, bool) {
+	for _, pt := range set.rows {
+		if _, done := set.taken[pt.id]; done {
+			continue
+		}
+
+		if pt.phantomFilePath != "" &&
+			pt.phantomFilePath == phantomAbs {
+			set.taken[pt.id] = struct{}{}
+
+			return pt.id, true
+		}
+	}
+
+	for _, pt := range set.rows {
+		if _, done := set.taken[pt.id]; done {
+			continue
+		}
+
+		if pt.position == int64(index) {
+			set.taken[pt.id] = struct{}{}
+
+			return pt.id, true
+		}
+	}
+
+	return 0, false
+}
+
+// fillPhantomRow points a phantom playlist_tracks row at a real audio
+// file and drops the placeholder metadata it was displaying.  The row
+// keeps its position, which is why resolving a phantom does not move
+// the track to the end of the playlist.
+func (s *Service) fillPhantomRow(
+	playlistTrackID, audioFileID int64,
+) error {
+	// SAFETY: Hand-crafted UPDATE to resolve a phantom playlist track.
+	// Sets audio_file_id and clears all phantom metadata columns.
+	// Parameterized by ID.
+	if _, err := s.db.ExecContext(
+		`UPDATE playlist_tracks SET
+			audio_file_id = ?,
+			phantom_title = NULL,
+			phantom_artist = NULL,
+			phantom_album = NULL,
+			phantom_duration_ms = NULL,
+			phantom_genre = NULL,
+			phantom_cover_art_path = NULL,
+			phantom_file_path = NULL
+		WHERE id = ?`,
+		audioFileID, playlistTrackID,
+	); err != nil {
+		return fmt.Errorf(
+			"could not resolve phantom track %d: %w",
+			playlistTrackID, err,
+		)
+	}
+
+	return nil
+}
+
 // resolvePlaylistPhantoms resolves phantom tracks for a single
 // playlist by reading its M3U8 file and matching entries against
 // the audio_files table.  Returns the number of resolved tracks.
@@ -1873,51 +2012,11 @@ func (s *Service) resolvePlaylistPhantoms(
 	}
 
 	// Load phantom tracks for this playlist.
-	// SAFETY: Hand-crafted SELECT for phantom tracks with
-	// position and phantom_file_path. No user input.
-	ptRows, err := s.db.QueryContext(
-		`SELECT id, position, COALESCE(phantom_file_path, '')
-		 FROM playlist_tracks
-		 WHERE playlist_id = ? AND audio_file_id IS NULL`,
-		playlistID,
-	)
-	if err != nil {
-		s.logger.Warn(
-			"could not query phantom tracks",
-			"playlistId", playlistID,
-			"err", err,
-		)
+	phantoms := s.loadPhantomRows(playlistID)
 
+	if len(phantoms.rows) == 0 {
 		return 0
 	}
-
-	var phantoms []phantomTrackRow
-
-	for ptRows.Next() {
-		var pt phantomTrackRow
-		if err := ptRows.Scan(
-			&pt.id, &pt.position, &pt.phantomFilePath,
-		); err != nil {
-			continue
-		}
-
-		phantoms = append(phantoms, pt)
-	}
-
-	if err := ptRows.Close(); err != nil {
-		s.logger.Warn(
-			"could not close phantom track rows",
-			"err", err,
-		)
-	}
-
-	if len(phantoms) == 0 {
-		return 0
-	}
-
-	// Build a set of already-resolved phantom IDs to avoid
-	// double-matching.
-	resolvedIDs := make(map[int64]struct{})
 
 	var resolved int
 
@@ -1933,63 +2032,17 @@ func (s *Service) resolvePlaylistPhantoms(
 			continue
 		}
 
-		// Find the phantom that corresponds to this entry.
-		// Priority 1: match by phantom_file_path (exact).
-		// Priority 2: match by position (M3U8 index).
-		matchIdx := -1
-
-		for j, pt := range phantoms {
-			if _, done := resolvedIDs[pt.id]; done {
-				continue
-			}
-
-			if pt.phantomFilePath != "" &&
-				pt.phantomFilePath == absPath {
-				matchIdx = j
-
-				break
-			}
-		}
-
-		if matchIdx == -1 {
-			for j, pt := range phantoms {
-				if _, done := resolvedIDs[pt.id]; done {
-					continue
-				}
-
-				if pt.position == int64(i) {
-					matchIdx = j
-
-					break
-				}
-			}
-		}
-
-		if matchIdx == -1 {
+		// Find the phantom that corresponds to this entry:
+		// phantom_file_path first, then this entry's index.
+		ptID, found := takePhantomRowAt(phantoms, absPath, i)
+		if !found {
 			continue
 		}
 
-		pt := phantoms[matchIdx]
-
-		// SAFETY: Hand-crafted UPDATE to resolve a phantom
-		// playlist track. Sets audio_file_id and clears all
-		// phantom metadata columns. Parameterized by ID.
-		if _, err := s.db.ExecContext(
-			`UPDATE playlist_tracks SET
-				audio_file_id = ?,
-				phantom_title = NULL,
-				phantom_artist = NULL,
-				phantom_album = NULL,
-				phantom_duration_ms = NULL,
-				phantom_genre = NULL,
-				phantom_cover_art_path = NULL,
-				phantom_file_path = NULL
-			WHERE id = ?`,
-			audioFileID, pt.id,
-		); err != nil {
+		if err := s.fillPhantomRow(ptID, audioFileID); err != nil {
 			s.logger.Warn(
 				"could not resolve phantom track",
-				"playlistTrackId", pt.id,
+				"playlistTrackId", ptID,
 				"audioFileId", audioFileID,
 				"err", err,
 			)
@@ -1997,7 +2050,6 @@ func (s *Service) resolvePlaylistPhantoms(
 			continue
 		}
 
-		resolvedIDs[pt.id] = struct{}{}
 		resolved++
 	}
 
@@ -2053,50 +2105,108 @@ func (s *Service) FindPhantomMatches(
 		entryByPath[absPath] = e
 	}
 
-	// Track which candidates have been claimed by auto-match
-	// so we don't assign the same candidate to two phantoms.
-	claimed := make(map[string]struct{})
-
-	var result PhantomSearchResult
+	// Every pairing confident enough to apply without asking.
+	var offers []phantomOffer
 
 	for _, phantomPath := range phantomPaths {
 		entry := entryByPath[phantomPath]
-		candidates := s.searchCandidates(
-			phantomPath, entry,
-		)
 
-		matched := false
-
-		for _, c := range candidates {
-			if _, taken := claimed[c.FilePath]; taken {
-				continue
-			}
-
-			if c.Score >= autoMatchMinimum {
-				result.AutoMatched = append(
-					result.AutoMatched,
-					PhantomMatch{
-						PhantomPath:  phantomPath,
-						PhantomTitle: entry.DisplayTitle,
-						Candidate:    c,
-					},
-				)
-
-				claimed[c.FilePath] = struct{}{}
-				matched = true
-
+		for _, c := range s.searchCandidates(phantomPath, entry) {
+			if c.Score < autoMatchMinimum {
+				// searchCandidates sorts by score, so nothing
+				// below this one qualifies either.
 				break
 			}
-		}
 
-		if !matched {
-			result.Unmatched = append(
-				result.Unmatched, phantomPath,
-			)
+			offers = append(offers, phantomOffer{
+				phantomPath:  phantomPath,
+				phantomTitle: entry.DisplayTitle,
+				candidate:    c,
+			})
 		}
 	}
 
+	var result PhantomSearchResult
+
+	result.AutoMatched = assignBestFirst(offers)
+
+	matched := make(map[string]struct{}, len(result.AutoMatched))
+	for _, m := range result.AutoMatched {
+		matched[m.PhantomPath] = struct{}{}
+	}
+
+	// Reported in the order the playlist has them, not the order they
+	// were matched in.
+	for _, phantomPath := range phantomPaths {
+		if _, done := matched[phantomPath]; done {
+			continue
+		}
+
+		result.Unmatched = append(
+			result.Unmatched, phantomPath,
+		)
+	}
+
 	return result, nil
+}
+
+// phantomOffer is one candidate a phantom track could be resolved to,
+// carrying enough to become a PhantomMatch.
+type phantomOffer struct {
+	phantomPath  string
+	phantomTitle string
+	candidate    CandidateTrack
+}
+
+// assignBestFirst pairs phantoms with candidates highest score first,
+// at most one candidate per phantom and one phantom per candidate.
+//
+// A candidate can only stand in for one phantom — two would put that
+// file in the playlist twice.  Taking the offers in *phantom* order,
+// which is what this replaced, let an early phantom claim a candidate
+// that was a better answer for a later one, so which of two similar
+// tracks got the good match depended on the order they happen to sit in
+// the playlist.
+func assignBestFirst(offers []phantomOffer) []PhantomMatch {
+	if len(offers) == 0 {
+		return nil
+	}
+
+	ordered := make([]phantomOffer, len(offers))
+	copy(ordered, offers)
+
+	slices.SortStableFunc(
+		ordered,
+		func(a, b phantomOffer) int {
+			return cmp.Compare(b.candidate.Score, a.candidate.Score)
+		},
+	)
+
+	var matches []PhantomMatch
+
+	claimedCandidates := make(map[string]struct{}, len(ordered))
+	matchedPhantoms := make(map[string]struct{}, len(ordered))
+
+	for _, o := range ordered {
+		if _, taken := claimedCandidates[o.candidate.FilePath]; taken {
+			continue
+		}
+
+		if _, done := matchedPhantoms[o.phantomPath]; done {
+			continue
+		}
+
+		matches = append(matches, PhantomMatch{
+			PhantomPath:  o.phantomPath,
+			PhantomTitle: o.phantomTitle,
+			Candidate:    o.candidate,
+		})
+
+		claimedCandidates[o.candidate.FilePath] = struct{}{}
+		matchedPhantoms[o.phantomPath] = struct{}{}
+	}
+
+	return matches
 }
 
 // GetPhantomCandidates returns scored candidate matches for a
@@ -2219,14 +2329,38 @@ func (s *Service) ResolvePhantomTracks(
 		)
 	}
 
+	// The phantom rows this is about to fill in, so a resolution
+	// updates the row the user pointed at rather than appending a
+	// second one beside it.
+	phantoms := s.loadPhantomRows(playlistID)
+
 	// Build M3U path replacements and insert DB rows.
 	pathReplacements := make(
 		map[string]string, len(matches),
 	)
 
-	var resolved int
+	// Two phantoms resolving to one file would put that file in the
+	// playlist twice, which is what FindPhantomMatches' claimed set
+	// already refuses to do on the auto-match path.
+	claimed := make(map[string]struct{}, len(matches))
+
+	var (
+		resolved int
+		appended int
+	)
 
 	for phantomAbs, resolvedAbs := range matches {
+		if _, taken := claimed[resolvedAbs]; taken {
+			s.logger.Warn(
+				"Two phantom tracks resolved to the same file",
+				"playlistId", playlistID,
+				"phantomPath", phantomAbs,
+				"resolvedPath", resolvedAbs,
+			)
+
+			continue
+		}
+
 		audioFile, lookupErr := s.db.Queries.GetAudioFileByPath(
 			s.db.Ctx, resolvedAbs,
 		)
@@ -2241,29 +2375,54 @@ func (s *Service) ResolvePhantomTracks(
 			continue
 		}
 
-		_, addErr := s.db.Queries.AddPlaylistTrack(
-			s.db.Ctx,
-			sqlcgen.AddPlaylistTrackParams{
-				PlaylistID:  playlistID,
-				AudioFileID: sql.NullInt64{Int64: audioFile.ID, Valid: true},
-				Position:    nextPos + int64(resolved),
-			},
+		ptID, found := takePhantomRow(
+			phantoms, phantomAbs, parsed.Entries, libraryRoots,
 		)
-		if addErr != nil {
-			s.logger.Warn(
-				"Could not add resolved track",
-				"playlistId", playlistID,
-				"path", resolvedAbs,
-				"err", addErr,
-			)
 
-			continue
+		switch {
+		case found:
+			if updateErr := s.fillPhantomRow(
+				ptID, audioFile.ID,
+			); updateErr != nil {
+				s.logger.Warn(
+					"Could not resolve phantom row",
+					"playlistId", playlistID,
+					"playlistTrackId", ptID,
+					"path", resolvedAbs,
+					"err", updateErr,
+				)
+
+				continue
+			}
+		default:
+			// No phantom row for this path — the M3U8 and the
+			// database disagree, so fall back to appending.
+			if _, addErr := s.db.Queries.AddPlaylistTrack(
+				s.db.Ctx,
+				sqlcgen.AddPlaylistTrackParams{
+					PlaylistID:  playlistID,
+					AudioFileID: sql.NullInt64{Int64: audioFile.ID, Valid: true},
+					Position:    nextPos + int64(appended),
+				},
+			); addErr != nil {
+				s.logger.Warn(
+					"Could not add resolved track",
+					"playlistId", playlistID,
+					"path", resolvedAbs,
+					"err", addErr,
+				)
+
+				continue
+			}
+
+			appended++
 		}
 
 		newRel := toRelativePathMultiRoot(
 			resolvedAbs, libraryRoots,
 		)
 		pathReplacements[phantomAbs] = newRel
+		claimed[resolvedAbs] = struct{}{}
 		resolved++
 	}
 
@@ -2390,11 +2549,11 @@ func (s *Service) searchCandidates(
 	var combined []database.SearchRow
 
 	// 1. Exact basename match via indexed column.
-	bnRows, err := s.db.Queries.SearchAudioFilesByBasename(
+	bnRows, err := s.db.Queries.SearchTracksByBasename(
 		s.db.Ctx,
-		sqlcgen.SearchAudioFilesByBasenameParams{
+		sqlcgen.SearchTracksByBasenameParams{
 			Basename: basename,
-			Limit:    int64(maxCandidates),
+			Lim:      int64(maxCandidates),
 		},
 	)
 	if err != nil {
@@ -2416,7 +2575,7 @@ func (s *Service) searchCandidates(
 			FilePath:           r.FilePath,
 			LengthMilliseconds: r.LengthMilliseconds,
 			Title:              r.Title,
-			Artist:             r.Artist,
+			Artist:             r.ArtistName,
 			Album:              r.Album,
 		})
 	}

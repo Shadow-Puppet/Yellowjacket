@@ -3,12 +3,12 @@ package autotagservice
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"testing"
 
 	"yellowjacket/backend/autotag"
 	"yellowjacket/backend/database"
-	"yellowjacket/backend/database/sql/sqlcgen"
 )
 
 // newTestService builds a Service with just enough wired up for
@@ -36,62 +36,18 @@ func newTestService(t *testing.T, db *database.DB) *Service {
 func seedMixedBagFolder(t *testing.T, db *database.DB, groupKey string, libraryID int64) {
 	t.Helper()
 
-	ctx := db.Ctx
-	q := db.Queries
-
 	addTrack := func(filePath, title, artist, album, albumArtist string, trackNum int) {
-		ac, err := q.UpsertArtistCredit(ctx, artist)
-		if err != nil {
-			t.Fatalf("upsert artist credit: %v", err)
-		}
-
-		rec, err := q.CreateRecordingFull(ctx, sqlcgen.CreateRecordingFullParams{
-			Name:           title,
-			ArtistCreditID: ac.ID,
-			TrackNumber:    sql.NullInt64{Int64: int64(trackNum), Valid: true},
+		database.InsertTestTrack(t, db, database.TestTrack{
+			FilePath:    filePath,
+			Title:       title,
+			Artist:      artist,
+			Album:       album,
+			AlbumArtist: albumArtist,
+			TrackNumber: int64(trackNum),
+			LengthMs:    200000,
+			LibraryID:   libraryID,
+			GroupKey:    groupKey,
 		})
-		if err != nil {
-			t.Fatalf("create recording: %v", err)
-		}
-
-		if album != "" {
-			albumArtistAC, err := q.UpsertArtistCredit(ctx, albumArtist)
-			if err != nil {
-				t.Fatalf("upsert album artist credit: %v", err)
-			}
-
-			rg, err := q.UpsertReleaseGroup(ctx, sqlcgen.UpsertReleaseGroupParams{
-				Name:                album,
-				AlbumArtistCreditID: sql.NullInt64{Int64: albumArtistAC.ID, Valid: true},
-			})
-			if err != nil {
-				t.Fatalf("upsert release group: %v", err)
-			}
-
-			if _, err := q.CreateReleaseGroupRecording(
-				ctx,
-				sqlcgen.CreateReleaseGroupRecordingParams{
-					ReleaseGroupID: rg.ID,
-					RecordingID:    rec.ID,
-					TrackNumber:    sql.NullInt64{Int64: int64(trackNum), Valid: true},
-				},
-			); err != nil {
-				t.Fatalf("link release group recording: %v", err)
-			}
-		}
-
-		if _, err := q.CreateAudioFileWithGroupKey(ctx, sqlcgen.CreateAudioFileWithGroupKeyParams{
-			FilePath:           filePath,
-			LengthMilliseconds: 200000,
-			FileTypeID:         0,
-			RecordingID:        rec.ID,
-			Basename:           filePath,
-			LibraryID:          libraryID,
-			GroupKey:           groupKey,
-			TagStatus:          "untagged",
-		}); err != nil {
-			t.Fatalf("create audio file: %v", err)
-		}
 	}
 
 	addTrack("/junk/01.mp3", "Song A1", "Artist One", "Album One", "Artist One", 1)
@@ -113,58 +69,22 @@ func seedMixedBagFolder(t *testing.T, db *database.DB, groupKey string, libraryI
 func seedCoherentAlbum(t *testing.T, db *database.DB, groupKey string, libraryID int64) {
 	t.Helper()
 
-	ctx := db.Ctx
-	q := db.Queries
-
-	ac, err := q.UpsertArtistCredit(ctx, "The Beatles")
-	if err != nil {
-		t.Fatalf("upsert artist credit: %v", err)
-	}
-
-	rg, err := q.UpsertReleaseGroup(ctx, sqlcgen.UpsertReleaseGroupParams{
-		Name:                "Abbey Road",
-		AlbumArtistCreditID: sql.NullInt64{Int64: ac.ID, Valid: true},
-	})
-	if err != nil {
-		t.Fatalf("upsert release group: %v", err)
-	}
-
-	titles := []string{"Come Together", "Something", "Maxwell's Silver Hammer", "Oh! Darling"}
-	for i, title := range titles {
-		rec, err := q.CreateRecordingFull(ctx, sqlcgen.CreateRecordingFullParams{
-			Name:           title,
-			ArtistCreditID: ac.ID,
-			TrackNumber:    sql.NullInt64{Int64: int64(i + 1), Valid: true},
+	for i, title := range []string{"Come Together", "Something", "Maxwell's Silver Hammer"} {
+		database.InsertTestTrack(t, db, database.TestTrack{
+			FilePath:    fmt.Sprintf("/beatles/%02d.mp3", i+1),
+			Title:       title,
+			Artist:      "The Beatles",
+			Album:       "Abbey Road",
+			TrackNumber: int64(i + 1),
+			LengthMs:    200000,
+			LibraryID:   libraryID,
+			GroupKey:    groupKey,
 		})
-		if err != nil {
-			t.Fatalf("create recording: %v", err)
-		}
-
-		if _, err := q.CreateReleaseGroupRecording(ctx, sqlcgen.CreateReleaseGroupRecordingParams{
-			ReleaseGroupID: rg.ID,
-			RecordingID:    rec.ID,
-			TrackNumber:    sql.NullInt64{Int64: int64(i + 1), Valid: true},
-		}); err != nil {
-			t.Fatalf("link release group recording: %v", err)
-		}
-
-		if _, err := q.CreateAudioFileWithGroupKey(ctx, sqlcgen.CreateAudioFileWithGroupKeyParams{
-			FilePath:           groupKey + "/" + title + ".mp3",
-			LengthMilliseconds: 200000,
-			FileTypeID:         0,
-			RecordingID:        rec.ID,
-			Basename:           title + ".mp3",
-			LibraryID:          libraryID,
-			GroupKey:           groupKey,
-			TagStatus:          "untagged",
-		}); err != nil {
-			t.Fatalf("create audio file: %v", err)
-		}
 	}
 
 	if _, err := db.ExecContext(`
 		INSERT INTO tagging_items (group_key, library_id, track_count, album_name, album_artist, disc_number, status)
-		VALUES (?, ?, 4, 'Abbey Road', 'The Beatles', 0, 'pending')
+		VALUES (?, ?, 3, 'Abbey Road', 'The Beatles', 0, 'pending')
 	`, groupKey, libraryID); err != nil {
 		t.Fatalf("insert tagging item: %v", err)
 	}
@@ -293,20 +213,11 @@ func TestSplitMixedFolder_NothingToClusterErrors(t *testing.T) {
 
 	db := database.NewTestDB(t)
 
-	if _, err := db.Queries.CreateAudioFileWithGroupKey(
-		db.Ctx,
-		sqlcgen.CreateAudioFileWithGroupKeyParams{
-			FilePath:    "/coherent/01.mp3",
-			FileTypeID:  0,
-			RecordingID: mustCreateRecording(t, db, "Track"),
-			Basename:    "01.mp3",
-			LibraryID:   0,
-			GroupKey:    "g-coherent",
-			TagStatus:   "untagged",
-		},
-	); err != nil {
-		t.Fatalf("create audio file: %v", err)
-	}
+	database.InsertTestTrack(t, db, database.TestTrack{
+		FilePath: "/coherent/01.mp3",
+		Title:    "Track",
+		GroupKey: "g-coherent",
+	})
 
 	if _, err := db.ExecContext(`
 		INSERT INTO tagging_items (group_key, library_id, track_count, album_name, album_artist, disc_number, status)
@@ -328,20 +239,11 @@ func TestListPendingFolders_PrunesOrphanedEntries(t *testing.T) {
 	db := database.NewTestDB(t)
 
 	// A real, live folder — must survive.
-	if _, err := db.Queries.CreateAudioFileWithGroupKey(
-		db.Ctx,
-		sqlcgen.CreateAudioFileWithGroupKeyParams{
-			FilePath:    "/live/01.mp3",
-			FileTypeID:  0,
-			RecordingID: mustCreateRecording(t, db, "Track"),
-			Basename:    "01.mp3",
-			LibraryID:   0,
-			GroupKey:    "g-live",
-			TagStatus:   "untagged",
-		},
-	); err != nil {
-		t.Fatalf("create audio file: %v", err)
-	}
+	database.InsertTestTrack(t, db, database.TestTrack{
+		FilePath: "/live/01.mp3",
+		Title:    "Track",
+		GroupKey: "g-live",
+	})
 
 	if _, err := db.ExecContext(`
 		INSERT INTO tagging_items (group_key, library_id, track_count, album_name, album_artist, disc_number, status)
@@ -384,23 +286,4 @@ func TestListPendingFolders_PrunesOrphanedEntries(t *testing.T) {
 	if _, err := db.Queries.GetTaggingItem(db.Ctx, "g-orphan"); !errors.Is(err, sql.ErrNoRows) {
 		t.Errorf("expected g-orphan row to be deleted from tagging_items, got err=%v", err)
 	}
-}
-
-func mustCreateRecording(t *testing.T, db *database.DB, title string) int64 {
-	t.Helper()
-
-	ac, err := db.Queries.UpsertArtistCredit(db.Ctx, "Artist")
-	if err != nil {
-		t.Fatalf("upsert artist credit: %v", err)
-	}
-
-	rec, err := db.Queries.CreateRecordingFull(db.Ctx, sqlcgen.CreateRecordingFullParams{
-		Name:           title,
-		ArtistCreditID: ac.ID,
-	})
-	if err != nil {
-		t.Fatalf("create recording: %v", err)
-	}
-
-	return rec.ID
 }

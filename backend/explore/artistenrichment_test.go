@@ -12,19 +12,15 @@ import (
 func seedIndexArtist(t *testing.T, db *database.DB, mbid string, discogFetched int) {
 	t.Helper()
 
-	if _, err := db.ExecContext(
-		upsertIndexSQL,
-		"artist", mbid, "Seeded Artist", "Seeded Artist", mbid, "",
-		0, 0,
-		0, "", "",
-		"", "", "",
-		"", "", "", "",
-		1, 0,
-		0, 0, 0,
-		discogFetched,
-	); err != nil {
-		t.Fatalf("seed explore_index row for %q: %v", mbid, err)
-	}
+	seedIndexResult(t, db, SearchIndexResult{
+		EntityType:    EntityArtist,
+		MBID:          testMBID(mbid),
+		Title:         "Seeded Artist",
+		ArtistName:    "Seeded Artist",
+		ArtistMBID:    testMBID(mbid),
+		InLibrary:     true,
+		DiscogFetched: discogFetched == 1,
+	})
 }
 
 // TestArtistEnrichmentMarksAreIndependent is the reason these are two

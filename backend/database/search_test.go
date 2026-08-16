@@ -3,6 +3,8 @@ package database
 import (
 	"fmt"
 	"testing"
+
+	"yellowjacket/backend/database/sql/sqlcgen"
 )
 
 // seedSearchData inserts ~7 tracks with the full FK chain required for
@@ -84,128 +86,44 @@ func seedSearchData(t *testing.T, db *DB) {
 		},
 	}
 
-	// Build unique sets.
-	artistMap := map[string]int64{}
-	albumMap := map[string]int64{}
-
-	var artistID, albumID int64
-
 	for _, tr := range tracks {
-		if _, ok := artistMap[tr.artist]; !ok {
-			artistID++
-			artistMap[tr.artist] = artistID
-		}
-
-		if _, ok := albumMap[tr.album]; !ok {
-			albumID++
-			albumMap[tr.album] = albumID
-		}
-	}
-
-	// Insert artist_credit rows.
-	for text, id := range artistMap {
-		_, err := db.ExecContext(
-			"INSERT INTO artist_credit (id, text) VALUES (?, ?)",
-			id, text,
-		)
-		if err != nil {
-			t.Fatalf("insert artist_credit %q: %v", text, err)
-		}
-	}
-
-	// Insert release_groups.
-	for name, id := range albumMap {
-		_, err := db.ExecContext(
-			"INSERT INTO release_groups (id, name) VALUES (?, ?)",
-			id, name,
-		)
-		if err != nil {
-			t.Fatalf("insert release_group %q: %v", name, err)
-		}
-	}
-
-	// Insert genres + recording_genres.
-	genreMap := map[string]int64{}
-
-	var genreID int64
-
-	for _, tr := range tracks {
-		if tr.genre == "" {
-			continue
-		}
-
-		if _, ok := genreMap[tr.genre]; !ok {
-			genreID++
-			genreMap[tr.genre] = genreID
-
-			_, err := db.ExecContext(
-				"INSERT INTO genres (id, name) VALUES (?, ?)",
-				genreID, tr.genre,
-			)
-			if err != nil {
-				t.Fatalf("insert genre %q: %v", tr.genre, err)
-			}
-		}
-	}
-
-	for _, tr := range tracks {
-		acID := artistMap[tr.artist]
-		rgID := albumMap[tr.album]
-
-		// Insert recording.
-		_, err := db.ExecContext(
-			"INSERT INTO recordings (id, name, artist_credit_id, "+
-				"track_number, disc_number, year, genre, composer) "+
-				"VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-			tr.id, tr.title, acID, tr.trackNum, tr.discNum,
-			tr.year, tr.genre, tr.composer,
-		)
-		if err != nil {
-			t.Fatalf("insert recording %d %q: %v", tr.id, tr.title, err)
-		}
-
-		// Insert audio_files.
-		_, err = db.ExecContext(
-			"INSERT INTO audio_files (id, file_path, "+
-				"length_milliseconds, file_type_id, recording_id, "+
-				"sample_rate, bit_depth, channels, bitrate, file_size) "+
-				"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-			tr.id, tr.filePath, tr.lenMs, tr.ftID, tr.id,
-			tr.sr, tr.bd, tr.ch, tr.br, tr.fsize,
-		)
-		if err != nil {
-			t.Fatalf("insert audio_file %d: %v", tr.id, err)
-		}
-
-		// Link recording to release_group.
-		_, err = db.ExecContext(
-			"INSERT INTO release_group_recordings "+
-				"(release_group_id, recording_id, track_number, disc_number) "+
-				"VALUES (?, ?, ?, ?)",
-			rgID, tr.id, tr.trackNum, tr.discNum,
-		)
-		if err != nil {
-			t.Fatalf("insert release_group_recordings %d→%d: %v", rgID, tr.id, err)
-		}
-
-		// Insert search_index entry (rowid must match audio_files.id).
-		if err := db.InsertSearchIndex(
-			tr.id, tr.filePath, tr.title, tr.artist, tr.album,
-		); err != nil {
-			t.Fatalf("insert search_index for %d: %v", tr.id, err)
-		}
-
-		// Insert recording_genres link.
+		var genres []string
 		if tr.genre != "" {
-			gID := genreMap[tr.genre]
+			genres = []string{tr.genre}
+		}
 
-			_, err = db.ExecContext(
-				"INSERT INTO recording_genres (recording_id, genre_id) VALUES (?, ?)",
-				tr.id, gID,
-			)
-			if err != nil {
-				t.Fatalf("insert recording_genres %d→%d: %v", tr.id, gID, err)
-			}
+		var trackNum, discNum int64
+		if tr.trackNum != nil {
+			trackNum = *tr.trackNum
+		}
+
+		if tr.discNum != nil {
+			discNum = *tr.discNum
+		}
+
+		id := InsertTestTrack(t, db, TestTrack{
+			FilePath:    tr.filePath,
+			Title:       tr.title,
+			Artist:      tr.artist,
+			Album:       tr.album,
+			Genres:      genres,
+			TrackNumber: trackNum,
+			DiscNumber:  discNum,
+			Year:        tr.year,
+			LengthMs:    tr.lenMs,
+		})
+
+		// The fixtures assert on audio properties and the composer,
+		// which InsertTestTrack does not carry - they are not part of
+		// what a seeder should have to know about a track.
+		if _, err := db.ExecContext(
+			`UPDATE audio_files
+			 SET file_type_id = ?, sample_rate = ?, bit_depth = ?,
+			     channels = ?, bitrate = ?, file_size = ?, composer = ?
+			 WHERE id = ?`,
+			tr.ftID, tr.sr, tr.bd, tr.ch, tr.br, tr.fsize, tr.composer, id,
+		); err != nil {
+			t.Fatalf("set audio properties for %q: %v", tr.filePath, err)
 		}
 	}
 }
@@ -553,7 +471,7 @@ func TestSearchFTSTracks(t *testing.T) {
 	db := NewTestDB(t)
 	seedSearchData(t, db)
 
-	results, err := db.SearchFTSTracks("queen", 10)
+	results, err := db.SearchFTSTracks("queen", 0, 10)
 	if err != nil {
 		t.Fatalf("SearchFTSTracks: %v", err)
 	}
@@ -563,7 +481,7 @@ func TestSearchFTSTracks(t *testing.T) {
 	}
 
 	// Find the Bohemian Rhapsody result and verify all 16 fields.
-	var br *SearchTrackRow
+	var br *sqlcgen.TrackMetadatum
 
 	for i, r := range results {
 		if r.Title == "Bohemian Rhapsody" {
@@ -635,26 +553,12 @@ func TestInsertAndDeleteSearchIndex(t *testing.T) {
 	db := NewTestDB(t)
 
 	// Set up minimal FK chain for a single track.
-	_, err := db.ExecContext(
-		"INSERT INTO artist_credit (id, text) VALUES (1, 'Test Artist')",
-	)
-	if err != nil {
-		t.Fatalf("insert artist_credit: %v", err)
-	}
-
-	_, err = db.ExecContext(
-		"INSERT INTO recordings (id, name, artist_credit_id) VALUES (1, 'Test Track', 1)",
-	)
-	if err != nil {
-		t.Fatalf("insert recording: %v", err)
-	}
-
-	_, err = db.ExecContext(
-		"INSERT INTO audio_files (id, file_path, length_milliseconds, file_type_id, recording_id) VALUES (1, '/test/track.mp3', 180000, 0, 1)",
-	)
-	if err != nil {
-		t.Fatalf("insert audio_file: %v", err)
-	}
+	InsertTestTrack(t, db, TestTrack{
+		FilePath: "/test/track.mp3",
+		Title:    "Test Track",
+		Artist:   "Test Artist",
+		LengthMs: 180000,
+	})
 
 	// Insert into search index.
 	if err := db.InsertSearchIndex(
@@ -698,41 +602,15 @@ func TestRebuildSearchIndex(t *testing.T) {
 
 	db := NewTestDB(t)
 
-	// Seed the full entity graph WITHOUT inserting into search_index.
-	_, err := db.ExecContext(
-		"INSERT INTO artist_credit (id, text) VALUES (1, 'Rebuild Artist')",
-	)
-	if err != nil {
-		t.Fatalf("insert artist_credit: %v", err)
-	}
-
-	_, err = db.ExecContext(
-		"INSERT INTO recordings (id, name, artist_credit_id) VALUES (1, 'Rebuild Track', 1)",
-	)
-	if err != nil {
-		t.Fatalf("insert recording: %v", err)
-	}
-
-	_, err = db.ExecContext(
-		"INSERT INTO audio_files (id, file_path, length_milliseconds, file_type_id, recording_id) VALUES (1, '/rebuild/track.mp3', 200000, 0, 1)",
-	)
-	if err != nil {
-		t.Fatalf("insert audio_file: %v", err)
-	}
-
-	_, err = db.ExecContext(
-		"INSERT INTO release_groups (id, name) VALUES (1, 'Rebuild Album')",
-	)
-	if err != nil {
-		t.Fatalf("insert release_group: %v", err)
-	}
-
-	_, err = db.ExecContext(
-		"INSERT INTO release_group_recordings (release_group_id, recording_id) VALUES (1, 1)",
-	)
-	if err != nil {
-		t.Fatalf("insert release_group_recordings: %v", err)
-	}
+	// Seed the file WITHOUT putting it in search_index.
+	InsertTestTrack(t, db, TestTrack{
+		FilePath:        "/rebuild/track.mp3",
+		Title:           "Rebuild Track",
+		Artist:          "Rebuild Artist",
+		Album:           "Rebuild Album",
+		LengthMs:        200000,
+		SkipSearchIndex: true,
+	})
 
 	// Search should return nothing before rebuild.
 	results, err := db.SearchFTS("Rebuild", 10)
@@ -887,36 +765,22 @@ func TestSearchIndexUpdateCycle(t *testing.T) {
 	db := NewTestDB(t)
 
 	// Set up minimal FK chain for a single track at rowid 100.
-	_, err := db.ExecContext(
-		"INSERT INTO artist_credit (id, text) VALUES (100, 'Old Artist')",
-	)
-	if err != nil {
-		t.Fatalf("insert artist_credit: %v", err)
-	}
-
-	_, err = db.ExecContext(
-		"INSERT INTO recordings (id, name, artist_credit_id) VALUES (100, 'Old Title', 100)",
-	)
-	if err != nil {
-		t.Fatalf("insert recording: %v", err)
-	}
-
-	_, err = db.ExecContext(
-		"INSERT INTO audio_files (id, file_path, length_milliseconds, file_type_id, recording_id) " +
-			"VALUES (100, '/test/update_cycle.mp3', 200000, 0, 100)",
-	)
-	if err != nil {
-		t.Fatalf("insert audio_file: %v", err)
-	}
+	id := InsertTestTrack(t, db, TestTrack{
+		FilePath:        "/test/update_cycle.mp3",
+		Title:           "Old Title",
+		Artist:          "Old Artist",
+		LengthMs:        200000,
+		SkipSearchIndex: true,
+	})
 
 	// 1. Insert with old metadata.
 	if err := db.InsertSearchIndex(
-		100, "/test/update_cycle.mp3", "Old Title", "Old Artist", "Old Album",
+		id, "/test/update_cycle.mp3", "Old Title", "Old Artist", "Old Album",
 	); err != nil {
 		t.Fatalf("InsertSearchIndex (old): %v", err)
 	}
 
-	// Verify search for "Old Title" returns rowid 100.
+	// Verify search for "Old Title" finds it.
 	results, err := db.SearchFTS("Old Title", 10)
 	if err != nil {
 		t.Fatalf("SearchFTS(Old Title): %v", err)
@@ -926,9 +790,9 @@ func TestSearchIndexUpdateCycle(t *testing.T) {
 		t.Fatal("SearchFTS(Old Title): got 0 results after insert")
 	}
 
-	// 2. Delete rowid 100.
-	if err := db.DeleteSearchIndex(100); err != nil {
-		t.Fatalf("DeleteSearchIndex(100): %v", err)
+	// 2. Delete the row.
+	if err := db.DeleteSearchIndex(id); err != nil {
+		t.Fatalf("DeleteSearchIndex(%d): %v", id, err)
 	}
 
 	// Verify "Old Title" no longer found.
@@ -944,25 +808,17 @@ func TestSearchIndexUpdateCycle(t *testing.T) {
 		)
 	}
 
-	// 3. Update the recording name in the DB to simulate tag edit.
+	// 3. Update the file's title in the DB to simulate a tag edit.
 	_, err = db.ExecContext(
-		"UPDATE recordings SET name = 'New Title' WHERE id = 100",
+		"UPDATE audio_files SET title = 'New Title' WHERE file_path = '/test/update_cycle.mp3'",
 	)
 	if err != nil {
-		t.Fatalf("update recording: %v", err)
+		t.Fatalf("update title: %v", err)
 	}
 
-	// Also add a new artist_credit for the new artist.
-	_, err = db.ExecContext(
-		"INSERT INTO artist_credit (id, text) VALUES (101, 'New Artist')",
-	)
-	if err != nil {
-		t.Fatalf("insert new artist_credit: %v", err)
-	}
-
-	// 4. Re-insert rowid 100 with new metadata.
+	// 4. Re-insert the row with new metadata.
 	if err := db.InsertSearchIndex(
-		100, "/test/update_cycle.mp3", "New Title", "New Artist", "New Album",
+		id, "/test/update_cycle.mp3", "New Title", "New Artist", "New Album",
 	); err != nil {
 		t.Fatalf("InsertSearchIndex (new): %v", err)
 	}
@@ -1079,25 +935,13 @@ func TestSearchIndexSchema(t *testing.T) {
 		t.Fatalf("insert artist: %v", err)
 	}
 
+	// The credit tables this used to assert a UNIQUE constraint on are
+	// gone; a file names its artist directly, and artists are unique by
+	// name, which is asserted below.
 	_, err = db.ExecContext(
-		"INSERT INTO artist_credit (id, text) VALUES (1, 'Test Credit')",
-	)
-	if err != nil {
-		t.Fatalf("insert artist_credit: %v", err)
-	}
-
-	_, err = db.ExecContext(
-		"INSERT INTO artist_credit_artist (artist_id, credit_id) VALUES (1, 1)",
-	)
-	if err != nil {
-		t.Fatalf("first insert artist_credit_artist: %v", err)
-	}
-
-	// Duplicate insert should fail with UNIQUE constraint.
-	_, err = db.ExecContext(
-		"INSERT INTO artist_credit_artist (artist_id, credit_id) VALUES (1, 1)",
+		"INSERT INTO artists (id, name) VALUES (2, 'Test')",
 	)
 	if err == nil {
-		t.Error("duplicate artist_credit_artist insert should fail, got nil error")
+		t.Error("duplicate artist name should fail, got nil error")
 	}
 }

@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+
+	"yellowjacket/backend/database/sql/sqlcgen"
 )
 
 // SearchRow holds a single result from an FTS5 or basename search.
@@ -183,203 +185,80 @@ func (d *DB) RebuildSearchIndex() error {
 	return nil
 }
 
-// SearchTrackRow holds a full track result from an FTS5 search,
-// matching all 16 columns returned by GetAllTracksWithFullMetadata.
-type SearchTrackRow struct {
-	FilePath           string
-	LengthMilliseconds int64
-	Title              string
-	ArtistName         string
-	TrackNumber        sql.NullInt64
-	DiscNumber         sql.NullInt64
-	Album              string
-	Genre              string
-	Year               int64
-	Composer           string
-	FileType           string
-	SampleRate         int64
-	BitDepth           int64
-	Channels           int64
-	Bitrate            int64
-	FileSize           int64
+// trackMetadataColumns is the column list of the track_metadata view,
+// in the order sqlc generates TrackMetadatum's fields.  The FTS
+// searches below cannot be sqlc queries (MATCH is not in its grammar),
+// so this is the one place the view's shape is written out by hand.
+const trackMetadataColumns = `
+	tm.id, tm.file_path, tm.length_milliseconds, tm.title, tm.artist_name,
+	tm.track_number, tm.disc_number, tm.album, tm.genre, tm.year,
+	tm.release_year, tm.composer, tm.file_type, tm.sample_rate,
+	tm.bit_depth, tm.channels, tm.bitrate, tm.file_size, tm.library_id,
+	tm.play_count, tm.last_played, tm.cover_art_path, tm.artist_mbid,
+	tm.release_group_mbid, tm.recording_mbid, tm.album_id, tm.artist_id`
+
+// scanTrackMetadata reads track_metadata rows into the generated row
+// type, so an FTS hit and an ordinary query produce the same Track.
+func scanTrackMetadata(rows *sql.Rows) ([]sqlcgen.TrackMetadatum, error) {
+	var out []sqlcgen.TrackMetadatum
+
+	for rows.Next() {
+		var r sqlcgen.TrackMetadatum
+
+		if err := rows.Scan(
+			&r.ID, &r.FilePath, &r.LengthMilliseconds, &r.Title, &r.ArtistName,
+			&r.TrackNumber, &r.DiscNumber, &r.Album, &r.Genre, &r.Year,
+			&r.ReleaseYear, &r.Composer, &r.FileType, &r.SampleRate,
+			&r.BitDepth, &r.Channels, &r.Bitrate, &r.FileSize, &r.LibraryID,
+			&r.PlayCount, &r.LastPlayed, &r.CoverArtPath, &r.ArtistMbid,
+			&r.ReleaseGroupMbid, &r.RecordingMbid, &r.AlbumID, &r.ArtistID,
+		); err != nil {
+			return nil, fmt.Errorf("scan track metadata: %w", err)
+		}
+
+		out = append(out, r)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate track metadata: %w", err)
+	}
+
+	return out, nil
 }
 
-// SearchFTSTracks performs a full-text search and returns full track
-// metadata for each match.  Unlike SearchFTS (which returns only 5
-// columns), this includes all 16 fields needed for library.Track.
+// SearchFTSTracks performs a full-text search and returns whole tracks.
+//
+// A library id of 0 means every library.  There were two of these, one
+// per case, each with its own copy of a sixteen-column projection that
+// silently dropped the MBIDs and the play count - which is why the
+// caller used to pass zeros for them.
 func (d *DB) SearchFTSTracks(
-	query string, limit int,
-) ([]SearchTrackRow, error) {
+	query string, libraryID int64, limit int,
+) ([]sqlcgen.TrackMetadatum, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return nil, nil
 	}
 
-	ftsQuery := buildFTSQuery(query)
-
 	// SAFETY: FTS5 MATCH syntax unsupported by sqlc. Query is parameterized; no string interpolation.
-	rows, err := d.db.QueryContext(d.Ctx, `
-		SELECT
-			tm.file_path,
-			tm.length_milliseconds,
-			tm.title,
-			tm.artist_name,
-			tm.track_number,
-			tm.disc_number,
-			tm.album,
-			tm.genre,
-			tm.year,
-			tm.composer,
-			tm.file_type,
-			tm.sample_rate,
-			tm.bit_depth,
-			tm.channels,
-			tm.bitrate,
-			tm.file_size
+	rows, err := d.reader().QueryContext(d.Ctx, `
+		SELECT`+trackMetadataColumns+`
 		FROM search_index si
 		JOIN track_metadata tm ON tm.id = si.rowid
 		WHERE search_index MATCH ?
+		  AND (? = 0 OR tm.library_id = ?)
 		ORDER BY rank
 		LIMIT ?
-	`, ftsQuery, limit)
+	`, buildFTSQuery(query), libraryID, libraryID, limit)
 	if err != nil {
-		return nil, fmt.Errorf(
-			"FTS track search failed: %w", err,
-		)
+		return nil, fmt.Errorf("FTS track search failed: %w", err)
 	}
 
 	defer func() { _ = rows.Close() }()
 
-	var results []SearchTrackRow
-
-	for rows.Next() {
-		var r SearchTrackRow
-
-		if err := rows.Scan(
-			&r.FilePath,
-			&r.LengthMilliseconds,
-			&r.Title,
-			&r.ArtistName,
-			&r.TrackNumber,
-			&r.DiscNumber,
-			&r.Album,
-			&r.Genre,
-			&r.Year,
-			&r.Composer,
-			&r.FileType,
-			&r.SampleRate,
-			&r.BitDepth,
-			&r.Channels,
-			&r.Bitrate,
-			&r.FileSize,
-		); err != nil {
-			return nil, fmt.Errorf(
-				"could not scan search track row: %w",
-				err,
-			)
-		}
-
-		results = append(results, r)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf(
-			"search track row iteration error: %w",
-			err,
-		)
-	}
-
-	return results, nil
+	return scanTrackMetadata(rows)
 }
 
-// SearchFTSTracksByLibrary performs a full-text search scoped to a
-// specific library and returns full track metadata for each match.
-func (d *DB) SearchFTSTracksByLibrary(
-	query string, limit int, libraryID int64,
-) ([]SearchTrackRow, error) {
-	query = strings.TrimSpace(query)
-	if query == "" {
-		return nil, nil
-	}
-
-	ftsQuery := buildFTSQuery(query)
-
-	// SAFETY: FTS5 MATCH syntax unsupported by sqlc. Query is parameterized; no string interpolation.
-	rows, err := d.db.QueryContext(d.Ctx, `
-		SELECT
-			tm.file_path,
-			tm.length_milliseconds,
-			tm.title,
-			tm.artist_name,
-			tm.track_number,
-			tm.disc_number,
-			tm.album,
-			tm.genre,
-			tm.year,
-			tm.composer,
-			tm.file_type,
-			tm.sample_rate,
-			tm.bit_depth,
-			tm.channels,
-			tm.bitrate,
-			tm.file_size
-		FROM search_index si
-		JOIN track_metadata tm ON tm.id = si.rowid
-		WHERE search_index MATCH ? AND tm.library_id = ?
-		ORDER BY rank
-		LIMIT ?
-	`, ftsQuery, libraryID, limit)
-	if err != nil {
-		return nil, fmt.Errorf(
-			"FTS library track search failed: %w", err,
-		)
-	}
-
-	defer func() { _ = rows.Close() }()
-
-	var results []SearchTrackRow
-
-	for rows.Next() {
-		var r SearchTrackRow
-
-		if err := rows.Scan(
-			&r.FilePath,
-			&r.LengthMilliseconds,
-			&r.Title,
-			&r.ArtistName,
-			&r.TrackNumber,
-			&r.DiscNumber,
-			&r.Album,
-			&r.Genre,
-			&r.Year,
-			&r.Composer,
-			&r.FileType,
-			&r.SampleRate,
-			&r.BitDepth,
-			&r.Channels,
-			&r.Bitrate,
-			&r.FileSize,
-		); err != nil {
-			return nil, fmt.Errorf(
-				"could not scan library search track row: %w",
-				err,
-			)
-		}
-
-		results = append(results, r)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf(
-			"library search track row iteration error: %w",
-			err,
-		)
-	}
-
-	return results, nil
-}
-
-// scanSearchRows reads all rows from a query result into a slice.
 func scanSearchRows(
 	rows interface {
 		Next() bool

@@ -409,3 +409,122 @@ func stringSliceEqual(a, b []string) bool {
 
 	return true
 }
+
+// TestScoreCandidateUnknownCandidateDuration pins which side may be the
+// one that does not know a duration.  An M3U8 without EXTINF lines was
+// already handled; a *library* file whose length was never read was not,
+// so an otherwise exact match was scored out of 0.9 and could not reach
+// the auto-match threshold.
+func TestScoreCandidateUnknownCandidateDuration(t *testing.T) {
+	t.Parallel()
+
+	pp := newPhantomProfile(
+		"/old/Music/Artist/01 - Song.mp3",
+		"Artist - Song",
+		240,
+	)
+
+	score := scoreCandidate(
+		pp,
+		"/new/Music/Artist/01 - Song.mp3",
+		"Song",
+		"Artist",
+		0, // the library never read this file's length
+	)
+
+	if score < autoMatchMinimum {
+		t.Errorf(
+			"score = %f, want >= %f for an exact match with no "+
+				"candidate duration",
+			score, autoMatchMinimum,
+		)
+	}
+}
+
+// TestAssignBestFirst covers the rule that one library file cannot
+// resolve two phantom tracks, and which phantom gets it when both want
+// the same one.
+func TestAssignBestFirst(t *testing.T) {
+	t.Parallel()
+
+	offers := []phantomOffer{
+		// The playlist's first phantom wants this file, but only
+		// just — and the third one is a better answer for it.
+		{
+			phantomPath: "/gone/a.mp3",
+			candidate: CandidateTrack{
+				FilePath: "/lib/shared.mp3", Score: 0.86,
+			},
+		},
+		{
+			phantomPath: "/gone/b.mp3",
+			candidate: CandidateTrack{
+				FilePath: "/lib/b.mp3", Score: 0.90,
+			},
+		},
+		{
+			phantomPath: "/gone/c.mp3",
+			candidate: CandidateTrack{
+				FilePath: "/lib/shared.mp3", Score: 0.98,
+			},
+		},
+	}
+
+	matches := assignBestFirst(offers)
+
+	if len(matches) != 2 {
+		t.Fatalf("matches = %d, want 2", len(matches))
+	}
+
+	got := make(map[string]string, len(matches))
+	for _, m := range matches {
+		got[m.PhantomPath] = m.Candidate.FilePath
+	}
+
+	if got["/gone/c.mp3"] != "/lib/shared.mp3" {
+		t.Errorf(
+			"the shared file went to %v, want /gone/c.mp3 to have it",
+			got,
+		)
+	}
+
+	if _, claimed := got["/gone/a.mp3"]; claimed {
+		t.Error("/gone/a.mp3 took a file a better match had claimed")
+	}
+
+	if got["/gone/b.mp3"] != "/lib/b.mp3" {
+		t.Errorf("/gone/b.mp3 matched %q, want /lib/b.mp3", got["/gone/b.mp3"])
+	}
+}
+
+// TestAssignBestFirstKeepsOnePerPhantom: a phantom with several
+// confident candidates takes its best one and no more.
+func TestAssignBestFirstKeepsOnePerPhantom(t *testing.T) {
+	t.Parallel()
+
+	matches := assignBestFirst([]phantomOffer{
+		{
+			phantomPath: "/gone/a.mp3",
+			candidate: CandidateTrack{
+				FilePath: "/lib/one.mp3", Score: 0.90,
+			},
+		},
+		{
+			phantomPath: "/gone/a.mp3",
+			candidate: CandidateTrack{
+				FilePath: "/lib/two.mp3", Score: 0.95,
+			},
+		},
+	})
+
+	if len(matches) != 1 {
+		t.Fatalf("matches = %d, want 1", len(matches))
+	}
+
+	if matches[0].Candidate.FilePath != "/lib/two.mp3" {
+		t.Errorf(
+			"matched %q, want the higher-scoring /lib/two.mp3",
+			matches[0].Candidate.FilePath,
+		)
+	}
+}

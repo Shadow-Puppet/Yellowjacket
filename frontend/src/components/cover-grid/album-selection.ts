@@ -1,6 +1,5 @@
 import {
     GetAlbumTracks,
-    GetAlbumTracksByLibrary,
     GetFilePathsByAlbums,
 } from '@go/library/library.js';
 import { libraryStore } from '@store/library-store';
@@ -59,11 +58,7 @@ export class AlbumSelectionManager {
         const libId =
             libraryStore.getSelectedLibraryId();
 
-        return list(
-            libId !== null
-                ? GetAlbumTracksByLibrary(albumId, libId)
-                : GetAlbumTracks(albumId),
-        );
+        return list(GetAlbumTracks(albumId, libId ?? 0));
     }
 
     /**

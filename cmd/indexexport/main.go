@@ -40,7 +40,7 @@ import (
 // recomputed locally by PopulateLocalCrossReferences after import.
 const catalogColumns = `entity_type, mbid, title, artist_name, artist_mbid,
 	aliases, popularity, listener_count, duration, caa_release_mbid,
-	release_name, primary_type, secondary_types, release_date,
+	release_name, primary_type, secondary_types, release_date, total_tracks,
 	artist_type, country, disambiguation, sort_name, discog_fetched`
 
 var errNoHome = errors.New(
@@ -139,21 +139,27 @@ func run(out string, artists, perArtistRGs, perArtistRecs int) error {
 // the importing client's own trigger rebuilds its FTS on insert.
 func createSchema(db *sql.DB) error {
 	stmts := []string{
+		// Column types mirror the app's own explore_index, because the
+		// export is a straight copy: MBIDs as 16 raw bytes, entity
+		// types as codes.  An importer that meets the older text form
+		// converts it (artifactSelectColumns), so this is a size change
+		// and not a compatibility break.
 		`CREATE TABLE core.explore_index (
-			entity_type      TEXT NOT NULL,
-			mbid             TEXT NOT NULL,
+			entity_type      INTEGER NOT NULL,
+			mbid             BLOB NOT NULL,
 			title            TEXT NOT NULL,
 			artist_name      TEXT NOT NULL,
-			artist_mbid      TEXT NOT NULL,
+			artist_mbid      BLOB NOT NULL,
 			aliases          TEXT NOT NULL DEFAULT '',
 			popularity       INTEGER NOT NULL DEFAULT 0,
 			listener_count   INTEGER NOT NULL DEFAULT 0,
 			duration         INTEGER NOT NULL DEFAULT 0,
-			caa_release_mbid TEXT NOT NULL DEFAULT '',
+			caa_release_mbid BLOB NOT NULL DEFAULT x'',
 			release_name     TEXT NOT NULL DEFAULT '',
 			primary_type     TEXT NOT NULL DEFAULT '',
 			secondary_types  TEXT NOT NULL DEFAULT '',
 			release_date     TEXT NOT NULL DEFAULT '',
+			total_tracks     INTEGER NOT NULL DEFAULT 0,
 			artist_type      TEXT NOT NULL DEFAULT '',
 			country          TEXT NOT NULL DEFAULT '',
 			disambiguation   TEXT NOT NULL DEFAULT '',
@@ -186,7 +192,7 @@ func copyRows(db *sql.DB, artists, perArtistRGs, perArtistRecs int) error {
 	if _, err := db.Exec(`
 		CREATE TEMP TABLE core_artists AS
 		SELECT mbid FROM main.explore_index
-		WHERE entity_type = 'artist'
+		WHERE entity_type = 1 /* artist */
 		ORDER BY popularity DESC
 		LIMIT ?`, artists,
 	); err != nil {
@@ -197,7 +203,7 @@ func copyRows(db *sql.DB, artists, perArtistRGs, perArtistRecs int) error {
 		INSERT INTO core.explore_index (`+catalogColumns+`)
 		SELECT `+catalogColumns+`
 		FROM main.explore_index
-		WHERE entity_type = 'artist'
+		WHERE entity_type = 1 /* artist */
 		  AND mbid IN (SELECT mbid FROM core_artists)`)
 	if err != nil {
 		return err
@@ -205,13 +211,18 @@ func copyRows(db *sql.DB, artists, perArtistRGs, perArtistRecs int) error {
 
 	fmt.Printf("  artists:        %d\n", copied)
 
+	// The entity codes are the catalog's storage form; see
+	// backend/explore/mbid.go.  The exporter copies the local index's
+	// encoding through unchanged, so the artifact carries it too - and
+	// the importer accepts either, so an artifact built before this
+	// still imports.
 	for _, sel := range []struct {
 		label  string
-		entity string
+		entity int
 		limit  int
 	}{
-		{"release groups", "release_group", perArtistRGs},
-		{"recordings", "recording", perArtistRecs},
+		{"release groups", 2 /* release_group */, perArtistRGs},
+		{"recordings", 3 /* recording */, perArtistRecs},
 	} {
 		// The window is over artist_mbid so each artist contributes at
 		// most `limit` rows, ranked by their own listen counts.

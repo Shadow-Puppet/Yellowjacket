@@ -57,9 +57,12 @@ async function playTheLongOne(app: Page): Promise<void> {
   });
 
   const paths: string[] = await app.evaluate(async (needle) => {
+    // One argument, and 0 means every library: the scoped and
+    // unscoped list queries collapsed into one when the schema did
+    // (plan 013 R3), so `GetTracks()` no longer exists to call.
     const tracks = await window.__yjEvents.call(
-      'library.Library.GetAllTracks',
-      [],
+      'library.Library.GetTracks',
+      [0],
       10_000,
     );
 

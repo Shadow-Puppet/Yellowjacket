@@ -8,8 +8,17 @@
  * the destinations and attributes differ per source type, and there is
  * no MBID/local-id fallback dance to share — a queue source always
  * carries a local id (`tracks` is the one exception, needing none).
+ *
+ * An album is the one source that needs more than its local id.
+ * `explore-album-details` is a *catalog* page and decides what it is
+ * showing from `release-group-mbid` alone — with only a local id it
+ * says "library only" about an album that is perfectly well tagged,
+ * which is not what the same album opened from the albums grid says.
+ * So the MBID is read off the library row here, exactly as
+ * `cover-grid` reads it off the card it navigates from.
  */
 
+import { libraryStore } from '../store/library-store';
 import type { QueueSource } from '../store/queue-store';
 
 /** Fire a navigate event from the clicked element. */
@@ -75,6 +84,26 @@ export function describeQueueSource(source: QueueSource): string | null {
     return `Playing from ${source.label}`;
 }
 
+/**
+ * The release-group MBID of a library album, or '' when it has none.
+ *
+ * Reads the album cache synchronously when it is warm — the albums
+ * view populates it, and so does anything else that has asked for the
+ * collection — and only awaits a fetch when nothing has yet.
+ */
+function albumMBID(id: number): string | Promise<string> {
+    const find = (albums: readonly { ID: number; MBID: string }[]): string =>
+        albums.find((a) => a.ID === id)?.MBID ?? '';
+
+    const cached = libraryStore.cachedAlbums;
+    if (cached) return find(cached);
+
+    return libraryStore
+        .getAlbums()
+        .then(find)
+        .catch(() => '');
+}
+
 /** Navigate to the collection a queue was built from. */
 export function navigateToQueueSource(
     target: EventTarget,
@@ -83,5 +112,25 @@ export function navigateToQueueSource(
     const buildDetail = SOURCE_NAVIGATE_DETAIL[source.type];
     if (!buildDetail) return;
 
-    navigate(target, buildDetail(source));
+    const detail = buildDetail(source);
+
+    if (source.type !== 'album') {
+        navigate(target, detail);
+
+        return;
+    }
+
+    const mbid = albumMBID(source.id);
+
+    if (typeof mbid === 'string') {
+        if (mbid) detail.releaseGroupMBID = mbid;
+        navigate(target, detail);
+
+        return;
+    }
+
+    void mbid.then((resolved) => {
+        if (resolved) detail.releaseGroupMBID = resolved;
+        navigate(target, detail);
+    });
 }

@@ -29,7 +29,6 @@ export type {
     Field,
     MatchScore,
     QualityScore,
-    Reconciler,
     Request,
     RequestInput,
     SearchRequest,

@@ -1,15 +1,11 @@
--- One row per "go find me this", from the moment the user asks until
--- the files are in the library or the attempt is abandoned.
+-- One row per folder the user has added as a music library.
 --
--- release_mbid / release_group_mbid are the anchor: a request that
--- carries one can be matched against a known tracklist at import time,
--- which is what makes unattended completion safe.  Free-text requests
--- (both NULL) are always presented to the user for confirmation.
+-- Everything else keyed by library_id means "which of these folders did
+-- this come from"; a library_id of 0 in a query means "all of them".
 --
--- `expected` caches the anchor's tracklist as JSON so ranking and
--- import do not have to re-resolve it, and so a request survives the
--- explore index being rebuilt underneath it.
-
+-- autotag_warning_acked records that the user has been told what
+-- autotagging will do to the files in this folder, which is a decision
+-- they made and not something a rescan can rediscover.
 
 CREATE TABLE IF NOT EXISTS libraries (
     id                     INTEGER PRIMARY KEY,

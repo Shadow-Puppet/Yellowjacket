@@ -28,24 +28,17 @@ func seedShelfRow(
 ) {
 	t.Helper()
 
-	owned := 0
-	if inLibrary {
-		owned = 1
-	}
-
-	if _, err := db.ExecContext(
-		upsertIndexSQL,
-		entityType, mbid, title, artistName, artistMBID, "",
-		popularity, popularity,
-		0, "", "",
-		"Album", "", "",
-		"", "", "", "",
-		owned, 0,
-		0, 0, 0,
-		0,
-	); err != nil {
-		t.Fatalf("seed explore_index row %q: %v", mbid, err)
-	}
+	seedIndexResult(t, db, SearchIndexResult{
+		EntityType:    entityType,
+		MBID:          testMBID(mbid),
+		Title:         title,
+		ArtistName:    artistName,
+		ArtistMBID:    testMBID(artistMBID),
+		Popularity:    popularity,
+		ListenerCount: popularity,
+		ReleaseName:   "Album",
+		InLibrary:     inLibrary,
+	})
 }
 
 func newShelfService(t *testing.T) (*Service, *database.DB) {
@@ -271,12 +264,12 @@ func TestShelves_TheSecondRowIsNotTheFirstRowsArtists(t *testing.T) {
 		t.Fatal("no popular-artists shelf")
 	}
 
-	if albums.Albums[0].ArtistMBID != "ar-huge" {
+	if albums.Albums[0].ArtistMBID != testMBID("ar-huge") {
 		t.Fatalf("albums shelf leads with %q, want ar-huge", albums.Albums[0].ArtistMBID)
 	}
 
 	for _, artist := range artists.Artists {
-		if artist.MBID == "ar-huge" {
+		if artist.MBID == testMBID("ar-huge") {
 			t.Fatal("artists shelf repeats the artist the albums shelf just showed")
 		}
 	}

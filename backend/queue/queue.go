@@ -217,6 +217,8 @@ func (q *Queue) ServiceStartup(
 }
 
 // SetPlayer provides the queue with a reference to the player for auto-advance.
+//
+//wails:ignore // internal wiring, not part of the app's IPC surface.
 func (q *Queue) SetPlayer(player TrackLoader) {
 	q.player = player
 }
@@ -224,6 +226,8 @@ func (q *Queue) SetPlayer(player TrackLoader) {
 // SetFallbackSource provides the queue with what to auto-play, if
 // anything, once it runs out. A nil source (the default) leaves
 // today's behavior: the queue just goes idle.
+//
+//wails:ignore // internal wiring, not part of the app's IPC surface.
 func (q *Queue) SetFallbackSource(fs FallbackSource) {
 	q.fallbackSource = fs
 }

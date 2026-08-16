@@ -104,13 +104,6 @@ export interface LogEntry {
 }
 
 /**
- * Registry owns every known job and pushes coalesced snapshots to the
- * frontend.  It is safe for concurrent use.
- */
-export interface Registry {
-}
-
-/**
  * Stage is one named sub-step of a multi-stage job, such as an index
  * build tier.  Jobs with a single linear phase leave Stages empty.
  */

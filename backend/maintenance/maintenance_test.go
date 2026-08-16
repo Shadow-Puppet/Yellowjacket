@@ -3,6 +3,7 @@ package maintenance
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -319,12 +320,14 @@ func TestOrphanedArtistImagesJob(t *testing.T) {
 		}
 	}
 
-	// The owned artist is in the library.
-	if _, err := db.ExecContext(
-		`INSERT INTO artists (name, mbid) VALUES ('Owned', ?)`, ownedMBID,
-	); err != nil {
-		t.Fatalf("seed artists: %v", err)
-	}
+	// The owned artist is in the library - which means a *file* says
+	// so.  An artists row on its own is the phantom the file-shaped
+	// schema removed, and it is not ownership.
+	database.InsertTestTrack(t, db, database.TestTrack{
+		FilePath:   "/music/owned.mp3",
+		Artist:     "Owned",
+		ArtistMBID: ownedMBID,
+	})
 
 	old := time.Now().Add(-200 * 24 * time.Hour)
 
@@ -519,5 +522,147 @@ func TestStrayArtistImageFilesJobRefusesEmptyKeepSet(t *testing.T) {
 
 	if _, err := os.Stat(primary); err != nil {
 		t.Error("an empty keep set emptied the directory")
+	}
+}
+
+// TestOrphanedArtistImagesJob_EvictsOverBudget pins the ceiling.
+//
+// Age alone bounds nothing: a browsing session fetches portraits for
+// hundreds of artists in an afternoon and every one of them is inside
+// the retention window. A real install held art for 5,770 artists in a
+// 1,301-artist library. Art for an artist the user owns is outside the
+// budget and must survive an eviction that takes everything else.
+func TestOrphanedArtistImagesJob_EvictsOverBudget(t *testing.T) {
+	t.Parallel()
+
+	db := database.NewTestDB(t)
+	dir := t.TempDir()
+
+	const ownedMBID = "aaaaaaaa-0000-0000-0000-000000000000"
+
+	database.InsertTestTrack(t, db, database.TestTrack{
+		FilePath:   "/music/owned.mp3",
+		Artist:     "Owned",
+		ArtistMBID: ownedMBID,
+	})
+
+	// Each artist's art is a quarter of the budget, so four browsed
+	// artists sit exactly on it and the fifth pushes it over.
+	blob := make([]byte, browsedArtBudget/4)
+
+	seed := func(mbid string, created time.Time) {
+		t.Helper()
+
+		artistDir := explore.ArtistImageDir(dir, mbid)
+		if err := os.MkdirAll(artistDir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", mbid, err)
+		}
+
+		if err := os.WriteFile(
+			filepath.Join(artistDir, "primary.jpg"), blob, 0o600,
+		); err != nil {
+			t.Fatalf("write image: %v", err)
+		}
+
+		if _, err := db.ExecContext(
+			`INSERT INTO artist_images
+			   (artist_mbid, source, source_url, file_path, created_at)
+			 VALUES (?, 'test', 'http://x', ?, ?)`,
+			mbid, filepath.Join(artistDir, "primary.jpg"), created,
+		); err != nil {
+			t.Fatalf("seed artist_images for %s: %v", mbid, err)
+		}
+	}
+
+	// All inside the retention window, so only the budget can evict.
+	now := time.Now()
+	seed(ownedMBID, now)
+
+	browsed := []string{
+		"bbbbbbbb-0000-0000-0000-000000000000",
+		"cccccccc-0000-0000-0000-000000000000",
+		"dddddddd-0000-0000-0000-000000000000",
+		"eeeeeeee-0000-0000-0000-000000000000",
+		"ffffffff-0000-0000-0000-000000000000",
+	}
+
+	for i, mbid := range browsed {
+		seed(mbid, now.Add(-time.Duration(len(browsed)-i)*time.Hour))
+	}
+
+	result, err := OrphanedArtistImagesJob(db, dir, explore.ArtistImageDir).
+		Run(context.Background())
+	if err != nil {
+		t.Fatalf("run job: %v", err)
+	}
+
+	if result.FilesDeleted == 0 {
+		t.Error("nothing was evicted despite being over budget")
+	}
+
+	// The oldest browsed artist goes first.
+	if _, err := os.Stat(explore.ArtistImageDir(dir, browsed[0])); !os.IsNotExist(err) {
+		t.Error("the least recently fetched art survived the budget pass")
+	}
+
+	// The owned artist is never in the budget.
+	if _, err := os.Stat(explore.ArtistImageDir(dir, ownedMBID)); err != nil {
+		t.Error("artwork for a library artist was evicted by the budget pass")
+	}
+
+	// And the newest browsed art survives, because eviction stops as
+	// soon as the rest fits.
+	if _, err := os.Stat(explore.ArtistImageDir(dir, browsed[len(browsed)-1])); err != nil {
+		t.Error("eviction did not stop once under budget")
+	}
+}
+
+// TestExpiredHTTPCacheJob_TrimsToBudget pins the ceiling that makes a
+// year-long entity TTL safe: once answers stop expiring, expiry stops
+// being a bound and something else has to be.
+func TestExpiredHTTPCacheJob_TrimsToBudget(t *testing.T) {
+	t.Parallel()
+
+	db := database.NewTestDB(t)
+
+	// Six rows of a third of the budget each: two fit, the rest go.
+	blob := make([]byte, httpCacheBudget/3)
+
+	for i := range 6 {
+		if _, err := db.ExecContext(
+			`INSERT INTO http_cache (url_key, response, expires_at)
+			 VALUES (?, ?, ?)`,
+			fmt.Sprintf("key-%d", i), blob,
+			time.Now().Add(time.Duration(i+1)*24*time.Hour),
+		); err != nil {
+			t.Fatalf("seed http_cache: %v", err)
+		}
+	}
+
+	if _, err := ExpiredHTTPCacheJob(db).Run(context.Background()); err != nil {
+		t.Fatalf("run job: %v", err)
+	}
+
+	var total int64
+	if err := db.QueryRowWriter(
+		"SELECT COALESCE(SUM(LENGTH(response)), 0) FROM http_cache",
+	).Scan(&total); err != nil {
+		t.Fatalf("measure http_cache: %v", err)
+	}
+
+	if total > httpCacheBudget {
+		t.Errorf("http_cache is %d bytes, over the %d budget", total, httpCacheBudget)
+	}
+
+	// The longest-lived answers are the ones kept.
+	var kept string
+	if err := db.QueryRowWriter(
+		"SELECT url_key FROM http_cache ORDER BY expires_at DESC LIMIT 1",
+	).Scan(&kept); err != nil {
+		t.Fatalf("read surviving row: %v", err)
+	}
+
+	if kept != "key-5" {
+		t.Errorf("kept %q, want the longest-lived row", kept)
 	}
 }

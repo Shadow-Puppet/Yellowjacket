@@ -72,9 +72,9 @@ export class LibraryController implements ReactiveController {
     }
 
     async getAlbumsByArtist(
-        artistID: number,
+        artist: string,
     ): Promise<library.Album[]> {
-        return libraryStore.getAlbumsByArtist(artistID);
+        return libraryStore.getAlbumsByArtist(artist);
     }
 
     getAlbumsByArtistNameCached(

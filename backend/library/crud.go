@@ -42,6 +42,8 @@ type RemovalHooks struct {
 
 // SetRemovalHooks provides optional hooks for cross-cutting
 // orchestration during RemoveLibrary.
+//
+//wails:ignore // internal wiring, not part of the app's IPC surface.
 func (l *Library) SetRemovalHooks(h RemovalHooks) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -168,9 +170,7 @@ func (l *Library) RenameLibrary(id int64, newName string) error {
 // GetRemovalImpact returns pre-removal counts for the confirmation
 // dialog. All queries are read-only.
 func (l *Library) GetRemovalImpact(libraryID int64) (*RemovalImpact, error) {
-	// SAFETY: Hand-crafted SQL for track count. sqlc query CountAudioFilesByLibrary
-	// exists but we inline the remaining two for consistency. Parameterized.
-	trackCount, err := l.db.Queries.CountAudioFilesByLibrary(l.ctx, libraryID)
+	trackCount, err := l.db.Queries.CountAudioFiles(l.ctx, libraryID)
 	if err != nil {
 		return nil, fmt.Errorf("could not count tracks: %w", err)
 	}
@@ -251,40 +251,17 @@ func (l *Library) RemoveLibrary(id int64) (*RemovalSummary, error) {
 	if _, err := tx.ExecContext(l.ctx, `
 		UPDATE playlist_tracks SET
 			phantom_title = sub.title,
-			phantom_artist = sub.artist,
+			phantom_artist = sub.artist_name,
 			phantom_album = sub.album,
-			phantom_duration_ms = sub.duration,
+			phantom_duration_ms = sub.length_milliseconds,
 			phantom_genre = sub.genre,
 			phantom_cover_art_path = sub.cover_art_path,
 			phantom_file_path = sub.file_path
 		FROM (
-			SELECT
-				pt.id AS pt_id,
-				af.file_path AS file_path,
-				COALESCE(r.name, '') AS title,
-				COALESCE(ac.text, '') AS artist,
-				COALESCE(rg.name, '') AS album,
-				af.length_milliseconds AS duration,
-				CAST(COALESCE(
-					(SELECT GROUP_CONCAT(g.name, '||')
-					 FROM recording_genres rg_sub
-					 JOIN genres g ON rg_sub.genre_id = g.id
-					 WHERE rg_sub.recording_id = r.id),
-					''
-				) AS TEXT) AS genre,
-				COALESCE(ca.file_path, '') AS cover_art_path
+			SELECT pt.id AS pt_id, tm.*
 			FROM playlist_tracks pt
-			JOIN audio_files af ON pt.audio_file_id = af.id
-			LEFT JOIN recordings r ON af.recording_id = r.id
-			LEFT JOIN artist_credit ac ON r.artist_credit_id = ac.id
-			LEFT JOIN (
-				SELECT recording_id, MIN(release_group_id) AS release_group_id
-				FROM release_group_recordings
-				GROUP BY recording_id
-			) rgr ON r.id = rgr.recording_id
-			LEFT JOIN release_groups rg ON rgr.release_group_id = rg.id
-			LEFT JOIN cover_art ca ON rg.cover_art_id = ca.id
-			WHERE af.library_id = ?
+			JOIN track_metadata tm ON tm.id = pt.audio_file_id
+			WHERE tm.library_id = ?
 		) sub
 		WHERE playlist_tracks.id = sub.pt_id`, id); err != nil {
 		return nil, fmt.Errorf("could not populate phantom metadata: %w", err)
@@ -301,97 +278,44 @@ func (l *Library) RemoveLibrary(id int64) (*RemovalSummary, error) {
 
 	tracksDeleted, _ := result.RowsAffected()
 
-	// 7. Delete orphaned recording_genres (must run BEFORE recordings
-	// because recording_genres.recording_id references recordings.id).
-	// SAFETY: Hand-crafted orphan cleanup SQL. Parameterless.
-	if _, err := tx.ExecContext(l.ctx,
-		`DELETE FROM recording_genres WHERE recording_id NOT IN (
-			SELECT DISTINCT recording_id FROM audio_files
-		)`); err != nil {
-		return nil, fmt.Errorf("could not delete orphaned recording_genres: %w", err)
-	}
-
-	// 8. Delete orphaned release_group_recordings (must run BEFORE
-	// recordings because release_group_recordings.recording_id
-	// references recordings.id).
-	// SAFETY: Hand-crafted orphan cleanup SQL. Parameterless.
-	if _, err := tx.ExecContext(l.ctx,
-		`DELETE FROM release_group_recordings WHERE recording_id NOT IN (
-			SELECT DISTINCT recording_id FROM audio_files
-		)`); err != nil {
-		return nil, fmt.Errorf("could not delete orphaned release_group_recordings: %w", err)
-	}
-
-	// 9. Delete orphaned recordings (safe now that child tables are cleaned).
-	// SAFETY: Hand-crafted orphan cleanup SQL. Reference-counting delete
-	// with NOT IN subquery unsupported by sqlc. No user input.
-	if _, err := tx.ExecContext(l.ctx,
-		`DELETE FROM recordings WHERE id NOT IN (
-			SELECT DISTINCT recording_id FROM audio_files
-		)`); err != nil {
-		return nil, fmt.Errorf("could not delete orphaned recordings: %w", err)
-	}
-
-	// 10. Delete orphaned release_groups.
+	// 7. Sweep what the files left behind.  This used to be eight
+	// statements in dependency order, because deleting a file cascaded
+	// to none of the five metadata tables it had created.  file_genres
+	// cascades now, so what is left is the two tables that genuinely
+	// outlive a file and the genres nothing references.
 	// SAFETY: Hand-crafted orphan cleanup SQL. Parameterless.
 	result, err = tx.ExecContext(l.ctx,
-		`DELETE FROM release_groups WHERE id NOT IN (
-			SELECT DISTINCT release_group_id FROM release_group_recordings
+		`DELETE FROM albums WHERE id NOT IN (
+			SELECT DISTINCT album_id FROM audio_files WHERE album_id IS NOT NULL
 		)`)
 	if err != nil {
-		return nil, fmt.Errorf("could not delete orphaned release_groups: %w", err)
+		return nil, fmt.Errorf("could not delete empty albums: %w", err)
 	}
 
 	albumsRemoved, _ := result.RowsAffected()
 
-	// 11. Delete orphaned artist_credit_artists (must run BEFORE
-	// artist_credit because artist_credit_artist.credit_id references
-	// artist_credit.id).
-	// SAFETY: Hand-crafted orphan cleanup SQL. Parameterless.
-	if _, err := tx.ExecContext(l.ctx,
-		`DELETE FROM artist_credit_artist WHERE credit_id NOT IN (
-			SELECT DISTINCT artist_credit_id FROM recordings
-		) AND credit_id NOT IN (
-			SELECT DISTINCT album_artist_credit_id FROM release_groups
-			WHERE album_artist_credit_id IS NOT NULL
-		)`); err != nil {
-		return nil, fmt.Errorf("could not delete orphaned artist_credit_artists: %w", err)
-	}
-
-	// 12. Delete orphaned artist_credits (safe now that child table is cleaned).
-	// SAFETY: Hand-crafted orphan cleanup SQL. Dual-FK reference counting
-	// (recordings.artist_credit_id + release_groups.album_artist_credit_id)
-	// unsupported by sqlc. Parameterless.
-	if _, err := tx.ExecContext(l.ctx,
-		`DELETE FROM artist_credit WHERE id NOT IN (
-			SELECT DISTINCT artist_credit_id FROM recordings
-		) AND id NOT IN (
-			SELECT DISTINCT album_artist_credit_id FROM release_groups
-			WHERE album_artist_credit_id IS NOT NULL
-		)`); err != nil {
-		return nil, fmt.Errorf("could not delete orphaned artist_credits: %w", err)
-	}
-
-	// 13. Delete orphaned artists.
+	// Artists after albums: an artist is unreferenced only once the
+	// albums pointing at it are gone.
 	// SAFETY: Hand-crafted orphan cleanup SQL. Parameterless.
 	result, err = tx.ExecContext(l.ctx,
 		`DELETE FROM artists WHERE id NOT IN (
-			SELECT DISTINCT artist_id FROM artist_credit_artist
+			SELECT DISTINCT artist_id FROM audio_files WHERE artist_id IS NOT NULL
+		) AND id NOT IN (
+			SELECT DISTINCT artist_id FROM albums WHERE artist_id IS NOT NULL
 		)`)
 	if err != nil {
-		return nil, fmt.Errorf("could not delete orphaned artists: %w", err)
+		return nil, fmt.Errorf("could not delete unreferenced artists: %w", err)
 	}
 
 	artistsRemoved, _ := result.RowsAffected()
 
-	// 14. Delete orphaned genres.
 	// SAFETY: Hand-crafted orphan cleanup SQL. Parameterless.
 	result, err = tx.ExecContext(l.ctx,
 		`DELETE FROM genres WHERE id NOT IN (
-			SELECT DISTINCT genre_id FROM recording_genres
+			SELECT DISTINCT genre_id FROM file_genres
 		)`)
 	if err != nil {
-		return nil, fmt.Errorf("could not delete orphaned genres: %w", err)
+		return nil, fmt.Errorf("could not delete unused genres: %w", err)
 	}
 
 	genresRemoved, _ := result.RowsAffected()
@@ -401,7 +325,7 @@ func (l *Library) RemoveLibrary(id int64) (*RemovalSummary, error) {
 	// Parameterless.
 	rows, err := tx.QueryContext(l.ctx,
 		`SELECT file_path FROM cover_art WHERE id NOT IN (
-			SELECT DISTINCT cover_art_id FROM release_groups
+			SELECT DISTINCT cover_art_id FROM albums
 			WHERE cover_art_id IS NOT NULL
 		)`)
 	if err != nil {
@@ -429,7 +353,7 @@ func (l *Library) RemoveLibrary(id int64) (*RemovalSummary, error) {
 	// SAFETY: Hand-crafted orphan cleanup SQL. Parameterless.
 	if _, err := tx.ExecContext(l.ctx,
 		`DELETE FROM cover_art WHERE id NOT IN (
-			SELECT DISTINCT cover_art_id FROM release_groups
+			SELECT DISTINCT cover_art_id FROM albums
 			WHERE cover_art_id IS NOT NULL
 		)`); err != nil {
 		return nil, fmt.Errorf("could not delete orphaned cover_art: %w", err)

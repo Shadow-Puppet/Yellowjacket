@@ -10,7 +10,7 @@ import (
 // LyricsResult is a single lyric-search hit, mapped from the DB layer
 // into the camelCase shape the frontend consumes.
 type LyricsResult struct {
-	RecordingID int64  `json:"recordingId"`
+	AudioFileID int64  `json:"audioFileId"`
 	FilePath    string `json:"filePath"`
 	LengthMs    int64  `json:"lengthMs"`
 	Title       string `json:"title"`
@@ -55,7 +55,7 @@ func (e *Service) SearchLyrics(query string) []LyricsResult {
 	out := make([]LyricsResult, 0, len(hits))
 	for _, h := range hits {
 		out = append(out, LyricsResult{
-			RecordingID: h.RecordingID,
+			AudioFileID: h.AudioFileID,
 			FilePath:    h.FilePath,
 			LengthMs:    h.LengthMilliseconds,
 			Title:       h.Title,
@@ -67,18 +67,18 @@ func (e *Service) SearchLyrics(query string) []LyricsResult {
 	return out
 }
 
-// GetTrackLyrics returns lyrics for a recording.  If the library
+// GetTrackLyrics returns lyrics for a file.  If the library
 // already has them (from embedded tags) they're returned as-is;
 // otherwise it fetches from LRCLIB, persists them (updating the FTS
 // index), and returns them.  Never returns an error to the frontend —
 // a miss just yields an empty result.
-func (e *Service) GetTrackLyrics(recordingID int64) TrackLyrics {
-	stored, err := e.db.GetRecordingLyrics(recordingID)
+func (e *Service) GetTrackLyrics(audioFileID int64) TrackLyrics {
+	stored, err := e.db.GetLyrics(audioFileID)
 	if err == nil && stored != "" {
 		return TrackLyrics{Plain: stored, Source: "embedded"}
 	}
 
-	lookup, err := e.db.RecordingLyricLookup(recordingID)
+	lookup, err := e.db.FileLyricLookup(audioFileID)
 	if err != nil || lookup == nil {
 		return TrackLyrics{}
 	}
@@ -150,7 +150,7 @@ func (e *Service) backfillLibraryLyrics(ctx context.Context) {
 			return
 		}
 
-		candidates, err := e.db.RecordingsMissingLyrics(lyricsBackfillBatch)
+		candidates, err := e.db.FilesMissingLyrics(lyricsBackfillBatch)
 		if err != nil {
 			e.logger.Warn("lyrics backfill: query failed", "err", err)
 
@@ -223,8 +223,12 @@ func (e *Service) fetchAndStoreLyrics(
 		return nil
 	}
 
-	if err := e.db.SetRecordingLyrics(c.RecordingID, lyrics.Plain); err != nil {
-		e.logger.Warn("lyrics store failed", "recordingId", c.RecordingID, "err", err)
+	// Marked `lrclib` rather than `tag`: these came off the network and
+	// a rebuild that discards them pays for them again.
+	if err := e.db.SetLyrics(
+		c.AudioFileID, lyrics.Plain, "lrclib", c.RecordingMBID,
+	); err != nil {
+		e.logger.Warn("lyrics store failed", "audioFileId", c.AudioFileID, "err", err)
 
 		return nil
 	}

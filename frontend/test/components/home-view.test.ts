@@ -132,7 +132,7 @@ describe('home view', () => {
     await new Promise((r) => setTimeout(r, 0));
 
     expect(seen).toEqual([]);
-    expect(lastArgs('library.Library.GetAlbumTracks')).toEqual([1]);
+    expect(lastArgs('library.Library.GetAlbumTracks')).toEqual([1, 0]);
     expect(lastArgs('queue.Queue.SetQueue')).toEqual([
       ['/music/1.mp3', '/music/2.mp3'],
       0,

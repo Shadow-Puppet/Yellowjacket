@@ -16,10 +16,6 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as mediacontrols$0 from "../mediacontrols/models.js";
-
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore: Unused imports
 import * as $models from "./models.js";
 
 /**
@@ -136,24 +132,6 @@ export function SaveState(): $CancellablePromise<void> {
  */
 export function Seek(targetSeconds: number): $CancellablePromise<void> {
     return $Call.ByID(829056707, targetSeconds);
-}
-
-/**
- * SetMediaControls provides an OS media controls handler. When set,
- * the player pushes metadata, playback state, volume, and seek
- * notifications to the OS media overlay.
- */
-export function SetMediaControls(h: mediacontrols$0.Handler): $CancellablePromise<void> {
-    return $Call.ByID(1896286877, h);
-}
-
-/**
- * SetPlaybackFinishedHandler sets a callback invoked when a track
- * finishes naturally. This allows the queue to drive auto-advance
- * without circular imports.
- */
-export function SetPlaybackFinishedHandler(handler: any): $CancellablePromise<void> {
-    return $Call.ByID(2023377546, handler);
 }
 
 /**

@@ -12,8 +12,8 @@ CREATE TABLE IF NOT EXISTS artist_images (
   created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
-CREATE INDEX IF NOT EXISTS idx_artist_images_mbid
-    ON artist_images(artist_mbid);
+-- No index on artist_mbid alone: the UNIQUE index below has it as its
+-- leftmost column.
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_artist_images_source
     ON artist_images(artist_mbid, source, source_url);

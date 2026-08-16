@@ -23,8 +23,16 @@ import { test, expect, callBinding } from '../support/fixtures.js';
  */
 
 /** A release group that exists whether or not this environment has a
- *  catalog — CI's `YJ_CORE_INDEX_URL` is deliberately dead. */
-const MBID = 'e2e-rg-badge-0001';
+ *  catalog — CI's `YJ_CORE_INDEX_URL` is deliberately dead.
+ *
+ *  It is a real UUID because the catalog stores an MBID as its 16 raw
+ *  bytes under `CHECK(length(mbid) = 16)`. A readable id fails that
+ *  check, `INSERT OR IGNORE` swallows the failure, and the staging step
+ *  below reports 200 having written nothing. */
+const MBID = 'e2ebad9e-0001-4000-8000-000000000001';
+
+/** The staged album's artist, for the same reason. */
+const ARTIST_MBID = 'e2ebad9e-0002-4000-8000-000000000002';
 const TITLE = 'Requested Album';
 const ARTIST = 'Badge Artist';
 
@@ -45,18 +53,29 @@ test.describe('the requested badge', () => {
             sql: `INSERT OR IGNORE INTO explore_index
                     (entity_type, mbid, title, artist_name, artist_mbid,
                      popularity, listener_count, primary_type)
-                  VALUES ('release_group', ?, ?, ?, 'e2e-ar-badge', 10, 10, 'Album')`,
-            args: [row.mbid, row.title, row.artist],
+                  VALUES (2 /* release_group */,
+                          unhex(replace(?, '-', '')), ?, ?,
+                          unhex(replace(?, '-', '')),
+                          10, 10, 'Album')`,
+            args: [row.mbid, row.title, row.artist, row.artistMbid],
           }),
         });
 
         return { status: r.status, body: await r.text() };
       },
-      { mbid: MBID, title: TITLE, artist: ARTIST },
+      { mbid: MBID, title: TITLE, artist: ARTIST, artistMbid: ARTIST_MBID },
     );
 
-    // A setup step whose failure is not checked is not setup.
+    // A setup step whose failure is not checked is not setup — and with
+    // `OR IGNORE` a 200 is not a write either: a CHECK the row violates
+    // is ignored rather than reported. `rowsAffected` is 0 on a second
+    // run against the same backend, so what is asserted is that the
+    // statement did not error.
     expect(res.status, `staging failed: ${res.body}`).toBe(200);
+    expect(
+      (JSON.parse(res.body) as { error?: string }).error,
+      `staging failed: ${res.body}`,
+    ).toBeUndefined();
 
     // A previous run that died between adding and removing would leave
     // this album requested, and the first assertion here is that it is

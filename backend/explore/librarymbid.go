@@ -18,9 +18,22 @@ func NewLibraryMBIDIndex(db *database.DB) *LibraryMBIDIndex {
 	return &LibraryMBIDIndex{db: db}
 }
 
-// CheckMBIDs returns which of the given MBIDs exist in the local
-// library.  The returned map has MBID → entity type ("artist",
+// CheckMBIDs returns which of the given MBIDs the library actually
+// has a file for.  The returned map is MBID -> entity type ("artist",
 // "release_group", or "recording").
+//
+// The "has a file" part is the whole point and is what this used to get
+// wrong.  It was three `SELECT mbid FROM <metadata table>` queries, and
+// a metadata row could outlive the file that created it - retagging a
+// file abandoned its old recording row, which kept the old MBID
+// forever.  Measured on a real library: 812 orphaned recordings, of
+// which 218 carried MBIDs, and 129 catalog rows that this function
+// therefore reported as owned.  Every one of them rendered as a track
+// you have, with a play button that could not work, because playback
+// resolves files and this resolved metadata.
+//
+// Each branch now joins audio_files.  An entity is in your library if
+// and only if a file says so.
 func (idx *LibraryMBIDIndex) CheckMBIDs(mbids []string) map[string]string {
 	if len(mbids) == 0 {
 		return nil
@@ -28,16 +41,26 @@ func (idx *LibraryMBIDIndex) CheckMBIDs(mbids []string) map[string]string {
 
 	result := make(map[string]string, len(mbids))
 
-	// Batch check all MBIDs against each table with a single IN query.
-	type tableEntity struct {
-		table      string
+	type entityQuery struct {
 		entityType string
+		query      string
 	}
 
-	tables := []tableEntity{
-		{"artists", "artist"},
-		{"release_groups", "release_group"},
-		{"recordings", "recording"},
+	queries := []entityQuery{
+		{"recording", `SELECT DISTINCT recording_mbid FROM audio_files
+			WHERE recording_mbid IN (%s)`},
+		{"release_group", `SELECT DISTINCT al.mbid FROM albums al
+			JOIN audio_files af ON af.album_id = al.id
+			WHERE al.mbid IN (%s)`},
+		{"artist", `SELECT DISTINCT a.mbid FROM artists a
+			WHERE a.mbid IN (%s) AND (
+				EXISTS (SELECT 1 FROM audio_files af WHERE af.artist_id = a.id)
+				OR EXISTS (
+					SELECT 1 FROM albums al
+					JOIN audio_files af2 ON af2.album_id = al.id
+					WHERE al.artist_id = a.id
+				)
+			)`},
 	}
 
 	// Build a set of MBIDs still unresolved.
@@ -48,12 +71,11 @@ func (idx *LibraryMBIDIndex) CheckMBIDs(mbids []string) map[string]string {
 		}
 	}
 
-	for _, te := range tables {
+	for _, eq := range queries {
 		if len(remaining) == 0 {
 			break
 		}
 
-		// Build IN clause from remaining MBIDs.
 		placeholders := make([]string, 0, len(remaining))
 		args := make([]any, 0, len(remaining))
 
@@ -62,9 +84,10 @@ func (idx *LibraryMBIDIndex) CheckMBIDs(mbids []string) map[string]string {
 			args = append(args, m)
 		}
 
-		//nolint:gosec // table name is hardcoded from the tables slice above
-		query := "SELECT mbid FROM " + te.table + " WHERE mbid IN (" +
-			strings.Join(placeholders, ",") + ")"
+		//nolint:gosec // the query text is a constant from the slice above
+		query := strings.Replace(
+			eq.query, "%s", strings.Join(placeholders, ","), 1,
+		)
 
 		rows, err := idx.db.QueryContext(query, args...)
 		if err != nil {
@@ -74,7 +97,7 @@ func (idx *LibraryMBIDIndex) CheckMBIDs(mbids []string) map[string]string {
 		for rows.Next() {
 			var mbid string
 			if err := rows.Scan(&mbid); err == nil {
-				result[mbid] = te.entityType
+				result[mbid] = eq.entityType
 				delete(remaining, mbid)
 			}
 		}

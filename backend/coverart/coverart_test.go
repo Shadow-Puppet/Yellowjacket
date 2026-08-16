@@ -108,8 +108,10 @@ func TestResolveURLs(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		path     string
+		name string
+		path string
+		// Original is the largest kept variant: the full-resolution
+		// image is not stored (see URLs).
 		wantOrig string
 		wantSm   string
 		wantMd   string
@@ -118,7 +120,7 @@ func TestResolveURLs(t *testing.T) {
 		{
 			name:     "absolute path",
 			path:     "/home/user/.local/share/yellowjacket/covers/a1b2c3d4.jpg",
-			wantOrig: "/covers/a1b2c3d4.jpg",
+			wantOrig: "/covers/a1b2c3d4_lg.jpg",
 			wantSm:   "/covers/a1b2c3d4_sm.jpg",
 			wantMd:   "/covers/a1b2c3d4_md.jpg",
 			wantLg:   "/covers/a1b2c3d4_lg.jpg",
@@ -126,7 +128,7 @@ func TestResolveURLs(t *testing.T) {
 		{
 			name:     "bare filename",
 			path:     "abcdef01.png",
-			wantOrig: "/covers/abcdef01.png",
+			wantOrig: "/covers/abcdef01_lg.jpg",
 			wantSm:   "/covers/abcdef01_sm.jpg",
 			wantMd:   "/covers/abcdef01_md.jpg",
 			wantLg:   "/covers/abcdef01_lg.jpg",

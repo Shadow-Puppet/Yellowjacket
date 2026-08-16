@@ -1,18 +1,26 @@
 package database
 
 import (
+	"crypto/sha256"
 	"strings"
 	"testing"
 )
 
 // seedExploreRow inserts one explore_index row.
+//
+// The catalog stores an MBID as 16 raw bytes and an entity type as a
+// code (see backend/explore/mbid.go), and the column says so, so the
+// label these tests use as an id is hashed into something the table
+// will accept.  What they actually assert on is the FTS text.
 func seedExploreRow(t *testing.T, db *DB, mbid, title, artist string) {
 	t.Helper()
 
+	sum := sha256.Sum256([]byte(mbid))
+
 	if _, err := db.ExecContext(`
 		INSERT INTO explore_index (entity_type, mbid, title, artist_name, artist_mbid)
-		VALUES ('recording', ?, ?, ?, '')
-	`, mbid, title, artist); err != nil {
+		VALUES (3 /* recording */, ?, ?, ?, x'')
+	`, sum[:16], title, artist); err != nil {
 		t.Fatalf("seed %s: %v", mbid, err)
 	}
 }
@@ -202,7 +210,8 @@ func TestExploreFTSUpdateSkipsUnchangedText(t *testing.T) {
 
 	// A popularity refresh: an FTS column is not named at all.
 	if _, err := db.ExecContext(
-		"UPDATE explore_index SET popularity = 42 WHERE mbid = 'mbid-1'",
+		"UPDATE explore_index SET popularity = 42 WHERE title = ?",
+		"Unchanged Title",
 	); err != nil {
 		t.Fatalf("popularity update: %v", err)
 	}
@@ -212,8 +221,8 @@ func TestExploreFTSUpdateSkipsUnchangedText(t *testing.T) {
 	if _, err := db.ExecContext(`
 		UPDATE explore_index
 		SET title = 'Unchanged Title', artist_name = 'Steady Artist', popularity = 43
-		WHERE mbid = 'mbid-1'
-	`); err != nil {
+		WHERE title = ?
+	`, "Unchanged Title"); err != nil {
 		t.Fatalf("no-op text update: %v", err)
 	}
 
@@ -237,7 +246,8 @@ func TestExploreFTSUpdateReindexesChangedText(t *testing.T) {
 	seedExploreRow(t, db, "mbid-2", "Original Title", "Some Artist")
 
 	if _, err := db.ExecContext(
-		"UPDATE explore_index SET title = 'Corrected Title' WHERE mbid = 'mbid-2'",
+		"UPDATE explore_index SET title = 'Corrected Title' WHERE title = ?",
+		"Original Title",
 	); err != nil {
 		t.Fatalf("rename: %v", err)
 	}
@@ -252,7 +262,8 @@ func TestExploreFTSUpdateReindexesChangedText(t *testing.T) {
 
 	// The same for the other two indexed columns.
 	if _, err := db.ExecContext(
-		"UPDATE explore_index SET artist_name = 'Renamed Artist', aliases = 'AKA Thing' WHERE mbid = 'mbid-2'",
+		"UPDATE explore_index SET artist_name = 'Renamed Artist', aliases = 'AKA Thing' WHERE title = ?",
+		"Corrected Title",
 	); err != nil {
 		t.Fatalf("artist rename: %v", err)
 	}

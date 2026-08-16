@@ -2,12 +2,9 @@ package tagwriter
 
 import (
 	"context"
-	"database/sql"
-	"path/filepath"
 	"testing"
 
 	"yellowjacket/backend/database"
-	"yellowjacket/backend/database/sql/sqlcgen"
 )
 
 // --- Mock implementations ---
@@ -58,110 +55,17 @@ func seedTestTrack(
 ) int64 {
 	t.Helper()
 
-	ctx := context.Background()
-	q := db.Queries
-
-	// Artist credit.
-	ac, err := q.UpsertArtistCredit(ctx, "Old Artist")
-	if err != nil {
-		t.Fatalf("upsert artist credit: %v", err)
-	}
-
-	artist, err := q.UpsertArtist(ctx, "Old Artist")
-	if err != nil {
-		t.Fatalf("upsert artist: %v", err)
-	}
-
-	if _, err := q.CreateArtistCreditArtist(ctx,
-		sqlcgen.CreateArtistCreditArtistParams{
-			ArtistID: artist.ID,
-			CreditID: ac.ID,
-		},
-	); err != nil {
-		t.Fatalf("create aca: %v", err)
-	}
-
-	// Recording.
-	rec, err := q.CreateRecordingFull(ctx, sqlcgen.CreateRecordingFullParams{
-		Name:           "Old Title",
-		ArtistCreditID: ac.ID,
-		TrackNumber:    sql.NullInt64{Int64: 1, Valid: true},
-		DiscNumber:     sql.NullInt64{Int64: 1, Valid: true},
-		Year:           sql.NullInt64{Int64: 2020, Valid: true},
-		Genre:          sql.NullString{String: "Rock", Valid: true},
-		Composer:       sql.NullString{String: "Old Composer", Valid: true},
+	return database.InsertTestTrack(t, db, database.TestTrack{
+		FilePath:    filePath,
+		Title:       "Old Title",
+		Artist:      "Old Artist",
+		Album:       "Old Album",
+		Genres:      []string{"Rock"},
+		TrackNumber: 1,
+		DiscNumber:  1,
+		Year:        2020,
+		LengthMs:    180000,
 	})
-	if err != nil {
-		t.Fatalf("create recording: %v", err)
-	}
-
-	// Release group.
-	rg, err := q.UpsertReleaseGroup(ctx, sqlcgen.UpsertReleaseGroupParams{
-		Name:                "Old Album",
-		AlbumArtistCreditID: sql.NullInt64{Int64: ac.ID, Valid: true},
-		Year:                sql.NullInt64{Int64: 2020, Valid: true},
-	})
-	if err != nil {
-		t.Fatalf("upsert release group: %v", err)
-	}
-
-	if _, err := q.CreateReleaseGroupRecording(ctx,
-		sqlcgen.CreateReleaseGroupRecordingParams{
-			ReleaseGroupID: rg.ID,
-			RecordingID:    rec.ID,
-			TrackNumber:    sql.NullInt64{Int64: 1, Valid: true},
-			DiscNumber:     sql.NullInt64{Int64: 1, Valid: true},
-		},
-	); err != nil {
-		t.Fatalf("create rg recording: %v", err)
-	}
-
-	// Genre.
-	genre, err := q.UpsertGenre(ctx, "Rock")
-	if err != nil {
-		t.Fatalf("upsert genre: %v", err)
-	}
-
-	if err := q.CreateRecordingGenre(ctx, sqlcgen.CreateRecordingGenreParams{
-		RecordingID: rec.ID,
-		GenreID:     genre.ID,
-	}); err != nil {
-		t.Fatalf("create recording genre: %v", err)
-	}
-
-	// Audio file.
-	af, err := q.CreateAudioFile(ctx, sqlcgen.CreateAudioFileParams{
-		FilePath:           filePath,
-		LengthMilliseconds: 180000,
-		FileTypeID:         0,
-		RecordingID:        rec.ID,
-		Basename:           filepath.Base(filePath),
-		LibraryID:          0,
-	})
-	if err != nil {
-		t.Fatalf("create audio file: %v", err)
-	}
-
-	// Seed FTS5 search index.
-	// SAFETY: FTS5 INSERT for test setup. All values parameterized.
-	tx, err := db.BeginTx()
-	if err != nil {
-		t.Fatalf("begin tx: %v", err)
-	}
-
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO search_index(rowid, file_path, title, artist, album)
-		 VALUES (?, ?, ?, ?, ?)`,
-		af.ID, filePath, "Old Title", "Old Artist", "Old Album",
-	); err != nil {
-		t.Fatalf("insert search index: %v", err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		t.Fatalf("commit: %v", err)
-	}
-
-	return af.ID
 }
 
 // createPipelineTestMP3 creates a minimal MP3 file for pipeline tests
@@ -253,20 +157,10 @@ func TestWriteTrackTags_OrphanCleanup(t *testing.T) {
 	// Get old artist credit ID before change.
 	ctx := context.Background()
 
-	af, err := db.Queries.GetAudioFile(ctx, trackID)
-	if err != nil {
-		t.Fatalf("get audio file: %v", err)
-	}
-
-	oldRec, err := db.Queries.GetRecording(ctx, af.RecordingID)
-	if err != nil {
-		t.Fatalf("get recording: %v", err)
-	}
-
-	oldACID := oldRec.ArtistCreditID
-
-	// Change both artist and album so the old credit loses all
-	// references (recordings AND release_groups.album_artist_credit_id).
+	// Change both artist and album.  Under the old schema this
+	// relinked a recording to a new credit and left the previous
+	// credit, its artist link and its release group behind, which is
+	// what three orphan sweeps in syncDatabase existed to clean up.
 	if err := tw.WriteTrackTags(trackID, TagChanges{
 		FieldArtist: "New Artist",
 		FieldAlbum:  "New Album",
@@ -274,37 +168,26 @@ func TestWriteTrackTags_OrphanCleanup(t *testing.T) {
 		t.Fatalf("WriteTrackTags: %v", err)
 	}
 
-	// Verify old artist credit is orphaned and deleted.
-	refCount, err := db.Queries.CountArtistCreditReferences(ctx, oldACID)
+	af, err := db.Queries.GetAudioFile(ctx, trackID)
 	if err != nil {
-		t.Fatalf("count refs: %v", err)
+		t.Fatalf("get audio file: %v", err)
 	}
 
-	if refCount != 0 {
-		// The old AC should have 0 references. Check if it still exists.
-		_, acErr := db.Queries.GetArtistCredit(ctx, oldACID)
-		if acErr == nil {
-			t.Errorf(
-				"expected old artist credit %d to be deleted (orphan), "+
-					"but it still exists with %d refs",
-				oldACID, refCount,
-			)
-		}
+	if af.ArtistCredit != "New Artist" {
+		t.Errorf("artist credit: got %q, want %q", af.ArtistCredit, "New Artist")
 	}
 
-	// Verify new recording has new artist credit.
-	newRec, err := db.Queries.GetRecording(ctx, af.RecordingID)
+	if !af.AlbumID.Valid {
+		t.Fatal("file has no album after the write")
+	}
+
+	album, err := db.Queries.GetAlbum(ctx, af.AlbumID.Int64)
 	if err != nil {
-		t.Fatalf("get new recording: %v", err)
+		t.Fatalf("get album: %v", err)
 	}
 
-	newAC, err := db.Queries.GetArtistCredit(ctx, newRec.ArtistCreditID)
-	if err != nil {
-		t.Fatalf("get new artist credit: %v", err)
-	}
-
-	if newAC.Text != "New Artist" {
-		t.Errorf("new artist credit: got %q, want %q", newAC.Text, "New Artist")
+	if album.Name != "New Album" {
+		t.Errorf("album name: got %q, want %q", album.Name, "New Album")
 	}
 }
 
@@ -332,13 +215,8 @@ func TestWriteTrackTags_GenreRelink(t *testing.T) {
 
 	ctx := context.Background()
 
-	af, err := db.Queries.GetAudioFile(ctx, trackID)
-	if err != nil {
-		t.Fatalf("get audio file: %v", err)
-	}
-
 	// Verify new genres are linked.
-	genres, err := db.Queries.GetGenresByRecordingID(ctx, af.RecordingID)
+	genres, err := db.Queries.GetGenreNamesByFile(ctx, trackID)
 	if err != nil {
 		t.Fatalf("get genres: %v", err)
 	}
@@ -349,7 +227,7 @@ func TestWriteTrackTags_GenreRelink(t *testing.T) {
 
 	genreNames := make(map[string]bool)
 	for _, g := range genres {
-		genreNames[g.Name] = true
+		genreNames[g] = true
 	}
 
 	if !genreNames["Jazz"] {
@@ -360,15 +238,10 @@ func TestWriteTrackTags_GenreRelink(t *testing.T) {
 		t.Error("expected Blues genre to be linked")
 	}
 
-	// Verify old "Rock" genre is deleted (orphaned).
-	oldRockRefs, err := db.Queries.CountGenreReferences(ctx, 1) // ID 1 from seeding
-	if err != nil {
-		// Genre might not exist anymore, which is expected.
-		return
-	}
-
-	if oldRockRefs > 0 {
-		t.Logf("Rock genre still has %d refs (may be expected if reused)", oldRockRefs)
+	// The old "Rock" link is gone: genres are relinked wholesale, so a
+	// genre dropped from the tag is dropped from the file.
+	if genreNames["Rock"] {
+		t.Error("expected the old Rock link to be replaced")
 	}
 }
 
@@ -399,65 +272,48 @@ func TestWriteTrackTags_DBSync(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Verify recording updated.
+	// Verify the file's own tag columns.
 	af, err := db.Queries.GetAudioFile(ctx, trackID)
 	if err != nil {
 		t.Fatalf("get audio file: %v", err)
 	}
 
-	rec, err := db.Queries.GetRecording(ctx, af.RecordingID)
+	if af.Title != "New Title" {
+		t.Errorf("title: got %q, want %q", af.Title, "New Title")
+	}
+
+	if af.Year.Int64 != 2025 {
+		t.Errorf("year: got %d, want 2025", af.Year.Int64)
+	}
+
+	if af.Composer != "New Composer" {
+		t.Errorf("composer: got %q, want %q", af.Composer, "New Composer")
+	}
+
+	if af.ArtistCredit != "New Artist" {
+		t.Errorf("artist credit: got %q, want %q", af.ArtistCredit, "New Artist")
+	}
+
+	if !af.AlbumID.Valid {
+		t.Fatal("file has no album after the write")
+	}
+
+	album, err := db.Queries.GetAlbum(ctx, af.AlbumID.Int64)
 	if err != nil {
-		t.Fatalf("get recording: %v", err)
+		t.Fatalf("get album: %v", err)
 	}
 
-	if rec.Name != "New Title" {
-		t.Errorf("recording name: got %q, want %q", rec.Name, "New Title")
-	}
-
-	if rec.Year.Int64 != 2025 {
-		t.Errorf("year: got %d, want 2025", rec.Year.Int64)
-	}
-
-	if rec.Composer.String != "New Composer" {
-		t.Errorf("composer: got %q, want %q", rec.Composer.String, "New Composer")
-	}
-
-	// Verify new artist credit.
-	ac, err := db.Queries.GetArtistCredit(ctx, rec.ArtistCreditID)
-	if err != nil {
-		t.Fatalf("get artist credit: %v", err)
-	}
-
-	if ac.Text != "New Artist" {
-		t.Errorf("artist credit: got %q, want %q", ac.Text, "New Artist")
-	}
-
-	// Verify new release group linked.
-	rgLinks, err := db.Queries.GetRecordingReleaseGroups(ctx, rec.ID)
-	if err != nil {
-		t.Fatalf("get rg links: %v", err)
-	}
-
-	if len(rgLinks) != 1 {
-		t.Fatalf("expected 1 rg link, got %d", len(rgLinks))
-	}
-
-	rg, err := db.Queries.GetReleaseGroup(ctx, rgLinks[0].ReleaseGroupID)
-	if err != nil {
-		t.Fatalf("get release group: %v", err)
-	}
-
-	if rg.Name != "New Album" {
-		t.Errorf("release group name: got %q, want %q", rg.Name, "New Album")
+	if album.Name != "New Album" {
+		t.Errorf("album name: got %q, want %q", album.Name, "New Album")
 	}
 
 	// Verify genre re-linked.
-	genres, err := db.Queries.GetGenresByRecordingID(ctx, rec.ID)
+	genres, err := db.Queries.GetGenreNamesByFile(ctx, trackID)
 	if err != nil {
 		t.Fatalf("get genres: %v", err)
 	}
 
-	if len(genres) != 1 || genres[0].Name != "Electronic" {
+	if len(genres) != 1 || genres[0] != "Electronic" {
 		t.Errorf("genres: got %v, want [Electronic]", genres)
 	}
 

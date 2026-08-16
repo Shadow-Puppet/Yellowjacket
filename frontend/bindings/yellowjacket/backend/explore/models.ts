@@ -86,7 +86,7 @@ export interface LBTopReleaseGroup {
  * into the camelCase shape the frontend consumes.
  */
 export interface LyricsResult {
-    "recordingId": number;
+    "audioFileId": number;
     "filePath": string;
     "lengthMs": number;
     "title": string;
@@ -228,6 +228,16 @@ export interface MBReleaseGroup {
      * local release_group row ID
      */
     "localId"?: number;
+
+    /**
+     * TotalTracks is the catalog's track count for this release group,
+     * or 0 for "the catalog does not say".  It answers "how much of
+     * this album do I have" for an album whose files declared no total
+     * -- the case GetAlbumCompleteness cannot answer -- and it is not
+     * filled by the MusicBrainz path below, which has the real
+     * tracklist and does not need a denominator.
+     */
+    "totalTracks": number;
 }
 
 /**
@@ -252,38 +262,6 @@ export interface MBTrack {
     "mbid": string;
     "inLibrary": boolean;
     "localId"?: number;
-}
-
-/**
- * MusicBrainzClient wraps the musicbrainzws2 library with a local
- * response cache.  Every API call checks the cache first and stores
- * successful responses for future hits.
- * 
- * A proactive rate limiter gates all outgoing requests at 1 req/sec
- * to avoid triggering MusicBrainz 429 responses.  The underlying
- * musicbrainzws2.Client still retries on 429 as a safety net, but
- * the limiter should prevent most rate-limit hits.
- */
-export interface MusicBrainzClient {
-}
-
-/**
- * RateLimiter enforces a maximum request rate using a token bucket.
- * MusicBrainz requires ≤1 request per second and rejects ALL
- * requests (not just excess) when the rate is exceeded, so callers
- * block proactively via Wait rather than retrying reactively.
- * 
- * A limiter may carry a second, slower **background lane** (see
- * WithBackgroundLane).  A caller marked by WithBackgroundPriority is
- * paced by that lane *and* yields to interactive callers: while any
- * interactive Wait is outstanding, background waits do not take a
- * token at all.  This is what keeps a multi-thousand-request backfill
- * from putting the album page the user is looking at right now behind
- * hours of queued work.
- * 
- * RateLimiter is safe for concurrent use.
- */
-export interface RateLimiter {
 }
 
 /**
