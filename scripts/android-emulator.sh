@@ -162,7 +162,42 @@ cmd_install() {
 	need_sdk
 	[ -f bin/yellowjacket.apk ] || die "no bin/yellowjacket.apk — run 'make android' first"
 	"$ADB" get-state >/dev/null 2>&1 || die "no device — run 'make android-emulator' first"
-	"$ADB" install -r bin/yellowjacket.apk
+
+	# The two ways this fails are both about identity rather than the
+	# build, and neither error says what to do about it.
+	#
+	# A *downgrade* is the versionCode rule working as designed: a bare
+	# `make android` produces versionCode 1, so it will not install over
+	# anything a versioned build left behind.  A *signature* mismatch is
+	# the rule this whole pipeline exists for — a debug-signed local
+	# build cannot replace a release-signed one.
+	#
+	# Both are fixed by uninstalling, and on a throwaway emulator that
+	# costs nothing, so say so rather than making someone read the
+	# constant name.
+	out=$("$ADB" install -r bin/yellowjacket.apk 2>&1) || {
+		printf '%s\n' "$out"
+		case "$out" in
+		*INSTALL_FAILED_VERSION_DOWNGRADE*)
+			echo
+			echo "The installed copy has a higher versionCode than this build."
+			echo "A bare 'make android' builds versionCode 1; a versioned one"
+			echo "builds e.g. 10301.  Either uninstall:"
+			echo "    $ADB uninstall $PKG"
+			echo "or build with a version:"
+			echo "    YJ_VERSION=1.3.1 YJ_VERSION_CODE=10301 make android"
+			;;
+		*INSTALL_FAILED_UPDATE_INCOMPATIBLE* | *signatures do not match*)
+			echo
+			echo "The installed copy was signed with a different key.  Android"
+			echo "never allows that as an update — which is exactly why CI"
+			echo "refuses to publish a debug-signed APK.  Uninstall:"
+			echo "    $ADB uninstall $PKG"
+			;;
+		esac
+		return 1
+	}
+	printf '%s\n' "$out"
 }
 
 cmd_launch() {
@@ -190,11 +225,17 @@ cmd_smoke() {
 
 	cmd_launch
 	sleep 3
-	local first
-	first=$("$ADB" shell pidof "$PKG" 2>/dev/null | tr -d '\r' | awk '{print $1}')
+	# **`|| true` is load-bearing.** `pidof` exits 1 when it finds
+	# nothing, and under `set -e` a failing command substitution kills
+	# the script -- silently, before it can print why. That is invisible
+	# for as long as the app crash-*loops*, because there is always some
+	# pid; it appears the moment the app dies for good and ActivityManager
+	# stops respawning it, which is exactly the run you most want output
+	# from.
+	local first second
+	first=$("$ADB" shell pidof "$PKG" 2>/dev/null | tr -d '\r' | awk '{print $1}' || true)
 	sleep "$wait_s"
-	local second
-	second=$("$ADB" shell pidof "$PKG" 2>/dev/null | tr -d '\r' | awk '{print $1}')
+	second=$("$ADB" shell pidof "$PKG" 2>/dev/null | tr -d '\r' | awk '{print $1}' || true)
 
 	if [ -n "$first" ] && [ "$first" = "$second" ]; then
 		echo "PASS: $PKG alive as pid $first after ${wait_s}s"

@@ -2587,3 +2587,59 @@ under the `Wails` tag and are inspectable from `chrome://inspect`;
 production builds compile that out — so a debug APK is the more
 informative one when something is wrong. And the docs recommend
 `build-tools;35.0.0`; 34.0.0 is what is installed here and builds fine.
+
+## The app starts on Android; x86_64 Android cannot run it (2026-08-16)
+
+Two findings, and the second is the one with consequences.
+
+**The startup bug is fixed.** `backend/system`'s `buildUserDirPath`
+switched on `runtime.GOOS` and Android took the `default:` branch, so
+`main()` called `os.Exit(1)` six milliseconds after the JNI bridge came
+up. `main()` now calls
+`system.UseHomeOverride(application.Mobile.StoragePath())` before
+anything asks for a path. `StoragePath()` is `getFilesDir()` on
+Android, Application Support on iOS and `""` on desktop — where
+`UseHomeOverride` is a no-op — so the change needs no build tag and
+alters nothing off mobile. `backend/system` gained no import of the
+Wails application package, deliberately: that is the same constraint
+the `indexbuild` split protects in `backend/events`.
+
+**And then it takes SIGSYS on the x86_64 emulator.**
+
+```
+F/libc: Fatal signal 31 (SIGSYS), code 1 (SYS_SECCOMP), syscall 6
+F/DEBUG: Cause: seccomp prevented call to disallowed x86_64 system call 6
+```
+
+Syscall 6 on x86_64 is `lstat`, and the caller is **not our code and
+not Go's**. Go's `syscall` package already routes both `Stat` and
+`Lstat` through `fstatat` on amd64 *and* arm64. The caller is
+`modernc.org/libc`, which `modernc.org/sqlite` sits on and therefore
+the entire database layer: `libc_linux_amd64.go`'s `Xlstat64` issues
+`unix.Syscall(unix.SYS_LSTAT, …)` directly. Android's seccomp filter
+forbids it because bionic never issues it.
+
+**arm64 is unaffected, structurally rather than by luck.** arm64 has no
+`lstat` syscall at all, so `ccgo_linux_arm64.go`'s `Xlstat` is
+`Xfstatat(…, AT_SYMLINK_NOFOLLOW)` → `SYS_newfstatat` (79), which is
+permitted. `grep -c SYS_LSTAT ccgo_linux_arm64.go` returns 0 against 1
+for amd64.
+
+Three consequences:
+
+- **The default emulator cannot verify this app.** `make android-smoke`
+  on an x86_64 AVD reports a tombstone that says nothing about your
+  change. Verification needs an `arm64-v8a` image (full software
+  emulation on an x86_64 host, so slow) or a real device.
+- **The x86_64 half of the fat APK is dead weight on every Android**,
+  not just emulators — an x86 Chromebook would hit exactly this. It is
+  31 MB of a 27 MB compressed artifact. Dropping it is a real option;
+  keeping it costs size and buys an emulator target that does not work.
+  Not decided here.
+- The failure is at least *legible*. Unlike the `os.Exit` it replaced,
+  SIGSYS leaves a tombstone with a backtrace into `libwails.so`, which
+  is how it was identified in one pass.
+
+Worth knowing for anything else that reaches for a pure-Go C library:
+this class of bug is invisible to every build and every desktop test,
+and appears only under a platform's syscall filter.

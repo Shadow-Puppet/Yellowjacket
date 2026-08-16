@@ -96,34 +96,59 @@ command. The emulator is addressed by its saved pid in
 
 ## The current state of the build
 
-`make android-smoke` **fails today, and the cause is known.**
-`backend/system`'s `buildUserDirPath` switches on `runtime.GOOS` with
-cases for darwin, linux and windows, and a `default:` that returns
-`errUnsupportedOS`. `runtime.GOOS` is `"android"`, so it takes the
-default, `NewYellowJacketApp` fails, and `main()` calls `os.Exit(1)` —
-about 6 ms after the bridge initialises, which is exactly the signature
-described above.
+**The app starts. The x86_64 emulator cannot run it, and that is not a
+bug in the app.**
 
-**The fix is a documented Wails API and needs no build tags.**
-`application.Mobile.StoragePath()` returns the app's private files
-directory and returns `""` on desktop (`mobile_stub.go`), and
-`resolveUserDirPath` already lets `YJ_HOME` override the path on every
-OS — so setting that override from `StoragePath()` early in `main()`,
-when it is non-empty, is the whole change. Do *not* import
-`pkg/application` into `backend/system`: that package is deliberately
-Wails-free, which is what the `indexbuild` tag split is protecting.
+`modernc.org/libc` — which `modernc.org/sqlite`, and therefore the whole
+database layer, sits on — issues a **raw `lstat` syscall on
+linux/amd64** (`libc_linux_amd64.go`'s `Xlstat64` calls
+`unix.Syscall(unix.SYS_LSTAT, …)`). Android's seccomp policy forbids
+syscall 6 on x86_64, because bionic never issues it, so the process
+takes `SIGSYS` the first time anything touches the database:
 
-It is the *first* thing that stops it, not the only one. MPRIS is
-compiled in (`android` implies the `linux` build tag, so
-`mpris_linux.go` is in the build and will look for a session bus that
-does not exist), and the desktop shell is still a desktop shell. Fixing
-one and re-running the smoke is how you find the next.
+```
+F/libc: Fatal signal 31 (SIGSYS), code 1 (SYS_SECCOMP), syscall 6
+F/DEBUG: Cause: seccomp prevented call to disallowed x86_64 system call 6
+```
 
-**And one that no amount of porting will fix:** open-*directory*
-dialogs return an error on Android — the Storage Access Framework gives
-tree URIs, not filesystem paths — as do save-file dialogs. This app's
-first run is "choose your music folder" and its library model is
-filesystem paths, so that is a design question, not a port.
+**arm64 is unaffected, and structurally so.** There is no `lstat`
+syscall on arm64 at all, so `ccgo_linux_arm64.go`'s `Xlstat` is
+`Xfstatat(…, AT_SYMLINK_NOFOLLOW)` → `SYS_newfstatat` (79), which
+Android permits. `grep -c SYS_LSTAT ccgo_linux_arm64.go` is 0. Go's own
+`syscall` package already uses `fstatat` on both architectures, which
+is why this is *only* the modernc path.
+
+So: **verify on arm64, not on the default emulator.** Use an
+`arm64-v8a` system image (slow on an x86_64 host — it is full software
+emulation) or a real device. `make android-smoke` on an x86_64 AVD will
+report a `SIGSYS` tombstone that says nothing about your change.
+
+Two consequences worth holding onto. The x86_64 half of the fat APK is
+*only* useful for emulators, and cannot work on any Android until
+modernc fixes this — including x86 Chromebooks. And the tombstone is at
+least honest: unlike the `os.Exit` that came before it, this one leaves
+a real crash record with a backtrace.
+
+### What was fixed to get here
+
+`backend/system`'s `buildUserDirPath` switched on `runtime.GOOS` with a
+`default:` returning `errUnsupportedOS`, so Android failed at startup
+and `main()` called `os.Exit(1)` six milliseconds after the bridge came
+up. `main()` now calls `system.UseHomeOverride(application.Mobile.
+StoragePath())` before anything asks for a path — a documented,
+build-tag-free API that returns `""` on desktop, where the setter is a
+no-op. `backend/system` gained no import of the Wails application
+package, which matters for the same reason `backend/events` is split by
+the `indexbuild` tag.
+
+### What is still not done
+
+MPRIS is compiled in (`android` implies the `linux` build tag), the
+shell is still a desktop shell, and — the largest one — open-*directory*
+dialogs return an error on Android, because the Storage Access Framework
+yields tree URIs rather than filesystem paths. This app's first run is
+"choose your music folder" and its library model is filesystem paths, so
+that is a design question rather than a port.
 
 ## The scaffold's own tasks
 
