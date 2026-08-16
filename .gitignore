@@ -63,10 +63,24 @@ bin/
 # packaging tasks that depend on it. A derived file with one source.
 build/linux/yellowjacket.desktop
 
-# `wails3 task common:update:build-assets` regenerates the mobile trees
-# whether or not anything asks for them. This is a desktop player and
-# cannot target iOS/Android, so their includes: entries are dropped from
-# Taskfile.yml and the trees themselves are not carried — ignored rather
-# than deleted-and-rediscovered on every asset refresh.
+# iOS is not carried. `wails3 update build-assets` regenerates the tree
+# whether or not anything asks for it, so it is ignored rather than
+# deleted-and-rediscovered on every asset refresh, and its includes:
+# entry is dropped from Taskfile.yml.
+#
+# build/android/ *is* carried — see plan 015. Note that `update
+# build-assets` does NOT regenerate it (only `generate build-assets`
+# does, and that rewrites the whole of build/), so the tree is committed
+# and edited by hand like any other source. Only its output is ignored,
+# below.
 build/ios/
-build/android/
+
+# Android build output. jniLibs holds the ~30 MB per-ABI c-shared
+# libraries the Go build produces; gen/ and overlay.json are written by
+# `wails3 android overlay:gen`; the rest is Gradle's.
+build/android/app/src/main/jniLibs/
+build/android/app/build/
+build/android/build/
+build/android/.gradle/
+build/android/gen/
+build/android/overlay.json
