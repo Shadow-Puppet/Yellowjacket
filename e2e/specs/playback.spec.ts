@@ -92,7 +92,7 @@ test.describe('queue', () => {
     await app.getByTestId('nav-tracks').click();
   });
 
-  test('playing a track populates the queue panel', async ({ app }) => {
+  test('playing a track queues the list it is in', async ({ app }) => {
     await resetEvents(app);
     await longRow(app).dblclick();
     await waitForEvent(app, 'QueueChanged');
@@ -105,14 +105,22 @@ test.describe('queue', () => {
 
     await queueToggle.click();
 
-    await expect(app.getByTestId('queue-row')).toHaveCount(1);
+    // Activating one row plays the list that row is in, from that row —
+    // the library as displayed, not a queue of one. The row's own
+    // position is what `currentIndex` points at.
+    const state = await callBinding<{
+      tracks: { title: string }[];
+      currentIndex: number;
+    }>(app, 'queue.Queue.GetState');
 
-    const state = await callBinding<{ tracks: unknown[] }>(
-      app,
-      'queue.Queue.GetState',
+    expect(state.tracks.length).toBeGreaterThan(1);
+    expect(state.tracks[state.currentIndex]?.title).toContain(LONG_TRACK);
+
+    // The panel shows that queue rather than some other one: every
+    // fixture track fits on screen, so the counts are comparable.
+    await expect(app.getByTestId('queue-row')).toHaveCount(
+      state.tracks.length,
     );
-
-    expect(state.tracks).toHaveLength(1);
 
     // Shut it again, and wait until it really is shut. These specs
     // share one backend process in file order, the panel's width is
