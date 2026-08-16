@@ -4,7 +4,18 @@ includes:
   common: ../Taskfile.yml
 
 vars:
-  APP_ID: '{{.APP_ID | default "com.wails.app"}}'
+  # The *installed* package name, which every adb-driven task below uses
+  # to uninstall, launch and filter. It must agree with `applicationId`
+  # in app/build.gradle, and nothing enforces that.
+  #
+  # ANDROID.md says to set this in build/config.yml. That does not work
+  # in beta.8, checked both ways: `wails3 task` builds its var set from
+  # CLI KEY=VALUE arguments and the Taskfile tree only -- nothing reads
+  # config.yml -- and even when set it feeds only these adb commands,
+  # never Gradle. So the identity is declared twice, here and in
+  # build.gradle, and a change to one alone means the official run and
+  # deploy tasks address a package that is not installed.
+  APP_ID: '{{.APP_ID | default "app.yellowjacket"}}'
   MIN_SDK: '21'
   TARGET_SDK: '35'
   # The emulator runs the host architecture; physical devices are arm64
@@ -51,6 +62,17 @@ tasks:
       - task: compile:go:shared
         vars:
           ARCH: '{{.ARCH | default .HOST_ARCH}}'
+          # This repo's one edit to the android scaffold, and it is not
+          # cosmetic. Upstream forwards ARCH here and not PRODUCTION, so
+          # compile:go:shared recomputed BUILD_FLAGS against an unset
+          # .PRODUCTION and fell back to the debug branch. package:fat
+          # calls compile:go:shared directly for amd64 (passing it), and
+          # reaches arm64 only through this task -- so a release APK
+          # shipped a *debug* 40 MB arm64 library beside a production
+          # 31 MB x86_64 one. The phone ABI, which is the only one a
+          # release is for, was the broken one. 34 MB APK before, 27
+          # after.
+          PRODUCTION: '{{.PRODUCTION}}'
     vars:
       BUILD_FLAGS: '{{if eq .PRODUCTION "true"}}-tags production,android -trimpath -buildvcs=false -ldflags="-w -s"{{else}}-tags android,debug -buildvcs=false -gcflags=all="-l"{{end}}'
     env:
