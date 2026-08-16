@@ -212,11 +212,31 @@ jobs:
       # absent, and that key differs between every machine and every
       # runner — so publishing an unsigned build is a decision to
       # reinstall by hand for ever.  Fail instead.
-      - name: Decode the signing keystore
+      # **Signing is not optional past the first install.**  Android
+      # refuses to update an app whose signing key changed and the only
+      # remedy is an uninstall, which takes the user's library with it.
+      # build.gradle falls back to the *debug* keystore when these are
+      # absent, and that key differs between every machine and every
+      # runner — so publishing an unsigned build is a decision to
+      # reinstall by hand for ever.  Fail instead.
+      #
+      # Decode, check and build are one step on purpose.  Splitting them
+      # would mean either handing the password to a later step through
+      # `$GITHUB_ENV` — where the `env:` dump is only masked for values
+      # that are *verbatim* a secret, so a trimmed one could print in
+      # clear — or repeating the trimming logic in both.
+      - name: Build the signed fat APK
+        working-directory: /src
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          YJ_VERSION: ${{ steps.version.outputs.version }}
+          YJ_VERSION_CODE: ${{ steps.version.outputs.code }}
         run: |
           set -eu
+
           if [ -z "${KEYSTORE_B64:-}" ]; then
             echo "ANDROID_KEYSTORE_B64 is not set."
             echo
@@ -225,68 +245,82 @@ jobs:
             echo "docs/android-release.md for the keytool command and the secrets."
             exit 1
           fi
-          # The path is decided here and exported, never composed in a
-          # later step's `env:` block: `${{ env.HOME }}` evaluates to an
-          # empty string in Gitea's expression context, which turns
-          # "$HOME/x.jks" into "/x.jks" — reported by Gradle as a missing
-          # file, a minute into the build.
+          if [ -z "${KEYSTORE_PASSWORD:-}" ]; then
+            echo "ANDROID_KEYSTORE_PASSWORD is not set — see docs/android-release.md" >&2
+            exit 1
+          fi
+
+          # The path is decided here rather than composed in an `env:`
+          # block: `${{ env.HOME }}` evaluates to an empty string in
+          # Gitea's expression context, which turns "$HOME/x.jks" into
+          # "/x.jks" — reported by Gradle as a missing file, a minute in.
           keystore="${RUNNER_TEMP:-/tmp}/yellowjacket-release.jks"
           printf '%s' "$KEYSTORE_B64" | base64 -d > "$keystore"
           chmod 600 "$keystore"
-          echo "ANDROID_KEYSTORE_FILE=$keystore" >> "$GITHUB_ENV"
-          echo "keystore decoded ($(stat -c %s "$keystore") bytes)"
 
-      # **There is one password and two required secrets.**  keytool has
-      # defaulted to PKCS12 since JDK 9 — the .jks extension does not
-      # change that — and PKCS12 cannot hold a separate key password:
-      # given -keypass it prints "Different store and key passwords not
-      # supported for PKCS12 KeyStores. Ignoring user-specified -keypass
-      # value." (confirmed verbatim).  So the key password defaults to
-      # the store password and the alias to the documented one.  Asking
-      # for a second password that cannot exist is how someone sets a
-      # wrong value and debugs Gradle at midnight.
-      - name: Build the fat APK
-        working-directory: /src
-        env:
-          YJ_VERSION: ${{ steps.version.outputs.version }}
-          YJ_VERSION_CODE: ${{ steps.version.outputs.code }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: |
-          set -eu
-          if [ -z "${ANDROID_KEYSTORE_PASSWORD:-}" ]; then
-            echo "ANDROID_KEYSTORE_PASSWORD is not set" >&2
+          # **A secret pasted into a web form very often carries a
+          # trailing newline**, and a password is compared byte for byte.
+          # Trim CR and LF from all three, and say so when it mattered —
+          # "the keystore did not open" with a correct password is an
+          # unpleasant thing to debug blind.
+          pass=$(printf '%s' "$KEYSTORE_PASSWORD" | tr -d '\r\n')
+          if [ "${#pass}" -ne "${#KEYSTORE_PASSWORD}" ]; then
+            echo "note: stripped newline(s) from ANDROID_KEYSTORE_PASSWORD"
+          fi
+          alias_want=$(printf '%s' "${KEY_ALIAS:-yellowjacket}" | tr -d '\r\n')
+          keypass=$(printf '%s' "${KEY_PASSWORD:-$pass}" | tr -d '\r\n')
+
+          # Describe the artifact before trying to open it.  A truncated
+          # or mis-pasted base64 yields a file that is the wrong size or
+          # has no keystore header at all, and that is a different
+          # problem from a wrong password.
+          size=$(stat -c %s "$keystore")
+          magic=$(od -An -N4 -tx1 "$keystore" | tr -s ' ' | sed 's/^ //')
+          echo "keystore: $size bytes, first four bytes: $magic"
+          case "$magic" in
+            "30 82"*)       echo "  header: PKCS12 (keytool's default since JDK 9)" ;;
+            "fe ed fe ed")  echo "  header: legacy JKS" ;;
+            *)              echo "  WARNING: not a keystore header.  Is the secret the base64 of the .jks?" ;;
+          esac
+
+          # Open it here rather than letting Gradle discover the problem
+          # at :app:validateSigningRelease, a minute of build time in and
+          # reported as a missing file rather than a bad password.
+          if ! keytool -list -keystore "$keystore" -storepass "$pass" >/tmp/ks.txt 2>/tmp/ks.err; then
+            echo "the keystore did not open with ANDROID_KEYSTORE_PASSWORD." >&2
+            echo "  password length after trimming: ${#pass}" >&2
+            sed 's/^/  keytool: /' /tmp/ks.err | head -5 >&2
+            echo >&2
+            echo "Check it locally with the same two values:" >&2
+            echo "  printf %s \"\$SECRET_B64\" | base64 -d > /tmp/k.jks" >&2
+            echo "  keytool -list -keystore /tmp/k.jks -storepass '<password>'" >&2
             exit 1
           fi
-
-          # Check the keystore before Gradle does.  Gradle only notices
-          # at :app:validateSigningRelease — a minute of build time in —
-          # and reports it as a missing file rather than a bad password.
-          if [ ! -s "${ANDROID_KEYSTORE_FILE:-}" ]; then
-            echo "keystore missing at '${ANDROID_KEYSTORE_FILE:-<unset>}'" >&2
-            exit 1
-          fi
-          keytool -list -keystore "$ANDROID_KEYSTORE_FILE" \
-            -storepass "$ANDROID_KEYSTORE_PASSWORD" >/dev/null || {
-            echo "the keystore did not open — is ANDROID_KEYSTORE_PASSWORD right?" >&2
-            exit 1
-          }
           echo "keystore opens with the supplied password"
 
-          export ANDROID_KEY_ALIAS="${KEY_ALIAS:-yellowjacket}"
-          export ANDROID_KEY_PASSWORD="${KEY_PASSWORD:-$ANDROID_KEYSTORE_PASSWORD}"
+          # And check the alias now, for the same reason.  It defaults to
+          # `yellowjacket`, so a keystore created with any other alias
+          # would otherwise fail deep inside Gradle.
+          if ! keytool -list -keystore "$keystore" -storepass "$pass" -alias "$alias_want" >/dev/null 2>&1; then
+            echo "alias '$alias_want' is not in this keystore.  It holds:" >&2
+            sed -n 's/^\([^,]*\),.*Entry.*$/    \1/p' /tmp/ks.txt >&2
+            echo "Set ANDROID_KEY_ALIAS to one of those." >&2
+            exit 1
+          fi
+          echo "alias '$alias_want': present"
+
+          ANDROID_KEYSTORE_FILE="$keystore"
+          ANDROID_KEYSTORE_PASSWORD="$pass"
+          ANDROID_KEY_ALIAS="$alias_want"
+          ANDROID_KEY_PASSWORD="$keypass"
+          export ANDROID_KEYSTORE_FILE ANDROID_KEYSTORE_PASSWORD
+          export ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD
 
           # ANDROID_SDK is passed explicitly: the Makefile defaults it to
           # ~/Android/Sdk, which is the developer-machine layout and not
           # this container's.
           make android ANDROID_SDK="$ANDROID_HOME" ANDROID_NDK="$ANDROID_NDK_HOME"
 
-      # **Nothing here pipes into `head`.**  Under `set -o pipefail`,
-      # `head -1` exits after one line, the producer takes SIGPIPE and
-      # the pipeline fails with 141 — so in ljos this step failed
-      # *after* printing a correctly signed APK.  `-print -quit` and a
-      # captured variable have no second process to kill.
       - name: Verify the APK
         id: apk
         working-directory: /src
