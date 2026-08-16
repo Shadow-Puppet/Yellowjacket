@@ -1,0 +1,362 @@
+name: Build & publish the Android APK
+
+# The fifth workflow, and the second that publishes.  It builds a signed
+# fat APK (arm64-v8a + x86_64) on every version tag and puts it in
+# Gitea's *generic* package registry, which — unlike the repository — is
+# readable without credentials.  That is what lets an Obtainium client
+# poll a plain URL with no token and no public mirror of the source.
+#
+# **Why its own file rather than a job in ci.yml.**  `ci.yml` runs on
+# every branch push and is the workflow that gates; this one runs on
+# tags only, takes tens of minutes on a cold cache, and the runner has
+# capacity 1.  Hanging it off the gate would put every push behind an
+# SDK download.
+#
+# **Why it is keyed on the tag.**  The ljos pipeline this is modelled on
+# computes a version in CI and cuts the release itself, then gates the
+# Android job on `needs.release.outputs.version != ''` with an
+# `always()` whose absence silently kills the manual path.  This repo
+# has no release automation — tags are pushed by hand and
+# homebrew-formula.yml already keys on `v*` — so the tag *is* the
+# version and none of that machinery, or its failure modes, is needed.
+#
+# It deliberately does **not** carry `continue-on-error`.  In ljos the
+# Android job shared a pipeline with a server deploy that must never go
+# red over a phone build; here it is standalone and can neither delay
+# nor redden anything, so a release step that fails silently would be
+# strictly worse than one that fails visibly.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build (default: the latest v* tag)"
+        required: false
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    container:
+      image: ubuntu:24.04
+      # /cache/tool holds the Go toolchain ci.yml already downloads.
+      # The other three are this workflow's own and are ~4 GB between
+      # them, which is most of its wall clock on a cold run:
+      #   android-sdk  the SDK, the NDK and the platform (~2 GB)
+      #   gradle       GRADLE_USER_HOME — the wrapper distribution and
+      #                the AGP dependency graph (~700 MB)
+      #   pnpm-store   shared with ci.yml
+      # Every path must be inside the runner's `valid_volumes` allowlist:
+      # a directory outside it makes the job **fail to start**, rather
+      # than silently skipping the mount.
+      volumes:
+        - /home/logan/docker/gitea/data/runner/cache/tool:/cache/tool
+        - /home/logan/docker/gitea/data/runner/cache/android-sdk:/cache/android-sdk
+        - /home/logan/docker/gitea/data/runner/cache/gradle:/cache/gradle
+        - /home/logan/docker/gitea/data/runner/cache/pnpm-store:/cache/pnpm-store
+    env:
+      PACKAGE_TOKEN: ${{ secrets.PACKAGE_TOKEN }}
+      SERVER_URL: ${{ github.server_url }}
+      REPO: ${{ github.repository }}
+      OWNER: ${{ github.repository_owner }}
+      SHA: ${{ github.sha }}
+      REF_NAME: ${{ github.ref_name }}
+      DEBIAN_FRONTEND: noninteractive
+      GO_VERSION: '1.25.0'
+      npm_config_store_dir: /cache/pnpm-store
+      # The Go half wants the NDK; the Gradle half wants a platform.
+      ANDROID_HOME: /cache/android-sdk
+      ANDROID_SDK_ROOT: /cache/android-sdk
+      GRADLE_USER_HOME: /cache/gradle
+      # Pinned, not "whatever sdkmanager installs": newer NDKs have
+      # broken the Wails Android build before, and r26d is what plan
+      # 015 phase 0 was verified against.
+      NDK_VERSION: 26.3.11579264
+      # The registry package name.  Obtainium watches
+      # <server>/api/packages/<owner>/generic/yellowjacket-android/latest/yellowjacket.apk
+      PACKAGE_NAME: yellowjacket-android
+
+    steps:
+      # libgtk-4-dev and libwebkitgtk-6.0-dev are here even though
+      # nothing in this job builds a desktop app: `wails3` is the task
+      # runner the whole Android build goes through, and the CLI links
+      # the GTK/WebKit bindings, so `go tool wails3` cannot compile
+      # without them.  libasound2-dev is oto's `pkg-config -- alsa`
+      # probe, for the same reason (the *Android* build uses oboe, not
+      # ALSA — this is the host toolchain only).
+      - name: System packages
+        run: |
+          set -eu
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+            ca-certificates curl git jq unzip zip \
+            build-essential pkg-config \
+            libwebkitgtk-6.0-dev libgtk-4-dev libasound2-dev \
+            openjdk-21-jdk-headless
+
+      # By hand rather than actions/checkout: that is a JS action and
+      # needs node inside the container before any step has installed
+      # it.  Same approach as the other four workflows.
+      - name: Clone repo at this commit
+        run: |
+          set -eu
+          git clone --quiet \
+            "https://x-access-token:${PACKAGE_TOKEN}@${SERVER_URL#https://}/${REPO}.git" /src
+          git -C /src checkout --quiet --detach "$SHA"
+          git config --global --add safe.directory /src
+          git -C /src log --oneline -1
+
+      # A tag push carries the version in its own name.  A manual run has
+      # no tag, so it takes the input or falls back to the latest v* tag,
+      # which is what a hand-triggered rebuild wants anyway.
+      - name: Resolve the version
+        id: version
+        working-directory: /src
+        run: |
+          set -eu
+          v="${{ inputs.version }}"
+          if [ -z "$v" ]; then
+            case "$REF_NAME" in
+              v*) v="$REF_NAME" ;;
+              *)  v=$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || echo "v0.0.0") ;;
+            esac
+          fi
+          v="${v#v}"
+
+          # Android orders releases by an integer and refuses anything
+          # not greater than what is installed.  1.3.1 -> 10301, which
+          # increases as long as minor and patch stay below 100.
+          IFS=. read -r maj min pat <<EOF
+          $v
+          EOF
+          code=$(( ${maj:-0} * 10000 + ${min:-0} * 100 + ${pat:-0} ))
+          if [ "$code" -le 0 ]; then
+            echo "refusing to build version '$v' (versionCode $code)" >&2
+            exit 1
+          fi
+
+          echo "version=$v"     >> "$GITHUB_OUTPUT"
+          echo "code=$code"     >> "$GITHUB_OUTPUT"
+          echo "building $v (versionCode $code)"
+
+      - name: Go toolchain
+        run: |
+          set -eu
+          if [ ! -x /cache/tool/go/bin/go ] || ! /cache/tool/go/bin/go version | grep -q "$GO_VERSION"; then
+            mkdir -p /cache/tool && rm -rf /cache/tool/go
+            curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" | tar -C /cache/tool -xz
+          fi
+          echo "/cache/tool/go/bin" >> "$GITHUB_PATH"
+          /cache/tool/go/bin/go version
+
+      - name: Node toolchain
+        run: |
+          set -eu
+          curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+          apt-get install -y -qq --no-install-recommends nodejs
+          corepack enable
+          node --version
+
+      # Idempotent by directory check.  sdkmanager is itself idempotent
+      # but still spends minutes verifying, so the guards are what make
+      # this cheap on every run after the first.
+      - name: Android SDK and NDK (cached)
+        run: |
+          set -eu
+          mkdir -p "$ANDROID_HOME/cmdline-tools"
+
+          if [ ! -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
+            echo "command line tools: installing"
+            cd /tmp
+            curl -fsSL -o tools.zip \
+              https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+            unzip -q tools.zip
+            rm -rf "$ANDROID_HOME/cmdline-tools/latest"
+            mv cmdline-tools "$ANDROID_HOME/cmdline-tools/latest"
+          else
+            echo "command line tools: cached"
+          fi
+
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+
+          install_if_missing() {
+            if [ -d "$ANDROID_HOME/$2" ]; then
+              echo "$1: cached"
+            else
+              echo "$1: installing"
+              yes | sdkmanager --install "$1" >/dev/null
+            fi
+          }
+          # android-35 matches compileSdk/targetSdk in
+          # build/android/app/build.gradle.  No system image and no
+          # emulator: this job builds, it does not run.
+          install_if_missing "platform-tools"       "platform-tools"
+          install_if_missing "platforms;android-35" "platforms/android-35"
+          install_if_missing "build-tools;34.0.0"   "build-tools/34.0.0"
+          install_if_missing "ndk;${NDK_VERSION}"   "ndk/${NDK_VERSION}"
+
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+          du -sh "$ANDROID_HOME" || true
+
+      # **Signing is not optional past the first install.**  Android
+      # refuses to update an app whose signing key changed and the only
+      # remedy is an uninstall, which takes the user's library with it.
+      # build.gradle falls back to the *debug* keystore when these are
+      # absent, and that key differs between every machine and every
+      # runner — so publishing an unsigned build is a decision to
+      # reinstall by hand for ever.  Fail instead.
+      - name: Decode the signing keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+        run: |
+          set -eu
+          if [ -z "${KEYSTORE_B64:-}" ]; then
+            echo "ANDROID_KEYSTORE_B64 is not set."
+            echo
+            echo "Building without it signs with the debug key, and every future"
+            echo "update then fails with a signature mismatch.  See"
+            echo "docs/android-release.md for the keytool command and the secrets."
+            exit 1
+          fi
+          # The path is decided here and exported, never composed in a
+          # later step's `env:` block: `${{ env.HOME }}` evaluates to an
+          # empty string in Gitea's expression context, which turns
+          # "$HOME/x.jks" into "/x.jks" — reported by Gradle as a missing
+          # file, a minute into the build.
+          keystore="${RUNNER_TEMP:-/tmp}/yellowjacket-release.jks"
+          printf '%s' "$KEYSTORE_B64" | base64 -d > "$keystore"
+          chmod 600 "$keystore"
+          echo "ANDROID_KEYSTORE_FILE=$keystore" >> "$GITHUB_ENV"
+          echo "keystore decoded ($(stat -c %s "$keystore") bytes)"
+
+      # **There is one password and two required secrets.**  keytool has
+      # defaulted to PKCS12 since JDK 9 — the .jks extension does not
+      # change that — and PKCS12 cannot hold a separate key password:
+      # given -keypass it prints "Different store and key passwords not
+      # supported for PKCS12 KeyStores. Ignoring user-specified -keypass
+      # value." (confirmed verbatim).  So the key password defaults to
+      # the store password and the alias to the documented one.  Asking
+      # for a second password that cannot exist is how someone sets a
+      # wrong value and debugs Gradle at midnight.
+      - name: Build the fat APK
+        working-directory: /src
+        env:
+          YJ_VERSION: ${{ steps.version.outputs.version }}
+          YJ_VERSION_CODE: ${{ steps.version.outputs.code }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -eu
+          if [ -z "${ANDROID_KEYSTORE_PASSWORD:-}" ]; then
+            echo "ANDROID_KEYSTORE_PASSWORD is not set" >&2
+            exit 1
+          fi
+
+          # Check the keystore before Gradle does.  Gradle only notices
+          # at :app:validateSigningRelease — a minute of build time in —
+          # and reports it as a missing file rather than a bad password.
+          if [ ! -s "${ANDROID_KEYSTORE_FILE:-}" ]; then
+            echo "keystore missing at '${ANDROID_KEYSTORE_FILE:-<unset>}'" >&2
+            exit 1
+          fi
+          keytool -list -keystore "$ANDROID_KEYSTORE_FILE" \
+            -storepass "$ANDROID_KEYSTORE_PASSWORD" >/dev/null || {
+            echo "the keystore did not open — is ANDROID_KEYSTORE_PASSWORD right?" >&2
+            exit 1
+          }
+          echo "keystore opens with the supplied password"
+
+          export ANDROID_KEY_ALIAS="${KEY_ALIAS:-yellowjacket}"
+          export ANDROID_KEY_PASSWORD="${KEY_PASSWORD:-$ANDROID_KEYSTORE_PASSWORD}"
+
+          # ANDROID_SDK is passed explicitly: the Makefile defaults it to
+          # ~/Android/Sdk, which is the developer-machine layout and not
+          # this container's.
+          make android ANDROID_SDK="$ANDROID_HOME" ANDROID_NDK="$ANDROID_NDK_HOME"
+
+      # **Nothing here pipes into `head`.**  Under `set -o pipefail`,
+      # `head -1` exits after one line, the producer takes SIGPIPE and
+      # the pipeline fails with 141 — so in ljos this step failed
+      # *after* printing a correctly signed APK.  `-print -quit` and a
+      # captured variable have no second process to kill.
+      - name: Verify the APK
+        id: apk
+        working-directory: /src
+        run: |
+          set -eu
+          apk=bin/yellowjacket.apk
+          [ -s "$apk" ] || { echo "no APK was produced" >&2; ls -la bin || true; exit 1; }
+          bt="$ANDROID_HOME/build-tools/34.0.0"
+
+          ls -la "$apk"
+          "$bt/aapt2" dump badging "$apk" | sed -n '1p;/application-label:/p;/native-code/p'
+
+          # Both ABIs, or the artifact is not the fat APK it claims to be.
+          "$bt/aapt2" dump badging "$apk" | grep -q "native-code: 'arm64-v8a' 'x86_64'" || {
+            echo "the APK does not carry both ABIs" >&2; exit 1; }
+
+          # The identity the pipeline exists to keep stable.
+          "$bt/aapt2" dump badging "$apk" | grep -q "versionCode='${{ steps.version.outputs.code }}'" || {
+            echo "versionCode is not ${{ steps.version.outputs.code }}" >&2; exit 1; }
+
+          echo
+          "$bt/apksigner" verify --print-certs "$apk" |
+            grep -E 'Signer #1 certificate (DN|SHA-256 digest)'
+
+          # A build signed with the debug key installs once and can never
+          # be updated.  It must never reach the registry.
+          if "$bt/apksigner" verify --print-certs "$apk" | grep -q 'CN=Android Debug'; then
+            echo "REFUSING TO PUBLISH: signed with the debug keystore" >&2
+            exit 1
+          fi
+          echo
+          echo "Record that SHA-256.  If it ever changes, updates will fail."
+
+      # Two copies: a versioned one for history and a fixed `latest` URL
+      # for Obtainium to watch.  Gitea refuses to overwrite an existing
+      # file, so `latest` is deleted first.  Credentials are the same
+      # OWNER/PACKAGE_TOKEN pair arch-package.yml publishes with.
+      - name: Publish to the Gitea package registry
+        working-directory: /src
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -eu
+          base="${SERVER_URL}/api/packages/${OWNER}/generic/${PACKAGE_NAME}"
+          apk=bin/yellowjacket.apk
+
+          put() {
+            code=$(curl -s -o /tmp/put.out -w '%{http_code}' \
+              --user "${OWNER}:${PACKAGE_TOKEN}" \
+              --upload-file "$apk" "$1")
+            echo "  -> $1 : $code"
+            # 409 is "already there", which is the correct outcome for a
+            # re-run of the same tag and not a failure.
+            if [ "$code" != "201" ] && [ "$code" != "409" ]; then
+              cat /tmp/put.out >&2
+              return 1
+            fi
+          }
+
+          echo "publishing the versioned copy"
+          put "$base/$VERSION/yellowjacket-$VERSION.apk"
+
+          echo "clearing the previous latest"
+          curl -s -o /dev/null -w '  -> delete latest: %{http_code}\n' \
+            --user "${OWNER}:${PACKAGE_TOKEN}" \
+            -X DELETE "$base/latest/yellowjacket.apk" || true
+
+          echo "publishing latest"
+          put "$base/latest/yellowjacket.apk"
+
+          echo
+          echo "Obtainium URL:"
+          echo "  $base/latest/yellowjacket.apk"
