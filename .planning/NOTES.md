@@ -3208,3 +3208,52 @@ probes, and that the hardware back button no longer kills the app (the
 `.dev` build carries the history fix; pid survived a BACK press).
 Unverified: what happened to the icons and the transport controls, which
 is where this resumes.
+
+## What the device actually said, with both builds side by side (2026-08-17)
+
+The phone inspectable and awake, the same Light Phone III running two
+builds of this app in turn. This closes both questions the previous entry
+left open, and **neither answer was the one the symptom suggested**.
+
+**"The playback controls are off screen" was true, literal, and already
+fixed.** The installed build is from B2 **phase 1** — it carries
+`bottom-nav` and no `now-playing-view`, which dates it between 57bfbdf
+and 1b05dde. Settled (30 s after launch, not 6), its player bar shows
+art, title, favourite, shuffle, prev — and stops. Play/pause, next,
+repeat and queue are past the right edge, because at 424 px the bar was
+still carrying the seek bar and volume that **phase 2 moved into
+`now-playing-view`**. On the current build, on the same phone and the
+same engine, `document.body.scrollWidth` equals `clientWidth` (424) and
+`player-controls` measures 200..380 inside 424. So the fix was already
+on main, unreleased, and the device is what proved it rather than
+argued it.
+
+**"No icons" was an artefact of my own screenshot.** A `wa-icon` on the
+device has `path` computed fill `rgb(255,212,59)` and paints; the first
+capture was six seconds after a cold start, before the icon fetches had
+landed. Two corrections in two entries from the same misreading: measure
+the node that paints, and let the app settle before believing a picture.
+
+**Chrome 113's missing Popover API does not break the menus.** This was
+the leading worry and it is unfounded: a long-press on a row opens the
+real panel at (212,145), 162x193, `visibility: visible`, seven
+`role=menuitem`s, all seven inside the panel and clear of the player bar
+— confirmed by screenshot as well as by measurement. Web Awesome's
+`showPopover?.()` is an optional call and `wa-popup` positions itself,
+so the attribute being inert costs nothing. **Long-press itself works on
+real hardware**, over a real 1,744-track library, which is the phase 3
+verification the browser tier could only approximate.
+
+**The one genuine fault the device adds is phase 4's.** `track-list` at
+424 px computes `--grid-cols: 24px 102px 101px 101px 80px` — which fits
+the host exactly, so nothing overflows — but "Duration" does not fit in
+80 px and neither does most content. The columns are not too wide; there
+are simply too many of them for a phone, which is what phase 4 already
+says. It is now a measurement rather than a prediction.
+
+Two operational notes. The debug sibling scanned the phone's real music
+and its data directory is **414 MB**, so it is worth uninstalling when
+done (`adb uninstall app.yellowjacket.dev` — the sibling id is exactly
+what makes that safe). And `am start` does not reliably take focus while
+another app is foreground: check `topResumedActivity` before trusting a
+screenshot, or you will read someone else's app.
