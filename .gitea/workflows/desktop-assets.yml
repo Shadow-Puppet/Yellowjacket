@@ -1,0 +1,176 @@
+name: Attach the desktop build to the release
+
+# The Arch package goes to the pacman registry and the APK to the generic
+# one, but a release page with nothing on it to download is a release page
+# nobody can use.  This builds the plain Linux x86_64 binary and attaches
+# it, so "get the latest version" has an answer that needs no package
+# manager at all.
+#
+# **Linux only, and macOS is not an oversight.**  `GOOS=darwin
+# CGO_ENABLED=0` fails at `wails/v3/pkg/mac: build constraints exclude all
+# Go files` — the darwin backend is Objective-C behind cgo, so a .app
+# needs a macOS host, and the runner is a Linux container.  That is
+# exactly why the Homebrew formula builds from source on the user's own
+# Mac, and it stays the macOS channel.
+#
+# Windows *does* cross-compile (GOOS=windows CGO_ENABLED=0 succeeds in a
+# couple of seconds — nothing in the audio, database or webview path needs
+# cgo there), and is deliberately not published: no Windows build of this
+# app has ever been run, and no tier here can exercise one.  Shipping it
+# would be a promise nothing in this repo can keep.  Revisit when someone
+# has actually booted it.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build and attach (default: the latest v* tag)"
+        required: false
+
+concurrency:
+  group: desktop-assets-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:24.04
+      volumes:
+        - /home/logan/docker/gitea/data/runner/cache/tool:/cache/tool
+        - /home/logan/docker/gitea/data/runner/cache/pnpm-store:/cache/pnpm-store
+    env:
+      PACKAGE_TOKEN: ${{ secrets.PACKAGE_TOKEN }}
+      SERVER_URL: ${{ github.server_url }}
+      REPO: ${{ github.repository }}
+      SHA: ${{ github.sha }}
+      REF_NAME: ${{ github.ref_name }}
+      DEBIAN_FRONTEND: noninteractive
+      GO_VERSION: '1.25.0'
+      npm_config_store_dir: /cache/pnpm-store
+    steps:
+      # The same set ci.yml's check job installs: the app is cgo, and
+      # without alsa.pc oto/v3 fails at `pkg-config --cflags -- alsa`
+      # before anything is compiled.
+      - name: System packages
+        run: |
+          set -eu
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+            ca-certificates curl git jq build-essential pkg-config \
+            libwebkitgtk-6.0-dev libgtk-4-dev libasound2-dev
+
+      - name: Clone repo at this commit
+        run: |
+          set -eu
+          git clone --quiet \
+            "https://x-access-token:${PACKAGE_TOKEN}@${SERVER_URL#https://}/${REPO}.git" /src
+          git -C /src checkout --quiet --detach "$SHA"
+          git config --global --add safe.directory /src
+          git -C /src log --oneline -1
+
+      - name: Resolve the version
+        id: version
+        working-directory: /src
+        run: |
+          set -eu
+          v="${{ inputs.version }}"
+          if [ -z "$v" ]; then
+            case "$REF_NAME" in
+              v*) v="$REF_NAME" ;;
+              *)  v=$(git describe --tags --abbrev=0 --match 'v[0-9]*') ;;
+            esac
+          fi
+          case "$v" in v*) ;; *) v="v$v" ;; esac
+
+          # v0.0.0 is semantic-release's version floor, not a shipment —
+          # see the bootstrap step in release.yml.  Nothing is built for
+          # it, and this is a clean skip rather than a failure because a
+          # red run against a tag that was never meant to ship is noise.
+          if [ "$v" = "v0.0.0" ]; then
+            echo "v0.0.0 is the version floor, not a release; nothing to build"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "skip=false"   >> "$GITHUB_OUTPUT"
+          echo "tag=$v"       >> "$GITHUB_OUTPUT"
+          echo "version=${v#v}" >> "$GITHUB_OUTPUT"
+          echo "building $v"
+
+      - name: Go toolchain
+        if: steps.version.outputs.skip == 'false'
+        run: |
+          set -eu
+          if [ ! -x /cache/tool/go/bin/go ] || ! /cache/tool/go/bin/go version | grep -q "$GO_VERSION"; then
+            mkdir -p /cache/tool && rm -rf /cache/tool/go
+            curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" | tar -C /cache/tool -xz
+          fi
+          echo "/cache/tool/go/bin" >> "$GITHUB_PATH"
+          /cache/tool/go/bin/go version
+
+      - name: Node toolchain
+        if: steps.version.outputs.skip == 'false'
+        run: |
+          set -eu
+          curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+          apt-get install -y -qq --no-install-recommends nodejs
+          corepack enable
+          node --version
+
+      # `make build-prod` is the production task: -trimpath and -w -s are
+      # already in it, so only the version stamp is passed, through the
+      # LDFLAGS_EXTRA variable this repo added to build/linux/Taskfile.yml.
+      # (`wails3 build` has no -ldflags of its own; that was v2.)
+      - name: Build
+        if: steps.version.outputs.skip == 'false'
+        working-directory: /src
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -eu
+          export PATH="/src/scripts/toolbin:$PATH"
+          commit=$(git rev-parse --short HEAD)
+
+          go generate ./...
+          go tool wails3 task build \
+            LDFLAGS_EXTRA="-X 'main.version=${TAG}' -X 'main.commit=${commit}'"
+
+          # Described, never run: main.go has no flag parsing, so any
+          # invocation here would try to open a window in a container with
+          # no display and hang the job rather than printing a version.
+          test -x bin/yellowjacket
+          ls -la bin/yellowjacket
+          file bin/yellowjacket || true
+
+      # The .desktop file and the icon go in the tarball because without
+      # them the binary is a window with no menu entry — the Arch package
+      # installs both, and this is the same app for people not using it.
+      - name: Package the tarball
+        if: steps.version.outputs.skip == 'false'
+        working-directory: /src
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -eu
+          dir="yellowjacket-${VERSION}-linux-amd64"
+          mkdir -p "/tmp/$dir"
+          cp bin/yellowjacket "/tmp/$dir/"
+          cp packaging/arch/yellowjacket.desktop "/tmp/$dir/"
+          cp frontend/src/assets/images/icons/music/compact-disc.svg \
+             "/tmp/$dir/yellowjacket.svg"
+          tar -C /tmp -czf "/tmp/${dir}.tar.gz" "$dir"
+          ls -la "/tmp/${dir}.tar.gz"
+
+      - name: Attach it to the release
+        if: steps.version.outputs.skip == 'false'
+        working-directory: /src
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -eu
+          ./scripts/release-asset.sh "$TAG" \
+            "/tmp/yellowjacket-${VERSION}-linux-amd64.tar.gz"

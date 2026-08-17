@@ -14,6 +14,15 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to sync (default: the pushed tag)"
+        required: false
+
+concurrency:
+  group: homebrew-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   sync-formula:
@@ -30,10 +39,25 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Compute version and tarball checksum
+        id: version
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"          # e.g. v1.3.0
-          VERSION="${TAG#v}"                 # e.g. 1.3.0
+          TAG="${{ inputs.version }}"
+          [ -n "$TAG" ] || TAG="${GITHUB_REF_NAME}"   # e.g. v0.0.1
+          case "$TAG" in v*) ;; *) TAG="v$TAG" ;; esac
+          VERSION="${TAG#v}"                          # e.g. 0.0.1
+
+          # v0.0.0 is semantic-release's version floor, not a shipment —
+          # see the bootstrap step in release.yml.  Skipped cleanly rather
+          # than failing: this one would otherwise push a formula for a
+          # version that does not exist into a *public* tap.
+          if [ "$VERSION" = "0.0.0" ]; then
+            echo "v0.0.0 is the version floor, not a release; nothing to sync"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
           TARBALL="${SOURCE_TARBALL_BASE}/${TAG}.tar.gz"
 
           echo "Fetching ${TARBALL}"
@@ -53,6 +77,7 @@ jobs:
           echo "SHA256=${SHA256}"   >> "$GITHUB_ENV"
 
       - name: Render the formula with the new version and checksum
+        if: steps.version.outputs.skip == 'false'
         run: |
           set -euo pipefail
           src="packaging/homebrew/Formula/yellowjacket.rb"
@@ -66,6 +91,7 @@ jobs:
           cat yellowjacket.rb
 
       - name: Push to the Homebrew tap repo
+        if: steps.version.outputs.skip == 'false'
         run: |
           set -euo pipefail
           git clone "https://x-access-token:${TAP_TOKEN}@github.com/${TAP_REPO}.git" tap
