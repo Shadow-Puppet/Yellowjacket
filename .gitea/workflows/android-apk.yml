@@ -1,7 +1,7 @@
 name: Build & publish the Android APK
 
 # The fifth workflow, and the second that publishes.  It builds a signed
-# fat APK (arm64-v8a + x86_64) on every version tag and puts it in
+# arm64-v8a APK on every version tag and puts it in
 # Gitea's *generic* package registry, which — unlike the repository — is
 # readable without credentials.  That is what lets an Obtainium client
 # poll a plain URL with no token and no public mirror of the source.
@@ -225,7 +225,7 @@ jobs:
       # `$GITHUB_ENV` — where the `env:` dump is only masked for values
       # that are *verbatim* a secret, so a trimmed one could print in
       # clear — or repeating the trimming logic in both.
-      - name: Build the signed fat APK
+      - name: Build the signed APK
         working-directory: /src
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
@@ -333,9 +333,14 @@ jobs:
           ls -la "$apk"
           "$bt/aapt2" dump badging "$apk" | sed -n '1p;/application-label:/p;/native-code/p'
 
-          # Both ABIs, or the artifact is not the fat APK it claims to be.
-          "$bt/aapt2" dump badging "$apk" | grep -q "native-code: 'arm64-v8a' 'x86_64'" || {
-            echo "the APK does not carry both ABIs" >&2; exit 1; }
+          # arm64 and *only* arm64.  x86_64 Android cannot run this app
+          # (modernc's raw lstat against Android's seccomp filter, which
+          # is every x86_64 device and not merely the emulator), so an
+          # x86_64 slice would be ~31 MB that runs nowhere -- and its
+          # reappearance would mean someone had put the ABI back in
+          # app/build.gradle without knowing that.
+          "$bt/aapt2" dump badging "$apk" | grep -q "native-code: 'arm64-v8a'$" || {
+            echo "the APK's ABI set is not exactly arm64-v8a" >&2; exit 1; }
 
           # The identity the pipeline exists to keep stable.
           "$bt/aapt2" dump badging "$apk" | grep -q "versionCode='${{ steps.version.outputs.code }}'" || {

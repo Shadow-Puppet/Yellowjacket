@@ -52,8 +52,13 @@ ANDROID_SDK ?= $(HOME)/Android/Sdk
 ANDROID_NDK ?= /opt/android-ndk
 ANDROID_ENV := ANDROID_HOME=$(ANDROID_SDK) ANDROID_SDK_ROOT=$(ANDROID_SDK) ANDROID_NDK_HOME=$(ANDROID_NDK)
 
-android: build-frontend ## Build the fat APK (arm64 + x86_64) into bin/
-	@$(ANDROID_ENV) PATH="$(TOOLBIN):$$PATH" go tool wails3 task android:package:fat
+# `package`, not `package:fat`: x86_64 Android cannot run this app at
+# all (modernc's raw lstat vs Android's seccomp -- see
+# android-tier.md), so the second ABI was ~31 MB that could not run
+# anywhere.  app/build.gradle's abiFilters says the same thing to
+# Gradle; both have to agree or the .so is built and then dropped.
+android: build-frontend ## Build the arm64 APK into bin/
+	@$(ANDROID_ENV) PATH="$(TOOLBIN):$$PATH" go tool wails3 task android:package
 
 android-setup: ## Install the SDK pieces and create the AVD (once, ~3.5GB)
 	@$(ANDROID_ENV) ./scripts/android-emulator.sh setup

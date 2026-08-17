@@ -40,9 +40,21 @@ android {
         versionCode Integer.parseInt(System.getenv("YJ_VERSION_CODE") ?: "1")
         versionName System.getenv("YJ_VERSION") ?: "0.0.0"
 
-        // Configure supported ABIs
+        // **arm64 only, and x86_64 is not a gap.**  `modernc.org/libc`'s
+        // Xlstat64 issues a raw lstat syscall on linux/amd64, which
+        // Android's seccomp policy forbids (bionic never issues it), so
+        // the process takes SIGSYS the first time anything touches the
+        // database -- which for this app is startup.  That is every
+        // x86_64 Android, emulators and x86 Chromebooks alike, not just
+        // some.  arm64 is structurally unaffected: the architecture has
+        // no lstat syscall at all, so modernc routes through fstatat.
+        //
+        // So the second ABI was ~31 MB of an artifact that could not run
+        // anywhere.  If modernc fixes it, adding 'x86_64' back here and
+        // to the native-code assertion in android-apk.yml is the whole
+        // change.
         ndk {
-            abiFilters 'arm64-v8a', 'x86_64'
+            abiFilters 'arm64-v8a'
         }
     }
 
@@ -93,7 +105,6 @@ android {
     packagingOptions {
         // Don't strip Go symbols in debug builds
         doNotStrip '*/arm64-v8a/libwails.so'
-        doNotStrip '*/x86_64/libwails.so'
     }
 }
 
