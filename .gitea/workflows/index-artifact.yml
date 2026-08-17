@@ -9,9 +9,29 @@ name: Search index maintenance
 #
 # A refresh is cheap and no-ops when nothing new has been published, so
 # running it on every push to main is safe.
+#
+# ---------------------------------------------------------------------
+# TEMPORARY (2026-08-17): the `push` trigger is off while the catalog
+# rebuilds.
+#
+# `fix(database): retire a table whose shape the schema moved past`
+# dropped this job's `explore_index` on its first run -- the CI database
+# is deliberately in the older encoding, so the repair judged it stale --
+# and the job fell back to a full ~205 GB import from the dumps.
+# `fix(database): never retire the catalog the index build derives`
+# stops it happening again but cannot undo it.
+#
+# Until that import reports complete, every push to main books another
+# `budget` (3h) of a runner with capacity 1, and ordinary CI queues
+# behind it. The weekly cron and workflow_dispatch still resume the
+# build, which is all it needs: indexbuild picks up from its checkpoint.
+#
+# RESTORE the two `push` lines below once a run reports
+# `complete=true`. Nothing else here changed.
+# ---------------------------------------------------------------------
 on:
-  push:
-    branches: [main]
+  # push:
+  #   branches: [main]
   schedule:
     # Weekly update pass. The 6-month rebuild is triggered by the same
     # command when it notices the import has aged out.
