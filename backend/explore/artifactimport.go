@@ -283,6 +283,9 @@ func (si *SearchIndex) importCoreArtifact(ctx context.Context, path string) erro
 	}
 
 	merged, mergeErr := si.mergeArtifactRows(ctx, info.rows)
+	if mergeErr == nil {
+		si.mergeArtifactCredits(ctx)
+	}
 
 	if ftsSuspended {
 		start := time.Now()
@@ -472,4 +475,76 @@ func (si *SearchIndex) removeArtifactFile(path string) {
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		si.logger.Warn("core artifact: cleanup failed", "path", path, "error", err)
 	}
+}
+
+// artifactHasCredits reports whether the attached artifact carries the
+// multi-artist credit tables.
+//
+// The same shape, and the same handle, as artifactHasTotals above: an
+// artifact published before credits existed is still a perfectly good
+// catalog, and there is one already out there.  Selecting from a table
+// that is not in it would fail an import that should have succeeded, so
+// it is asked rather than assumed -- on the *writer*, because `core` is
+// attached to that one connection and the read pool cannot see it.
+func (si *SearchIndex) artifactHasCredits() bool {
+	var n int
+
+	err := si.db.QueryRowWriter(
+		`SELECT COUNT(*) FROM core.sqlite_master
+		 WHERE type = 'table' AND name IN ('artist_credit_part', 'artist_credit_ref')`,
+	).Scan(&n)
+
+	return err == nil && n == 2
+}
+
+// mergeArtifactCredits copies the credit decomposition out of the
+// attached artifact.
+//
+// Credits are replaced wholesale rather than merged: they are derived
+// entirely from one dump build, they are keyed by ids that are only
+// meaningful within the artifact that carried them, and a half-updated
+// credit renders as the wrong artists rather than as missing ones.
+//
+// A failure here is logged and not returned.  The catalog has already
+// merged at this point, and a catalog without credits is the catalog
+// this app had before them -- every credit falls back to its single
+// artist, which is the same fallback an untagged file already gets.
+func (si *SearchIndex) mergeArtifactCredits(ctx context.Context) {
+	if !si.artifactHasCredits() {
+		si.logger.Info("core artifact: no credit tables, keeping single-artist credits")
+
+		return
+	}
+
+	start := time.Now()
+
+	for _, stmt := range []string{
+		"DELETE FROM artist_credit_part",
+		"DELETE FROM artist_credit_ref",
+		`INSERT OR REPLACE INTO artist_credit_part
+			(credit_id, position, artist_mbid, credited_name, join_phrase)
+		 SELECT credit_id, position, artist_mbid, credited_name, join_phrase
+		 FROM core.artist_credit_part`,
+		`INSERT OR REPLACE INTO artist_credit_ref (mbid, credit_id)
+		 SELECT mbid, credit_id FROM core.artist_credit_ref`,
+	} {
+		if err := ctx.Err(); err != nil {
+			return
+		}
+
+		if _, err := si.db.ExecContext(stmt); err != nil {
+			si.logger.Warn("core artifact: credit merge failed", "error", err)
+
+			return
+		}
+	}
+
+	var refs int
+
+	_ = si.db.QueryRowWriter("SELECT COUNT(*) FROM artist_credit_ref").Scan(&refs)
+
+	si.logger.Info("core artifact: credits merged",
+		"entities", refs,
+		"elapsed", time.Since(start).Round(time.Millisecond),
+	)
 }

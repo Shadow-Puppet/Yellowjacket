@@ -27,6 +27,19 @@ type Artist struct {
 	Mbid sql.NullString
 }
 
+type ArtistCreditPart struct {
+	CreditID     int64
+	Position     int64
+	ArtistMbid   []byte
+	CreditedName string
+	JoinPhrase   string
+}
+
+type ArtistCreditRef struct {
+	Mbid     []byte
+	CreditID int64
+}
+
 type ArtistEnrichment struct {
 	ArtistMbid string
 	BrowsedAt  sql.NullTime

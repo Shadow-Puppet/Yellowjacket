@@ -226,6 +226,18 @@ export function GetCandidateThumbnail(releaseMBID: string, releaseGroupMBID: str
 }
 
 /**
+ * GetCredits is the bound form: the frontend asks for a tracklist's
+ * worth of MBIDs at once rather than one per row.
+ * 
+ * Batched for the reason every other per-row backend question here is:
+ * asking on hover or on render turns a list into N IPC round trips, and
+ * this one is asked about every row of every list in the app.
+ */
+export function GetCredits(mbids: string[] | null): $CancellablePromise<{ [_ in string]?: $models.CreditPart[] | null } | null> {
+    return $Call.ByID(225964099, mbids);
+}
+
+/**
  * GetExploreShelves builds the page Explore shows before a query.
  * 
  * One call rather than one per shelf, for `home`'s reason: the shelves

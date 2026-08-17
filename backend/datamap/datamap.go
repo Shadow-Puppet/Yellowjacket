@@ -186,6 +186,21 @@ var tables = []Table{
 			"MusicBrainz dump. Rebuilt only by a full index build.",
 	},
 	{
+		Name: "artist_credit_part", Kind: Cache, Lifetime: Retained,
+		Note: "The decomposition of a multi-artist credit, from the " +
+			"MusicBrainz dump: one row per credited artist, with the " +
+			"name as credited and the join phrase that follows it. " +
+			"Arrives with the downloaded artifact, so rebuilding it " +
+			"costs a dump stream and it is never swept.",
+	},
+	{
+		Name: "artist_credit_ref", Kind: Cache, Lifetime: Retained,
+		Note: "Which credit a catalog recording or release group is " +
+			"credited to. Present only for multi-artist credits; " +
+			"absence means one artist, which explore_index already " +
+			"describes. Ships and dies with artist_credit_part.",
+	},
+	{
 		Name: "explore_index", Kind: Cache, Lifetime: Retained,
 		Note: "The offline MusicBrainz search index. Rebuilding costs a " +
 			"~205GB dump stream, so it is never swept automatically.",

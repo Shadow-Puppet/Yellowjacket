@@ -3,6 +3,7 @@ package explore
 import (
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -595,5 +596,155 @@ func TestImportCoreArtifactReadsTotalsWhenPresent(t *testing.T) {
 
 	if old.TotalTracks != 0 {
 		t.Errorf("TotalTracks = %d, want 0 (the catalog does not say)", old.TotalTracks)
+	}
+}
+
+// addArtifactCredits gives an artifact file the credit tables the
+// exporter now writes, so the import path can be exercised against one
+// that has them.
+func addArtifactCredits(t *testing.T, path string) {
+	t.Helper()
+
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatalf("open artifact: %v", err)
+	}
+
+	defer func() { _ = db.Close() }()
+
+	for _, stmt := range []string{
+		`CREATE TABLE artist_credit_part (
+			credit_id     INTEGER NOT NULL,
+			position      INTEGER NOT NULL,
+			artist_mbid   BLOB NOT NULL,
+			credited_name TEXT NOT NULL,
+			join_phrase   TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY (credit_id, position)
+		) WITHOUT ROWID`,
+		`CREATE TABLE artist_credit_ref (
+			mbid      BLOB NOT NULL PRIMARY KEY,
+			credit_id INTEGER NOT NULL
+		) WITHOUT ROWID`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("create credit tables: %v", err)
+		}
+	}
+
+	// The packed form the catalog stores.  uuid16/parseUUID live behind
+	// the indexbuild tag, so this file decodes for itself.
+	pack := func(mbid string) []byte {
+		raw, err := hex.DecodeString(strings.ReplaceAll(mbid, "-", ""))
+		if err != nil || len(raw) != 16 {
+			t.Fatalf("fixture MBID %q is not a UUID: %v", mbid, err)
+		}
+
+		return raw
+	}
+
+	a, b, rec := pack(artA), pack(artB), pack(recA)
+
+	for _, part := range [][]any{
+		{7, 0, a, "Artist A", " feat. "},
+		{7, 1, b, "Artist B", ""},
+	} {
+		if _, err := db.Exec(`INSERT INTO artist_credit_part
+			(credit_id, position, artist_mbid, credited_name, join_phrase)
+			VALUES (?, ?, ?, ?, ?)`, part...); err != nil {
+			t.Fatalf("insert part: %v", err)
+		}
+	}
+
+	if _, err := db.Exec(
+		"INSERT INTO artist_credit_ref (mbid, credit_id) VALUES (?, ?)", rec, 7,
+	); err != nil {
+		t.Fatalf("insert ref: %v", err)
+	}
+}
+
+// TestImportCoreArtifactMergesCredits is the positive half of the
+// compatibility pair: an artifact that carries credits delivers them,
+// rendering back to the credit string they decompose.
+func TestImportCoreArtifactMergesCredits(t *testing.T) {
+	db := database.NewTestDB(t)
+	si := NewSearchIndex(db, nil, nil, testLogger())
+
+	path := writeTestArtifact(t, validMeta(), []artifactRow{
+		{"recording", recA, "Song A", "Artist A feat. Artist B", artA, 2000},
+	})
+
+	addArtifactCredits(t, path)
+
+	if err := si.importCoreArtifact(context.Background(), path); err != nil {
+		t.Fatalf("importCoreArtifact: %v", err)
+	}
+
+	rows, err := db.QueryContext(
+		`SELECT p.credited_name, p.join_phrase
+		 FROM artist_credit_ref r
+		 JOIN artist_credit_part p ON p.credit_id = r.credit_id
+		 ORDER BY p.position`,
+	)
+	if err != nil {
+		t.Fatalf("query credits: %v", err)
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	var rendered strings.Builder
+
+	for rows.Next() {
+		var name, join string
+
+		if err := rows.Scan(&name, &join); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+
+		rendered.WriteString(name)
+		rendered.WriteString(join)
+	}
+
+	if got := rendered.String(); got != "Artist A feat. Artist B" {
+		t.Errorf("rendered credit = %q, want %q", got, "Artist A feat. Artist B")
+	}
+}
+
+// TestImportCoreArtifactWithoutCredits is the regression that matters
+// most here: an artifact published before credits existed cannot be
+// re-cut retroactively, so it must import as a catalog that declines to
+// answer rather than failing outright.  writeTestArtifact deliberately
+// builds one without the tables.
+func TestImportCoreArtifactWithoutCredits(t *testing.T) {
+	db := database.NewTestDB(t)
+	si := NewSearchIndex(db, nil, nil, testLogger())
+
+	path := writeTestArtifact(t, validMeta(), []artifactRow{
+		{"recording", recA, "Song A", "Artist A", artA, 2000},
+	})
+
+	if err := si.importCoreArtifact(context.Background(), path); err != nil {
+		t.Fatalf("an artifact without credit tables must still import: %v", err)
+	}
+
+	var rows int
+	if err := db.QueryRowWriter(
+		"SELECT COUNT(*) FROM explore_index",
+	).Scan(&rows); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+
+	if rows != 1 {
+		t.Errorf("catalog rows = %d, want 1", rows)
+	}
+
+	var refs int
+	if err := db.QueryRowWriter(
+		"SELECT COUNT(*) FROM artist_credit_ref",
+	).Scan(&refs); err != nil {
+		t.Fatalf("count refs: %v", err)
+	}
+
+	if refs != 0 {
+		t.Errorf("credit refs = %d, want 0", refs)
 	}
 }

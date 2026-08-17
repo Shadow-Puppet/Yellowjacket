@@ -26,7 +26,11 @@ pre-commit:
         go generate ./...
         if [ -n "$(git diff --name-only)" ]; then
           echo "Generated code is out of date. Run 'make generate' and stage the changes."
-          git diff --stat
+          # --no-pager, or this blocks forever on `less` waiting for a
+          # keypress that a hook run without a tty will never get: the
+          # commit hangs at exactly the moment it is trying to tell you
+          # why it failed.
+          git --no-pager diff --stat
           exit 1
         fi
 

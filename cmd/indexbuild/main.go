@@ -177,12 +177,25 @@ func run(o opts) error {
 
 	complete := svc.IndexImportComplete() && !errors.Is(err, errIncomplete)
 
+	// Credits are maintenance, not part of any one mode.  They come from
+	// a different dump, they are keyed on entities the catalog already
+	// holds, and a catalog built before the pass existed would otherwise
+	// only gain them from a rebuild — which re-downloads ~205 GB to
+	// re-derive rows it already has.  Skipped when the import is not
+	// complete, because there is nothing to key them against yet.
+	creditsAdded := false
+	if complete {
+		creditsAdded = svc.EnsureArtistCredits(context.Background())
+	}
+
 	// "Changed" means there is something new worth publishing, so it is
 	// only ever true for a finished import: a build stamps the listens
 	// series early, long before its rows are assembled, and reporting a
 	// change off that would be a lie about a half-built index.
 	changed := complete &&
-		(svc.IndexBaselineSeries() != seriesBefore || chosen != modeRefresh)
+		(svc.IndexBaselineSeries() != seriesBefore ||
+			chosen != modeRefresh ||
+			creditsAdded)
 
 	report(logger, svc, chosen, complete, changed)
 

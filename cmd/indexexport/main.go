@@ -171,6 +171,26 @@ func createSchema(db *sql.DB) error {
 			key   TEXT PRIMARY KEY,
 			value TEXT NOT NULL
 		)`,
+		// Multi-artist credits.  Shipped as their own tables rather than
+		// as an explore_index column because a credit is a variable
+		// number of ordered parts, and because credits are *shared* --
+		// an album's tracks by one artist reference one credit, which is
+		// what keeps this to a few hundred thousand rows.
+		//
+		// An importer that predates these reads an artifact without
+		// them; artifactHasCredits is what asks.
+		`CREATE TABLE core.artist_credit_part (
+			credit_id     INTEGER NOT NULL,
+			position      INTEGER NOT NULL,
+			artist_mbid   BLOB NOT NULL,
+			credited_name TEXT NOT NULL,
+			join_phrase   TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY (credit_id, position)
+		) WITHOUT ROWID`,
+		`CREATE TABLE core.artist_credit_ref (
+			mbid      BLOB NOT NULL PRIMARY KEY,
+			credit_id INTEGER NOT NULL
+		) WITHOUT ROWID`,
 	}
 
 	for _, stmt := range stmts {
@@ -242,6 +262,63 @@ func copyRows(db *sql.DB, artists, perArtistRGs, perArtistRecs int) error {
 
 		fmt.Printf("  %-15s %d\n", sel.label+":", n)
 	}
+
+	return copyCredits(db)
+}
+
+// copyCredits ships the credit decomposition for the entities that made
+// it into the artifact, and only those.
+//
+// The refs go first and the parts follow *from* the refs, so a credit is
+// carried only if something in the artifact points at it.  The source
+// index holds credits for every catalog entity, while the artifact is a
+// windowed subset -- copying all of them would carry a large table most
+// of which nothing in the artifact can reach.
+//
+// A source index built before the credit pass simply has no rows here,
+// which is not an error: the artifact then carries the tables empty, and
+// every credit falls back to its single artist exactly as before.
+func copyCredits(db *sql.DB) error {
+	// Asked, not assumed.  A source index built before the credit pass
+	// has no such table, and "no such table" would fail an export whose
+	// catalog is otherwise complete.
+	for _, table := range []string{"artist_credit_ref", "artist_credit_part"} {
+		var n int
+
+		if err := db.QueryRow(
+			`SELECT COUNT(*) FROM main.sqlite_master
+			 WHERE type = 'table' AND name = ?`, table,
+		).Scan(&n); err != nil {
+			return fmt.Errorf("probe %s: %w", table, err)
+		}
+
+		if n == 0 {
+			fmt.Printf("  %-15s none in source\n", "credits:")
+
+			return nil
+		}
+	}
+
+	refs, err := insertSelect(db, `
+		INSERT INTO core.artist_credit_ref (mbid, credit_id)
+		SELECT r.mbid, r.credit_id
+		FROM main.artist_credit_ref r
+		WHERE r.mbid IN (SELECT mbid FROM core.explore_index)`)
+	if err != nil {
+		return err
+	}
+
+	parts, err := insertSelect(db, `
+		INSERT INTO core.artist_credit_part
+			(credit_id, position, artist_mbid, credited_name, join_phrase)
+		SELECT p.credit_id, p.position, p.artist_mbid, p.credited_name, p.join_phrase
+		FROM main.artist_credit_part p
+		WHERE p.credit_id IN (SELECT credit_id FROM core.artist_credit_ref)`)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("  %-15s %d refs, %d parts\n", "credits:", refs, parts)
 
 	return nil
 }

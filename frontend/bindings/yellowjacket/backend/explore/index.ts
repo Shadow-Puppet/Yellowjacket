@@ -12,6 +12,7 @@ export {
 
 export type {
     AlbumCompleteFunc,
+    CreditPart,
     IndexStatus,
     LBSimilarArtist,
     LBTopRecording,

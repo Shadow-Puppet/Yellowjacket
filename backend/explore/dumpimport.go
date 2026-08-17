@@ -104,6 +104,7 @@ type dumpImporter struct {
 
 	canonicalBaseURL string
 	listensBaseURL   string
+	mbdumpBaseURL    string
 
 	// Disk safety floors (fields so tests can relax them).
 	minStartFreeBytes uint64
@@ -144,6 +145,7 @@ func newDumpImporter(si *SearchIndex, lb *ListenBrainzClient) (*dumpImporter, er
 		stagingDir:        stagingDir,
 		canonicalBaseURL:  defaultCanonicalBaseURL,
 		listensBaseURL:    defaultListensBaseURL,
+		mbdumpBaseURL:     defaultMBDumpBaseURL,
 		minStartFreeBytes: dumpMinStartFreeBytes,
 		abortFreeBytes:    dumpAbortFreeBytes,
 	}, nil
@@ -171,6 +173,7 @@ func (imp *dumpImporter) run(ctx context.Context) error {
 	// Fast path: rows already assembled, only patch passes remain.
 	if state.Stage == dumpStageAssembled {
 		imp.si.MarkReadyIfPopulated()
+		imp.ensureArtistCredits(ctx)
 		imp.runPatchPasses(ctx)
 
 		if err := ctx.Err(); err != nil {
@@ -304,6 +307,11 @@ func (imp *dumpImporter) run(ctx context.Context) error {
 
 	imp.si.MarkReadyIfPopulated()
 	imp.si.refreshStatusCounts()
+
+	// Multi-artist credits, from a different dump.  After the catalog,
+	// because it asks explore_index which entities are worth carrying
+	// credits for.
+	imp.ensureArtistCredits(ctx)
 
 	// Stage 4: API patch passes (idempotent).
 	imp.runPatchPasses(ctx)

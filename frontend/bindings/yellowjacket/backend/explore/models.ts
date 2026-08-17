@@ -8,6 +8,23 @@
 export type AlbumCompleteFunc = any;
 
 /**
+ * CreditPart is one credited artist within a credit, in credit order.
+ * 
+ * CreditedName is the name *as credited*, which is not the artist's own
+ * name: MusicBrainz credits "Snoop Dogg" on a track by the artist
+ * called "Snoop Doggy Dogg".  Display uses it; navigation uses
+ * ArtistMBID.  JoinPhrase is the literal connector that follows this
+ * part, so a credit renders by concatenation and never by searching a
+ * name inside a credit string.
+ */
+export interface CreditPart {
+    "position": number;
+    "artistMbid": string;
+    "creditedName": string;
+    "joinPhrase": string;
+}
+
+/**
  * IndexStatus is the full index build status, exposed to the frontend.
  */
 export interface IndexStatus {
