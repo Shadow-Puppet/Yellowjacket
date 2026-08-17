@@ -133,7 +133,7 @@ jobs:
           # see the bootstrap step in release.yml.  It is skipped cleanly
           # rather than failing the guard below, because a 45-minute red
           # run against a tag that was never meant to ship is noise, and
-          # this is the most expensive of the three workflows a tag fires.
+          # this is the most expensive of the four workflows a tag fires.
           if [ "$v" = "0.0.0" ]; then
             echo "v0.0.0 is the version floor, not a release; nothing to build"
             echo "skip=true" >> "$GITHUB_OUTPUT"

@@ -56,7 +56,7 @@ jobs:
       # v0.0.0 is semantic-release's version floor, not a shipment — see
       # the bootstrap step in release.yml.  A clean skip rather than a
       # failure: a red run against a tag that was never meant to ship is
-      # noise, and this is one of the three workflows that would otherwise
+      # noise, and this is one of the four workflows that would otherwise
       # fire on it.
       - name: Resolve the version
         id: version

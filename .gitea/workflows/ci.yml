@@ -1,6 +1,6 @@
 name: CI
 
-# The other three workflows package and publish; none of them test
+# The other five workflows package, publish or release; none of them test
 # anything, so a green tick on this repo used to mean "the Arch package
 # built", which is not the question anyone was asking.  This is the
 # workflow that gates.
@@ -92,7 +92,7 @@ jobs:
       # Cloned by hand rather than with actions/checkout: that is a JS
       # action and needs node inside the job container before any step
       # has had a chance to install it.  Same approach as the other
-      # three workflows in this directory.
+      # other workflows in this directory.
       - name: Clone repo at this commit
         run: |
           set -eu
