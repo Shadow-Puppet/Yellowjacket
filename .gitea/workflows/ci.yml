@@ -9,9 +9,23 @@ name: CI
 # before being written here, so every step below is a transcription of
 # something observed working rather than something expected to.
 
+# **A branch push and its PR are the same commit, and testing it twice
+# costs the only runner there is.**  `branches: ['**']` here meant every
+# PR booked four runs — `check` and `e2e` for the branch push, then both
+# again for `refs/pull/N/head` — on a host with capacity 1, where the
+# queue is shared with an index build that can hold it for three hours.
+#
+# `pull_request` covers feature branches, and `main` is kept because a
+# post-merge run is the record of the trunk's health.  Since main now
+# refuses direct pushes, that run happens exactly once per merge.
+#
+# The trade is explicit: a branch pushed with **no** PR open gets no CI.
+# That is consistent with the workflow this repo committed to — every
+# change goes through a PR — and the signal returns the moment one is
+# opened, on the same commit.
 on:
   push:
-    branches: ['**']
+    branches: [main]
   pull_request:
   workflow_dispatch:
 

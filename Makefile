@@ -179,10 +179,12 @@ bindings-check: ## Fail if the generated bindings are stale
 css-check: ## Fail if a css`` literal was ended early by a backtick in a comment
 	@cd frontend && node scripts/check-css-literals.mjs
 
-# .pi/ documents commands, and a skill that documents a command wrongly
-# is worse than no skill: an agent runs it confidently.  Every command
-# in there is a make target on purpose, so this is checkable.
-skill-check: ## Fail if .pi/ documents a make target that does not exist
+# .pi/ and CLAUDE.md document commands, and a doc that documents a
+# command wrongly is worse than no doc: an agent runs it confidently.
+# Every command in them is a make target on purpose, so this is
+# checkable.  It also asserts AGENTS.md is a symlink to CLAUDE.md, so the
+# two harnesses cannot drift onto two descriptions of one project.
+skill-check: ## Fail if the agent docs name a missing make target, or AGENTS.md is not a symlink
 	@./scripts/skill-check.sh
 
 # Conventional Commits, which CLAUDE.md claimed CI enforced for a long
