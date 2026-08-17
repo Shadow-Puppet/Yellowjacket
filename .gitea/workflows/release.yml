@@ -64,7 +64,13 @@ jobs:
           set -eu
           git clone --quiet \
             "https://x-access-token:${PACKAGE_TOKEN}@${SERVER_URL#https://}/${REPO}.git" /src
-          git -C /src checkout --quiet --detach "${{ github.sha }}"
+          # -B main rather than --detach, which the other five workflows
+          # use: semantic-release resolves the release branch and then
+          # pushes a commit and a tag to it, and a detached HEAD is a
+          # worse starting point for both than a local branch named after
+          # the one being released.  Pinned to this commit, not to
+          # whatever main points at by the time the container started.
+          git -C /src checkout --quiet -B main "${{ github.sha }}"
           git config --global --add safe.directory /src
           git -C /src log --oneline -1
 
@@ -112,10 +118,19 @@ jobs:
             exit 0
           fi
 
+          # Prefer the Actions token because a ref it pushes starts no
+          # workflow, which is the whole point for a tag that is a floor
+          # rather than a shipment.  Falling back to the PAT is safe
+          # rather than merely convenient: all four publishing workflows
+          # skip v0.0.0 explicitly, so the worst case is four jobs that
+          # start and immediately say there is nothing to build.
+          token="${ACTIONS_TOKEN:-$PACKAGE_TOKEN}"
+          [ -n "$ACTIONS_TOKEN" ] || echo "note: GITEA_TOKEN is unset; using the PAT"
+
           echo "no v* tag exists — seeding v0.0.0 so the first release is 0.0.1"
           git tag v0.0.0 "${{ github.sha }}"
           git push --quiet \
-            "https://x-access-token:${ACTIONS_TOKEN}@${SERVER_URL#https://}/${REPO}.git" \
+            "https://x-access-token:${token}@${SERVER_URL#https://}/${REPO}.git" \
             refs/tags/v0.0.0
           echo "seeded v0.0.0 at ${{ github.sha }}"
 
