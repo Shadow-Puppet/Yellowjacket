@@ -3301,3 +3301,34 @@ answering for the *old* bundle — it reported the desktop layout at 424 px
 until the page was reopened. And wireless adb dropped twice more mid-
 session when the screen slept; USB for anything longer than a few
 probes.
+
+## The catalog download now asks about the connection (2026-08-17)
+
+Plan 016 B4. ~0.6 GB had no network awareness at all; it is skipped on a
+cellular connection unless the user says otherwise
+(`AllowMeteredCatalogDownload`, default false, toggle in Settings' Search
+Index section).
+
+**The shape is dictated by the cgo rule, not by taste.** `explore` is
+imported by `cmd/indexbuild`, which builds with `CGO_ENABLED=0` and must
+not link Wails, so `netpolicy.go` holds the policy and the JSON parsing —
+tested on every platform — while the one platform call is a closure
+injected from `app.go`, where naming `application` is already legitimate.
+
+Four things measured or corrected in the doing:
+
+- **The portable name is `application.Mobile`, not `application.Android`**
+  (which the plan and `CLAUDE.md` both named). `Android` exists only
+  under the `android` build tag; `Mobile`'s desktop implementation is a
+  stub whose `NetworkJSON()` returns `""`.
+- **The runtime reports no metered flag.** `{"connected":bool,
+  "type":"wifi|cellular|ethernet|none"}` is all there is, so cellular is
+  the signal and a metered *Wi-Fi* — a phone hotspot, a hotel — cannot be
+  detected. Android itself knows (`NET_CAPABILITY_NOT_METERED`) and the
+  runtime does not pass it on. Documented gap, not an oversight.
+- **An unknown answer must not read as metered.** Every desktop answers
+  `""`, so the obvious defensive default would have disabled the catalog
+  download for every desktop user in the world.
+- **The gate belongs before the first status write.** Declining is a
+  no-op — no job in the indicator, no error tier to dismiss — which is
+  what makes the refusal safe to have on by default.

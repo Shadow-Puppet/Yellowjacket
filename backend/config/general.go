@@ -48,6 +48,12 @@ var errUnknownQueueFallback = errors.New("unknown queue fallback")
 type GeneralConfig struct {
 	DefaultPage   DefaultPage   `toml:"DefaultPage"`
 	QueueFallback QueueFallback `toml:"QueueFallback"`
+	// AllowMeteredCatalogDownload permits the ~0.6 GB Explore catalog to
+	// be fetched on a connection the platform calls cellular. It defaults
+	// to false, which is the whole point: the zero value is the safe one,
+	// so an existing config with no such key refuses by default rather
+	// than needing a migration to become careful.
+	AllowMeteredCatalogDownload bool `toml:"AllowMeteredCatalogDownload"`
 }
 
 // ApplyDefaults fills zero-value fields with sensible defaults.

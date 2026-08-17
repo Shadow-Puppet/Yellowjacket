@@ -347,8 +347,18 @@ done.**
   viewport would have: saved *desktop* column widths reached the phone
   through an id-keyed store and gave the duration column 55% of the row.
 
-**B2 is complete.** What is left in this plan is B3 (tag writing, which
-needs a device), B4 (the catalog download on a metered connection), and
+**B2 and B4 are complete.** B4 is `backend/explore/netpolicy.go`: the
+catalog download is skipped on a cellular connection unless
+`AllowMeteredCatalogDownload` is on, with the toggle in Settings' Search
+Index section. The policy and the JSON parsing are in `explore` (tested
+on every platform) and only the platform call is injected from `app.go`,
+because `cmd/indexbuild` imports `explore` and must not link Wails. Two
+things the plan got slightly wrong: the portable API is
+`application.Mobile.NetworkJSON()` rather than `Android`'s, and it
+reports no metered flag — so cellular is the signal and a metered Wi-Fi
+cannot be seen.
+
+What is left in this plan is B3 (tag writing, which needs a device) and
 the standing question of the Light Phone's Chrome 113 — which so far has
 cost nothing: menus, dialogs and long-press all work on it.
 

@@ -27,6 +27,20 @@ var artifactStageNames = [...]string{
 // failure path is non-fatal by design: the caller falls back, and a
 // fresh install with no network still gets its own library in Explore.
 func (si *SearchIndex) tryCoreArtifact(ctx context.Context) error {
+	// Before anything is staged: ~0.6 GB is not a download to start on
+	// someone's cellular allowance without being asked (plan 016 B4).
+	// This is checked first so no job appears and no status changes --
+	// declining is a no-op, not a failure the user has to dismiss.
+	if si.netPolicy.refuses() {
+		si.logIndexJob(
+			jobs.LevelInfo,
+			"Skipping the catalog download on a metered connection. "+
+				"Enable it in Settings to download anyway.",
+		)
+
+		return ErrMeteredNetwork
+	}
+
 	si.mu.Lock()
 	si.buildStatus = IndexStatus{
 		Building: true,

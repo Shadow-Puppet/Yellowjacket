@@ -508,6 +508,31 @@ selected as a literal `0`. Adding the column to the importer's SELECT
 list without that is how a published artifact — which nobody can re-cut
 retroactively — starts failing with `no such column`.
 
+**A 0.6 GB download asks about the connection first.** `explore`'s
+catalog artifact had no network awareness at all, which on a phone is a
+month's data allowance spent without being asked (plan 016 B4).
+`netpolicy.go` is the gate, and its shape is dictated by one constraint:
+`explore` is imported by `cmd/indexbuild`, which is built with
+`CGO_ENABLED=0` and must not link Wails — so the *policy* and the
+*parsing* live here and are tested on every platform, while the platform
+call is a closure injected from `app.go`. It is
+`application.Mobile.NetworkJSON()`, not `application.Android`'s: the
+latter exists only under the `android` build tag, and `Mobile`'s desktop
+implementation is a stub returning `""`.
+
+Three rules in it are load-bearing. **An unknown answer is not a metered
+one** — only mobile answers at all, so treating silence as metered would
+refuse the download on every desktop. **Cellular is the only signal
+available**: the runtime reports `wifi|cellular|ethernet|none` and no
+metered flag, so a metered *Wi-Fi* (a hotspot, a hotel) cannot be
+detected and is not refused, which is a documented gap rather than an
+oversight. And **the gate runs before anything is staged**, so declining
+is a no-op rather than a job in the indicator and a status the user has
+to dismiss. The permission (`AllowMeteredCatalogDownload`, default
+false, so an existing config is careful without a migration) is read at
+the moment a download would start, so turning it on takes effect on the
+next attempt rather than the next launch.
+
 **Background work yields, and says so in the context.** The post-scan
 backfills share MusicBrainz's rate limiters with every page the user
 can open, and both were FIFO — so a thousand-artist enrichment put an

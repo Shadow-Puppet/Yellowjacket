@@ -191,6 +191,24 @@ func NewYellowJacketApp(
 	yjApp.library.SetJobRegistry(yjApp.jobs)
 	yjApp.explore.SetJobRegistry(yjApp.jobs)
 
+	// Whether this connection is one to spend ~0.6 GB of catalog on
+	// (plan 016 B4). The probe is injected from here because `explore` is
+	// imported by `cmd/indexbuild`, which must not link Wails: naming
+	// `application` there is what `TestIndexToolsDoNotImportWails`
+	// forbids.
+	//
+	// `application.Mobile`, not `application.Android`: the latter exists
+	// only under the `android` build tag, while `Mobile` is the portable
+	// name whose desktop implementation is a stub returning "" — which
+	// parses to "unknown" and refuses nothing. Plan 016 named the tagged
+	// one; this is the same call by the name every build has.
+	yjApp.explore.SetNetworkPolicy(
+		func() explore.Network {
+			return explore.ParseNetworkJSON(application.Mobile.NetworkJSON())
+		},
+		yjApp.appConfig.GetAllowMeteredCatalogDownload,
+	)
+
 	// Let the release prefetch skip albums the user already owns in
 	// full — those open with no catalog call at all, so warming their
 	// tracklists spends the most expensive request in the app on

@@ -18,6 +18,14 @@ import * as download$0 from "../download/models.js";
 import * as tracklist$0 from "../tracklist/models.js";
 
 /**
+ * GetAllowMeteredCatalogDownload reports whether the ~0.6 GB Explore
+ * catalog may be fetched on a metered connection.
+ */
+export function GetAllowMeteredCatalogDownload(): $CancellablePromise<boolean> {
+    return $Call.ByID(2258585139);
+}
+
+/**
  * GetDefaultPage returns the view the app opens to on launch.
  */
 export function GetDefaultPage(): $CancellablePromise<string> {
@@ -125,6 +133,17 @@ export function ResetShortcuts(): $CancellablePromise<void> {
  */
 export function Save(): $CancellablePromise<void> {
     return $Call.ByID(1988945736);
+}
+
+/**
+ * SetAllowMeteredCatalogDownload saves the metered-download permission.
+ * 
+ * There is nothing to validate and nothing to restart: the policy is
+ * read at the moment a download would start, so turning it on takes
+ * effect on the next attempt rather than needing this launch to be over.
+ */
+export function SetAllowMeteredCatalogDownload(allow: boolean): $CancellablePromise<void> {
+    return $Call.ByID(192700351, allow);
 }
 
 /**
