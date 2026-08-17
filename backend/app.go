@@ -484,20 +484,24 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 	// Register playback finished handler to drive queue auto-advance.
 	yj.player.SetPlaybackFinishedHandler(yj.queue.OnPlaybackFinished)
 
-	// Initialize OS media controls (MPRIS on Linux, no-op elsewhere).
+	// Initialize OS media controls (MPRIS on desktop Linux, a
+	// MediaSession on Android, no-op elsewhere). The callbacks are the
+	// same on every platform; only what delivers them differs.
 	yj.mediaControls = mediacontrols.NewHandler(yj.logger)
 
 	if err := yj.mediaControls.Init(mediacontrols.Callbacks{
 		OnPlay: yj.queue.Play,
 		OnPause: func() {
 			if err := yj.player.Pause(); err != nil {
-				yj.logger.Warn("MPRIS Pause failed", "err", err)
+				yj.logger.Warn("Media controls Pause failed", "err", err)
 			}
 		},
 		OnPlayPause: func() {
 			if yj.player.IsPlaying() {
 				if err := yj.player.Pause(); err != nil {
-					yj.logger.Warn("MPRIS PlayPause(pause) failed", "err", err)
+					yj.logger.Warn(
+						"Media controls PlayPause(pause) failed", "err", err,
+					)
 				}
 			} else {
 				yj.queue.Play()
@@ -505,14 +509,14 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 		},
 		OnStop: func() {
 			if err := yj.player.Pause(); err != nil {
-				yj.logger.Warn("MPRIS Stop failed", "err", err)
+				yj.logger.Warn("Media controls Stop failed", "err", err)
 			}
 		},
 		OnNext:     yj.queue.Next,
 		OnPrevious: yj.queue.Previous,
 		OnSeek: func(positionSec int) {
 			if err := yj.player.Seek(positionSec); err != nil {
-				yj.logger.Warn("MPRIS Seek failed", "err", err)
+				yj.logger.Warn("Media controls Seek failed", "err", err)
 			}
 		},
 		OnVolume: func(vol float64) {
@@ -522,6 +526,7 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 				),
 			)
 		},
+		OnDuck: yj.player.SetDuck,
 	}); err != nil {
 		yj.logger.Error(
 			"Failed to initialize media controls",

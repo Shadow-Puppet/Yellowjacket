@@ -81,6 +81,9 @@ public class WailsBridge {
         System.loadLibrary("wails");
     }
 
+    /** The live bridge, for in-process components that are not given one. */
+    private static volatile WailsBridge instance;
+
     private final Activity activity;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private WebView webView;
@@ -122,6 +125,7 @@ public class WailsBridge {
 
     public WailsBridge(Activity activity) {
         this.activity = activity;
+        instance = this;
     }
 
     /**
@@ -208,6 +212,19 @@ public class WailsBridge {
      */
     public void emitEvent(String name, String json) {
         if (initialized) nativeEmitEvent(name, json);
+    }
+
+    /**
+     * Emit an event from a component that holds no bridge reference —
+     * {@link WailsForegroundService}, which Android constructs itself. It is a
+     * static hop rather than a binder because the service runs in this same
+     * process; before the bridge exists (or after it is gone) the event is
+     * dropped, which is the same thing {@link #emitEvent} does when the native
+     * library has not been initialized.
+     */
+    public static void emitFromService(String name, String json) {
+        WailsBridge b = instance;
+        if (b != null) b.emitEvent(name, json);
     }
 
     /**
@@ -1193,7 +1210,16 @@ public class WailsBridge {
                 i.setAction(WailsForegroundService.ACTION_START);
                 i.putExtra("title", title);
                 i.putExtra("text", text);
-                ContextCompat.startForegroundService(activity, i);
+                // The whole document, for the media service: seven extras
+                // would be seven chances for the two sides to disagree about
+                // a key, and the service already has to parse JSON for the
+                // fields the scaffold's title/text pair cannot carry.
+                i.putExtra("payload", json);
+                if (WailsForegroundService.running) {
+                    activity.startService(i);
+                } else {
+                    ContextCompat.startForegroundService(activity, i);
+                }
                 emitEvent("android:foregroundService", "{\"running\":true}");
             } catch (Exception e) {
                 Log.e(TAG, "startForegroundService failed", e);

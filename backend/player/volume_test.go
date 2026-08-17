@@ -1,8 +1,11 @@
 package player
 
 import (
+	"log/slog"
 	"math"
 	"testing"
+
+	"github.com/gopxl/beep/v2/effects"
 
 	"yellowjacket/backend/mediacontrols"
 )
@@ -200,5 +203,62 @@ func TestStateToMediaControls(t *testing.T) {
 				t.Errorf("stateToMediaControls(%q) = %d, want %d", tt.input, got, tt.expected)
 			}
 		})
+	}
+}
+
+// TestSetDuck covers the property the duck rests on: the attenuation
+// is applied to the output and is invisible to everything that asks
+// what the volume is -- the event, the persisted state, a relative
+// change. Getting that wrong would let one notification tone
+// permanently rewrite the user's volume.
+func TestSetDuck(t *testing.T) {
+	t.Parallel()
+
+	p := NewPlayer(slog.Default(), nil)
+	p.volume = &effects.Volume{Base: 2}
+	p.setVolumeLocked(80)
+
+	unducked := p.volume.Volume
+
+	p.SetDuck(true)
+
+	if p.volume.Volume >= unducked {
+		t.Errorf(
+			"ducked output volume = %v, want less than %v",
+			p.volume.Volume, unducked,
+		)
+	}
+
+	if got := p.getUserVolume(); got != 80 {
+		t.Errorf("user volume while ducked = %d, want 80", got)
+	}
+
+	// A second duck must not stack: the offset is re-applied to the
+	// user's level, never subtracted again from the current output.
+	ducked := p.volume.Volume
+
+	p.SetDuck(true)
+
+	if p.volume.Volume != ducked {
+		t.Errorf(
+			"duck applied twice = %v, want %v", p.volume.Volume, ducked,
+		)
+	}
+
+	// Changing the volume while ducked keeps the attenuation.
+	p.setVolumeLocked(60)
+
+	if got := p.getUserVolume(); got != 60 {
+		t.Errorf("user volume set while ducked = %d, want 60", got)
+	}
+
+	if want := float64(UserVolume(60).ToVolume()) - duckAttenuation; p.volume.Volume != want {
+		t.Errorf("output while ducked = %v, want %v", p.volume.Volume, want)
+	}
+
+	p.SetDuck(false)
+
+	if want := float64(UserVolume(60).ToVolume()); p.volume.Volume != want {
+		t.Errorf("output after unduck = %v, want %v", p.volume.Volume, want)
 	}
 }

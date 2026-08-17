@@ -1,10 +1,9 @@
-//go:build !linux || android
+//go:build !linux
 
-// Android is covered here rather than by mpris_linux.go: it satisfies
-// the `linux` tag but has no D-Bus session bus. Its real equivalent is
-// a MediaSession, which is Java-side work and not yet built -- so for
-// now the app simply has no lock-screen transport there, which is a
-// missing feature rather than a broken one.
+// Windows and macOS have no media-control integration yet. `!linux`
+// covers Android too without naming it, since `android` implies the
+// `linux` tag -- android.go claims it, mpris_linux.go excludes it, and
+// this file is left with the platforms neither wants.
 
 package mediacontrols
 
