@@ -1,7 +1,7 @@
 # Releasing the Android APK
 
-`.gitea/workflows/android-apk.yml` builds a signed fat APK
-(`arm64-v8a` + `x86_64`) on every `v*` tag and publishes it to Gitea's
+`.gitea/workflows/android-apk.yml` builds a signed `arm64-v8a` APK on
+every `v*` tag and publishes it to Gitea's
 **generic** package registry, which is readable without credentials —
 which is what lets Obtainium poll a plain URL with no token.
 
@@ -98,8 +98,12 @@ publish `1.100.0`**, and never move a tag that has already been built.
 ## What the workflow checks before publishing
 
 - the APK exists and is non-empty;
-- it carries **both** ABIs (`native-code: 'arm64-v8a' 'x86_64'`), or it
-  is not the fat APK it claims to be;
+- it carries **exactly one** ABI (`native-code: 'arm64-v8a'`). x86_64
+  Android cannot run this app at all — `modernc.org/libc` issues a raw
+  `lstat` syscall that Android's seccomp policy forbids, on every
+  x86_64 device and not merely the emulator — so an x86_64 slice would
+  be ~31 MB that runs nowhere, and its reappearance means someone put
+  the ABI back in `app/build.gradle` without knowing that;
 - its `versionCode` is the one derived from the tag;
 - it is **not** signed with the debug key.
 

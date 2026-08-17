@@ -47,7 +47,7 @@ make android-setup          # SDK pieces + the yj-test AVD, idempotent
 Then:
 
 ```bash
-make android                # fat APK (arm64 + x86_64) -> bin/yellowjacket.apk
+make android                # arm64-v8a APK -> bin/yellowjacket.apk (~16 MB)
 make android-emulator       # boot headless in the background, wait for boot
 make android-install        # adb install -r
 make android-smoke          # launch, then assert the same pid survives 10s
@@ -62,6 +62,17 @@ Never `pkill -f emulator` — the pattern matches the invoking shell's own
 command line and kills it, silently dropping the rest of your compound
 command. The emulator is addressed by its saved pid in
 `.dev/emulator.pid`, same discipline as `make dev-stop`.
+
+**adb is addressed by AVD name, not by whatever is plugged in.** The
+script resolves `ANDROID_SERIAL` from `ro.boot.qemu.avd_name` before
+any device command, because a second emulator (another project's, or
+this one's own corpse left `offline` by a previous run) makes a bare
+`adb` fail with "more than one device" — which `cmd_install` reported
+as *"no device — run 'make android-emulator' first"* immediately after
+that had succeeded. Serials are assigned in boot order and change
+between runs, so the AVD name is the identity. Set `ANDROID_SERIAL`
+yourself and it is honoured; one device that is not ours (a phone) is
+taken as the target.
 
 ## Things that cost a cycle
 
@@ -135,11 +146,57 @@ FATAL | Avd's CPU Architecture 'arm64' is not supported by the QEMU2
 Google dropped cross-architecture emulation; there is no flag. The
 options are an arm64 host, a physical device, or `adb connect` to one.
 
-Two consequences worth holding onto. The x86_64 half of the fat APK is
-*only* useful for emulators, and cannot work on any Android until
-modernc fixes this — including x86 Chromebooks. And the tombstone is at
-least honest: unlike the `os.Exit` that came before it, this one leaves
-a real crash record with a backtrace.
+**The x86_64 ABI is therefore gone from the build** (`abiFilters` in
+`build/android/app/build.gradle`, `android:package` rather than
+`package:fat` in the Makefile, and a `native-code: 'arm64-v8a'$`
+assertion in `android-apk.yml` that fails if it comes back). It could
+not run on any Android until modernc fixes this — x86 Chromebooks
+included — and dropping it took the artifact from 27 MB to 15.9 MB.
+The tombstone was at least honest while it lasted: unlike the
+`os.Exit` that came before it, it left a real crash record with a
+backtrace.
+
+### The emulator still installs it, and it still does not run
+
+The obvious guess about dropping x86_64 — that `make android-install`
+would now refuse with `INSTALL_FAILED_NO_MATCHING_ABIS` — is **wrong,
+and was measured wrong before it was written down.** Google's
+`google_apis` x86_64 images carry arm64 translation:
+
+```
+ro.product.cpu.abilist = x86_64,arm64-v8a
+```
+
+So the arm64-only APK installs, the loader maps `lib/arm64/libwails.so`
+and runs it (the tombstone says `Guest architecture: 'arm64'`). It then
+dies **before any of our code**, with SIGILL rather than SIGSYS:
+
+```
+signal 4 (SIGILL), code -6 (SI_TKILL)
+#00 pc 00000000015911d0  .../lib/arm64/libwails.so
+```
+
+Disassembling that offset names the reason exactly:
+
+```
+15911d0: d5380600   mrs  x0, ID_AA64ISAR0_EL1
+```
+
+That is Go's `internal/cpu` reading the arm64 CPU-feature ID register
+at runtime init, which the translator does not implement. So it is not
+"our Go program is unlucky": **no Go binary starts under this
+translation layer**, and no amount of work on this app changes it.
+
+The three failures are worth holding side by side, because each looks
+like the app's fault and none is:
+
+| build | on x86_64 Android | signal |
+|---|---|---|
+| x86_64 | modernc's raw `lstat` vs seccomp | SIGSYS, syscall 6 |
+| arm64, translated | Go reads `ID_AA64ISAR0_EL1` | SIGILL |
+| arm64, real device | — | unverified, still |
+
+**A physical arm64 device remains the only verification path.**
 
 ### What was fixed to get here
 
@@ -155,12 +212,37 @@ the `indexbuild` tag.
 
 ### What is still not done
 
-MPRIS is compiled in (`android` implies the `linux` build tag), the
-shell is still a desktop shell, and — the largest one — open-*directory*
-dialogs return an error on Android, because the Storage Access Framework
-yields tree URIs rather than filesystem paths. This app's first run is
-"choose your music folder" and its library model is filesystem paths, so
-that is a design question rather than a port.
+The shell is still a desktop shell, and the x86_64 half of the APK is
+still dead weight. Everything in plan 016's section A is now built:
+storage access, an in-app folder picker (Android's directory dialog
+returns an error, since the Storage Access Framework yields tree URIs
+rather than paths), MPRIS excluded, and a MediaSession with a transport
+notification and audio focus.
+
+### Compiling the `android`-tagged Go by hand
+
+`make lint` and `make test` never see it: their three tag sets are all
+linux/amd64, so the only thing that compiles `backend/mediacontrols/
+android.go` is `make android` — a full APK build for a Go type error.
+The short way round:
+
+```bash
+B=$(echo /opt/android-ndk/toolchains/llvm/prebuilt/*/bin)
+CC=$B/aarch64-linux-android21-clang CXX=$B/aarch64-linux-android21-clang++ \
+  GOOS=android GOARCH=arm64 CGO_ENABLED=1 go build ./backend/...
+```
+
+**`CXX` is not optional.** Without it the oboe C++ sources in `oto`
+compile against the host sysroot and fail on `android/log.h` and
+`sys/system_properties.h`, which reads like a broken or missing NDK.
+Restrict it to `./backend/...`: `./...` additionally builds
+`build/android/gen`, a scaffold shim that only resolves inside the
+wails task and fails with `undefined: main` on its own.
+
+A Go method added to a bound service also reaches the frontend unless
+it says not to — `//wails:ignore` above the func, which `make bindings`
+then honours. `Player.SetDuck` is driven by OS audio focus and carries
+one.
 
 ## The scaffold's own tasks
 

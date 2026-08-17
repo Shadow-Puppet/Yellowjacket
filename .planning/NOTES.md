@@ -2659,3 +2659,172 @@ it. So the arm64 claim above rests on reading modernc's two code paths,
 not on having run it: verifying the shipped ABI needs an arm64 host, a
 physical device, or `adb connect` to one. The image was deleted again;
 do not re-download it.
+
+## Android media controls need no new JNI and no new dependency (2026-08-16)
+
+Plan 016's A4 — playback that survives the screen locking — turned out
+to be reachable entirely through seams that already exist, which is the
+finding worth keeping. The obvious blocker is that Wails' `androidBridge*`
+helpers are unexported, so Go cannot call arbitrary Java. It does not
+need to:
+
+- **Go → Java** is `application.Android.StartForegroundService(json)`,
+  which *is* exported, and `build/android/` is our tree — so widening
+  the JSON that `WailsBridge.startForegroundService` accepts is a local
+  edit, not a fork of the runtime.
+- **Java → Go** is `WailsBridge.emitEvent(name, json)` →
+  `nativeEmitEvent` → `app.Event.Emit`, which a Go `app.Event.On`
+  subscriber receives with `Data` as a `map[string]any`.
+
+So the handler is one JSON document out and one command event back, and
+`backend/mediacontrols`' existing `Handler`/`Callbacks` interface — written
+for MPRIS — needed one addition (`OnDuck`) to cover a MediaSession.
+
+**The Java side needs no androidx.media either.** `MediaSessionCompat`
+is the documented route, but `android.media.session.MediaSession` and
+`Notification.MediaStyle` are both API 21 and minSdk here is 21, so the
+platform API covers it with two `Build.VERSION` branches (the channel,
+and PendingIntent mutability flags) and no new Gradle dependency.
+
+Four things measured or reasoned along the way, each of which would
+have been a bug:
+
+- **From API 26 the framework ducks the app itself** and sends no
+  `AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK`. So a duck implemented in the
+  player is a *pre-Oreo* path, and `setWillPauseWhenDucked(true)` —
+  which is how you get the callback back — would mean pausing for
+  every notification tone. Implementing both attenuates twice.
+- **A duck must not touch the user's volume.** `Player.SetDuck` holds
+  the attenuation as a separate offset and re-applies the user's level
+  through `setVolumeLocked`, so it cannot accumulate across repeated
+  ducks and `getUserVolume` — which feeds the event, the persisted
+  state and every relative change — still reports what the user chose.
+- **From Android 12 a background app may not *start* a foreground
+  service**, but it may keep delivering intents to one already running.
+  Every update after the first is exactly that case (a track change
+  with the screen off), so `WailsBridge` picks `startService` over
+  `startForegroundService` once `WailsForegroundService.running` is set.
+- **A service started with `startForegroundService` that returns from
+  `onStartCommand` without calling `startForeground` is killed**, so
+  the transport-button intents call it too rather than only the payload
+  path.
+
+**`make lint` does not see any of this.** Its three passes are the app,
+`indexbuild` and `dev` tag sets, all on linux/amd64, and `android.go` is
+behind the `android` build tag — the only thing that compiles it is the
+cross-compiler in `make android`. That is why the payload keys, the
+state words and the command names live in `androidpayload.go` *without*
+a build tag, with a test: it is the half that can be checked on the
+machine doing the work. A quick manual check of the tagged half is
+
+```bash
+B=$(echo /opt/android-ndk/toolchains/llvm/prebuilt/*/bin)
+CC=$B/aarch64-linux-android21-clang CXX=$B/aarch64-linux-android21-clang++ \
+  GOOS=android GOARCH=arm64 CGO_ENABLED=1 go build ./backend/...
+```
+
+— `CXX` matters: without it the oboe C++ sources compile against the
+host sysroot and fail on `android/log.h`, which reads like a missing NDK.
+
+**None of it has run.** The APK builds for both ABIs and the Go and Java
+halves compile; everything above about behaviour is read from the
+Android documentation and the source. The x86_64 emulator still cannot
+run this app (modernc `lstat`/seccomp, above) and an arm64 AVD still
+cannot exist on an x86_64 host, so A4's first real test is a device.
+
+## Dropping x86_64 cut the APK by 41% (measured 2026-08-16)
+
+Plan 016's B1, decided: the ABI is gone.
+
+| | fat (arm64 + x86_64) | arm64 only |
+|---|---|---|
+| `bin/yellowjacket.apk` | 27,059,130 B | 15,898,465 B |
+| `lib/` entries | 2 | 1 |
+
+It buys nothing to keep. x86_64 Android takes SIGSYS the first time it
+touches the database (modernc's raw `lstat` against Android's seccomp
+filter, above), which is *every* x86_64 device — emulators and x86
+Chromebooks alike — not merely the emulator here.
+
+Three places had to agree, and the third is the one that would have
+made this a silent no-op: `abiFilters` in `build/android/app/
+build.gradle` (what Gradle packages), `android:package` rather than
+`android:package:fat` in the Makefile (what Go compiles — otherwise the
+31 MB library is still built and then discarded), and the `native-code`
+assertion in `android-apk.yml`'s Verify step, which is now
+`native-code: 'arm64-v8a'$` and fails if a second ABI ever comes back.
+The anchor is deliberate and was checked against a real artifact:
+without it the pattern also matches the fat APK's line.
+
+One consequence for the dev tier was written down before it was
+checked, and checking it proved it false — see the next entry.
+
+## arm64 translation runs Go until Go asks the CPU what it is (measured 2026-08-16)
+
+Predicted, when the x86_64 ABI was dropped: `make android-install`
+against the emulator would now fail with
+`INSTALL_FAILED_NO_MATCHING_ABIS`. **Measured: it installs and
+launches.** Google's `google_apis` x86_64 images carry arm64
+translation —
+
+```
+ro.product.cpu.abilist = x86_64,arm64-v8a
+```
+
+— so the loader maps `lib/arm64/libwails.so` and executes it; the
+tombstone confirms it with `ABI: 'x86_64'` / `Guest architecture:
+'arm64'`.
+
+It dies anyway, before a line of our code, and the instruction says
+exactly why. The fault is at `libwails.so+0x15911d0`:
+
+```
+signal 4 (SIGILL), code -6 (SI_TKILL)
+15911d0: d5380600   mrs  x0, ID_AA64ISAR0_EL1
+```
+
+That is Go's `internal/cpu` reading the arm64 feature-ID system
+register during runtime init. The translator does not implement it, so
+**no Go binary starts under it** — this is not a property of this app
+and no work here would change it. (`code -6 (SI_TKILL)` also means the
+signal was re-raised by the process itself: Go's handler caught the
+SIGILL, printed a traceback to a stdout that goes to `/dev/null`, and
+re-raised. The invisible-failure rule again.)
+
+So there are now three distinct ways this app fails on an x86_64
+Android, none of them a bug in it:
+
+| build | cause | signal |
+|---|---|---|
+| x86_64 | modernc's raw `lstat` vs seccomp | SIGSYS, syscall 6 |
+| arm64, translated | Go reads `ID_AA64ISAR0_EL1` | SIGILL |
+| arm64, real device | — | still unverified |
+
+**A physical arm64 device is still the only verification path**, which
+is the conclusion the previous session reached by a different route.
+The value of this entry is that it closes the remaining plausible
+shortcut, with the instruction that closes it.
+
+### Two bugs the attempt found in the harness itself
+
+Both were on `main`, and the first had made the whole tier unusable
+since the commit that added it.
+
+**`scripts/android-emulator.sh` did not parse.** A `case` pattern read
+`*signatures do not match*)`, and `do` is a reserved word: bash fails
+the parse of the *entire file*, so `make android-emulator`,
+`android-install`, `android-smoke` and `android-logs` all died with
+`line 190: syntax error near unexpected token 'do'`. Quoting the inner
+words fixes it. A shell script that is only run interactively can carry
+a syntax error indefinitely — `bash -n` in the pre-commit hook would
+have caught it, and does not exist.
+
+**A bare `adb` addresses whatever is attached.** With a second emulator
+present (another project's, or a stale `offline` entry from a previous
+run), every adb call fails with "more than one device", and
+`cmd_install` reported that as *"no device — run 'make
+android-emulator' first"* — directly after that had printed "waiting
+for boot ok". `pick_device` now resolves `ANDROID_SERIAL` from
+`ro.boot.qemu.avd_name`, since serials are assigned in boot order and
+the AVD name is the stable identity. Verified with both emulators
+running: it selects `yj-test` and installs.

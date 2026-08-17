@@ -1,12 +1,14 @@
 # 016 — What Android parity would actually take
 
-> **Status: A1, A2 and A3 are done** (commit "let the app reach the
-> user's music"). The direction taken is **option 1, the full
-> librarian**: `MANAGE_EXTERNAL_STORAGE` plus an in-app folder browser,
-> which keeps the path-keyed model intact. A4 (MediaSession and audio
-> focus) and B1/B2 remain. The sections below are kept as written,
-> because they are the argument the decision rests on — see "What is
-> left" at the end for the current state.
+> **Status: all of section A is done.** A1–A3 landed with "let the app
+> reach the user's music"; A4 (MediaSession, transport notification,
+> audio focus) landed with "survive the screen locking". The direction
+> taken is **option 1, the full librarian**: `MANAGE_EXTERNAL_STORAGE`
+> plus an in-app folder browser, which keeps the path-keyed model
+> intact. B1/B2 remain, both awaiting a decision rather than work. The
+> sections below are kept as written, because they are the argument the
+> decision rests on — see "What is left" at the end for the current
+> state.
 
 Plan 015 shipped a *pipeline*: the app cross-compiles, is signed and
 versioned, and publishes from CI. This is the assessment of what stands
@@ -194,6 +196,56 @@ option 3 if the goal is the least work for the most value. Option 1 is
 the only one that answers "feature parity" literally, and it is the one
 worth arguing hardest against.
 
+> **Decided:** option 1's *data model* (the librarian keeps its
+> filesystem and its scanner — A1 shipped that) with option 2's
+> *surface*. The phone is a player over the library this app already
+> builds; it does not get every view. The list is below.
+
+## The phone gets a subset (decided)
+
+B2 is not a stylesheet pass and not a second front end either. A view
+is already a lazily-loaded chunk behind `VIEW_LOADERS` /
+`DETAIL_LOADERS` in `index.ts`, and the stores and bindings are shared,
+so the phone build is **a different loader table and a different
+chrome**, over the same stores.
+
+**In**, because each is something a person does with a phone in their
+hand:
+
+- **Home** — the shelves are already a phone-shaped surface.
+- **Library browse** — albums, artists, genres. The grids are already
+  virtualized and card-shaped.
+- **Now playing** — which on a phone is a *view*, not a 4em bar.
+- **The queue.**
+- **Search** — the header box, scoped as it already is.
+- **Playlists**, including smart ones, as lists to play rather than to
+  edit.
+
+**Out**, and each for a reason rather than by omission:
+
+- **Autotag** — the review UI is a wide table and the action rewrites
+  files on disk; B3 has not been verified even as *possible* yet.
+- **Downloads** — two tab panels of client configuration.
+- **Explore** — the catalog is a ~0.6 GB download (B4); browsing it is
+  the last thing to earn a phone's storage.
+- **Settings** — not the page. The phone needs a handful of settings
+  (theme, the library folder, playback) and not the 93 controls the
+  desktop page carries.
+- **Jobs**, **shortcuts overlay**, **column configuration** — a phone
+  has no keyboard and no resizable columns, and the jobs indicator is
+  enough.
+
+What the shell has to lose, from the audit at the top of this section:
+the 800×600 minimum, the 11-item sidebar (a phone wants a bottom tab
+bar over the five things above), hover as a route to anything,
+right-click as the only route to a context menu (long-press is the
+gesture), and ctrl/shift multi-select.
+
+One rule for the work: **no view forks.** A phone layout that copies a
+view's template is two templates to fix every bug in. Where a view
+cannot serve both, the split belongs at the chunk boundary that already
+exists.
+
 ## What is worth doing regardless of that decision
 
 Cheap, independently useful, and each unblocks measurement:
@@ -212,37 +264,68 @@ Cheap, independently useful, and each unblocks measurement:
    behaviour.
 
 
-## What is left (updated after A1-A3)
+## What is left (updated after A4)
 
-**A4, playback that survives the screen locking.** The manifest and the
-service are typed `mediaPlayback` now and the permission is declared,
-so the foundation is in place; what is missing is a `MediaSession`, a
-transport notification and audio-focus handling. The plumbing for it
-exists and needs no new JNI: Go can call
-`application.Android.StartForegroundService(json)` (exported by Wails),
-and Java can call `WailsBridge.emitEvent(name, json)` back into the
-application event bus, which Go subscribes to. So the shape is a JSON
-payload of title/artist/state going out and transport commands coming
-back, with `backend/mediacontrols` gaining an Android handler beside
-the MPRIS one — the interface it already defines is the right shape.
+**A4 is done.** `backend/mediacontrols/android.go` is a `Handler`
+beside the MPRIS one, and the Java half is
+`WailsForegroundService.java`: a `MediaSession`, a `MediaStyle`
+transport notification and audio focus. It needed no new JNI and no new
+Gradle dependency — `application.Android.StartForegroundService(json)`
+going out, `WailsBridge.emitEvent` → the application event bus coming
+back, and the platform `android.media.session` API rather than
+androidx.media, which minSdk 21 makes available anyway.
 
-Audio focus is the half that is easy to forget and the more important
-one: pause on a phone call, duck for a notification, pause on headphone
-unplug. `oto` will happily keep writing to a stream nobody can hear.
+Four decisions in it are worth keeping:
 
-**B1, the x86_64 half of the APK**, which cannot run on any Android
-because of the modernc `lstat` seccomp trap. Still undecided; dropping
-it is a five-minute change that halves the artifact.
+- **Ducking is a player concept, not a volume change.**
+  `Player.SetDuck` re-applies the *user's* level with an attenuation
+  offset, so `getUserVolume` still reports what the user chose and
+  nothing is persisted or emitted. A duck that wrote through to the
+  volume would let one notification tone permanently turn the music
+  down.
+- **The duck path is pre-Oreo only.** From API 26 the framework ducks
+  the app itself and sends no `CAN_DUCK` focus change, so asking to be
+  told instead (`setWillPauseWhenDucked`) would mean pausing for every
+  notification tone, and doing both would attenuate twice.
+- **An unchanged payload is not an event here either.** Every push
+  crosses JNI and re-delivers an Intent, and the player pushes state on
+  several paths that can agree.
+- **After the first start, updates use `startService`.** From Android
+  12 an app in the background may not *start* a foreground service, but
+  it may keep delivering intents to one it already has — which is every
+  track change with the screen off.
 
-**B2, the desktop shell.** Untouched and the largest remaining piece.
+The contract with Java — the payload keys, the state words, the command
+names — is in `androidpayload.go`, deliberately *without* the `android`
+build tag, so `go test` exercises it on every platform. Everything left
+in `android.go` is untested by construction: it compiles only under a
+cross-compiler and runs only on a phone.
+
+**B1 is done: x86_64 is dropped.** 27.1 MB → 15.9 MB, measured. Three
+places had to agree — `abiFilters`, the Makefile's `android:package`
+(or Go still compiles a library Gradle then discards) and the
+`native-code: 'arm64-v8a'$` assertion in `android-apk.yml`, whose
+anchor is what stops it also matching the fat APK's line. Adding the
+ABI back, if modernc ever fixes `Xlstat64`, is those same three edits.
+
+**B2, the desktop shell.** The largest remaining piece, and the scope
+is now decided — see "The phone gets a subset" below.
 
 **B3/B4** are unchanged, and B3 is now *possible* where it was not:
 with all-files access, `tagwriter` can write in place.
 
-### What A1-A3 did not answer
+### What none of section A answered
 
 Nothing here has been observed on a device. The permission flow in
 particular is the kind of thing that behaves differently across OEM
 builds — `ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION` is
 implemented inconsistently, which is why there is a fallback to the
 global list, and neither path has been exercised.
+
+A4 adds its own list of things only a device can answer, and they are
+the likely first failures: whether the notification appears at all
+(POST_NOTIFICATIONS is requested from `startForegroundService`, so a
+user who declines gets a service with an invisible notification),
+whether audio focus arrives while `oto`/oboe holds the output, whether
+the lock screen picks up the session, and whether cover art decoded
+from a `MANAGE_EXTERNAL_STORAGE` path is readable by the service.

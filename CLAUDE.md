@@ -343,7 +343,26 @@ rather than renaming them.
   came about.
 - `config` — TOML-based settings. Settings page uses HTMX + templ for server-rendered HTML fragments.
 - `playlist` / `smartplaylist` — Playlist CRUD and rule-based smart playlists.
-- `mediacontrols` — MPRIS integration on Linux via D-Bus.
+- `mediacontrols` — OS media controls behind one `Handler`: MPRIS over
+  D-Bus on desktop Linux, a MediaSession on Android, a no-op stub
+  elsewhere. The split is by build tag and `android` implies `linux`,
+  so the three files read `linux && !android`, `android` and `!linux`.
+  Its Android half needs no JNI beyond what Wails exports — a JSON
+  payload out through `application.Android.StartForegroundService`, a
+  command event back through `WailsBridge.emitEvent` — and the Java it
+  talks to is `build/android/.../WailsForegroundService.java`. That
+  contract (payload keys, state words, command names) is in
+  `androidpayload.go` **without** the build tag, because a tagged file
+  is compiled by nothing `make lint` or `make test` runs and is
+  untestable off a phone.
+
+  `OnDuck` is the one callback MPRIS does not use: Android asks for
+  attenuation rather than a pause when something short needs the
+  output. `Player.SetDuck` keeps it as an offset on top of the user's
+  level rather than writing through to the volume, so it cannot
+  accumulate and nothing persists or emits a level the user did not
+  choose — and it only ever fires below API 26, where the framework
+  does not already duck the app itself.
 - `system` — OS-specific paths (XDG on Linux, `%LOCALAPPDATA%` on Windows).
 - `explore` — Catalog search and browse over `explore_index`. See below.
   Its **shelves** (`shelves.go`) are the page Explore shows before
@@ -1774,8 +1793,9 @@ publish (`arch-package`, `homebrew-formula`, `index-artifact`,
 deciding whether a push was healthy.
 
 **`android-apk.yml` is the only one keyed on a tag and the only one
-that can lose something irrecoverable.** It builds the signed fat APK
-on every `v*` tag and publishes it to the *generic* registry, which is
+that can lose something irrecoverable.** It builds the signed
+`arm64-v8a` APK (the only ABI Android can run this app on — see
+`app/build.gradle`) on every `v*` tag and publishes it to the *generic* registry, which is
 readable without credentials — the reason Obtainium can poll a plain
 URL. Android refuses to update an app whose signing certificate
 changed, and the only remedy is an uninstall that takes the user's
