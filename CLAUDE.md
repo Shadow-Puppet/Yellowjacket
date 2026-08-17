@@ -2060,7 +2060,13 @@ Tests use `database.NewTestDB(t)` for in-memory SQLite, built by the same
 
 ## Git Workflow
 
-Feature branches and PRs are the norm, but direct pushes to `main` are allowed. Pre-commit runs vet, lint, codegen check, and frontend typecheck in parallel. Pre-push runs the full test suite.
+Feature branches and PRs are the only way in: **`main` is a protected
+branch** (`enable_push: false`, an empty push whitelist, and `CI / check*`
++ `CI / e2e*` as required status checks), so a direct push is rejected by
+the pre-receive hook. This file said otherwise for a long time. Tags are
+*not* protected, which is what lets `release.yml` push one.
+
+Pre-commit runs vet, lint, codegen check, and frontend typecheck in parallel. Pre-push runs the full test suite.
 
 ## CI
 
@@ -2092,9 +2098,19 @@ Four things about it are load-bearing:
   triggers nothing. All four publishers additionally skip `v0.0.0`
   explicitly, cleanly rather than by failing, because a floor is not a
   shipment.
-- **The changelog commit must not re-enter the workflow.** The `git`
-  plugin pushes `chore(release): x.y.z` back to `main`; the job guards on
-  that subject rather than trusting `[skip ci]`.
+- **The release page is the changelog, and that follows from the branch
+  protection.** `@semantic-release/git` would push a `chore(release):`
+  commit back to `main`, which the pre-receive hook rejects — *after* the
+  tag had been pushed, leaving a tagged release the run then reports as
+  failed. Whitelisting the CI user was the alternative and was declined:
+  it weakens a protection someone set on purpose and lets a bot push to
+  `main` without the checks every human PR passes. So the plugin is
+  absent, `@semantic-release/changelog` writes to a gitignored
+  `.release-notes.md` purely to carry the notes into
+  `scripts/gitea-release.sh`, and `CHANGELOG.md` is a signpost to the
+  releases page rather than a file that would silently stop updating.
+  The workflow keeps its `chore(release):` guard anyway, for the day
+  someone adds the plugin back.
 - **An asset upload waits for the release to exist.** semantic-release
   pushes the tag in `prepare` and creates the release in `publish`, so
   the tag push that starts these workflows happens *before* there is a

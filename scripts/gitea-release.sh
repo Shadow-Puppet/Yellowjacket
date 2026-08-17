@@ -6,13 +6,17 @@
 # Gitea's API is /api/v1 and @semantic-release/github speaks GitHub's.
 # That is the whole of the Gitea-shaped work: one POST.
 #
-# **The notes come from CHANGELOG.md, not from an argument.**  Release
-# notes are rendered commit messages — arbitrary text carrying backticks,
-# quotes and `$` — so interpolating ${nextRelease.notes} into a shell
-# command would be an injection whose input is the commit log.  The
-# changelog plugin has already written them to the top of CHANGELOG.md by
-# the time `publish` runs, so the only thing crossing the shell boundary
-# here is a semver string, which is validated below anyway.
+# **The notes come from a file, not from an argument.**  Release notes are
+# rendered commit messages — arbitrary text carrying backticks, quotes and
+# `$` — so interpolating ${nextRelease.notes} into a shell command would
+# be an injection whose input is the commit log.  @semantic-release/changelog
+# has already written them to .release-notes.md by the time `publish` runs,
+# so the only thing crossing the shell boundary here is a semver string,
+# which is validated below anyway.
+#
+# That file is a gitignored build artifact, not a document: `main` is a
+# protected branch, so nothing commits a changelog back to it and the
+# release page is the changelog.  See .releaserc.yml.
 #
 # Usage:  scripts/gitea-release.sh <version>      # e.g. 0.0.1
 #
@@ -48,10 +52,10 @@ tag="v${version}"
 notes=$(awk '
 	/^## / { seen++; if (seen > 1) exit }
 	seen   { print }
-' CHANGELOG.md)
+' .release-notes.md)
 
 if [ -z "$notes" ]; then
-	echo "gitea-release: found no release section at the top of CHANGELOG.md" >&2
+	echo "gitea-release: found no release section at the top of .release-notes.md" >&2
 	echo '  the changelog plugin runs in prepare and this runs in publish, so' >&2
 	echo '  an empty section means the plugin order in .releaserc.yml moved.' >&2
 	exit 1

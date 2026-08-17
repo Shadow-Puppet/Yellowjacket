@@ -206,7 +206,6 @@ release-dry: ## Print the version a merge to main would release
 		-p @semantic-release/commit-analyzer@13 \
 		-p @semantic-release/release-notes-generator@14 \
 		-p @semantic-release/changelog@7 \
-		-p @semantic-release/git@11 \
 		-p @semantic-release/exec@7 \
 		-p conventional-changelog-conventionalcommits@9 \
 		semantic-release --dry-run --no-ci

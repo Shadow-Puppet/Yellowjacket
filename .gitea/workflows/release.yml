@@ -74,12 +74,13 @@ jobs:
           git config --global --add safe.directory /src
           git -C /src log --oneline -1
 
-      # The @semantic-release/git plugin pushes a `chore(release): x.y.z`
-      # commit back to main, which is a push to the branch this workflow
-      # runs on.  Guarded here rather than by [skip ci], whose handling in
-      # Gitea is one more thing that would have to be verified — and this
-      # is a two-line test of a fact we control.
-      - name: Skip the changelog commit
+      # Nothing currently pushes a `chore(release):` commit — main is a
+      # protected branch, so .releaserc.yml carries no @semantic-release/git
+      # and the release page is the changelog.  This guard is kept for the
+      # day someone adds that plugin back: without it the commit-back is a
+      # push to the branch this workflow runs on, and the loop is a release
+      # per release.  Six lines against that is cheap.
+      - name: Skip a changelog commit, if one ever exists
         id: guard
         working-directory: /src
         run: |
@@ -161,7 +162,6 @@ jobs:
             -p @semantic-release/commit-analyzer@13 \
             -p @semantic-release/release-notes-generator@14 \
             -p @semantic-release/changelog@7 \
-            -p @semantic-release/git@11 \
             -p @semantic-release/exec@7 \
             -p conventional-changelog-conventionalcommits@9 \
             semantic-release \
