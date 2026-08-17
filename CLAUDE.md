@@ -271,6 +271,11 @@ rather than renaming them.
     the ~205 GB dump stream the `/cache` volume exists to avoid — so
     `retireStaleCache` is false there (`staleshape_policy_indexbuild.go`)
     and `TestTheCatalogSurvivesAStaleShape` fails the moment it is not.
+    `TestNoCacheTableIsRetiredHere` is the same assertion made of *every*
+    `datamap` Cache table rather than one, because the risk is not that
+    shape recurring — it is the next destructive repair added to
+    `database.NewDB`, the chokepoint every binary here shares, without
+    asking which binary it is in.
     This is written down because it already happened: the repair shipped
     without the distinction and dropped the real CI catalog on its first
     run, with `reason="column entity_type is TEXT, schema declares
