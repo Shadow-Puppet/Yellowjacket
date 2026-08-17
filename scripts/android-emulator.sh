@@ -60,6 +60,45 @@ need_sdk() {
 	[ -x "$EMULATOR" ] || die "no emulator at $EMULATOR — run 'make android-setup'"
 }
 
+# Address one device explicitly, because a bare `adb` addresses whatever
+# is attached and there is very often something else attached: another
+# project's emulator, or this one's own corpse left `offline` by a
+# previous run.  Both make every adb call here fail with "more than one
+# device", which cmd_install then reports as "no device — run 'make
+# android-emulator' first" *immediately after* that succeeded.
+#
+# The AVD name is the identity, not the serial: serials are assigned in
+# boot order and change between runs.  ANDROID_SERIAL is honoured if the
+# caller set it, and is what every later `adb` in this script reads.
+pick_device() {
+	[ -n "${ANDROID_SERIAL:-}" ] && return 0
+
+	online=$("$ADB" devices | awk '$2 == "device" { print $1 }')
+	[ -n "$online" ] || return 1
+
+	for serial in $online; do
+		name=$("$ADB" -s "$serial" shell getprop ro.boot.qemu.avd_name 2>/dev/null | tr -d '\r')
+		[ -n "$name" ] || name=$("$ADB" -s "$serial" shell getprop ro.kernel.qemu.avd_name 2>/dev/null | tr -d '\r')
+		if [ "$name" = "$AVD" ]; then
+			export ANDROID_SERIAL="$serial"
+			return 0
+		fi
+	done
+
+	# No AVD of ours, but exactly one device: a physical phone, which is
+	# the one target this tier actually wants (see android-tier.md).
+	if [ "$(printf '%s\n' "$online" | wc -l)" -eq 1 ]; then
+		export ANDROID_SERIAL="$online"
+		return 0
+	fi
+
+	echo "android: several devices and none is the '$AVD' AVD:" >&2
+	"$ADB" devices | sed '1d;/^$/d;s/^/    /' >&2
+	echo "    set ANDROID_SERIAL to choose one" >&2
+
+	return 1
+}
+
 # The emulator is the only long-lived process here, and it is addressed
 # by its saved pid.  Never by name: `pkill -f emulator` matches this
 # script's own command line and kills the shell running it, which is
@@ -126,6 +165,7 @@ cmd_start() {
 
 	echo -n "waiting for boot"
 	"$ADB" wait-for-device >/dev/null 2>&1 || die "device never appeared; see $LOGFILE"
+	pick_device || die "the emulator booted but could not be addressed"
 	for _ in $(seq 1 150); do
 		if [ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; then
 			echo " ok"
@@ -161,6 +201,7 @@ cmd_stop() {
 cmd_install() {
 	need_sdk
 	[ -f bin/yellowjacket.apk ] || die "no bin/yellowjacket.apk — run 'make android' first"
+	pick_device || die "no device — run 'make android-emulator' first"
 	"$ADB" get-state >/dev/null 2>&1 || die "no device — run 'make android-emulator' first"
 
 	# The two ways this fails are both about identity rather than the
@@ -187,7 +228,12 @@ cmd_install() {
 			echo "or build with a version:"
 			echo "    YJ_VERSION=1.3.1 YJ_VERSION_CODE=10301 make android"
 			;;
-		*INSTALL_FAILED_UPDATE_INCOMPATIBLE* | *signatures do not match*)
+		# The inner quotes are load-bearing: `do` is a reserved word, and
+		# an unquoted one in a case pattern is a syntax error that fails
+		# the parse of the *whole file* -- so every subcommand here died
+		# with "line 190: syntax error near unexpected token `do'", not
+		# just install.
+		*INSTALL_FAILED_UPDATE_INCOMPATIBLE* | *"signatures do not match"*)
 			echo
 			echo "The installed copy was signed with a different key.  Android"
 			echo "never allows that as an update — which is exactly why CI"
@@ -202,6 +248,7 @@ cmd_install() {
 
 cmd_launch() {
 	need_sdk
+	pick_device || die "no device — run 'make android-emulator' first"
 	"$ADB" shell am force-stop "$PKG"
 	"$ADB" logcat -c
 	"$ADB" shell am start -n "$PKG/$ACTIVITY" >/dev/null
@@ -209,6 +256,7 @@ cmd_launch() {
 
 cmd_logs() {
 	need_sdk
+	pick_device || die "no device — run 'make android-emulator' first"
 	# The app's own tags plus the two that report its death.  Chasing a
 	# raw logcat here is hopeless: the emulator emits thousands of lines
 	# a second, almost all of them WindowManager transitions.
