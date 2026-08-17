@@ -50,6 +50,7 @@ import '@store/theme-store';
 // registers the document keydown listener for global shortcuts.
 import './src/services/keyboard-shortcut-service';
 import { activateView, deactivateView } from '@utils/view-lifecycle';
+import { installLongPressContextMenu } from '@utils/long-press';
 import {
     hasTrackPayload,
     getDragPayload,
@@ -63,6 +64,11 @@ setBasePath('/dist/webawesome');
 // caches by URL, so one early render would pin the remote answer for
 // the session.
 registerBundledIcons();
+
+// The touch equivalent of a right-click, installed once for every menu
+// in the app rather than per component. Harmless on a desktop: it acts
+// on `pointerType === 'touch'` only.
+installLongPressContextMenu();
 
 // ---------------------------------------------------------------------------
 // View caching navigation system
