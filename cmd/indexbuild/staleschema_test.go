@@ -125,3 +125,92 @@ func count(t *testing.T, dbPath, query string) int {
 
 	return n
 }
+
+// TestTheCatalogSurvivesAStaleShape is the accident written down.
+//
+// The app repairs a stale Cache table by dropping it: its catalog is
+// downloaded, so a wrong shape costs about a minute of re-fetching and
+// keeping it costs every Explore read. Applied here that rule is
+// catastrophic — this database is what the artifact is *cut from*, so
+// there is nothing to re-fetch and the only way back is the ~205 GB
+// dump stream the /cache volume exists to avoid.
+//
+// It shipped without that distinction and dropped the real CI catalog
+// on the first run:
+//
+//	retiring a table ... table=explore_index
+//	  reason="column entity_type is TEXT, schema declares INTEGER"
+//	index maintenance mode=build reason="no completed import yet"
+//
+// The mismatch was real: that database is deliberately kept in the
+// older encoding, which `fix(indexexport): read an index older than the
+// binary` exists to tolerate. So the shape will not match, every run,
+// by design — and the catalog must survive it anyway.
+func TestTheCatalogSurvivesAStaleShape(t *testing.T) {
+	logger := slog.New(slog.DiscardHandler)
+
+	t.Setenv("YJ_HOME", t.TempDir())
+
+	dataDir, err := system.GetUserDataDirPath()
+	if err != nil {
+		t.Fatalf("resolve data dir: %v", err)
+	}
+
+	dbPath := filepath.Join(dataDir, "yj.db")
+
+	if _, err := database.NewDB(logger); err != nil {
+		t.Fatalf("first open: %v", err)
+	}
+
+	// The shape the real index database is in: every current column,
+	// but the ids and the entity type still text.  That is what the
+	// exporter's backward-compatibility fix tolerates, and it is what
+	// the repair saw and called stale.
+	exec(t, dbPath, `
+		DROP TABLE explore_index;
+		CREATE TABLE explore_index (
+			id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+			entity_type            TEXT NOT NULL,
+			mbid                   TEXT NOT NULL,
+			title                  TEXT NOT NULL,
+			artist_name            TEXT NOT NULL,
+			artist_mbid            TEXT NOT NULL,
+			aliases                TEXT NOT NULL DEFAULT '',
+			popularity             INTEGER NOT NULL DEFAULT 0,
+			listener_count         INTEGER NOT NULL DEFAULT 0,
+			duration               INTEGER NOT NULL DEFAULT 0,
+			caa_release_mbid       TEXT NOT NULL DEFAULT '',
+			release_name           TEXT NOT NULL DEFAULT '',
+			primary_type           TEXT NOT NULL DEFAULT '',
+			secondary_types        TEXT NOT NULL DEFAULT '',
+			release_date           TEXT NOT NULL DEFAULT '',
+			total_tracks           INTEGER NOT NULL DEFAULT 0,
+			artist_type            TEXT NOT NULL DEFAULT '',
+			country                TEXT NOT NULL DEFAULT '',
+			disambiguation         TEXT NOT NULL DEFAULT '',
+			sort_name              TEXT NOT NULL DEFAULT '',
+			in_library             INTEGER NOT NULL DEFAULT 0,
+			is_similar             INTEGER NOT NULL DEFAULT 0,
+			local_artist_id        INTEGER,
+			local_release_group_id INTEGER,
+			local_recording_id     INTEGER,
+			discog_fetched         INTEGER NOT NULL DEFAULT 0,
+			UNIQUE(mbid)
+		);
+		INSERT INTO explore_index
+			(entity_type, mbid, title, artist_name, artist_mbid)
+		VALUES ('artist', 'a-b-c', 'A Catalog Row', 'An Artist', 'd-e-f');
+	`)
+
+	if _, err := database.NewDB(logger); err != nil {
+		t.Fatalf("open with a stale catalog shape: %v", err)
+	}
+
+	if got := count(t, dbPath, "SELECT COUNT(*) FROM explore_index"); got != 1 {
+		t.Fatalf(
+			"explore_index rows = %d, want 1 — the catalog was retired, "+
+				"which costs this database a ~205GB rebuild",
+			got,
+		)
+	}
+}

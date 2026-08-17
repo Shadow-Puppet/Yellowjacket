@@ -115,6 +115,14 @@ func retireStaleTables(
 			continue
 		}
 
+		// Whether a stale Cache table may be rebuilt is decided per
+		// binary, at compile time: the app re-downloads its catalog in
+		// about a minute, cmd/indexbuild would re-derive it from ~205 GB
+		// of dumps.  See staleshape_policy.go.
+		if entry.Kind == datamap.Cache && !retireStaleCache {
+			continue
+		}
+
 		reason, err := staleReason(ctx, db, table, columns)
 		if err != nil {
 			return err
