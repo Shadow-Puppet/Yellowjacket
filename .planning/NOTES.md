@@ -3295,6 +3295,12 @@ other way, so the same assertion passed in the browser and failed on the
 phone. The unit test now carries the desktop map as a fixture, which is
 the reproduction the browser needed to have.
 
+**Confirmed on the phone afterwards**, with the fix installed:
+`24px 304px 80px`, 52 px rows, no header row, the title 298 px and not
+truncated, `body.scrollWidth == clientWidth`. The same numbers the
+browser gives at that viewport, which is the point of having measured
+both.
+
 Two tooling notes worth keeping. `playwright-cli` holds its page across
 a `make dev-headless` restart, so a probe after a rebuild can be
 answering for the *old* bundle — it reported the desktop layout at 424 px
