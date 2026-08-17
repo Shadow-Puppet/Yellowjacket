@@ -2,7 +2,12 @@
 <resources>
     <color name="wails_blue">#3574D4</color>
     <color name="wails_blue_dark">#2C5FB8</color>
-    <color name="wails_background">#1B2636</color>
+    <!-- The window background, which is what the launch screen shows and
+         what the system-bar padding leaves visible. Black rather than the
+         scaffold's blue-grey because this app's own default ramp is
+         black: a band of #1B2636 above and below it reads as the app
+         failing to fill the screen. -->
+    <color name="wails_background">#000000</color>
     <color name="white">#FFFFFFFF</color>
     <color name="black">#FF000000</color>
 </resources>

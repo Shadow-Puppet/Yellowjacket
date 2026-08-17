@@ -31,9 +31,16 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
+import android.view.View;
+
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.FileProvider;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
 import androidx.webkit.WebViewAssetLoader;
 
 import org.json.JSONObject;
@@ -87,6 +94,10 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+
+        // Before anything renders: the page is laid out inside the
+        // window, and on Android 15 the window is the whole screen.
+        applyWindowInsets();
 
         // Initialize the native Go library
         bridge = new WailsBridge(this);
@@ -892,8 +903,61 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    /**
+     * Keep the web content inside the safe area.
+     *
+     * <p>targetSdk 35 is Android 15, which lays every app out
+     * edge-to-edge and ignores the {@code statusBarColor} and
+     * {@code navigationBarColor} this app's theme still sets. The
+     * WebView is {@code match_parent}, so the page's bottom band -- the
+     * transport and, on a phone, the tab bar -- was drawn underneath the
+     * gesture bar and reported from a device as "I can't see the
+     * playback controls, they seem to be off screen".
+     *
+     * <p>No web-tier test can see this: a browser viewport has no system
+     * bars, so the phone specs at 390x844 render a shell that fits
+     * while the device does not.
+     *
+     * <p>The insets are applied as padding and the window insets are
+     * returned rather than consumed, so the WebView is laid out inside
+     * them. {@code ime()} is in the mask because the same reasoning
+     * covers the keyboard: a focused search box that the keyboard
+     * covers is the same bug one surface over.
+     */
+    private void applyWindowInsets() {
+        final View container = findViewById(R.id.main_container);
+
+        if (container == null) {
+            return;
+        }
+
+        ViewCompat.setOnApplyWindowInsetsListener(container, (view, windowInsets) -> {
+            Insets insets = windowInsets.getInsets(
+                    WindowInsetsCompat.Type.systemBars()
+                            | WindowInsetsCompat.Type.displayCutout()
+                            | WindowInsetsCompat.Type.ime());
+
+            view.setPadding(insets.left, insets.top, insets.right, insets.bottom);
+
+            return windowInsets;
+        });
+
+        // The padded band shows the window background, which is dark
+        // (this app's own default ramp is black), so the system's icons
+        // have to be the light set or they vanish into it. The theme is
+        // DayNight and would otherwise ask for dark icons in light mode.
+        WindowInsetsControllerCompat controller =
+                WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView());
+
+        controller.setAppearanceLightStatusBars(false);
+        controller.setAppearanceLightNavigationBars(false);
+    }
+
     @Override
     public void onBackPressed() {
+        // The frontend records every navigation as a history entry, so
+        // this is the app's own back stack: `canGoBack()` is false only
+        // at the launch entry, which is where back should leave.
         if (webView != null && webView.canGoBack()) {
             webView.goBack();
         } else {
