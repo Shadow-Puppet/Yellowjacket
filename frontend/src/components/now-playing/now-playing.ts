@@ -4,7 +4,7 @@ import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
 import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
 import {
-    artistLink,
+    creditLink,
     trackLink,
     exploreLinkStyles,
 } from '@utils/explore-link';
@@ -14,6 +14,7 @@ import {
     navigateToQueueSource,
 } from '@utils/queue-source-link';
 import { PlayerController } from '@store/controllers/player-controller';
+import { creditStore } from '@store/credit-store';
 import { QueueController } from '@store/controllers/queue-controller';
 import { FavoritesController } from '@store/controllers/favorites-controller';
 import { designTokens } from '../../styles/tokens.css';
@@ -290,6 +291,9 @@ export class NowPlaying extends LitElement {
     }
   `];
 
+    /** Unsubscribes the credit-arrival repaint. */
+    private creditsUnsub?: () => void;
+
     override connectedCallback() {
         super.connectedCallback();
         this.loadScrollMode();
@@ -306,10 +310,21 @@ export class NowPlaying extends LitElement {
             this.geometryDirty = true;
             this.requestUpdate();
         });
+
+        // A credit arriving changes the rendered text, and the marquee
+        // measures that text — so this is a geometry change, not just a
+        // repaint.  Saying so is what stops the bar scrolling to the
+        // old width.
+        this.creditsUnsub = creditStore.subscribe(() => {
+            this.geometryDirty = true;
+            this.requestUpdate();
+        });
     }
 
     override disconnectedCallback() {
         super.disconnectedCallback();
+        this.creditsUnsub?.();
+        this.creditsUnsub = undefined;
         // A drag interrupted by the bar going away still has to clean up.
         this.attachDragListeners(false);
         window.removeEventListener(SCROLL_CHANGE_EVENT, this.handleScrollModeEvent);
@@ -441,7 +456,7 @@ export class NowPlaying extends LitElement {
               @mouseleave=${this.handleArtistMouseLeave}
               @transitionend=${() => this.onScrollCycleEnd('artist')}
             >
-              <span class="scroll-content">${artistLink(track.artist, track.artistMbid) || 'Unknown Artist'}</span>
+              <span class="scroll-content">${creditLink(creditStore.credits(track.recordingMbid), track.artist, track.artistMbid) || 'Unknown Artist'}</span>
             </span>
             ${describeQueueSource(this.queue.source)
                 ? html`

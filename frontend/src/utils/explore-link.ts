@@ -294,3 +294,81 @@ async function openAlbum(
 
     navigate(target, detail);
 }
+
+/**
+ * One credited artist within a multi-artist credit.
+ *
+ * Mirrors `artist_credit_part` / `file_artists`: the name **as
+ * credited** (which is not the artist's own name — MusicBrainz credits
+ * "Snoop Dogg" on a track by the artist called "Snoop Doggy Dogg"), the
+ * MBID to navigate to, and the literal connector that follows this
+ * part.
+ */
+export interface CreditPart {
+    /** The name as credited. Display uses this. */
+    creditedName: string;
+    /** The artist's MusicBrainz ID. Navigation uses this. */
+    artistMbid: string;
+    /** The connector following this part: " feat. ", " & ", ", ", "". */
+    joinPhrase: string;
+}
+
+/**
+ * Render a credit as links, one per credited artist, with the join
+ * phrases as plain text between them.
+ *
+ * Join phrases are **assembly instructions, not disassembly
+ * instructions**.  This concatenates parts; it never searches for a
+ * name inside a credit string.  That distinction is the whole point:
+ * the stored credit text may have come from a file's tags while the
+ * parts come from the catalog, and measured on a real library those
+ * disagree for about one in three multi-artist credits ("Skrillex
+ * feat. Swae Lee" tagged against "Skrillex & Swae Lee" upstream).  A
+ * search would miss, or match the wrong span.  Building from parts,
+ * the link boundaries are known by construction.
+ *
+ * Falls back to `artistLink(fallbackName, fallbackMbid)` — today's
+ * behaviour exactly — when there are no parts.  That is the common
+ * case and not a degraded one: a single-artist credit *is* one link,
+ * and a file with no recording MBID or no catalog row has nothing to
+ * decompose.  Do not try to split the fallback string; there is
+ * genuinely no information in it to split on.
+ *
+ * @param parts - The credit's parts in position order, if known.
+ * @param fallbackName - The credit as a single string.
+ * @param fallbackMbid - The primary artist's MBID.
+ */
+export function creditLink(
+    parts: readonly CreditPart[] | undefined,
+    fallbackName: string,
+    fallbackMbid: string,
+): TemplateResult | string {
+    // One part is one link, so it is the fallback rather than a special
+    // case — and a zero-part credit reaching here would otherwise
+    // render as nothing at all, which is worse than the single-artist
+    // answer it replaced.
+    if (!parts || parts.length < 2) {
+        return artistLink(fallbackName, fallbackMbid);
+    }
+
+    return html`${parts.map(
+        (part) =>
+            html`${artistLink(part.creditedName, part.artistMbid)}${part.joinPhrase}`,
+    )}`;
+}
+
+/**
+ * The plain-text form of a credit, for `title=` attributes and any
+ * other place that needs a string rather than a template.
+ *
+ * Rendered from the same parts by the same concatenation, so the
+ * tooltip cannot disagree with the links beneath it.
+ */
+export function creditText(
+    parts: readonly CreditPart[] | undefined,
+    fallbackName: string,
+): string {
+    if (!parts || parts.length < 2) return fallbackName;
+
+    return parts.map((p) => p.creditedName + p.joinPhrase).join('');
+}

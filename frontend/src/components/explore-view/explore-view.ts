@@ -16,7 +16,8 @@ import { exploreCache, ARTIST_IMAGE_CACHE_LIMIT } from '../../store/explore-cach
 import { queueStore } from '../../store/queue-store';
 import { notificationStore } from '../../store/notification-store';
 import '../notifications/inline-notice';
-import { artistLink, trackLink, exploreLinkStyles } from '../../utils/explore-link';
+import { creditLink, trackLink, exploreLinkStyles } from '../../utils/explore-link';
+import { creditStore } from '@store/credit-store';
 import { describeError } from '../../utils/describe-error';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '../library-status-indicator/library-status-indicator.js';
@@ -774,6 +775,14 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
     }
 
     protected override onViewActivate(): void {
+        // A cached primary view, so this is torn down on the way out
+        // rather than on disconnect — which never fires here.
+        this.whileActive(
+            creditStore.subscribe(() => {
+                this.requestUpdate();
+            }),
+        );
+
         // Fetched on arrival rather than on connect: this is a cached
         // primary view, created and warmed at startup, so a fetch there
         // is three catalog queries every user pays for whether or not
@@ -2193,7 +2202,7 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
                                 <div class="album-title" title="${rg.title}">
                                     ${rg.title}
                                 </div>
-                                <div class="album-artist">${artistLink(rg.artistCredit, rg.artistMbid ?? '')}</div>
+                                <div class="album-artist">${creditLink(creditStore.credits(rg.mbid), rg.artistCredit, rg.artistMbid ?? '')}</div>
                                 <div class="album-meta">
                                     <div class="album-meta-text">
                                         ${rg.primaryType
@@ -2255,7 +2264,7 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
                                         ${trackLink(r.title, r.releaseName ?? '', r.releaseGroupMbid ?? '', r.mbid)}
                                     </div>
                                     <div class="track-artist">
-                                        ${artistLink(r.artistCredit, r.artistMbid ?? '')}
+                                        ${creditLink(creditStore.credits(r.mbid), r.artistCredit, r.artistMbid ?? '')}
                                     </div>
                                 </div>
                                 <div class="track-meta">

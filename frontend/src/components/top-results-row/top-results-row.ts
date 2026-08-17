@@ -9,7 +9,8 @@ import {
 } from '@go/explore/service.js';
 import '../library-status-indicator/library-status-indicator.js';
 import type { LibraryStatus } from '../library-status-indicator/library-status-indicator.js';
-import { artistLink, exploreLinkStyles } from '../../utils/explore-link';
+import { creditLink, exploreLinkStyles } from '../../utils/explore-link';
+import { creditStore } from '@store/credit-store';
 import { libraryStatusFor } from '../../utils/library-status';
 import { downloadStore } from '../../store/download-store';
 
@@ -61,14 +62,23 @@ export class TopResultsRow extends LitElement {
      * the property and never updates this element. One subscription for
      * the row, not one per card.
      */
+    /** Unsubscribes the credit-arrival repaint. */
+    private creditsUnsub?: () => void;
+
     override connectedCallback(): void {
         super.connectedCallback();
+
+        this.creditsUnsub = creditStore.subscribe(() => {
+            this.requestUpdate();
+        });
         this.unsubRequests = downloadStore.subscribe(() =>
             this.requestUpdate(),
         );
     }
 
     override disconnectedCallback(): void {
+        this.creditsUnsub?.();
+        this.creditsUnsub = undefined;
         this.unsubRequests?.();
         this.unsubRequests = undefined;
         super.disconnectedCallback();
@@ -327,7 +337,7 @@ export class TopResultsRow extends LitElement {
                         ${artistPart || metaPart
                             ? html`<span class="card-subtitle"
                                   >${artistPart
-                                      ? artistLink(artistPart, r.artistMbid ?? '')
+                                      ? creditLink(creditStore.credits(r.mbid), artistPart, r.artistMbid ?? '')
                                       : nothing}${artistPart && metaPart
                                       ? ' · '
                                       : ''}${metaPart}</span

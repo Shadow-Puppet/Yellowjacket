@@ -20,7 +20,8 @@ type MBRelease = explore.MBRelease;
 type MBTrack = explore.MBTrack;
 import { exploreCache } from '../../store/explore-cache';
 import { libraryStore } from '../../store/library-store';
-import { artistLink, exploreLinkStyles } from '../../utils/explore-link';
+import { creditLink, exploreLinkStyles } from '../../utils/explore-link';
+import { creditStore } from '@store/credit-store';
 import { describeError } from '../../utils/describe-error';
 import { EventsOn } from '@runtime/runtime';
 import { Events } from '../../events';
@@ -704,8 +705,15 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
      * BrowseReleases fetch never signals readiness. */
     private releasesFallbackTimer?: number;
 
+    /** Unsubscribes the credit-arrival repaint. */
+    private creditsUnsub?: () => void;
+
     override connectedCallback() {
         super.connectedCallback();
+
+        this.creditsUnsub = creditStore.subscribe(() => {
+            this.requestUpdate();
+        });
         if (this.releaseGroupMBID || this.localAlbumId) {
             void this.loadAllData();
         }
@@ -760,6 +768,8 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
 
     override disconnectedCallback() {
         super.disconnectedCallback();
+        this.creditsUnsub?.();
+        this.creditsUnsub = undefined;
         this.downloadUnsub?.();
         this.downloadUnsub = null;
         this.unsubReleasesReady?.();
@@ -2850,7 +2860,11 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
         return html`
             ${artist
                 ? html`<div class="album-artist">
-                      ${artistLink(artist, artistMbid)}
+                      ${creditLink(
+                          creditStore.credits(this.releaseGroupMBID),
+                          artist,
+                          artistMbid,
+                      )}
                   </div>`
                 : nothing}
             ${metaParts.length > 0

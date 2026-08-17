@@ -15,6 +15,7 @@ import {
 import { EventsOn } from '@runtime/runtime';
 import { Events } from '../../events';
 import { queueStore } from '@store/queue-store';
+import { creditStore } from '@store/credit-store';
 import { PlayerController } from '@store/controllers/player-controller';
 import { SearchController } from '@store/controllers/search-controller';
 import { SelectionController } from '@utils/selection-controller';
@@ -51,7 +52,8 @@ import type { CoverArtUrls } from '@components/track-details/track-details.js';
 import { libraryStore } from '@store/library-store';
 import { formatMilliseconds } from '@utils/time';
 import {
-    artistLink,
+    creditLink,
+    creditText,
     albumLink,
     trackLink,
     exploreLinkStyles,
@@ -136,6 +138,9 @@ export class SmartPlaylistDetails
      * rather than guessed: without the hint the flow layout's 100 px
      * default drives constant scroll-error correction, which reads as
      * the list jumping under the pointer. */
+    /** Unsubscribes the credit-arrival repaint. */
+    private creditsUnsub?: () => void;
+
     @query('lit-virtualizer')
     private virtualizer?: LitVirtualizer;
 
@@ -609,6 +614,14 @@ export class SmartPlaylistDetails
     override connectedCallback() {
         super.connectedCallback();
 
+        // Credits arrive after the rows that asked for them, and a
+        // virtualizer repaints from its *own* properties — a host
+        // update alone leaves the rows exactly as they were.
+        this.creditsUnsub = creditStore.subscribe(() => {
+            this.requestUpdate();
+            this.virtualizer?.requestUpdate();
+        });
+
         if (this.autoEdit) {
             // Skip evaluation for new playlists — go straight to editor.
             this.autoEdit = false;
@@ -649,6 +662,8 @@ export class SmartPlaylistDetails
 
     override disconnectedCallback() {
         super.disconnectedCallback();
+        this.creditsUnsub?.();
+        this.creditsUnsub = undefined;
 
         if (this.playlistDeletedCleanup) {
             this.playlistDeletedCleanup();
@@ -1423,7 +1438,7 @@ export class SmartPlaylistDetails
                                           : nothing}
                                   </div>
                                   <span class="cell col-title" title="${track.Title || track.FilePath}">${trackLink(track.Title, track.Album, track.ReleaseGroupMBID, track.RecordingMBID, undefined, track.Artist) || track.FilePath}</span>
-                                  <span class="cell col-artist" title="${track.Artist}">${artistLink(track.Artist, track.ArtistMBID)}</span>
+                                  <span class="cell col-artist" title="${creditText(creditStore.credits(track.RecordingMBID), track.Artist)}">${creditLink(creditStore.credits(track.RecordingMBID), track.Artist, track.ArtistMBID)}</span>
                                   <span class="cell col-album" title="${track.Album}">${albumLink(track.Album, track.ReleaseGroupMBID, undefined, track.Artist)}</span>
                                   <span class="cell col-duration">${formatMilliseconds(track.Duration)}</span>`}
                         </div>

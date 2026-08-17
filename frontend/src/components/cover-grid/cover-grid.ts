@@ -52,7 +52,8 @@ import {
 } from '@utils/context-menu-controller.js';
 import type { ContextMenuHost } from '@utils/context-menu-controller.js';
 import { FavoritesController } from '@store/controllers/favorites-controller';
-import { artistLink, exploreLinkStyles } from '../../utils/explore-link';
+import { creditLink, exploreLinkStyles } from '../../utils/explore-link';
+import { creditStore } from '@store/credit-store';
 import {
     createAlbumArtDragImage,
     createDragImage,
@@ -425,8 +426,18 @@ export class CoverGrid
      * Lifecycle
      * ==================================================================== */
 
+    /** Unsubscribes the credit-arrival repaint. */
+    private creditsUnsub?: () => void;
+
     override connectedCallback() {
         super.connectedCallback();
+
+        this.creditsUnsub = creditStore.subscribe(() => {
+            this.requestUpdate();
+            // Two virtualizers when the grid is split; both draw rows.
+            this.renderRoot?.querySelectorAll('lit-virtualizer')
+                .forEach((v) => (v as unknown as { requestUpdate(): void }).requestUpdate());
+        });
         this.restoreSortPreferences();
         this.loadAlbums();
 
@@ -441,6 +452,8 @@ export class CoverGrid
 
     override disconnectedCallback() {
         super.disconnectedCallback();
+        this.creditsUnsub?.();
+        this.creditsUnsub = undefined;
 
         this.removeEventListener(
             'error',
@@ -1820,7 +1833,7 @@ export class CoverGrid
                         class="artist-name"
                         title="${album.ArtistName}"
                     >
-                        ${artistLink(album.ArtistName, album.ArtistMBID ?? '')}
+                        ${creditLink(creditStore.credits(album.MBID), album.ArtistName, album.ArtistMBID ?? '')}
                     </div>
                 </div>
             </div>

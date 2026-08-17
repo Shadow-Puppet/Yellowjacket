@@ -25,6 +25,7 @@ import type { SortOption } from '@components/page-header/page-header';
 import { TrackListController } from '@store/controllers/tracklist-controller';
 import { FavoritesController } from '@store/controllers/favorites-controller';
 import { queueStore } from '@store/queue-store';
+import { creditStore } from '@store/credit-store';
 import type { QueueSource } from '@store/queue-store';
 import { LibraryController } from '@store/controllers/library-controller';
 import {
@@ -39,6 +40,7 @@ import {
 } from './search-ranking';
 import {
     artistLink,
+    creditLink,
     albumLink,
     trackLink,
     exploreLinkStyles,
@@ -1220,6 +1222,17 @@ export class TrackList
             'shortcut:tracklist-delete',
             this.handleShortcutDelete,
         );
+
+        // Credits arrive after the rows that asked for them.  The
+        // virtualizer produces its rows from its *own* properties, so a
+        // host re-render alone repaints nothing — the same reason a
+        // selection change pushes requestUpdate() into it.
+        this.whileActive(
+            creditStore.subscribe(() => {
+                this.requestUpdate();
+                this.virtualizer?.requestUpdate();
+            }),
+        );
     }
 
     /**
@@ -2031,7 +2044,15 @@ export class TrackList
                 if (col.id === 'trackName') {
                     display = trackLink(track.TrackName, track.Album, track.ReleaseGroupMBID, track.RecordingMBID, display as any, track.ArtistName);
                 } else if (col.id === 'artistName') {
-                    display = artistLink(track.ArtistName, track.ArtistMBID, display as any);
+                    // A search term highlights the *flat* credit string,
+                    // and mapping those spans onto decomposed parts is a
+                    // different problem from rendering the credit.  While
+                    // filtering, the single link is the honest answer.
+                    creditStore.request(track.RecordingMBID);
+                    const parts = term ? undefined : creditStore.get(track.RecordingMBID);
+                    display = parts && parts.length > 1
+                        ? creditLink(parts, track.ArtistName, track.ArtistMBID)
+                        : artistLink(track.ArtistName, track.ArtistMBID, display as any);
                 } else if (col.id === 'album') {
                     display = albumLink(track.Album, track.ReleaseGroupMBID, display as any, track.ArtistName);
                 }

@@ -12,6 +12,7 @@ import '@awesome.me/webawesome/dist/components/popup/popup.js';
 import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 import { QueueController } from '@store/controllers/queue-controller';
+import { creditStore } from '@store/credit-store';
 import {
     describeQueueSource,
     isQueueSourceNavigable,
@@ -55,7 +56,7 @@ import { tracksByFilePath } from '@utils/track-index.js';
 import type { TrackDetails } from '@components/track-details/track-details.js';
 import type { CoverArtUrls } from '@components/track-details/track-details.js';
 import {
-    artistLink,
+    creditLink,
     trackLink,
     exploreLinkStyles,
 } from '@utils/explore-link';
@@ -107,6 +108,9 @@ export class QueuePanel
 
     @query('#playlist-submenu')
     private playlistSubmenuPopup!: WaPopup;
+
+    /** Unsubscribes the credit-arrival repaint. */
+    private creditsUnsub?: () => void;
 
     @query('lit-virtualizer')
     private virtualizer!: LitVirtualizer;
@@ -635,6 +639,14 @@ export class QueuePanel
 
     override connectedCallback() {
         super.connectedCallback();
+
+        // Credits arrive after the rows that asked for them, and a
+        // virtualizer repaints from its *own* properties — a host
+        // update alone leaves the rows exactly as they were.
+        this.creditsUnsub = creditStore.subscribe(() => {
+            this.requestUpdate();
+            this.virtualizer?.requestUpdate();
+        });
         this.style.setProperty(
             '--queue-width',
             `${this.panelWidth}px`,
@@ -671,6 +683,8 @@ export class QueuePanel
 
     override disconnectedCallback() {
         super.disconnectedCallback();
+        this.creditsUnsub?.();
+        this.creditsUnsub = undefined;
         document.removeEventListener(
             'mousemove',
             this.handleMouseMove,
@@ -1675,7 +1689,7 @@ export class QueuePanel
                         ${trackLink(title, track.album, track.releaseGroupMbid, track.recordingMbid, undefined, track.artist)}
                     </span>
                     <span class="track-artist" title=${artist}>
-                        ${artistLink(track.artist, track.artistMbid) || 'Unknown Artist'}
+                        ${creditLink(creditStore.credits(track.recordingMbid), track.artist, track.artistMbid) || 'Unknown Artist'}
                     </span>
                 </div>
                 <button
