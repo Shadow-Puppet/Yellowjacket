@@ -12,6 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"yellowjacket/backend/database"
+	"yellowjacket/backend/datamap"
 	"yellowjacket/backend/system"
 )
 
@@ -212,5 +213,99 @@ func TestTheCatalogSurvivesAStaleShape(t *testing.T) {
 				"which costs this database a ~205GB rebuild",
 			got,
 		)
+	}
+}
+
+// TestNoCacheTableIsRetiredHere is the general form of the accident
+// above, and it exists because the specific one is not the risk.
+//
+// `TestTheCatalogSurvivesAStaleShape` pins one table in one wrong shape,
+// which is the failure that happened. What cost the ~205 GB was not that
+// shape: it was a destructive repair added to `database.NewDB` -- the
+// one chokepoint every binary in this project shares -- without asking
+// which binary it was running in. The next such repair will have a
+// different name and a different reason, and this database still cannot
+// afford it.
+//
+// So the assertion is about the *outcome* rather than the mechanism: put
+// every Cache table in a shape the schema has certainly moved past, open
+// the database the way cmd/indexbuild does, and require that all of them
+// are still there afterwards. Any future repair that drops one fails
+// here regardless of how it decides to.
+//
+// Two things about it are deliberate.
+//
+// The table list comes from `datamap.ByKind(Cache)` rather than being
+// written out, so a Cache table added next year is covered by this test
+// on the day it is added -- the same reason `TestCatalogCoversSchema`
+// reads the schema instead of a list.
+//
+// And `NewDB` returning an error is *accepted*, because that is the
+// trade the fix documents: with Cache tables no longer rebuilt here, a
+// shape the schema moved past now fails this job loudly instead of
+// silently costing it a day of downloading. Loud is fine. Gone is not.
+func TestNoCacheTableIsRetiredHere(t *testing.T) {
+	logger := slog.New(slog.DiscardHandler)
+
+	t.Setenv("YJ_HOME", t.TempDir())
+
+	dataDir, err := system.GetUserDataDirPath()
+	if err != nil {
+		t.Fatalf("resolve data dir: %v", err)
+	}
+
+	dbPath := filepath.Join(dataDir, "yj.db")
+
+	if _, err := database.NewDB(logger); err != nil {
+		t.Fatalf("first open: %v", err)
+	}
+
+	// An FTS table is four shadow tables and cannot be given a "wrong
+	// shape" meaningfully; the repair skips them for the same reason and
+	// retires them with their parent, which the parents below cover.
+	var cache []string
+
+	for _, table := range datamap.ByKind(datamap.Cache) {
+		if table.FTS {
+			continue
+		}
+
+		cache = append(cache, table.Name)
+	}
+
+	if len(cache) == 0 {
+		t.Fatal("no Cache tables to check: the datamap or this test is wrong")
+	}
+
+	for _, name := range cache {
+		// A shape nothing in the current schema describes. What matters
+		// is only that it disagrees; the real mismatch was one column's
+		// type.
+		exec(t, dbPath, `
+			DROP TABLE IF EXISTS `+name+`;
+			CREATE TABLE `+name+` (id INTEGER PRIMARY KEY, moved_past TEXT);
+			INSERT INTO `+name+` (moved_past) VALUES ('irreplaceable');
+		`)
+	}
+
+	// The error is not the assertion: see the note above.
+	_, _ = database.NewDB(logger)
+
+	for _, name := range cache {
+		rows := count(t, dbPath,
+			`SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = '`+name+`'`)
+		if rows == 0 {
+			t.Errorf("%s was retired: in this database a Cache table is derived, "+
+				"not downloaded, and dropping one costs the ~205 GB dump stream", name)
+
+			continue
+		}
+
+		// Present but emptied is the same loss wearing a different
+		// shape: SQLite does an implicit DELETE before a DROP, and a
+		// repair that recreated the table would look identical here.
+		if n := count(t, dbPath, `SELECT count(*) FROM `+name); n == 0 {
+			t.Errorf("%s survived but was emptied", name)
+		}
 	}
 }

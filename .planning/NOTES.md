@@ -3404,3 +3404,44 @@ Three things worth keeping from it:
   rebuilding. That is the right default, and it means the next schema
   change touching `explore_index` needs a deliberate plan for this one
   database rather than none.
+
+## Two guards for the index cache, and what each one is worth (2026-08-17)
+
+Both come out of the incident above, and they protect different halves
+of it.
+
+**`TestNoCacheTableIsRetiredHere` asserts the outcome, not the
+mechanism.** The test that shipped with the fix pins one table in one
+wrong shape, which is the failure that happened; what actually cost the
+rebuild was a destructive repair added at `database.NewDB` — the
+chokepoint every binary here shares — without asking which binary it was
+in. The next one will have a different name and a different reason. So
+this puts *every* `datamap` Cache table into a shape the schema has
+moved past, opens the database the way `cmd/indexbuild` does, and
+requires all of them to still be there.
+
+Three things it got right by being written this way. The table list is
+`datamap.ByKind(Cache)`, so the two credit tables added the same day
+were covered without anyone adding them — flipping the policy back fails
+on **five** tables including `artist_credit_part` and
+`artist_credit_ref`, where the single-table test fails on one. It
+asserts rows survive as well as the table, because SQLite does an
+implicit DELETE before a DROP and a repair that recreated the table
+would otherwise look identical. And it *accepts* an error from `NewDB`,
+because that is the trade the fix documents: loud failure instead of a
+silent day of downloading.
+
+**`scripts/index-cache-snapshot.sh` covers the half no test can.** The
+volume held the only copy of a catalog whose rebuild is hours of someone
+else's bandwidth. `VACUUM INTO` rather than `cp`, because a byte copy of
+a live SQLite file is a corrupt file of plausible size; the staging
+directory is deliberately not copied, since a build resumes without it;
+and the snapshot is reopened and asked for its catalog row count before
+any rotation happens. Both failure paths were exercised rather than
+argued: a corrupt source and an empty catalog each exit non-zero, delete
+their own output, and leave the previous snapshots in place.
+
+`docs/index-cache.md` is the restore procedure, and the number that
+makes it worth having: a restored snapshot resolves to `refresh` and
+folds in the incremental listens since — minutes, against the 3–23 h a
+rebuild was estimating.

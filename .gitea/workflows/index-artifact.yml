@@ -53,6 +53,10 @@ on:
 
 # Runs share one persistent working directory, so they must not overlap.
 # A push landing mid-build waits rather than corrupting the checkpoint.
+#
+# That directory holds the only copy of a catalog nothing can cheaply
+# re-derive: see docs/index-cache.md for the snapshot it takes and the
+# restore, which is minutes against the hours a rebuild costs.
 concurrency:
   group: search-index
   cancel-in-progress: false
