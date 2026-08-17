@@ -5,11 +5,12 @@ import '../audio-player/controls/player-controls';
 import '../audio-player/seekbar/seek-bar';
 import '../audio-player/volume-control/volume-control';
 import {
-    artistLink,
+    creditLink,
     albumLink,
     exploreLinkStyles,
 } from '@utils/explore-link';
 import { PlayerController } from '@store/controllers/player-controller';
+import { creditStore } from '@store/credit-store';
 import { FavoritesController } from '@store/controllers/favorites-controller';
 import { designTokens } from '../../styles/tokens.css';
 import { srOnly } from '../../styles/sr-only.css';
@@ -36,6 +37,22 @@ import { srOnly } from '../../styles/sr-only.css';
 @customElement('now-playing-view')
 export class NowPlayingView extends LitElement {
     private player = new PlayerController(this);
+
+    /** Unsubscribes the credit-arrival repaint. */
+    private creditsUnsub?: () => void;
+
+    override connectedCallback(): void {
+        super.connectedCallback();
+        // Credits arrive after the track does, so the name this view is
+        // already showing has to be re-rendered when they land.
+        this.creditsUnsub = creditStore.subscribe(() => this.requestUpdate());
+    }
+
+    override disconnectedCallback(): void {
+        super.disconnectedCallback();
+        this.creditsUnsub?.();
+        this.creditsUnsub = undefined;
+    }
     private favCtrl = new FavoritesController(this);
 
     static override styles = [designTokens, srOnly, exploreLinkStyles, css`
@@ -262,7 +279,11 @@ export class NowPlayingView extends LitElement {
                         ${track.title || track.fileName}
                     </h2>
                     <p class="artist">
-                        ${artistLink(track.artist, track.artistMbid)}
+                        ${creditLink(
+                            creditStore.credits(track.recordingMbid),
+                            track.artist,
+                            track.artistMbid,
+                        )}
                     </p>
                     ${track.album
                         ? html`<p class="album">
