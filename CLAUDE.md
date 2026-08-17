@@ -1998,14 +1998,29 @@ still not carried and its `includes:` entry is still dropped.
 **Its `MainActivity` owns the safe area, because `targetSdk 35` does
 not leave that to the theme.** Android 15 lays every app out
 edge-to-edge and ignores the `statusBarColor`/`navigationBarColor` the
-scaffold's theme sets, and the WebView is `match_parent` — so the page's
-bottom band, which on a phone is the transport *and* the tab bar, was
+scaffold's theme sets, and the WebView is `match_parent`, so the page's
+bottom band — the transport and, on a phone, the tab bar — would be
 drawn under the gesture bar. `applyWindowInsets()` pads the container by
 `systemBars | displayCutout | ime` and returns the insets rather than
 consuming them; the window background is black to match the app's own
-ramp, since that padding is what shows through. **No browser tier can
-see this class of fault** — a viewport has no system bars, so the phone
-specs render a shell that fits at the moment the device is clipping it.
+ramp, since that padding is what shows through. It is **pre-emptive**:
+the phone this was checked against is Android 14, where the system still
+insets the window, and the enforcement applies to an app *running on*
+15. No browser tier can see this class of fault either way — a viewport
+has no system bars.
+
+**And a device is an engine, not just a screen.** The phone this app was
+first run on renders in **Chrome 113** — two years behind every browser
+any other tier uses — at a 424x439 CSS px viewport. It has `:has()`,
+`color-mix()` and `dialog.showModal()`; it does **not** have relaxed CSS
+nesting (Chrome 120, so a nested rule beginning with a bare element
+selector is silently dropped), the Popover API (114, which Web Awesome's
+popups set `popover="manual"` for), `light-dark()` or relative colour
+syntax. So "it renders at that size in Chromium" is not evidence about
+the phone, and resizing a spec cannot recover the missing signal. `make
+android-inspect` forwards the WebView's devtools socket and `make
+android-eval` asks the real page — raw CDP, because `connectOverCDP`
+calls `Browser.setDownloadBehavior` and a WebView refuses it.
 
 `build/config.yml`'s `version` is the
 *metadata* version and is not what the app reports — `main.version` is

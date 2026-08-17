@@ -360,9 +360,14 @@ awaiting the next APK for confirmation (`NOTES.md`, same date):
   `webView.canGoBack()`; the frontend had never used `history`. A
   navigation is a history entry now, and `navStack` is gone rather than
   kept beside it.
-- **The transport was under the gesture bar.** `targetSdk 35` is
-  edge-to-edge by force; `applyWindowInsets()` in `MainActivity` pads
-  by `systemBars | displayCutout | ime`.
+- **The transport was under the gesture bar** — or so the version
+  number said. `applyWindowInsets()` in `MainActivity` is right and
+  stays, but the phone is **Android 14**, where the system still insets
+  the window: the fix is pre-emptive and the symptom has another cause.
+  Still open, along with icons that do not appear at all. The phone's
+  WebView is **Chrome 113**, which is the lead (no Popover API, no
+  relaxed CSS nesting), and `make android-inspect` / `android-eval` are
+  how it gets asked.
 
 The standing item is unchanged in kind: **B3 (tag writing) and the
 permission flow still need a device**, and so does confirming these two.

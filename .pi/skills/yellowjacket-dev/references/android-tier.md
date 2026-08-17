@@ -310,3 +310,41 @@ So when asking for a device run, ask about what the platform *adds* —
 system bars, the back gesture, focus and audio interruptions,
 permission dialogs, the keyboard — not about what the app draws. The
 drawing is what the other five tiers already cover.
+
+## Asking the device, not just looking at it
+
+A real phone can be inspected, and that turns this tier from "reported
+symptoms" into evidence. Three commands:
+
+```bash
+make android-screenshot          # what the screen shows (.dev/ by default)
+make android-inspect             # forward the WebView's devtools socket
+make android-eval EXPR='JSON.stringify({vp:[innerWidth,innerHeight]})'
+```
+
+Four things about it, each of which costs an hour if met cold:
+
+- **Only a `debuggable` build has a devtools socket**, and a debug build
+  carries `applicationIdSuffix ".dev"` so it installs **beside** the
+  release app. That matters more than convenience: the two are signed by
+  different certificates, and Android's only remedy for a changed
+  certificate is an uninstall, which takes the user's library with it.
+  Never uninstall to make room for a build.
+- **Playwright cannot drive it.** `connectOverCDP` calls
+  `Browser.setDownloadBehavior`, a WebView answers "Browser context
+  management is not supported", and the connection dies before the first
+  evaluate. `scripts/android-eval.mjs` is raw CDP over Node's built-in
+  WebSocket for that reason.
+- **Wireless adb drops when the screen sleeps.** The symptoms are
+  `device offline` mid-session and a `fetch failed` from the eval
+  script. Plug in over USB for anything longer than a couple of probes.
+- **The socket name carries the pid**, which changes on every launch, so
+  it is resolved rather than remembered.
+
+**And the reason to bother: the phone is an engine, not a screen.** The
+first device here renders in **Chrome 113** at 424x439 CSS px. Every
+other tier runs a current Chromium or WebKit, so a spec that passes at
+that viewport says nothing about the phone — 113 has no Popover API and
+no relaxed CSS nesting, and a dropped CSS declaration renders as
+"present but wrong", which is the hardest failure to read from a
+picture. Get the version first; it reframes every other symptom.

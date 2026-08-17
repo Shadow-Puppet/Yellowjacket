@@ -35,6 +35,8 @@ cd "$(dirname "$0")/.."
 AVD="${YJ_AVD:-yj-test}"
 SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/Android/Sdk}}"
 PKG="${YJ_ANDROID_PKG:-app.yellowjacket}"
+# Where `make android-inspect` forwards the WebView's devtools socket.
+CDP_PORT="${YJ_ANDROID_CDP_PORT:-9222}"
 # **Not "$PKG/.MainActivity".** A leading-dot activity is resolved
 # relative to the *applicationId*, and the scaffold's activity lives in
 # the Java package `com.wails.app`, which is deliberately not the
@@ -264,6 +266,67 @@ cmd_logs() {
 		WailsBridge:V "$PKG":V GoLog:V AndroidRuntime:E DEBUG:V libc:F ActivityManager:I '*:S'
 }
 
+# Forward the WebView's devtools socket, so the page can be asked things.
+#
+# Only a `debuggable` build opens that socket, and a debug build carries
+# `applicationIdSuffix ".dev"` precisely so it can be installed *beside*
+# the release app: the two are signed by different certificates, and
+# Android's remedy for a certificate change is an uninstall, which takes
+# the user's library with it. So this looks for the sibling first and the
+# release id second.
+#
+# The socket name carries the pid, which changes on every launch -- which
+# is why this resolves it rather than documenting a number.
+cmd_inspect() {
+	need_sdk
+	pick_device || die "no device -- plug a phone in (USB debugging on) or run 'make android-emulator'"
+
+	local pkg pid
+	pid=""
+
+	for pkg in "$PKG.dev" "$PKG"; do
+		pid=$("$ADB" shell pidof "$pkg" 2>/dev/null | tr -d '\r' | awk '{print $1}')
+		[ -n "$pid" ] && break
+	done
+
+	[ -n "$pid" ] || die "neither $PKG.dev nor $PKG is running; launch it first"
+
+	"$ADB" forward --remove-all >/dev/null 2>&1 || true
+	"$ADB" forward "tcp:$CDP_PORT" "localabstract:webview_devtools_remote_$pid" >/dev/null \
+		|| die "adb forward failed"
+
+	echo "android: $pkg (pid $pid) devtools on http://localhost:$CDP_PORT"
+	echo "    make android-eval EXPR='JSON.stringify({vp:[innerWidth,innerHeight]})'"
+	echo "    (a release build has no devtools socket: build and install the debug one)"
+}
+
+# What the phone is actually showing.
+#
+# This tier exists because no other one can see the platform: system
+# bars, the safe area, the keyboard, an OEM's permission dialog. All of
+# those are things you have to *look* at, and two of the three faults
+# found so far were found by reading a picture rather than an assertion
+# (`android-tier.md`).
+#
+# `exec-out` and not `shell`: `adb shell` runs the output through a pty
+# on some platforms, which translates LF and corrupts the PNG -- for
+# which the symptom is an image viewer refusing a file that downloaded
+# perfectly.
+cmd_screenshot() {
+	need_sdk
+	pick_device || die "no device \u2014 plug a phone in (USB debugging on) or run 'make android-emulator'"
+
+	local out="${1:-}"
+
+	[ -n "$out" ] || out=".dev/android-$(date +%Y%m%d-%H%M%S).png"
+	mkdir -p "$(dirname "$out")"
+
+	"$ADB" exec-out screencap -p > "$out" || die "screencap failed"
+	[ -s "$out" ] || die "screencap produced nothing (is the screen locked?)"
+
+	echo "android: screenshot -> $out"
+}
+
 # Start the app and assert it is *still the same process* a few seconds
 # later.  "It started" is not the question — a crash-looping app starts
 # continuously.
@@ -316,9 +379,11 @@ stop) cmd_stop ;;
 install) cmd_install ;;
 launch) cmd_launch ;;
 logs) cmd_logs ;;
+screenshot) cmd_screenshot "${2:-}" ;;
+inspect) cmd_inspect ;;
 smoke) cmd_smoke "${2:-10}" ;;
 *)
-	echo "usage: $0 {setup|start|stop|install|launch|logs|smoke [seconds]}" >&2
+	echo "usage: $0 {setup|start|stop|install|launch|logs|screenshot [path]|inspect|smoke [seconds]}" >&2
 	exit 2
 	;;
 esac

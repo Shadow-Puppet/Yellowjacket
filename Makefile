@@ -78,6 +78,19 @@ android-launch: ## Force-stop, clear logcat, and start the app
 android-logs: ## Tail logcat, filtered to the app's own tags
 	@$(ANDROID_ENV) ./scripts/android-emulator.sh logs
 
+# The only tier that can see the platform is the one you can look at.
+android-screenshot: ## Grab the device screen (OUT=<path>)
+	@$(ANDROID_ENV) ./scripts/android-emulator.sh screenshot $(OUT)
+
+# The page's own answer, from the engine that is really rendering it.
+# Needs the debug build installed (it is a sibling id, so it does not
+# disturb the release app): see scripts/android-eval.mjs.
+android-inspect: ## Forward the device WebView's devtools socket
+	@$(ANDROID_ENV) ./scripts/android-emulator.sh inspect
+
+android-eval: ## Evaluate JS in the device WebView (EXPR='...')
+	@node ./scripts/android-eval.mjs $(if $(EXPR),'$(EXPR)',)
+
 # "Did it start" is the wrong question — a crash-looping app starts
 # several times a second.  This asserts the *same pid* is still there.
 android-smoke: ## Launch and assert the app is still alive (SECONDS=<n>)

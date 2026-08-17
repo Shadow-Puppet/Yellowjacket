@@ -3138,3 +3138,73 @@ cover the history behaviour, on Chromium locally and WebKit in CI.
 Not verified: the insets themselves, which need the next APK on the
 owner's phone. What to look for is one thing — the transport and the tab
 bar clear of the gesture bar, and the header clear of the status bar.
+
+## The phone is a Chrome 113 WebView, and that reframes everything (2026-08-17)
+
+The device is reachable over adb now, so the tier can be *asked* rather
+than reported on. `make android-inspect` + `make android-eval` are that:
+a debug build (`applicationIdSuffix ".dev"`, so it installs **beside**
+the release app rather than needing the uninstall that would take the
+library with it) opens `webview_devtools_remote_<pid>`, and raw CDP over
+Node's built-in WebSocket evaluates in the real page. **Playwright
+cannot do this** — `connectOverCDP` calls `Browser.setDownloadBehavior`
+and a WebView answers "Browser context management is not supported",
+killing the connection before the first evaluate.
+
+Measured on the device (Light Phone III, TLP301):
+
+| fact | value |
+| --- | --- |
+| Android | 14, SDK 34 |
+| screen | 1080x1240, density 408 |
+| WebView viewport | **424 x 439 CSS px**, DPR 2.55 |
+| WebView engine | **Chrome 113.0.5672.136** (mid-2023) |
+
+**The first correction: the insets commit does not explain the report.**
+Edge-to-edge is forced for apps *running on* Android 15, and this phone
+is Android 14 — the screenshot shows the app correctly inset, with the
+status bar and the gesture bar outside it. `applyWindowInsets()` is
+right and stays (the next phone, or one OS update, is Android 15), but
+it is **pre-emptive, not the fix for "the controls are off screen"**.
+That was an inference from a version number, and the device disagreed.
+
+**The second correction: the black `fill` proves nothing.** A wa-icon on
+the device has the right `color` (#ffd43b) and an `<svg>` in its shadow
+root, and `getComputedStyle(svg).fill` is black — but that is the *svg
+root*, and every vendored Font Awesome path carries
+`fill="currentColor"` itself, so the root's fill is irrelevant. Measuring
+the wrong node produced a diagnosis-shaped result. `__yjIconMisses` is
+empty, so no name is unbundled either. Why the icons do not appear in the
+screenshot is **still open**.
+
+**What the engine version does explain, and what to check next.**
+Chrome 113 has `:has()`, `color-mix()` and `dialog.showModal()`, and
+lacks three things this app's dependencies use:
+
+- **Relaxed CSS nesting** (Chrome 120): a nested rule starting with a
+  bare element selector is dropped. `.x { svg { ... } }` parses to
+  nothing; `.x { & svg { ... } }` parses. Any Web Awesome or app
+  stylesheet written the modern way silently loses declarations here,
+  and dropped declarations are exactly the failure that looks like
+  "rendered but wrong".
+- **The Popover API** (Chrome 114). Web Awesome's popup calls
+  `showPopover?.()` — optional, so nothing throws — but also sets
+  `popover="manual"`, which on 113 is an unknown attribute doing
+  nothing. Every context menu, dropdown and the whole menu keyboard
+  model rides on that, so it is the first thing to test with a library
+  present.
+- `light-dark()` and relative colour syntax (`rgb(from ...)`).
+
+**The lesson for the tier: a device is an engine, not just a screen.**
+Every browser tier here runs a current Chromium or WebKit, and the phone
+that will actually run this app is two years behind — so "it renders at
+424x439 in Chromium" (checked, the transport is on screen) says nothing
+about whether it renders on the phone. The e2e tier cannot be fixed by
+resizing; the missing signal is version, and CDP against the device is
+the only place to get it.
+
+Verified by execution: every number in the table, the four feature
+probes, and that the hardware back button no longer kills the app (the
+`.dev` build carries the history fix; pid survived a BACK press).
+Unverified: what happened to the icons and the transport controls, which
+is where this resumes.

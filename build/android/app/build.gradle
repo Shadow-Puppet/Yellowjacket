@@ -83,6 +83,16 @@ android {
         }
         debug {
             debuggable true
+            // Its own application id, so it installs *beside* the release
+            // app rather than needing an uninstall to replace it. The two
+            // are signed by different certificates (the release one comes
+            // from a keystore CI holds), and Android's remedy for a
+            // certificate change is an uninstall -- which takes the
+            // user's library with it. This is also what makes the WebView
+            // inspectable on a real phone: `debuggable` is what turns on
+            // `setWebContentsDebuggingEnabled`, and `make android-inspect`
+            // drives it.
+            applicationIdSuffix ".dev"
         }
     }
 
