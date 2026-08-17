@@ -199,24 +199,23 @@ func TestManagerEndToEndAutoPick(t *testing.T) {
 		t.Errorf("expected imported file at %s: %v", want, err)
 	}
 
-	// Staging was released only after a successful import.
-	entries, err := os.ReadDir(f.staging.Root())
-	if err != nil {
-		t.Fatalf("read staging root: %v", err)
-	}
+	// Staging release and the rescan happen *after* the state is
+	// recorded (manager.go sets StateComplete, then releases, then
+	// scans), so waiting on the state is not waiting on these.  Under
+	// load the worker is descheduled in between and asserting straight
+	// away reads the world one step too early -- which is exactly how
+	// this test failed on a busy machine while passing alone.
+	waitFor(t, func() bool {
+		entries, err := os.ReadDir(f.staging.Root())
+		if err != nil || len(entries) != 0 {
+			return false
+		}
 
-	if len(entries) != 0 {
-		t.Errorf("staging not released: %d dirs remain", len(entries))
-	}
+		f.lib.mu.Lock()
+		defer f.lib.mu.Unlock()
 
-	// The library was told to rescan.
-	f.lib.mu.Lock()
-	scanned := len(f.lib.scanned)
-	f.lib.mu.Unlock()
-
-	if scanned != 1 {
-		t.Errorf("library scans = %d, want 1", scanned)
-	}
+		return len(f.lib.scanned) == 1
+	}, "staging was never released, or the library was never rescanned")
 }
 
 // An ambiguous result set must park for the user rather than guess.
