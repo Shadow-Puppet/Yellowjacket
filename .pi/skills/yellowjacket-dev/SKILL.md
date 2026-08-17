@@ -96,6 +96,15 @@ reference, because you need them *before* the failure, not after.
   Run against the `bulk` seed a measurement session left behind and a
   third of them fail (13 of 36, when it was measured), in a list that
   reads exactly like a regression in whatever you are holding. `make dev-headless SEED=default` first.
+- **The catalog is stubbed out locally now, like CI.**
+  `dev-headless.sh` defaults `YJ_CORE_INDEX_URL` to a dead address
+  because it was the only launcher that did not — `seed-sandbox.sh` and
+  `ci.yml` always have. Without it the app downloads the real ~1M-row
+  Explore catalog into the run's `YJ_HOME`, and specs that stage their
+  own catalog rows then search a million real ones and fail *locally
+  only*, which reads as a regression and is an environment. Pass
+  `YJ_CORE_INDEX_URL=<real url>` when you want the real catalog to
+  explore by hand.
 - **…and the suite spends state it cannot always give back.**
   `view-lifecycle.spec.ts` **skips an autotag album** on every run, out
   of the eleven the seed has, and does not put it back — so around the
@@ -151,6 +160,7 @@ only climb when it cannot.
 | Something you cannot predict — exploring | `make dev-headless SEED=default` + `playwright-cli` | interactive |
 | Something whose answer is a *number*, not a pass | `make perf` against a bulk-seeded app | ~1 min + setup |
 | A `.sql` or `.templ` file | `make generate`, then the checklist in [references/schema-change.md](references/schema-change.md) | |
+| Anything that has to survive on a phone | `make android-smoke` against a booted emulator | ~1 min + setup |
 
 Two targets are once-per-clone prerequisites that are **not**
 dependencies of the targets needing them, so on a fresh checkout each
@@ -426,3 +436,9 @@ fails the build otherwise, including in files no lint pass compiles.
   and what breaks in it.
 - [schema-change.md](references/schema-change.md) — the two-file
   schema/migration checklist.
+- [android-tier.md](references/android-tier.md) — the emulator tier,
+  and the three reasons a failure there looks like a success. **Read
+  its first section before running anything on Android**: Go's stdout
+  does not reach logcat, `os.Exit` leaves no panic and no tombstone,
+  and ActivityManager restarts a dying app fast enough that `pidof`
+  always answers.

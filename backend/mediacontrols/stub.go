@@ -1,5 +1,10 @@
 //go:build !linux
 
+// Windows and macOS have no media-control integration yet. `!linux`
+// covers Android too without naming it, since `android` implies the
+// `linux` tag -- android.go claims it, mpris_linux.go excludes it, and
+// this file is left with the platforms neither wants.
+
 package mediacontrols
 
 import "log/slog"

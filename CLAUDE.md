@@ -388,7 +388,26 @@ rather than renaming them.
   came about.
 - `config` — TOML-based settings. Settings page uses HTMX + templ for server-rendered HTML fragments.
 - `playlist` / `smartplaylist` — Playlist CRUD and rule-based smart playlists.
-- `mediacontrols` — MPRIS integration on Linux via D-Bus.
+- `mediacontrols` — OS media controls behind one `Handler`: MPRIS over
+  D-Bus on desktop Linux, a MediaSession on Android, a no-op stub
+  elsewhere. The split is by build tag and `android` implies `linux`,
+  so the three files read `linux && !android`, `android` and `!linux`.
+  Its Android half needs no JNI beyond what Wails exports — a JSON
+  payload out through `application.Android.StartForegroundService`, a
+  command event back through `WailsBridge.emitEvent` — and the Java it
+  talks to is `build/android/.../WailsForegroundService.java`. That
+  contract (payload keys, state words, command names) is in
+  `androidpayload.go` **without** the build tag, because a tagged file
+  is compiled by nothing `make lint` or `make test` runs and is
+  untestable off a phone.
+
+  `OnDuck` is the one callback MPRIS does not use: Android asks for
+  attenuation rather than a pause when something short needs the
+  output. `Player.SetDuck` keeps it as an offset on top of the user's
+  level rather than writing through to the volume, so it cannot
+  accumulate and nothing persists or emits a level the user did not
+  choose — and it only ever fires below API 26, where the framework
+  does not already duck the app itself.
 - `system` — OS-specific paths (XDG on Linux, `%LOCALAPPDATA%` on Windows).
 - `explore` — Catalog search and browse over `explore_index`. See below.
   Its **shelves** (`shelves.go`) are the page Explore shows before
@@ -709,6 +728,27 @@ moment it is most needed is the likeliest moment loading one fails.
 `first-run-wizard` and the startup chrome are eager for the ordinary
 reason — they are the first paint.
 
+**A navigation is a history entry, and that is the whole back stack.**
+`index.ts` records each navigation with `pushState` (same URL — the app
+has no routes, and a path a reload cannot resolve is worse than none)
+and replays `popstate` with `_isBack`. It exists for Android, whose back
+button is not a key the page can bind: the scaffold's
+`MainActivity.onBackPressed` asks `webView.canGoBack()` and finishes the
+activity otherwise, so an app that never touched `history` quit from any
+depth — which is what a device reported. Hooking the platform's own
+mechanism rather than adding a JNI callback is also what makes it
+testable in a browser (`page.goBack()`), and the Java half needed no
+change at all.
+
+Two rules hold it up. The **first** navigation *replaces* the launch
+entry rather than pushing one, or every launch costs a back press before
+the app will close. And the in-app back buttons (`navigate-back`, fired
+by the detail views and `now-playing-view`) go through `history.back()`
+rather than a stack of their own: the old `navStack` is **deleted**, not
+kept beside it, because two stacks is precisely how a view's own back
+button and the phone's gesture come to disagree about what one press
+means.
+
 **A primary view is cached, not unmounted.** `index.ts` keeps every
 primary view in the DOM and toggles a `.view-hidden` class, because that
 is what preserves `scrollTop` across navigation — so
@@ -863,6 +903,20 @@ against the real components:
 - **Web Awesome keys an item's tabindex and highlight off `active`**, so
   moving focus without setting it leaves the highlight on whichever
   item the mouse last touched.
+
+**And a menu opens from a finger, through the event it already has.**
+`utils/long-press.ts` is one document-capture listener installed once
+from `index.ts`: a touch that holds still for 500 ms dispatches a
+synthetic `contextmenu` at the touch point, so all six components that
+bind one — delegated on a virtualizer, per row, per card — gained the
+gesture without changing. The target is `composedPath()[0]` rather than
+`elementFromPoint`, which stops at the outermost shadow host and so
+reaches a delegated listener and no per-row one; a browser that fires
+its own long-press `contextmenu` (Chromium does, WebKit and the WebView
+vary) wins, ours being told from theirs by **identity** rather than
+`isTrusted`, since no test can dispatch a trusted event; and the click
+that ends the gesture is swallowed, keyed on the gesture rather than on
+a time window so the first tap on the menu it opened is not eaten too.
 
 Three lists had no focused row to open a menu *from* — the queue panel
 and both playlist detail views — and gained a roving tab stop through
@@ -1033,6 +1087,65 @@ transport where a desktop player's transport belongs. At every size
 this app promises, no scrollbar appears. Note that `overflow: hidden`
 still permits *programmatic* scrolling, so a probe that sets
 `scrollLeft` passes on the broken build; the spec uses a wheel gesture.
+
+**Below 600px it reflows instead, and that is the phone.** The sideways
+scroll above was the concession available while the shell had one
+layout; plan 016 B2 gives it a second. Under 600px the grid drops its
+sidebar column, `<bottom-nav>` takes over as the primary navigation,
+the header's controls shrink or stand down, and the shell measures
+exactly 320px in a 320px viewport — so `layout-overflow.spec.ts` now
+asserts *nothing needs scrolling to*, which is what WCAG 1.4.10 wanted
+all along. 600 rather than the sidebar's 900 because 900 is a laptop:
+the answer there is a narrower sidebar, which is still a sidebar.
+
+Three rules in it are load-bearing, and the second cost 30 specs.
+
+**A grid item's implicit minimum is its content**, so one child that
+insists on 580px makes the *body* 580px wide inside a 360px viewport
+and `overflow-x: hidden` then hides a third of the app rather than
+fitting it. Every box between the viewport and the content that must
+shrink carries `min-width: 0`, and the things that cannot shrink say so
+in their own stylesheet — `search-bar`'s 200px floor, `job-indicator`'s
+label, `audio-player`'s seek bar and volume. A media query inside a
+shadow root is answered by the viewport, so a component states what it
+drops at phone width itself rather than the shell reaching in.
+
+**A duplicated component duplicates its handles.** `bottom-nav`'s
+"More" opens the *same* `<app-sidebar>` in a `wa-drawer` rather than
+listing the destinations again — but rendering it unconditionally put a
+second copy of every `data-testid="nav-*"` in the DOM, and 30 existing
+specs failed with "strict mode violation: resolved to 2 elements" on a
+desktop viewport where the element is not even visible. It renders only
+while the drawer is open, and `bottom-nav.test.ts` asserts its absence
+before that.
+
+**The tab bar is four destinations and a way to the rest.** Three to
+five is where touch targets stop being thumb-sized; eleven over 360px
+is 32px each. Which four is plan 016's committed subset, and everything
+else — Settings included, because a phone still needs it — is behind
+"More".
+
+**The phone section of `index.css` is last on purpose.** A media query
+adds no specificity, so a `@media (max-width: 599px)` block placed
+above the plain rules it overrides loses to them — which is how phase 1
+shipped a header that kept its 2em gutters and 24px title on a 390px
+phone with every declaration dead and nothing failing. The shell fitted
+anyway, because the fitting is done by `min-width: 0` and by each
+component's own media query, which live in their own stylesheets and
+have no later rule to lose to. Cosmetic declarations are exactly what
+no assertion sees; a screenshot found it.
+
+**`<now-playing-view>` is where the seek bar and volume went.** It is a
+*detail* view (`DETAIL_LOADERS`, so the nav stack carries the way out —
+a tab you cannot leave by pressing again is not a tab), reached from a
+phone-only button over the mini player's art, and it **composes the
+real `<seek-bar>`, `<player-controls>` and `<volume-control>`** rather
+than reimplementing them. While it is up, `index.css` hides the bottom
+bar through `body:has(#main-content[data-active-view="now-playing"])` —
+the active view is already published as an attribute, and a class
+toggled from `index.ts` would be a second expression of the same fact.
+The view therefore carries its own queue button, because that button
+lives in the bar it hides.
 
 **The playing row is a shape, not a hue.** `track-list` and
 `queue-panel` draw a `::before` triangle in each row's own left
@@ -1813,10 +1926,25 @@ Feature branches and PRs are the norm, but direct pushes to `main` are allowed. 
 
 ## CI
 
-Four workflows in `.gitea/workflows/`. Three of them package and
-publish (`arch-package`, `homebrew-formula`, `index-artifact`); only
-`ci.yml` gates, and it is the one to look at when deciding whether a
-push was healthy.
+Five workflows in `.gitea/workflows/`. Four of them package and
+publish (`arch-package`, `homebrew-formula`, `index-artifact`,
+`android-apk`); only `ci.yml` gates, and it is the one to look at when
+deciding whether a push was healthy.
+
+**`android-apk.yml` is the only one keyed on a tag and the only one
+that can lose something irrecoverable.** It builds the signed
+`arm64-v8a` APK (the only ABI Android can run this app on — see
+`app/build.gradle`) on every `v*` tag and publishes it to the *generic* registry, which is
+readable without credentials — the reason Obtainium can poll a plain
+URL. Android refuses to update an app whose signing certificate
+changed, and the only remedy is an uninstall that takes the user's
+library with it, so the job **refuses to build** without the keystore
+secret rather than falling through to Gradle's debug-key default, and
+**refuses to publish** an artifact whose certificate says `CN=Android
+Debug`. It is deliberately not a job in `ci.yml`: that workflow runs on
+every branch push, this one takes tens of minutes on a cold cache, and
+the runner has capacity 1. `docs/android-release.md` is the operating
+document.
 
 Two jobs, both in an `ubuntu:24.04` container:
 
@@ -1898,11 +2026,47 @@ four bit the packaging recipes:
 **`build/`'s platform metadata is generated from `build/config.yml`.**
 `wails3 task common:update:build-assets` rewrites `Info.plist`, the
 `.desktop` template, `nfpm.yaml` and the Windows manifest from that
-one file — so a hand edit to any of them is lost on the next refresh,
-and the two fields it does *not* own (nfpm's `homepage` and `license`)
-say so in place. That refresh also regenerates `build/ios/` and
-`build/android/`, which this repo does not carry: they are gitignored
-rather than deleted-and-rediscovered, and their `includes:` entries
-are dropped from `Taskfile.yml`. `build/config.yml`'s `version` is the
+one file — so a hand edit to any of them is lost on the next refresh.
+nfpm's `homepage` and `license` say in place that the refresh does not
+own them, and **that comment is wrong**: a refresh reset them to
+`https://wails.io` and `MIT`. Re-check those two after any refresh.
+
+**That refresh does not touch the mobile trees**, contrary to what this
+file said for five phases. `update build-assets` extracts only
+`updatable_build_assets` (darwin/ios/linux/windows); `build/android/`
+and `build/ios/` come from `generate build-assets`, which rewrites the
+whole of `build/`. So `build/android/` is **committed and hand-edited
+like source** — it was generated once into a scratch directory and
+copied across (plan 015), it carries one deliberate edit to its
+`Taskfile.yml`, and only its output is gitignored. `build/ios/` is
+still not carried and its `includes:` entry is still dropped.
+**Its `MainActivity` owns the safe area, because `targetSdk 35` does
+not leave that to the theme.** Android 15 lays every app out
+edge-to-edge and ignores the `statusBarColor`/`navigationBarColor` the
+scaffold's theme sets, and the WebView is `match_parent`, so the page's
+bottom band — the transport and, on a phone, the tab bar — would be
+drawn under the gesture bar. `applyWindowInsets()` pads the container by
+`systemBars | displayCutout | ime` and returns the insets rather than
+consuming them; the window background is black to match the app's own
+ramp, since that padding is what shows through. It is **pre-emptive**:
+the phone this was checked against is Android 14, where the system still
+insets the window, and the enforcement applies to an app *running on*
+15. No browser tier can see this class of fault either way — a viewport
+has no system bars.
+
+**And a device is an engine, not just a screen.** The phone this app was
+first run on renders in **Chrome 113** — two years behind every browser
+any other tier uses — at a 424x439 CSS px viewport. It has `:has()`,
+`color-mix()` and `dialog.showModal()`; it does **not** have relaxed CSS
+nesting (Chrome 120, so a nested rule beginning with a bare element
+selector is silently dropped), the Popover API (114, which Web Awesome's
+popups set `popover="manual"` for), `light-dark()` or relative colour
+syntax. So "it renders at that size in Chromium" is not evidence about
+the phone, and resizing a spec cannot recover the missing signal. `make
+android-inspect` forwards the WebView's devtools socket and `make
+android-eval` asks the real page — raw CDP, because `connectOverCDP`
+calls `Browser.setDownloadBehavior` and a WebView refuses it.
+
+`build/config.yml`'s `version` is the
 *metadata* version and is not what the app reports — `main.version` is
 stamped at link time from the packaging recipe's git-derived version.

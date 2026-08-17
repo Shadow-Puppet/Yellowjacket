@@ -29,6 +29,29 @@ const (
 // without touching the current user's real config.toml or yj.db.
 const envHomeOverride = "YJ_HOME"
 
+// UseHomeOverride points every config and data path at base, by setting
+// the same override a development sandbox uses.
+//
+// It exists for mobile, where the switch in buildUserDirPath has no
+// answer: there is no home directory and no XDG, only a per-app private
+// directory the OS hands out at runtime. The caller is main(), which is
+// the only place that can ask the platform for it — deliberately, so
+// this package stays free of the Wails application package that knows
+// (see backend/events' indexbuild split for why that matters).
+//
+// Two rules. An empty base is a no-op, because that is exactly what
+// application.Mobile.StoragePath() returns on desktop. And an override
+// that is already set wins, so YJ_HOME on the command line still
+// relocates a sandbox on a platform that would otherwise decide for
+// itself.
+func UseHomeOverride(base string) {
+	if base == "" || os.Getenv(envHomeOverride) != "" {
+		return
+	}
+
+	_ = os.Setenv(envHomeOverride, base)
+}
+
 // getUserDirPath returns and creates the path for a user directory.
 func getUserDirPath(dt dirType) (string, error) {
 	path, err := resolveUserDirPath(dt)

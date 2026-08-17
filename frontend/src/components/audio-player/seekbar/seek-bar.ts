@@ -27,6 +27,18 @@ export class SeekBar extends LitElement {
   private showRemaining: boolean = true;
 
   static override styles = [designTokens, waSliderLabel, css`
+    /* 12px below the phone breakpoint. The bottom bar's seek bar is
+       display:none there (016 B2 phase 1), so the only instance a
+       viewport media query can reach at that width is the full-screen
+       now-playing view's -- which is exactly the one a thumb uses.
+       The track size lives on wa-slider inside this shadow root, so a
+       custom property set by the host would not reach it. */
+    @media (max-width: 599px) {
+      wa-slider {
+        --track-size: 12px;
+      }
+    }
+
     wa-slider {
       --track-size: 6px;
       flex: 1;

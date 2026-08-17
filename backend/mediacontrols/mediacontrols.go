@@ -34,6 +34,13 @@ type Callbacks struct {
 	OnPrevious  func()
 	OnSeek      func(positionSec int)
 	OnVolume    func(volume float64) // 0.0–1.0 linear scale.
+
+	// OnDuck asks for playback to be attenuated (true) or restored
+	// (false) without changing the user's volume. Android alone sends
+	// it, and only below API 26 -- from Oreo the audio framework ducks
+	// the app itself and reports no such focus change, so doing both
+	// would attenuate twice.
+	OnDuck func(ducked bool)
 }
 
 // Handler manages the OS media control integration.

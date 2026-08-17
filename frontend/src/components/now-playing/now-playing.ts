@@ -147,6 +147,41 @@ export class NowPlaying extends LitElement {
       position: relative;
     }
 
+    /* The phone's way into the full-screen now-playing view (016 B2
+       phase 2). It sits over the cover art rather than being a
+       thirteenth control in a 360px bar, and it is a *button* rather
+       than a click handler on the art because it is an action with a
+       name -- the art itself is decorative and the title beside it
+       already navigates somewhere else (the catalog page).
+
+       CSS owns whether it exists, the same way it does for bottom-nav:
+       there is no viewport check in the component. */
+    .expand {
+      display: none;
+    }
+
+    @media (max-width: 599px) {
+      .expand {
+        position: absolute;
+        inset: 0;
+        display: block;
+        width: 100%;
+        height: 100%;
+        padding: 0;
+        background: none;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        /* The art shows through; this is a target, not a picture. */
+        color: transparent;
+      }
+
+      .expand:focus-visible {
+        outline: 2px solid var(--yj-accent, #ffd43b);
+        outline-offset: 2px;
+      }
+    }
+
     .cover-preview-panel {
       width: 500px;
       height: 500px;
@@ -392,6 +427,13 @@ export class NowPlaying extends LitElement {
       <div class="sr-only" role="status" aria-live="polite">${announcement}</div>
       <div class="now-playing">
         <div class="cover-art-wrapper">
+          <button
+            type="button"
+            class="expand"
+            data-testid="open-now-playing"
+            aria-label="Open now playing"
+            @click=${this.openNowPlaying}
+          ></button>
           <div
             class="cover-art"
             @mouseenter=${this.handleCoverMouseEnter}
@@ -499,6 +541,15 @@ export class NowPlaying extends LitElement {
       ></div>
     `;
     }
+
+    /** Open the full-screen view. Phone only; see `.expand`. */
+    private openNowPlaying = () => {
+        this.dispatchEvent(new CustomEvent('navigate', {
+            detail: { view: 'now-playing' },
+            bubbles: true,
+            composed: true,
+        }));
+    };
 
     // ===================================================================
     // SCROLL LOGIC

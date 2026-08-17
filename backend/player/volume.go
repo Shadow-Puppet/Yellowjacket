@@ -19,6 +19,12 @@ const (
 	MaxVol Volume = 0
 )
 
+// duckAttenuation is how far playback drops when the OS asks us to
+// duck, on the same base-2 exponent scale: two steps is a quarter of
+// the amplitude (-12 dB), which is audible under a spoken notification
+// without sounding like a pause.
+const duckAttenuation = 2.0
+
 // ToVolume converts user volume to internal player volume.
 func (oldVol UserVolume) ToVolume() Volume {
 	var newVol Volume

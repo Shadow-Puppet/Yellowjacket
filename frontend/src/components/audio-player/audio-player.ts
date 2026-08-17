@@ -32,6 +32,23 @@ export class AudioPlayer extends LitElement {
       flex: 1;
     }
 
+    /* The phone transport (plan 016 B2): the buttons, and nothing
+       else.  A media query inside a shadow root is answered by the
+       viewport, not by the host, so this is the component saying what
+       it drops at phone width rather than the shell reaching in.
+
+       Volume goes because the hardware keys own it on a phone --
+       Android routes them to the media stream, which is also why
+       mediacontrols' Android handler implements no volume callback.
+       The seek bar goes because a 4px-tall target dragged with a thumb
+       is not a seek control; seeking belongs to the full-screen
+       now-playing view, which is the next phase. */
+    @media (max-width: 599px) {
+      volume-control,
+      seek-bar {
+        display: none;
+      }
+    }
   `];
 
   override render() {

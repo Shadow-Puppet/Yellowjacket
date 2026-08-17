@@ -21,6 +21,7 @@ import '@components/audio-player/audio-player.ts';
 import '@components/track-list/track-list.ts';
 import '@components/now-playing/now-playing.ts';
 import '@components/sidebar/app-sidebar.ts';
+import '@components/bottom-nav/bottom-nav.ts';
 import '@components/queue-panel/queue-panel.ts';
 import '@components/search-bar/search-bar.ts';
 import '@components/library-filter/library-filter.ts';
@@ -49,6 +50,7 @@ import '@store/theme-store';
 // registers the document keydown listener for global shortcuts.
 import './src/services/keyboard-shortcut-service';
 import { activateView, deactivateView } from '@utils/view-lifecycle';
+import { installLongPressContextMenu } from '@utils/long-press';
 import {
     hasTrackPayload,
     getDragPayload,
@@ -62,6 +64,11 @@ setBasePath('/dist/webawesome');
 // caches by URL, so one early render would pin the remote answer for
 // the session.
 registerBundledIcons();
+
+// The touch equivalent of a right-click, installed once for every menu
+// in the app rather than per component. Harmless on a desktop: it acts
+// on `pointerType === 'touch'` only.
+installLongPressContextMenu();
 
 // ---------------------------------------------------------------------------
 // View caching navigation system
@@ -126,6 +133,11 @@ const DETAIL_LOADERS: Record<string, () => Promise<unknown>> = {
         import('@components/explore-artist-details/explore-artist-details.js'),
     'explore-album-details': () =>
         import('@components/explore-album-details/explore-album-details.js'),
+    // A detail view rather than a primary one on purpose: it is
+    // somewhere you go and come back from, so the nav stack carries
+    // the way out (016 B2 phase 2).
+    'now-playing': () =>
+        import('@components/now-playing-view/now-playing-view.ts'),
 };
 
 // Opened from a menu rather than by navigating, so they have no entry
@@ -148,10 +160,6 @@ const viewCache = new Map<string, HTMLElement>();
 let currentViewEl: HTMLElement | null = null;
 let currentDetailEl: HTMLElement | null = null;
 
-/** Navigation history stack for back-button support in detail views. */
-const navStack: Array<{ view: string; [key: string]: any }> = [];
-/** The current navigation detail (so we can push it onto the stack). */
-let currentNavDetail: { view: string; [key: string]: any } = { view: 'home' };
 
 const mainContent = document.getElementById('main-content');
 
@@ -184,6 +192,71 @@ document.addEventListener('navigate', (e: Event) => {
     void handleNavigate((e as CustomEvent).detail);
 });
 
+// ---------------------------------------------------------------------------
+// The platform's back gesture
+// ---------------------------------------------------------------------------
+// Android's back button is not a keystroke the page can bind: the
+// scaffold's `MainActivity.onBackPressed` asks `webView.canGoBack()` and
+// otherwise finishes the activity.  This app never touched `history`, so
+// that was always false and back quit the app from any depth -- reported
+// from a device as "back does not navigate back".
+//
+// So a navigation is a history entry, and back is `popstate`.  It hooks
+// the platform's own mechanism rather than a JNI callback of our own,
+// which is the same reason `events.ts` hooks the runtime's transport:
+// the Java half needs no change, and the behaviour is testable in a
+// browser (`page.goBack()`) instead of only on a phone.
+//
+// Two rules keep the two stacks from disagreeing.  A navigation that
+// *came from* history pushes nothing (`_isBack`), or going back would
+// deepen the stack it is unwinding.  And the in-app back buttons --
+// `navigate-back`, which the detail views and `now-playing-view` fire --
+// go through `history.back()` rather than popping `navStack`
+// themselves, so one press cannot consume two entries.
+
+/** The navigation an entry stands for. `undefined` on the entry that
+ *  predates the app's own routing, which is the one back exits from. */
+type NavState = { yjNav?: { view: string; [key: string]: any } };
+
+/** Whether the app's first navigation has been recorded. It *replaces*
+ *  the launch entry rather than pushing, or every launch would cost one
+ *  back press before the app would exit. */
+let historyStarted = false;
+
+/** How many entries this session has pushed beyond that first one --
+ *  i.e. how deep back can go while staying inside the app. */
+let pushedEntries = 0;
+
+function recordNavigation(detail: { view: string; [key: string]: any }): void {
+    // `_isBack` is bookkeeping, not destination: keeping it in the entry
+    // would make a replayed navigation claim to be a back-navigation.
+    const { _isBack: _ignored, ...nav } = detail;
+    const state: NavState = { yjNav: nav };
+
+    // Same URL, deliberately: the app has no routes, and a path a
+    // reload cannot resolve is worse than no path at all.
+    if (historyStarted) {
+        history.pushState(state, '');
+        pushedEntries += 1;
+    } else {
+        history.replaceState(state, '');
+        historyStarted = true;
+    }
+}
+
+window.addEventListener('popstate', (e: PopStateEvent) => {
+    const nav = (e.state as NavState | null)?.yjNav;
+
+    // Before the app's first navigation, or an entry somebody else
+    // pushed: nothing to restore, and the activity should be free to
+    // finish.
+    if (!nav) return;
+
+    pushedEntries = Math.max(0, pushedEntries - 1);
+
+    void handleNavigate({ ...nav, _isBack: true });
+});
+
 async function handleNavigate(
     detail: { view: string; [key: string]: any },
 ): Promise<void> {
@@ -192,6 +265,8 @@ async function handleNavigate(
     if (!mainContent) return;
 
     const seq = ++navSeq;
+
+    if (!detail._isBack) recordNavigation(detail);
 
     // Bookkeeping stays synchronous with the click: the search box's
     // scope and the active-view attribute describe the navigation that
@@ -206,9 +281,6 @@ async function handleNavigate(
 
     // --- Primary (cacheable) views ----------------------------------------
     if (view in VIEW_TAGS) {
-        // Navigating to a primary view clears the history stack.
-        navStack.length = 0;
-
         // Remove any active detail view first
         if (currentDetailEl) {
             deactivateView(currentDetailEl);
@@ -241,7 +313,6 @@ async function handleNavigate(
         // the way out.  Either way this is the call that starts it.
         activateView(target);
         currentViewEl = target;
-        currentNavDetail = { view };
 
         return;
     }
@@ -250,12 +321,6 @@ async function handleNavigate(
     if (seq !== navSeq) return;
 
     // --- Detail (ephemeral) views -----------------------------------------
-    // Push the current view onto the nav stack before switching
-    // (unless this is a back-navigation, which already popped).
-    if (!detail._isBack) {
-        navStack.push({ ...currentNavDetail });
-    }
-
     // Hide the current primary view
     if (currentViewEl) {
         currentViewEl.classList.add('view-hidden');
@@ -267,8 +332,6 @@ async function handleNavigate(
         currentDetailEl.remove();
         currentDetailEl = null;
     }
-
-    currentNavDetail = { ...detail };
 
     switch (view) {
         case 'artist-details': {
@@ -302,6 +365,13 @@ async function handleNavigate(
             }
             mainContent.appendChild(spEl);
             currentDetailEl = spEl;
+            break;
+        }
+        case 'now-playing': {
+            const npEl = document.createElement('now-playing-view');
+
+            mainContent.appendChild(npEl);
+            currentDetailEl = npEl;
             break;
         }
         case 'genre-details': {
@@ -406,16 +476,16 @@ function schedule(fn: () => void): void {
     setTimeout(fn, 200);
 }
 
-// Navigate-back: pop the nav stack and re-dispatch as a regular navigate.
+// Navigate-back: the in-app back buttons, which are the same press as
+// the phone's.  It goes through the history rather than a stack of its
+// own, so one press is one entry however it arrived -- two stacks is
+// how a detail view's own button and the back gesture come to disagree.
+//
+// At the root there is nothing of ours to go back to, and going back
+// anyway would leave the app: the depth check is what stops a stray
+// `navigate-back` closing it.
 document.addEventListener('navigate-back', () => {
-    const prev = navStack.pop();
-    if (prev) {
-        document.dispatchEvent(new CustomEvent('navigate', {
-            bubbles: true,
-            composed: true,
-            detail: { ...prev, _isBack: true },
-        }));
-    }
+    if (pushedEntries > 0) history.back();
 });
 
 // Navigate to the user's configured launch page.  Falls back to 'home'

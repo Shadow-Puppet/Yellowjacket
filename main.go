@@ -15,6 +15,7 @@ import (
 	"yellowjacket/backend/assets"
 	"yellowjacket/backend/config"
 	"yellowjacket/backend/profiling"
+	"yellowjacket/backend/system"
 	"yellowjacket/internal/dev"
 )
 
@@ -28,6 +29,20 @@ var (
 var frontendDistAssets embed.FS
 
 func main() {
+	// **Mobile has no home directory, and this must run before anything
+	// asks for a path.** backend/system resolves config and data from
+	// $HOME or the OS equivalent, and on Android there is neither: its
+	// switch on runtime.GOOS took the default branch and returned
+	// errUnsupportedOS, so NewYellowJacketApp failed and main() exited
+	// six milliseconds after the JNI bridge came up -- with no panic and
+	// no tombstone, because os.Exit is not a crash.
+	//
+	// StoragePath() is the platform's own answer (getFilesDir() on
+	// Android, Application Support on iOS) and returns "" on desktop,
+	// where UseHomeOverride is then a no-op -- so this needs no build
+	// tag and changes nothing off mobile.
+	system.UseHomeOverride(application.Mobile.StoragePath())
+
 	// WebKitGTK's DMABuf renderer crashes on NVIDIA GPUs under Wayland.
 	// Only disable it for that specific combo so AMD/Intel and X11 users
 	// keep full hardware-accelerated buffer sharing.  Users can also

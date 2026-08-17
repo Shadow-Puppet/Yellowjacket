@@ -2394,3 +2394,817 @@ And `tag_status` was only ever written by the *insert* path, so a file
 another tagger stamped after import kept `untagged` for ever and its
 folder kept asking; `updateAudioFile` promotes it now, guarded on
 `untagged` so a deliberate `user_skipped_permanent` survives a rescan.
+
+## Android cross-compiles, unchanged (measured 2026-08-16)
+
+Plan 015's phase 0 gate, and it passed further than it was asked to: the
+whole app builds for Android and produces a working 27 MB fat APK with
+**no source changes at all**.
+
+Environment: Arch's `android-ndk-26` (`/opt/android-ndk`, r26d /
+26.3.11579264 — the pinned version), platform `android-35` and
+build-tools 34.0.0 from `~/Android/Sdk`. Note that Arch's
+`/opt/android-sdk` carries *no* platforms, so `ANDROID_HOME` has to
+point at `~/Android/Sdk` for the Gradle half while `ANDROID_NDK_HOME`
+points at `/opt/android-ndk` for the Go half.
+
+```
+export ANDROID_NDK_HOME=/opt/android-ndk
+export ANDROID_HOME="$HOME/Android/Sdk" ANDROID_SDK_ROOT="$HOME/Android/Sdk"
+cd frontend && pnpm build && cd ..          # main.go embeds frontend/dist
+PATH="$PWD/scripts/toolbin:$PATH" go tool wails3 task android:package:fat
+```
+
+Results, all first-try:
+
+| | |
+|---|---|
+| `libwails.so` arm64-v8a | 29.9 MB, production, stripped |
+| `libwails.so` x86_64 | 31.8 MB, production, stripped |
+| `bin/yellowjacket.apk` | 27.3 MB, both ABIs |
+| Go compile, per ABI | ~9 s |
+| Gradle assemble | ~13 s cold |
+
+**The dependency that looked fatal is fine.** A `CGO_ENABLED=0` probe of
+`./backend/... ./internal/...` for `android/arm64` compiles *everything*
+except two packages, and both fail only because their Android
+implementation is cgo: `ebitengine/oto/v3` (`driver_android.go` needs its
+bundled **oboe** C++ backend) and `wails/v3/pkg/application` (the JNI
+bridge). Both are exactly what the NDK supplies. `modernc.org/sqlite` —
+the whole database layer, and the thing most likely to have no Android
+target — is clean. Confirmed in the linked object rather than inferred:
+`nm -D` shows `oto_oboe_Play` and the `oboe::` symbols, `readelf -d`
+shows `libOpenSLES.so` as NEEDED, and the
+`Java_com_wails_app_WailsBridge_native*` exports are present. The audio
+backend is genuinely linked, not stubbed.
+
+Four things found on the way that are not obvious:
+
+- **`wails3 update build-assets` does not generate `build/android/`.** In
+  beta.8 it extracts only `internal/commands/updatable_build_assets`,
+  which is darwin/ios/linux/windows. The android tree comes from
+  `generate build-assets`, which extracts the *whole* asset FS and would
+  rewrite all of `build/`. So it was generated into a scratch dir and
+  `android/` copied across. CLAUDE.md claimed the refresh regenerates it;
+  that was wrong, and is corrected.
+- **`update build-assets` does clobber nfpm's `homepage` and
+  `license`**, which `build/linux/nfpm/nfpm.yaml` says in a comment it
+  leaves alone. It reset them to `https://wails.io` and `MIT`. The
+  comment is wrong; those two fields need re-checking after any refresh.
+- **The scaffold's `package:fat` shipped a debug arm64 library.**
+  `build` forwards `ARCH` to `compile:go:shared` but not `PRODUCTION`,
+  so the arm64 leg recomputed `BUILD_FLAGS` against an unset
+  `.PRODUCTION` and took the debug branch — while amd64, which
+  `package:fat` calls directly with `PRODUCTION: "true"`, was correct.
+  A release APK therefore carried a 40 MB unstripped debug library for
+  the phone ABI and a 31 MB production one for the emulator. Fixed in
+  `build/android/Taskfile.yml`, which is this repo's one edit to that
+  scaffold file and is commented as such. 34 MB APK before, 27 after.
+- **The generated APK is not yet an identity.** `com.wails.app`,
+  `versionCode 1`, `versionName 1.0`, signed `CN=Android Debug`. That is
+  plan 015 phase 2 and none of it is a surprise, but it is worth knowing
+  that the scaffold happily produces an installable-once,
+  never-updatable APK by default.
+
+**Not established:** that it *runs*. There is no AVD or system image on
+this machine and no device attached, so nothing has launched the APK.
+Every runtime concern plan 015 lists as out of scope is still out of
+scope and still real — MPRIS in particular is compiled *in*, because
+Go's `android` GOOS implies the `linux` build tag.
+
+## The Android build runs, and stops on one line (measured 2026-08-16)
+
+The APK installs and launches on an emulator. `libwails.so` loads, the
+JNI bridge comes up — and the process is gone six milliseconds later.
+
+**The cause is `backend/system/buildUserDirPath`.** It switches on
+`runtime.GOOS` with cases for `darwin`, `linux` and `windows` and a
+`default:` returning `errUnsupportedOS`. `runtime.GOOS` is `"android"`,
+so it takes the default, `NewYellowJacketApp` fails, and `main()` calls
+`os.Exit(1)`. `YJ_HOME` overrides that path on every OS, so an
+`android` case pointing at the app-private directory is the shape of
+the fix. It is the *first* thing that stops it, not the only one.
+
+**What cost the time was not finding the bug, it was that the failure
+is invisible in all three places you would look.** Worth knowing before
+meeting it:
+
+- **Go's stdout does not reach logcat.** An app's fd 1 and 2 go to
+  `/dev/null`, so the `slog` line naming the error is discarded.
+  `setprop log.redirect-stdio true` does not help — that redirects the
+  *Java* runtime's `System.out`, not a c-shared native library's.
+- **`os.Exit` leaves no evidence.** No panic, no `AndroidRuntime`
+  stack, nothing in `/data/tombstones`, nothing in `logcat -b crash` or
+  dropbox. The only signal present is `Zygote: exited due to signal 9`,
+  which reads as "the system killed it" and sends you looking at the
+  low-memory killer.
+- **ActivityManager restarts it faster than you can observe it.**
+  `pidof` always answers and `am start` always says `Status: ok`, so
+  the app looks alive while crash-looping several times a second. The
+  honest check is whether it is the *same pid* a few seconds later,
+  which is what `make android-smoke` asserts.
+
+The tell is `I/WailsBridge: Wails bridge initialized` followed
+immediately by a new pid doing the same thing.
+
+**Emulator environment**, which is not the obvious one on Arch: Gradle
+needs a *platform*, and `/opt/android-sdk` (the `android-sdk` package)
+has an NDK and build-tools but an empty `platforms/`. So `ANDROID_HOME`
+points at `~/Android/Sdk` (user-owned, where sdkmanager writes) while
+`ANDROID_NDK_HOME` points at `/opt/android-ndk` — two SDKs, one for
+each half of the build. The image is
+`system-images;android-35;google_apis;x86_64` (~3.5 GB with the
+emulator sdkmanager pulls alongside it): `google_apis` rather than
+`default` because this is a WebView app and that image carries the
+Chrome-based WebView. KVM is present and usable here; without it a 30 s
+boot becomes tens of minutes, which reads as a hung target.
+
+Operating all of this is `scripts/android-emulator.sh` and the
+`make android-*` targets, documented in
+`.pi/skills/yellowjacket-dev/references/android-tier.md`.
+
+## What the Wails v3 Android docs say, and where they are wrong (2026-08-16)
+
+Read after phase 0, before phase 2. Sources: `ANDROID.md` shipped inside
+`wails/v3@v3.0.0-beta.8` (authoritative for our exact version) and
+`v3.wails.io/guides/mobile/*`.
+
+**Two claims in `ANDROID.md` are wrong for beta.8, and both were
+checked.** Its Configuration section says to put `APP_ID: com.example.
+myapp` in `build/config.yml` and that this "controls the package name".
+Neither half holds. `wails3 task` builds its variable set from CLI
+`KEY=VALUE` arguments and the Taskfile tree and **never reads
+`config.yml`** (`internal/commands/task.go`); adding `APP_ID` there and
+running `android:run:device --dry` still emits
+`am start -n com.wails.app/`. And `APP_ID` feeds only the adb commands
+in the android Taskfile — uninstall, launch, log filter — never Gradle,
+whose `applicationId` is a literal in `app/build.gradle`. So the
+identity is necessarily declared **twice** and nothing enforces
+agreement. Both are set now, each with a comment pointing at the other.
+
+**The fix for the crash we found is a documented API.**
+`application.Mobile.StoragePath()` returns the app's private internal
+files directory (`getFilesDir()` on Android, Application Support on
+iOS) and — the useful part — is **build-tag-free**: `mobile.go` declares
+the interface and `mobile_stub.go` returns `""` on desktop. Since
+`resolveUserDirPath` already lets `YJ_HOME` override the path on every
+OS, the whole fix is to set that override from `StoragePath()` early in
+`main()` when it is non-empty. No `//go:build` split, no new import in
+`backend/system` (which must stay Wails-free — the `indexbuild` tag
+split exists for exactly that), and desktop behaviour is untouched
+because the stub returns empty.
+
+The same section gives the general rule: branch on
+`application.System.IsMobile()` / `IsPlatform(application.PlatformAndroid)`
+rather than build tags, because it compiles everywhere.
+
+**`android` implies `linux` is documented**, which confirms rather than
+discovers the MPRIS problem: `//go:build linux` files are in the Android
+build and desktop-Linux-only ones need `linux && !android`.
+
+**A finding for the runtime plan, not this one: the folder picker does
+not exist on Android.** Open-*directory* dialogs "return an error — SAF
+yields tree URIs, not filesystem paths", and save-file dialogs likewise.
+This app's entire first run is "choose your music folder", and its
+library model is filesystem paths. That is a design problem, not a
+porting detail, and it is larger than the data-directory one.
+
+**The scaffold ships its own android tasks**, and they are worth knowing
+before writing anything: `android:run`, `run:device`, `deploy-emulator`,
+`deploy-device`, `package`, `package:fat`, `bundle`/`bundle:fat` (AAB
+for Play), `studio`, `device:list`, `logs`, `logs:all`, `clean`, and an
+internal `ensure-emulator`. `make android-*` deliberately does not wrap
+most of them. Two reasons it does not just use `android:logs`: that task
+greps logcat for `(Wails|yellowjacket)`, which matches the `WailsBridge`
+tag but **not** the app's own process tag (`app.yellowjacket`, lowercase)
+and **not** `ActivityManager`'s "has died" line — the one that tells you
+it crashed. And `ensure-emulator` takes whatever `-list-avds | tail -1`
+returns, with no pidfile and no boot wait, so it cannot be stopped or
+sequenced by a Makefile.
+
+Two smaller things. Debug builds log framework diagnostics to logcat
+under the `Wails` tag and are inspectable from `chrome://inspect`;
+production builds compile that out — so a debug APK is the more
+informative one when something is wrong. And the docs recommend
+`build-tools;35.0.0`; 34.0.0 is what is installed here and builds fine.
+
+## The app starts on Android; x86_64 Android cannot run it (2026-08-16)
+
+Two findings, and the second is the one with consequences.
+
+**The startup bug is fixed.** `backend/system`'s `buildUserDirPath`
+switched on `runtime.GOOS` and Android took the `default:` branch, so
+`main()` called `os.Exit(1)` six milliseconds after the JNI bridge came
+up. `main()` now calls
+`system.UseHomeOverride(application.Mobile.StoragePath())` before
+anything asks for a path. `StoragePath()` is `getFilesDir()` on
+Android, Application Support on iOS and `""` on desktop — where
+`UseHomeOverride` is a no-op — so the change needs no build tag and
+alters nothing off mobile. `backend/system` gained no import of the
+Wails application package, deliberately: that is the same constraint
+the `indexbuild` split protects in `backend/events`.
+
+**And then it takes SIGSYS on the x86_64 emulator.**
+
+```
+F/libc: Fatal signal 31 (SIGSYS), code 1 (SYS_SECCOMP), syscall 6
+F/DEBUG: Cause: seccomp prevented call to disallowed x86_64 system call 6
+```
+
+Syscall 6 on x86_64 is `lstat`, and the caller is **not our code and
+not Go's**. Go's `syscall` package already routes both `Stat` and
+`Lstat` through `fstatat` on amd64 *and* arm64. The caller is
+`modernc.org/libc`, which `modernc.org/sqlite` sits on and therefore
+the entire database layer: `libc_linux_amd64.go`'s `Xlstat64` issues
+`unix.Syscall(unix.SYS_LSTAT, …)` directly. Android's seccomp filter
+forbids it because bionic never issues it.
+
+**arm64 is unaffected, structurally rather than by luck.** arm64 has no
+`lstat` syscall at all, so `ccgo_linux_arm64.go`'s `Xlstat` is
+`Xfstatat(…, AT_SYMLINK_NOFOLLOW)` → `SYS_newfstatat` (79), which is
+permitted. `grep -c SYS_LSTAT ccgo_linux_arm64.go` returns 0 against 1
+for amd64.
+
+Three consequences:
+
+- **The default emulator cannot verify this app.** `make android-smoke`
+  on an x86_64 AVD reports a tombstone that says nothing about your
+  change. Verification needs an `arm64-v8a` image (full software
+  emulation on an x86_64 host, so slow) or a real device.
+- **The x86_64 half of the fat APK is dead weight on every Android**,
+  not just emulators — an x86 Chromebook would hit exactly this. It is
+  31 MB of a 27 MB compressed artifact. Dropping it is a real option;
+  keeping it costs size and buys an emulator target that does not work.
+  Not decided here.
+- The failure is at least *legible*. Unlike the `os.Exit` it replaced,
+  SIGSYS leaves a tombstone with a backtrace into `libwails.so`, which
+  is how it was identified in one pass.
+
+Worth knowing for anything else that reaches for a pure-Go C library:
+this class of bug is invisible to every build and every desktop test,
+and appears only under a platform's syscall filter.
+
+### …and the arm64 emulator is not an option on an x86_64 host
+
+Emulator 37.1.11 refuses outright, after the 3.8 GB image download:
+
+```
+FATAL | Avd's CPU Architecture 'arm64' is not supported by the QEMU2
+        emulator on x86_64 host. System image must match the host
+        architecture.
+```
+
+Google dropped cross-architecture emulation and there is no flag for
+it. So the arm64 claim above rests on reading modernc's two code paths,
+not on having run it: verifying the shipped ABI needs an arm64 host, a
+physical device, or `adb connect` to one. The image was deleted again;
+do not re-download it.
+
+## Android media controls need no new JNI and no new dependency (2026-08-16)
+
+Plan 016's A4 — playback that survives the screen locking — turned out
+to be reachable entirely through seams that already exist, which is the
+finding worth keeping. The obvious blocker is that Wails' `androidBridge*`
+helpers are unexported, so Go cannot call arbitrary Java. It does not
+need to:
+
+- **Go → Java** is `application.Android.StartForegroundService(json)`,
+  which *is* exported, and `build/android/` is our tree — so widening
+  the JSON that `WailsBridge.startForegroundService` accepts is a local
+  edit, not a fork of the runtime.
+- **Java → Go** is `WailsBridge.emitEvent(name, json)` →
+  `nativeEmitEvent` → `app.Event.Emit`, which a Go `app.Event.On`
+  subscriber receives with `Data` as a `map[string]any`.
+
+So the handler is one JSON document out and one command event back, and
+`backend/mediacontrols`' existing `Handler`/`Callbacks` interface — written
+for MPRIS — needed one addition (`OnDuck`) to cover a MediaSession.
+
+**The Java side needs no androidx.media either.** `MediaSessionCompat`
+is the documented route, but `android.media.session.MediaSession` and
+`Notification.MediaStyle` are both API 21 and minSdk here is 21, so the
+platform API covers it with two `Build.VERSION` branches (the channel,
+and PendingIntent mutability flags) and no new Gradle dependency.
+
+Four things measured or reasoned along the way, each of which would
+have been a bug:
+
+- **From API 26 the framework ducks the app itself** and sends no
+  `AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK`. So a duck implemented in the
+  player is a *pre-Oreo* path, and `setWillPauseWhenDucked(true)` —
+  which is how you get the callback back — would mean pausing for
+  every notification tone. Implementing both attenuates twice.
+- **A duck must not touch the user's volume.** `Player.SetDuck` holds
+  the attenuation as a separate offset and re-applies the user's level
+  through `setVolumeLocked`, so it cannot accumulate across repeated
+  ducks and `getUserVolume` — which feeds the event, the persisted
+  state and every relative change — still reports what the user chose.
+- **From Android 12 a background app may not *start* a foreground
+  service**, but it may keep delivering intents to one already running.
+  Every update after the first is exactly that case (a track change
+  with the screen off), so `WailsBridge` picks `startService` over
+  `startForegroundService` once `WailsForegroundService.running` is set.
+- **A service started with `startForegroundService` that returns from
+  `onStartCommand` without calling `startForeground` is killed**, so
+  the transport-button intents call it too rather than only the payload
+  path.
+
+**`make lint` does not see any of this.** Its three passes are the app,
+`indexbuild` and `dev` tag sets, all on linux/amd64, and `android.go` is
+behind the `android` build tag — the only thing that compiles it is the
+cross-compiler in `make android`. That is why the payload keys, the
+state words and the command names live in `androidpayload.go` *without*
+a build tag, with a test: it is the half that can be checked on the
+machine doing the work. A quick manual check of the tagged half is
+
+```bash
+B=$(echo /opt/android-ndk/toolchains/llvm/prebuilt/*/bin)
+CC=$B/aarch64-linux-android21-clang CXX=$B/aarch64-linux-android21-clang++ \
+  GOOS=android GOARCH=arm64 CGO_ENABLED=1 go build ./backend/...
+```
+
+— `CXX` matters: without it the oboe C++ sources compile against the
+host sysroot and fail on `android/log.h`, which reads like a missing NDK.
+
+**None of it has run.** The APK builds for both ABIs and the Go and Java
+halves compile; everything above about behaviour is read from the
+Android documentation and the source. The x86_64 emulator still cannot
+run this app (modernc `lstat`/seccomp, above) and an arm64 AVD still
+cannot exist on an x86_64 host, so A4's first real test is a device.
+
+## Dropping x86_64 cut the APK by 41% (measured 2026-08-16)
+
+Plan 016's B1, decided: the ABI is gone.
+
+| | fat (arm64 + x86_64) | arm64 only |
+|---|---|---|
+| `bin/yellowjacket.apk` | 27,059,130 B | 15,898,465 B |
+| `lib/` entries | 2 | 1 |
+
+It buys nothing to keep. x86_64 Android takes SIGSYS the first time it
+touches the database (modernc's raw `lstat` against Android's seccomp
+filter, above), which is *every* x86_64 device — emulators and x86
+Chromebooks alike — not merely the emulator here.
+
+Three places had to agree, and the third is the one that would have
+made this a silent no-op: `abiFilters` in `build/android/app/
+build.gradle` (what Gradle packages), `android:package` rather than
+`android:package:fat` in the Makefile (what Go compiles — otherwise the
+31 MB library is still built and then discarded), and the `native-code`
+assertion in `android-apk.yml`'s Verify step, which is now
+`native-code: 'arm64-v8a'$` and fails if a second ABI ever comes back.
+The anchor is deliberate and was checked against a real artifact:
+without it the pattern also matches the fat APK's line.
+
+One consequence for the dev tier was written down before it was
+checked, and checking it proved it false — see the next entry.
+
+## arm64 translation runs Go until Go asks the CPU what it is (measured 2026-08-16)
+
+Predicted, when the x86_64 ABI was dropped: `make android-install`
+against the emulator would now fail with
+`INSTALL_FAILED_NO_MATCHING_ABIS`. **Measured: it installs and
+launches.** Google's `google_apis` x86_64 images carry arm64
+translation —
+
+```
+ro.product.cpu.abilist = x86_64,arm64-v8a
+```
+
+— so the loader maps `lib/arm64/libwails.so` and executes it; the
+tombstone confirms it with `ABI: 'x86_64'` / `Guest architecture:
+'arm64'`.
+
+It dies anyway, before a line of our code, and the instruction says
+exactly why. The fault is at `libwails.so+0x15911d0`:
+
+```
+signal 4 (SIGILL), code -6 (SI_TKILL)
+15911d0: d5380600   mrs  x0, ID_AA64ISAR0_EL1
+```
+
+That is Go's `internal/cpu` reading the arm64 feature-ID system
+register during runtime init. The translator does not implement it, so
+**no Go binary starts under it** — this is not a property of this app
+and no work here would change it. (`code -6 (SI_TKILL)` also means the
+signal was re-raised by the process itself: Go's handler caught the
+SIGILL, printed a traceback to a stdout that goes to `/dev/null`, and
+re-raised. The invisible-failure rule again.)
+
+So there are now three distinct ways this app fails on an x86_64
+Android, none of them a bug in it:
+
+| build | cause | signal |
+|---|---|---|
+| x86_64 | modernc's raw `lstat` vs seccomp | SIGSYS, syscall 6 |
+| arm64, translated | Go reads `ID_AA64ISAR0_EL1` | SIGILL |
+| arm64, real device | — | still unverified |
+
+**A physical arm64 device is still the only verification path**, which
+is the conclusion the previous session reached by a different route.
+The value of this entry is that it closes the remaining plausible
+shortcut, with the instruction that closes it.
+
+### Two bugs the attempt found in the harness itself
+
+Both were on `main`, and the first had made the whole tier unusable
+since the commit that added it.
+
+**`scripts/android-emulator.sh` did not parse.** A `case` pattern read
+`*signatures do not match*)`, and `do` is a reserved word: bash fails
+the parse of the *entire file*, so `make android-emulator`,
+`android-install`, `android-smoke` and `android-logs` all died with
+`line 190: syntax error near unexpected token 'do'`. Quoting the inner
+words fixes it. A shell script that is only run interactively can carry
+a syntax error indefinitely — `bash -n` in the pre-commit hook would
+have caught it, and does not exist.
+
+**A bare `adb` addresses whatever is attached.** With a second emulator
+present (another project's, or a stale `offline` entry from a previous
+run), every adb call fails with "more than one device", and
+`cmd_install` reported that as *"no device — run 'make
+android-emulator' first"* — directly after that had printed "waiting
+for boot ok". `pick_device` now resolves `ANDROID_SERIAL` from
+`ro.boot.qemu.avd_name`, since serials are assigned in boot order and
+the AVD name is the stable identity. Verified with both emulators
+running: it selects `yj-test` and installs.
+
+## The phone shell fits, and what it cost to make it fit (2026-08-16)
+
+Plan 016 B2, phase 1: the shell below 600px. Measured at 360×780 and
+390×844 against the real app (`make dev-headless` + Playwright, which
+is the tier that can answer this — server mode serves the same document
+an Android WebView renders).
+
+**What overflowed, and by how much.** The body was 652px wide in a
+360px viewport before any of this. Walking every element and its shadow
+roots for a `right` past the viewport named the causes in order:
+
+| element | width | why |
+|---|---|---|
+| `header.top-bar` | 580 | its children's minimums, summed |
+| `search-bar` | 320 | `.search-container { min-width: 200px }` |
+| `job-indicator` | 157 | the label, "3 background jobs" |
+
+A `min-width` in a flex row is a *hard* floor — it does not shrink — and
+a grid item's implicit minimum is `auto`, i.e. its content. So the
+header could not get smaller than the sum of what it held, the body grew
+to the header, and `overflow-x: hidden` would then have hidden a third
+of the app rather than fitting it. `min-width: 0` on the boxes between
+the viewport and the content, plus each component standing its own
+non-essential parts down in its own stylesheet, takes 360 → 360 exactly.
+At 320px (400% zoom, the width WCAG 1.4.10 names) it is also exact.
+
+**So an existing spec now asserts the opposite of what it did**, and
+that is the fix landing rather than the test being weakened.
+`layout-overflow.spec.ts` used to assert that the 464px of app behind
+`overflow: hidden` *could be scrolled to* with a wheel gesture, which
+was the remedy available when the shell had one layout. It reflows now,
+which is what 1.4.10 asks for; scrolling to the overflow was the
+concession.
+
+**And a shared component brings its test handles with it.**
+`bottom-nav`'s "More" opens the *existing* `<app-sidebar>` in a drawer —
+the whole point being not to write a second list of destinations — but
+rendering it unconditionally put a second `data-testid="nav-home"` (and
+ten siblings) in the DOM. **30 existing specs failed** with "strict mode
+violation: resolved to 2 elements", on a *desktop* viewport where
+`bottom-nav` is `display: none` and the drawer can never open. Lazy
+rendering fixes it; the component test asserts the absence, because the
+failure is invisible from inside the component and appears in files
+nobody touched.
+
+Three smaller things worth keeping:
+
+- **A new icon name is a runtime failure, not a build one.** `bars` was
+  not in `src/icons/names.txt`, so `offline-icons.spec.ts` caught it —
+  the sweep asserts `window.__yjIconMisses` is empty. `node
+  frontend/scripts/fetch-icons.mjs` re-vendors after adding a line.
+- **A `wa-drawer` animates, so a test asserts its events**, not its
+  `open` property: setting `open = false` starts a hide that has not
+  finished on the next microtask, and a test reading the property in
+  between sees the state it is leaving.
+- **`update(el)` in the component tier takes two arguments**
+  (`update(el, {})`), which is only visible from `tsc`, not from a
+  failing test.
+
+### The local e2e tier was not running the same app CI runs
+
+`requested-badge.spec.ts` failed two of three tests locally while CI was
+green, and the reason is worth more than the fix: **`dev-headless.sh`
+was the only place that did not neutralise `YJ_CORE_INDEX_URL`.**
+`seed-sandbox.sh` and `ci.yml` both point it at `127.0.0.1:1`; the dev
+launcher did not, so the app downloaded and built the real ~1M-row
+Explore catalog into the run's `YJ_HOME`, and a local `make e2e` then
+ran against a world CI never sees.
+
+Found by reading the failure screenshot: the spec had searched Explore
+for its fixture album and the page was full of *real* ones — Real
+Estate, Arrested Youth, The Yes Album. The staged row was there and
+invisible among a million others.
+
+`dev-headless.sh` now defaults the variable to the dead address and
+takes an explicit one if you want the real catalog for exploring by
+hand. `make e2e` locally: 97 passed / 3 failed before, 100 passed
+after.
+
+The second half of the same problem is that **the backend is one shared
+process with one database, and specs leave rows in it.**
+`explore-shelves` staged its catalog only `IfEmpty`, so a single album
+row left behind by `requested-badge` satisfied that gate, the shelves
+were drawn from one foreign row, and the artist card the spec clicks did
+not exist. It fails on the *second* local run and passes on the first,
+which is the least useful order, and never in CI, where every run gets a
+fresh `YJ_HOME`.
+
+"Is the catalog empty" was the wrong question; "are my rows there" is
+the right one. The staging is unconditional now (`INSERT OR IGNORE`
+keyed on the MBID) and the assertion moved from *this insert wrote a
+row* to *every fixture row is present* — which is both idempotent and a
+stronger check, since an MBID failing `CHECK(length(mbid) = 16)` is
+silently dropped by OR IGNORE and would otherwise show up as an empty
+page rather than a failed setup.
+
+**Verified: the full suite runs twice against the same app, 100 passed
+both times.** That is the property to keep — a spec tier whose second
+run differs from its first is a tier that will one day blame the wrong
+commit.
+
+## A media query adds no specificity, and dead CSS looks like working CSS (2026-08-16)
+
+Plan 016 B2 phase 2 shipped the full-screen now-playing view, and
+checking it with a screenshot found that **phase 1's shell rules had
+never applied**.
+
+`index.css` is base rules then component rules, and the phone block had
+been inserted in the middle — above the plain `.top-bar` and `.title`
+rules it meant to override. A media query is not a specificity boost,
+so with equal specificity the *later* declaration wins. Measured at
+390px before the fix:
+
+| declared for the phone | actually computed |
+|---|---|
+| `padding-left: 0.75em` | 32px (the 2em base) |
+| `gap: 0.5em` | 16px (base) |
+| `font-size: 1.1em` | 24px (the 1.5em base) |
+| `grid-template-columns: minmax(0,1fr) auto auto` | `320px 1fr auto` (base) |
+
+After moving the block to the end of the file: 12px, 8px, 17.6px, and
+`154px 187px 33px`.
+
+**Nothing failed while they were dead**, which is the part worth
+keeping. The phone spec asserts that the shell does not scroll
+sideways, and it did not — because the fitting was being done by
+`min-width: 0` and by each component's *own* media query, which live in
+their own stylesheets and so had no later rule to lose to. The
+declarations that did nothing were the cosmetic ones, and no assertion
+was ever going to see them. A screenshot did, in about ten seconds.
+
+The file now ends with one phone section, and says why it is last.
+
+### What the same screenshot found about the view itself
+
+The bottom bar was still rendering the mini player *underneath* the
+full-screen view — 4em of a 844px phone spent saying exactly what the
+view above it says, and invisible to every assertion about either one
+(both were correct on their own). `index.css` hides `.bottom-bar` while
+`#main-content[data-active-view="now-playing"]`, through `:has()`
+rather than a class toggled from `index.ts`: which view is showing is
+already published as an attribute, and a second expression of the same
+fact is a second thing to keep in step.
+
+That took the queue button away with it, since that button lives in the
+bar — so the view carries its own, toggling the same `open` attribute
+on the same panel element.
+
+**And a css`` literal cannot contain a backtick.** A comment reading
+"the track size is set on the `wa-slider` inside its shadow root"
+terminates the tagged template, and the failure arrives as
+`Expected "]" but found "wa"` from the CSS parser, at a line number in
+the *comment*. `make css-check` exists for this and named it
+immediately.
+
+## The index artifact could not be exported, and the reason is a rule this repo already had (2026-08-16)
+
+`maintain-index` failed on an unrelated push:
+
+```
+indexexport: copy rows: SQL logic error: no such column: total_tracks (1)
+```
+
+Three minutes in, on the one job that owns the ~205 GB checkpoint and
+publishes the catalog every user downloads.
+
+**The cause is the exception that keeps that checkpoint alive.** The
+index job's `/cache` is a real `YJ_HOME` that survives between runs, so
+`explore_index` there is classified `Cache` and is deliberately *not*
+dropped and recreated by `cmd/indexbuild`'s schema repair
+(`staleschema.go`). A column added to the schema afterwards is
+therefore simply absent from that database — and `total_tracks` was
+added by the album-completeness work. The exporter selected it anyway.
+
+**The fix is the rule the importer already follows.**
+`artifactHasTotals()` exists precisely because "adding a column to the
+importer's SELECT is how you break every artifact already published";
+the mirror image — *reading* an index older than the binary — had no
+such guard. `sourceColumns()` asks
+`pragma_table_info('explore_index', 'main')` and selects a literal `0`
+when the column is not there, which is what the column already means by
+"the catalog does not say" and what the app already renders as unknown
+rather than as incomplete. The destination keeps every column, so an
+importer needs no second shape.
+
+So the pattern generalises, and is worth stating once: **any query that
+crosses a version boundary in either direction asks the schema rather
+than trusting it.** There are now three of these — `artifactStoresText`
+(encoding), `artifactHasTotals` (import), `sourceColumns` (export).
+
+Two things about the test are worth keeping.
+
+It reproduces the failure **symptom first**: with the fix removed it
+fails with the CI message verbatim, `copy rows: SQL logic error: no
+such column: total_tracks (1)`. That was checked, not assumed.
+
+And its first version silently proved nothing. `oldColumns` was
+`strings.Replace(catalogColumns, "total_tracks, ", "", 1)` — which
+matches *nothing*, because the list is formatted across lines and the
+name is followed by a newline rather than a space. So the "old" index
+had every current column, the probe correctly said so, and the only
+reason this was caught is that the assertion about the probe ran before
+the assertion about the export. A fixture built by string surgery on a
+formatted constant needs to be whitespace-independent; it filters the
+list now.
+
+## Long-press is one document listener, and the header row is a row (2026-08-17)
+
+Plan 016 B2 phase 3. A phone has no right-click, and every context menu
+in this app opens from a `contextmenu` event — six components' worth,
+bound three different ways (delegated on a virtualizer, per row, per
+card). `frontend/src/utils/long-press.ts` is one document-capture
+listener installed once from `index.ts`: a touch that holds still for
+500 ms dispatches a synthetic `contextmenu` at the touch point, and
+**every existing handler runs unchanged**. No component opted in, and
+none can forget to.
+
+Four things it has to get right, and each is a way the obvious version
+fails:
+
+- **The target is `composedPath()[0]`, not `elementFromPoint`**, which
+  stops at the outermost shadow host. Every menu here is bound inside
+  one, so a host-targeted event reaches a delegated listener and no
+  per-row one.
+- **A browser that fires its own must win.** Chromium already dispatches
+  `contextmenu` on long-press; WebKit and the WebView vary. One arriving
+  during the press cancels ours; one arriving after ours is swallowed at
+  document capture.
+- **Ours is told from theirs by identity** (a `WeakSet`), not by
+  `isTrusted`. `isTrusted` would work in the app and is untestable — no
+  test can dispatch a trusted event — so the suppression path would have
+  been the one thing with no coverage.
+- **The click ending the gesture is swallowed**, keyed on the gesture
+  (cleared by the next `pointerdown`) rather than a time window, or a
+  quick tap on the menu that just opened is eaten too.
+
+**What cost the time was the assertion, not the code.** The e2e spec
+pressed `[role="row"]` — which is the *column header*, and it is the
+first one. The gesture fired correctly, the header correctly ignored it,
+and the failure looked exactly like a menu that would not open. Found by
+probing the running app (`playwright-cli eval`, dispatching the same
+pointer events and logging what saw the `contextmenu`), which showed the
+event reaching the row's own listener with no menu behind it — i.e. the
+handler was refusing it, not missing it. `.track-row` is the selector.
+
+Verified by execution: 8 component tests (real browser, real shadow
+boundary, real timings) and 2 e2e specs against the running app, twice
+in a row. Not verified: any of it under a real finger on a real
+WebView — the pointer events are dispatched, because neither Desktop
+Chrome nor Desktop Safari has touch and there is no device tier.
+
+## The first device run: A4 works, and two things only a phone could say (2026-08-17)
+
+The published v1.5.0 APK, on a real phone, owner-reported. **This is the
+first runtime evidence any of the Android work has ever had** — A4
+shipped entirely reasoned from source.
+
+**What holds.** Playback survives the screen locking. The MediaSession
+notification appears in the status pane *with album art* — which
+answers, in one observation, four of the open questions from plan 016:
+the foreground service starts, POST_NOTIFICATIONS was granted and the
+notification is visible, the session is picked up, and **cover art
+decoded from a `MANAGE_EXTERNAL_STORAGE` path by a service is
+readable**. The last was the one nobody could argue from documentation.
+
+**Two bugs, and neither is visible from any tier we have.**
+
+*Back did not navigate back.* The scaffold's
+`MainActivity.onBackPressed` asks `webView.canGoBack()` and finishes the
+activity otherwise — and this app had never touched `history`, so that
+was false at every depth and back quit from anywhere. The fix is in the
+frontend, not in Java: a navigation is a `history` entry now
+(`recordNavigation` in `index.ts`, same URL, the destination in the
+entry's state) and `popstate` replays it with `_isBack`. The Java half
+needs no change, because the mechanism it already uses is the one we
+were failing to feed.
+
+Two rules keep it honest. The **first** navigation replaces the launch
+entry rather than pushing one, or every launch costs a back press before
+the app will close. And the in-app back buttons go through
+`history.back()` rather than popping a stack of their own — `navStack`
+is **deleted**, not kept alongside, because two stacks is exactly how
+the detail view's own button and the phone's gesture come to disagree
+about how far back one press goes. `back-navigation.spec.ts` pins that
+invariant.
+
+*The transport was off screen.* **`targetSdk 35` is Android 15, which
+lays every app out edge-to-edge**, ignores the deprecated
+`statusBarColor`/`navigationBarColor` the theme still sets, and hands
+the app a window the size of the screen. The WebView is `match_parent`,
+so the page's bottom band — the transport, and on a phone the tab bar —
+was drawn underneath the gesture bar. `applyWindowInsets()` pads the
+container by `systemBars | displayCutout | ime` and returns the insets
+rather than consuming them. The window background goes black to match
+the app's own ramp, or the padding shows as a blue-grey band.
+
+**Neither is findable in the browser tier, and that is the lesson worth
+keeping**: a viewport has no system bars, so `phone-shell.spec.ts` at
+390x844 renders a shell that fits perfectly while the device cuts 48dp
+off the bottom — and `page.goBack()` was never called because nothing in
+a desktop shell has a back gesture. The Android tier's own note says
+failure there is invisible; this is the milder version, where the app
+works and is simply wrong in ways only the platform can show you.
+
+Verified by execution: the APK builds with the Java change; 3 e2e specs
+cover the history behaviour, on Chromium locally and WebKit in CI.
+Not verified: the insets themselves, which need the next APK on the
+owner's phone. What to look for is one thing — the transport and the tab
+bar clear of the gesture bar, and the header clear of the status bar.
+
+## The phone is a Chrome 113 WebView, and that reframes everything (2026-08-17)
+
+The device is reachable over adb now, so the tier can be *asked* rather
+than reported on. `make android-inspect` + `make android-eval` are that:
+a debug build (`applicationIdSuffix ".dev"`, so it installs **beside**
+the release app rather than needing the uninstall that would take the
+library with it) opens `webview_devtools_remote_<pid>`, and raw CDP over
+Node's built-in WebSocket evaluates in the real page. **Playwright
+cannot do this** — `connectOverCDP` calls `Browser.setDownloadBehavior`
+and a WebView answers "Browser context management is not supported",
+killing the connection before the first evaluate.
+
+Measured on the device (Light Phone III, TLP301):
+
+| fact | value |
+| --- | --- |
+| Android | 14, SDK 34 |
+| screen | 1080x1240, density 408 |
+| WebView viewport | **424 x 439 CSS px**, DPR 2.55 |
+| WebView engine | **Chrome 113.0.5672.136** (mid-2023) |
+
+**The first correction: the insets commit does not explain the report.**
+Edge-to-edge is forced for apps *running on* Android 15, and this phone
+is Android 14 — the screenshot shows the app correctly inset, with the
+status bar and the gesture bar outside it. `applyWindowInsets()` is
+right and stays (the next phone, or one OS update, is Android 15), but
+it is **pre-emptive, not the fix for "the controls are off screen"**.
+That was an inference from a version number, and the device disagreed.
+
+**The second correction: the black `fill` proves nothing.** A wa-icon on
+the device has the right `color` (#ffd43b) and an `<svg>` in its shadow
+root, and `getComputedStyle(svg).fill` is black — but that is the *svg
+root*, and every vendored Font Awesome path carries
+`fill="currentColor"` itself, so the root's fill is irrelevant. Measuring
+the wrong node produced a diagnosis-shaped result. `__yjIconMisses` is
+empty, so no name is unbundled either. Why the icons do not appear in the
+screenshot is **still open**.
+
+**What the engine version does explain, and what to check next.**
+Chrome 113 has `:has()`, `color-mix()` and `dialog.showModal()`, and
+lacks three things this app's dependencies use:
+
+- **Relaxed CSS nesting** (Chrome 120): a nested rule starting with a
+  bare element selector is dropped. `.x { svg { ... } }` parses to
+  nothing; `.x { & svg { ... } }` parses. Any Web Awesome or app
+  stylesheet written the modern way silently loses declarations here,
+  and dropped declarations are exactly the failure that looks like
+  "rendered but wrong".
+- **The Popover API** (Chrome 114). Web Awesome's popup calls
+  `showPopover?.()` — optional, so nothing throws — but also sets
+  `popover="manual"`, which on 113 is an unknown attribute doing
+  nothing. Every context menu, dropdown and the whole menu keyboard
+  model rides on that, so it is the first thing to test with a library
+  present.
+- `light-dark()` and relative colour syntax (`rgb(from ...)`).
+
+**The lesson for the tier: a device is an engine, not just a screen.**
+Every browser tier here runs a current Chromium or WebKit, and the phone
+that will actually run this app is two years behind — so "it renders at
+424x439 in Chromium" (checked, the transport is on screen) says nothing
+about whether it renders on the phone. The e2e tier cannot be fixed by
+resizing; the missing signal is version, and CDP against the device is
+the only place to get it.
+
+Verified by execution: every number in the table, the four feature
+probes, and that the hardware back button no longer kills the app (the
+`.dev` build carries the history fix; pid survived a BACK press).
+Unverified: what happened to the icons and the transport controls, which
+is where this resumes.

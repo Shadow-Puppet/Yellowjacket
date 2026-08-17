@@ -26,9 +26,7 @@ import type { Page } from '@playwright/test';
  */
 test.describe('Explore before anyone has typed', () => {
   test.beforeEach(async ({ app }) => {
-    // Idempotent, so running it per test costs one count query when a
-    // catalog is already there — which is every developer machine.
-    await stageCatalogIfEmpty(app);
+    await stageCatalog(app);
 
     await app.getByTestId('nav-explore').click();
     await expect(app.getByTestId('main-content')).toHaveAttribute(
@@ -125,8 +123,7 @@ test.describe('Explore before anyone has typed', () => {
 });
 
 /**
- * Give the app a catalog if it has none, so the empty-index environment
- * still exercises the shelves rather than skipping them.
+ * Give the app the catalog these shelves are written against.
  *
  * Deliberately shaped: two artists with albums (one of them with
  * three), and a third with none. The three albums are what "one album
@@ -135,9 +132,23 @@ test.describe('Explore before anyone has typed', () => {
  * above it and correctly skipped — the first version of this fixture
  * had only two, and the artists shelf was rightly omitted, which read
  * as a broken page.
+ *
+ * **Unconditional, and it used to ask whether the catalog was empty.**
+ * "Any rows at all" is the wrong question: the backend is one shared
+ * process with one database, so a *single* row left by another spec
+ * file — `requested-badge` stages one album — satisfies that gate and
+ * this suite then draws a shelf page with no artist card on it and
+ * times out looking for one. It survives a suite run, so it is the
+ * second local `make e2e` that fails and the first that passes, which
+ * is the least useful order. CI never sees it: every run there is a
+ * fresh YJ_HOME.
+ *
+ * The inserts are `INSERT OR IGNORE` keyed on the MBID, so running
+ * this per test is idempotent, and adding seven low-popularity rows to
+ * a developer machine's real million-row catalog changes nothing the
+ * shelves show.
  */
-async function stageCatalogIfEmpty(app: Page): Promise<void> {
-  if ((await catalogRows(app)) > 0) return;
+async function stageCatalog(app: Page): Promise<void> {
 
   // The catalog stores an MBID as its 16 raw bytes and an entity type
   // as a small integer, so a staged row has to be spelled the way the
@@ -185,15 +196,51 @@ async function stageCatalogIfEmpty(app: Page): Promise<void> {
     expect(result.status, `staging failed: ${result.body}`).toBe(200);
 
     // …and `OR IGNORE` means a 200 is not a write. A CHECK the row
-    // violates is *ignored*, not reported, so the count below is the
+    // violates is *ignored*, not reported, so the check below is the
     // only thing that can tell staging from silence.
+    //
+    // It is `0 or 1`, not `1`, because this helper is now
+    // unconditional: the second call of a run legitimately writes
+    // nothing. What must hold either way is that the rows are *there*,
+    // which is what the assertion after the loop says — a stronger
+    // statement than "this insert wrote something", and the one that
+    // actually protects the fixture.
     expect(
       (JSON.parse(result.body) as { rowsAffected?: number }).rowsAffected,
-      `staged nothing: ${result.body}`,
-    ).toBe(1);
+      `staging error: ${result.body}`,
+    ).toBeLessThanOrEqual(1);
   }
 
-  expect(await catalogRows(app)).toBeGreaterThan(0);
+  // Every staged row is present, whoever put it there. An MBID that
+  // fails `CHECK(length(mbid) = 16)` is silently dropped by OR IGNORE,
+  // and this is where that shows up.
+  expect(await stagedRowCount(app), 'the staged catalog is incomplete')
+    .toBe(rows.length);
+}
+
+/** How many of the staged fixture rows are in the catalog. */
+async function stagedRowCount(app: Page): Promise<number> {
+  const result = await app.evaluate(async () => {
+    const res = await fetch('/__test/sql', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sql: `SELECT COUNT(*) AS n FROM explore_index
+              WHERE artist_name IN ('Staged Alpha', 'Staged Beta',
+                                    'Staged Gamma')`,
+      }),
+    });
+
+    return { status: res.status, body: await res.text() };
+  });
+
+  expect(result.status, `count failed: ${result.body}`).toBe(200);
+
+  const parsed = JSON.parse(result.body) as {
+    rows?: { n?: number }[];
+  };
+
+  return parsed.rows?.[0]?.n ?? 0;
 }
 
 /**

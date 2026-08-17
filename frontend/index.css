@@ -41,6 +41,18 @@ body {
     overflow-y: hidden;
 }
 
+
+
+/* Above the phone breakpoint the tab bar does not exist.  It is in the
+   markup unconditionally and eagerly, for the reason notification-host
+   is: navigation that has to fetch a chunk before it can navigate is
+   not navigation. */
+@media (min-width: 600px) {
+    bottom-nav {
+        display: none;
+    }
+}
+
 p {
     margin: 0;
     /* I want to set paragraph margins myself */
@@ -129,6 +141,8 @@ body div.sidebar {
     overflow: hidden;
     contain: layout style paint;
 }
+
+
 
 .bottom-bar {
     grid-area: bottom-bar;
@@ -240,4 +254,111 @@ body div.sidebar {
     overflow: hidden !important;
     pointer-events: none !important;
     contain: strict !important;
+}
+
+
+/* ===================================================================
+   The phone shell (plan 016 B2).
+
+   **This section is last on purpose.** A media query adds no
+   specificity, so `@media (max-width: 599px) { .title { … } }` placed
+   above the plain `.title` rule loses to it -- which is exactly what
+   happened when this landed in the middle of the file: the header kept
+   its 2em gutters, its 16px gap and its 24px title on a 390px phone,
+   and every one of these declarations was dead. Nothing failed,
+   because the shell fits for a different reason (the `min-width: 0`
+   below and each component's own media query), so a screenshot was
+   what caught it.
+
+   600px, not the sidebar's 900: 900 is a *laptop* and the response to
+   it is a narrower sidebar, which is still a sidebar. Below 600 there
+   is no room for one at all -- 360px of viewport over a 200px nav is
+   not a layout -- so the navigation moves to the bottom, where a thumb
+   is, and the eleven-item list moves into `bottom-nav`'s drawer.
+   =================================================================== */
+@media (max-width: 599px) {
+    body {
+        grid-template:
+            "top-bar" 3.25em
+            "main-panel" 1fr
+            "bottom-bar" auto
+            "bottom-nav" auto
+            / 1fr;
+        /* Nothing may scroll sideways here.  On a desktop the shell is
+           allowed to overflow a zoomed-in window (a11y.21 above); a
+           phone *is* the small viewport, so the shell has to fit it. */
+        overflow-x: hidden;
+    }
+
+    body div.sidebar {
+        display: none;
+    }
+
+    bottom-nav {
+        grid-area: bottom-nav;
+    }
+
+    /* The 2em gutters are half a thumb each at this width, and the
+       subtitle is already gone from 900 down.
+
+       `min-width: 0` is the load-bearing half. A grid item's implicit
+       minimum is `auto` -- its content -- so a header whose children
+       ask for 580px makes the *body* 580px wide inside a 360px
+       viewport, and `overflow-x: hidden` then hides the right-hand
+       third of the app rather than fitting it. Every box between the
+       viewport and the content that must shrink needs this. */
+    .top-bar {
+        padding-left: 0.75em;
+        padding-right: 0.75em;
+        gap: 0.5em;
+        min-width: 0;
+        overflow: hidden;
+    }
+
+    .content-area,
+    .main-panel,
+    .bottom-bar {
+        min-width: 0;
+    }
+
+    .title {
+        font-size: 1.1em;
+    }
+
+    /* The search box is the one header control worth its width; the
+       library filter is a rarely-changed setting and reachable from
+       the drawer's Settings. */
+    .top-bar library-filter {
+        display: none;
+    }
+
+    /* The full-screen now-playing view *is* the transport, so the bar
+       repeating it underneath is 4em of a small screen spent saying
+       the same thing twice -- visible in a screenshot, invisible to
+       every assertion about either one.
+
+       `:has()` rather than a class toggled from index.ts: which view
+       is showing is already published as an attribute, and a second
+       expression of the same fact is a second thing to keep in step.
+       The view carries its own queue button, because this is where
+       that one lived. */
+    body:has(#main-content[data-active-view="now-playing"]) .bottom-bar {
+        display: none;
+    }
+
+    .top-bar search-bar {
+        flex: 1 1 auto;
+        min-width: 0;
+    }
+}
+
+@media (max-width: 599px) {
+    .bottom-bar {
+        grid-template-columns: minmax(0, 1fr) auto auto;
+        gap: 0.25em;
+    }
+
+    .bottom-bar audio-player {
+        margin: 0.25em;
+    }
 }

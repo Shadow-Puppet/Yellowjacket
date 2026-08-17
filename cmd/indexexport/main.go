@@ -25,6 +25,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -42,6 +43,41 @@ const catalogColumns = `entity_type, mbid, title, artist_name, artist_mbid,
 	aliases, popularity, listener_count, duration, caa_release_mbid,
 	release_name, primary_type, secondary_types, release_date, total_tracks,
 	artist_type, country, disambiguation, sort_name, discog_fetched`
+
+// sourceColumns is catalogColumns as read *from* the built index,
+// which is not always shaped like the one this binary was compiled
+// against.
+//
+// The index job's /cache volume is a real YJ_HOME that survives
+// between runs and holds ~205 GB nobody can re-download casually, so
+// its explore_index is classified Cache and is deliberately **not**
+// dropped and recreated by cmd/indexbuild's schema repair. A column
+// added to the schema after that database was built is therefore
+// absent from it, and selecting it fails the whole export with
+// "no such column: total_tracks" -- which is what happened the first
+// time the job ran after the completeness work.
+//
+// So the source list is asked for rather than assumed, exactly as
+// artifactHasTotals does on the importing side. Zero is what the
+// column means by "the catalog does not say", and the app already
+// renders that as unknown rather than as incomplete.
+func sourceColumns(db *sql.DB) string {
+	var n int
+
+	err := db.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('explore_index', 'main')
+		 WHERE name = 'total_tracks'`,
+	).Scan(&n)
+	if err == nil && n > 0 {
+		return catalogColumns
+	}
+
+	fmt.Println(
+		"  note: this index predates total_tracks; exporting 0 for it",
+	)
+
+	return strings.Replace(catalogColumns, "total_tracks", "0", 1)
+}
 
 var errNoHome = errors.New(
 	"YJ_HOME must be set to the directory holding the built index",
@@ -209,6 +245,10 @@ func createSchema(db *sql.DB) error {
 // dumpcatalog.go — a flat global top-N would give a handful of
 // superstars everything and everyone else nothing.
 func copyRows(db *sql.DB, artists, perArtistRGs, perArtistRecs int) error {
+	// The destination is created by this binary and always has every
+	// column; only the source may be older.
+	srcColumns := sourceColumns(db)
+
 	if _, err := db.Exec(`
 		CREATE TEMP TABLE core_artists AS
 		SELECT mbid FROM main.explore_index
@@ -221,7 +261,7 @@ func copyRows(db *sql.DB, artists, perArtistRGs, perArtistRecs int) error {
 
 	copied, err := insertSelect(db, `
 		INSERT INTO core.explore_index (`+catalogColumns+`)
-		SELECT `+catalogColumns+`
+		SELECT `+srcColumns+`
 		FROM main.explore_index
 		WHERE entity_type = 1 /* artist */
 		  AND mbid IN (SELECT mbid FROM core_artists)`)
@@ -248,7 +288,7 @@ func copyRows(db *sql.DB, artists, perArtistRGs, perArtistRecs int) error {
 		// most `limit` rows, ranked by their own listen counts.
 		n, err := insertSelect(db, `
 			INSERT INTO core.explore_index (`+catalogColumns+`)
-			SELECT `+catalogColumns+` FROM (
+			SELECT `+srcColumns+` FROM (
 				SELECT *, ROW_NUMBER() OVER (
 					PARTITION BY artist_mbid ORDER BY popularity DESC
 				) AS rn

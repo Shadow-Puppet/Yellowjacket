@@ -1,0 +1,127 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.wails.app'
+    compileSdk 35
+
+    buildFeatures {
+        buildConfig = true
+    }
+
+    defaultConfig {
+        // The app's identity on the device. `namespace` above stays
+        // com.wails.app -- that is the *Java package* the scaffold's
+        // MainActivity/WailsBridge live in, and renaming it would mean
+        // renaming their source. The two being different is normal and is
+        // why every `am start` needs the fully-qualified activity name
+        // (app.yellowjacket/com.wails.app.MainActivity), not `.MainActivity`.
+        //
+        // Matches build/config.yml's productIdentifier.
+        applicationId "app.yellowjacket"
+        minSdk 21
+        targetSdk 35
+
+        // **Android orders releases by this integer, not by the version
+        // string, and refuses to install anything not greater than what is
+        // already there.** A hardcoded 1 means the first install is the
+        // last: every later build is rejected as a downgrade and the only
+        // way out is an uninstall, which takes the user's library with it.
+        // CI derives it from the tag (1.3.1 -> 10301), monotonic as long as
+        // minor and patch stay under 100. The defaults keep a local build
+        // working with no environment at all.
+        //
+        // `Integer.parseInt`, not `(...) as Integer`: Groovy binds the call
+        // parentheses to `versionCode` before the cast, so the latter reads
+        // as `versionCode("1") as Integer` -- it sets a String, then casts
+        // the setter's null return, and Gradle fails the entire project
+        // with "Value is null" pointing at this line.
+        versionCode Integer.parseInt(System.getenv("YJ_VERSION_CODE") ?: "1")
+        versionName System.getenv("YJ_VERSION") ?: "0.0.0"
+
+        // **arm64 only, and x86_64 is not a gap.**  `modernc.org/libc`'s
+        // Xlstat64 issues a raw lstat syscall on linux/amd64, which
+        // Android's seccomp policy forbids (bionic never issues it), so
+        // the process takes SIGSYS the first time anything touches the
+        // database -- which for this app is startup.  That is every
+        // x86_64 Android, emulators and x86 Chromebooks alike, not just
+        // some.  arm64 is structurally unaffected: the architecture has
+        // no lstat syscall at all, so modernc routes through fstatat.
+        //
+        // So the second ABI was ~31 MB of an artifact that could not run
+        // anywhere.  If modernc fixes it, adding 'x86_64' back here and
+        // to the native-code assertion in android-apk.yml is the whole
+        // change.
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
+    }
+
+    def keystoreFile = System.getenv("ANDROID_KEYSTORE_FILE")
+    def hasKeystore = keystoreFile != null && !keystoreFile.trim().isEmpty()
+
+    signingConfigs {
+        // A real keystore can be provided via environment variables; without
+        // one, release builds are signed with the debug keystore so they can
+        // be installed for testing (not suitable for Play Store uploads).
+        release {
+            if (hasKeystore) {
+                storeFile file(keystoreFile)
+                storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias System.getenv("ANDROID_KEY_ALIAS")
+                keyPassword System.getenv("ANDROID_KEY_PASSWORD")
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            signingConfig hasKeystore ? signingConfigs.release : signingConfigs.debug
+        }
+        debug {
+            debuggable true
+            // Its own application id, so it installs *beside* the release
+            // app rather than needing an uninstall to replace it. The two
+            // are signed by different certificates (the release one comes
+            // from a keystore CI holds), and Android's remedy for a
+            // certificate change is an uninstall -- which takes the
+            // user's library with it. This is also what makes the WebView
+            // inspectable on a real phone: `debuggable` is what turns on
+            // `setWebContentsDebuggingEnabled`, and `make android-inspect`
+            // drives it.
+            applicationIdSuffix ".dev"
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+
+    // Source sets configuration
+    sourceSets {
+        main {
+            // JNI libraries are in jniLibs folder
+            jniLibs.srcDirs = ['src/main/jniLibs']
+            // Assets for the WebView
+            assets.srcDirs = ['src/main/assets']
+        }
+    }
+
+    // Packaging options
+    packagingOptions {
+        // Don't strip Go symbols in debug builds
+        doNotStrip '*/arm64-v8a/libwails.so'
+    }
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'androidx.webkit:webkit:1.9.0'
+    implementation 'com.google.android.material:material:1.11.0'
+    implementation 'androidx.biometric:biometric:1.1.0'
+    implementation 'androidx.security:security-crypto:1.1.0-alpha06'
+}

@@ -5,3 +5,9 @@ import * as FrontendUtil from "./frontendutil.js";
 export {
     FrontendUtil
 };
+
+export type {
+    DirEntry,
+    DirListing,
+    StorageAccess
+} from "./models.js";

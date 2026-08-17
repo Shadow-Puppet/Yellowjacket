@@ -56,6 +56,13 @@ type Player struct {
 	trackChangeID           uint64
 	mediaControls           mediacontrols.Handler
 
+	// duckAmount is the attenuation currently applied on top of the
+	// user's volume, in the same base-2 exponent effects.Volume uses.
+	// It is deliberately not persisted and emits no VolumeChanged: a
+	// duck is something the OS did for the length of a notification,
+	// not something the user chose.
+	duckAmount float64
+
 	// trackLengthMs holds the authoritative track duration in
 	// milliseconds, sourced from the database (which uses the
 	// custom header parser).  The go-mp3 decoder's Len() can be
@@ -793,10 +800,38 @@ func (p *Player) setVolumeLocked(desiredVolume UserVolume) {
 	speaker.Lock()
 
 	volume := clampVolume(desiredVolume)
-	p.volume.Volume = float64(volume.ToVolume())
+	p.volume.Volume = float64(volume.ToVolume()) - p.duckAmount
 	p.volume.Silent = volume == MinUserVol
 
 	speaker.Unlock()
+}
+
+// SetDuck attenuates playback (or restores it) without changing the
+// user's volume, for an OS that has asked us to get out of the way of
+// something short -- a navigation prompt, a notification tone.
+//
+// It re-applies the *user's* level through setVolumeLocked rather than
+// nudging the effect directly, so the offset cannot accumulate across
+// repeated ducks, and it neither emits nor persists: the level the user
+// set has not changed and the UI must not claim it has.
+//
+//wails:ignore // driven by OS audio focus, not by the frontend.
+func (p *Player) SetDuck(ducked bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	amount := 0.0
+	if ducked {
+		amount = duckAttenuation
+	}
+
+	if p.volume == nil || amount == p.duckAmount {
+		return
+	}
+
+	current := p.getUserVolume()
+	p.duckAmount = amount
+	p.setVolumeLocked(current)
 }
 
 // ChangeVolume adjusts the volume by a relative amount.
@@ -812,7 +847,9 @@ func (p *Player) ChangeVolume(deltaVolume int) error {
 }
 
 func (p *Player) getUserVolume() UserVolume {
-	return Volume(p.volume.Volume).ToUserVolume()
+	// Undo any duck, so every caller -- the event, the persisted
+	// state, a relative change -- sees the level the user chose.
+	return Volume(p.volume.Volume + p.duckAmount).ToUserVolume()
 }
 
 // Muted reports whether playback is currently silenced.
