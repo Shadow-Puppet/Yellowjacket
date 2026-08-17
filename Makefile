@@ -196,13 +196,17 @@ commit-check: ## Fail if a commit subject is not a Conventional Commit
 # same .releaserc.yml CI does, so "why did that not cut a version" is
 # answerable locally instead of by pushing and watching.  Needs no
 # credentials: --dry-run neither tags nor publishes.
+#
+# The pins must stay identical to release.yml's, which is where the note
+# on holding the conventionalcommits preset at 9 lives -- at 10 the
+# release notes come out empty with everything green.
 release-dry: ## Print the version a merge to main would release
 	@npx --yes \
 		-p semantic-release@25 \
-		-p @semantic-release/commit-analyzer@14 \
-		-p @semantic-release/release-notes-generator@15 \
-		-p @semantic-release/changelog@6 \
-		-p @semantic-release/git@10 \
+		-p @semantic-release/commit-analyzer@13 \
+		-p @semantic-release/release-notes-generator@14 \
+		-p @semantic-release/changelog@7 \
+		-p @semantic-release/git@11 \
 		-p @semantic-release/exec@7 \
 		-p conventional-changelog-conventionalcommits@9 \
 		semantic-release --dry-run --no-ci

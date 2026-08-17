@@ -124,6 +124,15 @@ jobs:
       # tool that looks for one.  conventional-changelog-conventionalcommits
       # is in the list because both the analyzer and the notes generator
       # name that preset and neither depends on it.
+      #
+      # **That preset is held at 9 and the reason is worth keeping.**  At
+      # 10 it is silently incompatible with the writer that
+      # release-notes-generator@14 pulls in (^8): every release note comes
+      # out as a bare `## 0.0.1 (date)` heading with **no sections and no
+      # commits under it**, and nothing errors.  The version would have
+      # been right, the tag would have been right, every job would have
+      # been green, and the release body would have been empty.  Check the
+      # notes, not the exit code, before moving any of these.
       - name: Run semantic-release
         if: steps.guard.outputs.skip == 'false'
         working-directory: /src
@@ -134,10 +143,10 @@ jobs:
 
           npx --yes \
             -p semantic-release@25 \
-            -p @semantic-release/commit-analyzer@14 \
-            -p @semantic-release/release-notes-generator@15 \
-            -p @semantic-release/changelog@6 \
-            -p @semantic-release/git@10 \
+            -p @semantic-release/commit-analyzer@13 \
+            -p @semantic-release/release-notes-generator@14 \
+            -p @semantic-release/changelog@7 \
+            -p @semantic-release/git@11 \
             -p @semantic-release/exec@7 \
             -p conventional-changelog-conventionalcommits@9 \
             semantic-release \

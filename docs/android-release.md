@@ -3,7 +3,33 @@
 `.gitea/workflows/android-apk.yml` builds a signed `arm64-v8a` APK on
 every `v*` tag and publishes it to Gitea's
 **generic** package registry, which is readable without credentials —
-which is what lets Obtainium poll a plain URL with no token.
+which is what lets Obtainium poll a plain URL with no token. It also
+attaches the same file to the Gitea release, which is what a person
+looking at the release page downloads.
+
+**Tags are not pushed by hand any more.** `.gitea/workflows/release.yml`
+reads the Conventional Commits on every merge to `main`, decides the
+version, and pushes the tag this workflow is keyed on — so releasing the
+APK means merging a `fix:` or `feat:` commit, not running `git tag`. The
+`workflow_dispatch` path below remains, for rebuilding a tag that already
+exists.
+
+## The 1.x installs cannot be upgraded to 0.0.x
+
+Releases restarted at **0.0.1** when they became automatic (plan 017).
+`versionCode` is computed as `maj*10000 + min*100 + pat`, so 0.0.1 is
+**1** against the **10300** an installed 1.3.0 build carries — and
+**Android refuses a downgrade outright**, with
+`INSTALL_FAILED_VERSION_DOWNGRADE`.
+
+The only way through is `adb uninstall app.yellowjacket` (or the
+launcher's own uninstall) before installing 0.0.1, **and that takes the
+device's library, playlists and play counts with it** — the same loss the
+signing key section below exists to prevent, arrived at from the other
+direction. This was chosen deliberately over offsetting `versionCode` by
+a constant, on the grounds that the honest number is worth one reinstall
+while an offset is permanent. The workflow prints a warning whenever the
+code it computes is below 10600.
 
 ```
 https://git.ljones.me/api/packages/yonlu/generic/yellowjacket-android/latest/yellowjacket.apk
