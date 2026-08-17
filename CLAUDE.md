@@ -1536,6 +1536,28 @@ by the three places that need them (the default widths, the
 normaliser, and the resize handles' positions), because they were
 written out separately and that is how they came to disagree.
 
+**A phone draws one column of two lines, and that is a column set
+rather than a second row template.** Measured on the device: at 424 px
+the four configured columns fit the row *exactly* (`--grid-cols` came
+out `24px 102px 101px 101px 80px`) and not one of them fit its content
+— "Duration" did not fit its own header. The columns were never too
+wide; there were too many of them. `PHONE_COLUMN_IDS` is `titleArtist`
+(title over artist, sharing the row's whole width) plus the duration, so
+the row, the delegated events, the selection semantics, the playing
+marker and the virtualizer are all untouched: from their side only the
+number of columns changed. Three rules come with it. **The row height
+lives in two places and they must agree** — `PHONE_ROW_HEIGHT` and the
+CSS rule — because the virtualizer positions rows from that number, so a
+taller row overlaps its neighbour. **What is drawn and what can be
+sorted are different questions**: the page header's sort list is built
+from `configuredColumns`, or a phone (which has no column headers
+either) could sort by nothing but title and duration. And **a phone's
+widths are neither loaded nor saved**: `loadColumnWidths` is keyed by
+column *id* and fills a gap with the minimum, so the stacked column —
+which nothing can ever have saved a width for — came out at 148 px
+beside a duration column of 236, and saving would have replaced the
+width the user dragged on a desktop for the same id.
+
 **The default columns are declared twice and must agree.**
 `tracklist.DefaultColumns` is what a fresh install persists;
 `DEFAULT_COLUMN_IDS` in `track-list/columns.ts` is what the list draws

@@ -30,6 +30,7 @@ import { LibraryController } from '@store/controllers/library-controller';
 import {
     COLUMN_DEFS,
     DEFAULT_COLUMN_IDS,
+    PHONE_COLUMN_IDS,
 } from './columns';
 import type { ColumnDef } from './columns';
 import { classMap } from 'lit/directives/class-map.js';
@@ -89,6 +90,18 @@ const FAV_COL_WIDTH = 24;
 const ROW_PADDING_X = 8;
 const ROW_CHROME_WIDTH =
     FAV_COL_WIDTH + ROW_PADDING_X * 2;
+
+/**
+ * Row heights, in the same relationship as the widths above: the number
+ * is read by the CSS *and* by the virtualizer's layout, so they cannot
+ * disagree. A phone row is two lines (title over artist).
+ */
+const ROW_HEIGHT = 33;
+const PHONE_ROW_HEIGHT = 52;
+
+/** The shell's phone breakpoint, as `index.css` and every component
+ *  stylesheet spells it. */
+const PHONE_QUERY = '(max-width: 599px)';
 
 // Inline SVG paths for favorite icons — eliminates wa-icon shadow DOM
 // overhead (30-50 shadow roots during scroll).  Font Awesome 6 paths.
@@ -175,19 +188,34 @@ export class TrackList
      * Resolved column definitions for the currently configured
      * column IDs.  Falls back to defaults for any unknown ID.
      */
-    private get activeColumns(): ColumnDef[] {
+    /**
+     * The columns the user has chosen — what a desktop draws, and what
+     * *anything* may be sorted by.
+     *
+     * This is deliberately separate from `activeColumns`: "which columns
+     * are drawn" and "what can I sort by" are different questions, and
+     * the phone is exactly where they diverge. Building the sort list
+     * from the drawn columns would silently take sort-by-artist and
+     * sort-by-album away from the phone, which has no other route to
+     * them since it has no column headers either.
+     */
+    private get configuredColumns(): ColumnDef[] {
         const ids = this.trackListCtrl.columnIds;
+        const chosen = !ids || ids.length === 0 ? DEFAULT_COLUMN_IDS : ids;
 
-        if (!ids || ids.length === 0) {
-            return DEFAULT_COLUMN_IDS
-                .map((id) => COLUMN_DEFS[id])
-                .filter(
-                    (d): d is ColumnDef =>
-                        d !== undefined,
-                );
-        }
+        return chosen
+            .map((id) => COLUMN_DEFS[id])
+            .filter(
+                (d): d is ColumnDef =>
+                    d !== undefined,
+            );
+    }
 
-        return ids
+    /** The columns actually drawn: two stacked lines on a phone. */
+    private get activeColumns(): ColumnDef[] {
+        if (!this.phone) return this.configuredColumns;
+
+        return PHONE_COLUMN_IDS
             .map((id) => COLUMN_DEFS[id])
             .filter(
                 (d): d is ColumnDef =>
@@ -374,9 +402,42 @@ export class TrackList
     // doesn't need to measure items. Without this hint, the default 100px
     // estimate causes constant scroll error correction (scrollTo() calls)
     // that produce visible jumping/skipping during scroll.
+    /**
+     * The virtualizer's item size and the CSS row height are the same
+     * number in two places, and they must agree: the layout positions
+     * rows from this figure, so a row that is really taller overlaps its
+     * neighbour and a shorter one leaves a gap. Both come from here.
+     */
     private flowLayout = flow({
-        _itemSize: { width: 100, height: 33 },
+        _itemSize: { width: 100, height: ROW_HEIGHT },
     } as Parameters<typeof flow>[0]);
+
+    private phoneFlowLayout = flow({
+        _itemSize: { width: 100, height: PHONE_ROW_HEIGHT },
+    } as Parameters<typeof flow>[0]);
+
+    private get rowLayout(): Parameters<typeof flow>[0] {
+        return this.phone ? this.phoneFlowLayout : this.flowLayout;
+    }
+
+    /**
+     * Phone width, from the shell's own breakpoint.
+     *
+     * A media query *inside* a shadow root is answered by the viewport,
+     * which is what lets every other component state what it drops at
+     * phone width in its own stylesheet. This list cannot: its grid is
+     * computed in JS from the host width, so the same threshold has to
+     * be readable from JS as well. One breakpoint, two expressions of
+     * it, and the reason is written here rather than inferred.
+     */
+    @state()
+    private phone = matchMedia(PHONE_QUERY).matches;
+
+    private phoneQuery = matchMedia(PHONE_QUERY);
+
+    private onPhoneChange = (e: MediaQueryListEvent): void => {
+        this.phone = e.matches;
+    };
     private hasRestoredScroll = false;
     private scrollSaveRAFId: number | null = null;
 
@@ -543,6 +604,20 @@ export class TrackList
     }
 
     private initColumnWidths() {
+        // A phone's widths are never the saved ones. `loadColumnWidths`
+        // is keyed by column *id* and fills a gap with
+        // `MIN_COLUMN_WIDTH`, so the phone's stacked column -- which
+        // nothing has ever saved a width for, there being no handles to
+        // drag -- came out at the minimum while the duration column
+        // inherited a width saved for a four-column desktop row. Found
+        // on the device: `24px 148px 236px`, the duration column with
+        // 55% of a phone's row.
+        if (this.phone) {
+            this.computeDefaultWidths();
+
+            return;
+        }
+
         const saved = this.loadColumnWidths();
         const cols = this.activeColumns;
 
@@ -673,6 +748,13 @@ export class TrackList
     }
 
     private saveColumnWidths() {
+        // And a phone's widths are never *saved*: they are computed from
+        // a column set the user did not choose, and writing them would
+        // overwrite the width they dragged for the same column on a
+        // desktop. Nothing on a phone can resize a column anyway, so
+        // this is only reachable by a window crossing the breakpoint.
+        if (this.phone) return;
+
         try {
             const cols = this.activeColumns;
 
@@ -1045,6 +1127,35 @@ export class TrackList
       contain: strict;
     }
 
+    /* A phone row is two lines, and this height must equal
+       PHONE_ROW_HEIGHT: the virtualizer positions rows from that number,
+       so a taller row overlaps its neighbour and a shorter one gaps. */
+    @media (max-width: 599px) {
+      .track-row {
+        height: 52px;
+      }
+    }
+
+    .stacked {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 2px;
+      min-width: 0;
+    }
+
+    .stacked-title,
+    .stacked-sub {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .stacked-sub {
+      font-size: var(--yj-text-xs);
+      color: var(--yj-text-secondary, #b3b3b3);
+    }
+
     .track-row > * {
       min-width: 0;
     }
@@ -1171,9 +1282,17 @@ export class TrackList
         );
 
         this.resizeObserver.observe(this);
+
+        // Connection, not the view lifecycle: this only sets state, so
+        // it is harmless (and wanted) while the list is off screen -- a
+        // rotation on another view must not leave this one laid out for
+        // the wrong width when the user comes back to it.
+        this.phoneQuery.addEventListener('change', this.onPhoneChange);
     }
 
     override disconnectedCallback() {
+        this.phoneQuery.removeEventListener('change', this.onPhoneChange);
+
         // Remove delegated event handlers from virtualizer.
         const virt = this.virtualizer;
         if (virt) {
@@ -2017,7 +2136,7 @@ export class TrackList
           </svg>
         </div>
         ${cols.map((col) => {
-                const customCell = col.renderCell?.(track);
+                const customCell = col.renderCell?.(track, term);
                 if (customCell !== undefined && customCell !== nothing) {
                     return html`<div role="gridcell" class="cell">${customCell}</div>`;
                 }
@@ -2065,7 +2184,7 @@ export class TrackList
     private renderPageHeader() {
         const options: SortOption[] = [
             { id: '', label: 'Default' },
-            ...this.activeColumns
+            ...this.configuredColumns
                 .filter((c) => c.comparator)
                 .map((c) => ({ id: c.id, label: c.label })),
         ];
@@ -2115,7 +2234,7 @@ export class TrackList
               aria-busy=${this.loadingTracks}
               @keydown=${this.onListKeydown}
             >
-            <div class="header-row" role="row">
+            ${this.phone ? nothing : html`<div class="header-row" role="row">
               <div role="columnheader" aria-label="Favourite"></div>
               ${cols.map(
                     (col) => html`
@@ -2149,7 +2268,7 @@ export class TrackList
                 </div>
               `,
                 )}
-            </div>
+            </div>`}
             ${visibleTracks.length === 0
                         ? html`<p class="no-results">
                       No tracks match your search.
@@ -2160,12 +2279,14 @@ export class TrackList
                         .items=${visibleTracks}
                         .renderItem=${this.renderTrackRow}
                         .keyFunction=${(track: library.Track) => track.FilePath}
-                        .layout=${this.flowLayout}
+                        .layout=${this.rowLayout}
                       ></lit-virtualizer>
                     `}
 
+      <!-- Resizing is a pointer gesture with no touch equivalent, and
+           the phone's two columns are not the user's to arrange. -->
       <div class="resize-overlay">
-        ${this.colBoundaryPositions.map(
+        ${(this.phone ? [] : this.colBoundaryPositions).map(
                         (pos, i) => html`
             <div
               class="col-resize-handle ${this.resizingColumn === i ? 'active' : ''}"

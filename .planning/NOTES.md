@@ -3257,3 +3257,47 @@ done (`adb uninstall app.yellowjacket.dev` — the sibling id is exactly
 what makes that safe). And `am start` does not reliably take focus while
 another app is foreground: check `topResumedActivity` before trusting a
 screenshot, or you will read someone else's app.
+
+## The phone track list, and the bug a viewport could not have found (2026-08-17)
+
+B2 phase 4. A phone draws `titleArtist` — the title with the artist
+under it — plus the duration, and drops the column headers and the
+resize handles. It is a **column set, not a second row template**: the
+row, its delegated events, the selection semantics, the playing marker
+and the virtualizer never learn that anything changed, because from
+their side only the number of columns did.
+
+Three rules, each one a way it breaks otherwise. The row height is in
+two places (`PHONE_ROW_HEIGHT` and the CSS) and they must agree, since
+the virtualizer positions rows from that number. What is *drawn* and
+what can be *sorted* are separate questions — the sort list is built
+from `configuredColumns`, or a phone with no headers could sort by
+nothing but title and duration. And a phone's widths are neither loaded
+nor saved.
+
+**That last one is the finding, and it came from the device.** With the
+arrangement passing five component tests and five e2e specs at
+424x439, the phone showed `24px 148px 236px`: the duration column with
+55% of the row. `loadColumnWidths` is keyed by column *id* and fills a
+gap with `MIN_COLUMN_WIDTH`, so the stacked column — which nothing can
+ever have saved a width for, there being no handles to drag — came out
+at the minimum while `trackLength` inherited a width saved for a
+four-column desktop row. The mirror image is worse and was never
+reachable from a phone at all: `saveColumnWidths` would have written the
+computed phone widths back under the same ids, replacing the width the
+user dragged on a desktop.
+
+**Why every browser test missed it.** The specs assert the *shape* — how
+many grid tracks, no header, no overflow, the title's share of the row —
+and the width bug depends on what is in `localStorage` for a *different*
+column set. dev-headless's seed happened to hold widths that split the
+other way, so the same assertion passed in the browser and failed on the
+phone. The unit test now carries the desktop map as a fixture, which is
+the reproduction the browser needed to have.
+
+Two tooling notes worth keeping. `playwright-cli` holds its page across
+a `make dev-headless` restart, so a probe after a rebuild can be
+answering for the *old* bundle — it reported the desktop layout at 424 px
+until the page was reopened. And wireless adb dropped twice more mid-
+session when the screen slept; USB for anything longer than a few
+probes.
