@@ -683,6 +683,27 @@ moment it is most needed is the likeliest moment loading one fails.
 `first-run-wizard` and the startup chrome are eager for the ordinary
 reason — they are the first paint.
 
+**A navigation is a history entry, and that is the whole back stack.**
+`index.ts` records each navigation with `pushState` (same URL — the app
+has no routes, and a path a reload cannot resolve is worse than none)
+and replays `popstate` with `_isBack`. It exists for Android, whose back
+button is not a key the page can bind: the scaffold's
+`MainActivity.onBackPressed` asks `webView.canGoBack()` and finishes the
+activity otherwise, so an app that never touched `history` quit from any
+depth — which is what a device reported. Hooking the platform's own
+mechanism rather than adding a JNI callback is also what makes it
+testable in a browser (`page.goBack()`), and the Java half needed no
+change at all.
+
+Two rules hold it up. The **first** navigation *replaces* the launch
+entry rather than pushing one, or every launch costs a back press before
+the app will close. And the in-app back buttons (`navigate-back`, fired
+by the detail views and `now-playing-view`) go through `history.back()`
+rather than a stack of their own: the old `navStack` is **deleted**, not
+kept beside it, because two stacks is precisely how a view's own back
+button and the phone's gesture come to disagree about what one press
+means.
+
 **A primary view is cached, not unmounted.** `index.ts` keeps every
 primary view in the DOM and toggles a `.view-hidden` class, because that
 is what preserves `scrollTop` across navigation — so
@@ -837,6 +858,20 @@ against the real components:
 - **Web Awesome keys an item's tabindex and highlight off `active`**, so
   moving focus without setting it leaves the highlight on whichever
   item the mouse last touched.
+
+**And a menu opens from a finger, through the event it already has.**
+`utils/long-press.ts` is one document-capture listener installed once
+from `index.ts`: a touch that holds still for 500 ms dispatches a
+synthetic `contextmenu` at the touch point, so all six components that
+bind one — delegated on a virtualizer, per row, per card — gained the
+gesture without changing. The target is `composedPath()[0]` rather than
+`elementFromPoint`, which stops at the outermost shadow host and so
+reaches a delegated listener and no per-row one; a browser that fires
+its own long-press `contextmenu` (Chromium does, WebKit and the WebView
+vary) wins, ours being told from theirs by **identity** rather than
+`isTrusted`, since no test can dispatch a trusted event; and the click
+that ends the gesture is swallowed, keyed on the gesture rather than on
+a time window so the first tap on the menu it opened is not eaten too.
 
 Three lists had no focused row to open a menu *from* — the queue panel
 and both playlist detail views — and gained a roving tab stop through
@@ -1960,6 +1995,18 @@ like source** — it was generated once into a scratch directory and
 copied across (plan 015), it carries one deliberate edit to its
 `Taskfile.yml`, and only its output is gitignored. `build/ios/` is
 still not carried and its `includes:` entry is still dropped.
+**Its `MainActivity` owns the safe area, because `targetSdk 35` does
+not leave that to the theme.** Android 15 lays every app out
+edge-to-edge and ignores the `statusBarColor`/`navigationBarColor` the
+scaffold's theme sets, and the WebView is `match_parent` — so the page's
+bottom band, which on a phone is the transport *and* the tab bar, was
+drawn under the gesture bar. `applyWindowInsets()` pads the container by
+`systemBars | displayCutout | ime` and returns the insets rather than
+consuming them; the window background is black to match the app's own
+ramp, since that padding is what shows through. **No browser tier can
+see this class of fault** — a viewport has no system bars, so the phone
+specs render a shell that fits at the moment the device is clipping it.
+
 `build/config.yml`'s `version` is the
 *metadata* version and is not what the app reports — `main.version` is
 stamped at link time from the packaging recipe's git-derived version.

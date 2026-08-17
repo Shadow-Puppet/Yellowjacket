@@ -315,8 +315,8 @@ places had to agree — `abiFilters`, the Makefile's `android:package`
 anchor is what stops it also matching the fat APK's line. Adding the
 ABI back, if modernc ever fixes `Xlstat64`, is those same three edits.
 
-**B2, the desktop shell.** Scope decided (below); **phases 1 and 2 are
-done.**
+**B2, the desktop shell.** Scope decided (below); **phases 1, 2 and 3
+are done.**
 
 - *Phase 1, the shell.* Below 600px the sidebar column is gone,
   `<bottom-nav>` is the primary navigation, and the shell fits 320px
@@ -326,14 +326,46 @@ done.**
   composes the real transport components rather than copying them; and
   it hides the bottom bar while it is up, so it carries its own queue
   button.
+- *Phase 3, long-press.* `utils/long-press.ts`: one document-capture
+  listener, installed once from `index.ts`, which turns a 500 ms
+  stationary touch into a synthetic `contextmenu` at the touch point.
+  Every menu in the app opens from that event, so all six components
+  gained the gesture without one of them changing — which is the same
+  argument `ContextMenuController` rests on, one layer lower. The
+  details that are not obvious are in `NOTES.md` (2026-08-17); the one
+  worth repeating is that ours is told from the browser's own
+  long-press event by **identity**, not `isTrusted`, because a test
+  cannot dispatch a trusted event and that path would otherwise be the
+  only uncovered one.
 
-What is left is the rest of the *interactions*: long-press for the
-context menus that are right-click today, and the track list's
-resizable columns, which are a pointer feature with no touch
-equivalent. Neither is started.
+What is left of B2 is the track list, whose resizable columns are a
+pointer feature with no touch equivalent. Not started.
 
 **B3/B4** are unchanged, and B3 is now *possible* where it was not:
 with all-files access, `tagwriter` can write in place.
+
+### What the first device run answered (2026-08-17)
+
+A4 **works**: playback survives the screen locking, and the transport
+notification appears with cover art — which also settles the service's
+access to a `MANAGE_EXTERNAL_STORAGE` path, the permission grant and
+the lock-screen session in one observation. Everything below in "what
+none of section A answered" was written before this and is now answered
+except the OEM permission-flow variance.
+
+It also found two faults no browser tier can see, both fixed and both
+awaiting the next APK for confirmation (`NOTES.md`, same date):
+
+- **Back quit the app from any depth.** The scaffold asks
+  `webView.canGoBack()`; the frontend had never used `history`. A
+  navigation is a history entry now, and `navStack` is gone rather than
+  kept beside it.
+- **The transport was under the gesture bar.** `targetSdk 35` is
+  edge-to-edge by force; `applyWindowInsets()` in `MainActivity` pads
+  by `systemBars | displayCutout | ime`.
+
+The standing item is unchanged in kind: **B3 (tag writing) and the
+permission flow still need a device**, and so does confirming these two.
 
 ### What none of section A answered
 

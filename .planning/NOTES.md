@@ -3034,3 +3034,107 @@ reason this was caught is that the assertion about the probe ran before
 the assertion about the export. A fixture built by string surgery on a
 formatted constant needs to be whitespace-independent; it filters the
 list now.
+
+## Long-press is one document listener, and the header row is a row (2026-08-17)
+
+Plan 016 B2 phase 3. A phone has no right-click, and every context menu
+in this app opens from a `contextmenu` event — six components' worth,
+bound three different ways (delegated on a virtualizer, per row, per
+card). `frontend/src/utils/long-press.ts` is one document-capture
+listener installed once from `index.ts`: a touch that holds still for
+500 ms dispatches a synthetic `contextmenu` at the touch point, and
+**every existing handler runs unchanged**. No component opted in, and
+none can forget to.
+
+Four things it has to get right, and each is a way the obvious version
+fails:
+
+- **The target is `composedPath()[0]`, not `elementFromPoint`**, which
+  stops at the outermost shadow host. Every menu here is bound inside
+  one, so a host-targeted event reaches a delegated listener and no
+  per-row one.
+- **A browser that fires its own must win.** Chromium already dispatches
+  `contextmenu` on long-press; WebKit and the WebView vary. One arriving
+  during the press cancels ours; one arriving after ours is swallowed at
+  document capture.
+- **Ours is told from theirs by identity** (a `WeakSet`), not by
+  `isTrusted`. `isTrusted` would work in the app and is untestable — no
+  test can dispatch a trusted event — so the suppression path would have
+  been the one thing with no coverage.
+- **The click ending the gesture is swallowed**, keyed on the gesture
+  (cleared by the next `pointerdown`) rather than a time window, or a
+  quick tap on the menu that just opened is eaten too.
+
+**What cost the time was the assertion, not the code.** The e2e spec
+pressed `[role="row"]` — which is the *column header*, and it is the
+first one. The gesture fired correctly, the header correctly ignored it,
+and the failure looked exactly like a menu that would not open. Found by
+probing the running app (`playwright-cli eval`, dispatching the same
+pointer events and logging what saw the `contextmenu`), which showed the
+event reaching the row's own listener with no menu behind it — i.e. the
+handler was refusing it, not missing it. `.track-row` is the selector.
+
+Verified by execution: 8 component tests (real browser, real shadow
+boundary, real timings) and 2 e2e specs against the running app, twice
+in a row. Not verified: any of it under a real finger on a real
+WebView — the pointer events are dispatched, because neither Desktop
+Chrome nor Desktop Safari has touch and there is no device tier.
+
+## The first device run: A4 works, and two things only a phone could say (2026-08-17)
+
+The published v1.5.0 APK, on a real phone, owner-reported. **This is the
+first runtime evidence any of the Android work has ever had** — A4
+shipped entirely reasoned from source.
+
+**What holds.** Playback survives the screen locking. The MediaSession
+notification appears in the status pane *with album art* — which
+answers, in one observation, four of the open questions from plan 016:
+the foreground service starts, POST_NOTIFICATIONS was granted and the
+notification is visible, the session is picked up, and **cover art
+decoded from a `MANAGE_EXTERNAL_STORAGE` path by a service is
+readable**. The last was the one nobody could argue from documentation.
+
+**Two bugs, and neither is visible from any tier we have.**
+
+*Back did not navigate back.* The scaffold's
+`MainActivity.onBackPressed` asks `webView.canGoBack()` and finishes the
+activity otherwise — and this app had never touched `history`, so that
+was false at every depth and back quit from anywhere. The fix is in the
+frontend, not in Java: a navigation is a `history` entry now
+(`recordNavigation` in `index.ts`, same URL, the destination in the
+entry's state) and `popstate` replays it with `_isBack`. The Java half
+needs no change, because the mechanism it already uses is the one we
+were failing to feed.
+
+Two rules keep it honest. The **first** navigation replaces the launch
+entry rather than pushing one, or every launch costs a back press before
+the app will close. And the in-app back buttons go through
+`history.back()` rather than popping a stack of their own — `navStack`
+is **deleted**, not kept alongside, because two stacks is exactly how
+the detail view's own button and the phone's gesture come to disagree
+about how far back one press goes. `back-navigation.spec.ts` pins that
+invariant.
+
+*The transport was off screen.* **`targetSdk 35` is Android 15, which
+lays every app out edge-to-edge**, ignores the deprecated
+`statusBarColor`/`navigationBarColor` the theme still sets, and hands
+the app a window the size of the screen. The WebView is `match_parent`,
+so the page's bottom band — the transport, and on a phone the tab bar —
+was drawn underneath the gesture bar. `applyWindowInsets()` pads the
+container by `systemBars | displayCutout | ime` and returns the insets
+rather than consuming them. The window background goes black to match
+the app's own ramp, or the padding shows as a blue-grey band.
+
+**Neither is findable in the browser tier, and that is the lesson worth
+keeping**: a viewport has no system bars, so `phone-shell.spec.ts` at
+390x844 renders a shell that fits perfectly while the device cuts 48dp
+off the bottom — and `page.goBack()` was never called because nothing in
+a desktop shell has a back gesture. The Android tier's own note says
+failure there is invisible; this is the milder version, where the app
+works and is simply wrong in ways only the platform can show you.
+
+Verified by execution: the APK builds with the Java change; 3 e2e specs
+cover the history behaviour, on Chromium locally and WebKit in CI.
+Not verified: the insets themselves, which need the next APK on the
+owner's phone. What to look for is one thing — the transport and the tab
+bar clear of the gesture bar, and the header clear of the status bar.

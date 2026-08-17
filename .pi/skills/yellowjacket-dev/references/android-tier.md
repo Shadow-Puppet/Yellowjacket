@@ -286,3 +286,27 @@ Related, and it will bite once: the launcher activity is
 resolves the leading dot against the *applicationId* and fails with a
 class-not-found that reads like a broken build. Always the
 fully-qualified form.
+
+## What only a device can answer
+
+The emulator cannot run this app (three separate reasons, none of them
+ours — see plan 016), so the phone in someone's pocket is a tier, and
+asking for it is cheap. The first run of it, on 2026-08-17, confirmed
+the whole of A4 and found two faults **no other tier can see**:
+
+- **The back gesture.** `MainActivity.onBackPressed` asks
+  `webView.canGoBack()`. Nothing in a desktop shell has a back gesture,
+  so no spec had ever called `page.goBack()` and the app had never
+  pushed a history entry — back quit from any depth. It is a history
+  entry per navigation now, which is also what made it assertable in the
+  browser tier (`e2e/specs/back-navigation.spec.ts`).
+- **The safe area.** `targetSdk 35` forces edge-to-edge, so the
+  transport and the tab bar sat under the gesture bar. **A browser
+  viewport has no system bars**: `phone-shell.spec.ts` at 390x844 will
+  keep passing on a build the device is clipping 48dp off. Insets are
+  handled in `applyWindowInsets()`.
+
+So when asking for a device run, ask about what the platform *adds* —
+system bars, the back gesture, focus and audio interruptions,
+permission dialogs, the keyboard — not about what the app draws. The
+drawing is what the other five tiers already cover.
