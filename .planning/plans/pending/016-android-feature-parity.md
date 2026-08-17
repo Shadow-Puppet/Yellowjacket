@@ -315,8 +315,8 @@ places had to agree — `abiFilters`, the Makefile's `android:package`
 anchor is what stops it also matching the fat APK's line. Adding the
 ABI back, if modernc ever fixes `Xlstat64`, is those same three edits.
 
-**B2, the desktop shell.** Scope decided (below); **phases 1, 2 and 3
-are done.**
+**B2, the desktop shell.** Scope decided (below); **all four phases are
+done.**
 
 - *Phase 1, the shell.* Below 600px the sidebar column is gone,
   `<bottom-nav>` is the primary navigation, and the shell fits 320px
@@ -338,8 +338,29 @@ are done.**
   cannot dispatch a trusted event and that path would otherwise be the
   only uncovered one.
 
-What is left of B2 is the track list, whose resizable columns are a
-pointer feature with no touch equivalent. Not started.
+- *Phase 4, the track list.* A phone draws `titleArtist` (title over
+  artist) plus the duration, and drops the column headers and the resize
+  handles — a column set rather than a second row template, so the row
+  and everything delegated on it is unchanged. Verified at the device's
+  own 424x439: `24px 304px 80px`, 52 px rows, no truncation, no
+  overflow. The device also found the bug in it, which no browser
+  viewport would have: saved *desktop* column widths reached the phone
+  through an id-keyed store and gave the duration column 55% of the row.
+
+**B2 and B4 are complete.** B4 is `backend/explore/netpolicy.go`: the
+catalog download is skipped on a cellular connection unless
+`AllowMeteredCatalogDownload` is on, with the toggle in Settings' Search
+Index section. The policy and the JSON parsing are in `explore` (tested
+on every platform) and only the platform call is injected from `app.go`,
+because `cmd/indexbuild` imports `explore` and must not link Wails. Two
+things the plan got slightly wrong: the portable API is
+`application.Mobile.NetworkJSON()` rather than `Android`'s, and it
+reports no metered flag — so cellular is the signal and a metered Wi-Fi
+cannot be seen.
+
+What is left in this plan is B3 (tag writing, which needs a device) and
+the standing question of the Light Phone's Chrome 113 — which so far has
+cost nothing: menus, dialogs and long-press all work on it.
 
 **B3/B4** are unchanged, and B3 is now *possible* where it was not:
 with all-files access, `tagwriter` can write in place.

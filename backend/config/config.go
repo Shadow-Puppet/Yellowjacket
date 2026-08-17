@@ -620,6 +620,51 @@ func (c *Config) SetQueueFallback(mode string) error {
 	return nil
 }
 
+// GetAllowMeteredCatalogDownload reports whether the ~0.6 GB Explore
+// catalog may be fetched on a metered connection.
+func (c *Config) GetAllowMeteredCatalogDownload() bool {
+	if c.General == nil {
+		return false
+	}
+
+	return c.General.AllowMeteredCatalogDownload
+}
+
+// SetAllowMeteredCatalogDownload saves the metered-download permission.
+//
+// There is nothing to validate and nothing to restart: the policy is
+// read at the moment a download would start, so turning it on takes
+// effect on the next attempt rather than needing this launch to be over.
+func (c *Config) SetAllowMeteredCatalogDownload(allow bool) error {
+	if c.General == nil {
+		c.General = &GeneralConfig{}
+		c.General.ApplyDefaults()
+	}
+
+	c.General.AllowMeteredCatalogDownload = allow
+
+	if err := c.Save(); err != nil {
+		return fmt.Errorf(
+			"could not save config: %w", err,
+		)
+	}
+
+	events.Emit(
+		c.ctx,
+		events.GeneralConfigChanged,
+		map[string]any{
+			"AllowMeteredCatalogDownload": allow,
+		},
+	)
+
+	c.logger.Info(
+		"metered catalog download permission updated",
+		"allow", allow,
+	)
+
+	return nil
+}
+
 // GetTrackListColumns returns the configured track-list columns.
 func (c *Config) GetTrackListColumns() []tracklist.Column {
 	if c.TrackList == nil {

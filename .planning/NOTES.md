@@ -3208,3 +3208,133 @@ probes, and that the hardware back button no longer kills the app (the
 `.dev` build carries the history fix; pid survived a BACK press).
 Unverified: what happened to the icons and the transport controls, which
 is where this resumes.
+
+## What the device actually said, with both builds side by side (2026-08-17)
+
+The phone inspectable and awake, the same Light Phone III running two
+builds of this app in turn. This closes both questions the previous entry
+left open, and **neither answer was the one the symptom suggested**.
+
+**"The playback controls are off screen" was true, literal, and already
+fixed.** The installed build is from B2 **phase 1** — it carries
+`bottom-nav` and no `now-playing-view`, which dates it between 57bfbdf
+and 1b05dde. Settled (30 s after launch, not 6), its player bar shows
+art, title, favourite, shuffle, prev — and stops. Play/pause, next,
+repeat and queue are past the right edge, because at 424 px the bar was
+still carrying the seek bar and volume that **phase 2 moved into
+`now-playing-view`**. On the current build, on the same phone and the
+same engine, `document.body.scrollWidth` equals `clientWidth` (424) and
+`player-controls` measures 200..380 inside 424. So the fix was already
+on main, unreleased, and the device is what proved it rather than
+argued it.
+
+**"No icons" was an artefact of my own screenshot.** A `wa-icon` on the
+device has `path` computed fill `rgb(255,212,59)` and paints; the first
+capture was six seconds after a cold start, before the icon fetches had
+landed. Two corrections in two entries from the same misreading: measure
+the node that paints, and let the app settle before believing a picture.
+
+**Chrome 113's missing Popover API does not break the menus.** This was
+the leading worry and it is unfounded: a long-press on a row opens the
+real panel at (212,145), 162x193, `visibility: visible`, seven
+`role=menuitem`s, all seven inside the panel and clear of the player bar
+— confirmed by screenshot as well as by measurement. Web Awesome's
+`showPopover?.()` is an optional call and `wa-popup` positions itself,
+so the attribute being inert costs nothing. **Long-press itself works on
+real hardware**, over a real 1,744-track library, which is the phase 3
+verification the browser tier could only approximate.
+
+**The one genuine fault the device adds is phase 4's.** `track-list` at
+424 px computes `--grid-cols: 24px 102px 101px 101px 80px` — which fits
+the host exactly, so nothing overflows — but "Duration" does not fit in
+80 px and neither does most content. The columns are not too wide; there
+are simply too many of them for a phone, which is what phase 4 already
+says. It is now a measurement rather than a prediction.
+
+Two operational notes. The debug sibling scanned the phone's real music
+and its data directory is **414 MB**, so it is worth uninstalling when
+done (`adb uninstall app.yellowjacket.dev` — the sibling id is exactly
+what makes that safe). And `am start` does not reliably take focus while
+another app is foreground: check `topResumedActivity` before trusting a
+screenshot, or you will read someone else's app.
+
+## The phone track list, and the bug a viewport could not have found (2026-08-17)
+
+B2 phase 4. A phone draws `titleArtist` — the title with the artist
+under it — plus the duration, and drops the column headers and the
+resize handles. It is a **column set, not a second row template**: the
+row, its delegated events, the selection semantics, the playing marker
+and the virtualizer never learn that anything changed, because from
+their side only the number of columns did.
+
+Three rules, each one a way it breaks otherwise. The row height is in
+two places (`PHONE_ROW_HEIGHT` and the CSS) and they must agree, since
+the virtualizer positions rows from that number. What is *drawn* and
+what can be *sorted* are separate questions — the sort list is built
+from `configuredColumns`, or a phone with no headers could sort by
+nothing but title and duration. And a phone's widths are neither loaded
+nor saved.
+
+**That last one is the finding, and it came from the device.** With the
+arrangement passing five component tests and five e2e specs at
+424x439, the phone showed `24px 148px 236px`: the duration column with
+55% of the row. `loadColumnWidths` is keyed by column *id* and fills a
+gap with `MIN_COLUMN_WIDTH`, so the stacked column — which nothing can
+ever have saved a width for, there being no handles to drag — came out
+at the minimum while `trackLength` inherited a width saved for a
+four-column desktop row. The mirror image is worse and was never
+reachable from a phone at all: `saveColumnWidths` would have written the
+computed phone widths back under the same ids, replacing the width the
+user dragged on a desktop.
+
+**Why every browser test missed it.** The specs assert the *shape* — how
+many grid tracks, no header, no overflow, the title's share of the row —
+and the width bug depends on what is in `localStorage` for a *different*
+column set. dev-headless's seed happened to hold widths that split the
+other way, so the same assertion passed in the browser and failed on the
+phone. The unit test now carries the desktop map as a fixture, which is
+the reproduction the browser needed to have.
+
+**Confirmed on the phone afterwards**, with the fix installed:
+`24px 304px 80px`, 52 px rows, no header row, the title 298 px and not
+truncated, `body.scrollWidth == clientWidth`. The same numbers the
+browser gives at that viewport, which is the point of having measured
+both.
+
+Two tooling notes worth keeping. `playwright-cli` holds its page across
+a `make dev-headless` restart, so a probe after a rebuild can be
+answering for the *old* bundle — it reported the desktop layout at 424 px
+until the page was reopened. And wireless adb dropped twice more mid-
+session when the screen slept; USB for anything longer than a few
+probes.
+
+## The catalog download now asks about the connection (2026-08-17)
+
+Plan 016 B4. ~0.6 GB had no network awareness at all; it is skipped on a
+cellular connection unless the user says otherwise
+(`AllowMeteredCatalogDownload`, default false, toggle in Settings' Search
+Index section).
+
+**The shape is dictated by the cgo rule, not by taste.** `explore` is
+imported by `cmd/indexbuild`, which builds with `CGO_ENABLED=0` and must
+not link Wails, so `netpolicy.go` holds the policy and the JSON parsing —
+tested on every platform — while the one platform call is a closure
+injected from `app.go`, where naming `application` is already legitimate.
+
+Four things measured or corrected in the doing:
+
+- **The portable name is `application.Mobile`, not `application.Android`**
+  (which the plan and `CLAUDE.md` both named). `Android` exists only
+  under the `android` build tag; `Mobile`'s desktop implementation is a
+  stub whose `NetworkJSON()` returns `""`.
+- **The runtime reports no metered flag.** `{"connected":bool,
+  "type":"wifi|cellular|ethernet|none"}` is all there is, so cellular is
+  the signal and a metered *Wi-Fi* — a phone hotspot, a hotel — cannot be
+  detected. Android itself knows (`NET_CAPABILITY_NOT_METERED`) and the
+  runtime does not pass it on. Documented gap, not an oversight.
+- **An unknown answer must not read as metered.** Every desktop answers
+  `""`, so the obvious defensive default would have disabled the catalog
+  download for every desktop user in the world.
+- **The gate belongs before the first status write.** Declining is a
+  no-op — no job in the indicator, no error tier to dismiss — which is
+  what makes the refusal safe to have on by default.

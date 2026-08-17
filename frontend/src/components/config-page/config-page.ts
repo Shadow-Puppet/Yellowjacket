@@ -17,6 +17,8 @@ import {
     SetDefaultPage,
     GetQueueFallback,
     SetQueueFallback,
+    GetAllowMeteredCatalogDownload,
+    SetAllowMeteredCatalogDownload,
 } from '@go/config/config.js';
 import { GetIndexStatus } from '@go/explore/service.js';
 import { notificationStore } from '@store/notification-store';
@@ -74,6 +76,9 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
 
     // --- Now Playing state ---
     @state() private scrollMode = 'hover';
+
+    /** Whether the ~0.6 GB catalog may be fetched on mobile data. */
+    @state() private allowMeteredCatalogDownload = false;
 
     // --- Favorites state ---
     @state() private playlists: playlist.Summary[] = [];
@@ -888,17 +893,20 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
 
     private async loadLibraries(): Promise<void> {
         try {
-            const [libs, mode, defaultPage, queueFallback] = await Promise.all([
-                GetAllLibrariesWithTrackCounts(),
-                GetScanConcurrency(),
-                GetDefaultPage(),
-                GetQueueFallback(),
-            ]);
+            const [libs, mode, defaultPage, queueFallback, allowMetered] =
+                await Promise.all([
+                    GetAllLibrariesWithTrackCounts(),
+                    GetScanConcurrency(),
+                    GetDefaultPage(),
+                    GetQueueFallback(),
+                    GetAllowMeteredCatalogDownload(),
+                ]);
 
             this.libraries = libs ?? [];
             this.concurrencyMode = mode;
             this.defaultPage = defaultPage;
             this.queueFallback = queueFallback;
+            this.allowMeteredCatalogDownload = allowMetered;
 
         } catch (err) {
             console.error(
@@ -1500,9 +1508,52 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
                               </div>`
                             : html`<div class="index-loading">Loading status…</div>`}
                 </div>
+
+                <config-field
+                    .schema=${{
+                        key: 'allowMeteredCatalogDownload',
+                        label: 'Download the catalog on mobile data',
+                        description:
+                            'The catalog is about 0.6 GB. It is skipped on a '
+                            + 'cellular connection unless this is on; a '
+                            + 'metered Wi-Fi network cannot be detected.',
+                        type: 'toggle' as const,
+                    }}
+                    .value=${this.allowMeteredCatalogDownload}
+                    @config-change=${this.handleAllowMeteredChange}
+                ></config-field>
             </config-section>
         `;
     }
+
+    /**
+     * The catalog download's one permission (plan 016 B4).
+     *
+     * It is in this section rather than General because it is about
+     * *this* download and nothing else, and because the section already
+     * explains what the catalog is — the toggle would be unreadable
+     * beside "Default page".
+     */
+    private handleAllowMeteredChange = (
+        e: CustomEvent<ConfigFieldChangeEvent>,
+    ): void => {
+        const allow = Boolean(e.detail.value);
+        const previous = this.allowMeteredCatalogDownload;
+
+        this.allowMeteredCatalogDownload = allow;
+
+        void SetAllowMeteredCatalogDownload(allow).catch((err: unknown) => {
+            console.error('failed to save metered download permission', err);
+            // The visible state reverted, so this is the Transient case:
+            // a small action the user can simply repeat.
+            this.allowMeteredCatalogDownload = previous;
+            notificationStore.transient({
+                key: 'metered-catalog-setting',
+                title: 'Setting not saved',
+                text: describeError(err, 'That setting could not be saved.'),
+            });
+        });
+    };
 
     private tierIcon(state: string): string {
         switch (state) {

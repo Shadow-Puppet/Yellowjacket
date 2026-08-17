@@ -212,6 +212,11 @@ type SearchIndex struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 
+	// netPolicy decides whether this connection is one to spend ~0.6 GB
+	// of catalog on. Its own lock: it is written once at startup and read
+	// from the build goroutine (netpolicy.go).
+	netPolicy networkPolicy
+
 	mu    sync.RWMutex
 	ready bool
 

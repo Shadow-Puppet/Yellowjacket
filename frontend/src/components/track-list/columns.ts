@@ -9,6 +9,8 @@ import {
 import { formatMilliseconds } from '@utils/time';
 import { html, nothing } from 'lit';
 
+import { highlightText } from './search-ranking';
+
 /** Compares two strings using locale-aware ordering. */
 const compareStr = (
     a: string,
@@ -36,8 +38,17 @@ export interface ColumnDef {
     defaultWidth: string;
     /** Text alignment. Defaults to left. */
     align?: 'left' | 'right';
-    /** Optional custom render function returning an HTML template. */
-    renderCell?: (track: library.Track) => unknown;
+    /**
+     * Optional custom render function returning an HTML template.
+     *
+     * `term` is the active search term, for a cell that wants to
+     * highlight its own text: the default path applies `highlightText`
+     * to `accessor`'s value, and a cell that renders itself has to do
+     * that itself or silently lose the highlight. Only `titleArtist`
+     * needs it, which is why it is optional rather than a second
+     * required parameter on all of them.
+     */
+    renderCell?: (track: library.Track, term?: string) => unknown;
     /**
      * Comparison function for sorting two tracks by this column.
      * Returns negative if a < b, positive if a > b, zero if equal.
@@ -84,6 +95,27 @@ export const COLUMN_DEFS: Record<string, ColumnDef> = {
                 style="width:24px;height:24px;border-radius:3px;object-fit:cover;display:block;"
             />`;
         },
+    },
+    titleArtist: {
+        id: 'titleArtist',
+        // Named for what it sorts by, since that is the only place the
+        // label is user-visible: the phone has no column headers, and
+        // the page header's sort list is built from the *configured*
+        // columns rather than the drawn ones.
+        label: 'Track Name',
+        accessor: (t) => t.TrackName,
+        defaultWidth: '1fr',
+        comparator: (a, b) => compareStr(a.TrackName, b.TrackName),
+        renderCell: (t, term) => html`
+            <div class="stacked">
+                <span class="stacked-title"
+                    >${term ? highlightText(t.TrackName, term) : t.TrackName}</span
+                >
+                <span class="stacked-sub"
+                    >${term ? highlightText(t.ArtistName, term) : t.ArtistName}</span
+                >
+            </div>
+        `,
     },
     trackName: {
         id: 'trackName',
@@ -248,6 +280,24 @@ export const CORE_SEARCH_COLUMN_IDS: string[] = [
     'artistName',
     'album',
 ];
+
+/**
+ * The one column a phone shows, and it is two lines.
+ *
+ * At 424 CSS px -- the width of the phone this was measured on -- four
+ * columns fit the row exactly and none of them fits its *content*:
+ * `--grid-cols` came out `24px 102px 101px 101px 80px`, so "Duration"
+ * did not fit its own header and a title had ~20 characters. The
+ * columns were never too wide; there were too many of them.
+ *
+ * So the phone gets the title with the artist under it, which is the
+ * shape every phone music list has, and the full row width to put them
+ * in. It is a *column definition* rather than a second row template on
+ * purpose: the row, the delegated events, the selection semantics, the
+ * playing marker and the virtualizer all keep working, because from
+ * their side nothing has changed except how many columns there are.
+ */
+export const PHONE_COLUMN_IDS: string[] = ['titleArtist', 'trackLength'];
 
 /**
  * Default column IDs. Album is in them (H-15): without it, the three

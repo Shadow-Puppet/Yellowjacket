@@ -553,6 +553,31 @@ selected as a literal `0`. Adding the column to the importer's SELECT
 list without that is how a published artifact — which nobody can re-cut
 retroactively — starts failing with `no such column`.
 
+**A 0.6 GB download asks about the connection first.** `explore`'s
+catalog artifact had no network awareness at all, which on a phone is a
+month's data allowance spent without being asked (plan 016 B4).
+`netpolicy.go` is the gate, and its shape is dictated by one constraint:
+`explore` is imported by `cmd/indexbuild`, which is built with
+`CGO_ENABLED=0` and must not link Wails — so the *policy* and the
+*parsing* live here and are tested on every platform, while the platform
+call is a closure injected from `app.go`. It is
+`application.Mobile.NetworkJSON()`, not `application.Android`'s: the
+latter exists only under the `android` build tag, and `Mobile`'s desktop
+implementation is a stub returning `""`.
+
+Three rules in it are load-bearing. **An unknown answer is not a metered
+one** — only mobile answers at all, so treating silence as metered would
+refuse the download on every desktop. **Cellular is the only signal
+available**: the runtime reports `wifi|cellular|ethernet|none` and no
+metered flag, so a metered *Wi-Fi* (a hotspot, a hotel) cannot be
+detected and is not refused, which is a documented gap rather than an
+oversight. And **the gate runs before anything is staged**, so declining
+is a no-op rather than a job in the indicator and a status the user has
+to dismiss. The permission (`AllowMeteredCatalogDownload`, default
+false, so an existing config is careful without a migration) is read at
+the moment a download would start, so turning it on takes effect on the
+next attempt rather than the next launch.
+
 **Background work yields, and says so in the context.** The post-scan
 backfills share MusicBrainz's rate limiters with every page the user
 can open, and both were FIFO — so a thousand-artist enrichment put an
@@ -1580,6 +1605,28 @@ last column was clipped at every size. Both numbers are constants read
 by the three places that need them (the default widths, the
 normaliser, and the resize handles' positions), because they were
 written out separately and that is how they came to disagree.
+
+**A phone draws one column of two lines, and that is a column set
+rather than a second row template.** Measured on the device: at 424 px
+the four configured columns fit the row *exactly* (`--grid-cols` came
+out `24px 102px 101px 101px 80px`) and not one of them fit its content
+— "Duration" did not fit its own header. The columns were never too
+wide; there were too many of them. `PHONE_COLUMN_IDS` is `titleArtist`
+(title over artist, sharing the row's whole width) plus the duration, so
+the row, the delegated events, the selection semantics, the playing
+marker and the virtualizer are all untouched: from their side only the
+number of columns changed. Three rules come with it. **The row height
+lives in two places and they must agree** — `PHONE_ROW_HEIGHT` and the
+CSS rule — because the virtualizer positions rows from that number, so a
+taller row overlaps its neighbour. **What is drawn and what can be
+sorted are different questions**: the page header's sort list is built
+from `configuredColumns`, or a phone (which has no column headers
+either) could sort by nothing but title and duration. And **a phone's
+widths are neither loaded nor saved**: `loadColumnWidths` is keyed by
+column *id* and fills a gap with the minimum, so the stacked column —
+which nothing can ever have saved a width for — came out at 148 px
+beside a duration column of 236, and saving would have replaced the
+width the user dragged on a desktop for the same id.
 
 **The default columns are declared twice and must agree.**
 `tracklist.DefaultColumns` is what a fresh install persists;
