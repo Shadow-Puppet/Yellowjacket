@@ -3338,3 +3338,69 @@ Four things measured or corrected in the doing:
 - **The gate belongs before the first status write.** Declining is a
   no-op — no job in the indicator, no error tier to dismiss — which is
   what makes the refusal safe to have on by default.
+
+## The stale-shape repair dropped the CI catalog (2026-08-17)
+
+Not our change, but it is the operational state everything else now runs
+in, and the restore condition needs to be written down somewhere that is
+not a commit message.
+
+`fix(database): retire a table whose shape the schema moved past` added
+`staleshape.go`: before `applySchema`, drop any non-Authored table whose
+live shape disagrees with the schema. That is the right rule for an
+install — a client's catalog is *downloaded*, so a stale one costs a
+minute of re-fetching the artifact, and keeping it costs every Explore
+read.
+
+It runs inside `database.NewDB`, which `cmd/indexbuild` also calls. On
+the first run after it landed, 19 seconds in:
+
+```
+16:15:51 retiring a table ... table=explore_index
+           reason="column entity_type is TEXT, schema declares INTEGER"
+16:16:05 index maintenance mode=build reason="no completed import yet"
+           lastImported=never baselineSeries=0
+```
+
+**The premise was false for the one database where it was expensive.**
+That catalog is not stale; it is deliberately kept in the older text
+encoding, which `artifactStoresText` and `sourceColumns` exist to
+tolerate — so it would have been judged stale and dropped on *every*
+run. And `retireLibraryTables`, in the same package, already documents
+the opposite rule for this database: drop everything the datamap does
+**not** call Cache.
+
+`fix(database): never retire the catalog the index build derives` makes
+the policy a build tag (`retireStaleCache`, false under `indexbuild`),
+which is how this project already separates the index tools. It prevents
+recurrence and cannot undo the drop: that volume was the only copy.
+
+**What it cost, and the shape of the cost.** A full re-import from the
+MetaBrainz dumps, resumed across runs from a checkpoint, at a rate that
+swung between 2 and 15 MB/s. The job runs on **every push to main** with
+a 3 h budget on a runner of capacity 1 — so until the import completes,
+every push books three hours and ordinary CI queues behind it. That is
+the real damage: not one lost job, but a repeating one.
+
+So the `push:` trigger in `index-artifact.yml` is **commented out**
+until a run reports `complete=true`; the weekly cron and
+`workflow_dispatch` still resume the build, which is all it needs.
+Restoring those two lines is the whole revert.
+
+Three things worth keeping from it:
+
+- **A repair belongs where its assumptions hold.** `NewDB` is the one
+  chokepoint every binary in this project shares, including the one
+  whose database cannot be re-derived cheaply. Anything destructive
+  there needs to ask which binary it is in — the build tag was available
+  and is what the fix used.
+- **The only copy of a 205 GB derived asset is one Docker volume.**
+  There is no snapshot, so the restore time is "however long
+  MetaBrainz takes today". A periodic copy would turn this class of
+  incident into twenty minutes.
+- **The fix's residual trade is now the thing to watch**: with Cache
+  tables never retired under `indexbuild`, a future `explore_index`
+  column fails that job loudly at build time instead of silently
+  rebuilding. That is the right default, and it means the next schema
+  change touching `explore_index` needs a deliberate plan for this one
+  database rather than none.
