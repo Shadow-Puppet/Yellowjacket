@@ -263,6 +263,24 @@ rather than renaming them.
     plan 013's stated "delete and rescan" — and `Derived` from Owned.
     A table the schema no longer describes at all goes too; 013 left
     seven behind plus `schema_migrations`.
+  - **Whether a stale `Cache` table may be rebuilt is a build tag**, and
+    it is the most expensive thing in this file to get wrong. In the app
+    the catalog is *downloaded*, so a wrong shape costs a minute of
+    re-fetching the artifact and keeping it costs every Explore read. In
+    `cmd/indexbuild` the catalog is *derived*, and the only way back is
+    the ~205 GB dump stream the `/cache` volume exists to avoid — so
+    `retireStaleCache` is false there (`staleshape_policy_indexbuild.go`)
+    and `TestTheCatalogSurvivesAStaleShape` fails the moment it is not.
+    This is written down because it already happened: the repair shipped
+    without the distinction and dropped the real CI catalog on its first
+    run, with `reason="column entity_type is TEXT, schema declares
+    INTEGER"`. The mismatch was genuine — that database is deliberately
+    kept in the older encoding, which `fix(indexexport): read an index
+    older than the binary` exists to tolerate — so it would have been
+    dropped on *every* run. The consequence is that a future
+    `explore_index` column fails the index job loudly on `applySchema`
+    rather than silently costing it a rebuild, which is the trade a
+    human should get to make.
   - **The drops are one transaction with `defer_foreign_keys`.** Those
     legacy tables reference each other, so dropping them in any order
     fails on whichever goes first, and turning foreign keys *off*
@@ -552,6 +570,56 @@ perfectly good catalog, so it is *asked* and the missing column is
 selected as a literal `0`. Adding the column to the importer's SELECT
 list without that is how a published artifact — which nobody can re-cut
 retroactively — starts failing with `no such column`.
+
+**A credit is ordered parts, and the string is derived from them.** A
+track credited to several artists had exactly one navigable artist and
+the rest were punctuation: `primaryArtist()` string-parses the credit,
+strips a " feat. " clause and discards the guest, and deliberately does
+not split on `&`, `with` or `,` because those live inside real artist
+names ("Simon & Garfunkel"). Measured on a real 26,069-file library,
+**13%** of recordings are multi-artist upstream while only **0.86%** of
+files carry a structured multi-artist tag — mp3 carries *zero* files
+with multiple `MUSICBRAINZ_ARTISTID` across 19,840 — so this cannot be
+a tag-parsing feature. (The "3 credits of 2,823" figure that justified
+plan 013's removal of the credit tables measured our own *writer*:
+`cachedLinkArtist` ran once per credit, so a collaboration could never
+have been recorded. Dropping the join table was still right on cost.)
+
+`artist_credit_part` / `artist_credit_ref` carry the decomposition for
+multi-artist credits only — a single-artist credit is already
+`explore_index`'s own `artist_name`, and storing those would triple the
+table to say nothing. Five things about it are load-bearing:
+
+- **Join phrases are assembly instructions, not disassembly ones.**
+  `creditLink` concatenates parts, so link boundaries are known by
+  construction. Locating a `credited_name` *inside* the stored credit
+  string would reintroduce the fault this exists to fix: that string may
+  come from the file's tags while the parts come from the catalog, and
+  the two disagree for ~1 in 3 multi-artist credits (`'Skrillex feat.
+  Swae Lee'` tagged against `'Skrillex & Swae Lee'` upstream).
+- **`credited_name` is stored per row**, never joined from `artists`:
+  MusicBrainz credits "Snoop Dogg" on a track by the artist called
+  "Snoop Doggy Dogg". Display follows the credit, navigation the MBID.
+- **The lookup is keyed on the recording MBID**, which the catalog and a
+  local file both carry (`library.Track.RecordingMBID`), so one binding
+  serves Explore and the library's own lists — which is why this needed
+  no local table. `file_artists` remains the offline-resilience step and
+  is deliberately *not* declared until something writes it.
+- **Absence is cached as an answer.** `credit-store.ts` stores `[]` for
+  a single-artist credit — *asked*, not *answered* — or the ~87% that
+  have nothing to decompose are re-requested on every render forever.
+  `request()` is per-row and coalesces into one call per frame, because
+  a virtualized list cannot hand over "the whole list": 50,000 rows is
+  100 queries for the ~30 on screen.
+- **The dump is a third source, and it had to be.** The canonical dump
+  CI already streams has no join phrases and no as-credited names, and
+  the JSON dumps cover 153,691 recordings of ~35M with *zero* overlap
+  against a real library. So `mbdump.tar.bz2` — 7.1 GB, ~13.7 min in
+  pure-Go bzip2, whose members are alphabetical, which is what lets one
+  pass resolve an entity's credit without buffering 35M recordings. The
+  pass runs on **every** mode, because a complete import means
+  `refresh`, which never enters the importer at all, and it reports
+  whether it populated anything so `changed` republishes the artifact.
 
 **A 0.6 GB download asks about the connection first.** `explore`'s
 catalog artifact had no network awareness at all, which on a phone is a
