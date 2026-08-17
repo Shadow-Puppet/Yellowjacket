@@ -315,14 +315,22 @@ places had to agree — `abiFilters`, the Makefile's `android:package`
 anchor is what stops it also matching the fat APK's line. Adding the
 ABI back, if modernc ever fixes `Xlstat64`, is those same three edits.
 
-**B2, the desktop shell.** Scope decided (below) and **phase 1 is
-done**: the shell itself. Below 600px the sidebar column is gone,
-`<bottom-nav>` is the primary navigation, and the shell fits 320px
-exactly — measured, from 652px in a 360px viewport before. What is left
-is the *views*: a full-screen now-playing (which is where seeking and
-volume went), long-press for the context menus that are right-click
-today, and the track list's resizable columns, which are a pointer
-feature with no touch equivalent.
+**B2, the desktop shell.** Scope decided (below); **phases 1 and 2 are
+done.**
+
+- *Phase 1, the shell.* Below 600px the sidebar column is gone,
+  `<bottom-nav>` is the primary navigation, and the shell fits 320px
+  exactly — measured, from 652px in a 360px viewport before.
+- *Phase 2, the full-screen now-playing view.* Where phase 1's seek bar
+  and volume went. A detail view, so Back pops the nav stack; it
+  composes the real transport components rather than copying them; and
+  it hides the bottom bar while it is up, so it carries its own queue
+  button.
+
+What is left is the rest of the *interactions*: long-press for the
+context menus that are right-click today, and the track list's
+resizable columns, which are a pointer feature with no touch
+equivalent. Neither is started.
 
 **B3/B4** are unchanged, and B3 is now *possible* where it was not:
 with all-files access, `tagwriter` can write in place.

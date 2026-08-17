@@ -1045,6 +1045,28 @@ is 32px each. Which four is plan 016's committed subset, and everything
 else — Settings included, because a phone still needs it — is behind
 "More".
 
+**The phone section of `index.css` is last on purpose.** A media query
+adds no specificity, so a `@media (max-width: 599px)` block placed
+above the plain rules it overrides loses to them — which is how phase 1
+shipped a header that kept its 2em gutters and 24px title on a 390px
+phone with every declaration dead and nothing failing. The shell fitted
+anyway, because the fitting is done by `min-width: 0` and by each
+component's own media query, which live in their own stylesheets and
+have no later rule to lose to. Cosmetic declarations are exactly what
+no assertion sees; a screenshot found it.
+
+**`<now-playing-view>` is where the seek bar and volume went.** It is a
+*detail* view (`DETAIL_LOADERS`, so the nav stack carries the way out —
+a tab you cannot leave by pressing again is not a tab), reached from a
+phone-only button over the mini player's art, and it **composes the
+real `<seek-bar>`, `<player-controls>` and `<volume-control>`** rather
+than reimplementing them. While it is up, `index.css` hides the bottom
+bar through `body:has(#main-content[data-active-view="now-playing"])` —
+the active view is already published as an attribute, and a class
+toggled from `index.ts` would be a second expression of the same fact.
+The view therefore carries its own queue button, because that button
+lives in the bar it hides.
+
 **The playing row is a shape, not a hue.** `track-list` and
 `queue-panel` draw a `::before` triangle in each row's own left
 padding, plus `aria-current` — before, both rows were a background tint

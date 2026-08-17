@@ -127,6 +127,11 @@ const DETAIL_LOADERS: Record<string, () => Promise<unknown>> = {
         import('@components/explore-artist-details/explore-artist-details.js'),
     'explore-album-details': () =>
         import('@components/explore-album-details/explore-album-details.js'),
+    // A detail view rather than a primary one on purpose: it is
+    // somewhere you go and come back from, so the nav stack carries
+    // the way out (016 B2 phase 2).
+    'now-playing': () =>
+        import('@components/now-playing-view/now-playing-view.ts'),
 };
 
 // Opened from a menu rather than by navigating, so they have no entry
@@ -303,6 +308,13 @@ async function handleNavigate(
             }
             mainContent.appendChild(spEl);
             currentDetailEl = spEl;
+            break;
+        }
+        case 'now-playing': {
+            const npEl = document.createElement('now-playing-view');
+
+            mainContent.appendChild(npEl);
+            currentDetailEl = npEl;
             break;
         }
         case 'genre-details': {

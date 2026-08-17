@@ -2929,3 +2929,57 @@ page rather than a failed setup.
 both times.** That is the property to keep — a spec tier whose second
 run differs from its first is a tier that will one day blame the wrong
 commit.
+
+## A media query adds no specificity, and dead CSS looks like working CSS (2026-08-16)
+
+Plan 016 B2 phase 2 shipped the full-screen now-playing view, and
+checking it with a screenshot found that **phase 1's shell rules had
+never applied**.
+
+`index.css` is base rules then component rules, and the phone block had
+been inserted in the middle — above the plain `.top-bar` and `.title`
+rules it meant to override. A media query is not a specificity boost,
+so with equal specificity the *later* declaration wins. Measured at
+390px before the fix:
+
+| declared for the phone | actually computed |
+|---|---|
+| `padding-left: 0.75em` | 32px (the 2em base) |
+| `gap: 0.5em` | 16px (base) |
+| `font-size: 1.1em` | 24px (the 1.5em base) |
+| `grid-template-columns: minmax(0,1fr) auto auto` | `320px 1fr auto` (base) |
+
+After moving the block to the end of the file: 12px, 8px, 17.6px, and
+`154px 187px 33px`.
+
+**Nothing failed while they were dead**, which is the part worth
+keeping. The phone spec asserts that the shell does not scroll
+sideways, and it did not — because the fitting was being done by
+`min-width: 0` and by each component's *own* media query, which live in
+their own stylesheets and so had no later rule to lose to. The
+declarations that did nothing were the cosmetic ones, and no assertion
+was ever going to see them. A screenshot did, in about ten seconds.
+
+The file now ends with one phone section, and says why it is last.
+
+### What the same screenshot found about the view itself
+
+The bottom bar was still rendering the mini player *underneath* the
+full-screen view — 4em of a 844px phone spent saying exactly what the
+view above it says, and invisible to every assertion about either one
+(both were correct on their own). `index.css` hides `.bottom-bar` while
+`#main-content[data-active-view="now-playing"]`, through `:has()`
+rather than a class toggled from `index.ts`: which view is showing is
+already published as an attribute, and a second expression of the same
+fact is a second thing to keep in step.
+
+That took the queue button away with it, since that button lives in the
+bar — so the view carries its own, toggling the same `open` attribute
+on the same panel element.
+
+**And a css`` literal cannot contain a backtick.** A comment reading
+"the track size is set on the `wa-slider` inside its shadow root"
+terminates the tagged template, and the failure arrives as
+`Expected "]" but found "wa"` from the CSS parser, at a line number in
+the *comment*. `make css-check` exists for this and named it
+immediately.

@@ -112,6 +112,41 @@ test.describe('the shell on a phone', () => {
     });
   }
 
+  test('opens the full-screen now playing, and comes back', async ({ app }) => {
+    // Something has to be playing for the mini player to be a way in.
+    await app.getByTestId('tab-tracks').click();
+    await expect(app.getByTestId('main-content'))
+      .toHaveAttribute('data-active-view', 'tracks');
+
+    await app.locator('track-list .track-row').first().dblclick();
+    await expect(app.getByTestId('now-playing-title')).not.toBeEmpty();
+
+    await app.getByTestId('open-now-playing').click();
+
+    await expect(app.getByTestId('main-content'))
+      .toHaveAttribute('data-active-view', 'now-playing');
+
+    // The seek bar and volume that phase 1 took out of the bottom bar
+    // are here, and they are the *same* components -- this view
+    // composes the transport rather than reimplementing it.
+    await expect(app.locator('now-playing-view seek-bar')).toBeVisible();
+    await expect(app.locator('now-playing-view volume-control')).toBeVisible();
+
+    // Back goes where the user came from, through the nav stack.
+    await app.getByTestId('npv-back').click();
+    await expect(app.getByTestId('main-content'))
+      .toHaveAttribute('data-active-view', 'tracks');
+  });
+
+  test('offers no way in on a desktop, where the bar is whole', async ({ app }) => {
+    await app.setViewportSize({ width: 1440, height: 900 });
+
+    // The button exists in the markup at every size; CSS decides. If
+    // this becomes visible on a desktop it is a 48px hit target over
+    // the cover art, swallowing the clicks that open the preview.
+    await expect(app.getByTestId('open-now-playing')).toBeHidden();
+  });
+
   test('keeps the transport, minus what a thumb cannot use', async ({ app }) => {
     // The player bar stays: this is a music player, and what is playing
     // has to be visible and pausable from every view.
