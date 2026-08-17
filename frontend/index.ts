@@ -21,6 +21,7 @@ import '@components/audio-player/audio-player.ts';
 import '@components/track-list/track-list.ts';
 import '@components/now-playing/now-playing.ts';
 import '@components/sidebar/app-sidebar.ts';
+import '@components/bottom-nav/bottom-nav.ts';
 import '@components/queue-panel/queue-panel.ts';
 import '@components/search-bar/search-bar.ts';
 import '@components/library-filter/library-filter.ts';

@@ -199,35 +199,39 @@ test.describe('the shell reflows rather than hiding what does not fit', () => {
     });
   });
 
-  test('what does not fit sideways can be scrolled to', async ({ app }) => {
+  test('nothing needs scrolling to at 320px, because it all fits', async ({ app }) => {
     // 320 CSS px is 400% page zoom of a 1280px viewport, which is the
-    // size 1.4.10 names. The shell is 784px wide there, so 464px of the
-    // app — the job indicator and the queue button among it — used to
-    // be behind `overflow: hidden` with no way to reach it.
+    // size 1.4.10 names.
+    //
+    // **This assertion is the inverse of the one it replaces, and that
+    // is the fix landing rather than the test being weakened.** The
+    // shell used to be 784px wide here, so 464px of the app — the job
+    // indicator and the queue button among it — sat behind
+    // `overflow: hidden` with no way to reach it; making the axis
+    // scrollable was the remedy available at the time. 016 B2's phone
+    // layout reflows instead: below 600px the sidebar becomes a bottom
+    // tab bar, the header's controls shrink, and the shell measures
+    // exactly 320px in a 320px viewport. Reflow is what 1.4.10 asks
+    // for; being able to scroll to the overflow was the concession.
     await app.setViewportSize({ width: 320, height: 256 });
 
-    // A *gesture*, not `scrollLeft = 9999`: `overflow: hidden` still
-    // permits programmatic scrolling, so the obvious probe passes on
-    // the build that has the bug. It did, first time.
-    await app.mouse.move(160, 20);
-    await app.mouse.wheel(400, 400);
-    await app.waitForTimeout(200);
-
-    const reach = await app.evaluate(() => {
+    const fit = await app.evaluate(() => {
       const se = document.scrollingElement!;
 
-      return { left: se.scrollLeft, top: se.scrollTop };
+      return {
+        scrollWidth: se.scrollWidth,
+        clientWidth: document.documentElement.clientWidth,
+        scrollHeight: se.scrollHeight,
+        clientHeight: document.documentElement.clientHeight,
+      };
     });
 
-    expect(reach.left).toBeGreaterThan(0);
+    expect(fit.scrollWidth).toBeLessThanOrEqual(fit.clientWidth);
 
     // And the vertical axis stays fixed, which is what keeps the
-    // transport where a desktop player's transport belongs.
-    expect(reach.top).toBe(0);
+    // transport where a player's transport belongs.
+    expect(fit.scrollHeight).toBeLessThanOrEqual(fit.clientHeight);
 
-    await app.evaluate(() => {
-      document.scrollingElement!.scrollLeft = 0;
-    });
     await app.setViewportSize({ width: 1440, height: 900 });
   });
 

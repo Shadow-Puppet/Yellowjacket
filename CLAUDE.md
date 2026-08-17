@@ -1008,6 +1008,43 @@ this app promises, no scrollbar appears. Note that `overflow: hidden`
 still permits *programmatic* scrolling, so a probe that sets
 `scrollLeft` passes on the broken build; the spec uses a wheel gesture.
 
+**Below 600px it reflows instead, and that is the phone.** The sideways
+scroll above was the concession available while the shell had one
+layout; plan 016 B2 gives it a second. Under 600px the grid drops its
+sidebar column, `<bottom-nav>` takes over as the primary navigation,
+the header's controls shrink or stand down, and the shell measures
+exactly 320px in a 320px viewport — so `layout-overflow.spec.ts` now
+asserts *nothing needs scrolling to*, which is what WCAG 1.4.10 wanted
+all along. 600 rather than the sidebar's 900 because 900 is a laptop:
+the answer there is a narrower sidebar, which is still a sidebar.
+
+Three rules in it are load-bearing, and the second cost 30 specs.
+
+**A grid item's implicit minimum is its content**, so one child that
+insists on 580px makes the *body* 580px wide inside a 360px viewport
+and `overflow-x: hidden` then hides a third of the app rather than
+fitting it. Every box between the viewport and the content that must
+shrink carries `min-width: 0`, and the things that cannot shrink say so
+in their own stylesheet — `search-bar`'s 200px floor, `job-indicator`'s
+label, `audio-player`'s seek bar and volume. A media query inside a
+shadow root is answered by the viewport, so a component states what it
+drops at phone width itself rather than the shell reaching in.
+
+**A duplicated component duplicates its handles.** `bottom-nav`'s
+"More" opens the *same* `<app-sidebar>` in a `wa-drawer` rather than
+listing the destinations again — but rendering it unconditionally put a
+second copy of every `data-testid="nav-*"` in the DOM, and 30 existing
+specs failed with "strict mode violation: resolved to 2 elements" on a
+desktop viewport where the element is not even visible. It renders only
+while the drawer is open, and `bottom-nav.test.ts` asserts its absence
+before that.
+
+**The tab bar is four destinations and a way to the rest.** Three to
+five is where touch targets stop being thumb-sized; eleven over 360px
+is 32px each. Which four is plan 016's committed subset, and everything
+else — Settings included, because a phone still needs it — is behind
+"More".
+
 **The playing row is a shape, not a hue.** `track-list` and
 `queue-panel` draw a `::before` triangle in each row's own left
 padding, plus `aria-current` — before, both rows were a background tint

@@ -2828,3 +2828,77 @@ for boot ok". `pick_device` now resolves `ANDROID_SERIAL` from
 `ro.boot.qemu.avd_name`, since serials are assigned in boot order and
 the AVD name is the stable identity. Verified with both emulators
 running: it selects `yj-test` and installs.
+
+## The phone shell fits, and what it cost to make it fit (2026-08-16)
+
+Plan 016 B2, phase 1: the shell below 600px. Measured at 360×780 and
+390×844 against the real app (`make dev-headless` + Playwright, which
+is the tier that can answer this — server mode serves the same document
+an Android WebView renders).
+
+**What overflowed, and by how much.** The body was 652px wide in a
+360px viewport before any of this. Walking every element and its shadow
+roots for a `right` past the viewport named the causes in order:
+
+| element | width | why |
+|---|---|---|
+| `header.top-bar` | 580 | its children's minimums, summed |
+| `search-bar` | 320 | `.search-container { min-width: 200px }` |
+| `job-indicator` | 157 | the label, "3 background jobs" |
+
+A `min-width` in a flex row is a *hard* floor — it does not shrink — and
+a grid item's implicit minimum is `auto`, i.e. its content. So the
+header could not get smaller than the sum of what it held, the body grew
+to the header, and `overflow-x: hidden` would then have hidden a third
+of the app rather than fitting it. `min-width: 0` on the boxes between
+the viewport and the content, plus each component standing its own
+non-essential parts down in its own stylesheet, takes 360 → 360 exactly.
+At 320px (400% zoom, the width WCAG 1.4.10 names) it is also exact.
+
+**So an existing spec now asserts the opposite of what it did**, and
+that is the fix landing rather than the test being weakened.
+`layout-overflow.spec.ts` used to assert that the 464px of app behind
+`overflow: hidden` *could be scrolled to* with a wheel gesture, which
+was the remedy available when the shell had one layout. It reflows now,
+which is what 1.4.10 asks for; scrolling to the overflow was the
+concession.
+
+**And a shared component brings its test handles with it.**
+`bottom-nav`'s "More" opens the *existing* `<app-sidebar>` in a drawer —
+the whole point being not to write a second list of destinations — but
+rendering it unconditionally put a second `data-testid="nav-home"` (and
+ten siblings) in the DOM. **30 existing specs failed** with "strict mode
+violation: resolved to 2 elements", on a *desktop* viewport where
+`bottom-nav` is `display: none` and the drawer can never open. Lazy
+rendering fixes it; the component test asserts the absence, because the
+failure is invisible from inside the component and appears in files
+nobody touched.
+
+Three smaller things worth keeping:
+
+- **A new icon name is a runtime failure, not a build one.** `bars` was
+  not in `src/icons/names.txt`, so `offline-icons.spec.ts` caught it —
+  the sweep asserts `window.__yjIconMisses` is empty. `node
+  frontend/scripts/fetch-icons.mjs` re-vendors after adding a line.
+- **A `wa-drawer` animates, so a test asserts its events**, not its
+  `open` property: setting `open = false` starts a hide that has not
+  finished on the next microtask, and a test reading the property in
+  between sees the state it is leaving.
+- **`update(el)` in the component tier takes two arguments**
+  (`update(el, {})`), which is only visible from `tsc`, not from a
+  failing test.
+
+### A pre-existing failure this uncovered but did not cause
+
+`requested-badge.spec.ts` fails two of its three tests, **on clean
+`main` as well** (verified by stashing every change and re-running).
+The symptom is `download.Service.AddRequest` not settling in 10s.
+
+What is now known, and narrows it for whoever picks it up: the same
+method with the same arguments, called straight at the runtime endpoint
+with `curl`, **returns in 4ms** (it inserted, and answered `2`). So it
+is not the backend and not the documented read-pool trap — `Queries` is
+built over the writer, and `Reconciler.Trigger` is a non-blocking
+select. It is the page-side path: `__yjEvents.call` → the `fetch` hook
+→ `/wails/runtime`. A third test in that file fails only *after* those
+two, so it is state, not a third bug.

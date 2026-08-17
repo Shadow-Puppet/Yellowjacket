@@ -149,6 +149,19 @@ export class JobIndicator extends LitElement {
                 text-overflow: ellipsis;
             }
 
+            /* On a phone the ring is the whole indicator: "3 background
+               jobs" is 114px of a 360px header, and it pushed the
+               header past the viewport.  Only the *visible* label
+               goes -- the live region in render() is what announces
+               this, and it is unaffected, so the ring keeps its
+               accessible name and screen readers keep hearing the
+               state change. */
+            @media (max-width: 599px) {
+                .label {
+                    display: none;
+                }
+            }
+
             .alert-dot {
                 width: 6px;
                 height: 6px;

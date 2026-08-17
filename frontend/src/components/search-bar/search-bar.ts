@@ -67,6 +67,21 @@ export class SearchBar extends LitElement {
             transition: border-color 0.15s ease;
         }
 
+        /* The 200px floor is a desktop floor. On a phone the header is
+           the whole width there is, and a min-width in a flex row is a
+           *hard* one -- it does not shrink, so the header stayed 580px
+           wide inside a 360px viewport and the shell scrolled
+           sideways. Measured at 360px: 580 -> 360. */
+        @media (max-width: 599px) {
+            :host {
+                min-width: 0;
+            }
+
+            .search-container {
+                min-width: 0;
+            }
+        }
+
         .search-container:focus-within {
             border-color: var(--yj-accent, #ffd43b);
         }

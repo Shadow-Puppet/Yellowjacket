@@ -1,5 +1,5 @@
 import { LitElement, html, css } from 'lit';
-import { customElement, state } from 'lit/decorators.js';
+import { customElement, state, property } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import { designTokens } from '../../styles/tokens.css';
 
@@ -165,6 +165,17 @@ export class AppSidebar extends LitElement {
 
     @state()
     private collapsed = false;
+
+    /**
+     * Keep the labels regardless of the viewport, for a host that has
+     * made room for them -- `bottom-nav`'s drawer, which is the whole
+     * screen wide on the phone where this would otherwise auto-collapse
+     * to icons. The auto-collapse is a *width* response to a narrow
+     * shell, and inside a drawer the shell is not what the sidebar is
+     * sharing space with.
+     */
+    @property({ type: Boolean, reflect: true })
+    expanded = false;
 
     /** The width the user chose, restored when the window grows back. */
     private userWidth = DEFAULT_WIDTH;
@@ -344,7 +355,8 @@ export class AppSidebar extends LitElement {
      */
     private applyViewportWidth() {
         const narrow =
-            this.narrowViewport?.matches ?? false;
+            !this.expanded &&
+            (this.narrowViewport?.matches ?? false);
         const width = narrow
             ? MIN_WIDTH
             : this.userWidth;

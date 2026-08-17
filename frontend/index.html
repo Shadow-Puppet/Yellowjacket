@@ -41,6 +41,13 @@
             <wa-icon name="list"></wa-icon>
         </button>
     </footer>
+    <!-- The phone's primary navigation, hidden above 600px by
+         index.css.  Eager rather than a chunk, for the reason
+         notification-host is: it is the only way to move around the
+         app on a phone.  After the footer, because that is where it
+         renders -- the tab bar sits below the transport, and DOM order
+         is what a screen reader and the tab sequence follow. -->
+    <bottom-nav></bottom-nav>
     <first-run-wizard></first-run-wizard>
     <notification-host></notification-host>
     <shortcuts-overlay></shortcuts-overlay>

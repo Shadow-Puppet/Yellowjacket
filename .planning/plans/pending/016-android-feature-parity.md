@@ -246,6 +246,13 @@ view's template is two templates to fix every bug in. Where a view
 cannot serve both, the split belongs at the chunk boundary that already
 exists.
 
+Phase 1 followed that rule and found its cost: reusing `<app-sidebar>`
+inside the drawer means reusing its `data-testid`s too, and a second
+copy standing by in the DOM broke 30 specs that had nothing to do with
+the phone. The rule holds — a second list of destinations would be
+worse — but a shared component must be rendered only when it is wanted,
+and the guard belongs in a test that names the reason.
+
 ## What is worth doing regardless of that decision
 
 Cheap, independently useful, and each unblocks measurement:
@@ -308,8 +315,14 @@ places had to agree — `abiFilters`, the Makefile's `android:package`
 anchor is what stops it also matching the fat APK's line. Adding the
 ABI back, if modernc ever fixes `Xlstat64`, is those same three edits.
 
-**B2, the desktop shell.** The largest remaining piece, and the scope
-is now decided — see "The phone gets a subset" below.
+**B2, the desktop shell.** Scope decided (below) and **phase 1 is
+done**: the shell itself. Below 600px the sidebar column is gone,
+`<bottom-nav>` is the primary navigation, and the shell fits 320px
+exactly — measured, from 652px in a 360px viewport before. What is left
+is the *views*: a full-screen now-playing (which is where seeking and
+volume went), long-press for the context menus that are right-click
+today, and the track list's resizable columns, which are a pointer
+feature with no touch equivalent.
 
 **B3/B4** are unchanged, and B3 is now *possible* where it was not:
 with all-files access, `tagwriter` can write in place.
