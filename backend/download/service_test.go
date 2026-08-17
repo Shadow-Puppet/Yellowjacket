@@ -20,6 +20,30 @@ func newServiceFixture(t *testing.T) serviceFixture {
 	mf := newManagerFixture(t)
 	svc := NewService(slogDiscard(), mf.manager, mf.store, NewMemSecretStore())
 
+	// Every test here is about the durable Request that `StartDownload`
+	// leaves behind, and none of them is about the download itself -- but
+	// their fixture is an anchored four-track request with a healthy
+	// provider, which is exactly what `AutoPickable` says yes to. So
+	// `Manager.Start` was firing `go m.grab(...)`, detached and with
+	// `context.WithoutCancel`, and the test then raced it.
+	//
+	// It lost, twice, in CI (`check` on c03c0b8, and nowhere locally):
+	//
+	//	service_test.go:66: state = "satisfied", want wanted
+	//	testing.go:1369: TempDir RemoveAll cleanup: ... directory not empty
+	//
+	// The first is the request reaching its *next* state before the
+	// assertion read it; the second is that same goroutine still writing
+	// into `t.TempDir()` after the test returned. One cause, two shapes.
+	//
+	// Putting the candidate outside the auto-pick size window stops the
+	// grab from ever starting, which is better than waiting for it: there
+	// is no goroutine to be slow, so the tests state what they mean
+	// ("the request exists, in this state") without a timing assumption
+	// underneath. A test that does want the download has `managerFixture`
+	// and sets its own preferences.
+	mf.manager.SetPreferences(AutoDownloadPrefs{MaxSizeMB: 1})
+
 	return serviceFixture{managerFixture: mf, svc: svc}
 }
 
