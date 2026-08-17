@@ -2983,3 +2983,54 @@ terminates the tagged template, and the failure arrives as
 `Expected "]" but found "wa"` from the CSS parser, at a line number in
 the *comment*. `make css-check` exists for this and named it
 immediately.
+
+## The index artifact could not be exported, and the reason is a rule this repo already had (2026-08-16)
+
+`maintain-index` failed on an unrelated push:
+
+```
+indexexport: copy rows: SQL logic error: no such column: total_tracks (1)
+```
+
+Three minutes in, on the one job that owns the ~205 GB checkpoint and
+publishes the catalog every user downloads.
+
+**The cause is the exception that keeps that checkpoint alive.** The
+index job's `/cache` is a real `YJ_HOME` that survives between runs, so
+`explore_index` there is classified `Cache` and is deliberately *not*
+dropped and recreated by `cmd/indexbuild`'s schema repair
+(`staleschema.go`). A column added to the schema afterwards is
+therefore simply absent from that database — and `total_tracks` was
+added by the album-completeness work. The exporter selected it anyway.
+
+**The fix is the rule the importer already follows.**
+`artifactHasTotals()` exists precisely because "adding a column to the
+importer's SELECT is how you break every artifact already published";
+the mirror image — *reading* an index older than the binary — had no
+such guard. `sourceColumns()` asks
+`pragma_table_info('explore_index', 'main')` and selects a literal `0`
+when the column is not there, which is what the column already means by
+"the catalog does not say" and what the app already renders as unknown
+rather than as incomplete. The destination keeps every column, so an
+importer needs no second shape.
+
+So the pattern generalises, and is worth stating once: **any query that
+crosses a version boundary in either direction asks the schema rather
+than trusting it.** There are now three of these — `artifactStoresText`
+(encoding), `artifactHasTotals` (import), `sourceColumns` (export).
+
+Two things about the test are worth keeping.
+
+It reproduces the failure **symptom first**: with the fix removed it
+fails with the CI message verbatim, `copy rows: SQL logic error: no
+such column: total_tracks (1)`. That was checked, not assumed.
+
+And its first version silently proved nothing. `oldColumns` was
+`strings.Replace(catalogColumns, "total_tracks, ", "", 1)` — which
+matches *nothing*, because the list is formatted across lines and the
+name is followed by a newline rather than a space. So the "old" index
+had every current column, the probe correctly said so, and the only
+reason this was caught is that the assertion about the probe ran before
+the assertion about the export. A fixture built by string surgery on a
+formatted constant needs to be whitespace-independent; it filters the
+list now.
