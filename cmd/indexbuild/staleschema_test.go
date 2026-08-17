@@ -53,10 +53,19 @@ func TestRetireLibraryTables(t *testing.T) {
 		CREATE TABLE recordings (id INTEGER PRIMARY KEY, title TEXT);
 	`)
 
-	// The symptom, before the repair: the schema cannot be applied over
-	// a table whose shape has moved on.
-	if _, err := database.NewDB(logger); err == nil {
-		t.Fatal("expected the stale shape to fail to open; it did not")
+	// This used to assert the symptom -- that the schema cannot be
+	// applied over a table whose shape has moved on -- because at the
+	// time nothing repaired it and only this job did.  The app-side
+	// repair (backend/database/staleshape.go) now retires a stale
+	// non-authored table before applySchema meets it, so opening
+	// succeeds and the symptom no longer reproduces from here.
+	//
+	// That does not make retireLibraryTables redundant, and the rest of
+	// this test is why: the app-side repair only removes what is *stale*,
+	// while this database wants its library half gone entirely, healthy
+	// or not, because nothing here scans, plays or authors.
+	if _, err := database.NewDB(logger); err != nil {
+		t.Fatalf("the app-side repair should have opened this: %v", err)
 	}
 
 	if err := retireLibraryTables(context.Background(), logger); err != nil {

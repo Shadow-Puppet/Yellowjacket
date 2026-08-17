@@ -233,6 +233,51 @@ rather than renaming them.
   the drift it caused before — `sql/schemas/` and the migrations
   disagreed, and sqlc generated against the stale one.
 
+  **What that costs an existing database is repaired once, at open.**
+  `CREATE ... IF NOT EXISTS` reaches an existing table only if its shape
+  already matches and otherwise silently no-ops, so a *changed* table
+  never migrates. Plan 014 added `total_tracks` to `explore_index` and
+  to `indexRowFields` — the projection every explore read uses — and no
+  database that already existed grew the column: **every** Explore
+  search, browse, artist and album page on such an install failed with
+  `no such column: total_tracks`, while a fresh install was perfectly
+  healthy, which is exactly why no test saw it. Plan 013 was worse on
+  the same install: `applySchema` could not be applied at all over a
+  pre-013 `audio_files`, so the app did not open.
+
+  `backend/database/staleshape.go` runs before `applySchema` and
+  retires what is stale, so the create is a create. Five things about
+  it are load-bearing:
+  - **It parses `sql/schemas/` for the expectation** rather than
+    writing the column list down a second time, because a second list
+    is a second thing to forget — the fault it exists to repair.
+  - **It notices a changed *type*, not just a missing column.** 013
+    moved `mbid` from TEXT to BLOB, and SQLite does not coerce between
+    them: a comparison against 16 raw bytes returns no rows rather than
+    an error. `ALTER TABLE ADD COLUMN` would have handled
+    `total_tracks` alone and cannot express this at all, which is why
+    the repair drops rather than migrates.
+  - **`Authored` is never retired**, and that boundary is a test
+    (`TestAuthoredTablesAreNeverRetired`), not a comment. Everything
+    else is rebuildable: `Cache` by definition, `Owned` by a rescan —
+    plan 013's stated "delete and rescan" — and `Derived` from Owned.
+    A table the schema no longer describes at all goes too; 013 left
+    seven behind plus `schema_migrations`.
+  - **The drops are one transaction with `defer_foreign_keys`.** Those
+    legacy tables reference each other, so dropping them in any order
+    fails on whichever goes first, and turning foreign keys *off*
+    instead would silently take `playlist_tracks.audio_file_id`'s
+    ON DELETE SET NULL with it — leaving playlist entries pointing at
+    ids a rescan reissues to *different songs*. Nulled entries are
+    empty; stale ones are wrong, and wrong quietly.
+  - **The order is sorted, so a failure reproduces.** Map order is
+    random, and the foreign-key bug above passed its own regression
+    test on two runs in three until the order was fixed.
+
+  Retiring `explore_index` takes its FTS and its meta with it, because
+  the `dump_import_done` marker is what would otherwise stop the
+  artifact ever being fetched again.
+
   **What that costs an existing database is that it does not open**, and
   "delete and rescan" is the answer (plan 013, open question 1) — free
   for everyone except one machine. The index job's `/cache` volume is a

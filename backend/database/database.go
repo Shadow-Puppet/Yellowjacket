@@ -89,6 +89,14 @@ func NewDB(logger *slog.Logger) (*DB, error) {
 		return nil, fmt.Errorf("could not apply PRAGMAs: %w", err)
 	}
 
+	// Before the schema is applied, not after: applySchema is
+	// CREATE ... IF NOT EXISTS, which no-ops against a table that
+	// already exists in an older shape.  Retiring the stale one first is
+	// what turns that no-op into a create.
+	if err := retireStaleTables(dbCtx, db, logger); err != nil {
+		return nil, err
+	}
+
 	if err := applySchema(dbCtx, db); err != nil {
 		return nil, err
 	}
