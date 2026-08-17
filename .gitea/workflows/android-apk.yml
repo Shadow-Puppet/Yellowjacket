@@ -277,6 +277,18 @@ jobs:
           size=$(stat -c %s "$keystore")
           magic=$(od -An -N4 -tx1 "$keystore" | tr -s ' ' | sed 's/^ //')
           echo "keystore: $size bytes, first four bytes: $magic"
+
+          # The fingerprint of the decoded file, so "is the secret the
+          # keystore I have locally?" is answerable without guessing.
+          # A hash of a *public* certificate store gives nothing away,
+          # and the alternative is comparing byte counts by eye.
+          #
+          #     sha256sum ~/path/to/yellowjacket-release.jks
+          #
+          # A password that is right for one keystore and wrong for
+          # another is indistinguishable from a wrong password, and this
+          # is the line that distinguishes them.
+          echo "  sha256: $(sha256sum "$keystore" | cut -d' ' -f1)"
           case "$magic" in
             "30 82"*)       echo "  header: PKCS12 (keytool's default since JDK 9)" ;;
             "fe ed fe ed")  echo "  header: legacy JKS" ;;
@@ -291,6 +303,20 @@ jobs:
             echo "  password length after trimming: ${#pass}" >&2
             sed 's/^/  keytool: /' /tmp/ks.err | head -5 >&2
             echo >&2
+
+            # A password pasted *with its shell quotes* is the one
+            # remaining cause that looks identical to a wrong password:
+            # the secret is two characters longer than the password and
+            # nothing in the error says so.  Naming it is safe --
+            # stripping the quotes and carrying on would not be, since a
+            # password may legitimately contain them.
+            unquoted=$(printf '%s' "$pass" | sed "s/^['\"]//;s/['\"]$//")
+            if [ "$unquoted" != "$pass" ] &&
+               keytool -list -keystore "$keystore" -storepass "$unquoted" >/dev/null 2>&1; then
+              echo "  ** it opens with the surrounding quotes removed. **" >&2
+              echo "  Re-paste ANDROID_KEYSTORE_PASSWORD without them." >&2
+              echo >&2
+            fi
             echo "Check it locally with the same two values:" >&2
             echo "  printf %s \"\$SECRET_B64\" | base64 -d > /tmp/k.jks" >&2
             echo "  keytool -list -keystore /tmp/k.jks -storepass '<password>'" >&2
