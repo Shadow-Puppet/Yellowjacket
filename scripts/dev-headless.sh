@@ -157,7 +157,22 @@ fi
 # YJ_TESTCTL mounts backend/testctl's /__test/ endpoints.  It is opt-in
 # rather than implied by the dev build so that a human's `make dev` does
 # not carry an arbitrary-SQL endpoint on a listening port.
+#
+# YJ_CORE_INDEX_URL points at a dead address, which is what
+# seed-sandbox.sh and ci.yml already do and what this script was the
+# only one *not* doing.  Without it the app downloads and builds the
+# real ~1M-row Explore catalog into the run's YJ_HOME, so a local `make
+# e2e` runs against a different world than CI: the specs that stage
+# their own catalog rows (requested-badge) then search a catalog full
+# of real albums, fail to find their fixture, and report it as a
+# regression in whatever was last changed.  A spec tier whose result
+# depends on what a previous run downloaded is not a result -- the same
+# rule as the emulator's `-no-snapshot`.
+#
+# Set YJ_CORE_INDEX_URL yourself to opt back in, for exploring Explore
+# by hand.
 YJ_TESTCTL=1 \
+	YJ_CORE_INDEX_URL="${YJ_CORE_INDEX_URL:-http://127.0.0.1:1/none.tar.zst}" \
 	WAILS_SERVER_PORT="$PORT" \
 	YJ_LOG_LEVEL="$LOG_LEVEL" setsid dbus-run-session -- \
 	"$BIN" \

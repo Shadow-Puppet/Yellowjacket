@@ -2888,17 +2888,44 @@ Three smaller things worth keeping:
   (`update(el, {})`), which is only visible from `tsc`, not from a
   failing test.
 
-### A pre-existing failure this uncovered but did not cause
+### The local e2e tier was not running the same app CI runs
 
-`requested-badge.spec.ts` fails two of its three tests, **on clean
-`main` as well** (verified by stashing every change and re-running).
-The symptom is `download.Service.AddRequest` not settling in 10s.
+`requested-badge.spec.ts` failed two of three tests locally while CI was
+green, and the reason is worth more than the fix: **`dev-headless.sh`
+was the only place that did not neutralise `YJ_CORE_INDEX_URL`.**
+`seed-sandbox.sh` and `ci.yml` both point it at `127.0.0.1:1`; the dev
+launcher did not, so the app downloaded and built the real ~1M-row
+Explore catalog into the run's `YJ_HOME`, and a local `make e2e` then
+ran against a world CI never sees.
 
-What is now known, and narrows it for whoever picks it up: the same
-method with the same arguments, called straight at the runtime endpoint
-with `curl`, **returns in 4ms** (it inserted, and answered `2`). So it
-is not the backend and not the documented read-pool trap — `Queries` is
-built over the writer, and `Reconciler.Trigger` is a non-blocking
-select. It is the page-side path: `__yjEvents.call` → the `fetch` hook
-→ `/wails/runtime`. A third test in that file fails only *after* those
-two, so it is state, not a third bug.
+Found by reading the failure screenshot: the spec had searched Explore
+for its fixture album and the page was full of *real* ones — Real
+Estate, Arrested Youth, The Yes Album. The staged row was there and
+invisible among a million others.
+
+`dev-headless.sh` now defaults the variable to the dead address and
+takes an explicit one if you want the real catalog for exploring by
+hand. `make e2e` locally: 97 passed / 3 failed before, 100 passed
+after.
+
+The second half of the same problem is that **the backend is one shared
+process with one database, and specs leave rows in it.**
+`explore-shelves` staged its catalog only `IfEmpty`, so a single album
+row left behind by `requested-badge` satisfied that gate, the shelves
+were drawn from one foreign row, and the artist card the spec clicks did
+not exist. It fails on the *second* local run and passes on the first,
+which is the least useful order, and never in CI, where every run gets a
+fresh `YJ_HOME`.
+
+"Is the catalog empty" was the wrong question; "are my rows there" is
+the right one. The staging is unconditional now (`INSERT OR IGNORE`
+keyed on the MBID) and the assertion moved from *this insert wrote a
+row* to *every fixture row is present* — which is both idempotent and a
+stronger check, since an MBID failing `CHECK(length(mbid) = 16)` is
+silently dropped by OR IGNORE and would otherwise show up as an empty
+page rather than a failed setup.
+
+**Verified: the full suite runs twice against the same app, 100 passed
+both times.** That is the property to keep — a spec tier whose second
+run differs from its first is a tier that will one day blame the wrong
+commit.
