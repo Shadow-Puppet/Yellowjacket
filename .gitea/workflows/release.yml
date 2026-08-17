@@ -1,0 +1,144 @@
+name: Release
+
+# The sixth workflow, and the one that decides whether the other three
+# run at all.  On every push to main it reads the Conventional Commits
+# since the last tag, and if any of them is releasable it writes the
+# changelog, pushes the tag, and creates the Gitea release whose body is
+# that changelog section.  The publishing workflows are keyed on `v*`, so
+# the tag push is what starts them.
+#
+# **Why the tag is pushed with PACKAGE_TOKEN and not the Actions token.**
+# Gitea, like GitHub, does not start a workflow from a ref pushed by a
+# workflow's own token (go-gitea#33123).  The token is what decides this,
+# not the workflow — so semantic-release is handed a repositoryUrl
+# carrying a *user* PAT, and the resulting push is attributed to a person
+# and triggers the `v*` workflows normally.
+#
+# That limitation is used deliberately in the bootstrap step below, where
+# a tag that must *not* trigger anything is pushed with the Actions token
+# instead.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Cutting a tag is not a thing to cancel halfway: a superseded run must
+# finish, not be killed between `git push --tags` and the release POST.
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:24.04
+    env:
+      SERVER_URL: ${{ github.server_url }}
+      OWNER: ${{ github.repository_owner }}
+      REPO: ${{ github.repository }}
+      PACKAGE_TOKEN: ${{ secrets.PACKAGE_TOKEN }}
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: System packages
+        run: |
+          set -eu
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends ca-certificates curl git jq
+
+      - name: Node toolchain
+        run: |
+          set -eu
+          curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+          apt-get install -y -qq --no-install-recommends nodejs
+          node --version
+
+      # By hand rather than actions/checkout, like the other five: that is
+      # a JS action and needs node inside the container before any step has
+      # installed it.  The full history is required — semantic-release
+      # reads tags and walks commits, and a shallow clone silently makes
+      # every release look like the first one.
+      - name: Clone repo at this commit
+        run: |
+          set -eu
+          git clone --quiet \
+            "https://x-access-token:${PACKAGE_TOKEN}@${SERVER_URL#https://}/${REPO}.git" /src
+          git -C /src checkout --quiet --detach "${{ github.sha }}"
+          git config --global --add safe.directory /src
+          git -C /src log --oneline -1
+
+      # The @semantic-release/git plugin pushes a `chore(release): x.y.z`
+      # commit back to main, which is a push to the branch this workflow
+      # runs on.  Guarded here rather than by [skip ci], whose handling in
+      # Gitea is one more thing that would have to be verified — and this
+      # is a two-line test of a fact we control.
+      - name: Skip the changelog commit
+        id: guard
+        working-directory: /src
+        run: |
+          set -eu
+          subject=$(git log -1 --format='%s')
+          case "$subject" in
+            "chore(release):"*)
+              echo "this is the release commit itself; nothing to do"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "skip=false" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+
+      # semantic-release calls the first release of a repo with no tags
+      # 1.0.0, and offers no option to say otherwise.  A floor tag is the
+      # only way to start at 0.0.1, so this creates one — once, ever.
+      #
+      # **It is pushed with the Actions token on purpose.**  v0.0.0 is a
+      # floor, not a shipment: pushing it with a user PAT would start the
+      # Arch, Homebrew and Android workflows for a version that does not
+      # exist.  The very limitation the header describes is what makes
+      # this inert.
+      - name: Seed the version floor
+        if: steps.guard.outputs.skip == 'false'
+        working-directory: /src
+        env:
+          ACTIONS_TOKEN: ${{ secrets.GITEA_TOKEN }}
+        run: |
+          set -eu
+          git fetch --quiet --tags origin
+
+          if [ -n "$(git tag --list 'v[0-9]*')" ]; then
+            echo "floor already set; newest tag is $(git describe --tags --abbrev=0 --match 'v[0-9]*')"
+            exit 0
+          fi
+
+          echo "no v* tag exists — seeding v0.0.0 so the first release is 0.0.1"
+          git tag v0.0.0 "${{ github.sha }}"
+          git push --quiet \
+            "https://x-access-token:${ACTIONS_TOKEN}@${SERVER_URL#https://}/${REPO}.git" \
+            refs/tags/v0.0.0
+          echo "seeded v0.0.0 at ${{ github.sha }}"
+
+      # Pinned rather than installed into the repo: this is a Go project
+      # and a package.json at its root invites the npm plugin and every
+      # tool that looks for one.  conventional-changelog-conventionalcommits
+      # is in the list because both the analyzer and the notes generator
+      # name that preset and neither depends on it.
+      - name: Run semantic-release
+        if: steps.guard.outputs.skip == 'false'
+        working-directory: /src
+        run: |
+          set -eu
+          git config user.name  "yellowjacket-ci"
+          git config user.email "yj@yellowjacket.app"
+
+          npx --yes \
+            -p semantic-release@25 \
+            -p @semantic-release/commit-analyzer@14 \
+            -p @semantic-release/release-notes-generator@15 \
+            -p @semantic-release/changelog@6 \
+            -p @semantic-release/git@10 \
+            -p @semantic-release/exec@7 \
+            -p conventional-changelog-conventionalcommits@9 \
+            semantic-release \
+              --repository-url "https://x-access-token:${PACKAGE_TOKEN}@${SERVER_URL#https://}/${REPO}.git"
