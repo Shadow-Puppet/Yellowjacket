@@ -7,31 +7,29 @@ name: Search index maintenance
 #   import older than 6mo -> rebuild (re-import from the newest dump)
 #   otherwise             -> refresh (fold in new incremental listens)
 #
-# A refresh is cheap and no-ops when nothing new has been published, so
-# running it on every push to main is safe.
+# **There is deliberately no `push` trigger, and restoring one is a
+# decision rather than a cleanup.** A refresh is individually cheap, so
+# running it on every push to main looked free; what it actually does is
+# put an unattended job that mutates the only copy of a ~205 GB catalog
+# on the same trigger as an ordinary code change, on a runner with
+# capacity 1.
 #
-# ---------------------------------------------------------------------
-# TEMPORARY (2026-08-17): the `push` trigger is off while the catalog
-# rebuilds.
+# That is not hypothetical. On 2026-08-17 `fix(database): retire a table
+# whose shape the schema moved past` landed on main, green — the CI
+# database is deliberately in the older encoding, so the stale-shape
+# repair judged its `explore_index` stale and dropped it, and this job
+# fell back to a full import from the dumps. `fix(database): never
+# retire the catalog the index build derives` stops that specific repair
+# and cannot undo it. Every push to main then booked another `budget`
+# (3h) of the one runner while ordinary CI queued behind it.
 #
-# `fix(database): retire a table whose shape the schema moved past`
-# dropped this job's `explore_index` on its first run -- the CI database
-# is deliberately in the older encoding, so the repair judged it stale --
-# and the job fell back to a full ~205 GB import from the dumps.
-# `fix(database): never retire the catalog the index build derives`
-# stops it happening again but cannot undo it.
-#
-# Until that import reports complete, every push to main books another
-# `budget` (3h) of a runner with capacity 1, and ordinary CI queues
-# behind it. The weekly cron and workflow_dispatch still resume the
-# build, which is all it needs: indexbuild picks up from its checkpoint.
-#
-# RESTORE the two `push` lines below once a run reports
-# `complete=true`. Nothing else here changed.
-# ---------------------------------------------------------------------
+# So the rule this file is an instance of: **a job that mutates state
+# which cannot be rebuilt in ten minutes is triggered deliberately, not
+# by a push.** The weekly cron keeps the catalog current, and
+# workflow_dispatch resumes or forces a build — indexbuild picks up from
+# its checkpoint either way, so nothing is lost by not running on every
+# merge. See docs/index-cache.md for the snapshot and the restore.
 on:
-  # push:
-  #   branches: [main]
   schedule:
     # Weekly update pass. The 6-month rebuild is triggered by the same
     # command when it notices the import has aged out.
