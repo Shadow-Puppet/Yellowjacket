@@ -2369,6 +2369,23 @@ Pre-commit hooks verify generated code is fresh — always run `make generate` a
   mistyped `feat` ships a minor version. `make release-dry` answers "what
   would this merge release" without pushing.
 
+  **The analyzer reads the type and ignores the scope, so a CI-only change
+  is `ci:` and never `fix(ci):`.** The scope is decoration; `fix` is a
+  patch whatever is in the brackets. Two commits touching nothing but
+  `.gitea/workflows/unclaim.yml` were written `fix(ci):` and cut `v0.2.1`
+  and `v0.2.2` — real releases, published to Arch, Homebrew and the APK
+  registry, containing no user-facing change. They were left in place
+  rather than deleted, because a version that vanishes is worse for
+  whoever pulled it than one that turns out to be empty.
+
+  **The blast radius is bigger than the version number**, which is what
+  makes this worth a paragraph. A merge to `main` starts two workflows;
+  if `release.yml` then pushes a tag, that tag push starts **four more**
+  (`arch-package`, `homebrew-formula`, `android-apk`, `desktop-assets`) —
+  on a runner with capacity 1, where the APK build alone is tens of
+  minutes. `make release-dry` before merging is how you find out, and it
+  is cheaper than every one of those.
+
   **`@semantic-release/github` is not in that config and must not be.**
   Gitea's API is `/api/v1` and is not GitHub's surface, so
   `@semantic-release/exec` calls `scripts/gitea-release.sh` instead — one
