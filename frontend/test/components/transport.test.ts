@@ -227,6 +227,41 @@ describe('<seek-bar>', () => {
     expect(text(el, '[data-testid="remaining-time"]')).toBe('01:30');
   });
 
+  it('keeps the slider still as the clocks count', async () => {
+    const el = await fixture('seek-bar');
+
+    emit(Events.TrackChanged, { ...TRACK, trackChangeId: 31 });
+    await flush();
+    await el.updateComplete;
+
+    const slider = () =>
+      shadow(el, 'wa-slider')!.getBoundingClientRect();
+    const before = slider();
+
+    // 1:11 against 4:08 is the reported jitter: different digits, and
+    // in a proportional font different widths. Toggling the right-hand
+    // clock is the other half -- the minus sign is a whole character.
+    for (const positionSeconds of [8, 71, 88]) {
+      emit(Events.PlaybackPositionChanged, {
+        positionSeconds,
+        trackLength: 90,
+        trackChangeId: 31,
+        seq: positionSeconds,
+        playing: true,
+      });
+      await flush();
+      await el.updateComplete;
+
+      expect(slider().width).toBeCloseTo(before.width, 1);
+      expect(slider().left).toBeCloseTo(before.left, 1);
+    }
+
+    await click(el, '[data-testid="remaining-time"]');
+    await el.updateComplete;
+
+    expect(slider().width).toBeCloseTo(before.width, 1);
+  });
+
   it('renders the position the backend reports rather than its own count', async () => {
     const el = await fixture('seek-bar');
 
