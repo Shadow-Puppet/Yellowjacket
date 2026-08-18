@@ -453,6 +453,15 @@ func TestReconcileRespectsBatchSize(t *testing.T) {
 	f := newReconcileFixture(t)
 	ctx := context.Background()
 
+	// A client that searches and finds nothing. The batch size is about
+	// how many requests one pass *searches for*, which only means
+	// anything when there is something to search with -- a pass with no
+	// provider now attempts nothing at all, deliberately.
+	f.manager.installProvider(
+		Config{ID: 1, Priority: 50},
+		NewFakeProvider(1, "finds-nothing", Caps{CanSearch: true}),
+	)
+
 	f.reconciler.SetBatch(2)
 
 	for _, mbid := range []string{"rg-1", "rg-2", "rg-3", "rg-4"} {
@@ -591,5 +600,74 @@ func TestSummaryReportsNoProviders(t *testing.T) {
 
 	if !summary.NoProviders {
 		t.Error("summary did not report that no download client is enabled")
+	}
+}
+
+// ...and it does not search, which is the part the user sees.
+//
+// Attempting with no provider fails every request with "no download
+// clients are enabled", and RecordAttempt writes that down as an
+// attempt and schedules a retry -- so a wanted list built deliberately
+// without a client accrued failures and announced "next check in 6
+// hours" about a check that cannot happen. Wanting something with no
+// way to fetch it is supported; being told it is being looked for is
+// a lie.
+func TestNoProvidersMeansNoAttempt(t *testing.T) {
+	t.Parallel()
+
+	f := newReconcileFixture(t)
+	ctx := context.Background()
+
+	id, err := f.store.AddRequest(ctx, Request{
+		MBID:      "rg-1",
+		Entity:    EntityReleaseGroup,
+		LibraryID: 1,
+		Title:     "OK Computer",
+	})
+	if err != nil {
+		t.Fatalf("AddRequest: %v", err)
+	}
+
+	f.catalog.tracklists["rg-1"] = fourTrackDownload().Expected
+
+	summary, err := f.reconciler.RunNow(ctx)
+	if err != nil {
+		t.Fatalf("RunNow: %v", err)
+	}
+
+	if summary.Attempted != 0 {
+		t.Errorf("attempted %d requests with no client to search with, want 0",
+			summary.Attempted)
+	}
+
+	// The list still knows what is on it: "nothing happened" has to be
+	// reportable as "nothing was searched for, of the one thing you
+	// want" rather than as silence.
+	if summary.Waiting != 1 {
+		t.Errorf("summary reported %d waiting, want 1", summary.Waiting)
+	}
+
+	req, err := f.store.GetRequest(ctx, id)
+	if err != nil {
+		t.Fatalf("GetRequest: %v", err)
+	}
+
+	if req.Attempts != 0 {
+		t.Errorf("attempts = %d, want 0: a pass that could not search did not",
+			req.Attempts)
+	}
+
+	if req.LastError != "" {
+		t.Errorf("lastError = %q, want empty: the request did not fail, it "+
+			"was never tried", req.LastError)
+	}
+
+	// A new request is due immediately (next_try_at is set to now on
+	// insert), so the fault is not the presence of a time -- it is a
+	// time pushed into the future by a failed attempt, which is what the
+	// UI renders as "next check in 6 hours".
+	if req.NextTryAt.After(time.Now().Add(time.Minute)) {
+		t.Errorf("next try scheduled for %v: a check that cannot happen was "+
+			"put on the clock", req.NextTryAt)
 	}
 }
