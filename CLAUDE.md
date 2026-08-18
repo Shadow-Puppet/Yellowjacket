@@ -53,14 +53,40 @@ reinvention:
 - **Hard blockers are real Gitea dependencies**, which render on the
   issue itself, and the blocked issue carries `Status/Blocked`.
 - **A PR body carries a commit-to-issue table, the verification
-  actually run, and a `Closes` list** — PR #83 is the shape.
+  actually run, and a `Closes` list** — PR #83 is the shape. That list
+  is for whoever reads the PR; what actually closes an issue is the
+  footer below.
 
-**And the `Closes` list does not reliably close anything.** #83 listed
-ten and five of them stayed open, shipped in `main`, for a fortnight.
-So closing is a step you take and check, not a keyword you trust:
-`./scripts/issue.sh close <n>` after the merge, with a comment naming
-the commit that shipped it. `close` also drops `Status/In Progress`,
-because a claim outlives the work if nothing takes the label off.
+**The closing keyword goes in the commit body, one issue per line.**
+
+```
+docs: delete four documents that contradict the code
+
+<body>
+
+Closes #98
+```
+
+**Gitea parses commit messages that reach `main`; it does not parse the
+PR body**, which only closes anything if the merge happens to copy it
+into the merge commit. Both halves of that were measured. #83's merge
+commit carried `Closes #9, #13, #14, …` and closed **five of ten** — a
+comma list is partially matched. #93's merge commit body was one
+`Reviewed-on:` trailer, so #92 stayed open behind a perfectly correct
+`Closes` line in the PR description.
+
+A footer costs nothing elsewhere: Conventional Commits allows one,
+`scripts/commit-check.sh` only regexes the subject, and
+semantic-release reads the type from the subject — so this changes no
+release decision. The rule that the issue number stays out of the
+**subject** is unaffected, and was never about the body.
+
+**Check it anyway.** A squash, or a merge message edited by hand,
+still drops the footer. `./scripts/issue.sh list --state open` after a
+merge, looking for what you just shipped; `./scripts/issue.sh close
+<n>` for whatever did not take, with a comment naming the commit.
+`close` also drops `Status/In Progress`, because a claim outlives the
+work if nothing takes the label off.
 
 ## Planning
 
