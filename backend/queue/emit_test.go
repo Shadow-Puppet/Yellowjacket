@@ -219,6 +219,56 @@ func TestEmit_AddTrackSendsDeltaNotSnapshot(t *testing.T) {
 	}
 }
 
+// The append clears the source, and the delta is the only event those
+// paths emit — so if it does not carry the source, the frontend keeps
+// the label it was last given and goes on offering a link back to an
+// album the queue no longer holds until something forces a full state.
+func TestEmit_AppendDeltaCarriesClearedSource(t *testing.T) {
+	t.Parallel()
+
+	q, db, rec := setupRecordedQueue(t)
+	paths := seedAudioFiles(t, db, 4)
+
+	q.SetQueue(
+		paths[:3], 0, false,
+		Source{Type: "album", ID: 1, Label: "Abbey Road"},
+	)
+
+	if _, ok := rec.Wait(events.QueueChanged, waitFor); !ok {
+		t.Fatalf("no QueueChanged after SetQueue; got %v", rec.Names())
+	}
+
+	rec.Reset()
+	q.AddTrack(paths[3])
+
+	if got := modifiedOf(t, rec).Source; got != (Source{}) {
+		t.Errorf("delta source = %+v, want zero value", got)
+	}
+}
+
+// And a delta that did not clear it still reports the source it has,
+// or the frontend would drop a perfectly good label on every removal.
+func TestEmit_NonAppendDeltaCarriesSource(t *testing.T) {
+	t.Parallel()
+
+	q, db, rec := setupRecordedQueue(t)
+	paths := seedAudioFiles(t, db, 4)
+
+	album := Source{Type: "album", ID: 1, Label: "Abbey Road"}
+	q.SetQueue(paths, 0, false, album)
+
+	if _, ok := rec.Wait(events.QueueChanged, waitFor); !ok {
+		t.Fatalf("no QueueChanged after SetQueue; got %v", rec.Names())
+	}
+
+	rec.Reset()
+	q.RemoveTrack(3)
+
+	if got := modifiedOf(t, rec).Source; got != album {
+		t.Errorf("delta source = %+v, want %+v", got, album)
+	}
+}
+
 func TestEmit_RemoveTracksReportsPositions(t *testing.T) {
 	t.Parallel()
 

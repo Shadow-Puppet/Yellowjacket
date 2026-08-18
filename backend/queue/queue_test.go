@@ -126,6 +126,117 @@ func TestClear_ResetsSource(t *testing.T) {
 	}
 }
 
+// A queue built from one album stops being that album the moment a
+// track from somewhere else joins it, so every path that adds one
+// drops the source. Before this, SetQueue was the only writer and
+// Clear the only clearer, so "Playing from Abbey Road" outlived every
+// append — and, being persisted, every restart too.
+func TestAppendPathsDropSource(t *testing.T) {
+	t.Parallel()
+
+	album := Source{Type: "album", ID: 1, Label: "Abbey Road"}
+
+	tests := []struct {
+		name   string
+		append func(q *Queue, paths []string)
+	}{
+		{
+			name: "AddTrack",
+			append: func(q *Queue, paths []string) {
+				q.AddTrack(paths[5])
+			},
+		},
+		{
+			name: "AddTracks",
+			append: func(q *Queue, paths []string) {
+				q.AddTracks(paths[5:7])
+			},
+		},
+		{
+			name: "InsertNext",
+			append: func(q *Queue, paths []string) {
+				q.InsertNext(paths[5])
+			},
+		},
+		{
+			name: "InsertNextTracks",
+			append: func(q *Queue, paths []string) {
+				q.InsertNextTracks(paths[5:7])
+			},
+		},
+		{
+			name: "InsertTracksAt",
+			append: func(q *Queue, paths []string) {
+				q.InsertTracksAt(paths[5:7], 1)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			q, db := setupTestQueue(t)
+			paths := seedAudioFiles(t, db, 8)
+
+			q.SetQueue(paths[:5], 0, false, album)
+
+			if got := q.GetState().Source; got != album {
+				t.Fatalf("source before append: got %+v, want %+v", got, album)
+			}
+
+			tt.append(q, paths)
+
+			if got := q.GetState().Source; got != (Source{}) {
+				t.Errorf(
+					"source after %s: got %+v, want zero value",
+					tt.name, got,
+				)
+			}
+		})
+	}
+}
+
+// Removing and reordering deliberately do not drop it: a queue with a
+// track taken out of it is still that album, and the link still goes
+// somewhere true.
+func TestRemoveAndMoveKeepSource(t *testing.T) {
+	t.Parallel()
+
+	album := Source{Type: "album", ID: 1, Label: "Abbey Road"}
+
+	t.Run("RemoveTrack", func(t *testing.T) {
+		t.Parallel()
+
+		q, db := setupTestQueue(t)
+		paths := seedAudioFiles(t, db, 5)
+
+		q.SetQueue(paths, 0, false, album)
+		q.RemoveTrack(3)
+
+		if got := q.GetState().Source; got != album {
+			t.Errorf("source after RemoveTrack: got %+v, want %+v", got, album)
+		}
+	})
+
+	t.Run("MoveQueueTracks", func(t *testing.T) {
+		t.Parallel()
+
+		q, db := setupTestQueue(t)
+		paths := seedAudioFiles(t, db, 5)
+
+		q.SetQueue(paths, 0, false, album)
+		q.MoveQueueTracks([]int{0}, 3)
+
+		if got := q.GetState().Source; got != album {
+			t.Errorf(
+				"source after MoveQueueTracks: got %+v, want %+v",
+				got, album,
+			)
+		}
+	})
+}
+
 func TestSetQueue_WithStartIndex(t *testing.T) {
 	t.Parallel()
 

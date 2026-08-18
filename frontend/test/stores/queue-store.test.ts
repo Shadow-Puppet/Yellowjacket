@@ -198,6 +198,61 @@ describe('queue store: move', () => {
   });
 });
 
+/**
+ * "Playing from X" is a claim that everything queued came from X, and
+ * appending a track from anywhere else makes it false. The backend
+ * clears the source on every add/insert path — but the delta is the
+ * only event those paths emit, so the label corrects itself here or
+ * not at all.
+ */
+describe('queue store: the source travels on the delta', () => {
+  function syncWithAlbum(): void {
+    emit(Events.QueueChanged, {
+      tracks: [track(1), track(2)],
+      currentIndex: 0,
+      shuffleMode: false,
+      repeatMode: 'off',
+      source: { type: 'album', id: 7, label: 'Abbey Road' },
+    });
+  }
+
+  beforeEach(() => {
+    syncWithAlbum();
+  });
+
+  it('drops the label when an append clears it backend-side', () => {
+    emit(Events.QueueTracksModified, {
+      action: 'add',
+      tracks: [track(3)],
+      index: 2,
+      currentIndex: 0,
+      source: { type: '', id: 0, label: '' },
+    });
+
+    expect(queueStore.getState().source).toEqual({
+      type: '',
+      id: 0,
+      label: '',
+    });
+  });
+
+  it('keeps a label the backend still reports, as on a removal', () => {
+    emit(Events.QueueTracksModified, {
+      action: 'remove',
+      positions: [1],
+      index: 0,
+      currentIndex: 0,
+      source: { type: 'album', id: 7, label: 'Abbey Road' },
+    });
+
+    expect(queueStore.getState().source).toEqual({
+      type: 'album',
+      id: 7,
+      label: 'Abbey Road',
+    });
+  });
+});
+
 describe('queue store: mode deltas', () => {
   beforeEach(() => {
     sync([track(1)], 0);
