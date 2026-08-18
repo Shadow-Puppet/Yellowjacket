@@ -2,6 +2,7 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property, state, query } from 'lit/decorators.js';
 import { classMap } from 'lit/directives/class-map.js';
 import { designTokens } from '../../styles/tokens.css';
+import { srOnly } from '../../styles/sr-only.css';
 import {
     LookupReleaseGroup,
     BrowseReleases,
@@ -289,6 +290,7 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
         designTokens,
         exploreLinkStyles,
         contextMenuStyles,
+        srOnly,
         css`
             :host {
                 display: flex;
@@ -3034,11 +3036,21 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
 
     /* ── Tracklist ── */
 
+    /**
+     * The heading is there and is not drawn.
+     *
+     * A list of numbered titles with durations under an album's cover
+     * does not need a word above it saying what it is — it was the
+     * only thing on this page labelling something already obvious. But
+     * the section is a landmark and the page's heading structure runs
+     * through it, so what goes is the *ink*, not the element: a reader
+     * jumping by heading still finds the tracklist.
+     */
     private renderTracklist() {
         if (this.loadingReleases) {
             return html`
                 <section>
-                    <h3 class="section-header">Tracklist</h3>
+                    <h3 class="sr-only">Tracklist</h3>
                     <div class="section-loading">Loading tracks\u2026</div>
                 </section>
             `;
@@ -3051,7 +3063,7 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
         if (!current) {
             return html`
                 <section>
-                    <h3 class="section-header">Tracklist</h3>
+                    <h3 class="sr-only">Tracklist</h3>
                     <div class="section-error">
                         <wa-icon name="triangle-exclamation"></wa-icon>
                         No release data available.
@@ -3064,7 +3076,7 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
         if (tracks.length === 0) {
             return html`
                 <section>
-                    <h3 class="section-header">Tracklist</h3>
+                    <h3 class="sr-only">Tracklist</h3>
                     <div
                         style="color: var(--yj-text-tertiary, #888); font-size: var(--yj-text-md)"
                     >
@@ -3080,7 +3092,7 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
 
         return html`
             <section>
-                <h3 class="section-header">Tracklist</h3>
+                <h3 class="sr-only">Tracklist</h3>
                 <div class="tracklist">
                     ${discNumbers.map((discNum) => {
                         const discTracks = discMap.get(discNum) ?? [];
