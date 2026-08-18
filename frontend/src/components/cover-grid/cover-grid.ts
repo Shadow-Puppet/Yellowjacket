@@ -1898,10 +1898,10 @@ export class CoverGrid
                         class="album-name"
                         title="${album.Name}"
                     >
-                        ${album.Name}${album.Year
-                ? html`
-                              <span class="album-year">
-                                  (${album.Year})</span
+                        <span class="album-title">${album.Name}</span
+                        >${album.Year
+                ? html`<span class="album-year"
+                                  >(${album.Year})</span
                               >`
                 : nothing}
                     </div>
