@@ -26,6 +26,15 @@ const (
 	FieldDiscNumber  = "disc_number"
 	FieldComposer    = "composer"
 	FieldCoverArt    = "cover_art" // []byte for set, nil for clear
+
+	// FieldTotalTracks is how many tracks are on *this file's disc*, not
+	// in the whole release.  That is what the "5/12" form declares and
+	// what GetAlbumCompleteness sums per disc; a release total written
+	// here would multiply the expectation by the number of discs.
+	FieldTotalTracks = "total_tracks"
+
+	// FieldTotalDiscs is how many discs the release has.
+	FieldTotalDiscs = "total_discs"
 )
 
 // AudioFormat represents a supported audio file format.

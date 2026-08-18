@@ -166,6 +166,8 @@ var oggFieldMappings = []struct { //nolint:gochecknoglobals // field mapping tab
 	{FieldYear, "DATE", true},
 	{FieldTrackNumber, "TRACKNUMBER", true},
 	{FieldDiscNumber, "DISCNUMBER", true},
+	{FieldTotalTracks, "TRACKTOTAL", true},
+	{FieldTotalDiscs, "DISCTOTAL", true},
 	{FieldComposer, "COMPOSER", false},
 }
 

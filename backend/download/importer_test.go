@@ -446,3 +446,77 @@ func keysOf(m map[string]tagwriter.TagChanges) []string {
 
 	return out
 }
+
+// An imported album should arrive knowing its own size, or the album
+// page reads "in your library" from its first imported track onward --
+// which is the badge complaint this exists to answer.
+func TestImportWritesTheAlbumTotals(t *testing.T) {
+	t.Parallel()
+
+	f := newImportFixture(t,
+		"01 - Airbag.flac",
+		"02 - Paranoid Android.flac",
+		"03 - Subterranean Homesick Alien.flac",
+		"04 - Exit Music (For a Film).flac",
+	)
+
+	if _, err := f.importer.Import(
+		context.Background(),
+		fourTrackDownload(),
+		Result{Dir: f.dir, Files: f.files},
+		ImportOptions{LibraryRoot: f.root, WriteTags: true},
+	); err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+
+	changes := f.tags.writes["01 - Airbag.flac"]
+	if changes == nil {
+		t.Fatal("no tag write recorded for the first track")
+	}
+
+	if got := changes[tagwriter.FieldTotalTracks]; got != 4 {
+		t.Errorf("%s: got %v, want 4", tagwriter.FieldTotalTracks, got)
+	}
+
+	if got := changes[tagwriter.FieldTotalDiscs]; got != 1 {
+		t.Errorf("%s: got %v, want 1", tagwriter.FieldTotalDiscs, got)
+	}
+}
+
+// A RecordingMBID anchor resolves Expected to exactly the one track it
+// asked for, so totalling it would tag a track off a twelve-track album
+// as "1 of 1" -- worse than saying nothing, because a declared total
+// outranks the catalog total that would have answered correctly.
+func TestImportWritesNoTotalsForATrackDownload(t *testing.T) {
+	t.Parallel()
+
+	f := newImportFixture(t, "01 - Airbag.flac")
+
+	dl := Download{
+		ID:            "dl-track",
+		LibraryID:     1,
+		RecordingMBID: "mbid-recording",
+		Artist:        "Radiohead",
+		Album:         "OK Computer",
+		Expected:      []ExpectedTrack{{Position: 1, Title: "Airbag"}},
+	}
+
+	if _, err := f.importer.Import(
+		context.Background(),
+		dl,
+		Result{Dir: f.dir, Files: f.files},
+		ImportOptions{LibraryRoot: f.root, WriteTags: true},
+	); err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+
+	changes := f.tags.writes["01 - Airbag.flac"]
+	if changes == nil {
+		t.Fatal("no tag write recorded")
+	}
+
+	if _, ok := changes[tagwriter.FieldTotalTracks]; ok {
+		t.Errorf("%s written for a single-track download: %v",
+			tagwriter.FieldTotalTracks, changes[tagwriter.FieldTotalTracks])
+	}
+}

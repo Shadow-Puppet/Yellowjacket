@@ -522,19 +522,20 @@ func readWavID3Tags(
 		}
 	}
 
-	// Track number (TRCK).
+	// Track number and total (TRCK), disc number and total (TPOS).
+	// Both carry the "n/N" form, so they are read the way a reader
+	// reads them rather than with Atoi -- which sees "2/10" as 0.
 	trckID := parsed.CommonID("Track number/Position in set")
 	if frames := parsed.GetFrames(trckID); len(frames) > 0 {
 		if tf, ok := frames[0].(id3v2.TextFrame); ok {
-			meta.TrackNumber = atoiSafe(tf.Text)
+			meta.TrackNumber, meta.TotalTracks = parseXofN(tf.Text)
 		}
 	}
 
-	// Disc number (TPOS).
 	tposID := parsed.CommonID("Part of a set")
 	if frames := parsed.GetFrames(tposID); len(frames) > 0 {
 		if tf, ok := frames[0].(id3v2.TextFrame); ok {
-			meta.DiscNumber = atoiSafe(tf.Text)
+			meta.DiscNumber, meta.TotalDiscs = parseXofN(tf.Text)
 		}
 	}
 

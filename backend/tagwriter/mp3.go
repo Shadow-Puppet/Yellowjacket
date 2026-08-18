@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
+	"strings"
 
 	id3v2 "github.com/bogem/id3v2/v2"
 
@@ -66,17 +67,10 @@ func applyTextChanges(tag *id3v2.Tag, changes TagChanges) {
 		tag.SetYear(strconv.Itoa(v))
 	}
 
-	if v, ok := asInt(changes[FieldTrackNumber]); ok {
-		trckID := tag.CommonID("Track number/Position in set")
-		tag.DeleteFrames(trckID)
-		tag.AddTextFrame(trckID, id3v2.EncodingUTF8, strconv.Itoa(v))
-	}
-
-	if v, ok := asInt(changes[FieldDiscNumber]); ok {
-		tposID := tag.CommonID("Part of a set")
-		tag.DeleteFrames(tposID)
-		tag.AddTextFrame(tposID, id3v2.EncodingUTF8, strconv.Itoa(v))
-	}
+	applyPositionFrame(tag, "Track number/Position in set", changes,
+		FieldTrackNumber, FieldTotalTracks)
+	applyPositionFrame(tag, "Part of a set", changes,
+		FieldDiscNumber, FieldTotalDiscs)
 
 	if v, ok := changes[FieldComposer].(string); ok {
 		tag.DeleteFrames("TCOM")
@@ -88,6 +82,64 @@ func applyTextChanges(tag *id3v2.Tag, changes TagChanges) {
 		tag.DeleteFrames(tpe2ID)
 		tag.AddTextFrame(tpe2ID, id3v2.EncodingUTF8, v)
 	}
+}
+
+// applyPositionFrame writes an ID3v2 position frame (TRCK or TPOS) in
+// the "n/N" form the readers parse.
+//
+// The number and the total are separate diff entries and either may be
+// absent, so the frame's *existing* value is the base: writing a total
+// alone must not discard the number that is already there, and writing
+// a number alone must not discard a total the file already declared.
+// A total with no number at all is not written, since "/12" says
+// nothing a reader can use.
+func applyPositionFrame(
+	tag *id3v2.Tag, description string, changes TagChanges, numKey, totalKey string,
+) {
+	_, hasNum := changes[numKey]
+	_, hasTotal := changes[totalKey]
+
+	if !hasNum && !hasTotal {
+		return
+	}
+
+	frameID := tag.CommonID(description)
+
+	num, total := parseXofN(
+		strings.TrimRight(tag.GetTextFrame(frameID).Text, "\x00 \t\n\r"),
+	)
+
+	if v, ok := asInt(changes[numKey]); ok {
+		num = v
+	}
+
+	if v, ok := asInt(changes[totalKey]); ok {
+		total = v
+	}
+
+	if num <= 0 {
+		return
+	}
+
+	value := strconv.Itoa(num)
+	if total > 0 {
+		value += "/" + strconv.Itoa(total)
+	}
+
+	tag.DeleteFrames(frameID)
+	tag.AddTextFrame(frameID, id3v2.EncodingUTF8, value)
+}
+
+// parseXofN splits an ID3v2 "n/N" position value.  A bare "n" yields a
+// zero total, and anything unparseable yields zeros — the same reading
+// dhowden/tag gives the frame.
+func parseXofN(s string) (int, int) {
+	numText, totalText, _ := strings.Cut(s, "/")
+
+	num, _ := strconv.Atoi(strings.TrimSpace(numText))
+	total, _ := strconv.Atoi(strings.TrimSpace(totalText))
+
+	return num, total
 }
 
 // applyCoverArtChanges handles the FieldCoverArt entry in the diff map.

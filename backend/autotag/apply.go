@@ -8,6 +8,7 @@ import (
 	"log/slog"
 
 	"yellowjacket/backend/database/sql/sqlcgen"
+	"yellowjacket/backend/tagtotals"
 )
 
 // TagChanges mirrors tagwriter.TagChanges — redefined here so the
@@ -28,6 +29,8 @@ const (
 	FieldYear        = "year"
 	FieldTrackNumber = "track_number"
 	FieldDiscNumber  = "disc_number"
+	FieldTotalTracks = "total_tracks"
+	FieldTotalDiscs  = "total_discs"
 	FieldCoverArt    = "cover_art"
 )
 
@@ -418,5 +421,32 @@ func buildChanges(
 		changes[FieldDiscNumber] = track.DiscNumber
 	}
 
+	// The totals are what says "2 of 10" rather than a bare tick, and
+	// dropping them here is what made autotagging an album *erase* the
+	// evidence: the release becomes MBID-matched while the field
+	// GetAlbumCompleteness reads stays absent.
+	//
+	// They are written unconditionally where the candidate has a
+	// tracklist, not only when they differ from the local value, because
+	// the common case is a file that declares no total at all -- which
+	// compares equal to nothing and would be skipped by a diff guard.
+	if tracks, discs := tagtotals.For(
+		candidatePositions(cand), track.DiscNumber,
+	); tracks > 0 {
+		changes[FieldTotalTracks] = tracks
+		changes[FieldTotalDiscs] = discs
+	}
+
 	return changes
+}
+
+// candidatePositions is the candidate's tracklist as bare positions.
+func candidatePositions(cand Candidate) []tagtotals.Position {
+	out := make([]tagtotals.Position, 0, len(cand.Tracks))
+
+	for _, t := range cand.Tracks {
+		out = append(out, tagtotals.Position{Disc: t.DiscNumber, Track: t.Position})
+	}
+
+	return out
 }

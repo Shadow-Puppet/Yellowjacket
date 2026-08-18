@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"yellowjacket/backend/tagtotals"
 	"yellowjacket/backend/tagwriter"
 )
 
@@ -275,11 +276,42 @@ func (i *Importer) tagFile(p plannedFile, dl Download) error {
 		changes[tagwriter.FieldDiscNumber] = p.Track.DiscNumber
 	}
 
+	// An imported file should arrive knowing how much of the album it
+	// is one of, or the album reads as "in your library" from its first
+	// imported track onward.
+	//
+	// A *track* download is the case this must not touch: a
+	// RecordingMBID anchor resolves Expected to exactly that one track,
+	// so totalling it would write "1 of 1" onto a track off a
+	// twelve-track album -- a confident lie, and one that outranks the
+	// catalog's own total, which is the fallback that would otherwise
+	// have answered correctly.
+	if dl.RecordingMBID == "" {
+		if tracks, discs := tagtotals.For(
+			expectedPositions(dl.Expected), p.Track.DiscNumber,
+		); tracks > 0 {
+			changes[tagwriter.FieldTotalTracks] = tracks
+			changes[tagwriter.FieldTotalDiscs] = discs
+		}
+	}
+
 	if err := i.tags.WriteUntrackedFileTags(p.Source, changes); err != nil {
 		return fmt.Errorf("write tags: %w", err)
 	}
 
 	return nil
+}
+
+// expectedPositions is the download's resolved tracklist as bare
+// positions.
+func expectedPositions(expected []ExpectedTrack) []tagtotals.Position {
+	out := make([]tagtotals.Position, 0, len(expected))
+
+	for _, t := range expected {
+		out = append(out, tagtotals.Position{Disc: t.DiscNumber, Track: t.Position})
+	}
+
+	return out
 }
 
 // destinationFor computes a file's library path from the template.
