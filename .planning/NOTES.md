@@ -3445,3 +3445,41 @@ their own output, and leave the previous snapshots in place.
 makes it worth having: a restored snapshot resolves to `refresh` and
 folds in the incremental listens since — minutes, against the 3–23 h a
 rebuild was estimating.
+
+## A green release pipeline can ship an empty changelog (2026-08-18)
+
+`conventional-changelog-conventionalcommits@10` is silently incompatible
+with the writer `@semantic-release/release-notes-generator@14` depends on
+(`conventional-changelog-writer@^8`). Every release note renders as a bare
+`## 0.0.1 (date)` heading with **no sections and no commits under it**, no
+step fails, and the release ships with an empty body.
+
+It is pinned to `9` in `.gitea/workflows/release.yml` and in
+`make release-dry`, which must stay identical. **Check the rendered notes,
+never the exit code** — this is invisible to every tick in the pipeline.
+
+## semantic-release needs push rights to the branch even when it never pushes to it (2026-08-18)
+
+Core runs `git push --dry-run HEAD:<branch>` as a permission check, before
+and independently of any plugin. With `@semantic-release/git` removed
+nothing ever pushes to `main`, and the check still runs.
+
+Two things this looked like and was not:
+
+- **Not branch protection.** A `--dry-run` push does not reach the
+  pre-receive hook: pushing one to protected `main` with a write-scoped
+  token succeeds. So `main`'s `enable_push: false` is not what fails here.
+- **A flat `403 Forbidden`, not Gitea's protection message.** That is the
+  tell. `PACKAGE_TOKEN` had package-write and repo-*read* — enough to
+  clone a private repo, so every other workflow was fine — and needed
+  `write:repository`.
+
+## A tag-triggered workflow runs the workflow file at the *tagged* commit (2026-08-18)
+
+Not the one on `main`. Moving `v0.0.0` onto a pre-merge commit ran that
+commit's version of `homebrew-formula.yml`, which predated the `v0.0.0`
+skip guard added in the same plan, and it pushed a `0.0.0` formula to the
+public tap.
+
+A guard added today does not protect a tag that points at yesterday. When
+re-pointing a tag, check what the workflows looked like *there*.

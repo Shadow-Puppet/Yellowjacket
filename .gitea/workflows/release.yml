@@ -128,12 +128,26 @@ jobs:
           token="${ACTIONS_TOKEN:-$PACKAGE_TOKEN}"
           [ -n "$ACTIONS_TOKEN" ] || echo "note: GITEA_TOKEN is unset; using the PAT"
 
+          # **On the parent, not on HEAD.**  The floor marks what has
+          # already been released, so tagging the commit being pushed
+          # leaves nothing between the floor and HEAD — semantic-release
+          # then correctly reports there is nothing to release, which is
+          # exactly what the first run of this workflow did.  HEAD^ is the
+          # first parent, so on the merge commit this fires for it is main
+          # as it was before the merge, and everything the merge brought
+          # in is releasable.
+          floor=$(git rev-parse "${{ github.sha }}^" 2>/dev/null || true)
+          if [ -z "$floor" ]; then
+            echo "HEAD has no parent, so no commit can precede the floor" >&2
+            exit 1
+          fi
+
           echo "no v* tag exists — seeding v0.0.0 so the first release is 0.0.1"
-          git tag v0.0.0 "${{ github.sha }}"
+          git tag v0.0.0 "$floor"
           git push --quiet \
             "https://x-access-token:${token}@${SERVER_URL#https://}/${REPO}.git" \
             refs/tags/v0.0.0
-          echo "seeded v0.0.0 at ${{ github.sha }}"
+          echo "seeded v0.0.0 at $floor (parent of ${{ github.sha }})"
 
       # Pinned rather than installed into the repo: this is a Go project
       # and a package.json at its root invites the npm plugin and every
