@@ -1480,12 +1480,16 @@ export class CoverGrid
             source: 'cover-grid',
         });
 
-        // Single album: show cover art thumbnail.
-        // Multiple albums: show track-count badge.
+        // Single album: show its cover, badged with how many tracks are
+        // on the way -- an album is 1 track or 30 and the thumbnail is
+        // the same picture either way, so the number the drop is about
+        // was the one thing this drag did not say.
+        // Multiple albums: show the track-count badge alone.
         if (isSingleAlbum && hit.album.CoverArtPath) {
             this.dragImageEl =
                 createAlbumArtDragImage(
                     this.getCoverUrl(hit.album),
+                    filePaths.length,
                 );
         } else {
             this.dragImageEl = createDragImage(
