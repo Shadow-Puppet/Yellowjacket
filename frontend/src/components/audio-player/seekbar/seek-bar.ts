@@ -68,6 +68,29 @@ export class SeekBar extends LitElement {
       align-items: center;
     }
 
+    /* The clocks must not resize as they count.
+
+       Two things move them, and they need different answers. Digits in
+       a proportional font are different widths, so 1:11 is narrower
+       than 4:08 and the bar breathed once a second -- that is what
+       tabular figures fix. The character *count* changes too, at the
+       hundredth minute and whenever the right-hand clock is toggled to
+       remaining and grows a minus sign, and a figure width cannot fix
+       that -- so each clock also reserves the widest string this track
+       can put in it. The budget is per track rather than a constant
+       because reserving six characters on every track would push the
+       slider in by a character at each end for nothing. */
+    #seek-bar-container small,
+    .time-toggle {
+      font-variant-numeric: tabular-nums;
+      flex: 0 0 auto;
+      min-width: calc(var(--yj-clock-chars, 5) * 1ch);
+    }
+
+    #seek-bar-container small {
+      text-align: left;
+    }
+
     .time-toggle {
       background: none;
       border: none;
@@ -76,6 +99,9 @@ export class SeekBar extends LitElement {
       font: inherit;
       font-size: var(--wa-font-size-s, 0.875rem);
       cursor: pointer;
+      /* One more for the minus sign the remaining form carries. */
+      min-width: calc((var(--yj-clock-chars, 5) + 1) * 1ch);
+      text-align: right;
     }
 
     .time-toggle:hover,
@@ -219,8 +245,19 @@ export class SeekBar extends LitElement {
       : formatSeconds(this.trackLength);
     const rightTime = this.hasTrack ? rightLabel : '--:--';
 
+    // The widest string either clock can hold for *this* track. The
+    // duration is the longest elapsed value there can be, so its length
+    // is the budget; `--:--` is five, which is also the floor.
+    const clockChars = Math.max(
+      5,
+      this.hasTrack ? formatSeconds(this.trackLength).length : 0,
+    );
+
     return html`
-      <div id="seek-bar-container">
+      <div
+        id="seek-bar-container"
+        style="--yj-clock-chars: ${clockChars}"
+      >
         <small data-testid="elapsed-time">${elapsedTime}</small>
         <wa-slider
           label="Seek"
