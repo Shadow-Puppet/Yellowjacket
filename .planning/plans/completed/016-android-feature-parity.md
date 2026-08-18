@@ -1,5 +1,7 @@
 # 016 — What Android parity would actually take
 
+> **Completed.** Sections A, B1, B2 and B4 shipped. B3, writing tags on the device, is now **#87**; the device-found UI faults are #51–#72, sequenced by #73.
+
 > **Status: all of section A is done.** A1–A3 landed with "let the app
 > reach the user's music"; A4 (MediaSession, transport notification,
 > audio focus) landed with "survive the screen locking". The direction

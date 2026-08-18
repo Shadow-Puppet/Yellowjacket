@@ -6,16 +6,85 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 YellowJacket is a cross-platform desktop music player built with Go (backend) and TypeScript/Lit (frontend), using the Wails framework to bridge them. It supports MP3, FLAC, OGG Vorbis, and WAV playback.
 
+## Issues
+
+**The tracker is the source of truth for what is wanted and what is
+already being worked on**, and it is shared with a collaborator who
+cannot see this session. `scripts/issue.sh` is the whole interface to
+it (`list`, `mine`, `search`, `show`, `new`, `claim`, `unclaim`,
+`comment`, `close`, `label`, `depends`, `labels`); it needs a
+`GITEA_TOKEN` with `write:issue`.
+
+**Search the tracker before starting any work, and claim what you
+find.** Fifty-odd issues make that a real lookup rather than a
+formality. `./scripts/issue.sh search <terms>` covers open and closed —
+closed matters, because "that was fixed three weeks ago" is the
+cheapest possible answer.
+
+**Claiming happens before the first edit, not before the commit.** The
+whole point is that the collaborator can see the work is taken *while
+it is being done*, so `claim` sets the assignee, applies
+`Status/In Progress` and posts a comment naming the branch and the
+approach — all three, or none. It refuses outright if somebody else
+already holds it, and that refusal is the feature: talk to them rather
+than working around it.
+
+**If no issue covers the work, open one first.** The issue exists
+before the branch does. That is what makes the tracker a description
+of the project rather than a description of the past.
+
+**Findings get filed.** A bug tripped over while doing something else
+is an issue with a reproduction, not a sentence in a chat message
+nobody can search. So is a piece of work deliberately not done — the
+issue is where "we decided not to, and here is why" survives.
+
+Four conventions are already established and are not up for
+reinvention:
+
+- **The labels are a taxonomy**, not tags: `Kind/*`, `Area/*`,
+  `Priority/*`, `Platform/*`, plus `Reviewed/Confirmed` (the code was
+  read and the defect confirmed) and the `Status/*` family. `Status/*`
+  and `Reviewed/*` are **exclusive scopes** — one of each at most, so
+  applying a second replaces the first.
+- **#73 is the roadmap.** It states the order the backlog should be
+  worked in and the soft relations that are not expressible as
+  blockers. Picking work off the open list by eye when a meta issue
+  states the sequence is how the sequence stops meaning anything.
+- **Hard blockers are real Gitea dependencies**, which render on the
+  issue itself, and the blocked issue carries `Status/Blocked`.
+- **A PR body carries a commit-to-issue table, the verification
+  actually run, and a `Closes` list** — PR #83 is the shape.
+
+**And the `Closes` list does not reliably close anything.** #83 listed
+ten and five of them stayed open, shipped in `main`, for a fortnight.
+So closing is a step you take and check, not a keyword you trust:
+`./scripts/issue.sh close <n>` after the merge, with a comment naming
+the commit that shipped it. `close` also drops `Status/In Progress`,
+because a claim outlives the work if nothing takes the label off.
+
 ## Planning
 
-Active and historical plans live in `.planning/`:
+`.planning/` is **design documents and measured history**, not a queue
+— the queue is the tracker, and a plan file that describes work nobody
+has started is a second, staler answer to "what are we doing next".
 
-- `.planning/NOTES.md` — gotchas, deferred items, open architecture questions, the "we already considered and rejected" list.
-- `.planning/plans/active/` — work currently in progress (read first).
-- `.planning/plans/pending/` — sequenced future work.
-- `.planning/plans/completed/` — one concise recap per shipped milestone.
+- `.planning/NOTES.md` — gotchas, measured facts, open architecture
+  questions, and the "we already considered and rejected" list. Dated,
+  because several are properties of someone else's server. **This is
+  where a decision reached on an issue gets written down** when it
+  outlives the issue.
+- `.planning/plans/completed/` — one recap per shipped milestone, kept
+  for the arguments in it. Where a plan shipped incompletely, its
+  header says which issue carries the remainder.
+- `.planning/audits/` — the read-only audits that produced the
+  reconciliation plans. Historical evidence; not a backlog.
+- `.planning/plans/active/` — a multi-phase design document for work
+  **in flight**, linked from the issue that tracks it. Empty is the
+  normal state. There is no `pending/`: a plan nobody is executing is
+  an issue.
 
-Numbering is sequential and stable across status moves (a plan keeps its `NNN-` prefix as it migrates between `pending → active → completed`). Abandoned plans are deleted; paused work stays in `pending/`.
+Numbering is sequential and stable across status moves (a plan keeps
+its `NNN-` prefix). Abandoned plans are deleted.
 
 ## Commands
 
@@ -2065,6 +2134,17 @@ branch** (`enable_push: false`, an empty push whitelist, and `CI / check*`
 + `CI / e2e*` as required status checks), so a direct push is rejected by
 the pre-receive hook. This file said otherwise for a long time. Tags are
 *not* protected, which is what lets `release.yml` push one.
+
+**A branch answers a claimed issue** — see "Issues" above. The commit
+grammar is unchanged and is load-bearing for a different reason
+(semantic-release reads it), so the issue number lives in the branch
+name and the PR body rather than in the commit subject.
+
+**A batch of small fixes can be one PR**, which is what #83 did: eight
+branches preserved as merges under one integration branch, so
+authorship survives and the batch lands as one release rather than
+eight. The cost is that its `Closes` list has to be checked afterwards
+— it half-worked.
 
 Pre-commit runs vet, lint, codegen check, and frontend typecheck in parallel. Pre-push runs the full test suite.
 
