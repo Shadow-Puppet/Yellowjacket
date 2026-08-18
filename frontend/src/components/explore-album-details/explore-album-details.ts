@@ -662,34 +662,21 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
                 font-weight: 400;
             }
 
-            /* The request control is only offered where there is
-             * something to request, and only when the row is being
-             * attended to — a column of plus signs down a mostly-owned
-             * album is the clutter the green ticks were.
+            /* The request control is offered on every row that has
+             * something to request, and is not revealed on hover.
              *
-             * Hidden with opacity, never display:none or visibility,
-             * so it keeps its place in the layout (rows do not reflow
-             * as the pointer moves) and stays in the tab order and the
-             * accessibility tree.  focus-within is what makes it
-             * reachable without a mouse: tabbing to the button reveals
-             * it, and the row's own focus reveals it before you get
-             * there. */
+             * It used to be transparent until the row was hovered or
+             * focused, on the reasoning that a column of plus signs
+             * down a mostly-owned album is clutter. That reasoning was
+             * inherited from the green ticks it replaced and does not
+             * survive the rule those were removed for: a tick marked
+             * the *common* case, while this marks the rows that are
+             * **not** here. A mark on the exception is the information
+             * on this page — and one that appears only under the
+             * pointer cannot be seen, counted, or reached by anyone
+             * driving this with a finger. */
             .track-row .track-request {
                 flex-shrink: 0;
-                opacity: 0;
-                transition: opacity 0.12s ease;
-            }
-
-            .track-row:hover .track-request,
-            .track-row:focus-within .track-request,
-            .track-row .track-request:focus-visible {
-                opacity: 1;
-            }
-
-            @media (prefers-reduced-motion: reduce) {
-                .track-row .track-request {
-                    transition: none;
-                }
             }
         `,
     ];
