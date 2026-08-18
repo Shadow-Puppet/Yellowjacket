@@ -1509,9 +1509,24 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
                             if (url) {
                                 this.thumbnailCache.set(req.mbid, url);
                                 this.requestUpdate();
+
+                                return;
                             }
+
+                            // An empty answer is not necessarily "there
+                            // is no art" — a slow Internet Archive node
+                            // is answered by a timeout, which looks
+                            // exactly the same from here. Drop the
+                            // in-flight marker so the next time this
+                            // release group is on screen it is asked
+                            // again; the backend records a genuine 404
+                            // on disk and answers that one instantly,
+                            // so a real miss costs nothing to re-ask.
+                            this.thumbnailCache.delete(req.mbid);
                         })
-                        .catch(() => {});
+                        .catch(() => {
+                            this.thumbnailCache.delete(req.mbid);
+                        });
                 }
             })
             .catch(() => {
