@@ -1,0 +1,86 @@
+name: Unclaim
+
+# A `Closes #N` footer in a commit body closes the issue on merge — and
+# leaves `Status/In Progress` on it, because Gitea's auto-close touches
+# state and nothing else.  So #100 was closed and simultaneously marked
+# as being actively worked on, and `scripts/issue.sh close` (which does
+# drop the label) is exactly the thing the footer exists to avoid
+# calling.
+#
+# **This hooks the close, not the merge.**  Stripping the label in the
+# PR would work and would be a per-PR habit; habits are what the footer
+# removed.  `issues: [closed]` covers every path an issue can close by —
+# the footer on merge, `issue.sh close`, someone clicking Close in the
+# web UI — and asks nothing of anyone at any of them.
+#
+# **Reopening deliberately does not restore it.**  Reopening says the
+# work was not finished, not that somebody is at a keyboard doing it
+# now; the claim gets re-made by whoever picks it up.
+#
+# **This is not instant, and should not be described as it.**  The
+# runner has capacity 1 and is shared with an index build that can hold
+# it for three hours, so a label tweak can queue behind one. Stale for
+# an afternoon beats stale forever, which is what it was.
+#
+# The audit that answers "is this still firing" stays in CLAUDE.md and
+# is one command:
+#
+#   ./scripts/issue.sh list --state closed --label "Status/In Progress"
+#
+# A workflow that silently stops working is the failure mode this whole
+# area has already produced once.
+
+on:
+  issues:
+    types: [closed]
+
+jobs:
+  unclaim:
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:24.04
+
+    steps:
+      - name: Drop the claim label
+        env:
+          # The automatic Actions token, as release.yml uses for the
+          # floor tag.  It needs no more than write access to this repo.
+          TOKEN: ${{ secrets.GITEA_TOKEN }}
+          API: ${{ github.server_url }}/api/v1/repos/${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends curl jq >/dev/null
+
+          label_id=$(
+            curl -sSf -H "Authorization: token $TOKEN" "$API/labels?limit=100" |
+              jq -r '.[] | select(.name == "Status/In Progress") | .id'
+          )
+
+          # The label not existing is a repo somebody reorganised, not a
+          # failure of this run — say so and stop, rather than failing a
+          # job on every close from then on.
+          if [ -z "$label_id" ]; then
+            echo "unclaim: no 'Status/In Progress' label in this repo; nothing to do"
+            exit 0
+          fi
+
+          # DELETE is idempotent here: an issue that never carried the
+          # label answers the same as one that did, which is what makes
+          # this safe to run on *every* close rather than only the ones
+          # that were claimed.
+          code=$(
+            curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
+              -H "Authorization: token $TOKEN" \
+              "$API/issues/$ISSUE/labels/$label_id"
+          )
+
+          case "$code" in
+            204) echo "unclaim: #$ISSUE is closed and unclaimed" ;;
+            *)
+              echo "unclaim: DELETE returned $code for #$ISSUE" >&2
+              exit 1
+              ;;
+          esac
