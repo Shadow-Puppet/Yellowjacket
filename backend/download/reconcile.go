@@ -310,15 +310,35 @@ func (r *Reconciler) run(ctx context.Context, force bool) (Summary, error) {
 
 	summary.Synced = r.syncExternalLists(ctx)
 
-	attempted, started, err := r.attemptDue(ctx, force)
-	if err != nil {
-		return summary, err
+	// Nothing is searched for when there is nothing to search with, and
+	// the point is what that *does not* do to the list.
+	//
+	// Attempting anyway is not merely wasted work: every request comes
+	// back "no download clients are enabled", which RecordAttempt writes
+	// down as an attempt and schedules a retry for -- so a user who has
+	// deliberately built a wanted list with no client watched their
+	// requests accrue failures and announce "next check in 6 hours"
+	// about a check that cannot happen. Wanting something without a way
+	// to fetch it is a supported thing to do; being told it is being
+	// looked for is a lie.
+	//
+	// Everything above this line still runs: an artist subscription
+	// still expands, and a request the user satisfied by some other
+	// route -- ripped, bought, copied in -- is still retired, because
+	// neither needs a provider.
+	summary.NoProviders = len(r.manager.enabledProviders()) == 0
+
+	if !summary.NoProviders {
+		attempted, started, err := r.attemptDue(ctx, force)
+		if err != nil {
+			return summary, err
+		}
+
+		summary.Attempted = attempted
+		summary.Started = started
 	}
 
-	summary.Attempted = attempted
-	summary.Started = started
 	summary.Waiting = r.countWaiting(ctx)
-	summary.NoProviders = len(r.manager.enabledProviders()) == 0
 
 	r.logger.Info(
 		"reconciled request list",
