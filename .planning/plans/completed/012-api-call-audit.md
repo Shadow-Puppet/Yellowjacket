@@ -1,5 +1,7 @@
 # 012 — What we ask the network for, and what we already had
 
+> **Completed.** Findings 1, 2 and 4 shipped. Finding 3 — the bound-but-uncalled methods — is now **#86**.
+
 **Status:** all four findings fixed. Lint (3 configs), Go tests (3
 configs), `tsc` and 752 Vitest tests pass; **not driven against the
 real app**, so the numbers below are read off the code, not measured.

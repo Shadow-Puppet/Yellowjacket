@@ -1,5 +1,7 @@
 # 015 — Android release pipeline
 
+> **Completed.** The pipeline ships a signed APK from CI on every `v*` tag; `docs/android-release.md` is its operating document.
+
 Ship an Android APK from CI on every version tag, published to the Gitea
 generic package registry so Obtainium can poll a plain URL.
 
