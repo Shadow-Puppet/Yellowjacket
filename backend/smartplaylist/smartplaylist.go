@@ -28,6 +28,7 @@ var (
 	errUnsupportedOp    = errors.New("unsupported operator")
 	errInvalidSortField = errors.New("invalid sort field: not in allowed field list")
 	errNotNumeric       = errors.New("value must be numeric")
+	errInvalidMatch     = errors.New("match must be \"all\" or \"any\"")
 )
 
 // Rule represents a single filter condition for a smart playlist.
@@ -37,13 +38,45 @@ type Rule struct {
 	Value    string `json:"value"`
 }
 
+// MatchType decides how a rule set's conditions combine.
+//
+// The rules used to be joined with " AND " and nothing else, so a
+// playlist could only ever narrow: "jazz released after 1960" was
+// expressible and "jazz or blues" was not, which is most of what
+// anyone reaches for a second rule to say.
+type MatchType string
+
+const (
+	// MatchAll requires every rule to hold — the historical behaviour,
+	// and what an empty match means so that every rule set written
+	// before this existed keeps the meaning it was saved with.
+	MatchAll MatchType = "all"
+	// MatchAny requires at least one rule to hold.
+	MatchAny MatchType = "any"
+)
+
+// joiner returns the SQL keyword that combines two conditions.
+// An unrecognised value cannot reach here — ParseRuleSet rejects one
+// — so the default is about the empty string, which is every rule set
+// saved before this field existed.
+func (m MatchType) joiner() string {
+	if m == MatchAny {
+		return " OR "
+	}
+
+	return " AND "
+}
+
 // RuleSet holds the complete filter configuration for a smart
 // playlist, including optional sort and limit.
 type RuleSet struct {
-	Rules     []Rule `json:"rules"`
-	Limit     int    `json:"limit,omitempty"`
-	SortField string `json:"sort_field,omitempty"`
-	SortDir   string `json:"sort_dir,omitempty"`
+	Rules []Rule `json:"rules"`
+	// Match is "all" or "any"; empty means "all". It is omitempty so
+	// an untouched playlist's stored JSON does not change shape.
+	Match     MatchType `json:"match,omitempty"`
+	Limit     int       `json:"limit,omitempty"`
+	SortField string    `json:"sort_field,omitempty"`
+	SortDir   string    `json:"sort_dir,omitempty"`
 }
 
 // fieldMap maps user-facing rule field names to track_metadata column
@@ -116,7 +149,12 @@ const genreDelimiter = "||"
 // slice of rules. It is a pure function — no database access needed.
 // Returns the clause (without the leading "WHERE"), the parameter
 // args, and any validation error.
-func BuildWhereClause(rules []Rule) (string, []any, error) {
+//
+// match decides how the conditions combine; an empty match is MatchAll,
+// which is what every rule set saved before the field existed means.
+func BuildWhereClause(
+	rules []Rule, match MatchType,
+) (string, []any, error) {
 	if len(rules) == 0 {
 		return "", nil, nil
 	}
@@ -179,7 +217,28 @@ func BuildWhereClause(rules []Rule) (string, []any, error) {
 		args = append(args, condArgs...)
 	}
 
-	return strings.Join(conditions, " AND "), args, nil
+	// Under OR, each condition is parenthesised; under AND it is not.
+	//
+	// The asymmetry is deliberate rather than an omission. AND is the
+	// tighter operator in SQL, so an OR-join has to protect any
+	// condition that contains a top-level AND of its own or the halves
+	// come apart: `days_since_played less_than` is
+	// `last_played IS NOT NULL AND <expr> < ?`, which read without
+	// brackets under an OR-join happens to still parse correctly and
+	// would stop doing so the moment a condition grows a top-level OR.
+	// Bracketing under AND would be a no-op semantically and would
+	// rewrite the clause every existing test pins, so the brackets go
+	// exactly where they change something.
+	if match == MatchAny {
+		bracketed := make([]string, len(conditions))
+		for i, cond := range conditions {
+			bracketed[i] = "(" + cond + ")"
+		}
+
+		conditions = bracketed
+	}
+
+	return strings.Join(conditions, match.joiner()), args, nil
 }
 
 // validateOperator checks that the operator is valid for the field
@@ -599,7 +658,7 @@ func Evaluate(
 	start := time.Now()
 	logger := db.Logger()
 
-	where, args, err := BuildWhereClause(ruleSet.Rules)
+	where, args, err := BuildWhereClause(ruleSet.Rules, ruleSet.Match)
 	if err != nil {
 		return nil, fmt.Errorf(
 			"smart playlist rule error: %w", err,
@@ -1033,6 +1092,16 @@ func ParseRuleSet(jsonStr string) (RuleSet, error) {
 	); err != nil {
 		return RuleSet{}, fmt.Errorf(
 			"invalid smart playlist rules JSON: %w", err,
+		)
+	}
+
+	// A match nobody recognises would otherwise fall through to AND,
+	// which is a playlist quietly returning the wrong tracks rather
+	// than refusing to be saved. This is the only place a rule set
+	// enters the backend, so it is the only place that has to ask.
+	if rs.Match != "" && rs.Match != MatchAll && rs.Match != MatchAny {
+		return RuleSet{}, fmt.Errorf(
+			"%w: %q", errInvalidMatch, rs.Match,
 		)
 	}
 

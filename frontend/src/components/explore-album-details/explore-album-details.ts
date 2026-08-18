@@ -2,6 +2,7 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property, state, query } from 'lit/decorators.js';
 import { classMap } from 'lit/directives/class-map.js';
 import { designTokens } from '../../styles/tokens.css';
+import { srOnly } from '../../styles/sr-only.css';
 import {
     LookupReleaseGroup,
     BrowseReleases,
@@ -289,6 +290,7 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
         designTokens,
         exploreLinkStyles,
         contextMenuStyles,
+        srOnly,
         css`
             :host {
                 display: flex;
@@ -662,34 +664,21 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
                 font-weight: 400;
             }
 
-            /* The request control is only offered where there is
-             * something to request, and only when the row is being
-             * attended to — a column of plus signs down a mostly-owned
-             * album is the clutter the green ticks were.
+            /* The request control is offered on every row that has
+             * something to request, and is not revealed on hover.
              *
-             * Hidden with opacity, never display:none or visibility,
-             * so it keeps its place in the layout (rows do not reflow
-             * as the pointer moves) and stays in the tab order and the
-             * accessibility tree.  focus-within is what makes it
-             * reachable without a mouse: tabbing to the button reveals
-             * it, and the row's own focus reveals it before you get
-             * there. */
+             * It used to be transparent until the row was hovered or
+             * focused, on the reasoning that a column of plus signs
+             * down a mostly-owned album is clutter. That reasoning was
+             * inherited from the green ticks it replaced and does not
+             * survive the rule those were removed for: a tick marked
+             * the *common* case, while this marks the rows that are
+             * **not** here. A mark on the exception is the information
+             * on this page — and one that appears only under the
+             * pointer cannot be seen, counted, or reached by anyone
+             * driving this with a finger. */
             .track-row .track-request {
                 flex-shrink: 0;
-                opacity: 0;
-                transition: opacity 0.12s ease;
-            }
-
-            .track-row:hover .track-request,
-            .track-row:focus-within .track-request,
-            .track-row .track-request:focus-visible {
-                opacity: 1;
-            }
-
-            @media (prefers-reduced-motion: reduce) {
-                .track-row .track-request {
-                    transition: none;
-                }
             }
         `,
     ];
@@ -720,14 +709,28 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
 
         // The download button only appears once a client is connected,
         // so this tracks the provider list rather than assuming.
+        //
+        // The `requestUpdate` is what makes the *tracklist's* badges
+        // move.  Both assignments below are reactive fields, so Lit
+        // repaints when either changes — but a track request changes
+        // neither: `canDownload` is about providers and `isRequested`
+        // is about this album's own release group.  Each row's badge
+        // reads `libraryStatusFor(false, track.mbid)` at render time,
+        // which is a dependency on the store that Lit cannot see, so
+        // clicking one filed the request and left the plus exactly
+        // where it was.  The other three hosts rendering these badges
+        // (`explore-artist-details`, `explore-view`, `top-results-row`)
+        // have always asked for the repaint here; this one did not.
         this.downloadUnsub = downloadStore.subscribe(() => {
             this.canDownload = downloadStore.available;
             this.syncRequested();
+            this.requestUpdate();
         });
 
         void downloadStore.init().then(() => {
             this.canDownload = downloadStore.available;
             this.syncRequested();
+            this.requestUpdate();
         });
 
         void this.resolveTargetLibraryId();
@@ -3033,11 +3036,21 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
 
     /* ── Tracklist ── */
 
+    /**
+     * The heading is there and is not drawn.
+     *
+     * A list of numbered titles with durations under an album's cover
+     * does not need a word above it saying what it is — it was the
+     * only thing on this page labelling something already obvious. But
+     * the section is a landmark and the page's heading structure runs
+     * through it, so what goes is the *ink*, not the element: a reader
+     * jumping by heading still finds the tracklist.
+     */
     private renderTracklist() {
         if (this.loadingReleases) {
             return html`
                 <section>
-                    <h3 class="section-header">Tracklist</h3>
+                    <h3 class="sr-only">Tracklist</h3>
                     <div class="section-loading">Loading tracks\u2026</div>
                 </section>
             `;
@@ -3050,7 +3063,7 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
         if (!current) {
             return html`
                 <section>
-                    <h3 class="section-header">Tracklist</h3>
+                    <h3 class="sr-only">Tracklist</h3>
                     <div class="section-error">
                         <wa-icon name="triangle-exclamation"></wa-icon>
                         No release data available.
@@ -3063,7 +3076,7 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
         if (tracks.length === 0) {
             return html`
                 <section>
-                    <h3 class="section-header">Tracklist</h3>
+                    <h3 class="sr-only">Tracklist</h3>
                     <div
                         style="color: var(--yj-text-tertiary, #888); font-size: var(--yj-text-md)"
                     >
@@ -3079,7 +3092,7 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
 
         return html`
             <section>
-                <h3 class="section-header">Tracklist</h3>
+                <h3 class="sr-only">Tracklist</h3>
                 <div class="tracklist">
                     ${discNumbers.map((discNum) => {
                         const discTracks = discMap.get(discNum) ?? [];

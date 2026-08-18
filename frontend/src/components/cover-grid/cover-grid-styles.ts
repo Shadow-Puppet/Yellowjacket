@@ -111,13 +111,32 @@ const gridStyles = css`
         scale: 0.95;
     }
 
+    /* Title and year on one line, and only the title truncates.
+
+       The year used to be part of the same run of text, so it was the
+       first thing an ellipsis ate: a card wide enough for a long album
+       name never showed its year, and browsing by year showed years
+       only for the albums with short names -- the sort said one thing
+       and the cards showed another.
+
+       A flex row rather than a second line, because the card's height
+       is what the virtualizer measures rows by. */
     .album-name {
         font-size: var(--album-name-font, 14px);
         font-weight: 400;
         color: var(--yj-text-primary, #fff);
+        display: flex;
+        justify-content: center;
+        align-items: baseline;
+        gap: 0.35em;
+        min-width: 0;
+    }
+
+    .album-title {
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+        min-width: 0;
     }
 
     .artist-name {
@@ -131,6 +150,8 @@ const gridStyles = css`
 
     .album-year {
         color: var(--yj-text-tertiary, #888);
+        flex: 0 0 auto;
+        white-space: nowrap;
     }
 
     /* ========================================

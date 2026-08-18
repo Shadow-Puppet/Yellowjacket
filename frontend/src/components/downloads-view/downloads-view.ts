@@ -512,7 +512,9 @@ export class DownloadsView extends ViewLifecycleMixin(LitElement) {
                         ${request.artist ? `${request.artist} — ` : ''}${request.title ||
                         request.mbid}
                     </div>
-                    <div class="detail">${requestDetail(request, this.nowMs)}</div>
+                    <div class="detail">
+                        ${requestDetail(request, this.nowMs, this.canDownload)}
+                    </div>
                 </div>
                 <div class="actions">
                     ${request.state === 'satisfied'
@@ -706,9 +708,19 @@ export class DownloadsView extends ViewLifecycleMixin(LitElement) {
  * looked for rather than as an error, because that is what it is — the
  * retry is already scheduled and there is nothing for the user to do.
  */
-function requestDetail(request: Request, nowMs: number): string {
+function requestDetail(
+    request: Request,
+    nowMs: number,
+    canDownload: boolean,
+): string {
     if (request.state === 'satisfied') return 'In your library';
     if (request.state === 'paused') return 'Paused — not being looked for';
+
+    // With no client there is no search and no retry clock — the
+    // backend stopped scheduling one — so a row must not imply either.
+    // "Queued" and "next check in 6 hours" are both promises nothing is
+    // in a position to keep.
+    if (!canDownload) return 'On your list — no download client to search with';
 
     if (request.attempts === 0) return 'Queued — not searched for yet';
 

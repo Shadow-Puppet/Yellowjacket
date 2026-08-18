@@ -193,6 +193,10 @@ export class SmartPlaylistEditor extends LitElement {
     // ── Internal state ──────────────────────────────────────────────
 
     @state() private ruleRows: RuleRow[] = [emptyRule()];
+    /** Whether every rule must hold or any one of them. Mirrors the
+     *  backend's `match`; 'all' is the default and the only thing a
+     *  playlist saved before this existed can have meant. */
+    @state() private matchType: 'all' | 'any' = 'all';
     @state() private limit = 0;
     @state() private sortField = 'random';
     @state() private sortDir = '';
@@ -222,6 +226,19 @@ export class SmartPlaylistEditor extends LitElement {
                 gap: 6px;
                 padding: 12px 0 8px;
                 flex-shrink: 0;
+            }
+
+            .match-row {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                font-size: var(--yj-text-sm);
+                color: var(--yj-text-secondary, #b3b3b3);
+                flex-wrap: wrap;
+            }
+
+            .match-select {
+                min-width: 72px;
             }
 
             .rule-row {
@@ -511,6 +528,10 @@ export class SmartPlaylistEditor extends LitElement {
             );
 
             this.ruleRows = rows.length > 0 ? rows : [emptyRule()];
+            // A playlist saved before this field existed has no match
+            // and means "all" — the backend reads an empty match the
+            // same way, so an upgrade cannot widen anyone's playlist.
+            this.matchType = parsed.match === 'any' ? 'any' : 'all';
             this.limit = parsed.limit ?? 0;
             this.sortField = parsed.sort_field || 'random';
             this.sortDir = parsed.sort_dir ?? '';
@@ -551,6 +572,7 @@ export class SmartPlaylistEditor extends LitElement {
 
         return JSON.stringify({
             rules,
+            match: this.matchType,
             limit: this.limit || 0,
             sort_field: this.sortField || '',
             sort_dir: this.sortDir || '',
@@ -627,6 +649,11 @@ export class SmartPlaylistEditor extends LitElement {
 
     private updateLimit(value: string) {
         this.limit = Math.max(0, parseInt(value, 10) || 0);
+        this.onRulesChanged();
+    }
+
+    private updateMatchType(value: string) {
+        this.matchType = value === 'any' ? 'any' : 'all';
         this.onRulesChanged();
     }
 
@@ -731,6 +758,7 @@ export class SmartPlaylistEditor extends LitElement {
     override render() {
         return html`
             <div class="rule-rows">
+                ${this.renderMatchType()}
                 ${this.ruleRows.map((row, index) =>
                     this.renderRuleRow(row, index),
                 )}
@@ -740,6 +768,46 @@ export class SmartPlaylistEditor extends LitElement {
             </div>
 
             ${this.renderSortOptions()} ${this.renderPreview()}
+        `;
+    }
+
+    /**
+     * Whether every rule has to hold, or any one of them.
+     *
+     * It is a sentence with a control in the middle rather than a
+     * labelled field, because the two readings differ by one word and
+     * that word is the whole of the setting — "Match **all** of the
+     * following rules" says what the list below it means in a way a
+     * select labelled "Match" beside a list does not.
+     *
+     * Hidden while there is one rule: with nothing to combine, all and
+     * any are the same query, and a control whose two settings cannot
+     * differ is a question the user has no way to answer wrongly and
+     * no reason to answer at all.
+     */
+    private renderMatchType() {
+        if (this.ruleRows.length < 2) return nothing;
+
+        return html`
+            <div class="match-row">
+                <span>Match</span>
+                <select
+                    class="match-select"
+                    aria-label="Match all or any of the following rules"
+                    @change=${(e: Event) =>
+                        this.updateMatchType(
+                            (e.target as HTMLSelectElement).value,
+                        )}
+                >
+                    <option value="all" ?selected=${this.matchType === 'all'}>
+                        all
+                    </option>
+                    <option value="any" ?selected=${this.matchType === 'any'}>
+                        any
+                    </option>
+                </select>
+                <span>of the following rules</span>
+            </div>
         `;
     }
 

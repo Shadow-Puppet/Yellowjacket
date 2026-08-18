@@ -279,17 +279,19 @@ func (h *MPRISHandler) enqueue(fn func()) {
 	}
 }
 
-// UpdateMetadata pushes track metadata to D-Bus.
-func (h *MPRISHandler) UpdateMetadata(meta Metadata) {
-	h.mu.Lock()
-	h.trackID++
-	tid := h.trackID
-	h.mu.Unlock()
-
-	m := map[string]interface{}{
+// metadataMap builds the org.mpris.MediaPlayer2.Player Metadata value
+// for one track.
+//
+// It is separated from UpdateMetadata, which needs a live D-Bus
+// connection, so the map's contents can be asserted on: this file is
+// behind a build tag and everything in it that touches h is reachable
+// only from a session bus, which is the same reason the Android
+// contract lives in an untagged androidpayload.go.
+func metadataMap(meta Metadata, trackID uint64) map[string]any {
+	m := map[string]any{
 		"mpris:trackid": dbus.ObjectPath(
 			fmt.Sprintf(
-				"/org/yellowjacket/Track/%d", tid,
+				"/org/yellowjacket/Track/%d", trackID,
 			),
 		),
 	}
@@ -306,15 +308,44 @@ func (h *MPRISHandler) UpdateMetadata(meta Metadata) {
 		m["xesam:album"] = meta.Album
 	}
 
+	// Always present, even with nothing to point at.
+	//
+	// Every other key here can be omitted safely because a client
+	// reading the map sees a track with no title or no album and
+	// renders it that way. Art is different: KDE's applet (and
+	// others) treat an *absent* mpris:artUrl as "no news about the
+	// art" and keep drawing whatever the last track had, so playing
+	// something with no cover left the previous album's sleeve on
+	// screen — which reads as the wrong track playing rather than as
+	// missing artwork.
+	//
+	// An empty string is the honest answer and is what the spec's
+	// "URI" type degrades to; a client that cannot load it falls back
+	// to its own placeholder, which is the behaviour wanted.
+	artURL := ""
 	if meta.ArtFilePath != "" {
-		m["mpris:artUrl"] = "file://" + meta.ArtFilePath
+		artURL = "file://" + meta.ArtFilePath
 	}
+
+	m["mpris:artUrl"] = artURL
 
 	if meta.DurationSec > 0 {
 		m["mpris:length"] = int64(
 			meta.DurationSec,
 		) * usPerSec
 	}
+
+	return m
+}
+
+// UpdateMetadata pushes track metadata to D-Bus.
+func (h *MPRISHandler) UpdateMetadata(meta Metadata) {
+	h.mu.Lock()
+	h.trackID++
+	tid := h.trackID
+	h.mu.Unlock()
+
+	m := metadataMap(meta, tid)
 
 	h.enqueue(func() {
 		h.props.SetMust(playerIf, "Metadata", m)

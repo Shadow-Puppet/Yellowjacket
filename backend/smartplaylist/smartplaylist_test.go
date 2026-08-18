@@ -1,6 +1,7 @@
 package smartplaylist
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -170,7 +171,7 @@ func TestBuildWhereClause_TextIs(t *testing.T) {
 
 	clause, args, err := BuildWhereClause([]Rule{
 		{Field: "artist", Operator: "is", Value: "Queen"},
-	})
+	}, MatchAll)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -189,7 +190,7 @@ func TestBuildWhereClause_TextIsNot(t *testing.T) {
 
 	clause, args, err := BuildWhereClause([]Rule{
 		{Field: "artist", Operator: "is_not", Value: "Queen"},
-	})
+	}, MatchAll)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -209,7 +210,7 @@ func TestBuildWhereClause_TextContains(t *testing.T) {
 
 	clause, args, err := BuildWhereClause([]Rule{
 		{Field: "title", Operator: "contains", Value: "Black"},
-	})
+	}, MatchAll)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -231,7 +232,7 @@ func TestBuildWhereClause_TextDoesNotContain(t *testing.T) {
 			Field: "title", Operator: "does_not_contain",
 			Value: "Black",
 		},
-	})
+	}, MatchAll)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -251,7 +252,7 @@ func TestBuildWhereClause_TextStartsWith(t *testing.T) {
 
 	clause, args, err := BuildWhereClause([]Rule{
 		{Field: "title", Operator: "starts_with", Value: "Back"},
-	})
+	}, MatchAll)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -270,7 +271,7 @@ func TestBuildWhereClause_TextEndsWith(t *testing.T) {
 
 	clause, args, err := BuildWhereClause([]Rule{
 		{Field: "title", Operator: "ends_with", Value: "Black"},
-	})
+	}, MatchAll)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -292,7 +293,7 @@ func TestBuildWhereClause_TextIsAnyOf(t *testing.T) {
 			Field: "artist", Operator: "is_any_of",
 			Value: `["Queen","AC/DC"]`,
 		},
-	})
+	}, MatchAll)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -312,7 +313,7 @@ func TestBuildWhereClause_NumericIs(t *testing.T) {
 
 	clause, args, err := BuildWhereClause([]Rule{
 		{Field: "year", Operator: "is", Value: "1980"},
-	})
+	}, MatchAll)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -331,7 +332,7 @@ func TestBuildWhereClause_NumericIsNot(t *testing.T) {
 
 	clause, args, err := BuildWhereClause([]Rule{
 		{Field: "year", Operator: "is_not", Value: "1980"},
-	})
+	}, MatchAll)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -350,7 +351,7 @@ func TestBuildWhereClause_NumericGreaterThan(t *testing.T) {
 
 	clause, args, err := BuildWhereClause([]Rule{
 		{Field: "year", Operator: "greater_than", Value: "2000"},
-	})
+	}, MatchAll)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -369,7 +370,7 @@ func TestBuildWhereClause_NumericLessThan(t *testing.T) {
 
 	clause, args, err := BuildWhereClause([]Rule{
 		{Field: "year", Operator: "less_than", Value: "1980"},
-	})
+	}, MatchAll)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -391,7 +392,7 @@ func TestBuildWhereClause_NumericBetween(t *testing.T) {
 			Field: "year", Operator: "between",
 			Value: "1975,1985",
 		},
-	})
+	}, MatchAll)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -414,7 +415,7 @@ func TestBuildWhereClause_NumericBetweenJSON(t *testing.T) {
 			Field: "year", Operator: "between",
 			Value: `["1975","1985"]`,
 		},
-	})
+	}, MatchAll)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -434,7 +435,7 @@ func TestBuildWhereClause_GenreIsProducesSubquery(t *testing.T) {
 
 	clause, args, err := BuildWhereClause([]Rule{
 		{Field: "genre", Operator: "is", Value: "Rock"},
-	})
+	}, MatchAll)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -466,7 +467,7 @@ func TestBuildWhereClause_GenreIsNotProducesSubquery(t *testing.T) {
 
 	clause, args, err := BuildWhereClause([]Rule{
 		{Field: "genre", Operator: "is_not", Value: "Rock"},
-	})
+	}, MatchAll)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -495,7 +496,7 @@ func TestBuildWhereClause_GenreIsAnyOfProducesSubquery(t *testing.T) {
 			Field: "genre", Operator: "is_any_of",
 			Value: `["Rock","Pop"]`,
 		},
-	})
+	}, MatchAll)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -524,7 +525,7 @@ func TestBuildWhereClause_GenreContainsUsesSubquery(t *testing.T) {
 
 	clause, args, err := BuildWhereClause([]Rule{
 		{Field: "genre", Operator: "contains", Value: "Rock"},
-	})
+	}, MatchAll)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -557,7 +558,7 @@ func TestBuildWhereClause_MultipleRulesAND(t *testing.T) {
 	clause, args, err := BuildWhereClause([]Rule{
 		{Field: "artist", Operator: "is", Value: "Queen"},
 		{Field: "year", Operator: "greater_than", Value: "1975"},
-	})
+	}, MatchAll)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -572,6 +573,110 @@ func TestBuildWhereClause_MultipleRulesAND(t *testing.T) {
 	}
 }
 
+func TestBuildWhereClause_MultipleRulesOR(t *testing.T) {
+	t.Parallel()
+
+	clause, args, err := BuildWhereClause([]Rule{
+		{Field: "artist", Operator: "is", Value: "Queen"},
+		{Field: "year", Operator: "greater_than", Value: "1975"},
+	}, MatchAny)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := "(artist_name = ? COLLATE NOCASE) OR (year > ?)"
+	if clause != want {
+		t.Errorf("clause = %q, want %q", clause, want)
+	}
+
+	if len(args) != 2 || args[0] != "Queen" || args[1] != int64(1975) {
+		t.Errorf("args = %v, want [Queen 1975]", args)
+	}
+}
+
+// An empty match is what every rule set saved before the field existed
+// carries, and it has to keep meaning AND — a playlist silently
+// widening to OR on upgrade is the whole risk of adding this field.
+func TestBuildWhereClause_EmptyMatchIsAll(t *testing.T) {
+	t.Parallel()
+
+	rules := []Rule{
+		{Field: "artist", Operator: "is", Value: "Queen"},
+		{Field: "year", Operator: "greater_than", Value: "1975"},
+	}
+
+	empty, _, err := BuildWhereClause(rules, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	all, _, err := BuildWhereClause(rules, MatchAll)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if empty != all {
+		t.Errorf("empty match = %q, want the same as MatchAll %q",
+			empty, all)
+	}
+}
+
+// A condition carrying its own top-level AND is what makes the
+// bracketing under OR load-bearing: `days_since_played less_than`
+// is two predicates, and both belong to the same rule.
+func TestBuildWhereClause_ORBracketsCompoundCondition(t *testing.T) {
+	t.Parallel()
+
+	clause, _, err := BuildWhereClause([]Rule{
+		{Field: "artist", Operator: "is", Value: "Queen"},
+		{
+			Field:    "days_since_played",
+			Operator: "less_than",
+			Value:    "30",
+		},
+	}, MatchAny)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.Contains(clause, "(last_played IS NOT NULL AND") {
+		t.Errorf(
+			"compound condition is not bracketed under OR: %q",
+			clause,
+		)
+	}
+}
+
+func TestParseRuleSet_RejectsUnknownMatch(t *testing.T) {
+	t.Parallel()
+
+	_, err := ParseRuleSet(`{"rules":[],"match":"either"}`)
+	if err == nil {
+		t.Fatal("expected an error for an unknown match type")
+	}
+
+	if !errors.Is(err, errInvalidMatch) {
+		t.Errorf("err = %v, want errInvalidMatch", err)
+	}
+}
+
+func TestParseRuleSet_AcceptsAnyAndAll(t *testing.T) {
+	t.Parallel()
+
+	for _, want := range []MatchType{MatchAll, MatchAny} {
+		rs, err := ParseRuleSet(
+			`{"rules":[],"match":"` + string(want) + `"}`,
+		)
+		if err != nil {
+			t.Fatalf("match %q: unexpected error: %v", want, err)
+		}
+
+		if rs.Match != want {
+			t.Errorf("match = %q, want %q", rs.Match, want)
+		}
+	}
+}
+
 func TestBuildWhereClause_SameFieldMultipleTimes(t *testing.T) {
 	t.Parallel()
 
@@ -581,7 +686,7 @@ func TestBuildWhereClause_SameFieldMultipleTimes(t *testing.T) {
 			Field: "genre", Operator: "does_not_contain",
 			Value: "Punk",
 		},
-	})
+	}, MatchAll)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -609,7 +714,7 @@ func TestBuildWhereClause_SameFieldMultipleTimes(t *testing.T) {
 func TestBuildWhereClause_EmptyRules(t *testing.T) {
 	t.Parallel()
 
-	clause, args, err := BuildWhereClause(nil)
+	clause, args, err := BuildWhereClause(nil, MatchAll)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -631,7 +736,7 @@ func TestBuildWhereClause_InvalidField(t *testing.T) {
 			Field: "nonexistent", Operator: "is",
 			Value: "anything",
 		},
-	})
+	}, MatchAll)
 	if err == nil {
 		t.Fatal("expected error for invalid field, got nil")
 	}
@@ -654,7 +759,7 @@ func TestBuildWhereClause_InvalidOperatorForNumeric(t *testing.T) {
 
 	_, _, err := BuildWhereClause([]Rule{
 		{Field: "year", Operator: "contains", Value: "1980"},
-	})
+	}, MatchAll)
 	if err == nil {
 		t.Fatal(
 			"expected error for text operator on numeric field",
@@ -676,7 +781,7 @@ func TestBuildWhereClause_InvalidOperatorForText(t *testing.T) {
 			Field: "artist", Operator: "greater_than",
 			Value: "Queen",
 		},
-	})
+	}, MatchAll)
 	if err == nil {
 		t.Fatal(
 			"expected error for numeric operator on text field",
@@ -720,6 +825,80 @@ func TestEvaluate_TextIs(t *testing.T) {
 				tr.TrackName, tr.ArtistName,
 			)
 		}
+	}
+}
+
+// Two rules that share no track at all: under AND this is empty, and
+// under OR it is the union. Before Match existed only the first was
+// expressible, so a playlist could only ever narrow — "jazz or blues"
+// had no way to be said.
+func TestEvaluate_MatchAnyUnionsWhereMatchAllIntersects(t *testing.T) {
+	t.Parallel()
+
+	db := database.NewTestDB(t)
+	seedSmartPlaylistData(t, db)
+
+	// Queen has two tracks; Beyoncé has one; no track is by both.
+	rules := []Rule{
+		{Field: "artist", Operator: "is", Value: "Queen"},
+		{Field: "artist", Operator: "is", Value: "Beyoncé"},
+	}
+
+	all, err := Evaluate(db, RuleSet{Rules: rules, Match: MatchAll})
+	if err != nil {
+		t.Fatalf("Evaluate(all): %v", err)
+	}
+
+	if len(all) != 0 {
+		t.Errorf("match=all returned %d tracks, want 0", len(all))
+	}
+
+	either, err := Evaluate(db, RuleSet{Rules: rules, Match: MatchAny})
+	if err != nil {
+		t.Fatalf("Evaluate(any): %v", err)
+	}
+
+	if len(either) != 3 {
+		t.Fatalf("match=any returned %d tracks, want 3", len(either))
+	}
+
+	for _, tr := range either {
+		if tr.ArtistName != "Queen" && tr.ArtistName != "Beyoncé" {
+			t.Errorf(
+				"track %q has artist %q, want Queen or Beyoncé",
+				tr.TrackName, tr.ArtistName,
+			)
+		}
+	}
+}
+
+// An empty match is what every playlist saved before the field existed
+// carries, and it has to keep meaning AND all the way through Evaluate
+// — a stored playlist silently widening on upgrade is the only real
+// risk in adding this.
+func TestEvaluate_EmptyMatchStillIntersects(t *testing.T) {
+	t.Parallel()
+
+	db := database.NewTestDB(t)
+	seedSmartPlaylistData(t, db)
+
+	tracks, err := Evaluate(db, RuleSet{
+		Rules: []Rule{
+			{Field: "artist", Operator: "is", Value: "Queen"},
+			{Field: "year", Operator: "greater_than", Value: "1979"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+
+	// Only "Another One Bites the Dust" (Queen, 1980) satisfies both.
+	if len(tracks) != 1 {
+		t.Fatalf("got %d tracks, want 1", len(tracks))
+	}
+
+	if want := "Another One Bites the Dust"; tracks[0].TrackName != want {
+		t.Errorf("got %q, want %q", tracks[0].TrackName, want)
 	}
 }
 
@@ -1340,7 +1519,7 @@ func TestSQLInjection_FieldName(t *testing.T) {
 			Field:    "title; DROP TABLE playlists",
 			Operator: "is", Value: "x",
 		},
-	})
+	}, MatchAll)
 	if err == nil {
 		t.Fatal(
 			"expected error for injected field name, got nil",
