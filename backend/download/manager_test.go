@@ -218,8 +218,17 @@ func TestManagerEndToEndAutoPick(t *testing.T) {
 	}, "staging was never released, or the library was never rescanned")
 }
 
-// An ambiguous result set must park for the user rather than guess.
-func TestManagerWaitsWhenAmbiguous(t *testing.T) {
+// Two equally good copies are not an ambiguity — they are a spare.
+//
+// This asserted the opposite for as long as auto-pick required 0.08 of
+// daylight over the runner-up, and that rule was wrong in exactly the
+// case it fired hardest: a popular album turns up several *correct*
+// copies, all matching the tracklist, differing only in format and
+// seeders. There is no question there about what to fetch, only about
+// which copy, and the ranking already answers that — closest to the
+// preferred bitrate first. A candidate does not have to be better than
+// the field, only good enough on its own terms.
+func TestManagerAutoPicksAmongEquallyGoodCopies(t *testing.T) {
 	t.Parallel()
 
 	f := newManagerFixture(t)
@@ -237,11 +246,41 @@ func TestManagerWaitsWhenAmbiguous(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 
-	if f.manager.AutoPickable(dl, ranked) {
-		t.Fatal("two equivalent candidates must not auto-pick")
+	if veto := f.manager.AutoPickVeto(dl, ranked); veto != "" {
+		t.Fatalf("two equally good copies must auto-pick, got veto: %s", veto)
 	}
 
-	// Nothing was grabbed while waiting for the user.
+	waitForDownloadState(t, f.store, dl.ID, StateComplete)
+
+	// Exactly one of them was fetched, not both.
+	if grabs := a.GrabCalls + b.GrabCalls; grabs != 1 {
+		t.Errorf("grabs = %d, want exactly 1", grabs)
+	}
+}
+
+// The user can still pick explicitly when auto-pick is not what
+// happened — a candidate the ranking did not choose is still grabbable.
+func TestManagerPickIsExplicit(t *testing.T) {
+	t.Parallel()
+
+	f := newManagerFixture(t)
+
+	a := fakeWithAlbum(1, "source-a", ".flac")
+	b := fakeWithAlbum(2, "source-b", ".flac")
+
+	f.manager.installProvider(Config{ID: 1, Priority: 50}, a)
+	f.manager.installProvider(Config{ID: 2, Priority: 50}, b)
+
+	// No tracklist: never auto-picks, so the result set parks for the
+	// user and Pick is the only way anything is fetched.
+	dl := fourTrackDownload()
+	dl.Expected = nil
+
+	ranked, err := f.manager.Start(context.Background(), dl)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
 	if a.GrabCalls != 0 || b.GrabCalls != 0 {
 		t.Errorf(
 			"grabs happened without a pick: a=%d b=%d",
@@ -258,7 +297,6 @@ func TestManagerWaitsWhenAmbiguous(t *testing.T) {
 		t.Errorf("stored request id = %s, want %s", stored.ID, dl.ID)
 	}
 
-	// The user picks the second one explicitly.
 	if err := f.manager.Pick(
 		context.Background(), dl.ID, ranked[1].ID,
 	); err != nil {

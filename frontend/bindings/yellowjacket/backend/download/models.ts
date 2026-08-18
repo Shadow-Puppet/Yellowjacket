@@ -3,28 +3,52 @@
 
 /**
  * AutoDownloadPrefs gates and scores what AutoPickable may choose
- * without asking.  Zero values are permissive: no size window and no
- * format restriction.
+ * without asking.  Zero values are permissive: no bitrate window, no
+ * size ceiling and no format restriction.
+ * 
+ * **The window is a rate, not a size.**  It used to be three numbers in
+ * megabytes, which cannot mean anything on their own: 300 MB is a
+ * generous FLAC single and a suspiciously small boxset, and the user
+ * setting the number has no idea which release the pipeline will
+ * eventually apply it to.  A bitrate is the same statement normalised
+ * by how long the music is, so one number holds across a 9-minute EP
+ * and a 3-hour opera — and it is the unit the thing being described is
+ * actually measured in.  The runtime is known for every request
+ * auto-pick can act on (`Download.Expected` carries per-track lengths,
+ * and an anchored request is the only kind that reaches here), so this
+ * costs no extra lookup.
  */
 export interface AutoDownloadPrefs {
     /**
-     * MinSizeMB and MaxSizeMB bound what auto-pick will grab.  Zero
-     * means no bound on that side.  A candidate outside the window is
-     * filtered out of auto-pick entirely, not merely scored down — a
-     * tiny "sampler" torrent or a boxset ten times the expected size is
-     * usually the wrong thing entirely, not a worse copy of the right
-     * thing.
+     * MinKbps and MaxKbps bound the average bitrate auto-pick will
+     * grab.  Zero means no bound on that side.  A candidate outside the
+     * window is filtered out of auto-pick entirely, not merely scored
+     * down — a 96 kbps rip of the right album is not a worse copy the
+     * user might accept, it is one they said not to take unattended.
+     * 
+     * For reference: 320 is the top of MP3, ~500–1000 is FLAC depending
+     * on the material, and anything under ~128 is a transcode.
      */
-    "minSizeMb": number;
-    "maxSizeMb": number;
+    "minKbps": number;
+    "maxKbps": number;
 
     /**
-     * PreferredSizeMB nudges the score toward a target size within the
-     * min/max window (a lossless rip and a heavily-padded lossless rip
-     * can both pass the window).  Zero disables the nudge; sizeFit then
-     * returns a neutral value that does not affect ranking.
+     * PreferredKbps nudges the score toward a target rate within the
+     * window, and breaks the tie when several candidates are equally
+     * good matches.  Zero disables the nudge; bitrateFit then returns a
+     * neutral value that does not affect ranking.
      */
-    "preferredSizeMb": number;
+    "preferredKbps": number;
+
+    /**
+     * MaxSizeMB is a hard ceiling on the whole candidate, and it is
+     * deliberately still a size.  It answers a different question from
+     * the window above — not "is this the quality I want" but "is this
+     * going to fill the disk" — and it has to hold even for a candidate
+     * whose bitrate cannot be worked out, which is exactly the shape a
+     * mislabelled boxset arrives in.  Zero means no ceiling.
+     */
+    "maxSizeMb": number;
 
     /**
      * AllowedFormats restricts auto-pick to candidates whose audio
@@ -487,9 +511,13 @@ export interface QualityScore {
     "priority": number;
 
     /**
-     * closeness to the preferred download size
+     * BitrateFit is closeness to the preferred *rate*, which is what
+     * the auto-download window is expressed in.  It replaced a
+     * `SizeFit` measured in megabytes: a size means nothing without
+     * knowing how long the music is, so the same number described a
+     * generous single and a suspiciously small boxset.
      */
-    "sizeFit": number;
+    "bitrateFit": number;
 
     /**
      * Mixed marks a candidate whose files are not all the same format,

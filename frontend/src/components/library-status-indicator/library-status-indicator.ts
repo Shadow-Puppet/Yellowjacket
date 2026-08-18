@@ -48,7 +48,7 @@ export type LibraryStatus =
  *
  * Colours and glyphs:
  *  - in-library    → green circle, check mark
- *  - queued        → amber circle, hourglass
+ *  - queued        → amber circle, bookmark ("on your list")
  *  - not-in-library → grey circle, plus sign
  *
  * Usage:
@@ -241,12 +241,23 @@ export class LibraryStatusIndicator extends LitElement {
         }
     `;
 
+    /**
+     * The glyph for each state.
+     *
+     * `queued` is a **bookmark**, not the hourglass it used to be. An
+     * hourglass says "wait, this is under way", which overstates what a
+     * request is: nothing may be downloading, nothing may ever be found,
+     * and the user can leave one sitting on the list indefinitely. A
+     * bookmark says the honest thing — it is on your list — and reads as
+     * the opposite of the plus that put it there, which is what a
+     * toggle's two states have to do.
+     */
     private iconName(): string {
         switch (this.status) {
             case 'in-library':
                 return 'check';
             case 'queued':
-                return 'hourglass-half';
+                return 'bookmark';
             default:
                 return 'plus';
         }
@@ -276,7 +287,7 @@ export class LibraryStatusIndicator extends LitElement {
         if (this.actionable) {
             return this.status === 'queued'
                 ? `Cancel the request for ${kind}${name}`
-                : `Want ${kind}${name}`;
+                : `Request ${kind}${name}`;
         }
 
         switch (this.status) {
@@ -354,25 +365,6 @@ export class LibraryStatusIndicator extends LitElement {
         }
 
         const title = this.tooltip();
-        const icon = this.iconName()
-            ? html`<wa-icon name=${this.iconName()} aria-hidden="true"></wa-icon>`
-            : nothing;
-
-        if (this.actionable) {
-            return html`
-                <button
-                    class="badge"
-                    type="button"
-                    title=${title}
-                    aria-label=${title}
-                    ?disabled=${this.busy}
-                    @click=${this.onActivate}
-                    @keydown=${this.onKeydown}
-                >
-                    ${icon}
-                </button>
-            `;
-        }
 
         // The ring stands in for the icon wherever the icon would go —
         // including inside the button, because a partly-held album is

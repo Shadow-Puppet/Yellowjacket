@@ -16,6 +16,7 @@
 # fetch-icons.mjs for why that is not negotiable.  Re-vendor with:
 #   node frontend/scripts/fetch-icons.mjs
 regular/heart
+regular/star
 solid/arrow-down-wide-short
 solid/arrow-left
 solid/arrow-rotate-right

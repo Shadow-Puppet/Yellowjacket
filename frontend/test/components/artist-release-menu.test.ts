@@ -120,7 +120,7 @@ describe('the context menu on an artist page release', () => {
     expect(items).toContain('Add to Queue');
     expect(items).toContain('Play Next');
     // Owned: there is nothing left to ask for.
-    expect(items).not.toContain('Want This');
+    expect(items).not.toContain('Request This');
   });
 
   it('offers a request, and no playback, for a release nobody owns', async () => {
@@ -132,7 +132,7 @@ describe('the context menu on an artist page release', () => {
 
     expect(items).not.toContain('Play');
     expect(items).not.toContain('Add to Queue');
-    expect(items).toContain('Want This');
+    expect(items).toContain('Request This');
     expect(items).toContain('View on MusicBrainz');
   });
 
@@ -148,7 +148,7 @@ describe('the context menu on an artist page release', () => {
     // …but a `local:` id names nothing upstream, and wanting something
     // already in the library is not a thing to offer.
     expect(items).not.toContain('View on MusicBrainz');
-    expect(items).not.toContain('Want This');
+    expect(items).not.toContain('Request This');
   });
 
   it('opens from the keyboard on Shift+F10', async () => {

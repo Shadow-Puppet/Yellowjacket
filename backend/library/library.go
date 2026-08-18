@@ -289,8 +289,13 @@ func (l *Library) scanInternal(
 		l.mu.Unlock()
 	}()
 
+	// The configured mode, not a hardcoded "auto".  `ScanConcurrency`
+	// has been a validated config field with three values and one
+	// caller passing a constant, so choosing `ssd` or `hdd` by hand
+	// did nothing at all.
+	diskProfile := system.ProfileForPath(libraryPath)
 	workerCount := resolveScanWorkerCount(
-		ScanConcurrencyAuto,
+		l.conf.ScanConcurrency,
 		libraryPath,
 	)
 
@@ -300,6 +305,10 @@ func (l *Library) scanInternal(
 		"libraryName", libraryName,
 		"libraryPath", libraryPath,
 		"workers", workerCount,
+		"mode", l.conf.ScanConcurrency,
+		"device", diskProfile.Device,
+		"rotational", diskProfile.Rotational,
+		"queueDepth", diskProfile.QueueDepth,
 	)
 
 	// Helper to build a ScanProgress with library identification.
@@ -818,7 +827,7 @@ func (l *Library) scanInternal(
 	g := new(errgroup.Group)
 	g.SetLimit(workerCount)
 
-	for work := range workChan {
+	for work := range readaheadWork(scanCtx, workChan, diskProfile) {
 		g.Go(func() error {
 			if err := l.waitIfPaused(scanCtx); err != nil {
 				return err
@@ -1285,9 +1294,101 @@ func surveyAudioFiles(
 	return count, maxModTime
 }
 
-// hddWorkerCount is the maximum number of concurrent extraction
-// workers when the library resides on a spinning disk.
-const hddWorkerCount = 2
+// How many extraction workers a spinning disk gets, and why it is two
+// numbers rather than one.
+//
+// Extraction is not CPU work — every parser here reads headers and
+// returns — so on a spinning disk the whole cost is seek latency, and
+// the only question worth asking is how many reads should be in flight
+// at once.  That has two different right answers and the drive says
+// which:
+//
+//   - A drive with command queueing (NCQ: /sys/block/<dev>/device/
+//     queue_depth reports 31 or 32 on any SATA disk with it enabled)
+//     reorders outstanding reads into the order its head passes over
+//     them.  Handing it several at once is most of why a parallel scan
+//     beats a serial one at all, and four is where the returns flatten:
+//     the drive needs a few requests to have anything to reorder, and
+//     past that it is queueing requests it was already going to
+//     service in that order.
+//   - A drive without it — queue_depth 1, which is what a USB bridge
+//     or a pre-2004 disk reports — services one command at a time in
+//     the order given.  Every extra worker there is one more seek
+//     competing for one head, and the scan gets *slower* the harder it
+//     is pushed.  Two is kept rather than one because the readahead
+//     hints (see readaheadWork) do the overlapping that concurrency
+//     was standing in for, and one worker cannot hide a stall.
+//
+// This used to be a flat 2 for anything rotational, which is a
+// pre-NCQ assumption: it left a modern spinning disk with a quarter of
+// the queue depth it can use.
+const (
+	hddWorkerCountQueued = 4
+	hddWorkerCountSerial = 2
+)
+
+// Readahead tuning.
+const (
+	// readaheadDepth is how many files ahead of the workers the
+	// prefetcher runs.  It is the channel's buffer, so it is also the
+	// number of `WILLNEED` hints outstanding at once — comfortably more
+	// than a queueing drive's 32-command window is worth filling with
+	// one library, and small enough that a cancelled scan is not
+	// holding a long tail of queued reads.
+	readaheadDepth = 16
+
+	// readaheadBytes is how much of each file to pull in.  Everything
+	// the scanner reads lives at the head: ID3v2 and FLAC's
+	// STREAMINFO/VORBIS_COMMENT/PICTURE blocks, and the first MPEG
+	// frame with its Xing header.  512 KB covers a tag carrying
+	// embedded cover art, which is the large case — and reading a
+	// little too much sequentially costs a spinning disk almost
+	// nothing next to the seek that got there.
+	readaheadBytes = 512 << 10
+)
+
+// readaheadWork forwards scan work while asking the kernel to fetch
+// each file's header before a worker reaches it.
+//
+// The buffered channel *is* the lookahead: this goroutine runs ahead
+// of the workers until the buffer fills, hinting every file as it goes,
+// so by the time a worker takes an item the read it needs has been in
+// flight for `readaheadDepth` files' worth of parsing.  That is the
+// only thing that helps a spinning disk here, because the per-file work
+// is already header-only — every parser in `backend/metadata` reads a
+// few hundred bytes and returns, so the scan is not waiting on CPU or
+// on bytes, it is waiting on the head to arrive.
+//
+// It runs on rotational disks only.  An SSD has no seek to hide and
+// already has one worker per core; issuing hints there is pure syscall
+// overhead against an OS readahead that is already ahead of us.
+func readaheadWork(
+	ctx context.Context,
+	in <-chan scanWork,
+	profile system.DiskProfile,
+) <-chan scanWork {
+	if !profile.Rotational {
+		return in
+	}
+
+	out := make(chan scanWork, readaheadDepth)
+
+	go func() {
+		defer close(out)
+
+		for work := range in {
+			hintReadahead(work.absolutePath, readaheadBytes)
+
+			select {
+			case out <- work:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	return out
+}
 
 // resolveScanWorkerCount returns the number of concurrent
 // extraction workers based on the configured concurrency mode
@@ -1296,20 +1397,45 @@ func resolveScanWorkerCount(
 	mode ScanConcurrency,
 	libraryPath string,
 ) int {
+	return workersForProfile(
+		mode,
+		system.ProfileForPath(libraryPath),
+		goruntime.NumCPU(),
+	)
+}
+
+// workersForProfile is the policy on its own, so it can be tested
+// against drives this machine does not have.
+//
+// `hdd` and `ssd` override what the device says rather than being a
+// separate branch: the mode is the user overruling detection, and
+// detection is right about the queue depth either way — a user who
+// picks `hdd` on a queueing drive still wants that drive's queue used.
+func workersForProfile(
+	mode ScanConcurrency,
+	profile system.DiskProfile,
+	cpus int,
+) int {
+	spinning := profile.Rotational
+
 	switch mode {
 	case ScanConcurrencySSD:
-		return goruntime.NumCPU()
+		spinning = false
 	case ScanConcurrencyHDD:
-		return min(hddWorkerCount, goruntime.NumCPU())
-	default: // auto
-		if system.IsRotationalDisk(libraryPath) {
-			return min(
-				hddWorkerCount, goruntime.NumCPU(),
-			)
-		}
-
-		return goruntime.NumCPU()
+		spinning = true
+	case ScanConcurrencyAuto:
 	}
+
+	if !spinning {
+		return cpus
+	}
+
+	workers := hddWorkerCountSerial
+	if profile.Queues() {
+		workers = hddWorkerCountQueued
+	}
+
+	return min(workers, cpus)
 }
 
 // scanWork represents a file to be processed by a worker.

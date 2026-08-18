@@ -1,6 +1,7 @@
 package download
 
 import (
+	"fmt"
 	"math"
 	"sort"
 	"strings"
@@ -34,14 +35,56 @@ const (
 	weightArtistFit    = 0.12
 )
 
-// Quality sub-weights.  They sum to 1.0 along with weightSizeFit below.
+// Quality sub-weights.  Each set sums to 1.0.
+//
+// There are two of them because a stated preference changes what the
+// other numbers are *for*.  `formatRank` and `bitrateScore` are the
+// app guessing at how good a copy is — FLAC over MP3, 320 over 128 —
+// and that guess exists precisely because the user has not said.  Once
+// they have, the guess should not outvote them: with the old single set
+// a preference of 320 kbps moved a candidate's score by at most 0.05
+// against the 0.42 riding on format, so asking for 320 and being handed
+// a FLAC every time was the *designed* behaviour.  That is the same
+// fault the megabyte window had — a preference the user can express and
+// the ranking can ignore.
 const (
-	weightFormat   = 0.42
-	weightBitrate  = 0.23
-	weightHealth   = 0.20
-	weightPriority = 0.10
-	weightSizeFit  = 0.05
+	weightFormat     = 0.42
+	weightBitrate    = 0.23
+	weightHealth     = 0.20
+	weightPriority   = 0.10
+	weightBitrateFit = 0.05
 )
+
+// Quality sub-weights when the user has named a preferred bitrate.
+// The weight comes off format and bitrate — the two proxies the
+// preference replaces — and health and priority are untouched, since
+// neither is a stand-in for anything the user just said.
+const (
+	statedWeightFormat     = 0.20
+	statedWeightBitrate    = 0.10
+	statedWeightHealth     = 0.20
+	statedWeightPriority   = 0.10
+	statedWeightBitrateFit = 0.40
+)
+
+// qualityWeights picks the set, in the order scoreQuality applies them.
+func qualityWeights(p AutoDownloadPrefs) (
+	format, bitrate, health, priority, fit float64,
+) {
+	if p.PreferredKbps > 0 {
+		return statedWeightFormat,
+			statedWeightBitrate,
+			statedWeightHealth,
+			statedWeightPriority,
+			statedWeightBitrateFit
+	}
+
+	return weightFormat,
+		weightBitrate,
+		weightHealth,
+		weightPriority,
+		weightBitrateFit
+}
 
 // unanchoredCap bounds the match score of a free-text request.  Without
 // an MBID there is no tracklist to be right about, so a confident-
@@ -49,23 +92,45 @@ const (
 const unanchoredCap = 0.65
 
 // AutoDownloadPrefs gates and scores what AutoPickable may choose
-// without asking.  Zero values are permissive: no size window and no
-// format restriction.
+// without asking.  Zero values are permissive: no bitrate window, no
+// size ceiling and no format restriction.
+//
+// **The window is a rate, not a size.**  It used to be three numbers in
+// megabytes, which cannot mean anything on their own: 300 MB is a
+// generous FLAC single and a suspiciously small boxset, and the user
+// setting the number has no idea which release the pipeline will
+// eventually apply it to.  A bitrate is the same statement normalised
+// by how long the music is, so one number holds across a 9-minute EP
+// and a 3-hour opera — and it is the unit the thing being described is
+// actually measured in.  The runtime is known for every request
+// auto-pick can act on (`Download.Expected` carries per-track lengths,
+// and an anchored request is the only kind that reaches here), so this
+// costs no extra lookup.
 type AutoDownloadPrefs struct {
-	// MinSizeMB and MaxSizeMB bound what auto-pick will grab.  Zero
-	// means no bound on that side.  A candidate outside the window is
-	// filtered out of auto-pick entirely, not merely scored down — a
-	// tiny "sampler" torrent or a boxset ten times the expected size is
-	// usually the wrong thing entirely, not a worse copy of the right
-	// thing.
-	MinSizeMB int `json:"minSizeMb"`
-	MaxSizeMB int `json:"maxSizeMb"`
+	// MinKbps and MaxKbps bound the average bitrate auto-pick will
+	// grab.  Zero means no bound on that side.  A candidate outside the
+	// window is filtered out of auto-pick entirely, not merely scored
+	// down — a 96 kbps rip of the right album is not a worse copy the
+	// user might accept, it is one they said not to take unattended.
+	//
+	// For reference: 320 is the top of MP3, ~500–1000 is FLAC depending
+	// on the material, and anything under ~128 is a transcode.
+	MinKbps int `json:"minKbps"`
+	MaxKbps int `json:"maxKbps"`
 
-	// PreferredSizeMB nudges the score toward a target size within the
-	// min/max window (a lossless rip and a heavily-padded lossless rip
-	// can both pass the window).  Zero disables the nudge; sizeFit then
-	// returns a neutral value that does not affect ranking.
-	PreferredSizeMB int `json:"preferredSizeMb"`
+	// PreferredKbps nudges the score toward a target rate within the
+	// window, and breaks the tie when several candidates are equally
+	// good matches.  Zero disables the nudge; bitrateFit then returns a
+	// neutral value that does not affect ranking.
+	PreferredKbps int `json:"preferredKbps"`
+
+	// MaxSizeMB is a hard ceiling on the whole candidate, and it is
+	// deliberately still a size.  It answers a different question from
+	// the window above — not "is this the quality I want" but "is this
+	// going to fill the disk" — and it has to hold even for a candidate
+	// whose bitrate cannot be worked out, which is exactly the shape a
+	// mislabelled boxset arrives in.  Zero means no ceiling.
+	MaxSizeMB int `json:"maxSizeMb"`
 
 	// AllowedFormats restricts auto-pick to candidates whose audio
 	// files are all in one of these formats.  Empty means no
@@ -74,17 +139,31 @@ type AutoDownloadPrefs struct {
 }
 
 // eligible reports whether a candidate may be auto-picked under these
-// preferences: within the size window (when set) and, when a format
-// list is given, every audio file in an allowed format.
-func (p AutoDownloadPrefs) eligible(c Candidate) bool {
+// preferences: inside the bitrate window and the size ceiling (when
+// set) and, when a format list is given, every audio file in an
+// allowed format.
+//
+// `runtimeMillis` is how long the requested release is, and 0 means
+// nobody knows.  An unknown runtime **passes** the bitrate window
+// rather than failing it: the window is a statement about quality, and
+// refusing everything the moment a tracklist is missing a length would
+// turn a gap in MusicBrainz into a silent embargo.  The size ceiling
+// still applies, which is why it exists separately.
+func (p AutoDownloadPrefs) eligible(c Candidate, runtimeMillis int64) bool {
 	const bytesPerMB = 1 << 20
-
-	if p.MinSizeMB > 0 && c.TotalSize < int64(p.MinSizeMB)*bytesPerMB {
-		return false
-	}
 
 	if p.MaxSizeMB > 0 && c.TotalSize > int64(p.MaxSizeMB)*bytesPerMB {
 		return false
+	}
+
+	if kbps := candidateKbps(c, runtimeMillis); kbps > 0 {
+		if p.MinKbps > 0 && kbps < float64(p.MinKbps) {
+			return false
+		}
+
+		if p.MaxKbps > 0 && kbps > float64(p.MaxKbps) {
+			return false
+		}
 	}
 
 	if len(p.AllowedFormats) == 0 {
@@ -107,11 +186,14 @@ func (p AutoDownloadPrefs) eligible(c Candidate) bool {
 
 // filter returns only the candidates these preferences allow to be
 // auto-picked, in the same (already ranked) order.
-func (p AutoDownloadPrefs) filter(ranked []Candidate) []Candidate {
+func (p AutoDownloadPrefs) filter(
+	ranked []Candidate,
+	runtimeMillis int64,
+) []Candidate {
 	out := make([]Candidate, 0, len(ranked))
 
 	for _, c := range ranked {
-		if p.eligible(c) {
+		if p.eligible(c, runtimeMillis) {
 			out = append(out, c)
 		}
 	}
@@ -119,32 +201,116 @@ func (p AutoDownloadPrefs) filter(ranked []Candidate) []Candidate {
 	return out
 }
 
-// sizeFit scores how close totalSize is to PreferredSizeMB, 0..1,
-// falling off linearly as the size doubles or halves away from it.
-// Returns a neutral 0.5 when no preference is set, so the absence of a
-// preference does not bias ranking.
-func (p AutoDownloadPrefs) sizeFit(totalSize int64) float64 {
+// bitrateFit scores how close a candidate's average bitrate is to
+// PreferredKbps, falling off linearly as it doubles or halves away
+// from it.
+//
+// The range is **0.5 to 1.0, not 0 to 1**, and the floor is the point.
+// This carries 0.40 of the quality score once a preference is set, so a
+// span down to zero would let a preference of 320 kbps push a perfectly
+// good FLAC under `minQuality` and out of auto-pick altogether —
+// turning "I like 320" into "never take anything else", silently.  A
+// preference may promote the copy that matches it; it may not
+// disqualify the others.  That is what `MinKbps`/`MaxKbps` are for, and
+// they say so out loud.
+//
+// Returns the neutral floor when no preference is set or the rate
+// cannot be worked out, so neither an absent preference nor an absent
+// runtime biases ranking.
+func (p AutoDownloadPrefs) bitrateFit(
+	c Candidate,
+	runtimeMillis int64,
+) float64 {
 	const (
-		bytesPerMB = 1 << 20
-		neutral    = 0.5
+		neutral = 0.5
+		span    = 0.5
 	)
 
-	if p.PreferredSizeMB <= 0 || totalSize <= 0 {
+	if p.PreferredKbps <= 0 {
 		return neutral
 	}
 
-	preferred := float64(p.PreferredSizeMB) * bytesPerMB
-	ratio := float64(totalSize) / preferred
+	kbps := candidateKbps(c, runtimeMillis)
+	if kbps <= 0 {
+		return neutral
+	}
 
+	ratio := kbps / float64(p.PreferredKbps)
 	if ratio < 1 {
 		ratio = 1 / ratio
 	}
 
 	// ratio is now >= 1: 1.0 is an exact match, 2.0 is double or half
-	// the preferred size.  Falls to 0 at 2x away and beyond.
-	fit := 1 - (ratio - 1)
+	// the preferred rate, where the closeness term reaches 0.
+	return neutral + span*clamp01(1-(ratio-1))
+}
 
-	return clamp01(fit)
+// candidateKbps is a candidate's average audio bitrate, or 0 when it
+// cannot be worked out.
+//
+// Two sources, in this order, and the order matters:
+//
+//   - **Derived from bytes over runtime**, which is the honest one. It
+//     covers lossless (where a stated bitrate rarely exists), it cannot
+//     be lied to by a filename, and it is what the user's window means.
+//     Only the *audio* files count: cover scans and a log file are not
+//     part of the bitrate, and a folder with 30 MB of artwork would
+//     otherwise read as a better rip than the same music without it.
+//   - **The mean stated bitrate**, when the runtime is unknown. Weaker
+//     — a provider that parses it from an MP3 header states it and one
+//     that guesses from the filename also "states" it — but a number
+//     from the file itself beats no number at all.
+func candidateKbps(c Candidate, runtimeMillis int64) float64 {
+	const bitsPerByte = 8
+
+	audio := c.AudioFiles()
+	if len(audio) == 0 {
+		return 0
+	}
+
+	if runtimeMillis > 0 {
+		var bytes int64
+		for _, f := range audio {
+			bytes += f.Size
+		}
+
+		if bytes > 0 {
+			// bytes×8 bits over seconds, expressed in kbps: the two
+			// factors of 1000 (millis→seconds, bits→kilobits) cancel.
+			return float64(bytes) * bitsPerByte /
+				float64(runtimeMillis)
+		}
+	}
+
+	var (
+		sum   int
+		count int
+	)
+
+	for _, f := range audio {
+		if f.Bitrate > 0 {
+			sum += f.Bitrate
+			count++
+		}
+	}
+
+	if count == 0 {
+		return 0
+	}
+
+	return float64(sum) / float64(count)
+}
+
+// runtimeMillis is how long the requested release is, summed over its
+// expected tracklist.  Zero when the tracklist is absent or carries no
+// lengths, which is what every caller here treats as "unknown".
+func (d Download) runtimeMillis() int64 {
+	var total int64
+	for _, t := range d.Expected {
+		total += t.LengthMillis
+	}
+
+	return total
 }
 
 // Score fills a candidate's Match, Quality and Score fields.
@@ -160,7 +326,9 @@ func Score(dl Download, c Candidate, priority int, prefs AutoDownloadPrefs) Cand
 	c.Files = mergeMatched(c.Files, matched)
 
 	c.Match = scoreMatch(dl, c, audio, titleFit)
-	c.Quality = scoreQuality(c, audio, priority, prefs)
+	c.Quality = scoreQuality(
+		c, audio, priority, prefs, dl.runtimeMillis(),
+	)
 
 	c.Score = weightMatch*c.Match.Overall + weightQuality*c.Quality.Overall
 
@@ -279,11 +447,12 @@ func scoreQuality(
 	audio []CandidateFile,
 	priority int,
 	prefs AutoDownloadPrefs,
+	runtimeMillis int64,
 ) QualityScore {
 	q := QualityScore{
-		Health:   clamp01(c.Health),
-		Priority: clamp01(float64(priority) / 100.0),
-		SizeFit:  prefs.sizeFit(c.TotalSize),
+		Health:     clamp01(c.Health),
+		Priority:   clamp01(float64(priority) / 100.0),
+		BitrateFit: prefs.bitrateFit(c, runtimeMillis),
 	}
 
 	if len(audio) == 0 {
@@ -310,11 +479,13 @@ func scoreQuality(
 	q.FormatRank = worst
 	q.Bitrate = bitrateScore(audio)
 
-	q.Overall = weightFormat*q.FormatRank +
-		weightBitrate*q.Bitrate +
-		weightHealth*q.Health +
-		weightPriority*q.Priority +
-		weightSizeFit*q.SizeFit
+	wFormat, wBitrate, wHealth, wPriority, wFit := qualityWeights(prefs)
+
+	q.Overall = wFormat*q.FormatRank +
+		wBitrate*q.Bitrate +
+		wHealth*q.Health +
+		wPriority*q.Priority +
+		wFit*q.BitrateFit
 
 	if q.Mixed {
 		q.Overall *= 0.9
@@ -444,6 +615,19 @@ func Rank(
 			return out[i].Match.Overall > out[j].Match.Overall
 		}
 
+		// Closest to the preferred bitrate wins the tie.
+		//
+		// This is what decides which copy is taken now that auto-pick
+		// no longer requires the winner to be clear of the field: when
+		// several candidates are equally good matches of equal overall
+		// quality, the one the user said they wanted the shape of is
+		// the answer, ahead of provider priority.  With no preference
+		// set every BitrateFit is the same neutral value and this
+		// falls through, exactly as before.
+		if out[i].Quality.BitrateFit != out[j].Quality.BitrateFit {
+			return out[i].Quality.BitrateFit > out[j].Quality.BitrateFit
+		}
+
 		if out[i].Quality.Priority != out[j].Quality.Priority {
 			return out[i].Quality.Priority > out[j].Quality.Priority
 		}
@@ -454,19 +638,58 @@ func Rank(
 	return out
 }
 
-// AutoPickable reports whether a ranked list has a clear enough winner
-// to grab without asking.  It demands an anchored request, a high match,
-// decent quality, and daylight between first and second place — if two
-// candidates are close, the choice is the user's.
-func AutoPickable(dl Download, ranked []Candidate, prefs AutoDownloadPrefs) bool {
-	const (
-		minMatch   = 0.85
-		minQuality = 0.5
-		minLead    = 0.08
-	)
+// Auto-pick gates.  Named rather than inlined because AutoPickVeto
+// reports which of them refused, and a number in a sentence the user
+// reads should be the same number the decision used.
+const (
+	minMatch   = 0.85
+	minQuality = 0.5
+)
 
-	if !dl.Anchored() || len(ranked) == 0 {
-		return false
+// AutoPickable reports whether a ranked list has a candidate worth
+// grabbing without asking: an anchored request with a tracklist behind
+// it, and a candidate that clears the match and quality bars inside the
+// user's guardrails.
+//
+// **It does not require the winner to be better than the runner-up.**
+// It used to demand 0.08 of daylight on the combined score, which meant
+// the check fired hardest in the case it was never written for: a
+// popular album turns up five *correct* copies, all matching the
+// tracklist at 95%+ and differing only in format and seeders, their
+// scores land within a point of each other, and auto-pick refused
+// forever on the grounds that the choice was the user's.  It was not.
+// There was no question about *what* to fetch, only about which copy —
+// and abundance is the one condition under which that question matters
+// least.  A candidate does not need to be the best one, only one that
+// meets the criteria; where several do, `Rank` puts the one closest to
+// the preferred bitrate first.
+func AutoPickable(dl Download, ranked []Candidate, prefs AutoDownloadPrefs) bool {
+	return AutoPickVeto(dl, ranked, prefs) == ""
+}
+
+// AutoPickVeto returns the reason auto-pick declined, or "" when it
+// would go ahead.
+//
+// It exists because "it rejected all of them" was indistinguishable
+// from "it found nothing good".  The request list's message was built
+// from `ranked[0]` — the best candidate *before* the size and format
+// guardrails, and before the lead check — so a request refused because
+// the user's maximum size excluded every copy, or because three equally
+// good copies were found, reported "best of 12 found is not a confident
+// enough match (match 96%, quality 88%)".  Numbers that clear both
+// thresholds, beside a refusal, is a message that teaches the user the
+// matcher is broken.  Each gate names itself now.
+func AutoPickVeto(
+	dl Download,
+	ranked []Candidate,
+	prefs AutoDownloadPrefs,
+) string {
+	if len(ranked) == 0 {
+		return "nothing found"
+	}
+
+	if !dl.Anchored() {
+		return "the request is free text, so there is no release to be right about"
 	}
 
 	// An anchor with no tracklist behind it is an anchor in name only:
@@ -474,29 +697,42 @@ func AutoPickable(dl Download, ranked []Candidate, prefs AutoDownloadPrefs) bool
 	// is exactly the evidence a wrong-album candidate also has.  This
 	// matters most for the request list, where nobody is watching.
 	if len(dl.Expected) == 0 {
-		return false
+		return "no tracklist for this release is known yet, so a candidate cannot be checked against it"
 	}
 
-	// The guardrails apply before the match/quality/lead checks: a
-	// candidate outside the allowed size or format is not a worse
-	// choice, it is not a choice auto-pick may make at all, so it must
-	// not count as "the winner" nor as "second place" for the lead
-	// check below.
-	eligible := prefs.filter(ranked)
+	// The guardrails apply before the match and quality checks: a
+	// candidate outside the allowed bitrate, size or format is not a
+	// worse choice, it is not a choice auto-pick may make at all, so it
+	// must not count as "the winner" either.
+	eligible := prefs.filter(ranked, dl.runtimeMillis())
 	if len(eligible) == 0 {
-		return false
+		return fmt.Sprintf(
+			"all %d found are outside the auto-download bitrate, size or format limits",
+			len(ranked),
+		)
 	}
 
 	best := eligible[0]
-	if best.Match.Overall < minMatch || best.Quality.Overall < minQuality {
-		return false
+
+	if best.Match.Overall < minMatch {
+		return fmt.Sprintf(
+			"best of %d found matches this release only %.0f%% (needs %.0f%%)",
+			len(ranked),
+			best.Match.Overall*100, //nolint:mnd // percent
+			minMatch*100,           //nolint:mnd // percent
+		)
 	}
 
-	if len(eligible) > 1 && best.Score-eligible[1].Score < minLead {
-		return false
+	if best.Quality.Overall < minQuality {
+		return fmt.Sprintf(
+			"best of %d found is the right release but scores %.0f%% on quality (needs %.0f%%)",
+			len(ranked),
+			best.Quality.Overall*100, //nolint:mnd // percent
+			minQuality*100,           //nolint:mnd // percent
+		)
 	}
 
-	return true
+	return ""
 }
 
 // mergeMatched copies MatchedTo assignments from the audio-only slice

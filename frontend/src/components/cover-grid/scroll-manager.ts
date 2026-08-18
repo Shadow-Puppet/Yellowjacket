@@ -6,12 +6,21 @@ import type { LibraryController } from '@store/controllers/library-controller';
 import type { GridEntry } from './cover-grid-types.js';
 
 /**
- * Grid spacing constants shared between the scroll
- * manager and the host component.
+ * Grid geometry, asked of the host rather than written down.
+ *
+ * These were two constants, `GRID_GAP` and `GRID_PADDING`, which stopped
+ * describing anything the moment the grid's spacing became elastic: the
+ * gap, the padding and the column count are all derived from the
+ * container width now, and a scroll position rebuilt from a stale 8px
+ * lands in the wrong row.
  */
 export interface GridConstants {
-    readonly GRID_GAP: number;
-    readonly GRID_PADDING: number;
+    /** Columns that fit across `width`. */
+    columnsFor(width: number): number;
+
+    /** The spacing `width` produces — between columns, between rows,
+     *  and around the outside, all the same number. */
+    spacingFor(width: number): number;
 }
 
 /**
@@ -275,8 +284,8 @@ export class ScrollManager {
                 return;
             }
 
-            const gap = this.gc.GRID_GAP;
-            const pad = this.gc.GRID_PADDING;
+            const gap = this.spacing(container);
+            const pad = gap;
             const rowStep =
                 this.host.cardHeight + gap;
 
@@ -293,7 +302,7 @@ export class ScrollManager {
             () => {
                 const rowStep =
                     this.host.cardHeight +
-                    this.gc.GRID_GAP;
+                    this.spacing(container);
 
                 if (this.pendingFocus === null) {
                     this.isResizing = true;
@@ -351,7 +360,7 @@ export class ScrollManager {
         container: HTMLElement,
         rowStep: number,
     ): void {
-        const pad = this.gc.GRID_PADDING;
+        const pad = this.spacing(container);
         const cols = this.currentColumnCount;
         const filtered =
             this.host.cachedFilteredAlbums;
@@ -410,17 +419,15 @@ export class ScrollManager {
     ): number {
         if (!container) return 1;
 
-        const gap = this.gc.GRID_GAP;
-        const pad = this.gc.GRID_PADDING;
-        const availableWidth =
-            container.clientWidth - pad * 2;
+        return this.gc.columnsFor(
+            container.clientWidth,
+        );
+    }
 
-        return Math.max(
-            1,
-            Math.floor(
-                (availableWidth + gap) /
-                    (this.host.cardWidth + gap),
-            ),
+    /** The grid's current spacing, which is also its padding. */
+    private spacing(container?: HTMLElement): number {
+        return this.gc.spacingFor(
+            container?.clientWidth ?? 800,
         );
     }
 
@@ -439,7 +446,7 @@ export class ScrollManager {
         container?: HTMLElement,
     ): number {
         const cols = this.getColumnCount(container);
-        const gap = this.gc.GRID_GAP;
+        const gap = this.spacing(container);
 
         return (
             cols * this.host.cardWidth +
@@ -460,7 +467,7 @@ export class ScrollManager {
 
         const cols = this.getColumnCount(container);
         const colIndex = idx % cols;
-        const gap = this.gc.GRID_GAP;
+        const gap = this.spacing(container);
 
         return (
             colIndex *
@@ -597,8 +604,8 @@ export class ScrollManager {
 
         if (!this.host.splitMode) return raw;
 
-        const gap = this.gc.GRID_GAP;
-        const pad = this.gc.GRID_PADDING;
+        const gap = this.spacing(container);
+        const pad = gap;
         const columns =
             this.getColumnCount(container);
         const rowStep = this.host.cardHeight + gap;
@@ -678,8 +685,8 @@ export class ScrollManager {
 
         if (expandedIndex < 0) return;
 
-        const gap = this.gc.GRID_GAP;
-        const pad = this.gc.GRID_PADDING;
+        const gap = this.spacing(container);
+        const pad = gap;
         const columns =
             this.getColumnCount(container);
         const rowStep = this.host.cardHeight + gap;
@@ -772,8 +779,8 @@ export class ScrollManager {
 
         if (idx < 0) return;
 
-        const gap = this.gc.GRID_GAP;
-        const pad = this.gc.GRID_PADDING;
+        const gap = this.spacing(container);
+        const pad = gap;
         const cols =
             this.getColumnCount(container);
         const rowStep = this.host.cardHeight + gap;
@@ -854,9 +861,8 @@ export class ScrollManager {
                         this.getExpandedAlbumIndex();
 
                     if (idx >= 0) {
-                        const gap = this.gc.GRID_GAP;
-                        const pad =
-                            this.gc.GRID_PADDING;
+                        const gap = this.spacing(container);
+                        const pad = gap;
                         const cols =
                             this.getColumnCount(
                                 container,

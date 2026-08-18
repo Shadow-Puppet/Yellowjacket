@@ -25,8 +25,26 @@ const (
 	// where cached cover art thumbnails are stored.
 	thumbnailDir = CoverArtCacheDirName
 
-	// thumbnailTimeout is the HTTP timeout for fetching a thumbnail.
-	thumbnailTimeout = 10 * time.Second
+	// thumbnailTimeout is the HTTP timeout for fetching a thumbnail,
+	// and it has to cover a redirect the Cover Art Archive does not
+	// serve itself.
+	//
+	// `coverartarchive.org` answers `front-250` with a 307 to an
+	// Internet Archive storage node (`dn######.us.archive.org`), and
+	// those nodes are routinely slow: measured against the twelve
+	// albums on Explore's own shelves, a successful fetch took 14–16 s
+	// and a failing one 13–17 s. At 10 s *every* cover on the page
+	// timed out — 24 cards, 5 of which had art, all of those from the
+	// disk cache — which reads as "Explore has no album art" rather
+	// than as a slow upstream, because a timeout writes nothing and
+	// says nothing.
+	//
+	// 30 s is chosen to clear that measured range with room, not to be
+	// generous: the fetch is off the critical path (each one is its own
+	// goroutine behind an 8/s limiter, and the frontend renders a
+	// placeholder until it lands), so the cost of waiting is nothing
+	// and the cost of giving up early is a blank page.
+	thumbnailTimeout = 30 * time.Second
 
 	// thumbnailMaxSize is the maximum image size to cache (2 MB).
 	thumbnailMaxSize = 2 * 1024 * 1024
@@ -94,6 +112,20 @@ func (p *CoverArtProxy) GetThumbnail(
 	}
 
 	if p.cacheDir == "" || releaseGroupMBID == "" {
+		return ""
+	}
+
+	// A 404 is an answer, and it is already on disk.
+	//
+	// `writeCache(mbid, nil)` has recorded "the archive has no art for
+	// this" as an empty file since this was written, and nothing has
+	// ever read it back: `readCache` returns "" for an empty file,
+	// which is indistinguishable from a miss, so every art-less release
+	// group was re-fetched from the network on every render that asked
+	// about it. On Explore's shelves a third of the cards are art-less,
+	// so that was a third of the page spending a live CAA request to be
+	// told again what the last one said.
+	if p.knownMissing(releaseGroupMBID) {
 		return ""
 	}
 
@@ -177,8 +209,9 @@ func (p *CoverArtProxy) GetCandidateThumbnail(
 		}
 	}
 
-	// Network fetch on release group.
-	if releaseGroupMBID != "" {
+	// Network fetch on release group — unless a previous one was told
+	// there is none. See `knownMissing`.
+	if releaseGroupMBID != "" && !p.knownMissing(releaseGroupMBID) {
 		url := CoverArtGroupURL(releaseGroupMBID)
 		data, cacheable, err := p.fetch(url)
 
@@ -194,7 +227,7 @@ func (p *CoverArtProxy) GetCandidateThumbnail(
 	}
 
 	// Network fetch on release (fallback).
-	if releaseMBID != "" {
+	if releaseMBID != "" && !p.knownMissing(releaseMBID) {
 		url := CoverArtURL(releaseMBID)
 		data, cacheable, err := p.fetch(url)
 
@@ -283,6 +316,17 @@ func (p *CoverArtProxy) fetch(url string) ([]byte, bool, error) {
 
 func (p *CoverArtProxy) cachePath(mbid string) string {
 	return filepath.Join(p.cacheDir, mbid+".jpg")
+}
+
+// knownMissing reports whether a previous fetch was told the archive
+// has no art for this MBID — the empty file `writeCache(mbid, nil)`
+// leaves behind. It is deliberately separate from `readCache`, which
+// answers "what are the bytes" and cannot express the difference
+// between no answer and an answer of none.
+func (p *CoverArtProxy) knownMissing(mbid string) bool {
+	info, err := os.Stat(p.cachePath(mbid))
+
+	return err == nil && info.Size() == 0
 }
 
 func (p *CoverArtProxy) readCache(mbid string) string {

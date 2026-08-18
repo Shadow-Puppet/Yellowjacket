@@ -7,7 +7,7 @@ import { test, expect, callBinding } from '../support/fixtures.js';
  * and produced two: every one of the eight call sites was a two-way
  * ternary, so an album already on the request list showed a plus and
  * said "is not in your library" — on the same page, forty pixels from a
- * filled button reading "Wanted".
+ * filled button reading "Requested".
  *
  * This spec exists at this tier rather than only in the component one
  * because of what it drags in with it: reaching the requested state is
@@ -181,7 +181,7 @@ test.describe('the requested badge', () => {
             const ds = document.querySelector('explore-album-details')
               ?.shadowRoot;
             const btn = [...(ds?.querySelectorAll('wa-button') ?? [])].find(
-              (b) => /Wanted/.test(b.textContent ?? ''),
+              (b) => /Requested/.test(b.textContent ?? ''),
             );
 
             return btn?.querySelector('wa-icon')?.getAttribute('name') ?? '';

@@ -1756,7 +1756,7 @@ export class PlaylistView extends ViewLifecycleMixin(LitElement) {
                     ${entry.summary.ID === this.favCtrl.playlistId
                         ? html`<wa-icon
                               class="playlist-icon"
-                              name=${this.favCtrl.iconName}
+                              name=${this.favCtrl.iconFor(true)}
                           ></wa-icon>`
                         : entry.summary.IsSmart
                           ? html`<wa-icon

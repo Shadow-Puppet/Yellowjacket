@@ -36,13 +36,24 @@ func newServiceFixture(t *testing.T) serviceFixture {
 	// assertion read it; the second is that same goroutine still writing
 	// into `t.TempDir()` after the test returned. One cause, two shapes.
 	//
-	// Putting the candidate outside the auto-pick size window stops the
+	// Putting the candidate outside the auto-pick guardrails stops the
 	// grab from ever starting, which is better than waiting for it: there
 	// is no goroutine to be slow, so the tests state what they mean
 	// ("the request exists, in this state") without a timing assumption
 	// underneath. A test that does want the download has `managerFixture`
 	// and sets its own preferences.
-	mf.manager.SetPreferences(AutoDownloadPrefs{MaxSizeMB: 1})
+	//
+	// The guard is a *format* the fake never produces, and it used to be
+	// `MaxSizeMB: 1`, which never fired: the size gates read
+	// `Candidate.TotalSize`, which real providers fill and the fake
+	// leaves at zero, and zero is under every ceiling. So the grab went
+	// ahead anyway and the second failure shape above — the TempDir
+	// cleanup race — kept happening, reproducibly, roughly one run in
+	// fifteen. A guard has to be keyed on something the fixture
+	// actually sets.
+	mf.manager.SetPreferences(AutoDownloadPrefs{
+		AllowedFormats: []Format{FormatWMA},
+	})
 
 	return serviceFixture{managerFixture: mf, svc: svc}
 }
@@ -181,6 +192,11 @@ func TestManualDownloadSatisfiesRequestOnSuccess(t *testing.T) {
 
 	f := newServiceFixture(t)
 	ctx := context.Background()
+
+	// This is the one test here that is *about* the download, so it
+	// undoes the fixture's guard rather than relying on it — which is
+	// what it was doing implicitly while the guard did not work.
+	f.manager.SetPreferences(AutoDownloadPrefs{})
 
 	provider := fakeWithAlbum(1, "source", ".flac")
 	f.manager.installProvider(Config{ID: 1, Priority: 50}, provider)

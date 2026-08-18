@@ -307,7 +307,7 @@ export class NowPlayingView extends LitElement {
                         : `Add ${track.title} to ${this.favCtrl.playlistName}`}
                     @click=${this.toggleFavorite}
                 >
-                    <wa-icon name=${this.favCtrl.iconName}></wa-icon>
+                    <wa-icon name=${this.favCtrl.iconFor(favorited)}></wa-icon>
                 </button>
             </div>
 
