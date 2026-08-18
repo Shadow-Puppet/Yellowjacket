@@ -42,6 +42,13 @@ jobs:
 
     steps:
       - name: Drop the claim label
+        # **Inside a container the act runner selects `sh`, not bash**, so
+        # `set -o pipefail` fails the job on its second line with "Illegal
+        # option" and the step never reaches the API.  `homebrew-formula.yml`
+        # carries the same `set -euo pipefail` without trouble because it
+        # runs with **no container**, on the host image where bash is the
+        # default — so "another workflow does it" is not evidence here.
+        shell: bash
         env:
           # The automatic Actions token, as release.yml uses for the
           # floor tag.  It needs no more than write access to this repo.
