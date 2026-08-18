@@ -2680,7 +2680,7 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
                     slot="start"
                     name=${this.isRequested ? 'solid/bookmark' : 'regular/bookmark'}
                 ></wa-icon>
-                ${this.isRequested ? 'Wanted' : 'Want this'}
+                ${this.isRequested ? 'Requested' : 'Request this'}
             </wa-button>
         `;
     }

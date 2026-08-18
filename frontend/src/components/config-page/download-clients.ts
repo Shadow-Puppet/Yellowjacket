@@ -86,9 +86,10 @@ export class DownloadClients extends LitElement {
     /** Working copy of the auto-download guardrails. */
     @state()
     private prefs: download.AutoDownloadPrefs = {
-        minSizeMb: 0,
+        minKbps: 0,
+        maxKbps: 0,
+        preferredKbps: 0,
         maxSizeMb: 0,
-        preferredSizeMb: 0,
         allowedFormats: [],
     } as download.AutoDownloadPrefs;
 
@@ -284,25 +285,72 @@ export class DownloadClients extends LitElement {
                     : nothing}
 
                 <div class="form">
+                    <!-- Bitrate, not megabytes.  A size means nothing
+                         on its own: 300 MB is a generous single and a
+                         suspiciously small boxset, and whoever fills
+                         this in has no idea which release it will be
+                         applied to.  A rate is the same statement
+                         divided by how long the music is, so one number
+                         holds across an EP and an opera. -->
                     <div class="field-row">
                         <wa-input
-                            label="Minimum size (MB)"
+                            label="Minimum bitrate (kbps)"
                             type="number"
                             min="0"
                             placeholder="No minimum"
-                            .value=${this.prefs.minSizeMb ? String(this.prefs.minSizeMb) : ''}
+                            .value=${this.prefs.minKbps ? String(this.prefs.minKbps) : ''}
                             @input=${(e: Event) => {
                                 this.prefs = {
                                     ...this.prefs,
-                                    minSizeMb: Number((e.target as HTMLInputElement).value) || 0,
+                                    minKbps: Number((e.target as HTMLInputElement).value) || 0,
                                 };
                             }}
                         ></wa-input>
                         <wa-input
-                            label="Maximum size (MB)"
+                            label="Maximum bitrate (kbps)"
                             type="number"
                             min="0"
                             placeholder="No maximum"
+                            .value=${this.prefs.maxKbps ? String(this.prefs.maxKbps) : ''}
+                            @input=${(e: Event) => {
+                                this.prefs = {
+                                    ...this.prefs,
+                                    maxKbps: Number((e.target as HTMLInputElement).value) || 0,
+                                };
+                            }}
+                        ></wa-input>
+                        <wa-input
+                            label="Preferred bitrate (kbps)"
+                            type="number"
+                            min="0"
+                            placeholder="No preference"
+                            .value=${this.prefs.preferredKbps
+                                ? String(this.prefs.preferredKbps)
+                                : ''}
+                            @input=${(e: Event) => {
+                                this.prefs = {
+                                    ...this.prefs,
+                                    preferredKbps:
+                                        Number((e.target as HTMLInputElement).value) || 0,
+                                };
+                            }}
+                        ></wa-input>
+                    </div>
+
+                    <div class="requires">
+                        320 is the top of MP3; a FLAC rip is usually
+                        500–1000 depending on the music. Preferred
+                        decides between copies that are otherwise equally
+                        good — it never rules one out, which is what the
+                        minimum and maximum are for.
+                    </div>
+
+                    <div class="field-row">
+                        <wa-input
+                            label="Never grab more than (MB)"
+                            type="number"
+                            min="0"
+                            placeholder="No limit"
                             .value=${this.prefs.maxSizeMb ? String(this.prefs.maxSizeMb) : ''}
                             @input=${(e: Event) => {
                                 this.prefs = {
@@ -311,22 +359,14 @@ export class DownloadClients extends LitElement {
                                 };
                             }}
                         ></wa-input>
-                        <wa-input
-                            label="Preferred size (MB)"
-                            type="number"
-                            min="0"
-                            placeholder="No preference"
-                            .value=${this.prefs.preferredSizeMb
-                                ? String(this.prefs.preferredSizeMb)
-                                : ''}
-                            @input=${(e: Event) => {
-                                this.prefs = {
-                                    ...this.prefs,
-                                    preferredSizeMb:
-                                        Number((e.target as HTMLInputElement).value) || 0,
-                                };
-                            }}
-                        ></wa-input>
+                    </div>
+
+                    <div class="requires">
+                        A ceiling on the download itself, in case a
+                        mislabelled boxset gets through. Still a size
+                        because it is a question about disk space, and
+                        because it has to apply to a candidate whose
+                        bitrate cannot be worked out at all.
                     </div>
 
                     <div>

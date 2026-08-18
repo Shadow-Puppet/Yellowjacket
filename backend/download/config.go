@@ -34,13 +34,29 @@ type UserConfig struct {
 	// in one burst that every provider sees as a flood.
 	WantedBatch int `toml:"WantedBatch"`
 
-	// MinFileSizeMB, MaxFileSizeMB and PreferredFileSizeMB bound and
-	// nudge what auto-pick (interactive or via the request list) may
-	// grab without asking.  Zero on any of them is permissive: see
-	// AutoDownloadPrefs.
-	MinFileSizeMB       int `toml:"MinFileSizeMB"`
-	MaxFileSizeMB       int `toml:"MaxFileSizeMB"`
-	PreferredFileSizeMB int `toml:"PreferredFileSizeMB"`
+	// MinKbps, MaxKbps and PreferredKbps bound and nudge what auto-pick
+	// (interactive or via the request list) may grab without asking.
+	// Zero on any of them is permissive: see AutoDownloadPrefs.
+	//
+	// They replaced MinFileSizeMB / MaxFileSizeMB /
+	// PreferredFileSizeMB, which were megabytes and so said nothing
+	// without knowing how long the release was.  The old keys are
+	// deliberately *not* read back: a number that meant "300 MB" cannot
+	// be reinterpreted as a bitrate without knowing the album it was
+	// aimed at, so migrating it would be inventing an intent the user
+	// never expressed.  An existing config falls back to no window,
+	// which is the permissive default and matches a fresh install —
+	// and MaxFileSizeMB is the one that does carry over, because a
+	// ceiling on total bytes still means exactly what it did.
+	MinKbps       int `toml:"MinKbps"`
+	MaxKbps       int `toml:"MaxKbps"`
+	PreferredKbps int `toml:"PreferredKbps"`
+
+	// MaxFileSizeMB is a hard ceiling on a candidate's total size, kept
+	// in megabytes on purpose — it is a question about disk space, not
+	// about quality, and it has to apply to a candidate whose bitrate
+	// cannot be worked out at all.
+	MaxFileSizeMB int `toml:"MaxFileSizeMB"`
 
 	// AllowedFormats restricts auto-pick to these formats.  Empty means
 	// no restriction.  Values are Format strings ("flac", "mp3", ...).
@@ -56,10 +72,11 @@ func (c *UserConfig) AutoDownloadPrefs() AutoDownloadPrefs {
 	}
 
 	return AutoDownloadPrefs{
-		MinSizeMB:       c.MinFileSizeMB,
-		MaxSizeMB:       c.MaxFileSizeMB,
-		PreferredSizeMB: c.PreferredFileSizeMB,
-		AllowedFormats:  formats,
+		MinKbps:        c.MinKbps,
+		MaxKbps:        c.MaxKbps,
+		PreferredKbps:  c.PreferredKbps,
+		MaxSizeMB:      c.MaxFileSizeMB,
+		AllowedFormats: formats,
 	}
 }
 

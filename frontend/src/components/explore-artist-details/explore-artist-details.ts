@@ -2753,7 +2753,7 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
                               slot="icon"
                               name=${requested ? 'xmark' : 'bookmark'}
                           ></wa-icon>
-                          ${requested ? 'Cancel Request' : 'Want This'}
+                          ${requested ? 'Cancel Request' : 'Request This'}
                       </wa-dropdown-item>
                   `
                 : nothing}

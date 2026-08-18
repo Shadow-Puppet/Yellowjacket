@@ -10,6 +10,7 @@ import type {
     VisibilityChangedEvent,
 } from '@lit-labs/virtualizer';
 import { grid } from '@lit-labs/virtualizer/layouts/grid.js';
+import { gridSpacingFor } from '@utils/grid-spacing';
 import {
     GetAlbumsByArtist,
     GetFilePathsByAlbums,
@@ -147,8 +148,6 @@ export class ArtistsView
 
     // ----- Grid spacing constants -----
 
-    private static readonly GRID_GAP = 8;
-    private static readonly GRID_PADDING = 8;
     private static readonly CARD_PADDING = 5;
 
     private get imageSize(): number {
@@ -177,18 +176,39 @@ export class ArtistsView
     private createGridLayout() {
         const w = this.cardSize ?? CARD_SIZE_DEFAULT;
         const h = w + this.cardTextHeight;
-        const gap = ArtistsView.GRID_GAP;
-        const pad = ArtistsView.GRID_PADDING;
+
+        // One number for the gap, the row gap and the padding: whatever
+        // a row could not spend on another card, shared out equally, so
+        // the outside is never wider than the inside.  See
+        // `utils/grid-spacing.ts`.
+        const spacing = this.spacingFor(this.containerWidth);
+
+        this.lastLayoutSpacing = spacing;
 
         return grid({
             itemSize: {
                 width: `${w}px`,
                 height: `${h}px`,
             },
-            gap: `${gap}px`,
-            padding: `${pad}px`,
-            justify: 'center',
+            gap: `${spacing}px`,
+            padding: `${spacing}px`,
+            justify: 'start',
         });
+    }
+
+    /** The width the grid lays itself out in. */
+    private get containerWidth(): number {
+        return (
+            this.renderRoot?.querySelector<HTMLElement>(
+                '.grid-scroll-container',
+            )?.clientWidth ||
+            this.clientWidth ||
+            0
+        );
+    }
+
+    private spacingFor(width: number): number {
+        return gridSpacingFor(width, this.cardSize);
     }
 
     /** Sort direction for the artist grid.
@@ -478,6 +498,8 @@ export class ArtistsView
     override disconnectedCallback() {
         super.disconnectedCallback();
         this.detachWheelListener();
+        this.gridResizeObserver?.disconnect();
+        this.gridResizeObserver = null;
     }
 
     /** The wheel listener and the scroll debounce belong to the grid
@@ -730,10 +752,34 @@ export class ArtistsView
      * ================================================================ */
 
     private lastLayoutWidth = 0;
+    private lastLayoutSpacing = 0;
+
+    /** Watches the scroller so a window resize rebuilds the layout:
+     *  the spacing is derived from its width, and nothing else asks
+     *  this view to update when only that changes. */
+    private gridResizeObserver: ResizeObserver | null = null;
+
+    private observeGridWidth() {
+        const container =
+            this.renderRoot?.querySelector<HTMLElement>(
+                '.grid-scroll-container',
+            );
+
+        if (!container || this.gridResizeObserver) return;
+
+        this.gridResizeObserver = new ResizeObserver(() =>
+            this.requestUpdate(),
+        );
+        this.gridResizeObserver.observe(container);
+    }
 
     private updateGridLayout() {
+        this.observeGridWidth();
+
         if (
-            this.cardSize === this.lastLayoutWidth
+            this.cardSize === this.lastLayoutWidth &&
+            this.lastLayoutSpacing ===
+                this.spacingFor(this.containerWidth)
         ) {
             return;
         }

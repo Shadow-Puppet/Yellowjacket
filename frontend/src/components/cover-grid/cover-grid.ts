@@ -19,6 +19,7 @@ import { LibraryController } from '@store/controllers/library-controller';
 import { SearchController } from '@store/controllers/search-controller';
 import { ViewLifecycleMixin } from '@utils/view-lifecycle';
 import { RovingGridController } from '@utils/roving-grid';
+import { gridColumnsFor, gridSpacingFor } from '@utils/grid-spacing';
 import { queueStore } from '@store/queue-store';
 import type { QueueSource } from '@store/queue-store';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
@@ -97,18 +98,35 @@ export class CoverGrid
     private lastAlbumsRef: library.Album[] | null =
         null;
 
-    // Fixed grid spacing constants.
-    private static readonly GRID_GAP = 8;
-    private static readonly GRID_PADDING = 8;
     private static readonly CARD_PADDING = 5;
 
     private ctxMenu = new ContextMenuController(this);
     private favCtrl = new FavoritesController(this);
     private selMgr = new AlbumSelectionManager();
     private scrollMgr = new ScrollManager(this, {
-        GRID_GAP: CoverGrid.GRID_GAP,
-        GRID_PADDING: CoverGrid.GRID_PADDING,
+        columnsFor: (width: number) => this.columnsFor(width),
+        spacingFor: (width: number) => this.spacingFor(width),
     });
+
+    /**
+     * How many cards fit across `width`, by the same arithmetic the
+     * virtualizer's `space-evenly` grid uses — no gap and no padding
+     * are reserved, because both come out of what is left over.
+     *
+     * The scroll manager restores a position by rebuilding the grid's
+     * geometry, so this and `spacingFor` must agree with the layout
+     * rather than approximate it; they were two constants that no
+     * longer describe anything once the spacing became elastic.
+     */
+    columnsFor(width: number): number {
+        return gridColumnsFor(width, this.cardWidth);
+    }
+
+    /** The spacing that width produces: between columns, between rows,
+     *  and around the outside, all the same number. */
+    spacingFor(width: number): number {
+        return gridSpacingFor(width, this.cardWidth);
+    }
 
     private lastSelectedAlbumIndex: number | null = null;
     private lastSelectedTrackIndex: number | null = null;
@@ -148,9 +166,29 @@ export class CoverGrid
     }
 
     // Virtualizer grid layout instance — recreated when
-    // the card size changes.
+    // the card size or the container width changes.
     private gridLayout = this.createGridLayout();
     private gridLayoutWidth = 0;
+
+    /** The spacing the current layouts were built with. */
+    private gridLayoutSpacing = 0;
+
+    /** Watches the scroll container so a window resize rebuilds the
+     *  layout: the spacing is derived from its width, and nothing else
+     *  asks this component to update when only that changes. */
+    private gridResizeObserver: ResizeObserver | null =
+        null;
+
+    private observeGridWidth(): void {
+        const container = this.scrollContainer;
+
+        if (!container || this.gridResizeObserver) return;
+
+        this.gridResizeObserver = new ResizeObserver(
+            () => this.requestUpdate(),
+        );
+        this.gridResizeObserver.observe(container);
+    }
 
     /**
      * Secondary layout for the "after" virtualizer in
@@ -169,20 +207,47 @@ export class CoverGrid
         }
 
         const h = w + this.cardTextHeight;
-        const gap = CoverGrid.GRID_GAP;
-        const pad = CoverGrid.GRID_PADDING;
+
+        // The spacing is whatever the row could not spend on another
+        // card, shared out equally — so it is the same number between
+        // two cards, between two rows, and down each outside edge.
+        // See `utils/grid-spacing.ts` for why it is computed rather
+        // than handed to the virtualizer as `space-evenly`.
+        const spacing = this.spacingFor(
+            this.containerWidth,
+        );
+
+        if (!noTopPad) {
+            this.gridLayoutSpacing = spacing;
+        }
 
         return grid({
             itemSize: {
                 width: `${w}px`,
                 height: `${h}px`,
             },
-            gap: `${gap}px`,
+            gap: `${spacing}px`,
             padding: noTopPad
-                ? `0 ${pad}px ${pad}px`
-                : `${pad}px`,
-            justify: 'center',
+                ? `0 ${spacing}px ${spacing}px`
+                : `${spacing}px`,
+            justify: 'start',
         });
+    }
+
+    /**
+     * The width the grid lays itself out in.
+     *
+     * Read from the scroll container when there is one; before the
+     * first render there is not, and the fallback only has to be
+     * plausible — the layout is rebuilt from the real width as soon as
+     * one exists.
+     */
+    private get containerWidth(): number {
+        return (
+            this.scrollContainer?.clientWidth ||
+            this.clientWidth ||
+            0
+        );
     }
 
     private dragImageEl: HTMLElement | null = null;
@@ -466,6 +531,9 @@ export class CoverGrid
         );
         this.wheelListenerAttached = false;
 
+        this.gridResizeObserver?.disconnect();
+        this.gridResizeObserver = null;
+
         this.scrollMgr.teardown();
         this.scrollMgr.revealContainer(
             this.scrollContainer,
@@ -603,10 +671,18 @@ export class CoverGrid
             this.wheelListenerAttached = true;
         }
 
-        // Recreate the virtualizer grid layout when
-        // the card size changes.
+        this.observeGridWidth();
+
+        // Recreate the virtualizer grid layout when the card size
+        // changes — or when the spacing the container width produces
+        // does, since that is now a derived number rather than a
+        // constant.  Keyed on the spacing rather than on the width, or
+        // every pixel of a drag rebuilds a layout that would come out
+        // the same.
         const cardSizeChanged =
-            this.gridLayoutWidth !== this.cardWidth;
+            this.gridLayoutWidth !== this.cardWidth ||
+            this.gridLayoutSpacing !==
+                this.spacingFor(this.containerWidth);
 
         if (cardSizeChanged) {
             this.gridLayout = this.createGridLayout();

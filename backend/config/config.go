@@ -411,9 +411,10 @@ func (c *Config) SetDownloadPreferences(prefs download.AutoDownloadPrefs) error 
 		formats = append(formats, string(f))
 	}
 
-	c.Downloads.MinFileSizeMB = prefs.MinSizeMB
+	c.Downloads.MinKbps = prefs.MinKbps
+	c.Downloads.MaxKbps = prefs.MaxKbps
+	c.Downloads.PreferredKbps = prefs.PreferredKbps
 	c.Downloads.MaxFileSizeMB = prefs.MaxSizeMB
-	c.Downloads.PreferredFileSizeMB = prefs.PreferredSizeMB
 	c.Downloads.AllowedFormats = formats
 
 	if err := c.Save(); err != nil {
