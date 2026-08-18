@@ -302,7 +302,12 @@ type QualityScore struct {
 	Bitrate    float64 `json:"bitrate"`
 	Health     float64 `json:"health"`   // seeders, free slots
 	Priority   float64 `json:"priority"` // user's per-provider preference
-	SizeFit    float64 `json:"sizeFit"`  // closeness to the preferred download size
+	// BitrateFit is closeness to the preferred *rate*, which is what
+	// the auto-download window is expressed in.  It replaced a
+	// `SizeFit` measured in megabytes: a size means nothing without
+	// knowing how long the music is, so the same number described a
+	// generous single and a suspiciously small boxset.
+	BitrateFit float64 `json:"bitrateFit"`
 
 	// Mixed marks a candidate whose files are not all the same format,
 	// which usually means a hand-assembled folder rather than a rip.

@@ -236,6 +236,12 @@ func (m *Manager) AutoPickable(dl Download, ranked []Candidate) bool {
 	return AutoPickable(dl, ranked, m.preferences())
 }
 
+// AutoPickVeto wraps the package function the same way, and is what the
+// request list quotes back to the user.
+func (m *Manager) AutoPickVeto(dl Download, ranked []Candidate) string {
+	return AutoPickVeto(dl, ranked, m.preferences())
+}
+
 // Reload rebuilds every provider from stored config.  Called at startup
 // and after any provider settings change.
 //
@@ -612,16 +618,8 @@ func (m *Manager) Attempt(
 		return false, "", err
 	}
 
-	if !m.AutoPickable(dl, ranked) {
-		best := ranked[0]
-
-		return false, fmt.Sprintf(
-			"best of %d found is not a confident enough match "+
-				"(match %.0f%%, quality %.0f%%)",
-			len(ranked),
-			best.Match.Overall*100, //nolint:mnd // percent
-			best.Quality.Overall*100,
-		), nil
+	if veto := m.AutoPickVeto(dl, ranked); veto != "" {
+		return false, veto, nil
 	}
 
 	if err := m.store.CreateDownload(ctx, dl); err != nil {
