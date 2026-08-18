@@ -74,12 +74,36 @@ export class FavoritesController
     }
 
     /**
-     * Returns the icon name for the current icon style.
+     * The icon name for the current icon style, unfilled.
+     *
+     * Prefer `iconFor(isFav)` — this getter is the name of the *empty*
+     * glyph, which is what every caller that does not know the state
+     * should draw.
      */
     get iconName(): string {
-        return this.iconStyle === 'star'
-            ? 'star'
-            : 'heart';
+        return this.iconFor(false);
+    }
+
+    /**
+     * The glyph for one track's favourite state.
+     *
+     * **A filled shape means favourited and an outline means not**, in
+     * every list in the app. Nine components rendered `iconName`, which
+     * was the *solid* glyph in both states — so "not a favourite" was a
+     * filled heart in a duller colour, and the only thing separating
+     * the two states was hue. That fails for anyone who cannot see the
+     * difference between them, and reads as "everything is a favourite"
+     * to everyone else. `track-list` and `album-dropdown` already drew
+     * it correctly, from inline SVG paths of their own; this is the
+     * same rule for the `<wa-icon>` call sites.
+     *
+     * The Font Awesome family is part of the name — `regular/heart` is
+     * the outline, a bare `heart` is the solid one (`src/icons`).
+     */
+    iconFor(favorited: boolean): string {
+        const shape = this.iconStyle === 'star' ? 'star' : 'heart';
+
+        return favorited ? shape : `regular/${shape}`;
     }
 
     // ===============================================================

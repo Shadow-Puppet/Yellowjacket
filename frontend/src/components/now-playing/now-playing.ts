@@ -527,7 +527,7 @@ export class NowPlaying extends LitElement {
                       )}
                 >
                   <wa-icon
-                    name=${this.favCtrl.iconName}
+                    name=${this.favCtrl.iconFor(isFav)}
                     variant=${favVariant}
                   ></wa-icon>
                 </button>
