@@ -2027,13 +2027,31 @@ Pre-commit hooks verify generated code is fresh — always run `make generate` a
   two in step or semantic-release will decline to release something the
   check accepted.
 
-  `.releaserc.yml` is a complete semantic-release config that **nothing
-  currently runs** — no workflow invokes it, and `CHANGELOG.md` is not
-  being written by it. That is deliberate for now (wiring it means pushing
-  tags, committing a changelog back, and interacting with the three
-  publish workflows); it is recorded here rather than implied, because
-  this file claimed for five phases that commitlint gated CI and that
-  semantic release ran, and neither was true.
+  `.releaserc.yml` **is** what runs now, from `release.yml`, and it is why
+  the commit grammar is load-bearing rather than decorative: a merge to
+  `main` whose commits are all `chore`/`ci`/`docs` releases nothing, and a
+  mistyped `feat` ships a minor version. `make release-dry` answers "what
+  would this merge release" without pushing.
+
+  **`@semantic-release/github` is not in that config and must not be.**
+  Gitea's API is `/api/v1` and is not GitHub's surface, so
+  `@semantic-release/exec` calls `scripts/gitea-release.sh` instead — one
+  `POST`, which is the whole of the Gitea-shaped work. The community
+  plugin (`@saithodev/semantic-release-gitea`) was considered and
+  rejected: last published 2022, on `got@10`, declaring no peer
+  dependency on semantic-release at all.
+
+  Two things in it fail *silently* and are therefore pinned with their
+  reasons. **The notes come from `CHANGELOG.md`, not from an argument**:
+  release notes are rendered commit messages — arbitrary text carrying
+  backticks, quotes and `$` — so templating `${nextRelease.notes}` into
+  `publishCmd` would be a shell injection whose input is the commit log.
+  And **`conventional-changelog-conventionalcommits` is held at 9**,
+  because at 10 it is quietly incompatible with the writer
+  `release-notes-generator@14` pulls in: every release note renders as a
+  bare `## 0.0.1 (date)` heading with no sections and no commits beneath
+  it, no step fails, and the release ships with an empty body. Check the
+  rendered notes, never the exit code.
 
 ## Testing
 
@@ -2042,17 +2060,85 @@ Tests use `database.NewTestDB(t)` for in-memory SQLite, built by the same
 
 ## Git Workflow
 
-Feature branches and PRs are the norm, but direct pushes to `main` are allowed. Pre-commit runs vet, lint, codegen check, and frontend typecheck in parallel. Pre-push runs the full test suite.
+Feature branches and PRs are the only way in: **`main` is a protected
+branch** (`enable_push: false`, an empty push whitelist, and `CI / check*`
++ `CI / e2e*` as required status checks), so a direct push is rejected by
+the pre-receive hook. This file said otherwise for a long time. Tags are
+*not* protected, which is what lets `release.yml` push one.
+
+Pre-commit runs vet, lint, codegen check, and frontend typecheck in parallel. Pre-push runs the full test suite.
 
 ## CI
 
-Five workflows in `.gitea/workflows/`. Four of them package and
+Seven workflows in `.gitea/workflows/`. Five of them package and
 publish (`arch-package`, `homebrew-formula`, `index-artifact`,
-`android-apk`); only `ci.yml` gates, and it is the one to look at when
+`android-apk`, `desktop-assets`); `release.yml` decides *whether* four of
+those run at all; only `ci.yml` gates, and it is the one to look at when
 deciding whether a push was healthy.
 
-**`android-apk.yml` is the only one keyed on a tag and the only one
-that can lose something irrecoverable.** It builds the signed
+**`release.yml` is the entry point for all of it.** On every push to
+`main` it reads the Conventional Commits since the last tag and, if any
+is releasable, writes the changelog, pushes the tag and creates the Gitea
+release whose body is that changelog section. `arch-package`,
+`homebrew-formula`, `android-apk` and `desktop-assets` are all keyed on
+`v*`, so **the tag push is what starts them** — nothing is released by
+hand any more.
+
+Four things about it are load-bearing:
+
+- **The tag is pushed with a user PAT, not the Actions token.** Gitea,
+  like GitHub, does not start a workflow from a ref pushed by a
+  workflow's own token (go-gitea#33123). The token is what decides this,
+  so `PACKAGE_TOKEN` is handed to semantic-release as the
+  `repositoryUrl` credential and the push is attributed to a person.
+- **That same limitation is used deliberately, once.** semantic-release
+  calls the first release of a tagless repo `1.0.0` and offers no way to
+  say otherwise, so a `v0.0.0` floor tag is what makes the first release
+  `0.0.1` — and it is pushed with the *Actions* token precisely so it
+  triggers nothing. All four publishers additionally skip `v0.0.0`
+  explicitly, cleanly rather than by failing, because a floor is not a
+  shipment.
+- **The release page is the changelog, and that follows from the branch
+  protection.** `@semantic-release/git` would push a `chore(release):`
+  commit back to `main`, which the pre-receive hook rejects — *after* the
+  tag had been pushed, leaving a tagged release the run then reports as
+  failed. Whitelisting the CI user was the alternative and was declined:
+  it weakens a protection someone set on purpose and lets a bot push to
+  `main` without the checks every human PR passes. So the plugin is
+  absent, `@semantic-release/changelog` writes to a gitignored
+  `.release-notes.md` purely to carry the notes into
+  `scripts/gitea-release.sh`, and `CHANGELOG.md` is a signpost to the
+  releases page rather than a file that would silently stop updating.
+  The workflow keeps its `chore(release):` guard anyway, for the day
+  someone adds the plugin back.
+- **An asset upload waits for the release to exist.** semantic-release
+  pushes the tag in `prepare` and creates the release in `publish`, so
+  the tag push that starts these workflows happens *before* there is a
+  release id to attach to. `scripts/release-asset.sh` polls for it. The
+  capacity-1 runner serialises things enough that this would usually work
+  by accident, which is the worst kind of bug.
+
+**Releases restarted at `0.0.1`, which is a downgrade on every channel.**
+pacman and Homebrew both silently offer no upgrade from the old `1.x`,
+and Android refuses the install outright — its remedy is an uninstall
+that takes the user's library. This was chosen over pacman's `epoch` and
+over offsetting `versionCode`, on the grounds that both are permanent and
+a reinstall is once. `packaging/homebrew/README.md` and
+`docs/android-release.md` say so where a user would look.
+
+**`desktop-assets.yml` publishes Linux and nothing else, and macOS is not
+an oversight.** `GOOS=darwin CGO_ENABLED=0` fails at
+`wails/v3/pkg/mac: build constraints exclude all Go files` — the darwin
+backend is Objective-C behind cgo, so a `.app` needs a macOS host and the
+runner is a Linux container. That is exactly why the Homebrew formula
+builds from source on the user's own Mac. Windows *does* cross-compile
+cleanly (`GOOS=windows CGO_ENABLED=0`, a couple of seconds — oto uses
+WinMM through `x/sys`, sqlite is modernc's pure-Go driver, WebView2 is
+COM syscalls, MPRIS is `linux && !android`-tagged) and is deliberately
+not published: no Windows build of this app has ever been *run*, and no
+tier here can exercise one.
+
+**`android-apk.yml` is the one that can lose something irrecoverable.** It builds the signed
 `arm64-v8a` APK (the only ABI Android can run this app on — see
 `app/build.gradle`) on every `v*` tag and publishes it to the *generic* registry, which is
 readable without credentials — the reason Obtainium can poll a plain

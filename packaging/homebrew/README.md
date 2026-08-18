@@ -22,6 +22,21 @@ brew install shadow-puppet/yellowjacket/yellowjacket
 no separate `brew tap` step. To build the tip of `main` instead of the latest
 release, add `--HEAD`.
 
+### Upgrading from 1.x needs a reinstall, once
+
+Releases became automatic and restarted at **0.0.1** (plan 017), which is
+*lower* than the `1.3.0` this tap last published. Homebrew compares versions
+and has no equivalent of pacman's `epoch`, so `brew upgrade` sees a downgrade
+and offers **nothing at all** — silently, which is indistinguishable from the
+tap having gone stale.
+
+```bash
+brew uninstall yellowjacket && brew install shadow-puppet/yellowjacket/yellowjacket
+```
+
+Nothing is stored inside the Cellar, so this costs a rebuild and no data. It is
+a one-time step: 0.0.2 onwards upgrade normally.
+
 ## How publishing works
 
 This directory holds the **canonical** formula. The tap users install from lives

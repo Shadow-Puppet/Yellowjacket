@@ -1,8 +1,23 @@
 name: Build & publish Arch package
 
+# Keyed on the tag, not on main.  It used to publish on every push,
+# deriving a version from `git describe` — so the registry accumulated a
+# package per merge and none of them corresponded to anything a user
+# could be told to install.  release.yml decides what a release is now,
+# and this builds the tag it cuts.
+
 on:
   push:
-    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build (default: the latest v* tag)"
+        required: false
+
+concurrency:
+  group: arch-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   arch-package:
@@ -17,6 +32,7 @@ jobs:
       REPO: ${{ github.repository }}
       OWNER: ${{ github.repository_owner }}
       SHA: ${{ github.sha }}
+      REF_NAME: ${{ github.ref_name }}
       # Arch registry name (the "$repo" in clients' pacman.conf). Arbitrary label.
       ARCH_REPO: stable
     steps:
@@ -26,8 +42,9 @@ jobs:
           # gtk3 was v2's stack and is now only the `-tags gtk3` escape hatch.
           # These must match the PKGBUILD's depends=() — makepkg installs
           # nothing itself, so a mismatch fails at link time, not at check time.
+          # jq is scripts/release-asset.sh's, not the build's.
           pacman -Syu --noconfirm --needed \
-            base-devel git go nodejs pnpm curl sudo \
+            base-devel git go nodejs pnpm curl sudo jq \
             webkitgtk-6.0 gtk4 alsa-lib
 
       - name: Create unprivileged build user
@@ -36,15 +53,43 @@ jobs:
           install -d -o builder -g builder /build
           echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
 
+      # v0.0.0 is semantic-release's version floor, not a shipment — see
+      # the bootstrap step in release.yml.  A clean skip rather than a
+      # failure: a red run against a tag that was never meant to ship is
+      # noise, and this is one of the four workflows that would otherwise
+      # fire on it.
+      - name: Resolve the version
+        id: version
+        run: |
+          set -eu
+          v="${{ inputs.version }}"
+          [ -n "$v" ] || v="$REF_NAME"
+          case "$v" in v*) ;; *) v="v$v" ;; esac
+
+          if [ "$v" = "v0.0.0" ]; then
+            echo "v0.0.0 is the version floor, not a release; nothing to build"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "tag=$v"     >> "$GITHUB_OUTPUT"
+          echo "building $v"
+
       - name: Clone repo at the pushed commit
+        if: steps.version.outputs.skip == 'false'
         run: |
           # Token auth works for private repos and needs no SSH key in CI.
           sudo -u builder git clone \
             "https://x-access-token:${PACKAGE_TOKEN}@${SERVER_URL#https://}/${REPO}.git" \
             /build/yellowjacket
+          # A tag push carries the tag's own commit in $SHA, so this checks
+          # out exactly what was tagged.  pkgver() then reads the tag from
+          # the clone's own git history.
           sudo -u builder git -C /build/yellowjacket checkout --detach "$SHA"
 
       - name: Build package with makepkg
+        if: steps.version.outputs.skip == 'false'
         run: |
           cd /build/yellowjacket/packaging/arch
           # Point the PKGBUILD at this local clone / exact commit; pkgver() then
@@ -54,6 +99,7 @@ jobs:
             makepkg -f --noconfirm --cleanbuild
 
       - name: Publish to the Gitea Arch registry
+        if: steps.version.outputs.skip == 'false'
         run: |
           cd /build/yellowjacket/packaging/arch
           # makepkg also produces a -debug package (detached symbols); end users
@@ -66,4 +112,21 @@ jobs:
             curl --fail-with-body --user "${OWNER}:${PACKAGE_TOKEN}" \
               --upload-file "$pkg" \
               "${SERVER_URL}/api/packages/${OWNER}/arch/${ARCH_REPO}"
+          done
+
+      # The pacman registry is for people who have added it to pacman.conf;
+      # the release page is for everyone else.  Same file, and it is
+      # already built.
+      - name: Attach the package to the release
+        if: steps.version.outputs.skip == 'false'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -eu
+          cd /build/yellowjacket/packaging/arch
+          for pkg in yellowjacket-*.pkg.tar.zst; do
+            case "$pkg" in
+              yellowjacket-debug-*) continue ;;
+            esac
+            /build/yellowjacket/scripts/release-asset.sh "$TAG" "$(pwd)/$pkg"
           done

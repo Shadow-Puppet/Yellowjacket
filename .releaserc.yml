@@ -1,6 +1,20 @@
-# semantic-release configuration
-# Runs on main branch pushes to auto-determine version from conventional commits.
-# Creates a git tag + GitHub Release draft; a separate workflow builds binaries.
+# semantic-release configuration.
+#
+# Runs on pushes to main from .gitea/workflows/release.yml: determine the
+# version from the Conventional Commits since the last tag, write the
+# changelog, commit it, push the tag, and create the Gitea release.
+#
+# **There is no `@semantic-release/github` plugin here and there must not
+# be.** Gitea's API is `/api/v1` and is not GitHub's surface. The Gitea
+# community plugin (@saithodev/semantic-release-gitea) was considered and
+# rejected: last published 2022, depends on got@10, and declares no peer
+# dependency on semantic-release at all — i.e. untested against anything
+# since v19, against a core now at v25. `exec` is first-party, current,
+# and the Gitea-shaped part is one curl.
+#
+# The type list below is the one scripts/commit-check.sh enforces the
+# grammar for — keep the two in step, or semantic-release will silently
+# decline to release something the commit hook accepted.
 branches:
   - main
 
@@ -63,19 +77,41 @@ plugins:
             section: Build
             hidden: true
 
-  # Write CHANGELOG.md.
+  # Render the notes to a file.
+  #
+  # **This plugin is here to carry the notes, not to maintain a document.**
+  # It is how they reach the Gitea API *without being interpolated into a
+  # shell command*: release notes are rendered commit messages — arbitrary
+  # text carrying backticks, quotes and `$` — so templating
+  # ${nextRelease.notes} into `publishCmd` would be a shell injection with
+  # the commit log as its input. scripts/gitea-release.sh reads the top
+  # section of this file instead, and the only thing interpolated below is
+  # a semver string.
+  #
+  # The target is a gitignored build artifact rather than CHANGELOG.md,
+  # because nothing commits it back — see below.
   - - "@semantic-release/changelog"
-    - changelogFile: CHANGELOG.md
+    - changelogFile: .release-notes.md
+      changelogTitle: "# Release notes"
 
-  # Commit the changelog back to the repo.
-  - - "@semantic-release/git"
-    - assets:
-        - CHANGELOG.md
-      message: "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
+  # Create the Gitea release, whose body is that section.
+  # `publish` runs after `prepare`, so the tag already exists by here.
+  - - "@semantic-release/exec"
+    - publishCmd: "./scripts/gitea-release.sh ${nextRelease.version}"
 
-  # Create the GitHub Release (draft, so the build workflow can attach binaries).
-  - - "@semantic-release/github"
-    - draft: true
-      successComment: false
-      failComment: false
-      releasedLabels: false
+  # **There is deliberately no @semantic-release/git here.**
+  #
+  # `main` is a protected branch with `enable_push: false` and an empty
+  # push whitelist, so a changelog commit-back would be rejected by the
+  # pre-receive hook — *after* the tag had already been pushed, leaving a
+  # tagged release the run then reported as failed. The alternative was to
+  # whitelist the CI user, which weakens a protection someone set on
+  # purpose and lets a bot push to main without passing the checks every
+  # human PR has to.
+  #
+  # So the release page is the changelog. Tags are not protected, so the
+  # tag push semantic-release does itself is unaffected. CHANGELOG.md in
+  # the repo is a signpost to the releases page and is not written by any
+  # of this; a file that claimed to be a changelog and silently stopped
+  # updating would be worse than no file at all.
+

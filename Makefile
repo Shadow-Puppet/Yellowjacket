@@ -192,6 +192,24 @@ skill-check: ## Fail if the agent docs name a missing make target, or AGENTS.md 
 commit-check: ## Fail if a commit subject is not a Conventional Commit
 	@./scripts/commit-check.sh $(if $(RANGE),--range $(RANGE))
 
+# What a merge to main would release, without releasing it.  Reads the
+# same .releaserc.yml CI does, so "why did that not cut a version" is
+# answerable locally instead of by pushing and watching.  Needs no
+# credentials: --dry-run neither tags nor publishes.
+#
+# The pins must stay identical to release.yml's, which is where the note
+# on holding the conventionalcommits preset at 9 lives -- at 10 the
+# release notes come out empty with everything green.
+release-dry: ## Print the version a merge to main would release
+	@npx --yes \
+		-p semantic-release@25 \
+		-p @semantic-release/commit-analyzer@13 \
+		-p @semantic-release/release-notes-generator@14 \
+		-p @semantic-release/changelog@7 \
+		-p @semantic-release/exec@7 \
+		-p conventional-changelog-conventionalcommits@9 \
+		semantic-release --dry-run --no-ci
+
 # v3 generates TypeScript into frontend/bindings/, nested by Go import
 # path, rather than v2's frontend/wailsjs/.  The `@go` alias absorbs the
 # constant prefix, so a call site imports '@go/library/library.js'.
@@ -207,7 +225,7 @@ bindings: ## Regenerate frontend/bindings from the bound Go services
 	sandbox-seed sandbox-seed-bulk sandbox-seeds e2e e2e-setup e2e-report \
 	perf perf-compare \
 	ui-test ui-watch ui-visual ui-visual-update ui-setup \
-	bindings bindings-check skill-check commit-check
+	bindings bindings-check skill-check commit-check release-dry
 
 # Base directory for fresh-install sandboxes. Deliberately NOT $TMPDIR:
 # on most Linux distros /tmp is tmpfs (RAM-backed) and only a few GB, so

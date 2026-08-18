@@ -129,6 +129,18 @@ jobs:
           fi
           v="${v#v}"
 
+          # v0.0.0 is semantic-release's version floor, not a shipment —
+          # see the bootstrap step in release.yml.  It is skipped cleanly
+          # rather than failing the guard below, because a 45-minute red
+          # run against a tag that was never meant to ship is noise, and
+          # this is the most expensive of the four workflows a tag fires.
+          if [ "$v" = "0.0.0" ]; then
+            echo "v0.0.0 is the version floor, not a release; nothing to build"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
           # Android orders releases by an integer and refuses anything
           # not greater than what is installed.  1.3.1 -> 10301, which
           # increases as long as minor and patch stay below 100.
@@ -143,9 +155,24 @@ jobs:
 
           echo "version=$v"     >> "$GITHUB_OUTPUT"
           echo "code=$code"     >> "$GITHUB_OUTPUT"
+          echo "tag=v$v"        >> "$GITHUB_OUTPUT"
           echo "building $v (versionCode $code)"
 
+          # Releases restarted at 0.0.1 when they became automatic (plan
+          # 017), so versionCode restarted at 1 — *below* the 10300 an
+          # installed 1.3.0 build carries.  Android refuses a downgrade
+          # outright, and the only remedy is an uninstall, which takes the
+          # user's library with it.  Said here because this is the file
+          # that computes the number.
+          if [ "$code" -lt 10600 ]; then
+            echo
+            echo "note: versionCode $code is below the 10600 that v1.6.0 shipped."
+            echo "      An existing install must be removed before this one will"
+            echo "      install, and that removal takes its library with it."
+          fi
+
       - name: Go toolchain
+        if: steps.version.outputs.skip == 'false'
         run: |
           set -eu
           if [ ! -x /cache/tool/go/bin/go ] || ! /cache/tool/go/bin/go version | grep -q "$GO_VERSION"; then
@@ -156,6 +183,7 @@ jobs:
           /cache/tool/go/bin/go version
 
       - name: Node toolchain
+        if: steps.version.outputs.skip == 'false'
         run: |
           set -eu
           curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
@@ -167,6 +195,7 @@ jobs:
       # but still spends minutes verifying, so the guards are what make
       # this cheap on every run after the first.
       - name: Android SDK and NDK (cached)
+        if: steps.version.outputs.skip == 'false'
         run: |
           set -eu
           mkdir -p "$ANDROID_HOME/cmdline-tools"
@@ -226,6 +255,7 @@ jobs:
       # that are *verbatim* a secret, so a trimmed one could print in
       # clear — or repeating the trimming logic in both.
       - name: Build the signed APK
+        if: steps.version.outputs.skip == 'false'
         working-directory: /src
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
@@ -349,6 +379,7 @@ jobs:
 
       - name: Verify the APK
         id: apk
+        if: steps.version.outputs.skip == 'false'
         working-directory: /src
         run: |
           set -eu
@@ -390,6 +421,7 @@ jobs:
       # file, so `latest` is deleted first.  Credentials are the same
       # OWNER/PACKAGE_TOKEN pair arch-package.yml publishes with.
       - name: Publish to the Gitea package registry
+        if: steps.version.outputs.skip == 'false'
         working-directory: /src
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -425,3 +457,18 @@ jobs:
           echo
           echo "Obtainium URL:"
           echo "  $base/latest/yellowjacket.apk"
+
+      # The generic registry is what Obtainium polls; the release page is
+      # what a person looks at.  Same file, already built and already
+      # verified by the step above — so this cannot publish something the
+      # signature check would have refused.
+      - name: Attach the APK to the release
+        if: steps.version.outputs.skip == 'false'
+        working-directory: /src
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -eu
+          ./scripts/release-asset.sh "$TAG" bin/yellowjacket.apk \
+            "yellowjacket-${VERSION}-android-arm64.apk"

@@ -84,3 +84,7 @@ build/android/build/
 build/android/.gradle/
 build/android/gen/
 build/android/overlay.json
+
+# Written by @semantic-release/changelog purely to carry the release notes
+# into scripts/gitea-release.sh; the release page is the changelog.
+.release-notes.md
