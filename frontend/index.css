@@ -207,6 +207,17 @@ body div.sidebar {
         color: var(--yj-accent, #ffd43b);
     }
 
+    /* An open queue is a state this button can be in, and it used to
+       look exactly like the closed one -- so the only way to tell what
+       pressing it would do was to look at the other side of the window
+       and infer it. `aria-expanded` is the same fact for anyone not
+       looking at all, and it points at the panel it controls. */
+    #queue-button[aria-expanded='true'] {
+        color: var(--yj-accent, #ffd43b);
+        background: var(--yj-bg-overlay, #404040);
+        border-radius: 4px;
+    }
+
     #queue-button.drag-over {
         color: var(--yj-accent, #ffd43b);
         outline: 2px dashed var(--yj-accent, #ffd43b);
