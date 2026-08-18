@@ -29,11 +29,23 @@ export function createDragImage(count: number): HTMLElement {
 }
 
 /**
- * Creates a drag image showing an album cover art thumbnail.
- * Falls back to the track-count badge if the image fails to load.
+ * Creates a drag image showing an album cover art thumbnail, with a
+ * corner badge saying how many tracks are on the way.
+ *
+ * The count is not decoration. The cover says *what* is being dragged
+ * and nothing said *how much* — an album is 1 track or 30 and the
+ * thumbnail is identical either way, so the one number the drop is
+ * about was the one thing the drag did not show. Every other drag in
+ * the app says it (`createDragImage` is a count and nothing else);
+ * this one was the exception because it had a picture to show instead.
+ *
+ * A count of 1 draws no badge: "1" over a single album cover is noise,
+ * and the absence is unambiguous next to a badge that only ever
+ * appears when there is more than one.
  */
 export function createAlbumArtDragImage(
     coverUrl: string,
+    count = 1,
 ): HTMLElement {
     const size = 64;
     const wrapper = document.createElement('div');
@@ -44,6 +56,12 @@ export function createAlbumArtDragImage(
         'left: -1000px',
         'pointer-events: none',
         'z-index: 9999',
+        // The badge is positioned against this box, and the box stays
+        // exactly the cover's size: anything outside it risks being
+        // clipped out of the snapshot the browser takes, and padding
+        // it instead would move the cover away from the cursor.
+        `width: ${size}px`,
+        `height: ${size}px`,
     ].join(';');
 
     const img = document.createElement('img');
@@ -61,9 +79,42 @@ export function createAlbumArtDragImage(
     ].join(';');
 
     wrapper.appendChild(img);
+
+    if (count > 1) {
+        wrapper.appendChild(countBadge(count));
+    }
+
     document.body.appendChild(wrapper);
 
     return wrapper;
+}
+
+/** The corner badge on a multi-track drag image. */
+function countBadge(count: number): HTMLElement {
+    const badge = document.createElement('span');
+
+    badge.className = 'drag-count-badge';
+    badge.textContent = String(count);
+    badge.style.cssText = [
+        'position: absolute',
+        'top: 3px',
+        'right: 3px',
+        'min-width: 20px',
+        'height: 20px',
+        'padding: 0 5px',
+        'box-sizing: border-box',
+        'border-radius: 10px',
+        'background: #ffd43b',
+        'color: #000',
+        'font-size: 12px',
+        'font-weight: 600',
+        'font-family: inherit',
+        'line-height: 20px',
+        'text-align: center',
+        'box-shadow: 0 1px 4px rgba(0,0,0,0.5)',
+    ].join(';');
+
+    return badge;
 }
 
 /**
