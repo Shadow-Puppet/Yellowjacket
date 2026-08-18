@@ -249,7 +249,7 @@ describe('<library-status-indicator> as a control', () => {
     const el = await badge({ requestMbid: 'rg-1' });
 
     expect(shadow(el, '.badge')?.getAttribute('aria-label')).toBe(
-      'Want album "Abbey Road"',
+      'Request album "Abbey Road"',
     );
 
     await update(el, { status: 'queued' });

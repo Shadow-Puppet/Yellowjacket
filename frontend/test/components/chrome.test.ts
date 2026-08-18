@@ -166,7 +166,7 @@ describe('<library-status-indicator>', () => {
       glyphs.push(shadow(el, 'wa-icon')?.getAttribute('name'));
     }
 
-    expect(glyphs).toEqual(['check', 'hourglass-half', 'plus']);
+    expect(glyphs).toEqual(['check', 'bookmark', 'plus']);
   });
 
   it('phrases its label around the entity it describes', async () => {

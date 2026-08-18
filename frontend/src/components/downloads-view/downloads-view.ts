@@ -400,7 +400,7 @@ export class DownloadsView extends ViewLifecycleMixin(LitElement) {
     private renderEmptyRequests() {
         return html`
             <div class="empty">
-                Nothing requested yet. Use “Want this” on an album or artist
+                Nothing requested yet. Use “Request this” on an album or artist
                 to add it here.
             </div>
         `;
