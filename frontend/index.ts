@@ -521,6 +521,28 @@ if (queueButton && queuePanel) {
         }
     });
 
+    // The button says whether the panel is open, and it learns that
+    // from the panel rather than from its own click handler.
+    //
+    // It is not the only thing that opens the queue -- `now-playing-view`
+    // sets the same attribute, because it hides the bar this button
+    // lives in -- so a state kept beside the click would be right until
+    // something else opened the panel and then quietly wrong. The panel's
+    // `open` attribute is the one fact; this reflects it.
+    const reflectQueueState = () => {
+        queueButton.setAttribute(
+            'aria-expanded',
+            String(queuePanel.hasAttribute('open')),
+        );
+    };
+
+    new MutationObserver(reflectQueueState).observe(queuePanel, {
+        attributes: true,
+        attributeFilter: ['open'],
+    });
+
+    reflectQueueState();
+
     // ---------------------------------------------------------------
     // Queue button as drop target (when queue panel is closed)
     // ---------------------------------------------------------------
