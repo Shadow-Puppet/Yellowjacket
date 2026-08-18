@@ -1,5 +1,7 @@
 # Autotag (v1.3) — MusicBrainz Autotagger
 
+> **Historical record.** Phases 008–010 shipped, and the scoring engine was subsequently overhauled (`recommend.go`, `rank.go`, `mixedbag.go`), which makes the 011/012 sections below stale in their details. What is actually left is **#90** (auto-accept and entry points) and **#91** (settings, and a way back from the dismissed file-write warning).
+
 The MusicBrainz autotagger, collectively **v1.3**. Builds on the explore-browser API client + cache foundation. Five sequential phases (008–012), each depending on the prior one.
 
 | Phase | Title | Status |

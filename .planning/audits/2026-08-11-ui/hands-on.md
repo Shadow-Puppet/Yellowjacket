@@ -13,7 +13,7 @@ reviews. Nothing was changed.
 
 Findings below are numbered `H-n` (hands-on) and cross-reference the
 static reports where they overlap. The reconciliation plan built from
-all four files is `.planning/plans/pending/007-ui-reconciliation.md`.
+all four files is `.planning/plans/completed/007-ui-reconciliation.md`.
 
 ---
 

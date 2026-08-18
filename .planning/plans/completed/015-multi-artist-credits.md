@@ -1,5 +1,7 @@
 # 015 — Multi-artist credits, navigable
 
+> **Completed.** Phases 1, 2 and 4 shipped. Running the ingest against the real dump and publishing an artifact that carries credits is **#88**; Phase 3 (`file_artists`) is **#89**, blocked on it.
+
 ## The problem
 
 A track credited to more than one artist has exactly one navigable
