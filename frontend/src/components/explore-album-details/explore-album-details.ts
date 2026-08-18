@@ -720,14 +720,28 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
 
         // The download button only appears once a client is connected,
         // so this tracks the provider list rather than assuming.
+        //
+        // The `requestUpdate` is what makes the *tracklist's* badges
+        // move.  Both assignments below are reactive fields, so Lit
+        // repaints when either changes — but a track request changes
+        // neither: `canDownload` is about providers and `isRequested`
+        // is about this album's own release group.  Each row's badge
+        // reads `libraryStatusFor(false, track.mbid)` at render time,
+        // which is a dependency on the store that Lit cannot see, so
+        // clicking one filed the request and left the plus exactly
+        // where it was.  The other three hosts rendering these badges
+        // (`explore-artist-details`, `explore-view`, `top-results-row`)
+        // have always asked for the repaint here; this one did not.
         this.downloadUnsub = downloadStore.subscribe(() => {
             this.canDownload = downloadStore.available;
             this.syncRequested();
+            this.requestUpdate();
         });
 
         void downloadStore.init().then(() => {
             this.canDownload = downloadStore.available;
             this.syncRequested();
+            this.requestUpdate();
         });
 
         void this.resolveTargetLibraryId();
