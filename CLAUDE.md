@@ -85,8 +85,18 @@ release decision. The rule that the issue number stays out of the
 still drops the footer. `./scripts/issue.sh list --state open` after a
 merge, looking for what you just shipped; `./scripts/issue.sh close
 <n>` for whatever did not take, with a comment naming the commit.
-`close` also drops `Status/In Progress`, because a claim outlives the
-work if nothing takes the label off.
+
+**Unclaiming is automatic, and it is hooked to the close rather than
+to the merge.** Gitea's auto-close changes state and nothing else, so a
+footer left `Status/In Progress` on a closed issue — #100 was closed
+and marked as being actively worked on at the same time.
+`.gitea/workflows/unclaim.yml` runs on `issues: [closed]`, which covers
+the footer, `issue.sh close` and a click in the web UI alike; stripping
+the label in the PR instead would have been a per-PR habit, and habits
+are what the footer removed. It is not instant — the runner has
+capacity 1 — and reopening deliberately does not restore the label.
+`./scripts/issue.sh list --state closed --label "Status/In Progress"`
+is how you find out it has stopped firing.
 
 ## Planning
 
@@ -2176,10 +2186,11 @@ Pre-commit runs vet, lint, codegen check, and frontend typecheck in parallel. Pr
 
 ## CI
 
-Seven workflows in `.gitea/workflows/`. Five of them package and
+Eight workflows in `.gitea/workflows/`. Five of them package and
 publish (`arch-package`, `homebrew-formula`, `index-artifact`,
 `android-apk`, `desktop-assets`); `release.yml` decides *whether* four of
-those run at all; only `ci.yml` gates, and it is the one to look at when
+those run at all; `unclaim.yml` is housekeeping on the tracker and
+touches no code; only `ci.yml` gates, and it is the one to look at when
 deciding whether a push was healthy.
 
 **`release.yml` is the entry point for all of it.** On every push to
