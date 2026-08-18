@@ -106,5 +106,8 @@ make dev          # run with hot-reload
 make build-prod   # produce a release binary
 ```
 
-More detail for contributors lives in
-[`docs/dev/overview.md`](./docs/dev/overview.md) and [`CLAUDE.md`](./CLAUDE.md).
+More detail for contributors lives in [`CLAUDE.md`](./CLAUDE.md) — the
+architecture, the conventions and the reasons behind them. What is
+being worked on is [the issue
+tracker](https://git.ljones.me/yonlu/yellowjacket/issues); #73 is the
+roadmap.
