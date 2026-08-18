@@ -156,12 +156,21 @@ type PlaybackFailure struct {
 }
 
 // TracksModified is the payload for the QueueTracksModified event.
+//
+// Source is carried because an append is exactly what can *invalidate*
+// it: a queue built from one album stops being that album the moment a
+// track from somewhere else is added to it. The delta is the only event
+// those paths emit, so without this the frontend would keep the label
+// it was last given and go on saying "Playing from" an album that is no
+// longer what is queued — an event carrying what its consumer needs, so
+// nothing has to invalidate anything.
 type TracksModified struct {
 	Action       string  `json:"action"`
 	Tracks       []Track `json:"tracks,omitempty"`
 	Index        int     `json:"index"`
 	Positions    []int   `json:"positions,omitempty"`
 	CurrentIndex int     `json:"currentIndex"`
+	Source       Source  `json:"source"`
 }
 
 // Queue manages an ordered list of tracks for playback.
@@ -455,6 +464,8 @@ func (q *Queue) AddTrack(filePath string) {
 		q.generateShuffleOrder()
 	}
 
+	q.dropSource()
+
 	q.persistAddTrack(track)
 	q.persistState()
 	q.emitTracksModified(
@@ -504,6 +515,8 @@ func (q *Queue) AddTracks(filePaths []string) {
 	if q.shuffleMode {
 		q.generateShuffleOrder()
 	}
+
+	q.dropSource()
 
 	q.persistAddTracks(newTracks)
 	q.persistState()
@@ -563,6 +576,8 @@ func (q *Queue) InsertNextTracks(filePaths []string) {
 		q.generateShuffleOrder()
 	}
 
+	q.dropSource()
+
 	q.persistInsertTracks(newTracks, insertPos)
 	q.persistState()
 	q.emitTracksModified(
@@ -612,6 +627,8 @@ func (q *Queue) InsertNext(filePath string) {
 	if q.shuffleMode {
 		q.generateShuffleOrder()
 	}
+
+	q.dropSource()
 
 	q.persistInsertTracks([]Track{track}, insertPos)
 	q.persistState()
@@ -679,6 +696,8 @@ func (q *Queue) InsertTracksAt(filePaths []string, index int) {
 	if q.shuffleMode {
 		q.generateShuffleOrder()
 	}
+
+	q.dropSource()
 
 	q.persistInsertTracks(newTracks, index)
 	q.persistState()
@@ -1535,6 +1554,31 @@ func (q *Queue) reindexPositions() {
 	for i := range q.tracks {
 		q.tracks[i].Position = int64(i)
 	}
+}
+
+// dropSource forgets which collection the queue was built from.
+//
+// A Source is a claim that everything queued came from one album,
+// playlist, genre or artist, and the frontend renders it as a
+// "Playing from X" link back to that page. Adding or inserting a track
+// makes the claim false — the queue is now that album *plus* something
+// else — so every path that does so calls this.
+//
+// It was set by SetQueue and cleared in exactly one place, Clear, so a
+// label survived every append. It is persisted too (source_type /
+// source_id / source_label on the queue state row), which is what made
+// a wrong label outlive the session that earned it: an album queued on
+// Monday, added to on Tuesday, still offered a link back to that album
+// on Friday.
+//
+// Removing, reordering and shuffling deliberately do not call this. A
+// queue with a track taken out of it, or played in another order, is
+// still that album — the link still goes somewhere true. Only the
+// arrival of a track from elsewhere makes it a lie.
+//
+// The caller must hold q.mu.
+func (q *Queue) dropSource() {
+	q.source = Source{}
 }
 
 // commitMutation persists the current queue state after a mutation.

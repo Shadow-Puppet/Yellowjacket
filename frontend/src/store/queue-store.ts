@@ -57,6 +57,12 @@ interface TracksModified {
   index: number;
   positions?: number[];
   currentIndex: number;
+  /** The queue's source *after* the mutation. An append clears it
+   *  backend-side — a queue built from one album is not that album
+   *  once a track from elsewhere joins it — and this delta is the
+   *  only event those paths emit, so the label would otherwise keep
+   *  pointing at a collection the queue no longer holds. */
+  source?: QueueSource;
 }
 
 type Subscriber = () => void;
@@ -198,6 +204,7 @@ class QueueStore {
     }
 
     this.state.currentIndex = delta.currentIndex;
+    this.state.source = delta.source ?? EMPTY_QUEUE_SOURCE;
   }
 
   // ===================================================================

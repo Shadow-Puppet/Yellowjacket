@@ -81,6 +81,7 @@ func (q *Queue) emitTracksModified(
 			Index:        index,
 			Positions:    positions,
 			CurrentIndex: q.currentIndex,
+			Source:       q.source,
 		},
 	)
 }
