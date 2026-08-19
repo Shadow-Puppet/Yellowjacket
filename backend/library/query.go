@@ -244,6 +244,65 @@ func (l *Library) GetAlbumCompleteness(albumID int64) (AlbumCompleteness, error)
 	}, nil
 }
 
+// GetAlbumsCompleteness answers the same question for a screenful of
+// albums in one query, keyed by album id.
+//
+// A card grid asks this about every card that has a local album behind
+// it, and one query per card is how a grid of fifty albums becomes
+// fifty round trips. The answer matters there for the reason it
+// matters on the album page: an album held 9 tracks of 12 has to show
+// the count, and a bare tick saying "in your library" is the complaint
+// this whole rule came from.
+//
+// An album with no row in the result is one with no files, and it is
+// absent rather than zeroed — "I have none of this" and "I have no
+// idea" are the same third state `Known` exists to keep apart, and a
+// caller reading a missing key gets nothing rather than a confident 0.
+func (l *Library) GetAlbumsCompleteness(
+	albumIDs []int64,
+) (map[int64]AlbumCompleteness, error) {
+	out := make(map[int64]AlbumCompleteness, len(albumIDs))
+
+	if len(albumIDs) == 0 {
+		return out, nil
+	}
+
+	keys := make([]sql.NullInt64, 0, len(albumIDs))
+
+	for _, id := range albumIDs {
+		if id <= 0 {
+			continue
+		}
+
+		keys = append(keys, sql.NullInt64{Int64: id, Valid: true})
+	}
+
+	if len(keys) == 0 {
+		return out, nil
+	}
+
+	rows, err := l.db.ReadQueries.GetAlbumsCompleteness(l.ctx, keys)
+	if err != nil {
+		l.logger.Error("could not get album completeness in batch",
+			"albums", len(keys), "error", err)
+
+		return nil, fmt.Errorf("could not get album completeness: %w", err)
+	}
+
+	for _, row := range rows {
+		known := row.Known != 0 && row.Expected > 0
+
+		out[row.AlbumID] = AlbumCompleteness{
+			Owned:    int(row.Owned),
+			Expected: int(row.Expected),
+			Known:    known,
+			Complete: known && row.Owned >= row.Expected,
+		}
+	}
+
+	return out, nil
+}
+
 // GetAlbumTracks returns one album's tracks in disc/track order.
 func (l *Library) GetAlbumTracks(albumID, libraryID int64) ([]Track, error) {
 	rows, err := l.db.ReadQueries.GetTracksByAlbum(
