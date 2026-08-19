@@ -39,7 +39,17 @@ import { EventsOn } from '@runtime/runtime';
 import { Events } from '../../events';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '../library-status-indicator/library-status-indicator.js';
-import { libraryStatusFor, toggleRequest } from '@utils/library-status';
+import {
+    albumBadgeFor,
+    libraryStatusFor,
+    toggleRequest,
+} from '@utils/library-status';
+import {
+    isOwned,
+    ownershipLabel,
+    unownedStyles,
+} from '@utils/ownership';
+import { completenessStore } from '@store/completeness-store';
 import '../catalog-scope-notice/catalog-scope-notice.js';
 import type { CatalogScope } from '../catalog-scope-notice/catalog-scope-notice.js';
 import { queueStore } from '../../store/queue-store';
@@ -178,7 +188,6 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
     @state() private discoRowSize = 5;
     private discoObserver?: ResizeObserver;
     @state() private similarExpanded = false;
-    private libraryMBIDs = new Set<string>();
 
     /* ── Release prefetch ── */
 
@@ -257,6 +266,7 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
         designTokens,
         exploreLinkStyles,
         contextMenuStyles,
+        unownedStyles,
         css`
             :host {
                 display: flex;
@@ -995,6 +1005,9 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
     /** Unsubscribe handle for the requests list. */
     private unsubRequests: (() => void) | null = null;
 
+    /** Unsubscribes the "how much of this album is here" repaint. */
+    private unsubCompleteness: (() => void) | null = null;
+
     override connectedCallback() {
         super.connectedCallback();
         if (this.artistMBID || this.localArtistId) {
@@ -1006,6 +1019,12 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
         // anything.
         this.unsubRequests = downloadStore.subscribe(() => this.requestUpdate());
         void downloadStore.init().then(() => this.requestUpdate());
+
+        // The count behind a partly-held album lands a frame after the
+        // cards do, since the store batches a screenful into one query.
+        this.unsubCompleteness = completenessStore.subscribe(() =>
+            this.requestUpdate(),
+        );
 
         // A background discography fetch (top tracks / top releases for an
         // artist that wasn't indexed yet) finished — re-fetch those two
@@ -1045,6 +1064,8 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
         super.disconnectedCallback();
         this.unsubRequests?.();
         this.unsubRequests = null;
+        this.unsubCompleteness?.();
+        this.unsubCompleteness = null;
         this.unsubDiscogReady?.();
         this.unsubSimilarReady?.();
         if (this.discogFallbackTimer) clearTimeout(this.discogFallbackTimer);
@@ -1573,10 +1594,6 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
                 this.catalogPending = false;
             }
 
-            // Populate libraryMBIDs from the inLibrary flag (already
-            // set by the backend via local_release_group_id cross-ref).
-            this.checkLibrary();
-
             // Batch-resolve cover art for discography (lower priority — loaded after top sections).
             void this.batchResolveThumbnails(
                 rgs?.map((r) => ({ mbid: r.mbid, albumName: r.title, artistName: r.artistCredit }))
@@ -1903,23 +1920,6 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
         }
     }
 
-    private checkLibrary() {
-        // Backend now populates `inLibrary` directly on each MBReleaseGroup
-        // via the local_release_group_id cross-reference column.  Just read it.
-        let updated = false;
-
-        for (const rg of this.releaseGroups) {
-            if (rg.mbid && rg.inLibrary && !this.libraryMBIDs.has(rg.mbid)) {
-                this.libraryMBIDs.add(rg.mbid);
-                updated = true;
-            }
-        }
-
-        if (updated) {
-            this.requestUpdate();
-        }
-    }
-
     /* ── Playback ── */
 
     /**
@@ -2063,7 +2063,7 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
     }
 
     private isTrackOwned(track: LBTopRecording): boolean {
-        return Boolean(track.inLibrary || track.localId);
+        return isOwned(track);
     }
 
     private onTrackRowDblClick(track: LBTopRecording): void {
@@ -2106,7 +2106,7 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
             mbid: rg.releaseGroupMbid || '',
             localId: rg.localId ?? 0,
             title: rg.title,
-            owned: Boolean(rg.inLibrary || rg.localId),
+            owned: isOwned(rg),
         };
     }
 
@@ -2126,10 +2126,12 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
             mbid: isLocal ? '' : rg.mbid || '',
             localId: Number.isFinite(localId) ? localId : 0,
             title: rg.title,
-            owned:
-                this.libraryMBIDs.has(rg.mbid) ||
-                Boolean(rg.inLibrary) ||
-                localId > 0,
+            // The same answer the menu gates Play on, which is the
+            // point: this used to be `inLibrary` too, so a card could
+            // report itself owned, be offered no Play (that item is
+            // gated on the local id) and be offered no request either
+            // (that one is gated on *not* owned).
+            owned: localId > 0,
         };
     }
 
@@ -2944,15 +2946,20 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
                                 <div class="top-section-col top-section-col-tracks">
                                     <h3 class="section-header">Top Tracks</h3>
                                     <div class="track-list">
-                                        ${tracks.map(
-                                            (t, i) => html`
+                                        ${tracks.map((t, i) => {
+                                            const owned = this.isTrackOwned(t);
+
+                                            return html`
                                                 <div
-                                                    class=${classMap({ 'track-item': true, owned: this.isTrackOwned(t) })}
+                                                    class=${classMap({
+                                                        'track-item': true,
+                                                        owned,
+                                                        unowned: !owned,
+                                                    })}
                                                     tabindex="0"
                                                     role="button"
-                                                    aria-label=${this.isTrackOwned(t)
-                                                        ? `Play “${t.trackName}”`
-                                                        : `${t.trackName} — not in your library`}
+                                                    aria-disabled=${owned ? 'false' : 'true'}
+                                                    aria-label=${ownershipLabel(owned, 'Play', t.trackName, 'track')}
                                                     @dblclick=${() => this.onTrackRowDblClick(t)}
                                                     @contextmenu=${(e: MouseEvent) => this.onTrackContextMenu(e, t)}
                                                     @keydown=${(e: KeyboardEvent) => this.onTrackRowKeydown(e, t)}
@@ -2977,16 +2984,18 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
                                                     <span class="track-listens">
                                                         ${formatListenCount(t.totalListenCount)} plays
                                                     </span>
-                                                    <library-status-indicator
-                                                        status=${libraryStatusFor(Boolean(t.inLibrary || t.localId), t.recordingMbid)}
-                                                        entity-type="track"
-                                                        label=${t.trackName}
-                                                        request-mbid=${t.recordingMbid}
-                                                        request-artist=${t.artistName ?? ''}
-                                                    ></library-status-indicator>
+                                                    ${owned
+                                                        ? nothing
+                                                        : html`<library-status-indicator
+                                                              status=${libraryStatusFor(false, t.recordingMbid)}
+                                                              entity-type="track"
+                                                              label=${t.trackName}
+                                                              request-mbid=${t.recordingMbid}
+                                                              request-artist=${t.artistName ?? ''}
+                                                          ></library-status-indicator>`}
                                                 </div>
-                                            `,
-                                        )}
+                                            `;
+                                        })}
                                     </div>
                                     ${canExpandTracks
                                         ? html`
@@ -3057,10 +3066,16 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
     private renderTopReleaseCard(rg: LBTopReleaseGroup) {
         const artURL = this.thumbnailURLs.get(rg.releaseGroupMbid) || '';
         const target = this.topReleaseTarget(rg);
+        const owned = target.owned;
+        const badge = albumBadgeFor(
+            { localId: target.localId },
+            rg.releaseGroupMbid,
+        );
 
         return html`
             <div
-                class="top-release-card"
+                class=${classMap({ 'top-release-card': true, unowned: !owned })}
+                aria-label=${ownershipLabel(owned, 'Album', rg.title, 'album')}
                 @click=${() => this.navigateToTopRelease(rg)}
                 role="button"
                 tabindex="0"
@@ -3092,14 +3107,18 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
                         <div class="top-release-meta-text">
                             ${rg.date ? html`<span>${extractYear(rg.date)}</span>` : nothing}
                         </div>
-                        <library-status-indicator
-                            status=${libraryStatusFor(Boolean(rg.inLibrary || rg.localId), rg.releaseGroupMbid)}
-                            entity-type="album"
-                            label=${rg.title}
-                            request-mbid=${rg.releaseGroupMbid}
-                            request-artist=${this.artist?.name ?? ''}
-                            size="18"
-                        ></library-status-indicator>
+                        ${badge.status === 'in-library'
+                            ? nothing
+                            : html`<library-status-indicator
+                                  status=${badge.status}
+                                  owned=${badge.owned}
+                                  expected=${badge.expected}
+                                  entity-type="album"
+                                  label=${rg.title}
+                                  request-mbid=${rg.releaseGroupMbid}
+                                  request-artist=${this.artist?.name ?? ''}
+                                  size="18"
+                              ></library-status-indicator>`}
                     </div>
                 </div>
             </div>
@@ -3189,14 +3208,15 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
     private renderAlbumCard(rg: MBReleaseGroup) {
         const artURL = this.thumbnailURLs.get(rg.mbid) || '';
         const year = extractYear(rg.firstReleaseDate);
-        const inLibrary = this.libraryMBIDs.has(rg.mbid) || Boolean(rg.inLibrary);
-        const status = libraryStatusFor(inLibrary, rg.mbid);
 
         const target = this.albumTarget(rg);
+        const owned = target.owned;
+        const badge = albumBadgeFor({ localId: target.localId }, target.mbid);
 
         return html`
             <div
-                class="album-card"
+                class=${classMap({ 'album-card': true, unowned: !owned })}
+                aria-label=${ownershipLabel(owned, 'Album', rg.title, 'album')}
                 @click=${() => this.navigateToAlbum(rg)}
                 role="button"
                 tabindex="0"
@@ -3225,13 +3245,17 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
                     <div class="album-meta-text">
                         ${year ? html`<span>${year}</span>` : nothing}
                     </div>
-                    <library-status-indicator
-                        status=${status}
-                        entity-type="album"
-                        label=${rg.title}
-                        request-mbid=${rg.mbid}
-                        request-artist=${this.artist?.name ?? ''}
-                    ></library-status-indicator>
+                    ${badge.status === 'in-library'
+                        ? nothing
+                        : html`<library-status-indicator
+                              status=${badge.status}
+                              owned=${badge.owned}
+                              expected=${badge.expected}
+                              entity-type="album"
+                              label=${rg.title}
+                              request-mbid=${rg.mbid}
+                              request-artist=${this.artist?.name ?? ''}
+                          ></library-status-indicator>`}
                 </div>
             </div>
         `;

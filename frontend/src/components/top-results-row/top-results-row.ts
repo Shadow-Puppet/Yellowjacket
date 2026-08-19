@@ -11,8 +11,16 @@ import '../library-status-indicator/library-status-indicator.js';
 import type { LibraryStatus } from '../library-status-indicator/library-status-indicator.js';
 import { creditLink, exploreLinkStyles } from '../../utils/explore-link';
 import { creditStore } from '@store/credit-store';
-import { libraryStatusFor } from '../../utils/library-status';
+import { albumBadgeFor, libraryStatusFor } from '../../utils/library-status';
+import {
+    isOwned,
+    ownershipLabel,
+    unownedStyles,
+    type OwnableKind,
+} from '../../utils/ownership';
+import { completenessStore } from '../../store/completeness-store';
 import { downloadStore } from '../../store/download-store';
+import { classMap } from 'lit/directives/class-map.js';
 
 /** Format milliseconds as m:ss. */
 function formatDuration(ms: number | undefined): string {
@@ -65,6 +73,9 @@ export class TopResultsRow extends LitElement {
     /** Unsubscribes the credit-arrival repaint. */
     private creditsUnsub?: () => void;
 
+    /** Unsubscribes the "how much of this album is here" repaint. */
+    private unsubCompleteness?: () => void;
+
     override connectedCallback(): void {
         super.connectedCallback();
 
@@ -74,6 +85,9 @@ export class TopResultsRow extends LitElement {
         this.unsubRequests = downloadStore.subscribe(() =>
             this.requestUpdate(),
         );
+        this.unsubCompleteness = completenessStore.subscribe(() =>
+            this.requestUpdate(),
+        );
     }
 
     override disconnectedCallback(): void {
@@ -81,12 +95,15 @@ export class TopResultsRow extends LitElement {
         this.creditsUnsub = undefined;
         this.unsubRequests?.();
         this.unsubRequests = undefined;
+        this.unsubCompleteness?.();
+        this.unsubCompleteness = undefined;
         super.disconnectedCallback();
     }
 
     static override styles = [
         designTokens,
         exploreLinkStyles,
+        unownedStyles,
         css`
             :host {
                 display: block;
@@ -289,23 +306,41 @@ export class TopResultsRow extends LitElement {
               ? r.year || ''
               : formatDuration(r.length) || '';
 
-        const status: LibraryStatus = libraryStatusFor(
-            Boolean(r.inLibrary),
-            r.mbid,
-        );
-        const entityType: 'artist' | 'album' | 'track' =
+        const entityType: OwnableKind =
             r.entityType === 'artist'
                 ? 'artist'
                 : r.entityType === 'release_group'
                   ? 'album'
                   : 'track';
 
+        // Ownership is the local row, not the catalog's flag — see
+        // `utils/ownership.ts`. An album additionally says *how much*
+        // of it is here, which is the one thing a tick cannot.
+        const owned = isOwned(r);
+        const badge =
+            entityType === 'album'
+                ? albumBadgeFor(r, r.mbid)
+                : {
+                      status: libraryStatusFor(owned, r.mbid) as LibraryStatus,
+                      owned: 0,
+                      expected: 0,
+                  };
+
+        // A card navigates whether or not the entity is owned, so it is
+        // not `aria-disabled` the way an unplayable track row is — the
+        // name is what carries the state to anyone not seeing the
+        // dimming.
         return html`
             <div
-                class="card"
+                class=${classMap({ card: true, unowned: !owned })}
                 role="button"
                 tabindex="0"
-                aria-label=${`${badgeLabel(r.entityType)}: ${r.name}`}
+                aria-label=${ownershipLabel(
+                    owned,
+                    `${badgeLabel(r.entityType)}:`,
+                    r.name,
+                    entityType,
+                )}
                 @click=${() => this.handleClick(r)}
                 @keydown=${(e: KeyboardEvent) => {
                     if (e.key !== 'Enter' && e.key !== ' ') return;
@@ -345,10 +380,12 @@ export class TopResultsRow extends LitElement {
                             : nothing}
                     </div>
                 </div>
-                ${isArtist
+                ${isArtist || badge.status === 'in-library'
                     ? nothing
                     : html`<library-status-indicator
-                        status=${status}
+                        status=${badge.status}
+                        owned=${badge.owned}
+                        expected=${badge.expected}
                         entity-type=${entityType}
                         label=${r.name}
                         request-mbid=${r.mbid}

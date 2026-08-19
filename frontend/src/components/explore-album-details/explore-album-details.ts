@@ -3,6 +3,7 @@ import { customElement, property, state, query } from 'lit/decorators.js';
 import { classMap } from 'lit/directives/class-map.js';
 import { designTokens } from '../../styles/tokens.css';
 import { srOnly } from '../../styles/sr-only.css';
+import { unownedLabel, unownedStyles } from '@utils/ownership';
 import {
     LookupReleaseGroup,
     BrowseReleases,
@@ -316,6 +317,7 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
         exploreLinkStyles,
         contextMenuStyles,
         srOnly,
+        unownedStyles,
         css`
             :host {
                 display: flex;
@@ -687,20 +689,14 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
                 white-space: nowrap;
             }
 
-            /* A track the library does not have, on the pattern a
-             * streaming service uses for something it cannot play: the
-             * row stays, dimmed, so the album reads as the album rather
-             * than as the subset that happens to be here.
-             *
-             * The dimming is a colour, so it cannot be the only signal
-             * — the row also carries aria-disabled, which is what
-             * reaches anyone not seeing it.  Secondary rather than
-             * tertiary because the row's hover background is
-             * bgOverlay, which tertiary does not clear. */
-            .track-row.unowned .track-title {
-                color: var(--yj-text-secondary, #b3b3b3);
-                font-weight: 400;
-            }
+            /* The dimming itself is unownedStyles, from
+             * utils/ownership.ts, imported above.  It was written here
+             * first — this tracklist is where the treatment came from —
+             * and moved out when seven other surfaces had to draw the
+             * same thing, because two of them would otherwise have
+             * ended up drawing it slightly differently.  (No backticks or
+             * apostrophes-as-quotes here: this is inside a tagged
+             * template literal.) */
 
             /* The request control is offered on every row that has
              * something to request, and is not revealed on hover.
@@ -3273,7 +3269,7 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
                                         aria-disabled=${owned ? 'false' : 'true'}
                                         aria-label=${owned
                                             ? `Play “${track.title}”`
-                                            : `${track.title} — not in your library`}
+                                            : unownedLabel(track.title, 'track')}
                                         @dblclick=${() => this.onTrackRowDblClick(track)}
                                         @contextmenu=${(e: MouseEvent) => this.onTrackContextMenu(e, track)}
                                         @keydown=${(e: KeyboardEvent) => this.onTrackRowKeydown(e, track)}
