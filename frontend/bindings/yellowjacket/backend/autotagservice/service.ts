@@ -161,6 +161,39 @@ export function ListPendingFolders(libraryID: number): $CancellablePromise<$mode
 }
 
 /**
+ * MatchForAlbum answers "does the autotagger have something confident
+ * to say about this album", for the album detail page.
+ * 
+ * Three things about it are load-bearing.
+ * 
+ * **It costs no MusicBrainz request.** Everything it needs is already
+ * on disk: `tagging_items` carries the top score and release from the
+ * background prefetch, and `tagging_candidates` durably holds the
+ * scored list. The rate limiters here are shared with every page the
+ * user can open, so a lookup that fires on page load must not join
+ * that queue — which also means this returns nothing for a folder
+ * nobody has scored yet, rather than scoring it now. That is the
+ * right trade: the prefetch will get to it, and a page that silently
+ * spends a minute of somebody's MusicBrainz budget to draw a banner
+ * is worse than a page that says nothing.
+ * 
+ * **The tier is computed, not read.** `tagging_items.score` is the raw
+ * number and `Recommend` is what turns it into a claim — capping it
+ * for an ambiguous runner-up, an incomplete alignment or a folder too
+ * small to corroborate itself. Filtering on the raw score would
+ * promise confidence the scorer had explicitly withheld.
+ * 
+ * **Nothing is said about an album the user has already answered
+ * for.** Only a `pending` group qualifies: `confirmed` covers both a
+ * finished apply and an explicit "leave as is", and `skipped` is the
+ * user saying not now. Re-offering either is nagging, and "leave as
+ * is" would be actively wrong to argue with.
+ */
+export function MatchForAlbum(albumID: number): $CancellablePromise<$models.AlbumMatchView | null> {
+    return $Call.ByID(514173221, albumID);
+}
+
+/**
  * RetagGroup flips a group back to 'pending' so the user can
  * re-review after an apply or skip.  Drops the durably-cached
  * candidate list too, so the next open recomputes against fresh
