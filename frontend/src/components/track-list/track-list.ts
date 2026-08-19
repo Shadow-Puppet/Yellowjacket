@@ -11,6 +11,7 @@ import {
 import { SelectionController } from '@utils/selection-controller';
 import type { SelectionHost } from '@utils/selection-controller';
 import { ViewLifecycleMixin } from '@utils/view-lifecycle';
+import { PHONE_QUERY } from '@utils/breakpoints';
 import {
     ContextMenuController,
     contextMenuStyles,
@@ -105,9 +106,6 @@ const ROW_CHROME_WIDTH =
 const ROW_HEIGHT = 33;
 const PHONE_ROW_HEIGHT = 52;
 
-/** The shell's phone breakpoint, as `index.css` and every component
- *  stylesheet spells it. */
-const PHONE_QUERY = '(max-width: 599px)';
 
 // Inline SVG paths for favorite icons — eliminates wa-icon shadow DOM
 // overhead (30-50 shadow roots during scroll).  Font Awesome 6 paths.

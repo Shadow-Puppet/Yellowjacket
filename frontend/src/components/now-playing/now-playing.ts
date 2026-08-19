@@ -13,6 +13,7 @@ import {
     isQueueSourceNavigable,
     navigateToQueueSource,
 } from '@utils/queue-source-link';
+import { PHONE_QUERY } from '@utils/breakpoints';
 import { PlayerController } from '@store/controllers/player-controller';
 import { creditStore } from '@store/credit-store';
 import { QueueController } from '@store/controllers/queue-controller';
@@ -79,6 +80,19 @@ export class NowPlaying extends LitElement {
     private reduceMotion = false;
 
     private reduceMotionQuery?: MediaQueryList;
+
+    /**
+     * Phone width, from the shell's own breakpoint.
+     *
+     * This is in JS rather than in the stylesheet because what changes
+     * is the *content*, not its appearance: the title, artist and
+     * source render as plain text instead of as links, and no CSS rule
+     * can take a click handler off an element.
+     */
+    @state()
+    private phone = false;
+
+    private phoneQuery?: MediaQueryList;
 
     /** Whether each field is actively mid-scroll (class toggle). */
     @state()
@@ -341,6 +355,12 @@ export class NowPlaying extends LitElement {
         this.reduceMotion = this.reduceMotionQuery?.matches ?? false;
         this.reduceMotionQuery?.addEventListener('change', this.handleReduceMotionChange);
 
+        // Same reasoning as above: looked up here, not at module load,
+        // so a test can install its own matchMedia first.
+        this.phoneQuery = window.matchMedia?.(PHONE_QUERY);
+        this.phone = this.phoneQuery?.matches ?? false;
+        this.phoneQuery?.addEventListener('change', this.handlePhoneChange);
+
         this.resizeObserver = new ResizeObserver(() => {
             this.geometryDirty = true;
             this.requestUpdate();
@@ -364,6 +384,7 @@ export class NowPlaying extends LitElement {
         this.attachDragListeners(false);
         window.removeEventListener(SCROLL_CHANGE_EVENT, this.handleScrollModeEvent);
         this.reduceMotionQuery?.removeEventListener('change', this.handleReduceMotionChange);
+        this.phoneQuery?.removeEventListener('change', this.handlePhoneChange);
         this.resizeObserver?.disconnect();
         this.stopScrollCycle('title');
         this.stopScrollCycle('artist');
@@ -488,7 +509,7 @@ export class NowPlaying extends LitElement {
               @mouseleave=${this.handleTitleMouseLeave}
               @transitionend=${() => this.onScrollCycleEnd('title')}
             >
-              <span class="scroll-content">${trackLink(track.title, track.album, track.releaseGroupMbid, track.recordingMbid) || track.title}</span>
+              <span class="scroll-content">${this.phone ? track.title : trackLink(track.title, track.album, track.releaseGroupMbid, track.recordingMbid) || track.title}</span>
             </span>
             <span
               class="track-artist ${artistScrolling ? 'will-scroll' : ''} ${this.artistScrolling ? 'scrolling' : ''}"
@@ -498,14 +519,15 @@ export class NowPlaying extends LitElement {
               @mouseleave=${this.handleArtistMouseLeave}
               @transitionend=${() => this.onScrollCycleEnd('artist')}
             >
-              <span class="scroll-content">${creditLink(creditStore.credits(track.recordingMbid), track.artist, track.artistMbid) || 'Unknown Artist'}</span>
+              <span class="scroll-content">${this.phone ? track.artist || 'Unknown Artist' : creditLink(creditStore.credits(track.recordingMbid), track.artist, track.artistMbid) || 'Unknown Artist'}</span>
             </span>
             ${describeQueueSource(this.queue.source)
                 ? html`
                   <span
-                    class="track-source ${isQueueSourceNavigable(this.queue.source) ? 'navigable' : ''}"
+                    class="track-source ${!this.phone && isQueueSourceNavigable(this.queue.source) ? 'navigable' : ''}"
                     data-testid="now-playing-source"
                     @click=${(e: MouseEvent) => {
+                        if (this.phone) return;
                         if (!isQueueSourceNavigable(this.queue.source)) return;
                         navigateToQueueSource(
                             e.currentTarget as EventTarget,
@@ -571,6 +593,10 @@ export class NowPlaying extends LitElement {
         this.reduceMotion = e.matches;
     };
 
+    private handlePhoneChange = (e: MediaQueryListEvent): void => {
+        this.phone = e.matches;
+    };
+
     private shouldScroll(field: 'title' | 'artist'): boolean {
         const overflows = field === 'title' ? this.titleOverflows : this.artistOverflows;
 
@@ -606,6 +632,12 @@ export class NowPlaying extends LitElement {
             track?.artist ?? '',
             this.shouldScroll('title') ? '1' : '0',
             this.shouldScroll('artist') ? '1' : '0',
+            // Crossing the breakpoint swaps a link for a bare string,
+            // and a link is not guaranteed to measure the same as the
+            // text inside it. The marquee travels a distance read from
+            // that measurement, so this belongs in the key even though
+            // the words are identical either side.
+            this.phone ? '1' : '0',
         ].join('\u0000');
     }
 
