@@ -1,4 +1,4 @@
-import { test, expect } from '../support/fixtures.js';
+import { test, expect, navigateTo } from '../support/fixtures.js';
 
 /**
  * Plan 007 phase 5: a11y.1 and a11y.2, frozen against the real app.
@@ -56,7 +56,9 @@ test.describe('Settings is reachable without a mouse', () => {
 
 test.describe("Downloads' tabs are tabs", () => {
   test('arrow keys move the selection and swap the panel', async ({ app }) => {
-    await app.getByTestId('nav-downloads').click();
+    // By event, not by nav item: with no download client configured
+    // there is no Downloads destination to click (#25).
+    await navigateTo(app, 'downloads');
 
     const view = app.locator('downloads-view');
     const requests = view.getByRole('tab', { name: 'Requests' });
