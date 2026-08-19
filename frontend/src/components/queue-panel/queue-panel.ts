@@ -72,6 +72,24 @@ const MIN_WIDTH = 200;
 const MAX_WIDTH = 500;
 const DEFAULT_WIDTH = 320;
 
+/**
+ * The narrowest main panel the queue is allowed to leave behind before
+ * it stops being a column and becomes an overlay (plan 018, issue #24).
+ *
+ * There is no cliff to derive this from, and pretending otherwise would
+ * be the more dishonest answer: the track list rescales its columns
+ * continuously (213px down to 124px between main widths of 900 and 544,
+ * with no row overflow at any of them) and the album grid steps 3
+ * columns to 2 without breaking. So this is a judgement, anchored at
+ * both ends — it keeps the *default* 1100px window inline, because an
+ * inline queue is a desktop affordance people choose and demoting the
+ * common case to an overlay would be a regression in feel; and it puts
+ * every case measured as broken on the overlay side, which is 900x600
+ * (main = 379px, where all three of the Playlists header's actions are
+ * clipped) and every phone width (main = 69px at 390, 0px at 320).
+ */
+const MAIN_PANEL_FLOOR = 480;
+
 @customElement('queue-panel')
 export class QueuePanel
     extends LitElement
@@ -84,6 +102,22 @@ export class QueuePanel
 
     @property({ type: Boolean, reflect: true })
     open = false;
+
+    /**
+     * Whether the panel is covering the content instead of sitting
+     * beside it. **Computed, never set by a caller** — it is reflected
+     * so the stylesheet and a spec can both read it.
+     *
+     * It is deliberately *not* a media query, which is the whole reason
+     * this is a property and not a `@media` block. The panel's width is
+     * user state: drag-resizable between MIN_WIDTH and MAX_WIDTH and
+     * persisted. A breakpoint at a fixed viewport width silently
+     * assumes the default 320, so it is wrong by up to 180px for a user
+     * who has widened the panel — in the direction that hurts, since a
+     * wider queue is exactly when the content can least afford it.
+     */
+    @property({ type: Boolean, reflect: true })
+    overlay = false;
 
     @state()
     private isDragging = false;
@@ -190,6 +224,19 @@ export class QueuePanel
     private panelWidth = DEFAULT_WIDTH;
     private scrollbarDragging = false;
 
+    /** Watches `.content-area`, which is the viewport minus the sidebar. */
+    private spaceObserver?: ResizeObserver;
+
+    /**
+     * What had focus when the overlay opened, so Escape and the scrim
+     * can give it back. Focus is only taken back if the panel had it —
+     * the same rule `MenuKeyboard` follows, for the same reason: the
+     * queue can also be closed by the button in the bottom bar, and
+     * yanking focus away from wherever the user actually is would be
+     * worse than leaving it.
+     */
+    private overlayOpener: HTMLElement | null = null;
+
     // _itemSize is an internal property applied via Object.assign in BaseLayout's
     // config setter. Setting it to match the actual fixed .track-item height (49px)
     // prevents lit-virtualizer's scroll error correction from fighting the native
@@ -263,6 +310,86 @@ export class QueuePanel
                 ${unsafeCSS(DEFAULT_WIDTH)}px
             );
             border-left: 1px solid var(--yj-border-subtle, #333);
+        }
+
+        /* ---------------------------------------------------------
+           Overlay mode (plan 018, #24).
+
+           In flow the panel takes its width *from the main panel*,
+           which is the reported bug: at 900x600 that left 379px and
+           clipped every action in the Playlists header, and at 320px
+           it left 0px — the content was not degraded but gone.
+
+           Here the host spans the whole content area instead and
+           stops being a layout participant, so the main panel keeps
+           its full width and the queue sits over it. The host itself
+           is transparent and click-through; the scrim and the panel
+           are what take pointer events. The containment drops paint,
+           which would otherwise clip the panel's own shadow.
+           --------------------------------------------------------- */
+        :host([overlay]) {
+            position: absolute;
+            inset: 0;
+            width: auto;
+            background-color: transparent;
+            overflow: visible;
+            pointer-events: none;
+            contain: layout style;
+            z-index: 20;
+        }
+
+        /* Closed, an overlay is not there at all. In flow the panel is
+           width: 0, which is its own way of saying this; absolutely
+           positioned there is no width to collapse. */
+        :host([overlay]:not([open])) {
+            display: none;
+        }
+
+        :host([overlay][open]) {
+            border-left: none;
+        }
+
+        :host([overlay]) .panel-content {
+            position: absolute;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            width: var(--queue-width, ${unsafeCSS(DEFAULT_WIDTH)}px);
+            max-width: 100%;
+            box-sizing: border-box;
+            background-color: var(--yj-bg-surface, #212529);
+            border-left: 1px solid var(--yj-border-subtle, #333);
+            box-shadow: -8px 0 24px rgb(0 0 0 / 45%);
+            pointer-events: auto;
+        }
+
+        /* Dragging the edge of something that is already covering the
+           content answers a question nobody asked, and it is a
+           mouse-only affordance either way. */
+        :host([overlay]) .resize-handle {
+            display: none;
+        }
+
+        .scrim {
+            position: absolute;
+            inset: 0;
+            background-color: rgb(0 0 0 / 45%);
+            pointer-events: auto;
+            border: none;
+            padding: 0;
+            margin: 0;
+            cursor: pointer;
+        }
+
+        /* The phone gets the whole width: below 600 there is no
+           "beside" left to be, and this is the shape #55 turns into a
+           real screen. A media query inside a shadow root is answered
+           by the viewport, so the component states this itself rather
+           than the shell reaching in. */
+        @media (max-width: 599px) {
+            :host([overlay]) .panel-content {
+                width: 100%;
+            }
         }
 
         .resize-handle {
@@ -656,6 +783,20 @@ export class QueuePanel
             '--queue-width',
             `${this.panelWidth}px`,
         );
+
+        // The mode is a measurement, so it is observed rather than
+        // computed once: the parent is `.content-area`, whose width is
+        // the viewport minus the sidebar — including the sidebar's own
+        // collapse at 900px, which is what makes 900 the *worst*
+        // desktop width rather than the minimum.
+        this.updateOverlayMode();
+
+        if (this.parentElement) {
+            this.spaceObserver = new ResizeObserver(() =>
+                this.updateOverlayMode(),
+            );
+            this.spaceObserver.observe(this.parentElement);
+        }
         document.addEventListener(
             'mousemove',
             this.handleMouseMove,
@@ -690,6 +831,9 @@ export class QueuePanel
         super.disconnectedCallback();
         this.creditsUnsub?.();
         this.creditsUnsub = undefined;
+        this.spaceObserver?.disconnect();
+        this.spaceObserver = undefined;
+        document.removeEventListener('keydown', this.onOverlayKeydown);
         document.removeEventListener(
             'mousemove',
             this.handleMouseMove,
@@ -736,7 +880,79 @@ export class QueuePanel
         this.delegationAttached = false;
     }
 
+    /**
+     * Decide whether the queue can afford to be a column.
+     *
+     * The parent is `.content-area`, so its width is the viewport minus
+     * the sidebar and the sum already accounts for the sidebar's own
+     * collapse. It is stable across the panel's own open/closed state
+     * in both modes — in flow the panel is a child of that box, and as
+     * an overlay it is out of flow — so this cannot oscillate.
+     */
+    private updateOverlayMode = () => {
+        const available = this.parentElement?.clientWidth ?? 0;
+
+        // Before layout there is nothing to measure, and answering 0 by
+        // flipping to overlay would show the scrim for a frame.
+        if (available === 0) return;
+
+        this.overlay = available - this.panelWidth < MAIN_PANEL_FLOOR;
+    };
+
+    /**
+     * Escape closes a scrimmed overlay, which is the one keyboard rule
+     * every dialog in this app already follows.
+     *
+     * It is a document listener rather than a panel-scoped binding
+     * (`services/shortcut-scope.ts`) because it is not a *shortcut*: it
+     * is the dismissal of something covering the page, and it has to
+     * work while focus is still behind the scrim. It is attached only
+     * while the overlay is actually up and removed on close, so it is
+     * scoped to a state rather than being a permanent global. Nothing
+     * else binds Escape — the shortcut service only uses it to blur a
+     * text input.
+     */
+    private onOverlayKeydown = (e: KeyboardEvent) => {
+        if (e.key !== 'Escape' || !this.open || !this.overlay) return;
+
+        e.stopPropagation();
+        this.closeFromOverlay();
+    };
+
+    private closeFromOverlay = () => {
+        const hadFocus = this.contains(
+            document.activeElement as Node | null,
+        );
+
+        this.open = false;
+
+        if (hadFocus) {
+            const back =
+                this.overlayOpener ??
+                document.getElementById('queue-button');
+
+            back?.focus();
+        }
+
+        this.overlayOpener = null;
+    };
+
     override updated() {
+        // The overlay owns Escape only while it is up.
+        if (this.open && this.overlay) {
+            document.addEventListener('keydown', this.onOverlayKeydown);
+
+            this.overlayOpener ??=
+                document.activeElement instanceof HTMLElement &&
+                document.activeElement !== document.body
+                    ? document.activeElement
+                    : null;
+        } else {
+            document.removeEventListener('keydown', this.onOverlayKeydown);
+
+            if (!this.open) this.overlayOpener = null;
+        }
+
         // Closed, the panel is `width: 0` — which hides it from the eye
         // and from nobody else: its Clear and Add buttons still took tab
         // stops at x=1440 and were still read out (H-5).  `inert` is the
@@ -1631,6 +1847,11 @@ export class QueuePanel
             '--queue-width',
             `${clampedWidth}px`,
         );
+
+        // Widening the panel is one of the two ways the content can run
+        // out of room, and it is the way a viewport-width media query
+        // cannot see at all.
+        this.updateOverlayMode();
     };
 
     private handleMouseUp = () => {
@@ -1714,6 +1935,15 @@ export class QueuePanel
         const tracks = this.queue.tracks;
 
         return html`
+            ${this.overlay
+                ? html`<div
+                      class="scrim"
+                      part="scrim"
+                      data-testid="queue-scrim"
+                      aria-hidden="true"
+                      @click=${this.closeFromOverlay}
+                  ></div>`
+                : nothing}
             <div class="panel-content">
                 <div
                     class="resize-handle ${this.isDragging
@@ -1763,6 +1993,16 @@ export class QueuePanel
                                 name=${ICON_PLAYLIST}
                             ></wa-icon>
                         </button>
+                        ${this.overlay
+                            ? html`<button
+                                  class="header-action-button"
+                                  data-testid="queue-close"
+                                  aria-label="Close queue"
+                                  @click=${this.closeFromOverlay}
+                              >
+                                  <wa-icon name="xmark"></wa-icon>
+                              </button>`
+                            : nothing}
                     </div>
                 </div>
 
