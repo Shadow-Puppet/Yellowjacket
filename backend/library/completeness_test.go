@@ -232,3 +232,112 @@ func TestGetAlbumCompleteness_EmptyAlbum(t *testing.T) {
 		t.Errorf("empty album reported %+v, want zero and unknown", got)
 	}
 }
+
+// The batch and the single-album query are two spellings of one
+// question, and the thing worth pinning is that they never disagree.
+//
+// They are genuinely different SQL — the single-album form is
+// correlated subqueries over one album, the batch is two grouping
+// levels over a slice — so the risk is not a typo but a drift in
+// meaning: a disc's total counted once per file, a duplicate counted
+// twice, a disc with no total silently covered by one that had one.
+// Every shape the table above cares about is staged here at once,
+// because a batch that is only ever asked about one album is not being
+// asked the question that can go wrong.
+func TestGetAlbumsCompletenessAgreesWithTheSingleAlbumQuery(t *testing.T) {
+	t.Parallel()
+
+	lib, _ := setupTestLibrary(t)
+
+	shapes := map[int][]track{
+		1: disc(1, 100, 12, 12),
+		2: disc(1, 200, 9, 12),
+		3: disc(1, 300, 13, 12),
+		4: {{recordingID: 400, disc: 1, number: 1}},
+		5: append(disc(1, 500, 10, 10), disc(2, 600, 2, 5)...),
+		6: append(
+			disc(1, 700, 10, 10),
+			track{recordingID: 750, disc: 2, number: 1},
+		),
+		7: append(
+			disc(1, 800, 5, 6),
+			track{recordingID: 899, disc: 1, number: 3, total: 6},
+		),
+	}
+
+	ids := make([]int64, 0, len(shapes))
+
+	for albumID, tracks := range shapes {
+		stageAlbum(t, lib, albumID, tracks)
+		ids = append(ids, albumIDFor(t, lib, albumID))
+	}
+
+	batch, err := lib.GetAlbumsCompleteness(ids)
+	if err != nil {
+		t.Fatalf("GetAlbumsCompleteness: %v", err)
+	}
+
+	if len(batch) != len(ids) {
+		t.Fatalf("batch answered for %d albums, want %d", len(batch), len(ids))
+	}
+
+	for _, id := range ids {
+		one, err := lib.GetAlbumCompleteness(id)
+		if err != nil {
+			t.Fatalf("GetAlbumCompleteness(%d): %v", id, err)
+		}
+
+		if got := batch[id]; got != one {
+			t.Errorf("album %d: batch says %+v, single says %+v", id, got, one)
+		}
+	}
+}
+
+// An album with no files is absent from the batch, not zeroed.
+//
+// "I have none of this" and "I have no idea" are the third state Known
+// exists to keep apart, and a caller reading a missing key gets nothing
+// rather than a confident zero it would have to know to distrust.
+func TestGetAlbumsCompletenessOmitsAnAlbumWithNoFiles(t *testing.T) {
+	t.Parallel()
+
+	lib, _ := setupTestLibrary(t)
+
+	stageAlbum(t, lib, 1, disc(1, 100, 3, 3))
+
+	held := albumIDFor(t, lib, 1)
+
+	got, err := lib.GetAlbumsCompleteness([]int64{held, 4242})
+	if err != nil {
+		t.Fatalf("GetAlbumsCompleteness: %v", err)
+	}
+
+	if _, ok := got[4242]; ok {
+		t.Errorf("an album with no files answered %+v, want absent", got[4242])
+	}
+
+	if !got[held].Complete {
+		t.Errorf("held album reported %+v, want complete", got[held])
+	}
+}
+
+// A caller with nothing to ask about must not issue a query at all —
+// sqlc's empty-slice branch rewrites the placeholder to NULL, which is
+// a perfectly valid query returning nothing, so this is about the round
+// trip rather than the answer.
+func TestGetAlbumsCompletenessAsksNothingForAnEmptyList(t *testing.T) {
+	t.Parallel()
+
+	lib, _ := setupTestLibrary(t)
+
+	for _, ids := range [][]int64{nil, {}, {0}, {-1, 0}} {
+		got, err := lib.GetAlbumsCompleteness(ids)
+		if err != nil {
+			t.Fatalf("GetAlbumsCompleteness(%v): %v", ids, err)
+		}
+
+		if len(got) != 0 {
+			t.Errorf("GetAlbumsCompleteness(%v) = %+v, want empty", ids, got)
+		}
+	}
+}

@@ -1,5 +1,11 @@
 import { avatarBackground } from '@utils/avatar-color';
-import { libraryStatusFor } from '@utils/library-status';
+import { albumBadgeFor, libraryStatusFor } from '@utils/library-status';
+import {
+    isOwned,
+    ownershipLabel,
+    unownedStyles,
+} from '@utils/ownership';
+import { completenessStore } from '@store/completeness-store';
 import { downloadStore } from '@store/download-store';
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state, query as litQuery } from 'lit/decorators.js';
@@ -171,7 +177,6 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
     private searchDebounceTimer?: ReturnType<typeof setTimeout>;
     private thumbnailCache = new LRUMap<string, string>(THUMBNAIL_CACHE_LIMIT);
     private artistImageCache = new LRUMap<string, string>(ARTIST_IMAGE_CACHE_LIMIT);
-    private libraryMBIDs = new Set<string>();
 
     constructor() {
         super();
@@ -226,6 +231,7 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
         srOnly,
         exploreLinkStyles,
         contextMenuStyles,
+        unownedStyles,
         css`
             :host {
                 display: block;
@@ -812,6 +818,13 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
         // Explore should not pay for it.
         this.whileActive(downloadStore.subscribe(() => this.requestUpdate()));
         void downloadStore.init().then(() => this.requestUpdate());
+
+        // How much of an owned album is here arrives a frame after the
+        // cards do — the store coalesces a screenful into one query —
+        // so a card that turns out to be 9 of 12 repaints when the
+        // answer lands rather than showing a plain tick until something
+        // else happens to re-render the grid.
+        this.whileActive(completenessStore.subscribe(() => this.requestUpdate()));
     }
 
     /** A debounced search that lands after the user has left the page is
@@ -1083,7 +1096,6 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
                 this.results?.artists ?? [],
                 this.results?.releaseGroups ?? [],
             );
-            this.checkLibrary();
         } catch (err) {
             if (version !== this.searchVersion) return;
 
@@ -1229,8 +1241,11 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
         void this.playAlbum(rg, false);
     }
 
-    private onRecordingRowDblClick(r: { mbid: string; inLibrary: boolean; localId?: number }): void {
-        if (!r.inLibrary && !r.localId) return;
+    // The same answer the row is drawn from. It used to accept
+    // `inLibrary` as well, so a row drawn dimmed and `aria-disabled`
+    // would still try to play and fail with a notification.
+    private onRecordingRowDblClick(r: { mbid: string; localId?: number }): void {
+        if (!isOwned(r)) return;
 
         void this.playRecording(r.mbid);
     }
@@ -1665,42 +1680,6 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
         }
     }
 
-    /**
-     * Check which result MBIDs exist in the local library.
-     */
-    private checkLibrary() {
-        if (!this.results) return;
-
-        // Backend now populates `inLibrary` directly on each MB result
-        // via the local_*_id cross-reference columns.  Just read those.
-        let updated = false;
-
-        for (const a of this.results.artists ?? []) {
-            if (a.mbid && a.inLibrary && !this.libraryMBIDs.has(a.mbid)) {
-                this.libraryMBIDs.add(a.mbid);
-                updated = true;
-            }
-        }
-
-        for (const rg of this.results.releaseGroups ?? []) {
-            if (rg.mbid && rg.inLibrary && !this.libraryMBIDs.has(rg.mbid)) {
-                this.libraryMBIDs.add(rg.mbid);
-                updated = true;
-            }
-        }
-
-        for (const r of this.results.recordings ?? []) {
-            if (r.mbid && r.inLibrary && !this.libraryMBIDs.has(r.mbid)) {
-                this.libraryMBIDs.add(r.mbid);
-                updated = true;
-            }
-        }
-
-        if (updated) {
-            this.requestUpdate();
-        }
-    }
-
     /* ── Navigation ── */
 
     private navigateToArtist(artist: MBArtist) {
@@ -2107,12 +2086,16 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
                     : nothing}
                 <div class="horizontal-row">
                     ${artists.map((a) => {
+                        const owned = isOwned(a);
+                        const name = a.englishName || a.name;
+
                         return html`
                             <div
-                                class="artist-card"
+                                class=${classMap({ 'artist-card': true, unowned: !owned })}
                                 @click=${() => this.navigateToArtist(a)}
                                 role="button"
                                 tabindex="0"
+                                aria-label=${ownershipLabel(owned, 'Artist', name, 'artist')}
                                 @keydown=${(e: KeyboardEvent) => {
                                     if (e.key === 'Enter' || e.key === ' ') {
                                         e.preventDefault();
@@ -2171,11 +2154,17 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
                         const artURL = this.thumbnailCache.get(rg.mbid) || '';
                         const year = extractYear(rg.firstReleaseDate);
 
-                        const owned = Boolean(rg.localId);
+                        const owned = isOwned(rg);
+                        const badge = albumBadgeFor(rg, rg.mbid);
 
                         return html`
                             <div
-                                class=${classMap({ 'album-card': true, owned })}
+                                class=${classMap({
+                                    'album-card': true,
+                                    owned,
+                                    unowned: !owned,
+                                })}
+                                aria-label=${ownershipLabel(owned, 'Album', rg.title, 'album')}
                                 @click=${() => this.navigateToAlbum(rg)}
                                 @dblclick=${() => this.onAlbumCardDblClick(rg)}
                                 @contextmenu=${(e: MouseEvent) =>
@@ -2228,13 +2217,17 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
                                             : nothing}
                                         ${year ? html`<span>${year}</span>` : nothing}
                                     </div>
-                                    <library-status-indicator
-                                        status=${libraryStatusFor(this.libraryMBIDs.has(rg.mbid) || Boolean(rg.inLibrary), rg.mbid)}
-                                        entity-type="album"
-                                        label=${rg.title}
-                                        request-mbid=${rg.mbid}
-                                        request-artist=${rg.artistCredit ?? ''}
-                                    ></library-status-indicator>
+                                    ${badge.status === 'in-library'
+                                        ? nothing
+                                        : html`<library-status-indicator
+                                              status=${badge.status}
+                                              owned=${badge.owned}
+                                              expected=${badge.expected}
+                                              entity-type="album"
+                                              label=${rg.title}
+                                              request-mbid=${rg.mbid}
+                                              request-artist=${rg.artistCredit ?? ''}
+                                          ></library-status-indicator>`}
                                 </div>
                             </div>
                         `;
@@ -2249,12 +2242,20 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
             <section>
                 <h3 class="section-header">Tracks</h3>
                 <div class="track-list">
-                    ${recordings.map(
-                        (r) => html`
+                    ${recordings.map((r) => {
+                        const owned = isOwned(r);
+
+                        return html`
                             <div
-                                class=${classMap({ 'track-item': true, owned: Boolean(r.inLibrary || r.localId) })}
+                                class=${classMap({
+                                    'track-item': true,
+                                    owned,
+                                    unowned: !owned,
+                                })}
                                 role="button"
                                 tabindex="0"
+                                aria-disabled=${owned ? 'false' : 'true'}
+                                aria-label=${ownershipLabel(owned, 'Play', r.title, 'track')}
                                 @dblclick=${() => this.onRecordingRowDblClick(r)}
                                 @contextmenu=${(e: MouseEvent) =>
                                     this.onExploreContextMenu(e, {
@@ -2291,16 +2292,18 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
                                         ? html`<span class="track-duration">${formatDuration(r.length)}</span>`
                                         : nothing}
                                 </div>
-                                <library-status-indicator
-                                    status=${libraryStatusFor(this.libraryMBIDs.has(r.mbid) || Boolean(r.inLibrary), r.mbid)}
-                                    entity-type="track"
-                                    label=${r.title}
-                                    request-mbid=${r.mbid}
-                                    request-artist=${r.artistCredit ?? ''}
-                                ></library-status-indicator>
+                                ${owned
+                                    ? nothing
+                                    : html`<library-status-indicator
+                                          status=${libraryStatusFor(false, r.mbid)}
+                                          entity-type="track"
+                                          label=${r.title}
+                                          request-mbid=${r.mbid}
+                                          request-artist=${r.artistCredit ?? ''}
+                                      ></library-status-indicator>`}
                             </div>
-                        `,
-                    )}
+                        `;
+                    })}
                 </div>
             </section>
         `;

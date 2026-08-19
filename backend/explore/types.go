@@ -41,7 +41,16 @@ type TopResult struct {
 	ReleaseGroupMBID string `json:"releaseGroupMbid,omitempty"`
 	ReleaseName      string `json:"releaseName,omitempty"`
 	// Library status — populated from index cross-reference columns.
-	InLibrary bool `json:"inLibrary"`
+	//
+	// LocalID is the one the cards read.  It is the local row behind
+	// this entity — an album, a file, an artist — and it is set and
+	// cleared by a test against `audio_files`, so it means "there is
+	// something of mine here".  InLibrary is written by the same pass
+	// but is a one-way ratchet the prune can only clear alongside a
+	// local id, so it is the weaker of the two and stays for scoring
+	// (`fwInLibrary`), which is where an approximate answer is fine.
+	InLibrary bool  `json:"inLibrary"`
+	LocalID   int64 `json:"localId,omitempty"`
 }
 
 // MBArtist is a Wails-friendly projection of a MusicBrainz artist.

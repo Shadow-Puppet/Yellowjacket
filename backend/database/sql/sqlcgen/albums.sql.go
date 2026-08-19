@@ -8,6 +8,7 @@ package sqlcgen
 import (
 	"context"
 	"database/sql"
+	"strings"
 )
 
 const deleteAlbum = `-- name: DeleteAlbum :exec
@@ -220,6 +221,98 @@ func (q *Queries) GetAlbumsByArtistName(ctx context.Context, arg GetAlbumsByArti
 			&i.ArtistName,
 			&i.ArtistMbid,
 			&i.CoverArtPath,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getAlbumsCompleteness = `-- name: GetAlbumsCompleteness :many
+WITH per_disc AS (
+    SELECT
+        album_id AS album_id,
+        COUNT(DISTINCT COALESCE(CAST(track_number AS TEXT), 'f' || id))
+            AS owned_on_disc,
+        MAX(total_tracks) AS disc_total,
+        SUM(CASE WHEN total_tracks IS NULL THEN 1 ELSE 0 END)
+            AS discs_without_a_total
+    FROM audio_files
+    WHERE album_id IN (/*SLICE:album_ids*/?)
+    GROUP BY album_id, COALESCE(disc_number, 1)
+)
+SELECT
+    CAST(album_id AS INTEGER) AS album_id,
+    CAST(SUM(owned_on_disc) AS INTEGER) AS owned,
+    CAST(COALESCE(SUM(disc_total), 0) AS INTEGER) AS expected,
+    CAST(SUM(discs_without_a_total) = 0 AS INTEGER) AS known
+FROM per_disc
+GROUP BY album_id
+`
+
+type GetAlbumsCompletenessRow struct {
+	AlbumID  int64
+	Owned    int64
+	Expected int64
+	Known    int64
+}
+
+// The same question as GetAlbumCompleteness, asked of a screenful of
+// albums at once.
+//
+// A card grid cannot afford one query per card, and the answer it wants
+// is the one thing a badge cannot guess: an album held 9 tracks of 12
+// must show the count, never a bare tick.  So this is one query for the
+// whole grid, asked only of the cards that have a local album id.
+//
+// It is two grouping levels rather than the single-album form's
+// correlated subqueries, because a correlated subquery in the FROM
+// clause is not something SQLite will reliably do -- and because the
+// slice may only be spelled once, or sqlc expands it twice with
+// independently numbered placeholders.
+//
+// The per-disc level is where the meaning is, and it is the same
+// meaning as the single-album query.  `owned` counts DISTINCT track
+// numbers within a disc (this app detects duplicates, and counting two
+// files of track 3 twice would report a short album as complete), with
+// a file that declares no track number falling back to its own id
+// because three untagged files are three tracks and not one.
+// `expected` takes each disc's declared total and sums over discs,
+// since a total is declared per disc and a release total written on
+// every file of a two-disc album would double its expectation.  A disc
+// whose files declared nothing contributes a NULL that SUM ignores,
+// and `known` is what says the album is therefore unanswerable.
+func (q *Queries) GetAlbumsCompleteness(ctx context.Context, albumIds []sql.NullInt64) ([]GetAlbumsCompletenessRow, error) {
+	query := getAlbumsCompleteness
+	var queryParams []interface{}
+	if len(albumIds) > 0 {
+		for _, v := range albumIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:album_ids*/?", strings.Repeat(",?", len(albumIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:album_ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetAlbumsCompletenessRow
+	for rows.Next() {
+		var i GetAlbumsCompletenessRow
+		if err := rows.Scan(
+			&i.AlbumID,
+			&i.Owned,
+			&i.Expected,
+			&i.Known,
 		); err != nil {
 			return nil, err
 		}

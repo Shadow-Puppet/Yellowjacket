@@ -3534,3 +3534,49 @@ silent.** `artifactHasTotals` and `artifactHasCredits` are both correct
 and both mean a feature can ship, pass every test, and produce nothing
 for anybody without a single failure anywhere. Checking the *published
 file* is one query and is not implied by any tick in CI.
+
+## "Do I own this" has two answers in the schema, and one of them is a flag (2026-08-19)
+
+Decided while doing #38, and it outlives it because every future
+catalog surface has to pick one.
+
+`explore_index` carries both `in_library` and `local_artist_id` /
+`local_release_group_id` / `local_recording_id`. They are written by
+the same pass (`collectLibraryEntities`), so on a healthy database they
+agree, and the code read them as an OR — `inLibrary || localId > 0` —
+at eight call sites.
+
+They are not the same kind of thing:
+
+- **`local_*_id` is a fact with an owner.** Every query that sets one
+  joins `audio_files`, and `pruneStaleLocalCrossReferences` clears it
+  with an existence test that is a file test in all three cases. It is
+  the same rule `explore-album-details`'s `filePaths` implements, one
+  layer down and computed once per scan.
+- **`in_library` is a ratchet.** `upsertBatch` raises it with
+  `MAX(in_library, excluded.in_library)` and the prune is the only
+  thing that lowers it — gated on the local id being non-null, so a row
+  holding the flag *without* an id is a fixed point nothing can clear.
+  Filed as #118; it still drives search scoring, the popularity-floor
+  bypass and two Explore shelves, so routing the UI around it was not a
+  fix.
+
+What made the choice concrete rather than theoretical: on
+`explore-artist-details` the *same card* used both. The context menu
+gated Play on `localId > 0`; the badge used `inLibrary`. An album with
+the flag and no local row drew a green tick saying it was in your
+library, offered no Play, and — the request item being gated on *not*
+owned — offered no way to ask for it either.
+
+The rejected alternative is worth keeping: batching a real file lookup
+per screenful, the way `credit-store` coalesces. It would have answered
+for **recordings** (`GetFilePathsByRecordingMBIDs`) and most of the
+cards on these surfaces are release groups, so it would have made track
+rows strong, left album cards exactly where they were, and cost a new
+store. The batch that *was* worth adding is a different question —
+`GetAlbumsCompleteness`, "how much of this album is here", which no
+per-card flag can answer at all.
+
+The general point: **two columns that agree today are not one column.**
+Which of them a new surface reads should be decided by which one has
+something that can un-set it.

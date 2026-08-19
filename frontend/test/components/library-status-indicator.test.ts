@@ -77,3 +77,30 @@ describe('the library status badge', () => {
     expect(name).toContain('Glass Harbour');
   });
 });
+
+/**
+ * A partly-held album is the one state that is *actionable and
+ * counted*: there are tracks left to ask for, so the badge is a button
+ * — and a control is named after what activating it does, which is how
+ * the count came to be dropped from exactly the state the ring exists
+ * for. Both, or the ring says "some" to an eye and nothing to anyone
+ * else.
+ */
+describe('a partial badge that can act', () => {
+  it('names the action and keeps the count', async () => {
+    const el = await fixture('library-status-indicator', {
+      status: 'partial',
+      owned: 9,
+      expected: 12,
+      entityType: 'album',
+      label: 'Glass Harbour',
+      requestMbid: 'rg-1',
+    });
+
+    const name = shadow(el, '.badge')?.getAttribute('aria-label') ?? '';
+
+    expect(shadow(el, 'button.badge')).not.toBeNull();
+    expect(name).toContain('Request the rest of');
+    expect(name).toContain('9 of 12');
+  });
+});

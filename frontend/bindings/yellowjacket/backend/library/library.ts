@@ -99,6 +99,26 @@ export function GetAlbumsByArtist(artist: string, libraryID: number): $Cancellab
 }
 
 /**
+ * GetAlbumsCompleteness answers the same question for a screenful of
+ * albums in one query, keyed by album id.
+ * 
+ * A card grid asks this about every card that has a local album behind
+ * it, and one query per card is how a grid of fifty albums becomes
+ * fifty round trips. The answer matters there for the reason it
+ * matters on the album page: an album held 9 tracks of 12 has to show
+ * the count, and a bare tick saying "in your library" is the complaint
+ * this whole rule came from.
+ * 
+ * An album with no row in the result is one with no files, and it is
+ * absent rather than zeroed — "I have none of this" and "I have no
+ * idea" are the same third state `Known` exists to keep apart, and a
+ * caller reading a missing key gets nothing rather than a confident 0.
+ */
+export function GetAlbumsCompleteness(albumIDs: number[] | null): $CancellablePromise<{ [_ in `${number}`]?: $models.AlbumCompleteness } | null> {
+    return $Call.ByID(531636827, albumIDs);
+}
+
+/**
  * GetAllLibrariesWithTrackCounts lists the libraries and their sizes.
  */
 export function GetAllLibrariesWithTrackCounts(): $CancellablePromise<$models.Info[] | null> {

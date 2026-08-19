@@ -1658,6 +1658,59 @@ not about plumbing — it says rows may be missing from the page
 altogether, which nothing on screen can show. (`explore-artist-details`
 still uses `loading`; it has no equivalent per-row signal.)
 
+**And that treatment is the app's, not the page's.**
+`utils/ownership.ts` is the rule written once, because it was written
+at eight call sites and so none of them had the whole of it: Explore's
+cards, `top-results-row` and the artist page's three card shapes all
+mixed owned and unowned with a small badge as the only difference, and
+the badge on the *owned* ones was a green tick — the mark on the common
+case this tracklist removed. Owned is plain and draws no badge at all;
+unowned is dimmed, says so in its accessible name, and keeps its
+request affordance; a partly-held album says how partly.
+
+Four things about it are load-bearing.
+
+**Ownership is `localId`, and `inLibrary` is deliberately not
+consulted.** The album page answers with `filePaths`, a real file per
+displayed track, and a card grid cannot afford that — but it does not
+need to, because `explore_index.local_*_id` is built by
+`collectLibraryEntities` from queries that every one join `audio_files`
+and cleared by `pruneStaleLocalCrossReferences`, whose existence test
+is a file test in all three cases. That is the same "ownership is a
+file" rule computed once per scan instead of once per screenful.
+`in_library` is written by the same pass, so the two agree in a healthy
+database, but it is a one-way ratchet
+(`MAX(in_library, excluded.in_library)`) whose only clearing pass is
+gated on a non-null local id: it cannot be un-set on its own (#118).
+One is a fact with an owner; the other is a flag that happens to agree.
+Both `explore-view` and `explore-artist-details` additionally kept a
+`libraryMBIDs` set that accumulated every MBID ever seen with the flag
+and cleared it never, in views that never unmount; both are gone.
+
+**The two answers used to sit on one card.**
+`renderReleaseMenuItems` gates Play on `release.localId > 0` while the
+badge used `inLibrary`, so an album with the flag and no local row drew
+a tick saying it was in your library, offered no Play, and — the
+request item being gated on *not* owned — offered no way to ask for it
+either. Any new surface that asks the question twice will reproduce it.
+
+**`aria-disabled` goes on rows and not on cards.** An unowned *row*
+cannot be activated; an unowned *card* still navigates to the catalog
+page for it, which is a perfectly good thing to do with something you
+do not own. The accessible name carries the state either way, which is
+why it is one helper and not a class.
+
+**The count is batched, not looked up.** `store/completeness-store.ts`
+is `credit-store` one question over: `request()` is per-card and
+coalesces a screenful into one `GetAlbumsCompleteness`, absence is
+cached as an answer (or the albums with no totals re-ask forever), and
+the whole cache is dropped on a scan, a retag or a removal rather than
+aged. `library-status.ts`'s `albumBadgeFor` is where that meets
+`Known`: a total that was never declared is a plain `in-library`, never
+a ring at 0%. One consequence in the badge itself — a `partial` badge
+is *actionable*, and a control named after its action alone dropped the
+count from the one state the ring exists for, so its name is both.
+
 **A partly-owned album draws the release, not the part.** Once the tags
 say nine of twelve, `buildLibraryEntry` shows the *catalog's* twelve
 with three dimmed, rather than the nine on disk — the missing tracks

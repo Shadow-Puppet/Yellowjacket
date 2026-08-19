@@ -1,7 +1,9 @@
+import { completenessStore } from '@store/completeness-store';
 import { downloadStore } from '@store/download-store';
 import { libraryStore } from '@store/library-store';
 import type * as download from '@go/download/models.js';
 import type { LibraryStatus } from '../components/library-status-indicator/library-status-indicator';
+import { isOwned, type Ownable } from './ownership';
 
 /**
  * What the tick/hourglass/plus badge should say about one entity.
@@ -44,6 +46,61 @@ export function libraryStatusFor(
     if (request && request.state !== 'satisfied') return 'queued';
 
     return 'not-in-library';
+}
+
+/**
+ * Everything a badge needs about one entity, decided in one place.
+ *
+ * `status` is the state; `owned`/`expected` are the counts behind
+ * `partial` and are zero for every other state, which is what the badge
+ * requires — it documents that a caller with no total must not pass a
+ * ring at 0%.
+ */
+export interface BadgeState {
+    status: LibraryStatus;
+    owned: number;
+    expected: number;
+}
+
+/**
+ * What the badge on an album card should say.
+ *
+ * Three rules, and the middle one is the whole point of this issue.
+ *
+ * **Ownership is the local album id**, per `utils/ownership.ts` — a
+ * file, not the catalog's `inLibrary` ratchet.
+ *
+ * **A partly-held album says how partly.** The count comes from
+ * `completenessStore`, which batches a screenful into one query;
+ * reading it is what asks for it. Before this, an album held 2 tracks
+ * of 10 wore the same green tick as one held whole on every grid in
+ * the app.
+ *
+ * **A total that was never declared is not a total of zero.** Where
+ * `known` is false — most of an untagged library, and every album until
+ * a rescan repopulates `audio_files.total_tracks` — this is a plain
+ * `in-library` and says nothing, which is the rule the badge's own
+ * documentation states and the reason `Known` exists at all.
+ */
+export function albumBadgeFor(
+    album: Ownable | null | undefined,
+    mbid?: string | null,
+): BadgeState {
+    if (!isOwned(album)) {
+        return { status: libraryStatusFor(false, mbid), owned: 0, expected: 0 };
+    }
+
+    const held = completenessStore.completeness(album?.localId);
+
+    if (held?.known && !held.complete) {
+        return {
+            status: 'partial',
+            owned: held.owned,
+            expected: held.expected,
+        };
+    }
+
+    return { status: 'in-library', owned: 0, expected: 0 };
 }
 
 /** What a badge can ask for. Artists are deliberately absent: a
