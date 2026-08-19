@@ -38,8 +38,10 @@
 # Where a body is taken and no --body-file is given, it is read from stdin.
 #
 # Environment:
-#   GITEA_TOKEN   a PAT with write:issue (plus write:repository and read:user,
-#                 which the rest of this repo's tooling reaches for)
+#   GITEA_TOKEN   a PAT with write:issue.  `claim` and `mine` additionally
+#                 need to know your username: set GITEA_USER, or give the
+#                 token read:user and it is looked up.
+#   GITEA_USER    your Gitea login.  Optional; see above.
 #   GITEA_URL     defaults to https://git.ljones.me
 #   GITEA_REPO    defaults to yonlu/yellowjacket
 set -euo pipefail
@@ -81,7 +83,29 @@ read_body() {
 	if [ "$file" = "-" ]; then cat; else cat "$file"; fi
 }
 
-me() { curl -sS -H "Authorization: token $GITEA_TOKEN" "$server/api/v1/user" | python3 "$py" login; }
+# The one lookup in this script that needs a scope beyond write:issue.
+# `GET /user` requires read:user, and it is reached for exactly two reasons:
+# to name the assignee in `claim`, and to filter in `mine`.  A token scoped to
+# the work this script does — write:issue — therefore failed at `claim`, which
+# is the one step the workflow requires before the first edit, so the whole
+# documented process was blocked by its own tooling.
+#
+# GITEA_USER short-circuits it, which is what lets a least-privilege token do
+# the job.  The lookup stays as the fallback because it is right when the
+# scope is there and needs no setup at all.
+me() {
+	if [ -n "${GITEA_USER:-}" ]; then
+		printf '%s' "$GITEA_USER"
+		return
+	fi
+	curl -sS -H "Authorization: token $GITEA_TOKEN" "$server/api/v1/user" |
+		python3 "$py" login ||
+		{
+			echo "issue.sh: could not resolve your username. Set GITEA_USER, or" >&2
+			echo "issue.sh: re-issue GITEA_TOKEN with read:user." >&2
+			exit 1
+		}
+}
 
 label_id() { call GET "/labels?limit=100" | python3 "$py" label-id "$1"; }
 
