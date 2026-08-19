@@ -1,11 +1,36 @@
 name: Release
 
 # The sixth workflow, and the one that decides whether the other three
-# run at all.  On every push to main it reads the Conventional Commits
-# since the last tag, and if any of them is releasable it writes the
-# changelog, pushes the tag, and creates the Gitea release whose body is
-# that changelog section.  The publishing workflows are keyed on `v*`, so
-# the tag push is what starts them.
+# run at all.  It reads the Conventional Commits since the last tag, and
+# if any of them is releasable it writes the changelog, pushes the tag,
+# and creates the Gitea release whose body is that changelog section.
+# The publishing workflows are keyed on `v*`, so the tag push is what
+# starts them.
+#
+# **It is triggered by hand, and there is deliberately no `push`
+# trigger.**  There was one, on `main`, which made the trigger "a PR was
+# merged" and nothing else: eight releases in twenty-two hours
+# (v0.0.1 -> v0.3.1) for one session's work, each fanning out to four
+# publishers on a runner with capacity 1, so ~40 packaging jobs shipped
+# three issues and ordinary PR CI queued behind them.  A version per
+# merged PR is a version per unit of *work*, not per *shipment*, and
+# pacman, Homebrew and Obtainium see every one.
+#
+# Nothing else had to change to batch them: semantic-release already
+# reads every commit since the last tag, so five fixes and two feats
+# become one minor release with all seven in the notes.  Release
+# frequency was only ever how often this file fired.
+#
+# This is the rule `index-artifact.yml` states and is the other instance
+# of: **a job that mutates state which cannot be rebuilt in ten minutes
+# is triggered deliberately, not by a push.**  A release here is a tag,
+# a Gitea release, an Arch package, a Homebrew formula, a signed APK and
+# desktop assets — and an Android version going backwards costs the user
+# their library (docs/android-release.md).
+#
+# A schedule was considered and rejected: a cron batches without anyone
+# having to remember, but it puts the decision back on a timer, which is
+# the thing being removed.
 #
 # **Why the tag is pushed with PACKAGE_TOKEN and not the Actions token.**
 # Gitea, like GitHub, does not start a workflow from a ref pushed by a
@@ -19,9 +44,12 @@ name: Release
 # instead.
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Report what would be released and stop"
+        required: false
+        default: "false"
 
 # Cutting a tag is not a thing to cancel halfway: a superseded run must
 # finish, not be killed between `git push --tags` and the release POST.
@@ -163,13 +191,31 @@ jobs:
       # been right, the tag would have been right, every job would have
       # been green, and the release body would have been empty.  Check the
       # notes, not the exit code, before moving any of these.
+      # The point of a manual trigger is deliberateness, and deliberate
+      # means being able to look before pulling the lever.  `--dry-run`
+      # reports the version and the notes and writes nothing: no tag, no
+      # release, no publishers.  `make release-dry` is the same answer
+      # locally; this is it from the runner, against the same commit and
+      # the same tag history, which is what actually decides.
       - name: Run semantic-release
         if: steps.guard.outputs.skip == 'false'
         working-directory: /src
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -eu
           git config user.name  "yellowjacket-ci"
           git config user.email "yj@yellowjacket.app"
+
+          # Anything but a literal "true" releases for real.  A typo in a
+          # dispatch box must not silently turn a shipment into a no-op
+          # that reports success — the failure worth avoiding is the one
+          # where nothing happens and the run is green.
+          dry=""
+          if [ "${DRY_RUN:-false}" = "true" ]; then
+            echo "DRY RUN — no tag will be pushed and no release created"
+            dry="--dry-run"
+          fi
 
           npx --yes \
             -p semantic-release@25 \
@@ -178,5 +224,5 @@ jobs:
             -p @semantic-release/changelog@7 \
             -p @semantic-release/exec@7 \
             -p conventional-changelog-conventionalcommits@9 \
-            semantic-release \
+            semantic-release $dry \
               --repository-url "https://x-access-token:${PACKAGE_TOKEN}@${SERVER_URL#https://}/${REPO}.git"

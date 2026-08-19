@@ -2309,13 +2309,53 @@ those run at all; `unclaim.yml` is housekeeping on the tracker and
 touches no code; only `ci.yml` gates, and it is the one to look at when
 deciding whether a push was healthy.
 
-**`release.yml` is the entry point for all of it.** On every push to
-`main` it reads the Conventional Commits since the last tag and, if any
+**`release.yml` is the entry point for all of it, and it is triggered by
+hand.** It reads the Conventional Commits since the last tag and, if any
 is releasable, writes the changelog, pushes the tag and creates the Gitea
 release whose body is that changelog section. `arch-package`,
 `homebrew-formula`, `android-apk` and `desktop-assets` are all keyed on
-`v*`, so **the tag push is what starts them** — nothing is released by
-hand any more.
+`v*`, so **the tag push is what starts them** — the version, the notes
+and the packaging are still nobody's manual work; *when* is the only
+decision left to a person.
+
+**It used to fire on every push to `main`, which made the trigger "a PR
+was merged".** That is a version per unit of *work* rather than per
+*shipment*: eight releases in twenty-two hours (`v0.0.1` → `v0.3.1`) for
+one session, each fanning out to four publishers on a runner with
+capacity 1 — ~40 packaging jobs to ship three issues, with ordinary PR CI
+queued behind them. Nothing else had to change to batch them, because
+**semantic-release already reads every commit since the last tag**: five
+`fix`es and two `feat`s become one minor release with all seven in the
+notes. Release frequency was only ever how often the workflow fired.
+
+This is the same rule `index-artifact.yml` states — *a job that mutates
+state which cannot be rebuilt in ten minutes is triggered deliberately,
+not by a push* — and the two are now the only workflows with no push
+trigger. A schedule was considered and rejected: a cron batches without
+anyone having to remember, but it puts the decision back on a timer,
+which is the thing being removed. A `beta` integration branch was
+considered and rejected too (#115): it relocates the trigger rather than
+removing one, needs a second protected branch carrying the same required
+checks, and *adds* a full `check` + `e2e` run per batch on the very
+runner whose queue is the complaint.
+
+**`dry_run` is why the manual trigger is usable.** The point of pulling
+a lever by hand is being able to look first, so the dispatch takes a
+flag that runs `semantic-release --dry-run`: the version and the notes,
+no tag, no release, no publishers. Anything but the literal string
+`true` releases for real — a typo in a dispatch box must not silently
+turn a shipment into a green no-op.
+
+**A prerelease tag is not a shipment, and all four publishers now say
+so.** Their trigger is `v*`, which matches `v0.4.0-beta.1`; they guarded
+`v0.0.0` and nothing else. Nothing produces a prerelease today — the
+guard is there because the thing that would is `prerelease: true` in
+`.releaserc.yml`, one line whose blast radius is a public Homebrew tap
+and a credential-free APK registry that Obtainium polls. `android-apk`
+is the worst of the four twice over, since its `versionCode` maths
+splits on dots and would read `1` out of `0-beta` — a wrong number
+rather than a failed build, and Android refuses anything not greater
+than what is installed.
 
 Four things about it are load-bearing:
 

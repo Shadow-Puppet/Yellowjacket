@@ -7,12 +7,22 @@ which is what lets Obtainium poll a plain URL with no token. It also
 attaches the same file to the Gitea release, which is what a person
 looking at the release page downloads.
 
-**Tags are not pushed by hand any more.** `.gitea/workflows/release.yml`
-reads the Conventional Commits on every merge to `main`, decides the
-version, and pushes the tag this workflow is keyed on — so releasing the
-APK means merging a `fix:` or `feat:` commit, not running `git tag`. The
-`workflow_dispatch` path below remains, for rebuilding a tag that already
-exists.
+**Tags are not pushed by hand any more, but releasing is a decision.**
+`.gitea/workflows/release.yml` reads the Conventional Commits since the
+last tag, decides the version, and pushes the tag this workflow is keyed
+on — so releasing the APK means **running that workflow**, not running
+`git tag`. It has no push trigger: merging a `fix:` or `feat:` used to
+be enough and produced a version per merged PR (issue #115). Run it with
+`dry_run` first to see what the accumulated commits would ship. The
+`workflow_dispatch` path below is a different thing and remains, for
+rebuilding a tag that already exists.
+
+**A prerelease tag is skipped here**, cleanly. This workflow triggers on
+`v*`, which matches `v0.4.0-beta.1`, and it is the one where that would
+hurt most: the APK goes to the credential-free generic registry that
+Obtainium polls, and the `versionCode` maths below splits on dots — it
+would read `1` out of `0-beta` and produce a wrong number rather than a
+failed build.
 
 ## The 1.x installs cannot be upgraded to 0.0.x
 

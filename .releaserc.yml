@@ -1,8 +1,19 @@
 # semantic-release configuration.
 #
-# Runs on pushes to main from .gitea/workflows/release.yml: determine the
-# version from the Conventional Commits since the last tag, write the
-# changelog, commit it, push the tag, and create the Gitea release.
+# Run by hand from .gitea/workflows/release.yml, which has no push
+# trigger: determine the version from the Conventional Commits since the
+# last tag, write the changelog, push the tag, and create the Gitea
+# release.  A release is a shipment rather than a merge, and the commits
+# accumulate until someone says so -- this file needs to know nothing
+# about that, because reading everything since the last tag is what it
+# already did.
+#
+# `branches` is main and only main.  A `prerelease: true` channel is the
+# obvious next edit here and is the one to think twice about: all four
+# publishing workflows trigger on `v*`, which matches `v0.4.0-beta.1`.
+# They carry a prerelease guard now, so the failure is a clean skip
+# rather than a beta in a public tap -- but they are four separate files
+# and this is the line that would turn them on.
 #
 # **There is no `@semantic-release/github` plugin here and there must not
 # be.** Gitea's API is `/api/v1` and is not GitHub's surface. The Gitea
