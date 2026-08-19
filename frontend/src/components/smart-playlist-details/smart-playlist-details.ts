@@ -64,6 +64,7 @@ import { list } from '@utils/binding';
 import {
     ICON_PLAYLIST,
     ICON_QUEUE,
+    ICON_SMART_PLAYLIST,
 } from '@utils/icon-language';
 
 
@@ -1214,7 +1215,7 @@ export class SmartPlaylistDetails
                     <wa-icon name="arrow-left"></wa-icon>
                 </button>
                 <div class="playlist-avatar">
-                    <wa-icon name="filter"></wa-icon>
+                    <wa-icon name=${ICON_SMART_PLAYLIST}></wa-icon>
                 </div>
                 <div class="playlist-info">
                     <h1

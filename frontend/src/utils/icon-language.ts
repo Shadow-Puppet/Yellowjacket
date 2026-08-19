@@ -55,6 +55,18 @@ export const ICON_PLAYLIST = 'list';
 export const ICON_NEW = 'plus';
 
 /**
+ * A smart playlist — the rule, and the thing the rule makes.
+ *
+ * Governed for the reason `ICON_AUTOTAG` states: it was already at
+ * three call sites (the Playlists header, the row marker beside a smart
+ * playlist's name, and `smart-playlist-details`'s avatar), and a name
+ * stops being a detail of one component the moment there are two. It is
+ * deliberately *not* `ICON_NEW`, even on the button that makes one:
+ * an icon names the noun it acts on, and the noun here is the rule.
+ */
+export const ICON_SMART_PLAYLIST = 'filter';
+
+/**
  * The request ("want") toggle, as an outline/solid pair.
  *
  * Two states of one control have to read as each other's opposite,
@@ -99,6 +111,18 @@ export const ICON_AUTOTAG = 'tag';
  * "queued" state stopped being an hourglass.
  */
 export const ICON_DOWNLOADING = 'download';
+
+/**
+ * The rest of what this thing can do.
+ *
+ * `page-header` collapses the actions that do not fit into one menu
+ * behind this, so the glyph has to name *more of the same nouns* rather
+ * than any one of them — which is what an ellipsis is and what `bars`
+ * (the navigation drawer, one component over in `bottom-nav`) is not.
+ * It is deliberately the only meaning it carries: an overflow menu that
+ * shared an icon with a destination would be the `list` problem again.
+ */
+export const ICON_MORE_ACTIONS = 'ellipsis';
 
 /**
  * Take this away.

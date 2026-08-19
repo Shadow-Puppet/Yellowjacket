@@ -1,8 +1,9 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
-import '@awesome.me/webawesome/dist/components/button/button.js';
 import { GetShelves } from '@go/home/service.js';
+import { ICON_SHUFFLE } from '@utils/icon-language';
+import type { PageAction } from '@components/page-header/page-header';
 import { GetAlbumTracks } from '@go/library/library.js';
 import type * as home from '@go/home/models.js';
 import type * as library from '@go/library/models.js';
@@ -283,23 +284,24 @@ export class HomeView extends ViewLifecycleMixin(LitElement) {
 
     override render() {
         return html`
-            <page-header heading="Home">
-                <!-- "Shuffle" alone was two different controls with one
-                     name: this one and the transport's shuffle mode.
-                     They were never on screen together until the app
-                     started landing on Home (H-8), and a cached view is
-                     in the accessibility tree either way. -->
-                <wa-button
-                    slot="actions"
-                    size="small"
-                    appearance="plain"
-                    title="Reshuffle the suggestions"
-                    @click=${() => void this.load()}
-                >
-                    <wa-icon slot="start" name="shuffle"></wa-icon>
-                    Shuffle suggestions
-                </wa-button>
-            </page-header>
+            <page-header
+                heading="Home"
+                .actions=${[
+                    {
+                        // "Shuffle" alone was two different controls
+                        // with one name: this one and the transport's
+                        // shuffle mode. They were never on screen
+                        // together until the app started landing on
+                        // Home (H-8), and a cached view is in the
+                        // accessibility tree either way.
+                        id: 'shuffle-suggestions',
+                        label: 'Shuffle suggestions',
+                        icon: ICON_SHUFFLE,
+                        title: 'Reshuffle the suggestions',
+                        onSelect: () => void this.load(),
+                    },
+                ] satisfies PageAction[]}
+            ></page-header>
             <p class="lede">Somewhere to start listening.</p>
             ${this.renderBody()}
         `;

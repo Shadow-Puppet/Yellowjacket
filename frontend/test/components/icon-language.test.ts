@@ -44,6 +44,8 @@ const GOVERNED = [
   'regular/bookmark',
   'bars-staggered',
   'tag',
+  'filter',
+  'ellipsis',
 ];
 
 /** The one file allowed to say them, plus its own test. */

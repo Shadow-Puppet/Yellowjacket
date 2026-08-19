@@ -7,6 +7,7 @@
  * opening it.
  */
 import { describe, expect, it, beforeEach } from 'vitest';
+import type { LitElement } from 'lit';
 
 import '@components/home-view/home-view';
 import { stub, calls, lastArgs, stubFailure } from '@test/support/harness';
@@ -166,7 +167,17 @@ describe('home view', () => {
 
     const before = calls('home.Service.GetShelves').length;
 
-    shadow<HTMLElement>(el, 'wa-button')!.click();
+    // The action is declared to `page-header` rather than slotted as
+    // markup (#69), so it is a button in *that* shadow root now.
+    const header = shadow<HTMLElement>(el, 'page-header')!;
+
+    await (header as LitElement).updateComplete;
+
+    header.shadowRoot!
+      .querySelector<HTMLButtonElement>(
+        '[data-testid="page-action-shuffle-suggestions"]',
+      )!
+      .click();
     await el.updateComplete;
 
     expect(calls('home.Service.GetShelves').length).toBe(before + 1);
