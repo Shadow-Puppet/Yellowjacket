@@ -1623,6 +1623,32 @@ side-effect worth knowing: this is what finally makes `ownership()`
 say something true here, since counting the displayed tracklist of a
 library-only entry could only ever produce "9 of 9".
 
+**And it can be asked, because the rule alone reaches too few albums.**
+That guard depends on two inputs the user does not control: the files
+declaring a per-disc total, and the catalog's own `total_tracks`. Where
+neither says — which is a great deal of any library, and *every* library
+until an artifact carrying the column is published — a partly-owned
+album showed only the tracks on disk with nothing to say the rest
+existed. `renderTracklistScope()` is the explicit route: a
+"Show the whole album" switch that flips the synthetic "Your Library"
+entry between the local files and the release, which is the rendering
+the page could already do and could only be *triggered* automatically.
+
+Three things about it are load-bearing. **`showFullTracklist` is a
+tri-state**, `null` meaning "follow the automatic rule": the rule is
+right when it fires and the switch has to be able to agree with the page
+it sits on rather than starting out contradicting it, which a plain
+boolean would need recomputed every time the completeness answer moved
+underneath it. **`fullReleaseCluster()` falls back to the
+highest-scoring cluster**, because `findLibraryCluster` is a guess over
+the `inLibrary` flags and returns *nothing* when none are set — which is
+exactly the untagged library the switch exists for, so without the
+fallback the control would be absent precisely where it is needed. And
+**it is shown only where it can change what is on screen**: against the
+library entry, with a release to switch to, and only when the two
+tracklists differ — the same test the version dropdown answers, one
+control over.
+
 **A dropdown is only a choice if the choices differ.** The version
 selector tested `versionEntries.length`, but a release group routinely
 has several releases — reissues, regional pressings, a remaster — whose
