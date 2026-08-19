@@ -1980,6 +1980,79 @@ that corrects itself a moment later is worse than saying nothing. And
 the field, the direction and their persistence, so the control cannot
 disagree with the list.
 
+**And an action is data, on that same rule: the header decides what
+fits, the host decides what happens.** Playlists slotted three buttons
+totalling 390px into a header that gets 700px at 900×600, so "New Smart
+Playlist" rendered **114 of its 162px** with the queue closed — and on a
+phone none of them could be reached at all, which is what #69 reported.
+A host passes `PageAction[]` (`{id, label, icon, onSelect, priority,
+drop?}`) and `page-header` renders each one as a button or as an item in
+one "More actions" menu.
+
+**It could not have been a rule added in one place**, and that is a fact
+about the API rather than an effort estimate: actions used to arrive
+through `<slot name="actions">` as arbitrary light-DOM markup, and a
+component cannot move another component's light-DOM children into a
+dropdown and keep their behaviour — there is nothing generic in markup
+to render as a menu item. The slot survives for markup a data list
+cannot express, at the stated cost that **a slotted action does not
+collapse** and must therefore fit at 800×600.
+
+Six things about it are load-bearing:
+
+- **The fit is measured, never breakpointed.** A ResizeObserver drives
+  it, and each pass starts from *all visible* and hides the
+  lowest-priority action until it fits — so the collapsed set is a pure
+  function of the current width rather than of how the window got
+  there. A rule that only ever added to the set would never give a
+  button back, and one that adjusted by a step would need a hysteresis
+  band to stop it oscillating on the pixel where a button exactly fits.
+- **"Fits" means nothing is clipped, which is not the same as the
+  header not overflowing.** The title can ellipsis, and the moment it
+  can it absorbs the pressure: `scrollWidth` reports a header that fits
+  perfectly while the heading reads "Playlis…". That is this bug moved
+  from the button to the title, invisible to the same measurement that
+  missed it the first time — so the heading's own truncation counts as
+  not fitting, and an action is collapsed before the title gives way.
+  Below that, at 320px, the title *is* what yields: the navigation also
+  says which page you are on, and an action has nowhere else to be said.
+- **The measurement flips `hidden` on the rendered nodes rather than
+  re-rendering between steps.** Reading `scrollWidth` forces layout,
+  which is the point; awaiting a Lit update between steps instead lets
+  the intermediate all-visible state paint, so the fix would flash the
+  overflow it exists to prevent.
+- **Priority is what a *capability* costs, not what a button is worth.**
+  New Playlist is highest because it is the **drop target** and a closed
+  menu cannot be one; that is also why `PageAction.drop` carries the
+  host's own `dragover`/`dragleave`/`drop` handlers rather than the
+  header owning a notion of dropping, and why the affordance is simply
+  absent from the overflow rather than approximated there.
+- **`aria-controls` names a panel that is always in the DOM** —
+  `config-section`'s rule, and `wa-popup` hides it when inactive — and
+  the keyboard model is `MenuKeyboard`, shared with every other menu in
+  the app so this is not a second one.
+- **It is checked per button, because `layout-overflow.spec.ts` cannot
+  see this.** That spec asserts the *shell* needs no sideways
+  scrolling and passed on the broken build; clipping *inside* a
+  component is invisible to it, which is exactly why the defect
+  survived a spec named for it.
+  `e2e/specs/header-action-overflow.spec.ts` measures each button
+  against its header at 900×600, 800×600, 390×780 and 320×600, and
+  asserts buttons **plus** menu account for every declared action —
+  without that half it would pass vacuously on a build that renders no
+  actions at all.
+
+One thing it deliberately does **not** grow is a phone mode for the
+actions. `PHONE_COLUMN_IDS` is the precedent for "what is drawn and
+what can be sorted are different questions", but it exists because the
+track list's columns cannot be derived from a width; these can, and a
+second declaration of what a phone shows is a second thing to keep in
+step. What the header *does* state at phone width is one word: below
+600px the sort control's "Sort:" label is visually hidden — 172px of a
+320px header for a label the adjacent direction arrow implies — and it
+stays in the accessibility tree, because it is the select's accessible
+name and hiding it outright is `config-field`'s bug one component over.
+
 **The header search box is view-scoped, and now says so.** It sits in
 the app header and reads as global; typing `tide` on Playlists answered
 "No playlists match your search" with three *Tideline* tracks in the
