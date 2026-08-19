@@ -83,7 +83,7 @@ func TestFallback_TriggersOnNaturalFinish(t *testing.T) {
 	q.SetFallbackSource(fake)
 
 	q.SetQueue(seedPaths, 0, false, Source{Type: "album", ID: 1, Label: "Seed Album"})
-	q.OnPlaybackFinished()
+	q.OnPlaybackFinished(nil)
 
 	waitUntil(t, func() bool { return fake.callCount() == 1 }, "fallback to be resolved")
 	waitUntil(t, func() bool {
@@ -159,7 +159,7 @@ func TestFallback_EmptyResultLeavesQueueExhausted(t *testing.T) {
 	q.SetFallbackSource(fake)
 
 	q.SetQueue(seedPaths, 0, false, Source{})
-	q.OnPlaybackFinished()
+	q.OnPlaybackFinished(nil)
 
 	waitUntil(t, func() bool { return fake.callCount() == 1 }, "fallback to be resolved")
 
@@ -193,7 +193,7 @@ func TestFallback_StaleResolutionDiscarded(t *testing.T) {
 	q.SetFallbackSource(fake)
 
 	q.SetQueue(seedPaths, 0, false, Source{})
-	q.OnPlaybackFinished() // starts resolving, blocked on gate
+	q.OnPlaybackFinished(nil) // starts resolving, blocked on gate
 
 	time.Sleep(20 * time.Millisecond) // let the goroutine reach the gate
 

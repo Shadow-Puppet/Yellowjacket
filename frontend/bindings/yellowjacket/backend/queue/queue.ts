@@ -114,14 +114,6 @@ export function Next(): $CancellablePromise<void> {
 }
 
 /**
- * OnPlaybackFinished is called when a track finishes playing naturally.
- * This drives the auto-advance behavior and records the play.
- */
-export function OnPlaybackFinished(): $CancellablePromise<void> {
-    return $Call.ByID(2184869763);
-}
-
-/**
  * Play handles a play request by either resuming the current track or
  * starting playback from the beginning of the queue. When a track is
  * already active (currentIndex != -1) the player is told to resume;

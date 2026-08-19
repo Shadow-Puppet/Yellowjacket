@@ -52,9 +52,17 @@ type Player struct {
 	control                 *beep.Ctrl
 	volume                  *effects.Volume
 	speakerStreamer         beep.Streamer
-	playbackFinishedHandler func()
+	playbackFinishedHandler func(error)
 	trackChangeID           uint64
-	mediaControls           mediacontrols.Handler
+
+	// chainID identifies the streamer chain currently registered with
+	// the speaker.  updateStreamers bumps it, and the finished
+	// callback carries the value it was registered with, so a callback
+	// that queued for p.mu behind a LoadFile can tell that the player
+	// has moved on and return rather than rewinding somebody else's
+	// track.
+	chainID       uint64
+	mediaControls mediacontrols.Handler
 
 	// duckAmount is the attenuation currently applied on top of the
 	// user's volume, in the same base-2 exponent effects.Volume uses.
@@ -180,11 +188,18 @@ func (p *Player) InitSpeaker() error {
 }
 
 // SetPlaybackFinishedHandler sets a callback invoked when a track
-// finishes naturally. This allows the queue to drive auto-advance
+// stops streaming. This allows the queue to drive auto-advance
 // without circular imports.
 //
+// The error says *why* the track stopped: nil for a track that
+// reached its end, non-nil for one that broke partway through.  Both
+// arrive here because both look identical to the speaker, and only
+// the queue holds the metadata a PlaybackFailed needs -- but they are
+// not the same event, and reporting a decode failure as a natural
+// finish is how a broken file used to auto-advance in silence.
+//
 //wails:ignore // internal wiring, not part of the app's IPC surface.
-func (p *Player) SetPlaybackFinishedHandler(handler func()) {
+func (p *Player) SetPlaybackFinishedHandler(handler func(error)) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -424,6 +439,19 @@ func (p *Player) updateStreamers(
 	newBaseStreamer beep.StreamSeeker,
 	sr beep.SampleRate,
 ) error {
+	// A new chain supersedes the old one, so any finished callback the
+	// old one still owes is stale from here on.
+	p.chainID++
+
+	// The previous read-ahead goroutine reads the same decoder this
+	// one is about to, under its own srcMu -- two goroutines, two
+	// mutexes, one decoder that is not safe for concurrent use.  The
+	// replay-after-finish path rebuilds from p.seeker without going
+	// through LoadFile, which is where that pair could meet.
+	if p.buffered != nil {
+		p.buffered.Close()
+	}
+
 	// set base streamer
 	p.baseStreamer = newBaseStreamer
 	p.seeker = newBaseStreamer
@@ -474,23 +502,57 @@ func (p *Player) startPaused() {
 	p.control.Paused = true
 	speaker.Unlock()
 
+	// Captured, not read at callback time: by then p.chainID names
+	// whatever is loaded *now*, which is the thing the guard exists to
+	// distinguish this chain from.
+	chainID := p.chainID
+	buffered := p.buffered
+
 	// The beep.Callback runs with the speaker mutex held, so we
 	// dispatch to a goroutine that can safely acquire p.mu.
 	speaker.Play(beep.Seq(
 		p.speakerStreamer,
 		beep.Callback(func() {
-			go p.onPlaybackFinished()
+			// Asked here rather than under p.mu: this is the chain that
+			// just ended, and by the time the goroutine holds the lock
+			// p.buffered may be a different one.
+			var err error
+			if buffered != nil {
+				err = buffered.Err()
+			}
+
+			go p.onPlaybackFinished(chainID, err)
 		}),
 	))
 
 	p.state = Paused
 }
 
-// onPlaybackFinished handles the natural end of a track. It is
-// called on a new goroutine from the beep callback (which holds
-// the speaker lock) so that it can safely acquire p.mu.
-func (p *Player) onPlaybackFinished() {
+// onPlaybackFinished handles a track that stopped streaming, whether
+// it ended or broke. It is called on a new goroutine from the beep
+// callback (which holds the speaker lock) so that it can safely
+// acquire p.mu.
+//
+// chainID names the streamer chain the callback fired for and srcErr
+// says why it stopped.
+func (p *Player) onPlaybackFinished(chainID uint64, srcErr error) {
 	p.mu.Lock()
+
+	// The player has moved on while this callback queued for the lock
+	// -- a user pressing Next during the last second of a track is
+	// enough. Everything below is about the *current* track: rewinding
+	// the decoder, saying playback stopped, asking the queue to
+	// advance. Doing any of it now would do it to the wrong track.
+	if chainID != p.chainID {
+		p.mu.Unlock()
+		p.logger.Debug(
+			"Ignoring finished callback for a superseded chain",
+			"chain", chainID, "current", p.chainID,
+		)
+
+		return
+	}
+
 	p.state = Stopped
 	handler := p.playbackFinishedHandler
 	mc := p.mediaControls
@@ -501,10 +563,11 @@ func (p *Player) onPlaybackFinished() {
 	// the Stopped state anyway, so this only moves the decoder.
 	p.rewindLocked()
 	p.emitPositionLocked()
-	p.mu.Unlock()
 
-	// Emit Wails events outside the lock — these are non-blocking
-	// calls that don't need player state.
+	// Emitted under p.mu, like every other transition in this file.
+	// Outside it, a Play() taking the lock in the gap emits `playing`
+	// first and this stale `stopped` lands last -- leaving the button
+	// showing play over a track that is audibly running.
 	p.emitPlaybackFinished()
 
 	events.Emit(
@@ -512,6 +575,8 @@ func (p *Player) onPlaybackFinished() {
 		events.PlaybackStateChanged,
 		map[string]string{"state": string(Stopped)},
 	)
+
+	p.mu.Unlock()
 
 	// Notify media controls outside the lock. The track just
 	// ended so position is 0.
@@ -521,12 +586,19 @@ func (p *Player) onPlaybackFinished() {
 		)
 	}
 
-	p.logger.Info("Playback finished naturally")
+	if srcErr != nil {
+		p.logger.Error(
+			"Playback stopped: the audio source failed",
+			"err", srcErr,
+		)
+	} else {
+		p.logger.Info("Playback finished naturally")
+	}
 
 	// Notify queue for auto-advance. Called without p.mu held
 	// because it re-enters the player via LoadFile/Play.
 	if handler != nil {
-		handler()
+		handler(srcErr)
 	}
 }
 
@@ -586,6 +658,18 @@ func (p *Player) loadFileLocked(filePath string) error {
 	}
 
 	p.currentFile = f
+
+	// The decoder's own format, kept for the paths that rebuild the
+	// chain later: Play()'s replay branch resamples from it, so a
+	// stale rate there plays a finished track back at the wrong speed.
+	p.format = format
+
+	// The previous track's duration must not outlive it.  This is set
+	// again by emitTrackChanged below, but only when the database has
+	// a row for the file -- and every position this player reports is
+	// scaled by it, so inheriting means every report is wrong by the
+	// ratio between two unrelated tracks.
+	p.trackLengthMs = 0
 
 	if err := p.updateStreamers(
 		streamer, format.SampleRate,
@@ -906,6 +990,8 @@ func (p *Player) CurrentPosition() (int, error) {
 		return 0, errNoAudioFileLoaded
 	}
 
+	defer p.lockSourceLocked()()
+
 	speaker.Lock()
 	pos := math.Round(
 		100.0 * float64(p.seeker.Position()) /
@@ -922,6 +1008,28 @@ func (p *Player) Seek(targetSeconds int) error {
 	defer p.mu.Unlock()
 
 	return p.seekLocked(targetSeconds)
+}
+
+// lockSourceLocked blocks the read-ahead goroutine from touching the
+// decoder and returns the function that releases it, so a caller can
+// `defer p.lockSourceLocked()()`.
+//
+// Reading the decoder's position is a read *of the decoder*, and the
+// speaker lock does not exclude the read-ahead goroutine -- it never
+// takes it.  That was a genuine data race on every position emit,
+// once a second for the whole of playback.
+//
+// srcMu is not reentrant, so nothing that already holds it may call
+// this; seekSourceLocked exists to keep that region free of emits.
+// Must be called with p.mu held.
+func (p *Player) lockSourceLocked() func() {
+	if p.buffered == nil {
+		return func() {}
+	}
+
+	p.buffered.LockSource()
+
+	return p.buffered.UnlockSource
 }
 
 // rewindLocked returns the decoder to the start of the track without
@@ -959,6 +1067,46 @@ func (p *Player) seekLocked(targetSeconds int) error {
 		return fmt.Errorf("cannot get track length: %w", err)
 	}
 
+	// The source lock is released before anything below is emitted:
+	// emitPositionLocked reads the decoder's position and takes the
+	// same lock, which is not reentrant.
+	seekErr := p.seekSourceLocked(targetSeconds, lengthSecs)
+	if seekErr != nil {
+		p.logger.Warn(
+			"Seek failed, playback will start from "+
+				"the beginning",
+			"target-seconds", targetSeconds,
+			"err", seekErr,
+		)
+
+		// The optimistic move the UI already made has to be taken
+		// back, and only the backend knows it did not happen.
+		events.Emit(p.ctx, events.SeekFailed)
+		p.emitPositionLocked()
+
+		return fmt.Errorf("failed to seek: %w", seekErr)
+	}
+
+	if p.mediaControls != nil {
+		p.mediaControls.NotifySeek(targetSeconds)
+	}
+
+	// Report the landing position immediately rather than leaving the
+	// UI to guess until the next tick — this is the half of H-3 that
+	// desynced the seek bar by 30 s over four keyboard seeks.
+	p.emitPositionLocked()
+
+	return nil
+}
+
+// seekSourceLocked moves the decoder and flushes the stale read-ahead
+// behind it.  It owns the source lock for exactly that long and
+// emits nothing, so its caller is free to read the position
+// afterwards.  Must be called with p.mu held.
+func (p *Player) seekSourceLocked(
+	targetSeconds int,
+	lengthSecs int,
+) error {
 	// Block the read-ahead goroutine from reading the source while
 	// we seek it. The decoder (e.g. FLAC's bufseekio.ReadSeeker) is
 	// not safe for concurrent Read+Seek, and read-ahead runs on its
@@ -1014,18 +1162,10 @@ func (p *Player) seekLocked(targetSeconds int) error {
 	if seekErr != nil {
 		speaker.Unlock()
 
-		p.logger.Warn(
-			"Seek failed, playback will start from "+
-				"the beginning",
-			"target-seconds", targetSeconds,
-			"samples", samples,
-			"err", seekErr,
+		p.logger.Debug(
+			"seek rejected by the decoder",
+			"samples", samples, "err", seekErr,
 		)
-
-		// The optimistic move the UI already made has to be taken
-		// back, and only the backend knows it did not happen.
-		events.Emit(p.ctx, events.SeekFailed)
-		p.emitPositionLocked()
 
 		return fmt.Errorf("failed to seek: %w", seekErr)
 	}
@@ -1038,15 +1178,6 @@ func (p *Player) seekLocked(targetSeconds int) error {
 	if p.buffered != nil {
 		p.buffered.Flush()
 	}
-
-	if p.mediaControls != nil {
-		p.mediaControls.NotifySeek(targetSeconds)
-	}
-
-	// Report the landing position immediately rather than leaving the
-	// UI to guess until the next tick — this is the half of H-3 that
-	// desynced the seek bar by 30 s over four keyboard seeks.
-	p.emitPositionLocked()
 
 	return nil
 }
@@ -1140,6 +1271,10 @@ func (p *Player) seekerLengthSecsLocked() (int, error) {
 		return 0, errNoAudioFileLoaded
 	}
 
+	// Len is fixed for the life of the decoder, so unlike Position it
+	// races with nothing and needs no source lock -- which it must not
+	// take anyway: displayPositionSecsLocked calls this while holding
+	// it, and srcMu is not reentrant.
 	speaker.Lock()
 	length := p.seeker.Len() / int(p.format.SampleRate)
 	speaker.Unlock()
@@ -1155,6 +1290,8 @@ func (p *Player) displayPositionSecsLocked() int {
 	if p.seeker == nil {
 		return 0
 	}
+
+	defer p.lockSourceLocked()()
 
 	speaker.Lock()
 	pos := p.seeker.Position()
