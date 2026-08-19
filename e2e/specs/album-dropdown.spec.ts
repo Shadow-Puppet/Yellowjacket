@@ -2,6 +2,12 @@ import { test, expect } from '../support/fixtures.js';
 import type { Page } from '@playwright/test';
 
 /**
+ * How far the scroll test scrolls. One constant, because the guard and
+ * the assertion have to agree about it — they did not, which is #133.
+ */
+const SCROLL_TARGET = 80;
+
+/**
  * Plan 007 phase 5: expanding an album shows its tracks.
  *
  * `perf.p2` files `cover-grid`'s `renderSplitGrid` as dead code carried
@@ -104,20 +110,27 @@ test.describe('the album dropdown', () => {
     await app.setViewportSize({ width: 900, height: 600 });
 
     try {
-      await expect.poll(() => scrollRange(app)).toMatchObject({
-        scrollable: true,
-        overflowY: 'auto',
-      });
+      // Wait for the range the assertion below actually needs, not for
+      // "scrollable at all" (#133). The guard used to be
+      // `scrollHeight > clientHeight + 40` while the next line asks to
+      // reach 80, so any range in 41-79 satisfied it and could not
+      // satisfy the assertion — and the grid passes through exactly
+      // that while it settles, because it recomputes its columns after
+      // the resize rather than during it. The settled range here is
+      // 330, so this waits rather than weakening anything.
+      await expect
+        .poll(() => scrollRange(app))
+        .toMatchObject({ room: true, overflowY: 'auto' });
 
-      await app.evaluate(() => {
+      await app.evaluate((target) => {
         const sc = document
           .querySelector('cover-grid')
           ?.shadowRoot?.querySelector('.grid-scroll-container');
 
-        if (sc) sc.scrollTop = 80;
-      });
+        if (sc) sc.scrollTop = target;
+      }, SCROLL_TARGET);
 
-      expect(await scrollTop(app)).toBe(80);
+      expect(await scrollTop(app)).toBe(SCROLL_TARGET);
 
       // And the dropdown it opens is on screen, wherever the manager
       // decides that leaves the scroll. It is *not* "the position is
@@ -250,16 +263,19 @@ async function closeDropdown(app: Page): Promise<void> {
 
 /** Whether the grid can scroll at all, which decides if a probe can move. */
 async function scrollRange(app: Page) {
-  return app.evaluate(() => {
+  return app.evaluate((target) => {
     const sc = document
       .querySelector('cover-grid')
       ?.shadowRoot?.querySelector('.grid-scroll-container');
 
     return {
-      scrollable: !!sc && sc.scrollHeight > sc.clientHeight + 40,
+      // `room` is the precondition of the assertion that follows it:
+      // enough range to actually reach the target. A threshold below
+      // what the caller depends on is not a guard.
+      room: !!sc && sc.scrollHeight - sc.clientHeight >= target,
       overflowY: sc ? getComputedStyle(sc).overflowY : '',
     };
-  });
+  }, SCROLL_TARGET);
 }
 
 async function scrollTop(app: Page): Promise<number> {
