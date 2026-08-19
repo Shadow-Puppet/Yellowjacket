@@ -8,6 +8,7 @@ import '../sidebar/app-sidebar.js';
 import { nameDialog } from '@utils/name-dialog';
 import { ICON_PLAYLIST } from '@utils/icon-language';
 import { ActiveViewController } from '@store/controllers/active-view-controller';
+import { ViewVisibilityController } from '@store/controllers/view-visibility-controller';
 
 type View = 'home' | 'albums' | 'tracks' | 'playlists';
 
@@ -130,6 +131,22 @@ export class BottomNav extends LitElement {
     private activeCtrl = new ActiveViewController(this);
 
     /**
+     * The tab bar honours the sidebar's toggles (#25), and the reason is
+     * inside this component rather than a general rule about phones.
+     * `PHONE_COLUMN_IDS` is the precedent for "what a phone shows is a
+     * different question", and it would apply here too -- except that
+     * "More" opens the *same* `<app-sidebar>`, which filters. An
+     * unfiltered bar would therefore contradict its own drawer, one tap
+     * apart, and a destination the user switched off is off wherever it
+     * is offered.
+     *
+     * Which four tabs remains plan 016's committed subset; this only
+     * removes from it. Hiding all four leaves "More", which is always
+     * present and reaches everything.
+     */
+    private visibilityCtrl = new ViewVisibilityController(this);
+
+    /**
      * Whether the drawer has been asked for.
      *
      * The sidebar inside it is rendered only while this is true, and
@@ -211,7 +228,9 @@ export class BottomNav extends LitElement {
         return html`
             <nav aria-label="Primary">
                 <ul>
-                    ${BottomNav.TABS.map((tab) => html`
+                    ${BottomNav.TABS
+                        .filter((tab) => this.visibilityCtrl.visible(tab.id))
+                        .map((tab) => html`
                         <li>
                             <button
                                 type="button"

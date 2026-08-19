@@ -27,6 +27,9 @@ import type * as library from '@go/library/models.js';
 import { ThemeController } from '@store/controllers/theme-controller';
 import { TrackListController } from '@store/controllers/tracklist-controller';
 import { FavoritesController } from '@store/controllers/favorites-controller';
+import { ViewVisibilityController } from '@store/controllers/view-visibility-controller';
+import { VIEW_META } from '../../services/view-meta';
+import { downloadStore } from '@store/download-store';
 import { GetAllPlaylists } from '@go/playlist/service.js';
 import type * as playlist from '@go/playlist/models.js';
 import { Events } from '../../events';
@@ -70,6 +73,9 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
 
     // --- Favorites controller ---
     private favCtrl = new FavoritesController(this);
+
+    /** Which destinations the navigation offers (#25). */
+    private viewsCtrl = new ViewVisibilityController(this);
 
     // --- Shortcuts controller ---
     private shortcutsCtrl = new ShortcutsController(this);
@@ -467,6 +473,12 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
 
         .column-label {
             flex: 1;
+        }
+
+        .view-note {
+            color: var(--yj-text-tertiary, #888);
+            font-size: var(--yj-font-size-sm, 0.85rem);
+            margin-left: auto;
         }
 
         .column-arrows {
@@ -1084,6 +1096,25 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
         }
     }
 
+    private handleViewToggle = (
+        view: string,
+        visible: boolean,
+    ): void => {
+        this.viewsCtrl
+            .setVisible(view, visible)
+            .catch((err: unknown) => {
+                console.error('Failed to save view visibility:', err);
+                notificationStore.transient({
+                    key: 'view-visibility',
+                    text: `Could not change which views are shown. ${describeError(err)}`,
+                    detail: String(err),
+                });
+                // The checkbox has already flipped itself; the store is
+                // the truth, so redraw from it.
+                this.requestUpdate();
+            });
+    };
+
     private handleDefaultPageChange = (
         e: CustomEvent<ConfigFieldChangeEvent>,
     ): void => {
@@ -1428,6 +1459,7 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
             -->
             ${this.renderLibrarySection()}
             ${this.renderGeneralSection()}
+            ${this.renderNavigationSection()}
             ${this.renderNowPlayingSection()}
             ${this.renderThemeSection()}
             ${this.renderTrackListSection()}
@@ -1674,6 +1706,79 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
                     .value=${this.queueFallback}
                     @config-change=${this.handleQueueFallbackChange}
                 ></config-field>
+            </config-section>
+        `;
+    }
+
+    // --- Navigation section ---
+
+    /**
+     * Which destinations the sidebar and the phone's tab bar offer.
+     *
+     * Two items are drawn but not editable, and both say why in place
+     * rather than being silently inert. Settings is never hideable --
+     * the backend refuses it too, because `config.toml` is
+     * hand-editable. The launch page is not hideable *while it is the
+     * launch page*, which is a state the user can leave by changing the
+     * launch page above; refusing is preferable to the alternatives,
+     * since resetting their launch page silently changes a second thing
+     * they chose and allowing it lands the app on a page nothing points
+     * at.
+     */
+    private renderNavigationSection() {
+        return html`
+            <config-section
+                heading="Navigation"
+                description="Choose which destinations the sidebar and the phone's tab bar offer. Hiding one does not remove it — links and the launch page still open it."
+            >
+                <ul class="column-list">
+                    ${repeat(VIEW_META, (v) => v.id, (v) => {
+            const checked = this.viewsCtrl.enabled(v.id);
+            const isLaunchPage = this.defaultPage === v.id;
+            const locked = v.alwaysShown === true || isLaunchPage;
+
+            let note = '';
+
+            if (v.alwaysShown === true) {
+                note = 'Always shown.';
+            } else if (isLaunchPage) {
+                note = 'This is the launch page.';
+            } else if (
+                v.id === 'downloads' &&
+                checked &&
+                !downloadStore.available
+            ) {
+                // The config says show it and the nav does not, which
+                // would otherwise read as the checkbox not working.
+                note = 'Hidden until a download client is configured.';
+            }
+
+            return html`
+                            <li
+                                class="column-item ${checked ? 'enabled' : 'disabled'}"
+                            >
+                                <input
+                                    type="checkbox"
+                                    class="column-toggle"
+                                    aria-label="Show ${v.label} in the navigation"
+                                    .checked=${checked}
+                                    ?disabled=${locked}
+                                    @change=${(e: Event) =>
+                    this.handleViewToggle(
+                        v.id,
+                        (e.target as HTMLInputElement).checked,
+                    )}
+                                />
+                                <span class="column-label">
+                                    ${v.label}
+                                </span>
+                                ${note
+                    ? html`<span class="view-note">${note}</span>`
+                    : nothing}
+                            </li>
+                        `;
+        })}
+                </ul>
             </config-section>
         `;
     }

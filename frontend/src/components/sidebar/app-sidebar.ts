@@ -5,19 +5,9 @@ import { designTokens } from '../../styles/tokens.css';
 
 import type { DragActiveDetail } from '@utils/drag-controller';
 import { ActiveViewController } from '@store/controllers/active-view-controller';
-import {
-    ICON_PLAYLIST,
-    ICON_AUTOTAG,
-    ICON_REQUESTED,
-} from '@utils/icon-language';
-
-type View = 'home' | 'playlists' | 'artists' | 'genres' | 'albums' | 'tracks' | 'explore' | 'downloads' | 'autotag' | 'jobs' | 'settings';
-
-interface NavItem {
-    id: View;
-    label: string;
-    icon: string;
-}
+import { ViewVisibilityController } from '@store/controllers/view-visibility-controller';
+import { VIEW_META } from '../../services/view-meta';
+import type { View } from '../../services/view-meta';
 
 const MIN_WIDTH = 56;
 const MAX_WIDTH = 400;
@@ -210,19 +200,15 @@ export class AppSidebar extends LitElement {
         typeof setTimeout
     > | null = null;
 
-    private navItems: NavItem[] = [
-        { id: 'home', label: 'Home', icon: 'house' },
-        { id: 'playlists', label: 'Playlists', icon: ICON_PLAYLIST },
-        { id: 'artists', label: 'Artists', icon: 'user-group' },
-        { id: 'genres', label: 'Genres', icon: 'masks-theater' },
-        { id: 'albums', label: 'Albums', icon: 'compact-disc' },
-        { id: 'tracks', label: 'Tracks', icon: 'music' },
-        { id: 'explore', label: 'Explore', icon: 'globe' },
-        { id: 'downloads', label: 'Downloads', icon: ICON_REQUESTED },
-        { id: 'autotag', label: 'Autotag', icon: ICON_AUTOTAG },
-        { id: 'jobs', label: 'Jobs', icon: 'list-check' },
-        { id: 'settings', label: 'Settings', icon: 'gear' },
-    ];
+    /**
+     * Which destinations the user has kept (#25). The list below is
+     * still the whole set and its order -- this only filters it, and
+     * only for drawing: a hidden view is still reachable by `navigate`,
+     * which is what detail views and the launch page depend on.
+     */
+    private visibilityCtrl = new ViewVisibilityController(this);
+
+    private navItems = VIEW_META;
 
     override connectedCallback() {
         super.connectedCallback();
@@ -283,7 +269,9 @@ export class AppSidebar extends LitElement {
             ></div>
             <nav aria-label="Main">
             <ul>
-                ${this.navItems.map((item) => {
+                ${this.navItems
+            .filter((item) => this.visibilityCtrl.visible(item.id))
+            .map((item) => {
             const active = this.activeCtrl.isActive(item.id);
             const classes = [
                 active

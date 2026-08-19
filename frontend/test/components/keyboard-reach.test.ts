@@ -11,7 +11,8 @@ import { describe, expect, it, beforeEach } from 'vitest';
 import '@components/sidebar/app-sidebar';
 import '@components/queue-panel/queue-panel';
 import '@components/track-list/track-list';
-import { stub } from '@test/support/harness';
+import { stub, emit, flush } from '@test/support/harness';
+import { Events } from '../../src/events';
 import { fixture, shadow, shadowAll, update } from '@test/support/render';
 
 /** Two fixture tracks, enough to move a focus ring between. */
@@ -33,6 +34,16 @@ const TRACKS = [
 ] as never[];
 
 describe('<app-sidebar> is reachable', () => {
+  // Eleven destinations assumes a configured download client, since
+  // Downloads is not offered without one (#25).
+  beforeEach(async () => {
+    stub('download.Service.ListProviders', [
+      { id: 1, kind: 'slskd', name: 'Sound', enabled: true, priority: 50 },
+    ]);
+    emit(Events.DownloadProvidersChanged);
+    await flush();
+  });
+
   it('renders every destination as a button, not a bare list item', async () => {
     const el = await fixture('app-sidebar');
 
