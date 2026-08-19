@@ -192,15 +192,21 @@ skill-check: ## Fail if the agent docs name a missing make target, or AGENTS.md 
 commit-check: ## Fail if a commit subject is not a Conventional Commit
 	@./scripts/commit-check.sh $(if $(RANGE),--range $(RANGE))
 
-# What a merge to main would release, without releasing it.  Reads the
-# same .releaserc.yml CI does, so "why did that not cut a version" is
-# answerable locally instead of by pushing and watching.  Needs no
-# credentials: --dry-run neither tags nor publishes.
+# What running the release workflow now would ship, without shipping it.
+# Reads the same .releaserc.yml CI does, so "why did that not cut a
+# version" is answerable locally instead of by pushing and watching.
+# Needs no credentials: --dry-run neither tags nor publishes.
+#
+# release.yml is dispatch-only, so this answers the question that
+# actually gets asked now -- what has accumulated since the last tag --
+# rather than what one merge would have done.  The workflow's own
+# `dry_run` input is the same answer from the runner, against whatever
+# main points at rather than the working tree.
 #
 # The pins must stay identical to release.yml's, which is where the note
 # on holding the conventionalcommits preset at 9 lives -- at 10 the
 # release notes come out empty with everything green.
-release-dry: ## Print the version a merge to main would release
+release-dry: ## Print the version a release run would cut right now
 	@npx --yes \
 		-p semantic-release@25 \
 		-p @semantic-release/commit-analyzer@13 \

@@ -1,9 +1,14 @@
 # YellowJacket Arch package
 
 This directory holds the `PKGBUILD` and desktop entry used to build the
-Arch Linux package. CI builds it on every push to `main` (see
+Arch Linux package. CI builds it on every **release tag** (see
 `.gitea/workflows/arch-package.yml`) and publishes it to the Gitea Arch
 package registry, from which pacman can install it directly.
+
+Tags come from `.gitea/workflows/release.yml`, which is run by hand — it
+used to fire on every push to `main`, which meant a new package per
+merged PR (issue #115). A prerelease tag (`v0.4.0-beta.1`) is skipped:
+the workflow's trigger is `v*` and matches one.
 
 ## Installing from the registry
 
@@ -58,7 +63,7 @@ this is not recommended.
 - Only the runtime package is published; the `-debug` package makepkg
   produces (detached symbols) is skipped by the workflow.
 - Package versions come from `pkgver()` in the PKGBUILD, derived from git
-  (e.g. `1.3.0.r173.g4ae5ffc-1`), so every push to `main` yields a new
+  (e.g. `1.3.0.r173.g4ae5ffc-1`), so every release tag yields a new
   version.
 - Repo priority: if another configured repo ever provides a package named
   `yellowjacket`, the repo listed **first** in `pacman.conf` wins. Force a

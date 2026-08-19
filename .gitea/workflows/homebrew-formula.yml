@@ -56,6 +56,18 @@ jobs:
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+
+          # Nor is a prerelease, and this trigger is `v*`, which matches
+          # `v0.4.0-beta.1`.  It matters most here of the four: the tap
+          # is public, and `brew upgrade` would offer a beta to everyone
+          # on it.
+          case "$VERSION" in
+            *-*)
+              echo "$TAG is a prerelease; not syncing it to a public tap"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
           echo "skip=false" >> "$GITHUB_OUTPUT"
 
           TARBALL="${SOURCE_TARBALL_BASE}/${TAG}.tar.gz"
