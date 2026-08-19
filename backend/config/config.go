@@ -544,7 +544,7 @@ func (c *Config) SetDefaultPage(page string) error {
 		c.General.ApplyDefaults()
 	}
 
-	c.General.DefaultPage = DefaultPage(page)
+	c.General.DefaultPage = View(page)
 
 	if err := c.General.Validate(); err != nil {
 		return fmt.Errorf(
@@ -661,6 +661,81 @@ func (c *Config) SetAllowMeteredCatalogDownload(allow bool) error {
 	c.logger.Info(
 		"metered catalog download permission updated",
 		"allow", allow,
+	)
+
+	return nil
+}
+
+// GetViewVisibility reports which primary views the sidebar should
+// show, answered for every known view rather than only the ones the
+// config mentions -- so the frontend filters on a value and never has
+// to hold a second copy of the defaults.
+func (c *Config) GetViewVisibility() map[string]bool {
+	if c.General == nil {
+		general := &GeneralConfig{}
+		general.ApplyDefaults()
+
+		return general.ResolvedViewVisibility()
+	}
+
+	return c.General.ResolvedViewVisibility()
+}
+
+// SetViewVisible shows or hides one primary view.
+//
+// Two refusals, both about a state the user cannot get out of from the
+// UI they would be left with: Settings is never hideable, and the
+// launch page is never hideable while it is the launch page (change it
+// first). Hiding a view does not make it unreachable -- `navigate`
+// still resolves it, which detail views depend on -- it only takes the
+// nav item away.
+func (c *Config) SetViewVisible(view string, visible bool) error {
+	spec, known := LookupView(view)
+	if !known {
+		return fmt.Errorf("%w: %q", errUnknownView, view)
+	}
+
+	if c.General == nil {
+		c.General = &GeneralConfig{}
+		c.General.ApplyDefaults()
+	}
+
+	if !visible {
+		if !spec.Hideable {
+			return fmt.Errorf("%w: %q", errViewNotHideable, view)
+		}
+
+		if spec.ID == c.General.DefaultPage {
+			return fmt.Errorf("%w: %q", errViewIsLaunchPage, view)
+		}
+	}
+
+	if c.General.ViewVisibility == nil {
+		c.General.ViewVisibility = make(map[string]bool, len(Views))
+	}
+
+	c.General.ViewVisibility[view] = visible
+
+	if err := c.General.Validate(); err != nil {
+		return fmt.Errorf("invalid view visibility: %w", err)
+	}
+
+	if err := c.Save(); err != nil {
+		return fmt.Errorf("could not save config: %w", err)
+	}
+
+	events.Emit(
+		c.ctx,
+		events.GeneralConfigChanged,
+		map[string]any{
+			"ViewVisibility": c.General.ResolvedViewVisibility(),
+		},
+	)
+
+	c.logger.Info(
+		"view visibility updated",
+		"view", view,
+		"visible", visible,
 	)
 
 	return nil

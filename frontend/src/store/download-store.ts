@@ -189,6 +189,8 @@ class DownloadStore {
 
     private initialized = false;
 
+    private providersLoaded = false;
+
     constructor() {
         EventsOn(Events.DownloadProvidersChanged, () => {
             void this.refreshProviders();
@@ -283,6 +285,25 @@ class DownloadStore {
         } catch (err) {
             console.error('Failed to load download client types:', err);
         }
+    }
+
+    /**
+     * Loads the providers, and only those, once.
+     *
+     * `init()` additionally fetches the descriptors, the downloads and
+     * the request list, which is right for a page about downloading and
+     * wrong for the sidebar: it only needs `available`, to decide
+     * whether the Downloads destination exists at all (#25), and that
+     * is one query. `DownloadProvidersChanged` keeps it current
+     * afterwards, so configuring a client makes the tab appear without
+     * a restart.
+     */
+    async ensureProviders(): Promise<void> {
+        if (this.providersLoaded) return;
+
+        this.providersLoaded = true;
+
+        await this.refreshProviders();
     }
 
     async refreshProviders(): Promise<void> {

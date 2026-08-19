@@ -1,4 +1,4 @@
-import { test, expect } from '../support/fixtures.js';
+import { test, expect, navigateTo } from '../support/fixtures.js';
 
 /**
  * H-19: Playlists, Downloads, Jobs, Settings and Home had a page
@@ -58,8 +58,12 @@ const TAGS: Record<string, string> = {
 
 test.describe('every primary view says what it is', () => {
   test('each one has the shared header, with a heading', async ({ app }) => {
+    // By event rather than by nav item: a destination is not
+    // guaranteed to have one any more (#25 — Downloads is absent
+    // without a download client), and every one of these is still a
+    // primary view with a header, which is what this spec is about.
     for (const [view, heading, hasCount] of VIEWS) {
-      await app.getByTestId(`nav-${view}`).click();
+      await navigateTo(app, view);
       await expect(app.getByTestId('main-content')).toHaveAttribute(
         'data-active-view',
         view,

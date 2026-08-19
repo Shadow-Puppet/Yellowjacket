@@ -4,6 +4,7 @@ import {
   eventNames,
   resetEvents,
   waitForEvent,
+  navigateTo,
 } from '../support/fixtures.js';
 
 /**
@@ -39,7 +40,9 @@ test.describe('view lifecycle', () => {
   test('a keypress on Settings does not reach the Autotag queue', async ({
     app,
   }) => {
-    await app.getByTestId('nav-autotag').click();
+    // By event, not by nav item: Autotag is hidden by default (#25)
+    // and a hidden view is still reachable.
+    await navigateTo(app, 'autotag');
     await expect(app.getByTestId('main-content')).toHaveAttribute(
       'data-active-view',
       'autotag',
@@ -83,7 +86,9 @@ test.describe('view lifecycle', () => {
     // The other half of the same bug (H-2): two document keydown handlers
     // with no arbitration meant `s` on this page skipped the album *and*
     // toggled shuffle.  As a panel binding it can only mean one thing.
-    await app.getByTestId('nav-autotag').click();
+    // By event, not by nav item: Autotag is hidden by default (#25)
+    // and a hidden view is still reachable.
+    await navigateTo(app, 'autotag');
     await expect
       .poll(() => pendingCount(app))
       .toMatch(/^Pending \(\d+\)$/);

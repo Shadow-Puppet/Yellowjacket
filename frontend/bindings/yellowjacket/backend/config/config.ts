@@ -113,6 +113,16 @@ export function GetTrackListColumns(): $CancellablePromise<tracklist$0.Column[] 
 }
 
 /**
+ * GetViewVisibility reports which primary views the sidebar should
+ * show, answered for every known view rather than only the ones the
+ * config mentions -- so the frontend filters on a value and never has
+ * to hold a second copy of the defaults.
+ */
+export function GetViewVisibility(): $CancellablePromise<{ [_ in string]?: boolean } | null> {
+    return $Call.ByID(2798108026);
+}
+
+/**
  * Load reads and parses the config file from disk.
  */
 export function Load(): $CancellablePromise<void> {
@@ -245,6 +255,20 @@ export function SetThemeBackgroundShade(shade: string): $CancellablePromise<void
  */
 export function SetTrackListColumns(columns: tracklist$0.Column[] | null): $CancellablePromise<void> {
     return $Call.ByID(4226159685, columns);
+}
+
+/**
+ * SetViewVisible shows or hides one primary view.
+ * 
+ * Two refusals, both about a state the user cannot get out of from the
+ * UI they would be left with: Settings is never hideable, and the
+ * launch page is never hideable while it is the launch page (change it
+ * first). Hiding a view does not make it unreachable -- `navigate`
+ * still resolves it, which detail views depend on -- it only takes the
+ * nav item away.
+ */
+export function SetViewVisible(view: string, visible: boolean): $CancellablePromise<void> {
+    return $Call.ByID(1751982648, view, visible);
 }
 
 /**

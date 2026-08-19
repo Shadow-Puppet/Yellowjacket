@@ -26,7 +26,26 @@ import {
   ICON_REQUESTED,
 } from '@utils/icon-language';
 
+/** A configured, enabled download client. */
+const PROVIDER = {
+  id: 1,
+  kind: 'slskd',
+  name: 'Sound',
+  enabled: true,
+  priority: 50,
+};
+
 describe('<app-sidebar>', () => {
+  // Downloads is offered only where there is a client to download with
+  // (#25), so "all eleven destinations" is a statement about a
+  // configured install. `view-visibility.test.ts` owns the rule itself;
+  // this states the world these cases are describing.
+  beforeEach(async () => {
+    stub('download.Service.ListProviders', [PROVIDER]);
+    emit(Events.DownloadProvidersChanged);
+    await flush();
+  });
+
   it('renders a testid per destination, which is how e2e navigates', async () => {
     const el = await fixture('app-sidebar');
 

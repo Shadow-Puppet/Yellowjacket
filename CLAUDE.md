@@ -1032,6 +1032,71 @@ whole way through — so it was green on the broken build. Same trap as
 `layout-overflow.spec.ts` and `page-header`: a spec named for the
 behaviour, measuring the plumbing.
 
+**Which destinations exist is configuration, and hiding one takes away
+the nav item and nothing else.** Eleven sidebar entries is more than
+most libraries need (#25), so each is toggleable from Settings →
+Navigation, Autotag is off until asked for, and Downloads is absent
+until there is a client to download with — a destination for a feature
+that cannot work is worse than none. `navigate` still resolves a hidden
+view, which is not a nicety: detail views navigate into these and the
+launch page is one of them. Nothing needed a special case for the
+highlight either, because the paragraph above moved that onto
+`active-view-store`: the sidebar asks `isActive(id)` per *rendered*
+item, so a hidden view lights nothing exactly as a detail view does.
+
+Five things about it are load-bearing.
+
+**The stored shape is a map keyed by view id, and an absent key means
+that view's own default** (`backend/config.Views`). That is what makes
+this need no migration in either direction, and it is the polarity rule
+`AllowMeteredCatalogDownload` states: the zero value is the intended
+answer. A `HiddenViews []string` cannot express "Autotag off by
+default" at all — its zero value is *hide nothing* — and a struct with
+a boolean per view turns a view that later stops existing into stored
+garbage. Here an unknown key is dropped on load and a view added later
+gets its own default rather than being invisible or forcibly visible.
+It is also what makes #73's `#25 → #27` order safe rather than
+backwards: when Jobs folds into Settings, `jobs = true` in somebody's
+config is a key nothing asks about.
+
+**Two states the user could not get out of are refused, in the config
+and not in the checkbox.** Settings is never hideable and the launch
+page is not hideable while it is the launch page. `config.toml` is
+hand-editable, so a disabled checkbox is the affordance and
+`SetViewVisible` is the rule — an app that can be locked out of its own
+Settings by a typo in TOML is a support problem nobody can debug
+remotely. On *load* the launch page is instead un-hidden rather than
+refused: there is nobody to tell, and the honest reading of "my launch
+page is Autotag" is that this user wants Autotag, not that their launch
+page should be silently reset to something they did not choose.
+
+**Downloads is gated at the nav and not in the config**, on
+`downloadStore.available`, so switching it on in Settings still means
+what it says once a client exists and the tab appears without a restart
+(#37's rule). `available` is false until the providers have loaded,
+which makes the item *appear* on a fresh launch rather than appearing
+and then vanishing.
+
+**The tab bar honours the toggles too, and the reason is local rather
+than a general rule about phones.** `PHONE_COLUMN_IDS` is the precedent
+for "what a phone shows is a different question", and it would apply —
+except that `bottom-nav`'s "More" opens the *same* `<app-sidebar>`,
+which filters, so an unfiltered bar would contradict its own drawer one
+tap away. Which four tabs is still plan 016's committed subset; this
+only removes from it, and "More" is never filtered because it is how
+everything else stays reachable.
+
+**The list of destinations is `services/view-meta.ts`**, on
+`shortcut-meta.ts`'s pattern, because #25 gave it a second reader:
+Settings renders a toggle per view and needs the same labels in the
+same order. Which views exist and what an unconfigured install shows is
+Go's (`backend/config.Views`, which `DefaultPage`'s validation reads
+too, so the launchable set is not a second list); how they are *drawn*
+is the frontend's, beside the rest of the icon vocabulary. The binding
+returns the **resolved** map for every view, so the frontend holds no
+copy of the defaults — which would be the copy that shipped in the
+binary rather than the one being edited.
+
 **A primary view is cached, not unmounted.** `index.ts` keeps every
 primary view in the DOM and toggles a `.view-hidden` class, because that
 is what preserves `scrollTop` across navigation — so

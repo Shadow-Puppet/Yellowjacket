@@ -111,6 +111,35 @@ export async function bindingCalls(page: Page): Promise<string[]> {
   return calls.map(nameOf);
 }
 
+/**
+ * Go to a view without going through the navigation.
+ *
+ * `navigate` is the event the shell listens for and every nav item, card
+ * and detail view dispatches, so this is the app's own mechanism rather
+ * than a test-only door. It exists because a destination is not
+ * guaranteed to have a nav item any more (#25): Autotag is hidden until
+ * the user asks for it and Downloads until a client exists, and a spec
+ * about what a *view* does should not also be asserting that the
+ * sidebar offers it.
+ */
+export async function navigateTo(page: Page, view: string): Promise<void> {
+  await page.evaluate(
+    (v) =>
+      void document.dispatchEvent(
+        new CustomEvent('navigate', {
+          detail: { view: v },
+          bubbles: true,
+          composed: true,
+        }),
+      ),
+    view,
+  );
+
+  await page
+    .getByTestId('main-content')
+    .waitFor({ state: 'attached' });
+}
+
 /** Thin client for the dev-only /__test/ surface (backend/testctl). */
 export class TestCtl {
   constructor(private readonly baseURL: string) {}
