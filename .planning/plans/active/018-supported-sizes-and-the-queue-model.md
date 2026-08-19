@@ -183,6 +183,22 @@ follows immediately after this. What *this* plan owes it is the
 promise in the matrix — no action unreachable at any supported size —
 and the measurement that the only offender today is Playlists.
 
+**And the promise is not kept yet, which is the honest version of a
+claim this document made in its first draft.** "Decision 2 removes the
+desktop half of #69's symptom" was too strong. Measured after phase 2,
+at 900×600 on Playlists:
+
+| | before | after |
+|---|---|---|
+| queue open | main 379px, **all three** actions clipped | main 700px, **one** clipped |
+| queue closed | main 700px, one clipped | unchanged |
+
+So the queue's *contribution* is gone — open and closed are now
+identical, which is the whole of what this decision owed — and the
+residual "New Smart Playlist: 114/162px" is the header overflowing on
+its own, at a size the queue never touched. #69 is still a live defect
+at a supported size, and the matrix's promise is what will close it.
+
 ---
 
 ## Decision 4 — a very small window becomes the phone layout, not the mini-player
@@ -219,16 +235,39 @@ correctness one.
 ## Phases
 
 1. **This document**, linked from #24, with the matrix reported on the
-   issue and #55 told whether it is unblocked. *(no code)*
+   issue and #55 told whether it is unblocked. *(no code)* — **done**
 2. **The queue's overlay mode** — computed mode attribute, scrim,
    Escape and scrim-click close, focus return. The inline path is
-   unchanged above the threshold.
+   unchanged above the threshold. — **done**
 3. **The window minimum's comment** — replace both stale reasons with
-   the measured ones. No value change.
+   the measured ones. No value change. — **done**
 4. **Verification**, below. Including the specs that must change
-   because they assert the old behaviour.
+   because they assert the old behaviour. — **done**
 
-#69 follows as its own branch; #55 becomes unblocked at phase 2.
+#69 follows as its own branch; #55 became unblocked at phase 2.
+
+## What landed, measured
+
+Main panel width with the queue open, before and after:
+
+| viewport | before | after | mode |
+|---|---|---|---|
+| 1280×800 | 759 | 759 | inline |
+| 1100×720 (default window) | 579 | 579 | inline |
+| 1024×768 | 503 | 503 | inline |
+| 900×600 | **379** | **700** | overlay |
+| 800×600 | 423 | 744 | overlay |
+| 390×780 | **69** | **390** | overlay |
+| 320×600 | **0** | **320** | overlay |
+
+The scrim is perceptible but subtle on a dark ramp, which is worth
+knowing before someone "fixes" it: sampled from the screenshots at
+900×600, the main panel's background goes 33,37,41 → 18,20,23 and a
+row's text 242 → 133. It covers the **content area only** — not the
+sidebar or the transport — on purpose: the queue is not modal, and
+leaving the navigation live means the scrim reads as "this is over the
+content" (which is what #24 asked for) without pretending the rest of
+the app is unavailable.
 
 ## Verification, and what each tier cannot see
 

@@ -3580,3 +3580,87 @@ per-card flag can answer at all.
 The general point: **two columns that agree today are not one column.**
 Which of them a new surface reads should be decided by which one has
 something that can un-set it.
+
+## The queue panel was a column that could not afford to be one (measured 2026-08-19)
+
+Plan 018, issue #24. Measured against the running app (`make
+dev-headless SEED=default`, Chromium) on Playlists, sweeping the
+viewport with the queue open and closed. Main panel width, and how much
+of the page header survived:
+
+| viewport | sidebar | main (queue open) | actions clipped |
+|---|---|---|---|
+| 1280×800 | 200 | 759 | — |
+| 1000×700 | 200 | 479 | 2 of 3 |
+| **900×600** | 200 | **379** | all three |
+| 800×600 | 56 | 423 | all three |
+| 390×780 | — | **69** | all three |
+| 320×600 | — | **0** | all three |
+| 800×600 | 56 | 744 *(closed)* | New Smart Playlist, 158/162px |
+
+Five things came out of it that the issue did not say.
+
+- **The header clips at the enforced minimum with the queue closed.**
+  800×600 is the only size this app promises, and "New Smart Playlist"
+  loses 4px of its 162 there. The queue makes it dramatic; it is not
+  the cause.
+- **900×600 is worse than 800×600.** `AUTO_COLLAPSE_VIEWPORT` collapses
+  the sidebar *below* 900, so the main panel is 843px at 899 and 700px
+  at 900. **The worst desktop case is the top of the Compact band, not
+  the enforced floor** — so every viewport list that stopped at "the
+  minimum" was missing its own worst case. `layout-overflow.spec.ts`
+  carries 900 now.
+- **At 320px the main panel was 0px.** The panel is `flex-shrink: 0` in
+  the flow of `.content-area`, so an open queue is paid for by the
+  content rather than covering it. Not degraded — gone. That is the
+  measurement #55 wanted and did not have.
+- **Only Playlists overflows.** All ten primary views swept at 900×600
+  and 390×780; every other header reports `scrollWidth ==
+  clientWidth`, and Albums at 390 renders title, count and sort legibly
+  (checked on a screenshot, not just the number). So #69 is one view's
+  action set — three text buttons totalling 390px — and not a systemic
+  header failure.
+- **Both reasons in `MinWidth`'s comment had expired.** The subtitle is
+  `display: none` from 899 down, and the sidebar host is
+  `overflow-y: auto` (at 600×460, `scrollHeight` 434 against a 332px
+  client, Settings reachable after scrolling). The floor is right; its
+  stated defence was two mechanisms that can no longer happen, which is
+  worse than either answer because nobody can argue with it.
+
+**A correction worth keeping, because it nearly went in the plan.** My
+first probe for the sidebar's scroller searched
+`shadowRoot.querySelectorAll('*')` and reported "no scroller — items
+are unreachable", which reads exactly like a live Settings-unreachable
+bug. The scroller is the **host**, and a host is not inside its own
+shadow root. CLAUDE.md was right and the probe was wrong.
+
+**And one claim in the plan's first draft was too strong**: that the
+overlay "removes the desktop half of #69". After phase 2, at 900×600,
+open and closed are now *identical* (main 700, one action clipped)
+where open used to be main 379 with all three clipped. The queue's
+contribution is gone; the header's own overflow remains and is still a
+live defect at a supported size.
+
+### The mode cannot be a media query
+
+The panel is drag-resizable 200–500px and persisted, so a viewport
+breakpoint assumes the default 320 and is wrong by up to 180px for a
+user who widened it — in the direction that hurts, since a wider queue
+is exactly when the content can least afford it. It is computed from
+`.content-area`'s width instead (which already accounts for the
+sidebar's collapse), and the component test that matters widens the
+panel at a *fixed* parent width and asserts the flip.
+
+The floor (480) is a judgement, and the measurement is why: there is no
+cliff. The track list rescales its columns continuously — 213px down to
+124px between main widths of 900 and 544, `rowOverflow=0` at every step
+— and the album grid steps 3 columns to 2 somewhere between 564 and 644
+without breaking. So 480 is anchored at both ends instead: it keeps the
+default 1100px window inline, and puts every measured-broken case on
+the overlay side.
+
+The scrim is perceptible but subtle on a dark ramp, which is worth
+knowing before someone "fixes" it as broken: sampled from screenshots at
+900×600, the main panel's background goes 33,37,41 → 18,20,23 and a
+row's text 242 → 133. It covers the content area only — not the sidebar
+or the transport — because the queue is not modal.
