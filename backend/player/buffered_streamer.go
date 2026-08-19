@@ -1,6 +1,7 @@
 package player
 
 import (
+	"errors"
 	"sync"
 	"time"
 
@@ -34,7 +35,44 @@ type BufferedStreamer struct {
 	done    bool
 	err     error
 	closed  chan struct{}
+
+	// starved counts consecutive Stream calls served with silence
+	// because the ring was empty, and starvedSince is when that run
+	// began.  An underrun is legitimate for a moment -- that is what
+	// the read-ahead exists to absorb -- but it is not legitimate
+	// forever, and "forever" is indistinguishable from healthy
+	// playback everywhere above this type: the chain never ends, so
+	// the player stays in Playing with the button showing pause, and
+	// the decoder's position never moves, so the 1 Hz report pins the
+	// seek bar and suppresses its interpolation.
+	starved      int
+	starvedSince time.Time
 }
+
+// The silence fill is bounded by both a duration and a run of calls,
+// and it needs both.
+//
+// Duration alone is the real measure -- the speaker paces itself, so
+// wall clock is what says whether the source has actually stopped --
+// but a caller draining in a tight loop (a test, a decode-to-buffer)
+// makes hundreds of calls in microseconds and would trip nothing.
+// A call count alone is the opposite failure: the same tight loop
+// spends the whole budget before the read-ahead goroutine has been
+// scheduled once, and ends a perfectly good stream at sample zero.
+//
+// The duration is longer than the 2 s read-ahead it is there to
+// outlast, and the count is short enough that the speaker (~200 ms a
+// call) reaches it well inside that.
+const (
+	maxStarvedDuration = 3 * time.Second
+	minStarvedCalls    = 8
+)
+
+// errSourceStalled is returned by Err when the source stopped
+// producing samples without ever reporting end-of-stream.
+var errSourceStalled = errors.New(
+	"audio source stopped producing samples",
+)
 
 // NewBufferedStreamer creates a BufferedStreamer that pre-fills
 // bufferSize samples from source via a background goroutine.
@@ -54,14 +92,37 @@ func NewBufferedStreamer(
 	return bs
 }
 
+// finish marks the stream ended, recording err as the reason when
+// there is one.  Every exit from readAhead goes through it: an exit
+// that leaves done false strands Stream in its underrun branch,
+// where it returns silence and ok forever.
+func (bs *BufferedStreamer) finish(err error) {
+	bs.mu.Lock()
+	defer bs.mu.Unlock()
+
+	bs.done = true
+
+	if err != nil && bs.err == nil {
+		bs.err = err
+	}
+}
+
 // readAhead continuously reads from the source into the ring buffer
 // until the source is drained, an error occurs, or Close is called.
+// It always marks the stream done on the way out.
 func (bs *BufferedStreamer) readAhead() {
 	// Temporary buffer for reading from source outside the lock.
 	// 512 samples per chunk keeps the critical section short.
 	const chunkSize = 512
 
 	tmp := make([][2]float64, chunkSize)
+
+	// Every exit marks the stream done.  An exit that does not is what
+	// stranded Stream in its underrun branch, returning silence and ok
+	// for the rest of the process's life.
+	var exitErr error
+
+	defer func() { bs.finish(exitErr) }()
 
 	for {
 		// Check if closed.
@@ -72,6 +133,15 @@ func (bs *BufferedStreamer) readAhead() {
 		}
 
 		bs.mu.Lock()
+
+		// Stream gave up waiting for us.  Nothing downstream is
+		// listening any more, so filling the ring is work for nobody.
+		if bs.done {
+			bs.mu.Unlock()
+
+			return
+		}
+
 		space := len(bs.ring) - bs.count
 
 		if space == 0 {
@@ -115,14 +185,12 @@ func (bs *BufferedStreamer) readAhead() {
 		}
 
 		if !ok {
-			bs.mu.Lock()
-			bs.done = true
-
-			if srcErr := bs.source.Err(); srcErr != nil {
-				bs.err = srcErr
-			}
-
-			bs.mu.Unlock()
+			// A drained source and a failed one both land here and are
+			// not the same event: one is a track that ended, the other
+			// is a track that broke.  Err is what tells them apart, and
+			// it is why the player must ask before treating this as a
+			// natural finish.
+			exitErr = bs.source.Err()
 
 			return
 		}
@@ -154,13 +222,36 @@ func (bs *BufferedStreamer) Stream(
 	}
 
 	if bs.count == 0 {
-		// Buffer temporarily empty — fill with silence.
+		// The read-ahead has not caught up.  Silence buys it time --
+		// but only for a bounded stretch, because "forever" is
+		// reported upward as healthy playback and there is no watchdog
+		// above this to notice otherwise.
+		bs.starved++
+
+		if bs.starvedSince.IsZero() {
+			bs.starvedSince = time.Now()
+		}
+
+		if bs.starved >= minStarvedCalls &&
+			time.Since(bs.starvedSince) > maxStarvedDuration {
+			bs.done = true
+
+			if bs.err == nil {
+				bs.err = errSourceStalled
+			}
+
+			return 0, false
+		}
+
 		for i := range samples {
 			samples[i] = [2]float64{}
 		}
 
 		return len(samples), true
 	}
+
+	// Samples arrived, so whatever the stall was, it is over.
+	bs.resetStarvationLocked()
 
 	// Copy available samples from ring buffer.
 	n := len(samples)
@@ -197,6 +288,19 @@ func (bs *BufferedStreamer) Flush() {
 	bs.readPos = 0
 	bs.writPos = 0
 	bs.count = 0
+
+	// A seek empties the ring on purpose, and the refill that follows
+	// is exactly the stall the budget exists to tolerate.  Charging it
+	// against a budget the previous underrun already spent would end
+	// the track on a seek near the end of a slow file.
+	bs.resetStarvationLocked()
+}
+
+// resetStarvationLocked forgets an underrun run.  Must be called with
+// bs.mu held.
+func (bs *BufferedStreamer) resetStarvationLocked() {
+	bs.starved = 0
+	bs.starvedSince = time.Time{}
 }
 
 // LockSource blocks the read-ahead goroutine from touching the

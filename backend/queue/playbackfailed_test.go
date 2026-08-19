@@ -107,7 +107,7 @@ func TestPlaybackFailed_AutoAdvanceSkipsPastIt(t *testing.T) {
 
 	// The first track finished: auto-advance lands on the missing
 	// file and must step over it rather than stopping dead.
-	q.OnPlaybackFinished()
+	q.OnPlaybackFinished(nil)
 
 	if got := q.GetState().CurrentIndex; got != 2 {
 		t.Errorf("currentIndex after skipping: got %d, want 2", got)
@@ -183,7 +183,7 @@ func TestQueueExhausted_KeepsTheFinishedTrackLoaded(t *testing.T) {
 
 	q.SetQueue(paths, 0, false, Source{})
 	q.Play()
-	q.OnPlaybackFinished()
+	q.OnPlaybackFinished(nil)
 
 	if q.GetState().CurrentIndex != -1 {
 		t.Errorf(
