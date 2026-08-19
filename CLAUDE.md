@@ -952,6 +952,50 @@ kept beside it, because two stacks is precisely how a view's own back
 button and the phone's gesture come to disagree about what one press
 means.
 
+**And there is one statement of which view is active**, for the same
+reason: `popstate` calls `handleNavigate()` directly and dispatches no
+`navigate`, so the two nav components — which learned the active view
+from that event — kept highlighting the view the user had just *left*.
+`store/active-view-store.ts` is the shell saying where the user is, and
+both navs read it through `ActiveViewController` rather than holding an
+`activeView` of their own.
+
+Four things about it are load-bearing.
+
+**"Please go to X" and "the active view is now X" are different
+statements**, and only the first existed — dispatched from 28 call
+sites across 18 files. A re-dispatch from inside `handleNavigate` is
+not the fix and cannot be: that function is the `document` listener for
+`navigate`, so it is an infinite loop.
+
+**It is a store rather than an event, because a component that mounts
+after a navigation still has to know.** `bottom-nav`'s "More" drawer
+creates its `<app-sidebar>` on open, and that copy had heard no
+`navigate` at all — standing on Albums, the drawer opened highlighting
+Home. An event has no answer for a listener that was not there.
+
+**A detail view is not a view here**, so the destination it was opened
+from stays lit. `app-sidebar` did that by accident (it guarded on
+`navItems.some(...)`, so an unmatched name left its highlight alone)
+and `bottom-nav` had no such guard and so lit *nothing* — which is why
+one looked right and the other looked broken on the same screen.
+Whether a view is primary is the shell's fact: `view in VIEW_TAGS` is
+passed to `setView`, never re-derived, because a second copy of that
+list is a second thing to forget.
+
+**Nothing is lit until the shell has navigated.** The store starts
+empty rather than defaulting to `home`, which is what `app-sidebar`'s
+field used to do to match the landing view — a default that is correct
+only while `GetDefaultPage()` agrees with it.
+
+The assertion is `aria-current="page"`, in
+`e2e/specs/back-navigation.spec.ts`. That file existed throughout the
+bug, covered exactly these journeys, and asserted only
+`data-active-view` — the shell's own bookkeeping, which was right the
+whole way through — so it was green on the broken build. Same trap as
+`layout-overflow.spec.ts` and `page-header`: a spec named for the
+behaviour, measuring the plumbing.
+
 **A primary view is cached, not unmounted.** `index.ts` keeps every
 primary view in the DOM and toggles a `.view-hidden` class, because that
 is what preserves `scrollTop` across navigation — so
