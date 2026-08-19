@@ -252,9 +252,30 @@ function publishDepth(): void {
 }
 
 function recordNavigation(detail: { view: string; [key: string]: any }): void {
-    // `_isBack` is bookkeeping, not destination: keeping it in the entry
-    // would make a replayed navigation claim to be a back-navigation.
-    const { _isBack: _ignored, ...nav } = detail;
+    // `_isBack` and `_replace` are bookkeeping, not destination: keeping
+    // either in the entry would make a replayed navigation claim to be
+    // one.
+    const { _isBack: _ignored, _replace: replace, ...nav } = detail;
+
+    // Still launching: the configured landing page is not a navigation
+    // *away* from the eager one, it is the same arrival arriving late
+    // (#142). Pushing it left the app one entry deep before the user
+    // had touched anything, so the first back press replayed home over
+    // home -- invisible on desktop until #6 drew a Back button, and on
+    // Android the press that should have exited the app instead did
+    // nothing, because `canGoBack()` was true.
+    //
+    // Guarded on being at the root rather than on a flag, because
+    // `GetDefaultPage()` is a backend call and the user can navigate
+    // while it is in flight: past index 0 this is an ordinary
+    // navigation, or a slow answer would overwrite an entry they made.
+    if (historyStarted && replace && currentIndex === 0) {
+        history.replaceState({ yjNav: nav, yjIdx: 0 }, '');
+        maxIndex = 0;
+        publishDepth();
+
+        return;
+    }
 
     // Same URL, deliberately: the app has no routes, and a path a
     // reload cannot resolve is worse than no path at all.
@@ -570,14 +591,17 @@ GetDefaultPage()
         document.dispatchEvent(new CustomEvent('navigate', {
             bubbles: true,
             composed: true,
-            detail: { view: view || 'home' },
+            // Part of launching, not a navigation away from the eager
+            // 'home' above: it replaces that entry rather than
+            // stacking on it (#142).
+            detail: { view: view || 'home', _replace: true },
         }));
     })
     .catch(() => {
         document.dispatchEvent(new CustomEvent('navigate', {
             bubbles: true,
             composed: true,
-            detail: { view: 'home' },
+            detail: { view: 'home', _replace: true },
         }));
     });
 
