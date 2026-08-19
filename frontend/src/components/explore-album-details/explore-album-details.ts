@@ -198,6 +198,28 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
     @state() private versionEntries: VersionEntry[] = [];
     /** Currently-selected dropdown entry (by VersionEntry.key). */
     @state() private selectedVersionKey: string = '';
+
+    /**
+     * The key `buildClusters` defaulted to, kept so the page can tell
+     * "this is what we picked for you" from "you went and chose this".
+     *
+     * Only the second needs saying out loud. With the selector demoted
+     * to a disclosure below the tracklist, a chosen version is the one
+     * case where the list on screen is not the one the header
+     * describes, and nothing else on the page would say so.
+     */
+    @state() private defaultVersionKey: string = '';
+
+    /**
+     * Whether the "Other versions" disclosure is open.
+     *
+     * Collapsed by default — choosing which pressing you are looking at
+     * is a metadata-repair task and does not belong above the
+     * tracklist. It is deliberately *not* closed when the selection
+     * changes: the user opened it to change something, and a panel that
+     * shuts on use cannot be used twice.
+     */
+    @state() private versionsOpen = false;
     @state() private coverArtURL = '';
 
     /**
@@ -523,7 +545,93 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
                 flex-shrink: 0;
             }
 
-            /* ── Version selector ── */
+            /* ── Other versions (a disclosure, below the tracklist) ── */
+            .versions {
+                margin-top: 24px;
+                border-top: 1px solid
+                    var(--yj-border-subtle, rgba(255, 255, 255, 0.08));
+                padding-top: 8px;
+            }
+
+            /* The heading exists so the section is reachable by heading
+             * navigation; the button inside it is the control. Its own
+             * type scale is the section header's, reduced — this is a
+             * footnote to the page, not a peer of the tracklist. */
+            .versions-heading {
+                margin: 0;
+                font-size: var(--yj-text-sm);
+                font-weight: 500;
+            }
+
+            .versions-toggle {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                width: 100%;
+                padding: 8px 2px;
+                background: none;
+                border: none;
+                color: var(--yj-text-secondary, #b3b3b3);
+                font: inherit;
+                text-align: left;
+                cursor: pointer;
+            }
+
+            .versions-toggle:hover {
+                color: var(--yj-text-primary, #fff);
+            }
+
+            .versions-toggle:focus-visible {
+                outline: 2px solid var(--yj-accent-text, #ffd43b);
+                outline-offset: 2px;
+                border-radius: 4px;
+            }
+
+            .versions-toggle wa-icon {
+                font-size: var(--yj-icon-xs, 11px);
+                transition: transform 0.2s ease;
+            }
+
+            .versions-toggle[aria-expanded='false'] wa-icon {
+                transform: rotate(-90deg);
+            }
+
+            .versions-intro {
+                margin: 0 0 10px;
+                font-size: var(--yj-text-xs);
+                color: var(--yj-text-tertiary, #888);
+                line-height: 1.4;
+            }
+
+            /* A line above the tracklist, and only after a deliberate
+             * choice — see renderChosenVersion. */
+            .chosen-version {
+                margin: 0 0 10px;
+                font-size: var(--yj-text-sm);
+                color: var(--yj-text-secondary, #b3b3b3);
+            }
+
+            .chosen-version strong {
+                color: var(--yj-text-primary, #fff);
+                font-weight: 600;
+            }
+
+            .chosen-version-reset {
+                background: none;
+                border: none;
+                padding: 0;
+                font: inherit;
+                color: var(--yj-accent-text, #ffd43b);
+                text-decoration: underline;
+                cursor: pointer;
+            }
+
+            .chosen-version-reset:focus-visible {
+                outline: 2px solid var(--yj-accent-text, #ffd43b);
+                outline-offset: 2px;
+                border-radius: 2px;
+            }
+
             .version-selector {
                 display: flex;
                 flex-direction: column;
@@ -948,6 +1056,8 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
         this.releases = [];
         this.versionEntries = [];
         this.selectedVersionKey = '';
+        this.defaultVersionKey = '';
+        this.versionsOpen = false;
         this.showFullTracklist = null;
         this.localTracks = [];
         this.filePaths = new Map();
@@ -1639,6 +1749,14 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
             || standardEntry?.key
             || this.versionEntries[0]?.key
             || '';
+
+        // Recorded here rather than derived later: this is the one
+        // place that knows what "the version we picked" means, and
+        // recomputing the preference order at the render site would be
+        // a second copy of it.  `handleTracklistScopeChange` rebuilds
+        // through here too, so the switch does not read as a choice of
+        // version.
+        this.defaultVersionKey = this.selectedVersionKey;
     }
 
     /**
@@ -2297,9 +2415,10 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
                     entity-type="album"
                     @catalog-retry=${this.retryCatalog}
                 ></catalog-scope-notice>
-                ${this.renderVersionSelector()}
+                ${this.renderChosenVersion()}
                 ${this.renderTracklistScope()}
                 ${this.renderTracklist()}
+                ${this.renderVersionSelector()}
             </div>
             <track-details></track-details>
         `;
@@ -2950,26 +3069,81 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
 
     /* ── Version Selector (R025, R026, R027) ── */
 
+    /**
+     * Which pressing is on screen — said only when the user chose it.
+     *
+     * The selector is a disclosure below the tracklist now, so nothing
+     * above the list names the version it came from. That is right for
+     * the default, which is what the header already describes; it is
+     * wrong the moment someone picks a different one, because then the
+     * tracklist and the page disagree and the control that explains it
+     * is off the bottom of the screen.
+     *
+     * `defaultVersionKey` is the whole test. A quiet line that appears
+     * on every album would be the thing this issue removed, one size
+     * smaller.
+     */
+    private renderChosenVersion() {
+        if (this.loadingReleases || this.errorReleases) return nothing;
+        if (!this.selectedVersionKey) return nothing;
+        if (this.selectedVersionKey === this.defaultVersionKey) return nothing;
+
+        const current = this.currentVersion();
+
+        if (!current) return nothing;
+
+        return html`
+            <p class="chosen-version">
+                Showing <strong>${current.label}</strong> —
+                ${current.sublabel}.
+                <button
+                    type="button"
+                    class="chosen-version-reset"
+                    @click=${this.resetVersion}
+                >
+                    Use the default version
+                </button>
+            </p>
+        `;
+    }
+
+    /** Back to what `buildClusters` picked, without opening the panel. */
+    private resetVersion = () => {
+        if (!this.defaultVersionKey) return;
+
+        this.selectedVersionKey = this.defaultVersionKey;
+    };
+
+    /**
+     * "Other versions" — a disclosure, below the tracklist.
+     *
+     * Choosing which pressing you are looking at is an advanced,
+     * metadata-repair task, and it used to sit directly above the
+     * tracklist with a heading and a paragraph of prose explaining our
+     * clustering heuristic. It is not removed — matching the wrong
+     * release is a real problem and this is how it gets fixed — it is
+     * demoted (#17).
+     *
+     * Two things about the shape are load-bearing, and both are
+     * `config-section`'s rules rather than new ones. The header is a
+     * real `<button aria-expanded aria-controls>` inside the heading
+     * that names the section, so it is reachable by Tab and by heading
+     * navigation alike. And the body **renders unconditionally and is
+     * toggled with `hidden`**, because `aria-controls` has to name an
+     * element that is in the DOM.
+     *
+     * The loading and error states this used to own are gone rather
+     * than moved. Both were unguarded, so they took the primary slot on
+     * every album regardless of whether there was ever going to be a
+     * choice: the spinner said the same thing `renderTracklist` was
+     * already saying about the same fetch, and the error is the one
+     * `catalog-scope-notice` shows at the top of the page with a retry
+     * — every path that sets `errorReleases` also sets `catalogFailed`,
+     * which is the only route to `unavailable`. What the tracklist does
+     * with a failure is now the tracklist's own business.
+     */
     private renderVersionSelector() {
-        if (this.loadingReleases) {
-            return html`
-                <section>
-                    <h3 class="section-header">Versions</h3>
-                    <div class="section-loading">Loading releases\u2026</div>
-                </section>
-            `;
-        }
-        if (this.errorReleases) {
-            return html`
-                <section>
-                    <h3 class="section-header">Versions</h3>
-                    <div class="section-error">
-                        <wa-icon name="triangle-exclamation"></wa-icon>
-                        ${this.errorReleases}
-                    </div>
-                </section>
-            `;
-        }
+        if (this.loadingReleases || this.errorReleases) return nothing;
 
         // A dropdown is only a choice if the choices differ. Counting
         // *entries* is the wrong test: a release group routinely has
@@ -2980,7 +3154,9 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
         //
         // Distinct *tracklists* is the real question, and it is already
         // computed: clusters are keyed by tracklist fingerprint.
-        if (this.distinctTracklistCount() <= 1) return nothing;
+        const choices = this.distinctTracklistCount();
+
+        if (choices <= 1) return nothing;
 
         const aggregateEntries = this.versionEntries.filter(
             (e) => e.group === 'aggregate',
@@ -2990,34 +3166,58 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
         );
 
         return html`
-            <div class="version-selector">
-                <div class="version-selector-row">
-                    <label for="version-select">Version</label>
-                    <select
-                        id="version-select"
-                        @change=${this.handleVersionChange}
-                        aria-label="Select release version"
+            <section class="versions">
+                <h3 class="versions-heading">
+                    <button
+                        type="button"
+                        class="versions-toggle"
+                        aria-expanded=${this.versionsOpen ? 'true' : 'false'}
+                        aria-controls="versions-body"
+                        @click=${this.toggleVersions}
                     >
-                        ${aggregateEntries.length > 0
-                            ? html`
-                                  <optgroup label="Aggregate">
-                                      ${aggregateEntries.map((e) =>
-                                          this.renderVersionOption(e),
-                                      )}
-                                  </optgroup>
-                              `
-                            : nothing}
-                        <optgroup label="Versions">
-                            ${clusterEntries.map((e) =>
-                                this.renderVersionOption(e),
-                            )}
-                        </optgroup>
-                    </select>
+                        <wa-icon name="chevron-down" aria-hidden="true"></wa-icon>
+                        Other versions of this album (${choices})
+                    </button>
+                </h3>
+                <div id="versions-body" ?hidden=${!this.versionsOpen}>
+                    <p class="versions-intro">
+                        A release group can have several pressings with
+                        different tracklists. Pick another if the one
+                        above does not match your copy.
+                    </p>
+                    <div class="version-selector">
+                        <div class="version-selector-row">
+                            <label for="version-select">Version</label>
+                            <select
+                                id="version-select"
+                                @change=${this.handleVersionChange}
+                            >
+                                ${aggregateEntries.length > 0
+                                    ? html`
+                                          <optgroup label="Aggregate">
+                                              ${aggregateEntries.map((e) =>
+                                                  this.renderVersionOption(e),
+                                              )}
+                                          </optgroup>
+                                      `
+                                    : nothing}
+                                <optgroup label="Versions">
+                                    ${clusterEntries.map((e) =>
+                                        this.renderVersionOption(e),
+                                    )}
+                                </optgroup>
+                            </select>
+                        </div>
+                        ${this.renderVersionMeta()}
+                    </div>
                 </div>
-                ${this.renderVersionMeta()}
-            </div>
+            </section>
         `;
     }
+
+    private toggleVersions = () => {
+        this.versionsOpen = !this.versionsOpen;
+    };
 
     /**
      * One option in the version list.
@@ -3197,8 +3397,21 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
             `;
         }
         if (this.errorReleases) {
-            // Error already shown in version selector section
-            return nothing;
+            // The failure belongs to the list that is missing because
+            // of it. This used to return `nothing` and lean on the
+            // version selector's own error block to have said it, which
+            // is precisely the coupling that made demoting the selector
+            // a rewrite rather than a move: a control in a collapsed
+            // disclosure cannot be the page's error surface.
+            return html`
+                <section>
+                    <h3 class="sr-only">Tracklist</h3>
+                    <div class="section-error">
+                        <wa-icon name="triangle-exclamation"></wa-icon>
+                        ${this.errorReleases}
+                    </div>
+                </section>
+            `;
         }
         const current = this.currentVersion();
         if (!current) {
