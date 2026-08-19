@@ -2015,11 +2015,14 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
 
     /**
      * File path for one top track, resolved by recording MBID — the
-     * same key `inLibrary`/`localId` were set from. Works whether or
-     * not the containing release itself matched a local album.
+     * same key `localId` was set from. Works whether or not the
+     * containing release itself matched a local album.
+     *
+     * Gated on the same answer the row is drawn from, or a row drawn
+     * dimmed and `aria-disabled` would still try to play and fail.
      */
     private async trackFilePath(track: LBTopRecording): Promise<string | null> {
-        if (!(track.inLibrary || track.localId) || !track.recordingMbid) return null;
+        if (!isOwned(track) || !track.recordingMbid) return null;
 
         const libraryID = libraryStore.getSelectedLibraryId() ?? 0;
         const byMBID = await dictByName(

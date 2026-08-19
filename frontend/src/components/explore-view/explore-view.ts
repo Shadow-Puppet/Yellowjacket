@@ -1241,8 +1241,11 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
         void this.playAlbum(rg, false);
     }
 
-    private onRecordingRowDblClick(r: { mbid: string; inLibrary: boolean; localId?: number }): void {
-        if (!r.inLibrary && !r.localId) return;
+    // The same answer the row is drawn from. It used to accept
+    // `inLibrary` as well, so a row drawn dimmed and `aria-disabled`
+    // would still try to play and fail with a notification.
+    private onRecordingRowDblClick(r: { mbid: string; localId?: number }): void {
+        if (!isOwned(r)) return;
 
         void this.playRecording(r.mbid);
     }
