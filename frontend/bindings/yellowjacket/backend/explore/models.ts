@@ -431,8 +431,17 @@ export interface TopResult {
 
     /**
      * Library status — populated from index cross-reference columns.
+     * 
+     * LocalID is the one the cards read.  It is the local row behind
+     * this entity — an album, a file, an artist — and it is set and
+     * cleared by a test against `audio_files`, so it means "there is
+     * something of mine here".  InLibrary is written by the same pass
+     * but is a one-way ratchet the prune can only clear alongside a
+     * local id, so it is the weaker of the two and stays for scoring
+     * (`fwInLibrary`), which is where an approximate answer is fine.
      */
     "inLibrary": boolean;
+    "localId"?: number;
 }
 
 /**
