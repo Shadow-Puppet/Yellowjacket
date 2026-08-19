@@ -26,6 +26,12 @@ const MIN_VIEWPORT = { width: 800, height: 600 };
 const VIEWPORTS = [
   { name: '1440×900', width: 1440, height: 900 },
   { name: '1024×768', width: 1024, height: 768 },
+  // Not the minimum, and that is the point (#24). The sidebar collapses
+  // to icons *below* 900, so the main panel is 843px at 899 and 700px
+  // at 900 — the narrowest content area any desktop width produces is
+  // here, not at the enforced floor. A list that stopped at the minimum
+  // was missing its own worst case.
+  { name: '900×600 (the widest sidebar, so the narrowest content)', width: 900, height: 600 },
   { name: `the minimum (${MIN_VIEWPORT.width}×${MIN_VIEWPORT.height})`, ...MIN_VIEWPORT },
 ];
 
