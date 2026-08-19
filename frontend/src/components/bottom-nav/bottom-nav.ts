@@ -7,6 +7,7 @@ import { designTokens } from '../../styles/tokens.css';
 import '../sidebar/app-sidebar.js';
 import { nameDialog } from '@utils/name-dialog';
 import { ICON_PLAYLIST } from '@utils/icon-language';
+import { ActiveViewController } from '@store/controllers/active-view-controller';
 
 type View = 'home' | 'albums' | 'tracks' | 'playlists';
 
@@ -114,8 +115,19 @@ export class BottomNav extends LitElement {
         }
     `];
 
-    @state()
-    private activeView = 'home';
+    /**
+     * Which tab is lit, read from the shell rather than tracked here.
+     *
+     * This was a `@state()` field set from the `navigate` event, which
+     * only the outbound path dispatches -- so backing out of a detail
+     * view left the highlight wherever it had been (#72). It had no
+     * equivalent of `app-sidebar`'s `navItems.some(...)` guard either,
+     * so a detail view set it to a name matching no tab and *nothing*
+     * was lit; that asymmetry is why one nav looked broken and the
+     * other looked fine. The store answers both: a detail view leaves
+     * the tab it was opened from lit, in both components.
+     */
+    private activeCtrl = new ActiveViewController(this);
 
     /**
      * Whether the drawer has been asked for.
@@ -167,12 +179,9 @@ export class BottomNav extends LitElement {
         nameDialog(this.drawer);
     }
 
-    private onGlobalNavigate = (e: Event) => {
-        const detail = (e as CustomEvent<{ view?: string }>).detail;
-
-        if (detail?.view) this.activeView = detail.view;
-
+    private onGlobalNavigate = () => {
         // A navigation from inside the drawer is the drawer's job done.
+        // The highlight is not this listener's business any more.
         this.drawerOpen = false;
     };
 
@@ -206,9 +215,11 @@ export class BottomNav extends LitElement {
                         <li>
                             <button
                                 type="button"
-                                class=${this.activeView === tab.id ? 'active' : ''}
+                                class=${this.activeCtrl.isActive(tab.id)
+                                    ? 'active'
+                                    : ''}
                                 data-testid="tab-${tab.id}"
-                                aria-current=${this.activeView === tab.id
+                                aria-current=${this.activeCtrl.isActive(tab.id)
                                     ? 'page'
                                     : 'false'}
                                 @click=${() => this.navigate(tab.id)}

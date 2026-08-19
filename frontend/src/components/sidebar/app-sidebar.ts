@@ -4,6 +4,7 @@ import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import { designTokens } from '../../styles/tokens.css';
 
 import type { DragActiveDetail } from '@utils/drag-controller';
+import { ActiveViewController } from '@store/controllers/active-view-controller';
 import {
     ICON_PLAYLIST,
     ICON_AUTOTAG,
@@ -159,11 +160,20 @@ export class AppSidebar extends LitElement {
     /** Delay in ms before a drag-hover triggers navigation. */
     private static readonly HOVER_NAV_DELAY = 600;
 
-    /** Home, because that is where `index.ts` now navigates on startup
-     *  (H-8). The sidebar does not hear a `navigate` it did not send,
-     *  so this default is what keeps `aria-current` honest on arrival. */
-    @state()
-    private activeView: View = 'home';
+    /**
+     * Which item is lit, read from the shell rather than tracked here.
+     *
+     * This used to be a `@state()` field defaulting to `home` -- the
+     * landing view -- because "the sidebar does not hear a `navigate`
+     * it did not send". That default was the only honest moment it
+     * ever had: a back-navigation dispatches no `navigate`, so the
+     * highlight stayed on the view the user had just left (#72), and
+     * the copy of this component that `bottom-nav` mounts inside its
+     * drawer opened on `home` from whatever page you were standing on.
+     * The shell publishes the active view now, so there is nothing to
+     * default and nothing to keep in step.
+     */
+    private activeCtrl = new ActiveViewController(this);
 
     @state()
     private isDragging = false;
@@ -237,10 +247,6 @@ export class AppSidebar extends LitElement {
             'yj-drag-active',
             this.onDragActive as EventListener,
         );
-        document.addEventListener(
-            'navigate',
-            this.onGlobalNavigate as EventListener,
-        );
     }
 
     override disconnectedCallback() {
@@ -262,10 +268,6 @@ export class AppSidebar extends LitElement {
             'yj-drag-active',
             this.onDragActive as EventListener,
         );
-        document.removeEventListener(
-            'navigate',
-            this.onGlobalNavigate as EventListener,
-        );
         this.clearDragHoverTimer();
     }
 
@@ -282,8 +284,9 @@ export class AppSidebar extends LitElement {
             <nav aria-label="Main">
             <ul>
                 ${this.navItems.map((item) => {
+            const active = this.activeCtrl.isActive(item.id);
             const classes = [
-                this.activeView === item.id
+                active
                     ? 'active'
                     : '',
                 this.dragHoverView === item.id
@@ -299,7 +302,7 @@ export class AppSidebar extends LitElement {
                                 type="button"
                                 class=${classes}
                                 data-testid="nav-${item.id}"
-                                aria-current=${this.activeView === item.id
+                                aria-current=${active
                     ? 'page'
                     : 'false'}
                                 @click=${() =>
@@ -382,19 +385,6 @@ export class AppSidebar extends LitElement {
     private static readonly DROP_VIEWS: Set<View> =
         new Set(['playlists']);
 
-    /** Keeps the highlighted nav item in sync with navigation that
-     * originates outside the sidebar itself (e.g. the launch-page
-     * dispatch in index.ts). */
-    private onGlobalNavigate = (
-        e: CustomEvent<{ view?: string }>,
-    ) => {
-        const view = e.detail.view;
-
-        if (view && this.navItems.some((item) => item.id === view)) {
-            this.activeView = view as View;
-        }
-    };
-
     private onDragActive = (
         e: CustomEvent<DragActiveDetail>,
     ) => {
@@ -460,7 +450,11 @@ export class AppSidebar extends LitElement {
     }
 
     private navigate(view: View) {
-        this.activeView = view;
+        // No optimistic highlight: the shell answers, and it answers
+        // synchronously in `handleNavigate` before it awaits anything.
+        // Setting it here as well is the second opinion this fix
+        // removes -- it is what let a click's highlight survive a
+        // navigation the shell then handled differently.
         this.dispatchEvent(new CustomEvent('navigate', {
             detail: { view },
             bubbles: true,

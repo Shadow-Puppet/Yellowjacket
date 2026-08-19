@@ -9,6 +9,8 @@ export type { ThemeState, BackgroundShade } from './theme-store';
 export { ThemeController } from './controllers/theme-controller';
 export { searchStore } from './search-store';
 export { SearchController } from './controllers/search-controller';
+export { activeViewStore } from './active-view-store';
+export { ActiveViewController } from './controllers/active-view-controller';
 export { shortcutsStore } from './shortcuts-store';
 export type { ShortcutsState } from './shortcuts-store';
 export { ShortcutsController } from './controllers/shortcuts-controller';
