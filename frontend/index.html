@@ -20,6 +20,12 @@
             <!-- a11y.29: a heading level was being used for type size. -->
             <p class="subtitle">Music how it was meant to bee.</p>
         </hgroup>
+        <!-- Global back/forward (#6). Before the library filter so the
+             two navigation controls in this bar are adjacent, and after
+             the brand because that is where a window's chrome ends and
+             the app's begins. Hidden below 600px by index.css: the
+             phone has a system back, and this bar has no room. -->
+        <nav-history></nav-history>
         <library-filter></library-filter>
         <search-bar></search-bar>
         <job-indicator></job-indicator>

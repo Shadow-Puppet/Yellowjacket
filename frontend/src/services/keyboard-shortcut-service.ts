@@ -400,6 +400,20 @@ async function dispatch(action: string): Promise<void> {
             break;
         }
 
+        // The keyboard half of #6. It dispatches the same events the
+        // header's buttons and the detail views' own back buttons do,
+        // rather than calling `history.back()` here: the shell owns the
+        // guard that stops a press at the root leaving the app, and a
+        // second caller reaching for `history` directly is how the old
+        // `navStack` came to disagree with the platform.
+        case 'nav.back':
+            document.dispatchEvent(new CustomEvent('navigate-back'));
+            break;
+
+        case 'nav.forward':
+            document.dispatchEvent(new CustomEvent('navigate-forward'));
+            break;
+
         case 'nav.queue': {
             const queuePanel = document.getElementById(
                 'queue-panel',

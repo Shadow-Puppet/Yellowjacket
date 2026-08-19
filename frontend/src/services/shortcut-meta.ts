@@ -103,6 +103,18 @@ export const SHORTCUT_META: Record<string, ShortcutMeta> = {
             scope: 'global',
             defaultKey: 'Q',
         },
+        'nav.back': {
+            label: 'Back',
+            category: 'Navigation',
+            scope: 'global',
+            defaultKey: 'Alt+Left',
+        },
+        'nav.forward': {
+            label: 'Forward',
+            category: 'Navigation',
+            scope: 'global',
+            defaultKey: 'Alt+Right',
+        },
         'app.shortcuts': {
             label: 'Keyboard Shortcuts',
             category: 'App',

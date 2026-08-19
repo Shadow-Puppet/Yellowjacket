@@ -104,6 +104,15 @@ p {
     flex: 0 1 320px;
 }
 
+/* The bar is `justify-content: space-between`, which with four children
+   spreads them evenly and left back/forward floating in the middle of
+   nothing. Collecting the free space *after* this one puts the pair
+   beside the brand, where a browser keeps them, and leaves the
+   right-hand group exactly as it was. */
+.top-bar nav-history {
+    margin-right: auto;
+}
+
 ul {
     list-style-type: none;
 }
@@ -131,6 +140,23 @@ ul {
    down into the nav (H-11). */
 @media (max-width: 899px) {
     .subtitle {
+        display: none;
+    }
+
+    /* Back/forward is Desktop-band chrome (#6), and 900 is the same
+       line the sidebar's labels and the subtitle are already given up
+       at -- below it the shell is narrow enough that the header is
+       what runs out of room first. Measured at 600, the bottom of the
+       Compact band: the bar is 611px inside a 600px viewport *before*
+       this component exists (filed separately), and 695px with it, so
+       keeping it here would be widening a violation of the promise
+       that nothing scrolls sideways at a supported size.
+
+       Nothing is unreachable as a result, which is the rule that
+       decides it: Alt+Left / Alt+Right are global and every width has
+       them, the detail views keep their own back buttons, and the
+       phone additionally has the platform's gesture. */
+    .top-bar nav-history {
         display: none;
     }
 }
@@ -346,7 +372,13 @@ body div.sidebar {
 
     /* The search box is the one header control worth its width; the
        library filter is a rarely-changed setting and reachable from
-       the drawer's Settings. */
+       the drawer's Settings.
+
+       `nav-history` is already gone from 899 down. It would belong
+       here anyway and for a stronger reason than width: the phone has
+       Back as a gesture or a button the OS owns, and this app hooks it
+       (`popstate`), so a second Back in the chrome duplicates a
+       control the platform provides. */
     .top-bar library-filter {
         display: none;
     }

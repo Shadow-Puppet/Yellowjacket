@@ -23,6 +23,7 @@ import '@components/now-playing/now-playing.ts';
 import '@components/sidebar/app-sidebar.ts';
 import '@components/bottom-nav/bottom-nav.ts';
 import '@components/queue-panel/queue-panel.ts';
+import '@components/nav-history/nav-history.ts';
 import '@components/search-bar/search-bar.ts';
 import '@components/library-filter/library-filter.ts';
 import '@components/first-run-wizard/first-run-wizard.ts';
@@ -41,6 +42,7 @@ import { registerBundledIcons } from './src/icons';
 import { queueStore } from '@store/queue-store';
 import { searchStore } from '@store/search-store';
 import { activeViewStore } from '@store/active-view-store';
+import { historyStore } from '@store/history-store';
 import * as Player from '@go/player/player.js';
 import * as Queue from '@go/queue/queue.js';
 import { GetDefaultPage } from '@go/config/config.js';
@@ -215,45 +217,80 @@ document.addEventListener('navigate', (e: Event) => {
 // go through `history.back()` rather than popping `navStack`
 // themselves, so one press cannot consume two entries.
 
-/** The navigation an entry stands for. `undefined` on the entry that
- *  predates the app's own routing, which is the one back exits from. */
-type NavState = { yjNav?: { view: string; [key: string]: any } };
+/** The navigation an entry stands for, and where it sits in this
+ *  session's list. `undefined` on the entry that predates the app's own
+ *  routing, which is the one back exits from. */
+type NavState = { yjNav?: { view: string; [key: string]: any }; yjIdx?: number };
 
 /** Whether the app's first navigation has been recorded. It *replaces*
  *  the launch entry rather than pushing, or every launch would cost one
  *  back press before the app would exit. */
 let historyStarted = false;
 
-/** How many entries this session has pushed beyond that first one --
- *  i.e. how deep back can go while staying inside the app. */
-let pushedEntries = 0;
+// Back and forward are the *same* `popstate` event -- it carries no
+// direction, and the History API exposes neither the current position
+// nor a reachable depth. So the shell numbers its own entries: the
+// index of the one showing, and the highest index reachable from here.
+//
+// The counter this replaced (`pushedEntries`, one number decremented on
+// every pop) could not express forward at all: going forward looked
+// exactly like going back again, so two presses of a Forward button
+// would have claimed the app was at its root.
+
+/** Index of the entry now showing. 0 is the launch entry, which is
+ *  replaced rather than pushed -- so this is also how deep back can go
+ *  while staying inside the app. */
+let currentIndex = 0;
+
+/** The highest index reachable from here: how far forward is left.
+ *  A new navigation truncates the forward list, exactly as a browser
+ *  does, so this is reset to the entry being pushed. */
+let maxIndex = 0;
+
+function publishDepth(): void {
+    historyStore.setDepth(currentIndex > 0, currentIndex < maxIndex);
+}
 
 function recordNavigation(detail: { view: string; [key: string]: any }): void {
     // `_isBack` is bookkeeping, not destination: keeping it in the entry
     // would make a replayed navigation claim to be a back-navigation.
     const { _isBack: _ignored, ...nav } = detail;
-    const state: NavState = { yjNav: nav };
 
     // Same URL, deliberately: the app has no routes, and a path a
     // reload cannot resolve is worse than no path at all.
     if (historyStarted) {
-        history.pushState(state, '');
-        pushedEntries += 1;
+        currentIndex += 1;
+        // Navigating from the middle of the list drops what was ahead
+        // of it -- there is no longer a forward to go to.
+        maxIndex = currentIndex;
+        history.pushState({ yjNav: nav, yjIdx: currentIndex }, '');
     } else {
-        history.replaceState(state, '');
+        currentIndex = 0;
+        maxIndex = 0;
+        history.replaceState({ yjNav: nav, yjIdx: 0 }, '');
         historyStarted = true;
     }
+
+    publishDepth();
 }
 
 window.addEventListener('popstate', (e: PopStateEvent) => {
-    const nav = (e.state as NavState | null)?.yjNav;
+    const state = e.state as NavState | null;
+    const nav = state?.yjNav;
 
     // Before the app's first navigation, or an entry somebody else
     // pushed: nothing to restore, and the activity should be free to
     // finish.
     if (!nav) return;
 
-    pushedEntries = Math.max(0, pushedEntries - 1);
+    // The entry says where it is, so this works in both directions and
+    // across a jump of more than one -- which a long-press on a
+    // browser's back button, and `history.go(-n)`, both produce.
+    // The fallback is for an entry pushed before this numbering
+    // existed; it can only be wrong about a control's disabled state,
+    // never about which view is restored.
+    currentIndex = state?.yjIdx ?? Math.max(0, currentIndex - 1);
+    publishDepth();
 
     void handleNavigate({ ...nav, _isBack: true });
 });
@@ -512,7 +549,18 @@ function schedule(fn: () => void): void {
 // anyway would leave the app: the depth check is what stops a stray
 // `navigate-back` closing it.
 document.addEventListener('navigate-back', () => {
-    if (pushedEntries > 0) history.back();
+    if (currentIndex > 0) history.back();
+});
+
+// Forward: the other half of #6. The stack was always global -- every
+// navigation is an entry and `popstate` restores any of them -- so what
+// was missing is a way to ask for one, and a truthful answer to whether
+// there is one to ask for. It is guarded for the same reason back is:
+// `history.forward()` at the end of the list is silent, so a button
+// that offers it when there is nothing there is a button that does
+// nothing.
+document.addEventListener('navigate-forward', () => {
+    if (currentIndex < maxIndex) history.forward();
 });
 
 // Navigate to the user's configured launch page.  Falls back to 'home'
