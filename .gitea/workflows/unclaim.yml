@@ -42,6 +42,13 @@ jobs:
 
     steps:
       - name: Drop the claim label
+        # **Inside a container the act runner selects `sh`, not bash**, so
+        # `set -o pipefail` fails the job on its second line with "Illegal
+        # option" and the step never reaches the API.  `homebrew-formula.yml`
+        # carries the same `set -euo pipefail` without trouble because it
+        # runs with **no container**, on the host image where bash is the
+        # default — so "another workflow does it" is not evidence here.
+        shell: bash
         env:
           # The automatic Actions token, as release.yml uses for the
           # floor tag.  It needs no more than write access to this repo.
@@ -51,8 +58,15 @@ jobs:
         run: |
           set -euo pipefail
 
+          # `ca-certificates` is named because `--no-install-recommends`
+          # skips it, and `ubuntu:24.04` ships no CA bundle of its own —
+          # so curl comes up unable to verify TLS against our own Gitea
+          # and fails with "error setting certificate file" (exit 77).
+          # Every other containerised workflow here spells it out for the
+          # same reason; this one did not, and cost a release cycle.
           apt-get update -qq
-          apt-get install -y -qq --no-install-recommends curl jq >/dev/null
+          apt-get install -y -qq --no-install-recommends \
+            ca-certificates curl jq >/dev/null
 
           label_id=$(
             curl -sSf -H "Authorization: token $TOKEN" "$API/labels?limit=100" |
@@ -71,8 +85,14 @@ jobs:
           # label answers the same as one that did, which is what makes
           # this safe to run on *every* close rather than only the ones
           # that were claimed.
+          # The body is captured, not discarded, so a refusal is
+          # diagnosable from this log alone.  Whether the automatic
+          # token carries issue-write scope is still unproven, and
+          # "DELETE returned 403" without Gitea's own sentence costs
+          # another merge to find out which of the two it is.
+          body=$(mktemp)
           code=$(
-            curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
+            curl -sS -o "$body" -w '%{http_code}' -X DELETE \
               -H "Authorization: token $TOKEN" \
               "$API/issues/$ISSUE/labels/$label_id"
           )
@@ -81,6 +101,7 @@ jobs:
             204) echo "unclaim: #$ISSUE is closed and unclaimed" ;;
             *)
               echo "unclaim: DELETE returned $code for #$ISSUE" >&2
+              cat "$body" >&2
               exit 1
               ;;
           esac
