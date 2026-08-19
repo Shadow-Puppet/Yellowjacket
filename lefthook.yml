@@ -63,8 +63,17 @@ pre-commit:
       root: "frontend/"
       run: node scripts/check-css-literals.mjs
 
+# Deliberately sequential, unlike pre-commit.  `go test -race`
+# saturates every core for the better part of a minute and the UI tier
+# is a real browser with wall-clock timeouts, so run together the
+# browser loses: setup took 106s inside the hook against 63s
+# standalone, and a different suite failed each time -- three suites
+# failing to fetch setup.ts from Vitest's own dev server on one run, a
+# 15s "did not mount itself" on the next, against a suite that passes
+# 898/898 on its own. A gate that fails at random is not a gate. The
+# ~15s saved is not worth it.
 pre-push:
-  parallel: true
+  parallel: false
   commands:
     go-test:
       glob: "*.go"
