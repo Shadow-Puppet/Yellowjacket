@@ -17,6 +17,34 @@ const (
 	RecommendationStrong Recommendation = "strong"
 )
 
+// ConfidentTier is the tier at which this package considers a match
+// good enough to act on without being asked to look.
+//
+// It exists as a name rather than as `== RecommendationStrong` at
+// each call site because two features read it and they must not
+// disagree about what "high confidence" means: the album page tells
+// the user unprompted that the autotagger has a match (#28), and
+// strict auto-accept will rewrite the files without asking (#90).
+// A page that says "we are sure" about something the auto-accept
+// pass would decline is the app contradicting itself.
+//
+// What the two do *not* share is everything else. Surfacing a match
+// is a suggestion with a confirm dialog behind it; auto-accept is an
+// irreversible on-disk rewrite, and #90 gates it on further
+// conditions this tier cannot express — exact track count, every
+// title matching, lengths within a couple of seconds, no cover
+// replacement, no MBID conflict. So this is the floor both stand on,
+// not the whole of either test.
+const ConfidentTier = RecommendationStrong
+
+// Confident reports whether a tier clears ConfidentTier.
+//
+// A comparison rather than an equality, so adding a tier above
+// "strong" later does not silently stop qualifying.
+func Confident(r Recommendation) bool {
+	return recommendationRank(r) >= recommendationRank(ConfidentTier)
+}
+
 const (
 	// Absolute score tiers.
 	strongScoreThresh = 0.90

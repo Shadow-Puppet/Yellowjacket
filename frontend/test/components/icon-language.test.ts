@@ -43,6 +43,7 @@ const GOVERNED = [
   'solid/bookmark',
   'regular/bookmark',
   'bars-staggered',
+  'tag',
 ];
 
 /** The one file allowed to say them, plus its own test. */

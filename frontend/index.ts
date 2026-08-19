@@ -308,6 +308,18 @@ async function handleNavigate(
             deactivateView(currentViewEl);
         }
         target.classList.remove('view-hidden');
+
+        // A primary view is cached, so there is no construction to
+        // hand a payload to the way a detail view gets one below.  The
+        // one navigation that carries something is the album page's
+        // "Review in Autotag", which has to land on *that* album: the
+        // request goes on as an attribute and `autotag-view` consumes
+        // it (removes it) once acted on, or every later visit would
+        // reopen a folder the user finished with long ago.
+        if (view === 'autotag' && typeof detail.groupKey === 'string') {
+            target.setAttribute('group-key', detail.groupKey);
+        }
+
         // A freshly created view was appended hidden, so it did not
         // self-activate on connection; a cached one was deactivated on
         // the way out.  Either way this is the call that starts it.

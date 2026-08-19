@@ -168,3 +168,34 @@ func TestRecommend_LocalCandidatesWithoutRGMBIDCompareByTitle(t *testing.T) {
 		t.Errorf("different-title rival: Recommend = %q, want medium", got)
 	}
 }
+
+// The tier both features stand on is one name, checked here rather
+// than assumed at two call sites.
+//
+// #28 renders "we have a match for this album" on the album page and
+// #90 will rewrite files without asking; a page that claims confidence
+// the auto-accept pass would decline is the app contradicting itself.
+// What they do not share is everything else — auto-accept adds gates
+// this tier cannot express — so this pins the floor, not the whole of
+// either test.
+func TestConfidentIsTheOneSharedFloor(t *testing.T) {
+	t.Parallel()
+
+	if ConfidentTier != RecommendationStrong {
+		t.Errorf("ConfidentTier = %q, want strong", ConfidentTier)
+	}
+
+	for _, tc := range []struct {
+		rec  Recommendation
+		want bool
+	}{
+		{RecommendationNone, false},
+		{RecommendationLow, false},
+		{RecommendationMedium, false},
+		{RecommendationStrong, true},
+	} {
+		if got := Confident(tc.rec); got != tc.want {
+			t.Errorf("Confident(%q) = %v, want %v", tc.rec, got, tc.want)
+		}
+	}
+}

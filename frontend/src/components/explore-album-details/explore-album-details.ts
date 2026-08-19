@@ -30,12 +30,16 @@ import { Events } from '../../events';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '../library-status-indicator/library-status-indicator.js';
 import { libraryStatusFor } from '@utils/library-status';
+import { ICON_AUTOTAG } from '@utils/icon-language';
 import type { LibraryStatus } from '../library-status-indicator/library-status-indicator.js';
 import '../catalog-scope-notice/catalog-scope-notice.js';
 import type { CatalogScope } from '../catalog-scope-notice/catalog-scope-notice.js';
 import '@awesome.me/webawesome/dist/components/button/button.js';
 import '../download-picker/download-picker';
 import { downloadStore } from '../../store/download-store';
+import { MatchForAlbum, ApplyAsync } from '@go/autotagservice/service.js';
+import type * as autotagservice from '@go/autotagservice/models.js';
+import { confirmAction } from '../confirm-dialog/confirm-dialog';
 import { queueStore } from '../../store/queue-store';
 import type { QueueSource } from '../../store/queue-store';
 import { notificationStore } from '../../store/notification-store';
@@ -174,6 +178,19 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
 
     @property({ type: Number, attribute: 'local-album-id' })
     localAlbumId = 0;
+
+    /**
+     * A confident autotag match for this album, or null when there is
+     * none worth mentioning.
+     *
+     * The tier behind "confident" is `autotag.ConfidentTier`, decided
+     * in the backend so this page and strict auto-accept cannot
+     * disagree about what it means (#28, #90).
+     */
+    @state() private autotagMatch: autotagservice.AlbumMatchView | null = null;
+
+    /** True while an apply started from this page is in flight. */
+    @state() private applyingTags = false;
 
     /* ── Internal state ── */
 
@@ -542,6 +559,57 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
             .section-error wa-icon {
                 color: #e5534b;
                 font-size: var(--yj-icon-sm);
+                flex-shrink: 0;
+            }
+
+            /* ── The autotag suggestion ── */
+            .autotag-match {
+                display: flex;
+                align-items: center;
+                flex-wrap: wrap;
+                gap: 8px 12px;
+                margin-bottom: 12px;
+                padding: 10px 14px;
+                border: 1px solid
+                    var(--yj-border-subtle, rgba(255, 255, 255, 0.08));
+                border-radius: 8px;
+                background: var(--yj-surface-1, rgba(255, 255, 255, 0.04));
+            }
+
+            .autotag-match > wa-icon {
+                flex-shrink: 0;
+                font-size: var(--yj-icon-sm);
+                color: var(--yj-text-secondary, #b3b3b3);
+            }
+
+            .autotag-match-text {
+                margin: 0;
+                flex: 1;
+                /* The suggestion sits in a flex row beside its buttons,
+                 * and a grid/flex item's implicit minimum is its
+                 * content — without this a long release title pushes
+                 * the actions off the end at phone width. */
+                min-width: 0;
+                font-size: var(--yj-text-sm);
+                color: var(--yj-text-secondary, #b3b3b3);
+            }
+
+            .autotag-match-text strong {
+                color: var(--yj-text-primary, #fff);
+                font-weight: 600;
+            }
+
+            .autotag-match-note {
+                display: block;
+                margin-top: 2px;
+                font-size: var(--yj-text-xs);
+                color: var(--yj-text-tertiary, #888);
+            }
+
+            .autotag-match-actions {
+                display: flex;
+                align-items: center;
+                gap: 8px;
                 flex-shrink: 0;
             }
 
@@ -1062,6 +1130,14 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
         this.localTracks = [];
         this.filePaths = new Map();
         this.askedFor = new Set();
+        this.autotagMatch = null;
+
+        // Not awaited: the banner is a bonus and the page must not
+        // wait on it. It is also the *most* useful on an untagged
+        // album, which is exactly the page that has least else to
+        // show, so it is asked for on both branches below rather than
+        // only the catalog one.
+        void this.loadAutotagMatch();
 
         // Local-only album (no MBID) — populate entirely from library.
         if (!mbid && this.localAlbumId) {
@@ -1252,6 +1328,31 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
         }
 
         return this.completeness;
+    }
+
+    /**
+     * Ask whether the autotagger already has a confident match here.
+     *
+     * It answers from what the background prefetch has already scored
+     * and makes no MusicBrainz request, so this is safe on page load —
+     * see `MatchForAlbum`. A folder nobody has reached yet answers
+     * `null`, which is the same as "nothing to say": the banner is a
+     * bonus, so a failure is a missing suggestion rather than an error
+     * the user can act on, and it stays in the console.
+     */
+    private async loadAutotagMatch(): Promise<void> {
+        if (this.localAlbumId <= 0) {
+            this.autotagMatch = null;
+
+            return;
+        }
+
+        try {
+            this.autotagMatch = await MatchForAlbum(this.localAlbumId);
+        } catch (err) {
+            console.error('[explore-album] autotag match lookup failed', err);
+            this.autotagMatch = null;
+        }
     }
 
     /**
@@ -2415,6 +2516,7 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
                     entity-type="album"
                     @catalog-retry=${this.retryCatalog}
                 ></catalog-scope-notice>
+                ${this.renderAutotagMatch()}
                 ${this.renderChosenVersion()}
                 ${this.renderTracklistScope()}
                 ${this.renderTracklist()}
@@ -3068,6 +3170,155 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
     }
 
     /* ── Version Selector (R025, R026, R027) ── */
+
+    /**
+     * "MusicBrainz has a match for this album."
+     *
+     * The complaint this answers is that the user had to notice the
+     * metadata was missing, then go and hunt the album down on the
+     * Autotag page — so the point is to say it *here*, while they are
+     * looking at the thing, with something to do about it.
+     *
+     * Three things about it are load-bearing.
+     *
+     * **Applying is offered only when it would do the whole album.** A
+     * tagging group is a folder, so a multi-disc album is several, and
+     * one button that applied to the best-scoring one would leave the
+     * album holding a mix of old and new tags — the exact case the
+     * app's Blocking notification level exists for. `groupCount` is
+     * the test, and the answer there is review, not apply.
+     *
+     * **The confirm is not a formality.** This rewrites tags on disk
+     * and cannot be undone, so it goes through `confirmAction()` with
+     * an impact line that says so in those words.
+     *
+     * **The banner does not claim a percentage.** The backend has a
+     * score and deliberately does not put it in the sentence: 0.95
+     * reads as a probability and is not one. What the user needs is
+     * which release it is, which is what the release title and artist
+     * are for.
+     */
+    private renderAutotagMatch() {
+        const match = this.autotagMatch;
+
+        if (!match) return nothing;
+
+        const wholeAlbum = match.groupCount === 1;
+
+        return html`
+            <div class="autotag-match" role="status">
+                <wa-icon name=${ICON_AUTOTAG} aria-hidden="true"></wa-icon>
+                <p class="autotag-match-text">
+                    MusicBrainz has a match for this album:
+                    <strong>${match.title}</strong>
+                    ${match.artistCredit ? html` by ${match.artistCredit}` : nothing}.
+                    ${wholeAlbum
+                        ? nothing
+                        : html`<span class="autotag-match-note"
+                              >It is filed as ${match.groupCount} folders here, so
+                              tagging it is a review rather than one
+                              step.</span
+                          >`}
+                </p>
+                <div class="autotag-match-actions">
+                    ${wholeAlbum
+                        ? html`<wa-button
+                              size="small"
+                              variant="brand"
+                              ?disabled=${this.applyingTags}
+                              @click=${this.onApplyAutotagMatch}
+                              >Apply tags</wa-button
+                          >`
+                        : nothing}
+                    <wa-button
+                        size="small"
+                        appearance="outlined"
+                        @click=${this.onReviewAutotagMatch}
+                        >Review in Autotag</wa-button
+                    >
+                </div>
+            </div>
+        `;
+    }
+
+    /** Hand the group over to the Autotag page and go there. */
+    private onReviewAutotagMatch = () => {
+        const match = this.autotagMatch;
+
+        if (!match) return;
+
+        this.dispatchEvent(
+            new CustomEvent('navigate', {
+                bubbles: true,
+                composed: true,
+                detail: { view: 'autotag', groupKey: match.groupKey },
+            }),
+        );
+    };
+
+    /**
+     * Apply the match, after asking.
+     *
+     * `ApplyAsync` is the registered-job path, so the work is visible
+     * in the jobs indicator and cancellable there like every other
+     * long-running operation — this page does not grow a second
+     * progress surface for it. What it does own is the *acknowledgement*
+     * that the request was accepted, because the button is here.
+     *
+     * The page is not refreshed on completion either: rewriting tags
+     * emits `TrackMetadataChanged`, which `library-store` answers by
+     * discarding every cached collection, and this page reloads from
+     * that like everything else.
+     */
+    private onApplyAutotagMatch = async () => {
+        const match = this.autotagMatch;
+
+        if (!match || this.applyingTags) return;
+
+        const ok = await confirmAction({
+            title: `Tag this album as “${match.title}”?`,
+            message:
+                `The ${match.trackCount} files of this album are rewritten to` +
+                ` match the MusicBrainz release${
+                    match.artistCredit ? ` by ${match.artistCredit}` : ''
+                }.`,
+            impact:
+                'This edits the tags in the files on disk and cannot be' +
+                ' undone. Nothing is moved or deleted.',
+            confirmLabel: 'Apply tags',
+        });
+
+        if (!ok) return;
+
+        this.applyingTags = true;
+
+        try {
+            await ApplyAsync(match.groupKey, match.releaseMbid);
+
+            // The suggestion has been acted on, so it stops being a
+            // suggestion immediately rather than sitting there inviting
+            // a second click while the job runs.
+            this.autotagMatch = null;
+
+            notificationStore.transient({
+                text: 'Tagging this album — progress is in the jobs indicator.',
+            });
+        } catch (err) {
+            console.error('[explore-album] autotag apply failed', err);
+
+            // Persistent rather than transient: the user asked for
+            // something that did not happen, and retrying is meaningful.
+            notificationStore.persistent({
+                text: describeError(
+                    err,
+                    'Those tags could not be applied.',
+                ),
+                tone: 'error',
+            });
+        } finally {
+            this.applyingTags = false;
+        }
+    };
 
     /**
      * Which pressing is on screen — said only when the user chose it.

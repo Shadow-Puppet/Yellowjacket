@@ -342,3 +342,35 @@ WHERE ti.status = 'pending'
   )
 ORDER BY ti.group_key
 LIMIT 1;
+
+-- name: GetTaggingItemsForAlbum :many
+-- Every tagging group holding a file of this album.
+--
+-- The join is `audio_files.group_key`, not a key derived from the
+-- album's folder path: a group carved out of a mixed-bag folder by
+-- SplitMixedFolder is keyed on its tags rather than on a directory,
+-- so a path-derived key finds nothing for exactly the messiest
+-- libraries this is meant to help.
+--
+-- Usually one row. A multi-disc album is one group per disc, which
+-- the caller has to know about rather than average over -- applying
+-- to "the album" would silently retag one disc of three.
+SELECT
+  ti.group_key,
+  ti.status,
+  ti.score,
+  ti.best_match_release_mbid,
+  ti.track_count,
+  ti.album_name,
+  ti.album_artist,
+  ti.synthetic
+FROM tagging_items ti
+WHERE ti.group_key IN (
+    SELECT DISTINCT af.group_key
+    FROM audio_files af
+    WHERE af.album_id = sqlc.arg(album_id) AND af.group_key != ''
+  )
+  AND ti.cleared_at IS NULL
+-- Best first, with an unscored group last rather than first: NULL
+-- sorts low in SQLite and DESC would put it at the top.
+ORDER BY ti.score IS NULL, ti.score DESC, ti.group_key;

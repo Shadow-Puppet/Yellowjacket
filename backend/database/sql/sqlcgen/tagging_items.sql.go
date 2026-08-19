@@ -231,6 +231,82 @@ func (q *Queries) GetTaggingItem(ctx context.Context, groupKey string) (TaggingI
 	return i, err
 }
 
+const getTaggingItemsForAlbum = `-- name: GetTaggingItemsForAlbum :many
+SELECT
+  ti.group_key,
+  ti.status,
+  ti.score,
+  ti.best_match_release_mbid,
+  ti.track_count,
+  ti.album_name,
+  ti.album_artist,
+  ti.synthetic
+FROM tagging_items ti
+WHERE ti.group_key IN (
+    SELECT DISTINCT af.group_key
+    FROM audio_files af
+    WHERE af.album_id = ?1 AND af.group_key != ''
+  )
+  AND ti.cleared_at IS NULL
+ORDER BY ti.score IS NULL, ti.score DESC, ti.group_key
+`
+
+type GetTaggingItemsForAlbumRow struct {
+	GroupKey             string
+	Status               string
+	Score                sql.NullFloat64
+	BestMatchReleaseMbid sql.NullString
+	TrackCount           int64
+	AlbumName            string
+	AlbumArtist          string
+	Synthetic            int64
+}
+
+// Every tagging group holding a file of this album.
+//
+// The join is `audio_files.group_key`, not a key derived from the
+// album's folder path: a group carved out of a mixed-bag folder by
+// SplitMixedFolder is keyed on its tags rather than on a directory,
+// so a path-derived key finds nothing for exactly the messiest
+// libraries this is meant to help.
+//
+// Usually one row. A multi-disc album is one group per disc, which
+// the caller has to know about rather than average over -- applying
+// to "the album" would silently retag one disc of three.
+// Best first, with an unscored group last rather than first: NULL
+// sorts low in SQLite and DESC would put it at the top.
+func (q *Queries) GetTaggingItemsForAlbum(ctx context.Context, albumID sql.NullInt64) ([]GetTaggingItemsForAlbumRow, error) {
+	rows, err := q.db.QueryContext(ctx, getTaggingItemsForAlbum, albumID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetTaggingItemsForAlbumRow
+	for rows.Next() {
+		var i GetTaggingItemsForAlbumRow
+		if err := rows.Scan(
+			&i.GroupKey,
+			&i.Status,
+			&i.Score,
+			&i.BestMatchReleaseMbid,
+			&i.TrackCount,
+			&i.AlbumName,
+			&i.AlbumArtist,
+			&i.Synthetic,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAudioFilesInTaggingGroup = `-- name: ListAudioFilesInTaggingGroup :many
 SELECT
   af.id,

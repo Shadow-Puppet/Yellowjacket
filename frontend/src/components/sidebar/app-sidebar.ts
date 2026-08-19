@@ -6,6 +6,7 @@ import { designTokens } from '../../styles/tokens.css';
 import type { DragActiveDetail } from '@utils/drag-controller';
 import {
     ICON_PLAYLIST,
+    ICON_AUTOTAG,
     ICON_REQUESTED,
 } from '@utils/icon-language';
 
@@ -208,7 +209,7 @@ export class AppSidebar extends LitElement {
         { id: 'tracks', label: 'Tracks', icon: 'music' },
         { id: 'explore', label: 'Explore', icon: 'globe' },
         { id: 'downloads', label: 'Downloads', icon: ICON_REQUESTED },
-        { id: 'autotag', label: 'Autotag', icon: 'tag' },
+        { id: 'autotag', label: 'Autotag', icon: ICON_AUTOTAG },
         { id: 'jobs', label: 'Jobs', icon: 'list-check' },
         { id: 'settings', label: 'Settings', icon: 'gear' },
     ];

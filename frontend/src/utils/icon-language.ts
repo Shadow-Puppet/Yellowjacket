@@ -81,6 +81,17 @@ export const ICON_REQUESTED = 'solid/bookmark';
 export const ICON_IN_LIBRARY = 'check';
 
 /**
+ * The autotagger, and a match it is offering.
+ *
+ * The same icon as the Autotag destination in the sidebar, on the rule
+ * `ICON_PLAYLIST` was chosen by: an icon names the noun it acts on, so
+ * a suggestion on the album page wears the mark of the page it would
+ * send you to. Governed from the moment there were two call sites,
+ * which is when a name stops being a detail of one component.
+ */
+export const ICON_AUTOTAG = 'tag';
+
+/**
  * Something is being fetched right now.
  *
  * Distinct from `ICON_REQUESTED`: a request may sit on the list
