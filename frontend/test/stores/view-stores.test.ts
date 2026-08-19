@@ -8,6 +8,7 @@ import { describe, expect, it, beforeEach } from 'vitest';
 
 import { searchStore } from '@store/search-store';
 import { activeViewStore } from '@store/active-view-store';
+import { historyStore } from '@store/history-store';
 import { trackListStore } from '@store/tracklist-store';
 import { exploreCache, ARTIST_IMAGE_CACHE_LIMIT } from '@store/explore-cache';
 import { Events } from '../../src/events';
@@ -130,6 +131,46 @@ describe('active view store', () => {
     activeViewStore.setView('', true);
 
     expect(activeViewStore.isActive('')).toBe(false);
+  });
+});
+
+describe('history store', () => {
+  beforeEach(() => {
+    historyStore.setDepth(false, false);
+  });
+
+  it('holds both answers, because forward is not back negated', () => {
+    historyStore.setDepth(true, false);
+
+    expect(historyStore.get()).toEqual({ canBack: true, canForward: false });
+
+    // The middle of the list: both directions available at once, which
+    // a single depth counter cannot express and which is the state the
+    // old `pushedEntries` got wrong.
+    historyStore.setDepth(true, true);
+
+    expect(historyStore.get()).toEqual({ canBack: true, canForward: true });
+  });
+
+  it('does not notify when neither answer changed', () => {
+    let notifications = 0;
+    const off = historyStore.subscribe(() => {
+      notifications += 1;
+    });
+
+    historyStore.setDepth(true, true);
+    historyStore.setDepth(true, true);
+    off();
+
+    expect(notifications).toBe(1);
+  });
+
+  it('starts with both unavailable, which is the truth at launch', () => {
+    // A fresh session is one entry deep and that entry is *replaced*,
+    // not pushed, so there is nothing of ours behind it. A control
+    // that assumed otherwise would offer a press that does nothing --
+    // and on Android, one the OS would have used to exit the app.
+    expect(historyStore.get()).toEqual({ canBack: false, canForward: false });
   });
 });
 

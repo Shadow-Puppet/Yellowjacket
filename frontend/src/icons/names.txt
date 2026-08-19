@@ -19,6 +19,7 @@ regular/heart
 regular/star
 solid/arrow-down-wide-short
 solid/arrow-left
+solid/arrow-right
 solid/arrow-rotate-right
 solid/arrows-rotate
 solid/arrow-up-short-wide

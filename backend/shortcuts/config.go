@@ -24,10 +24,19 @@ func DefaultBindings() map[string]string {
 		"player.repeat":      "R",
 		"player.mute":        "M",
 
-		// Navigation (Global scope)
+		// Navigation (Global scope).  Back and forward are the browser's
+		// own combination on every platform, which is the whole design
+		// brief for them: the app has one global history and this is the
+		// gesture people already have for it.  The modifier is what keeps
+		// them clear of `player.seekBack`/`seekForward`, which are the
+		// bare arrows -- a binding is matched on its full canonical
+		// string, so "Alt+Left" and "Left" are different keys and not a
+		// conflict.
 		"nav.search":    "/",
 		"nav.searchAlt": "Ctrl+F",
 		"nav.queue":     "Q",
+		"nav.back":      "Alt+Left",
+		"nav.forward":   "Alt+Right",
 
 		// App actions
 		"app.selectAll": "Ctrl+A",

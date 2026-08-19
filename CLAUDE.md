@@ -945,7 +945,16 @@ change at all.
 
 Two rules hold it up. The **first** navigation *replaces* the launch
 entry rather than pushing one, or every launch costs a back press before
-the app will close. And the in-app back buttons (`navigate-back`, fired
+the app will close. **There are two launch navigations**, which is what
+defeated that rule for five phases: the eager `navigate → home` at the
+foot of `index.ts` and the configured page `GetDefaultPage()` resolves
+to later. Only the first replaced, so a fresh session was already one
+entry deep, the first back press replayed home over home, and on Android
+`canGoBack()` was true so the press that should have exited the app did
+nothing (#142). The landing-page navigation carries `_replace`, honoured
+only while still at index 0 — past that the user has navigated during
+the backend call, and a slow answer must not overwrite an entry they
+made. And the in-app back buttons (`navigate-back`, fired
 by the detail views and `now-playing-view`) go through `history.back()`
 rather than a stack of their own: the old `navStack` is **deleted**, not
 kept beside it, because two stacks is precisely how a view's own back
@@ -987,6 +996,33 @@ list is a second thing to forget.
 empty rather than defaulting to `home`, which is what `app-sidebar`'s
 field used to do to match the landing view — a default that is correct
 only while `GetDefaultPage()` agrees with it.
+
+**Back and forward are chrome, and the depth is the shell's own
+count.** `<nav-history>` in the top bar is #6: the stack was always
+global — every navigation is an entry and `popstate` restores any of
+them in either direction — so what was missing was an affordance, since
+the only way back was a detail view's own button, which leaves the
+screen with the view it belongs to. The buttons dispatch
+`navigate-back` / `navigate-forward` and the shell owns both guards,
+for the reason the old `navStack` was deleted: a second caller reaching
+for `history` is how two stacks come to disagree.
+
+Three things about it are load-bearing. **Forward is not back
+negated**, so the single `pushedEntries` counter could not express it —
+`popstate` carries no direction and fires identically both ways, so a
+counter decremented on every pop reads a forward as a second back. Each
+entry carries its index (`yjIdx`) and the shell keeps the current one
+and a high-water mark; that also survives a jump of more than one,
+which `history.go(-n)` and a long-press on a browser's back button both
+produce. **A control that cannot act is `disabled` here**, which is the
+documented exception to `library-status-indicator`'s rule: the two are
+a pair whose positions the user learns, and hiding one moves the other
+under the cursor. And **it stands down below 900px** — the top bar is
+what runs out of room first below that (it already overflows 600px by
+11px, #143), and nothing becomes unreachable: `nav.back` / `nav.forward`
+(`Alt+Left` / `Alt+Right`, the browser's own combination, and clear of
+the bare arrows that seek) are global at every width, and the phone has
+the platform's gesture.
 
 The assertion is `aria-current="page"`, in
 `e2e/specs/back-navigation.spec.ts`. That file existed throughout the

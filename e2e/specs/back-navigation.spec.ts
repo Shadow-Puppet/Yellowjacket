@@ -79,6 +79,114 @@ async function openAnArtist(app: Page): Promise<void> {
   );
 }
 
+/**
+ * The global back/forward control (#6).
+ *
+ * It is desktop chrome — hidden below 900px, where the sidebar has
+ * already given up its labels — so these set a desktop viewport
+ * explicitly rather than trusting the runner's default.
+ */
+const DESKTOP = { width: 1280, height: 800 };
+
+const backButton = (page: Page) =>
+  page.locator('nav-history').getByRole('button', { name: 'Back' });
+
+const forwardButton = (page: Page) =>
+  page.locator('nav-history').getByRole('button', { name: 'Forward' });
+
+test.describe('global back and forward', () => {
+  test.beforeEach(async ({ app }) => {
+    await app.setViewportSize(DESKTOP);
+  });
+
+  test('offers nothing at launch, in either direction', async ({ app }) => {
+    // The launch entry is *replaced*, not pushed, so there is nothing
+    // of ours behind it — and a Back button that is live at the root
+    // is a press that does nothing on desktop and, on Android, the
+    // press that should have exited the app (#142). This assertion is
+    // what pins that: it failed before the launch navigation stopped
+    // recording two entries.
+    await expect(backButton(app)).toBeDisabled();
+    await expect(forwardButton(app)).toBeDisabled();
+  });
+
+  test('walks the history in both directions, and says which are available', async ({
+    app,
+  }) => {
+    await app.getByTestId('nav-albums').click();
+    await expect(activeView(app)).toHaveAttribute('data-active-view', 'albums');
+    await expect(backButton(app)).toBeEnabled();
+    await expect(forwardButton(app)).toBeDisabled();
+
+    await app.getByTestId('nav-tracks').click();
+    await expect(activeView(app)).toHaveAttribute('data-active-view', 'tracks');
+
+    await backButton(app).click();
+
+    await expect(activeView(app)).toHaveAttribute('data-active-view', 'albums');
+    // Standing in the middle of the list: both directions live, which
+    // is the state a single depth counter cannot express.
+    await expect(backButton(app)).toBeEnabled();
+    await expect(forwardButton(app)).toBeEnabled();
+
+    await forwardButton(app).click();
+
+    await expect(activeView(app)).toHaveAttribute('data-active-view', 'tracks');
+    await expect(forwardButton(app)).toBeDisabled();
+  });
+
+  test('reaches the detail view a tab click left behind', async ({ app }) => {
+    // The report, exactly: the album is one entry away the whole time,
+    // and before this control the only way back to it was a button
+    // that had gone off screen with the view it belonged to.
+    await app.getByTestId('nav-artists').click();
+    await openAnArtist(app);
+
+    await app.getByTestId('nav-tracks').click();
+    await expect(activeView(app)).toHaveAttribute('data-active-view', 'tracks');
+
+    await backButton(app).click();
+
+    await expect(activeView(app)).toHaveAttribute(
+      'data-active-view',
+      'explore-artist-details',
+    );
+  });
+
+  test('drops the forward list when the user navigates from the middle', async ({
+    app,
+  }) => {
+    await app.getByTestId('nav-albums').click();
+    await app.getByTestId('nav-tracks').click();
+    await backButton(app).click();
+    await expect(forwardButton(app)).toBeEnabled();
+
+    // A browser truncates here, and so does this: what was ahead is no
+    // longer reachable, and a Forward button still offering it would
+    // be pointing at an entry that has been overwritten.
+    await app.getByTestId('nav-genres').click();
+
+    await expect(activeView(app)).toHaveAttribute('data-active-view', 'genres');
+    await expect(forwardButton(app)).toBeDisabled();
+    await expect(backButton(app)).toBeEnabled();
+  });
+
+  test('is absent below the desktop band, where nothing needs it', async ({
+    app,
+  }) => {
+    // Alt+Left/Right survive at every width, the detail views keep
+    // their own back buttons and the phone has the platform's gesture
+    // — so this is a control standing down, not an action becoming
+    // unreachable. It is hidden at 899 because the top bar is what
+    // runs out of room first below 900 (#143).
+    await app.setViewportSize({ width: 899, height: 600 });
+    await expect(app.locator('nav-history')).toBeHidden();
+
+    await app.setViewportSize({ width: 390, height: 844 });
+    await expect(app.locator('nav-history')).toBeHidden();
+  });
+});
+
 test.describe('the back gesture', () => {
   test('leaves a detail view for the view it was opened from', async ({
     app,
