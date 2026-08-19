@@ -6,6 +6,7 @@ import type WaDrawer from '@awesome.me/webawesome/dist/components/drawer/drawer.
 import { designTokens } from '../../styles/tokens.css';
 import '../sidebar/app-sidebar.js';
 import { nameDialog } from '@utils/name-dialog';
+import { ICON_PLAYLIST } from '@utils/icon-language';
 
 type View = 'home' | 'albums' | 'tracks' | 'playlists';
 
@@ -138,7 +139,7 @@ export class BottomNav extends LitElement {
         { id: 'home', label: 'Home', icon: 'house' },
         { id: 'albums', label: 'Albums', icon: 'compact-disc' },
         { id: 'tracks', label: 'Tracks', icon: 'music' },
-        { id: 'playlists', label: 'Playlists', icon: 'list' },
+        { id: 'playlists', label: 'Playlists', icon: ICON_PLAYLIST },
     ];
 
     override connectedCallback() {

@@ -4,6 +4,11 @@ import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import { toggleRequest } from '@utils/library-status';
 import { notificationStore } from '@store/notification-store';
 import { describeError } from '@utils/describe-error';
+import {
+    ICON_CAN_REQUEST,
+    ICON_IN_LIBRARY,
+    ICON_REQUESTED,
+} from '@utils/icon-language';
 
 /**
  * Library status for an entity (artist, album, or track).
@@ -248,18 +253,25 @@ export class LibraryStatusIndicator extends LitElement {
      * hourglass says "wait, this is under way", which overstates what a
      * request is: nothing may be downloading, nothing may ever be found,
      * and the user can leave one sitting on the list indefinitely. A
-     * bookmark says the honest thing — it is on your list — and reads as
-     * the opposite of the plus that put it there, which is what a
-     * toggle's two states have to do.
+     * bookmark says the honest thing — it is on your list.
+     *
+     * The *other* state is the outline of that same bookmark, not a
+     * plus. Two states of one toggle have to read as each other's
+     * opposite, and a plus and a bookmark do not — this badge showed a
+     * plus on the same page as a "Request this" button already using
+     * the outline/solid pair, forty pixels away. That is the fault
+     * `utils/library-status.ts` was written for, one layer down: it
+     * made the two agree on what wanting *means* and left them
+     * disagreeing on what it looks like.
      */
     private iconName(): string {
         switch (this.status) {
             case 'in-library':
-                return 'check';
+                return ICON_IN_LIBRARY;
             case 'queued':
-                return 'bookmark';
+                return ICON_REQUESTED;
             default:
-                return 'plus';
+                return ICON_CAN_REQUEST;
         }
     }
 

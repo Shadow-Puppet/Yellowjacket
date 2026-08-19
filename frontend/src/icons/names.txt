@@ -24,6 +24,7 @@ solid/arrows-rotate
 solid/arrow-up-short-wide
 solid/backward-step
 solid/bars
+solid/bars-staggered
 regular/bookmark
 solid/bookmark
 solid/box-open

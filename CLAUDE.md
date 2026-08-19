@@ -1448,6 +1448,52 @@ is therefore **reported at runtime** to `window.__yjIconMisses` and
 drawn as a fallback — an e2e sweep asserts there are none — since a
 missing icon used to be impossible, the CDN having had everything.
 
+**What each icon *means* is a second table, and it is
+`utils/icon-language.ts`.** Bundling answers "does this name resolve";
+nothing answered "does this name mean what the one next to it means",
+and a wrong-but-real icon renders perfectly. So `plus` came to mean add
+to the queue, add to a playlist, make a new playlist **and** you do not
+own this — the first two *adjacent in the same context menu* — while
+`list` meant the queue, the Playlists destination and adding to the
+queue.
+
+The rule the table is built on: **an icon names the noun it acts on,
+not the verb.** "Add to queue" and "add to playlist" are one verb on
+two nouns, so the noun is what has to differ — which is why adding to a
+playlist wears the Playlists destination's own icon, and why the queue
+got `bars-staggered` and stopped wearing Playlists'. `plus` keeps the
+one meaning it is unambiguous about, making something that is not there
+yet.
+
+Four things about it are load-bearing:
+
+- **The request toggle is one glyph in two weights**
+  (`regular/bookmark` → `solid/bookmark`), because two states of a
+  toggle have to read as each other's opposite and a plus against a
+  bookmark does not. The pair was *already in the app and already
+  right* on `explore-album-details`'s "Request this" button while the
+  badge forty pixels away showed a plus — `utils/library-status.ts`'s
+  fault one layer down, having made the two agree on what wanting means
+  and left them disagreeing on what it looks like.
+- **Downloads keeps the solid bookmark, deliberately.** That is the
+  same word twice, not two words: the badge says "this is on your
+  list" and the nav item is that list.
+- **`icon-language.test.ts` sweeps the source**, because the rule is
+  about every call site and checking one checks nothing — the same
+  shape as `TestNoDirectRuntimeEmits`. It reads every `src/**/*.ts` as
+  raw text and fails on a literal `name="plus"` or `icon: 'list'`
+  outside the table, and its **first assertion is that it read
+  anything at all**, since a sweep over an empty glob passes.
+- **It also asserts every `ICON_*` is bundled**, which closes the loop
+  the runtime cannot: `bookmark-check` is Font Awesome **Pro** and sat
+  on `explore-artist-details`'s Follow button, drawn for every followed
+  artist as a circled question mark. `offline-icons.spec.ts` sweeps
+  `__yjIconMisses` and could not see it, because no spec had ever
+  followed an artist — the same fault `requested-badge.spec.ts` was
+  written for, one component over, still live. A name computed from
+  state was only checkable from the state; now it is checkable from the
+  table.
+
 **An album page says how much of the album is yours.**
 `explore-album-details` is a *catalog* page and there is no
 library-side album detail page at all, so the album on it may be

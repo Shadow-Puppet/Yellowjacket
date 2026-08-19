@@ -18,6 +18,7 @@ import { notificationStore } from '@store/notification-store';
 import { describeError } from '@utils/describe-error';
 import type { DuplicateTracksDialog } from '@components/duplicate-tracks-dialog/duplicate-tracks-dialog.js';
 import { list } from '@utils/binding';
+import { ICON_NEW } from '@utils/icon-language';
 
 /**
  * A reusable playlist picker that displays existing playlists
@@ -307,7 +308,7 @@ export class PlaylistPicker extends LitElement {
                       `
                     : nothing}
                 <wa-dropdown-item @click=${this.handleShowCreate}>
-                    <wa-icon slot="icon" name="plus"></wa-icon>
+                    <wa-icon slot="icon" name=${ICON_NEW}></wa-icon>
                     New Playlist
                 </wa-dropdown-item>
             </div>

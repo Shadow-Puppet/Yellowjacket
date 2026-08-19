@@ -4,6 +4,10 @@ import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import { designTokens } from '../../styles/tokens.css';
 
 import type { DragActiveDetail } from '@utils/drag-controller';
+import {
+    ICON_PLAYLIST,
+    ICON_REQUESTED,
+} from '@utils/icon-language';
 
 type View = 'home' | 'playlists' | 'artists' | 'genres' | 'albums' | 'tracks' | 'explore' | 'downloads' | 'autotag' | 'jobs' | 'settings';
 
@@ -197,13 +201,13 @@ export class AppSidebar extends LitElement {
 
     private navItems: NavItem[] = [
         { id: 'home', label: 'Home', icon: 'house' },
-        { id: 'playlists', label: 'Playlists', icon: 'list' },
+        { id: 'playlists', label: 'Playlists', icon: ICON_PLAYLIST },
         { id: 'artists', label: 'Artists', icon: 'user-group' },
         { id: 'genres', label: 'Genres', icon: 'masks-theater' },
         { id: 'albums', label: 'Albums', icon: 'compact-disc' },
         { id: 'tracks', label: 'Tracks', icon: 'music' },
         { id: 'explore', label: 'Explore', icon: 'globe' },
-        { id: 'downloads', label: 'Downloads', icon: 'bookmark' },
+        { id: 'downloads', label: 'Downloads', icon: ICON_REQUESTED },
         { id: 'autotag', label: 'Autotag', icon: 'tag' },
         { id: 'jobs', label: 'Jobs', icon: 'list-check' },
         { id: 'settings', label: 'Settings', icon: 'gear' },

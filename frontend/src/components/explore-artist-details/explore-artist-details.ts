@@ -59,6 +59,12 @@ import { dict, dictByName } from '@utils/binding';
 import type { TrackDetails } from '@components/track-details/track-details.js';
 import { showTrackDetailsForPath } from '@utils/track-details-opener.js';
 import '@components/playlist-picker/playlist-picker.js';
+import {
+    ICON_CAN_REQUEST,
+    ICON_PLAYLIST,
+    ICON_QUEUE,
+    ICON_REQUESTED,
+} from '@utils/icon-language';
 
 /* ── Constants ── */
 
@@ -2674,7 +2680,7 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
                           @click=${() => this.onContextMenuAction('add-to-queue')}
                           @mouseenter=${() => this.ctxMenu.closePlaylistSubmenu()}
                       >
-                          <wa-icon slot="icon" name="plus"></wa-icon>
+                          <wa-icon slot="icon" name=${ICON_QUEUE}></wa-icon>
                           Add to Queue
                       </wa-dropdown-item>
                       <wa-dropdown-item
@@ -2693,7 +2699,7 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
                               void this.openPlaylistSubmenu(true);
                           }}
                       >
-                          <wa-icon slot="icon" name="plus"></wa-icon>
+                          <wa-icon slot="icon" name=${ICON_PLAYLIST}></wa-icon>
                           Add to Playlist
                           <span class="submenu-arrow">&#9654;</span>
                       </wa-dropdown-item>
@@ -2737,7 +2743,7 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
                           Play
                       </wa-dropdown-item>
                       <wa-dropdown-item @click=${() => void this.onReleaseAction('add-to-queue')}>
-                          <wa-icon slot="icon" name="plus"></wa-icon>
+                          <wa-icon slot="icon" name=${ICON_QUEUE}></wa-icon>
                           Add to Queue
                       </wa-dropdown-item>
                       <wa-dropdown-item @click=${() => void this.onReleaseAction('play-next')}>
@@ -2751,7 +2757,7 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
                       <wa-dropdown-item @click=${() => void this.onReleaseRequestToggle()}>
                           <wa-icon
                               slot="icon"
-                              name=${requested ? 'xmark' : 'bookmark'}
+                              name=${requested ? ICON_REQUESTED : ICON_CAN_REQUEST}
                           ></wa-icon>
                           ${requested ? 'Cancel Request' : 'Request This'}
                       </wa-dropdown-item>
@@ -2789,9 +2795,15 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
                     appearance=${request ? 'filled' : 'outlined'}
                     @click=${() => void this.toggleFollow(request?.id)}
                 >
+                    <!-- This was bookmark-check, which is not in
+                         names.txt and so has rendered the missing-icon
+                         fallback — a circled question mark — on every
+                         followed artist since it was written. A
+                         backtick around that name would end this
+                         template literal, which is why there is none. -->
                     <wa-icon
                         slot="start"
-                        name=${request ? 'bookmark-check' : 'bookmark'}
+                        name=${request ? ICON_REQUESTED : ICON_CAN_REQUEST}
                     ></wa-icon>
                     ${request ? 'Following' : 'Follow for new releases'}
                 </wa-button>

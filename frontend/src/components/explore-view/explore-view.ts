@@ -36,6 +36,7 @@ import '@awesome.me/webawesome/dist/components/popup/popup.js';
 import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 import { dict, dictByName } from '@utils/binding';
+import { ICON_QUEUE } from '@utils/icon-language';
 
 /** The region explore's own action failures (play/queue) are rendered in. */
 export const ExploreRegion = 'explore';
@@ -1342,7 +1343,7 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
                                             Play
                                         </wa-dropdown-item>
                                         <wa-dropdown-item @click=${() => this.onContextMenuAction('add-to-queue')}>
-                                            <wa-icon slot="icon" name="plus"></wa-icon>
+                                            <wa-icon slot="icon" name=${ICON_QUEUE}></wa-icon>
                                             Add to Queue
                                         </wa-dropdown-item>
                                         <wa-dropdown-item @click=${() => this.onContextMenuAction('play-next')}>

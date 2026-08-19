@@ -19,6 +19,11 @@ import {
   update,
   visual,
 } from '@test/support/render';
+import {
+  ICON_CAN_REQUEST,
+  ICON_IN_LIBRARY,
+  ICON_REQUESTED,
+} from '@utils/icon-language';
 
 describe('<app-sidebar>', () => {
   it('renders a testid per destination, which is how e2e navigates', async () => {
@@ -154,9 +159,20 @@ describe('<library-status-indicator>', () => {
   it('defaults to "not in library"', async () => {
     const el = await fixture('library-status-indicator');
 
-    expect(shadow(el, 'wa-icon')?.getAttribute('name')).toBe('plus');
+    expect(shadow(el, 'wa-icon')?.getAttribute('name')).toBe(ICON_CAN_REQUEST);
   });
 
+  /**
+   * Named from the vocabulary rather than written out, or this test
+   * pins the glyphs *against* the table it is supposed to follow —
+   * which is what it did: it asserted `plus` for the un-owned state,
+   * the same glyph two adjacent menu items were using for two other
+   * meanings, and passing was the reason nobody looked.
+   *
+   * What is still worth asserting is that the three differ, which is
+   * the property the states need and the one the table cannot state
+   * about itself here.
+   */
   it('uses a distinct glyph per state', async () => {
     const glyphs: (string | null | undefined)[] = [];
 
@@ -166,7 +182,8 @@ describe('<library-status-indicator>', () => {
       glyphs.push(shadow(el, 'wa-icon')?.getAttribute('name'));
     }
 
-    expect(glyphs).toEqual(['check', 'bookmark', 'plus']);
+    expect(glyphs).toEqual([ICON_IN_LIBRARY, ICON_REQUESTED, ICON_CAN_REQUEST]);
+    expect(new Set(glyphs).size).toBe(3);
   });
 
   it('phrases its label around the entity it describes', async () => {
