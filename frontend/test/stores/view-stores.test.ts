@@ -1,11 +1,13 @@
 /**
- * The three small stores behind view chrome: the global search term,
- * the track list's column set, and the explore cache that keeps detail
- * pages from re-fetching what a search already returned.
+ * The small stores behind view chrome: the global search term, the
+ * active view both navs highlight, the track list's column set, and
+ * the explore cache that keeps detail pages from re-fetching what a
+ * search already returned.
  */
 import { describe, expect, it, beforeEach } from 'vitest';
 
 import { searchStore } from '@store/search-store';
+import { activeViewStore } from '@store/active-view-store';
 import { trackListStore } from '@store/tracklist-store';
 import { exploreCache, ARTIST_IMAGE_CACHE_LIMIT } from '@store/explore-cache';
 import { Events } from '../../src/events';
@@ -77,6 +79,57 @@ describe('search store', () => {
     });
 
     expect(results).toEqual([false, false, false, false]);
+  });
+});
+
+describe('active view store', () => {
+  beforeEach(() => {
+    activeViewStore.setView('home', true);
+  });
+
+  it('holds the primary view the shell navigated to', () => {
+    activeViewStore.setView('albums', true);
+
+    expect(activeViewStore.get()).toBe('albums');
+    expect(activeViewStore.isActive('albums')).toBe(true);
+    expect(activeViewStore.isActive('tracks')).toBe(false);
+  });
+
+  it('leaves the primary view lit while a detail view is open', () => {
+    activeViewStore.setView('albums', true);
+    activeViewStore.setView('explore-album-details', false);
+
+    // #72's third finding, made deliberate: a detail view is not a
+    // destination in either nav, and the tab it was opened from is
+    // where the user still is. `app-sidebar` did this by accident (it
+    // guarded on its own item list) and `bottom-nav` did not do it at
+    // all, which is why one looked right and the other looked broken.
+    expect(activeViewStore.get()).toBe('albums');
+  });
+
+  it('does not notify when the view is unchanged', () => {
+    let notifications = 0;
+    const off = activeViewStore.subscribe(() => {
+      notifications += 1;
+    });
+
+    activeViewStore.setView('albums', true);
+    activeViewStore.setView('albums', true);
+    activeViewStore.setView('explore-album-details', false);
+    off();
+
+    expect(notifications).toBe(1);
+  });
+
+  it('lights nothing for a view with no name', () => {
+    // The store starts empty rather than defaulting to a view, because
+    // a written-down default is right only while `GetDefaultPage()`
+    // agrees with it. That is only safe if the empty value matches
+    // nothing: `isActive` compares strings, and a component asking
+    // about an id it does not have must not light up.
+    activeViewStore.setView('', true);
+
+    expect(activeViewStore.isActive('')).toBe(false);
   });
 });
 

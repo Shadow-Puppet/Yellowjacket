@@ -10,6 +10,7 @@ import '@components/sidebar/app-sidebar';
 import '@components/library-filter/library-filter';
 import '@components/library-status-indicator/library-status-indicator';
 import { Events } from '../../src/events';
+import { activeViewStore } from '@store/active-view-store';
 import { emit, stub, flush, calls, lastArgs } from '@test/support/harness';
 import {
   fixture,
@@ -49,6 +50,8 @@ describe('<app-sidebar>', () => {
   });
 
   it('marks exactly one item as the current page', async () => {
+    activeViewStore.setView('home', true);
+
     const el = await fixture('app-sidebar');
 
     const current = shadowAll(el, 'li button').filter(
@@ -72,15 +75,47 @@ describe('<app-sidebar>', () => {
     expect(seen).toEqual(['artists']);
   });
 
-  it('moves aria-current to the clicked destination', async () => {
+  it('moves aria-current with the shell, not with the click', async () => {
+    activeViewStore.setView('home', true);
+
     const el = await fixture('app-sidebar');
 
     shadow<HTMLElement>(el, '[data-testid="nav-genres"]')?.click();
     await el.updateComplete;
 
+    // The click asks; it does not answer. The sidebar used to move its
+    // own highlight optimistically, which is the second opinion #72
+    // removed -- one component deciding where the user is, while the
+    // shell decided separately and `bottom-nav` decided a third way.
+    expect(
+      shadow(el, '[data-testid="nav-genres"]')?.getAttribute('aria-current'),
+    ).toBe('false');
+
+    // What the shell does with that event, in one line.
+    activeViewStore.setView('genres', true);
+    await update(el, {});
+
     expect(
       shadow(el, '[data-testid="nav-genres"]')?.getAttribute('aria-current'),
     ).toBe('page');
+  });
+
+  it('follows the back path, which dispatches no navigate event', async () => {
+    activeViewStore.setView('albums', true);
+
+    const el = await fixture('app-sidebar');
+
+    // `popstate` replays an entry through `handleNavigate` directly, so
+    // there is no `navigate` event to hear -- which is why the sidebar
+    // stayed on the view the user had just left (#72).
+    activeViewStore.setView('tracks', true);
+    await update(el, {});
+
+    expect(
+      shadowAll(el, 'li button')
+        .filter((item) => item.getAttribute('aria-current') === 'page')
+        .map((item) => item.getAttribute('data-testid')),
+    ).toEqual(['nav-tracks']);
   });
 
   it('looks the way it did last time', async () => {

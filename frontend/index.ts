@@ -40,6 +40,7 @@ import { setBasePath } from '@awesome.me/webawesome/dist/webawesome.js';
 import { registerBundledIcons } from './src/icons';
 import { queueStore } from '@store/queue-store';
 import { searchStore } from '@store/search-store';
+import { activeViewStore } from '@store/active-view-store';
 import * as Player from '@go/player/player.js';
 import * as Queue from '@go/queue/queue.js';
 import { GetDefaultPage } from '@go/config/config.js';
@@ -278,6 +279,20 @@ async function handleNavigate(
     // the cached children lacks .view-hidden.  Publishing it as an
     // attribute keeps e2e selectors semantic instead of structural.
     mainContent.dataset.activeView = view;
+
+    // And publishing it as a *value* is what the nav components read.
+    // They used to learn the active view from the `navigate` event,
+    // which only the outbound path dispatches -- so a back-navigation
+    // left both of them highlighting the view it had just left (#72).
+    // Re-dispatching `navigate` here is not the fix: this file is a
+    // document listener for it, so that is an infinite loop, and
+    // "please go to X" is not the statement being made.
+    //
+    // `view in VIEW_TAGS` is the primary/detail split, and it is passed
+    // rather than re-derived because this table is where it is written
+    // down.  A detail view therefore leaves the tab it was opened from
+    // lit, which is what the report asks for.
+    activeViewStore.setView(view, view in VIEW_TAGS);
 
     // --- Primary (cacheable) views ----------------------------------------
     if (view in VIEW_TAGS) {
