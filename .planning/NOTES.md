@@ -3696,3 +3696,39 @@ as a tidy-up, a change nothing on a desktop renders differently.
 Related: a width-gated decision **is** testable at both tiers, which is
 why #61's phone mini player is a `matchMedia` stub in the component test
 and needs nothing special.
+
+## A default that is an *absent* key survives an existing seed (2026-08-19)
+
+The skill warns that a seed freezes every default it has already
+persisted, so changing one in `backend/config` is invisible against an
+existing `YJ_HOME` while CI, which seeds by running the app, tests the
+new one. That warning is about defaults stored as *values*.
+
+#25's Autotag-hidden default is stored as the **absence of a key**:
+`GeneralConfig.ViewVisibility` is a map, an id it does not mention takes
+`backend/config.Views`' answer, and only what the user changed is ever
+written. So a seed built before the feature existed showed the new
+default immediately — verified against `.dev/seeds/default.tar`, whose
+`config.toml` has no `[General.ViewVisibility]` table at all, and whose
+sidebar came up without Autotag on the first launch of the new binary.
+After toggling it on and off again the file carries exactly one line,
+`autotag = false`.
+
+The general form is worth keeping: **a default expressed as a zero value
+needs a re-seed to observe; a default expressed as an absent key does
+not**, and it needs no migration for existing installs either. It is the
+same property that makes removing a view later free (an unknown key is
+dropped on load), which is what the `#25 → #27` ordering on #73 rests on.
+
+## A spec cannot assume a destination has a nav item (2026-08-19)
+
+Since #25, `getByTestId('nav-<view>')` is not a reliable way to reach a
+view: Autotag is hidden by default and Downloads is absent without a
+download client, so four existing specs failed on a 30 s timeout waiting
+for a locator that will never resolve. `navigateTo(page, view)` in
+`e2e/support/fixtures.ts` dispatches the app's own `navigate` event
+instead, which is what every nav item, card and detail view dispatches —
+so it is the mechanism and not a test-only door.
+
+Use the nav item when the *nav* is the subject, and `navigateTo` when
+the view is.

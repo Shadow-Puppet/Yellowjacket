@@ -195,6 +195,12 @@ Two rules about climbing:
 - **Do not write an e2e spec first.** Drive the flow by hand, then
   promote it with `/e2e`. Specs written blind assert on selectors that
   do not exist.
+- **Not every view has a nav item.** Since #25 the destinations are
+  configurable, Autotag is hidden by default and Downloads is absent
+  until a download client exists — so `getByTestId('nav-<view>')` waits
+  30 s for a locator that will never resolve. `navigateTo(page, view)`
+  (`e2e/support/fixtures.ts`) dispatches the app's own `navigate` event.
+  Click the nav item when the *nav* is what the spec is about.
 
 Before a commit, the gate is `make lint`, `make test`, `make ui-test`,
 `make bindings-check`, `make css-check` and — from `frontend/` —
