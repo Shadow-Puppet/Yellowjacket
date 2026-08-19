@@ -82,6 +82,100 @@ func TestPruneStaleLocalCrossReferences(t *testing.T) {
 	}
 }
 
+// TestPruneClearsInLibraryWithNoLocalID covers the fixed point: a row
+// carrying in_library with a NULL local_*_id.  The upsert's conflict
+// clause is `in_library = MAX(in_library, excluded.in_library)`, so it
+// can only ever raise the flag, and this pass used to be gated on the id
+// being present — which meant nothing in the app could clear such a row,
+// ever.  It is asserted for all three entity types because the gate was
+// written once and used three times, so a fix applied to one is a fix
+// that looks complete.
+//
+// The rows are seeded with raw SQL rather than through seedIndexResult
+// deliberately: upsertBatch writes a zero LocalArtistID as literal 0,
+// not NULL, and 0 satisfies `IS NOT NULL` — so the old gate already
+// caught that shape and a fixture built through the upsert cannot
+// reproduce this at all.  NULL is what the artifact importer and any
+// older writer leave behind, the column being nullable with no default.
+func TestPruneClearsInLibraryWithNoLocalID(t *testing.T) {
+	t.Parallel()
+
+	db := database.NewTestDB(t)
+	si := NewSearchIndex(db, nil, nil, slog.Default())
+
+	// A genuinely owned artist, to prove the wider gate does not simply
+	// clear everything it now looks at.
+	database.InsertTestTrack(t, db, database.TestTrack{
+		FilePath: "/music/owned.mp3",
+		Artist:   "Owned",
+	})
+
+	artist, err := db.Queries.GetArtistByName(t.Context(), "Owned")
+	if err != nil {
+		t.Fatalf("read seeded artist: %v", err)
+	}
+
+	seedIndexResult(t, db, SearchIndexResult{
+		EntityType:    EntityArtist,
+		MBID:          testMBID("owned"),
+		Title:         "Owned",
+		ArtistName:    "Owned",
+		ArtistMBID:    testMBID("owned"),
+		InLibrary:     true,
+		LocalArtistID: artist.ID,
+	})
+
+	orphans := []struct {
+		name       string
+		entityType string
+		mbid       string
+	}{
+		{"artist", EntityArtist, "orphan-artist"},
+		{"release group", EntityReleaseGroup, "orphan-release-group"},
+		{"recording", EntityRecording, "orphan-recording"},
+	}
+
+	for _, o := range orphans {
+		if _, err := db.ExecContext(
+			`INSERT INTO explore_index
+			     (entity_type, mbid, title, artist_name, artist_mbid,
+			      in_library,
+			      local_artist_id, local_release_group_id, local_recording_id)
+			 VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+			dbEntityType(o.entityType), dbMBID(testMBID(o.mbid)), o.name, o.name,
+			dbMBID(testMBID(o.mbid)),
+			nil, nil, nil,
+		); err != nil {
+			t.Fatalf("seed %s orphan: %v", o.name, err)
+		}
+	}
+
+	si.pruneStaleLocalCrossReferences()
+
+	inLibrary := func(t *testing.T, mbid string) int {
+		t.Helper()
+
+		var flag int
+		if err := db.QueryRowWriter(
+			"SELECT in_library FROM explore_index WHERE mbid = ?", dbMBID(mbid),
+		).Scan(&flag); err != nil {
+			t.Fatalf("read in_library for %q: %v", mbid, err)
+		}
+
+		return flag
+	}
+
+	for _, o := range orphans {
+		if got := inLibrary(t, testMBID(o.mbid)); got != 0 {
+			t.Errorf("%s with a NULL local id: in_library = %d, want 0", o.name, got)
+		}
+	}
+
+	if got := inLibrary(t, testMBID("owned")); got != 1 {
+		t.Errorf("owned artist: in_library = %d, want 1 (it still has a file)", got)
+	}
+}
+
 // TestUnenrichedLibraryArtistMBIDs_OrdersByOwnedTrackCount verifies the
 // backfill queue prioritizes artists by how many tracks the user actually
 // owns, not by how many duplicate-mbid artist rows happen to exist (the
