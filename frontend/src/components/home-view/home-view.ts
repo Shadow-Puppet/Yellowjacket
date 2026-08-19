@@ -160,29 +160,52 @@ export class HomeView extends ViewLifecycleMixin(LitElement) {
                 user-select: none;
             }
 
+            /*
+             * The hover play button is a *hover* affordance, so it is
+             * gated on the device having hover rather than on width.  A
+             * touch long-press synthesises a hover state in the WebView,
+             * so on a phone it flashed into view during the 500ms hold
+             * that utils/long-press.ts is measuring for a context menu —
+             * a control appearing because you were reaching for a
+             * different one.  A phone user taps the album and plays from
+             * the detail view, so there is nothing to replace it with.
+             *
+             * display:none outside the query rather than opacity:0 on
+             * its own: an opacity-0 button still takes taps and is
+             * still in the accessibility tree, so the invisible control
+             * would keep the hit area it was never meant to have on
+             * touch. Everything else stays inside, so the desktop
+             * animation is unchanged.
+             */
             .play {
-                position: absolute;
-                right: 8px;
-                bottom: 8px;
-                width: 38px;
-                height: 38px;
-                border: none;
-                border-radius: 50%;
-                background: var(--yj-accent, #ffd43b);
-                color: var(--yj-accent-fg, #000);
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                cursor: pointer;
-                opacity: 0;
-                transform: translateY(6px);
-                transition: opacity 0.12s ease, transform 0.12s ease;
+                display: none;
             }
 
-            .card:hover .play,
-            .card:focus-within .play {
-                opacity: 1;
-                transform: translateY(0);
+            @media (hover: hover) and (pointer: fine) {
+                .play {
+                    position: absolute;
+                    right: 8px;
+                    bottom: 8px;
+                    width: 38px;
+                    height: 38px;
+                    border: none;
+                    border-radius: 50%;
+                    background: var(--yj-accent, #ffd43b);
+                    color: var(--yj-accent-fg, #000);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    cursor: pointer;
+                    opacity: 0;
+                    transform: translateY(6px);
+                    transition: opacity 0.12s ease, transform 0.12s ease;
+                }
+
+                .card:hover .play,
+                .card:focus-within .play {
+                    opacity: 1;
+                    transform: translateY(0);
+                }
             }
 
             .name {
