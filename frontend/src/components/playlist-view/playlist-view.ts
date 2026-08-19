@@ -40,7 +40,10 @@ import type { DuplicateTracksDialog } from '@components/duplicate-tracks-dialog/
 import {
     ICON_NEW,
     ICON_PLAYLIST,
+    ICON_SMART_PLAYLIST,
 } from '@utils/icon-language';
+import '@components/page-header/page-header';
+import type { PageAction } from '@components/page-header/page-header';
 
 const SCROLL_DEBOUNCE_MS = 100;
 
@@ -194,11 +197,6 @@ export class PlaylistView extends ViewLifecycleMixin(LitElement) {
             contain: layout style;
         }
 
-        .header-actions {
-            display: flex;
-            gap: 8px;
-        }
-
         .header-spinner {
             display: inline-block;
             width: 14px;
@@ -207,33 +205,6 @@ export class PlaylistView extends ViewLifecycleMixin(LitElement) {
             border-top-color: var(--yj-text-primary, #fff);
             border-radius: 50%;
             animation: spin 0.6s linear infinite;
-        }
-
-        .new-playlist-button {
-            background: none;
-            border: 1px solid var(--yj-border-subtle, #555);
-            border-radius: 4px;
-            color: var(--yj-text-primary, #fff);
-            padding: 6px 12px;
-            font-size: 13px;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            font-family: inherit;
-        }
-
-        .new-playlist-button:hover,
-        .new-playlist-button.drag-over {
-            border-color: var(--yj-accent, #ffd43b);
-            color: var(--yj-accent-text, #ffd43b);
-        }
-
-        .new-playlist-button.drag-over {
-            background-color: var(
-                --yj-accent-bg-strong,
-                rgba(255, 212, 59, 0.15)
-            );
         }
 
         .create-form {
@@ -453,25 +424,6 @@ export class PlaylistView extends ViewLifecycleMixin(LitElement) {
             outline: none;
             font-family: inherit;
             min-width: 0;
-        }
-
-        .import-button {
-            background: none;
-            border: 1px solid var(--yj-border-subtle, #555);
-            border-radius: 4px;
-            color: var(--yj-text-primary, #fff);
-            padding: 6px 12px;
-            font-size: 13px;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            font-family: inherit;
-        }
-
-        .import-button:hover {
-            border-color: var(--yj-accent, #ffd43b);
-            color: var(--yj-accent-text, #ffd43b);
         }
 
         .import-error {
@@ -1022,10 +974,11 @@ export class PlaylistView extends ViewLifecycleMixin(LitElement) {
     ) => {
         const related =
             e.relatedTarget as Node | null;
-        const btn =
-            this.shadowRoot?.querySelector(
-                '.new-playlist-button',
-            );
+        // The button the event was bound to, rather than a selector for
+        // it: `page-header` renders it now, so it is not in this shadow
+        // root at all and the old `.new-playlist-button` lookup would
+        // find nothing and leave the highlight stuck on.
+        const btn = e.currentTarget as Element | null;
 
         if (btn && !btn.contains(related)) {
             this.dragOverNewButton = false;
@@ -1470,6 +1423,49 @@ export class PlaylistView extends ViewLifecycleMixin(LitElement) {
         this.saveSortPreferences();
     };
 
+    /**
+     * The three things this page can do, as data.
+     *
+     * The priority order is what #69's Direction asks for and it is
+     * only interesting for one of them: **New Playlist is highest
+     * because it is the drop target**. You cannot drag a track onto a
+     * closed menu, so collapsing it is the one collapse here that
+     * removes a capability rather than relocating it. Import is lowest
+     * because it is the rarest, and at 900×600 it is the only one that
+     * has to go.
+     */
+    private headerActions(): PageAction[] {
+        return [
+            {
+                id: 'import',
+                label: 'Import',
+                icon: 'file-import',
+                priority: 0,
+                onSelect: () => void this.handleImportPlaylist(),
+            },
+            {
+                id: 'new-playlist',
+                label: 'New Playlist',
+                icon: ICON_NEW,
+                priority: 2,
+                onSelect: () => this.handleNewPlaylistClick(),
+                drop: {
+                    active: this.dragOverNewButton,
+                    onDragOver: this.onNewButtonDragOver,
+                    onDragLeave: this.onNewButtonDragLeave,
+                    onDrop: this.onNewButtonDrop,
+                },
+            },
+            {
+                id: 'new-smart-playlist',
+                label: 'New Smart Playlist',
+                icon: ICON_SMART_PLAYLIST,
+                priority: 1,
+                onSelect: () => this.handleNewSmartPlaylistClick(),
+            },
+        ];
+    }
+
     override render() {
         return html`
             <page-header
@@ -1484,33 +1480,8 @@ export class PlaylistView extends ViewLifecycleMixin(LitElement) {
                 search-term=${this.searchCtrl.term}
                 ?busy=${this.refreshing}
                 @sort-change=${this.onPageHeaderSort}
+                .actions=${this.headerActions()}
             >
-                <div slot="actions" class="header-actions">
-                    <button
-                        class="import-button"
-                        @click=${this.handleImportPlaylist}
-                    >
-                        <wa-icon name="file-import"></wa-icon>
-                        Import
-                    </button>
-                    <button
-                        class="new-playlist-button ${this.dragOverNewButton ? 'drag-over' : ''}"
-                        @click=${this.handleNewPlaylistClick}
-                        @dragover=${this.onNewButtonDragOver}
-                        @dragleave=${this.onNewButtonDragLeave}
-                        @drop=${this.onNewButtonDrop}
-                    >
-                        <wa-icon name=${ICON_NEW}></wa-icon>
-                        New Playlist
-                    </button>
-                    <button
-                        class="new-playlist-button"
-                        @click=${this.handleNewSmartPlaylistClick}
-                    >
-                        <wa-icon name="filter"></wa-icon>
-                        New Smart Playlist
-                    </button>
-                </div>
             </page-header>
 
             ${this.importError
@@ -1765,7 +1736,7 @@ export class PlaylistView extends ViewLifecycleMixin(LitElement) {
                         : entry.summary.IsSmart
                           ? html`<wa-icon
                                 class="playlist-icon"
-                                name="filter"
+                                name=${ICON_SMART_PLAYLIST}
                             ></wa-icon>`
                           : nothing}
                     ${isRenaming

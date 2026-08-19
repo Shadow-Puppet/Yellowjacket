@@ -1,8 +1,16 @@
 import { LitElement, html, css, nothing } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
+import { customElement, property, query, state } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
+import '@awesome.me/webawesome/dist/components/popup/popup.js';
+import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
+import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
 
 import { designTokens } from '../../styles/tokens.css';
+import {
+    MenuKeyboard,
+    contextMenuStyles,
+} from '../../utils/context-menu-controller';
+import { ICON_MORE_ACTIONS } from '../../utils/icon-language';
 
 /**
  * The one arrangement every primary view uses to say what it is.
@@ -18,6 +26,19 @@ import { designTokens } from '../../styles/tokens.css';
  * Title, count, sort, actions — in that order, in one component, so a
  * new view gets the shape by using it rather than by copying whichever
  * neighbour it happened to read.
+ *
+ * **Actions are data, and `<slot name="actions">` is the exception.**
+ * Playlists' three buttons totalled 390px inside a header that gets
+ * 700px at 900×600 and clipped "New Smart Playlist" to 114 of its 162
+ * (#69) — a live defect at a size the app promises, against plan 018's
+ * *no action is ever unreachable at any supported size*. The header
+ * cannot fix that for slotted markup: it cannot move another
+ * component's light-DOM children into a dropdown and keep their
+ * behaviour, and arbitrary markup offers nothing generic to render as
+ * a menu item. So a host declares `PageAction[]` and the header picks
+ * the rendering. The slot survives for markup a data list genuinely
+ * cannot express, at the stated cost that **a slotted action does not
+ * collapse** and must therefore fit at 800×600.
  */
 
 export interface SortOption {
@@ -26,6 +47,50 @@ export interface SortOption {
 }
 
 export type SortDirection = 'asc' | 'desc';
+
+/**
+ * An action that only makes sense while it is a button.
+ *
+ * A drop target is the case: you cannot drag a track onto a closed
+ * menu, so the affordance is absent from the overflow rather than
+ * approximated there. The header wires these onto the button it
+ * renders and owns none of them — the same division the sort control
+ * already lives by.
+ */
+export interface PageActionDrop {
+    /** True while an acceptable payload is over the button. */
+    active?: boolean;
+    onDragOver: (e: DragEvent) => void;
+    onDragLeave: (e: DragEvent) => void;
+    onDrop: (e: DragEvent) => void;
+}
+
+/**
+ * One thing a view can do, as data rather than as markup.
+ *
+ * `<slot name="actions">` cannot be collapsed, and that is a fact about
+ * the API rather than an effort estimate (#69): a component cannot move
+ * another component's light-DOM children into a dropdown and keep their
+ * behaviour, and there is nothing generic in arbitrary markup to render
+ * as a menu item. Declaring an action instead is what lets the header
+ * choose between the two renderings.
+ */
+export interface PageAction {
+    id: string;
+    label: string;
+    /** From `utils/icon-language`, never a literal. */
+    icon: string;
+    onSelect: () => void;
+    /**
+     * Higher survives longer. The lowest collapses first, ties broken
+     * by declaration order from the right, so a host that says nothing
+     * gets "the last one written goes first".
+     */
+    priority?: number;
+    disabled?: boolean;
+    title?: string;
+    drop?: PageActionDrop;
+}
 
 @customElement('page-header')
 export class PageHeader extends LitElement {
@@ -80,8 +145,82 @@ export class PageHeader extends LitElement {
     @property({ type: Boolean })
     busy = false;
 
+    /**
+     * What this view can do, in the order it wants them shown.
+     *
+     * The header decides what *fits*; the host decides what *happens*.
+     * That is the rule the sort control already lives by — it asks for
+     * a sort rather than performing one — and actions follow it, which
+     * is why an action carries a handler rather than the header
+     * carrying a verb it would have to interpret.
+     */
+    @property({ attribute: false })
+    actions: PageAction[] = [];
+
+    /** Action ids currently in the overflow menu. Derived, never set by a host. */
+    @state()
+    private collapsed: ReadonlySet<string> = new Set();
+
+    @state()
+    private menuOpen = false;
+
+    @query('.page-header')
+    private headerEl?: HTMLElement;
+
+    @query('.more-button')
+    private moreButton?: HTMLButtonElement;
+
+    @query('#page-header-overflow')
+    private menuPanel?: HTMLElement;
+
+    @query('wa-popup')
+    private popup?: WaPopup;
+
+    private menuKeyboard = new MenuKeyboard(() => this.closeMenu());
+
+    private resizeObserver?: ResizeObserver;
+
+    /**
+     * Whether the outside-click listener is attached.
+     *
+     * A `removeEventListener` with no matching `add` is not harmless
+     * here: `view-lifecycle.test.ts` counts document listeners across a
+     * view's life and an unconditional detach on disconnect shows up as
+     * `held: -1`, which is the same accounting that would hide a real
+     * leak in the other direction.
+     */
+    private outsideCloseAttached = false;
+
+    /**
+     * What the last fit was measured against.
+     *
+     * `updated()` runs on every pass, so it has to say what it depends
+     * on or it re-measures — and a measurement here forces synchronous
+     * layout. Width changes arrive through the ResizeObserver; this key
+     * covers everything *else* in the flex row that can change how much
+     * of it the actions are left.
+
+     */
+    private lastFitKey = '';
+
+    override connectedCallback(): void {
+        super.connectedCallback();
+
+        this.resizeObserver = new ResizeObserver(() => this.measureFit());
+        this.resizeObserver.observe(this);
+    }
+
+    override disconnectedCallback(): void {
+        super.disconnectedCallback();
+
+        this.resizeObserver?.disconnect();
+        this.resizeObserver = undefined;
+        this.detachOutsideClose();
+    }
+
     static override styles = [
         designTokens,
+        contextMenuStyles,
         css`
             :host {
                 display: block;
@@ -96,12 +235,26 @@ export class PageHeader extends LitElement {
                 border-bottom: 1px solid var(--yj-border-subtle, #333);
             }
 
+            /* The title gives way before an action does.
+
+               Everything in this row was flex-shrink: 0, so whatever
+               came last lost — and the actions come last, which is how
+               the "More actions" button ended up 76px off the right
+               edge of a 320px viewport with every action already
+               collapsed into it. The title is the one thing here the
+               navigation also says (the sidebar item is selected, the
+               bottom-nav tab is current), so it is the cheapest thing
+               to truncate; the count, the sort and the actions are each
+               the only place they are said. */
             h1 {
                 margin: 0;
                 font-size: var(--yj-text-xl, 18px);
                 font-weight: 600;
                 color: var(--yj-text-primary, #fff);
                 white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                min-width: 0;
             }
 
             .count {
@@ -191,6 +344,98 @@ export class PageHeader extends LitElement {
             ::slotted(*) {
                 flex-shrink: 0;
             }
+
+            .actions {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                flex-shrink: 0;
+            }
+
+            .action,
+            .more-button {
+                background: none;
+                border: 1px solid var(--yj-border-subtle, #555);
+                border-radius: 4px;
+                color: var(--yj-text-primary, #fff);
+                padding: 6px 12px;
+                font-size: var(--yj-text-md, 13px);
+                font-family: inherit;
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                white-space: nowrap;
+                flex-shrink: 0;
+            }
+
+            .more-button {
+                padding: 6px 10px;
+            }
+
+            /* The display: flex above outranks the UA stylesheet's
+               rule for [hidden], and hiding is how an action
+               collapses. (No backticks in here: one ends the css
+               literal, and what you get is "css(...) is not a
+               function" a long way from the cause.) */
+            .action[hidden],
+            .more-button[hidden] {
+                display: none;
+            }
+
+            .action:hover,
+            .more-button:hover,
+            .action.drag-over {
+                border-color: var(--yj-accent, #ffd43b);
+                color: var(--yj-accent-text, #ffd43b);
+            }
+
+            .action.drag-over {
+                background-color: var(
+                    --yj-accent-bg-strong,
+                    rgba(255, 212, 59, 0.15)
+                );
+            }
+
+            .action:disabled {
+                opacity: 0.5;
+                cursor: default;
+            }
+
+            .action:focus-visible,
+            .more-button:focus-visible {
+                outline: 2px solid var(--yj-accent, #ffd43b);
+                outline-offset: -1px;
+            }
+
+            wa-popup {
+                z-index: 200;
+            }
+
+            /* A component states what it drops at phone width itself,
+               in its own stylesheet, because a media query inside a
+               shadow root is answered by the viewport and the shell
+               cannot reach in. Here that is one word: the sort control
+               is 172px of a 320px header, and "Sort:" is ~40px of it
+               for a label the adjacent direction arrow already implies.
+               It stays in the accessibility tree — it is the select's
+               accessible name, so hiding it outright would rename the
+               control to nothing — which is config-field's bug, one
+               component over. clip-path rather than display: none for
+               the reason styles/sr-only.css.ts gives. */
+            @media (max-width: 599px) {
+                .sort-label {
+                    position: absolute;
+                    width: 1px;
+                    height: 1px;
+                    margin: -1px;
+                    padding: 0;
+                    overflow: hidden;
+                    clip-path: inset(50%);
+                    white-space: nowrap;
+                    border: 0;
+                }
+            }
         `,
     ];
 
@@ -212,9 +457,291 @@ export class PageHeader extends LitElement {
                 ${this.renderCount()}
                 <div class="spacer"></div>
                 ${this.renderScope()} ${this.renderSort()}
+                ${this.renderActions()}
                 <slot name="actions"></slot>
             </header>
         `;
+    }
+
+    protected override updated(): void {
+        const key = [
+            this.heading,
+            this.count,
+            this.countNoun,
+            this.countPlural,
+            this.searchTerm,
+            this.sortOptions.length,
+            this.sortField,
+            this.sortDirection,
+            this.busy,
+            this.actions.map((a) => `${a.id}:${a.label}:${a.disabled ?? false}`).join(','),
+        ].join('|');
+
+        if (key === this.lastFitKey) return;
+
+        this.lastFitKey = key;
+        this.measureFit();
+    }
+
+    // =================================================================
+    // What fits
+    // =================================================================
+
+    /**
+     * Decide which actions are buttons and which are menu items.
+     *
+     * Two things about the shape of this are load-bearing.
+     *
+     * **Every pass starts from all-visible**, so the collapsed set is a
+     * pure function of the current width rather than of the order the
+     * widths arrived in. A rule that only ever *added* to the set would
+     * never give an action back when the window grew, and one that
+     * adjusted by a step would need a hysteresis band to stop it
+     * oscillating on the pixel where a button exactly fits.
+     *
+     * **It flips `hidden` on the rendered nodes rather than re-rendering
+     * between steps.** Reading `scrollWidth` forces layout, which is the
+     * point; awaiting a Lit update between steps instead would let the
+     * intermediate all-visible state paint, so the fix would flash the
+     * overflow it exists to prevent. The reactive state is set once, at
+     * the end, and the next render agrees with what was measured.
+     *
+     * The budget is the *header's* overflow and not the actions row's,
+     * because the count and the sort control are `flex-shrink: 0` and
+     * are therefore competing for the same width — only `.scope` gives
+     * way, which is what it has an ellipsis for.
+     */
+    private measureFit(): void {
+        const header = this.headerEl;
+
+        if (!header) return;
+
+        if (this.actions.length === 0) {
+            this.commitCollapsed(new Set());
+
+            return;
+        }
+
+        const buttons = new Map<string, HTMLElement>();
+
+        for (const el of this.renderRoot.querySelectorAll<HTMLElement>(
+            '[data-action-id]',
+        )) {
+            const id = el.dataset['actionId'];
+
+            if (id !== undefined) buttons.set(id, el);
+        }
+
+        const more = this.moreButton;
+        const title = this.renderRoot.querySelector('h1');
+
+        /**
+         * Nothing is clipped — which is not the same as the header not
+         * overflowing, and the difference is a trap worth naming.
+         *
+         * Once the title can ellipsis, it absorbs the pressure and
+         * `scrollWidth` reports a header that fits perfectly while the
+         * heading reads "Playlis…". That is this issue's own failure
+         * mode moved from the button to the title, and it is invisible
+         * to exactly the same measurement that missed it the first time.
+         * So the title's own truncation counts as not fitting, and
+         * collapsing an action is tried before the title gives way.
+         */
+        const fits = () =>
+            header.scrollWidth <= header.clientWidth &&
+            (title === null || title.scrollWidth <= title.clientWidth + 1);
+
+        for (const el of buttons.values()) el.hidden = false;
+
+        if (more) more.hidden = true;
+
+        const collapsed = new Set<string>();
+
+        if (!fits()) {
+            if (more) more.hidden = false;
+
+            for (const action of this.collapseOrder()) {
+                collapsed.add(action.id);
+
+                const el = buttons.get(action.id);
+
+                if (el) el.hidden = true;
+
+                if (fits()) break;
+            }
+        }
+
+        this.commitCollapsed(collapsed);
+    }
+
+    /** Lowest priority first; ties broken from the right. */
+    private collapseOrder(): PageAction[] {
+        return this.actions
+            .map((action, index) => ({ action, index }))
+            .sort(
+                (a, b) =>
+                    (a.action.priority ?? 0) - (b.action.priority ?? 0) ||
+                    b.index - a.index,
+            )
+            .map(({ action }) => action);
+    }
+
+    private commitCollapsed(next: Set<string>): void {
+        const same =
+            next.size === this.collapsed.size &&
+            [...next].every((id) => this.collapsed.has(id));
+
+        if (same) return;
+
+        this.collapsed = next;
+
+        // Nothing left to show in it. Closing rather than leaving an
+        // empty menu open is the same rule the shelves follow.
+        if (next.size === 0 && this.menuOpen) this.closeMenu();
+    }
+
+    // =================================================================
+    // Rendering
+    // =================================================================
+
+    private renderActions() {
+        if (this.actions.length === 0) return nothing;
+
+        const overflowed = this.actions.filter((a) => this.collapsed.has(a.id));
+
+        return html`
+            <div class="actions">
+                ${this.actions.map((a) => this.renderActionButton(a))}
+                <wa-popup
+                    placement="bottom-end"
+                    flip
+                    shift
+                    .active=${this.menuOpen}
+                >
+                    <button
+                        slot="anchor"
+                        class="more-button"
+                        type="button"
+                        data-testid="page-actions-more"
+                        aria-label="More actions"
+                        aria-haspopup="menu"
+                        aria-expanded=${this.menuOpen ? 'true' : 'false'}
+                        aria-controls="page-header-overflow"
+                        ?hidden=${overflowed.length === 0}
+                        @click=${this.onMoreClick}
+                    >
+                        <wa-icon name=${ICON_MORE_ACTIONS}></wa-icon>
+                    </button>
+                    <div
+                        id="page-header-overflow"
+                        class="context-menu-panel"
+                        role="menu"
+                        aria-label="More actions"
+                    >
+                        ${overflowed.map(
+                            (a) => html`
+                                <wa-dropdown-item
+                                    ?disabled=${a.disabled ?? false}
+                                    @click=${() => this.onActionSelect(a)}
+                                >
+                                    <wa-icon
+                                        slot="icon"
+                                        name=${a.icon}
+                                    ></wa-icon>
+                                    ${a.label}
+                                </wa-dropdown-item>
+                            `,
+                        )}
+                    </div>
+                </wa-popup>
+            </div>
+        `;
+    }
+
+    private renderActionButton(a: PageAction) {
+        const drop = a.drop;
+
+        return html`
+            <button
+                class="action ${drop?.active === true ? 'drag-over' : ''}"
+                type="button"
+                data-action-id=${a.id}
+                data-testid=${`page-action-${a.id}`}
+                title=${a.title ?? nothing}
+                ?disabled=${a.disabled ?? false}
+                ?hidden=${this.collapsed.has(a.id)}
+                @click=${() => a.onSelect()}
+                @dragover=${(e: DragEvent) => drop?.onDragOver(e)}
+                @dragleave=${(e: DragEvent) => drop?.onDragLeave(e)}
+                @drop=${(e: DragEvent) => drop?.onDrop(e)}
+            >
+                <wa-icon name=${a.icon}></wa-icon>
+                ${a.label}
+            </button>
+        `;
+    }
+
+    // =================================================================
+    // The overflow menu
+    // =================================================================
+
+    private onActionSelect(a: PageAction): void {
+        if (a.disabled === true) return;
+
+        this.closeMenu();
+        a.onSelect();
+    }
+
+    private onMoreClick = (): void => {
+        if (this.menuOpen) {
+            this.closeMenu();
+
+            return;
+        }
+
+        this.menuOpen = true;
+
+        void this.updateComplete.then(() => {
+            if (!this.menuOpen) return;
+
+            this.popup?.reposition();
+            this.menuKeyboard.open(this.menuPanel ?? null, this.moreButton);
+            this.attachOutsideClose();
+        });
+    };
+
+    private closeMenu(): void {
+        if (!this.menuOpen) return;
+
+        this.detachOutsideClose();
+        this.menuKeyboard.close();
+        this.menuOpen = false;
+    }
+
+    /**
+     * A click anywhere else closes it. `composedPath` rather than
+     * `contains`, because the trigger and the panel are both inside
+     * this shadow root and a click retargets at the host.
+     */
+    private onOutsideDown = (e: Event): void => {
+        if (e.composedPath().includes(this.menuPanel as EventTarget)) return;
+        if (e.composedPath().includes(this.moreButton as EventTarget)) return;
+
+        this.closeMenu();
+    };
+
+    private attachOutsideClose(): void {
+        if (this.outsideCloseAttached) return;
+
+        this.outsideCloseAttached = true;
+        document.addEventListener('mousedown', this.onOutsideDown, true);
+    }
+
+    private detachOutsideClose(): void {
+        if (!this.outsideCloseAttached) return;
+
+        this.outsideCloseAttached = false;
+        document.removeEventListener('mousedown', this.onOutsideDown, true);
     }
 
     private renderCount() {
@@ -258,7 +785,10 @@ export class PageHeader extends LitElement {
         if (this.sortOptions.length === 1) {
             return html`
                 <div class="sort">
-                    <span>Sort: ${this.sortOptions[0]?.label}</span>
+                    <span
+                        ><span class="sort-label">Sort: </span
+                        >${this.sortOptions[0]?.label}</span
+                    >
                     ${this.renderDirectionButton(ascending)}
                 </div>
             `;
@@ -267,7 +797,7 @@ export class PageHeader extends LitElement {
         return html`
             <div class="sort">
                 <label>
-                    Sort:
+                    <span class="sort-label">Sort:</span>
                     <select
                         data-testid="page-sort"
                         .value=${this.sortField}

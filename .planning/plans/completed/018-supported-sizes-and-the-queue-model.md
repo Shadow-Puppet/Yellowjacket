@@ -3,7 +3,8 @@
 **Issue:** #24 (`Area/Shell-Nav`, `Priority/High`, `Reviewed/Confirmed`)
 **Unblocks:** #55 (queue as a screen) — a real Gitea dependency
 **Relates:** #69 (page-header overflow), #12 (mini-player), #51 (small-screen umbrella)
-**Status:** in flight
+**Status:** complete — #24 shipped as PR #132, and the matrix's last
+unkept promise closed with #69.
 
 #73 puts this first in Phase 2 and hangs the rest of the phase off it,
 so the decision has to be written down and arguable before any CSS
@@ -268,6 +269,38 @@ sidebar or the transport — on purpose: the queue is not modal, and
 leaving the navigation live means the scrim reads as "this is over the
 content" (which is what #24 asked for) without pretending the rest of
 the app is unavailable.
+
+## What #69 did with the promise, and one thing this plan got wrong
+
+#69 landed on its own branch as decision 3 said it would, and the
+matrix's *no action is ever unreachable at any supported size* is now
+kept rather than promised. Measured on Playlists, actions clipped:
+
+| viewport | before #24 | after #24 | after #69 |
+|---|---|---|---|
+| 900×600, queue open | all three | one (114/162px) | none |
+| 900×600, queue closed | one | one | none |
+| 800×600, queue closed | one (158/162px) | one | none |
+| 390×780 | all three | all three | none |
+| 320×600 | all three | all three | none |
+
+The shape was the one decision 3 predicted — an actions API first, an
+overflow rule second — and all three hosts that slot actions migrated.
+
+**What this document got wrong is smaller and worth keeping.** Decision
+1 says the header's minimum is a *comfort* floor and that only the
+queue and the actions compete for the header's width. They are not the
+only two: every child of that flex row was `flex-shrink: 0`, so
+whatever came last lost, and the actions come last. At 320px the sort
+control alone is 172px of the header — so with every action already
+collapsed into the menu, the *menu button* was 76px off the right edge.
+The promise was still broken with nothing left to collapse.
+
+That is why #69 also had to decide what gives way: the title (which the
+navigation also states) and, below 600px, the word "Sort:" (which the
+direction arrow implies). Neither is an action, which is the rule the
+matrix actually encodes — **an action is a capability and everything
+else on that row is a label.**
 
 ## Verification, and what each tier cannot see
 

@@ -3,6 +3,7 @@ import { customElement, state } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@awesome.me/webawesome/dist/components/button/button.js';
 import '@components/page-header/page-header';
+import type { PageAction } from '@components/page-header/page-header';
 import { designTokens } from '../../styles/tokens.css';
 import { downloadStore, stateLabel } from '@store/download-store';
 import type { Request, RequestSummary, DownloadView as DownloadRecord } from '@store/download-store';
@@ -246,23 +247,23 @@ export class DownloadsView extends ViewLifecycleMixin(LitElement) {
 
     override render() {
         return html`
-            <page-header heading="Downloads">
-                ${this.tab === 'requests'
-                    ? html`
-                          <wa-button
-                              slot="actions"
-                              size="small"
-                              appearance="outlined"
-                              ?disabled=${this.checking}
-                              title="Search every download client for everything on this list right now, instead of waiting for the next scheduled check"
-                              @click=${() => void this.checkNow()}
-                          >
-                              <wa-icon slot="start" name="rotate"></wa-icon>
-                              ${this.checking ? 'Searching…' : 'Check now'}
-                          </wa-button>
-                      `
-                    : nothing}
-            </page-header>
+            <page-header
+                heading="Downloads"
+                .actions=${this.tab === 'requests'
+                    ? ([
+                          {
+                              id: 'check-now',
+                              label: this.checking
+                                  ? 'Searching\u2026'
+                                  : 'Check now',
+                              icon: 'rotate',
+                              disabled: this.checking,
+                              title: 'Search every download client for everything on this list right now, instead of waiting for the next scheduled check',
+                              onSelect: () => void this.checkNow(),
+                          },
+                      ] satisfies PageAction[])
+                    : []}
+            ></page-header>
 
             <p class="subtitle">
                 Music you have requested, and the download attempts that

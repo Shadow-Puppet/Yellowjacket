@@ -41,6 +41,7 @@ solid/compact-disc
 solid/copy
 solid/database
 solid/download
+solid/ellipsis
 solid/file-import
 solid/filter
 solid/floppy-disk
