@@ -231,6 +231,14 @@ body div.sidebar {
     display: flex;
     overflow: hidden;
     contain: layout style;
+
+    /* The containing block for the queue panel's overlay mode (plan
+       018, #24), which spans this box rather than taking width from
+       the main panel beside it. `contain: layout` already establishes
+       one; this says so on purpose, so that removing the containment
+       for a paint reason does not silently reparent the overlay to the
+       viewport. */
+    position: relative;
 }
 
 .main-panel {

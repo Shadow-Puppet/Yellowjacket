@@ -1328,6 +1328,68 @@ is 32px each. Which four is plan 016's committed subset, and everything
 else — Settings included, because a phone still needs it — is behind
 "More".
 
+**There are three supported size bands, and the queue is part of the
+promise.** Plan 018 (#24) wrote them down: **Phone** below 600 (bottom
+nav, reflows, fits 320px exactly), **Compact** 600–899 (icon sidebar),
+**Desktop** from 900 (labelled sidebar) — plus one sentence across all
+three, *no action is ever unreachable at any supported size*. The bands
+themselves already existed; what was new is that they are a promise and
+that the queue panel is inside it.
+
+**900 is the worst desktop width, not the 800×600 minimum.** The
+sidebar collapses to icons *below* 900, so the main panel is 843px at
+899 and 700px at 900 — the narrowest content area any desktop width
+produces is at the top of the Compact band, not at the enforced floor.
+Every viewport list that stopped at "the minimum" was therefore missing
+its own worst case, which is why `layout-overflow.spec.ts` carries 900
+now. And **both reasons in `MinWidth`'s comment had expired** — the
+subtitle is `display: none` from 899 down and the sidebar host scrolls
+(`overflow-y: auto`; at 600×460 its `scrollHeight` is 434 against a
+332px client) — so 800×600 is a *comfort* floor for desktop chrome and
+not a correctness one. Below it the phone layout takes over, which is
+also why a very small window reflows rather than becoming a
+mini-player: **#12 is a second always-on-top window, not a mode of this
+one**, and making it a mode would discard navigation state on a resize
+and put the process-level MPRIS question on a path a drag can trigger.
+
+**The queue panel is a column only while the content can spare the
+width, and that cannot be a media query.** In flow the host is
+`flex-shrink: 0`, so an open queue is paid for by the main panel: it
+left 379px at 900×600 (with all three of the Playlists header's actions
+clipped), 69px at 390, and **0px** at 320 — the content was not
+degraded but gone. It goes to an overlay with a scrim when
+`available - panelWidth < 480`, where `available` is
+`.content-area`'s width and therefore already accounts for the
+sidebar's collapse.
+
+Four things about it are load-bearing. **The mode is computed, not
+breakpointed**, because the panel's width is user state — drag-resizable
+200–500px and persisted — so a viewport breakpoint silently assumes the
+default 320 and is wrong by up to 180px in the direction that hurts;
+widening the panel at a fixed window size must flip it, and
+`queue-overlay-mode.test.ts` is written around exactly that. **480 is a
+judgement and says so**: there is no cliff to derive it from (the track
+list rescales continuously, 213px to 124px columns with no row
+overflow), so it is anchored to keep the default 1100px window inline
+and put every measured-broken case on the overlay side. **The scrim
+covers the content area only** — not the sidebar or the transport —
+because the queue is not modal, and it is subtle on a dark ramp by
+arithmetic rather than by accident (33,37,41 → 18,20,23). And **the
+overlay is a presentation, not a fork**: #55 asks for one component
+with two mount points, so the roving tab stop, Alt+Arrow reorder, drag
+reorder, selection semantics and `virtualizer.requestUpdate()` all come
+along untouched. Escape closes it and returns focus, and is attached
+only while the overlay is up — it is a dismissal, not a shortcut, which
+is why it is not a panel-scoped binding.
+
+What this does **not** fix is `page-header` overflowing on its own:
+at 900×600 "New Smart Playlist" is still clipped to 114 of 162px with
+the queue *closed*. That is #69, and it cannot be fixed in
+`page-header` alone — actions arrive through `<slot name="actions">` as
+arbitrary light-DOM markup with their own handlers, so collapsing them
+into a "More actions" menu needs an actions *API* (data, not markup)
+across all three hosts that slot them.
+
 **The phone section of `index.css` is last on purpose.** A media query
 adds no specificity, so a `@media (max-width: 599px)` block placed
 above the plain rules it overrides loses to them — which is how phase 1
