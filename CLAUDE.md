@@ -1547,11 +1547,55 @@ shape as the encoding probe beside it.
 
 What neither side can give is *which* tracks are missing, only how many
 — so an incomplete album still browses, and that is now the exception
-rather than every album load. Two smaller consequences: existing databases
-read "unknown" until a rescan repopulates the column (which degrades to
-exactly the old behaviour, so nothing breaks), and our own `tagwriter`
-writes track and disc *numbers* but not totals, so autotagging a folder
-currently degrades the field this rests on.
+rather than every album load. One smaller consequence: existing databases
+read "unknown" until a rescan repopulates the column, which degrades to
+exactly the old behaviour, so nothing breaks.
+
+**And our own writers declare the total, because for a long time they
+did not.** `tagwriter` wrote track and disc *numbers* and dropped the
+totals, so autotagging an album actively **erased** the evidence this
+rests on: the release became MBID-matched — a green tick — while the
+field `GetAlbumCompleteness` reads stayed absent, which is exactly the
+"2 of 10 tracks, reported as in your library" the report described.
+`FieldTotalTracks` / `FieldTotalDiscs` are written by the autotag apply
+pass and by the download importer, and `dbsync` persists the track
+total to the row so the album page agrees with the file without waiting
+for a rescan.
+
+Five things about it are load-bearing, and four of them fail silently:
+
+- **The total is per *disc*, not per release**, because that is what
+  the tag form declares and what `GetAlbumCompleteness` **sums** per
+  disc — a release total written on every file multiplies a two-disc
+  album's expectation by two, and no library can then satisfy it.
+  `backend/tagtotals` is that derivation, once, because the two callers
+  must not import each other or the writer.
+- **The Vorbis names are `TRACKTOTAL` and `DISCTOTAL` and no other
+  spelling.** `dhowden/tag`'s Vorbis reader looks at exactly those two
+  keys, so a perfectly reasonable `TOTALTRACKS`, or a `1/12` inside
+  `TRACKNUMBER`, is written successfully and reads back as no total at
+  all. The tests assert the round trip through the reader the *scan*
+  uses rather than through the bytes, for that reason.
+- **ID3's number and total share one frame**, so writing either alone
+  has to read the other off the existing tag or it silently discards
+  it. A total with no number is not written: `/12` is what a reader
+  parses as track 0.
+- **The totals are written unconditionally, not on a diff.** The case
+  this exists for is a file that declares *no* total, which compares
+  equal to nothing and is exactly what a "only if it changed" guard
+  skips.
+- **A single-track download must not be totalled.** A `RecordingMBID`
+  anchor resolves `Expected` to that one track, so the same code would
+  tag a track off a twelve-track album "1 of 1" — and a declared total
+  outranks the catalog total that would otherwise have answered
+  correctly. Confidently wrong is worse than absent here, which is the
+  same rule `Known` exists for.
+
+One gap this did not close, and it is older: **`dhowden/tag` has no
+RIFF reader**, so nothing the tag writer puts in a WAV's `id3 ` chunk
+is visible to `metadata.ExtractTags` — not the totals and not the title
+either. `wav_test.go` reads that chunk itself, which is why no test
+ever noticed.
 
 **The absence is what gets marked, not the presence.** The tracklist
 put a green tick against every owned track and a legend underneath

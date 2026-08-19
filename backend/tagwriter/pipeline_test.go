@@ -333,3 +333,31 @@ func TestWriteTrackTags_DBSync(t *testing.T) {
 		t.Error("expected FTS5 result for 'New Title'")
 	}
 }
+
+// The row is what the album page reads, and it is only refreshed by a
+// scan.  Leaving total_tracks at whatever the last scan saw means an
+// album autotagged just now stays "unknown" -- a plain tick on an album
+// the user holds two tracks of -- until a full rescan happens to run.
+func TestWriteTrackTags_PersistsTheTotal(t *testing.T) {
+	db := database.NewTestDB(t)
+	dir := t.TempDir()
+	trackID := seedTestTrack(t, db, createPipelineTestMP3(t, dir))
+
+	tw := NewTagWriter(testLogger(), db, &mockPlayer{}, &mockPipelineLocker{})
+
+	if err := tw.WriteTrackTags(trackID, TagChanges{
+		FieldTrackNumber: 2,
+		FieldTotalTracks: 10,
+	}); err != nil {
+		t.Fatalf("WriteTrackTags: %v", err)
+	}
+
+	af, err := db.Queries.GetAudioFile(context.Background(), trackID)
+	if err != nil {
+		t.Fatalf("get audio file: %v", err)
+	}
+
+	if !af.TotalTracks.Valid || af.TotalTracks.Int64 != 10 {
+		t.Errorf("total_tracks: got %v, want 10", af.TotalTracks)
+	}
+}

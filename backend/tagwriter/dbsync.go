@@ -183,6 +183,15 @@ func syncDatabase(
 		discNum = toNullInt64(v)
 	}
 
+	// The completeness evidence.  Without this the row keeps whatever
+	// the last scan read while the file on disk now declares a total,
+	// so the album stays "unknown" until a full rescan -- which is the
+	// state the report describes.
+	totalTracks := old.TotalTracks
+	if v, ok := asInt(params.changes[FieldTotalTracks]); ok {
+		totalTracks = toNullInt64(v)
+	}
+
 	composer := old.Composer
 	if v, ok := params.changes[FieldComposer].(string); ok {
 		composer = v
@@ -207,7 +216,7 @@ func syncDatabase(
 		AlbumID:            albumID,
 		TrackNumber:        trackNum,
 		DiscNumber:         discNum,
-		TotalTracks:        old.TotalTracks,
+		TotalTracks:        totalTracks,
 		Year:               year,
 		Composer:           composer,
 		Comment:            old.Comment,

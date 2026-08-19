@@ -3483,3 +3483,26 @@ public tap.
 
 A guard added today does not protect a tag that points at yesterday. When
 re-pointing a tag, check what the workflows looked like *there*.
+
+## A tag reader looks at exactly one spelling of "total" (measured 2026-08-18)
+
+Writing #16's totals means matching the reader, which is
+`dhowden/tag`, and it is narrower than the specs are:
+
+- **Vorbis (FLAC, OGG): `TRACKTOTAL` and `DISCTOTAL` only.**
+  `vorbis.go`'s `Track()` reads `tracknumber` and `tracktotal` and
+  nothing else, so `TOTALTRACKS` — which several taggers write and
+  which xiph lists — and a `1/12` packed into `TRACKNUMBER` both read
+  back as *no total*. They write successfully. Nothing errors.
+- **ID3v2 (MP3): `TRCK`/`TPOS` as `n/N`**, via `parseXofN`. That is one
+  frame carrying two facts, which is why `applyPositionFrame` reads the
+  existing frame before writing either half.
+- **WAV: nothing at all.** There is no RIFF reader in the module, so a
+  WAV's `id3 ` chunk is invisible to `metadata.ExtractTags` — every
+  field, not just the totals. Filed as #104.
+
+The general shape, and the reason this is written down: a tag written
+under a name the reader does not look at is indistinguishable from one
+never written. So the tests assert the round trip through
+`metadata.ExtractTags` — the reader the *scan* uses — rather than
+through the bytes the writer produced.

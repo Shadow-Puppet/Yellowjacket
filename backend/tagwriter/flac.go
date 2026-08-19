@@ -101,6 +101,11 @@ func applyFlacTextChanges(cmt *flacvorbis.MetaDataBlockVorbisComment, changes Ta
 		{FieldYear, flacvorbis.FIELD_DATE, true},
 		{FieldTrackNumber, flacvorbis.FIELD_TRACKNUMBER, true},
 		{FieldDiscNumber, "DISCNUMBER", true},
+		// TRACKTOTAL/DISCTOTAL and no other spelling: dhowden/tag's
+		// Vorbis reader looks at exactly these two keys, so TOTALTRACKS
+		// or a "1/12" inside TRACKNUMBER reads back as no total at all.
+		{FieldTotalTracks, "TRACKTOTAL", true},
+		{FieldTotalDiscs, "DISCTOTAL", true},
 		{FieldComposer, "COMPOSER", false},
 	}
 
