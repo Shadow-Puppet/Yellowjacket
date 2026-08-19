@@ -297,9 +297,23 @@ export class LibraryStatusIndicator extends LitElement {
         // row to one and nothing to the other, and "Add … to library"
         // was the old button's promise written into the copy.
         if (this.actionable) {
-            return this.status === 'queued'
-                ? `Cancel the request for ${kind}${name}`
-                : `Request ${kind}${name}`;
+            if (this.status === 'queued') {
+                return `Cancel the request for ${kind}${name}`;
+            }
+
+            // A partly-held album is actionable *and* has a count, and
+            // the count does not survive being named after the action
+            // alone. The `partial` case below says why it matters — a
+            // ring says "some" to a sighted user and nothing to anyone
+            // else — and that argument does not stop applying because
+            // the badge became clickable. This branch used to say only
+            // "Request album X", so the one state the ring exists for
+            // was the one state whose name did not mention it.
+            if (this.status === 'partial') {
+                return `Request the rest of ${kind}${name} — ${this.owned} of ${this.expected} tracks are in your library`;
+            }
+
+            return `Request ${kind}${name}`;
         }
 
         switch (this.status) {
