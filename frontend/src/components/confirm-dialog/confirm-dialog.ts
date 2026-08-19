@@ -81,23 +81,55 @@ export class ConfirmDialog extends LitElement {
         `,
     ];
 
+    /**
+     * Which question is on screen.
+     *
+     * This is a singleton reused for every confirmation in the app,
+     * and `wa-dialog` reports its close *asynchronously* — `open =
+     * false` starts an animation and `wa-hide` arrives after it. So a
+     * hide belonging to a question that has already been answered can
+     * land after the *next* question has opened, and cancel it: the
+     * user is asked something, the dialog vanishes on its own, and the
+     * call site is told they said no.
+     *
+     * The counter is what tells one question from the next. Every
+     * close bumps it, and the `wa-hide` handler carries the id its
+     * template was rendered with.
+     */
+    private askSeq = 0;
+
     /** Ask. Resolves true if the user went ahead. */
     ask(request: ConfirmRequest): Promise<boolean> {
         this.close(false);
+
+        const id = ++this.askSeq;
+
         this.request = request;
 
         return new Promise<boolean>((resolve) => {
             this.settle = resolve;
             void this.updateComplete.then(() => {
-                if (this.dialog) this.dialog.open = true;
+                // A third question could have arrived while this one
+                // was waiting for its own render.
+                if (this.askSeq === id && this.dialog) this.dialog.open = true;
             });
         });
     }
 
-    private close(ok: boolean): void {
+    /**
+     * Settle the current question, if `id` still names it.
+     *
+     * The button handlers pass nothing and always mean the question on
+     * screen; only `wa-hide` carries an id, because only `wa-hide` can
+     * arrive late.
+     */
+    private close(ok: boolean, id = this.askSeq): void {
+        if (id !== this.askSeq) return;
+
         const settle = this.settle;
 
         this.settle = null;
+        this.askSeq++;
 
         if (this.dialog) this.dialog.open = false;
         this.request = null;
@@ -118,11 +150,15 @@ export class ConfirmDialog extends LitElement {
 
         if (!request) return nothing;
 
+        // Captured at render time, so the handler answers the question
+        // it was drawn for and not whichever one is up when it fires.
+        const id = this.askSeq;
+
         return html`
             <wa-dialog
                 label=${request.title}
                 data-testid="confirm-dialog"
-                @wa-hide=${() => this.close(false)}
+                @wa-hide=${() => this.close(false, id)}
             >
                 <p>${request.message}</p>
                 ${request.impact

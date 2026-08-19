@@ -80,3 +80,42 @@ describe('confirmAction', () => {
     await expect(Promise.all([first, second])).resolves.toEqual([false, true]);
   });
 });
+
+/**
+ * A late `wa-hide` must not answer the next question.
+ *
+ * This is one singleton for every confirmation in the app, and
+ * `wa-dialog` reports its close *asynchronously* — `open = false`
+ * starts an animation and `wa-hide` arrives after it. So a hide
+ * belonging to a question already answered can land after the next one
+ * has opened: the user is asked something, the dialog vanishes on its
+ * own, and the call site is told they said no.
+ *
+ * Found by writing two `confirmAction()` tests in one file — the
+ * second could not be accepted at all, because the first one's hide
+ * had cancelled it before the click landed. In the app it needs two
+ * confirmations close together, which "apply these tags" now makes
+ * reachable.
+ */
+describe('two questions in a row', () => {
+  it('does not let the first one answer the second', async () => {
+    const first = confirmAction({ title: 'First?', message: 'One.' });
+
+    await press('confirm-cancel');
+    await expect(first).resolves.toBe(false);
+
+    const second = confirmAction({ title: 'Second?', message: 'Two.' });
+
+    // Whatever the first dialog's hide animation is still doing, the
+    // second question is on screen and unanswered.
+    await new Promise((r) => setTimeout(r, 0));
+
+    // The title is a `label` on `wa-dialog` and lands in *its* shadow
+    // root; the message is the part this component renders.
+    expect(host().shadowRoot?.textContent ?? '').toContain('Two.');
+
+    await press('confirm-accept');
+
+    await expect(second).resolves.toBe(true);
+  });
+});
