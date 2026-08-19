@@ -2562,6 +2562,19 @@ func (si *SearchIndex) PopulateLocalCrossReferences() {
 // The row itself is left in place (it may still be part of the shipped
 // catalog, just no longer owned) — only the "this is mine" bookkeeping
 // is cleared.
+//
+// It is gated on the flag *or* the id, not on the id alone.  Gated on
+// the id, `in_library = 1 AND local_*_id IS NULL` is a fixed point: the
+// upsert can only ever raise the flag and this pass skipped such a row
+// by construction, so nothing in the app could clear it — a row claiming
+// to be owned, permanently, with no local row to check the claim
+// against.  Nothing in the tree writes that shape today
+// (collectLibraryEntities sets both together), which is exactly why it
+// is worth closing now: the exposure is a database written by an older
+// version, and the next writer that sets the flag without an id, which
+// nothing structurally prevents.  A NULL id fails the existence test on
+// its own, so the wider gate needs no second clause to say what "not
+// owned" means.
 func (si *SearchIndex) pruneStaleLocalCrossReferences() {
 	type prune struct {
 		entityType string
@@ -2594,7 +2607,8 @@ func (si *SearchIndex) pruneStaleLocalCrossReferences() {
 		result, err := si.db.ExecContext(
 			`UPDATE explore_index
 			 SET in_library = 0, `+p.column+` = NULL
-			 WHERE entity_type = ? AND `+p.column+` IS NOT NULL
+			 WHERE entity_type = ?
+			   AND (`+p.column+` IS NOT NULL OR in_library = 1)
 			   AND NOT EXISTS (`+p.exists+`)`,
 			dbEntityType(p.entityType),
 		)

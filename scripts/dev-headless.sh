@@ -97,6 +97,55 @@ if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
 fi
 rm -f "$PID_FILE"
 
+# ── Refuse to inherit somebody else's port ───────────────────────────
+# The PID check above only knows about *this* worktree: `make dev-stop`
+# kills the pid in this .dev/app.pid and nothing else.  Several worktrees
+# of this repo share the default port, so an app orphaned by a deleted
+# worktree goes on listening with nothing left to stop it.
+#
+# Without this check the new app starts, fails to bind, exits — and every
+# curl and playwright-cli call afterwards goes to the *other* process, so
+# the harness reports facts about an app nobody asked for.  That is not a
+# quiet wrongness either: it presented as
+# "no such table: libraries" against a freshly created YJ_HOME, which
+# reads exactly like applySchema or staleshape.go having gone wrong and
+# is a frightening place to start looking.
+#
+# The startup wait below cannot catch it, because the health check is
+# satisfied by *any* app on the port — which is precisely the failure.
+# So it is refused here, before anything is launched, rather than warned
+# about.  --port already exists for the legitimate second-app case.
+port_holder() {
+	command -v ss >/dev/null || return 0
+	ss -lptn "sport = :$PORT" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | head -n 1
+}
+
+if curl -sf -o /dev/null --max-time 2 "http://localhost:$PORT/" ||
+	[ -n "$(port_holder)" ]; then
+	holder="$(port_holder)"
+	echo "dev-headless: :$PORT is already in use; refusing to start" >&2
+	if [ -n "$holder" ]; then
+		# /proc/<pid>/cwd names the checkout it belongs to, and says
+		# "(deleted)" for the orphaned-worktree case that is the whole
+		# reason this is worth a check.
+		cwd="$(readlink "/proc/$holder/cwd" 2>/dev/null || echo unknown)"
+		cmd="$(tr '\0' ' ' <"/proc/$holder/cmdline" 2>/dev/null || echo unknown)"
+		echo "  pid  $holder  ($cmd)" >&2
+		echo "  cwd  $cwd" >&2
+		# The PID-file check above has already passed, so whatever this
+		# is, `make dev-stop` does not know about it — saying otherwise
+		# sends you to a command that will report success and change
+		# nothing.  Never `pkill -f` here either: the pattern would
+		# match this script's own command line.
+		echo "  'make dev-stop' will not touch it (it is not in" >&2
+		echo "  ${PID_FILE#"$REPO_ROOT"/}): kill $holder, or pass --port." >&2
+	else
+		echo "  The holder could not be identified (no ss, or it belongs" >&2
+		echo "  to another user). Try: ss -lptn 'sport = :$PORT'" >&2
+	fi
+	exit 1
+fi
+
 # ── Choose the YJ_HOME ───────────────────────────────────────────────
 # A seed is a YJ_HOME that a previous run of the app produced, tarred
 # up (see scripts/seed-sandbox.sh).  Restoring it means starting *in*
@@ -199,6 +248,20 @@ until curl -sf -o /dev/null "http://localhost:$PORT/"; do
 
 	sleep 0.25
 done
+
+# The loop above exits on the first answer from the port, and "something
+# answered" is not "the app we started answered".  The pre-launch guard
+# makes that unlikely rather than impossible — a race, or a listener
+# started in between — and the check is one signal, so it is worth making
+# here too.  An empty log beside a dead pid is the "it exited immediately
+# and nothing said so" case that the original report spent its time on.
+if ! kill -0 "$APP_PID" 2>/dev/null; then
+	echo "dev-headless: :$PORT answered, but the app we started (pid" >&2
+	echo "  $APP_PID) is gone — something else holds the port." >&2
+	tail -n 30 "$LOG_FILE" >&2
+	rm -f "$PID_FILE"
+	exit 1
+fi
 
 cat <<EOF
 dev-headless: up

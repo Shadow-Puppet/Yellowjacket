@@ -3664,3 +3664,35 @@ knowing before someone "fixes" it as broken: sampled from screenshots at
 900×600, the main panel's background goes 33,37,41 → 18,20,23 and a
 row's text 242 → 133. It covers the content area only — not the sidebar
 or the transport — because the queue is not modal.
+
+## No test tier can see a `hover:` media query (measured 2026-08-19)
+
+Gating an affordance on `(hover: hover) and (pointer: fine)` — #68's fix
+for the play button that flashed on a long-press — is invisible to both
+browser tiers, in *different* ways, and neither of them fails.
+
+- **`make ui-test`**: CDP's `Emulation.setEmulatedMedia` with a `hover`
+  feature does not reach the tier's iframe. The call succeeds and
+  `matchMedia('(hover: hover)')` still answers `true` afterwards. So
+  there is no way to render a component as a phone would and read the
+  computed style.
+- **`make e2e`**: both projects are desktop (`Desktop Chrome`,
+  `Desktop Safari`), and the phone specs reach phone *width* with
+  `setViewportSize`, which changes no media feature but `width`. So the
+  phone specs run with `hover: hover` and the gate is never exercised.
+
+What does work, and what the fix was verified with, is a second browser
+context under a device descriptor: `chromium.newContext(devices['Pixel
+5'])` reports `hover=false pointer:fine=false` and the button computes
+`display: none`, against `flex` at 1440px. That is a one-off script, not
+a spec — `isMobile` is Chromium-only, so it cannot become an e2e project
+without losing the WebKit half.
+
+`hover-affordance.test.ts` therefore asserts the *parsed stylesheet* —
+that the reveal rule sits inside the media query — which catches the
+regression that actually threatens it: someone hoisting the rule back out
+as a tidy-up, a change nothing on a desktop renders differently.
+
+Related: a width-gated decision **is** testable at both tiers, which is
+why #61's phone mini player is a `matchMedia` stub in the component test
+and needs nothing special.
