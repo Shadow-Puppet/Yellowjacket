@@ -72,6 +72,22 @@ jobs:
             exit 0
           fi
 
+          # A prerelease is not a shipment either, and this trigger is
+          # `v*` — which matches `v0.4.0-beta.1`.  Nothing produces one
+          # today; the guard is here because the thing that would is
+          # semantic-release's `prerelease: true` channel, a one-line
+          # change in .releaserc.yml whose blast radius is four public
+          # package channels.  Same argument as release.yml's
+          # `chore(release):` guard: cheap, against something a future
+          # edit turns on somewhere else entirely.
+          case "$v" in
+            *-*)
+              echo "$v is a prerelease; not packaging it for pacman"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
+
           echo "skip=false" >> "$GITHUB_OUTPUT"
           echo "tag=$v"     >> "$GITHUB_OUTPUT"
           echo "building $v"

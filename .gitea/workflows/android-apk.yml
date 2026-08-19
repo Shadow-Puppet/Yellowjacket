@@ -139,6 +139,23 @@ jobs:
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+
+          # Nor is a prerelease, and this trigger is `v*`, which matches
+          # `v0.4.0-beta.1`.  Two reasons it is worst here.  The APK goes
+          # to the *generic* registry, which is readable without
+          # credentials so Obtainium can poll a plain URL — a beta would
+          # be offered to every device on it.  And the versionCode maths
+          # below splits on dots and would read "1" out of "0-beta",
+          # producing a code that is wrong rather than a build that
+          # fails: Android orders releases by that integer and refuses
+          # anything not greater than what is installed.
+          case "$v" in
+            *-*)
+              echo "v$v is a prerelease; not publishing an APK for it"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
           echo "skip=false" >> "$GITHUB_OUTPUT"
 
           # Android orders releases by an integer and refuses anything

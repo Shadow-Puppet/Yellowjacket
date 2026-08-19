@@ -95,6 +95,19 @@ jobs:
             exit 0
           fi
 
+          # Nor is a prerelease, and this trigger is `v*`, which matches
+          # `v0.4.0-beta.1`.  The mildest of the four — assets attach to
+          # the prerelease's own Gitea release and no package manager
+          # reads them — but four workflows sharing one trigger should
+          # share one answer about what a shipment is.
+          case "$v" in
+            *-*)
+              echo "$v is a prerelease; not attaching desktop assets"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
+
           echo "skip=false"   >> "$GITHUB_OUTPUT"
           echo "tag=$v"       >> "$GITHUB_OUTPUT"
           echo "version=${v#v}" >> "$GITHUB_OUTPUT"
