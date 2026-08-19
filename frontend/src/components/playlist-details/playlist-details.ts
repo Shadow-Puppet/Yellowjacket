@@ -70,6 +70,10 @@ import {
 } from '@utils/explore-link';
 import { designTokens } from '../../styles/tokens.css';
 import { list } from '@utils/binding';
+import {
+    ICON_PLAYLIST,
+    ICON_QUEUE,
+} from '@utils/icon-language';
 
 /** One playlist row: the track and its position in the *playlist*,
  *  which is not its position in the filtered view. */
@@ -1358,7 +1362,7 @@ export class PlaylistDetails
                 </button>
                 <div class="playlist-avatar">
                     <wa-icon
-                        name="list"
+                        name=${ICON_PLAYLIST}
                     ></wa-icon>
                 </div>
                 <div class="playlist-info">
@@ -1665,7 +1669,7 @@ export class PlaylistDetails
                                   >
                                       <wa-icon
                                           slot="icon"
-                                          name="plus"
+                                          name=${ICON_QUEUE}
                                       ></wa-icon>
                                       Add to Queue
                                   </wa-dropdown-item>
@@ -1720,7 +1724,7 @@ export class PlaylistDetails
                                   >
                                       <wa-icon
                                           slot="icon"
-                                          name="plus"
+                                          name=${ICON_PLAYLIST}
                                       ></wa-icon>
                                       Add to Playlist
                                       <span

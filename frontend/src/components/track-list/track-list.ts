@@ -74,6 +74,10 @@ import { tracksByFilePath, tracksForPaths } from '@utils/track-index.js';
 import '@components/playlist-picker/playlist-picker.js';
 import type { TrackDetails } from '@components/track-details/track-details.js';
 import type { CoverArtUrls } from '@components/track-details/track-details.js';
+import {
+    ICON_PLAYLIST,
+    ICON_QUEUE,
+} from '@utils/icon-language';
 
 const COLUMN_STORAGE_KEY = 'track-list-column-widths';
 const SORT_FIELD_KEY = 'track-list-sort-field';
@@ -2342,7 +2346,7 @@ export class TrackList
                   @click=${() => this.onContextMenuAction('add-to-queue')}
                   @mouseenter=${() => this.ctxMenu.closePlaylistSubmenu()}
                 >
-                  <wa-icon slot="icon" name="plus"></wa-icon>
+                  <wa-icon slot="icon" name=${ICON_QUEUE}></wa-icon>
                   Add to Queue
                 </wa-dropdown-item>
                 <wa-dropdown-item
@@ -2364,7 +2368,7 @@ export class TrackList
                         void this.ctxMenu.showPlaylistSubmenu(this.selection.getSelectedKeysOrdered());
                     }}
                 >
-                  <wa-icon slot="icon" name="plus"></wa-icon>
+                  <wa-icon slot="icon" name=${ICON_PLAYLIST}></wa-icon>
                   Add to Playlist
                   <span class="submenu-arrow">&#9654;</span>
                 </wa-dropdown-item>

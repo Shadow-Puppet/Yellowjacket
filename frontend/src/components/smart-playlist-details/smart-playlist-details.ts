@@ -61,6 +61,10 @@ import {
 import '@components/smart-playlist-editor/smart-playlist-editor.js';
 import { designTokens } from '../../styles/tokens.css';
 import { list } from '@utils/binding';
+import {
+    ICON_PLAYLIST,
+    ICON_QUEUE,
+} from '@utils/icon-language';
 
 
 /**
@@ -1481,7 +1485,7 @@ export class SmartPlaylistDetails
                               >
                                   <wa-icon
                                       slot="icon"
-                                      name="plus"
+                                      name=${ICON_QUEUE}
                                   ></wa-icon>
                                   Add to Queue
                               </wa-dropdown-item>
@@ -1521,7 +1525,7 @@ export class SmartPlaylistDetails
                               >
                                   <wa-icon
                                       slot="icon"
-                                      name="plus"
+                                      name=${ICON_PLAYLIST}
                                   ></wa-icon>
                                   Add to Playlist
                                   <span

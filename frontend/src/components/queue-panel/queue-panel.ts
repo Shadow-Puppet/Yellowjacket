@@ -60,6 +60,11 @@ import {
     trackLink,
     exploreLinkStyles,
 } from '@utils/explore-link';
+import {
+    ICON_NEW,
+    ICON_PLAYLIST,
+    ICON_QUEUE,
+} from '@utils/icon-language';
 /** Above this many tracks, clearing the queue asks first. */
 const CLEAR_CONFIRM_THRESHOLD = 20;
 
@@ -1755,7 +1760,7 @@ export class QueuePanel
                             title="Add queue to playlist"
                         >
                             <wa-icon
-                                name="plus"
+                                name=${ICON_PLAYLIST}
                             ></wa-icon>
                         </button>
                     </div>
@@ -1794,11 +1799,11 @@ export class QueuePanel
                         ? html`<div class="empty-state">
                               <div class="drop-zone-icon">
                                   <wa-icon
-                                      name="plus"
+                                      name=${ICON_NEW}
                                   ></wa-icon>
                               </div>
                               <wa-icon
-                                  name="list"
+                                  name=${ICON_QUEUE}
                               ></wa-icon>
                               <p>Queue is empty</p>
                               <p style="font-size: 12px;">
@@ -1875,7 +1880,7 @@ export class QueuePanel
                               >
                                   <wa-icon
                                       slot="icon"
-                                      name="plus"
+                                      name=${ICON_PLAYLIST}
                                   ></wa-icon>
                                   Add to Playlist
                                   <span

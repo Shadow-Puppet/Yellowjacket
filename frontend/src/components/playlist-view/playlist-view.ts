@@ -37,6 +37,10 @@ import { ViewLifecycleMixin } from '@utils/view-lifecycle';
 import { FavoritesController } from '@store/controllers/favorites-controller';
 import '@components/duplicate-tracks-dialog/duplicate-tracks-dialog.js';
 import type { DuplicateTracksDialog } from '@components/duplicate-tracks-dialog/duplicate-tracks-dialog.js';
+import {
+    ICON_NEW,
+    ICON_PLAYLIST,
+} from '@utils/icon-language';
 
 const SCROLL_DEBOUNCE_MS = 100;
 
@@ -1496,7 +1500,7 @@ export class PlaylistView extends ViewLifecycleMixin(LitElement) {
                         @dragleave=${this.onNewButtonDragLeave}
                         @drop=${this.onNewButtonDrop}
                     >
-                        <wa-icon name="plus"></wa-icon>
+                        <wa-icon name=${ICON_NEW}></wa-icon>
                         New Playlist
                     </button>
                     <button
@@ -1641,10 +1645,10 @@ export class PlaylistView extends ViewLifecycleMixin(LitElement) {
                 >
                     <div class="drop-zone-icon">
                         <wa-icon
-                            name="plus"
+                            name=${ICON_NEW}
                         ></wa-icon>
                     </div>
-                    <wa-icon name="list"></wa-icon>
+                    <wa-icon name=${ICON_PLAYLIST}></wa-icon>
                     <p>No playlists yet</p>
                     <p style="font-size: 12px;">
                         Create a playlist or drop
@@ -1666,7 +1670,7 @@ export class PlaylistView extends ViewLifecycleMixin(LitElement) {
                 >
                     <div class="drop-zone-icon">
                         <wa-icon
-                            name="plus"
+                            name=${ICON_NEW}
                         ></wa-icon>
                     </div>
                     <p>
@@ -1701,7 +1705,7 @@ export class PlaylistView extends ViewLifecycleMixin(LitElement) {
                 >
                     <div class="drop-zone-icon">
                         <wa-icon
-                            name="plus"
+                            name=${ICON_NEW}
                         ></wa-icon>
                     </div>
                 </li>

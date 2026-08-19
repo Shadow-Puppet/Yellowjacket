@@ -35,6 +35,10 @@ import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js'
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 import '@components/playlist-picker/playlist-picker.js';
 import { dictByName } from '@utils/binding';
+import {
+    ICON_PLAYLIST,
+    ICON_QUEUE,
+} from '@utils/icon-language';
 
 /** Pixels to change card width per scroll tick. */
 const ZOOM_STEP = 16;
@@ -1211,7 +1215,7 @@ export class GenresView
                               >
                                   <wa-icon
                                       slot="icon"
-                                      name="plus"
+                                      name=${ICON_QUEUE}
                                   ></wa-icon>
                                   Add to Queue
                               </wa-dropdown-item>
@@ -1257,7 +1261,7 @@ export class GenresView
                               >
                                   <wa-icon
                                       slot="icon"
-                                      name="plus"
+                                      name=${ICON_PLAYLIST}
                                   ></wa-icon>
                                   Add to Playlist
                                   <span

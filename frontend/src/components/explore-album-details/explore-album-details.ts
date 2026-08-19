@@ -52,6 +52,12 @@ import { dictByName } from '@utils/binding';
 import type { TrackDetails } from '@components/track-details/track-details.js';
 import { showTrackDetailsForPath } from '@utils/track-details-opener.js';
 import '@components/playlist-picker/playlist-picker.js';
+import {
+    ICON_CAN_REQUEST,
+    ICON_PLAYLIST,
+    ICON_QUEUE,
+    ICON_REQUESTED,
+} from '@utils/icon-language';
 
 /**
  * The region the album header's own failures are rendered in.
@@ -2437,7 +2443,7 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
                     data-testid="album-queue"
                     @click=${() => this.queueOwned()}
                 >
-                    <wa-icon slot="start" name="list"></wa-icon>
+                    <wa-icon slot="start" name=${ICON_QUEUE}></wa-icon>
                     Add to queue
                 </wa-button>
                 ${partial
@@ -2740,7 +2746,7 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
                      of the same Free glyph carry the toggle instead. -->
                 <wa-icon
                     slot="start"
-                    name=${this.isRequested ? 'solid/bookmark' : 'regular/bookmark'}
+                    name=${this.isRequested ? ICON_REQUESTED : ICON_CAN_REQUEST}
                 ></wa-icon>
                 ${this.isRequested ? 'Requested' : 'Request this'}
             </wa-button>
@@ -3338,7 +3344,7 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
                                             @click=${() => this.onContextMenuAction('add-to-queue')}
                                             @mouseenter=${() => this.ctxMenu.closePlaylistSubmenu()}
                                         >
-                                            <wa-icon slot="icon" name="plus"></wa-icon>
+                                            <wa-icon slot="icon" name=${ICON_QUEUE}></wa-icon>
                                             Add to Queue
                                         </wa-dropdown-item>
                                         <wa-dropdown-item
@@ -3357,7 +3363,7 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
                                                 this.openPlaylistSubmenu();
                                             }}
                                         >
-                                            <wa-icon slot="icon" name="plus"></wa-icon>
+                                            <wa-icon slot="icon" name=${ICON_PLAYLIST}></wa-icon>
                                             Add to Playlist
                                             <span class="submenu-arrow">&#9654;</span>
                                         </wa-dropdown-item>

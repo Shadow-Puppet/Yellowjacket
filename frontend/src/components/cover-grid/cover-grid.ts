@@ -76,6 +76,10 @@ import type {
     SortDirection,
 } from './cover-grid-types.js';
 import { list } from '@utils/binding';
+import {
+    ICON_PLAYLIST,
+    ICON_QUEUE,
+} from '@utils/icon-language';
 
 @customElement('cover-grid')
 export class CoverGrid
@@ -2123,7 +2127,7 @@ export class CoverGrid
                               >
                                   <wa-icon
                                       slot="icon"
-                                      name="plus"
+                                      name=${ICON_QUEUE}
                                   ></wa-icon>
                                   Add to Queue
                               </wa-dropdown-item>
@@ -2156,7 +2160,7 @@ export class CoverGrid
                               >
                                   <wa-icon
                                       slot="icon"
-                                      name="plus"
+                                      name=${ICON_PLAYLIST}
                                   ></wa-icon>
                                    Add to Playlist
                                    <span

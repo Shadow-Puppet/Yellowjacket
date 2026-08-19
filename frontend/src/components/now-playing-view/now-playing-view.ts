@@ -14,6 +14,7 @@ import { creditStore } from '@store/credit-store';
 import { FavoritesController } from '@store/controllers/favorites-controller';
 import { designTokens } from '../../styles/tokens.css';
 import { srOnly } from '../../styles/sr-only.css';
+import { ICON_QUEUE } from '@utils/icon-language';
 
 /**
  * What is playing, at the size a phone has room for (plan 016 B2,
@@ -339,7 +340,7 @@ export class NowPlayingView extends LitElement {
                     aria-label="Show the queue"
                     @click=${this.openQueue}
                 >
-                    <wa-icon name="list"></wa-icon>
+                    <wa-icon name=${ICON_QUEUE}></wa-icon>
                 </button>
             </header>
         `;
