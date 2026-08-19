@@ -3506,3 +3506,31 @@ under a name the reader does not look at is indistinguishable from one
 never written. So the tests assert the round trip through
 `metadata.ExtractTags` — the reader the *scan* uses — rather than
 through the bytes the writer produced.
+
+## The published catalog artifact predates `total_tracks` (measured 2026-08-18)
+
+```
+$ curl -sSI .../generic/yellowjacket-core-index/latest/core-index.db.zst
+last-modified: Mon, 10 Aug 2026 04:38:16 GMT
+content-length: 75417037
+
+$ sqlite3 core-index.db \
+    "SELECT COUNT(*) FROM pragma_table_info('explore_index') WHERE name='total_tracks';"
+0
+$ sqlite3 core-index.db "SELECT COUNT(*) FROM explore_index;"
+1079667
+```
+
+The column landed in the schema on 2026-08-16; the artifact is from
+08-10, and `index-artifact.yml` is a weekly cron, not a push trigger.
+So `completenessAnswer()`'s catalog fallback answers 0 for **every**
+user today — the machinery is correct and `artifactHasTotals()` is
+doing precisely its job, there is just no data behind it. Same position
+the credit tables are in; both ride on the next publish (#88).
+
+The general point, which is why this is written down rather than just
+fixed: **a probe that makes a column optional also makes its absence
+silent.** `artifactHasTotals` and `artifactHasCredits` are both correct
+and both mean a feature can ship, pass every test, and produce nothing
+for anybody without a single failure anywhere. Checking the *published
+file* is one query and is not implied by any tick in CI.

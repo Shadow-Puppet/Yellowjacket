@@ -194,6 +194,25 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
     @state() private coverArtURL = '';
 
     /**
+     * Whether to draw the whole release rather than only the files on
+     * disk — `null` while nobody has said, which is the automatic rule
+     * (`buildLibraryEntry`: show the release once the tags say the album
+     * is incomplete).
+     *
+     * It is a *tri-state* on purpose. The automatic rule is right when
+     * it fires and the switch has to be able to agree with it, or the
+     * control would start out contradicting the page it is sitting on;
+     * a plain boolean would need its default recomputed every time the
+     * completeness answer changed underneath it.
+     *
+     * The rule alone was not enough, which is the report: it depends on
+     * the files declaring a per-disc total, so a library whose tags
+     * never said sat permanently on "only my tracks" with no way to ask
+     * for the rest — and no way to tell that there was a rest.
+     */
+    @state() private showFullTracklist: boolean | null = null;
+
+    /**
      * The local album's own tracks — the authoritative answer to "what
      * is actually on disk," independent of `this.releases`, which
      * `fetchReleases()` fully replaces with catalog data as soon as it
@@ -559,6 +578,19 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
             }
 
             /* ── Tracklist ── */
+            .tracklist-scope {
+                display: flex;
+                align-items: center;
+                flex-wrap: wrap;
+                gap: 6px 12px;
+                margin-bottom: 8px;
+            }
+
+            .tracklist-scope-hint {
+                font-size: var(--yj-text-xs);
+                color: var(--yj-text-tertiary, #888);
+            }
+
             .tracklist {
                 display: flex;
                 flex-direction: column;
@@ -914,6 +946,7 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
         this.releases = [];
         this.versionEntries = [];
         this.selectedVersionKey = '';
+        this.showFullTracklist = null;
         this.localTracks = [];
         this.filePaths = new Map();
         this.askedFor = new Set();
@@ -1817,17 +1850,23 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
             // Guarded on `known` rather than on "fewer tracks than the
             // cluster", which would swap in a catalog tracklist for
             // every album whose tags simply never declared a total.
+            //
+            // And guarded on the *user's* answer first, because the
+            // automatic rule can only fire where the tags declared a
+            // total: an album that says nothing is not an album that is
+            // complete, and it used to be shown as one.
             const answer = this.completenessAnswer();
-            const incomplete = answer?.known && !answer.complete;
 
-            if (incomplete) {
-                const fullRelease = this.findLibraryCluster(clusters);
+            if (this.showFullTracklist ?? (answer?.known && !answer.complete)) {
+                const fullRelease = this.fullReleaseCluster(clusters);
 
                 if (fullRelease) {
                     return {
                         key: 'synthetic:library',
                         label: 'Your Library',
-                        sublabel: `${answer?.owned ?? 0} of ${answer?.expected ?? 0} tracks · ${this.clusterLabel(fullRelease)}`,
+                        sublabel: answer?.known
+                            ? `${answer.owned} of ${answer.expected} tracks · ${this.clusterLabel(fullRelease)}`
+                            : `${this.clusterLabel(fullRelease)} · full tracklist`,
                         group: 'aggregate',
                         syntheticKind: 'library',
                         tracks: fullRelease.representative.tracks ?? [],
@@ -1859,6 +1898,25 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
             tracks: libraryCluster.representative.tracks ?? [],
             backingCluster: libraryCluster,
         };
+    }
+
+    /**
+     * The release to draw when the whole album is wanted rather than
+     * the files on disk.
+     *
+     * `findLibraryCluster` is the right answer where it has one — the
+     * release the user's tracks overlap most — but it is a guess over
+     * the `inLibrary` flags and returns nothing at all when none of
+     * them are set, which is every untagged library. Falling back to
+     * the highest-scoring cluster is what makes the switch work there;
+     * that is the same release the page would call "Standard", and the
+     * sublabel names it either way rather than leaving the user to
+     * wonder whose tracklist they are reading.
+     */
+    private fullReleaseCluster(
+        clusters: ReleaseCluster[],
+    ): ReleaseCluster | undefined {
+        return this.findLibraryCluster(clusters) ?? clusters[0];
     }
 
     /**
@@ -2238,6 +2296,7 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
                     @catalog-retry=${this.retryCatalog}
                 ></catalog-scope-notice>
                 ${this.renderVersionSelector()}
+                ${this.renderTracklistScope()}
                 ${this.renderTracklist()}
             </div>
             <track-details></track-details>
@@ -3035,6 +3094,86 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
     }
 
     /* ── Tracklist ── */
+
+    /**
+     * "Show the whole album" — the switch between the files on disk and
+     * the release they are part of.
+     *
+     * The page could already draw the full release with the missing
+     * rows dimmed, and did so automatically once the tags said the
+     * album was incomplete. What it could not do was be *asked*: where
+     * the files declare no per-disc total and the catalog has none
+     * either, the rule never fires, so a partly-owned album showed only
+     * the tracks the user had and nothing said the rest existed.
+     *
+     * Three things about when it appears, all of them the same rule —
+     * a control that cannot change what is on screen is worse than no
+     * control, which is what the version dropdown's own guard is for:
+     *
+     * - Only against the synthetic "Your Library" entry. Every other
+     *   entry *is* a catalog tracklist already.
+     * - Only when a catalog release exists to switch to.
+     * - Only when the two differ. A complete album's release has the
+     *   same rows as its files, so the switch would redraw the same
+     *   list and read as broken.
+     */
+    private renderTracklistScope() {
+        const current = this.currentVersion();
+
+        if (current?.syntheticKind !== 'library') return nothing;
+        if (this.localTracks.length === 0) return nothing;
+
+        const full = this.fullReleaseCluster(this.clustersOf(this.versionEntries));
+        const fullCount = full?.representative.tracks?.length ?? 0;
+
+        if (fullCount === 0 || fullCount <= this.localTracks.length) {
+            return nothing;
+        }
+
+        const showing = current.tracks.length > this.localTracks.length;
+
+        return html`
+            <div class="tracklist-scope">
+                <wa-switch
+                    size="small"
+                    ?checked=${showing}
+                    @change=${this.handleTracklistScopeChange}
+                >
+                    Show the whole album
+                </wa-switch>
+                <span class="tracklist-scope-hint">
+                    ${showing
+                        ? `${this.localTracks.length} of ${fullCount} tracks are in your library`
+                        : `${fullCount - this.localTracks.length} more tracks are on this release`}
+                </span>
+            </div>
+        `;
+    }
+
+    /**
+     * The clusters behind the current entries.
+     *
+     * `buildClusters` computes them and keeps only the entries, so this
+     * recovers them rather than storing the array twice — two copies of
+     * a list rebuilt on four different events is how they come to
+     * disagree.
+     */
+    private clustersOf(entries: VersionEntry[]): ReleaseCluster[] {
+        return entries
+            .filter((e) => e.group === 'cluster')
+            .map((e) => e.cluster)
+            .filter((c): c is ReleaseCluster => !!c);
+    }
+
+    private handleTracklistScopeChange = (e: Event) => {
+        this.showFullTracklist = (e.target as HTMLInputElement).checked;
+
+        // The entries are derived, so the switch rebuilds them rather
+        // than patching the one it changed. `buildClusters` re-defaults
+        // the selection, which lands back on "Your Library" — the only
+        // entry this control is ever shown against.
+        this.buildClusters();
+    };
 
     /**
      * The heading is there and is not drawn.
