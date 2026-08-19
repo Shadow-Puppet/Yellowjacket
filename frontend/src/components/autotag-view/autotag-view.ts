@@ -1315,11 +1315,38 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
         // the page only needs the folder list, which is local and may
         // have moved while the page was away.
         if (this.queueStarted) {
-            void this.loadFolders();
+            void this.loadFolders().then(() => this.openRequestedFolder());
         } else {
             this.queueStarted = true;
-            void this.startQueue();
+            void this.startQueue().then(() => this.openRequestedFolder());
         }
+    }
+
+    /**
+     * Open the folder somebody navigated here to look at.
+     *
+     * The album page's "Review in Autotag" has to land on *that*
+     * album. The queue is sorted by score so the intended folder is
+     * often near the top, but "often" is a link that sometimes opens
+     * the wrong album, which is worse than no link.
+     *
+     * It is an attribute rather than a property because this is a
+     * **cached primary view**: `index.ts` creates it once and reuses
+     * it, so there is no construction to pass a value to. Which is
+     * also why the request is *consumed* — the attribute is removed
+     * once acted on, or every later visit to Autotag would reopen an
+     * album the user finished with three navigations ago.
+     */
+    private openRequestedFolder(): void {
+        const requested = this.getAttribute('group-key');
+
+        if (!requested) return;
+
+        this.removeAttribute('group-key');
+
+        if (this.current?.groupKey === requested) return;
+
+        void this.selectFolder(requested);
     }
 
     protected override onViewDeactivate(): void {
