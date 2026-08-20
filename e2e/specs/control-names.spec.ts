@@ -29,18 +29,13 @@ test.describe('a control says what it controls', () => {
   });
 
   test('the volume slider is announced as Volume', async ({ app }) => {
-    // The popup renders no slider at all while closed, the same way the
-    // queue panel renders no list — so this has to open it first.
-    await app.getByRole('button', { name: /volume/i }).click();
-
+    // No disclosure to open first, and no state to put back afterwards:
+    // #42 made the slider inline, so it is simply there. The assertion
+    // is unchanged — the *name* is the subject here, and the route to
+    // the control got shorter rather than different.
     await expect(
       app.getByRole('slider', { name: 'Volume' }),
     ).toBeVisible();
-
-    // Leave the transport as it was found: the specs share one page in
-    // file order, and an open popup covers the buttons beneath it.
-    await app.keyboard.press('Escape');
-    await app.locator('body').click({ position: { x: 5, y: 5 } });
   });
 
   test('naming the slider did not move the transport', async ({ app }) => {

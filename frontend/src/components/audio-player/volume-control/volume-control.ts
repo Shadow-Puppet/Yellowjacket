@@ -4,6 +4,7 @@ import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@awesome.me/webawesome/dist/components/slider/slider.js';
 import type WaSlider from '@awesome.me/webawesome/dist/components/slider/slider.js';
 import { PlayerController } from '@store/controllers/player-controller';
+import { volumeStyleStore } from '@store/volume-style-store';
 import { designTokens } from '../../../styles/tokens.css';
 import { waSliderLabel } from '../../../styles/wa-slider-label.css';
 
@@ -21,6 +22,12 @@ export class VolumeControl extends LitElement {
 
   @state()
   private showSlider = false;
+
+  /** Whether this is the click-to-open popup rather than a slider. */
+  @state()
+  private popup = volumeStyleStore.popup;
+
+  private unsubscribeStyle?: () => void;
 
   // Locally-tracked volume while the user is actively dragging or scrolling.
   // The store's volume only updates once the backend echoes VolumeChanged
@@ -86,9 +93,29 @@ export class VolumeControl extends LitElement {
       --thumb-height: 16px;
     }
 
-    wa-slider::part(track) {
+    .volume-popup wa-slider::part(track) {
       background: var(--yj-text-primary, white);
       height: 120px;
+    }
+
+    /* The inline slider (#42). It is the default now, so the width is
+       a real layout decision rather than a detail: 5em is wide enough
+       to aim at and narrow enough that the bottom bar's *outer*
+       columns stay equal without squeezing the transport — which is
+       the arrangement #23 depends on.
+
+       flex-shrink: 0 for the reason the top bar's children have it
+       (#143): a control that quietly gets narrower under pressure
+       hides the fact that the bar has run out of room. This one stands
+       down at phone width instead, in index.css, where the shell can
+       see the viewport. */
+    .inline-slider {
+      width: 5em;
+      flex-shrink: 0;
+    }
+
+    .inline-slider::part(track) {
+      background: var(--yj-text-primary, white);
     }
 
     wa-slider::part(indicator) {
@@ -122,8 +149,23 @@ export class VolumeControl extends LitElement {
   // LIFECYCLE
   // ===================================================================
 
+  override connectedCallback() {
+    super.connectedCallback();
+
+    this.unsubscribeStyle = volumeStyleStore.subscribe(() => {
+      this.popup = volumeStyleStore.popup;
+
+      // Switching to the slider while the popup is open would leave the
+      // document listener installed for a popup that no longer renders.
+      if (!this.popup) this.closeSlider();
+    });
+
+    void volumeStyleStore.init();
+  }
+
   override disconnectedCallback() {
     super.disconnectedCallback();
+    this.unsubscribeStyle?.();
     document.removeEventListener('click', this.boundHandleOutsideClick);
     clearTimeout(this.volumeDebounceTimer);
   }
@@ -154,10 +196,12 @@ export class VolumeControl extends LitElement {
   private handleOutsideClick(e: Event) {
     const path = e.composedPath();
 
-    if (!path.includes(this)) {
-      this.showSlider = false;
-      document.removeEventListener('click', this.boundHandleOutsideClick);
-    }
+    if (!path.includes(this)) this.closeSlider();
+  }
+
+  private closeSlider() {
+    this.showSlider = false;
+    document.removeEventListener('click', this.boundHandleOutsideClick);
   }
 
   private handleInput(e: Event) {
@@ -192,18 +236,46 @@ export class VolumeControl extends LitElement {
   override render() {
     const muted = this.player.muted;
 
+    // Inline, the icon is the mute toggle rather than a disclosure:
+    // there is nothing left to disclose, and a button that opens a
+    // popup containing the slider already beside it would be a control
+    // whose only effect is to duplicate its neighbour.
+    const iconAction = this.popup
+      ? this.toggleSlider
+      : () => this.player.toggleMute();
+    const iconLabel = this.popup
+      ? muted
+        ? 'Muted'
+        : `Volume ${this.currentVolume}%`
+      : muted
+        ? 'Unmute'
+        : 'Mute';
+
     return html`
       <button
         class=${muted ? 'muted' : ''}
         title=${muted ? 'Muted — click for volume' : 'Volume'}
-        aria-label=${muted ? 'Muted' : `Volume ${this.currentVolume}%`}
+        aria-label=${iconLabel}
         data-muted=${muted ? 'true' : 'false'}
-        @click="${this.toggleSlider}"
+        @click="${iconAction}"
         @wheel="${this.handleWheel}"
       >
         <wa-icon name=${this.volumeIcon}></wa-icon>
       </button>
-      ${this.showSlider
+      ${!this.popup
+        ? html`
+            <wa-slider
+              class="inline-slider ${muted ? 'muted' : ''}"
+              label="Volume"
+              min="0"
+              max="100"
+              .value="${this.currentVolume}"
+              @input="${this.handleInput}"
+              @wheel="${this.handleWheel}"
+            ></wa-slider>
+          `
+        : ''}
+      ${this.popup && this.showSlider
         ? html`
             <div
               class="volume-popup ${muted ? 'muted' : ''}"

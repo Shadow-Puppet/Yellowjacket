@@ -211,7 +211,39 @@ body div.sidebar {
     padding: 0.25em;
     background-color: var(--yj-bg-elevated, #343a40);
     display: grid;
-    grid-template-columns: var(--now-playing-width, 320px) 1fr auto;
+    /* Three columns whose outer two are the *same* width, which is what
+       centres the middle one (#23). It was `var(--now-playing-width) 1fr
+       auto`, so the transport's centre sat at `W/2 + 140px` — in the
+       middle of the space left over, which is not the same thing and
+       reads as an alignment mistake at every window size.
+
+       The outer width is still `--now-playing-width`, so **the metadata
+       panel's drag handle keeps meaning something**: widening it takes
+       room from the transport on both sides at once, symmetrically. An
+       `1fr … 1fr` pair would have centred the transport just as well and
+       silently made that handle a no-op.
+
+       **The cap is what stops that being a regression**, and it was
+       measured as one first. Reserving the full metadata width on both
+       sides costs the transport twice: at 800px the outer pair wanted
+       640 of 800, and the seek bar's track went from 257px to 61px
+       (and to 0 at 200% text) — the control you drag, squeezed out to
+       centre the buttons above it. So the side tracks are the metadata
+       width *or a quarter of the bar*, whichever is smaller, which
+       leaves the drag handle meaningful everywhere it has room to be
+       and hands the difference to the transport where it does not.
+
+       `minmax(0, …)` on the outer tracks and `min-content` on the middle
+       decide who yields when even that is not enough: the metadata and
+       the end group shrink (both truncate; neither loses an action), and
+       the transport keeps at least its buttons. Without the `min-content`
+       floor the middle collapses first, because a `1fr` track's minimum
+       is `auto` only until something else insists. */
+    --bar-side: min(var(--now-playing-width, 320px), 25%);
+    grid-template-columns:
+        minmax(0, var(--bar-side))
+        minmax(min-content, 1fr)
+        minmax(0, var(--bar-side));
     align-items: center;
     contain: layout style;
 
@@ -239,23 +271,44 @@ body div.sidebar {
             text-wrap-mode: nowrap;
             overflow: hidden;
 
-            p {
+            /* `& p`, not `p`. **A nested rule that begins with a bare
+               element selector is silently dropped before Chrome 120**
+               (relaxed nesting), and the phone this app runs on renders
+               in Chrome 113 -- so this ellipsis, and the two rules
+               below, have never applied on the device. Nothing fails;
+               the text simply overflows there. The `&` form is valid in
+               both, which is why it is used for every element selector
+               in this file's nested blocks. */
+            & p {
                 overflow: hidden;
                 text-overflow: ellipsis;
             }
         }
     }
 
-    now-playing {
+    & now-playing {
         overflow: hidden;
     }
 
-    audio-player {
+    & audio-player {
         margin: 0.5em 1em;
+        min-width: 0;
+    }
+
+    /* The right-hand group, and the thing the left column is matched
+       against. It is one grid cell rather than two columns because the
+       centring rule above compares *columns*: volume and the queue
+       button in separate tracks would make the outer pair unequal by
+       whatever the volume happens to measure. */
+    .bar-end {
+        justify-self: end;
+        display: flex;
+        align-items: center;
+        gap: 0.25em;
+        min-width: 0;
     }
 
     #queue-button {
-        justify-self: end;
         background: none;
         border: none;
         color: inherit;
@@ -440,6 +493,11 @@ body div.sidebar {
 }
 
 @media (max-width: 599px) {
+    /* The phone keeps the two-part bar it had: metadata, then the
+       transport and the queue button. There is no third column to
+       balance because the centring the desktop does is a luxury of
+       having room — at 360px the metadata needs all of the space the
+       controls do not. */
     .bottom-bar {
         grid-template-columns: minmax(0, 1fr) auto auto;
         gap: 0.25em;
@@ -447,5 +505,20 @@ body div.sidebar {
 
     .bottom-bar audio-player {
         margin: 0.25em;
+    }
+
+    /* Volume stands down here whatever the setting says, because this
+       is about room and about the platform rather than about
+       preference: the hardware keys own volume on a phone, which is
+       also why mediacontrols' Android handler implements no volume
+       callback. It moved from `audio-player`'s own media query when
+       #42 moved the control into the bar — same rule, and now stated
+       where the element actually is.
+
+       `.bottom-bar volume-control`, not the one in
+       `now-playing-view`: that view is the phone's transport and is
+       where a slider does belong. */
+    .bottom-bar volume-control {
+        display: none;
     }
 }

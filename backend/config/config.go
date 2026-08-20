@@ -666,6 +666,49 @@ func (c *Config) SetAllowMeteredCatalogDownload(allow bool) error {
 	return nil
 }
 
+// GetPopupVolume reports whether the bottom bar's volume control is a
+// click-to-open popup rather than an inline slider (#42).
+func (c *Config) GetPopupVolume() bool {
+	if c.General == nil {
+		return false
+	}
+
+	return c.General.PopupVolume
+}
+
+// SetPopupVolume saves the volume control's presentation.
+//
+// Nothing to validate: both values are legal at every width, and the
+// frontend additionally stands the inline slider down below the phone
+// breakpoint whatever this says, because that is about room rather than
+// about preference.
+func (c *Config) SetPopupVolume(popup bool) error {
+	if c.General == nil {
+		c.General = &GeneralConfig{}
+		c.General.ApplyDefaults()
+	}
+
+	c.General.PopupVolume = popup
+
+	if err := c.Save(); err != nil {
+		return fmt.Errorf(
+			"could not save config: %w", err,
+		)
+	}
+
+	events.Emit(
+		c.ctx,
+		events.GeneralConfigChanged,
+		map[string]any{
+			"PopupVolume": popup,
+		},
+	)
+
+	c.logger.Info("volume control presentation updated", "popup", popup)
+
+	return nil
+}
+
 // GetViewVisibility reports which primary views the sidebar should
 // show, answered for every known view rather than only the ones the
 // config mentions -- so the frontend filters on a value and never has

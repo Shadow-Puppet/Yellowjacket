@@ -18,6 +18,9 @@
 //   track-list — index.html renders one, so it is the first paint.
 // ---------------------------------------------------------------------------
 import '@components/audio-player/audio-player.ts';
+// In the bar rather than inside `audio-player` since #42, so the shell
+// is what has to register it.
+import '@components/audio-player/volume-control/volume-control.ts';
 import '@components/track-list/track-list.ts';
 import '@components/now-playing/now-playing.ts';
 import '@components/sidebar/app-sidebar.ts';

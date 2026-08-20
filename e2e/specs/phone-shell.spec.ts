@@ -154,9 +154,26 @@ test.describe('the shell on a phone', () => {
     await expect(app.locator('now-playing')).toBeVisible();
 
     // Volume is the hardware keys' job on a phone, and a 4px seek bar
-    // is not a thumb target -- both belong to a later phase's
-    // full-screen now-playing view.
-    await expect(app.locator('audio-player volume-control')).toBeHidden();
+    // is not a thumb target -- both belong to the full-screen
+    // now-playing view.
+    //
+    // `.bottom-bar volume-control`, not `audio-player volume-control`:
+    // #42 moved the control out of that component and into the bar, and
+    // **the old locator would have kept passing** — `toBeHidden()` is
+    // satisfied by an element that does not exist, so this assertion
+    // would have gone on reporting success about nothing. Its partner
+    // below is what makes this one mean something.
+    await expect(app.locator('.bottom-bar volume-control')).toBeHidden();
+
+    // The element is there and hidden, rather than absent: the check
+    // above cannot tell those apart on its own.
+    await expect(app.locator('.bottom-bar volume-control')).toHaveCount(1);
+
+    // And the seek bar is still inside the transport, where it stands
+    // down by its own media query.
+    await expect(
+      app.locator('audio-player').locator('seek-bar'),
+    ).toBeHidden();
   });
 });
 

@@ -1572,6 +1572,50 @@ And **the bar does not resize when a job starts**, which is the case the
 whole thing is for — a ResizeObserver on the header alone never fires,
 so every element child is observed too.
 
+**The bottom bar is three columns whose outer two are the same width,
+and that is what "centred" means.** It was `320px 1fr auto`, so the
+transport sat in the middle of the space the metadata and the queue
+button did not use — its centre was ~140px right of the window's at
+every size (#23). The outer tracks are now the same expression, so the
+middle one is centred by construction rather than by arithmetic that
+has to be redone whenever a control joins the bar.
+
+Four things about it are load-bearing.
+
+**The side width is the metadata's, capped at a quarter of the bar**,
+and the cap is not tidiness — it was measured as a regression first.
+Reserving the full `--now-playing-width` on *both* sides costs the
+transport twice: at 800px the outer pair wanted 640 of 800 and the seek
+bar's track fell from **257px to 61px**, and to 0 at 200% text. The
+control you drag was being squeezed to centre the buttons above it.
+With the cap it is 246px at 800, which is parity with the uncentred
+layout.
+
+**The cap is a `min()` rather than a breakpoint** because
+`--now-playing-width` is *user state* — the metadata panel has a drag
+handle — and the same reasoning the queue panel's overlay mode uses
+applies: a rule that assumed the default 320 would be wrong by whatever
+the user dragged. Tying both sides to that variable is also what keeps
+the handle meaningful; a plain `1fr … 1fr` would centre the transport
+just as well and silently make dragging a no-op.
+
+**The volume moved out of `audio-player` and into the bar** (#42),
+because the transport column has to hold the transport and nothing
+else or "centred" means centred with a slider bolted to one side. It
+lives in `.bar-end` with the queue button — one cell, not two columns,
+since the centring compares *columns* and a separate volume track would
+make the outer pair unequal by whatever the slider measures.
+
+And **the slider is inline by default, with the popup as a setting**
+whose stored flag names the *popup*: `backend/config`'s polarity rule,
+where the zero value has to be the intended answer, so an existing
+`config.toml` with no key gets the new default without a migration.
+Inline, the icon becomes the mute toggle and is named after that action
+rather than after the state, because with the slider beside it there is
+nothing left to disclose. It stands down below 600px whatever the
+setting says — that is about the platform rather than preference, and
+is why `mediacontrols`' Android handler implements no volume callback.
+
 **900 is the worst desktop width, not the 800×600 minimum.** The
 sidebar collapses to icons *below* 900, so the main panel is 843px at
 899 and 700px at 900 — the narrowest content area any desktop width
