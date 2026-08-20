@@ -15,7 +15,6 @@ export type View =
     | 'explore'
     | 'downloads'
     | 'autotag'
-    | 'jobs'
     | 'settings';
 
 export interface ViewMeta {
@@ -61,6 +60,5 @@ export const VIEW_META: ViewMeta[] = [
     { id: 'explore', label: 'Explore', icon: 'globe' },
     { id: 'downloads', label: 'Downloads', icon: ICON_REQUESTED },
     { id: 'autotag', label: 'Autotag', icon: ICON_AUTOTAG },
-    { id: 'jobs', label: 'Jobs', icon: 'list-check' },
     { id: 'settings', label: 'Settings', icon: 'gear', alwaysShown: true },
 ];

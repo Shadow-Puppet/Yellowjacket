@@ -101,7 +101,6 @@ const VIEW_TAGS: Record<string, string> = {
     explore: 'explore-view',
     autotag: 'autotag-view',
     downloads: 'downloads-view',
-    jobs: 'jobs-view',
     settings: 'config-page',
 };
 
@@ -119,7 +118,6 @@ const VIEW_LOADERS: Record<string, () => Promise<unknown>> = {
     explore: () => import('@components/explore-view/explore-view.ts'),
     autotag: () => import('@components/autotag-view/autotag-view.ts'),
     downloads: () => import('@components/downloads-view/downloads-view.ts'),
-    jobs: () => import('@components/jobs/jobs-view.ts'),
     settings: () => import('@components/config-page/config-page.ts'),
 };
 

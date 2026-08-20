@@ -57,7 +57,17 @@ type GeneralConfig struct {
 }
 
 // ApplyDefaults fills zero-value fields with sensible defaults.
+//
+// A launch page naming a *retired* view is treated as a zero value
+// rather than as an error, because the alternative is an app that will
+// not start for anyone who had that page selected when it was removed.
+// An unknown-but-not-retired name still fails Validate: that is a typo,
+// and telling someone about it is the useful answer.
 func (c *GeneralConfig) ApplyDefaults() {
+	if _, retired := RetiredViews[c.DefaultPage]; retired {
+		c.DefaultPage = ""
+	}
+
 	if c.DefaultPage == "" {
 		c.DefaultPage = DefaultDefaultPage
 	}

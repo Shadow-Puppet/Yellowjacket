@@ -24,9 +24,24 @@ const (
 	ViewExplore   View = "explore"
 	ViewDownloads View = "downloads"
 	ViewAutotag   View = "autotag"
-	ViewJobs      View = "jobs"
 	ViewSettings  View = "settings"
 )
+
+// RetiredViews are destinations that used to exist and no longer do.
+//
+// A *visibility* entry for a removed view needs no such list: it is a
+// key in a map, and an unknown key is dropped on load. A `DefaultPage`
+// is a **value**, and an unknown one fails validation -- which on the
+// load path means the app refuses to start rather than a setting being
+// ignored. So the one shape that cannot be retired for free is named
+// here and reset to the default instead.
+//
+// `jobs` was folded into Settings by #27: library scans under
+// Libraries, index work under Search Index, downloads under the
+// download clients, and the autotag apply into the Autotag view.
+var RetiredViews = map[View]struct{}{
+	"jobs": {},
+}
 
 // ViewSpec is what the backend knows about a destination. The label and
 // the icon are deliberately absent: those are presentation, they live
@@ -73,7 +88,6 @@ var Views = []ViewSpec{
 	{ID: ViewExplore, VisibleByDefault: true, Hideable: true, CanLaunch: true},
 	{ID: ViewDownloads, VisibleByDefault: true, Hideable: true, CanLaunch: true},
 	{ID: ViewAutotag, VisibleByDefault: false, Hideable: true, CanLaunch: true},
-	{ID: ViewJobs, VisibleByDefault: true, Hideable: true, CanLaunch: true},
 	{ID: ViewSettings, VisibleByDefault: true, Hideable: false, CanLaunch: false},
 }
 
