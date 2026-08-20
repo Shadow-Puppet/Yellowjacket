@@ -3732,3 +3732,22 @@ so it is the mechanism and not a test-only door.
 
 Use the nav item when the *nav* is the subject, and `navigateTo` when
 the view is.
+
+## `config-section .header` is ambiguous once a job exists (2026-08-19)
+
+#27 embeds `<job-panel>` inside four Settings sections, and a panel with
+any job in it also mounts a `job-details-drawer` — whose own header
+carries the class `.header`. So `config-page config-section .header`,
+which `settings-reach.spec.ts` had used since plan 007, resolves to two
+elements and fails Playwright's strict mode the moment a scan has run.
+
+Two things follow. A spec asserting on a section's *disclosure* should
+locate it by role and name (`getByRole('button', {name: heading})`) or
+scope per section and take `.first()`, not by that class. And this is a
+worked example of the more general trap: a class name is not a
+selector's contract, and a component that embeds another inherits its
+class names into every ancestor query.
+
+It also only appears in a suite that has *done* something — the
+sections are empty on a fresh app, so this cannot be reproduced by
+opening Settings and looking.
