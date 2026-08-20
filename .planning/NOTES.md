@@ -3961,3 +3961,71 @@ The general rule for this repo's fixture library: it is deliberately
 full of edge cases (untagged, unicode, duplicates, extremes), so a spec
 that wants an *ordinary* track has to **say so** — filter on the
 property it depends on rather than slicing.
+## A nested rule starting with an element name is dropped on the phone (2026-08-20)
+
+`CLAUDE.md` records that the device renders in **Chrome 113**, which
+does not have relaxed CSS nesting (Chrome 120). The consequence is
+sharper than "some syntax is unavailable": a nested rule whose selector
+begins with a bare identifier is not a parse error you would notice, it
+is **silently dropped**.
+
+Three such rules were live in `frontend/index.css`, all inside
+`.bottom-bar`, and all therefore dead on the phone and only on the
+phone:
+
+```css
+.bottom-bar {
+    #track-info { p { … } }   /* the metadata's ellipsis */
+    now-playing { overflow: hidden; }
+    audio-player { margin: 0.5em 1em; }
+}
+```
+
+The first is the interesting one: it is the *ellipsis* on the bottom
+bar's track title and artist, so on the device that text has never
+truncated — the same class of fault as `now-playing`'s marquee, whose
+`text-overflow` sat on the wrong box and had never produced an ellipsis
+in any mode. Both are invisible to every assertion and visible in a
+screenshot.
+
+`& p`, `& now-playing`, `& audio-player` are valid in both, so the fix
+is one character per rule. What is worth keeping is the rule of thumb:
+**inside a nested block, always write `&`** — and note that a rule
+inside `@media` is *not* nested, so `@media … { bottom-nav { … } }`
+elsewhere in that file is fine and needs nothing.
+
+`make css-check` does not catch this (it looks for backticks that end a
+tagged template early). Filed as an issue: the check is the natural
+place for it, being the same shape of trap — a silent, phone-only,
+screenshot-only failure.
+
+## Centring a bar costs the control in the middle of it (measured 2026-08-20)
+
+#23 asks for the transport centred in the bottom bar. The obvious
+implementation — make the outer two grid tracks the same width, so the
+middle is centred by construction — is right, and the first cut of it
+was a regression, because "the same width" was taken to mean *the
+metadata's* width on both sides.
+
+Measured at 800px, with the seek bar's own track:
+
+| layout | seek track | transport column |
+|---|---|---|
+| `320px 1fr auto` (before) | 257 | 407 |
+| both sides `--now-playing-width` | **61** | 179 |
+| both sides `min(--now-playing-width, 25%)` | 246 | 364 |
+
+At 200% text the middle row is worse still: 130 before, **0** with the
+uncapped sides. Centring is free at 1440 and expensive at 800, so a
+change checked only at a comfortable width looks perfect.
+
+The general form: **a symmetric layout reserves space on the side that
+does not need it.** The right-hand group here is ~141px (volume plus
+the queue button) and was being given 320 to keep the arithmetic
+symmetric. Cap the side tracks against the *bar*, not against their
+content, and the middle gets the difference.
+
+The spec that pins this is two assertions, not one, and that split is
+deliberate: an uncapped build is *perfectly centred* and fails only the
+seek-bar width, so a spec asserting centring alone would have passed
+the regression.

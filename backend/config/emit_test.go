@@ -188,3 +188,43 @@ func TestEmit_FavoritesChangeCarriesFullConfig(t *testing.T) {
 		}
 	}
 }
+
+// TestEmit_PopupVolumeRoundTripsAndDefaultsToInline pins both halves of
+// #42's storage decision.
+//
+// The **default** is the load-bearing one: inline is what a fresh
+// install and an existing `config.toml` with no such key must both
+// produce, which is why the field names the popup rather than the
+// inline slider. A flag spelled the other way round would default to
+// false, hand every existing install the popup this issue exists to
+// stop being the only option, and need a migration to say otherwise.
+func TestEmit_PopupVolumeRoundTripsAndDefaultsToInline(t *testing.T) {
+	t.Parallel()
+
+	conf, rec := setupRecordedConfig(t)
+
+	if conf.GetPopupVolume() {
+		t.Error("a config with no PopupVolume key wants the popup, want inline")
+	}
+
+	if err := conf.SetPopupVolume(true); err != nil {
+		t.Fatalf("SetPopupVolume: %v", err)
+	}
+
+	if !conf.GetPopupVolume() {
+		t.Error("GetPopupVolume = false after setting it true")
+	}
+
+	data := payloadMap(t, rec, events.GeneralConfigChanged)
+	if data["PopupVolume"] != true {
+		t.Errorf("PopupVolume = %v, want true", data["PopupVolume"])
+	}
+
+	if err := conf.SetPopupVolume(false); err != nil {
+		t.Fatalf("SetPopupVolume(false): %v", err)
+	}
+
+	if conf.GetPopupVolume() {
+		t.Error("GetPopupVolume = true after setting it false")
+	}
+}

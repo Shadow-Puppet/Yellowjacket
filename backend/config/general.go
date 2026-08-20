@@ -54,6 +54,16 @@ type GeneralConfig struct {
 	// so an existing config with no such key refuses by default rather
 	// than needing a migration to become careful.
 	AllowMeteredCatalogDownload bool `toml:"AllowMeteredCatalogDownload"`
+	// PopupVolume draws the bottom bar's volume as a click-to-open popup
+	// instead of a slider that is always there (#42).
+	//
+	// The polarity is the rule this file already states twice: **the
+	// zero value is the intended answer**. Inline is the new default, so
+	// the flag has to name the *other* choice — an `InlineVolume bool`
+	// would default to false and give every existing install the popup
+	// this issue exists to stop being the only option, and would need a
+	// migration to say otherwise.
+	PopupVolume bool `toml:"PopupVolume"`
 }
 
 // ApplyDefaults fills zero-value fields with sensible defaults.

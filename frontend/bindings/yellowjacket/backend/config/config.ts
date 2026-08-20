@@ -70,6 +70,14 @@ export function GetPinDefaultPlaylist(): $CancellablePromise<boolean> {
 }
 
 /**
+ * GetPopupVolume reports whether the bottom bar's volume control is a
+ * click-to-open popup rather than an inline slider (#42).
+ */
+export function GetPopupVolume(): $CancellablePromise<boolean> {
+    return $Call.ByID(2885777);
+}
+
+/**
  * GetQueueFallback returns what plays, if anything, once the queue
  * runs out.
  */
@@ -205,6 +213,18 @@ export function SetLibraryDirectory(dir: string): $CancellablePromise<void> {
  */
 export function SetPinDefaultPlaylist(pin: boolean): $CancellablePromise<void> {
     return $Call.ByID(372446849, pin);
+}
+
+/**
+ * SetPopupVolume saves the volume control's presentation.
+ * 
+ * Nothing to validate: both values are legal at every width, and the
+ * frontend additionally stands the inline slider down below the phone
+ * breakpoint whatever this says, because that is about room rather than
+ * about preference.
+ */
+export function SetPopupVolume(popup: boolean): $CancellablePromise<void> {
+    return $Call.ByID(1430308453, popup);
 }
 
 /**

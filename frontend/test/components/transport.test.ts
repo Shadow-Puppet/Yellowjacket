@@ -11,7 +11,7 @@ import '@components/audio-player/controls/player-controls';
 import '@components/audio-player/seekbar/seek-bar';
 import '@components/audio-player/volume-control/volume-control';
 import { Events } from '../../src/events';
-import { emit, calls, lastArgs, flush } from '@test/support/harness';
+import { emit, calls, lastArgs, flush, stub } from '@test/support/harness';
 import {
   fixture,
   shadow,
@@ -434,13 +434,40 @@ describe('<seek-bar>', () => {
  * be driven by its own event — watching the volume number, as it used
  * to, meant pressing M visibly did nothing.
  */
+/**
+ * The volume control has two presentations (#42), and the icon button
+ * means a different thing in each — so both are exercised rather than
+ * whichever one happens to be the default.
+ *
+ * Inline is the default: the slider is simply there, which leaves the
+ * icon with nothing to disclose, so it is the mute toggle and is named
+ * after that action. In the popup it is a disclosure, so it is named
+ * after the *state* it is showing.
+ */
 describe('volume control: mute', () => {
-  beforeEach(() => {
+  /**
+   * Put the presentation back to the default between tests.
+   *
+   * `volumeStyleStore` is a singleton whose `init()` reads the setting
+   * once, so stubbing the binding inside a test is too late — a
+   * previous test has already loaded it. `GeneralConfigChanged` is the
+   * store's own refresh trigger and the same one the Settings page
+   * fires, so driving it that way exercises the real path instead of
+   * reaching for a test-only reset.
+   */
+  const setPresentation = async (popup: boolean) => {
+    stub('config.Config.GetPopupVolume', popup);
+    emit(Events.GeneralConfigChanged, {});
+    await flush();
+  };
+
+  beforeEach(async () => {
+    await setPresentation(false);
     emit(Events.VolumeChanged, 40);
     emit(Events.MuteChanged, false);
   });
 
-  it('shows a muted glyph and label once the backend reports mute', async () => {
+  it('shows a muted glyph once the backend reports mute', async () => {
     const el = await fixture('volume-control');
 
     expect(shadow(el, 'button')?.getAttribute('data-muted')).toBe('false');
@@ -453,14 +480,53 @@ describe('volume control: mute', () => {
     expect(shadow(el, 'button wa-icon')?.getAttribute('name')).toBe(
       'volume-xmark',
     );
+  });
+
+  it('names the inline icon after the action it performs', async () => {
+    const el = await fixture('volume-control');
+
+    expect(shadow(el, 'button')?.getAttribute('aria-label')).toBe('Mute');
+
+    emit(Events.MuteChanged, true);
+    await flush();
+    await el.updateComplete;
+
+    expect(shadow(el, 'button')?.getAttribute('aria-label')).toBe('Unmute');
+  });
+
+  it('names the popup icon after the state it discloses', async () => {
+    await setPresentation(true);
+
+    const el = await fixture('volume-control');
+
+    await el.updateComplete;
+
+    expect(shadow(el, 'button')?.getAttribute('aria-label')).toBe(
+      'Volume 40%',
+    );
+
+    emit(Events.MuteChanged, true);
+    await flush();
+    await el.updateComplete;
+
     expect(shadow(el, 'button')?.getAttribute('aria-label')).toBe('Muted');
   });
 
+  it('shows the slider without a click when it is inline', async () => {
+    const el = await fixture('volume-control');
+
+    // The whole point of the issue: no disclosure to operate first.
+    expect(shadow<HTMLInputElement>(el, 'wa-slider')?.value).toBe(40);
+  });
+
   it('keeps showing the volume level while muted, because it is unchanged', async () => {
+    await setPresentation(true);
     emit(Events.MuteChanged, true);
     await flush();
 
     const el = await fixture('volume-control');
+
+    await el.updateComplete;
     await click(el, 'button');
 
     expect(shadow<HTMLInputElement>(el, 'wa-slider')?.value).toBe(40);
@@ -468,11 +534,24 @@ describe('volume control: mute', () => {
 
   it('toggles mute through the backend rather than locally', async () => {
     const el = await fixture('volume-control');
+
+    await click(el, 'button');
+
+    expect(calls('player.Player.MuteToggle').length).toBe(1);
+    // Nothing optimistic: the icon follows the backend's event.
+    expect(shadow(el, 'button')?.getAttribute('data-muted')).toBe('false');
+  });
+
+  it('toggles mute from inside the popup, where the icon is a disclosure', async () => {
+    await setPresentation(true);
+
+    const el = await fixture('volume-control');
+
+    await el.updateComplete;
     await click(el, 'button');
     await click(el, '.mute-toggle');
 
     expect(calls('player.Player.MuteToggle').length).toBe(1);
-    // Nothing optimistic: the icon follows the backend's event.
     expect(shadow(el, 'button')?.getAttribute('data-muted')).toBe('false');
   });
 });

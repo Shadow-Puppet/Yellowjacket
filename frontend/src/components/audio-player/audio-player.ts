@@ -3,7 +3,6 @@ import { customElement } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import './controls/player-controls';
 import './seekbar/seek-bar';
-import './volume-control/volume-control';
 import '../notifications/inline-notice';
 import { PlayerRegion } from '@store/player-store';
 import { designTokens } from '../../styles/tokens.css';
@@ -30,6 +29,7 @@ export class AudioPlayer extends LitElement {
 
     .player-main {
       flex: 1;
+      min-width: 0;
     }
 
     /* The phone transport (plan 016 B2): the buttons, and nothing
@@ -37,14 +37,17 @@ export class AudioPlayer extends LitElement {
        viewport, not by the host, so this is the component saying what
        it drops at phone width rather than the shell reaching in.
 
-       Volume goes because the hardware keys own it on a phone --
-       Android routes them to the media stream, which is also why
-       mediacontrols' Android handler implements no volume callback.
        The seek bar goes because a 4px-tall target dragged with a thumb
        is not a seek control; seeking belongs to the full-screen
-       now-playing view, which is the next phase. */
+       now-playing view.
+
+       Volume used to go from here too, and now goes from index.css
+       instead: #42 moved the control out of this component and into
+       the bar, so the shell is what can hide it. The reason is
+       unchanged -- the hardware keys own volume on a phone, which is
+       also why mediacontrols' Android handler implements no volume
+       callback. */
     @media (max-width: 599px) {
-      volume-control,
       seek-bar {
         display: none;
       }
@@ -65,7 +68,6 @@ export class AudioPlayer extends LitElement {
             <seek-bar></seek-bar>
           </div>
         </div>
-        <volume-control></volume-control>
       </div>
     `;
   }

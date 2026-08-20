@@ -25,6 +25,8 @@ import {
     SetQueueFallback,
     GetAllowMeteredCatalogDownload,
     SetAllowMeteredCatalogDownload,
+    GetPopupVolume,
+    SetPopupVolume,
 } from '@go/config/config.js';
 import { GetIndexStatus } from '@go/explore/service.js';
 import { notificationStore } from '@store/notification-store';
@@ -125,6 +127,8 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
     @state() private concurrencyMode = 'auto';
     @state() private defaultPage = 'home';
     @state() private queueFallback = 'favorites';
+
+    @state() private popupVolume = false;
     @state() private indexStatus: explore.IndexStatus | null = null;
     /** Three states, not one: the panel used to say "Loading status…"
      *  for the entire session, because the only thing that ever set
@@ -938,20 +942,28 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
 
     private async loadLibraries(): Promise<void> {
         try {
-            const [libs, mode, defaultPage, queueFallback, allowMetered] =
-                await Promise.all([
-                    GetAllLibrariesWithTrackCounts(),
-                    GetScanConcurrency(),
-                    GetDefaultPage(),
-                    GetQueueFallback(),
-                    GetAllowMeteredCatalogDownload(),
-                ]);
+            const [
+                libs,
+                mode,
+                defaultPage,
+                queueFallback,
+                allowMetered,
+                popupVolume,
+            ] = await Promise.all([
+                GetAllLibrariesWithTrackCounts(),
+                GetScanConcurrency(),
+                GetDefaultPage(),
+                GetQueueFallback(),
+                GetAllowMeteredCatalogDownload(),
+                GetPopupVolume(),
+            ]);
 
             this.libraries = libs ?? [];
             this.concurrencyMode = mode;
             this.defaultPage = defaultPage;
             this.queueFallback = queueFallback;
             this.allowMeteredCatalogDownload = allowMetered;
+            this.popupVolume = popupVolume;
 
         } catch (err) {
             console.error(
@@ -1858,9 +1870,50 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
                     .value=${this.queueFallback}
                     @config-change=${this.handleQueueFallbackChange}
                 ></config-field>
+                <config-field
+                    .schema=${{
+                        key: 'popupVolume',
+                        label: 'Volume opens in a popup',
+                        description:
+                            'Off, the volume slider is always visible in the '
+                            + 'player bar. On, it hides behind the speaker '
+                            + 'icon. The slider stands down on a phone either '
+                            + 'way, where the hardware keys own volume.',
+                        type: 'toggle' as const,
+                    }}
+                    .value=${this.popupVolume}
+                    @config-change=${this.handlePopupVolumeChange}
+                ></config-field>
             </config-section>
         `;
     }
+
+    /**
+     * The volume control's presentation (#42).
+     *
+     * In General rather than beside the theme because it is about the
+     * transport's behaviour rather than its colours, and next to "When
+     * the Queue Ends" because both are answers to "how should the
+     * player behave".
+     */
+    private handlePopupVolumeChange = (
+        e: CustomEvent<ConfigFieldChangeEvent>,
+    ): void => {
+        const popup = Boolean(e.detail.value);
+        const previous = this.popupVolume;
+
+        this.popupVolume = popup;
+
+        void SetPopupVolume(popup).catch((err: unknown) => {
+            console.error('failed to save the volume control setting', err);
+            this.popupVolume = previous;
+            notificationStore.transient({
+                key: 'popup-volume-setting',
+                title: 'Setting not saved',
+                text: describeError(err, 'That setting could not be saved.'),
+            });
+        });
+    };
 
     // --- Navigation section ---
 
