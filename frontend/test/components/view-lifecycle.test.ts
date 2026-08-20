@@ -27,7 +27,6 @@ import '@components/explore-view/explore-view';
 import '@components/home-view/home-view';
 import '@components/downloads-view/downloads-view';
 
-import '@components/jobs/jobs-view';
 import '@components/playlist-view/playlist-view';
 import { fixture } from '@test/support/render';
 import { stub, flush } from '@test/support/harness';
@@ -223,7 +222,6 @@ const CACHED_VIEWS = [
   'artists-view',
   'genres-view',
   'downloads-view',
-  'jobs-view',
   'playlist-view',
   'explore-view',
   'home-view',

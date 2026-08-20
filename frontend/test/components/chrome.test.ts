@@ -63,7 +63,6 @@ describe('<app-sidebar>', () => {
       'nav-explore',
       'nav-downloads',
       'nav-autotag',
-      'nav-jobs',
       'nav-settings',
     ]);
   });

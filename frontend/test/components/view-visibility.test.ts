@@ -72,7 +72,6 @@ const ALL_VISIBLE = {
   explore: true,
   downloads: true,
   autotag: true,
-  jobs: true,
   settings: true,
 };
 
@@ -96,7 +95,6 @@ describe('view visibility', () => {
       'explore',
       'downloads',
       'autotag',
-      'jobs',
       'settings',
     ]);
   });
@@ -104,11 +102,11 @@ describe('view visibility', () => {
   it('drops the ones the user switched off', async () => {
     const el = await fixture<LitElement>('app-sidebar');
 
-    await setViews({ ...ALL_VISIBLE, autotag: false, jobs: false });
+    await setViews({ ...ALL_VISIBLE, autotag: false, explore: false });
     await el.updateComplete;
 
     expect(navIDs(el)).not.toContain('autotag');
-    expect(navIDs(el)).not.toContain('jobs');
+    expect(navIDs(el)).not.toContain('explore');
     expect(navIDs(el)).toContain('settings');
   });
 

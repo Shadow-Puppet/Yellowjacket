@@ -28,7 +28,7 @@ const EXPECTED_MIN_ICONS = 5;
 
 const VIEWS = [
   'home', 'tracks', 'albums', 'artists', 'genres', 'playlists',
-  'explore', 'downloads', 'jobs', 'settings',
+  'explore', 'downloads', 'autotag', 'settings',
 ];
 
 type IconState = { name: string; hasSvg: boolean };
