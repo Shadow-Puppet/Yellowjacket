@@ -108,7 +108,23 @@ test.describe('the top bar fits the window', () => {
 
       // The indicator has to actually be up, or this test passes by
       // measuring the idle case under another name.
-      await expect(app.locator('job-indicator')).toBeVisible();
+      //
+      // Below 600px there is deliberately no indicator to measure:
+      // #62 stands it down and puts the rows in `<job-band>` instead,
+      // in the layout under the bar. So at 390 the assertion is that
+      // it *is* away and the bar still fits -- which is the same
+      // property (the bar has nothing hanging out of it) reached by the
+      // other branch of the same rule, rather than a width quietly
+      // dropped from the list.
+      const phone = width < 600;
+
+      await expect(app.locator('job-indicator'))[
+        phone ? 'toBeHidden' : 'toBeVisible'
+      ]();
+
+      if (phone) {
+        await expect(app.locator('job-band').locator('job-row')).toHaveCount(1);
+      }
 
       await expect.poll(() => overflowingChildren(app)).toEqual([]);
     });

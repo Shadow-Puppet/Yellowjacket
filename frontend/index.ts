@@ -38,6 +38,11 @@ import '@components/confirm-dialog/confirm-dialog.ts';
 // not know what is going on. It costs a dialog and a table.
 import '@components/shortcuts-overlay/shortcuts-overlay.ts';
 import '@components/jobs/job-indicator.ts';
+// The phone's half of the same thing (#62). Eager because it is part
+// of the shell's first paint below 600px, and because a band that has
+// to fetch a chunk before it can say the app is busy is late by
+// exactly the interval it exists to explain.
+import '@components/jobs/job-band.ts';
 import '@awesome.me/webawesome/dist/styles/themes/default.css';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import { setBasePath } from '@awesome.me/webawesome/dist/webawesome.js';
