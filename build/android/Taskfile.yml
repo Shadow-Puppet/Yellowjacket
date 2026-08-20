@@ -4,18 +4,28 @@ includes:
   common: ../Taskfile.yml
 
 vars:
-  # The *installed* package name, which every adb-driven task below uses
-  # to uninstall, launch and filter. It must agree with `applicationId`
-  # in app/build.gradle, and nothing enforces that.
+  # APP_ID is an *assertion*, not a setting, and it has no default.
   #
-  # ANDROID.md says to set this in build/config.yml. That does not work
-  # in beta.8, checked both ways: `wails3 task` builds its var set from
-  # CLI KEY=VALUE arguments and the Taskfile tree only -- nothing reads
-  # config.yml -- and even when set it feeds only these adb commands,
-  # never Gradle. So the identity is declared twice, here and in
-  # build.gradle, and a change to one alone means the official run and
-  # deploy tasks address a package that is not installed.
-  APP_ID: '{{.APP_ID | default "app.yellowjacket"}}'
+  # It used to be the id every adb-driven task below uninstalled,
+  # launched and filtered, defaulting to "app.yellowjacket". It could
+  # never have been a setting: `wails3 task` builds its var set from CLI
+  # KEY=VALUE arguments and the Taskfile tree only -- nothing reads
+  # build/config.yml, contrary to ANDROID.md, checked with --dry -- and
+  # even when set it fed only the adb commands, never Gradle. So the
+  # identity was declared twice, here and as `applicationId` in
+  # app/build.gradle, with nothing enforcing that they agree.
+  #
+  # They did not agree. The debug buildType carries
+  # `applicationIdSuffix ".dev"`, so the tasks that assemble a debug APK
+  # addressed the *release* id -- on a device, the user's installed app
+  # and their library (#159).
+  #
+  # The id is now read back from the built APK by scripts/android-
+  # pkgid.sh, so the thing installed and the thing launched agree by
+  # construction. Passing APP_ID= says "this build had better declare
+  # that id", and the deploy refuses before touching anything if it does
+  # not -- which is the check that would have caught #159 statically.
+  APP_ID: '{{.APP_ID | default ""}}'
   MIN_SDK: '21'
   TARGET_SDK: '35'
   # The emulator runs the host architecture; physical devices are arm64
@@ -372,9 +382,7 @@ tasks:
           ARCH: '{{.ARCH | default .HOST_ARCH}}'
     cmds:
       - task: ensure-emulator
-      - '"{{.ADB}}" uninstall {{.APP_ID}} 2>/dev/null || true'
-      - '"{{.ADB}}" install "{{.BIN_DIR}}/{{.APP_NAME}}.apk"'
-      - '"{{.ADB}}" shell am start -n {{.APP_ID}}/com.wails.app.MainActivity'
+      - './scripts/android-deploy.sh --apk "{{.BIN_DIR}}/{{.APP_NAME}}.apk" --target emulator{{if .APP_ID}} --expect "{{.APP_ID}}"{{end}}'
 
   run:
     summary: Build, install and launch a debug build in the Android Emulator
@@ -383,9 +391,7 @@ tasks:
       - task: build
     cmds:
       - task: assemble:apk
-      - '"{{.ADB}}" uninstall {{.APP_ID}} 2>/dev/null || true'
-      - '"{{.ADB}}" install "{{.BIN_DIR}}/{{.APP_NAME}}.apk"'
-      - '"{{.ADB}}" shell am start -n {{.APP_ID}}/com.wails.app.MainActivity'
+      - './scripts/android-deploy.sh --apk "{{.BIN_DIR}}/{{.APP_NAME}}.apk" --target emulator{{if .APP_ID}} --expect "{{.APP_ID}}"{{end}}'
 
   device:list:
     summary: Lists connected Android devices and emulators (serials)
@@ -400,25 +406,7 @@ tasks:
           ARCH: arm64
     cmds:
       - task: assemble:apk
-      - |
-        DEVICE='{{.DEVICE_ID | default ""}}'
-        if [ -z "$DEVICE" ]; then
-          DEVICE="${DEVICE_ID:-}"
-        fi
-        if [ -z "$DEVICE" ]; then
-          DEVICE=$("{{.ADB}}" devices | awk 'NR > 1 && $2 == "device" && $1 !~ /^emulator-/ { print $1; exit }')
-        fi
-        if [ -z "$DEVICE" ]; then
-          echo "Error: no connected physical Android device found."
-          echo "Pass DEVICE_ID=<serial> to target a device explicitly."
-          echo "Find connected device serials with: {{.ADB}} devices"
-          exit 1
-        fi
-
-        echo "Deploying {{.BIN_DIR}}/{{.APP_NAME}}.apk to device $DEVICE..."
-        "{{.ADB}}" -s "$DEVICE" uninstall {{.APP_ID}} 2>/dev/null || true
-        "{{.ADB}}" -s "$DEVICE" install "{{.BIN_DIR}}/{{.APP_NAME}}.apk"
-        "{{.ADB}}" -s "$DEVICE" shell am start -n {{.APP_ID}}/com.wails.app.MainActivity
+      - './scripts/android-deploy.sh --apk "{{.BIN_DIR}}/{{.APP_NAME}}.apk" --target device{{if .DEVICE_ID}} --serial "{{.DEVICE_ID}}"{{end}}{{if .APP_ID}} --expect "{{.APP_ID}}"{{end}}'
     preconditions:
       - sh: '[ -x "{{.ADB}}" ] || command -v adb'
         msg: "adb not found. Install the Android SDK platform-tools (or set ANDROID_HOME)"
@@ -430,25 +418,7 @@ tasks:
         vars:
           ARCH: arm64
     cmds:
-      - |
-        DEVICE='{{.DEVICE_ID | default ""}}'
-        if [ -z "$DEVICE" ]; then
-          DEVICE="${DEVICE_ID:-}"
-        fi
-        if [ -z "$DEVICE" ]; then
-          DEVICE=$("{{.ADB}}" devices | awk 'NR > 1 && $2 == "device" && $1 !~ /^emulator-/ { print $1; exit }')
-        fi
-        if [ -z "$DEVICE" ]; then
-          echo "Error: no connected physical Android device found."
-          echo "Pass DEVICE_ID=<serial> to target a device explicitly."
-          echo "Find connected device serials with: {{.ADB}} devices"
-          exit 1
-        fi
-
-        echo "Deploying {{.BIN_DIR}}/{{.APP_NAME}}.apk to device $DEVICE..."
-        "{{.ADB}}" -s "$DEVICE" uninstall {{.APP_ID}} 2>/dev/null || true
-        "{{.ADB}}" -s "$DEVICE" install "{{.BIN_DIR}}/{{.APP_NAME}}.apk"
-        "{{.ADB}}" -s "$DEVICE" shell am start -n {{.APP_ID}}/com.wails.app.MainActivity
+      - './scripts/android-deploy.sh --apk "{{.BIN_DIR}}/{{.APP_NAME}}.apk" --target device{{if .DEVICE_ID}} --serial "{{.DEVICE_ID}}"{{end}}{{if .APP_ID}} --expect "{{.APP_ID}}"{{end}}'
     preconditions:
       - sh: '[ -x "{{.ADB}}" ] || command -v adb'
         msg: "adb not found. Install the Android SDK platform-tools (or set ANDROID_HOME)"
