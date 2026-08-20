@@ -258,26 +258,41 @@ one.
 `build/android/Taskfile.yml` ships more than the Makefile wraps, and
 they are the right thing to reach for when you want something one-off:
 
-> **Do not run `android:run:device` or `android:deploy-device`
-> against a device that has the released app on it (#159).** Both begin
-> with `adb uninstall {{.APP_ID}}`, and `APP_ID` defaults to
-> `app.yellowjacket` — the **release** id — while `run:device` builds
-> the **debug** variant, whose id is `app.yellowjacket.dev`. So it
-> uninstalls the user's app, taking the library with it, installs a
-> different package, and then fails to launch the one it removed. This
-> is "the identity is declared twice" (below) cashing out. The safe
-> sequence is at the end of this section.
+> **These four were unsafe until #159 and are now the way in.** All of
+> them began with `adb uninstall {{.APP_ID}}`, where `APP_ID` defaulted
+> to `app.yellowjacket` — the **release** id — while `run` and
+> `run:device` build the **debug** variant, whose id is
+> `app.yellowjacket.dev`. So they uninstalled the user's app, taking
+> the library with it, installed a different package, and then failed
+> to launch the one they had removed.
+>
+> They share `scripts/android-deploy.sh` now, which **never**
+> uninstalls (`install -r`, and a changed signing certificate is
+> reported with the command rather than acted on), reads the package id
+> back out of the built APK, and refuses a target that is not the kind
+> the task names. There is nothing left to avoid; the manual sequence
+> below is kept because it is still the smallest thing that works.
 
 ```
 wails3 task android:run              # debug build + emulator install + launch
-wails3 task android:run:device       # UNSAFE, see #159
-wails3 task android:deploy-device    # UNSAFE, see #159
+wails3 task android:run:device       # debug build + install + launch on a phone
+wails3 task android:deploy-device    # release build, same
 wails3 task android:bundle:fat       # AAB, for a Play Store upload
 wails3 task android:studio           # open build/android/ in Android Studio
 wails3 task android:device:list
 wails3 task android:logs:all
 wails3 task android:clean
 ```
+
+**`run` and `deploy-emulator` mean the emulator, and now say so to
+adb.** They used a bare `adb install`, which with exactly one device
+attached picks that device whatever it is — so with a phone plugged in
+and no emulator running, the task whose summary reads "in the Android
+Emulator" installed on the phone. They pass `--target emulator` and
+refuse with `make android-emulator` as the remedy.
+
+**`DEVICE_ID=<serial>` still names a device, and several attached
+devices is now an error rather than a silent pick of the first.**
 
 Two are deliberately **not** wrapped. `android:logs` greps logcat for
 `(Wails|yellowjacket)`, which catches the `WailsBridge` tag but misses
@@ -288,16 +303,51 @@ instead. And `ensure-emulator` boots whatever `-list-avds | tail -1`
 returns, with no pidfile and no boot wait, so it cannot be stopped or
 sequenced.
 
-## The identity is declared twice
+## The identity is read back from the APK
 
+It used to be **declared twice**, and that is what #159 was.
 `applicationId` in `build/android/app/build.gradle` is what Gradle
-installs. `APP_ID` in `build/android/Taskfile.yml` is what every
-adb-driven task uninstalls, launches and filters. **Nothing enforces
-that they agree**, and `ANDROID.md`'s advice to set `APP_ID` in
-`build/config.yml` does not work in beta.8 — `wails3 task` never reads
-that file (verified with `--dry`), and even when set it feeds only the
-adb commands, never Gradle. Change both or the official `run`/`deploy`
-tasks address a package that is not installed.
+installs; `APP_ID` in `build/android/Taskfile.yml` was what every
+adb-driven task uninstalled, launched and filtered, and nothing
+enforced that they agree. They did not: the debug buildType carries
+`applicationIdSuffix ".dev"`, so every task that assembles a debug APK
+addressed the release id. This file flagged the hazard for five phases
+and it cashed out twice — once as a wrong `am start`, once as an
+uninstall of the user's library.
+
+**`scripts/android-pkgid.sh` is the one answer now.** It prints the
+package id an APK declares (`aapt2 dump packagename`, falling back to
+`aapt dump badging`), and the deploy path installs and launches *that*.
+The APK is the authority because the task that installs it has just
+built it: whatever Gradle resolved the applicationId to, suffixes and
+flavours included, is in the file, and no default can disagree with it.
+An APK it cannot read is a hard failure, never a fallback to a written
+down default — guessing is the bug.
+
+**`APP_ID` survives as an assertion, not a setting**, and has no
+default. `wails3 task android:run APP_ID=app.yellowjacket` says "this
+build had better declare that id" and is refused, naming both, *before*
+anything is installed or a device is even chosen. It could never have
+been a setting: `ANDROID.md`'s advice to put it in `build/config.yml`
+does not work in beta.8 — `wails3 task` never reads that file (verified
+with `--dry`) — and even when set it fed only the adb commands, never
+Gradle.
+
+`scripts/android-emulator.sh` derives `PKG` the same way, from
+`bin/yellowjacket.apk` when one is built, so `make android-install`,
+`android-launch`, `android-logs` and `android-smoke` follow whichever
+variant is actually in `bin/`. `YJ_ANDROID_PKG` still overrides, and
+the old literal survives only for a tree with no APK built yet.
+
+**The uninstall is gone and is not coming back.** It existed to make
+the bare `install` on the next line work at all — without `-r` Android
+refuses an install over an existing package — so `install -r` removes
+the *reason* for it rather than merely removing it. What is left is the
+one case an uninstall really is the remedy, a changed signing
+certificate, and that is exactly the case where performing it silently
+costs the user their library. So it is named and not done, which is the
+answer `scripts/android-emulator.sh` had already reached for
+`make android-install`.
 
 Related, and it will bite once: the launcher activity is
 `com.wails.app.MainActivity` and the applicationId is
@@ -306,8 +356,10 @@ resolves the leading dot against the *applicationId* and fails with a
 class-not-found that reads like a broken build. Always the
 fully-qualified form.
 
-**The safe way to put a debug build on a real device**, which is what
-#52 used and what #159 exists to make unnecessary:
+**`wails3 task android:run:device` is the way to put a debug build on a
+real device**, since #159. What #52 used, before it was safe, was the
+longer form, and it is still the smallest thing that works if you want
+no script between you and adb:
 
 ```bash
 wails3 task android:build ARCH=arm64 && wails3 task android:assemble:apk
@@ -315,9 +367,15 @@ adb install -r bin/yellowjacket.apk      # -r, never uninstall
 adb shell am start -n app.yellowjacket.dev/com.wails.app.MainActivity
 ```
 
-`YJ_ANDROID_PKG=app.yellowjacket.dev` points `scripts/android-emulator.sh`
-— and therefore `make android-smoke`, `android-logs`, `android-launch`
-— at the debug id, which is otherwise `app.yellowjacket`.
+The id in that last line is the one thing to keep an eye on by hand —
+`./scripts/android-pkgid.sh bin/yellowjacket.apk` is what the tasks ask,
+and it is a good habit before any `am start` written out in full.
+
+`YJ_ANDROID_PKG=app.yellowjacket.dev` still overrides what
+`scripts/android-emulator.sh` — and therefore `make android-smoke`,
+`android-logs`, `android-launch` — addresses, but it is rarely needed
+now: that default is read from `bin/yellowjacket.apk`, so it already
+follows whichever variant was built last.
 
 ## What only a device can answer
 

@@ -4155,3 +4155,90 @@ This is the hazard that file already names — "The identity is declared
 twice ... **Nothing enforces that they agree**" — reached by a second
 route: the two ids differ not because someone edited one, but because
 the debug buildType suffixes it.
+
+## The uninstall was there to make a bare `install` work (measured 2026-08-20)
+
+Fixing #159 turned up *why* the `adb uninstall` was in all four tasks,
+which the issue does not say and which decides whether it can simply be
+deleted. The line under it was `adb install`, with **no `-r`** — and
+Android refuses an install over an existing package without it. So the
+uninstall was not a deliberate clean-slate step; it was the price of
+the missing flag, paid on every run, and `install -r` removes the
+reason for it rather than merely removing it.
+
+That matters because "should the uninstall go at all" looked like a
+trade — drop it and a signing-certificate change fails with
+`INSTALL_FAILED_UPDATE_INCOMPATIBLE` instead of being handled. It is
+not a trade: nothing else was relying on it. The certificate case is
+reported with the command to run, which is what
+`scripts/android-emulator.sh` already did for `make android-install`,
+so this is one existing judgement applied consistently rather than a
+new one.
+
+## `wails3 task android:run` installs on a phone (measured 2026-08-20)
+
+The emulator tasks (`run`, `deploy-emulator`) used a bare `adb install`
+with no `-s`. adb with exactly one device attached uses that device
+whatever kind it is, so with a phone plugged in and no emulator
+running, the task whose summary reads "in the Android Emulator"
+installed on the phone — and, before #159 was fixed, ran
+`adb uninstall app.yellowjacket` against it first. The reported data
+loss was reachable from the *emulator* task, which is not what the
+issue describes and is worse, because nothing in the name warns you.
+
+Measured after the fix, phone attached and emulator stopped:
+
+```
+$ ./scripts/android-deploy.sh --apk bin/yellowjacket.apk --target emulator
+android-deploy: no emulator target is online.
+    LP3LHMA531900746	device
+    Start one with:  make android-emulator
+```
+
+The general form: **a task that names a target has to say so to adb.**
+The device tasks always filtered on `$1 !~ /^emulator-/`; the emulator
+tasks filtered on nothing at all.
+
+## The package id can be read back, and costs nothing (2026-08-20)
+
+`aapt2 dump packagename <apk>` answers in one word and ~40 ms, from
+`$ANDROID_HOME/build-tools/*/aapt2` (versioned, so resolved not
+pinned); `aapt dump badging` is the fallback for older build-tools and
+is what #159's own measurement used. That is cheap enough to do on
+every deploy, which is what makes "the two ids agree by construction"
+affordable rather than aspirational — the alternative considered was
+giving the debug-flavoured tasks `APP_ID` + `.dev`, which is one line
+and leaves the class of bug alive for the next flavour or suffix.
+
+The guard runs **before** a target is chosen, deliberately: it is a
+question about the artifact, so it can be exercised with nothing
+plugged in, and a build whose id is wrong should be refused whether or
+not there is anything to install it onto. That is what let the negative
+test run safely with the user's phone attached:
+
+```
+$ ./scripts/android-deploy.sh --apk bin/yellowjacket.apk \
+      --target device --expect app.yellowjacket
+android-pkgid: refusing to act on a package this APK does not declare.
+    the APK declares:  app.yellowjacket.dev
+    the task expects:  app.yellowjacket
+rc=2
+```
+
+That is exactly #159's configuration — debug APK, release id, real
+device — refused with no adb call made.
+
+## `make android-emulator`'s boot wait can be satisfied by a phone (2026-08-20)
+
+Noticed while booting the emulator for #159's verification, with a
+phone also attached. `scripts/android-emulator.sh start` reported
+`waiting for boot ok / android 14` about **eight seconds** after
+launching the emulator, which had not appeared in `adb devices` yet —
+`pick_device`'s last resort is "exactly one device online", and at that
+moment the one online device was the phone. So it waited for the
+phone's boot, found it long since booted, and returned. The emulator
+took another ~10 s to come up.
+
+Harmless here (the emulator was up before anything used it) and a
+straightforward race otherwise: `start` should wait for a device that
+is an emulator, not for whatever `pick_device` returns. Filed as #162.

@@ -34,7 +34,21 @@ cd "$(dirname "$0")/.."
 
 AVD="${YJ_AVD:-yj-test}"
 SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/Android/Sdk}}"
-PKG="${YJ_ANDROID_PKG:-app.yellowjacket}"
+# The third declaration of the app's identity, and the one #159 did not
+# cash out in -- but the same hazard, so it is derived rather than
+# written down too. The APK in bin/ is what `make android-install` is
+# about to install and what `android-launch`, `logs` and `smoke` are
+# about to address, so it is the authority; whatever Gradle resolved the
+# applicationId to, suffix included, is in the file.
+#
+# The literal survives only as the answer for a tree with no APK built
+# yet, where these commands are asking about whatever is already on the
+# device and there is nothing to read. YJ_ANDROID_PKG still overrides.
+PKG="${YJ_ANDROID_PKG:-}"
+if [ -z "$PKG" ] && [ -f bin/yellowjacket.apk ]; then
+	PKG="$(./scripts/android-pkgid.sh bin/yellowjacket.apk 2>/dev/null || true)"
+fi
+PKG="${PKG:-app.yellowjacket}"
 # Where `make android-inspect` forwards the WebView's devtools socket.
 CDP_PORT="${YJ_ANDROID_CDP_PORT:-9222}"
 # **Not "$PKG/.MainActivity".** A leading-dot activity is resolved
@@ -281,15 +295,24 @@ cmd_inspect() {
 	need_sdk
 	pick_device || die "no device -- plug a phone in (USB debugging on) or run 'make android-emulator'"
 
-	local pkg pid
+	local pkg pid candidates
 	pid=""
 
-	for pkg in "$PKG.dev" "$PKG"; do
+	# Debug sibling first, release second, whichever way round $PKG was
+	# resolved -- it is read from the built APK now, so it is already the
+	# .dev id whenever a debug build is what is in bin/, and appending a
+	# second ".dev" to it would probe a package that cannot exist.
+	case "$PKG" in
+	*.dev) candidates="$PKG ${PKG%.dev}" ;;
+	*) candidates="$PKG.dev $PKG" ;;
+	esac
+
+	for pkg in $candidates; do
 		pid=$("$ADB" shell pidof "$pkg" 2>/dev/null | tr -d '\r' | awk '{print $1}')
 		[ -n "$pid" ] && break
 	done
 
-	[ -n "$pid" ] || die "neither $PKG.dev nor $PKG is running; launch it first"
+	[ -n "$pid" ] || die "none of: $candidates is running; launch it first"
 
 	"$ADB" forward --remove-all >/dev/null 2>&1 || true
 	"$ADB" forward "tcp:$CDP_PORT" "localabstract:webview_devtools_remote_$pid" >/dev/null \
