@@ -3824,3 +3824,70 @@ Staging it is `/__test/emit` with a `JobsChanged` snapshot; a job with
 `state: "running"` never completes, so it stays up until an empty
 snapshot is emitted, which is what makes an idle re-measurement look
 like the fix not working.
+
+## Two repaint mechanisms, and neither is pinned alone (measured 2026-08-20)
+
+`CLAUDE.md` already states the rule — *a virtualized list repaints only
+when you tell it to, and the accidental way you were telling it may be
+the thing you are about to delete* — found in `artists-view` and
+`genres-view`. `queue-panel` is a second instance with numbers, and the
+numbers are the part worth keeping.
+
+It repaints its rows **two** ways:
+
+- `onSelectionChanged()` calls `virtualizer.requestUpdate()`, which is
+  the intended one and the one `track-list` has always had;
+- `.keyFunction=${(track) => track.id}` is a **per-render arrow**, so it
+  is a changed property on every host update and repaints the rows by
+  itself.
+
+Removing *either* alone changes nothing observable. That is why #43
+could not be settled by reading the code: the hypothesis in its Findings
+(the repaint is missing) was checkable, false, and would have looked
+identical either way.
+
+Removing **both** does not break selection either — it delays it. Time
+from click to `aria-selected`, three clicks each:
+
+| build | ms to highlight |
+|---|---|
+| healthy | 5, 16, 17 |
+| both mechanisms removed | 134, 3,866, 5,816 |
+
+The highlight arrives on whatever unrelated render happens next (the
+player's 1 Hz position report is the usual candidate). **Four seconds is
+indistinguishable from broken to a user, and invisible to a spec** —
+`expect.poll`'s default 5 s timeout passes the degraded build on every
+assertion. `queue-selection.spec.ts` bounds its selection assertions at
+500 ms for that reason, which is ~30x the healthy case and an order of
+magnitude under the degraded one.
+
+The general form, for the next spec about anything push-driven: **a poll
+generous enough to be stable is generous enough to miss a latency
+regression entirely.** If "late" is a failure mode worth having, the
+timeout has to say so.
+
+## A hit-scan says how much of a row is not selectable (measured 2026-08-20)
+
+`explore-link` stops the click's propagation on purpose — "the row must
+not also treat it as a selection" — so a click on a track, album or
+artist *name* navigates and selects nothing. That is app-wide and
+deliberate, and the useful question about any given list is how much of
+its row it costs.
+
+Asking `elementFromPoint` what is under each x across a row, at three
+heights:
+
+| list | link coverage |
+|---|---|
+| queue panel | 12% |
+| track list | 21% |
+
+This killed a fix in progress. #43 reads as "selection is broken in the
+queue panel, and fine in the track list", the obvious mechanism is that
+the queue's narrow rows are mostly name, and it is **wrong**: the panel
+is *less* link-covered than the list it is being compared against. The
+scan takes a minute and is worth running before demoting anybody's links
+— `explore-album-details`'s tracklist (number / title / artist /
+duration) is the one that plausibly *is* mostly link, and is the one
+#5 is about to add selection to.

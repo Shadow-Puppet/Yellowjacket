@@ -277,6 +277,26 @@ export class QueuePanel
         return this.queue.tracks.length;
     }
 
+    /**
+     * Repaint the rows when the selection changes.
+     *
+     * `<lit-virtualizer>` renders through the `virtualize` directive,
+     * which reacts to its *own* properties and not to the host having
+     * re-rendered, so host state like a selection reaches the rows only
+     * if it is pushed. `track-list` has always done this and both
+     * playlist views had to be taught it.
+     *
+     * **There is a second, accidental mechanism here and it must not be
+     * mistaken for this one**: `.keyFunction` below is a per-render
+     * arrow, so it is a changed property on every host update and
+     * repaints the rows by itself. Removing *either* alone changes
+     * nothing observable, which is why #43 could not be settled by
+     * reading the code. With both gone the highlight still arrives —
+     * on whatever unrelated render happens next, measured at 134ms,
+     * 3,866ms and 5,816ms against 5–17ms healthy, which a user cannot
+     * tell from broken. `queue-selection.spec.ts` asserts the
+     * *promptness* rather than the eventual state for that reason.
+     */
     onSelectionChanged(): void {
         this.virtualizer?.requestUpdate();
     }
