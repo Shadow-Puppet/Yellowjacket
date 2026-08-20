@@ -317,6 +317,60 @@ stacking dialogs. Window state moved off that path entirely, onto a
 window still exists and `OnShutdown` has neither a context nor a
 window.
 
+**An activity is a view onto the process, and `main()` runs once per
+process.** On Android the Wails entry point is `nativeInit`, which
+`MainActivity.onCreate` calls — and it does two things: it re-points the
+native library's global JNI reference at the calling `WailsBridge`, and
+it runs `go mainFunc()`. Android destroys and recreates an activity
+**without restarting the process** (a configuration change the manifest
+does not declare, memory pressure, or every background under "Don't keep
+activities"), so `main()` ran again on a live app. `application.New`
+returns the *existing* app rather than building a second one,
+`app.Run()` then refuses — `a.starting` is still true, because Android's
+`platformRun` is `select{}` and never returns — and the `os.Exit(1)`
+under that error took the **first**, healthy app down with it: its
+database, its queue, and the audio a `mediaPlayback` foreground service
+was holding the process alive to play. `mainStarted` latches it, first
+statement in `main()`.
+
+Four things about it are load-bearing.
+
+**The answer to "restore the session or cold-start" is settled by
+playback, not by preference.** The audio lives in the Go process, so a
+cold start on every activity recreation would stop the music mid-song —
+which is the exact thing the foreground service exists to prevent. The
+activity is a view; the app is the process. The frontend already
+cooperates, because a recreated WebView loads the page fresh and fetches
+its state from a backend that never went away.
+
+**Returning early is not a degraded mode, and that is why the latch is
+in Go rather than in Java.** The obvious fix — making
+`WailsBridge.initialized` `static`, so the second `nativeInit` is
+skipped — keeps the process alive and silently breaks the app, because
+skipping `nativeInit` skips the reference re-point too: Go would keep
+executing JavaScript against the *destroyed* activity's WebView, and the
+app would open, render, and never receive another backend event. The
+latch lets `nativeInit` do its first job and declines only its second.
+
+**`ServiceShutdown` has never run on Android**, and nothing should be
+built on the assumption that it will. `App.Quit()` reaches an
+`androidApp.destroy()` that is an empty method, and `Run()`'s deferred
+`shutdownServices()` cannot fire behind `select{}`. Durability on this
+platform is the persist writers, which submit on every mutation rather
+than at exit — which is also why `MainActivity.onDestroy` no longer
+calls `bridge.shutdown()`: the activity going away is not the app
+shutting down, and there is no callback for the process going away
+because Android simply kills it.
+
+**No tier here can see any of this**, so the guard is split. A source
+sweep (`TestMainClaimsBeforeItDoesAnything`) asserts the latch is the
+*first* statement of `main()` — the failure it exists for is not
+deletion, which is loud, but a line creeping in above it, since a second
+`NewYellowJacketApp` opens the SQLite database again on every
+recreation. The rest is a documented device check in
+`.pi/skills/yellowjacket-dev/references/android-tier.md`, with the
+logcat signature and a one-line way to force a recreation.
+
 `internalServiceMethods` auto-excludes `ServiceStartup`,
 `ServiceShutdown`, `ServiceName` and `ServeHTTP` from bindings, so this
 shape **removed** 12 spurious bindings and the bogus `context` model

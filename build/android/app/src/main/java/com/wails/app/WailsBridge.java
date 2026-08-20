@@ -129,7 +129,24 @@ public class WailsBridge {
     }
 
     /**
-     * Initialize the native Go library
+     * Initialize the native Go library.
+     *
+     * <p><b>{@code initialized} is deliberately per-instance, and making
+     * it {@code static} is the trap this comment exists for.</b> A
+     * recreated activity builds a new bridge and calls this again, in a
+     * process where the native library is already loaded and Go's
+     * {@code main()} is already running -- so "initialise once per
+     * process" looks like exactly the right rule. It is not, because
+     * {@code nativeInit} does <i>two</i> things: it runs
+     * {@code go mainFunc()}, and it stores the global JNI reference to
+     * <i>this</i> bridge. Skip it and Go keeps executing JavaScript
+     * against the destroyed activity's WebView: the app opens, renders,
+     * and never receives another backend event.
+     *
+     * <p>So this is called every time, and the half that must not repeat
+     * is latched on the Go side instead, at the top of {@code main()} --
+     * which is also where the damage was ({@code os.Exit(1)}), and the
+     * only place that can see it. See #52.
      */
     public void initialize() {
         if (initialized) {

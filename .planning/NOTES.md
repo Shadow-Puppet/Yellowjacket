@@ -4077,3 +4077,81 @@ have saved the other two cycles.
 first track with no cover art" selects nothing in particular. The
 placeholder's presence is asserted instead, which is the property the
 test actually depends on.
+
+## An activity recreation kills the process, deterministically (measured 2026-08-20)
+
+#52's report was "sometimes crashes or restarts when reopened after
+running in the background". Measured on a real device, the *fault* is
+not intermittent at all — only its trigger is.
+
+Device: Light Phone III (TLP301), Android 14 / SDK 34, arm64-v8a,
+WebView **Chrome 113** at 424x439 CSS px. Debug build
+(`app.yellowjacket.dev`), installed beside the released `v0.3.1` with
+`install -r`.
+
+**Conditional on the activity actually being recreated in a live
+process, the process died 8 times out of 8** — 3 by hand, then 5/5 in a
+scripted loop. The runs where it survived were runs where no recreation
+happened (one `Wails bridge initialized` in the log rather than two), so
+they are inconclusive rather than passes; a harness that does not check
+for the second init reports those as green and reads as flakiness.
+After the fix: 5/5 recreations survived, plus 6 background/foreground
+cycles and 3 interleaved recreations on one pid.
+
+The mechanism is three log lines:
+
+```
+12:47:56.159 I/WailsBridge(22956): Wails bridge initialized
+12:48:38.898 I/WailsBridge(22956): Wails bridge initialized   <- same pid
+12:48:39.357 I/ActivityManager: Process app.yellowjacket.dev (pid 22956) has died: fg  TOP
+```
+
+`nativeInit` runs `go mainFunc()` on every activity creation; the second
+`main()` reaches `app.Run()`, which refuses because `a.starting` is
+still true behind Android's `select{}`, and `os.Exit(1)` takes the whole
+process — including the healthy first app — with it.
+
+Four things worth keeping:
+
+- **`has died: fg  TOP` is not a memory kill.** The system does not
+  reclaim the foreground process. This reads as "the OS killed us",
+  which is the wrong hypothesis and the reason the issue sat unverified.
+- **There is no crash record of any kind**: `logcat -b crash` empty, no
+  `AndroidRuntime`, no `libc: Fatal signal`, no tombstone. `os.Exit` is
+  not a crash. The one line that named the fault —
+  `slog.Error("application error", "err", ...)`, carrying
+  `"application is running or a previous run has failed"` — went to
+  `/dev/null`. That is #160.
+- **"Don't keep activities" does not work on this device.**
+  `settings put global always_finish_activities 1` reads back as `1`,
+  `am set-always-finish-activities` does not exist on this build, and
+  the activity was never finished on backgrounding. The report's own
+  suggested lever is a dead end here. What *does* work, deterministically
+  and in one line, is a configuration change the manifest does not
+  declare: `adb shell settings put system font_scale 1.15`
+  (`AndroidManifest.xml` declares `orientation|screenSize|
+  keyboardHidden|uiMode`, so none of those are triggers).
+- **Surviving is only half the property.** The recreated WebView has to
+  still be wired to the running app, which was verified by hooking
+  `window._wails.dispatchWailsEvent` and backgrounding/foregrounding:
+  `["IndexStatusChanged","JobsChanged","JobsChanged",
+  "android:storageAccess"]`. The tempting Java-side fix — making
+  `WailsBridge.initialized` static — passes the pid check and fails
+  this one, because `nativeInit` is also what re-points the JNI
+  reference at the new bridge.
+
+## The Taskfile's device tasks uninstall the released app (2026-08-20)
+
+`android:run:device` builds the **debug** variant
+(`applicationIdSuffix ".dev"`) and then runs
+`adb uninstall {{.APP_ID}}`, where `APP_ID` defaults to
+`app.yellowjacket` — the **release** id. So it deletes the user's
+installed app and its library, installs a different package, and then
+fails to launch the one it removed. `deploy-device` carries the same
+uninstall. Filed as #159; `android-tier.md` had been recommending
+`run:device` as the way onto a device.
+
+This is the hazard that file already names — "The identity is declared
+twice ... **Nothing enforces that they agree**" — reached by a second
+route: the two ids differ not because someone edited one, but because
+the debug buildType suffixes it.

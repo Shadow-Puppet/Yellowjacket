@@ -891,13 +891,41 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    /**
+     * The activity going away is not the app shutting down.
+     *
+     * <p>The scaffold called {@code bridge.shutdown()} here, which is
+     * the natural reading of onDestroy and is wrong for this app twice
+     * over. Android destroys and recreates an activity for a
+     * configuration change the manifest does not declare, under memory
+     * pressure, and on every background if the user has "Don't keep
+     * activities" on -- all **without restarting the process**. And
+     * when the user really does leave, this app's reason for existing
+     * in the background is that a song is playing, which is what the
+     * {@code mediaPlayback} foreground service is holding the process
+     * alive for. Either way, tearing the Go side down here would stop
+     * the music.
+     *
+     * <p>It was harmless only by accident: {@code nativeShutdown} calls
+     * {@code App.Quit()}, whose Android {@code destroy()} is an empty
+     * method, and {@code Run()}'s deferred {@code shutdownServices()}
+     * can never fire because Android's {@code platformRun} is
+     * {@code select{}} and does not return. So no {@code
+     * ServiceShutdown} has ever run on Android, and removing this call
+     * changes nothing today -- it stops the day someone implements
+     * {@code destroy()} from silently killing playback on a rotation.
+     *
+     * <p>There is no callback for "the process is going away"; Android
+     * simply kills it. Durability on this platform is the persist
+     * writers, which submit on every mutation rather than at exit.
+     *
+     * <p>See #52, and CLAUDE.md, "An activity is a view onto the
+     * process".
+     */
     @Override
     protected void onDestroy() {
         super.onDestroy();
         unregisterSystemEventReceivers();
-        if (bridge != null) {
-            bridge.shutdown();
-        }
         if (webView != null) {
             webView.destroy();
         }
