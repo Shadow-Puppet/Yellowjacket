@@ -29,6 +29,7 @@ import { nameDialogsIn } from '../../utils/name-dialog';
 import { ViewLifecycleMixin } from '../../utils/view-lifecycle';
 import { confirmAction } from '../confirm-dialog/confirm-dialog';
 import '@awesome.me/webawesome/dist/components/dialog/dialog.js';
+import '@components/jobs/job-panel';
 import { list } from '@utils/binding';
 
 type PendingItem = autotagservice.PendingItem;
@@ -135,8 +136,20 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
                 padding: 0.75rem 1rem;
             }
 
-            .header {
+            /* The header and the apply-job panel share the header row.
+               A wrapper rather than a third grid row, because the panel
+               is display:none while nothing is applying and a grid
+               row would still spend the container's gap on it -- the
+               idle case, which is nearly always. */
+            .header-area {
                 grid-area: header;
+                display: flex;
+                flex-direction: column;
+                gap: 0.5rem;
+                min-width: 0;
+            }
+
+            .header {
                 display: flex;
                 align-items: center;
                 gap: 0.75rem;
@@ -3207,7 +3220,20 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
         // sees a blank full-screen "Loading\u2026".
         return html`
             <div class="root">
-                ${this.renderHeader()}
+                <div class="header-area">
+                    ${this.renderHeader()}
+                    <!--
+                      Applying rewrites tags on disk, and until #27 the
+                      only way to stop a run was the Jobs tab or the
+                      header popover. The per-album ring says work is
+                      happening; this is what can stop it, and what has
+                      the log when it goes wrong.
+                    -->
+                    <job-panel
+                        kinds="autotag-apply"
+                        heading="Applying tags"
+                    ></job-panel>
+                </div>
                 ${this.renderFolderSidebar()}
                 ${this.renderMain()}
             </div>

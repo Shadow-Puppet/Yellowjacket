@@ -22,6 +22,7 @@ import { compact } from '@utils/binding';
 import { describeError, explainError } from '@utils/describe-error';
 import { confirmAction } from '@components/confirm-dialog/confirm-dialog';
 import './config-section';
+import '@components/jobs/job-panel';
 import { pickDirectory } from '../../utils/pick-directory';
 
 /**
@@ -274,6 +275,17 @@ export class DownloadClients extends LitElement {
                             </wa-button>
                         </div>
                     `}
+
+                <!--
+                  The Downloads view already shows every download's
+                  lifecycle state; what it has never had is pause,
+                  cancel and the log, which the Jobs tab carried (#27).
+                  Renders nothing while nothing is downloading.
+                -->
+                <job-panel
+                    kinds="download"
+                    heading="Downloads in progress"
+                ></job-panel>
             </config-section>
 
             <config-section

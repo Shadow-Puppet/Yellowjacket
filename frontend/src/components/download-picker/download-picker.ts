@@ -246,7 +246,7 @@ export class DownloadPicker extends LitElement {
             return html`
                 <wa-callout variant="success">
                     Found a clear match and started downloading it. Progress is
-                    in the background jobs panel.
+                    on the Downloads page.
                 </wa-callout>
             `;
         }
