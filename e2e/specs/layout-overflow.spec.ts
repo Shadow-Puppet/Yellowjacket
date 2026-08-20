@@ -93,9 +93,10 @@ test.describe('the app fits in its own window', () => {
       )
       .toBe(true);
 
-    // Settings and Jobs are the two that were unreachable: they are
-    // last in the nav, and the pane used to clip rather than scroll.
-    for (const view of ['jobs', 'settings'] as const) {
+    // Settings is the one that was unreachable: it is last in the nav,
+    // and the pane used to clip rather than scroll. (Jobs was the other
+    // half of this until #27 folded it into Settings.)
+    for (const view of ['explore', 'settings'] as const) {
       const item = app.getByTestId(`nav-${view}`);
 
       await item.scrollIntoViewIfNeeded();

@@ -9,7 +9,13 @@ import {
     RemoveLibrary,
     GetRemovalImpact,
     GetAllLibrariesWithTrackCounts,
+    ScanLibrary,
+    ScanAllLibraries,
+    FullRescan,
 } from '@go/library/library.js';
+import { jobStore } from '@store/job-store';
+import type { Job } from '@store/job-store';
+import '@components/jobs/job-panel';
 import {
     GetScanConcurrency,
     SetScanConcurrency,
@@ -76,6 +82,24 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
 
     /** Which destinations the navigation offers (#25). */
     private viewsCtrl = new ViewVisibilityController(this);
+
+    /**
+     * The job snapshot, for the per-library scan status (#27).
+     *
+     * Held as state rather than read from the store in `render()` so
+     * Lit sees the dependency: the store notifies, and a getter read
+     * inside a template is not a reactive input.
+     */
+    @state() private jobs: Job[] = [];
+
+    /**
+     * Set between pressing a scan button and the job snapshot that
+     * proves it started -- `JobsChanged` is coalesced at 250 ms, which
+     * is long enough for a second click to start a second scan.
+     */
+    @state() private startingScan = false;
+
+    private unsubscribeJobs: (() => void) | null = null;
 
     // --- Shortcuts controller ---
     private shortcutsCtrl = new ShortcutsController(this);
@@ -864,8 +888,14 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
         this.scrollMode =
             localStorage.getItem(SCROLL_STORAGE_KEY) || 'hover';
 
-        // Scan progress lives in the jobs panel now — this page only
-        // needs to know when the library list itself changes.
+        // Scanning is started and watched here (#27), so the job
+        // snapshot is a live input to this page.
+        this.unsubscribeJobs = jobStore.subscribe(() => {
+            this.jobs = jobStore.jobs;
+        });
+        this.jobs = jobStore.jobs;
+        void jobStore.init();
+
         this.cancelLibraryAdded = EventsOn(
             Events.LibraryAdded,
             () => void this.loadLibraries(),
@@ -896,6 +926,9 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
     }
 
     protected override onViewDeactivate(): void {
+        this.unsubscribeJobs?.();
+        this.unsubscribeJobs = null;
+
         this.cancelLibraryAdded?.();
         this.cancelLibraryRenamed?.();
         this.cancelLibraryRemoved?.();
@@ -1095,6 +1128,114 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
             this.indexStatusFailed = true;
         }
     }
+
+    // ===================================================================
+    // SCANNING (#27 — back from the Jobs tab)
+    // ===================================================================
+
+    /** The scan job for a library, if one is registered. */
+    private jobForLibrary(id: number): Job | undefined {
+        return this.jobs.find((job) => job.id === `scan:${id}`);
+    }
+
+    /** The status line under a library name while it is being scanned. */
+    private libraryScanStatus(id: number): string | null {
+        const job = this.jobForLibrary(id);
+
+        if (!job) return null;
+
+        switch (job.state) {
+            case 'running':
+                return job.phase ? `Scanning · ${job.phase}` : 'Scanning';
+            case 'queued':
+                return 'Queued';
+            case 'paused':
+                return 'Paused';
+            case 'pausing':
+                return 'Pausing…';
+            case 'cancelling':
+                return 'Stopping…';
+            default:
+                return null;
+        }
+    }
+
+    private get anyScanning(): boolean {
+        return this.libraries.some(
+            (lib) => this.libraryScanStatus(lib.id) !== null,
+        );
+    }
+
+    /**
+     * Run something that starts a job, holding the buttons until the
+     * snapshot lands and saying so when it does not start at all.
+     *
+     * Persistent, not a toast: the user asked for work to happen, it
+     * did not, and retrying is exactly the useful response.
+     */
+    private async startJob(
+        what: string,
+        start: () => Promise<unknown>,
+        retry: () => void,
+    ): Promise<void> {
+        if (this.startingScan) return;
+
+        this.startingScan = true;
+
+        try {
+            await start();
+        } catch (err) {
+            console.error(`${what} failed:`, err);
+            notificationStore.persistent({
+                key: 'scan-start',
+                title: 'Scan did not start',
+                text: `${what} failed. ${describeError(err)}`,
+                detail: String(err),
+                action: { label: 'Try again', run: retry },
+            });
+        } finally {
+            this.startingScan = false;
+        }
+    }
+
+    private handleScanLibrary = (id: number): void => {
+        this.activeMenuId = null;
+        void this.startJob(
+            'Scanning that library',
+            () => ScanLibrary(id),
+            () => this.handleScanLibrary(id),
+        );
+    };
+
+    private handleScanAll = (): void => {
+        void this.startJob(
+            'Scanning your libraries',
+            () => ScanAllLibraries(),
+            () => this.handleScanAll(),
+        );
+    };
+
+    private handleFullRescan = async (): Promise<void> => {
+        const ok = await confirmAction({
+            title: 'Full rescan',
+            message:
+                'This deletes all library data — including downloaded '
+                + 'cover art — and rebuilds it from your files.',
+            impact:
+                'It is not the same as “Scan now”, which only picks up '
+                + 'what changed.',
+            confirmLabel: 'Rebuild everything',
+            danger: true,
+        });
+
+        if (!ok) return;
+
+        await this.startJob(
+            'The full rescan',
+            () => FullRescan(),
+            () => void this.handleFullRescan(),
+        );
+    };
 
     private handleViewToggle = (
         view: string,
@@ -1554,6 +1695,20 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
                     .value=${this.allowMeteredCatalogDownload}
                     @config-change=${this.handleAllowMeteredChange}
                 ></config-field>
+
+                <!--
+                  The tier list above says what the build is *doing*;
+                  this says it is a job, and gives it the pause, cancel
+                  and log the tier list never had (#27). Cancelling one
+                  still asks first — that confirmation is inside
+                  applyJobControl, keyed on the kind, which is why
+                  this embeds the shared rows rather than drawing its
+                  own.
+                -->
+                <job-panel
+                    kinds="index-build,catalog-enrich"
+                    heading="Index jobs"
+                ></job-panel>
             </config-section>
         `;
     }
@@ -1674,18 +1829,15 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
                         description:
                             'The page the app opens to on launch.',
                         type: 'select' as const,
-                        options: [
-                            { value: 'home', label: 'Home' },
-                            { value: 'tracks', label: 'Tracks' },
-                            { value: 'albums', label: 'Albums' },
-                            { value: 'artists', label: 'Artists' },
-                            { value: 'genres', label: 'Genres' },
-                            { value: 'playlists', label: 'Playlists' },
-                            { value: 'explore', label: 'Explore' },
-                            { value: 'downloads', label: 'Downloads' },
-                            { value: 'autotag', label: 'Autotag' },
-                            { value: 'jobs', label: 'Jobs' },
-                        ],
+                        // Derived, not written out: this list was a
+                        // second copy of the launchable set, and #27
+                        // removing a destination is exactly the change
+                        // that would have left the two disagreeing.
+                        // Settings is excluded because it is the one
+                        // view the backend refuses to launch into.
+                        options: VIEW_META
+                            .filter((v) => v.alwaysShown !== true)
+                            .map((v) => ({ value: v.id, label: v.label })),
                     }}
                     .value=${this.defaultPage}
                     @config-change=${this.handleDefaultPageChange}
@@ -2161,8 +2313,8 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
         return html`
             <config-section
                 heading="Libraries"
-                description="Manage your music library folders. Scanning and its
-                    progress live in the Jobs panel."
+                description="Manage your music library folders, and scan them
+                    for new and changed files."
                 .open=${true}
             >
                 <div class="scan-actions">
@@ -2171,6 +2323,23 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
                         @click=${this.handleAddLibrary}
                     >
                         Add Library
+                    </button>
+                    <button
+                        ?disabled=${this.anyScanning
+                || this.startingScan
+                || this.libraries.length === 0}
+                        @click=${this.handleScanAll}
+                    >
+                        Scan All
+                    </button>
+                    <button
+                        class="btn-danger"
+                        ?disabled=${this.anyScanning
+                || this.startingScan
+                || this.libraries.length === 0}
+                        @click=${this.handleFullRescan}
+                    >
+                        Full Rescan
                     </button>
                 </div>
 
@@ -2209,7 +2378,8 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
                                         <span class="library-count">
                                             ${this.removingLibraryId === lib.id
                                                 ? 'Removing…'
-                                                : html`${lib.trackCount} tracks`}
+                                                : this.libraryScanStatus(lib.id)
+                                                    ?? html`${lib.trackCount} tracks`}
                                         </span>
                                         <div class="overflow-wrapper">
                                             <button
@@ -2232,6 +2402,16 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
                                                           >
                                                               Rename
                                                           </div>
+                                                          ${this.libraryScanStatus(lib.id) === null
+                                                            ? html`
+                                                                  <div
+                                                                      class="overflow-item"
+                                                                      @click=${() => this.handleScanLibrary(lib.id)}
+                                                                  >
+                                                                      Scan now
+                                                                  </div>
+                                                              `
+                                                            : nothing}
                                                           <div
                                                               class="overflow-item overflow-item--danger"
                                                               @click=${() => void this.handleRemoveClick(lib.id)}
@@ -2274,6 +2454,11 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
                     .value=${this.concurrencyMode}
                     @config-change=${this.handleConcurrencyChange}
                 ></config-field>
+
+                <job-panel
+                    kinds="library-scan"
+                    heading="Scans"
+                ></job-panel>
 
             </config-section>
         `;

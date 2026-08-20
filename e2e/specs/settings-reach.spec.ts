@@ -18,16 +18,19 @@ test.describe('Settings is reachable without a mouse', () => {
   }) => {
     await app.getByTestId('nav-settings').click();
 
-    const headers = app.locator('config-page config-section .header');
+    // Per *section*, not per `.header`: a section holding a
+    // `job-panel` (#27) also contains `job-details-drawer`, whose own
+    // header carries that class and is not a disclosure.
+    const sections = app.locator('config-page config-section');
 
-    await expect(headers.first()).toBeVisible();
+    await expect(sections.first()).toBeVisible();
 
-    const count = await headers.count();
+    const count = await sections.count();
 
     expect(count).toBeGreaterThan(4);
 
     for (let i = 0; i < count; i++) {
-      const header = headers.nth(i);
+      const header = sections.nth(i).locator('.header').first();
 
       expect(await header.evaluate((el) => el.tagName)).toBe('BUTTON');
       expect(['true', 'false']).toContain(

@@ -40,7 +40,7 @@ import '@components/jobs/job-details-drawer';
 import '@components/jobs/job-indicator';
 import '@components/jobs/job-log-view';
 import '@components/jobs/job-row';
-import '@components/jobs/jobs-view';
+import '@components/jobs/job-panel';
 import '@components/library-filter/library-filter';
 import '@components/library-status-indicator/library-status-indicator';
 import '@components/now-playing/now-playing';
@@ -87,8 +87,8 @@ const TAGS = [
   'job-details-drawer',
   'job-indicator',
   'job-log-view',
+  'job-panel',
   'job-row',
-  'jobs-view',
   'library-filter',
   'library-status-indicator',
   'now-playing',

@@ -21,7 +21,6 @@ const VIEWS: [string, string, boolean][] = [
   ['tracks', 'Tracks', true],
   ['explore', 'Explore', false],
   ['downloads', 'Downloads', false],
-  ['jobs', 'Background jobs', false],
 ];
 
 /** The header lives in the view's shadow root, inside its own. */
@@ -53,7 +52,6 @@ const TAGS: Record<string, string> = {
   tracks: 'track-list',
   explore: 'explore-view',
   downloads: 'downloads-view',
-  jobs: 'jobs-view',
 };
 
 test.describe('every primary view says what it is', () => {

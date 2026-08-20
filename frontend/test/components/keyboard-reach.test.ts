@@ -49,7 +49,7 @@ describe('<app-sidebar> is reachable', () => {
 
     const items = shadowAll(el, 'li button');
 
-    expect(items).toHaveLength(11);
+    expect(items).toHaveLength(10);
     expect(items.every((item) => item.tagName === 'BUTTON')).toBe(true);
   });
 

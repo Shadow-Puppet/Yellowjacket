@@ -66,7 +66,7 @@ func TestViewVisibilityStoredWins(t *testing.T) {
 	general := &GeneralConfig{
 		ViewVisibility: map[string]bool{
 			string(ViewAutotag): true,
-			string(ViewJobs):    false,
+			string(ViewExplore): false,
 		},
 	}
 	general.ApplyDefaults()
@@ -77,8 +77,8 @@ func TestViewVisibilityStoredWins(t *testing.T) {
 		t.Error("autotag was switched on and should be visible")
 	}
 
-	if resolved[string(ViewJobs)] {
-		t.Error("jobs was switched off and should be hidden")
+	if resolved[string(ViewExplore)] {
+		t.Error("explore was switched off and should be hidden")
 	}
 }
 
@@ -133,6 +133,58 @@ func TestValidateRevealsAHiddenLaunchPage(t *testing.T) {
 
 	if !general.ResolvedViewVisibility()[string(ViewAutotag)] {
 		t.Error("the launch page must be visible")
+	}
+}
+
+// A launch page naming a view that no longer exists resets to the
+// default instead of failing validation, which on the load path would
+// mean the app refusing to start for whoever had it selected.
+//
+// This is the one shape #25's storage decision does *not* make free: a
+// visibility entry is a key and an unknown key is dropped, but a launch
+// page is a value.
+func TestARetiredLaunchPageFallsBackToTheDefault(t *testing.T) {
+	t.Parallel()
+
+	general := &GeneralConfig{DefaultPage: "jobs"}
+
+	if err := general.Validate(); err != nil {
+		t.Fatalf("Validate() error: %v", err)
+	}
+
+	if general.DefaultPage != DefaultDefaultPage {
+		t.Errorf("DefaultPage = %q, want %q", general.DefaultPage, DefaultDefaultPage)
+	}
+}
+
+// A name that is merely wrong is still an error: that is a typo, and
+// saying so is more useful than ignoring it.
+func TestAnUnknownLaunchPageIsStillAnError(t *testing.T) {
+	t.Parallel()
+
+	general := &GeneralConfig{DefaultPage: "nonsense"}
+
+	if err := general.Validate(); !errors.Is(err, errUnknownDefaultPage) {
+		t.Fatalf("Validate() error = %v, want errUnknownDefaultPage", err)
+	}
+}
+
+// A retired view is not a view, so nothing offers it and nothing
+// resolves it -- the visibility map included.
+func TestARetiredViewIsGone(t *testing.T) {
+	t.Parallel()
+
+	for id := range RetiredViews {
+		if _, ok := LookupView(string(id)); ok {
+			t.Errorf("%s is retired but still in Views", id)
+		}
+
+		general := &GeneralConfig{}
+		general.ApplyDefaults()
+
+		if _, ok := general.ResolvedViewVisibility()[string(id)]; ok {
+			t.Errorf("%s is retired but still resolves a visibility", id)
+		}
 	}
 }
 
@@ -213,7 +265,7 @@ func TestViewVisibilityRoundTrips(t *testing.T) {
 		t.Fatalf("SetViewVisible() error: %v", err)
 	}
 
-	if err := original.SetViewVisible(string(ViewJobs), false); err != nil {
+	if err := original.SetViewVisible(string(ViewExplore), false); err != nil {
 		t.Fatalf("SetViewVisible() error: %v", err)
 	}
 
@@ -228,8 +280,8 @@ func TestViewVisibilityRoundTrips(t *testing.T) {
 		t.Error("autotag should have loaded as visible")
 	}
 
-	if resolved[string(ViewJobs)] {
-		t.Error("jobs should have loaded as hidden")
+	if resolved[string(ViewExplore)] {
+		t.Error("explore should have loaded as hidden")
 	}
 }
 

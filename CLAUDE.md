@@ -514,6 +514,36 @@ rather than renaming them.
   the autotag apply are registered; anything that is not registered has
   none of that, which is exactly how the three gaps the audit found
   came about.
+
+  **Its rows are shown where the work is started, not on a page of
+  their own.** #27 folded the Jobs destination away, and the shape it
+  folded into is `<job-panel kinds="…">` embedded four times — scans in
+  Settings → Libraries, index and enrichment in Settings → Search
+  Index, downloads under the download clients, the autotag apply in
+  `autotag-view`. One "Background jobs" section in Settings was the
+  obvious reading of the report and is the tab again under another
+  name.
+
+  Four things about it are load-bearing. **Four of the five kinds
+  already had a home** that showed their work — the tier list, the
+  download list, the apply ring — and what none of them had is the
+  *generic* affordances, so the panel carries pause, cancel, Details
+  and the log to each rather than replacing what is there. **The
+  controls are `applyJobControl`**, not a reimplementation, which is
+  what keeps the "you will discard hours of downloading" confirmation
+  alive: it is keyed on `KindIndexBuild` inside the shared handler, and
+  a host drawing its own buttons would drop it silently. **A panel with
+  nothing to say is `hidden`**, host margin included, because an idle
+  panel in four places is four pieces of furniture describing an
+  absence. And **there is no "Clear finished"** in it, because
+  `ClearFinishedJobs` is global — a Clear under Libraries would discard
+  the index build's history too; a finished row dismisses itself.
+
+  The header `job-indicator` is untouched and is still the one view of
+  everything at once, from every page. One consequence worth knowing
+  before writing a spec: a section holding a `job-panel` also holds a
+  `job-details-drawer`, whose own header carries `.header` — so
+  `config-section .header` is ambiguous the moment a job exists.
 - `config` — TOML-based settings. Settings page uses HTMX + templ for server-rendered HTML fragments.
 - `playlist` / `smartplaylist` — Playlist CRUD and rule-based smart playlists.
 - `mediacontrols` — OS media controls behind one `Handler`: MPRIS over
@@ -1085,6 +1115,15 @@ which filters, so an unfiltered bar would contradict its own drawer one
 tap away. Which four tabs is still plan 016's committed subset; this
 only removes from it, and "More" is never filtered because it is how
 everything else stays reachable.
+
+**A retired destination is the one shape this does not make free.** An
+absent visibility key takes its default and an unknown one is dropped,
+but `DefaultPage` is a *value*: a launch page naming a view that no
+longer exists fails validation, and on the load path that means the app
+refuses to start for whoever had it selected. `RetiredViews` is that
+list, and `ApplyDefaults` treats a retired name as a zero value while
+an unknown-but-not-retired one still errors — a typo is worth being
+told about. #27 retiring `jobs` is its first entry.
 
 **The list of destinations is `services/view-meta.ts`**, on
 `shortcut-meta.ts`'s pattern, because #25 gave it a second reader:

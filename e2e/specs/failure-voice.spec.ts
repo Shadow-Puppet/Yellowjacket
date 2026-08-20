@@ -36,9 +36,16 @@ test.describe('a failed binding says so', () => {
     // Libraries is the one section that starts expanded (H-22), so ask
     // the disclosure what state it is in rather than assuming one — a
     // blind click used to expand it and now collapses it.
+    //
+    // By role and name, not by `.header`: since #27 the section also
+    // contains a `job-panel`, and an open `job-details-drawer` inside
+    // it carries the same class. That only bites once a job exists,
+    // which is why it showed up on the *second* engine of a CI run and
+    // not the first.
     const disclosure = page
       .locator('config-section[heading="Libraries"]')
-      .locator('.header');
+      .getByRole('button', { name: 'Libraries' })
+      .first();
 
     if ((await disclosure.getAttribute('aria-expanded')) === 'false') {
       await disclosure.click();
