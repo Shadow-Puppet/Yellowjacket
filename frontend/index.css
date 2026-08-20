@@ -414,6 +414,7 @@ body div.sidebar {
     body {
         grid-template:
             "top-bar" 3.25em
+            "jobs-band" auto
             "main-panel" 1fr
             "bottom-bar" auto
             "bottom-nav" auto
@@ -520,5 +521,47 @@ body div.sidebar {
        where a slider does belong. */
     .bottom-bar volume-control {
         display: none;
+    }
+}
+
+/* Out of the desktop grid entirely.  `job-band` renders nothing above
+   600px anyway, but an in-flow grid child with no named area is
+   auto-placed into a row of the shell -- the same trap the skip link is
+   absolutely positioned to avoid. */
+body job-band {
+    display: none;
+}
+
+/* #62.  The job indicator stands down on the phone, and its work is
+   shown in the notification band instead (notification-host).
+
+   Three reasons, and the first is the report: its popover is anchored
+   to the top bar, which is 3.25em here on a viewport 439 CSS px tall,
+   and it was reported as unreadable behind other UI.  The second is
+   that a popover is a disclosure, and background work is the one thing
+   a phone should not make you disclose.  The third is #57, which
+   deletes this bar entirely and is blocked on the indicator having
+   somewhere else to live -- this is that somewhere.
+
+   `display: none` rather than a fit step: `services/top-bar-fit.ts`
+   already skips children whose computed display is none, so the bar's
+   measurement simply sees one fewer child, and `[compact]` toggling on
+   a hidden element costs nothing. */
+@media (max-width: 599px) {
+    .top-bar job-indicator {
+        display: none;
+    }
+
+    /* ...and its rows appear here, in the grid row above the content.
+       In flow rather than over it: a fixed band reads fine in a
+       screenshot and is unusable, because at 424x439 a compact panel
+       is ~200px of a 439px screen and it *covers* what is under it.
+       Measured, not assumed -- four e2e specs failed on that version,
+       two phone-shell journeys and the header's action menu, because
+       the panel was intercepting the taps. */
+    body job-band {
+        display: block;
+        grid-area: jobs-band;
+        background-color: var(--yj-bg-elevated, #343a40);
     }
 }

@@ -30,6 +30,14 @@
         <search-bar></search-bar>
         <job-indicator></job-indicator>
     </header>
+    <!-- The phone's view of background work (#62): below 600px the
+         indicator above stands down and its rows appear here instead,
+         in the layout rather than over it.  `display: none` above that
+         width in index.css, which is also what keeps it out of the
+         desktop grid -- an in-flow child with no named area is
+         auto-placed into one of the shell's rows, which is the trap the
+         skip link is absolutely positioned to avoid. -->
+    <job-band></job-band>
     <div class="sidebar">
         <app-sidebar></app-sidebar>
     </div>

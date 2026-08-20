@@ -77,6 +77,68 @@ describe('<job-panel>', () => {
   });
 
   /**
+   * #62. The phone's band has no kinds to name: it is standing in for
+   * the header indicator, whose whole job was to be the one view of
+   * everything at once.
+   */
+  it('answers for every kind when asked with a star', async () => {
+    const el = await fixture<LitElement>('job-panel', { kinds: '*' });
+
+    await snapshot([
+      job({ id: 'scan:1', kind: 'library-scan', title: 'Scanning Music' }),
+      job({ id: 'idx', kind: 'index-build', title: 'Building the index' }),
+      job({ id: 'dl:1', kind: 'download', title: 'Downloading Glass Harbour' }),
+    ]);
+    await el.updateComplete;
+
+    expect(titles(el)).toEqual([
+      'Scanning Music',
+      'Building the index',
+      'Downloading Glass Harbour',
+    ]);
+  });
+
+  /**
+   * The other half of that, and the reason it is a star rather than the
+   * meaning of an empty attribute: empty is what a typo and a dropped
+   * binding both produce, and "show everything" is the wrong thing to
+   * do by accident.
+   */
+  it('still shows nothing when asked for nothing', async () => {
+    const el = await fixture<LitElement>('job-panel', { kinds: '' });
+
+    await snapshot([job({ id: 'scan:1', kind: 'library-scan' })]);
+    await el.updateComplete;
+
+    expect([el.hidden, rows(el)].map(String)).toEqual(['true', '']);
+  });
+
+  /**
+   * `full` stays the default so the four settings call sites are
+   * untouched; the band asks for the density `job-row` calls "the
+   * popover density", because on the phone this panel *is* the popover.
+   */
+  it('passes its density to the rows, defaulting to full', async () => {
+    const settings = await fixture<LitElement>('job-panel', { kinds: '*' });
+
+    await snapshot([job()]);
+    await settings.updateComplete;
+
+    const band = await fixture<LitElement>('job-panel', {
+      kinds: '*',
+      density: 'compact',
+    });
+
+    await snapshot([job()]);
+    await band.updateComplete;
+
+    expect([
+      rows(settings)[0]?.getAttribute('variant'),
+      rows(band)[0]?.getAttribute('variant'),
+    ]).toEqual(['full', 'compact']);
+  });
+
+  /**
    * An idle panel in four places is four pieces of furniture describing
    * an absence — and `hidden` rather than an empty render, because the
    * host's own margin would otherwise still be spent.
