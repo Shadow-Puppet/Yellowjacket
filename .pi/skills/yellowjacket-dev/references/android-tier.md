@@ -515,6 +515,75 @@ Four things about it, each of which costs an hour if met cold:
   script. Plug in over USB for anything longer than a couple of probes.
 - **The socket name carries the pid**, which changes on every launch, so
   it is resolved rather than remembered.
+- **A reinstall resets the runtime permissions**, and the grant dialog
+  is a separate activity that takes focus — so the app is up, `am start`
+  reports "delivered to currently running top-most instance", and
+  `pidof` is empty because it never got to the foreground.
+  `dumpsys window | grep mCurrentFocus` naming
+  `GrantPermissionsActivity` is the tell. `adb shell pm grant
+  app.yellowjacket.dev android.permission.READ_MEDIA_AUDIO` (and
+  `POST_NOTIFICATIONS`) ahead of the launch skips it.
+
+### Calling a binding on the device
+
+**The runtime call does not go over HTTP on Android**, and this is worth
+knowing before an hour is spent on it. The WebView cannot deliver a
+`fetch()` POST body to `shouldInterceptRequest`, so v3 routes runtime
+calls through the `addJavascriptInterface` bridge instead: the
+@wailsio/runtime installs a `customTransport` that calls
+`window.wails.invokeAsync(id, payload)` and receives the answer on
+`window._wailsAndroidCallback`. Two consequences:
+
+- **`.playwright/init-events.js` does not transfer to the device.** Its
+  outbound half hooks `fetch`, which sees nothing here, and its
+  `call()` posts to `/wails/runtime`, which answers
+  `Invalid runtime call: missing object value` — the interceptor got the
+  URL with no body. Its *inbound* half is still right, because
+  `dispatchWailsEvent` is the entry point in every mode.
+- **Hooking `fetch` from an eval is too late anyway**, on any platform:
+  the bundle captured its reference at module scope, so a wrapper
+  installed afterwards records nothing. That is why the harness is an
+  `initScript` and not a step in a spec.
+
+What works is to borrow the bridge, chaining the runtime's own callback
+so its pending calls still resolve:
+
+```js
+const pending = new Map();
+const prev = window._wailsAndroidCallback;
+window._wailsAndroidCallback = (id, response, error) => {
+  if (!pending.has(id)) return prev && prev(id, response, error);
+  const p = pending.get(id); pending.delete(id);
+  const env = JSON.parse(response || "{}");
+  return env.ok ? p.resolve(env.data ?? env.text) : p.reject(new Error(env.error));
+};
+window.__yj = { call(name, args) {
+  return new Promise((resolve, reject) => {
+    const id = "yj" + Math.random().toString(36).slice(2);
+    pending.set(id, { resolve, reject });
+    window.wails.invokeAsync(id, JSON.stringify({
+      object: 0, method: 0, windowName: "",
+      args: { "call-id": id, methodName: "yellowjacket/backend/" + name, args: args || [] },
+      clientId: window._wails.clientId,
+    }));
+  });
+} };
+```
+
+That turns the device into a tier that can be *driven* rather than only
+looked at — `__yj.call("player.Player.LoadFile", [path])` and
+`__yj.call("library.Library.AddLibrary", ["/sdcard/Music/..."])` are how
+#53 was measured. Names are the Go ones (`GetTracks`, not
+`GetAllTracks`); an unknown one comes back as a plain
+`unknown bound method name`, so a wrong guess is loud.
+
+**Getting audio onto the phone**: `adb push` into
+`/sdcard/Android/data/<pkg>/files/` looks like it works and then the
+files are not there — scoped storage. `/sdcard/Music/...` plus
+`pm grant … READ_MEDIA_AUDIO` does work, and `AddLibrary` takes the
+plain path. The generated fixtures are **~2 seconds** each, which is
+fine for a scan and useless for watching a seek bar, so synthesise a
+long one: `ffmpeg -f lavfi -i sine=frequency=440:duration=240`.
 
 **And the reason to bother: the phone is an engine, not a screen.** The
 first device here renders in **Chrome 113** at 424x439 CSS px. Every

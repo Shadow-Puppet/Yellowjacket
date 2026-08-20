@@ -4242,3 +4242,63 @@ took another ~10 s to come up.
 Harmless here (the emulator was up before anything used it) and a
 straightforward race otherwise: `start` should wait for a device that
 is an emulator, not for whatever `pick_device` returns. Filed as #162.
+
+## The Android runtime transport is not HTTP (measured 2026-08-20)
+
+Found while trying to drive the phone for #53. `wails3` routes runtime
+calls through `addJavascriptInterface` on Android, not through
+`/wails/runtime` — the WebView cannot deliver a `fetch()` POST body to
+`shouldInterceptRequest`, which the v3 source says in as many words
+(`application_android.go`, "The Android transport"). The runtime
+installs a `customTransport` over `window.wails.invokeAsync(id,
+payload)` and takes the answer on `window._wailsAndroidCallback`.
+
+Two things follow, and both cost time before the source was read:
+
+- **`.playwright/init-events.js` does not transfer to the device.** Its
+  outbound half hooks `fetch`; a POST to `/wails/runtime` answers
+  `Invalid runtime call: missing object value`, which reads like a
+  wrong payload shape and is actually the interceptor receiving a URL
+  with no body at all. The payload shape was right the whole time. Its
+  *inbound* half is still correct, because `dispatchWailsEvent` is the
+  entry point in every mode.
+- **Hooking `fetch` from an `eval` is too late on any platform.** The
+  bundle captured its reference at module scope, so a wrapper installed
+  afterwards records nothing — which is exactly why the harness is an
+  `initScript`. Measured: zero calls captured while the app was
+  demonstrably making them.
+
+The working recipe is in `android-tier.md`; it chains the runtime's own
+callback rather than replacing it, so its pending calls still resolve.
+This is what makes the device a tier that can be *driven*.
+
+## #53's frontend is byte-identical to the build it was reported against (2026-08-20)
+
+`git diff v0.3.1 HEAD -- frontend/src/components/audio-player/seekbar/
+frontend/src/store/player-store.ts` is **empty**; the whole diff in that
+area is `backend/player/`. The phone carries the released `v0.3.1`, so
+whatever #53 saw, the component was not what changed — and v0.4.0 is
+where the player audit (#122–#127) landed.
+
+Measured on that phone, current `main`, with a synthesised 4-minute
+track: the Now Playing seek bar tracks correctly when mounted
+mid-playback (`seekValue` 28 of 240), when the view is opened before
+playback starts, after a tap on the track, and across an activity
+recreation (same pid, bar resumes at 30 → 35). The issue's stated
+symptom did not reproduce in any of them.
+
+Reverting **only** `backend/player/` to v0.3.1 — the frontend and
+everything else at HEAD — does reproduce a real position defect on the
+same device: six seconds into a 20-second file with no database row,
+played after a 240-second one, the bar read **01:27 of 240**. That is
+#125's stale `trackLengthMs` ("cleared only by UnloadTrack, so a file
+with no row inherited the previous track's duration"), and it is fixed
+at HEAD. Note the *shape* of it: the fraction is roughly right and the
+absolute numbers are wrong, so it presents as a clock that lies rather
+than as a handle that will not move.
+
+The one-line experiment is worth remembering: v0.3.1's `backend/player`
+compiles against HEAD with a single shim
+(`SetPlaybackFinishedHandler` gained a `srcErr error` parameter), which
+makes "did the backend fix cause this" a ten-minute question instead of
+a full checkout.
