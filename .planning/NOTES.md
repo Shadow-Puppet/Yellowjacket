@@ -3761,3 +3761,66 @@ the same run. Reproducing it locally is running the suite twice against
 one `make dev-headless` — which is worth doing for any change that
 leaves state behind, since it is the only place a cross-engine order
 dependency shows up.
+
+## `scrollWidth` counts the left padding and not the right (measured 2026-08-20)
+
+The obvious predicate for "does this flex row fit" is
+`el.scrollWidth <= el.clientWidth`, and on a box with symmetric gutters
+it **under-reports by one gutter**. `scrollWidth` is the extent of the
+scrollable content area, which includes `padding-left` and excludes
+`padding-right`; `clientWidth` includes both. So a child may end up to
+`padding-right` past where content is allowed to go while the box
+reports a perfect fit.
+
+Measured on the top bar (`padding: 0 2em`) at 700x600 with a long-titled
+scan staged: `clientWidth 700`, `scrollWidth 700` — and
+`job-indicator`'s right edge at 700 against a content edge of 668, i.e.
+sitting in the whole right gutter. `#143`'s first fix passed its own
+measurement and left the indicator visibly jammed against the window
+edge.
+
+The predicate `services/top-bar-fit.ts` uses instead is the one its
+spec asserts: no in-flow child's rect outside the parent's *content*
+box, both edges, with half a pixel of slack for fractional flex widths.
+
+This is the same family as #69's title trap — the measurement easiest to
+reach for is the one that cannot see the failure — and it is worth
+knowing before writing the next one of these: **the fit test and the
+assertion that proves it should be the same test.** It was found only
+because `top-bar-fit.spec.ts` measures per child rather than asserting
+on the container, which is exactly why #69 needed
+`header-action-overflow.spec.ts`.
+
+## The top bar's overflow is 11px idle and 262px while working (measured 2026-08-20)
+
+#143 was filed as "11px at 600x600" and re-measured as 171. Both are the
+same defect seen with different jobs running: `job-indicator` is
+`hidden` when idle, ~144px wide showing "Scanning Music", and **235px**
+showing a real library's scan title ("Scanning Music from the external
+drive"), because the label is capped at 12rem and gets there.
+
+Swept against the running app with that job staged, `header.top-bar`
+client vs scroll:
+
+| width | idle | with the long-titled scan |
+|---|---|---|
+| 320, 390, 599 | fits | fits (the phone rules drop the filter and the label) |
+| 600 | 611 | **862** |
+| 700 | fits | 862 |
+| 800 | fits | 862 |
+| 899 | fits | 899 (fits) |
+| 900 | fits | 946 |
+| 1100, 1440 | fits | fits |
+
+Two things worth keeping. The band is **600–610 idle and 600–900 while
+working**, so "a narrow corner" and "the header is crowded from 900
+down" are both true and the difference is entirely what is in flight —
+which is the case a seeded, settled app can never show you. And 899
+fits while 900 does not, because `nav-history` appears at 900: the worst
+width for the header is not the narrowest one, the same way 900 rather
+than 800 is the worst width for the content area.
+
+Staging it is `/__test/emit` with a `JobsChanged` snapshot; a job with
+`state: "running"` never completes, so it stays up until an empty
+snapshot is emitted, which is what makes an idle re-measurement look
+like the fix not working.

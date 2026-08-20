@@ -1520,6 +1520,58 @@ three, *no action is ever unreachable at any supported size*. The bands
 themselves already existed; what was new is that they are a promise and
 that the queue panel is inside it.
 
+**The top bar decides what it can afford, and what it gives up is never
+an action.** Its five children do not fit at the bottom of the Compact
+band: the bar was 611px inside a 600px viewport idle and **862px while
+a scan ran**, because `job-indicator` is `hidden` when idle and 235px
+wide showing a real library's scan title (#143). So `services/
+top-bar-fit.ts` is `page-header`'s treatment one bar up — a
+ResizeObserver, every pass starting from all-visible, hiding the
+lowest-priority child until it fits.
+
+Five things about it are load-bearing.
+
+**It is measured rather than breakpointed for a reason specific to this
+bar**: three of its five children are as wide as their *content* — the
+library filter is a `<select>` sized by the longest library name, the
+indicator by the running job's title, the search box by its view-scoped
+placeholder — so any width picked is right for one library, one job and
+one view. Swept with a long-titled scan staged, the bar overflowed at
+**every** width from 600 to 899 *and* at 900 where `nav-history`
+appears, while 899 fits; a breakpoint fixing "600 to 610" would have
+fixed whichever case happened to be idle when it was measured.
+
+**What yields is decided by the promise above, which rules out the two
+cheapest answers.** Hiding the library filter takes away an action —
+`library-filter` is the only control in the app that calls
+`setSelectedLibrary` — so it trades this promise for the same promise
+(#148 is the phone already doing that). Collapsing the search box to an
+icon is what #57 wants and #57 is blocked behind #62, so building it
+here is building it without the thing that blocks it. The two that
+yield are the two that are **not** actions: the wordmark, which the
+window's own title bar repeats and which #48 wants down to "YJ" at
+every width anyway, and then the job indicator's *label*, leaving the
+ring — which is not a new judgement, since the component already drops
+it below 600px and its `sr-only` live region is what announces the
+state either way.
+
+**The wordmark yields its width, not its existence.** The collapsed
+rule is visually-hidden rather than `display: none`, because that `h1`
+is the document's top-level heading as well as the brand.
+
+**"Fits" is the children against the content box, and `scrollWidth`
+cannot express it.** `scrollWidth` counts a box's left padding and not
+its right, so with 2em gutters it under-reports by 32px: the first fix
+read `700/700` — a perfect fit — with the indicator sitting in the
+whole right gutter. Same family as #69's title trap, and found only
+because `top-bar-fit.spec.ts` measures **per child**, which is what
+`layout-overflow.spec.ts` cannot do and why that spec was green
+throughout the defect.
+
+And **the bar does not resize when a job starts**, which is the case the
+whole thing is for — a ResizeObserver on the header alone never fires,
+so every element child is observed too.
+
 **900 is the worst desktop width, not the 800×600 minimum.** The
 sidebar collapses to icons *below* 900, so the main panel is 843px at
 899 and 700px at 900 — the narrowest content area any desktop width
