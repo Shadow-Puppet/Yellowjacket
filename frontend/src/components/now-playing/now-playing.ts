@@ -188,6 +188,27 @@ export class NowPlaying extends LitElement {
         cursor: pointer;
         /* The art shows through; this is a target, not a picture. */
         color: transparent;
+        /* **Above the art, or it is not a target at all** (#150).
+
+           This button is absolutely positioned with z-index auto and
+           the art is a *later* sibling, so the two tie on paint order
+           and the later one wins. With an <img> that costs nothing --
+           an image is not a hit-test obstacle here -- but a track with
+           no artwork renders a placeholder wa-icon, which is, and it
+           takes every click aimed at the button underneath it.
+
+           The failure is therefore per *track*, not per build: on a
+           phone the only way into the full-screen now-playing view
+           stopped working whenever the current song had no cover.
+           Measured with elementFromPoint at the button's centre --
+           wa-icon with a placeholder, button.expand with an image, and
+           button.expand either way once this line exists.
+
+           z-index rather than pointer-events: none on the art, which
+           would take the cover preview's mouseenter with it; and
+           rather than reordering the DOM, which would leave the same
+           tie to be won by the same accident in the other direction. */
+        z-index: 1;
       }
 
       .expand:focus-visible {
