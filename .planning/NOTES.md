@@ -3751,3 +3751,13 @@ class names into every ancestor query.
 It also only appears in a suite that has *done* something — the
 sections are empty on a fresh app, so this cannot be reproduced by
 opening Settings and looking.
+
+**And it appears on the second engine, not the first.** CI runs
+chromium then webkit against **one app**, so a spec that scans in the
+chromium pass leaves a finished job the webkit pass then trips over.
+Three specs used that selector; two failed locally and the third
+(`failure-voice.spec.ts`) was green on chromium and red on webkit in
+the same run. Reproducing it locally is running the suite twice against
+one `make dev-headless` — which is worth doing for any change that
+leaves state behind, since it is the only place a cross-engine order
+dependency shows up.
