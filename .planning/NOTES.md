@@ -3891,3 +3891,40 @@ scan takes a minute and is worth running before demoting anybody's links
 — `explore-album-details`'s tracklist (number / title / artist /
 duration) is the one that plausibly *is* mostly link, and is the one
 #5 is about to add selection to.
+
+## A layout is still moving when a guard says it has arrived (measured 2026-08-20)
+
+`album-dropdown.spec.ts` failed with `Expected 80, Received 10` twice
+over two sessions, and #133 already strengthened its guard from
+"scrollable at all" to "has at least the range the assertion needs".
+That was necessary and could not be sufficient, and the reason is
+structural rather than a matter of thresholds: **a guard and the write
+it guards are separate CDP round trips**, so the page is free to
+re-lay-out between them. Polling harder cannot close a window between
+two moments; only removing the window can.
+
+Measured directly, sampling `scrollHeight - clientHeight` on
+`.grid-scroll-container` every frame across a 1440x900 → 900x600 resize,
+three runs:
+
+| t (ms) | range |
+|---|---|
+| 0 | 0 |
+| 1 | **88** |
+| 8–14 | 330 (settled) |
+
+88 satisfies a guard asking for 80 and is not the settled value, so the
+guard can pass while the grid is one layout pass from done. Under
+full-suite load the transient is worse — the observed failure had 10 —
+which is why it shows up on the second run of a suite and not in ten
+consecutive runs of the file alone (0/10 both before and after the fix).
+
+The shape to write instead: **one page-side call that performs the
+action and returns what it observes**, with `expect.poll` retrying
+*that*. `scrollTo()` sets `scrollTop` and returns `scrollTop`, so the
+assertion is about what the grid did rather than about what it was
+ready to do. `layout-overflow.spec.ts`'s sidebar probe already had the
+fused half and was missing the retry; it has both now.
+
+Worth generalising: a spec that resizes and then measures is asserting
+about a moving target for the next dozen frames. Fuse, then poll.

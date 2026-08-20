@@ -110,27 +110,30 @@ test.describe('the album dropdown', () => {
     await app.setViewportSize({ width: 900, height: 600 });
 
     try {
-      // Wait for the range the assertion below actually needs, not for
-      // "scrollable at all" (#133). The guard used to be
-      // `scrollHeight > clientHeight + 40` while the next line asks to
-      // reach 80, so any range in 41-79 satisfied it and could not
-      // satisfy the assertion — and the grid passes through exactly
-      // that while it settles, because it recomputes its columns after
-      // the resize rather than during it. The settled range here is
-      // 330, so this waits rather than weakening anything.
+      // The container has to be a scroller at all, which is the thing
+      // the defect behind this spec broke and is a property rather
+      // than a moment.
       await expect
         .poll(() => scrollRange(app))
-        .toMatchObject({ room: true, overflowY: 'auto' });
+        .toMatchObject({ overflowY: 'auto' });
 
-      await app.evaluate((target) => {
-        const sc = document
-          .querySelector('cover-grid')
-          ?.shadowRoot?.querySelector('.grid-scroll-container');
-
-        if (sc) sc.scrollTop = target;
-      }, SCROLL_TARGET);
-
-      expect(await scrollTop(app)).toBe(SCROLL_TARGET);
+      // **Scrolling it and reading it back are one round trip** (#151).
+      //
+      // #133 made the guard ask for the range this needs rather than
+      // for "scrollable at all", which was necessary and is not
+      // sufficient: a guard and the write it guards are separate
+      // `evaluate` calls, so the grid can satisfy the range and settle
+      // out of it before the write lands. It still does — observed as
+      // `Expected 80, Received 10` in the second of three consecutive
+      // full-suite runs, with the spec green alone on the same app
+      // straight afterwards.
+      //
+      // Polling harder cannot close a window between two moments; only
+      // removing the window can. So the probe sets `scrollTop` and
+      // returns what it reads back, in one page-side call, and the
+      // poll retries *that* — which also means the assertion is about
+      // what the grid did rather than about what it was ready to do.
+      await expect.poll(() => scrollTo(app, SCROLL_TARGET)).toBe(SCROLL_TARGET);
 
       // And the dropdown it opens is on screen, wherever the manager
       // decides that leaves the scroll. It is *not* "the position is
@@ -261,7 +264,7 @@ async function closeDropdown(app: Page): Promise<void> {
   });
 }
 
-/** Whether the grid can scroll at all, which decides if a probe can move. */
+/** Whether the grid is a scroller at all, which is what the bug broke. */
 async function scrollRange(app: Page) {
   return app.evaluate((target) => {
     const sc = document
@@ -269,22 +272,37 @@ async function scrollRange(app: Page) {
       ?.shadowRoot?.querySelector('.grid-scroll-container');
 
     return {
-      // `room` is the precondition of the assertion that follows it:
-      // enough range to actually reach the target. A threshold below
-      // what the caller depends on is not a guard.
+      // Reported for the failure message rather than waited on: `room`
+      // was the guard #133 strengthened, and #151 is that a guard in
+      // its own round trip cannot speak for the write in the next one.
+      // `scrollTo` below is the assertion now; this says *why* it did
+      // not reach the target when it does not.
       room: !!sc && sc.scrollHeight - sc.clientHeight >= target,
       overflowY: sc ? getComputedStyle(sc).overflowY : '',
     };
   }, SCROLL_TARGET);
 }
 
-async function scrollTop(app: Page): Promise<number> {
-  return app.evaluate(
-    () =>
-      document
-        .querySelector('cover-grid')
-        ?.shadowRoot?.querySelector('.grid-scroll-container')?.scrollTop ?? -1,
-  );
+/**
+ * Scroll the grid and report where it actually landed, in one call.
+ *
+ * The whole point is that the set and the read share a moment: a
+ * `scrollTop` write is clamped to the range *at the instant it lands*,
+ * so reading it back in a second round trip asks a container that may
+ * have re-laid out in between.
+ */
+async function scrollTo(app: Page, target: number): Promise<number> {
+  return app.evaluate((to) => {
+    const sc = document
+      .querySelector('cover-grid')
+      ?.shadowRoot?.querySelector('.grid-scroll-container');
+
+    if (!sc) return -1;
+
+    sc.scrollTop = to;
+
+    return sc.scrollTop;
+  }, target);
 }
 
 /** Whether the open dropdown is inside the scroll container's viewport. */

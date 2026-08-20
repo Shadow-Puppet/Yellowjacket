@@ -132,22 +132,34 @@ test.describe('the app fits in its own window', () => {
     // be dragged here, but a scaled display or a large system font can
     // still land the layout in it, and clipping the nav with no scroll
     // is the failure that made Settings unreachable.
-    const reachable = await app.locator('app-sidebar').evaluate((el) => {
-      const settings = el.shadowRoot?.querySelector<HTMLElement>(
-        '[data-testid="nav-settings"]',
-      );
+    //
+    // The scroll and the measurement share one `evaluate` — #151's
+    // rule, which this already had — and the whole probe is polled,
+    // which it did not: a viewport change settles asynchronously, so a
+    // single attempt reads whatever the sidebar happened to be doing.
+    // The probe is safe to repeat because scrolling to the bottom twice
+    // is scrolling to the bottom.
+    await expect
+      .poll(() =>
+        app.locator('app-sidebar').evaluate((el) => {
+          const settings = el.shadowRoot?.querySelector<HTMLElement>(
+            '[data-testid="nav-settings"]',
+          );
 
-      if (!settings) return null;
+          if (!settings) return null;
 
-      el.scrollTop = el.scrollHeight;
+          el.scrollTop = el.scrollHeight;
 
-      const item = settings.getBoundingClientRect();
-      const pane = el.getBoundingClientRect();
+          const item = settings.getBoundingClientRect();
+          const pane = el.getBoundingClientRect();
 
-      return item.bottom <= Math.ceil(pane.bottom) && item.top >= Math.floor(pane.top);
-    });
-
-    expect(reachable).toBe(true);
+          return (
+            item.bottom <= Math.ceil(pane.bottom) &&
+            item.top >= Math.floor(pane.top)
+          );
+        }),
+      )
+      .toBe(true);
   });
 });
 
