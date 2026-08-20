@@ -194,9 +194,13 @@ like the app's fault and none is:
 |---|---|---|
 | x86_64 | modernc's raw `lstat` vs seccomp | SIGSYS, syscall 6 |
 | arm64, translated | Go reads `ID_AA64ISAR0_EL1` | SIGILL |
-| arm64, real device | — | unverified, still |
+| arm64, real device | **runs** (2026-08-20) | — |
 
-**A physical arm64 device remains the only verification path.**
+**A physical arm64 device remains the only verification path**, and it
+has now been walked: a Light Phone III (TLP301, Android 14 / SDK 34,
+arm64-v8a, WebView Chrome 113 at 424x439). The app builds, installs,
+launches and stays up; `make android-smoke SECONDS=60` passes on it.
+What that run *found* is the lifecycle fault below.
 
 ### What was fixed to get here
 
@@ -209,6 +213,11 @@ build-tag-free API that returns `""` on desktop, where the setter is a
 no-op. `backend/system` gained no import of the Wails application
 package, which matters for the same reason `backend/events` is split by
 the `indexbuild` tag.
+
+**And `main()` is now latched to one run per process** (#52). That is
+the second `os.Exit(1)` in this file's history and it had the same
+signature as the first, which is the argument for #160: both were named
+exactly by an `slog` line that went to `/dev/null`.
 
 ### What is still not done
 
@@ -249,10 +258,20 @@ one.
 `build/android/Taskfile.yml` ships more than the Makefile wraps, and
 they are the right thing to reach for when you want something one-off:
 
+> **Do not run `android:run:device` or `android:deploy-device`
+> against a device that has the released app on it (#159).** Both begin
+> with `adb uninstall {{.APP_ID}}`, and `APP_ID` defaults to
+> `app.yellowjacket` — the **release** id — while `run:device` builds
+> the **debug** variant, whose id is `app.yellowjacket.dev`. So it
+> uninstalls the user's app, taking the library with it, installs a
+> different package, and then fails to launch the one it removed. This
+> is "the identity is declared twice" (below) cashing out. The safe
+> sequence is at the end of this section.
+
 ```
 wails3 task android:run              # debug build + emulator install + launch
-wails3 task android:run:device       # same, first connected physical device
-wails3 task android:deploy-device    # production APK to a device
+wails3 task android:run:device       # UNSAFE, see #159
+wails3 task android:deploy-device    # UNSAFE, see #159
 wails3 task android:bundle:fat       # AAB, for a Play Store upload
 wails3 task android:studio           # open build/android/ in Android Studio
 wails3 task android:device:list
@@ -287,6 +306,19 @@ resolves the leading dot against the *applicationId* and fails with a
 class-not-found that reads like a broken build. Always the
 fully-qualified form.
 
+**The safe way to put a debug build on a real device**, which is what
+#52 used and what #159 exists to make unnecessary:
+
+```bash
+wails3 task android:build ARCH=arm64 && wails3 task android:assemble:apk
+adb install -r bin/yellowjacket.apk      # -r, never uninstall
+adb shell am start -n app.yellowjacket.dev/com.wails.app.MainActivity
+```
+
+`YJ_ANDROID_PKG=app.yellowjacket.dev` points `scripts/android-emulator.sh`
+— and therefore `make android-smoke`, `android-logs`, `android-launch`
+— at the debug id, which is otherwise `app.yellowjacket`.
+
 ## What only a device can answer
 
 The emulator cannot run this app (three separate reasons, none of them
@@ -310,6 +342,91 @@ So when asking for a device run, ask about what the platform *adds* —
 system bars, the back gesture, focus and audio interruptions,
 permission dialogs, the keyboard — not about what the app draws. The
 drawing is what the other five tiers already cover.
+
+**The third such fault was the activity lifecycle** (#52), and it is
+the one to re-check after touching `main()`, `WailsBridge` or
+`MainActivity`. Android destroys and recreates an activity **without
+restarting the process**, and Wails' `nativeInit` — which
+`MainActivity.onCreate` calls — runs `go mainFunc()` every time. So
+Go's `main()` ran again on a live app, `app.Run()` refused (`a.starting`
+is still true behind Android's `select{}`), and the `os.Exit(1)` under
+it took the healthy first app down with it.
+
+### The lifecycle check, and how to trigger it on demand
+
+This is the regression guard for #52 on this tier, because no other
+tier runs `main()` on Android at all. The Go-side guard
+(`TestMainClaimsBeforeItDoesAnything`) catches work creeping above the
+latch; only the device catches the latch not working.
+
+**Trigger a relaunch with a configuration change the manifest does not
+declare.** `AndroidManifest.xml` lists
+`orientation|screenSize|keyboardHidden|uiMode`, so those are handled
+in-place and are *not* triggers. `fontScale` is not listed, and it is a
+one-liner:
+
+```bash
+adb shell settings put system font_scale 1.15   # restore the old value after
+```
+
+That is the same in-process destroy/recreate that "Don't keep
+activities", a locale change and a memory trim produce, but on demand.
+
+**"Don't keep activities" is the report's own lever and did not work on
+this device**: `settings put global always_finish_activities 1` reads
+back as `1`, `am set-always-finish-activities` does not exist on this
+build, and the activity was never finished on backgrounding. Do not
+spend an afternoon on it; use the config change.
+
+**The assertion is the pid, and the tell is two bridge inits in one.**
+
+```bash
+adb logcat -d | grep -E "Wails bridge initialized|has died|finishDrawing of relaunch"
+```
+
+Healthy is one pid appearing twice — the process surviving the
+recreation:
+
+```
+I/WailsBridge(28420): Wails bridge initialized
+I/WailsBridge(28420): Wails bridge initialized     <- same pid, recreated
+```
+
+Broken is that pair followed within a second by:
+
+```
+I/WindowManager: finishDrawing of relaunch: Window{...MainActivity} 603ms
+I/ActivityManager: Process app.yellowjacket.dev (pid 22956) has died: fg  TOP
+W/ActivityTaskManager: Force removing ActivityRecord{...}: app died, no saved state
+```
+
+Two things about reading that. **`has died: fg  TOP` is not a memory
+kill** — the system does not reclaim the foreground process, so this is
+the app leaving of its own accord. And there is **no crash record
+anywhere**: `logcat -b crash` is empty, no `AndroidRuntime`, no
+`libc: Fatal signal`, no tombstone. That is the `os.Exit` signature,
+and it is why "the system killed it" is the wrong first hypothesis.
+
+**Surviving is only half of it — check the recreated WebView is still
+wired to the running app.** A plausible-looking fix (making
+`WailsBridge.initialized` static, so the second `nativeInit` is skipped)
+keeps the process alive and silently breaks this, because `nativeInit`
+is also what re-points the JNI reference at the new bridge. Go would go
+on executing JavaScript against the destroyed activity's WebView: the
+app opens, renders, and never receives another backend event.
+
+Ask the page, after a relaunch and a resume:
+
+```bash
+make android-inspect
+make android-eval EXPR='(()=>{window.__probe=[];const o=window._wails.dispatchWailsEvent.bind(window._wails);window._wails.dispatchWailsEvent=(e)=>{window.__probe.push(e&&e.name);return o(e)};return "ok"})()'
+# background and foreground the app, then:
+make android-eval EXPR='JSON.stringify(window.__probe)'
+```
+
+A healthy build answers with events from the live services —
+`["IndexStatusChanged","JobsChanged","JobsChanged","android:storageAccess"]`.
+`[]` means the bridge reference is stale.
 
 ## Asking the device, not just looking at it
 
