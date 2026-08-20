@@ -3928,3 +3928,36 @@ fused half and was missing the retry; it has both now.
 
 Worth generalising: a spec that resizes and then measures is asserting
 about a moving target for the next dozen frames. Fuse, then poll.
+
+## "The first N tracks" is not a way to ask for an ordinary one (2026-08-20)
+
+`queue-selection.spec.ts` staged its queue from the first few rows of
+`library.Library.GetTracks(0)` and clicked a track *name*, which
+`explore-link` routes to that track's **album** page. Four tracks in the
+fixture library have no album at all — `01 Tone A`, `02 Tone B`,
+`Title Only`, `no-tags-at-all` — and a name with nothing to route to
+renders as **plain text**, not as a link.
+
+Two things follow, and the second is the sharper one.
+
+**The order is the scan's.** `GetTracks` returns `audio_files.id` order,
+i.e. the order the scan inserted rows, which depends on concurrency and
+directory traversal. Locally the first eight are all from two proper
+albums, so the spec passed twice over; CI rebuilds its seed with a real
+scan, got a different eight, and failed on both engines. This is the
+same family as "a seed freezes every default it has already persisted" —
+the fixture library is not a list, it is a *set* with an incidental
+order, and no spec should depend on that order.
+
+**A loose locator hid it.** The row was located with
+`.locator('.explore-link').first()`, and a row has two — the title and
+the artist. When the title is plain text, `first()` silently resolves to
+the **artist** link, so the click went somewhere real and the assertion
+was about a destination the test had not exercised. `.track-title
+.explore-link` is the locator that says which one it means; the loose
+one turned a fixture problem into a mystery.
+
+The general rule for this repo's fixture library: it is deliberately
+full of edge cases (untagged, unicode, duplicates, extremes), so a spec
+that wants an *ordinary* track has to **say so** — filter on the
+property it depends on rather than slicing.
