@@ -4302,3 +4302,51 @@ compiles against HEAD with a single shim
 (`SetPlaybackFinishedHandler` gained a `srcErr error` parameter), which
 makes "did the backend fix cause this" a ten-minute question instead of
 a full checkout.
+
+## An overlay band is not a notification, it is a lid (measured 2026-08-20)
+
+#62 asks for background jobs to become "a notification" on the phone,
+and the app has exactly one notification surface, so the first version
+of the fix put `<job-panel>` in `notification-host`'s band — which is
+`position: fixed` under the header. It renders correctly, it is on top,
+it is inside the viewport, and it is unusable.
+
+At the device's 424x439 viewport a **compact** panel showing two active
+jobs is ~216px — half the screen — drawn over the content, with
+`pointer-events: auto` so it swallows every tap underneath. Nothing in
+the component tier could see it. The e2e suite could: four specs failed,
+and *none* of them was about jobs — two `phone-shell` journeys into the
+full-screen Now Playing and `header-action-overflow`'s phone case, all
+three because the band was intercepting taps meant for the app.
+
+`<job-band>` is in the shell's grid instead, as a row between the top
+bar and the main panel, so it **pushes**. That is #24's one sentence
+("no action is ever unreachable at any supported size") deciding a
+layout question: a band that hides the app in order to say the app is
+busy has traded the popover's fault for a worse one.
+
+Two things fell out of it worth keeping:
+
+- **A finished row in flow is furniture.** The overlay could afford to
+  keep terminal jobs around; a row that holds the content down after
+  the work is done cannot. `job-panel` grew `active-only` for the band,
+  and Settings keeps finished rows because that is where "did the last
+  scan work" is asked.
+- **`job-row` already had the right density.** `variant="compact"` is
+  described in its own source as "the popover density", which is
+  exactly what the band is replacing — 216px against 259px for the
+  same two jobs, and no per-job statistics that a phone has no room
+  for.
+
+## The e2e suite is the tier that sees a shell regression (2026-08-20)
+
+Worth stating because it decided how #62 was verified. The change is
+one component, one stylesheet and one line of `index.html`; `make
+ui-test` (955 tests) passed on the broken overlay version and so did
+`tsc`, `lint` and the whole Go suite. The failure was three specs that
+have nothing to do with jobs, failing on `click()` timeouts.
+
+The corollary for anything that draws over the shell: **run the whole
+e2e suite, not the spec you wrote.** A spec written for a feature
+asserts the feature works; what a new overlay breaks is everything
+else, and only the suite is looking at that.

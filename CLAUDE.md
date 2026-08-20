@@ -593,11 +593,38 @@ rather than renaming them.
   `ClearFinishedJobs` is global — a Clear under Libraries would discard
   the index build's history too; a finished row dismisses itself.
 
-  The header `job-indicator` is untouched and is still the one view of
-  everything at once, from every page. One consequence worth knowing
-  before writing a spec: a section holding a `job-panel` also holds a
-  `job-details-drawer`, whose own header carries `.header` — so
+  The header `job-indicator` is still the one view of everything at
+  once, from every page — **on a desktop.** One consequence worth
+  knowing before writing a spec: a section holding a `job-panel` also
+  holds a `job-details-drawer`, whose own header carries `.header` — so
   `config-section .header` is ambiguous the moment a job exists.
+
+  **Below 600px that indicator stands down and `<job-band>` takes
+  over** (#62), because a popover is a *disclosure* and background work
+  is the one thing a phone should not make you open something to see —
+  and because #57 deletes the bar it is anchored to and is blocked on
+  it having somewhere else to live. The band is the same `job-panel`,
+  so `applyJobControl` and its index-build confirmation come along
+  rather than being reimplemented; `kinds="*"` is how it says "every
+  kind", which is what the indicator was for.
+
+  Three things about it are load-bearing. **It is in the layout, not
+  over it**, as its own grid row above the main panel: the first
+  version put it in `notification-host`'s fixed band, which reads fine
+  in a screenshot and is unusable — at 424×439 a compact panel is
+  ~200px of a 439px screen and it *covers* what is under it, which four
+  e2e specs caught by failing on taps it was intercepting. **It shows
+  active work only** (`active-only`), because in flow a finished row is
+  furniture that keeps the content pushed down after the work is done;
+  finished rows stay where the work was started, which is #27's rule.
+  And **it renders nothing above 600px**, from `matchMedia` rather than
+  a media query, because that decides whether the element *exists* —
+  Settings already holds four `job-panel`s and a fifth answering for
+  every kind is `bottom-nav`'s "resolved to 2 elements" trap again.
+  `index.css` keeps it `display: none` outside the phone for a second
+  reason: an in-flow grid child with no named area is auto-placed into
+  one of the shell's rows, which is what the skip link is absolutely
+  positioned to avoid.
 - `config` — TOML-based settings. Settings page uses HTMX + templ for server-rendered HTML fragments.
 - `playlist` / `smartplaylist` — Playlist CRUD and rule-based smart playlists.
 - `mediacontrols` — OS media controls behind one `Handler`: MPRIS over
