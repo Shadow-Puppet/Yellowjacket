@@ -22,6 +22,24 @@ export class SeekBar extends LitElement {
   @state()
   private seekValue: number = 0;
 
+  /**
+   * Whether the user is dragging the thumb right now.
+   *
+   * It is `@state` rather than a plain field because `updated()` owns
+   * the interval and only reactive state brings `updated()` round.  A
+   * bare `stopProgress()` in the input handler mutated nothing, so
+   * nothing re-rendered, so the tail of `updated()` that restarts the
+   * interval never ran — and the only things that could restart it
+   * were a `change` event or the next backend report.  Any `input`
+   * without a committed `change` therefore froze the interpolation:
+   * a drag cancelled outside the element, a pointer taken by a scroll,
+   * or a touch on the track treated as a scrub, which on a phone are
+   * ordinary gestures.  While playing, the 1 Hz report papered over it
+   * within a second; with reports not arriving it was permanent.
+   */
+  @state()
+  private dragging: boolean = false;
+
   /** Whether the right-hand clock shows time remaining or total. */
   @state()
   private showRemaining: boolean = true;
@@ -133,6 +151,7 @@ export class SeekBar extends LitElement {
   override disconnectedCallback() {
     super.disconnectedCallback();
     this.stopProgress();
+    this.endDrag();
   }
 
   override updated() {
@@ -154,18 +173,33 @@ export class SeekBar extends LitElement {
     // A report for a track that is no longer loaded is stale by
     // definition: the change id is the only thing that distinguishes
     // it, since the same file can play twice in a row.
+    //
+    // A report arriving mid-drag is deliberately *not* applied: the
+    // thumb belongs to the finger on it, and adopting a report once a
+    // second pulls it back out from under them.  The seq is left
+    // unrecorded too, so the first report after the drag still counts
+    // as fresh.
     const position = this.player.position;
     const forThisTrack =
       position !== null && position.trackChangeId === currentChangeId;
 
-    if (position && forThisTrack && position.seq !== this.previousPositionSeq) {
+    if (
+      position &&
+      forThisTrack &&
+      !this.dragging &&
+      position.seq !== this.previousPositionSeq
+    ) {
       this.previousPositionSeq = position.seq;
       this.seekValue = position.positionSeconds;
       this.stopProgress();
     }
 
-    // Start/stop progress interval based on playback state
-    if (this.isPlaying && this.hasTrack) {
+    // One owner for the interval, and this is it.  Every other place
+    // that wants it started or stopped says so by changing state that
+    // brings us back here, so the timer cannot be left running by a
+    // path that forgot to stop it or stopped by a path that forgot to
+    // start it again.
+    if (this.isPlaying && this.hasTrack && !this.dragging) {
       this.startProgress();
     } else {
       this.stopProgress();
@@ -210,18 +244,48 @@ export class SeekBar extends LitElement {
 
   private handleChange(e: Event) {
     const newSeekVal = (e.target as WaSlider).value;
+    this.endDrag();
     this.setSeekValue(newSeekVal);
     this.player.seek(newSeekVal);
+  }
 
-    if (this.isPlaying) {
-      this.startProgress();
+  /**
+   * The user is moving the thumb.
+   *
+   * This only records that fact; `updated()` decides what it means for
+   * the interval.  `seekValue` follows the slider so the clocks track
+   * the thumb during the drag rather than jumping when it is released.
+   */
+  private handleInput(e: Event) {
+    this.setSeekValue((e.target as WaSlider).value);
+
+    if (this.dragging) {
+      return;
     }
+
+    this.dragging = true;
+
+    // A drag that never commits must not strand the flag, or this fix
+    // turns a stall of up to one second into a permanent one -- which
+    // is the failure it exists to remove.  `change` is the ordinary
+    // end; these are the ones that are not, and they are on the
+    // document because the pointer is routinely released outside the
+    // element it started in.  A drag's listeners belong to the drag,
+    // so they go on with it and come off with it.
+    document.addEventListener('pointerup', this.endDrag);
+    document.addEventListener('pointercancel', this.endDrag);
+    document.addEventListener('touchend', this.endDrag);
+    document.addEventListener('touchcancel', this.endDrag);
   }
 
-  // Stops progress while user is dragging the thumb
-  private handleInput() {
-    this.stopProgress();
-  }
+  private endDrag = () => {
+    document.removeEventListener('pointerup', this.endDrag);
+    document.removeEventListener('pointercancel', this.endDrag);
+    document.removeEventListener('touchend', this.endDrag);
+    document.removeEventListener('touchcancel', this.endDrag);
+
+    this.dragging = false;
+  };
 
   private setSeekValue(val: number) {
     if (val < 0) val = 0;

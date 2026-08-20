@@ -397,6 +397,111 @@ describe('<seek-bar>', () => {
     expect(lastArgs('player.Player.Seek')).toEqual([42]);
   });
 
+  // #164.  `handleInput` used to call `stopProgress()` and mutate no
+  // reactive state, so Lit scheduled no update, `updated()` never ran,
+  // and the tail of `updated()` that restarts the interval never
+  // executed.  Only a `change` or the next backend report could bring
+  // it back -- so an `input` that never commits froze the clock, which
+  // on a touch device is an ordinary cancelled gesture.  With no
+  // reports arriving, that is permanent.
+  it('keeps ticking after a drag that never commits', async () => {
+    vi.useFakeTimers();
+
+    const el = await fixture('seek-bar');
+
+    emit(Events.TrackChanged, TRACK);
+    emit(Events.PlaybackStateChanged, { state: 'playing' });
+    await vi.advanceTimersByTimeAsync(2000);
+    await el.updateComplete;
+
+    // A touch lands on the track and is then cancelled: `input`, and
+    // no `change` ever follows.
+    const slider = shadow<HTMLElement & { value: number }>(el, 'wa-slider');
+
+    if (slider) slider.value = 20;
+
+    slider?.dispatchEvent(new Event('input'));
+    await el.updateComplete;
+
+    document.dispatchEvent(new Event('pointerup'));
+    await vi.advanceTimersByTimeAsync(0);
+    await el.updateComplete;
+
+    await vi.advanceTimersByTimeAsync(3000);
+    await el.updateComplete;
+
+    expect(text(el, '[data-testid="elapsed-time"]')).toBe('00:23');
+  });
+
+  // The other half of the same fix: while the thumb is held, a report
+  // arriving once a second used to overwrite `seekValue` and pull it
+  // back out from under the finger.
+  it('leaves the thumb where the finger is while a drag is live', async () => {
+    vi.useFakeTimers();
+
+    const el = await fixture('seek-bar');
+
+    emit(Events.TrackChanged, { ...TRACK, trackChangeId: 20 });
+    emit(Events.PlaybackStateChanged, { state: 'playing' });
+    await vi.advanceTimersByTimeAsync(0);
+    await el.updateComplete;
+
+    const slider = shadow<HTMLElement & { value: number }>(el, 'wa-slider');
+
+    if (slider) slider.value = 60;
+
+    slider?.dispatchEvent(new Event('input'));
+    await el.updateComplete;
+
+    emit(Events.PlaybackPositionChanged, {
+      positionSeconds: 4,
+      trackLength: 90,
+      trackChangeId: 20,
+      seq: 7,
+      playing: true,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    await el.updateComplete;
+
+    expect(text(el, '[data-testid="elapsed-time"]')).toBe('01:00');
+  });
+
+  // And the drag must not hold the interval hostage once it ends: the
+  // report that was skipped mid-drag is not recorded as seen, so the
+  // next one is still fresh and is applied.
+  it('takes the backend back as the authority once the drag commits', async () => {
+    vi.useFakeTimers();
+
+    const el = await fixture('seek-bar');
+
+    emit(Events.TrackChanged, { ...TRACK, trackChangeId: 21 });
+    emit(Events.PlaybackStateChanged, { state: 'playing' });
+    await vi.advanceTimersByTimeAsync(0);
+    await el.updateComplete;
+
+    const slider = shadow<HTMLElement & { value: number }>(el, 'wa-slider');
+
+    if (slider) slider.value = 60;
+
+    slider?.dispatchEvent(new Event('input'));
+    await el.updateComplete;
+
+    slider?.dispatchEvent(new Event('change'));
+    await el.updateComplete;
+
+    emit(Events.PlaybackPositionChanged, {
+      positionSeconds: 61,
+      trackLength: 90,
+      trackChangeId: 21,
+      seq: 9,
+      playing: true,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    await el.updateComplete;
+
+    expect(text(el, '[data-testid="elapsed-time"]')).toBe('01:01');
+  });
+
   it('bounds the slider by the track length', async () => {
     const el = await fixture('seek-bar');
 
