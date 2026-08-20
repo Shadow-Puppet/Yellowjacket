@@ -4029,3 +4029,51 @@ The spec that pins this is two assertions, not one, and that split is
 deliberate: an uncapped build is *perfectly centred* and fails only the
 seek-bar width, so a spec asserting centring alone would have passed
 the regression.
+
+## The phone's way into Now Playing was under the artwork (measured 2026-08-20)
+
+`phone-shell.spec.ts`'s "opens the full-screen now playing" failed in CI
+on both engines, three times across two branches that could not have
+caused it, and passed on re-run each time. It was filed as a flake
+(#150). It is not one: **it depends on which track is playing.**
+
+`.expand` — the phone's only route into `<now-playing-view>` — is
+`position: absolute; inset: 0` inside `.cover-art-wrapper`, and
+`.cover-art` is a **later sibling**. Both have `z-index: auto`, so they
+tie on paint order and the later one wins. With an `<img>` that costs
+nothing; with no artwork the placeholder `wa-icon` renders and takes
+every click aimed at the button underneath it.
+
+Measured at 390px with `elementFromPoint` at the button's centre:
+
+| playing track | hit test |
+|---|---|
+| has artwork | `button.expand` |
+| no artwork | **`wa-icon`** |
+| no artwork, with `z-index: 1` | `button.expand` |
+
+So on a phone, the only way into the full-screen player stopped working
+whenever the current song had no cover — and this has nothing to do with
+the fixture: any library has untagged files.
+
+Three things worth keeping.
+
+**"Flaky in CI" was the wrong diagnosis and it cost three cycles.** The
+spec starts the *first* row of the track list, so which track it plays
+is the order the scan inserted rows in — the same root cause as #156,
+one spec over. A test whose subject is a hit test has to *choose* the
+case that breaks it.
+
+**The first two hypotheses were both wrong, and both were plausible.**
+A custom element's upgrade replacing its own contents, and the cover
+preview's `mouseenter` opening a popup under the pointer. Neither
+survived contact with `elementFromPoint`, which took a minute and would
+have saved the other two cycles.
+
+**And the spec that pins it needs the 90-second track**, because a
+2-second one finishes before the assertions run — the trap
+`fixtures.ts` already documents. Note the filter that does *not* work:
+`library.Track.CoverArt` is empty for all 31 fixture rows, so "the
+first track with no cover art" selects nothing in particular. The
+placeholder's presence is asserted instead, which is the property the
+test actually depends on.
