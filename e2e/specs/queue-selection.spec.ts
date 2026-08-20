@@ -93,10 +93,31 @@ async function queueSixAndOpen(app: Page): Promise<void> {
       'library.Library.GetTracks',
       [0],
       10_000,
-    )) as { FilePath: string; TrackName: string }[];
+    )) as { FilePath: string; TrackName: string; Album: string }[];
 
     const long = tracks.find((t) => t.TrackName === longTitle);
-    const rest = tracks.filter((t) => t.TrackName !== longTitle).slice(0, 5);
+
+    /**
+     * **Tracks that have an album**, which is a requirement of one of
+     * the tests and was previously left to luck (#156).
+     *
+     * `explore-link` routes a track name to its *album's* page, so a
+     * track with no album renders a name that navigates nowhere — and
+     * the fixture library deliberately contains two (`01 Tone A`,
+     * `02 Tone B`). Which tracks arrive first is `audio_files.id`
+     * order, i.e. the order the **scan** inserted them, which depends
+     * on concurrency and directory traversal: locally the first eight
+     * all had albums and the spec passed twice over, and CI rebuilds
+     * its seed with a real scan and got a different eight.
+     *
+     * Asking for what the test needs is the fix. It is not a
+     * narrowing: every assertion here wants an ordinary track, and
+     * "the first five rows" was never a way to ask for one in a
+     * library whose whole purpose is edge cases.
+     */
+    const rest = tracks
+      .filter((t) => t.TrackName !== longTitle && t.Album !== '')
+      .slice(0, 5);
 
     // Index 3 is the long one: far enough down that a shift-extend has
     // room either side of it.
@@ -223,7 +244,14 @@ test.describe('selecting in the queue with a mouse', () => {
       .poll(() => selected(app), { timeout: HIGHLIGHT_MS })
       .toEqual([1]);
 
-    await row(app, 2).locator('.explore-link').first().click();
+    // `.track-title .explore-link`, not `.explore-link` first(): a row
+    // has two, and which one `first()` finds depends on whether the
+    // *title* is a link at all. It is not, for a track with no album —
+    // `explore-link` renders plain text where it cannot route — so the
+    // loose locator silently clicked the **artist** instead and the
+    // assertion below was about a different destination than the one
+    // being exercised (#156).
+    await row(app, 2).locator('.track-title .explore-link').click();
 
     await expect(app.getByTestId('main-content')).toHaveAttribute(
       'data-active-view',
