@@ -104,6 +104,42 @@ p {
     flex: 0 1 320px;
 }
 
+/* What the bar gives up when it does not fit is decided by measuring
+   it (`services/top-bar-fit.ts`, #143). Two rules here are what make
+   that measurement mean anything.
+
+   **Nothing but the search box may shrink.** `scrollWidth` reports a
+   perfect fit while a child quietly truncates -- #69's trap, one
+   component over -- and the indicator's label is `text-overflow:
+   ellipsis`, so it would have absorbed the deficit and hidden it. The
+   search box is exempt because it shrinks between its 320px basis and
+   the 200px floor its own stylesheet sets, and a narrower input hides
+   nothing it was showing. */
+.top-bar hgroup,
+.top-bar library-filter,
+.top-bar job-indicator {
+    flex-shrink: 0;
+}
+
+/* **The wordmark yields its width, not its existence.** It is the
+   app's top-level heading as well as its brand, and `display: none`
+   would take a document from one `h1` to none at exactly the widths
+   where the view's own header is the only thing left saying where you
+   are. This is `styles/sr-only.css.ts`'s recipe, written out because
+   that one is a `CSSResult` for shadow roots and this is the light
+   DOM. */
+.top-bar hgroup.yj-collapsed {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+}
+
 /* The bar is `justify-content: space-between`, which with four children
    spreads them evenly and left back/forward floating in the middle of
    nothing. Collecting the free space *after* this one puts the pair

@@ -54,6 +54,7 @@ import '@store/theme-store';
 import './src/services/keyboard-shortcut-service';
 import { activateView, deactivateView } from '@utils/view-lifecycle';
 import { installLongPressContextMenu } from '@utils/long-press';
+import { installTopBarFit } from './src/services/top-bar-fit';
 import {
     hasTrackPayload,
     getDragPayload,
@@ -72,6 +73,14 @@ registerBundledIcons();
 // in the app rather than per component. Harmless on a desktop: it acts
 // on `pointerType === 'touch'` only.
 installLongPressContextMenu();
+
+// The top bar decides what it can afford to show (#143). Here rather
+// than in a component because the bar is light DOM in index.html and
+// its children are five separate elements; the shell is the only thing
+// that can see all five at once.
+const topBar = document.querySelector<HTMLElement>('header.top-bar');
+
+if (topBar) installTopBarFit(topBar);
 
 // ---------------------------------------------------------------------------
 // View caching navigation system

@@ -33,6 +33,14 @@ const VIEWPORTS = [
   // was missing its own worst case.
   { name: '900×600 (the widest sidebar, so the narrowest content)', width: 900, height: 600 },
   { name: `the minimum (${MIN_VIEWPORT.width}×${MIN_VIEWPORT.height})`, ...MIN_VIEWPORT },
+  // Below the enforced minimum on purpose, and for the reason 700×480
+  // is below it further down: a scaled display or a large system font
+  // lands the layout here without the window ever being dragged there,
+  // and 600 is the last width before the phone layout takes over. The
+  // *narrowest header* is a different question from the narrowest
+  // content area and has a different answer — this one (#143), where
+  // the bar was 611px inside 600 sitting still.
+  { name: '600×600 (the bottom of the Compact band)', width: 600, height: 600 },
 ];
 
 /**
@@ -145,6 +153,12 @@ test.describe('the app fits in its own window', () => {
 
 test.describe('the title block fits its bar', () => {
   test('the hgroup stays inside the 4em top bar', async ({ app }) => {
+    // Stated rather than inherited from whatever ran last. Since #143
+    // the wordmark is visually hidden at widths where the bar cannot
+    // afford it, so a test about its *vertical* fit has to say which
+    // width it is asking about.
+    await app.setViewportSize({ width: 1440, height: 900 });
+
     // The state a11y.29 landed in. The pair is flex-centred and a UA
     // gives an `h1` a 0.67em top margin, so the block measured 67px
     // inside 64 — pre-existing, and invisible until dropping the h3's
@@ -246,16 +260,26 @@ test.describe('the shell reflows rather than hiding what does not fit', () => {
     test(`no scrollbar appears at ${vp.name}`, async ({ app }) => {
       await app.setViewportSize({ width: vp.width, height: vp.height });
 
-      const excess = await app.evaluate(() => {
-        const de = document.documentElement;
+      // Polled, for the reason the track-row test above is: since #143
+      // the top bar's fit is *measured* — a ResizeObserver decides what
+      // it can afford at this width — so a single read taken straight
+      // after the resize races the observer and reports the frame
+      // before it. Read once, this passed alone and failed in the full
+      // suite, which is the shape of a timing assumption rather than of
+      // a defect.
+      //
+      // The other half of the assertion: at every size this app
+      // promises, the fix costs nothing. A scrollbar that is always
+      // there is a worse answer than the clipping it replaced.
+      await expect
+        .poll(() =>
+          app.evaluate(() => {
+            const de = document.documentElement;
 
-        return de.scrollWidth - de.clientWidth;
-      });
-
-      // The other half: at every size this app promises, the fix costs
-      // nothing. A scrollbar that is always there is a worse answer
-      // than the clipping it replaced.
-      expect(excess).toBe(0);
+            return de.scrollWidth - de.clientWidth;
+          }),
+        )
+        .toBe(0);
     });
   }
 });
