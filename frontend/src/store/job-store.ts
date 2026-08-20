@@ -30,6 +30,7 @@ export type JobState =
 export type JobKind =
     | 'library-scan'
     | 'index-build'
+    | 'download'
     | 'autotag-apply'
     | 'catalog-enrich';
 
