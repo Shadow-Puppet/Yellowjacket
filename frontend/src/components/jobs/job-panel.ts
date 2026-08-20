@@ -51,6 +51,14 @@ export class JobPanel extends LitElement {
      * literal in a template, and one of them is inside an HTMX-adjacent
      * settings page where a property binding would be one more thing to
      * remember.
+     *
+     * **`*` means every kind**, which is the phone's band (#62) and
+     * nothing else: there, this panel is standing in for the header
+     * indicator, whose whole job was to be the one view of everything
+     * at once. It is spelled `*` rather than taken as the meaning of an
+     * empty attribute, because empty is what a typo and a missing
+     * binding both produce and "show everything" is the wrong thing to
+     * do by accident. Empty still shows nothing.
      */
     @property({ type: String })
     kinds = '';
@@ -58,6 +66,31 @@ export class JobPanel extends LitElement {
     /** Heading above the rows. Omitted renders no heading. */
     @property({ type: String })
     heading = '';
+
+    /**
+     * Row density, passed to `job-row`.
+     *
+     * `full` adds elapsed time and per-job statistics and is what a
+     * settings section wants, so it stays the default and the four
+     * existing call sites are unchanged. `compact` is what `job-row`
+     * itself calls "the popover density", and it is what the phone's
+     * band uses (#62) — there this panel *is* the popover, on a screen
+     * 439 CSS px tall, and the full density spent 259 of them.
+     */
+    @property({ type: String })
+    density: 'compact' | 'full' = 'full';
+
+    /**
+     * Drop finished rows.
+     *
+     * For the phone's band (#62), which is *in the layout*: a finished
+     * row there is a banner that stays after the work is done and keeps
+     * the content pushed down. Settings keeps them, because that is
+     * where "did the last scan work" is asked, and a finished row there
+     * dismisses itself.
+     */
+    @property({ type: Boolean, attribute: 'active-only' })
+    activeOnly = false;
 
     @state()
     private jobs: Job[] = [];
@@ -162,9 +195,14 @@ export class JobPanel extends LitElement {
     }
 
     private get mine(): Job[] {
-        const wanted = this.wanted;
+        const ofKind =
+            this.kinds.trim() === '*'
+                ? this.jobs
+                : this.jobs.filter((job) =>
+                      this.wanted.has(job.kind as JobKind),
+                  );
 
-        return this.jobs.filter((job) => wanted.has(job.kind as JobKind));
+        return this.activeOnly ? ofKind.filter((job) => !isTerminal(job)) : ofKind;
     }
 
     private openDetails(id: string) {
@@ -196,7 +234,7 @@ export class JobPanel extends LitElement {
                         <div class="job-entry">
                             <job-row
                                 .job=${job}
-                                variant="full"
+                                variant=${this.density}
                                 @job-control=${applyJobControl}
                             ></job-row>
                             <button
