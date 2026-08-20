@@ -155,11 +155,25 @@ export class JobIndicator extends LitElement {
                goes -- the live region in render() is what announces
                this, and it is unaffected, so the ring keeps its
                accessible name and screen readers keep hearing the
-               state change. */
+               state change.
+
+               [compact] is the same removal asked for by measurement
+               rather than by width, and it is set from outside: the
+               shell's fit pass (services/top-bar-fit.ts, #143) owns
+               it, because between 600 and 900 whether this label fits
+               depends on what else is in the bar and on how long the
+               running job's title is -- 235px for "Scanning Music from
+               the external drive" -- rather than on the viewport. Two
+               triggers, one effect, and the phone's is unconditional
+               because it was argued and pinned before this existed. */
             @media (max-width: 599px) {
                 .label {
                     display: none;
                 }
+            }
+
+            :host([compact]) .label {
+                display: none;
             }
 
             .alert-dot {
