@@ -646,7 +646,11 @@ rather than renaming them.
   level rather than writing through to the volume, so it cannot
   accumulate and nothing persists or emits a level the user did not
   choose — and it only ever fires below API 26, where the framework
-  does not already duck the app itself.
+  does not already duck the app itself. On that platform "the user's
+  level" is a constant, since #64 pins it at maximum and refuses every
+  way to move it; the duck is the one thing that still may, and it
+  works unchanged because it was always an offset applied *to* that
+  level rather than a write of it.
 - `system` — OS-specific paths (XDG on Linux, `%LOCALAPPDATA%` on Windows).
 - `explore` — Catalog search and browse over `explore_index`. See below.
   Its **shelves** (`shelves.go`) are the page Explore shows before
@@ -1725,12 +1729,58 @@ where the zero value has to be the intended answer, so an existing
 `config.toml` with no key gets the new default without a migration.
 Inline, the icon becomes the mute toggle and is named after that action
 rather than after the state, because with the slider beside it there is
-nothing left to disclose. It stands down below 600px whatever the
-setting says — that is about the platform rather than preference, and
-is why `mediacontrols`' Android handler implements no volume callback.
-(Only the *bar's* copy: `now-playing-view` renders one and it is
-visible on a phone. #64 asks for it to be gone on Android outright,
-which is a platform question the frontend cannot currently ask.)
+nothing left to disclose. The bar's copy stands down below 600px, which
+is about *room*: five controls and a slider do not fit a 360px bar, and
+`now-playing-view` is where seeking and volume go on a phone.
+
+**Whether there is a volume to control at all is a different question,
+and it is asked of the player** (#64). On Android the hardware keys are
+the volume control and the framework mixes our stream against the
+device level, so `player`'s own level is pinned at maximum, `SetVolume`
+/ `ChangeVolume` / `MuteToggle` are refused, and `volume-control`
+renders `nothing` — in both of its mount points, at every width.
+`mediacontrols`' Android handler implementing no volume callback is the
+same fact one layer down.
+
+Five things about it are load-bearing.
+
+**It could not be a width, and that is not a preference.** Every other
+stand-down rule in this app is keyed on a viewport, because a width is
+what a browser can answer and what every tier can test. This one is a
+property of the build: keyed on width, an Android *tablet* at 600px or
+more draws the bottom bar's slider over a pinned level — a control that
+cannot act, on exactly the platform the rule exists for, which
+`library-status-indicator` already settled is worse than none. The
+same rule is wrong in the other direction below 600px, where a narrow
+desktop window has no hardware keys to fall back on.
+
+**The predicate is named after the capability, not the platform.**
+`SystemOwnsVolume` is what the frontend asks; `platformOwnsVolume` is
+the one build-tagged constant behind it, in two files that declare
+nothing else. That is `mediacontrols`' split with
+`androidpayload.go`'s reasoning: a tagged file is compiled by nothing
+`make lint` or `make test` runs, so everything decidable off a phone is
+decided against `Player.systemVolume`, a field a test sets either way.
+The frontend's absent branch is therefore testable in the component
+tier with a stubbed binding, and the constant itself is covered by a
+source sweep rather than by a device.
+
+**Mute goes with it, because it is a level of zero by another name** —
+and because with no control rendered it is the one state on such a
+platform the user could not get out of.
+
+**Nothing persists a level nobody chose.** The maximum the player runs
+at is synthetic, so `restoreStateLocked` *remembers* the stored volume
+instead of applying it and `saveState` writes that same value back.
+The alternative — a second query that omits the column — buys nothing
+and is a second write path to keep in step.
+
+**And ducking is untouched, which is what makes the pin safe.**
+`SetDuck` applies its attenuation by re-applying the *user's* level
+through `setVolumeLocked`, so pinning that level to maximum leaves the
+offset arithmetic exactly as it was. It is the only thing that may move
+the output on such a platform, and it is the one volume-shaped path
+that is not refused.
 
 **And below 600px that bar carries three controls, not five** (#59).
 Shuffle, repeat and the queue button leave it; what is left is art,
