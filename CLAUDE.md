@@ -1367,14 +1367,86 @@ against the real components:
   `wa-dropdown-item` sets its `role` in its *own* first update, so a
   `[role^="menuitem"]` query at `updateComplete` finds nothing — which
   reads exactly like a menu that opened and refused to take focus.
-- **`focus()` on a popup that has not positioned itself is a silent
-  no-op**, so the first focus is retried across a few frames.
+- **`focus()` on a surface that has not shown itself is a silent
+  no-op**, so the first focus is retried on a *time* budget rather
+  than a frame count — the thing being waited for is another
+  component's animation. And a retry is not enough on its own for the
+  sheet below: `wa-dialog` focuses `[autofocus]` or *itself* on the
+  frame after `showModal()`, and it cannot see the first menu item to
+  prefer it, because the panel is slotted through `menu-surface` and
+  the dialog's own `querySelector` stops at the `<slot>`. The first
+  attempt therefore *succeeds* and is then overwritten, which no
+  amount of waiting fixes — so the surface announces `menu-shown` when
+  it has settled and `MenuKeyboard.refocus()` re-asserts.
 - **Focus is only taken back if the menu had it.** A click elsewhere
   closes the menu too, and pulling focus to the row the user
   right-clicked a moment ago is worse than leaving it.
 - **Web Awesome keys an item's tabindex and highlight off `active`**, so
   moving focus without setting it leaves the highlight on whichever
   item the mouse last touched.
+
+**And a menu is drawn where it fits: a popup on a desktop, a bottom
+sheet on a phone** (#60). `components/menu-surface/` is that one
+decision. The host renders the panel it always rendered and slots it
+into whichever surface is up, so `ContextMenuController` still drives
+`.active` and `.anchor` as though it were talking to a `wa-popup`, and
+fourteen call sites changed one tag name each and nothing else.
+
+**It is a correctness fix, not a taste one, and the failure was
+measured on the device rather than inferred.** Chrome 113 has no
+Popover API, so `wa-popup` takes its own documented fallback and
+positions with `strategy: "fixed"`; `.main-panel` carries
+`contain: layout style paint`, and paint containment *clips* fixed
+descendants. On the reference device the main panel spans 0-318 of a
+439px viewport while the open menu spanned 191-401 — three of its seven
+items cut off, with no way to reach them. `showModal()` is Chrome 37
+and uses the real top layer, so a dialog is immune by construction.
+
+Six things about it are load-bearing.
+
+**"Dialogs are fine" needed checking, because every other dialog in
+this app is mounted in `index.html`** — outside `.main-panel` — so it
+was not evidence about one opened from inside a view. A probe dialog
+appended to `track-list`'s shadow root paints to y=439, over the mini
+player and the tab bar, with the contained ancestor still in place. A
+top-layer element's containing block is the viewport, contained
+ancestor or not.
+
+**The sheet has to un-do the UA stylesheet.** A native `<dialog>`
+carries `max-width: calc(100% - 6px - 2em)` and `margin: auto`, which
+drew a 354px panel floating in the middle of a 424px screen.
+`max-width: none` plus explicit margins is what makes it a sheet.
+
+**The row sizing lives in `contextMenuStyles`, not in the component.**
+The panel is the *host's* light DOM — it stays in the host's shadow
+root, so only the host's stylesheet can reach it. `menu-surface` puts
+`data-sheet` on the panel and that shared stylesheet does the rest,
+which is how fourteen menus went from 29px rows to 48px ones in one
+edit.
+
+**A dismissal has to travel back.** `wa-dialog` closes itself on
+Escape, which would leave the controller believing the menu is open —
+and the failure mode is not a stuck sheet but the *next* long-press
+doing nothing, which reads as the gesture breaking. `menu-dismiss` is
+that signal; the three surfaces that do not use `ContextMenuController`
+bind it themselves.
+
+**The playlist submenu is a sheet too, and it had to be.** It is a
+`placement="right-start"` flyout, and making the menu full-width moved
+its anchor — measured at x −182 to 0, entirely off-screen, so "Add to
+Playlist" led nowhere. It stacks as a second sheet over the first,
+which is also why `menu-shown` does not re-assert focus while the
+submenu is open.
+
+**And which call sites exist is swept, not remembered.** A thirteenth
+menu written as a bare `<wa-popup>` works perfectly in every tier here
+and is clipped on the device, so `menu-surface.test.ts` reads the
+source and fails on one outside a three-file allowlist —
+`menu-surface` itself, `job-indicator` (in `.top-bar`, which no
+ancestor contains — the contrast that proved the diagnosis on #62) and
+`now-playing`'s cover preview (a hover affordance, which a touch device
+never opens). **The sweep found two of the fourteen**; twelve were
+converted by hand.
 
 **And a menu opens from a finger, through the event it already has.**
 `utils/long-press.ts` is one document-capture listener installed once

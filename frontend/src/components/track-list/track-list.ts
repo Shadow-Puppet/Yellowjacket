@@ -18,7 +18,7 @@ import {
     isContextMenuKey,
 } from '@utils/context-menu-controller.js';
 
-import type { ContextMenuHost } from '@utils/context-menu-controller.js';
+import type { ContextMenuHost, MenuTarget } from '@utils/context-menu-controller.js';
 import { PlayerController } from '@store/controllers/player-controller';
 import { SearchController } from '@store/controllers/search-controller';
 import '@components/page-header/page-header';
@@ -63,7 +63,8 @@ import type {
 } from '@lit-labs/virtualizer';
 import { flow } from '@lit-labs/virtualizer/layouts/flow.js';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
-import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
+import type { MenuSurface } from '../menu-surface/menu-surface';
+import '../menu-surface/menu-surface';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import { describeError } from '@utils/describe-error';
@@ -231,18 +232,18 @@ export class TrackList
     private tracks: library.Track[] = [];
 
     @query('#context-menu')
-    private contextMenuPopup!: WaPopup;
+    private contextMenuPopup!: MenuSurface;
 
     @query('#playlist-submenu')
-    private playlistSubmenuPopup!: WaPopup;
+    private playlistSubmenuPopup!: MenuSurface;
 
     // -- ContextMenuHost interface --
 
-    getContextMenuPopup(): WaPopup | undefined {
+    getContextMenuPopup(): MenuTarget | undefined {
         return this.contextMenuPopup;
     }
 
-    getPlaylistSubmenuPopup(): WaPopup | undefined {
+    getPlaylistSubmenuPopup(): MenuTarget | undefined {
         return this.playlistSubmenuPopup;
     }
 
@@ -2323,11 +2324,8 @@ export class TrackList
             </div>
           `}
 
-      <wa-popup
+      <menu-surface
         id="context-menu"
-        placement="bottom-start"
-        flip
-        shift
         .active=${this.ctxMenu.contextMenuOpen}
       >
         ${this.ctxMenu.contextMenuOpen
@@ -2413,13 +2411,12 @@ export class TrackList
               </div>
             `
                 : nothing}
-      </wa-popup>
+      </menu-surface>
 
-      <wa-popup
+      <menu-surface
         id="playlist-submenu"
+                label="Add to playlist"
         placement="right-start"
-        flip
-        shift
         .active=${this.ctxMenu.playlistSubmenuOpen}
       >
         ${this.ctxMenu.playlistSubmenuOpen && this.selection.hasSelection
@@ -2437,7 +2434,7 @@ export class TrackList
               </div>
             `
                 : nothing}
-      </wa-popup>
+      </menu-surface>
 
       <track-details></track-details>
     `;

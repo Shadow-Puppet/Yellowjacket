@@ -26,7 +26,7 @@ import {
     contextMenuStyles,
     isContextMenuKey,
 } from '@utils/context-menu-controller.js';
-import type { ContextMenuHost } from '@utils/context-menu-controller.js';
+import type { ContextMenuHost, MenuTarget } from '@utils/context-menu-controller.js';
 import { focusRovingRow, nextRovingIndex } from '@utils/roving-rows';
 import { FavoritesController } from '@store/controllers/favorites-controller';
 import {
@@ -40,7 +40,8 @@ import {
 } from '@utils/drag-image';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
-import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
+import type { MenuSurface } from '../menu-surface/menu-surface';
+import '../menu-surface/menu-surface';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 import '@lit-labs/virtualizer';
 import type { LitVirtualizer } from '@lit-labs/virtualizer';
@@ -176,10 +177,10 @@ export class SmartPlaylistDetails
     private dragImageEl: HTMLElement | null = null;
 
     @query('#context-menu')
-    private contextMenuPopup!: WaPopup;
+    private contextMenuPopup!: MenuSurface;
 
     @query('#playlist-submenu')
-    private playlistSubmenuPopup!: WaPopup;
+    private playlistSubmenuPopup!: MenuSurface;
 
     @query('track-details')
     private trackDetailsDialog!: TrackDetails;
@@ -188,11 +189,11 @@ export class SmartPlaylistDetails
     // ContextMenuHost interface
     // =================================================================
 
-    getContextMenuPopup(): WaPopup | undefined {
+    getContextMenuPopup(): MenuTarget | undefined {
         return this.contextMenuPopup;
     }
 
-    getPlaylistSubmenuPopup(): WaPopup | undefined {
+    getPlaylistSubmenuPopup(): MenuTarget | undefined {
         return this.playlistSubmenuPopup;
     }
 
@@ -1465,11 +1466,8 @@ export class SmartPlaylistDetails
 
     private renderContextMenu() {
         return html`
-            <wa-popup
+            <menu-surface
                 id="context-menu"
-                placement="bottom-start"
-                flip
-                shift
                 .active=${this.ctxMenu.contextMenuOpen}
             >
                 ${this.ctxMenu.contextMenuOpen
@@ -1583,13 +1581,12 @@ export class SmartPlaylistDetails
                           </div>
                       `
                     : nothing}
-            </wa-popup>
+            </menu-surface>
 
-            <wa-popup
+            <menu-surface
                 id="playlist-submenu"
+                label="Add to playlist"
                 placement="right-start"
-                flip
-                shift
                 .active=${this.ctxMenu
                     .playlistSubmenuOpen}
             >
@@ -1616,7 +1613,7 @@ export class SmartPlaylistDetails
                           </div>
                       `
                     : nothing}
-            </wa-popup>
+            </menu-surface>
         `;
     }
 }

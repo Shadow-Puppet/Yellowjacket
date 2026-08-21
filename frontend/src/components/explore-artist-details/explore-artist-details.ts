@@ -61,9 +61,11 @@ import {
     contextMenuStyles,
     isContextMenuKey,
 } from '@utils/context-menu-controller.js';
-import type { ContextMenuHost } from '@utils/context-menu-controller.js';
+import type { ContextMenuHost, MenuTarget } from '@utils/context-menu-controller.js';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
 import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
+import type { MenuSurface } from '../menu-surface/menu-surface';
+import '../menu-surface/menu-surface';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 import { dict, dictByName } from '@utils/binding';
 import type { TrackDetails } from '@components/track-details/track-details.js';
@@ -215,7 +217,7 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
     @state() private ctxMenuTarget: ContextMenuTarget | null = null;
 
     @query('#context-menu')
-    private contextMenuPopup!: WaPopup;
+    private contextMenuPopup!: MenuSurface;
 
     @query('#playlist-submenu')
     private playlistSubmenuPopup?: WaPopup;
@@ -233,11 +235,11 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
 
     // -- ContextMenuHost interface --
 
-    getContextMenuPopup(): WaPopup | undefined {
+    getContextMenuPopup(): MenuTarget | undefined {
         return this.contextMenuPopup;
     }
 
-    getPlaylistSubmenuPopup(): WaPopup | undefined {
+    getPlaylistSubmenuPopup(): MenuTarget | undefined {
         return this.playlistSubmenuPopup;
     }
 
@@ -2621,11 +2623,8 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
         const target = this.ctxMenuTarget;
 
         return html`
-            <wa-popup
+            <menu-surface
                 id="context-menu"
-                placement="bottom-start"
-                flip
-                shift
                 .active=${this.ctxMenu.contextMenuOpen}
             >
                 ${this.ctxMenu.contextMenuOpen && target
@@ -2643,13 +2642,12 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
                           </div>
                       `
                     : nothing}
-            </wa-popup>
+            </menu-surface>
 
-            <wa-popup
+            <menu-surface
                 id="playlist-submenu"
+                label="Add to playlist"
                 placement="right-start"
-                flip
-                shift
                 .active=${this.ctxMenu.playlistSubmenuOpen}
             >
                 ${this.ctxMenu.playlistSubmenuOpen
@@ -2666,7 +2664,7 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
                           </div>
                       `
                     : nothing}
-            </wa-popup>
+            </menu-surface>
         `;
     }
 

@@ -1,9 +1,9 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property, query, state } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
-import '@awesome.me/webawesome/dist/components/popup/popup.js';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
-import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
+import type { MenuSurface } from '../menu-surface/menu-surface';
+import '../menu-surface/menu-surface';
 
 import { designTokens } from '../../styles/tokens.css';
 import {
@@ -183,8 +183,8 @@ export class PageHeader extends LitElement {
     @query('#page-header-overflow')
     private menuPanel?: HTMLElement;
 
-    @query('wa-popup')
-    private popup?: WaPopup;
+    @query('menu-surface')
+    private popup?: MenuSurface;
 
     private menuKeyboard = new MenuKeyboard(() => this.closeMenu());
 
@@ -418,7 +418,7 @@ export class PageHeader extends LitElement {
                 outline-offset: -1px;
             }
 
-            wa-popup {
+            menu-surface {
                 z-index: 200;
             }
 
@@ -670,10 +670,17 @@ export class PageHeader extends LitElement {
         return html`
             <div class="actions">
                 ${this.actions.map((a) => this.renderActionButton(a))}
-                <wa-popup
+                <!-- A sheet below 600px, like every other menu in the
+                     app (#60). The clipping that issue is about does
+                     not bite here — this one opens downward from the
+                     top of a full-height view, so it has somewhere to
+                     go even without top-layer promotion — but the touch
+                     targets do: on a phone *every* action of a page
+                     that overflows lives in here, at wa-dropdown-item
+                     defaults. One surface, so there is no second
+                     answer to what a menu looks like. -->
+                <menu-surface
                     placement="bottom-end"
-                    flip
-                    shift
                     .active=${this.menuOpen}
                 >
                     <button
@@ -711,7 +718,7 @@ export class PageHeader extends LitElement {
                             `,
                         )}
                     </div>
-                </wa-popup>
+                </menu-surface>
             </div>
         `;
     }

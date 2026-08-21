@@ -23,7 +23,8 @@ import { gridColumnsFor, gridSpacingFor } from '@utils/grid-spacing';
 import { queueStore } from '@store/queue-store';
 import type { QueueSource } from '@store/queue-store';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
-import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
+import type { MenuSurface } from '../menu-surface/menu-surface';
+import '../menu-surface/menu-surface';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@components/playlist-picker/playlist-picker.js';
@@ -51,7 +52,7 @@ import {
     ContextMenuController,
     isContextMenuKey,
 } from '@utils/context-menu-controller.js';
-import type { ContextMenuHost } from '@utils/context-menu-controller.js';
+import type { ContextMenuHost, MenuTarget } from '@utils/context-menu-controller.js';
 import { FavoritesController } from '@store/controllers/favorites-controller';
 import { creditLink, exploreLinkStyles } from '../../utils/explore-link';
 import { creditStore } from '@store/credit-store';
@@ -415,17 +416,17 @@ export class CoverGrid
     splitIndex = 0;
 
     @query('#context-menu')
-    private contextMenuPopup!: WaPopup;
+    private contextMenuPopup!: MenuSurface;
 
     @query('#playlist-submenu')
-    private playlistSubmenuPopup!: WaPopup;
+    private playlistSubmenuPopup!: MenuSurface;
 
     // ContextMenuHost interface.
-    getContextMenuPopup(): WaPopup | undefined {
+    getContextMenuPopup(): MenuTarget | undefined {
         return this.contextMenuPopup;
     }
 
-    getPlaylistSubmenuPopup(): WaPopup | undefined {
+    getPlaylistSubmenuPopup(): MenuTarget | undefined {
         return this.playlistSubmenuPopup;
     }
 
@@ -2087,11 +2088,8 @@ export class CoverGrid
         const { ctxMenu } = this;
 
         return html`
-            <wa-popup
+            <menu-surface
                 id="context-menu"
-                placement="bottom-start"
-                flip
-                shift
                 .active=${ctxMenu.contextMenuOpen}
             >
                 ${ctxMenu.contextMenuOpen
@@ -2204,13 +2202,12 @@ export class CoverGrid
                           </div>
                       `
                 : nothing}
-            </wa-popup>
+            </menu-surface>
 
-            <wa-popup
+            <menu-surface
                 id="playlist-submenu"
+                label="Add to playlist"
                 placement="right-start"
-                flip
-                shift
                 .active=${ctxMenu.playlistSubmenuOpen}
             >
                 ${ctxMenu.playlistSubmenuOpen
@@ -2232,7 +2229,7 @@ export class CoverGrid
                           </div>
                       `
                 : nothing}
-            </wa-popup>
+            </menu-surface>
 
             <track-details></track-details>
         `;
