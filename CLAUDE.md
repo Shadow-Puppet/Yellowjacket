@@ -1479,10 +1479,20 @@ and its place in the accessibility tree. Where the control is the
 overlay and remove, `shortcut-capture`'s reset (#137) — because hiding
 it takes the action away entirely.
 
-One thing to know before checking either: **no tier here can render as a
-touch device.** CDP's `Emulation.setEmulatedMedia` does not reach the
-component tier's iframe, and the e2e projects are Desktop Chrome and
-Desktop Safari, neither of which has touch. So
+**Always-visible is not the same as always-in-the-way.** The cover-art
+overlay is `inset: 0` at 50% black, which is fine as a hover state and
+is not fine as the permanent appearance of the artwork being edited —
+and it is only a *hint*, since `.cover-art-edit` carries the click and
+tapping the art always worked. Off hover it becomes a corner chip in
+the remove button's own language. The × beside it stays full-size,
+because that one really is the only route to its action.
+
+One thing to know before checking either: **no *committed* tier renders
+as a touch device.** CDP's `Emulation.setEmulatedMedia` does not reach
+the component tier's iframe, and the e2e projects are Desktop Chrome
+and Desktop Safari, neither of which has touch — a Playwright project
+using a mobile descriptor would report `hover: none`, so this is a
+choice not to carry one rather than a thing that cannot be done. So
 `hover-affordance.test.ts` asserts the *parsed stylesheet* — which rule
 sits inside which media query — and says so; the regression it exists
 for is someone hoisting a rule out of its query as a tidy-up, which
