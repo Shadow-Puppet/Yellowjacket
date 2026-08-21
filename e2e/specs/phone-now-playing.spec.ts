@@ -107,11 +107,19 @@ async function openNowPlaying(page: Page): Promise<void> {
       const el = v?.shadowRoot?.querySelector('.art img, .art .placeholder');
       const t = v?.shadowRoot?.querySelector('.transport');
 
-      if (!stack || !el || !t) return false;
+      if (!el || !t) return false;
 
-      const dir = getComputedStyle(stack).flexDirection;
+      // A build with no `.stack` at all is the one before this change,
+      // and the squareness assertions are still meaningful against it
+      // -- so this waits for the arrangement only where there is one to
+      // wait for. Otherwise reverting the component to check that these
+      // tests bite produces eight timeouts instead of the measurements
+      // that make the case.
+      if (stack) {
+        const dir = getComputedStyle(stack).flexDirection;
 
-      if (dir !== (row ? 'row' : 'column')) return false;
+        if (dir !== (row ? 'row' : 'column')) return false;
+      }
 
       const r = el.getBoundingClientRect();
 
@@ -152,6 +160,7 @@ async function boxes(page: Page) {
       // Whichever of the two the track has; both carry the sizing.
       art: rect('.art img') ?? rect('.art .placeholder'),
       artBox: rect('.art'),
+      stack: rect('.stack'),
       meta: rect('.meta'),
       transport: rect('.transport'),
       scrollHeight: v.scrollHeight,
@@ -239,29 +248,36 @@ test.describe('Now Playing survives a short screen', () => {
   });
 
   /**
-   * The reflow is only worth having if it buys something, and the
-   * honest form of that is a floor on the device's own viewport
-   * rather than a comparison with a layout that is no longer there.
+   * What the reflow actually does, stated as a mechanism rather than
+   * as a number: in a row the art is bounded by the row's *height*,
+   * so it fills it — where in a column it is the leftover after the
+   * names, which is what made it 53px.
    *
-   * The first draft compared the art against the column's leftover
-   * computed from the boxes on screen, and it passed on the build
-   * before this change as well -- the subtraction goes negative when
-   * the names are taller than the art, which is precisely the broken
-   * state. A test that cannot fail on the defect is not evidence.
+   * **The pixel count is deliberately not asserted here.** Two drafts
+   * tried. The first compared the art against the column's leftover
+   * computed from the boxes on screen and passed on the broken build,
+   * because the subtraction goes negative when the names are taller
+   * than the art — precisely the defect. The second put a floor of
+   * 100px on it, passed locally at 114 and **failed in CI at 64**: this
+   * app is long-lived, so a job staged by an earlier spec is still on
+   * screen, and the volume control renders here where it does not on
+   * Android. Both are chrome above and below this view, and both move
+   * the leftover. A test that asserts how much room CI happened to
+   * have is a test about the runner.
    *
-   * 100 is a floor, not the measurement: the device draws 143 and CI's
-   * chrome differs by whatever the volume control adds, so pinning the
-   * exact number would make this a test about the runner.
+   * The device numbers — 53px to 143px — are on #51, measured there,
+   * which is the only tier that can honestly produce them.
    */
-  test('gives the art a real size on the reference device', async ({ app }) => {
+  test('fills the row with the art rather than the leftover', async ({ app }) => {
     await app.setViewportSize(DEVICE);
     await openNowPlaying(app);
 
     const b = await boxes(app);
 
+    expect(b!.stack, 'there is no row to fill').not.toBeNull();
     expect(
-      b!.art!.height,
-      'the art is still a sliver at the size #51 is about',
-    ).toBeGreaterThan(100);
+      Math.abs(b!.artBox!.height - b!.stack!.height),
+      'the art does not fill the row, so it is still a leftover',
+    ).toBeLessThanOrEqual(1);
   });
 });
