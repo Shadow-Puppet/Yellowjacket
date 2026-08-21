@@ -67,6 +67,7 @@ import '@store/theme-store';
 import './src/services/keyboard-shortcut-service';
 import { activateView, deactivateView } from '@utils/view-lifecycle';
 import { installLongPressContextMenu } from '@utils/long-press';
+import { openQueue, queuePanelElement } from '@utils/open-queue';
 import { installTopBarFit } from './src/services/top-bar-fit';
 import {
     hasTrackPayload,
@@ -336,6 +337,33 @@ window.addEventListener('popstate', (e: PopStateEvent) => {
     void handleNavigate({ ...nav, _isBack: true });
 });
 
+/**
+ * The queue, while it is a screen (#55).
+ *
+ * It is *not* in `VIEW_TAGS` and *not* in `DETAIL_LOADERS`: there is
+ * nothing to mount, because the panel is already in the document and,
+ * as an overlay, already occupies `.main-panel`'s rect exactly. What a
+ * navigation adds is the two things that make a screen a screen — a
+ * history entry, so the platform's back gesture answers it, and a
+ * destination to leave, so navigating anywhere else takes it away.
+ *
+ * Keeping it out of both tables is what keeps its context menu working
+ * on the reference device: `.main-panel > *` is paint-contained and a
+ * `wa-popup` falls back to `position: fixed` on Chrome 113, which
+ * escapes overflow but not containment (#60). The panel stays in
+ * `.content-area`, which is not paint-contained, exactly as it is
+ * today.
+ */
+const QUEUE_VIEW = 'queue';
+
+/** Close a queue that is being navigated away from. A *column* is not
+ *  a place, so it survives a navigation the way the sidebar does. */
+function dismissQueueScreen(): void {
+    const panel = queuePanelElement();
+
+    if (panel?.hasAttribute('overlay')) panel.removeAttribute('open');
+}
+
 async function handleNavigate(
     detail: { view: string; [key: string]: any },
 ): Promise<void> {
@@ -346,6 +374,25 @@ async function handleNavigate(
     const seq = ++navSeq;
 
     if (!detail._isBack) recordNavigation(detail);
+
+    if (view === QUEUE_VIEW) {
+        // The shell says where the user is; `false` because the queue is
+        // not a primary view, so nothing in either nav lights while it
+        // is up -- the same rule a detail view gets, and the reason the
+        // tab the queue was opened from stays lit.
+        activeViewStore.setView(view, false);
+        queuePanelElement()?.setAttribute('open', '');
+
+        // Deliberately not `searchStore.setCurrentView` and not
+        // `dataset.activeView`: both describe what is *in the main
+        // panel*, and the queue covers that panel without replacing it.
+        // Overwriting either would disable the search box belonging to
+        // the page underneath and make every `data-active-view`
+        // selector in the suite disagree with the element it names.
+        return;
+    }
+
+    dismissQueueScreen();
 
     // Bookkeeping stays synchronous with the click: the search box's
     // scope and the active-view attribute describe the navigation that
@@ -631,13 +678,17 @@ const queuePanel = document.getElementById('queue-panel') as HTMLElement | null;
 
 if (queueButton && queuePanel) {
     queueButton.addEventListener('click', () => {
-        const isOpen = queuePanel.hasAttribute('open');
-
-        if (isOpen) {
+        if (queuePanel.hasAttribute('open')) {
+            // Closing goes through the panel either way; where the queue
+            // is a screen the observer below is what unwinds its history
+            // entry, so this button, Escape, the scrim and the close
+            // button all take the same route out.
             queuePanel.removeAttribute('open');
-        } else {
-            queuePanel.setAttribute('open', '');
+
+            return;
         }
+
+        openQueue();
     });
 
     // The button says whether the panel is open, and it learns that
@@ -655,7 +706,39 @@ if (queueButton && queuePanel) {
         );
     };
 
-    new MutationObserver(reflectQueueState).observe(queuePanel, {
+    /**
+     * Keep the back stack honest about a queue that closed itself.
+     *
+     * Where the queue is a screen its `open` attribute and the current
+     * history entry are two statements of one fact, and the panel can
+     * change its half on its own -- Escape, the scrim, the close button,
+     * and anything added later. Reconciling here rather than at each of
+     * those is the same reason this observer already exists for
+     * `aria-expanded`: the attribute is the one fact, and a state kept
+     * beside a click is right until something else changes it.
+     *
+     * Without this the entry is orphaned and the *next* back press is
+     * the one that closes the queue -- a press that appears to do
+     * nothing, which is the defect this issue is about, moved one press
+     * later.
+     *
+     * `history.back()` rather than a stack of our own, for the reason
+     * `navigate-back` does: two stacks is how a component's own way out
+     * and the phone's gesture come to disagree about what one press
+     * means.
+     */
+    const reconcileQueueHistory = () => {
+        if (queuePanel.hasAttribute('open')) return;
+
+        const state = history.state as NavState | null;
+
+        if (state?.yjNav?.view === QUEUE_VIEW) history.back();
+    };
+
+    new MutationObserver(() => {
+        reflectQueueState();
+        reconcileQueueHistory();
+    }).observe(queuePanel, {
         attributes: true,
         attributeFilter: ['open'],
     });
