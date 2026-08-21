@@ -3502,7 +3502,10 @@ would notice on 113 — the rule simply does not exist, there and nowhere
 else, which is how the bottom bar's `text-overflow: ellipsis` came to
 have never truncated on the device. `make css-check`
 (`frontend/scripts/check-css-nesting.mjs`, a pre-commit hook and a CI
-step) fails on one, over `index.css` and the `css` literals alike, and
+step) fails on one, over every `frontend/*.css` and the `css` literals
+alike — a glob rather than `index.css` by name, because the hook fires
+on `frontend/**/*.{ts,css}` and a sweep that names one file goes green
+over a stylesheet it never opened — and
 says the fix is a leading `&` — valid in both syntaxes, so no nested
 rule here has a reason to omit it. Two things it has to get right, and
 both follow from asking whether a *style* rule is anywhere above rather

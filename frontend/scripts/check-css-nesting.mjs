@@ -18,10 +18,24 @@ import { findBareNestedRules } from './css-nesting.mjs';
 
 const problems = [];
 
-for (const { line, selector } of findBareNestedRules(
-  readFileSync('index.css', 'utf8'),
-)) {
-  problems.push({ file: 'index.css', line, selector });
+// Every stylesheet, not `index.css` by name: the hook that runs this
+// fires on `frontend/**/*.{ts,css}`, so naming one file promises a
+// coverage the sweep does not deliver -- a second stylesheet would be
+// silently unswept while the hook still went green over it. There is
+// only `index.css` today, which is exactly when this is free to fix.
+const stylesheets = globSync('*.css', { cwd: process.cwd() });
+
+if (stylesheets.length === 0) {
+  console.error('css-nesting-check: no stylesheet matched *.css');
+  process.exit(1);
+}
+
+for (const file of stylesheets) {
+  for (const { line, selector } of findBareNestedRules(
+    readFileSync(file, 'utf8'),
+  )) {
+    problems.push({ file, line, selector });
+  }
 }
 
 const sources = globSync('src/**/*.ts', { cwd: process.cwd() });
@@ -61,5 +75,5 @@ if (problems.length > 0) {
 }
 
 console.log(
-  `css-nesting-check: index.css + ${sources.length} files, no bare nested rules`,
+  `css-nesting-check: ${stylesheets.length} stylesheet(s) + ${sources.length} files, no bare nested rules`,
 );
