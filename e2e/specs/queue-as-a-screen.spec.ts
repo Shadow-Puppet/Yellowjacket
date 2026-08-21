@@ -1,4 +1,4 @@
-import { test, expect } from '../support/fixtures.js';
+import { test, expect, openTheQueue } from '../support/fixtures.js';
 
 /**
  * #55 — the queue is a *place* while it covers the content, and a
@@ -37,15 +37,37 @@ const DEVICE = { width: 424, height: 439 };
 /** Wide enough that the queue is a column: 1280 − 200 − 320 ≥ 480. */
 const DESKTOP = { width: 1280, height: 800 };
 
+/**
+ * The Compact band, where the queue is a *screen* (644 − 320 < 480) and
+ * the bottom bar still carries its button.
+ *
+ * Two of these tests need both facts at once and only this band has
+ * them: below 600px #59 takes the button off the bar, so there is no
+ * toggle to re-press and the queue is opened from Now Playing — which
+ * is itself a detail view, so "the destination stays lit" is vacuously
+ * true there rather than tested.
+ */
+const COMPACT = { width: 700, height: 600 };
+
 const activeView = (page: Page) => page.getByTestId('main-content');
 const queue = (page: Page) => page.locator('#queue-panel');
 const toggle = (page: Page) => page.locator('#queue-button');
 
+/**
+ * Whether the queue is up.
+ *
+ * The panel's own attribute rather than the toggle's `aria-expanded`,
+ * because below 600px there is no toggle to ask (#59) — and the panel
+ * is the one fact both of them reflect anyway.
+ */
 async function expectQueue(page: Page, open: boolean): Promise<void> {
-  await expect(toggle(page)).toHaveAttribute(
-    'aria-expanded',
-    String(open),
-  );
+  const panel = queue(page);
+
+  if (open) {
+    await expect(panel).toHaveAttribute('open', '');
+  } else {
+    await expect(panel).not.toHaveAttribute('open', '');
+  }
 }
 
 test.describe('the queue is a screen where it covers the content', () => {
@@ -55,12 +77,17 @@ test.describe('the queue is a screen where it covers the content', () => {
     await expect(activeView(app)).toHaveAttribute('data-active-view', 'albums');
   });
 
+  // On a phone the queue is opened from Now Playing (#59), so the page
+  // *underneath* it is `now-playing` and the journey is two entries
+  // deep: albums -> now-playing -> queue. That is the real route a user
+  // takes, which is why these do not reach for the shortcut.
+
   test('back closes the queue and leaves the page where it was', async ({
     app,
   }) => {
     await expect(queue(app)).toHaveAttribute('overlay', '');
 
-    await toggle(app).click();
+    await openTheQueue(app);
     await expectQueue(app, true);
 
     await app.goBack();
@@ -69,27 +96,31 @@ test.describe('the queue is a screen where it covers the content', () => {
     // The page underneath is untouched. Before #55 this was the
     // *previous* view, because the queue was not in the stack at all
     // and back spent an entry navigating something nobody could see.
-    await expect(activeView(app)).toHaveAttribute('data-active-view', 'albums');
+    await expect(activeView(app)).toHaveAttribute(
+      'data-active-view',
+      'now-playing',
+    );
   });
 
   test('costs exactly one entry, so the next press navigates', async ({
     app,
   }) => {
-    await toggle(app).click();
+    await openTheQueue(app);
     await expectQueue(app, true);
 
     await app.goBack();
     await expectQueue(app, false);
+    await expect(activeView(app)).toHaveAttribute(
+      'data-active-view',
+      'now-playing',
+    );
 
     await app.goBack();
 
-    // Whatever the launch page is, it is not Albums — the point is that
-    // this press moved the app rather than being swallowed by a queue
-    // that had already closed.
-    await expect(activeView(app)).not.toHaveAttribute(
-      'data-active-view',
-      'albums',
-    );
+    // Exactly one entry each: the second press leaves Now Playing for
+    // the page it was opened from, rather than being swallowed by a
+    // queue that had already closed.
+    await expect(activeView(app)).toHaveAttribute('data-active-view', 'albums');
   });
 
   /**
@@ -116,15 +147,9 @@ test.describe('the queue is a screen where it covers the content', () => {
         await app.keyboard.press('Escape');
       },
     ],
-    [
-      'the toggle it was opened from',
-      async (app: Page) => {
-        await toggle(app).click();
-      },
-    ],
   ] as Array<[string, (app: Page) => Promise<void>]>) {
     test(`${name} leaves no entry behind`, async ({ app }) => {
-      await toggle(app).click();
+      await openTheQueue(app);
       await expectQueue(app, true);
 
       await dismiss(app);
@@ -132,7 +157,10 @@ test.describe('the queue is a screen where it covers the content', () => {
 
       await app.goBack();
 
-      await expect(activeView(app)).not.toHaveAttribute(
+      // One press, one screen: Now Playing is what the queue was opened
+      // from, so leaving it lands on Albums. An orphaned entry would
+      // have spent this press on nothing and left it here.
+      await expect(activeView(app)).toHaveAttribute(
         'data-active-view',
         'albums',
       );
@@ -149,18 +177,6 @@ test.describe('the queue is a screen where it covers the content', () => {
    * `back-navigation.spec.ts` gives: the class was right throughout the
    * bug that rule exists for.
    */
-  test('leaves the tab it was opened from highlighted', async ({ app }) => {
-    await expect(
-      app.getByRole('button', { name: 'Albums', exact: true }),
-    ).toHaveAttribute('aria-current', 'page');
-
-    await toggle(app).click();
-    await expectQueue(app, true);
-
-    await expect(
-      app.getByRole('button', { name: 'Albums', exact: true }),
-    ).toHaveAttribute('aria-current', 'page');
-  });
 
   /**
    * With the panel spanning the whole width the scrim has no uncovered
@@ -168,7 +184,7 @@ test.describe('the queue is a screen where it covers the content', () => {
    * full-screen surface. Measured at 424×439 before #55: **25×21px**.
    */
   test('offers a way out a thumb can hit', async ({ app }) => {
-    await toggle(app).click();
+    await openTheQueue(app);
 
     const box = await app
       .getByRole('button', { name: 'Close queue' })
@@ -204,7 +220,7 @@ test('the panel stays out of the paint-contained region', async ({ app }) => {
   // from it — and because the host drops `paint` from its own
   // containment deliberately in overlay mode, so a closed panel answers
   // a different question.
-  await toggle(app).click();
+  await openTheQueue(app);
   await expectQueue(app, true);
 
   const ancestry = await app.evaluate(() => {
@@ -233,6 +249,66 @@ test('the panel stays out of the paint-contained region', async ({ app }) => {
       'a paint-contained ancestor clips a fixed-positioned popup on Chrome 113',
     ).not.toMatch(/paint|content|strict/);
   }
+});
+
+/**
+ * Two properties need the queue to be a *screen* and the bar to still
+ * have its button, and only the Compact band has both — below 600px #59
+ * takes the button off the bar.
+ */
+test.describe('a screen opened from the bar', () => {
+  test.beforeEach(async ({ app }) => {
+    await app.setViewportSize(COMPACT);
+    await app.getByTestId('nav-albums').click();
+    await expect(activeView(app)).toHaveAttribute('data-active-view', 'albums');
+    await expect(queue(app)).toHaveAttribute('overlay', '');
+  });
+
+  /**
+   * A detail view leaves the destination it was opened from lit
+   * (`active-view-store`, #72), and the queue inherits that — it is
+   * published with `isPrimary: false`, so `isActive('albums')` is still
+   * true underneath it.
+   *
+   * `aria-current` rather than a class, for the reason
+   * `back-navigation.spec.ts` gives: the class was right throughout the
+   * bug that rule exists for.
+   */
+  test('leaves the destination it was opened from highlighted', async ({
+    app,
+  }) => {
+    // By testid, not by role: at 700px the sidebar is in icon mode, so
+    // what the item is *named* is a different question from which item
+    // it is. The assertion is still `aria-current`, which is the
+    // accessible fact.
+    const albums = app.getByTestId('nav-albums');
+
+    await expect(albums).toHaveAttribute('aria-current', 'page');
+
+    await toggle(app).click();
+    await expectQueue(app, true);
+
+    await expect(albums).toHaveAttribute('aria-current', 'page');
+  });
+
+  /** The toggle is a fourth way out, and it unwinds the entry like the
+   *  other three — through the panel's attribute, not its own handler. */
+  test('closes from the same toggle, leaving no entry behind', async ({
+    app,
+  }) => {
+    await toggle(app).click();
+    await expectQueue(app, true);
+
+    await toggle(app).click();
+    await expectQueue(app, false);
+
+    await app.goBack();
+
+    await expect(activeView(app)).not.toHaveAttribute(
+      'data-active-view',
+      'albums',
+    );
+  });
 });
 
 /**
