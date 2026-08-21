@@ -13,6 +13,7 @@ import type { MenuSurface } from '../menu-surface/menu-surface';
 import '../menu-surface/menu-surface';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 import { QueueController } from '@store/controllers/queue-controller';
+import { PHONE_QUERY } from '@utils/breakpoints';
 import { creditStore } from '@store/credit-store';
 import {
     describeQueueSource,
@@ -119,6 +120,25 @@ export class QueuePanel
      */
     @property({ type: Boolean, reflect: true })
     overlay = false;
+
+    /**
+     * Phone width, from `matchMedia` rather than from a media query,
+     * because it decides whether the scrim *exists* (#171) —
+     * `job-band`'s rule, and a stylesheet cannot express it: a
+     * `display: none` scrim is still an element with a click handler.
+     *
+     * Below 600px the panel spans the whole content area, so the scrim
+     * has no uncovered pixels: measured at 424x439, host, panel and
+     * scrim are all 424x318 with the scrim entirely underneath. It dims
+     * nothing and dismisses nothing there, and the queue is a *screen*
+     * at that width anyway (#55) — back and a 44px close button are its
+     * ways out. Between 600 and 899 the panel is a 320px column of a
+     * wider content area, the scrim is reachable, and #24's
+     * tap-outside-to-close is real; that band is untouched.
+     */
+    @state() private phone = false;
+
+    private phoneQuery?: MediaQueryList;
 
     @state()
     private isDragging = false;
@@ -391,6 +411,8 @@ export class QueuePanel
             display: none;
         }
 
+        /* Overlay only, and above 600px only -- see the phone field,
+           which is where that half is decided (#171). */
         .scrim {
             position: absolute;
             inset: 0;
@@ -414,10 +436,10 @@ export class QueuePanel
 
             /* A screen's way out has to be hittable with a thumb.
                Measured at 424x439 before #55: these were **25x21px**,
-               and with the panel spanning the whole width the scrim
-               underneath has no uncovered pixels at all -- so it was
-               the only pointer route out of a full-screen surface.
-               Back answers it now as well, which is the other half.
+               and with the panel spanning the whole width there is no
+               scrim here at all (#171) -- so this is the only pointer
+               route out of a full-screen surface. Back answers it now
+               as well, which is the other half.
 
                Sized only in overlay mode: inline these sit in a 320px
                column beside the content, where a mouse is what reaches
@@ -847,6 +869,12 @@ export class QueuePanel
         // desktop width rather than the minimum.
         this.updateOverlayMode();
 
+        // Read here rather than in a field initialiser, so a test can
+        // install its own matchMedia before the element is created.
+        this.phoneQuery = window.matchMedia?.(PHONE_QUERY);
+        this.phone = this.phoneQuery?.matches ?? false;
+        this.phoneQuery?.addEventListener('change', this.onPhoneMedia);
+
         if (this.parentElement) {
             this.spaceObserver = new ResizeObserver(() =>
                 this.updateOverlayMode(),
@@ -889,6 +917,8 @@ export class QueuePanel
         this.creditsUnsub = undefined;
         this.spaceObserver?.disconnect();
         this.spaceObserver = undefined;
+        this.phoneQuery?.removeEventListener('change', this.onPhoneMedia);
+        this.phoneQuery = undefined;
         document.removeEventListener('keydown', this.onOverlayKeydown);
         document.removeEventListener(
             'mousemove',
@@ -953,6 +983,10 @@ export class QueuePanel
         if (available === 0) return;
 
         this.overlay = available - this.panelWidth < MAIN_PANEL_FLOOR;
+    };
+
+    private onPhoneMedia = (e: MediaQueryListEvent): void => {
+        this.phone = e.matches;
     };
 
     /**
@@ -1991,7 +2025,7 @@ export class QueuePanel
         const tracks = this.queue.tracks;
 
         return html`
-            ${this.overlay
+            ${this.overlay && !this.phone
                 ? html`<div
                       class="scrim"
                       part="scrim"

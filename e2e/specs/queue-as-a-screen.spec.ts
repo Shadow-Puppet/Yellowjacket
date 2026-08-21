@@ -179,8 +179,8 @@ test.describe('the queue is a screen where it covers the content', () => {
    */
 
   /**
-   * With the panel spanning the whole width the scrim has no uncovered
-   * pixels, so the close button is the only pointer route out of a
+   * With the panel spanning the whole width there is no scrim here at
+   * all (#171), so the close button is the only pointer route out of a
    * full-screen surface. Measured at 424×439 before #55: **25×21px**.
    */
   test('offers a way out a thumb can hit', async ({ app }) => {
@@ -193,6 +193,33 @@ test.describe('the queue is a screen where it covers the content', () => {
     expect(box).not.toBeNull();
     expect(box!.width).toBeGreaterThanOrEqual(44);
     expect(box!.height).toBeGreaterThanOrEqual(44);
+  });
+
+  /**
+   * #171 — and it draws no scrim, because there is nowhere to tap.
+   *
+   * `.panel-content` is `width: 100%` here, so the scrim sat entirely
+   * underneath it: measured at 424×439, host, panel and scrim all
+   * 424×318. #24's tap-outside-to-close cannot exist on a surface with
+   * no outside, and a `cursor: pointer` layer nobody can reach is a
+   * claim the component cannot keep.
+   *
+   * Asserted as absence rather than by clicking, for the reason the
+   * issue gives: a naive phone case clicks the scrim's centre and hits
+   * the panel, so it passes on the build this exists to fail. The scrim
+   * is still real between 600 and 899px, which `queue-overlay.spec.ts`
+   * asserts at 900×600 by clicking it.
+   */
+  test('draws no scrim, because a screen has no outside to tap', async ({
+    app,
+  }) => {
+    await openTheQueue(app);
+
+    const scrim = await queue(app).evaluate(
+      (el) => el.shadowRoot!.querySelector('.scrim') !== null,
+    );
+
+    expect(scrim).toBe(false);
   });
 });
 
