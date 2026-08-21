@@ -892,6 +892,67 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
             .track-row .track-request {
                 flex-shrink: 0;
             }
+
+            /* ── The phone (#66) ──
+             *
+             * **This block is last on purpose**, for index.css's
+             * reason: a media query adds no specificity, so a rule
+             * written above the plain one it overrides loses to it and
+             * every declaration here is silently dead.
+             *
+             * Two faults, one shape. The page is a fixed header over a
+             * scrolling tracklist — the desktop arrangement — so at the
+             * reference device's 424x439 the header owned 253 of the
+             * panel's 318px and the tracklist scrolled inside the 64px
+             * that were left. And the header's flex row squeezed
+             * .album-info to 112px, so the title drew as one ellipsised
+             * glyph and two of the album's three primary actions were
+             * clipped by the host's own overflow: Shuffle album ended
+             * at x=443 in a 424px box, unreachable by any gesture.
+             *
+             * .album-info carries min-width: 0 and was shrinking as
+             * asked, so another one is not the fix — the row has to
+             * stack, or the info column has nothing to be wide with.
+             *
+             * The scroller moves to the host and .content stops being
+             * one, which is what makes the header scroll away; the
+             * tracklist is plain DOM rather than a virtualizer, so
+             * nothing inside wants a scroll window of its own. */
+            @media (max-width: 599px) {
+                :host {
+                    overflow-y: auto;
+                }
+
+                .album-header {
+                    flex-direction: column;
+                    align-items: flex-start;
+                    gap: 12px;
+                    padding: 12px 16px;
+                }
+
+                /* Stacked, the art is the whole of the header's width
+                 * budget and its 200px square is 45% of the reference
+                 * device's height. It is still what identifies the
+                 * album, so it shrinks rather than going. */
+                .cover-art-container {
+                    width: 140px;
+                    height: 140px;
+                }
+
+                /* A column flex item takes its content's width from
+                 * align-items: flex-start above, which would leave the
+                 * actions wrapping inside a box narrower than the row
+                 * they now have to themselves. */
+                .album-info {
+                    align-self: stretch;
+                }
+
+                .content {
+                    flex: 0 0 auto;
+                    overflow-y: visible;
+                    padding: 16px 16px 24px;
+                }
+            }
         `,
     ];
 
