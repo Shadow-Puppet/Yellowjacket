@@ -4429,3 +4429,61 @@ the content starts where the **row above it** ends, which is true with a
 job running and without one. An assertion against an absolute
 coordinate was quietly also asserting "and no background job exists",
 which is not something that spec is about or can arrange.
+
+## The queue was already the right rectangle; what it lacked was an entry (measured 2026-08-21)
+
+#55 asks for the queue to be "a real screen instead of a pop-open
+sidebar", and its Direction asks for a `DETAIL_LOADERS` mount. Measured
+against `880adff` at the reference device's real viewport (424x439),
+with #24's overlay open:
+
+| box | rect |
+|---|---|
+| `.main-panel` | 424 x 318 |
+| `queue-panel` host | 424 x 318 |
+| `.panel-content` | 424 x 318 |
+| `.scrim` | 424 x 318, entirely underneath the panel |
+
+So a detail-view mount would have drawn the same rectangle in the same
+place. Three things were genuinely missing, and none of them is a
+rendering:
+
+- **Back navigated the page underneath and left the queue up.** Opened
+  on Artists, pressed back: `data-active-view` went `artists` ->
+  `albums`, `open` stayed `true`. A press that changes something the
+  user cannot see, and costs them their place.
+- **The scrim has zero reachable pixels at phone width**, because
+  `panel-content` is `width: 100%` there. #24's tap-outside-to-close
+  does not exist on the device.
+- The only pointer route out was a **25x21px** button.
+
+The rule that followed is that the queue is a *place* exactly while it
+is an overlay and a *control* while it is a column, which reuses #24's
+computed mode rather than adding a breakpoint.
+
+**The containment finding is the reason the Direction was not
+followed.** Read off the running app rather than the stylesheet:
+
+| element | computed `contain` |
+|---|---|
+| `queue-panel` (open, overlay) | `layout style` |
+| `.content-area` | `layout style` |
+| `.main-panel` | `content` |
+| `.main-panel > *` (a view) | `content` |
+
+`queue-panel` has a `wa-popup` context menu, and #60's finding is that
+`position: fixed` escapes overflow but not paint containment on
+Chrome 113. Its ancestry today is paint-free to `body`; a
+`DETAIL_LOADERS` mount would have put it under two paint-containing
+ancestors. **No tier here can see that** — CI's Chromium and WebKit
+both have the Popover API — so the spec asserts the mechanism (the
+panel is not under a paint-contained ancestor) rather than the
+symptom. This is the second change in a row where the honest assertion
+was about where an element *is* rather than how it *looks*.
+
+One thing worth knowing about the spec: **three of its nine tests fail
+on the build before the change and the other six cannot.** "The entry
+is not orphaned" and "a docked column is not in the stack" are both
+vacuously true of a build that pushes no entry at all. Reverting the
+source and re-running is what established which were which, and the
+file says so in its header rather than implying all nine reproduce.

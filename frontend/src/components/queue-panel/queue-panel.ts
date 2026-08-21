@@ -410,6 +410,22 @@ export class QueuePanel
             :host([overlay]) .panel-content {
                 width: 100%;
             }
+
+            /* A screen's way out has to be hittable with a thumb.
+               Measured at 424x439 before #55: these were **25x21px**,
+               and with the panel spanning the whole width the scrim
+               underneath has no uncovered pixels at all -- so it was
+               the only pointer route out of a full-screen surface.
+               Back answers it now as well, which is the other half.
+
+               Sized only in overlay mode: inline these sit in a 320px
+               column beside the content, where a mouse is what reaches
+               them and 44px of header is 44px the queue does not get. */
+            :host([overlay]) .header-action-button {
+                min-width: 44px;
+                min-height: 44px;
+                justify-content: center;
+            }
         }
 
         .resize-handle {

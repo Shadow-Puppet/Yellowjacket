@@ -15,6 +15,7 @@ import { FavoritesController } from '@store/controllers/favorites-controller';
 import { designTokens } from '../../styles/tokens.css';
 import { srOnly } from '../../styles/sr-only.css';
 import { ICON_QUEUE } from '@utils/icon-language';
+import { openQueue as showQueue } from '@utils/open-queue';
 
 /**
  * What is playing, at the size a phone has room for (plan 016 B2,
@@ -226,13 +227,15 @@ export class NowPlayingView extends LitElement {
      *
      * This view hides the bottom bar (index.css), and the bar is where
      * the queue button lives -- so without this, going full-screen
-     * would take the queue away. It toggles the same `open` attribute
+     * would take the queue away. It goes through the same helper
      * `index.ts` does, because the panel's state is an attribute on one
      * element and a second mechanism for it is a second thing to keep
-     * in step.
+     * in step -- which is exactly what this button was: it set `open`
+     * directly, so on a phone it produced a queue with no history entry
+     * behind it and back moved the page underneath instead (#55).
      */
     private openQueue() {
-        document.getElementById('queue-panel')?.setAttribute('open', '');
+        showQueue();
     }
 
     private toggleFavorite() {

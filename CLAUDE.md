@@ -1775,6 +1775,61 @@ along untouched. Escape closes it and returns focus, and is attached
 only while the overlay is up — it is a dismissal, not a shortcut, which
 is why it is not a panel-scoped binding.
 
+**And an overlaid queue is a place, which is the whole of #55.** The
+pixels were already right: measured at the reference device's 424×439,
+the overlaid panel is 424×318 — `.main-panel`'s rect exactly — so a
+`DETAIL_LOADERS` mount would draw the same rectangle in the same spot.
+What was missing was the navigation model, and the defect was one
+measurement: opening the queue on Artists and pressing back moved the
+page *underneath* to Albums and left the queue up. So opening an
+**overlay** queue dispatches `navigate {view: 'queue'}` and opening a
+**column** sets the attribute as it always did — `utils/open-queue.ts`
+is that one decision, and both routes end at the same `open` attribute
+on the same element.
+
+Five things about it are load-bearing.
+
+**The queue is a screen exactly while it is an overlay**, which is the
+rule above rather than a second one: a column is a thing the user
+docked, so back must not undock it and a navigation must not take it
+away, while an overlay is covering the content and has to answer the
+platform's gesture. That also inherits the *computed, not
+breakpointed* property for free — the panel is drag-resizable, so a
+viewport breakpoint would be wrong by up to 180px.
+
+**It is in neither `VIEW_TAGS` nor `DETAIL_LOADERS`**, because there is
+nothing to mount; the panel is already in the document. That is not
+tidiness. `.main-panel > *` is paint-contained under a `.main-panel`
+that is, and `contain: paint` clips the `position: fixed` a `wa-popup`
+falls back to on the reference device's Chrome 113 (#60) — so the
+detail-view mount asked for in #55's Direction would have broken
+`queue-panel`'s working context menu on the one device the issue is
+about. Measured: the panel's ancestry is `layout style` all the way to
+`body`; a view inside the main panel is `content` under `content`.
+**No tier here can see that consequence** — CI's Chromium and WebKit
+both have the Popover API — so `queue-as-a-screen.spec.ts` asserts the
+*mechanism*, that the panel is not under a paint-contained ancestor.
+
+**A navigation to `queue` deliberately writes neither
+`dataset.activeView` nor `searchStore.setCurrentView`**, because both
+describe what is *in* the main panel and the queue covers that panel
+without replacing it. It publishes itself through `activeViewStore`
+with `isPrimary: false`, so the tab it was opened from stays lit —
+the same rule a detail view gets.
+
+**The entry is unwound from the panel's `open` attribute**, in the
+mutation observer `index.ts` already ran for `aria-expanded`, rather
+than at each of the four ways out. Escape, the scrim, the close button
+and the toggle all take that route, and a fifth added later gets it
+free. Without it the entry is orphaned and the *next* back press is the
+one that closes the queue — the reported defect moved one press later,
+which looks exactly like a press that did nothing.
+
+**And the way out is 44px on a phone.** With the panel spanning the
+whole width the scrim has no uncovered pixels at all, so the close
+button is the only pointer route out of a full-screen surface; it was
+**25×21px**.
+
 What this does **not** fix is `page-header` overflowing on its own:
 at 900×600 "New Smart Playlist" is still clipped to 114 of 162px with
 the queue *closed*. That is #69, and it cannot be fixed in
