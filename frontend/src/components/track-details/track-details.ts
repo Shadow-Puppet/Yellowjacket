@@ -529,6 +529,21 @@ export class TrackDetails extends LitElement {
             background: var(--yj-error, #e03131);
         }
 
+        /*
+         * Both are the *only* route to changing or removing a track's
+         * cover art, so where the device has no hover they are always
+         * visible rather than hidden — the inverse of #68's rule, which
+         * applies where the hover control is redundant. Revealed by
+         * opacity, so what is on screen is what the desktop reveal shows
+         * and nothing about the layout moves.
+         */
+        @media not all and (hover: hover) {
+            .cover-art-overlay,
+            .cover-art-remove {
+                opacity: 1;
+            }
+        }
+
         /* Error message */
         .error-message {
             flex: 1;
