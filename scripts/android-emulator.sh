@@ -276,8 +276,14 @@ cmd_logs() {
 	# The app's own tags plus the two that report its death.  Chasing a
 	# raw logcat here is hopeless: the emulator emits thousands of lines
 	# a second, almost all of them WindowManager transitions.
+	#
+	# `yellowjacket` is where the Go side's slog goes (backend/androidlog,
+	# #160).  It is a fixed tag rather than "$PKG", which is the whole
+	# point of it being fixed: the debug build's id carries a ".dev"
+	# suffix, so a tag derived from the id would be filtered out on the
+	# one build anybody debugging this app is running.
 	"$ADB" logcat -v time \
-		WailsBridge:V "$PKG":V GoLog:V AndroidRuntime:E DEBUG:V libc:F ActivityManager:I '*:S'
+		yellowjacket:V WailsBridge:V "$PKG":V GoLog:V AndroidRuntime:E DEBUG:V libc:F ActivityManager:I '*:S'
 }
 
 # Forward the WebView's devtools socket, so the page can be asked things.
