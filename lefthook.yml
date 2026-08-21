@@ -58,6 +58,15 @@ pre-commit:
       root: "frontend/"
       run: node scripts/check-css-literals.mjs
 
+    # A nested rule whose selector starts with an element name is
+    # silently dropped by the device's Chrome 113, and by nothing else --
+    # so every tier here renders it correctly and only a screenshot of
+    # the phone disagrees. Instant.
+    css-nesting:
+      glob: "frontend/**/*.{ts,css}"
+      root: "frontend/"
+      run: node scripts/check-css-nesting.mjs
+
 # Deliberately sequential, unlike pre-commit.  `go test -race`
 # saturates every core for the better part of a minute and the UI tier
 # is a real browser with wall-clock timeouts, so run together the

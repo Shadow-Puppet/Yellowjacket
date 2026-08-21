@@ -23,97 +23,23 @@
  * as the literal contains an unterminated `/*`. Nothing else produces
  * that, and a legitimate literal cannot contain one.
  */
-import { readFileSync } from 'node:fs';
-import { globSync } from 'node:fs';
+import { globSync, readFileSync } from 'node:fs';
+
+import { taggedLiterals } from './css-literals.mjs';
 
 const TAGS = ['css', 'html', 'svg'];
-
-/**
- * Find the end of a template literal that starts at `start` (the index
- * of its opening backtick), respecting escapes and `${}` substitutions.
- * Returns the index of the closing backtick, or -1.
- */
-function endOfTemplate(src, start) {
-  let depth = 0;
-
-  for (let i = start + 1; i < src.length; i++) {
-    const c = src[i];
-
-    if (c === '\\') {
-      i++;
-      continue;
-    }
-
-    if (c === '$' && src[i + 1] === '{') {
-      depth++;
-      i++;
-      continue;
-    }
-
-    if (c === '}' && depth > 0) {
-      depth--;
-      continue;
-    }
-
-    if (c === '`' && depth === 0) return i;
-  }
-
-  return -1;
-}
-
-/** Strip `${...}` substitutions, which may legitimately contain anything. */
-function stripSubstitutions(text) {
-  let out = '';
-  let depth = 0;
-
-  for (let i = 0; i < text.length; i++) {
-    if (text[i] === '$' && text[i + 1] === '{') {
-      depth++;
-      i++;
-      continue;
-    }
-
-    if (text[i] === '}' && depth > 0) {
-      depth--;
-      continue;
-    }
-
-    if (depth === 0) out += text[i];
-  }
-
-  return out;
-}
-
-function lineOf(src, index) {
-  return src.slice(0, index).split('\n').length;
-}
 
 const files = globSync('src/**/*.ts', { cwd: process.cwd() });
 const problems = [];
 
 for (const file of files) {
   const src = readFileSync(file, 'utf8');
-  const tagPattern = new RegExp(`(^|[^\\w$.])(${TAGS.join('|')})\``, 'g');
 
-  let match;
-
-  while ((match = tagPattern.exec(src)) !== null) {
-    const open = match.index + match[0].length - 1;
-    const close = endOfTemplate(src, open);
-
-    if (close === -1) continue;
-
-    const body = stripSubstitutions(src.slice(open + 1, close));
+  for (const { tag, body, line } of taggedLiterals(src, TAGS)) {
     const opens = (body.match(/\/\*/g) ?? []).length;
     const closes = (body.match(/\*\//g) ?? []).length;
 
-    if (opens > closes) {
-      problems.push({
-        file,
-        line: lineOf(src, open),
-        tag: match[2],
-      });
-    }
+    if (opens > closes) problems.push({ file, line, tag });
   }
 }
 
