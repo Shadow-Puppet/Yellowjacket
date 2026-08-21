@@ -8,13 +8,29 @@ This tier answers "does the phone build run", nothing else. It is not a
 spec tier, it does not run in CI, and the app is not a usable Android
 player yet (plan 015 says why, at length).
 
-## Three facts that make failure invisible
+## Two facts that make failure invisible
 
-**Go's stdout does not reach logcat.** An Android app's fd 1 and 2 go to
-`/dev/null`. Every `slog` line the app writes is discarded — including
-the one naming the error it is about to exit on. `setprop
-log.redirect-stdio true` does not help: it redirects the *Java*
-runtime's `System.out`, and the Go code is a c-shared native library.
+There were three. The first was that **Go's stdout does not reach
+logcat** — an Android app's fd 1 and 2 go to `/dev/null`, so every
+`slog` line the app wrote was discarded, including the one naming the
+error it was about to exit on. That is fixed (#160):
+`backend/androidlog` is a `slog.Handler` over `__android_log_write`,
+selected in `main()` by build tag, and the app's whole diagnostic
+stream now arrives under the `yellowjacket` tag, which `make
+android-logs` filters for.
+
+What remains true about it is the part that misleads: **`setprop
+log.redirect-stdio true` still does not help**, because it redirects
+the *Java* runtime's `System.out` and the Go code is a c-shared native
+library. Nothing that reaches logcat here does so through stdout, so
+anything printed with `fmt.Println` is still lost. Log with `slog`.
+
+The tag is a fixed string rather than the application id, and that is
+load-bearing rather than tidy: the debug build carries
+`applicationIdSuffix ".dev"` so it can be installed beside the release
+app, and it is the only build whose WebView can be inspected — so a tag
+derived from the id would be filtered out on the one build anybody
+debugging this app is running.
 
 **`os.Exit` is a silent death.** `main()` ends several failure paths in
 `os.Exit(1)`. From Android's side that is a process that vanished:
@@ -34,7 +50,10 @@ the wrong question. `make android-smoke` asks the right one — is it the
 The tell, once you know it: `I/WailsBridge: Wails bridge initialized`
 followed immediately by a new pid doing the same thing. That means the
 native library loaded, the JNI bridge came up, Go's `main()` ran, and
-`main()` left. Work backwards through its `os.Exit(1)` paths.
+`main()` left. Work backwards through its `os.Exit(1)` paths — and
+since #160, **read the `E/yellowjacket` line above it first**, because
+every one of those paths logs the error before it exits. That line is
+what #52 spent months without.
 
 ## What to run
 

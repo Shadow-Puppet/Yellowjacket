@@ -39,16 +39,21 @@ type Player struct {
 	// via the queue).
 	mu sync.Mutex
 
-	ctx                     context.Context
-	logger                  *slog.Logger
-	db                      *database.DB
-	state                   State
-	currentFile             *os.File
-	format                  beep.Format
-	baseStreamer            beep.Streamer
-	seeker                  beep.StreamSeeker
-	resampled               beep.Streamer
-	buffered                *BufferedStreamer
+	ctx          context.Context
+	logger       *slog.Logger
+	db           *database.DB
+	state        State
+	currentFile  *os.File
+	format       beep.Format
+	baseStreamer beep.Streamer
+	seeker       beep.StreamSeeker
+	resampled    beep.Streamer
+	buffered     *BufferedStreamer
+
+	// lastUnderruns is the previous report, so the 1 Hz log can say
+	// what happened in the last second and stay quiet when nothing did.
+	// It is reset with the streamer, in loadFileLocked.
+	lastUnderruns           UnderrunStats
 	control                 *beep.Ctrl
 	volume                  *effects.Volume
 	speakerStreamer         beep.Streamer
@@ -292,7 +297,76 @@ func (p *Player) emitPositionIfPlaying() {
 		return
 	}
 
+	p.reportUnderrunsLocked()
 	p.emitPositionLocked()
+}
+
+// underrunDelta is what happened since the last report.
+//
+// It clamps at zero rather than subtracting blind, because the counter
+// belongs to the *streamer* and the streamer is replaced on every
+// track: a baseline carried across that boundary is the previous
+// track's total subtracted from a fresh zero, which is negative. That
+// is repaired at the load (lastUnderruns is reset with the streamer)
+// and clamped here as well, because a negative count in a log line
+// reads as a broken instrument and would discredit the measurement
+// this exists to make.
+func underrunDelta(now, last UnderrunStats) UnderrunStats {
+	return UnderrunStats{
+		Runs:    max(0, now.Runs-last.Runs),
+		Calls:   max(0, now.Calls-last.Calls),
+		Samples: max(0, now.Samples-last.Samples),
+	}
+}
+
+// reportUnderrunsLocked logs what the ring buffer missed, at most once
+// a second and only when the number moved.  Must be called with p.mu
+// held.
+//
+// **An underrun is audible and nothing counted it** (#135). The ring
+// serves silence when it is empty, so a run of zeros is spliced into
+// the waveform and the step discontinuity at each edge is a click; a
+// series of short ones is static. Everything that makes one likelier
+// is worse on a phone than on a desktop -- slower storage, a governor
+// that parks cores, background work, GC -- and no tier here can see it,
+// since CI's audio device is a null sink chosen because it keeps time.
+//
+// Three things about the reporting are deliberate.
+//
+// **It is on the 1 Hz position ticker rather than in Stream.** Stream
+// runs on the speaker callback's real-time deadline, and a log line
+// there would allocate, format and write on the exact path whose
+// missed deadline is the defect -- measuring by making it worse.
+//
+// **An unchanged count is not logged.** That is emitStatus' rule one
+// package over: a healthy player is silent, so anything in the log is
+// news, and the line appears exactly while it is popping. Reading it
+// off a device means `make android-logs` with the audio audible.
+//
+// **It is Info rather than Debug**, because the default level is Info
+// and a phone has no convenient way to set YJ_LOG_LEVEL -- a debug
+// line here would be a counter nobody on the affected platform can
+// read, which is the shape of the bug that made #160 necessary.
+func (p *Player) reportUnderrunsLocked() {
+	if p.buffered == nil {
+		return
+	}
+
+	stats := p.buffered.Underruns()
+	if stats == p.lastUnderruns {
+		return
+	}
+
+	since := underrunDelta(stats, p.lastUnderruns)
+	p.lastUnderruns = stats
+
+	slog.Info("audio underrun",
+		"runs", since.Runs,
+		"calls", since.Calls,
+		"silenceMs", speakerSampleRate.D(int(since.Samples)).Milliseconds(),
+		"trackRuns", stats.Runs,
+		"trackSilenceMs", speakerSampleRate.D(int(stats.Samples)).Milliseconds(),
+	)
 }
 
 // emitPositionLocked pushes the current position to the frontend.
@@ -483,6 +557,12 @@ func (p *Player) updateStreamers(
 	p.buffered = NewBufferedStreamer(
 		p.resampled, int(speakerSampleRate)*2,
 	)
+
+	// The counter belongs to the streamer, so the baseline it is
+	// reported against has to go with it -- otherwise the first report
+	// of a new track is the previous track's total subtracted from
+	// zero, which is negative and looks like the instrument is broken.
+	p.lastUnderruns = UnderrunStats{}
 
 	// wrap in ctrl streamer to allow play/pause
 	p.control = &beep.Ctrl{Streamer: p.buffered}

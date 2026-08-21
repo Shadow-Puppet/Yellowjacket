@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/golang-cz/devslog"
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
 
@@ -110,11 +109,7 @@ func main() {
 	// create sLogger
 	loglevel := resolveLogLevel(isDev)
 
-	sLogger := slog.New(devslog.NewHandler(os.Stdout, &devslog.Options{
-		HandlerOptions: &slog.HandlerOptions{
-			Level: loglevel,
-		},
-	}))
+	sLogger := slog.New(newLogHandler(&slog.HandlerOptions{Level: loglevel}))
 	slog.SetDefault(sLogger)
 	sLogger.Info("starting yellowjacket", "version", version, "commit", commit)
 
