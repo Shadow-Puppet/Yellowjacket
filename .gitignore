@@ -88,3 +88,8 @@ build/android/overlay.json
 # Written by @semantic-release/changelog purely to carry the release notes
 # into scripts/gitea-release.sh; the release page is the changelog.
 .release-notes.md
+
+# Agent session log: local scratch, not repo memory (that is CLAUDE.md
+# and .planning/). Written by the scheduled backlog runs.
+.pi/journal.md
+.pi/schedule-prompts.json

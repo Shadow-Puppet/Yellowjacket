@@ -426,6 +426,7 @@ body div.sidebar {
             "jobs-band" auto
             "main-panel" 1fr
             "bottom-bar" auto
+            "progress-line" auto
             "bottom-nav" auto
             / 1fr;
         /* Nothing may scroll sideways here.  On a desktop the shell is
@@ -501,7 +502,8 @@ body div.sidebar {
        expression of the same fact is a second thing to keep in step.
        The view carries its own queue button, because this is where
        that one lived. */
-    body:has(#main-content[data-active-view="now-playing"]) .bottom-bar {
+    body:has(#main-content[data-active-view="now-playing"]) .bottom-bar,
+    body:has(#main-content[data-active-view="now-playing"]) player-progress-line {
         display: none;
     }
 }
@@ -568,8 +570,12 @@ body div.sidebar {
 /* Out of the desktop grid entirely.  `job-band` renders nothing above
    600px anyway, but an in-flow grid child with no named area is
    auto-placed into a row of the shell -- the same trap the skip link is
-   absolutely positioned to avoid. */
-body job-band {
+   absolutely positioned to avoid.  `player-progress-line` (#58) is the
+   same element in the same position for the same reason: below 600px it
+   has a named row, and above it there is no border for it to sit on --
+   the desktop bar carries a real, interactive seek bar. */
+body job-band,
+body player-progress-line {
     display: none;
 }
 
@@ -600,5 +606,23 @@ body job-band {
         display: block;
         grid-area: jobs-band;
         background-color: var(--yj-bg-elevated, #343a40);
+    }
+}
+
+/* #58.  How far through the song we are, in its own grid row between
+   the two bars -- so the line is *on* the border rather than inside
+   either of them, and in flow rather than over it.  The row is `auto`
+   and the element renders nothing while no track is loaded, so it costs
+   no height at all until there is something to say.
+
+   **This block is below the `display: none` above and has to be**, for
+   the reason the band's rule is: a media query adds no specificity, so
+   `body player-progress-line { display: block }` written before that
+   rule loses to it at equal specificity and the line never appears at
+   any width.  Nothing fails; it is simply not there. */
+@media (max-width: 599px) {
+    body player-progress-line {
+        display: block;
+        grid-area: progress-line;
     }
 }

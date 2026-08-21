@@ -21,6 +21,10 @@ import '@components/audio-player/audio-player.ts';
 // In the bar rather than inside `audio-player` since #42, so the shell
 // is what has to register it.
 import '@components/audio-player/volume-control/volume-control.ts';
+// The phone's progress line (#58), on the border between the mini
+// player and the tab bar. In the shell for the same reason the volume
+// is, and eager because it is part of the bottom bar's first paint.
+import '@components/audio-player/progress-line/progress-line.ts';
 import '@components/track-list/track-list.ts';
 import '@components/now-playing/now-playing.ts';
 import '@components/sidebar/app-sidebar.ts';

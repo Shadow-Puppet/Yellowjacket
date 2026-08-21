@@ -1909,6 +1909,33 @@ every desktop button from 33×21 to 36×24, silently. The sizes are
 asserted as `'33x21'` rather than as a range, because the regression
 was three pixels.
 
+**What that bar lost is how far through the song it is, and
+`<player-progress-line>` is where it went** (#58). Plan 016 B2 took the
+seek bar off the phone's transport, so the one thing a mini player is
+expected to say without being opened had nowhere left to be said. It is
+a 2px line on the border between the mini player and the tab bar: the
+**shell's** element and its own `auto` grid row between `bottom-bar`
+and `bottom-nav`, because those two are separate components and either
+one drawing it means reaching into the other's box for two pixels.
+
+Four things about it are load-bearing. **It never counts** — the fill is
+`scaleX()` off the same `PlaybackPositionChanged` the seek bar renders,
+with the same `trackChangeId` and `seq` guards and an interval that is
+stopped and restarted by every report, which is the rule that exists
+because a local clock drifted 30 s away across four keyboard seeks.
+**It is not a control and cannot become one**: `aria-hidden` on the host
+and `pointer-events: none` throughout, because Now Playing's seek bar
+is what announces the position and a 2px strip on the top edge of the
+tab bar is exactly where a thumb aiming at a tab lands. **It renders
+nothing above 600px**, from `matchMedia` rather than a media query, for
+`job-band`'s reason plus one of its own — a stylesheet cannot stop a
+1 Hz interval running for the life of every desktop session about a
+line nobody can see. And **its phone rule sits at the foot of
+`index.css`, beside `job-band`'s**, not in the phone block above: a
+media query adds no specificity, so a `display: block` written before
+the `display: none` that takes it out of the desktop grid loses to it
+and the line never appears at any width, silently.
+
 **900 is the worst desktop width, not the 800×600 minimum.** The
 sidebar collapses to icons *below* 900, so the main panel is 843px at
 899 and 700px at 900 — the narrowest content area any desktop width
