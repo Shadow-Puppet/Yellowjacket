@@ -4874,6 +4874,17 @@ ancestor, and a hit test at each control's centre reaches the control.
 The width work of #57, #62, #55 and #59 holds; what was left was
 vertical, and it was this screen.
 
+**A number measured on the device is not a number CI can assert.** The
+spec's floor on the art's height passed here at 114 and failed in CI at
+**64**, and both are honest: this app is long-lived, so a job staged by
+an earlier spec is still on screen, and `volume-control` renders in a
+browser where it does not on Android. Both are chrome above and below
+the view and both move the leftover. That is the same trap the entry
+above about staged jobs describes, arriving as a *measurement* rather
+than as a stuck job. The assertion is the mechanism now -- in a row the
+art fills the row's height rather than being the leftover -- and the
+53-to-143 stays on the issue, where it was measured.
+
 The probe is worth keeping in mind for the next audit, because two of
 its three checks needed a second pass to mean anything. "Painted
 outside the viewport" flags a horizontally scrolling carousel -- the
