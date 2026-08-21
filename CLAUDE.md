@@ -2489,6 +2489,31 @@ missing half; `catalogFailed` is the only route to `unavailable` now,
 and the timer is a 60 s backstop for a genuine hang rather than the
 verdict.
 
+**On a phone that page is one scroll container, and the header is in
+it** (#66). It was built as a fixed header over a scrolling tracklist,
+which is the desktop arrangement: at the reference device's 424×439 the
+header owned **253 of the panel's 318px** and the list scrolled inside
+the 64 that were left. Below 600px the *host* is the scroller and
+`.content` stops being one, so the whole page moves together — which is
+only available because this tracklist is plain DOM rather than a
+virtualizer, and because `.main-panel > *` already gives the host a
+definite height.
+
+Three things about it are load-bearing. **Another `min-width: 0` was
+not the fix**: `.album-info` carries one and was shrinking exactly as
+asked, to 112px beside a 200px cover — so the title drew as `G…` and
+"Shuffle album" ended at x=443 inside a 424px box, clipped by the
+component's own `overflow: hidden` and reachable by no gesture. A row
+with a fixed-size sibling has to **stack** at that width, or the column
+that must shrink has nothing to be wide with. **`layout-overflow.spec.ts`
+cannot see any of this** — `body.scrollWidth` equalled the viewport
+throughout, because the overflow was *inside* a component; the spec
+measures each header control against the host's own box, which is
+`top-bar-fit.spec.ts`'s shape for the same reason. And **the phone block
+is last in the stylesheet**, on `index.css`'s rule: a media query adds
+no specificity, so written above the plain rules it overrides every
+declaration in it is silently dead.
+
 **Activating a row plays the list the row is in, from that row.** A
 double-click — and Play on a single row's context menu — queues the
 list as *displayed* with `startIndex` on that row, not a queue of one
