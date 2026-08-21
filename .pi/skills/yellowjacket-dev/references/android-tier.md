@@ -524,6 +524,61 @@ Four things about it, each of which costs an hour if met cold:
   app.yellowjacket.dev android.permission.READ_MEDIA_AUDIO` (and
   `POST_NOTIFICATIONS`) ahead of the launch skips it.
 
+### Getting the app into a state worth measuring
+
+A fresh install is **not** a neutral starting point, and three things
+about it will each cost you a measurement.
+
+**It downloads the real catalog.** `YJ_CORE_INDEX_URL` is stubbed in
+`dev-headless.sh` and in CI and is *real* here, so the app spends its
+first minutes fetching ~0.6 GB and `job-band` is **103px of a 439px
+screen** while it does. Every vertical number taken in that state is
+wrong -- one #51 measurement had the album art at 0px and it was
+entirely this.
+
+`__yj.call("explore.Service.StopIndexBuild", [])` stops it and returns
+cleanly. **It then starts again within seconds.** So stop it
+*immediately before* the measurement rather than once at the beginning,
+and check `jobs.Service.GetJobs` afterwards -- an empty array is the
+only proof. `jobs.Service.ClearFinishedJobs` tidies the finished rows
+that otherwise keep the band open.
+
+**A library added over the bridge does not dismiss the first-run
+wizard.** `library.Library.AddLibrary` works and scans, but the wizard
+checks for an existing library once, on mount, and its "Get Started"
+button gates on a directory chosen *in the wizard* -- so it stays up
+with a correctly disabled button over everything you are trying to
+measure. Nothing is broken; reload the page and it is gone. This reads
+exactly like a tap being swallowed, which is the expensive part.
+
+**Scoped storage decides where the music can be.** `/sdcard/Music/...`
+plus `pm grant <pkg> android.permission.READ_MEDIA_AUDIO` works and
+`AddLibrary` takes the plain path; a push into
+`/sdcard/Android/data/<pkg>/files/` looks like it worked and then is not
+there. Some builds additionally want
+`appops set <pkg> MANAGE_EXTERNAL_STORAGE allow`, and until they have it
+the app opens the *system* "All files access" screen on launch -- so
+`dumpsys window | grep mCurrentFocus` naming `com.android.settings` is
+that, not a crash.
+
+### A note on quoting `make android-eval`
+
+`EXPR='...'` is a single-quoted shell word, so anything with a quote or
+an apostrophe in it -- a file path like `Blazo, 49'ers - ...`, or a
+snippet containing a string literal -- breaks in a way that reads as a
+JavaScript error. Put the expression in a file and pass it positionally:
+
+```bash
+node ./scripts/android-eval.mjs "$(cat /tmp/probe.js)"
+```
+
+That is the same script `make android-eval` wraps, so nothing is lost.
+Two things worth knowing about it: it does **not** await a promise, so
+an async call has to park its result (`window.__r = ...`) and be read
+back in a second eval; and the shim from the section below is lost on
+every reload and every app restart, along with the devtools socket,
+whose name carries the pid.
+
 ### Calling a binding on the device
 
 **The runtime call does not go over HTTP on Android**, and this is worth
