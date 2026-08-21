@@ -45,18 +45,6 @@ export class SeekBar extends LitElement {
   private showRemaining: boolean = true;
 
   static override styles = [designTokens, waSliderLabel, css`
-    /* 12px below the phone breakpoint. The bottom bar's seek bar is
-       display:none there (016 B2 phase 1), so the only instance a
-       viewport media query can reach at that width is the full-screen
-       now-playing view's -- which is exactly the one a thumb uses.
-       The track size lives on wa-slider inside this shadow root, so a
-       custom property set by the host would not reach it. */
-    @media (max-width: 599px) {
-      wa-slider {
-        --track-size: 12px;
-      }
-    }
-
     wa-slider {
       --track-size: 6px;
       flex: 1;
@@ -78,6 +66,57 @@ export class SeekBar extends LitElement {
 
     wa-slider::part(thumb) {
       background: var(--yj-bg-base, black);
+    }
+
+    /* The phone's seek bar, and this block is last on purpose.
+
+       A media query adds no specificity, so this lived above the plain
+       "wa-slider" rule and lost to it at every width: the 12px track it
+       asks for had never once applied, and the bar measured 261x6 on
+       the device while the source said 12. That is index.css's rule
+       ("the phone section is last on purpose") met inside a component's
+       own stylesheet, and nothing renders differently in any tier here
+       to say so.
+
+       The bottom bar's seek bar is display:none below this width (016
+       B2 phase 1), so the only instance a viewport media query can
+       reach is the full-screen now-playing view's -- which is exactly
+       the one a thumb uses. The desktop bar keeps its 6px, where a
+       mouse is precise and the thickness is right.
+
+       The painted track and the thing you can hit are allowed to
+       differ, and a slider is the clearest case where they should: 12px
+       is a progress bar you can see, and 44px is the app's touch floor
+       (#56). A 44px-*thick* bar would be wrong-looking and would cost
+       the album art the vertical space #51 spent an issue recovering.
+
+       Two things about how the target is built.
+
+       The padding goes on ::part(slider) rather than on the host,
+       because that inner div is what carries the gesture -- it has the
+       listener and the touch-action: none, and it is exactly the host's
+       size, so padding the host would grow a box that does not take the
+       press.
+
+       The padding is asymmetric and the margins cancel it, so the row
+       does not grow by the difference. Both halves are measured: the
+       seek row is 19px (its clocks, not the track, decide that) and the
+       play button's top edge is 8px below it, so the target takes the
+       space *above*, where .art is a non-interactive div. Growing the
+       row instead cost the art 25px of 143. Verified on the device at
+       424x439: hit area 44px, painted track 12px, row still 19px, art
+       still 143px, 8px of clearance left under the play button, a press
+       26px above the track seeks, and a hit test on the play button's
+       top edge still reaches the play button. */
+    @media (max-width: 599px) {
+      wa-slider {
+        --track-size: 12px;
+      }
+
+      wa-slider::part(slider) {
+        padding-block: 28px 4px;
+        margin-block: -28px -4px;
+      }
     }
 
     #seek-bar-container {
