@@ -143,6 +143,18 @@ export function SetVolume(desiredVolume: $models.UserVolume): $CancellablePromis
 }
 
 /**
+ * SystemOwnsVolume reports whether the platform's own control is the
+ * only volume control there is, so this app neither offers one nor
+ * remembers a level.
+ * 
+ * It is bound: the frontend renders no `<volume-control>` when it is
+ * true, at any width.
+ */
+export function SystemOwnsVolume(): $CancellablePromise<boolean> {
+    return $Call.ByID(1027623185);
+}
+
+/**
  * TrackLengthInSeconds returns the duration of the current track.
  */
 export function TrackLengthInSeconds(): $CancellablePromise<number> {

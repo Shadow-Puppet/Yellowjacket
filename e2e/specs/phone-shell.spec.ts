@@ -130,6 +130,25 @@ test.describe('the shell on a phone', () => {
     // are here, and they are the *same* components -- this view
     // composes the transport rather than reimplementing it.
     await expect(app.locator('now-playing-view seek-bar')).toBeVisible();
+
+    // Volume is here **because the player says there is one** (#64),
+    // not because this is a phone. This tier is the platform that owns
+    // its own volume, so what it can assert is that the control's
+    // presence follows that answer -- an inverted polarity in
+    // `volume-style-store` fails here and in `bottom-bar.spec.ts`, and
+    // the *absent* branch is checked in the component tier, where the
+    // binding can be stubbed. Nothing here can reach the Android side.
+    const systemOwns = await app.evaluate(
+      async () =>
+        (await window.__yjEvents.call(
+          'player.Player.SystemOwnsVolume',
+          [],
+          5_000,
+        )) as boolean,
+    );
+
+    expect(systemOwns, 'this platform should own its own volume').toBe(false);
+
     await expect(app.locator('now-playing-view volume-control')).toBeVisible();
 
     // Back goes where the user came from, through the nav stack.

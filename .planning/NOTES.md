@@ -4573,3 +4573,137 @@ fault in it, and it is filed as #172 with the per-element budget. #64
 umbrella; folding shuffle and repeat back onto the primary row was
 considered and rejected — it buys 52px, leaves the art at 91px, and
 costs a third arrangement of the same five buttons.
+
+## The volume is not ours on Android, and the predicate could not be a width (measured 2026-08-21)
+
+#64 asked for the in-app volume control to be absent on Android. Its
+first Finding said `volume-control` "already stands down at narrow
+widths", which was true of one of its two copies and is why the issue
+had been read as nearly done. The bar's copy goes by width; the
+full-screen view's copy was deliberately kept, with a comment saying a
+slider does belong there.
+
+**The crux was platform versus width, and three options were on the
+issue.** What settled it is that the *backend* half of the same issue —
+pin the level at 1.0 — makes a width rule wrong on the platform the
+issue is about: an Android tablet at >=600px gets the bottom bar, and
+the bar's slider would then move a level that is pinned. That is a
+control that cannot act, which `library-status-indicator` already
+settled is worse than none. The same rule is wrong the other way below
+600px, where a narrow desktop window has no hardware keys.
+
+So the frontend asks the player — `SystemOwnsVolume` — and the answer
+is right at every width in both mount points. **The predicate is named
+after the capability rather than the platform**, which is what makes it
+testable: only `platformOwnsVolume` is behind a build tag, in two files
+that declare nothing else, and everything else is decided against a
+field a Go test sets either way. `frontend/test/components/
+volume-ownership.test.ts` stubs the binding and so exercises the
+*Android* rendering on an ordinary Linux runner; both of its tests were
+confirmed to fail on the build before the change.
+
+**Measured at 424x439, by flipping `platformOwnsVolume` to true in the
+`!android` file and rebuilding** — the real binding, the real store, the
+real component, everything except the tag:
+
+| element | before | after |
+|---|---|---|
+| header | 48 | 48 |
+| **album art** | **39** | **68** |
+| title / artist / album | 63 | 63 |
+| transport (seek + controls + volume) | **172** | **143** |
+| — seek bar | 19 | 19 |
+| — player-controls | 116 | 116 |
+| — volume-control | 21 | **0** |
+
+29px, which is the 21px control plus the 8px flex gap it stops drawing:
+a gap is only painted between boxes, so `:host([hidden])` costs the
+transport nothing rather than leaving a hole. That is #172's "~30px of
+pure gain" confirmed, and the art is 74% larger. It is still the
+second-smallest thing on the screen, which is #51's evidence.
+
+Three smaller things worth keeping.
+
+**`:host([hidden])` has to be written down.** The UA's `[hidden]`
+rule is `display: none`, but `volume-control`'s own `:host` sets
+`display: inline-flex` and outranks it — so setting `hidden` alone
+hides nothing. Same family as the nested-`#queue-button` specificity
+trap from the session before.
+
+**Rendering `nothing` and hiding the host are two different
+assertions**, and the component test makes both: an empty shadow root
+is what stops a by-role or positional query finding a button that
+cannot act, and `hidden` is what stops the host occupying space. Either
+alone passes on a build that gets the other wrong.
+
+**The bar's centring survives the control going away.** #23's outer
+columns are the same `min()` expression rather than content-sized, so
+at 900px with the volume gone the bar's centre, `audio-player`'s centre
+and `player-controls`' centre are all 450 — checked, because "the
+transport is centred with a slider bolted to one side" is the fault
+that rule exists for and removing the slider is the obvious way to
+re-break it.
+
+**What no tier here can check**: the constant itself, and ducking
+against a real audio-focus change. The first is a source sweep
+(`TestPlatformVolumeOwnershipIsDeclaredOncePerPlatform`), the second is
+`TestSystemVolumeStillDucks` against the arithmetic. Neither is a
+device, and no device was attached.
+
+### The device answered three of the four (measured 2026-08-21, TLP301 / Android 14 / SDK 34 / arm64, Chrome 113 at 424x439)
+
+A Light Phone III was attached after the PR was opened, so what that PR
+listed as unverifiable was re-checked rather than left as a caveat.
+
+**The whole chain resolves on the device.** `__yj.call("player.Player.
+SystemOwnsVolume", [])` answers `true` — build tag, `platformOwnsVolume`,
+`Player.systemVolume` and the generated binding, end to end. That is the
+one thing the source sweep only approximates, and it took a real arm64
+device because nothing else here compiles the `android` file at all.
+(`GOOS=android GOARCH=arm64 CGO_ENABLED=1 go build ./backend/...` with
+the NDK's clang compiles it in ~40 s and is worth running first; it
+catches a type error but not a wrong constant.)
+
+**The control is absent in both mount points**, on the real engine:
+`.bottom-bar volume-control` is `hidden` with an empty shadow root, and
+so is `now-playing-view`'s. Measured on the device, transport **143px**,
+which is the figure the desktop-headless "after" predicted exactly. The
+art is 75px there rather than 68 because the fixture's `.names` block is
+one line shorter, not because anything differs.
+
+**Nothing persists a level nobody chose, and this is the measurement
+that took some care.** The default (50) surviving proves nothing, since
+50 is also what a fresh row holds. So: force-stop, pull `yj.db`, set
+`player_state.volume = 37`, push it back through
+`run-as … dd` (a `cp` from `/sdcard` is refused — the app sandbox
+cannot read it), relaunch, and drive a queue change to make the row be
+rewritten. Reading it back **the WAL has to be pulled with it** — the
+main file still showed the old `last_track_path` and reads as a write
+that never happened. With `yj.db-wal` beside it: `last_track_path` is
+the new track, so `saveState` ran, and `volume` is still **37**.
+
+**The duck cannot be verified on this device, and now for a stated
+reason rather than for want of hardware.** `WailsForegroundService`
+builds its `AudioFocusRequest` without `setWillPauseWhenDucked` on
+API >= 26, so the framework attenuates the stream itself and never
+delivers `AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK`. The device's own log
+says so: `MediaFocusControl: requestAudioFocus() … AA=USAGE_MEDIA/
+CONTENT_TYPE_MUSIC … req=1 flags=0x0` — no
+`AUDIOFOCUS_FLAG_PAUSES_ON_DUCKABLE_LOSS`. **`minSdk` is 21**, so the
+Go-side duck is not dead code; it is reachable on Android 5.0 to 7.1
+and on nothing newer. Any future "verify ducking on a device" needs one
+of those, and asking for a modern phone will not do it.
+
+Two smaller things from the same session.
+
+**A fresh install downloads the real catalog, and it is 209px of the
+screen while it does.** `YJ_CORE_INDEX_URL` is stubbed in
+`dev-headless.sh` and in CI but is real on a device, so the first
+measurement taken was of a screen with `job-band` on it and the art at
+**0px**. That is not a defect and not #172 — it is the environment.
+`explore.Service.StopIndexBuild` and a relaunch is the clean state.
+
+**The first-run wizard does not dismiss when a library appears by a
+route other than its own** (#175) — it was still up, full-screen and
+intercepting pointer events, after `AddLibrary` succeeded through the
+binding, and was gone after a relaunch. Filed.

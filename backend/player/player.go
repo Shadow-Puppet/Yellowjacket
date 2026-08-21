@@ -71,6 +71,19 @@ type Player struct {
 	// not something the user chose.
 	duckAmount float64
 
+	// systemVolume is what SystemOwnsVolume answers: the platform's own
+	// control is the only one, so ours neither acts nor persists.  It is
+	// a field rather than the build constant read directly so that a
+	// test can exercise both sides on any machine.  See systemvolume.go.
+	systemVolume bool
+
+	// storedVolume and storedMuted hold the persisted level as it was
+	// found at restore, for a platform whose volume we do not own: the
+	// maximum we then run at is not a level the user chose, so saveState
+	// writes back what it read rather than overwriting it.
+	storedVolume UserVolume
+	storedMuted  bool
+
 	// trackLengthMs holds the authoritative track duration in
 	// milliseconds, sourced from the database (which uses the
 	// custom header parser).  The go-mp3 decoder's Len() can be
@@ -156,6 +169,8 @@ func NewPlayer(logger *slog.Logger, db *database.DB) *Player {
 		logger:       logger,
 		db:           db,
 		state:        Stopped,
+		systemVolume: platformOwnsVolume,
+		storedVolume: DefaultUserVol,
 		baseStreamer: generators.Silence(-1),
 		format: beep.Format{
 			SampleRate: speakerSampleRate,
@@ -875,6 +890,10 @@ func (p *Player) SetVolume(desiredVolume UserVolume) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	if p.systemVolume {
+		return
+	}
+
 	p.setVolumeLocked(desiredVolume)
 	p.emitVolumeChanged()
 	p.saveState()
@@ -923,6 +942,10 @@ func (p *Player) ChangeVolume(deltaVolume int) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	if p.systemVolume {
+		return nil
+	}
+
 	p.setVolumeLocked(p.getUserVolume() + UserVolume(deltaVolume))
 	p.emitVolumeChanged()
 	p.saveState()
@@ -951,6 +974,14 @@ func (p *Player) MuteToggle() error {
 
 	if p.volume == nil {
 		return errNoAudioFileLoaded
+	}
+
+	// Mute is a level of zero by another name, so it goes with the rest
+	// of the volume where the system owns it -- and it would be the one
+	// state on such a platform the user could not get out of, since with
+	// no control rendered there is nothing left to un-mute with.
+	if p.systemVolume {
+		return nil
 	}
 
 	speaker.Lock()
@@ -1403,7 +1434,15 @@ func (p *Player) saveState() {
 	volume := int64(DefaultUserVol)
 	muted := false
 
-	if p.volume != nil {
+	switch {
+	case p.systemVolume:
+		// The maximum this platform runs at is not a level anybody
+		// chose, so it is not one to remember.  Writing back what
+		// restore found keeps the row a description of the user's
+		// setting without needing a second query that omits the column.
+		volume = int64(p.storedVolume)
+		muted = p.storedMuted
+	case p.volume != nil:
 		volume = int64(p.getUserVolume())
 		muted = p.volume.Silent
 	}
@@ -1487,11 +1526,20 @@ func (p *Player) restoreStateLocked() {
 		}
 	}
 
-	vol := clampVolume(UserVolume(state.Volume))
-	p.setVolumeLocked(vol)
+	if p.systemVolume {
+		// Remembered, not applied: the device's keys are the volume
+		// control here, so the player runs wide open and hands the
+		// stored level back untouched at the next save.
+		p.storedVolume = clampVolume(UserVolume(state.Volume))
+		p.storedMuted = state.Muted
+		p.setVolumeLocked(MaxUserVol)
+	} else {
+		vol := clampVolume(UserVolume(state.Volume))
+		p.setVolumeLocked(vol)
 
-	if state.Muted {
-		p.volume.Silent = true
+		if state.Muted {
+			p.volume.Silent = true
+		}
 	}
 
 	// Restore last track if the file still exists.
@@ -1531,8 +1579,9 @@ func (p *Player) restoreStateLocked() {
 	}
 
 	p.logger.Info("Player state restored",
-		"volume", vol,
-		"muted", state.Muted,
+		"volume", p.getUserVolume(),
+		"muted", p.volume.Silent,
+		"systemVolume", p.systemVolume,
 		"trackPath", state.LastTrackPath,
 		"positionSeconds", state.LastPositionSeconds,
 	)
