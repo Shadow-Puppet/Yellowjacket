@@ -1462,6 +1462,42 @@ vary) wins, ours being told from theirs by **identity** rather than
 that ends the gesture is swallowed, keyed on the gesture rather than on
 a time window so the first tap on the menu it opened is not eaten too.
 
+**A control revealed by `:hover` is gated on the device having hover,
+and which way round depends on whether it is the only route to its
+action.** The gate itself is not optional: a touch long-press
+synthesises a hover state in the WebView, so every one of these flashed
+into view during the 500 ms hold above — a control appearing because
+the user was reaching for a different one. Where the action is reachable
+another way the control is **absent** on a touch device (the home card's
+play button, #68; the queue row's remove, which the row's bottom-sheet
+menu carries since #60), and that is `display: none` outside
+`(hover: hover) and (pointer: fine)` rather than `opacity: 0` or
+`visibility: hidden`, both of which leave a button holding its hit area
+and its place in the accessibility tree. Where the control is the
+**only** route it is instead always visible under
+`@media not all and (hover: hover)` — `track-details`'s cover-art
+overlay and remove, `shortcut-capture`'s reset (#137) — because hiding
+it takes the action away entirely.
+
+**Always-visible is not the same as always-in-the-way.** The cover-art
+overlay is `inset: 0` at 50% black, which is fine as a hover state and
+is not fine as the permanent appearance of the artwork being edited —
+and it is only a *hint*, since `.cover-art-edit` carries the click and
+tapping the art always worked. Off hover it becomes a corner chip in
+the remove button's own language. The × beside it stays full-size,
+because that one really is the only route to its action.
+
+One thing to know before checking either: **no *committed* tier renders
+as a touch device.** CDP's `Emulation.setEmulatedMedia` does not reach
+the component tier's iframe, and the e2e projects are Desktop Chrome
+and Desktop Safari, neither of which has touch — a Playwright project
+using a mobile descriptor would report `hover: none`, so this is a
+choice not to carry one rather than a thing that cannot be done. So
+`hover-affordance.test.ts` asserts the *parsed stylesheet* — which rule
+sits inside which media query — and says so; the regression it exists
+for is someone hoisting a rule out of its query as a tidy-up, which
+nothing on a desktop renders differently.
+
 Three lists had no focused row to open a menu *from* — the queue panel
 and both playlist detail views — and gained a roving tab stop through
 `utils/roving-rows.ts`. **`track-list` deliberately does not use it**:

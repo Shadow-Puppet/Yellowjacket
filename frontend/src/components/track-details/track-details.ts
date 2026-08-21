@@ -529,6 +529,44 @@ export class TrackDetails extends LitElement {
             background: var(--yj-error, #e03131);
         }
 
+        /*
+         * Both are the *only* route to changing or removing a track's
+         * cover art, so where the device has no hover they are always
+         * visible rather than hidden — the inverse of #68's rule, which
+         * applies where the hover control is redundant. Revealed by
+         * opacity, so what is on screen is what the desktop reveal shows
+         * and nothing about the layout moves.
+         */
+        @media not all and (hover: hover) {
+            /* The × is genuinely the only route to removing the art, so
+               on a device that cannot hover it is simply always there.
+
+               The pen is not: .cover-art-edit carries the click that
+               opens the file picker, so tapping the artwork already
+               worked while the overlay was invisible. It is a discovery
+               hint — and paying for discovery by covering the artwork
+               being edited in 50% black, permanently, on every touch
+               device, is heavier than the hint is worth. It becomes a
+               corner chip in the remove button's own visual language
+               instead: same size, same disc, same alpha. */
+            .cover-art-remove {
+                opacity: 1;
+            }
+
+            .cover-art-overlay {
+                opacity: 1;
+                inset: auto 4px 4px auto;
+                width: 24px;
+                height: 24px;
+                border-radius: 50%;
+                background: rgba(0, 0, 0, 0.7);
+            }
+
+            .cover-art-overlay wa-icon {
+                font-size: 14px;
+            }
+        }
+
         /* Error message */
         .error-message {
             flex: 1;

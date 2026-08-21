@@ -639,23 +639,42 @@ export class QueuePanel
             text-overflow: ellipsis;
         }
 
+        /*
+         * The per-row remove is a hover affordance, and on a device
+         * without hover it is redundant rather than missing: the row's
+         * context menu is a bottom sheet since #60 and carries "Remove
+         * from Queue", so the action is one long-press away. An
+         * always-visible X would instead spend part of a 424px row on
+         * something already reachable. #68's treatment, for #68's reason.
+         *
+         * display:none outside the query rather than visibility:hidden:
+         * a hidden button still occupies its hit area and is still in
+         * the accessibility tree, so a phone would keep a target for a
+         * control it can never see.
+         */
         .remove-button {
-            background: none;
-            border: none;
-            color: var(--yj-text-tertiary, #888);
-            cursor: pointer;
-            padding: 4px;
-            display: flex;
-            align-items: center;
-            visibility: hidden;
+            display: none;
         }
 
-        .track-item:hover .remove-button {
-            visibility: visible;
-        }
+        @media (hover: hover) and (pointer: fine) {
+            .remove-button {
+                background: none;
+                border: none;
+                color: var(--yj-text-tertiary, #888);
+                cursor: pointer;
+                padding: 4px;
+                display: flex;
+                align-items: center;
+                visibility: hidden;
+            }
 
-        .remove-button:hover {
-            color: var(--yj-error-text, #ff8787);
+            .track-item:hover .remove-button {
+                visibility: visible;
+            }
+
+            .remove-button:hover {
+                color: var(--yj-error-text, #ff8787);
+            }
         }
 
         .list-area.drag-over {

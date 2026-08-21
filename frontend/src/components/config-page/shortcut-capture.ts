@@ -79,6 +79,17 @@ export class ShortcutCapture extends LitElement {
         .reset-btn:hover {
             color: var(--yj-accent-text, #ffd43b);
         }
+        /*
+         * Reset is the only way to put a rebound shortcut back, so where
+         * the device has no hover it is always visible rather than an
+         * invisible button holding its hit area. The inverse of #68's
+         * rule, which applies where the hover control is redundant.
+         */
+        @media not all and (hover: hover) {
+            .reset-btn {
+                opacity: 1;
+            }
+        }
     `;
 
     private handleClick = () => {
