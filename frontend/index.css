@@ -412,8 +412,17 @@ body div.sidebar {
    =================================================================== */
 @media (max-width: 599px) {
     body {
+        /* **There is no top-bar row here (#57).** Every one of the five
+           things that bar held has somewhere else to be below 600px:
+           `nav-history` is the platform's own gesture (gone from 899
+           down), the job indicator is `<job-band>` (#62), the search
+           box is a modal opened from the view's own header
+           (`search-trigger`), the library filter is Settings ->
+           Libraries (#148), and the wordmark is below. That is 3.25em
+           of a 439 CSS px viewport -- the single biggest vertical win
+           available on the reference device, which is why #57 asks for
+           the row rather than for a smaller bar. */
         grid-template:
-            "top-bar" 3.25em
             "jobs-band" auto
             "main-panel" 1fr
             "bottom-bar" auto
@@ -433,44 +442,53 @@ body div.sidebar {
         grid-area: bottom-nav;
     }
 
-    /* The 2em gutters are half a thumb each at this width, and the
-       subtitle is already gone from 900 down.
+    /* The bar is out of the layout, and out of it the way the *wordmark*
+       already goes at desktop widths: visually hidden rather than
+       `display: none`, because that `h1` is the document's top-level
+       heading and this app would otherwise have none on the pages whose
+       own header is empty by design (`page-header` renders no `h1` when
+       `heading` is '', and Settings has no `page-header` at all).
 
-       `min-width: 0` is the load-bearing half. A grid item's implicit
-       minimum is `auto` -- its content -- so a header whose children
-       ask for 580px makes the *body* 580px wide inside a 360px
-       viewport, and `overflow-x: hidden` then hides the right-hand
-       third of the app rather than fitting it. Every box between the
-       viewport and the content that must shrink needs this. */
+       Its four *controls* are `display: none` below, which is what
+       keeps them out of the tab order -- a visually-hidden container is
+       still focusable, and tabbing into a search box nobody can see is
+       worse than not having one.
+
+       This is `styles/sr-only.css.ts`'s recipe again, written out
+       because that one is a `CSSResult` for shadow roots and this is
+       the light DOM. `position: absolute` is also what tells
+       `services/top-bar-fit.ts` there is no row to fit into. */
     .top-bar {
-        padding-left: 0.75em;
-        padding-right: 0.75em;
-        gap: 0.5em;
-        min-width: 0;
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
         overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
+        border: 0;
+        gap: 0;
+        min-width: 0;
     }
 
+    .top-bar nav-history,
+    .top-bar library-filter,
+    .top-bar search-bar,
+    .top-bar job-indicator {
+        display: none;
+    }
+
+    /* `min-width: 0` is load-bearing wherever a box sits between the
+       viewport and content that must shrink. A grid item's implicit
+       minimum is `auto` -- its content -- so one child insisting on
+       580px makes the *body* 580px wide inside a 360px viewport, and
+       `overflow-x: hidden` then hides the right-hand third of the app
+       rather than fitting it. */
     .content-area,
     .main-panel,
     .bottom-bar {
         min-width: 0;
-    }
-
-    .title {
-        font-size: 1.1em;
-    }
-
-    /* The search box is the one header control worth its width; the
-       library filter is a rarely-changed setting and reachable from
-       the drawer's Settings.
-
-       `nav-history` is already gone from 899 down. It would belong
-       here anyway and for a stronger reason than width: the phone has
-       Back as a gesture or a button the OS owns, and this app hooks it
-       (`popstate`), so a second Back in the chrome duplicates a
-       control the platform provides. */
-    .top-bar library-filter {
-        display: none;
     }
 
     /* The full-screen now-playing view *is* the transport, so the bar
@@ -485,11 +503,6 @@ body div.sidebar {
        that one lived. */
     body:has(#main-content[data-active-view="now-playing"]) .bottom-bar {
         display: none;
-    }
-
-    .top-bar search-bar {
-        flex: 1 1 auto;
-        min-width: 0;
     }
 }
 
@@ -543,16 +556,12 @@ body job-band {
    deletes this bar entirely and is blocked on the indicator having
    somewhere else to live -- this is that somewhere.
 
-   `display: none` rather than a fit step: `services/top-bar-fit.ts`
-   already skips children whose computed display is none, so the bar's
-   measurement simply sees one fewer child, and `[compact]` toggling on
-   a hidden element costs nothing. */
+   #57 has since done exactly that, so the indicator's own rule now
+   lives with the other three in the phone block above, where the bar
+   goes out of the layout in one statement rather than four. What stays
+   here is the band, and the argument for it.  */
 @media (max-width: 599px) {
-    .top-bar job-indicator {
-        display: none;
-    }
-
-    /* ...and its rows appear here, in the grid row above the content.
+    /* The indicator's rows appear here, in the grid row above the content.
        In flow rather than over it: a fixed band reads fine in a
        screenshot and is unusable, because at 424x439 a compact panel
        is ~200px of a 439px screen and it *covers* what is under it.

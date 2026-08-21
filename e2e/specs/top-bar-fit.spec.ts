@@ -26,10 +26,22 @@ type Page = import('@playwright/test').Page;
  * 600 is the bottom of the Compact band (#24) and where the defect
  * lands; 899 and 900 straddle `nav-history` appearing (68px more to
  * find, at the width that just gained the sidebar's labels); 800 is the
- * enforced minimum; 390 is a phone, where the answer must be that
- * nothing collapses because the media queries already did the work.
+ * enforced minimum.
+ *
+ * **390 is kept, and what it asks changed with #57.** There is no bar
+ * to fit below 600px any more — it is out of the grid and visually
+ * hidden — so "nothing hangs out of it" is a claim about an element
+ * with no row, and would pass on a build that had merely broken the
+ * bar. Dropping the width would be dropping the one place this file
+ * can still say something true about a phone, so it asserts the
+ * *stronger* property instead, below: the bar is out of the layout
+ * altogether, which is the thing #57 wanted and the thing that makes
+ * fitting moot.
  */
-const WIDTHS = [390, 600, 800, 899, 900, 1440];
+const WIDTHS = [600, 800, 899, 900, 1440];
+
+/** Where #57 leaves the bar, and where the desktop still has one. */
+const PHONE_WIDTH = 390;
 
 /**
  * A scan whose title is as long as a real one gets. The label is capped
@@ -90,6 +102,56 @@ const collapsed = (page: Page) =>
   }));
 
 test.describe('the top bar fits the window', () => {
+  /**
+   * The phone's answer, which is not "it fits" (#57).
+   *
+   * The bar has no grid row below 600px, so measuring its children
+   * against its content box is measuring a 1px box that is already
+   * invisible — a fit pass would collapse the wordmark every time and
+   * report success about nothing, which is why `measureTopBarFit`
+   * declines to run at all when the bar is out of flow. What is worth
+   * asserting here is that the fit pass has not quietly started
+   * *undoing* that: a rule that put the bar back in the layout would
+   * pass every assertion in this file and cost a 439px screen 12% of
+   * its height.
+   */
+  test(`the bar is out of the layout at ${PHONE_WIDTH}px, with a job running`, async ({
+    app,
+    testctl,
+  }) => {
+    await app.setViewportSize({ width: PHONE_WIDTH, height: 600 });
+    await testctl.emit('JobsChanged', [LONG_JOB]);
+
+    // Not merely hidden: `display: none` on the header would satisfy
+    // "invisible" and leave the 3.25em row exactly where it was. So
+    // the assertion is that the content starts where the row above it
+    // ends -- and with a job staged, the row above it is the jobs
+    // band, which is the whole reason this row could go.
+    await expect
+      .poll(() =>
+        app.evaluate(() => {
+          const bar = document.querySelector<HTMLElement>('header.top-bar')!;
+          const main = document.querySelector<HTMLElement>('.main-panel')!;
+          const band = document.querySelector<HTMLElement>('job-band')!;
+
+          return {
+            position: getComputedStyle(bar).position,
+            gap:
+              Math.round(main.getBoundingClientRect().top) -
+              Math.round(band.getBoundingClientRect().bottom),
+          };
+        }),
+      )
+      .toEqual({ position: 'absolute', gap: 0 });
+
+    // And the work is still visible, in the band that replaced the
+    // indicator (#62) — which is what made this row removable at all.
+    await expect(app.locator('job-indicator')).toBeHidden();
+    await expect(app.locator('job-band').locator('job-row')).toHaveCount(1);
+
+    await app.setViewportSize({ width: 1440, height: 900 });
+  });
+
   for (const width of WIDTHS) {
     test(`no control sits outside the bar at ${width}px, idle`, async ({
       app,
@@ -108,23 +170,7 @@ test.describe('the top bar fits the window', () => {
 
       // The indicator has to actually be up, or this test passes by
       // measuring the idle case under another name.
-      //
-      // Below 600px there is deliberately no indicator to measure:
-      // #62 stands it down and puts the rows in `<job-band>` instead,
-      // in the layout under the bar. So at 390 the assertion is that
-      // it *is* away and the bar still fits -- which is the same
-      // property (the bar has nothing hanging out of it) reached by the
-      // other branch of the same rule, rather than a width quietly
-      // dropped from the list.
-      const phone = width < 600;
-
-      await expect(app.locator('job-indicator'))[
-        phone ? 'toBeHidden' : 'toBeVisible'
-      ]();
-
-      if (phone) {
-        await expect(app.locator('job-band').locator('job-row')).toHaveCount(1);
-      }
+      await expect(app.locator('job-indicator')).toBeVisible();
 
       await expect.poll(() => overflowingChildren(app)).toEqual([]);
     });
