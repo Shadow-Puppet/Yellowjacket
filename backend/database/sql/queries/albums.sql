@@ -40,7 +40,8 @@ WHERE id = ? AND (mbid IS NULL OR mbid = '');
 -- name: GetAlbumsWithPendingReleaseMBID :many
 SELECT id, pending_release_mbid FROM albums
 WHERE pending_release_mbid IS NOT NULL AND pending_release_mbid != ''
-  AND (mbid IS NULL OR mbid = '');
+  AND (mbid IS NULL OR mbid = '')
+LIMIT ?;
 
 -- name: DeleteAlbum :exec
 DELETE FROM albums WHERE id = ?;

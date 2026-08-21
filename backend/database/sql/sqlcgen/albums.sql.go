@@ -331,6 +331,7 @@ const getAlbumsWithPendingReleaseMBID = `-- name: GetAlbumsWithPendingReleaseMBI
 SELECT id, pending_release_mbid FROM albums
 WHERE pending_release_mbid IS NOT NULL AND pending_release_mbid != ''
   AND (mbid IS NULL OR mbid = '')
+LIMIT ?
 `
 
 type GetAlbumsWithPendingReleaseMBIDRow struct {
@@ -338,8 +339,8 @@ type GetAlbumsWithPendingReleaseMBIDRow struct {
 	PendingReleaseMbid sql.NullString
 }
 
-func (q *Queries) GetAlbumsWithPendingReleaseMBID(ctx context.Context) ([]GetAlbumsWithPendingReleaseMBIDRow, error) {
-	rows, err := q.db.QueryContext(ctx, getAlbumsWithPendingReleaseMBID)
+func (q *Queries) GetAlbumsWithPendingReleaseMBID(ctx context.Context, limit int64) ([]GetAlbumsWithPendingReleaseMBIDRow, error) {
+	rows, err := q.db.QueryContext(ctx, getAlbumsWithPendingReleaseMBID, limit)
 	if err != nil {
 		return nil, err
 	}
