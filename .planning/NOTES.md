@@ -4707,3 +4707,81 @@ measurement taken was of a screen with `job-band` on it and the art at
 route other than its own** (#175) — it was still up, full-screen and
 intercepting pointer events, after `AddLibrary` succeeded through the
 binding, and was gone after a relaunch. Filed.
+
+## The context menu was clipped on the device, and the fix needed four measurements nothing here could make (measured 2026-08-21, TLP301 / Chrome 113 / 424x439)
+
+#60 had been diagnosed from the Web Awesome source and was right. What
+the device added was the numbers, and three things the reading had not
+reached.
+
+**The clip, reproduced before any code was written.** Long-press on the
+lowest visible track row at 424x439:
+
+| | |
+|---|---|
+| viewport | 424x439 |
+| `.main-panel` | 0 to **318**, computed `contain: content` |
+| menu panel | 191 to **401**, 210px tall |
+| clipped away | **83px, three of seven items** |
+| `wa-popup` computed position | `fixed` |
+| `HTMLElement.prototype.hasOwnProperty('popover')` | **false** |
+| row height | **29px** (against a 44px floor and a 48px ask) |
+
+A screenshot shows the menu sliced off flush with the mini player's top
+edge. Both halves of the diagnosis are therefore measured, not inferred.
+
+**"A dialog escapes containment" was the premise, and it was untested.**
+Every dialog in this app is mounted in `index.html`, *outside*
+`.main-panel` — so nothing here was evidence about a dialog opened from
+inside a view, which is what this change needed. A probe `<dialog>`
+appended to `track-list`'s shadow root and `showModal()`n paints to
+y=439, over the mini player and the tab bar. A top-layer element's
+containing block is the viewport, paint-contained ancestor or not.
+Checking that first cost ten minutes and would have cost a rebuild.
+
+**The UA stylesheet is the thing that makes a naive sheet look wrong.**
+That same probe came out **354px wide on a 424px screen**, centred,
+because a native `<dialog>` carries `max-width: calc(100% - 6px - 2em)`
+and `margin: auto`. `max-width: none` and explicit margins are four
+declarations that are pure undoing.
+
+**A retry loop cannot win against a steal that happens later.**
+`MenuKeyboard` focuses the first item and returns as soon as it lands;
+`wa-dialog` then focuses `[autofocus]` or *itself* on the frame after
+`showModal()`, and it cannot see our first item to prefer it — the
+panel is slotted through `menu-surface`, so the dialog's own
+`querySelector` stops at the `<slot>`. Measured: the sheet opened with
+`document.activeElement` on the `<dialog>` and every arrow key went
+nowhere. Lengthening the retry budget does not help, because the first
+attempt *succeeds*. The surface announcing `menu-shown` after
+`wa-after-show`, and the keyboard re-asserting, is the fix.
+
+**The submenu was made worse before it was made better, and only a
+measurement caught it.** `#playlist-submenu` is a
+`placement="right-start"` flyout anchored to its row. Making the menu a
+full-width sheet moved that anchor to x=0, so the flip put the playlist
+picker at **x −182 to 0 — entirely off-screen**, and "Add to Playlist"
+led nowhere at all. Before the change the anchor row started at x≈245
+and the same flip landed it on screen. It is a `menu-surface` too now
+and stacks as a second sheet. Two lessons: a change that moves an
+anchor changes every flip decision downstream of it, and *the scope I
+declared on the issue was wrong* — I had said I would measure the
+submenu and file it, and the measurement said fix it.
+
+**And the sweep found two call sites the conversion missed.** Twelve
+were converted by hand; `menu-surface.test.ts` reads every source file
+and fails on a `<wa-popup>` outside a three-file allowlist, which
+immediately named `queue-panel`'s add-to-playlist popup (a real menu,
+converted) and `now-playing`'s cover preview (a hover affordance in the
+bottom bar — allowlisted, since a touch device never opens it and
+nothing clips it). A thirteenth menu written as a bare popup would pass
+every tier here and be clipped on the device, which is precisely why
+the guard is a source sweep rather than a rendered assertion.
+
+**What no tier here can see remains the clip itself.** This runner's
+Chromium and CI's WebKit both have the Popover API, so the popup is
+top-layered and correct and a "not clipped" assertion passes on the
+broken build. The specs assert the *mechanism* — that the surface is a
+native `<dialog>` at phone width — which is the same move
+`queue-as-a-screen.spec.ts` makes about containment and for the same
+reason.
