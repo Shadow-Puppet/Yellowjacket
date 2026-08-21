@@ -5,7 +5,20 @@ import type {
 } from 'lit';
 import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
 
+/**
+ * What this controller needs of a surface: something it can switch on
+ * and point at. Both `wa-popup` and `menu-surface` satisfy it.
+ */
+export type MenuTarget = HTMLElement & {
+    active: boolean;
+    anchor?: WaPopup['anchor'];
+};
+
 import { registerViewAware } from './view-lifecycle';
+import {
+    MENU_DISMISS_EVENT,
+    MENU_SHOWN_EVENT,
+} from '../components/menu-surface/menu-surface';
 
 /**
  * Host interface for components using the ContextMenuController.
@@ -17,10 +30,18 @@ export interface ContextMenuHost
     extends ReactiveControllerHost {
     updateComplete: Promise<boolean>;
     shadowRoot: ShadowRoot | null;
-    /** Return the main context-menu popup element. */
-    getContextMenuPopup(): WaPopup | undefined;
-    /** Return the playlist submenu popup element. */
-    getPlaylistSubmenuPopup(): WaPopup | undefined;
+    /**
+     * Return the main context-menu surface.
+     *
+     * `MenuSurface` since #60, which is a `wa-popup` above 600px and a
+     * bottom sheet below it. The type is the narrow shape this
+     * controller drives rather than either element, so a host that
+     * still renders a bare `wa-popup` — the playlist submenu does —
+     * satisfies it unchanged.
+     */
+    getContextMenuPopup(): MenuTarget | undefined;
+    /** Return the playlist submenu surface. */
+    getPlaylistSubmenuPopup(): MenuTarget | undefined;
     /**
      * Called when the context menu is closed by an
      * outside click/contextmenu/mousedown.  Components
@@ -32,6 +53,15 @@ export interface ContextMenuHost
 
 /** Submenu close delay in milliseconds. */
 const SUBMENU_CLOSE_DELAY = 150;
+
+/**
+ * How long to keep trying to put focus on a menu's first item.
+ *
+ * Long enough to outlast `wa-dialog`'s show animation, which ends by
+ * focusing the dialog; short enough that a menu which genuinely has no
+ * items stops rather than spinning for the life of the page.
+ */
+const FOCUS_RETRY_BUDGET_MS = 500;
 
 /** A menu item, focusable and clickable. Web Awesome sets `role` itself. */
 type MenuItem = HTMLElement & { active?: boolean; disabled?: boolean };
@@ -74,6 +104,30 @@ export class MenuKeyboard {
     }
 
     /**
+     * Take focus back, for a surface that finished showing after we
+     * had already placed it.
+     *
+     * `wa-dialog` focuses `[autofocus]` or *itself* on the animation
+     * frame after `showModal()`, and it cannot see our first menu item
+     * to prefer it: the panel is slotted through `menu-surface`, so the
+     * dialog's own `querySelector` stops at the `<slot>`. Retrying on a
+     * longer budget does not fix this either -- the first attempt
+     * *succeeds*, and the steal happens afterwards. Measured on the
+     * device: the sheet opened with focus on the `<dialog>` and every
+     * arrow key went nowhere.
+     *
+     * So the surface says when it has settled and this re-asserts. It
+     * is a no-op for a menu that is closed or that already has focus.
+     */
+    refocus(): void {
+        const panel = this.panel;
+
+        if (!panel || panel.contains(deepActiveElement())) return;
+
+        void this.focusFirstItem(panel);
+    }
+
+    /**
      * Focus the first item, once the items are items.
      *
      * The host's `updateComplete` resolves before the `wa-dropdown-item`s
@@ -91,11 +145,24 @@ export class MenuKeyboard {
 
         await Promise.all(candidates.map((el) => el.updateComplete ?? null));
 
-        // …and once the popup has positioned itself. `wa-popup` places the
+        // …and once the surface has shown itself. `wa-popup` places the
         // panel on an animation frame, and `focus()` on a not-yet-shown
         // element is a silent no-op — which looks identical to a menu
         // that opened and refused to take focus.
-        for (let attempt = 0; attempt < 3; attempt++) {
+        //
+        // **The budget is time, not frames, because #60 gave this a
+        // second kind of surface.** Three frames was enough for a
+        // popup; a `wa-dialog` runs a show *animation* and moves focus
+        // to the dialog itself when it finishes, which lands after
+        // those frames and takes the focus back. Measured on the
+        // device: the sheet opened with `document.activeElement` on the
+        // `<dialog>`, so every arrow key went nowhere. Retrying to a
+        // deadline is `roving-grid`'s rule for the same reason — the
+        // thing being waited for is another component's animation, not
+        // a fixed number of paints.
+        const deadline = Date.now() + FOCUS_RETRY_BUDGET_MS;
+
+        while (Date.now() < deadline) {
             // Bail if the menu closed while we waited.
             if (this.panel !== panel) return;
 
@@ -259,6 +326,20 @@ export class ContextMenuController
     /** Bound close handler for document events. */
     private closeHandler = () => this.close();
 
+    /**
+     * A surface finished showing; see `MenuKeyboard.refocus`.
+     *
+     * **Not while the submenu is up.** Both surfaces send this, and the
+     * submenu's sheet opens *over* the main one -- so re-asserting
+     * focus on the main panel's first item would snatch it straight
+     * back out of the playlist picker the user just opened.
+     */
+    private shownHandler = () => {
+        if (this.contextMenuOpen && !this.playlistSubmenuOpen) {
+            this.keyboard.refocus();
+        }
+    };
+
     /** Bound mousedown handler for outside-click detection. */
     private mousedownCloseHandler = (
         e: MouseEvent,
@@ -325,12 +406,28 @@ export class ContextMenuController
             'mousedown',
             this.mousedownCloseHandler,
         );
+        document.addEventListener(
+            MENU_DISMISS_EVENT,
+            this.closeHandler,
+        );
+        document.addEventListener(
+            MENU_SHOWN_EVENT,
+            this.shownHandler,
+        );
     }
 
     private detach(): void {
         if (!this.listening) return;
 
         this.listening = false;
+        document.removeEventListener(
+            MENU_DISMISS_EVENT,
+            this.closeHandler,
+        );
+        document.removeEventListener(
+            MENU_SHOWN_EVENT,
+            this.shownHandler,
+        );
         document.removeEventListener(
             'click',
             this.closeHandler,
@@ -548,6 +645,48 @@ export class ContextMenuController
 export const contextMenuStyles = css`
     #context-menu {
         z-index: 200;
+    }
+
+    /* ---------------------------------------------------------------
+       The sheet (#60).
+
+       menu-surface puts data-sheet on the panel when it is drawn
+       as a bottom sheet, and these rules are here rather than in that
+       component because the panel is the *host's* light DOM: it lives
+       in the host's shadow root, so only the host's stylesheet can
+       reach it. This file is the one every call site already includes,
+       which is what makes twelve menus grow thumb-sized rows from one
+       edit.
+
+       Measured on the device before the change: rows were 29px, against
+       the 44px floor plan 018 promises and the 48px this issue asks
+       for. --------------------------------------------------------- */
+    .context-menu-panel[data-sheet] {
+        border: none;
+        border-radius: 0;
+        box-shadow: none;
+        min-width: 0;
+        padding: 4px 0 8px;
+        background-color: transparent;
+    }
+
+    .context-menu-panel[data-sheet] wa-dropdown-item {
+        font-size: var(--yj-text-md, 0.9375rem);
+        min-height: 48px;
+        align-items: center;
+    }
+
+    .context-menu-panel[data-sheet] wa-dropdown-item::part(base) {
+        min-height: 48px;
+        align-items: center;
+    }
+
+    /* A submenu arrow means "a flyout opens to the right", which is not
+       what happens on a phone and is not a thing a thumb can aim at.
+       The row still works — it is the tap handler that opens the
+       playlist picker — so what goes is the arrow, not the item. */
+    .context-menu-panel[data-sheet] .submenu-arrow {
+        display: none;
     }
 
     .context-menu-panel {
