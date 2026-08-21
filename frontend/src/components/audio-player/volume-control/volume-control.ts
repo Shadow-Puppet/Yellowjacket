@@ -1,4 +1,4 @@
-import { LitElement, html, css } from 'lit';
+import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@awesome.me/webawesome/dist/components/slider/slider.js';
@@ -27,6 +27,26 @@ export class VolumeControl extends LitElement {
   @state()
   private popup = volumeStyleStore.popup;
 
+  /**
+   * Whether there is a volume of ours to control at all (#64).
+   *
+   * The decision is made here rather than at either mount point,
+   * because there are two -- the bottom bar's copy lives in
+   * `index.html`, which has no module scope to make it conditional --
+   * and one of them is a control the shell cannot un-render. So the
+   * control answers for itself, and the bar and the phone's
+   * full-screen transport get the same answer without either knowing
+   * the question exists.
+   *
+   * It renders `nothing` *and* hides the host: an empty shadow root is
+   * what stops a positional or role query finding a button that cannot
+   * act, and `:host([hidden])` is what stops the element occupying a
+   * flex item's worth of the transport -- the `:host` display above
+   * outranks the UA's `[hidden]` rule, so it has to be said.
+   */
+  @state()
+  private available = volumeStyleStore.available;
+
   private unsubscribeStyle?: () => void;
 
   // Locally-tracked volume while the user is actively dragging or scrolling.
@@ -41,6 +61,13 @@ export class VolumeControl extends LitElement {
       position: relative;
       display: inline-flex;
       align-items: center;
+    }
+
+    /* See the available field. A gap is only drawn between boxes,
+       so a hidden host costs its parent nothing -- which is where the
+       29px this gives back to Now Playing comes from (#172). */
+    :host([hidden]) {
+      display: none;
     }
 
     button {
@@ -154,11 +181,14 @@ export class VolumeControl extends LitElement {
 
     this.unsubscribeStyle = volumeStyleStore.subscribe(() => {
       this.popup = volumeStyleStore.popup;
+      this.setAvailable(volumeStyleStore.available);
 
       // Switching to the slider while the popup is open would leave the
       // document listener installed for a popup that no longer renders.
       if (!this.popup) this.closeSlider();
     });
+
+    this.setAvailable(volumeStyleStore.available);
 
     void volumeStyleStore.init();
   }
@@ -233,7 +263,25 @@ export class VolumeControl extends LitElement {
   // RENDER
   // ===================================================================
 
+  /**
+   * `hidden` is set imperatively rather than reflected from the state,
+   * because it has to be on the *host* and a `@state` does not reflect.
+   * It is the right attribute besides: it takes the element out of the
+   * accessibility tree as well as out of the layout.
+   */
+  private setAvailable(available: boolean) {
+    this.available = available;
+    this.hidden = !available;
+
+    // A popup left open when the control goes away would keep its
+    // document click listener installed for markup that no longer
+    // renders.
+    if (!available) this.closeSlider();
+  }
+
   override render() {
+    if (!this.available) return nothing;
+
     const muted = this.player.muted;
 
     // Inline, the icon is the mute toggle rather than a disclosure:

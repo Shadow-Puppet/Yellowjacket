@@ -343,6 +343,12 @@ export class NowPlayingView extends LitElement {
                      a media query because the bottom bar wants a
                      different answer at this same viewport. -->
                 <player-controls context="full"></player-controls>
+                <!-- Rendered unconditionally and absent on its own
+                     terms where the device owns the volume (#64): the
+                     control asks the player, not this view and not the
+                     viewport. A hidden host draws no gap, so that is
+                     29px of a 439px screen back to the album art
+                     (#172). -->
                 <volume-control></volume-control>
             </div>
         `;

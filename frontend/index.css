@@ -522,16 +522,20 @@ body div.sidebar {
     }
 
     /* Volume stands down here whatever the setting says, because this
-       is about room and about the platform rather than about
-       preference: the hardware keys own volume on a phone, which is
-       also why mediacontrols' Android handler implements no volume
-       callback. It moved from `audio-player`'s own media query when
-       #42 moved the control into the bar — same rule, and now stated
-       where the element actually is.
+       is about room: five controls and a slider do not fit a 360px
+       bar, and the full-screen now-playing view is where seeking and
+       volume go on a phone. It moved from `audio-player`'s own media
+       query when #42 moved the control into the bar — same rule, and
+       now stated where the element actually is.
 
-       `.bottom-bar volume-control`, not the one in
-       `now-playing-view`: that view is the phone's transport and is
-       where a slider does belong. */
+       **This rule used to carry the platform argument too, and no
+       longer does** (#64). "The hardware keys own the volume" is not a
+       width: it is false of a narrow desktop window and true of an
+       Android tablet, which this selector gets backwards both ways.
+       The player answers it now — `SystemOwnsVolume` — and
+       `volume-control` renders nothing when it is true, at every
+       width and in both of its mount points. What is left here is the
+       question a stylesheet can actually answer. */
     .bottom-bar volume-control {
         display: none;
     }
