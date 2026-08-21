@@ -105,6 +105,19 @@ export class NowPlayingView extends LitElement {
             color: var(--yj-text-secondary, #adb5bd);
         }
 
+        /* The art and the names are one block, so that a short
+           screen can lay them out side by side without either of them
+           knowing about the other's box. Vertically it is exactly what
+           the host used to do -- same gap, art flexible, names fixed --
+           so the tall layout is unchanged. */
+        .stack {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75em;
+            flex: 1 1 auto;
+            min-height: 0;
+        }
+
         .art {
             flex: 1 1 auto;
             display: flex;
@@ -113,38 +126,89 @@ export class NowPlayingView extends LitElement {
             min-height: 0;
         }
 
-        .art img,
-        .art .placeholder {
-            /* Square, and never taller than the room left over: the
-               art is the one thing here that would happily push the
-               transport off the bottom of a short phone.
+        .art img {
+            /* Square, and never larger than the room left over --
+               where "square" is a property of what is painted and not
+               just of what was asked for.
 
-               **max-height is what actually keeps that promise**, and
-               it was missing. With a definite width and
-               a 1:1 aspect-ratio the height is *derived from the width*
-               and is bounded by nothing: at the reference device's
-               424x439 that is a 263px square (60vh) in a box with far
-               less than 263px left, so the art overflowed its own
-               centred flex item and drew over the header above and the
-               title below it. The comment claimed this was handled;
-               60vh is a bound on the *viewport*, not on the room left
-               over, and those differ by however much chrome is above
-               and below.
+               The previous rule asked for a square and did not get
+               one. width: min(100%, 60vh) makes the width definite,
+               aspect-ratio: 1 derives the height from it, and
+               max-height: 100% then clamps that height **without
+               re-deriving the width** -- which is how the
+               aspect-ratio property is specified to behave, unlike
+               an intrinsic ratio. So whenever the room left over was
+               shorter than the box was wide, the art was drawn as a
+               letterbox strip and object-fit: cover cropped the
+               cover to it. Measured on the reference device at
+               424x439: **264x53**, a 5:1 band of a square image.
 
-               Pre-existing -- screenshotted on main -- and made acute
-               by #56, which gives the transport 95px more than it had.
-               Found by reading a screenshot, which is the only tier
-               that can see it: nothing fails, nothing overflows the
-               *shell*, and every control is still hittable. */
-            width: min(100%, 60vh);
+               That is not only the phone. The leftover exceeds the
+               width only above ~843px of viewport, so every height
+               from ~500 to ~843 -- most phones, and any small window
+               -- drew a cropped strip too.
+
+               Both maxes with auto sizes is the fix, and it is the
+               replaced-element path rather than the aspect-ratio
+               one: the used size preserves the ratio under *both*
+               bounds (CSS2.1 10.4), so the art is square at every
+               height. Checked against Chrome 113 itself -- the
+               device's engine -- at column heights of 288, 300, 451,
+               600 and 800: square at all five, where the old rule
+               cropped at four.
+
+               A corollary worth knowing: auto will not upscale past
+               the image's natural size, and the largest tier
+               saveCoverArt keeps is 400px. Drawing it larger was
+               upscaling, so nothing is lost. */
+            max-width: 100%;
             max-height: 100%;
+            width: auto;
+            height: auto;
             aspect-ratio: 1;
             object-fit: cover;
             border-radius: 12px;
             background-color: var(--yj-bg-elevated, #343a40);
         }
 
+        /* The placeholder is not a replaced element, so it cannot use
+           the rule above: with no intrinsic size, auto/auto collapses
+           it to its icon -- measured at 13x58 in Chrome 113, which is
+           neither square nor the art's size.
+
+           So it is sized from the height, and then bounded by the
+           width in the one way a box like this can be. A non-replaced
+           element cannot express "the largest square that fits" in a
+           single rule: aspect-ratio derives the second axis from the
+           first, and whichever max clamps it does not re-derive the
+           other, which is the same trap the image rule above is about.
+           Driving it from the height alone is right until the column
+           is taller than it is wide -- ~843px of viewport, which is a
+           tall phone and #51's other named device -- and there it went
+           380x484.
+
+           max-height in viewport units is what closes it, and it is
+           sound here for the reason 60vh was not: this view is a
+           phone-width detail view, so its content box really is the
+           viewport less the host's own 1rem gutters. It is a *max*, so
+           the failure mode if that ever stopped being true is a square
+           bounded slightly early rather than a crop. rem and not em --
+           this box sets font-size: 3rem for the icon, so 2em here
+           would be 96px. */
         .art .placeholder {
+            height: 100%;
+            width: auto;
+            max-width: 100%;
+            max-height: calc(100vw - 2rem);
+            /* A flex item's automatic minimum is its content, so
+               without this the icon's own width becomes a floor and
+               the box goes wider than it is tall the moment the row is
+               shorter than the icon -- which is exactly the state a
+               job band puts this screen in. */
+            min-width: 0;
+            aspect-ratio: 1;
+            border-radius: 12px;
+            background-color: var(--yj-bg-elevated, #343a40);
             display: flex;
             align-items: center;
             justify-content: center;
@@ -232,6 +296,60 @@ export class NowPlayingView extends LitElement {
             color: var(--yj-text-secondary, #adb5bd);
             text-align: center;
         }
+
+        /* Below 500px of viewport the art and the names sit side by
+           side, and that is the whole of this screen's answer to a
+           short phone (#51).
+
+           The stacked layout cannot be rescued by sizing alone. Its
+           budget is fixed -- 48px of header, 143px of transport since
+           #64, 78px of names, 68px of padding and gaps -- so the art
+           gets height - 386, which on the reference device's 424x439
+           is **53px**. #172 measured 39px before #64 and named the
+           two options: give the art a floor and let the block scroll,
+           or reflow. A floor scrolls the transport off the bottom,
+           and "controls never scroll off" is #51's own Direction and
+           plan 018's promise -- so it is the reflow.
+
+           Sideways the art is bounded by the row's height rather than
+           by the column's leftover, which is the whole gain: the same
+           439px screen goes from a 53px sliver to **143px**, measured
+           on the device, with nothing scrolling and the transport
+           untouched.
+
+           500 is where the two layouts cross rather than a round
+           number. In a row the art is height - 296 and the names get
+           what is left of 392px, so the names hold 176px at exactly
+           500 and less above it; stacked, the art is height - 386,
+           which passes 176px at 562. Below 500 the row is the bigger
+           art *and* the readable one -- above it the column is, which
+           is why a tall phone (a Pixel 7's ~869) keeps the layout it
+           has. Unverified on that device: none was attached.
+
+           It is keyed on height alone, not on the phone's width,
+           because it is an answer to vertical room -- a 900x450 window
+           has the same problem and the same fix. */
+        @media (max-height: 500px) {
+            .stack {
+                flex-direction: row;
+                align-items: center;
+            }
+
+            /* A square of the row's height. The box has to carry the
+               ratio here rather than the image, because in a row the
+               art's width is what the ratio has to produce -- and the
+               image's own rule then fits it to a box that is already
+               square. */
+            .art {
+                flex: 0 1 auto;
+                height: 100%;
+                aspect-ratio: 1;
+            }
+
+            .meta {
+                flex: 1 1 auto;
+            }
+        }
     `];
 
     private back() {
@@ -283,55 +401,57 @@ export class NowPlayingView extends LitElement {
         return html`
             ${this.renderHeader()}
 
-            <div class="art">
-                ${art
-                    ? html`<img
-                          src=${art}
-                          alt=""
-                          decoding="async"
-                          data-testid="npv-art"
-                      />`
-                    : html`<div class="placeholder" aria-hidden="true">
-                          <wa-icon name="compact-disc"></wa-icon>
-                      </div>`}
-            </div>
-
-            <div class="meta">
-                <div class="names">
-                    <h2 class="title" data-testid="npv-title">
-                        ${track.title || track.fileName}
-                    </h2>
-                    <p class="artist">
-                        ${creditLink(
-                            creditStore.credits(track.recordingMbid),
-                            track.artist,
-                            track.artistMbid,
-                        )}
-                    </p>
-                    ${track.album
-                        ? html`<p class="album">
-                              ${albumLink(
-                                  track.album,
-                                  track.releaseGroupMbid,
-                                  undefined,
-                                  track.artist,
-                              )}
-                          </p>`
-                        : nothing}
+            <div class="stack">
+                <div class="art">
+                    ${art
+                        ? html`<img
+                              src=${art}
+                              alt=""
+                              decoding="async"
+                              data-testid="npv-art"
+                          />`
+                        : html`<div class="placeholder" aria-hidden="true">
+                              <wa-icon name="compact-disc"></wa-icon>
+                          </div>`}
                 </div>
 
-                <button
-                    type="button"
-                    class="favorite ${favorited ? 'on' : ''}"
-                    data-testid="npv-favorite"
-                    aria-pressed=${favorited ? 'true' : 'false'}
-                    aria-label=${favorited
-                        ? `Remove ${track.title} from ${this.favCtrl.playlistName}`
-                        : `Add ${track.title} to ${this.favCtrl.playlistName}`}
-                    @click=${this.toggleFavorite}
-                >
-                    <wa-icon name=${this.favCtrl.iconFor(favorited)}></wa-icon>
-                </button>
+                <div class="meta">
+                    <div class="names">
+                        <h2 class="title" data-testid="npv-title">
+                            ${track.title || track.fileName}
+                        </h2>
+                        <p class="artist">
+                            ${creditLink(
+                                creditStore.credits(track.recordingMbid),
+                                track.artist,
+                                track.artistMbid,
+                            )}
+                        </p>
+                        ${track.album
+                            ? html`<p class="album">
+                                  ${albumLink(
+                                      track.album,
+                                      track.releaseGroupMbid,
+                                      undefined,
+                                      track.artist,
+                                  )}
+                              </p>`
+                            : nothing}
+                    </div>
+
+                    <button
+                        type="button"
+                        class="favorite ${favorited ? 'on' : ''}"
+                        data-testid="npv-favorite"
+                        aria-pressed=${favorited ? 'true' : 'false'}
+                        aria-label=${favorited
+                            ? `Remove ${track.title} from ${this.favCtrl.playlistName}`
+                            : `Add ${track.title} to ${this.favCtrl.playlistName}`}
+                        @click=${this.toggleFavorite}
+                    >
+                        <wa-icon name=${this.favCtrl.iconFor(favorited)}></wa-icon>
+                    </button>
+                </div>
             </div>
 
             <div class="transport">

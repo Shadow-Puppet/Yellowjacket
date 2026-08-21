@@ -4785,3 +4785,130 @@ broken build. The specs assert the *mechanism* — that the surface is a
 native `<dialog>` at phone width — which is the same move
 `queue-as-a-screen.spec.ts` makes about containment and for the same
 reason.
+
+## Now Playing was not drawing a small square, it was drawing a crop (measured 2026-08-21, TLP301 / Chrome 113 / 424x439)
+
+#172 handed #51 a design question — whether the album art gets a floor
+with the block scrolling, or whether the screen reflows below some
+height. Measuring it first turned up a defect underneath the question,
+and the defect is bigger than the phone.
+
+**The art was never square.** `aspect-ratio` is specified not to
+re-derive the width when `max-height` clamps the height — unlike an
+intrinsic ratio, which CSS2.1 10.4 preserves under both bounds. So
+`width: min(100%, 60vh)` made the width definite, the ratio derived a
+height from it, `max-height: 100%` clipped that height, and the width
+stayed where it was. `object-fit: cover` then cropped a square cover
+into the band. On the device: **264x53**, a 5:1 strip. #172's own table
+called it "39px of art" and the missing half is that those 39px were
+263 wide.
+
+**And it is not only the phone.** The leftover exceeds the width only
+above ~843px of viewport, so every height from ~500 to ~843 drew a
+crop too — most phones, and any short window. The e2e spec written for
+this fails on the old build at 424x439 (263x39), 390x700 (358x315) and
+900x500 (300x36), and *passes* at 412x869, which is the boundary
+falling exactly where the arithmetic says it should.
+
+**Both maxes with auto sizes is the whole fix**, and it was chosen by
+asking Chrome 113 rather than by reasoning: a probe shadow root at
+column heights of 288, 300, 451, 600 and 800 measured four candidate
+rules. `max-width/max-height: 100%` with `width/height: auto` is square
+at all five; the shipped rule cropped at four; `aspect-ratio` on the
+box cropped at the tallest. A corollary that makes it free: `auto` will
+not upscale past the natural size, and the largest tier `saveCoverArt`
+keeps is 400px, so nothing is lost by never exceeding it.
+
+**The placeholder cannot use that rule and needed its own**, which is
+the part that would have shipped broken. It is not a replaced element,
+so with no intrinsic size auto/auto collapses it to its icon —
+measured at **13x58**, neither square nor the art's size. Three things
+about the rule it did get:
+
+- It is driven from the **height**, which is the axis that binds
+  everywhere this view is reached from.
+- A flex item's automatic minimum is its content, so without
+  `min-width: 0` the icon's own width becomes a floor and the box goes
+  wider than it is tall the moment the row is shorter than the icon —
+  which is exactly the state a job band puts this screen in.
+- **A non-replaced box cannot express "the largest square that fits" at
+  all**, because whichever max clamps does not re-derive the other. The
+  height-driven rule alone went **380x484** at 412x869 — a tall phone,
+  #51's other named device — and `max-height: calc(100vw - 2rem)` is
+  what closes it. That is sound here for the reason `60vh` was not: this
+  is a phone-width detail view, so its content box really is the
+  viewport less the host's own gutters, and it is a *max*, so if that
+  ever stopped being true the failure is a square bounded early rather
+  than a crop. `rem` and not `em` — the box sets `font-size: 3rem` for
+  the icon, so `2em` there is 96px.
+
+**Then the design question, and the reflow is the answer.** The
+stacked layout's budget is fixed — 48px of header, 143px of transport
+since #64, 78px of names, 68px of padding and gaps — so the art gets
+`height - 386`, which is 53px at 439. A floor on the art scrolls the
+transport off the bottom, and "controls never scroll off" is #51's own
+Direction and plan 018's promise. So below 500px the art and the names
+share a row, where the art is bounded by the row's height rather than
+by the column's leftover: **53px to 143px on the device**, measured on
+the shipped build, with nothing scrolling and the transport untouched.
+
+**500 is where the two layouts cross, not a round number.** In a row
+the art is `height - 296` and the names get what is left of 392px, so
+the names hold 176px at exactly 500 and less above it; stacked, the art
+is `height - 386`, which passes 176px at 562. It is keyed on height
+alone rather than on the phone's width because it is an answer to
+vertical room — a 900x450 window has the same problem and the same fix.
+
+Two things the audit found that are *not* this, and are filed:
+**#186**, every control that is not the transport is under the 44px
+floor (the sort direction arrow is 28x21, and `search-trigger` — which
+exists only on a phone — is 40x40), and **#187**, the seek bar's drag
+target is 6px tall.
+
+**What the audit did not find is a reachability failure**, which is
+worth recording because it is the promise plan 018 makes. At 424x439,
+on every view -- the ten primary ones, the queue, `album-details`,
+`artist-details`, Downloads and Autotag -- `documentElement.scrollWidth`
+is 424 against a 424 viewport, no control sits outside a scrollable
+ancestor, and a hit test at each control's centre reaches the control.
+The width work of #57, #62, #55 and #59 holds; what was left was
+vertical, and it was this screen.
+
+**A number measured on the device is not a number CI can assert.** The
+spec's floor on the art's height passed here at 114 and failed in CI at
+**64**, and both are honest: this app is long-lived, so a job staged by
+an earlier spec is still on screen, and `volume-control` renders in a
+browser where it does not on Android. Both are chrome above and below
+the view and both move the leftover. That is the same trap the entry
+above about staged jobs describes, arriving as a *measurement* rather
+than as a stuck job. The assertion is the mechanism now -- in a row the
+art fills the row's height rather than being the leftover -- and the
+53-to-143 stays on the issue, where it was measured.
+
+The probe is worth keeping in mind for the next audit, because two of
+its three checks needed a second pass to mean anything. "Painted
+outside the viewport" flags a horizontally scrolling carousel -- the
+home shelves -- so the real question is whether a *scrollable ancestor*
+can bring the element back. And a hit test at a control's centre flags
+everything below the fold in a scroll container, so it only says
+something once the control is on screen. Both first drafts produced
+long lists of nothing.
+
+## Two traps that cost time on the device, both already written down (2026-08-21)
+
+Recorded because both are in `android-tier.md` and I met them anyway.
+
+**A fresh install downloads the real catalog**, so `job-band` is 103px
+of a 439px screen and every vertical measurement is wrong. Worse, it
+**restarts**: `explore.Service.StopIndexBuild` returns cleanly and the
+job is `running` again within seconds, so it has to be stopped again
+immediately before a measurement rather than once at the start.
+`YJ_CORE_INDEX_URL` is stubbed in `dev-headless.sh` and in CI and is
+real on a device.
+
+**The first-run wizard does not re-check for a library it did not
+create.** Adding one through `library.Library.AddLibrary` over the
+bridge leaves the wizard up with its "Get Started" button correctly
+disabled — it gates on a directory chosen *in the wizard*, and the
+existing-library check runs once, on mount. A reload clears it. Nothing
+is broken; it cost twenty minutes of believing a tap had been swallowed.
