@@ -113,6 +113,19 @@ func main() {
 	slog.SetDefault(sLogger)
 	sLogger.Info("starting yellowjacket", "version", version, "commit", commit)
 
+	// Android has no /tmp and gives an app no TMPDIR, so anything in
+	// this process that spills to a temporary file is handed a path that
+	// does not exist -- see system.UseTempDir. It runs here rather than
+	// beside UseHomeOverride above because it has something to say when
+	// it fails and the logger does not exist up there; what matters is
+	// that it is before NewYellowJacketApp, which opens the database.
+	//
+	// A failure is not fatal: it leaves the platform's own answer in
+	// place, which is what every release before this one ran with.
+	if err := system.UseTempDir(application.Mobile.StoragePath()); err != nil {
+		sLogger.Error("could not set up a temp directory", "err", err.Error())
+	}
+
 	// Start profiling server (pprof + trace). In production builds this
 	// is a no-op — the compiler eliminates all profiling code.
 	stopProfiler := profiling.Start(sLogger)

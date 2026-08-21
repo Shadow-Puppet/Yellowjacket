@@ -2,6 +2,7 @@ package explore
 
 import (
 	"context"
+	"database/sql"
 	"log/slog"
 	"math"
 	"sort"
@@ -12,6 +13,7 @@ import (
 	"golang.org/x/sync/singleflight"
 
 	"yellowjacket/backend/database"
+	"yellowjacket/backend/database/sql/sqlcgen"
 	"yellowjacket/backend/events"
 	"yellowjacket/backend/jobs"
 )
@@ -279,36 +281,31 @@ func (e *Service) BackfillReleaseGroupMBIDs() {
 	go e.backfillReleaseGroupMBIDs(e.ctx)
 }
 
-func (e *Service) backfillReleaseGroupMBIDs(ctx context.Context) {
-	rows, err := e.db.QueryContext(
-		"SELECT id, pending_release_mbid FROM release_groups "+
-			"WHERE (mbid IS NULL OR mbid = '') "+
-			"AND pending_release_mbid IS NOT NULL AND pending_release_mbid != '' "+
-			"LIMIT ?",
-		releaseGroupMBIDBackfillMaxPerRun,
+// pendingReleaseMBIDs is the albums this pass has work to do on.
+//
+// It is separate from the pass, and returns its error rather than
+// logging it, so that a test can assert the statement runs against the
+// real schema. That is not a general preference -- it is this
+// statement's history: it named `release_groups`, a table plan 013
+// renamed to `albums`, so it failed on every launch since e7748f1 and
+// the pass returned quietly having done nothing. A test of the pass
+// as a whole cannot see that, because a query error and an empty
+// library are the same early return.
+func (e *Service) pendingReleaseMBIDs(
+	ctx context.Context,
+) ([]sqlcgen.GetAlbumsWithPendingReleaseMBIDRow, error) {
+	return e.db.ReadQueries.GetAlbumsWithPendingReleaseMBID(
+		ctx, releaseGroupMBIDBackfillMaxPerRun,
 	)
+}
+
+func (e *Service) backfillReleaseGroupMBIDs(ctx context.Context) {
+	pending, err := e.pendingReleaseMBIDs(ctx)
 	if err != nil {
 		e.logger.Warn("release-group mbid backfill: query failed", "error", err)
 
 		return
 	}
-
-	type pendingRow struct {
-		id          int64
-		releaseMBID string
-	}
-
-	var pending []pendingRow
-
-	for rows.Next() {
-		var p pendingRow
-
-		if err := rows.Scan(&p.id, &p.releaseMBID); err == nil {
-			pending = append(pending, p)
-		}
-	}
-
-	_ = rows.Close()
 
 	if len(pending) == 0 {
 		return
@@ -335,7 +332,7 @@ func (e *Service) backfillReleaseGroupMBIDs(ctx context.Context) {
 
 		job.progress(i, len(pending))
 
-		release, err := e.mb.LookupRelease(ctx, p.releaseMBID)
+		release, err := e.mb.LookupRelease(ctx, p.PendingReleaseMbid.String)
 		if err != nil || release.ReleaseGroupMBID == "" {
 			// Left alone rather than cleared: LookupRelease caches its
 			// answer (success or a release with no group) for 7 days,
@@ -344,12 +341,19 @@ func (e *Service) backfillReleaseGroupMBIDs(ctx context.Context) {
 			continue
 		}
 
-		_, err = e.db.ExecContext(
-			"UPDATE release_groups SET mbid = ?, pending_release_mbid = NULL "+
-				"WHERE id = ? AND (mbid IS NULL OR mbid = '')",
-			release.ReleaseGroupMBID, p.id,
-		)
-		if err != nil {
+		// The writer, not ReadQueries: an UPDATE issued on the
+		// query-only pool fails at runtime with "attempt to write a
+		// readonly database".
+		if err := e.db.Queries.ResolveAlbumPendingReleaseMBID(
+			ctx,
+			sqlcgen.ResolveAlbumPendingReleaseMBIDParams{
+				Mbid: sql.NullString{
+					String: release.ReleaseGroupMBID,
+					Valid:  true,
+				},
+				ID: p.ID,
+			},
+		); err != nil {
 			e.logger.Warn("release-group mbid backfill: update failed", "error", err)
 		}
 	}

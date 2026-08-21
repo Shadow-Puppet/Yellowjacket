@@ -87,3 +87,116 @@ func TestUseHomeOverride(t *testing.T) {
 		})
 	}
 }
+
+// UseTempDir carries UseHomeOverride's two rules for the same reasons,
+// plus one of its own: the directory it names has to be usable.
+//
+// **The only tier that can compile the platform this exists for is a
+// phone**, so everything decidable off one is decided here -- which is
+// androidpayload.go's discipline, and is why the platform call is a
+// parameter rather than something this package reaches for. The
+// device's half is a single measurement: no /tmp, no TMPDIR (#190).
+func TestUseTempDir(t *testing.T) {
+	t.Run("an empty base is a no-op", func(t *testing.T) {
+		// This is the desktop case in full: StoragePath() answers ""
+		// off mobile, where /tmp is real and must be left alone.
+		t.Setenv(envTempDir, "")
+
+		if err := UseTempDir(""); err != nil {
+			t.Fatalf("UseTempDir(\"\") = %v, want nil", err)
+		}
+
+		if got := os.Getenv(envTempDir); got != "" {
+			t.Errorf("%s = %q, want it untouched", envTempDir, got)
+		}
+	})
+
+	t.Run("an explicit TMPDIR wins", func(t *testing.T) {
+		const chosen = "/somewhere/deliberate"
+
+		// The base is taken before TMPDIR moves, because t.TempDir()
+		// reads TMPDIR too -- which is the same fact this function is
+		// about, met from the other side.
+		base := t.TempDir()
+
+		t.Setenv(envTempDir, chosen)
+
+		if err := UseTempDir(base); err != nil {
+			t.Fatalf("UseTempDir = %v, want nil", err)
+		}
+
+		if got := os.Getenv(envTempDir); got != chosen {
+			t.Errorf("%s = %q, want the explicit %q", envTempDir, got, chosen)
+		}
+	})
+
+	t.Run("points at a real directory under the base", func(t *testing.T) {
+		base := t.TempDir()
+
+		t.Setenv(envTempDir, "")
+
+		if err := UseTempDir(base); err != nil {
+			t.Fatalf("UseTempDir = %v, want nil", err)
+		}
+
+		got := os.Getenv(envTempDir)
+
+		want := filepath.Join(base, tempDirName)
+		if got != want {
+			t.Fatalf("%s = %q, want %q", envTempDir, got, want)
+		}
+
+		// The whole failure being repaired is a temp directory that is
+		// named and does not exist, so naming one is not enough.
+		info, err := os.Stat(got)
+		if err != nil {
+			t.Fatalf("the temp directory was named but not created: %v", err)
+		}
+
+		if !info.IsDir() {
+			t.Fatalf("%s is not a directory", got)
+		}
+	})
+
+	t.Run("os.TempDir then answers with it", func(t *testing.T) {
+		// The point of setting the variable at all: this is what every
+		// library in the process reads, SQLite's driver included.
+		base := t.TempDir()
+
+		t.Setenv(envTempDir, "")
+
+		if err := UseTempDir(base); err != nil {
+			t.Fatalf("UseTempDir = %v, want nil", err)
+		}
+
+		if got := os.TempDir(); got != filepath.Join(base, tempDirName) {
+			t.Errorf("os.TempDir() = %q, want the directory we made", got)
+		}
+	})
+
+	t.Run("an unwritable directory is an error, not a silent success", func(t *testing.T) {
+		if os.Getuid() == 0 {
+			t.Skip("root can write anywhere, so there is nothing to refuse")
+		}
+
+		base := t.TempDir()
+
+		// MkdirAll on an existing directory succeeds whatever its
+		// mode, so without the write probe this case would set TMPDIR
+		// to a directory nothing can use -- which is the bug again,
+		// one directory over.
+		if err := os.Mkdir(filepath.Join(base, tempDirName), 0o500); err != nil {
+			t.Fatalf("prepare the unwritable directory: %v", err)
+		}
+
+		t.Setenv(envTempDir, "")
+
+		if err := UseTempDir(base); err == nil {
+			t.Fatal("UseTempDir accepted a directory it cannot write to")
+		}
+
+		if got := os.Getenv(envTempDir); got != "" {
+			t.Errorf("%s was set to %q despite the failure", envTempDir, got)
+		}
+	})
+}

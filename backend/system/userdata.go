@@ -52,6 +52,75 @@ func UseHomeOverride(base string) {
 	_ = os.Setenv(envHomeOverride, base)
 }
 
+// envTempDir is the variable Go's os.TempDir() reads, and through it
+// every library in the process that asks for a temporary file.
+const envTempDir = "TMPDIR"
+
+// tempDirName is the subdirectory of the app's own storage that
+// becomes that answer.
+const tempDirName = "tmp"
+
+// UseTempDir gives the process a temporary directory that exists.
+//
+// **Android has no /tmp and hands an app no TMPDIR**, and Go's
+// os.TempDir() falls back to "/tmp" when the variable is unset -- so
+// every library in the process that wants scratch space is handed a
+// path that has never existed. SQLite is the one that noticed: an
+// INSERT ... SELECT large enough to spill returned
+// SQLITE_IOERR_GETTEMPPATH (disk I/O error 6410), which is how the
+// champion search index came to fail its rebuild on every launch while
+// the app otherwise looked healthy (#190).
+//
+// It is the *class* that is fixed here rather than that statement.
+// Anything that spills fails the same way on that platform -- large
+// sorts, large joins, VACUUM -- so the repair belongs at the process's
+// one answer to the question rather than at each caller. The
+// alternative considered was PRAGMA temp_store = MEMORY, which is
+// cheaper and more local and is a promise that every future spill fits
+// in RAM on a phone; the catalog is the largest thing in this app and
+// that is not a promise worth making silently.
+//
+// The rules are UseHomeOverride's, for the same reasons. **An empty
+// base is a no-op**, because that is what
+// application.Mobile.StoragePath() returns on desktop -- so this needs
+// no build tag and changes nothing off mobile, where /tmp is real. And
+// **an explicit TMPDIR wins**, so anyone who set one deliberately gets
+// what they asked for; nothing sets it on the platform this exists for.
+//
+// It returns its error rather than swallowing it because a temp
+// directory that could not be created is the same silent failure one
+// step earlier, and since #160 a log line on that platform is
+// something a person can actually read.
+func UseTempDir(base string) error {
+	if base == "" || os.Getenv(envTempDir) != "" {
+		return nil
+	}
+
+	dir := filepath.Join(base, tempDirName)
+
+	if err := os.MkdirAll(dir, os.ModePerm); err != nil {
+		return fmt.Errorf("could not make the temp directory %s: %w", dir, err)
+	}
+
+	// Writability is checked rather than assumed: the whole failure
+	// this repairs is a directory that is named and cannot be used, and
+	// MkdirAll on an existing unwritable directory succeeds.
+	probe, err := os.CreateTemp(dir, "probe")
+	if err != nil {
+		return fmt.Errorf("temp directory %s is not writable: %w", dir, err)
+	}
+
+	name := probe.Name()
+	_ = probe.Close()
+	_ = os.Remove(name)
+
+	if err := os.Setenv(envTempDir, dir); err != nil {
+		return fmt.Errorf("could not set %s: %w", envTempDir, err)
+	}
+
+	return nil
+}
+
 // getUserDirPath returns and creates the path for a user directory.
 func getUserDirPath(dt dirType) (string, error) {
 	path, err := resolveUserDirPath(dt)
