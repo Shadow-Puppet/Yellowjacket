@@ -2120,6 +2120,54 @@ toggled from `index.ts` would be a second expression of the same fact.
 The view therefore carries its own queue button, because that button
 lives in the bar it hides.
 
+**And below 500px of height its art and its names share a row** (#51).
+The stacked arrangement's budget is fixed — 48px of header, 143px of
+transport since #64, 78px of names, 68px of padding and gaps — so the
+art gets `height - 386`, which at the reference device's 424x439 is
+**53px**: the one thing a Now Playing screen exists to show, smallest
+on it. #172 named the two ways out and this is the second, because the
+first — a floor on the art with the block scrolling — scrolls the
+transport off the bottom, and *controls never scroll off* is #51's own
+Direction and plan 018's promise. Sideways the art is bounded by the
+row's height instead of by the column's leftover: **53px to 143px**,
+measured on the device, nothing scrolling, the transport untouched.
+
+Three things about it are load-bearing.
+
+**500 is where the two layouts cross rather than a round number.** In a
+row the art is `height - 296` and the names get what is left of 392px,
+so the names hold 176px at exactly 500 and less above it; stacked, the
+art is `height - 386`, which passes 176px at 562. Below 500 the row is
+the bigger art *and* the readable one — above it the column is, which
+is why a tall phone keeps the arrangement it has. It is keyed on height
+alone and not on the phone's width, because it answers vertical room: a
+900x450 window has the same problem and the same fix.
+
+**The art was not a small square, it was a crop, and that was never
+only the phone.** `aspect-ratio` is specified not to re-derive the
+width when `max-height` clamps the height — unlike an intrinsic ratio,
+which is preserved under both bounds — so a definite `width: min(100%,
+60vh)` kept its width while the height was clipped, and `object-fit:
+cover` cropped a square cover into the band: **264x53** on the device.
+The leftover exceeds the width only above ~843px of viewport, so every
+height from ~500 to ~843 drew one too. `max-width`/`max-height: 100%`
+with `width`/`height: auto` is the fix and is the replaced-element
+path; it also never upscales past the natural size, and the largest
+tier `saveCoverArt` keeps is 400px, so nothing is lost.
+
+**The placeholder needs its own rule, and a non-replaced box cannot
+express this one.** With no intrinsic size, auto/auto collapses it to
+its icon (13x58, measured). It is driven from the height instead, with
+`min-width: 0` because a flex item's automatic minimum is its content —
+without it the icon's width becomes a floor the moment the row is
+shorter than the icon, which is exactly what a job band does to this
+screen. And since whichever max clamps does not re-derive the other, a
+height-driven box goes **380x484** on a tall phone; `max-height:
+calc(100vw - 2rem)` closes it, which is sound here for the reason
+`60vh` was not — this is a phone-width detail view, so its content box
+really is the viewport less the host's gutters, and it is a *max*, so
+the failure mode is a square bounded early rather than a crop.
+
 **The playing row is a shape, not a hue.** `track-list` and
 `queue-panel` draw a `::before` triangle in each row's own left
 padding, plus `aria-current` — before, both rows were a background tint
