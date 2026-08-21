@@ -29,8 +29,38 @@ import { shadow } from '@test/support/render';
 
 const wrappers: HTMLElement[] = [];
 
+let restoreMedia: (() => void) | null = null;
+
+/**
+ * Answer the shell's phone query with `phone` until restored.
+ *
+ * Stubbed rather than emulated, for the reason `search-dialog.test.ts`
+ * gives: the runner's viewport is fixed at 1280x800, and the panel
+ * reads `matchMedia` in `connectedCallback` precisely so a test can
+ * answer it first.
+ */
+function stubPhone(phone: boolean): void {
+  const real = window.matchMedia.bind(window);
+
+  window.matchMedia = ((q: string) =>
+    q.includes('max-width: 599px')
+      ? {
+          matches: phone,
+          media: q,
+          addEventListener() {},
+          removeEventListener() {},
+        }
+      : real(q)) as typeof window.matchMedia;
+
+  restoreMedia = () => {
+    window.matchMedia = real;
+  };
+}
+
 afterEach(() => {
   for (const w of wrappers.splice(0)) w.remove();
+  restoreMedia?.();
+  restoreMedia = null;
 });
 
 /**
@@ -155,6 +185,52 @@ describe('the queue panel decides whether it can be a column', () => {
 
       expect(el.open).toBe(false);
     }
+  });
+
+  /**
+   * #171 — the scrim is a dismissal target, so it exists only where it
+   * has pixels to be tapped.
+   *
+   * Below 600px `.panel-content` is `width: 100%`, so the scrim is
+   * entirely underneath an opaque panel: measured at 424x439, host,
+   * panel and scrim all 424x318. Drawing it there is a `cursor:
+   * pointer` click target nobody can reach, and the queue is a screen
+   * at that width anyway (#55) — back and the close button are its ways
+   * out. Existence rather than `display: none`, because a hidden scrim
+   * is still an element carrying the handler.
+   */
+  it('draws no scrim at phone width, where it would have no reachable pixels', async () => {
+    stubPhone(true);
+
+    const el = await panelIn(424);
+
+    expect(el.overlay).toBe(true);
+    expect(el.shadowRoot?.querySelector('.scrim')).toBeNull();
+
+    // The way out a thumb can hit is still there.
+    expect(
+      shadow(el, '[data-testid="queue-close"]')?.getAttribute('aria-label'),
+    ).toBe('Close queue');
+  });
+
+  /**
+   * The 600–899 band is where the panel is a 320px column of a wider
+   * content area, so the scrim has uncovered pixels and #24's
+   * tap-outside-to-close is real. Same width as the overlay tests
+   * above, with the phone query explicitly answered `false`, so this
+   * fails if the scrim is ever dropped for every overlay.
+   */
+  it('keeps the scrim above phone width, where it can be tapped', async () => {
+    stubPhone(false);
+
+    const el = await panelIn(700);
+
+    expect(el.overlay).toBe(true);
+
+    shadow<HTMLElement>(el, '.scrim')?.click();
+    await el.updateComplete;
+
+    expect(el.open).toBe(false);
   });
 
   /**

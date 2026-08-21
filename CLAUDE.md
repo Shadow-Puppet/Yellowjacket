@@ -2069,9 +2069,26 @@ one that closes the queue — the reported defect moved one press later,
 which looks exactly like a press that did nothing.
 
 **And the way out is 44px on a phone.** With the panel spanning the
-whole width the scrim has no uncovered pixels at all, so the close
-button is the only pointer route out of a full-screen surface; it was
-**25×21px**.
+whole width there is no scrim there at all, so the close button is the
+only pointer route out of a full-screen surface; it was **25×21px**.
+
+**The scrim is drawn only where it can be tapped** (#171). Below 600px
+`.panel-content` is `width: 100%`, so the scrim sat entirely underneath
+an opaque panel — measured at 424×439, host, panel and scrim all
+424×318 — dimming nothing and dismissing nothing while wearing
+`cursor: pointer`. #24's tap-outside-to-close cannot exist on a surface
+with no outside, and the screen above is what answers it instead: back,
+and a 44px close button. The alternative — a gutter, which is the
+drawer pattern — was declined, because it buys the affordance by taking
+width off a full-screen surface on a 424px viewport. Two things about
+it are load-bearing. Its **existence** is `matchMedia`, not
+`display: none`, on `job-band`'s rule: a hidden scrim is still an
+element carrying the dismissal handler. And **the 600–899 band is
+untouched**, where the panel is a 320px column of a wider content area
+and the scrim has real uncovered pixels — which is why the e2e half
+asserts *absence* at 424×439 rather than clicking, since a phone-width
+case that clicks the scrim's centre hits the panel and passes on the
+broken build.
 
 What this does **not** fix is `page-header` overflowing on its own:
 at 900×600 "New Smart Playlist" is still clipped to 114 of 162px with
