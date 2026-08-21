@@ -4867,11 +4867,21 @@ target is 6px tall.
 
 **What the audit did not find is a reachability failure**, which is
 worth recording because it is the promise plan 018 makes. At 424x439,
-on all ten primary views plus the queue, `documentElement.scrollWidth`
+on every view -- the ten primary ones, the queue, `album-details`,
+`artist-details`, Downloads and Autotag -- `documentElement.scrollWidth`
 is 424 against a 424 viewport, no control sits outside a scrollable
 ancestor, and a hit test at each control's centre reaches the control.
 The width work of #57, #62, #55 and #59 holds; what was left was
 vertical, and it was this screen.
+
+The probe is worth keeping in mind for the next audit, because two of
+its three checks needed a second pass to mean anything. "Painted
+outside the viewport" flags a horizontally scrolling carousel -- the
+home shelves -- so the real question is whether a *scrollable ancestor*
+can bring the element back. And a hit test at a control's centre flags
+everything below the fold in a scroll container, so it only says
+something once the control is on screen. Both first drafts produced
+long lists of nothing.
 
 ## Two traps that cost time on the device, both already written down (2026-08-21)
 
