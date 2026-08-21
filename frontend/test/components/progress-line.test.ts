@@ -7,8 +7,8 @@
  * backend reported rather than a count of its own, and that it is
  * neither announced nor touchable. It cannot see where it sits — that
  * is the shell's grid, and it is asserted in
- * `e2e/specs/phone-transport.spec.ts` where there is a real bar with a
- * real tab bar under it.
+ * `e2e/specs/phone-progress-line.spec.ts` where there is a real bar
+ * with a real tab bar under it.
  */
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 
@@ -166,6 +166,36 @@ describe('<player-progress-line>', () => {
         await el.updateComplete;
 
         expect(scale(el)).toBeCloseTo(41 / 90, 3);
+    });
+
+    /*
+     * The reason this component asks `matchMedia` instead of letting a
+     * stylesheet hide it: a media query cannot stop a 1 Hz interval
+     * running for the life of every desktop session. That claim is
+     * load-bearing in CLAUDE.md, so it is asserted rather than
+     * described — the timer count, because a desktop render is empty
+     * either way and so cannot tell the two apart.
+     */
+    it('runs no interpolation timer above the breakpoint', async () => {
+        pretendPhone(false);
+        vi.useFakeTimers();
+
+        const el = await fixture('player-progress-line');
+
+        emit(Events.TrackChanged, { ...TRACK, trackChangeId: 9 });
+        emit(Events.PlaybackStateChanged, { state: 'playing' });
+        emit(Events.PlaybackPositionChanged, {
+            positionSeconds: 3,
+            trackLength: 90,
+            trackChangeId: 9,
+            seq: 9,
+            playing: true,
+        });
+        await vi.advanceTimersByTimeAsync(5000);
+        await el.updateComplete;
+
+        expect(scale(el)).toBeNull();
+        expect(vi.getTimerCount()).toBe(0);
     });
 
     it('ignores a report about a track that is no longer loaded', async () => {

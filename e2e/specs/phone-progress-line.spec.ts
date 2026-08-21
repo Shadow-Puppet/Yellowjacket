@@ -79,6 +79,20 @@ test.describe('the progress line sits on the border between the bars', () => {
     await play(app);
   });
 
+  /*
+   * Every test here starts a LONG_TRACK and the suite is workers: 1,
+   * fullyParallel: false against one long-lived app — so without this
+   * the four phone-* specs that follow alphabetically inherit a playing
+   * queue. phone-transport.spec.ts records where that lesson came from:
+   * the fault first showed up as a flake in a spec about something else.
+   */
+  test.afterEach(async ({ app }) => {
+    await callBinding(app, 'queue.Queue.Clear').catch(() => {
+      /* already empty */
+    });
+    await app.setViewportSize(DESKTOP);
+  });
+
   test('spans the width, between the mini player and the tab bar', async ({
     app,
   }) => {
