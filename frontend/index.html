@@ -81,6 +81,16 @@
             </button>
         </div>
     </footer>
+    <!-- How far through the song we are, on the border between the two
+         bars (#58). The shell's element rather than either bar's:
+         they are separate components stacked in this grid, so a line
+         on the border between them is a row of it, and neither one has
+         to reach into the other's box for two pixels. It renders
+         nothing above 600px and nothing with no track, is `aria-hidden`
+         (Now Playing's seek bar is what announces the position) and
+         takes no pointer events at all -- a thin line that sometimes
+         seeks is worse than one that never does. -->
+    <player-progress-line></player-progress-line>
     <!-- The phone's primary navigation, hidden above 600px by
          index.css.  Eager rather than a chunk, for the reason
          notification-host is: it is the only way to move around the
