@@ -62,7 +62,10 @@ export class SearchBar extends LitElement {
             gap: 8px;
             height: 32px;
             min-width: 200px;
-            max-width: 360px;
+            /* A cap for a header, not for the box. search-dialog gives
+               it the whole of a modal, where 360px of a 424px screen
+               would read as a control that failed to size itself. */
+            max-width: var(--yj-search-max-width, 360px);
             width: 100%;
             transition: border-color 0.15s ease;
         }

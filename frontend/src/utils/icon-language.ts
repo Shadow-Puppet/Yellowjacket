@@ -125,6 +125,19 @@ export const ICON_DOWNLOADING = 'download';
 export const ICON_MORE_ACTIONS = 'ellipsis';
 
 /**
+ * Look for something.
+ *
+ * Deliberately **not** governed by the sweep in
+ * `icon-language.test.ts`: `magnifying-glass` has only ever meant this,
+ * in the header box and in Explore's own catalog search alike, so
+ * governing it would force a rename on two call sites that are already
+ * right. It is written down because #57 gave the meaning a *button* as
+ * well as a box, and a second surface for the same verb is exactly the
+ * point at which two spellings start.
+ */
+export const ICON_SEARCH = 'magnifying-glass';
+
+/**
  * Take this away.
  *
  * One icon for removing from a playlist, from the queue and from the

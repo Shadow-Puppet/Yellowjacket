@@ -16,6 +16,7 @@ import { playerStore } from '@store/player-store';
 import { queueStore } from '@store/queue-store';
 import * as Player from '@go/player/player.js';
 import type { SearchBar } from '@components/search-bar/search-bar';
+import { OPEN_SEARCH_EVENT } from '@components/search-dialog/search-dialog';
 
 // ===================================================================
 // KEY STRING UTILITIES
@@ -387,14 +388,24 @@ async function dispatch(action: string): Promise<void> {
             break;
 
         // Navigation
+        // The key has one meaning -- *let me search this page* -- and
+        // two surfaces since #57. The header box is gone below 600px,
+        // so scoping the query to the bar is not tidiness: an unscoped
+        // `search-bar` also matches the one inside `search-dialog`
+        // while that is open, and would focus a box the user is
+        // already typing in while leaving the phone with nothing at
+        // all. The dialog declines to open on a view with nothing to
+        // search, which is the same condition the trigger renders on.
         case 'nav.search':
         case 'nav.searchAlt': {
             const bar = document.querySelector(
-                'search-bar',
+                'header.top-bar search-bar',
             ) as SearchBar | null;
 
-            if (bar && !bar.hasAttribute('hidden')) {
+            if (bar && bar.checkVisibility()) {
                 bar.focusInput();
+            } else {
+                document.dispatchEvent(new CustomEvent(OPEN_SEARCH_EVENT));
             }
 
             break;

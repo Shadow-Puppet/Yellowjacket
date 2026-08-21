@@ -27,6 +27,7 @@ import { queueStore } from '@store/queue-store';
 import { creditStore } from '@store/credit-store';
 import { PlayerController } from '@store/controllers/player-controller';
 import { SearchController } from '@store/controllers/search-controller';
+import '../search-dialog/search-trigger';
 import { SelectionController } from '@utils/selection-controller';
 import type { SelectionHost } from '@utils/selection-controller';
 import {
@@ -1039,6 +1040,16 @@ export class PlaylistDetails
             min-width: 0;
         }
 
+        /* #57. This view is in search-store's map and filters on the
+           term, but it is a detail view and so has no page-header to
+           carry the phone's search button. Pushed to the end of the
+           header row, which is where page-header puts it too. */
+        .header-end {
+            margin-left: auto;
+            display: flex;
+            align-items: center;
+        }
+
         .playlist-title {
             font-size: 24px;
             font-weight: 700;
@@ -1382,6 +1393,9 @@ export class PlaylistDetails
                               </span>
                           `
                         : ''}
+                </div>
+                <div class="header-end">
+                    <search-trigger></search-trigger>
                 </div>
             </div>
             ${searchBar}

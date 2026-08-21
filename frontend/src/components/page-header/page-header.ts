@@ -11,6 +11,7 @@ import {
     contextMenuStyles,
 } from '../../utils/context-menu-controller';
 import { ICON_MORE_ACTIONS } from '../../utils/icon-language';
+import '../search-dialog/search-trigger';
 
 /**
  * The one arrangement every primary view uses to say what it is.
@@ -457,6 +458,20 @@ export class PageHeader extends LitElement {
                 ${this.renderCount()}
                 <div class="spacer"></div>
                 ${this.renderScope()} ${this.renderSort()}
+                <!-- #57. Below 600px the top bar is out of the layout,
+                     so the search box has to be reachable from here.
+                     It renders nothing at every other width and on
+                     every view search-store says has nothing to
+                     search, which is why no host declares it: the map
+                     of searchable views already exists and this is one
+                     more reader of it, not a second copy.
+
+                     Before the actions, and never one of them: an
+                     action can collapse into the overflow menu, and on
+                     a phone that menu is already where the page's own
+                     actions live -- search behind an ellipsis is the
+                     top bar's problem moved rather than fixed. -->
+                <search-trigger></search-trigger>
                 ${this.renderActions()}
                 <slot name="actions"></slot>
             </header>
