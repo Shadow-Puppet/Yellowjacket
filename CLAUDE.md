@@ -1559,8 +1559,8 @@ still permits *programmatic* scrolling, so a probe that sets
 **Below 600px it reflows instead, and that is the phone.** The sideways
 scroll above was the concession available while the shell had one
 layout; plan 016 B2 gives it a second. Under 600px the grid drops its
-sidebar column, `<bottom-nav>` takes over as the primary navigation,
-the header's controls shrink or stand down, and the shell measures
+sidebar column *and* (since #57) its top-bar row, `<bottom-nav>` takes
+over as the primary navigation, and the shell measures
 exactly 320px in a 320px viewport — so `layout-overflow.spec.ts` now
 asserts *nothing needs scrolling to*, which is what WCAG 1.4.10 wanted
 all along. 600 rather than the sidebar's 900 because 900 is a laptop:
@@ -1601,9 +1601,36 @@ three, *no action is ever unreachable at any supported size*. The bands
 themselves already existed; what was new is that they are a promise and
 that the queue panel is inside it.
 
-**The top bar decides what it can afford, and what it gives up is never
-an action.** Its five children do not fit at the bottom of the Compact
-band: the bar was 611px inside a 600px viewport idle and **862px while
+**And below 600px there is no top bar at all** (#57). The row is gone
+from the phone's grid template — not the header hidden, the row deleted
+— which is 3.25em of a 439 CSS px viewport, the single biggest vertical
+win the reference device has to give. Each of its five children has
+somewhere else to be there: `nav-history` is the platform's own back
+gesture (already gone from 899 down), the job indicator is `<job-band>`
+(#62, which is why this was blocked on it), the search box is a
+`wa-dialog` opened from the view's own header, the library filter is
+Settings → Libraries (#148), and the wordmark stays exactly where it is.
+
+Three things about it are load-bearing. **The header is visually hidden
+rather than `display: none`**, because that `h1` is the document's
+top-level heading and several pages have no other one — `page-header`
+renders no `h1` when `heading` is `''`, and Settings has no
+`page-header` at all. Its four *controls* are `display: none` inside it,
+which is what keeps them out of the tab order: a visually-hidden
+container is still focusable, and tabbing into a search box nobody can
+see is worse than not having one. **The fit pass stands down**, from the
+bar's computed `position` rather than from a width — with the bar out of
+flow there is no content box to measure children against, and a pass
+that ran would collapse the wordmark every time and report success about
+a 1px box. And **`top-bar-fit.spec.ts` keeps 390 in its list and asserts
+the stronger property there**: "nothing hangs out of the bar" is
+trivially true of a bar with no row, and would have passed on a build
+that merely broke it, so what that width asks now is that the content
+starts where the row above it ends.
+
+**Above 600px the top bar decides what it can afford, and what it gives
+up is never an action.** Its five children do not fit at the bottom of
+the Compact band: the bar was 611px inside a 600px viewport idle and **862px while
 a scan ran**, because `job-indicator` is `hidden` when idle and 235px
 wide showing a real library's scan title (#143). So `services/
 top-bar-fit.ts` is `page-header`'s treatment one bar up — a
@@ -1624,12 +1651,17 @@ fixed whichever case happened to be idle when it was measured.
 
 **What yields is decided by the promise above, which rules out the two
 cheapest answers.** Hiding the library filter takes away an action —
-`library-filter` is the only control in the app that calls
-`setSelectedLibrary` — so it trades this promise for the same promise
-(#148 is the phone already doing that). Collapsing the search box to an
-icon is what #57 wants and #57 is blocked behind #62, so building it
-here is building it without the thing that blocks it. The two that
-yield are the two that are **not** actions: the wordmark, which the
+`library-filter` was the only control in the app that called
+`setSelectedLibrary` — so it trades this promise for the same promise.
+That is #148, and #57 fixed it by giving the selection a *second
+placement* rather than a second definition: the same component, in
+Settings → Libraries under a "Showing" label, at every width. A
+phone-only copy was the obvious cheaper answer and is the fault, not the
+fix — "where do I change which library I am browsing" having two answers
+by viewport is exactly what one control in two places avoids.
+Collapsing the search box to an icon is what #57 wanted and #57 was
+blocked behind #62, so building it here would have been building it
+without the thing that blocked it. The two that yield are the two that are **not** actions: the wordmark, which the
 window's own title bar repeats and which #48 wants down to "YJ" at
 every width anyway, and then the job indicator's *label*, leaving the
 ring — which is not a new judgement, since the component already drops
@@ -2403,6 +2435,23 @@ Six things about it are load-bearing:
   without that half it would pass vacuously on a build that renders no
   actions at all.
 
+**The count is the last thing to yield, and only at 320px.** Four
+things compete for that row and three of them cannot go: the title
+yields first and is allowed to ellipsis away entirely, because the
+navigation also says which page you are on; the sort control and the
+actions are each the only place they are said, which is what the
+overflow menu exists for. That leaves the count, which is the one
+purely informational item there — an empty page says so in its empty
+state and a full one is being looked at. It became reachable rather
+than theoretical with #57, since below 600px this header also carries
+the phone's search button: measured on Playlists at 320px, title 0,
+count 50, sort 143, search 40, "More actions" 38, five 12px gaps and
+32px of gutters — 363 in 320, with the More button ending 27px past
+the edge. It is rendered and hidden with an attribute rather than
+returned as `nothing`, for the reason the action buttons are: every
+pass starts from all-visible and needs a node to un-hide, or the first
+320px window costs the count for the rest of the session.
+
 One thing it deliberately does **not** grow is a phone mode for the
 actions. `PHONE_COLUMN_IDS` is the precedent for "what is drawn and
 what can be sorted are different questions", but it exists because the
@@ -2429,6 +2478,54 @@ term belongs in that map**, detail views included —
 `smart-playlist-details` narrowed its list as you typed under a
 placeholder saying there was nothing to search here, because its
 sibling was in the map and it was not.
+
+**On a phone the box is a modal, and the map is what decides who gets
+one** (#57). There is no header to hold it below 600px, so
+`<search-trigger>` is a button in the row that already says which page
+you are on and `<search-dialog>` is where the box goes — and both ask
+`searchStore.isSearchableView()` rather than being told, which is the
+whole reason the trigger is an element and not a `PageAction`. Seven
+hosts each declaring a search action would be a second list of
+searchable views, and putting the decision inside `page-header` would
+be the phone mode for actions that component documents its refusal to
+grow.
+
+Four things about it are load-bearing.
+
+**It is a `wa-dialog`, and that is a mechanism rather than a taste.**
+#60 read out of the Web Awesome source that `wa-popup` renders
+`<div popover="manual">` and feature-detects the Popover API, falling
+back to `strategy: "fixed"` where there is none — which is Chrome 113,
+the reference device, since `popover` is Chrome 114. `position: fixed`
+escapes ancestor overflow but **not** `contain: paint`, which
+`.main-panel` carries, so a popup-shaped search panel opened from a
+view's header is structurally clipped on that device. `<dialog>` /
+`showModal()` is Chrome 37 and uses the real top layer. **No tier here
+can see the difference** — CI's Chromium and WebKit both have the
+Popover API, so the popup would be top-layered and correct and a spec
+asserting "not clipped" would pass on the broken build. The component
+tier asserts the *mechanism* instead: that there is a native `<dialog>`
+in the tree.
+
+**It carries the real `<search-bar>`**, not a second input, which is
+what keeps one debounce, one clear button and one view-scoped
+placeholder. `--yj-search-max-width` is the one thing the modal changes
+about it: 360px is a cap for a header, not for a control that has the
+whole of a 424px screen.
+
+**The results are the page, not a list in the modal.** The term is
+view-scoped and the view behind already filters on it and says
+"Showing tracks matching …", so Enter closes and hands the screen back.
+Rendering results in the dialog would be a second implementation of
+every view's filtering, and one that could not offer the row actions
+the view does.
+
+**Escape closes and keeps the term.** `search-bar`'s own input treats
+Escape as *clear the search*, which is right in a header where the box
+is on screen either way; in a modal it would mean dismissing the search
+surface silently discarded the search. The dialog takes the key in the
+capture phase on its own host, which is the only listener that runs
+before the input inside `search-bar`'s shadow root.
 
 **The window's minimum is measured, not aspirational.** `MinWidth`/
 `MinHeight` are 800×600 because that is where the shell was checked to
