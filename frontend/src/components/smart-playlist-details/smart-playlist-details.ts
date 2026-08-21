@@ -18,6 +18,7 @@ import { queueStore } from '@store/queue-store';
 import { creditStore } from '@store/credit-store';
 import { PlayerController } from '@store/controllers/player-controller';
 import { SearchController } from '@store/controllers/search-controller';
+import '../search-dialog/search-trigger';
 import { SelectionController } from '@utils/selection-controller';
 import type { SelectionHost } from '@utils/selection-controller';
 import {
@@ -357,6 +358,15 @@ export class SmartPlaylistDetails
             gap: 8px;
             padding: 12px 20px 8px;
             flex-shrink: 0;
+        }
+
+        /* #57. Like playlist-details, this view filters on the search
+           term and has no page-header to carry the phone's search
+           button, so the action row does. */
+        .actions-end {
+            margin-left: auto;
+            display: flex;
+            align-items: center;
         }
 
         .action-button {
@@ -1300,6 +1310,9 @@ export class SmartPlaylistDetails
                                         Edit Rules
                                     </button>
                                 `}
+                          <div class="actions-end">
+                              <search-trigger></search-trigger>
+                          </div>
                       </div>
                       ${this.editing
                           ? html`

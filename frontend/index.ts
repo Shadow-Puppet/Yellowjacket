@@ -28,6 +28,11 @@ import '@components/bottom-nav/bottom-nav.ts';
 import '@components/queue-panel/queue-panel.ts';
 import '@components/nav-history/nav-history.ts';
 import '@components/search-bar/search-bar.ts';
+// The phone's search surface (#57). Eager, because below 600px it is
+// the *only* way to search and a modal that has to fetch a chunk before
+// it can take a keystroke is late by exactly the interval it exists to
+// remove. It renders nothing until asked.
+import '@components/search-dialog/search-dialog.ts';
 import '@components/library-filter/library-filter.ts';
 import '@components/first-run-wizard/first-run-wizard.ts';
 import '@components/notifications/notification-host.ts';

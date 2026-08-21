@@ -119,6 +119,16 @@ export const FIT_STEPS: readonly FitStep[] = [
  * @returns the ids collapsed, in the order they were given up.
  */
 export function measureTopBarFit(bar: HTMLElement): string[] {
+    // Below 600px there is no bar to fit (#57): `index.css` takes it
+    // out of the grid and leaves it visually hidden at 1px, carrying
+    // nothing but the document's `h1`. Measuring that reports the
+    // wordmark as overflowing 1px of content box and collapses it every
+    // time -- true, and about nothing, since the whole bar is already
+    // invisible. Asking the *computed position* rather than the
+    // viewport width is what keeps this file free of a breakpoint the
+    // stylesheet already owns.
+    if (getComputedStyle(bar).position === 'absolute') return [];
+
     const fits = () => {
         const style = getComputedStyle(bar);
         const box = bar.getBoundingClientRect();

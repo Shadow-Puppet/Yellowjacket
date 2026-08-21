@@ -56,6 +56,10 @@ import {
 
 import './config-field';
 import './config-section';
+// The view filter's home (#148). The same component the top bar
+// carries, placed a second time rather than reimplemented -- two
+// definitions of "which library am I browsing" is what this is for.
+import '@components/library-filter/library-filter';
 import './download-clients';
 import './shortcut-capture';
 import { confirmAction } from '../confirm-dialog/confirm-dialog';
@@ -229,6 +233,42 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
             display: flex;
             gap: 0.75em;
             flex-wrap: wrap;
+        }
+
+        /* #148, and the second half of #57.
+
+           library-filter is the only control in the app that calls
+           setSelectedLibrary, and it lived in the top bar -- which
+           #57 takes out of the layout on a phone, and which #143
+           already refused to hide as a fit step precisely because
+           hiding it takes away an action. So the selection gets a home
+           that does not depend on that bar existing.
+
+           At every width, not below 600px: a phone-only copy would be
+           a second place the control lives, and "where do I change
+           which library I am browsing" having two answers by size is
+           the fault, not the fix. */
+        .library-scope {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1em;
+            flex-wrap: wrap;
+            margin-bottom: 1em;
+        }
+
+        .library-scope .scope-label {
+            font-weight: 600;
+            font-size: 0.85em;
+            color: var(--yj-text-primary, #fff);
+            display: block;
+        }
+
+        .library-scope .scope-description {
+            font-size: 0.75em;
+            color: var(--yj-text-tertiary, #888);
+            margin: 0.35em 0 0;
+            max-width: 40em;
         }
 
         .save-row {
@@ -2370,6 +2410,21 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
                     for new and changed files."
                 .open=${true}
             >
+                <div class="library-scope">
+                    <div>
+                        <span class="scope-label">Showing</span>
+                        <p class="scope-description">
+                            Which library the Albums, Artists and Genres
+                            views show. This is a view filter, not a
+                            setting about the libraries themselves — the
+                            list below is where they are added, renamed
+                            and scanned.
+                        </p>
+                    </div>
+                    <library-filter data-testid="settings-library-filter">
+                    </library-filter>
+                </div>
+
                 <div class="scan-actions">
                     <button
                         class="btn-primary"

@@ -4350,3 +4350,82 @@ The corollary for anything that draws over the shell: **run the whole
 e2e suite, not the spec you wrote.** A spec written for a feature
 asserts the feature works; what a new overlay breaks is everything
 else, and only the suite is looking at that.
+
+## `contain: paint` is why a Web Awesome popup is clipped on the device (read 2026-08-20, applied 2026-08-21)
+
+Recorded here because it outlives #57 and #60 both, and because the
+next person to reach for a floating surface will reach for `wa-popup`.
+
+`wa-popup` renders `<div popover="manual">` and feature-detects the
+Popover API, falling back to `strategy: "fixed"` where there is none.
+The reference device is Chrome 113 and `popover` is Chrome 114, so
+every popup in the app takes the fallback there. `position: fixed`
+escapes ancestor *overflow* but not `contain: paint`, which makes an
+element a containing block for fixed descendants **and clips them** —
+and `index.css` puts `contain: layout style paint` on `.main-panel`
+and on `div.sidebar`.
+
+So the rule is: **a floating surface opened from inside the main panel
+must be a `wa-dialog`, not a `wa-popup`,** because `<dialog>` /
+`showModal()` is Chrome 37 and uses the real top layer. #57's search
+modal is one on that ground alone; #60 is the same finding applied to
+the six context menus.
+
+The half that costs time is the second one. **No tier here can
+reproduce the clip.** CI's Chromium and WebKit both have the Popover
+API, so a popup is top-layered and correct, and a spec asserting "the
+surface is not clipped" is green on the broken build. Assert the
+*mechanism* — that there is a native `<dialog>` in the tree at phone
+width — which is the one form of the question a browser here answers
+honestly.
+
+## Removing the phone's top bar cost the page header its count (measured 2026-08-21)
+
+#57 deletes the `top-bar` grid row below 600px and puts a 40px search
+button in `page-header` instead. That button is 43px more than the row
+has at 320px, which is a width the app promises (WCAG 1.4.10 reflow,
+and `header-action-overflow.spec.ts` asks about it).
+
+Measured on Playlists at 320px, after the fit pass had already
+collapsed all three actions into "More actions" and truncated the title
+to nothing: title 0, count 50, sort 143, search 40, More 38, five 12px
+gaps, 32px of gutters — **363 in 320**, with the More button ending
+27px past the edge. So an *action* was clipped, which is the exact
+defect #69 exists to prevent.
+
+What yields is the **count**, last, after everything else. It is the
+only item on that row that is neither an identity (the title, which the
+navigation repeats) nor an action (the sort control and the buttons,
+each the only place they are said). With it gone the header is 304 in
+304 and the title even comes back to 19px.
+
+Two things worth keeping:
+
+- **The failure was found by the suite, not by the spec.** `make
+  ui-test` (964), `tsc` in both packages, `make lint`, `make test` and
+  the new `phone-search.spec.ts` were all green; what failed was
+  `header-action-overflow.spec.ts` at 320×600, which has nothing to do
+  with search. That is #62's lesson holding for a second change in a
+  row: anything that adds to or reflows the shell has a blast radius
+  the spec you wrote cannot see.
+- **A collapsed thing has to still be in the DOM.** Returning `nothing`
+  from `renderCount()` would have taken the count away for the rest of
+  the session the first time a 320px window appeared, because
+  `measureFit` starts every pass from all-visible and needs a node to
+  un-hide. Same shape as the action buttons, which is where the pattern
+  was already written down.
+
+## The e2e app is long-lived, so a staged job outlives the spec that staged it (measured 2026-08-21)
+
+`make dev-headless` runs one app across every `make e2e` invocation, and
+`/__test/emit` writes to a store that nothing clears. A first draft of
+`phone-search.spec.ts` asserted the content starts at y=0 with the top
+bar gone; it passed alone and failed in a suite run, because
+`top-bar-fit.spec.ts` had staged a long-titled scan and `<job-band>` is
+a real grid row whenever work is in flight.
+
+The fix is not `beforeEach` cleanup — it is measuring the right thing:
+the content starts where the **row above it** ends, which is true with a
+job running and without one. An assertion against an absolute
+coordinate was quietly also asserting "and no background job exists",
+which is not something that spec is about or can arrange.

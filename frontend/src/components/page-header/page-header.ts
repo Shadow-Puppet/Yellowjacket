@@ -11,6 +11,7 @@ import {
     contextMenuStyles,
 } from '../../utils/context-menu-controller';
 import { ICON_MORE_ACTIONS } from '../../utils/icon-language';
+import '../search-dialog/search-trigger';
 
 /**
  * The one arrangement every primary view uses to say what it is.
@@ -160,6 +161,15 @@ export class PageHeader extends LitElement {
     /** Action ids currently in the overflow menu. Derived, never set by a host. */
     @state()
     private collapsed: ReadonlySet<string> = new Set();
+
+    /**
+     * Whether the count has been given up. Derived, like `collapsed`.
+     *
+     * It is the last thing to yield and the only thing here that is
+     * neither an identity nor an action — see `measureFit`.
+     */
+    @state()
+    private countCollapsed = false;
 
     @state()
     private menuOpen = false;
@@ -457,6 +467,20 @@ export class PageHeader extends LitElement {
                 ${this.renderCount()}
                 <div class="spacer"></div>
                 ${this.renderScope()} ${this.renderSort()}
+                <!-- #57. Below 600px the top bar is out of the layout,
+                     so the search box has to be reachable from here.
+                     It renders nothing at every other width and on
+                     every view search-store says has nothing to
+                     search, which is why no host declares it: the map
+                     of searchable views already exists and this is one
+                     more reader of it, not a second copy.
+
+                     Before the actions, and never one of them: an
+                     action can collapse into the overflow menu, and on
+                     a phone that menu is already where the page's own
+                     actions live -- search behind an ellipsis is the
+                     top bar's problem moved rather than fixed. -->
+                <search-trigger></search-trigger>
                 ${this.renderActions()}
                 <slot name="actions"></slot>
             </header>
@@ -516,12 +540,6 @@ export class PageHeader extends LitElement {
 
         if (!header) return;
 
-        if (this.actions.length === 0) {
-            this.commitCollapsed(new Set());
-
-            return;
-        }
-
         const buttons = new Map<string, HTMLElement>();
 
         for (const el of this.renderRoot.querySelectorAll<HTMLElement>(
@@ -534,6 +552,7 @@ export class PageHeader extends LitElement {
 
         const more = this.moreButton;
         const title = this.renderRoot.querySelector('h1');
+        const count = this.renderRoot.querySelector<HTMLElement>('.count');
 
         /**
          * Nothing is clipped — which is not the same as the header not
@@ -555,6 +574,8 @@ export class PageHeader extends LitElement {
 
         if (more) more.hidden = true;
 
+        if (count) count.hidden = false;
+
         const collapsed = new Set<string>();
 
         if (!fits()) {
@@ -571,7 +592,42 @@ export class PageHeader extends LitElement {
             }
         }
 
-        this.commitCollapsed(collapsed);
+        this.commitCollapsed(collapsed, this.collapseCount(count, fits));
+    }
+
+    /**
+     * The last thing to give way, after every action is in the menu and
+     * the title has already run out.
+     *
+     * There are four things competing for this row and three of them
+     * cannot go. The **title** yields first and is allowed to ellipsis
+     * away entirely at 320px, because the navigation also says which
+     * page you are on. The **sort** control and the **actions** are
+     * each the only place they are said, so an action collapses into
+     * the menu rather than disappearing and the sort control stays.
+     * That leaves the **count**, which is the one purely informational
+     * item on the row — an empty page says so in its empty state, and a
+     * full one is being looked at.
+     *
+     * It became reachable rather than theoretical with #57: below 600px
+     * the header also carries the phone's search button, and on
+     * Playlists at 320px that is 43px more than the row has. Measured
+     * there: title 0, count 50, sort 143, search 40, "More actions" 38,
+     * five 12px gaps and 32px of gutters — 363 in 320, with the More
+     * button ending 27px past the edge. Something has to go, and this
+     * is the only candidate that is not an action.
+     *
+     * @returns whether the count was given up.
+     */
+    private collapseCount(
+        count: HTMLElement | null,
+        fits: () => boolean,
+    ): boolean {
+        if (count === null || fits()) return false;
+
+        count.hidden = true;
+
+        return true;
     }
 
     /** Lowest priority first; ties broken from the right. */
@@ -586,7 +642,9 @@ export class PageHeader extends LitElement {
             .map(({ action }) => action);
     }
 
-    private commitCollapsed(next: Set<string>): void {
+    private commitCollapsed(next: Set<string>, countHidden: boolean): void {
+        this.countCollapsed = countHidden;
+
         const same =
             next.size === this.collapsed.size &&
             [...next].every((id) => this.collapsed.has(id));
@@ -754,7 +812,16 @@ export class PageHeader extends LitElement {
 
         const noun = this.count === 1 ? this.countNoun : plural;
 
-        return html`<span class="count" data-testid="page-count"
+        // Rendered whether or not it fits, and hidden with an
+        // attribute -- the same shape the action buttons use, and for
+        // the same reason: `measureFit` starts every pass from
+        // all-visible, so it needs a node to un-hide. Returning
+        // `nothing` here would take the count away for the rest of the
+        // session the first time a 320px window appeared.
+        return html`<span
+            class="count"
+            data-testid="page-count"
+            ?hidden=${this.countCollapsed}
             >${this.count.toLocaleString()} ${noun}</span
         >`;
     }

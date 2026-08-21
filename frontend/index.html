@@ -14,6 +14,13 @@
          user is not walked through the header, the library filter, the
          search box and eleven nav items on every navigation. -->
     <a class="skip-link" href="#main-content">Skip to content</a>
+    <!-- Below 600px this bar is not in the layout at all (#57): index.css
+         takes its grid row away and leaves the element visually hidden,
+         carrying nothing but the `h1` below.  Every control in it has
+         somewhere else to be there -- `nav-history` is the platform's
+         own back gesture, `job-indicator` is `<job-band>`, `search-bar`
+         is `<search-dialog>` opened from the view's own header, and
+         `library-filter` is Settings -> Libraries (#148). -->
     <header class="top-bar">
         <hgroup>
             <h1 class="title">YellowJacket</h1>
@@ -84,6 +91,12 @@
     <first-run-wizard></first-run-wizard>
     <notification-host></notification-host>
     <shortcuts-overlay></shortcuts-overlay>
+    <!-- The phone's search surface (#57).  A singleton here for the
+         reason shortcuts-overlay is one: one instance, one document
+         listener, and no `data-testid="search-input"` resolving to two
+         elements.  It renders nothing while shut, so the header's box
+         is still the only one on a desktop. -->
+    <search-dialog></search-dialog>
 </body>
 
 </html>
