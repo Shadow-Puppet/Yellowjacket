@@ -130,7 +130,13 @@ reference, because you need them *before* the failure, not after.
   what you otherwise get is `Property 'scroll' does not exist on type
   'CSSResult'` pointing at a line of prose, or every test in the suite
   failing to import. It went in after the trap cost a fourth session in
-  which its own warning had been read twice.
+  which its own warning had been read twice. **The same command carries
+  a second CSS check**: a nested rule whose selector starts with an
+  element name (`audio-player { … }` rather than `& audio-player { … }`)
+  is silently dropped by the device's Chrome 113 and by nothing else, so
+  every tier you can run renders it correctly. Run it after touching
+  `index.css` or any `css` literal; a rule directly inside a top-level
+  `@media` is not nested and is not flagged.
 - **A failing CI job's log is reachable even when `gitea_ci job_logs`
   says it is not.** That endpoint 404s on this Gitea build. The REST
   API answers, with the `GITEA_TOKEN` already in the environment:

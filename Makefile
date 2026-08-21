@@ -172,12 +172,17 @@ ui-setup: ## Install the Vitest browser provider's own Chromium (once)
 bindings-check: ## Fail if the generated bindings are stale
 	@./scripts/bindings-check.sh
 
+# Two CSS traps that report a long way from their cause, or not at all.
 # A backtick inside a comment in a css`` literal ends the literal, and
 # what you get back is a type error about CSSResult, or every test in
-# the suite failing to import. Four sessions, three plans. Instant.
+# the suite failing to import. Four sessions, three plans. And a nested
+# rule starting with an element name is dropped by the device's
+# Chrome 113 in silence -- no tier here runs an engine that can see it.
+# Instant.
 .PHONY: css-check
-css-check: ## Fail if a css`` literal was ended early by a backtick in a comment
+css-check: ## Fail on a css`` literal ended early by a backtick, or a nested rule needing an &
 	@cd frontend && node scripts/check-css-literals.mjs
+	@cd frontend && node scripts/check-css-nesting.mjs
 
 # .pi/ and CLAUDE.md document commands, and a doc that documents a
 # command wrongly is worse than no doc: an agent runs it confidently.
