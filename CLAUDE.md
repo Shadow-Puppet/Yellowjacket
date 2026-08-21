@@ -1910,8 +1910,8 @@ asserted as `'33x21'` rather than as a range, because the regression
 was three pixels.
 
 **What that bar lost is how far through the song it is, and
-`<player-progress-line>` is where it went** (#58). #59 took the seek
-bar off the phone's transport, so the one thing a mini player is
+`<player-progress-line>` is where it went** (#58). Plan 016 B2 took the
+seek bar off the phone's transport, so the one thing a mini player is
 expected to say without being opened had nowhere left to be said. It is
 a 2px line on the border between the mini player and the tab bar: the
 **shell's** element and its own `auto` grid row between `bottom-bar`

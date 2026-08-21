@@ -9,8 +9,8 @@ import { PHONE_QUERY } from '../../../utils/breakpoints';
  * How far through the song we are, on the border between the mini
  * player and the tab bar (#58).
  *
- * The phone's bottom bar carries three controls and no seek bar — #59
- * took it out, because 4px of height is not a thumb target and the
+ * The phone's bottom bar carries three controls and no seek bar — plan
+ * 016 B2 took it out, because 4px of height is not a thumb target and the
  * full-screen `now-playing-view` is where seeking belongs. What went
  * with it is the one thing a mini player is expected to say without
  * being opened: how far through the song it is. This is that, and
