@@ -39,21 +39,44 @@ let restoreMedia: (() => void) | null = null;
  * reads `matchMedia` in `connectedCallback` precisely so a test can
  * answer it first.
  */
-function stubPhone(phone: boolean): void {
+/**
+ * Answering the phone query is not enough on its own: what decides
+ * whether the scrim exists is a `change` listener, and a stub whose
+ * `addEventListener` is a no-op leaves that listener untested — the
+ * whole suite stays green with it deleted. So the stub records the
+ * listeners and hands back a way to fire them.
+ */
+function stubPhone(phone: boolean): (next: boolean) => void {
   const real = window.matchMedia.bind(window);
+  const listeners = new Set<(e: MediaQueryListEvent) => void>();
+  let matches = phone;
 
   window.matchMedia = ((q: string) =>
     q.includes('max-width: 599px')
       ? {
-          matches: phone,
+          get matches() {
+            return matches;
+          },
           media: q,
-          addEventListener() {},
-          removeEventListener() {},
+          addEventListener(_: string, fn: (e: MediaQueryListEvent) => void) {
+            listeners.add(fn);
+          },
+          removeEventListener(_: string, fn: (e: MediaQueryListEvent) => void) {
+            listeners.delete(fn);
+          },
         }
       : real(q)) as typeof window.matchMedia;
 
   restoreMedia = () => {
     window.matchMedia = real;
+  };
+
+  return (next: boolean) => {
+    matches = next;
+
+    for (const fn of listeners) {
+      fn({ matches: next } as MediaQueryListEvent);
+    }
   };
 }
 
@@ -231,6 +254,32 @@ describe('the queue panel decides whether it can be a column', () => {
     await el.updateComplete;
 
     expect(el.open).toBe(false);
+  });
+
+  /**
+   * The scrim's existence comes from `matchMedia` rather than a
+   * stylesheet, which only holds up if the query is *listened* to — a
+   * panel opened on a desktop and carried across the breakpoint (a
+   * resized window, an unfolded phone) has to lose its scrim without
+   * being reopened. Nothing else in this file fires `change`, so
+   * deleting the listener leaves the whole suite green.
+   */
+  it('drops the scrim when the viewport crosses the breakpoint', async () => {
+    const setPhone = stubPhone(false);
+
+    const el = await panelIn(700);
+
+    expect(el.shadowRoot?.querySelector('.scrim')).not.toBeNull();
+
+    setPhone(true);
+    await el.updateComplete;
+
+    expect(el.shadowRoot?.querySelector('.scrim')).toBeNull();
+
+    setPhone(false);
+    await el.updateComplete;
+
+    expect(el.shadowRoot?.querySelector('.scrim')).not.toBeNull();
   });
 
   /**
