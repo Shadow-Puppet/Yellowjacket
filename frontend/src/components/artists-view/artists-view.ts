@@ -26,14 +26,15 @@ import {
     contextMenuStyles,
     isContextMenuKey,
 } from '@utils/context-menu-controller.js';
-import type { ContextMenuHost } from '@utils/context-menu-controller.js';
+import type { ContextMenuHost, MenuTarget } from '@utils/context-menu-controller.js';
 import { FavoritesController } from '@store/controllers/favorites-controller';
 import { ViewLifecycleMixin } from '@utils/view-lifecycle';
 import { RovingGridController } from '@utils/roving-grid';
 
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
-import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
+import type { MenuSurface } from '../menu-surface/menu-surface';
+import '../menu-surface/menu-surface';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 import '@components/playlist-picker/playlist-picker.js';
 import { dict, list } from '@utils/binding';
@@ -131,17 +132,17 @@ export class ArtistsView
     private contextMenuArtistId: number | null = null;
 
     @query('#context-menu')
-    private contextMenuPopup!: WaPopup;
+    private contextMenuPopup!: MenuSurface;
 
     @query('#playlist-submenu')
-    private playlistSubmenuPopup!: WaPopup;
+    private playlistSubmenuPopup!: MenuSurface;
 
-    getContextMenuPopup(): WaPopup | undefined {
+    getContextMenuPopup(): MenuTarget | undefined {
         return this.contextMenuPopup;
     }
 
     getPlaylistSubmenuPopup():
-        | WaPopup
+        | MenuTarget
         | undefined {
         return this.playlistSubmenuPopup;
     }
@@ -1336,11 +1337,8 @@ export class ArtistsView
 
     private renderContextMenu() {
         return html`
-            <wa-popup
+            <menu-surface
                 id="context-menu"
-                placement="bottom-start"
-                flip
-                shift
                 .active=${this.ctxMenu
                     .contextMenuOpen}
             >
@@ -1434,13 +1432,12 @@ export class ArtistsView
                           </div>
                       `
                     : nothing}
-            </wa-popup>
+            </menu-surface>
 
-            <wa-popup
+            <menu-surface
                 id="playlist-submenu"
+                label="Add to playlist"
                 placement="right-start"
-                flip
-                shift
                 .active=${this.ctxMenu
                     .playlistSubmenuOpen}
             >
@@ -1468,7 +1465,7 @@ export class ArtistsView
                           </div>
                       `
                     : nothing}
-            </wa-popup>
+            </menu-surface>
         `;
     }
 

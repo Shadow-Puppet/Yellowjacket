@@ -9,7 +9,8 @@ import {
 } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
-import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
+import type { MenuSurface } from '../menu-surface/menu-surface';
+import '../menu-surface/menu-surface';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 import { QueueController } from '@store/controllers/queue-controller';
 import { creditStore } from '@store/credit-store';
@@ -34,7 +35,7 @@ import {
     contextMenuStyles,
     isContextMenuKey,
 } from '@utils/context-menu-controller.js';
-import type { ContextMenuHost } from '@utils/context-menu-controller.js';
+import type { ContextMenuHost, MenuTarget } from '@utils/context-menu-controller.js';
 import { focusRovingRow, nextRovingIndex } from '@utils/roving-rows';
 import { FavoritesController } from '@store/controllers/favorites-controller';
 import {
@@ -140,13 +141,13 @@ export class QueuePanel
     private delegationAttached = false;
 
     @query('#add-to-playlist-popup')
-    private addToPlaylistPopup!: WaPopup;
+    private addToPlaylistPopup!: MenuSurface;
 
     @query('#context-menu')
-    private contextMenuPopup!: WaPopup;
+    private contextMenuPopup!: MenuSurface;
 
     @query('#playlist-submenu')
-    private playlistSubmenuPopup!: WaPopup;
+    private playlistSubmenuPopup!: MenuSurface;
 
     /** Unsubscribes the credit-arrival repaint. */
     private creditsUnsub?: () => void;
@@ -305,11 +306,11 @@ export class QueuePanel
     // ContextMenuHost interface
     // =================================================================
 
-    getContextMenuPopup(): WaPopup | undefined {
+    getContextMenuPopup(): MenuTarget | undefined {
         return this.contextMenuPopup;
     }
 
-    getPlaylistSubmenuPopup(): WaPopup | undefined {
+    getPlaylistSubmenuPopup(): MenuTarget | undefined {
         return this.playlistSubmenuPopup;
     }
 
@@ -1092,7 +1093,7 @@ export class QueuePanel
         }
     }
 
-    private closePlaylistPicker() {
+    private closePlaylistPicker = () => {
         if (!this.playlistPickerOpen) return;
 
         this.playlistPickerOpen = false;
@@ -1102,7 +1103,7 @@ export class QueuePanel
         if (popup) {
             popup.active = false;
         }
-    }
+    };
 
     private onPlaylistActionComplete = () => {
         this.closePlaylistPicker();
@@ -2042,9 +2043,11 @@ export class QueuePanel
                     </div>
                 </div>
 
-                <wa-popup
+                <menu-surface
                     id="add-to-playlist-popup"
+                    label="Add to playlist"
                     placement="bottom-end"
+                    @menu-dismiss=${this.closePlaylistPicker}
                     .active=${this.playlistPickerOpen}
                 >
                     ${this.playlistPickerOpen
@@ -2060,7 +2063,7 @@ export class QueuePanel
                               ></playlist-picker>
                           `
                         : nothing}
-                </wa-popup>
+                </menu-surface>
 
                 <div
                     class="list-area"
@@ -2103,11 +2106,8 @@ export class QueuePanel
                 </div>
             </div>
 
-            <wa-popup
+            <menu-surface
                 id="context-menu"
-                placement="bottom-start"
-                flip
-                shift
                 .active=${this.ctxMenu.contextMenuOpen}
             >
                 ${this.ctxMenu.contextMenuOpen
@@ -2195,13 +2195,12 @@ export class QueuePanel
                           </div>
                       `
                     : nothing}
-            </wa-popup>
+            </menu-surface>
 
-            <wa-popup
+            <menu-surface
                 id="playlist-submenu"
+                label="Add to playlist"
                 placement="right-start"
-                flip
-                shift
                 .active=${this.ctxMenu.playlistSubmenuOpen}
             >
                 ${this.ctxMenu.playlistSubmenuOpen &&
@@ -2224,7 +2223,7 @@ export class QueuePanel
                           </div>
                       `
                     : nothing}
-            </wa-popup>
+            </menu-surface>
 
             <track-details></track-details>
         `;

@@ -2,7 +2,9 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state, query } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
-import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
+
+import type { MenuSurface } from '../menu-surface/menu-surface';
+import '../menu-surface/menu-surface';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 
 import {
@@ -140,7 +142,7 @@ export class PlaylistView extends ViewLifecycleMixin(LitElement) {
     private pendingDropPaths: string[] = [];
 
     @query('#playlist-context-menu')
-    private playlistContextMenuPopup!: WaPopup;
+    private playlistContextMenuPopup!: MenuSurface;
 
     @query('duplicate-tracks-dialog')
     private duplicateDialog!: DuplicateTracksDialog;
@@ -1059,7 +1061,7 @@ export class PlaylistView extends ViewLifecycleMixin(LitElement) {
         );
     }
 
-    private closePlaylistContextMenu() {
+    private closePlaylistContextMenu = () => {
         if (!this.playlistContextMenuOpen) return;
 
         this.menuKeyboard.close();
@@ -1072,7 +1074,7 @@ export class PlaylistView extends ViewLifecycleMixin(LitElement) {
         if (popup) {
             popup.active = false;
         }
-    }
+    };
 
     private async onPlaylistContextAction(
         action: string,
@@ -1500,13 +1502,11 @@ export class PlaylistView extends ViewLifecycleMixin(LitElement) {
                   </div>`
                 : this.renderPlaylistList()}
 
-            <wa-popup
+            <menu-surface
                 id="playlist-context-menu"
-                placement="bottom-start"
-                flip
-                shift
                 .active=${this
                     .playlistContextMenuOpen}
+                @menu-dismiss=${this.closePlaylistContextMenu}
             >
                 ${this.playlistContextMenuOpen
                     ? html`
@@ -1564,7 +1564,7 @@ export class PlaylistView extends ViewLifecycleMixin(LitElement) {
                           </div>
                       `
                     : nothing}
-            </wa-popup>
+            </menu-surface>
 
             <duplicate-tracks-dialog
                 @playlist-action-complete=${() =>

@@ -37,9 +37,11 @@ import {
     contextMenuStyles,
     isContextMenuKey,
 } from '@utils/context-menu-controller.js';
-import type { ContextMenuHost } from '@utils/context-menu-controller.js';
+import type { ContextMenuHost, MenuTarget } from '@utils/context-menu-controller.js';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
 import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
+import type { MenuSurface } from '../menu-surface/menu-surface';
+import '../menu-surface/menu-surface';
 import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 import { dict, dictByName } from '@utils/binding';
 import { ICON_QUEUE } from '@utils/icon-language';
@@ -206,13 +208,13 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
     @state() private ctxMenuTarget: ExploreMenuTarget | null = null;
 
     @litQuery('#explore-context-menu')
-    private contextMenuPopup!: WaPopup;
+    private contextMenuPopup!: MenuSurface;
 
     // -- ContextMenuHost interface --
     // No playlist submenu — same reason as the album/artist detail
     // pages: every action here resolves its one file lazily.
 
-    getContextMenuPopup(): WaPopup | undefined {
+    getContextMenuPopup(): MenuTarget | undefined {
         return this.contextMenuPopup;
     }
 
@@ -1341,11 +1343,8 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
         const owned = Boolean(target?.localId);
 
         return html`
-            <wa-popup
+            <menu-surface
                 id="explore-context-menu"
-                placement="bottom-start"
-                flip
-                shift
                 .active=${this.ctxMenu.contextMenuOpen}
             >
                 ${this.ctxMenu.contextMenuOpen && target
@@ -1374,7 +1373,7 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
                           </div>
                       `
                     : nothing}
-            </wa-popup>
+            </menu-surface>
         `;
     }
 
