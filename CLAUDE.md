@@ -1728,6 +1728,55 @@ rather than after the state, because with the slider beside it there is
 nothing left to disclose. It stands down below 600px whatever the
 setting says — that is about the platform rather than preference, and
 is why `mediacontrols`' Android handler implements no volume callback.
+(Only the *bar's* copy: `now-playing-view` renders one and it is
+visible on a phone. #64 asks for it to be gone on Android outright,
+which is a platform question the frontend cannot currently ask.)
+
+**And below 600px that bar carries three controls, not five** (#59).
+Shuffle, repeat and the queue button leave it; what is left is art,
+title/artist, favourite, and prev/play/next. `player-controls` is one
+component in two places and **the context is a property rather than a
+media query**, which is the exception to the rule two paragraphs down:
+on a phone the bar wants three controls and `now-playing-view` wants
+five, larger still, *at the same viewport* — so the host states the
+context and the viewport states the size band, and neither alone can
+express it. Sizes come from `--yj-control-*` custom properties set per
+context; play/pause alone goes above the 44px floor, because a row of
+identical squares says every action is equally likely and that is not
+true of play. Measured before #56: every one of them was **33×21px**,
+and the mini bar's favourite was **18×14**, the smallest control in the
+app.
+
+Four things about it are load-bearing.
+
+**The phone draws three buttons rather than hiding two**, from
+`matchMedia` — `job-band`'s pattern, and the rule that a decision about
+whether an element *exists* is not a stylesheet's to make. A
+`display: none` control is still in the shadow root and still something
+a positional query finds, so "the phone has three controls" would have
+been true of the pixels and false of the element.
+
+**Removing a control is only allowed because it is still reachable.**
+Plan 018's matrix promises no action is unreachable at any supported
+size, and all three are on `now-playing-view`, one tap away through the
+mini player's art. That promise is what `phone-transport.spec.ts`
+asserts — it walks the route — rather than counting buttons.
+
+**So the route to Now Playing must not depend on what is playing**, and
+it did. `now-playing` renders two branches and the no-track one had no
+`.expand` button on its placeholder, so with nothing loaded there was
+no way to the full-screen view — which, once the queue button left the
+bar, made the *queue* unreachable. The queue is persisted across
+restarts, so "tracks queued, nothing playing" is a state the app
+launches into.
+
+**The desktop bar is untouched and a spec says so with a literal.**
+Both issues are `Platform/Android`. The trap is that a `<button>` does
+not inherit its font from its parent — the UA stylesheet gives it one —
+so a generic `font-size: inherit` is not the no-op it reads as: it took
+every desktop button from 33×21 to 36×24, silently. The sizes are
+asserted as `'33x21'` rather than as a range, because the regression
+was three pixels.
 
 **900 is the worst desktop width, not the 800×600 minimum.** The
 sidebar collapses to icons *below* 900, so the main panel is 843px at

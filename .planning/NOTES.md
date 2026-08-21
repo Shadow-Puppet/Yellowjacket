@@ -4487,3 +4487,89 @@ is not orphaned" and "a docked column is not in the stack" are both
 vacuously true of a build that pushes no entry at all. Reverting the
 source and re-running is what established which were which, and the
 file says so in its header rather than implying all nine reproduce.
+
+## The phone's transport, and three things that only a screenshot or a stash could see (measured 2026-08-21)
+
+#59 and #56 were done as one PR — argued on #73 first — because they are
+the same row of pixels: one removes controls from the phone's bar and
+the other enlarges what is left, and both are one property on
+`player-controls`. Measured at 424x439 before:
+
+| control | before | after |
+|---|---|---|
+| bar: shuffle / prev / play / next / repeat | 33x21 each | prev/next 44, play 56, shuffle+repeat moved |
+| bar: favourite | **18x14** | 44x44 |
+| bar: queue button | 33x29 | gone (#59) |
+| Now Playing: all five | 33x21 each | 44, play 64 |
+| desktop bar: all five | 33x21 | **33x21** |
+
+Four things cost a cycle each and are worth keeping.
+
+**A `<button>` does not inherit its font from its parent.** The UA
+stylesheet gives it one, so `font-size: inherit` on a button is a
+*change*, not a no-op: it took every desktop control from 33x21 to
+36x24 by moving them from 13.3px to the shell's 16px. Nothing failed.
+The only way it surfaced was measuring the baseline by stashing the file
+and re-running.
+
+**And the pixel it was first pinned with was the wrong assertion.** The
+spec asserted the literal `'33x21'`, measured in Chromium — and WebKit
+draws the same button **36x24**, so it failed in CI on a build where
+nothing was wrong. A button's box comes from the UA stylesheet when the
+author sets nothing, and what each UA sets is its own business. What
+must not happen is that *we* set something, so that is what it asserts
+now: `min-width` and `min-height` compute to `0px`, and the font-size
+still equals that of a bare `<button>` probed in the same page. That
+form catches the `font-size: inherit` regression in either engine —
+checked by re-introducing it — and it is the same "assert the
+mechanism" move `queue-as-a-screen.spec.ts` makes about containment.
+
+It is also the second time in two sessions that **CI's WebKit was the
+only tier that could see something**, which is the argument for checking
+that step ran rather than trusting the run's conclusion.
+
+**A rule at the bottom of `index.css` still loses to a nested rule
+above it.** The phone block is last on purpose because a media query
+adds no specificity — but `#queue-button` is written *nested* inside
+`.bottom-bar`, so it builds to a descendant selector one class more
+specific, and a bare `#queue-button { display: none }` in the phone
+block did nothing at all. Silently: the button simply stayed. Nesting
+adds specificity the source does not show.
+
+**Removing a control moved the question of how you reach what is left,
+and ten specs were quietly asserting the old answer.** Hiding the bar's
+queue button failed ten tests in four files about the back stack and
+about layout, every one of which opened the queue by clicking
+`#queue-button`. `openTheQueue` in `e2e/support/fixtures.ts` is the
+route *this viewport* offers, and the fix was to stop hard-coding one.
+
+**And the route it takes did not exist in the state that matters.**
+`now-playing` renders two branches, and the no-track one had no
+`.expand` button — so with nothing loaded there was no way to Now
+Playing, and once the queue button left the bar the queue was
+unreachable outright. The queue is persisted across restarts, so this
+is a state the app launches into, not a corner. It first appeared as a
+*flake* (#168: the long-lived e2e app meant whether a track was loaded
+depended on which spec ran first), which is worth remembering — a leak
+made a deterministic bug look like a race.
+
+## Now Playing does not fit a 439px screen, and #56 makes that visible (measured 2026-08-21)
+
+Two separate things, and only the first is a defect.
+
+**The art overflowed its own box and drew over the header and the
+title.** It is `width: min(100%, 60vh); aspect-ratio: 1`, so its height
+is derived from its width and bounded by nothing — 60vh bounds the
+*viewport*, not the room left over, and those differ by all the chrome
+above and below. `max-height: 100%` is the fix and shipped with #56.
+Pre-existing: screenshotted on `main`. **Found by reading a screenshot,
+which is the only tier that can see it** — nothing fails, the shell does
+not overflow, and every control is still hittable.
+
+**With that fixed, the art is a 39px sliver**, because the transport is
+now 172px of a 439px screen. That is a consequence of #56 rather than a
+fault in it, and it is filed as #172 with the per-element budget. #64
+(no in-app volume on Android) is ~30px of pure gain there and #51 is the
+umbrella; folding shuffle and repeat back onto the primary row was
+considered and rejected — it buys 52px, leaves the art at 91px, and
+costs a third arrangement of the same five buttons.

@@ -117,8 +117,27 @@ export class NowPlayingView extends LitElement {
         .art .placeholder {
             /* Square, and never taller than the room left over: the
                art is the one thing here that would happily push the
-               transport off the bottom of a short phone. */
+               transport off the bottom of a short phone.
+
+               **max-height is what actually keeps that promise**, and
+               it was missing. With a definite width and
+               a 1:1 aspect-ratio the height is *derived from the width*
+               and is bounded by nothing: at the reference device's
+               424x439 that is a 263px square (60vh) in a box with far
+               less than 263px left, so the art overflowed its own
+               centred flex item and drew over the header above and the
+               title below it. The comment claimed this was handled;
+               60vh is a bound on the *viewport*, not on the room left
+               over, and those differ by however much chrome is above
+               and below.
+
+               Pre-existing -- screenshotted on main -- and made acute
+               by #56, which gives the transport 95px more than it had.
+               Found by reading a screenshot, which is the only tier
+               that can see it: nothing fails, nothing overflows the
+               *shell*, and every control is still hittable. */
             width: min(100%, 60vh);
+            max-height: 100%;
             aspect-ratio: 1;
             object-fit: cover;
             border-radius: 12px;
@@ -317,7 +336,13 @@ export class NowPlayingView extends LitElement {
 
             <div class="transport">
                 <seek-bar></seek-bar>
-                <player-controls></player-controls>
+                <!-- context="full": this view *is* the player, so the
+                     transport is the page rather than a strip of it --
+                     primary controls large, shuffle and repeat beneath
+                     at normal size (#56). It is a property rather than
+                     a media query because the bottom bar wants a
+                     different answer at this same viewport. -->
+                <player-controls context="full"></player-controls>
                 <volume-control></volume-control>
             </div>
         `;

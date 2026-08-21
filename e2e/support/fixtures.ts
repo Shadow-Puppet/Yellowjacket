@@ -140,6 +140,50 @@ export async function navigateTo(page: Page, view: string): Promise<void> {
     .waitFor({ state: 'attached' });
 }
 
+/**
+ * Open the queue the way a user at this viewport would.
+ *
+ * **The route differs by width and that is the feature, not an
+ * inconvenience.** Above 600px the bottom bar carries a queue button.
+ * Below it that button is gone (#59) and the queue is reached from the
+ * full-screen Now Playing view, which the mini player's art opens —
+ * "reachable only from Now Playing", which is what the issue asks for.
+ *
+ * It is here rather than in one spec because four files need it, and
+ * because a spec that hard-codes `#queue-button` is quietly asserting
+ * *which* route exists as well as what the queue does. Four of them
+ * were, which is how hiding one button failed ten tests about
+ * something else.
+ *
+ * The width is read from the page rather than passed, so a caller that
+ * resizes and then opens does not have to say so twice.
+ */
+export async function openTheQueue(page: Page): Promise<void> {
+  const toggle = page.locator('#queue-button');
+
+  if (await toggle.isVisible()) {
+    if ((await toggle.getAttribute('aria-expanded')) !== 'true') {
+      await toggle.click();
+    }
+
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+
+    return;
+  }
+
+  // The phone: through Now Playing. `open-now-playing` is the mini
+  // player's art, which is a button only below 600px.
+  if (
+    (await page.getByTestId('main-content').getAttribute('data-active-view')) !==
+    'now-playing'
+  ) {
+    await page.getByTestId('open-now-playing').click();
+  }
+
+  await page.getByTestId('npv-queue').click();
+  await expect(page.locator('#queue-panel')).toHaveAttribute('open', '');
+}
+
 /** Thin client for the dev-only /__test/ surface (backend/testctl). */
 export class TestCtl {
   constructor(private readonly baseURL: string) {}

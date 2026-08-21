@@ -1,4 +1,4 @@
-import { test, expect } from '../support/fixtures.js';
+import { test, expect, openTheQueue } from '../support/fixtures.js';
 
 /**
  * #24 — the queue panel does not take the page's width away from it.
@@ -54,15 +54,15 @@ const shellGeometry = (page: import('@playwright/test').Page) =>
     };
   });
 
-async function openQueue(page: import('@playwright/test').Page) {
-  const toggle = page.locator('#queue-button');
-
-  if ((await toggle.getAttribute('aria-expanded')) !== 'true') {
-    await toggle.click();
-  }
-
-  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
-}
+/**
+ * Opening the queue is `openTheQueue`, which takes the route this
+ * viewport offers. It used to be a local helper that clicked
+ * `#queue-button` unconditionally, and #59 hid that button below
+ * 600px -- so the two phone bands here failed on a build where the
+ * queue was working perfectly, having been asserting *how* it opens as
+ * much as what it does.
+ */
+const openQueue = openTheQueue;
 
 test.describe('an open queue leaves the content its width', () => {
   for (const band of BANDS) {
