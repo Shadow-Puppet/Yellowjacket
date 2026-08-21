@@ -47,6 +47,39 @@ type BufferedStreamer struct {
 	// seek bar and suppresses its interpolation.
 	starved      int
 	starvedSince time.Time
+
+	// underruns accumulates for the life of this streamer, where
+	// starved is reset by every arriving sample.
+	//
+	// The two answer different questions and only the first was being
+	// asked. starved is a *stall* detector: it exists to end a track
+	// whose source has died, so it forgets a run the moment audio
+	// resumes -- which is exactly the case this counts. A hundred 20ms
+	// underruns a minute never approach the give-up threshold and were
+	// invisible to the log, the UI and every test tier, while being
+	// audible as static: an underrun is served as a run of zeros
+	// spliced into the waveform, and a step discontinuity at each edge
+	// is what a click is.
+	underruns UnderrunStats
+}
+
+// UnderrunStats is what the ring buffer missed, cumulatively.
+//
+// Samples rather than milliseconds because this type does not know the
+// sample rate -- the player does, and converts at the point of
+// reporting.
+type UnderrunStats struct {
+	// Runs is the number of *episodes*: transitions from healthy into
+	// starved. Calls is how many Stream calls were served with
+	// silence, and Samples is how much silence that was.
+	//
+	// Runs is the count that means something audible. One episode is
+	// one pop however many calls it spans, and the ratio of the two is
+	// how long the average episode was -- which is what separates
+	// "clicking" from "dropping out".
+	Runs    int64
+	Calls   int64
+	Samples int64
 }
 
 // The silence fill is bounded by both a duration and a run of calls,
@@ -226,6 +259,13 @@ func (bs *BufferedStreamer) Stream(
 		// but only for a bounded stretch, because "forever" is
 		// reported upward as healthy playback and there is no watchdog
 		// above this to notice otherwise.
+		if bs.starved == 0 {
+			bs.underruns.Runs++
+		}
+
+		bs.underruns.Calls++
+		bs.underruns.Samples += int64(len(samples))
+
 		bs.starved++
 
 		if bs.starvedSince.IsZero() {
@@ -269,6 +309,20 @@ func (bs *BufferedStreamer) Stream(
 	return n, true
 }
 
+// Underruns returns the cumulative underrun count.
+//
+// It is a snapshot rather than a live view, and it is read from
+// outside the audio callback: counting happens in Stream, under the
+// lock it already takes, because that path has a real-time deadline
+// and anything that allocates or formats on it is a cause of the
+// defect it is measuring rather than a measurement of it.
+func (bs *BufferedStreamer) Underruns() UnderrunStats {
+	bs.mu.Lock()
+	defer bs.mu.Unlock()
+
+	return bs.underruns
+}
+
 // Err returns any error encountered by the source streamer.
 func (bs *BufferedStreamer) Err() error {
 	bs.mu.Lock()
@@ -298,6 +352,10 @@ func (bs *BufferedStreamer) Flush() {
 
 // resetStarvationLocked forgets an underrun run.  Must be called with
 // bs.mu held.
+//
+// Deliberately does not touch bs.underruns: forgetting the run is what
+// makes starved a stall detector, and remembering it is the whole
+// point of the counter beside it.
 func (bs *BufferedStreamer) resetStarvationLocked() {
 	bs.starved = 0
 	bs.starvedSince = time.Time{}
