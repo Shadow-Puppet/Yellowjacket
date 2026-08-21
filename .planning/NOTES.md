@@ -4510,9 +4510,23 @@ stylesheet gives it one, so `font-size: inherit` on a button is a
 *change*, not a no-op: it took every desktop control from 33x21 to
 36x24 by moving them from 13.3px to the shell's 16px. Nothing failed.
 The only way it surfaced was measuring the baseline by stashing the file
-and re-running — which is now what `phone-transport.spec.ts` pins, with
-a literal `'33x21'` rather than a range, because a range swallows three
-pixels.
+and re-running.
+
+**And the pixel it was first pinned with was the wrong assertion.** The
+spec asserted the literal `'33x21'`, measured in Chromium — and WebKit
+draws the same button **36x24**, so it failed in CI on a build where
+nothing was wrong. A button's box comes from the UA stylesheet when the
+author sets nothing, and what each UA sets is its own business. What
+must not happen is that *we* set something, so that is what it asserts
+now: `min-width` and `min-height` compute to `0px`, and the font-size
+still equals that of a bare `<button>` probed in the same page. That
+form catches the `font-size: inherit` regression in either engine —
+checked by re-introducing it — and it is the same "assert the
+mechanism" move `queue-as-a-screen.spec.ts` makes about containment.
+
+It is also the second time in two sessions that **CI's WebKit was the
+only tier that could see something**, which is the argument for checking
+that step ran rather than trusting the run's conclusion.
 
 **A rule at the bottom of `index.css` still loses to a nested rule
 above it.** The phone block is last on purpose because a media query

@@ -258,19 +258,58 @@ test.describe('the desktop bar is untouched', () => {
     await expect(app.locator('#queue-button')).toBeVisible();
   });
 
-  test('keeps them exactly the size they were', async ({ app }) => {
-    const sizes = await barControls(app).evaluate((el) =>
-      [...el.shadowRoot!.querySelectorAll('button')].map((b) => {
+  /**
+   * **The mechanism, because the pixels are the engine's.**
+   *
+   * The first version of this asserted the literal `'33x21'`, measured
+   * on `main` in Chromium — and WebKit draws the same button **36x24**,
+   * so it failed in CI on a build where nothing was wrong. A button's
+   * box comes from the UA stylesheet when the author sets nothing, and
+   * what each UA sets is its own business.
+   *
+   * What this PR must not do is *set* anything here, so that is what is
+   * asserted: our two box properties are unset, and the font is still
+   * the UA's rather than the shell's. That is precisely the regression
+   * this caught the first time — a generic `font-size: inherit` took
+   * these from the UA's default to 16px — and it catches it in either
+   * engine.
+   */
+  test('sets no size of its own on the desktop bar', async ({ app }) => {
+    const measured = await barControls(app).evaluate((el) => {
+      // A bare button with no author styles: whatever this engine
+      // gives one is what the bar's buttons must still be.
+      const probe = document.createElement('button');
+
+      document.body.appendChild(probe);
+
+      const uaFontSize = getComputedStyle(probe).fontSize;
+
+      probe.remove();
+
+      return [...el.shadowRoot!.querySelectorAll('button')].map((b) => {
+        const cs = getComputedStyle(b);
         const r = b.getBoundingClientRect();
 
-        return `${Math.round(r.width)}x${Math.round(r.height)}`;
-      }),
-    );
+        return {
+          minWidth: cs.minWidth,
+          minHeight: cs.minHeight,
+          usesUaFont: cs.fontSize === uaFontSize,
+          size: `${Math.round(r.width)}x${Math.round(r.height)}`,
+        };
+      });
+    });
 
-    // Measured on `main` before this change, at 1280x800 and at 424x439
-    // alike. Written down as a literal rather than as "not bigger",
-    // because the regression was three pixels and a range would have
-    // swallowed it.
-    expect(sizes).toEqual(['33x21', '33x21', '33x21', '33x21', '33x21']);
+    expect(measured).toHaveLength(5);
+
+    for (const m of measured) {
+      expect(m.minWidth, 'min-width').toBe('0px');
+      expect(m.minHeight, 'min-height').toBe('0px');
+      expect(m.usesUaFont, 'font-size is still the UA default').toBe(true);
+    }
+
+    // And all five are the same box: `.play` takes a larger size in
+    // both sized contexts, so this is what says the desktop is neither
+    // of them.
+    expect(new Set(measured.map((m) => m.size)).size).toBe(1);
   });
 });
