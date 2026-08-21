@@ -215,6 +215,17 @@ export class NowPlaying extends LitElement {
         outline: 2px solid var(--yj-accent, #ffd43b);
         outline-offset: 2px;
       }
+
+      /* The favourite is one of the three controls #59 keeps on the
+         phone's bar, and it was the **smallest control in the app**:
+         measured at 424x439, 18x14px, against the 48x48 art beside it.
+         Zero padding around an icon-sized glyph is a reasonable mouse
+         target and is not a thumb target at all. */
+      .fav-btn {
+        min-width: 44px;
+        min-height: 44px;
+        font-size: var(--yj-icon-md);
+      }
     }
 
     .cover-preview-panel {
@@ -446,8 +457,30 @@ export class NowPlaying extends LitElement {
             return html`
         <div class="sr-only" role="status" aria-live="polite">${announcement}</div>
         <div class="now-playing">
-          <div class="cover-art">
-            <div class="cover-placeholder"><wa-icon name="music"></wa-icon></div>
+          <!-- **The way to Now Playing does not depend on what is
+               playing.** This branch used to render the placeholder
+               with no button on it, so on a phone there was no route to
+               the full-screen view while nothing was loaded -- and once
+               #59 took the queue button off the bar, that made the
+               queue itself unreachable, because Now Playing is where it
+               is reached from. The queue is persisted across restarts,
+               so "a queue with tracks in it and nothing playing" is an
+               ordinary state to launch into, not a corner.
+
+               Plan 018's matrix promises no action is unreachable at
+               any supported size, and the promise is what makes #59
+               allowed to remove a control at all. -->
+          <div class="cover-art-wrapper">
+            <button
+              type="button"
+              class="expand"
+              data-testid="open-now-playing"
+              aria-label="Open now playing"
+              @click=${this.openNowPlaying}
+            ></button>
+            <div class="cover-art">
+              <div class="cover-placeholder"><wa-icon name="music"></wa-icon></div>
+            </div>
           </div>
         </div>
         <div

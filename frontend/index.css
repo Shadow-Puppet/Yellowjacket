@@ -535,6 +535,30 @@ body div.sidebar {
     .bottom-bar volume-control {
         display: none;
     }
+
+    /* The queue leaves the phone's bar (#59), because #55 made it a
+       screen with an entry in the back stack and Now Playing already
+       carries its own button for it. The route is the mini player's
+       art -> Now Playing -> the queue, which is the "reachable only
+       from Now Playing" this issue asks for.
+
+       This is allowed to remove a control only because the control is
+       still reachable: plan 018's matrix promises that no action is
+       ever unreachable at any supported size, and that promise is what
+       `phone-transport.spec.ts` asserts rather than the button count.
+
+       **`.bottom-bar #queue-button`, not `#queue-button`**, and that is
+       not decoration. The rule this overrides is written *nested*
+       inside `.bottom-bar`, so it builds to a descendant selector one
+       class more specific than it looks in the source -- and a bare
+       `#queue-button` here loses to it, media query or not. Being last
+       in the file is not enough when the thing above is more specific,
+       which is the same lesson as this section's own header one level
+       down: nesting adds specificity the source does not show, and the
+       failure is silent (the button simply stayed). */
+    .bottom-bar #queue-button {
+        display: none;
+    }
 }
 
 /* Out of the desktop grid entirely.  `job-band` renders nothing above
