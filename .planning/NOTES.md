@@ -4649,3 +4649,61 @@ against a real audio-focus change. The first is a source sweep
 (`TestPlatformVolumeOwnershipIsDeclaredOncePerPlatform`), the second is
 `TestSystemVolumeStillDucks` against the arithmetic. Neither is a
 device, and no device was attached.
+
+### The device answered three of the four (measured 2026-08-21, TLP301 / Android 14 / SDK 34 / arm64, Chrome 113 at 424x439)
+
+A Light Phone III was attached after the PR was opened, so what that PR
+listed as unverifiable was re-checked rather than left as a caveat.
+
+**The whole chain resolves on the device.** `__yj.call("player.Player.
+SystemOwnsVolume", [])` answers `true` — build tag, `platformOwnsVolume`,
+`Player.systemVolume` and the generated binding, end to end. That is the
+one thing the source sweep only approximates, and it took a real arm64
+device because nothing else here compiles the `android` file at all.
+(`GOOS=android GOARCH=arm64 CGO_ENABLED=1 go build ./backend/...` with
+the NDK's clang compiles it in ~40 s and is worth running first; it
+catches a type error but not a wrong constant.)
+
+**The control is absent in both mount points**, on the real engine:
+`.bottom-bar volume-control` is `hidden` with an empty shadow root, and
+so is `now-playing-view`'s. Measured on the device, transport **143px**,
+which is the figure the desktop-headless "after" predicted exactly. The
+art is 75px there rather than 68 because the fixture's `.names` block is
+one line shorter, not because anything differs.
+
+**Nothing persists a level nobody chose, and this is the measurement
+that took some care.** The default (50) surviving proves nothing, since
+50 is also what a fresh row holds. So: force-stop, pull `yj.db`, set
+`player_state.volume = 37`, push it back through
+`run-as … dd` (a `cp` from `/sdcard` is refused — the app sandbox
+cannot read it), relaunch, and drive a queue change to make the row be
+rewritten. Reading it back **the WAL has to be pulled with it** — the
+main file still showed the old `last_track_path` and reads as a write
+that never happened. With `yj.db-wal` beside it: `last_track_path` is
+the new track, so `saveState` ran, and `volume` is still **37**.
+
+**The duck cannot be verified on this device, and now for a stated
+reason rather than for want of hardware.** `WailsForegroundService`
+builds its `AudioFocusRequest` without `setWillPauseWhenDucked` on
+API >= 26, so the framework attenuates the stream itself and never
+delivers `AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK`. The device's own log
+says so: `MediaFocusControl: requestAudioFocus() … AA=USAGE_MEDIA/
+CONTENT_TYPE_MUSIC … req=1 flags=0x0` — no
+`AUDIOFOCUS_FLAG_PAUSES_ON_DUCKABLE_LOSS`. **`minSdk` is 21**, so the
+Go-side duck is not dead code; it is reachable on Android 5.0 to 7.1
+and on nothing newer. Any future "verify ducking on a device" needs one
+of those, and asking for a modern phone will not do it.
+
+Two smaller things from the same session.
+
+**A fresh install downloads the real catalog, and it is 209px of the
+screen while it does.** `YJ_CORE_INDEX_URL` is stubbed in
+`dev-headless.sh` and in CI but is real on a device, so the first
+measurement taken was of a screen with `job-band` on it and the art at
+**0px**. That is not a defect and not #172 — it is the environment.
+`explore.Service.StopIndexBuild` and a relaunch is the clean state.
+
+**The first-run wizard does not dismiss when a library appears by a
+route other than its own** (#175) — it was still up, full-screen and
+intercepting pointer events, after `AddLibrary` succeeded through the
+binding, and was gone after a relaunch. Filed.

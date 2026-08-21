@@ -1763,7 +1763,8 @@ nothing else. That is `mediacontrols`' split with
 decided against `Player.systemVolume`, a field a test sets either way.
 The frontend's absent branch is therefore testable in the component
 tier with a stubbed binding, and the constant itself is covered by a
-source sweep rather than by a device.
+source sweep plus, once, a real arm64 device answering `true` — which
+is the only tier that compiles the `android` file at all.
 
 **Mute goes with it, because it is a level of zero by another name** —
 and because with no control rendered it is the one state on such a
@@ -1781,6 +1782,14 @@ through `setVolumeLocked`, so pinning that level to maximum leaves the
 offset arithmetic exactly as it was. It is the only thing that may move
 the output on such a platform, and it is the one volume-shaped path
 that is not refused.
+
+One thing to know before anyone offers to test it on a phone: **the
+duck is unreachable above API 25.** `WailsForegroundService` builds its
+`AudioFocusRequest` without `setWillPauseWhenDucked` from Oreo, so the
+framework attenuates us itself and never sends
+`AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK` — a device confirms it by logging
+`requestAudioFocus() … flags=0x0`. `minSdk` is 21, so this is live code
+rather than dead, on Android 5.0 to 7.1 and nowhere else.
 
 **And below 600px that bar carries three controls, not five** (#59).
 Shuffle, repeat and the queue button leave it; what is left is art,
