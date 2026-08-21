@@ -61,11 +61,21 @@ export class SearchTrigger extends LitElement {
                 display: inline-flex;
                 align-items: center;
                 justify-content: center;
-                /* The smallest a touch target should be. The header's
-                   own action buttons are smaller because they carry a
-                   label; this one is a glyph. */
-                min-width: 40px;
-                min-height: 40px;
+                /* The app's touch floor, from #56 -- and this is the
+                   control that should least have to argue for it: #57
+                   created it as the phone's replacement for the header
+                   search box, so it exists *only* where there is a
+                   thumb.
+
+                   It shipped at 40px under a comment calling that "the
+                   smallest a touch target should be", which was the
+                   floor being restated four pixels short rather than a
+                   second opinion about it (#186). The rest of that
+                   comment said the header's own action buttons are
+                   smaller because they carry a label; they are 44px
+                   now too, so that no longer distinguishes anything. */
+                min-width: 44px;
+                min-height: 44px;
                 padding: 0;
                 background: none;
                 border: 1px solid var(--yj-border-subtle, #555);
