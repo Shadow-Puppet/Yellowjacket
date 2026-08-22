@@ -62,6 +62,7 @@ import {
 } from '@utils/explore-link';
 import '@components/smart-playlist-editor/smart-playlist-editor.js';
 import { designTokens } from '../../styles/tokens.css';
+import { backButton } from '../../styles/back-button.css';
 import { list } from '@utils/binding';
 import {
     ICON_PLAYLIST,
@@ -242,6 +243,7 @@ export class SmartPlaylistDetails
 
     static override styles = [
         designTokens,
+        backButton,
         contextMenuStyles,
         exploreLinkStyles,
         css`
@@ -267,31 +269,6 @@ export class SmartPlaylistDetails
                     --yj-border-subtle,
                     rgba(255, 255, 255, 0.06)
                 );
-        }
-
-        .back-button {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            width: 32px;
-            height: 32px;
-            border: none;
-            border-radius: 50%;
-            background: var(
-                --yj-bg-overlay,
-                rgba(255, 255, 255, 0.06)
-            );
-            color: var(--yj-text-primary, #fff);
-            cursor: pointer;
-            flex-shrink: 0;
-            transition: background-color 0.15s ease;
-        }
-
-        .back-button:hover {
-            background: var(
-                --yj-bg-hover,
-                rgba(255, 255, 255, 0.12)
-            );
         }
 
         .back-button wa-icon {

@@ -250,13 +250,20 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
             }
 
             /* Collapsible-section toggle used in the Pending header —
-               transparent button that inherits the header's type. */
+               transparent button that inherits the header's type.
+
+               187x**15** before this (#186), which was the smallest
+               control measured anywhere in the app until the column
+               arrows were counted. It is transparent and full-width
+               already, so the floor costs it a height and nothing
+               else. */
             .section-toggle {
                 display: flex;
                 align-items: center;
                 gap: 0.35rem;
                 flex: 1;
                 min-width: 0;
+                min-block-size: 44px;
                 padding: 0;
                 background: transparent;
                 border: 0;
@@ -274,6 +281,8 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
                 color: var(--yj-text-tertiary, #888);
             }
 
+            /* 32x18, and it has no background until hover -- so the
+               padding out to a square target is invisible (#186). */
             .folders-menu-trigger {
                 background: transparent;
                 border: 0;
@@ -281,6 +290,8 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
                 font-size: 1.1rem;
                 line-height: 1;
                 padding: 0.1rem 0.4rem;
+                min-inline-size: 44px;
+                min-block-size: 44px;
                 border-radius: 3px;
                 cursor: pointer;
             }
@@ -293,7 +304,10 @@ export class AutotagView extends ViewLifecycleMixin(LitElement) {
             .folders-refresh-trigger {
                 display: flex;
                 align-items: center;
+                justify-content: center;
                 font-size: 0.95rem;
+                min-inline-size: 44px;
+                min-block-size: 44px;
             }
 
             .folders-refresh-trigger:disabled {

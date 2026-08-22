@@ -14,6 +14,7 @@ import {
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@components/cover-grid/cover-grid.js';
 import { designTokens } from '../../styles/tokens.css';
+import { backButton } from '../../styles/back-button.css';
 
 @customElement('artist-details')
 export class ArtistDetails extends LitElement {
@@ -40,7 +41,7 @@ export class ArtistDetails extends LitElement {
     /** Tracks the store's cached array reference to detect refreshes. */
     private lastAlbumsRef: library.Album[] | null = null;
 
-    static override styles = [designTokens, css`
+    static override styles = [designTokens, backButton, css`
         :host {
             display: flex;
             flex-direction: column;
@@ -64,31 +65,6 @@ export class ArtistDetails extends LitElement {
                     --yj-border-subtle,
                     rgba(255, 255, 255, 0.06)
                 );
-        }
-
-        .back-button {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            width: 32px;
-            height: 32px;
-            border: none;
-            border-radius: 50%;
-            background: var(
-                --yj-bg-overlay,
-                rgba(255, 255, 255, 0.06)
-            );
-            color: var(--yj-text-primary, #fff);
-            cursor: pointer;
-            flex-shrink: 0;
-            transition: background-color 0.15s ease;
-        }
-
-        .back-button:hover {
-            background: var(
-                --yj-bg-hover,
-                rgba(255, 255, 255, 0.12)
-            );
         }
 
         .back-button wa-icon {

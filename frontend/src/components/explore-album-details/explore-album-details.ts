@@ -2,6 +2,7 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property, state, query } from 'lit/decorators.js';
 import { classMap } from 'lit/directives/class-map.js';
 import { designTokens } from '../../styles/tokens.css';
+import { backButton } from '../../styles/back-button.css';
 import { srOnly } from '../../styles/sr-only.css';
 import { unownedLabel, unownedStyles } from '@utils/ownership';
 import {
@@ -355,6 +356,7 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
 
     static override styles = [
         designTokens,
+        backButton,
         exploreLinkStyles,
         contextMenuStyles,
         srOnly,
@@ -377,25 +379,6 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
                 flex-shrink: 0;
                 border-bottom: 1px solid
                     var(--yj-border-subtle, rgba(255, 255, 255, 0.06));
-            }
-
-            .back-button {
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                width: 32px;
-                height: 32px;
-                border: none;
-                border-radius: 50%;
-                background: var(--yj-bg-overlay, rgba(255, 255, 255, 0.06));
-                color: var(--yj-text-primary, #fff);
-                cursor: pointer;
-                flex-shrink: 0;
-                transition: background-color 0.15s ease;
-            }
-
-            .back-button:hover {
-                background: var(--yj-bg-hover, rgba(255, 255, 255, 0.12));
             }
 
             .back-button wa-icon {
