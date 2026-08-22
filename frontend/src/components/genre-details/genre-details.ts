@@ -15,6 +15,7 @@ import { describeError } from '@utils/describe-error';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@components/track-list/track-list.js';
 import { designTokens } from '../../styles/tokens.css';
+import { backButton } from '../../styles/back-button.css';
 import { list } from '@utils/binding';
 
 @customElement('genre-details')
@@ -37,7 +38,7 @@ export class GenreDetails extends LitElement {
     private scanCompleteCleanup: (() => void) | null =
         null;
 
-    static override styles = [designTokens, css`
+    static override styles = [designTokens, backButton, css`
         :host {
             display: flex;
             flex-direction: column;
@@ -75,31 +76,6 @@ export class GenreDetails extends LitElement {
                     --yj-border-subtle,
                     rgba(255, 255, 255, 0.06)
                 );
-        }
-
-        .back-button {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            width: 32px;
-            height: 32px;
-            border: none;
-            border-radius: 50%;
-            background: var(
-                --yj-bg-overlay,
-                rgba(255, 255, 255, 0.06)
-            );
-            color: var(--yj-text-primary, #fff);
-            cursor: pointer;
-            flex-shrink: 0;
-            transition: background-color 0.15s ease;
-        }
-
-        .back-button:hover {
-            background: var(
-                --yj-bg-hover,
-                rgba(255, 255, 255, 0.12)
-            );
         }
 
         .back-button wa-icon {

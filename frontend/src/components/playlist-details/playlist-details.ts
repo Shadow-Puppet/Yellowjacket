@@ -71,6 +71,7 @@ import {
     exploreLinkStyles,
 } from '@utils/explore-link';
 import { designTokens } from '../../styles/tokens.css';
+import { backButton } from '../../styles/back-button.css';
 import { list } from '@utils/binding';
 import {
     ICON_PLAYLIST,
@@ -954,6 +955,7 @@ export class PlaylistDetails
 
     static override styles = [
         designTokens,
+        backButton,
         contextMenuStyles,
         exploreLinkStyles,
         css`
@@ -979,31 +981,6 @@ export class PlaylistDetails
                     --yj-border-subtle,
                     rgba(255, 255, 255, 0.06)
                 );
-        }
-
-        .back-button {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            width: 32px;
-            height: 32px;
-            border: none;
-            border-radius: 50%;
-            background: var(
-                --yj-bg-overlay,
-                rgba(255, 255, 255, 0.06)
-            );
-            color: var(--yj-text-primary, #fff);
-            cursor: pointer;
-            flex-shrink: 0;
-            transition: background-color 0.15s ease;
-        }
-
-        .back-button:hover {
-            background: var(
-                --yj-bg-hover,
-                rgba(255, 255, 255, 0.12)
-            );
         }
 
         .back-button wa-icon {

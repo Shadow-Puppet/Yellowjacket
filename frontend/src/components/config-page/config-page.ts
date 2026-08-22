@@ -176,6 +176,13 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
             cursor: pointer;
             transition: background-color 0.15s ease;
             white-space: nowrap;
+            /* The app's 44px touch floor (#56, #186), stated once for
+               all 41 buttons this page renders rather than per class.
+               Height is free here: Settings has no overflow fit, so
+               the header's "only width is contested" rule does not
+               bind, and the two classes that need more than a height
+               say so below. */
+            min-block-size: 44px;
         }
 
         button:disabled {
@@ -509,11 +516,24 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
             margin: 0;
         }
 
+        /* The two column lists are the densest thing in the app, and
+           the density argument is why they are shaped the way they
+           are rather than simply grown (#186).
+
+           Measured on the reference device: the row was already
+           335x36 -- it is the controls *inside* it that were 16x16 and
+           **16x14**, the smallest anywhere in this app, 36 of them.
+           So the fix grows the controls into the row they already
+           occupy and only takes the row from 36 to 44, which over the
+           two lists (10 and 19 items) is 232px of extra scroll on a
+           439px screen. Growing each control to its own 44px row
+           instead would have cost four screens. */
         .column-item {
             display: flex;
-            align-items: center;
+            align-items: stretch;
             gap: 0.5em;
-            padding: 0.5em 0.75em;
+            padding: 0 0.75em;
+            min-block-size: 44px;
             border-bottom: 1px solid
                 var(--yj-border-subtle, #333);
             font-size: 0.85em;
@@ -531,8 +551,19 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
             color: var(--yj-text-tertiary, #888);
         }
 
+        /* A native checkbox cannot grow its hit area without growing
+           its paint, and a 44px checkbox is not what anyone wants. So
+           the target is the label instead: .column-label is a real
+           <label for> now, which makes the column's *name* the thing
+           you tap -- ~250x44 rather than 16x16.
+
+           That is the argument config-field already makes one file
+           over for its own labels: "a real label association also
+           makes the label text a click target for the control, which
+           is behaviour, not annotation". Here it is the whole fix. */
         .column-toggle {
             cursor: pointer;
+            align-self: center;
             accent-color: var(
                 --yj-accent,
                 #ffd43b
@@ -541,20 +572,32 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
 
         .column-label {
             flex: 1;
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            min-block-size: 44px;
         }
 
         .view-note {
             color: var(--yj-text-tertiary, #888);
             font-size: var(--yj-font-size-sm, 0.85rem);
             margin-left: auto;
+            /* The row stretches its children so the label can be a
+               full-height target; this is text, not a target. */
+            align-self: center;
         }
 
         .column-arrows {
             display: flex;
+            align-items: stretch;
             gap: 0.15em;
             margin-left: auto;
         }
 
+        /* 16x14 before this, and they carry background: none and a
+           transparent border -- so padding out to 44px grows the
+           target and changes nothing anyone can see until hover,
+           which is precisely what #186's Direction asks for. */
         .column-arrow-btn {
             background: none;
             border: 1px solid transparent;
@@ -564,6 +607,8 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
             font-size: 0.65em;
             line-height: 1;
             padding: 0.2em 0.35em;
+            min-inline-size: 44px;
+            min-block-size: 44px;
             transition:
                 color 0.15s,
                 border-color 0.15s;
@@ -711,6 +756,11 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
             padding: 0.2em 0.4em;
             letter-spacing: 2px;
             border-radius: 4px;
+            /* Square, so it needs the width too -- the shared rule
+               above only gives it a height. It was 31x31, and it is
+               the only route to "Remove library", which is the case
+               #55 settled one component over: the way out is 44px. */
+            min-inline-size: 44px;
         }
 
         .overflow-btn:hover {
@@ -2003,6 +2053,7 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
                                 class="column-item ${checked ? 'enabled' : 'disabled'}"
                             >
                                 <input
+                                    id="view-${v.id}"
                                     type="checkbox"
                                     class="column-toggle"
                                     aria-label="Show ${v.label} in the navigation"
@@ -2014,9 +2065,9 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
                         (e.target as HTMLInputElement).checked,
                     )}
                                 />
-                                <span class="column-label">
+                                <label class="column-label" for="view-${v.id}">
                                     ${v.label}
-                                </span>
+                                </label>
                                 ${note
                     ? html`<span class="view-note">${note}</span>`
                     : nothing}
@@ -2212,6 +2263,7 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
                                 class="column-item ${checked ? 'enabled' : 'disabled'}"
                             >
                                 <input
+                                    id="column-${id}"
                                     type="checkbox"
                                     class="column-toggle"
                                     aria-label="Show the ${columnLabel} column"
@@ -2222,11 +2274,12 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
                                             id,
                                         )}
                                 />
-                                <span
+                                <label
                                     class="column-label"
+                                    for="column-${id}"
                                 >
                                     ${columnLabel}
-                                </span>
+                                </label>
                                 <span
                                     class="column-arrows"
                                 >

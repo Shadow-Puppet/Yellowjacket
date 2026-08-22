@@ -25,6 +25,11 @@ export class ShortcutCapture extends LitElement {
         :host {
             display: inline-block;
         }
+        /* 80x25, twenty-six of them -- the most numerous control on
+           the Settings page after the column lists (#186). The floor
+           is a height here and nothing else: the width was already
+           past it, and the type stays where it is so a shortcut still
+           reads as a key rather than as a button. */
         button {
             font-family: inherit;
             font-size: var(--yj-text-sm, 13px);
@@ -35,6 +40,7 @@ export class ShortcutCapture extends LitElement {
             color: var(--yj-text-primary, #eee);
             cursor: pointer;
             min-width: 80px;
+            min-height: 44px;
             text-align: center;
             transition:
                 border-color 0.15s,
@@ -61,6 +67,11 @@ export class ShortcutCapture extends LitElement {
                 opacity: 0.7;
             }
         }
+        /* Reset renders only for a rebound shortcut, so a sweep of a
+           freshly-installed app never sees it -- it is not in #186's
+           tables for that reason, and it is a touch target the moment
+           anybody uses the feature. It also has no background, so the
+           padding out to 44px is invisible. */
         .reset-btn {
             font-size: var(--yj-text-xs, 11px);
             padding: 2px 6px;
@@ -69,7 +80,8 @@ export class ShortcutCapture extends LitElement {
             background: transparent;
             color: var(--yj-text-tertiary, #888);
             cursor: pointer;
-            min-width: auto;
+            min-width: 44px;
+            min-height: 44px;
             opacity: 0;
             transition: opacity 0.15s;
         }

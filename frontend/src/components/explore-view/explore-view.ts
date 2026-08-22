@@ -256,15 +256,18 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
                 margin-bottom: 10px;
             }
 
+            /* 89x26 and 79x26 before this (#186). */
             .search-mode-tab {
                 display: inline-flex;
                 align-items: center;
+                justify-content: center;
                 gap: 6px;
                 background: none;
                 border: 1px solid transparent;
                 border-radius: 6px;
                 color: var(--yj-text-tertiary, #888);
                 cursor: pointer;
+                min-block-size: 44px;
                 padding: 5px 12px;
                 font-size: var(--yj-text-sm);
                 font-family: inherit;
@@ -289,7 +292,7 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
                 border-radius: 6px;
                 padding: 0 12px;
                 gap: 8px;
-                height: 36px;
+                min-height: 44px;
                 max-width: 520px;
                 transition: border-color 0.15s ease;
             }
@@ -364,8 +367,15 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
                 flex-shrink: 0;
             }
 
+            /* The input measured 325x**18** and the box around it 36,
+               which is two faults rather than one (#186): the row was
+               under the floor, and the input did not fill it, so eight
+               of those pixels were not a target at all. The container
+               is 44 and the input stretches to it -- a tap anywhere in
+               the box now lands on the input rather than beside it. */
             input {
                 flex: 1;
+                align-self: stretch;
                 background: none;
                 border: none;
                 outline: none;
@@ -379,15 +389,21 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
                 color: var(--yj-text-tertiary, #888);
             }
 
+            /* No background until hover, so the target grows and the
+               glyph does not. It is inside a 44px box already, hence
+               the width alone. */
             .clear-button {
                 display: flex;
                 align-items: center;
                 justify-content: center;
+                align-self: stretch;
                 background: none;
                 border: none;
                 color: var(--yj-text-tertiary, #888);
                 cursor: pointer;
                 padding: 0;
+                min-inline-size: 44px;
+                margin-inline-end: -12px;
                 font-size: var(--yj-text-sm);
                 flex-shrink: 0;
             }

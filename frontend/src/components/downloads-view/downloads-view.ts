@@ -93,8 +93,26 @@ export class DownloadsView extends ViewLifecycleMixin(LitElement) {
                 border-bottom: 1px solid var(--yj-bg-overlay, rgba(255, 255, 255, 0.08));
             }
 
+            /* 85x34 and 96x34 before this (#186). A tab is the only
+               route to the panel it names, so it is the last control
+               that should be hard to hit -- and the underline that
+               marks the active one is drawn on the bottom border,
+               which a taller box moves further from the label. So the
+               height goes on *padding*, keeping the border against
+               the label rather than 10px below a centred one.
+
+               The min-size is the floor and is not redundant: padding
+               alone made this 44px here and **43px in CI**, because
+               the total is 13 + 13 + 2 + whatever line box the font
+               gives 13px text, and ubuntu:24.04's is a pixel shorter
+               than this machine's. A height computed from a font's
+               line box is not a height you control -- the same
+               mistake #195 made about a layout property measured on
+               one engine, one layer down, and caught here by the test
+               rather than by a person. */
             .tab {
-                padding: 8px 14px;
+                min-block-size: 44px;
+                padding: 13px 14px;
                 font-size: 13px;
                 font-weight: 600;
                 color: var(--yj-text-secondary, #b3b3b3);
