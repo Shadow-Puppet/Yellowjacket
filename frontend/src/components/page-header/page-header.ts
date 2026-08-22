@@ -320,10 +320,25 @@ export class PageHeader extends LitElement {
                query that no tier here renders, which is exactly how
                the seek bar's phone rule came to be dead for months.
 
-               Only the *width* of this reaches the overflow fit below:
-               that pass measures inline size, so the height costs it
-               nothing, and the two square controls grow the header's
-               content by 22px in total. */
+               **The height is the box and the width is not**, and that
+               asymmetry is the whole of what the overflow fit below
+               cares about. That pass measures inline size, so a taller
+               control costs it nothing and a wider one costs it
+               directly. Growing the two square controls to 44px wide
+               added 22px, which fits at every width Chromium was
+               checked at and clipped the overflow trigger at 320px in
+               **WebKit** -- the engine closest to what actually ships,
+               and the one no machine here can run. So the horizontal
+               half is padding with the margin cancelling it, which is
+               what the issue asked for in the first place: the target
+               grows and the layout does not.
+
+               The cost is that a horizontal target can now overlap a
+               neighbour, which the box version could not. The arrow's
+               is deliberately lopsided for the seek bar's reason
+               (#187): the select is 6px to its left and there is open
+               space to its right, so it takes the side with nothing to
+               steal from. */
             .sort select {
                 font: inherit;
                 color: inherit;
@@ -347,9 +362,16 @@ export class PageHeader extends LitElement {
                 padding: 3px 5px;
                 /* 28x21 before this, the smallest control in the
                    header and the only one that failed the floor in
-                   both directions. */
-                min-inline-size: 44px;
+                   both directions.
+
+                   Vertically the box grows, because the header has the
+                   room and nothing measures it. Horizontally the box
+                   must not: 28 + 2 + 14 is a 44px target over a 28px
+                   layout box, weighted right because the select is 6px
+                   to the left. */
                 min-block-size: 44px;
+                padding-inline: 5px 21px;
+                margin-inline: 0 -16px;
             }
 
             .sort-dir:hover {
@@ -417,8 +439,12 @@ export class PageHeader extends LitElement {
                 padding: 6px 10px;
                 /* 38x27, and it is the route to every collapsed
                    action, so it is the last control that should be
-                   hard to hit. */
-                min-inline-size: 44px;
+                   hard to hit -- and the one WebKit clipped at 320px
+                   when this was 6px wider as a box. 38 + 3 + 3 is a
+                   44px target over a 38px layout box; the actions row
+                   has an 8px gap, so this one can be symmetric. */
+                padding-inline: 13px;
+                margin-inline: -3px;
             }
 
             /* The display: flex above outranks the UA stylesheet's

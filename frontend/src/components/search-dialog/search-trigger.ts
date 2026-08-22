@@ -73,9 +73,20 @@ export class SearchTrigger extends LitElement {
                    second opinion about it (#186). The rest of that
                    comment said the header's own action buttons are
                    smaller because they carry a label; they are 44px
-                   now too, so that no longer distinguishes anything. */
+                   now too, so that no longer distinguishes anything.
+
+                   The extra width is a target rather than a box, for
+                   page-header's reason: this button sits in that
+                   header, whose overflow fit (#69) measures inline
+                   size, and four pixels there is four pixels the
+                   trigger for every collapsed action does not get at
+                   320px. Height is free -- nothing measures it. */
                 min-width: 44px;
                 min-height: 44px;
+                /* Border-box, so the 44 above is the whole target and
+                   the margin is what hands the four extra pixels back
+                   to the row. */
+                margin-inline: -2px;
                 padding: 0;
                 background: none;
                 border: 1px solid var(--yj-border-subtle, #555);

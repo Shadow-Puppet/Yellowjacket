@@ -90,6 +90,46 @@ describe("the page header's controls", () => {
     expect(tooSmall(controls)).toEqual([]);
   });
 
+  it('grows the target without growing the box, so the overflow fit is untouched', async () => {
+    // The regression this exists for, and it was a real one: growing
+    // the two square controls to 44px *wide* added 22px to the header,
+    // which fit at every width Chromium was checked at and clipped the
+    // overflow trigger at 320x600 in WebKit -- the engine closest to
+    // what ships, and the one no machine here can run. #69's fit pass
+    // measures inline size, so a taller control is free and a wider one
+    // is not.
+    //
+    // Negative inline margins are what keep the box out of it: the
+    // padding makes the target, and the margin gives the space back.
+    const el = await fixture<PageHeader>('page-header', {
+      heading: 'Playlists',
+      sortOptions: SORTS,
+      sortField: 'name',
+      actions: actions(),
+    });
+
+    el.style.width = '320px';
+
+    for (let frame = 0; frame < 3; frame += 1) {
+      await new Promise((r) => requestAnimationFrame(r));
+      await el.updateComplete;
+    }
+
+    for (const selector of ['.sort-dir', '.more-button']) {
+      const control = shadowAll<HTMLElement>(el, selector).filter(
+        (c) => !(c as HTMLButtonElement).hidden,
+      )[0];
+
+      expect(control, selector).toBeTruthy();
+
+      const style = getComputedStyle(control!);
+      const added =
+        parseFloat(style.marginInlineStart) + parseFloat(style.marginInlineEnd);
+
+      expect(added, `${selector} gives its extra width back`).toBeLessThan(0);
+    }
+  });
+
   it('includes the overflow trigger, which is the route to the rest', async () => {
     // At 320px the fit pass collapses actions into the menu, so the
     // trigger is rendered — and it is then the only way to reach them,
