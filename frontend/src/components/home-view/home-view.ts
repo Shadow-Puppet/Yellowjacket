@@ -166,7 +166,7 @@ export class HomeView extends ViewLifecycleMixin(LitElement) {
              * gated on the device having hover rather than on width.  A
              * touch long-press synthesises a hover state in the WebView,
              * so on a phone it flashed into view during the 500ms hold
-             * that utils/long-press.ts is measuring for a context menu —
+             * that utils/touch-gestures.ts is measuring for a long press —
              * a control appearing because you were reaching for a
              * different one.  A phone user taps the album and plays from
              * the detail view, so there is nothing to replace it with.

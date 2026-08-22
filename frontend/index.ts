@@ -70,7 +70,7 @@ import '@store/theme-store';
 // registers the document keydown listener for global shortcuts.
 import './src/services/keyboard-shortcut-service';
 import { activateView, deactivateView } from '@utils/view-lifecycle';
-import { installLongPressContextMenu } from '@utils/long-press';
+import { installTouchGestures } from '@utils/touch-gestures';
 import { openQueue, queuePanelElement } from '@utils/open-queue';
 import { installTopBarFit } from './src/services/top-bar-fit';
 import {
@@ -87,10 +87,13 @@ setBasePath('/dist/webawesome');
 // the session.
 registerBundledIcons();
 
-// The touch equivalent of a right-click, installed once for every menu
-// in the app rather than per component. Harmless on a desktop: it acts
-// on `pointerType === 'touch'` only.
-installLongPressContextMenu();
+// Every touch gesture in the app, installed once rather than per
+// component (plan 019). Harmless on a desktop: it acts on
+// `pointerType === 'touch'` only, per event, so a mouse on a
+// touchscreen keeps click-selects / double-click-plays on the very
+// same row. An unclaimed long press still becomes a `contextmenu`,
+// which is what leaves all fourteen menus untouched by #63.
+installTouchGestures();
 
 // The top bar decides what it can afford to show (#143). Here rather
 // than in a component because the bar is light DOM in index.html and
