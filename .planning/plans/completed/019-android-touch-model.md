@@ -5,7 +5,7 @@
 **Relates:** #67 (inline links into the menu), #71 ("More" nav), #54
 (native feel), #5/#8 (selection, drag to queue — the desktop semantics
 being diverged from)
-**Status:** in flight.
+**Status:** shipped (phases 1-4). Its one deliberate remainder is #200.
 
 #73 puts #60 first in Phase 4 because it is "the presentation every
 other item needs", and this is the next one. The Direction on #63 asks
@@ -229,12 +229,58 @@ finding above and a reveal-and-snap affordance. **Shipped**; what the
 device said about it is the section below.
 
 **Phase 3 — the other three surfaces**, which is mostly wiring, since
-they already share the controller.
+they already share the controller. **Shipped**, and it was not entirely
+wiring — see below.
 
 **Phase 4 — what this leaves behind.** The inline `explore-link`s in a
 row are a single-click target inside a row whose single tap now plays;
 that conflict is #67's, and this plan should not pre-empt its answer
-beyond making tap-to-play win on touch.
+beyond making tap-to-play win on touch. **Shipped.**
+
+## Phase 3 was not symmetric, in two places
+
+**A tap on a queue row plays that position**, not the list. Copying
+`track-list`'s tap — which sets the queue to the list the row is in —
+would rebuild the queue *from* the queue, discarding its source, its
+shuffle order and everything a user had inserted by hand. It reads as a
+no-op and is not one.
+
+**The queue panel has no swipe, deliberately.** A right swipe means
+*add to the queue* everywhere else it exists, and a queue row is
+already in the queue; the only thing it could mean there is *remove*,
+which is the same gesture with the opposite effect one screen away —
+the fault `utils/icon-language.ts` exists to have fixed for glyphs.
+Removing a queue row is on the row itself (the ×), on its bottom sheet
+since #60, and on the selection bar this phase gave it. The assertion
+is that its rows do **not** carry `data-swipe`, so a swipe there cannot
+silently become a second meaning for the app's one horizontal gesture.
+
+And the affordance became `utils/swipe-to-queue.ts` rather than being
+copied twice. Three lists want it; three copies of "how far is far
+enough" is three chances for them to disagree, which is what
+`utils/library-status.ts` and `utils/ownership.ts` each exist to have
+stopped happening. The shared stylesheet is keyed on `[data-swipe]`
+rather than on a class name, because the three lists call their rows
+two different things and the `touch-action` half of the device fix has
+to reach all of them.
+
+## Phase 4 was already true, which is why it is asserted
+
+A claimed tap has its click swallowed at document capture, so an
+`explore-link` inside the row never sees one and tap-to-play wins with
+no rule of its own. Nothing in the suite would have failed if that
+stopped covering the link, and the symptom — tapping a track's *title*
+navigating to its album instead of playing it — is one a phone user
+meets constantly and a mouse user never does.
+
+**Its test was vacuous when written**, in the way this file keeps
+finding: the tap helper dispatched `pointerdown` and `pointerup` and no
+`click`, so there was nothing to swallow and the assertion held on any
+build. It sends the trailing click now, which also strengthened phase
+1's "a tap plays and does not also select". The fixture needed an MBID
+for the same reason — without one the link asks the backend for a local
+album first and gives up when nothing answers, so "it did not navigate"
+was true of a working build and a broken one alike.
 
 ---
 
@@ -329,14 +375,34 @@ on the fixed build, six clean.
 ## Open questions
 
 1. **Does selection mode have an escape other than the bar's own
-   close?** Back is the platform's answer and the shell already owns
-   the history stack (#6/#55). Pushing an entry for a *mode* rather
-   than a place is the same argument #55 settled for the overlaid
-   queue, and it should probably be settled the same way — but the
-   queue is a screen and a selection mode is not, so it wants its own
-   paragraph rather than an assumption.
+   close?** *Settled: Escape, here; back, not here.*
+
+   Escape leaves the mode, from `selection-bar` rather than from each
+   of the four hosts — that element exists only while the mode does, so
+   it is the one place a dismissal can be attached and detached with
+   the thing it dismisses. It is the same documented exception the
+   overlaid queue's Escape is: **a dismissal, not a shortcut**, so it
+   is not a panel-scoped binding.
+
+   The back gesture is the half that is *not* done, and deliberately.
+   The obvious version — `selection-bar` pushing a history entry — is
+   precisely the fault `navStack` was deleted for: the shell owns the
+   stack (#6/#55) and is the only thing that calls `pushState`, so that
+   two stacks cannot disagree about what one press means. Four lists
+   each reaching for `history` is four stacks. It is also wrong on its
+   own terms, since a mode is per-component and a user who enters one,
+   navigates away and returns has an entry for a mode that no longer
+   exists. #55 settled the shape for a *place*; a mode is not one,
+   which is why it could not simply inherit that answer.
+
+   What it wants is one shell-owned register of dismissible surfaces,
+   which would retro-fit the queue overlay, the dialogs and this alike
+   rather than adding a fourth private answer. **#200.**
+
 2. **Does a tap on a row's favourite icon still toggle it in normal
-   mode?** It is inside the row and the row now plays. It has to keep
-   working — it is a 44px target since #56 — so the gesture layer needs
-   the same "a control inside the row wins" rule the keyboard service
-   has for a focused control that owns a key.
+   mode?** *Settled in phase 1: yes.* A control inside the row keeps
+   its own tap — the gesture is simply not claimed there, so the click
+   behind it falls through untouched. It is the same rule the shortcut
+   service has for a focused control that owns a key, and it is what
+   keeps the 44px favourite target (#56) from becoming a 44px play
+   target. The queue row's × is the second instance of it.

@@ -266,12 +266,20 @@ describe('a finger swiped right across a track row', () => {
     expect(rows(el)[0]?.getAttribute('aria-selected')).toBe('false');
   });
 
-  it('declares pan-y on the row, which is half of what makes it work', () => {
-    // The other half is the module's non-passive `preventDefault`.
-    // Neither works alone on Chrome 113 and both are irrelevant here,
-    // so this reads the stylesheet rather than the rendering — the
-    // regression is someone tidying the declaration away, and nothing
-    // in this browser looks different when they do.
+  it('declares pan-y on the row, which is half of what makes it work', async () => {
+    // The other half is the gesture module's non-passive
+    // `preventDefault`. Neither works alone on Chrome 113 and both are
+    // irrelevant here, so this reads the stylesheet and the attribute
+    // rather than the rendering — the regression is someone tidying
+    // one of them away, and nothing in this browser looks different
+    // when they do.
+    const el = await mountList();
+
+    expect(
+      rows(el)[0]?.hasAttribute('data-swipe'),
+      'the row opts into the shared rule',
+    ).toBe(true);
+
     const sheets = (
       customElements.get('track-list') as unknown as {
         styles: { cssText: string }[];
@@ -280,9 +288,9 @@ describe('a finger swiped right across a track row', () => {
     const css = sheets.map((s) => s.cssText).join('\n');
     const rule = css
       .split('}')
-      .find((block) => /\.track-row\s*\{/.test(block));
+      .find((block) => /\[data-swipe\]\s*\{/.test(block));
 
-    expect(rule, 'the row rule is still there to read').toBeTruthy();
+    expect(rule, 'the shared rule is in this component').toBeTruthy();
     expect(rule).toContain('touch-action: pan-y');
     expect(css, 'never none: it takes the scrolling too').not.toContain(
       'touch-action: none',
