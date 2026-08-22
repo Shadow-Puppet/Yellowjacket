@@ -23,8 +23,14 @@ export class LibraryFilter extends LitElement {
             align-items: center;
         }
 
+        /* 120x32 on the reference device (#186). This control has two
+           placements since #57 -- the desktop top bar and Settings ->
+           Libraries -- and it is the only route to setSelectedLibrary
+           in either, so it is one of the controls #148 argued must not
+           simply be taken away. It is one component, so it reaches the
+           floor in one place. */
         select {
-            height: 32px;
+            min-height: 44px;
             padding: 0 8px;
             border-radius: 6px;
             border: 1px solid

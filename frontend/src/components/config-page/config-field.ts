@@ -85,6 +85,21 @@ export class ConfigField extends LitElement {
             gap: 0.5em;
         }
 
+        /* Every control here meets the app's 44px touch floor (#186).
+
+           This is the shape every row in Settings uses, so it is the
+           one rule that covers the most controls -- and it is the
+           *cheapest* place to reach the floor, because there is no
+           overflow fit on this page. The page header's had one (#69),
+           which is why that pass had to grow padding and hand the
+           width back with a negative margin; here the control is a
+           block in a column and a taller box costs nothing but the
+           height it takes.
+
+           Measured on the reference device before this: the select
+           335x30, the text and number inputs the same, the browse
+           button 30 tall, the colour swatch 33x33 and the toggle
+           **34x19**. */
         input[type='text'],
         input[type='number'] {
             background: var(--yj-bg-elevated, #343a40);
@@ -95,6 +110,7 @@ export class ConfigField extends LitElement {
             font-size: 0.85em;
             font-family: inherit;
             min-width: 0;
+            min-block-size: 44px;
             flex: 1;
         }
 
@@ -117,6 +133,7 @@ export class ConfigField extends LitElement {
             font-size: 0.85em;
             font-family: inherit;
             cursor: pointer;
+            min-block-size: 44px;
             flex: 1;
         }
 
@@ -139,6 +156,7 @@ export class ConfigField extends LitElement {
             font-size: 0.85em;
             cursor: pointer;
             white-space: nowrap;
+            min-block-size: 44px;
         }
 
         button:hover {
@@ -158,8 +176,12 @@ export class ConfigField extends LitElement {
         }
 
         input[type='color'] {
-            width: 2.5em;
-            height: 2.5em;
+            /* border-box, or the 2px border makes this 48 and the
+               assertion below reads as passing by four pixels of
+               border rather than by the rule. */
+            box-sizing: border-box;
+            width: 44px;
+            height: 44px;
             border: 2px solid var(--yj-border, #444);
             border-radius: 4px;
             padding: 0;
@@ -187,12 +209,32 @@ export class ConfigField extends LitElement {
             display: flex;
             align-items: center;
             justify-content: space-between;
+            min-block-size: 44px;
         }
 
+        /* The toggle is the one control here whose target and paint
+           must differ, and it is also the one no sweep can see.
+
+           Its <input> is opacity: 0; width: 0; height: 0, so a
+           walk of every input on the page skips it as a zero-sized
+           node -- the thing a finger actually hits is this <label>,
+           which measured **34x19**. That is smaller than anything in
+           #186's original table and it is absent from it for exactly
+           that reason.
+
+           A 44px pill is not what a switch should look like, so the
+           box is 44px and the paint is not: .toggle-slider is a
+           2.5em x 1.4em child centred in it rather than an absolute
+           fill. The negative inline margins hand the extra width back
+           to the layout, so the pill stays flush with the right edge
+           of the inputs in the rows above it -- the header pass's
+           shape, used here for alignment rather than for a fit. */
         .toggle-switch {
-            position: relative;
-            width: 2.5em;
-            height: 1.4em;
+            display: grid;
+            place-items: center;
+            inline-size: 44px;
+            block-size: 44px;
+            margin-inline: calc((2.5em - 44px) / 2);
         }
 
         .toggle-switch input {
@@ -202,9 +244,10 @@ export class ConfigField extends LitElement {
         }
 
         .toggle-slider {
-            position: absolute;
+            position: relative;
             cursor: pointer;
-            inset: 0;
+            inline-size: 2.5em;
+            block-size: 1.4em;
             background: var(--yj-bg-overlay, #495057);
             border-radius: 1em;
             transition: background 0.2s;

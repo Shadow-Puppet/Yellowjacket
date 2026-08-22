@@ -8,6 +8,7 @@ import '@awesome.me/webawesome/dist/components/switch/switch.js';
 import '@awesome.me/webawesome/dist/components/spinner/spinner.js';
 import '@awesome.me/webawesome/dist/components/callout/callout.js';
 import { designTokens } from '../../styles/tokens.css';
+import { waTouchFloor } from '../../styles/wa-touch-floor.css';
 import type {
     DownloadDescriptor,
     DownloadProvider,
@@ -136,6 +137,7 @@ export class DownloadClients extends LitElement {
 
     static override styles = [
         designTokens,
+        waTouchFloor,
         css`
             :host {
                 display: block;
@@ -239,12 +241,17 @@ export class DownloadClients extends LitElement {
                 margin-top: 0.4em;
             }
 
+            /* The checkbox is 16x16 and cannot grow without becoming
+               a 44px checkbox, but it is already wrapped in the label
+               that names it -- so the label is the target and only
+               needs the height (#186). Eight of them. */
             .format-option {
                 display: flex;
                 align-items: center;
                 gap: 0.4em;
                 font-size: 0.9em;
                 cursor: pointer;
+                min-block-size: 44px;
             }
         `,
     ];
