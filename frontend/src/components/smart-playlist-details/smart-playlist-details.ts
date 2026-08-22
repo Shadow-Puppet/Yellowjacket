@@ -28,6 +28,10 @@ import {
 } from '@utils/context-menu-controller.js';
 import type { ContextMenuHost, MenuTarget } from '@utils/context-menu-controller.js';
 import { focusRovingRow, nextRovingIndex } from '@utils/roving-rows';
+import type { GestureEvent } from '@utils/touch-gestures';
+import { SwipeToQueue, swipeRevealStyles } from '@utils/swipe-to-queue';
+import '@components/selection-bar/selection-bar';
+import type { SelectionAction } from '@components/selection-bar/selection-bar';
 import { FavoritesController } from '@store/controllers/favorites-controller';
 import {
     setDragPayload,
@@ -63,8 +67,11 @@ import {
 import '@components/smart-playlist-editor/smart-playlist-editor.js';
 import { designTokens } from '../../styles/tokens.css';
 import { backButton } from '../../styles/back-button.css';
+import { srOnly } from '../../styles/sr-only.css';
 import { list } from '@utils/binding';
 import {
+    ICON_PLAY,
+    ICON_PLAY_NEXT,
     ICON_PLAYLIST,
     ICON_QUEUE,
     ICON_SMART_PLAYLIST,
@@ -243,9 +250,11 @@ export class SmartPlaylistDetails
 
     static override styles = [
         designTokens,
+        srOnly,
         backButton,
         contextMenuStyles,
         exploreLinkStyles,
+        swipeRevealStyles,
         css`
         :host {
             display: flex;
@@ -444,6 +453,9 @@ export class SmartPlaylistDetails
         .track-item {
             width: 100%;
             box-sizing: border-box;
+            /* The swipe reveal is absolute inside the row. */
+            position: relative;
+            overflow: hidden;
         }
 
         .track-header {
@@ -920,6 +932,110 @@ export class SmartPlaylistDetails
     // Context menu actions
     // =================================================================
 
+    // =================================================================
+    // A finger on a smart playlist row (plan 019 phase 3, #63)
+    // =================================================================
+
+    /** The row an announced gesture is on, with its track. */
+    private rowFromGesture(
+        e: Event,
+    ): { index: number; track: playlist.Track } | null {
+        const row = (e.target as HTMLElement).closest(
+            '.track-item',
+        ) as HTMLElement | null;
+
+        if (!row) return null;
+
+        const index = Number(row.dataset.index);
+        const track = this.tracks[index];
+
+        if (Number.isNaN(index) || !track) return null;
+
+        return { index, track };
+    }
+
+    /** A tap plays the playlist from that row -- `playlist-details`'
+     *  rule, and the app's: activating a row plays the list it is in. */
+    private onRowTap = (e: GestureEvent) => {
+        const hit = this.rowFromGesture(e);
+
+        if (!hit) return;
+
+        if (this.selection.selectionMode) {
+            e.preventDefault();
+            this.focusedIndex = hit.index;
+            this.selection.toggleInMode(String(hit.index), hit.index);
+            this.virtualizer?.requestUpdate();
+
+            return;
+        }
+
+        // A missing file has nothing to play, so the tap falls through
+        // to the click that selects it.
+        if (hit.track.Phantom) return;
+
+        e.preventDefault();
+        this.focusedIndex = hit.index;
+        this.handleTrackDblClick(hit.index);
+    };
+
+    private onRowLongPress = (e: GestureEvent) => {
+        const hit = this.rowFromGesture(e);
+
+        if (!hit) return;
+
+        e.preventDefault();
+        this.focusedIndex = hit.index;
+        this.selection.enterSelectionMode(String(hit.index), hit.index);
+        this.virtualizer?.requestUpdate();
+    };
+
+    private swipe = new SwipeToQueue(this, {
+        resolve: (e) => {
+            const hit = this.rowFromGesture(e);
+
+            if (!hit || hit.track.Phantom) return null;
+
+            const selected = this.selection.getSelectedIndices();
+            const many =
+                selected.length > 1 && selected.includes(hit.index);
+            const filePaths = many
+                ? this.getSelectedFilePaths()
+                : [hit.track.FilePath];
+
+            return { index: hit.index, filePaths, label: hit.track.Title };
+        },
+        repaint: () => this.virtualizer?.requestUpdate(),
+    });
+
+    /** The three worth a thumb; the sheet behind "More" is the rest. */
+    private static readonly SELECTION_ACTIONS: SelectionAction[] = [
+        { id: 'play', label: 'Play', icon: ICON_PLAY },
+        { id: 'add-to-queue', label: 'Add to queue', icon: ICON_QUEUE },
+        { id: 'play-next', label: 'Play next', icon: ICON_PLAY_NEXT },
+    ];
+
+    private renderSelectionBar() {
+        if (!this.selection.selectionMode) return nothing;
+
+        return html`
+            <selection-bar
+                .count=${this.selection.selectionCount}
+                .actions=${SmartPlaylistDetails.SELECTION_ACTIONS}
+                @selection-exit=${this.onSelectionExit}
+                @selection-action=${(e: CustomEvent<{ id: string }>) =>
+                this.onContextMenuAction(e.detail.id)}
+                @selection-more=${(e: CustomEvent<{ x: number; y: number }>) =>
+                this.ctxMenu.openAt(e.detail.x, e.detail.y)}
+            ></selection-bar>
+        `;
+    }
+
+    private onSelectionExit = () => {
+        this.selection.exitSelectionMode();
+        this.virtualizer?.requestUpdate();
+    };
+
     private onContextMenuAction(action: string) {
         const filePaths = this.getSelectedFilePaths();
 
@@ -1334,6 +1450,9 @@ export class SmartPlaylistDetails
                 <div class="header-cell col-album">Album</div>
                 <div class="header-cell col-duration">Duration</div>
             </div>
+            <div class="sr-only" role="status" aria-live="polite">
+                ${this.swipe.announcement}
+            </div>
             <lit-virtualizer
                 role="listbox"
                 aria-label="Smart playlist tracks"
@@ -1342,7 +1461,13 @@ export class SmartPlaylistDetails
                 .renderItem=${this.renderRow}
                 .keyFunction=${this.rowKey}
                 .layout=${this.flowLayout}
+                @yj-tap=${this.onRowTap}
+                @yj-long-press=${this.onRowLongPress}
+                @yj-swipe-start=${this.swipe.onSwipeStart}
+                @yj-swipe-move=${this.swipe.onSwipeMove}
+                @yj-swipe-end=${this.swipe.onSwipeEnd}
             ></lit-virtualizer>
+            ${this.renderSelectionBar()}
         `;
     }
 
@@ -1364,6 +1489,7 @@ export class SmartPlaylistDetails
                         active ? 'active' : '',
                         selected ? 'selected' : '',
                         isPhantom ? 'phantom' : '',
+                        this.swipe.isSwiping(trackIndex) ? 'swiping' : '',
                     ]
                         .filter(Boolean)
                         .join(' ');
@@ -1374,6 +1500,7 @@ export class SmartPlaylistDetails
                             role="option"
                             aria-selected=${selected}
                             data-index=${trackIndex}
+                            data-swipe
                             tabindex=${trackIndex === this.focusedIndex ? 0 : -1}
                             @keydown=${(e: KeyboardEvent) =>
                                 this.onRowKeydown(e, trackIndex)}
@@ -1408,6 +1535,7 @@ export class SmartPlaylistDetails
                                 ? nothing
                                 : this.onTrackDragEnd}
                         >
+                            ${this.swipe.renderReveal(trackIndex)}
                             ${isPhantom
                                 ? html`<div class="phantom-row">
                                       <wa-icon

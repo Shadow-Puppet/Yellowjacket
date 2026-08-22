@@ -64,9 +64,14 @@ import {
 } from '@utils/explore-link';
 import {
     ICON_NEW,
+    ICON_PLAY,
     ICON_PLAYLIST,
     ICON_QUEUE,
+    ICON_REMOVE,
 } from '@utils/icon-language';
+import type { GestureEvent } from '@utils/touch-gestures';
+import '@components/selection-bar/selection-bar';
+import type { SelectionAction } from '@components/selection-bar/selection-bar';
 /** Above this many tracks, clearing the queue asks first. */
 const CLEAR_CONFIRM_THRESHOLD = 20;
 
@@ -844,6 +849,8 @@ export class QueuePanel
         virtEl.addEventListener('dragstart', this.onDelegatedDragStart);
         virtEl.addEventListener('dragend', this.onTrackDragEnd);
         virtEl.addEventListener('keydown', this.onDelegatedKeydown);
+        virtEl.addEventListener('yj-tap', this.onRowTap);
+        virtEl.addEventListener('yj-long-press', this.onRowLongPress);
         this.delegationAttached = true;
     }
 
@@ -962,6 +969,8 @@ export class QueuePanel
             virtEl.removeEventListener('dragstart', this.onDelegatedDragStart);
             virtEl.removeEventListener('dragend', this.onTrackDragEnd);
             virtEl.removeEventListener('keydown', this.onDelegatedKeydown);
+            virtEl.removeEventListener('yj-tap', this.onRowTap);
+            virtEl.removeEventListener('yj-long-press', this.onRowLongPress);
         }
         this.delegationAttached = false;
     }
@@ -1246,6 +1255,92 @@ export class QueuePanel
         this.selection.clear();
         this.queue.playAtIndex(index);
     }
+
+    // =================================================================
+    // A finger on a queue row (plan 019 phase 3, #63)
+    // =================================================================
+
+    /**
+     * A tap plays this position in the queue.
+     *
+     * `track-list`'s tap sets the queue to the list it was made in;
+     * copying that here would rebuild the queue from the queue, which
+     * is not the no-op it looks like -- it would discard the queue's
+     * source, its shuffle order and everything a user had inserted by
+     * hand. `playAtIndex` is what a double-click already does, and it
+     * is what a tap means.
+     */
+    private onRowTap = (e: GestureEvent) => {
+        const idx = this.resolveTrackIndexFromEvent(e);
+
+        if (idx === null) return;
+
+        // A control inside the row owns its own tap -- the same rule
+        // the shortcut service has for a focused control that owns a
+        // key. The remove button is the one here.
+        if ((e.target as HTMLElement).closest('.remove-button')) return;
+
+        e.preventDefault();
+
+        // The roving tab stop follows the finger, or Tab returns to
+        // wherever the arrows last were rather than to the row that was
+        // just touched.
+        this.focusedIndex = idx;
+
+        if (this.selection.selectionMode) {
+            this.selection.toggleInMode(String(idx), idx);
+            this.virtualizer?.requestUpdate();
+
+            return;
+        }
+
+        this.selection.clear();
+        this.queue.playAtIndex(idx);
+    };
+
+    private onRowLongPress = (e: GestureEvent) => {
+        const idx = this.resolveTrackIndexFromEvent(e);
+
+        if (idx === null) return;
+
+        e.preventDefault();
+        this.focusedIndex = idx;
+        this.selection.enterSelectionMode(String(idx), idx);
+        this.virtualizer?.requestUpdate();
+    };
+
+    /**
+     * The two worth a thumb, and "More" for the rest.
+     *
+     * Remove is here rather than left to the overflow because it is
+     * what a selection in a *queue* is most often made for, and it is
+     * the action the row's own × offers one row at a time.
+     */
+    private static readonly SELECTION_ACTIONS: SelectionAction[] = [
+        { id: 'play', label: 'Play', icon: ICON_PLAY },
+        { id: 'remove', label: 'Remove', icon: ICON_REMOVE, danger: true },
+    ];
+
+    private renderSelectionBar() {
+        if (!this.selection.selectionMode) return nothing;
+
+        return html`
+            <selection-bar
+                .count=${this.selection.selectionCount}
+                .actions=${QueuePanel.SELECTION_ACTIONS}
+                @selection-exit=${this.onSelectionExit}
+                @selection-action=${(e: CustomEvent<{ id: string }>) =>
+                this.onContextMenuAction(e.detail.id)}
+                @selection-more=${(e: CustomEvent<{ x: number; y: number }>) =>
+                this.ctxMenu.openAt(e.detail.x, e.detail.y)}
+            ></selection-bar>
+        `;
+    }
+
+    private onSelectionExit = () => {
+        this.selection.exitSelectionMode();
+        this.virtualizer?.requestUpdate();
+    };
 
     private handleTrackContextMenu(
         e: MouseEvent,
@@ -2157,6 +2252,7 @@ export class QueuePanel
                               ></lit-virtualizer>
                           `}
                 </div>
+                ${this.renderSelectionBar()}
             </div>
 
             <menu-surface

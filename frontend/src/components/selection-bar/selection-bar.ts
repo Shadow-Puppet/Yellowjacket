@@ -39,6 +39,11 @@ import { ICON_MORE_ACTIONS } from '@utils/icon-language';
  * region: the number changes under the user's finger as they tap rows,
  * and nothing else on screen announces it.
  *
+ * **Escape leaves the mode, from here rather than from each host.**
+ * This element exists only while the mode does, so it is the one place
+ * a dismissal can be attached and detached with the thing it
+ * dismisses. It is the same exception the overlaid queue's Escape is.
+ *
  * **It renders nothing at zero.** The mode ends when the last row is
  * deselected — `SelectionController.toggleInMode` is where that is
  * decided — so a bar with a count of none is a state this should never
@@ -118,6 +123,43 @@ export class SelectionBar extends LitElement {
         this.dispatchEvent(
             new CustomEvent(name, { detail, bubbles: true, composed: true }),
         );
+    }
+
+    /**
+     * Escape leaves the mode.
+     *
+     * A mode changes what a tap means, so it has to have an exit that
+     * is not "find the ×" -- and this is the documented exception to
+     * the app's one-keyboard-authority rule, on exactly the grounds
+     * the overlaid queue's Escape is: **it is a dismissal, not a
+     * shortcut**, so it is not a panel-scoped binding and it is
+     * attached only while there is something to dismiss. Putting it
+     * here rather than in each host is what gives all four surfaces
+     * the same answer, since this element exists only while the mode
+     * does.
+     *
+     * The platform's own back gesture is the other half of that and is
+     * deliberately *not* here: the shell owns the history stack
+     * (#6/#55), and a component reaching for `history` itself is how
+     * two stacks come to disagree about what one press means -- the
+     * fault that deleted `navStack`. See #200.
+     */
+    private onKeydown = (e: KeyboardEvent) => {
+        if (e.key !== 'Escape' || this.count <= 0) return;
+
+        e.preventDefault();
+        e.stopPropagation();
+        this.emit('selection-exit');
+    };
+
+    override connectedCallback() {
+        super.connectedCallback();
+        document.addEventListener('keydown', this.onKeydown, true);
+    }
+
+    override disconnectedCallback() {
+        super.disconnectedCallback();
+        document.removeEventListener('keydown', this.onKeydown, true);
     }
 
     override render() {

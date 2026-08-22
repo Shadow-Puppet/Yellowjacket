@@ -38,6 +38,10 @@ import {
 } from '@utils/context-menu-controller.js';
 import type { ContextMenuHost, MenuTarget } from '@utils/context-menu-controller.js';
 import { focusRovingRow, nextRovingIndex } from '@utils/roving-rows';
+import type { GestureEvent } from '@utils/touch-gestures';
+import { SwipeToQueue, swipeRevealStyles } from '@utils/swipe-to-queue';
+import '@components/selection-bar/selection-bar';
+import type { SelectionAction } from '@components/selection-bar/selection-bar';
 import { FavoritesController } from '@store/controllers/favorites-controller';
 import { notificationStore } from '@store/notification-store';
 import { describeError } from '@utils/describe-error';
@@ -71,11 +75,14 @@ import {
     exploreLinkStyles,
 } from '@utils/explore-link';
 import { designTokens } from '../../styles/tokens.css';
+import { srOnly } from '../../styles/sr-only.css';
 import { backButton } from '../../styles/back-button.css';
 import { list } from '@utils/binding';
 import {
+    ICON_PLAY,
     ICON_PLAYLIST,
     ICON_QUEUE,
+    ICON_REMOVE,
 } from '@utils/icon-language';
 
 /** One playlist row: the track and its position in the *playlist*,
@@ -421,6 +428,127 @@ export class PlaylistDetails
 
         queueStore.setQueue(filePaths, trackIndex, false, { type: 'playlist', id: this.playlistId, label: this.playlistName });
     }
+
+    // =================================================================
+    // A finger on a playlist row (plan 019 phase 3, #63)
+    // =================================================================
+
+    /** The row an announced gesture is on, with its track. */
+    private rowFromGesture(
+        e: Event,
+    ): { index: number; track: playlist.Track } | null {
+        const row = (e.target as HTMLElement).closest(
+            '.track-item',
+        ) as HTMLElement | null;
+
+        if (!row) return null;
+
+        const index = Number(row.dataset.index);
+        const track = this.tracks[index];
+
+        if (Number.isNaN(index) || !track) return null;
+
+        return { index, track };
+    }
+
+    /**
+     * A tap plays the playlist from that row.
+     *
+     * The same thing a double-click does, which is the rule the whole
+     * app follows: activating one row plays the list the row is in,
+     * from that row, rather than a queue of one that stops when the
+     * song ends.
+     */
+    private onRowTap = (e: GestureEvent) => {
+        const hit = this.rowFromGesture(e);
+
+        if (!hit) return;
+
+        if (this.selection.selectionMode) {
+            e.preventDefault();
+            this.focusedIndex = hit.index;
+            this.selection.toggleInMode(String(hit.index), hit.index);
+            this.virtualizer?.requestUpdate();
+
+            return;
+        }
+
+        // A missing file has nothing to play, so the tap is left
+        // unclaimed and falls through to the click that selects it --
+        // which is what a mouse does here and the only useful thing a
+        // phantom row can answer.
+        if (hit.track.Phantom) return;
+
+        e.preventDefault();
+        this.focusedIndex = hit.index;
+        this.handleTrackDblClick(hit.index);
+    };
+
+    private onRowLongPress = (e: GestureEvent) => {
+        const hit = this.rowFromGesture(e);
+
+        if (!hit) return;
+
+        e.preventDefault();
+        this.focusedIndex = hit.index;
+        this.selection.enterSelectionMode(String(hit.index), hit.index);
+        this.virtualizer?.requestUpdate();
+    };
+
+    /**
+     * Swipe a row right to queue it.
+     *
+     * `track-list`'s rule, one list over: one row is a position and
+     * several rows are an explicit choice, and a swipe never changes
+     * the selection it reads.
+     */
+    private swipe = new SwipeToQueue(this, {
+        resolve: (e) => {
+            const hit = this.rowFromGesture(e);
+
+            // A phantom has no file to queue, so there is nothing for
+            // the reveal to promise.
+            if (!hit || hit.track.Phantom) return null;
+
+            const selected = this.selection.getSelectedIndices();
+            const many =
+                selected.length > 1 && selected.includes(hit.index);
+            const filePaths = many
+                ? this.getSelectedFilePaths()
+                : [hit.track.FilePath];
+
+            return { index: hit.index, filePaths, label: hit.track.Title };
+        },
+        repaint: () => this.virtualizer?.requestUpdate(),
+    });
+
+    /** The three worth a thumb; the sheet behind "More" is the rest. */
+    private static readonly SELECTION_ACTIONS: SelectionAction[] = [
+        { id: 'play', label: 'Play', icon: ICON_PLAY },
+        { id: 'add-to-queue', label: 'Add to queue', icon: ICON_QUEUE },
+        { id: 'remove', label: 'Remove', icon: ICON_REMOVE, danger: true },
+    ];
+
+    private renderSelectionBar() {
+        if (!this.selection.selectionMode) return nothing;
+
+        return html`
+            <selection-bar
+                .count=${this.selection.selectionCount}
+                .actions=${PlaylistDetails.SELECTION_ACTIONS}
+                @selection-exit=${this.onSelectionExit}
+                @selection-action=${(e: CustomEvent<{ id: string }>) =>
+                this.onContextMenuAction(e.detail.id)}
+                @selection-more=${(e: CustomEvent<{ x: number; y: number }>) =>
+                this.ctxMenu.openAt(e.detail.x, e.detail.y)}
+            ></selection-bar>
+        `;
+    }
+
+    private onSelectionExit = () => {
+        this.selection.exitSelectionMode();
+        this.virtualizer?.requestUpdate();
+    };
 
     private handleTrackContextMenu(
         e: MouseEvent,
@@ -955,9 +1083,11 @@ export class PlaylistDetails
 
     static override styles = [
         designTokens,
+        srOnly,
         backButton,
         contextMenuStyles,
         exploreLinkStyles,
+        swipeRevealStyles,
         css`
         :host {
             display: flex;
@@ -1136,6 +1266,9 @@ export class PlaylistDetails
         .track-item {
             width: 100%;
             box-sizing: border-box;
+            /* The swipe reveal is absolute inside the row. */
+            position: relative;
+            overflow: hidden;
         }
 
         .track-header {
@@ -1433,6 +1566,9 @@ export class PlaylistDetails
                 <div class="header-cell col-album">Album</div>
                 <div class="header-cell col-duration">Duration</div>
             </div>
+            <div class="sr-only" role="status" aria-live="polite">
+                ${this.swipe.announcement}
+            </div>
             <lit-virtualizer
                 class="track-scroller"
                 role="listbox"
@@ -1442,7 +1578,13 @@ export class PlaylistDetails
                 .renderItem=${this.renderRow}
                 .keyFunction=${this.rowKey}
                 .layout=${this.flowLayout}
+                @yj-tap=${this.onRowTap}
+                @yj-long-press=${this.onRowLongPress}
+                @yj-swipe-start=${this.swipe.onSwipeStart}
+                @yj-swipe-move=${this.swipe.onSwipeMove}
+                @yj-swipe-end=${this.swipe.onSwipeEnd}
             ></lit-virtualizer>
+            ${this.renderSelectionBar()}
         `;
     }
 
@@ -1464,6 +1606,7 @@ export class PlaylistDetails
                         active ? 'active' : '',
                         selected ? 'selected' : '',
                         isPhantom ? 'phantom' : '',
+                        this.swipe.isSwiping(trackIndex) ? 'swiping' : '',
                     ]
                         .filter(Boolean)
                         .join(' ');
@@ -1474,6 +1617,7 @@ export class PlaylistDetails
                             role="option"
                             aria-selected=${selected}
                             data-index=${trackIndex}
+                            data-swipe
                             tabindex=${trackIndex === this.focusedIndex ? 0 : -1}
                             @keydown=${(e: KeyboardEvent) =>
                                 this.onRowKeydown(e, trackIndex)}
@@ -1520,6 +1664,7 @@ export class PlaylistDetails
                                 ? nothing
                                 : this.onTrackDragEnd}
                         >
+                            ${this.swipe.renderReveal(trackIndex)}
                             ${isPhantom
                                 ? html`<div
                                       class="phantom-row"

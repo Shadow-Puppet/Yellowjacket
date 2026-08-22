@@ -1449,18 +1449,112 @@ never opens). **The sweep found two of the fourteen**; twelve were
 converted by hand.
 
 **And a menu opens from a finger, through the event it already has.**
-`utils/long-press.ts` is one document-capture listener installed once
-from `index.ts`: a touch that holds still for 500 ms dispatches a
-synthetic `contextmenu` at the touch point, so all six components that
-bind one — delegated on a virtualizer, per row, per card — gained the
-gesture without changing. The target is `composedPath()[0]` rather than
+`utils/touch-gestures.ts` is one document-capture listener installed
+once from `index.ts` — `utils/long-press.ts` until #63 replaced it,
+rather than adding a second listener claiming the same 500 ms hold. It
+**announces** rather than acts: `yj-tap`, `yj-long-press` and
+`yj-swipe-start` are composed and cancelable, and a component claims
+one with `preventDefault()`. That is what let #63 reassign the hold
+without touching one of the fourteen context menus: an *unclaimed*
+`yj-long-press` still becomes a synthetic `contextmenu`, so all six
+components that bind one — delegated on a virtualizer, per row, per
+card — behave exactly as they did, and only the lists that opt in get
+selection mode. The target is `composedPath()[0]` rather than
 `elementFromPoint`, which stops at the outermost shadow host and so
-reaches a delegated listener and no per-row one; a browser that fires
-its own long-press `contextmenu` (Chromium does, WebKit and the WebView
-vary) wins, ours being told from theirs by **identity** rather than
-`isTrusted`, since no test can dispatch a trusted event; and the click
-that ends the gesture is swallowed, keyed on the gesture rather than on
-a time window so the first tap on the menu it opened is not eaten too.
+reaches a delegated listener and no per-row one; and the click that
+ends a *claimed* gesture is swallowed, keyed on the gesture rather than
+on a time window so the first tap on the menu it opened is not eaten
+too.
+
+Three things about it are load-bearing, and all three were found on the
+device rather than in a tier.
+
+**A browser that fires its own long-press `contextmenu` is a trigger,
+not a competitor.** Chromium does, WebKit and the WebView vary. The old
+rule was to stand down when a trusted one arrived, which was right
+while both paths ended in a context menu and is wrong the moment a hold
+can mean something else — standing down silently does the *old* thing.
+So the gesture is announced from the native event, and only a component
+that claims it suppresses that event. Ours and the browser's are told
+apart by **identity** rather than `isTrusted`, since no test can
+dispatch a trusted event.
+
+**That arrives in either order, and both have to be handled.** The
+native `contextmenu` mid-hold is one case; the other is our own 500 ms
+timer firing first and Chrome delivering its menu **50–70 ms later**,
+which nothing suppressed — measured over four holds on the reference
+phone, two took that order, so the context menu opened over the
+selection bar intermittently, on the one surface #63 changed. A press
+that has produced its outcome therefore suppresses a late
+`contextmenu` whichever branch it took.
+
+**A horizontal swipe runs on touch events, and needs two things that
+look like one.** Chrome 113's WebView cancels the *pointer* stream
+~16 px into any drag — measured at `auto`, `pan-y` and `none` alike,
+one or two `pointermove`s and then `pointercancel`, while `touchmove`
+kept firing throughout. So the recogniser is `touchmove`, the surface
+declares **`touch-action: pan-y`** *and* a claimed swipe calls
+**`preventDefault()`** on a non-passive listener. Neither works alone:
+with the `preventDefault` in place but `touch-action` back at `auto`
+the gesture died after one move, because `auto` lets the browser commit
+to a horizontal pan before any threshold can be crossed. `none` is the
+value to avoid — it takes the list's own vertical scrolling with it.
+**Both are correct in Chromium either way**, which is why this is
+written down rather than tested. The tie breaks toward scrolling, in
+that order: vertical drift past the tolerance vetoes the swipe for the
+rest of the press (a scroll that curves is still a scroll), and a
+gesture that is not *strictly* more horizontal than vertical is the
+scroller's.
+
+**And what a finger *means* on a row is the inversion of what a mouse
+means, decided per event** (#63). A click selects and a double-click
+plays; a tap **plays** and a hold enters **selection mode**, in which a
+tap toggles. The predicate is `pointerType`, never a viewport width and
+never a platform flag — #64's rule, and with #64's warning: keyed on a
+width, an Android tablet over 600px gets desktop semantics on a
+touchscreen, a touchscreen laptop cannot be described at all, and a
+narrow desktop window gets phone semantics with a mouse.
+
+There is deliberately **no double-tap**, which #63 asked for. The first
+tap of one is indistinguishable from a single tap until the interval
+expires, so tapping would have to wait `DOUBLE_CLICK_GRACE_MS` before
+acting — 250ms on top of a measured ~100ms play, 3.5x the app's primary
+interaction, to reach a menu a hold already reaches. So the menu and
+the action bar are the same surface: `components/selection-bar/` is
+presentational (a count and a list of actions, no store, no selection),
+`SelectionController` carries the mode for all four selecting surfaces,
+and #60's bottom sheet is the overflow behind "More" — so
+`contextMenuStyles`, `MenuKeyboard` and `menu-surface` are reused
+rather than reimplemented.
+
+Three things about it are load-bearing. **A control inside a row keeps
+its own tap**: the gesture is simply not claimed there, so the click
+behind it falls through, which is what stops the 44px favourite target
+(#56) becoming a 44px play target — the queue row's × is the second
+instance. **A swipe right queues**, and its affordance is
+`utils/swipe-to-queue.ts` once rather than in each of the three lists
+that draw it: the row does not move, its *children* do (a row here is
+`contain: strict` with `overflow: hidden`, so a pane held at the row's
+original position while the row translates is at a negative offset
+inside a clipping box and is not painted), the travel is written to the
+row's own style rather than rendered, and the threshold is a fraction
+of the row because the row is 424x52 on the reference device. **The
+queue panel takes the tap and the hold and refuses the swipe**, because
+a right swipe means *add to the queue* everywhere it exists and a queue
+row is already in it — the only thing it could mean there is *remove*,
+which is the same gesture with the opposite effect one screen away.
+A tap there plays that *position*, too: setting the queue to the queue
+reads as a no-op and discards its source, its shuffle order and
+anything inserted by hand.
+
+Escape leaves the mode, from `selection-bar` rather than from each
+host, since that element exists only while the mode does — the same
+exception the overlaid queue's Escape is, *a dismissal, not a
+shortcut*. The platform's back gesture deliberately does **not** reach
+it: the shell owns the history stack and four lists each reaching for
+`history` is four stacks, which is the fault `navStack` was deleted
+for. That wants one shell-owned register of dismissible surfaces, which
+is #200.
 
 **A control revealed by `:hover` is gated on the device having hover,
 and which way round depends on whether it is the only route to its

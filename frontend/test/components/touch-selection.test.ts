@@ -26,6 +26,9 @@ import { fixture, shadow, shadowAll } from '@test/support/render';
 import { installTouchGestures, LONG_PRESS_MS } from '@utils/touch-gestures';
 
 const HELD = LONG_PRESS_MS + 120;
+
+/** Comfortably past `explore-link`'s own DOUBLE_CLICK_GRACE_MS of 250. */
+const EXPLORE_LINK_GRACE = 400;
 const BRIEF = Math.round(LONG_PRESS_MS / 4);
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -39,6 +42,12 @@ function track(n: number) {
     Album: 'An Album',
     Duration: 100 + n,
     ID: n,
+    // Tagged, so the title's `explore-link` can actually navigate.
+    // Without an MBID it asks the backend for a local album first and
+    // gives up when nothing answers -- which makes "the tap did not
+    // navigate" true of every build, working or not.
+    ReleaseGroupMBID: 'e8f4b1d2-0000-4000-8000-00000000000' + n,
+    RecordingMBID: 'a1b2c3d4-0000-4000-8000-00000000000' + n,
   };
 }
 
@@ -60,11 +69,24 @@ function press(el: EventTarget, type: string, init: PointerEventInit = {}) {
   );
 }
 
-/** A whole finger tap: down, a moment, up. */
+/**
+ * A whole finger tap: down, a moment, up, and **the click a browser
+ * fires afterwards**.
+ *
+ * That last event is not decoration. A tap the component claims has
+ * its click swallowed at document capture, and the click is the only
+ * thing that would otherwise select the row, follow the `explore-link`
+ * in its title, or press whatever the finger landed on. A helper that
+ * stops at `pointerup` asserts none of that and passes on a build with
+ * the swallow deleted.
+ */
 async function tap(el: EventTarget) {
   press(el, 'pointerdown');
   await wait(BRIEF);
   press(el, 'pointerup');
+  el.dispatchEvent(
+    new MouseEvent('click', { bubbles: true, composed: true, cancelable: true }),
+  );
   await wait(0);
 }
 
@@ -275,5 +297,100 @@ describe('<selection-bar>', () => {
         button.getAttribute('aria-label') ?? '',
       ).toBeGreaterThanOrEqual(44);
     }
+  });
+});
+
+/**
+ * What the gestures leave behind (plan 019 phase 4, #63).
+ *
+ * Every track, album and artist name in a row is an `explore-link`,
+ * which navigates on a genuine single click — and a row's single
+ * *tap* now plays. That conflict is #67's to answer properly; what
+ * this plan committed to is the narrower half of it, that **tap-to-play
+ * wins on touch**, and it falls out of phase 1's design rather than
+ * needing a rule: a claimed tap has its click swallowed at document
+ * capture, so the link's own handler never runs.
+ *
+ * It falls out, which is exactly why it is asserted. Nothing else in
+ * the suite would fail if the swallow stopped covering the link, and
+ * the symptom — a tap on a track's title navigating to its album
+ * instead of playing it — is one a phone user meets constantly and a
+ * mouse user never does.
+ */
+describe('a tap on a name inside a row', () => {
+  beforeEach(() => {
+    resetHarness();
+    stub('library.Library.GetTracks', TRACKS);
+    stub('library.Library.GetAllLibrariesWithTrackCounts', []);
+    stub('config.Config.GetShortcuts', {});
+    stub('queue.Queue.SetQueue', null);
+    uninstall = installTouchGestures();
+  });
+
+  afterEach(() => {
+    uninstall?.();
+    uninstall = null;
+    vi.restoreAllMocks();
+  });
+
+  /** Where the row's title is rendered, which is a link. */
+  function titleLink(el: HTMLElement, row: number): HTMLElement {
+    const link = rows(el)[row]?.querySelector('.explore-link');
+
+    expect(link, 'the row renders its title as a link').toBeTruthy();
+
+    return link as HTMLElement;
+  }
+
+  it('plays the row rather than navigating', async () => {
+    const el = await mountList();
+    const navigations: Event[] = [];
+
+    document.addEventListener('navigate', (e) => navigations.push(e));
+
+    await tap(titleLink(el, 1));
+    await flush();
+    // `explore-link` holds a navigation for DOUBLE_CLICK_GRACE_MS, so
+    // asserting sooner passes on a build that is about to navigate.
+    await wait(EXPLORE_LINK_GRACE);
+
+    expect(calls('queue.Queue.SetQueue').length, 'the row played').toBe(1);
+    expect(navigations, 'and nothing navigated').toHaveLength(0);
+  });
+
+  it('toggles the row while selection mode is on', async () => {
+    const el = await mountList();
+    const navigations: Event[] = [];
+
+    document.addEventListener('navigate', (e) => navigations.push(e));
+
+    await hold(rows(el)[0]!);
+    await el.updateComplete;
+    await tap(titleLink(el, 2));
+    await el.updateComplete;
+    await wait(EXPLORE_LINK_GRACE);
+
+    expect(
+      (shadow(el, 'selection-bar') as unknown as { count: number }).count,
+    ).toBe(2);
+    expect(navigations).toHaveLength(0);
+  });
+
+  it('leaves the mode on Escape', async () => {
+    // A mode changes what a tap means, so it needs an exit that is not
+    // "find the x". It is a dismissal rather than a shortcut, which is
+    // why it is not a panel-scoped binding.
+    const el = await mountList();
+
+    await hold(rows(el)[0]!);
+    await el.updateComplete;
+
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+    );
+    await el.updateComplete;
+
+    expect(shadow(el, 'selection-bar')).toBeFalsy();
+    expect(rows(el)[0]?.getAttribute('aria-selected')).toBe('false');
   });
 });

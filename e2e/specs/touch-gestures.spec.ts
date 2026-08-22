@@ -1,4 +1,4 @@
-import { test, expect } from '../support/fixtures.js';
+import { test, expect, callBinding } from '../support/fixtures.js';
 
 /**
  * The touch gestures against the real app (plan 019, #63; long-press
@@ -190,5 +190,122 @@ test.describe('a hold anywhere else still opens the menu', () => {
     // The same panel Shift+F10 opens, items and all -- not an empty
     // popup that happened to become visible.
     expect((await panel(app, 'cover-grid'))?.items).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * Swipe right on a track row to queue it (plan 019 phase 2, #63).
+ *
+ * The component tier has the rule this obeys — one row is a position,
+ * several are a choice — against a queue that is a fake. What is only
+ * true here is that the gesture reaches the *real* queue: `AddTracks`
+ * is a Go method, the queue is persisted, and "the row was added"
+ * is a question only the backend can answer.
+ *
+ * **It is Chromium-only, and that is a property of the browser rather
+ * than a gap.** The gesture runs on touch events, because Chrome 113's
+ * WebView cancels the pointer stream ~16px into any drag whatever
+ * `touch-action` says. Desktop WebKit implements no `TouchEvent`
+ * constructor at all — touch events are a mobile-Safari surface — so
+ * the events this needs cannot be built there. Skipping loudly is
+ * better than a spec that quietly asserts nothing on half the matrix,
+ * which is what `layout-overflow.spec.ts` and `back-navigation.spec.ts`
+ * were each doing when they were green on a broken build.
+ */
+test.describe('a swipe right on a track row queues it', () => {
+  test.beforeEach(async ({ app, browserName }) => {
+    test.skip(
+      browserName !== 'chromium',
+      'desktop WebKit has no TouchEvent constructor to build the gesture from',
+    );
+
+    await app.setViewportSize(PHONE);
+    await app.getByTestId('tab-tracks').click();
+    await expect(app.getByTestId('main-content')).toHaveAttribute(
+      'data-active-view',
+      'tracks',
+    );
+  });
+
+  test.afterEach(async ({ app }) => {
+    await app.setViewportSize({ width: 1440, height: 900 });
+  });
+
+  /**
+   * Drag the first row sideways by a fraction of its own width and
+   * lift. `fraction` is against the row, because the commit threshold
+   * is — a number of pixels here would be a second declaration of it,
+   * right on one viewport and wrong on the next.
+   */
+  const swipeFirstRow = (page: Page, fraction: number) =>
+    page.evaluate((f) => {
+      const row = document
+        .querySelector('track-list')
+        ?.shadowRoot?.querySelector('.track-row');
+
+      if (!row) throw new Error('no track row to swipe');
+
+      const box = row.getBoundingClientRect();
+      const y = box.top + box.height / 2;
+      const at = (x: number) =>
+        new Touch({
+          identifier: 1,
+          target: row,
+          clientX: box.left + x,
+          clientY: y,
+        });
+      const send = (type: string, points: Touch[]) =>
+        row.dispatchEvent(
+          new TouchEvent(type, {
+            bubbles: true,
+            composed: true,
+            cancelable: true,
+            touches: points,
+            changedTouches: points.length > 0 ? points : [at(0)],
+          }),
+        );
+
+      send('touchstart', [at(0)]);
+
+      for (const step of [0.25, 0.5, 0.75, 1]) {
+        send('touchmove', [at(box.width * f * step)]);
+      }
+
+      send('touchend', []);
+    }, fraction);
+
+  /** How many tracks the backend says are in the queue. */
+  const queueLength = async (page: Page) => {
+    const state = await callBinding<{ tracks: unknown[] }>(
+      page,
+      'queue.Queue.GetState',
+    );
+
+    return state.tracks?.length ?? 0;
+  };
+
+  test('adds exactly one track to the real queue', async ({ app }) => {
+    const before = await queueLength(app);
+
+    await swipeFirstRow(app, 0.6);
+
+    await expect.poll(() => queueLength(app)).toBe(before + 1);
+
+    // Queued, not played: a swipe is not a tap, and the difference is
+    // what is on screen afterwards.
+    expect(
+      await app.getByTestId('main-content').getAttribute('data-active-view'),
+    ).toBe('tracks');
+  });
+
+  test('does nothing when the finger did not get far enough', async ({
+    app,
+  }) => {
+    const before = await queueLength(app);
+
+    await swipeFirstRow(app, 0.1);
+    await app.waitForTimeout(400);
+
+    expect(await queueLength(app)).toBe(before);
   });
 });

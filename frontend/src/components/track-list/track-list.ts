@@ -11,6 +11,7 @@ import {
 import { SelectionController } from '@utils/selection-controller';
 import type { SelectionHost } from '@utils/selection-controller';
 import type { GestureEvent } from '@utils/touch-gestures';
+import { SwipeToQueue, swipeRevealStyles } from '@utils/swipe-to-queue';
 import '@components/selection-bar/selection-bar';
 import type { SelectionAction } from '@components/selection-bar/selection-bar';
 import { ViewLifecycleMixin } from '@utils/view-lifecycle';
@@ -281,6 +282,29 @@ export class TrackList
      *  standard roving tabindex.  Before this the list had no keyboard
      *  path into it at all (H-5). */
     @state() private focusedIndex = 0;
+
+    /**
+     * Swipe a row right to queue it (plan 019 phase 2, #63).
+     *
+     * The affordance and the arithmetic are `utils/swipe-to-queue.ts`,
+     * shared with both playlist detail views; what stays here is what
+     * only this list knows -- which row an event is on, and what a
+     * swipe on it means when other rows are selected.
+     */
+    private swipe = new SwipeToQueue(this, {
+        resolve: (e) => {
+            const hit = this.resolveTrackFromEvent(e);
+
+            if (!hit) return null;
+
+            return {
+                index: hit.index,
+                filePaths: this.swipeTargetKeys(hit.track.FilePath),
+                label: hit.track.TrackName,
+            };
+        },
+        repaint: () => this.virtualizer?.requestUpdate(),
+    });
 
     private handleSelectAll = (): void => {
         this.selection.selectAll();
@@ -1016,7 +1040,7 @@ export class TrackList
         this.requestUpdate();
     };
 
-    static override styles = [designTokens, srOnly, contextMenuStyles, exploreLinkStyles, css`
+    static override styles = [designTokens, srOnly, contextMenuStyles, exploreLinkStyles, swipeRevealStyles, css`
     :host {
       display: flex;
       flex-direction: column;
@@ -1213,6 +1237,7 @@ export class TrackList
       background-color: var(--yj-selection-bg, rgba(100, 160, 255, 0.15));
     }
 
+
     .cell {
       overflow: hidden;
       text-overflow: ellipsis;
@@ -1311,6 +1336,9 @@ export class TrackList
             virt.removeEventListener('contextmenu', this.onDelegatedContextMenu);
             virt.removeEventListener('yj-tap', this.onRowTap);
             virt.removeEventListener('yj-long-press', this.onRowLongPress);
+            virt.removeEventListener('yj-swipe-start', this.swipe.onSwipeStart);
+            virt.removeEventListener('yj-swipe-move', this.swipe.onSwipeMove);
+            virt.removeEventListener('yj-swipe-end', this.swipe.onSwipeEnd);
             virt.removeEventListener('dragstart', this.onDelegatedDragStart);
             virt.removeEventListener('dragend', this.onTrackDragEnd);
         }
@@ -1457,6 +1485,9 @@ export class TrackList
         // through the same path a real click takes (plan 019).
         virt.addEventListener('yj-tap', this.onRowTap);
         virt.addEventListener('yj-long-press', this.onRowLongPress);
+        virt.addEventListener('yj-swipe-start', this.swipe.onSwipeStart);
+        virt.addEventListener('yj-swipe-move', this.swipe.onSwipeMove);
+        virt.addEventListener('yj-swipe-end', this.swipe.onSwipeEnd);
         this.delegationAttached = true;
     }
 
@@ -1775,6 +1806,30 @@ export class TrackList
         this.selection.enterSelectionMode(hit.track.FilePath, hit.index);
         this.virtualizer?.requestUpdate();
     };
+
+    /**
+     * What a swipe on this row would queue.
+     *
+     * The same rule the context menu answers with, and it has to be:
+     * **one row is a position, several rows are an explicit choice.**
+     * A finger that swipes a row which is part of a selection of forty
+     * has not un-made that selection, and queueing the one row it
+     * touched would quietly contradict the bar above saying forty are
+     * selected. A swipe on a row *outside* the selection is a statement
+     * about that row, exactly as a right-click on one is -- and unlike
+     * a right-click it does not move the selection, because a swipe is
+     * not a way of selecting anything.
+     */
+    private swipeTargetKeys(filePath: string): string[] {
+        if (
+            this.selection.selectionCount > 1 &&
+            this.selection.isSelected(filePath)
+        ) {
+            return this.selection.getSelectedKeysOrdered();
+        }
+
+        return [filePath];
+    }
 
     private onDelegatedDragStart = (e: DragEvent) => {
         const hit = this.resolveTrackFromEvent(e);
@@ -2197,6 +2252,7 @@ export class TrackList
             'track-row': true,
             active,
             selected,
+            swiping: this.swipe.isSwiping(index),
         })}
         role="row"
         aria-rowindex=${index + 1}
@@ -2206,8 +2262,10 @@ export class TrackList
         draggable="true"
         data-index=${index}
         data-testid="track-row"
+        data-swipe
         data-file-path=${track.FilePath}
       >
+        ${this.swipe.renderReveal(index)}
         <div
           role="gridcell"
           class=${classMap({
@@ -2353,6 +2411,9 @@ export class TrackList
       ${this.renderPageHeader()}
       <div class="sr-only" role="status" aria-live="polite">
         ${this.liveStatus(visibleTracks.length)}
+      </div>
+      <div class="sr-only" role="status" aria-live="polite">
+        ${this.swipe.announcement}
       </div>
       ${this.tracks.length === 0
                 ? this.renderPlaceholder()
