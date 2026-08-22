@@ -19,6 +19,29 @@ export class SelectionController implements ReactiveController {
     private host: SelectionHost;
     private _selectedItems: Set<string> = new Set();
     private lastSelectedIndex: number | null = null;
+    private _mode = false;
+
+    /**
+     * Whether the list is in *selection mode* (plan 019, #63).
+     *
+     * A finger has no modifier keys, so the ctrl/shift semantics this
+     * controller was written for cannot be expressed by touch at all.
+     * Selection mode is the platform's answer: a long press enters it,
+     * and while it is on, a tap toggles a row instead of playing it.
+     *
+     * It is a flag *here* rather than a fifth concept beside the
+     * controller because all four surfaces that select
+     * (`track-list`, `queue-panel` and both playlist detail views)
+     * already share this class -- so "is this list selecting" has one
+     * answer per list, in the object that already owns the selection
+     * it would otherwise contradict.
+     *
+     * A mouse never sets it. Desktop selection is unchanged and stays
+     * modeless, which is what `handleItemClick` still implements.
+     */
+    get selectionMode(): boolean {
+        return this._mode;
+    }
 
     constructor(host: SelectionHost) {
         this.host = host;
@@ -136,8 +159,64 @@ export class SelectionController implements ReactiveController {
         return true;
     }
 
+    /**
+     * Enter selection mode with `key` selected.
+     *
+     * The row the gesture was made on is selected, rather than the
+     * mode opening empty: a long press is a statement about *that*
+     * row, and an action bar with nothing in it is a mode the user has
+     * to make a second gesture to escape.
+     */
+    enterSelectionMode(key: string, index: number): void {
+        this._mode = true;
+        this._selectedItems = new Set([key]);
+        this.lastSelectedIndex = index;
+        this.host.requestUpdate();
+        this.host.onSelectionChanged?.();
+    }
+
+    /**
+     * Toggle one row, and leave the mode when the last one goes.
+     *
+     * Deselecting everything is how Android's own list surfaces exit
+     * selection mode, and it matters more here than convention: the
+     * mode changes what a tap *means*, so a mode with an empty
+     * selection is a list where tapping does nothing and nothing on
+     * screen says why.
+     */
+    toggleInMode(key: string, index: number): void {
+        const next = new Set(this._selectedItems);
+
+        if (next.has(key)) next.delete(key);
+        else next.add(key);
+
+        this._selectedItems = next;
+        this.lastSelectedIndex = index;
+
+        if (next.size === 0) this._mode = false;
+
+        this.host.requestUpdate();
+        this.host.onSelectionChanged?.();
+    }
+
+    /** Leave selection mode, dropping the selection with it. */
+    exitSelectionMode(): void {
+        if (!this._mode && this._selectedItems.size === 0) return;
+
+        this._mode = false;
+        this._selectedItems = new Set();
+        this.lastSelectedIndex = null;
+        this.host.requestUpdate();
+        this.host.onSelectionChanged?.();
+    }
+
     /** Clear the entire selection. */
     clear(): void {
+        // The mode goes with it: every caller of this means "the
+        // selection is no longer meaningful", and a mode outliving the
+        // selection it was showing is the empty-mode trap above.
+        this._mode = false;
+
         if (this._selectedItems.size === 0) return;
 
         this._selectedItems = new Set();
@@ -176,6 +255,13 @@ export class SelectionController implements ReactiveController {
         if (next.size === this._selectedItems.size) return;
 
         this._selectedItems = next;
+
+        // A refetch that emptied the selection also ends the mode --
+        // otherwise removing the last selected track from the library
+        // leaves the list in a state where a tap selects and the bar
+        // is gone.
+        if (next.size === 0) this._mode = false;
+
         this.host.requestUpdate();
         this.host.onSelectionChanged?.();
     }

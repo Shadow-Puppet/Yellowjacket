@@ -10,6 +10,9 @@ import {
 } from 'lit/decorators.js';
 import { SelectionController } from '@utils/selection-controller';
 import type { SelectionHost } from '@utils/selection-controller';
+import type { GestureEvent } from '@utils/touch-gestures';
+import '@components/selection-bar/selection-bar';
+import type { SelectionAction } from '@components/selection-bar/selection-bar';
 import { ViewLifecycleMixin } from '@utils/view-lifecycle';
 import { PHONE_QUERY } from '@utils/breakpoints';
 import {
@@ -77,7 +80,9 @@ import '@components/playlist-picker/playlist-picker.js';
 import type { TrackDetails } from '@components/track-details/track-details.js';
 import type { CoverArtUrls } from '@components/track-details/track-details.js';
 import {
+    ICON_PLAY,
     ICON_PLAYLIST,
+    ICON_PLAY_NEXT,
     ICON_QUEUE,
 } from '@utils/icon-language';
 
@@ -1304,6 +1309,8 @@ export class TrackList
             virt.removeEventListener('click', this.onDelegatedClick);
             virt.removeEventListener('dblclick', this.onDelegatedDblClick);
             virt.removeEventListener('contextmenu', this.onDelegatedContextMenu);
+            virt.removeEventListener('yj-tap', this.onRowTap);
+            virt.removeEventListener('yj-long-press', this.onRowLongPress);
             virt.removeEventListener('dragstart', this.onDelegatedDragStart);
             virt.removeEventListener('dragend', this.onTrackDragEnd);
         }
@@ -1445,6 +1452,11 @@ export class TrackList
         virt.addEventListener('contextmenu', this.onDelegatedContextMenu);
         virt.addEventListener('dragstart', this.onDelegatedDragStart);
         virt.addEventListener('dragend', this.onTrackDragEnd);
+        // Delegated like the rest: the gesture layer dispatches on the
+        // element the finger landed on, composed, so it arrives here
+        // through the same path a real click takes (plan 019).
+        virt.addEventListener('yj-tap', this.onRowTap);
+        virt.addEventListener('yj-long-press', this.onRowLongPress);
         this.delegationAttached = true;
     }
 
@@ -1706,6 +1718,62 @@ export class TrackList
         const hit = this.resolveTrackFromEvent(e);
 
         if (hit) this.onTrackContextMenu(e, hit.track);
+    };
+
+    /**
+     * A finger tapped a row (plan 019, #63).
+     *
+     * On a desktop a click selects and a double-click plays; a finger
+     * inverts that, because there is no second button and no modifier
+     * key, so the primary action has to be the primary gesture.
+     *
+     * Claiming the gesture (`preventDefault`) is what tells the layer
+     * to swallow the click behind it -- otherwise playing a track
+     * would also select it, and the row would end up in both states.
+     * A tap this does *not* claim falls through as an ordinary click,
+     * which is what keeps the favourite icon working.
+     */
+    private onRowTap = (e: GestureEvent) => {
+        const hit = this.resolveTrackFromEvent(e);
+
+        if (!hit) return;
+
+        // A control inside the row owns its own tap. The same rule the
+        // shortcut service has for a focused control that owns a key,
+        // and without it the 44px favourite target (#56) becomes a
+        // 44px play target.
+        if ((e.target as HTMLElement).closest('.fav-icon')) return;
+
+        e.preventDefault();
+        this.focusedIndex = hit.index;
+
+        if (this.selection.selectionMode) {
+            this.selection.toggleInMode(hit.track.FilePath, hit.index);
+            this.virtualizer?.requestUpdate();
+
+            return;
+        }
+
+        this.playFromRow(hit.index);
+    };
+
+    /**
+     * A finger held a row still for half a second.
+     *
+     * Claiming this is what makes it *selection mode* rather than the
+     * context menu it has been since plan 016 -- an unclaimed
+     * `yj-long-press` still becomes a `contextmenu`, which is how the
+     * card grids and Explore keep the behaviour they have.
+     */
+    private onRowLongPress = (e: GestureEvent) => {
+        const hit = this.resolveTrackFromEvent(e);
+
+        if (!hit) return;
+
+        e.preventDefault();
+        this.focusedIndex = hit.index;
+        this.selection.enterSelectionMode(hit.track.FilePath, hit.index);
+        this.virtualizer?.requestUpdate();
     };
 
     private onDelegatedDragStart = (e: DragEvent) => {
@@ -2238,6 +2306,45 @@ export class TrackList
         this.saveSortPreferences();
     };
 
+    /**
+     * The three worth a thumb. Everything else is behind "More",
+     * which opens the context menu this list already renders.
+     *
+     * A bar is one row on a 424px screen and the menu is nine items,
+     * so this is a subset by necessity rather than a second opinion
+     * about what matters -- and plan 018's promise that no action is
+     * unreachable is kept by the overflow, not by this list.
+     */
+    private static readonly SELECTION_ACTIONS: SelectionAction[] = [
+        { id: 'play', label: 'Play', icon: ICON_PLAY },
+        { id: 'add-to-queue', label: 'Add to queue', icon: ICON_QUEUE },
+        { id: 'play-next', label: 'Play next', icon: ICON_PLAY_NEXT },
+    ];
+
+    private renderSelectionBar() {
+        // Only in selection mode: a mouse selection is modeless and
+        // shows its actions on right-click, which is where a desktop
+        // user looks for them.
+        if (!this.selection.selectionMode) return nothing;
+
+        return html`
+            <selection-bar
+                .count=${this.selection.selectionCount}
+                .actions=${TrackList.SELECTION_ACTIONS}
+                @selection-exit=${this.onSelectionExit}
+                @selection-action=${(e: CustomEvent<{ id: string }>) =>
+                    this.onContextMenuAction(e.detail.id)}
+                @selection-more=${(e: CustomEvent<{ x: number; y: number }>) =>
+                    this.ctxMenu.openAt(e.detail.x, e.detail.y)}
+            ></selection-bar>
+        `;
+    }
+
+    private onSelectionExit = () => {
+        this.selection.exitSelectionMode();
+        this.virtualizer?.requestUpdate();
+    };
+
     override render() {
         const visibleTracks = this.cachedSortedTracks;
         const cols = this.activeColumns;
@@ -2322,6 +2429,7 @@ export class TrackList
                     )}
       </div>
             </div>
+            ${this.renderSelectionBar()}
           `}
 
       <menu-surface
