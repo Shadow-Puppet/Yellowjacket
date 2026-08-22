@@ -61,11 +61,32 @@ export class SearchTrigger extends LitElement {
                 display: inline-flex;
                 align-items: center;
                 justify-content: center;
-                /* The smallest a touch target should be. The header's
-                   own action buttons are smaller because they carry a
-                   label; this one is a glyph. */
-                min-width: 40px;
-                min-height: 40px;
+                /* The app's touch floor, from #56 -- and this is the
+                   control that should least have to argue for it: #57
+                   created it as the phone's replacement for the header
+                   search box, so it exists *only* where there is a
+                   thumb.
+
+                   It shipped at 40px under a comment calling that "the
+                   smallest a touch target should be", which was the
+                   floor being restated four pixels short rather than a
+                   second opinion about it (#186). The rest of that
+                   comment said the header's own action buttons are
+                   smaller because they carry a label; they are 44px
+                   now too, so that no longer distinguishes anything.
+
+                   The extra width is a target rather than a box, for
+                   page-header's reason: this button sits in that
+                   header, whose overflow fit (#69) measures inline
+                   size, and four pixels there is four pixels the
+                   trigger for every collapsed action does not get at
+                   320px. Height is free -- nothing measures it. */
+                min-width: 44px;
+                min-height: 44px;
+                /* Border-box, so the 44 above is the whole target and
+                   the margin is what hands the four extra pixels back
+                   to the row. */
+                margin-inline: -2px;
                 padding: 0;
                 background: none;
                 border: 1px solid var(--yj-border-subtle, #555);

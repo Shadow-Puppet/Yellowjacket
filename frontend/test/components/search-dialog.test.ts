@@ -99,6 +99,25 @@ describe('<search-trigger>', () => {
     }
   });
 
+  it('meets the touch floor it was shipped four pixels under', async () => {
+    stubPhone(true);
+
+    // #57 created this as the phone's replacement for the header search
+    // box, so it exists *only* where there is a thumb -- and it shipped
+    // at 40x40 under a comment calling that "the smallest a touch
+    // target should be", which was the app's own 44px floor (#56)
+    // restated short rather than a second opinion about it. #186.
+    const el = await fixture('search-trigger');
+    const button = shadow<HTMLButtonElement>(el, '[data-testid="search-trigger"]');
+
+    expect(button).not.toBeNull();
+
+    const box = button!.getBoundingClientRect();
+
+    expect(Math.round(box.width)).toBeGreaterThanOrEqual(44);
+    expect(Math.round(box.height)).toBeGreaterThanOrEqual(44);
+  });
+
   it('names what the button will search', async () => {
     stubPhone(true);
 
