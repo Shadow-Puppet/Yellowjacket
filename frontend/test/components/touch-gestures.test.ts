@@ -424,6 +424,24 @@ describe("the browser's own long press", () => {
     expect(menus).toHaveLength(0);
   });
 
+  it('suppresses a menu that arrives after the hold was claimed', async () => {
+    // The order the device actually produces, and the one that was
+    // missing: our 500ms timer fires first and a component claims it,
+    // then Chrome delivers its own `contextmenu` 50-70ms later.
+    // Measured over four holds on the reference phone, two took this
+    // order -- so the context menu opened over the selection bar,
+    // intermittently, on the one surface #63 changed.
+    const menus = recordMenus(inner);
+
+    inner.addEventListener('yj-long-press', (e) => e.preventDefault());
+
+    press(inner, 'pointerdown');
+    await wait(HELD);
+    browserContextMenu(inner);
+
+    expect(menus, 'the menu is late, not new').toHaveLength(0);
+  });
+
   it('still opens exactly one menu when nobody claims it', async () => {
     // The old behaviour, reached by asking instead of assuming. This
     // is what leaves the card grids, Explore and the playlist rows
@@ -436,5 +454,228 @@ describe("the browser's own long press", () => {
     await wait(HELD);
 
     expect(menus).toHaveLength(1);
+  });
+});
+
+/**
+ * The swipe half (plan 019 phase 2, #63).
+ *
+ * It runs on touch events rather than pointer events, and that is the
+ * one thing about it a browser tier cannot check. Measured on the
+ * reference device: Chrome 113's WebView cancels the *pointer* stream
+ * ~16px into any drag whatever `touch-action` says, while `touchmove`
+ * keeps firing — so what these assert is the shape that survives it,
+ * not that it survives.
+ *
+ * What they can hold is everything else: the axis rule, that the tie
+ * breaks toward the scroller, that an unclaimed swipe is left entirely
+ * alone, that a claimed one prevents the default (which is the half of
+ * the device fix that lives in code), and that an end always arrives.
+ */
+describe('a finger dragged sideways', () => {
+  beforeEach(() => {
+    uninstall = installTouchGestures();
+    ({ host, inner } = mountRow());
+  });
+
+  afterEach(() => {
+    uninstall?.();
+    uninstall = null;
+    host.remove();
+  });
+
+  /** One finger, at an offset from where it landed. */
+  function touch(el: EventTarget, type: string, dx = 0, dy = 0): TouchEvent {
+    const point = new Touch({
+      identifier: 1,
+      target: el as EventTarget as Element,
+      clientX: 40 + dx,
+      clientY: 60 + dy,
+    });
+    const event = new TouchEvent(type, {
+      bubbles: true,
+      composed: true,
+      cancelable: true,
+      touches: type === 'touchend' || type === 'touchcancel' ? [] : [point],
+      changedTouches: [point],
+    });
+
+    el.dispatchEvent(event);
+
+    return event;
+  }
+
+  /** Record the swipe events a component would bind. */
+  function recordSwipes(
+    el: EventTarget,
+    opts: { claim?: boolean } = {},
+  ): { type: string; dx: number; canceled: boolean }[] {
+    const seen: { type: string; dx: number; canceled: boolean }[] = [];
+
+    for (const name of ['yj-swipe-start', 'yj-swipe-move', 'yj-swipe-end']) {
+      el.addEventListener(name, (e) => {
+        const detail = (e as CustomEvent<{ dx: number; canceled: boolean }>)
+          .detail;
+
+        if (name === 'yj-swipe-start' && opts.claim !== false) {
+          e.preventDefault();
+        }
+
+        seen.push({ type: name, dx: detail.dx, canceled: detail.canceled });
+      });
+    }
+
+    return seen;
+  }
+
+  it('announces a swipe once it has travelled decisively sideways', () => {
+    const seen = recordSwipes(inner);
+
+    touch(inner, 'touchstart');
+    touch(inner, 'touchmove', 4);
+    expect(seen, 'a wobble is not a swipe').toHaveLength(0);
+
+    touch(inner, 'touchmove', 30);
+    touch(inner, 'touchmove', 60);
+    touch(inner, 'touchend');
+
+    expect(seen.map((s) => s.type)).toEqual([
+      'yj-swipe-start',
+      'yj-swipe-move',
+      'yj-swipe-end',
+    ]);
+    expect(seen.at(-1)?.dx).toBe(60);
+    expect(seen.at(-1)?.canceled).toBe(false);
+  });
+
+  it('prevents the default only for a claimed swipe', () => {
+    // This is the half of the device fix that lives in code: a
+    // non-passive `touchmove` calling `preventDefault` is what keeps
+    // the gesture ours on Chrome 113. Preventing anything else would
+    // be taking the list's scrolling away.
+    recordSwipes(inner);
+
+    touch(inner, 'touchstart');
+
+    const early = touch(inner, 'touchmove', 4);
+
+    expect(early.defaultPrevented, 'a wobble scrolls').toBe(false);
+
+    const claimed = touch(inner, 'touchmove', 30);
+    const after = touch(inner, 'touchmove', 60);
+
+    expect(claimed.defaultPrevented).toBe(true);
+    expect(after.defaultPrevented).toBe(true);
+  });
+
+  it('leaves an unclaimed swipe entirely alone', () => {
+    const seen = recordSwipes(inner, { claim: false });
+
+    touch(inner, 'touchstart');
+    touch(inner, 'touchmove', 30);
+
+    const later = touch(inner, 'touchmove', 60);
+
+    touch(inner, 'touchend');
+
+    // Asked once, refused, and then not asked again for the rest of
+    // the press -- and nothing prevented, so the browser still owns it.
+    expect(seen.map((s) => s.type)).toEqual(['yj-swipe-start']);
+    expect(later.defaultPrevented).toBe(false);
+  });
+
+  it('gives a drag that went vertical to the scroller, and keeps it', () => {
+    // The veto is a *latch*, and that is the whole of it: a scroll
+    // that curves — which is what a thumb does — would otherwise
+    // become a swipe halfway down the list, snatching the list out
+    // from under itself. Without the latch the second move here is
+    // decisively horizontal and would claim the gesture.
+    const seen = recordSwipes(inner);
+
+    touch(inner, 'touchstart');
+    touch(inner, 'touchmove', 4, 30);
+    touch(inner, 'touchmove', 80, 35);
+    touch(inner, 'touchend');
+
+    expect(seen, 'the list has it').toHaveLength(0);
+  });
+
+  it('gives the scroller the tie as well', () => {
+    // Exactly diagonal is not "decisively sideways". A list that will
+    // not scroll is unusable; a swipe that needs a second try is not.
+    const seen = recordSwipes(inner);
+
+    touch(inner, 'touchstart');
+    touch(inner, 'touchmove', 60, 60);
+    touch(inner, 'touchend');
+
+    expect(seen).toHaveLength(0);
+  });
+
+  it('is not a tap and not a hold once it is a swipe', async () => {
+    const menus = recordMenus(inner);
+    const taps: Event[] = [];
+
+    inner.addEventListener('yj-tap', (e) => taps.push(e));
+    recordSwipes(inner);
+
+    press(inner, 'pointerdown');
+    touch(inner, 'touchstart');
+    touch(inner, 'touchmove', 40);
+    await wait(HELD);
+    touch(inner, 'touchend');
+    press(inner, 'pointerup');
+
+    expect(menus, 'the hold did not become a menu').toHaveLength(0);
+    expect(taps, 'the lift did not become a tap').toHaveLength(0);
+  });
+
+  it('always ends, even when the gesture is taken away', () => {
+    // A component that has a row half off its own left edge has no
+    // other way to learn the finger is gone -- so `touchcancel` is an
+    // end with `canceled` set, not a silence.
+    const seen = recordSwipes(inner);
+
+    touch(inner, 'touchstart');
+    touch(inner, 'touchmove', 40);
+    touch(inner, 'touchcancel');
+
+    expect(seen.at(-1)?.type).toBe('yj-swipe-end');
+    expect(seen.at(-1)?.canceled).toBe(true);
+    expect(seen.at(-1)?.dx).toBe(40);
+  });
+
+  it('is never one gesture when there are two fingers', () => {
+    const seen = recordSwipes(inner);
+    const two = new TouchEvent('touchstart', {
+      bubbles: true,
+      composed: true,
+      cancelable: true,
+      touches: [
+        new Touch({ identifier: 1, target: inner, clientX: 40, clientY: 60 }),
+        new Touch({ identifier: 2, target: inner, clientX: 90, clientY: 60 }),
+      ],
+    });
+
+    inner.dispatchEvent(two);
+    touch(inner, 'touchmove', 60);
+
+    expect(seen, 'a pinch is not a swipe').toHaveLength(0);
+  });
+
+  it('swallows the click a claimed swipe ends on', () => {
+    const clicks: Event[] = [];
+
+    recordSwipes(inner);
+    inner.addEventListener('click', (e) => clicks.push(e));
+
+    touch(inner, 'touchstart');
+    touch(inner, 'touchmove', 40);
+    touch(inner, 'touchend');
+    inner.dispatchEvent(
+      new MouseEvent('click', { bubbles: true, composed: true }),
+    );
+
+    expect(clicks, 'the row was not also clicked').toHaveLength(0);
   });
 });

@@ -10,7 +10,7 @@ import {
 } from 'lit/decorators.js';
 import { SelectionController } from '@utils/selection-controller';
 import type { SelectionHost } from '@utils/selection-controller';
-import type { GestureEvent } from '@utils/touch-gestures';
+import type { GestureEvent, SwipeEvent } from '@utils/touch-gestures';
 import '@components/selection-bar/selection-bar';
 import type { SelectionAction } from '@components/selection-bar/selection-bar';
 import { ViewLifecycleMixin } from '@utils/view-lifecycle';
@@ -281,6 +281,37 @@ export class TrackList
      *  standard roving tabindex.  Before this the list had no keyboard
      *  path into it at all (H-5). */
     @state() private focusedIndex = 0;
+
+    // --- swipe right to queue (plan 019 phase 2, #63) ----------------
+
+    /** How far along the row a swipe has to reach to mean it. */
+    private static readonly SWIPE_COMMIT_FRACTION = 0.3;
+
+    /** … and a floor, for a narrow list embedded in a detail page. */
+    private static readonly SWIPE_COMMIT_MIN_PX = 72;
+
+    /** How long the reveal holds its confirmation before snapping. */
+    private static readonly SWIPE_CONFIRM_MS = 550;
+
+    /** The snap itself, which the stylesheet also states. */
+    private static readonly SWIPE_SETTLE_MS = 180;
+
+    /** Which row is being swiped, and therefore which draws a reveal. */
+    @state() private swipeIndex: number | null = null;
+
+    /** Past the commit threshold: the reveal says so, in words. */
+    @state() private swipeArmed = false;
+
+    /** Committed, and holding the confirmation. */
+    @state() private swipeDone = false;
+
+    /** What the gesture did, for anyone not watching the row. */
+    @state() private swipeAnnouncement = '';
+
+    private swipeRow: HTMLElement | null = null;
+    private swipeKeys: string[] = [];
+    private swipeCommitPx = 0;
+    private swipeSettleTimer = 0;
 
     private handleSelectAll = (): void => {
         this.selection.selectAll();
@@ -1135,6 +1166,18 @@ export class TrackList
       height: 33px;
       box-sizing: border-box;
       contain: strict;
+      /* Swipe right to queue (plan 019 phase 2, #63). Half of what
+         makes the gesture reach us on the device: auto lets Chrome
+         113's WebView commit to a horizontal pan on the first move
+         past slop, and the pointer stream is cancelled before any
+         threshold can be crossed. The other half is the non-passive
+         preventDefault in utils/touch-gestures.ts, and neither works
+         alone -- both were measured three ways on the phone.
+         Never none: that takes the list's own vertical scrolling with
+         it. The cost is that a finger starting on a row can no longer
+         pan the shell sideways in the 600-899 band, where the shell
+         can still overflow; anywhere else on the page still can. */
+      touch-action: pan-y;
     }
 
     /* A phone row is two lines, and this height must equal
@@ -1211,6 +1254,62 @@ export class TrackList
 
     .track-row.selected.active {
       background-color: var(--yj-selection-bg, rgba(100, 160, 255, 0.15));
+    }
+
+    /* The reveal behind a swiped row (plan 019 phase 2, #63).
+
+       The row itself does not move -- its *cells* do. Moving the row
+       and counter-translating the pane inside it is the obvious
+       arrangement and does not work here: .track-row is contain:
+       strict with overflow: hidden, so a pane held at the row's
+       original position is a pane at a negative offset inside a
+       clipping box, and it is simply not painted. Sliding the cells
+       instead leaves the pane where it was drawn, clips the cells off
+       the right edge, and needs no wrapper element in a row that is
+       already a grid.
+
+       It is not only a colour (WCAG 1.4.1, the rule the playing-row
+       marker is here for): the pane carries an icon and words, the
+       words change at the commit threshold, and the outcome is
+       announced in the list's live region. */
+    .swipe-reveal {
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: var(--yj-swipe-dx, 0px);
+      box-sizing: border-box;
+      display: flex;
+      align-items: center;
+      gap: 0.4em;
+      padding-left: 8px;
+      overflow: hidden;
+      white-space: nowrap;
+      pointer-events: none;
+      font-size: var(--yj-text-xs);
+      background-color: var(--yj-bg-elevated, #343a40);
+      color: var(--yj-text-secondary, #b3b3b3);
+    }
+
+    .swipe-reveal.armed {
+      background-color: var(--yj-success, #2f9e44);
+      color: var(--yj-success-fg, #fff);
+    }
+
+    .track-row.swiping > :not(.swipe-reveal) {
+      transform: translateX(var(--yj-swipe-dx, 0px));
+    }
+
+    .track-row.settling > * {
+      transition:
+        transform 160ms ease-out,
+        width 160ms ease-out;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .track-row.settling > * {
+        transition: none;
+      }
     }
 
     .cell {
@@ -1311,6 +1410,9 @@ export class TrackList
             virt.removeEventListener('contextmenu', this.onDelegatedContextMenu);
             virt.removeEventListener('yj-tap', this.onRowTap);
             virt.removeEventListener('yj-long-press', this.onRowLongPress);
+            virt.removeEventListener('yj-swipe-start', this.onRowSwipeStart);
+            virt.removeEventListener('yj-swipe-move', this.onRowSwipeMove);
+            virt.removeEventListener('yj-swipe-end', this.onRowSwipeEnd);
             virt.removeEventListener('dragstart', this.onDelegatedDragStart);
             virt.removeEventListener('dragend', this.onTrackDragEnd);
         }
@@ -1457,6 +1559,9 @@ export class TrackList
         // through the same path a real click takes (plan 019).
         virt.addEventListener('yj-tap', this.onRowTap);
         virt.addEventListener('yj-long-press', this.onRowLongPress);
+        virt.addEventListener('yj-swipe-start', this.onRowSwipeStart);
+        virt.addEventListener('yj-swipe-move', this.onRowSwipeMove);
+        virt.addEventListener('yj-swipe-end', this.onRowSwipeEnd);
         this.delegationAttached = true;
     }
 
@@ -1775,6 +1880,193 @@ export class TrackList
         this.selection.enterSelectionMode(hit.track.FilePath, hit.index);
         this.virtualizer?.requestUpdate();
     };
+
+    // =================================================================
+    // Swipe right to queue (plan 019 phase 2, #63)
+    // =================================================================
+
+    /**
+     * What a swipe on this row would queue.
+     *
+     * The same rule the context menu answers with, and it has to be:
+     * **one row is a position, several rows are an explicit choice.**
+     * A finger that swipes a row which is part of a selection of forty
+     * has not un-made that selection, and queueing the one row it
+     * touched would quietly contradict the bar above saying forty are
+     * selected. A swipe on a row *outside* the selection is a statement
+     * about that row, exactly as a right-click on one is -- and unlike
+     * a right-click it does not move the selection, because a swipe is
+     * not a way of selecting anything.
+     */
+    private swipeTargetKeys(filePath: string): string[] {
+        if (
+            this.selection.selectionCount > 1 &&
+            this.selection.isSelected(filePath)
+        ) {
+            return this.selection.getSelectedKeysOrdered();
+        }
+
+        return [filePath];
+    }
+
+    private onRowSwipeStart = (e: SwipeEvent) => {
+        // Rightward only. Nothing is bound to a leftward swipe, and
+        // claiming one would take a gesture away to do nothing with it.
+        if (e.detail.dx <= 0) return;
+
+        const hit = this.resolveTrackFromEvent(e);
+
+        if (!hit) return;
+
+        const row = (e.target as HTMLElement).closest(
+            '.track-row',
+        ) as HTMLElement | null;
+
+        if (!row) return;
+
+        e.preventDefault();
+
+        this.swipeRow = row;
+        this.swipeKeys = this.swipeTargetKeys(hit.track.FilePath);
+        // A fraction of the row, with a floor: the row is 424x52 on the
+        // reference device, so a threshold in bare pixels is a fraction
+        // of a row height on one screen and a third of the width on
+        // another.
+        this.swipeCommitPx = Math.max(
+            TrackList.SWIPE_COMMIT_MIN_PX,
+            row.getBoundingClientRect().width *
+            TrackList.SWIPE_COMMIT_FRACTION,
+        );
+        this.swipeArmed = false;
+        this.swipeDone = false;
+        this.swipeIndex = hit.index;
+        this.virtualizer?.requestUpdate();
+        this.setSwipeOffset(0);
+    };
+
+    private onRowSwipeMove = (e: SwipeEvent) => {
+        if (this.swipeIndex === null) return;
+
+        const dx = Math.min(
+            Math.max(e.detail.dx, 0),
+            this.swipeCommitPx * 2,
+        );
+        const armed = dx >= this.swipeCommitPx;
+
+        // Crossing the threshold is the only thing here that renders.
+        // The offset itself is written straight to the row's style, or
+        // a virtualized list would re-render every visible row for
+        // every frame of one finger's travel.
+        if (armed !== this.swipeArmed) {
+            this.swipeArmed = armed;
+            this.virtualizer?.requestUpdate();
+        }
+
+        this.setSwipeOffset(dx);
+    };
+
+    private onRowSwipeEnd = (e: SwipeEvent) => {
+        if (this.swipeIndex === null) return;
+
+        const commit =
+            !e.detail.canceled && e.detail.dx >= this.swipeCommitPx;
+
+        if (!commit) {
+            this.settleSwipe(0);
+
+            return;
+        }
+
+        queueStore.addTracksToQueue(this.swipeKeys);
+
+        const count = this.swipeKeys.length;
+        const only =
+            count === 1
+                ? tracksByFilePath(this.tracks).get(this.swipeKeys[0]!)
+                : undefined;
+
+        // The reveal is the only thing on screen that says this
+        // happened -- the queue panel may well be closed -- so it holds
+        // its confirmation for a moment rather than snapping back the
+        // instant the finger lifts. The live region is the same
+        // sentence for anyone not watching it.
+        this.swipeDone = true;
+        this.swipeAnnouncement =
+            count === 1
+                ? `Added ${only?.TrackName ?? 'the track'} to the queue.`
+                : `Added ${count} tracks to the queue.`;
+        this.virtualizer?.requestUpdate();
+        this.settleSwipe(TrackList.SWIPE_CONFIRM_MS);
+    };
+
+    /** Write the travel to the row itself, with no render. */
+    private setSwipeOffset(dx: number) {
+        this.swipeRow?.style.setProperty('--yj-swipe-dx', `${dx}px`);
+    }
+
+    /**
+     * Put the row back, after `delay`, and forget the swipe.
+     *
+     * The row element is held rather than looked up again: a
+     * virtualizer recycles its rows, and by the time this runs the
+     * element may be drawing a different track. Clearing the property
+     * off whatever it holds now is right either way, since
+     * `swipeIndex` is what decides who draws the reveal.
+     */
+    private settleSwipe(delay: number) {
+        const row = this.swipeRow;
+
+        window.clearTimeout(this.swipeSettleTimer);
+
+        this.swipeSettleTimer = window.setTimeout(() => {
+            row?.classList.add('settling');
+            this.setSwipeOffset(0);
+
+            this.swipeSettleTimer = window.setTimeout(() => {
+                row?.classList.remove('settling');
+                row?.style.removeProperty('--yj-swipe-dx');
+                this.swipeRow = null;
+                this.swipeIndex = null;
+                this.swipeArmed = false;
+                this.swipeDone = false;
+                this.virtualizer?.requestUpdate();
+            }, TrackList.SWIPE_SETTLE_MS);
+        }, delay);
+    }
+
+    /**
+     * What is revealed behind the row, in three states.
+     *
+     * One glyph throughout, and the words carry the state. A tick
+     * would read better for the last of them and is `ICON_IN_LIBRARY`
+     * -- it means *you own this* -- and `icon-language.ts` exists
+     * because `plus` came to mean four things that way.
+     */
+    private renderSwipeReveal() {
+        const count = this.swipeKeys.length;
+        const what =
+            count === 1 ? 'to queue' : `${count} tracks to queue`;
+
+        return html`
+            <div
+                class=${classMap({
+            'swipe-reveal': true,
+            armed: this.swipeArmed,
+        })}
+                aria-hidden="true"
+                data-testid="swipe-reveal"
+            >
+                <wa-icon name=${ICON_QUEUE}></wa-icon>
+                <span
+                    >${this.swipeDone
+                ? 'Added'
+                : this.swipeArmed
+                    ? 'Release to add'
+                    : `Add ${what}`}</span
+                >
+            </div>
+        `;
+    }
 
     private onDelegatedDragStart = (e: DragEvent) => {
         const hit = this.resolveTrackFromEvent(e);
@@ -2197,6 +2489,7 @@ export class TrackList
             'track-row': true,
             active,
             selected,
+            swiping: this.swipeIndex === index,
         })}
         role="row"
         aria-rowindex=${index + 1}
@@ -2208,6 +2501,7 @@ export class TrackList
         data-testid="track-row"
         data-file-path=${track.FilePath}
       >
+        ${this.swipeIndex === index ? this.renderSwipeReveal() : nothing}
         <div
           role="gridcell"
           class=${classMap({
@@ -2353,6 +2647,9 @@ export class TrackList
       ${this.renderPageHeader()}
       <div class="sr-only" role="status" aria-live="polite">
         ${this.liveStatus(visibleTracks.length)}
+      </div>
+      <div class="sr-only" role="status" aria-live="polite">
+        ${this.swipeAnnouncement}
       </div>
       ${this.tracks.length === 0
                 ? this.renderPlaceholder()

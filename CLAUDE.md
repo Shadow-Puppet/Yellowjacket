@@ -1449,18 +1449,62 @@ never opens). **The sweep found two of the fourteen**; twelve were
 converted by hand.
 
 **And a menu opens from a finger, through the event it already has.**
-`utils/long-press.ts` is one document-capture listener installed once
-from `index.ts`: a touch that holds still for 500 ms dispatches a
-synthetic `contextmenu` at the touch point, so all six components that
-bind one — delegated on a virtualizer, per row, per card — gained the
-gesture without changing. The target is `composedPath()[0]` rather than
+`utils/touch-gestures.ts` is one document-capture listener installed
+once from `index.ts` — `utils/long-press.ts` until #63 replaced it,
+rather than adding a second listener claiming the same 500 ms hold. It
+**announces** rather than acts: `yj-tap`, `yj-long-press` and
+`yj-swipe-start` are composed and cancelable, and a component claims
+one with `preventDefault()`. That is what let #63 reassign the hold
+without touching one of the fourteen context menus: an *unclaimed*
+`yj-long-press` still becomes a synthetic `contextmenu`, so all six
+components that bind one — delegated on a virtualizer, per row, per
+card — behave exactly as they did, and only the lists that opt in get
+selection mode. The target is `composedPath()[0]` rather than
 `elementFromPoint`, which stops at the outermost shadow host and so
-reaches a delegated listener and no per-row one; a browser that fires
-its own long-press `contextmenu` (Chromium does, WebKit and the WebView
-vary) wins, ours being told from theirs by **identity** rather than
-`isTrusted`, since no test can dispatch a trusted event; and the click
-that ends the gesture is swallowed, keyed on the gesture rather than on
-a time window so the first tap on the menu it opened is not eaten too.
+reaches a delegated listener and no per-row one; and the click that
+ends a *claimed* gesture is swallowed, keyed on the gesture rather than
+on a time window so the first tap on the menu it opened is not eaten
+too.
+
+Three things about it are load-bearing, and all three were found on the
+device rather than in a tier.
+
+**A browser that fires its own long-press `contextmenu` is a trigger,
+not a competitor.** Chromium does, WebKit and the WebView vary. The old
+rule was to stand down when a trusted one arrived, which was right
+while both paths ended in a context menu and is wrong the moment a hold
+can mean something else — standing down silently does the *old* thing.
+So the gesture is announced from the native event, and only a component
+that claims it suppresses that event. Ours and the browser's are told
+apart by **identity** rather than `isTrusted`, since no test can
+dispatch a trusted event.
+
+**That arrives in either order, and both have to be handled.** The
+native `contextmenu` mid-hold is one case; the other is our own 500 ms
+timer firing first and Chrome delivering its menu **50–70 ms later**,
+which nothing suppressed — measured over four holds on the reference
+phone, two took that order, so the context menu opened over the
+selection bar intermittently, on the one surface #63 changed. A press
+that has produced its outcome therefore suppresses a late
+`contextmenu` whichever branch it took.
+
+**A horizontal swipe runs on touch events, and needs two things that
+look like one.** Chrome 113's WebView cancels the *pointer* stream
+~16 px into any drag — measured at `auto`, `pan-y` and `none` alike,
+one or two `pointermove`s and then `pointercancel`, while `touchmove`
+kept firing throughout. So the recogniser is `touchmove`, the surface
+declares **`touch-action: pan-y`** *and* a claimed swipe calls
+**`preventDefault()`** on a non-passive listener. Neither works alone:
+with the `preventDefault` in place but `touch-action` back at `auto`
+the gesture died after one move, because `auto` lets the browser commit
+to a horizontal pan before any threshold can be crossed. `none` is the
+value to avoid — it takes the list's own vertical scrolling with it.
+**Both are correct in Chromium either way**, which is why this is
+written down rather than tested. The tie breaks toward scrolling, in
+that order: vertical drift past the tolerance vetoes the swipe for the
+rest of the press (a scroll that curves is still a scroll), and a
+gesture that is not *strictly* more horizontal than vertical is the
+scroller's.
 
 **A control revealed by `:hover` is gated on the device having hover,
 and which way round depends on whether it is the only route to its

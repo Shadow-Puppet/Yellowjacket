@@ -225,7 +225,8 @@ still works. `SelectionController` gains a mode. `track-list` acts on
 tap and enters the mode on long press. The action bar.
 
 **Phase 2 — swipe right to queue**, with the `touch-action: pan-y`
-finding above and a reveal-and-snap affordance.
+finding above and a reveal-and-snap affordance. **Shipped**; what the
+device said about it is the section below.
 
 **Phase 3 — the other three surfaces**, which is mostly wiring, since
 they already share the controller.
@@ -236,6 +237,94 @@ that conflict is #67's, and this plan should not pre-empt its answer
 beyond making tap-to-play win on touch.
 
 ---
+
+## What phase 2 measured, which was not what phase 2 predicted
+
+The `touch-action` finding above is **half** of the answer, and
+shipping only that half would have been the exact failure it warns
+about. Driving a real finger with `adb shell input swipe` across a
+track row, three values, all three on the device:
+
+```
+touch-action: auto    pointerdown, 1 move,  pointercancel
+touch-action: pan-y   pointerdown, 2 moves, pointercancel
+touch-action: none    pointerdown, 2 moves, pointercancel
+```
+
+`touchmove` kept firing in all three. So **Chrome 113's WebView
+cancels the pointer stream ~16px into any drag whatever `touch-action`
+says**, and a swipe recognised from `pointermove` — which is what the
+rest of this module is built on — is a swipe that dies 16px in.
+
+The other half is a **non-passive `touchmove` calling
+`preventDefault()`**: with it, the same swipe ran to 12 moves and a
+`pointerup` at full travel. And both halves are required, which was
+measured rather than assumed — with the `preventDefault` in place and
+`touch-action` back at `auto`, the gesture died after **one** move.
+The reading is that `auto` lets the browser commit to a horizontal pan
+on the first move past slop, before any threshold of ours can have
+been crossed, while `pan-y` leaves it undecided long enough for the
+second move to claim it.
+
+`none` is the one value to avoid: the list stopped scrolling at all.
+With the shipped pair, a vertical drag still scrolls the virtualizer
+81px on the same run that a horizontal one survives.
+
+**`draggable="true"` is not a competitor**, which is the other thing
+the device was asked. No `dragstart` fires from a touch drag on this
+WebView at all, so the drag-to-playlist attribute on every row needs no
+pointer-type gate.
+
+### And it found a phase 1 defect that no tier can see
+
+The native `contextmenu` arrives in **either** order, and phase 1 only
+handled one of them. `nativeSeen` covers the browser's menu arriving
+*during* the hold. The reverse — our 500ms timer firing first, a
+component claiming it, and Chrome delivering its own `contextmenu`
+50–70ms *later* — was suppressed by nothing, so the context menu
+opened on top of the selection bar. Measured over four holds:
+
+```
+hold 1  yj-long-press, then contextmenu isTrusted=true   menu open
+hold 2  yj-long-press                                    clean
+hold 3  yj-long-press, then contextmenu isTrusted=true   menu open
+hold 4  yj-long-press                                    clean
+```
+
+Two in four, on the one surface #63 exists to have changed, and
+invisible to both browser tiers because neither synthesises a
+`contextmenu` from a dispatched press. A press that has produced its
+outcome now suppresses a late one whichever branch it took; six holds
+on the fixed build, six clean.
+
+### The rules phase 2 settled
+
+- **A swipe is not a selection.** It queues the row it was made on,
+  unless that row is one of several *explicitly* selected — the same
+  rule the context menu answers with, because a bar reading "40
+  selected" beside a gesture that quietly queues one of them is two
+  answers to one question. It never changes the selection, which is
+  where it differs from a right-click.
+- **Rightward only.** Nothing is bound to a leftward swipe and
+  claiming one would take a gesture away to do nothing with it.
+- **The commit threshold is a fraction of the row** (0.3, floor 72px),
+  because the row is 424x52 on this device and a bare pixel count is a
+  fraction of a row height on one screen and a third of the width on
+  the next.
+- **The affordance is not only a colour** (WCAG 1.4.1, the rule the
+  playing-row marker exists for): the pane carries the queue icon and
+  words, the words change at the threshold ("Add to queue" → "Release
+  to add" → "Added"), and the outcome is announced in a live region.
+- **The row does not move; its cells do.** `.track-row` is
+  `contain: strict` with `overflow: hidden`, so a pane held at the
+  row's original position while the row translates is a pane at a
+  negative offset inside a clipping box and is simply not painted.
+  Sliding the cells needs no wrapper element in a row that is already
+  a grid.
+- **The travel is written to the row's own style, not rendered.** One
+  render at the start, one at the threshold, one at the end; a
+  virtualizer re-rendering every visible row per frame of one finger's
+  travel is the thing `perf.m1` is about.
 
 ## Open questions
 
