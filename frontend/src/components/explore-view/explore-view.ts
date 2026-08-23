@@ -23,6 +23,8 @@ import { queueStore } from '../../store/queue-store';
 import { notificationStore } from '../../store/notification-store';
 import '../notifications/inline-notice';
 import { creditLink, trackLink, exploreLinkStyles } from '../../utils/explore-link';
+import { goToMenuItems } from '../../utils/go-to-menu';
+import type { GoToTarget } from '../../utils/go-to-menu';
 import { creditStore } from '@store/credit-store';
 import { describeError } from '../../utils/describe-error';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
@@ -54,10 +56,28 @@ export const ExploreRegion = 'explore';
  * is present only when owned — that's what gates the playback items,
  * while `mbid` (always present) is what "View on MusicBrainz" uses, so
  * a catalog-only card still gets a menu with somewhere useful to go.
+ *
+ * `goTo` is the names the card draws -- an artist credit, and for a
+ * recording row the release its title links to. Below the phone
+ * breakpoint those are plain text, so the menu is where they went
+ * (#67); an album card carries no album of its own, because tapping
+ * the card is already that.
  */
 type ExploreMenuTarget =
-    | { kind: 'album'; mbid: string; localId?: number; title: string }
-    | { kind: 'recording'; mbid: string; localId?: number; title: string };
+    | {
+          kind: 'album';
+          mbid: string;
+          localId?: number;
+          title: string;
+          goTo?: GoToTarget;
+      }
+    | {
+          kind: 'recording';
+          mbid: string;
+          localId?: number;
+          title: string;
+          goTo?: GoToTarget;
+      };
 type ThumbnailRequest = explore.ThumbnailRequest;
 type MBSearchResult = explore.MBSearchResult;
 type LyricsResult = explore.LyricsResult;
@@ -1386,6 +1406,9 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
                                   <wa-icon slot="icon" name="globe"></wa-icon>
                                   View on MusicBrainz
                               </wa-dropdown-item>
+                              ${goToMenuItems(target.goTo, {
+                                  onSelect: () => this.ctxMenu.close(),
+                              })}
                           </div>
                       `
                     : nothing}
@@ -2188,6 +2211,10 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
                                         mbid: rg.mbid,
                                         localId: rg.localId,
                                         title: rg.title,
+                                        goTo: {
+                                            artistName: rg.artistCredit,
+                                            artistMBID: rg.artistMbid ?? '',
+                                        },
                                     })}
                                 role="button"
                                 tabindex="0"
@@ -2200,6 +2227,10 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
                                             mbid: rg.mbid,
                                             localId: rg.localId,
                                             title: rg.title,
+                                            goTo: {
+                                                artistName: rg.artistCredit,
+                                                artistMBID: rg.artistMbid ?? '',
+                                            },
                                         },
                                     )}
                             >
@@ -2278,6 +2309,12 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
                                         mbid: r.mbid,
                                         localId: r.localId,
                                         title: r.title,
+                                        goTo: {
+                                            artistName: r.artistCredit,
+                                            artistMBID: r.artistMbid ?? '',
+                                            albumName: r.releaseName ?? '',
+                                            albumMBID: r.releaseGroupMbid ?? '',
+                                        },
                                     })}
                                 @keydown=${(e: KeyboardEvent) =>
                                     this.onCardKeydown(
@@ -2288,6 +2325,12 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
                                             mbid: r.mbid,
                                             localId: r.localId,
                                             title: r.title,
+                                            goTo: {
+                                                artistName: r.artistCredit,
+                                                artistMBID: r.artistMbid ?? '',
+                                                albumName: r.releaseName ?? '',
+                                                albumMBID: r.releaseGroupMbid ?? '',
+                                            },
                                         },
                                     )}
                             >

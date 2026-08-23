@@ -4958,3 +4958,39 @@ than on screen.** The first two probes (24px/0.45, then 32px/0.75) were
 measurably present — 52,58,64 down to 30,33,37 — and invisible in the
 inline preview. Crop the bottom 70px and scale it up before judging;
 the pixel values are the honest answer either way.
+
+## The phone's context sheet is now longer than the phone (measured 2026-08-23, headless at 424x439)
+
+#67 moves two destinations into every row menu, and the track list's
+menu is where that runs out of screen. Measured against the running
+app at the reference viewport, one row selected:
+
+| menu | items | first item top | last item bottom |
+|---|---|---|---|
+| queue panel | 7 | 95 | 431 |
+| track list | 8 | 86 | **470** |
+
+The viewport is 439. So the track list's last item — "Remove from
+Library" — is below the fold. It is **not unreachable**: the sheet is a
+`wa-dialog` whose body is `overflow-y: auto`, measured `scrollHeight`
+412 against `clientHeight` 373, and scrolling it 39px brings that item
+fully into view (383–431). What it has is no *affordance*: nothing on
+screen says the list continues.
+
+Two things worth knowing before adding a ninth item anywhere.
+
+**The limit was already reached, and this is what crossed it.** Seven
+48px rows in a 373px body is 364px — the queue's menu fits with 8px to
+spare and the track list's fitted exactly. Any item added to any of the
+fourteen menus after #60 was going to be the one that overflowed; the
+first one simply happened to be this.
+
+**The measurement has to be taken with a row selected**, since the
+`Go to` items are drawn for a single selection only, and on the *first*
+track of the fixture library — which has no album (`01 Tone A`,
+`02 Tone B`) — only "Go to Artist" appears. That is the 8 above; an
+ordinary track makes it 9.
+
+Filed as its own issue rather than fixed in #67's diff: it is a
+property of the shared sheet (`components/menu-surface/`), not of the
+items.

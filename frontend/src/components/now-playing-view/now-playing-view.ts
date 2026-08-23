@@ -420,11 +420,20 @@ export class NowPlayingView extends LitElement {
                         <h2 class="title" data-testid="npv-title">
                             ${track.title || track.fileName}
                         </h2>
+                        <!-- keepOnPhone: this screen is the phone's,
+                             and it has no context menu to carry the
+                             destination the way a row does (#67).
+                             Suppressing these takes the artist and the
+                             album away rather than moving them, and
+                             they are two lines of their own here
+                             rather than a few characters inside a
+                             row. -->
                         <p class="artist">
                             ${creditLink(
                                 creditStore.credits(track.recordingMbid),
                                 track.artist,
                                 track.artistMbid,
+                                { keepOnPhone: true },
                             )}
                         </p>
                         ${track.album
@@ -434,6 +443,7 @@ export class NowPlayingView extends LitElement {
                                       track.releaseGroupMbid,
                                       undefined,
                                       track.artist,
+                                      { keepOnPhone: true },
                                   )}
                               </p>`
                             : nothing}

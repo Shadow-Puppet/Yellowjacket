@@ -30,6 +30,7 @@ import { libraryStore } from '../../store/library-store';
 import { downloadStore } from '../../store/download-store';
 import '@awesome.me/webawesome/dist/components/button/button.js';
 import { trackLink, exploreLinkStyles } from '../../utils/explore-link';
+import { goToMenuItems } from '../../utils/go-to-menu';
 import { describeError } from '../../utils/describe-error';
 import {
     GetAlbumsByArtist,
@@ -2705,6 +2706,16 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
                 <wa-icon slot="icon" name="globe"></wa-icon>
                 View on MusicBrainz
             </wa-dropdown-item>
+            <!-- The track title links to its album, and below the phone
+                 breakpoint it is plain text (#67). The artist is this
+                 page, so there is nothing to go to. -->
+            ${goToMenuItems(
+                { albumName: track.releaseName, albumMBID: track.releaseGroupMbid ?? '' },
+                {
+                    onSelect: () => this.ctxMenu.close(),
+                    onHover: () => this.ctxMenu.closePlaylistSubmenu(),
+                },
+            )}
         `;
     }
 

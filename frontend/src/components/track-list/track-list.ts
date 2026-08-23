@@ -51,6 +51,8 @@ import {
     trackLink,
     exploreLinkStyles,
 } from '@utils/explore-link';
+import { goToMenuItems } from '@utils/go-to-menu';
+import type { GoToTarget } from '@utils/go-to-menu';
 import {
     setDragPayload,
     emitDragActive,
@@ -1954,6 +1956,33 @@ export class TrackList
         emitDragActive(false);
     };
 
+    /**
+     * The row the menu can navigate from, for "Go to Artist" / "Go to
+     * Album" — which exist only below the phone breakpoint, where the
+     * row's own names are no longer links (#67).
+     *
+     * One row only, on the rule the Play item already states: one row
+     * is a position, several are an explicit choice of *those* tracks,
+     * and "go to the album" of five different albums means nothing.
+     */
+    private get goToTarget(): GoToTarget | undefined {
+        if (this.selection.selectionCount !== 1) return undefined;
+
+        const [path] = this.selection.selectedItems;
+        const track = path
+            ? tracksByFilePath(this.tracks).get(path)
+            : undefined;
+
+        if (!track) return undefined;
+
+        return {
+            artistName: track.ArtistName,
+            artistMBID: track.ArtistMBID,
+            albumName: track.Album,
+            albumMBID: track.ReleaseGroupMBID,
+        };
+    }
+
     private onContextMenuAction(action: string) {
         const filePaths =
             this.selection.getSelectedKeysOrdered();
@@ -2563,6 +2592,13 @@ export class TrackList
                     ></wa-icon>
                     Track Details
                 </wa-dropdown-item>
+                ${goToMenuItems(this.goToTarget, {
+                    onSelect: () => {
+                        this.selection.clear();
+                        this.ctxMenu.close();
+                    },
+                    onHover: () => this.ctxMenu.closePlaylistSubmenu(),
+                })}
                 <wa-dropdown-item
                     @click=${() =>
                         this.onContextMenuAction(

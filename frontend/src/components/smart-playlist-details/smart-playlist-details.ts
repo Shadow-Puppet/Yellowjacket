@@ -64,6 +64,8 @@ import {
     trackLink,
     exploreLinkStyles,
 } from '@utils/explore-link';
+import { goToMenuItems } from '@utils/go-to-menu';
+import type { GoToTarget } from '@utils/go-to-menu';
 import '@components/smart-playlist-editor/smart-playlist-editor.js';
 import { designTokens } from '../../styles/tokens.css';
 import { backButton } from '../../styles/back-button.css';
@@ -928,6 +930,28 @@ export class SmartPlaylistDetails
             .map((i) => this.tracks[i]!.FilePath);
     }
 
+    /**
+     * The row "Go to Artist" / "Go to Album" navigate from — one row
+     * or none, and only below the phone breakpoint, where the row's
+     * own names stopped being links (#67).
+     */
+    private get goToTarget(): GoToTarget | undefined {
+        const indices = this.selection.getSelectedIndices();
+
+        if (indices.length !== 1) return undefined;
+
+        const track = this.tracks[indices[0]!];
+
+        if (!track) return undefined;
+
+        return {
+            artistName: track.Artist,
+            artistMBID: track.ArtistMBID,
+            albumName: track.Album,
+            albumMBID: track.ReleaseGroupMBID,
+        };
+    }
+
     // =================================================================
     // Context menu actions
     // =================================================================
@@ -1683,6 +1707,14 @@ export class SmartPlaylistDetails
                                   ></wa-icon>
                                   Track Details
                               </wa-dropdown-item>
+                              ${goToMenuItems(this.goToTarget, {
+                                  onSelect: () => {
+                                      this.selection.clear();
+                                      this.ctxMenu.close();
+                                  },
+                                  onHover: () =>
+                                      this.ctxMenu.closePlaylistSubmenu(),
+                              })}
                           </div>
                       `
                     : nothing}

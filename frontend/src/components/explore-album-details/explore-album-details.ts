@@ -3191,10 +3191,14 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
         return html`
             ${artist
                 ? html`<div class="album-artist">
+                      <!-- keepOnPhone: the page header is not a row and
+                           has no menu of its own, so this credit is the
+                           only route from an album to its artist (#67). -->
                       ${creditLink(
                           creditStore.credits(this.releaseGroupMBID),
                           artist,
                           artistMbid,
+                          { keepOnPhone: true },
                       )}
                   </div>`
                 : nothing}
