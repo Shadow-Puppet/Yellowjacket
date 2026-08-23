@@ -98,6 +98,58 @@ test.describe('the shell on a phone', () => {
     ).toBeVisible();
   });
 
+  test('draws "More" as a sheet on the bottom edge (#71)', async ({ app }) => {
+    await app.getByTestId('tab-more').click();
+    await expect(app.getByTestId('nav-drawer').locator('app-sidebar'))
+      .toBeVisible();
+
+    // What the report is about is geometry, and geometry is what no
+    // other assertion here can see: the side drawer was a 200px column
+    // opening away from the thumb that asked for it, with the rest of
+    // its 400px band empty. Measured rather than screenshotted, since
+    // the failure is a number.
+    //
+    // Polled, because a sheet *arrives*: the drawer's show animation
+    // translates it a full height below the fold, so a measurement
+    // taken the moment its content is visible reports a box hanging
+    // 412px off the bottom of the screen. Asking for the settled
+    // number is the assertion; asking once is a race.
+    const measure = () => app.evaluate(() => {
+      const nav = document.querySelector('bottom-nav');
+      const drawer = nav?.shadowRoot?.querySelector('wa-drawer');
+      const dialog = drawer?.shadowRoot?.querySelector('[part~="dialog"]');
+      const sidebar = nav?.shadowRoot?.querySelector('app-sidebar');
+      const row = sidebar?.shadowRoot?.querySelector('li button');
+      const box = dialog?.getBoundingClientRect();
+
+      return {
+        left: Math.round(box?.left ?? -1),
+        right: Math.round(box?.right ?? -1),
+        bottom: Math.round(box?.bottom ?? -1),
+        height: Math.round(box?.height ?? -1),
+        row: Math.round(row?.getBoundingClientRect().height ?? -1),
+        viewport: [window.innerWidth, window.innerHeight],
+      };
+    });
+
+    await expect
+      .poll(async () => (await measure()).bottom)
+      .toBe(PHONE.height);
+
+    const sheet = await measure();
+
+    expect(sheet.left).toBe(0);
+    expect(sheet.right).toBe(sheet.viewport[0]);
+
+    // A surface covering the whole screen is a page, not a sheet --
+    // which is also what leaves an outside to tap on, the only pointer
+    // route out of it (#171 is the same question one surface over).
+    expect(sheet.height).toBeLessThan(sheet.viewport[1]);
+
+    // 48px rows, from #186's touch floor and #60's context sheet.
+    expect(sheet.row).toBeGreaterThanOrEqual(48);
+  });
+
   for (const vp of [PHONE, SMALL_PHONE]) {
     test(`does not scroll sideways at ${vp.width}×${vp.height}`, async ({ app }) => {
       await app.setViewportSize(vp);

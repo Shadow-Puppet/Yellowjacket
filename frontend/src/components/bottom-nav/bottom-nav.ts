@@ -27,15 +27,43 @@ interface Tab {
  * three to five items before the targets stop being thumb-sized —
  * 360 px over eleven sidebar entries is 32 px each — so the four here
  * are the ones plan 016's subset says a phone is *for*, and "More"
- * opens the existing `<app-sidebar>` in a drawer. That is deliberately
+ * opens the existing `<app-sidebar>` in a sheet. That is deliberately
  * a reuse rather than a second nav: two lists of destinations is two
  * places to add the next view to, and the sidebar already carries the
  * drag-to-navigate behaviour, the active state and the labels.
  *
+ * **"More" rises from the bottom, and it is the same sheet a context
+ * menu is** (#71). It was a `wa-drawer` sliding in from the side: a
+ * 200px column of a 424px screen, opening away from the thumb that
+ * asked for it, with three nested scrollers in it — the dialog, its
+ * body, and the sidebar's own `overflow-y: auto` host — which is the
+ * "only part of the screen scrolls under my finger" in the report.
+ *
+ * Three things about the replacement are load-bearing.
+ *
+ * **It is the same element with another `placement`, not a new
+ * surface.** `wa-drawer` renders a native `<dialog>` and opens it with
+ * `showModal()`, which is exactly what `menu-surface`'s sheet relies
+ * on — Chrome 37, the real top layer — so #60's containment finding
+ * carries over with nothing new to prove, and the focus trap, Escape,
+ * tap-outside and `wa-after-hide` all come along unchanged.
+ *
+ * **The body is the only scroller**, with `overscroll-behavior:
+ * contain`, and the sidebar is told to stop being one. Nesting them is
+ * what makes a drag scroll the wrong box.
+ *
+ * **The sidebar is still mounted rather than re-listed as data**,
+ * which the issue offers as an alternative. Its `data-testid` per
+ * destination is the reason: the shell's own sidebar is `display:
+ * none` below 600px rather than removed, so a second list drawing
+ * `nav-*` handles is the duplication this component already renders
+ * conditionally to avoid — and it would be a second place to add the
+ * next view to, with its own copy of #25's visibility filter.
+ *
  * It emits the same bubbling, composed `navigate` event the sidebar
  * does, so `index.ts` needs no knowledge of it, and it listens for that
  * event globally for the same reason the sidebar does: a navigation it
- * did not send (a card click, a detail view, the drawer) still has to
+ * did not send (a card click, a detail view, the sheet) still has to
  * move the highlight.
  */
 @customElement('bottom-nav')
@@ -115,15 +143,50 @@ export class BottomNav extends LitElement {
             white-space: nowrap;
         }
 
-        wa-drawer::part(body) {
-            padding: 0;
+        /* The sheet. --size is the drawer's own API for the axis its
+           placement uses, so auto is what makes it hug its content
+           instead of being a fixed 25rem band; the rest is the shape
+           the menu-surface context sheet already has, so a phone meets
+           one sheet rather than two. 85vh for its reason too: a surface
+           covering the whole screen is a page, not a sheet. */
+        wa-drawer {
+            --size: auto;
         }
 
-        app-sidebar {
-            /* The sidebar sizes itself inline and collapses to icons
-               below 900px, which is every phone.  In the drawer there
-               is room for the labels, so it is told not to. */
-            height: 100%;
+        wa-drawer::part(dialog) {
+            max-height: 85vh;
+            border-radius: 12px 12px 0 0;
+            /* The sidebar paints its own surface, so the sheet takes
+               that colour rather than the menus' elevated one: two
+               greys in one sheet is a seam across the middle of it. */
+            background-color: var(--yj-bg-surface, #212529);
+            /* One scroller, and it is the body below. The dialog's own
+               overflow: auto is what let the sheet scroll as well as
+               its content, and it is also what would square off the
+               corners this rule just rounded. */
+            overflow: hidden;
+        }
+
+        wa-drawer::part(body) {
+            padding: 0;
+            /* A scroll that reaches the end of this list must not
+               become a scroll of the page underneath it. */
+            overscroll-behavior: contain;
+            /* The sheet sits on the bottom edge, so the last
+               destination would otherwise be under the home indicator
+               on a gesture-navigation phone -- the same allowance the
+               bar itself makes above. */
+            padding-bottom: env(safe-area-inset-bottom, 0);
+        }
+
+        /* A sheet is dragged at with a thumb, so it says where its top
+           edge is. Decorative: the destinations are below it. */
+        .grip {
+            width: 36px;
+            height: 4px;
+            margin: 8px auto 4px;
+            border-radius: 2px;
+            background: var(--yj-text-tertiary, #888);
         }
     `];
 
@@ -158,7 +221,7 @@ export class BottomNav extends LitElement {
     private visibilityCtrl = new ViewVisibilityController(this);
 
     /**
-     * Whether the drawer has been asked for.
+     * Whether the sheet has been asked for.
      *
      * The sidebar inside it is rendered only while this is true, and
      * that is not an optimisation. `app-sidebar` carries a
@@ -200,15 +263,17 @@ export class BottomNav extends LitElement {
 
     override updated() {
         // Web Awesome renders its heading into its own shadow root and
-        // never points aria-labelledby at it, so the drawer would
+        // never points aria-labelledby at it, so the sheet would
         // otherwise be announced unnamed -- the same fix, and the same
         // reason, as every wa-dialog in the app. A drawer's shadow root
-        // has the same shape, so the helper needs no change.
+        // has the same shape, so the helper needs no change; under
+        // `without-header` there is no heading to point at, which is
+        // that helper's documented `aria-label` path.
         nameDialog(this.drawer);
     }
 
     private onGlobalNavigate = () => {
-        // A navigation from inside the drawer is the drawer's job done.
+        // A navigation from inside the sheet is the sheet's job done.
         // The highlight is not this listener's business any more.
         this.drawerOpen = false;
     };
@@ -274,12 +339,14 @@ export class BottomNav extends LitElement {
             </nav>
 
             <wa-drawer
-                placement="start"
+                placement="bottom"
+                without-header
                 label="All views"
                 data-testid="nav-drawer"
                 ?open=${this.drawerOpen}
                 @wa-after-hide=${this.onDrawerHide}
             >
+                <div class="grip"></div>
                 ${this.drawerOpen
                     ? html`<app-sidebar expanded></app-sidebar>`
                     : nothing}
