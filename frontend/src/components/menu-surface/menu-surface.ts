@@ -184,8 +184,10 @@ export class MenuSurface extends LitElement {
            its label centred, so 32px of scrim that is already down to
            a quarter strength at 14px reaches y-centre at about 0.06 and
            spends its weight on the strip below the last legible label.
-           Measured on the dark ramp: 52,58,64 flat before, 52,57,63 at
-           the label and 29,33,36 at the bottom edge after. */
+           Measured on the dark ramp at x=300, flat 52,58,64 throughout
+           before: 50,56,62 at y=330, 33,37,40 at y=350 and 22,24,27 at
+           the bottom edge, and flat again at the end of the list. The
+           light ramp puts 9.9:1 on the last label. */
         wa-dialog::part(body) {
             padding: 0;
             overflow-y: auto;
