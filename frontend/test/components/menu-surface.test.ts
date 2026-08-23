@@ -207,6 +207,56 @@ describe('menu-surface', () => {
     });
 
     /**
+     * The scroll affordance (#207), and this is the mechanism again
+     * rather than the symptom.
+     *
+     * The sheet's body has scrolled since #60 and said nothing about
+     * it: measured at 424x439, eight items ended at y=470 with the
+     * fold at 439, and where the cut lands on a row boundary the sheet
+     * ends in a clean edge that reads as the end of the list.
+     *
+     * What makes the fade *conditional* — absent on a menu that fits,
+     * present the moment one does not, gone again at the end of the
+     * list — is `background-attachment`, not a scroll listener: a cover
+     * of the sheet's own colour is painted at the end of the content
+     * and attached `local`, over a shadow pinned to the box and
+     * attached `scroll`. So the pair of attachments *is* the feature,
+     * and it is what this asserts. The rendered result was measured in
+     * the harness (dark ramp 52,58,64 flat before; 52,57,63 at the last
+     * label and 22,24,27 at the bottom edge with more below; flat again
+     * at the end of the list) and is on the PR.
+     */
+    it('paints the fade only while there is more below', async () => {
+      const el = await surfaceWithPanel();
+
+      const wrapper = el.shadowRoot?.querySelector('wa-dialog');
+
+      await (wrapper as HTMLElement & { updateComplete: Promise<unknown> })
+        .updateComplete;
+
+      const body = wrapper?.shadowRoot?.querySelector('[part~="body"]');
+
+      expect(body, 'no body part to scroll').not.toBeNull();
+
+      const style = getComputedStyle(body as Element);
+
+      expect(style.overflowY, 'the body is what gives, not the cap').toBe(
+        'auto',
+      );
+
+      // The cover scrolls with the content; the shadow does not. Either
+      // one alone is a fade that is always there or never there.
+      expect(
+        style.backgroundAttachment,
+        'the cover must be local and the shadow must not',
+      ).toBe('local, scroll');
+
+      // Both sit at the bottom, or the cover hides nothing.
+      expect(style.backgroundPosition).toBe('50% 100%, 50% 100%');
+      expect(style.backgroundSize).toBe('100% 32px, 100% 32px');
+    });
+
+    /**
      * A dialog with no accessible name is what `utils/name-dialog.ts`
      * exists for; here the name is already written on the panel, so no
      * call site says it twice.

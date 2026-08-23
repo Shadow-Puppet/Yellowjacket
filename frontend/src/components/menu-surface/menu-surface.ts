@@ -155,10 +155,53 @@ export class MenuSurface extends LitElement {
            bottom was at y=452 on a 439px screen -- the one row a
            destructive action is most likely to be. The cap has to stay
            (a sheet covering the whole screen is a page, not a sheet),
-           so the body is what gives. */
+           so the body is what gives.
+
+           **And a body that scrolls says so** (#207). Scrolling was the
+           whole of the fix above, which left the last item reachable
+           and nothing on screen admitting it was there -- measured at
+           424x439, eight items ending at y=470 with the fold at 439,
+           and worse when the cut lands on a row boundary, where the
+           sheet ends in a clean edge that reads as the end of the list.
+
+           Two layers, and the *order* is what asks the question: a
+           shadow pinned to the bottom of the box (attachment scroll),
+           and over it a cover of the sheet's own colour painted at the
+           end of the *content* (attachment local), which therefore
+           scrolls up over the shadow and hides it exactly when there is
+           nothing more to see. So the affordance is absent on a menu
+           that fits, present the moment one does not, and gone again at
+           the end of the list -- with no scroll listener, no
+           measurement, and nothing reaching into wa-dialog's shadow
+           root for the scroller. background-attachment is Chrome 4;
+           the reference device is Chrome 113.
+
+           **The curve is steep because the rows under it stay live.**
+           A scrim over a menu item is that item's text surface, and
+           this app's rule is that text clears 4.5:1 on every surface it
+           can sit on -- which the light ramp, whose bgElevated is
+           #e9ecef, is what makes non-theoretical. A row is 48px with
+           its label centred, so 32px of scrim that is already down to
+           a quarter strength at 14px reaches y-centre at about 0.06 and
+           spends its weight on the strip below the last legible label.
+           Measured on the dark ramp: 52,58,64 flat before, 52,57,63 at
+           the label and 29,33,36 at the bottom edge after. */
         wa-dialog::part(body) {
             padding: 0;
             overflow-y: auto;
+            background:
+                linear-gradient(
+                        var(--yj-bg-elevated, #343a40),
+                        var(--yj-bg-elevated, #343a40)
+                    )
+                    bottom / 100% 32px no-repeat local,
+                linear-gradient(
+                        to top,
+                        rgba(0, 0, 0, 0.6) 0%,
+                        rgba(0, 0, 0, 0.25) 45%,
+                        rgba(0, 0, 0, 0) 100%
+                    )
+                    bottom / 100% 32px no-repeat scroll;
         }
 
         /* A sheet is dragged at with a thumb, so it says where its top

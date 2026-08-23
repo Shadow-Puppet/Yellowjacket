@@ -1402,7 +1402,7 @@ descendants. On the reference device the main panel spans 0-318 of a
 items cut off, with no way to reach them. `showModal()` is Chrome 37
 and uses the real top layer, so a dialog is immune by construction.
 
-Six things about it are load-bearing.
+Seven things about it are load-bearing.
 
 **"Dialogs are fine" needed checking, because every other dialog in
 this app is mounted in `index.html`** — outside `.main-panel` — so it
@@ -1430,6 +1430,25 @@ and the failure mode is not a stuck sheet but the *next* long-press
 doing nothing, which reads as the gesture breaking. `menu-dismiss` is
 that signal; the three surfaces that do not use `ContextMenuController`
 bind it themselves.
+
+**A sheet that scrolls says so, and `background-attachment` is what
+asks whether it does** (#207). The sheet is capped at 85vh — a surface
+covering the whole screen is a page, not a sheet — so a long menu's
+body scrolls, and for three phases it scrolled *silently*: measured at
+424x439, eight items ended at y=470 with the fold at 439, and where the
+cut lands on a row boundary the sheet ends in a clean edge that reads
+as the end of the list. The fade is two background layers on
+`wa-dialog::part(body)` — a shadow pinned to the box (`scroll`) under a
+cover of the sheet's own colour painted at the end of the *content*
+(`local`), which scrolls up over the shadow exactly when there is
+nothing more to see. So it is absent on a menu that fits, present the
+moment one does not, and gone again at the end of the list, with no
+scroll listener and nothing reaching into `wa-dialog`'s shadow root for
+the scroller. **The curve is steep because the rows under it stay
+live**: a scrim over a menu item is that item's text surface, and the
+4.5:1 rule applies to it — 32px already down to a quarter strength at
+14px spends its weight below the last legible label, measured at 9.9:1
+on the light ramp, whose `bgElevated` is `#e9ecef`.
 
 **The playlist submenu is a sheet too, and it had to be.** It is a
 `placement="right-start"` flyout, and making the menu full-width moved
