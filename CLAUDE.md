@@ -3471,6 +3471,25 @@ Pre-commit hooks verify generated code is fresh — always run `make generate` a
 Tests use `database.NewTestDB(t)` for in-memory SQLite, built by the same
 `applySchema` production uses so the two cannot diverge. Test audio fixtures live in `test_data/music_library_test/`. Table-driven tests are the norm.
 
+**`make ui-visual` is the one tier nothing but a person runs, and it
+cannot become one.** Its ten `toMatchScreenshot` baselines were recorded
+on a developer's Arch box; replayed in a bare `ubuntu:24.04` container
+— CI's `check` image — three of them fail on font metrics and
+compositing alone (`track-info` and one `page-header` shot at a 0.03
+mismatch ratio against a 0.02 allowance, `seek-bar` one pixel shorter),
+and two components disagree about their own height between the two
+machines. So CI keeps running `make ui-test`, which is the same suite
+with the comparisons off, and a pre-push hook would be the same fault
+with the machines swapped. What replaces the gate is a rule, in
+`.pi/skills/yellowjacket-dev/references/ui-tier.md`: **a change that
+moves a component's geometry refreshes that component's baseline in the
+same commit, having read the image, and never one it did not cause**.
+That is #196, which was four stale references accumulated across three
+unrelated merges — a red tier nobody could read, which is how it stayed
+red. A visual case must also **state the world it photographs**, since
+the stores are singletons and a case that sets nothing records whatever
+the previous one left in them.
+
 ## Git Workflow
 
 Feature branches and PRs are the only way in: **`main` is a protected

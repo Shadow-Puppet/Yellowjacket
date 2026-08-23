@@ -158,7 +158,7 @@ only climb when it cannot.
 | You changed | Run | Cost |
 |---|---|---|
 | A Lit component, a store, the shortcut service | `make ui-test` | ~2 s, no app |
-| …and it renders differently | `make ui-visual` | + 6 baselines, opt-in |
+| …and it renders differently | `make ui-visual` | + 10 baselines, opt-in, never gates |
 | Any Go code | `make test` | 3 passes, ~2 min |
 | A service that emits events | `make test` — assert on the payload, see `backend/queue/emit_test.go` | in-process, no app |
 | A bound method or a bound struct field | `make bindings` then `make ui-test` | ~1.5 s + 2 s |
@@ -180,6 +180,13 @@ less than it looks.)
 
 Two rules about climbing:
 
+- **If you moved a component's geometry, run `make ui-visual` and
+  refresh that component's baseline in the same commit.** Nothing else
+  will: it is the one tier in this repo no hook and no CI job runs, and
+  it cannot be one — its references are machine-specific, measured in
+  [references/ui-tier.md](references/ui-tier.md). Four of them drifted
+  across three merges before anyone noticed (#196). Read the image;
+  never bless a reference you did not cause.
 - **A component test passing is not the app rendering.** If you touched
   anything in `frontend/src`, verify it in the real app too — start it
   headless, `screenshot --filename=/tmp/shot.png`, and *read the PNG*.
