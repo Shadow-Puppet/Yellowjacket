@@ -161,6 +161,15 @@ describe('double-clicking a row in the track list', () => {
     localStorage.removeItem('track-list-column-widths');
 
     el = await fixture<LitElement>('track-list', { externalTracks: LIST });
+
+    // Say which order is being asserted rather than inheriting one.
+    // `restoreSortPreferences()` runs in `connectedCallback`, so the
+    // list opens in whatever sort was last persisted -- and
+    // `track-11` sorts before `track-3` by title, which is the shape
+    // of #138. The row below is the fixture's third track only while
+    // nothing is sorting the list.
+    (el as unknown as { sortField: string | null }).sortField = null;
+
     el.style.display = 'block';
     el.style.height = '600px';
     await flush();
@@ -171,6 +180,10 @@ describe('double-clicking a row in the track list', () => {
   it('queues the list as displayed and starts on that row', async () => {
     const rows = shadowAll(el, '.track-row');
     const row = rows.find((r) => r.getAttribute('data-index') === '3');
+
+    // Stated first, so a list that is not in the order this asserts
+    // fails by saying so rather than as an off-by-eight file path.
+    expect(row?.getAttribute('data-file-path')).toBe('/music/track-3.mp3');
 
     dblclick(row!);
     await flush();
