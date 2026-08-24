@@ -2549,11 +2549,38 @@ Five things about it are load-bearing, and four of them fail silently:
   correctly. Confidently wrong is worse than absent here, which is the
   same rule `Known` exists for.
 
-One gap this did not close, and it is older: **`dhowden/tag` has no
-RIFF reader**, so nothing the tag writer puts in a WAV's `id3 ` chunk
-is visible to `metadata.ExtractTags` — not the totals and not the title
-either. `wav_test.go` reads that chunk itself, which is why no test
-ever noticed.
+One gap this did not close and #104 did: **`dhowden/tag` has no RIFF
+reader**, so nothing the tag writer put in a WAV's `id3 ` chunk was
+visible to `metadata.ExtractTags` — not the totals and not the title
+either, on files the app itself had just tagged. `wav_test.go` read
+that chunk itself, which is why no test noticed: a round trip asserted
+through the writer's own parser is a test of the writer.
+
+`backend/riff` is where the container is now read, and it is its own
+package because the alternative is an import cycle — `tagwriter`
+imports `metadata`, so `metadata` cannot reach back for `parseRIFF`.
+`backend/tagtotals` is the precedent.
+
+Three things about it are load-bearing. **The two readers are
+deliberately different**: `Parse` holds every chunk in memory, which is
+what rewriting a file needs, and a WAV's audio *is* a chunk — so the
+scan path uses `ID3Chunk`, which seeks over what it is not looking for.
+**The container decides, before `tag.ReadFrom` rather than after it
+fails**, because that library's last resort is an ID3v1 trailer and a
+WAV carrying both would otherwise be read by the wrong one. And **an
+untagged WAV is a file with no tags, not a file with a problem**: no
+chunk, an RF64 container or a tag holding no frames all read as empty
+metadata with no `TagReadWarning`, since the scanner's filename
+fallback is the right answer and a warning would put a fault on a file
+that has none.
+
+The gap was pinned by a test that said so, which failed the moment the
+reader learned and carried the instructions for what to update in its
+own comment. So it is deleted, `TestFixturesMatchManifest` no longer
+skips `wav`, and `totals_test.go`'s WAV case goes through
+`metadata.ExtractTags` like the other three formats. The fixture
+library's two WAV tracks scan with their tags and their cover now,
+which is a change to what every seeded tier sees.
 
 **The absence is what gets marked, not the presence.** The tracklist
 put a green tick against every owned track and a legend underneath

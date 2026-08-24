@@ -74,6 +74,14 @@ func ExtractTags(path string) (*TrackMetadata, error) {
 
 // ExtractTagsFromReader reads metadata from an io.ReadSeeker.
 func ExtractTagsFromReader(r io.ReadSeeker) (*TrackMetadata, error) {
+	// The container decides, so this is asked before tag.ReadFrom and
+	// not after its failure: a WAV's tags live in a RIFF chunk that
+	// dhowden/tag cannot see, and its fallback -- an ID3v1 trailer --
+	// would otherwise outrank them.
+	if meta, ok := wavTags(r); ok {
+		return meta, nil
+	}
+
 	m, err := tag.ReadFrom(r)
 	if err != nil {
 		// No tags found is not necessarily an error - return empty metadata

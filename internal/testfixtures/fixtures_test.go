@@ -30,12 +30,6 @@ func TestFixturesMatchManifest(t *testing.T) {
 	m := testfixtures.Load(t)
 
 	for _, want := range m.Tracks {
-		// WAV tags are write-only today; see
-		// TestWAVTagsAreNotReadableYet.
-		if want.Format == "wav" {
-			continue
-		}
-
 		t.Run(want.Path, func(t *testing.T) {
 			t.Parallel()
 
@@ -156,39 +150,6 @@ func TestDuplicateFixturesAreIndistinguishable(t *testing.T) {
 				filepath.Base(path),
 				got.Title, got.Artist, got.Album,
 				ref.Title, ref.Artist, ref.Album,
-			)
-		}
-	}
-}
-
-// TestWAVTagsAreNotReadableYet pins a known gap rather than hiding it.
-//
-// backend/tagwriter writes WAV tags into a RIFF "id3 " chunk, but
-// backend/metadata reads through dhowden/tag, which recognises MP3,
-// FLAC, OGG, MP4 and DSF and has no RIFF parser at all.  So every tag
-// the app writes to a WAV is invisible to the app that wrote it, and
-// WAV tracks always scan in as untitled.
-//
-// The fixtures are tagged correctly on disk, so when the reader learns
-// to unwrap the RIFF chunk this test starts failing — which is the
-// point.  Delete it then and drop the "wav" skip in
-// TestFixturesMatchManifest.
-func TestWAVTagsAreNotReadableYet(t *testing.T) {
-	t.Parallel()
-
-	m := testfixtures.Load(t)
-
-	for _, path := range m.Case(t, testfixtures.CaseWAVTracks) {
-		got, err := metadata.ExtractTags(path)
-		if err != nil {
-			t.Fatalf("extract tags from %s: %v", path, err)
-		}
-
-		if got.Title != "" {
-			t.Errorf(
-				"%s: WAV tags are now readable (%q) — good news; "+
-					"see this test's comment for what to update",
-				filepath.Base(path), got.Title,
 			)
 		}
 	}

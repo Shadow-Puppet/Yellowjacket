@@ -12,6 +12,7 @@ import (
 	id3v2 "github.com/bogem/id3v2/v2"
 
 	"yellowjacket/backend/metadata"
+	"yellowjacket/backend/riff"
 )
 
 // createTestWAV builds a minimal valid WAV file with an optional
@@ -270,6 +271,88 @@ func TestWriteWavTags_PartialUpdate(t *testing.T) {
 	assertStrField(t, "Composer", meta.Composer, "Original Composer")
 }
 
+// The writer has always been correct and the reader could not see it:
+// a WAV tagged by this app scanned as an untagged file, so editing
+// tags, autotagging a folder or importing a WAV download all appeared
+// to work and changed nothing the library could show (#104).  So this
+// asserts the write through metadata.ExtractTags -- the reader the
+// scan uses -- rather than through the id3 chunk.
+func TestWriteWavTags_ReadBackByTheScanner(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := createTestWAV(t, dir, "scanner.wav", nil)
+	art := tinyJPEG(t)
+
+	changes := TagChanges{
+		FieldTitle:       "Some Song",
+		FieldArtist:      "Some Artist",
+		FieldAlbum:       "Some Album",
+		FieldAlbumArtist: "Some Album Artist",
+		FieldGenre:       "Rock",
+		FieldYear:        2024,
+		FieldTrackNumber: 3,
+		FieldComposer:    "Some Composer",
+		FieldCoverArt:    art,
+	}
+
+	if err := writeWavTags(testLogger(), path, changes); err != nil {
+		t.Fatalf("writeWavTags: %v", err)
+	}
+
+	meta, err := metadata.ExtractTags(path)
+	if err != nil {
+		t.Fatalf("ExtractTags: %v", err)
+	}
+
+	if meta.TagReadWarning != nil {
+		t.Errorf("TagReadWarning: %v", meta.TagReadWarning)
+	}
+
+	assertStrField(t, "Title", meta.Title, "Some Song")
+	assertStrField(t, "Artist", meta.Artist, "Some Artist")
+	assertStrField(t, "Album", meta.Album, "Some Album")
+	assertStrField(t, "AlbumArtist", meta.AlbumArtist, "Some Album Artist")
+	assertStrField(t, "Genre", meta.Genre, "Rock")
+	assertStrField(t, "Composer", meta.Composer, "Some Composer")
+	assertStrField(t, "FileFormat", meta.FileFormat, "WAV")
+	assertIntField(t, "Year", meta.Year, 2024)
+	assertIntField(t, "TrackNumber", meta.TrackNumber, 3)
+
+	if !strings.HasPrefix(meta.TagFormat, "ID3v2") {
+		t.Errorf("TagFormat: got %q, want an ID3v2 version", meta.TagFormat)
+	}
+
+	if meta.Picture == nil {
+		t.Fatal("expected cover art, got nil")
+	}
+
+	if !bytes.Equal(meta.Picture.Data, art) {
+		t.Errorf("picture data mismatch: got %d bytes, want %d",
+			len(meta.Picture.Data), len(art))
+	}
+}
+
+// An untagged WAV is a file with no tags, not a file with a problem:
+// the scanner falls back to the filename and must not be handed a
+// warning to surface about it.
+func TestUntaggedWav_ReadsAsEmptyWithoutAWarning(t *testing.T) {
+	t.Parallel()
+
+	path := createTestWAV(t, t.TempDir(), "bare.wav", nil)
+
+	meta, err := metadata.ExtractTags(path)
+	if err != nil {
+		t.Fatalf("ExtractTags: %v", err)
+	}
+
+	if meta.TagReadWarning != nil {
+		t.Errorf("TagReadWarning: %v", meta.TagReadWarning)
+	}
+
+	assertStrField(t, "Title", meta.Title, "")
+}
+
 func TestWriteWavTags_ChunkPreservation(t *testing.T) {
 	t.Parallel()
 
@@ -282,7 +365,7 @@ func TestWriteWavTags_ChunkPreservation(t *testing.T) {
 		t.Fatalf("open original: %v", err)
 	}
 
-	origChunks, err := parseRIFF(origFile)
+	origChunks, err := riff.Parse(origFile)
 	_ = origFile.Close()
 
 	if err != nil {
@@ -292,7 +375,7 @@ func TestWriteWavTags_ChunkPreservation(t *testing.T) {
 	// Record original chunk data by ID string.
 	origData := map[string][]byte{}
 	for _, c := range origChunks {
-		origData[string(c.id[:])] = c.data
+		origData[string(c.ID[:])] = c.Data
 	}
 
 	// Write a tag to trigger RIFF rewrite.
@@ -309,7 +392,7 @@ func TestWriteWavTags_ChunkPreservation(t *testing.T) {
 		t.Fatalf("open after write: %v", err)
 	}
 
-	newChunks, err := parseRIFF(newFile)
+	newChunks, err := riff.Parse(newFile)
 	_ = newFile.Close()
 
 	if err != nil {
@@ -320,7 +403,7 @@ func TestWriteWavTags_ChunkPreservation(t *testing.T) {
 	origNonID3 := 0
 
 	for _, c := range origChunks {
-		if !isID3ChunkID(c.id) {
+		if !riff.IsID3(c.ID) {
 			origNonID3++
 		}
 	}
@@ -328,7 +411,7 @@ func TestWriteWavTags_ChunkPreservation(t *testing.T) {
 	newNonID3 := 0
 
 	for _, c := range newChunks {
-		if !isID3ChunkID(c.id) {
+		if !riff.IsID3(c.ID) {
 			newNonID3++
 		}
 	}
@@ -359,17 +442,17 @@ func TestWriteWavTags_ChunkPreservation(t *testing.T) {
 // in chunks and its data matches want byte-for-byte.
 func checkChunkPreserved(
 	t *testing.T,
-	chunks []riffChunk,
+	chunks []riff.Chunk,
 	idStr string,
 	want []byte,
 ) {
 	t.Helper()
 
 	for _, c := range chunks {
-		if string(c.id[:]) == idStr {
-			if !bytes.Equal(c.data, want) {
+		if string(c.ID[:]) == idStr {
+			if !bytes.Equal(c.Data, want) {
 				t.Errorf("chunk %q data changed: got %d bytes, want %d",
-					idStr, len(c.data), len(want))
+					idStr, len(c.Data), len(want))
 			}
 
 			return
@@ -430,7 +513,7 @@ func TestWriteWavTags_RejectsRF64(t *testing.T) {
 	buf.WriteString("WAVE")
 
 	// Minimal ds64 chunk (required for RF64 but we just need
-	// enough bytes for parseRIFF to hit the RF64 rejection).
+	// enough bytes for riff.Parse to hit the RF64 rejection).
 	buf.WriteString("ds64")
 	_ = binary.Write(&buf, binary.LittleEndian, uint32(28)) //nolint:mnd
 	buf.Write(make([]byte, 28))                             //nolint:mnd
@@ -454,9 +537,12 @@ func TestWriteWavTags_RejectsRF64(t *testing.T) {
 
 // readWavID3Tags extracts ID3v2 metadata from a WAV file by parsing
 // the RIFF structure and reading the id3 chunk with bogem/id3v2.
-// dhowden/tag's ReadFrom does not support WAV files, and its
-// ReadID3v2Tags fails on empty tags (after clearing all frames).
-// Using bogem/id3v2.ParseReader handles all cases correctly.
+//
+// metadata.ExtractTags reads a WAV since #104 and is what the round
+// trips assert through.  This stays for the two cases that are about
+// the bytes rather than about the scan: a tag with every frame
+// cleared, which no reader reports as anything, and the chunk
+// preservation test, which is already parsing the container itself.
 func readWavID3Tags(
 	t *testing.T,
 	path string,
@@ -470,17 +556,17 @@ func readWavID3Tags(
 
 	defer func() { _ = f.Close() }()
 
-	chunks, err := parseRIFF(f)
+	chunks, err := riff.Parse(f)
 	if err != nil {
-		t.Fatalf("parseRIFF: %v", err)
+		t.Fatalf("riff.Parse: %v", err)
 	}
 
 	// Find the id3 chunk.
 	var id3Data []byte
 
 	for _, c := range chunks {
-		if isID3ChunkID(c.id) {
-			id3Data = c.data
+		if riff.IsID3(c.ID) {
+			id3Data = c.Data
 
 			break
 		}
