@@ -8,6 +8,7 @@ import {
 import '@lit-labs/virtualizer';
 import type {
     LitVirtualizer,
+    RangeChangedEvent,
     VisibilityChangedEvent,
 } from '@lit-labs/virtualizer';
 import { grid } from '@lit-labs/virtualizer/layouts/grid.js';
@@ -30,6 +31,7 @@ import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@components/playlist-picker/playlist-picker.js';
 import { loadTrackDetails } from '@utils/lazy-track-details.js';
 import { tracksByFilePath, tracksForPaths } from '@utils/track-index.js';
+import { prefetchImageWindow } from '@utils/image-prefetch.js';
 import type { TrackDetails } from '@components/track-details/track-details.js';
 import type { CoverArtUrls } from '@components/track-details/track-details.js';
 import { AlbumSelectionManager } from './album-selection.js';
@@ -907,6 +909,31 @@ export class CoverGrid
             isSplit
                 ? this.getBeforeEntries()
                 : this.buildGridEntries(),
+        );
+    };
+
+    /**
+     * Warm the covers just past the rendered range (#65).
+     *
+     * `rangeChanged` rather than `visibilityChanged`, because the two
+     * report different ranges and only one of them is the right
+     * anchor: visibility is what is on screen, and the virtualizer has
+     * already rendered about 1000px past that. Measured from the
+     * visible range this would spend most of its window on cards that
+     * already exist and have already asked for their own art.
+     *
+     * The entry lists are memoized, so asking for one here costs a
+     * reference compare.
+     */
+    private onRangeChanged = (e: RangeChangedEvent) => {
+        const entries = this.splitMode
+            ? this.getBeforeEntries()
+            : this.buildGridEntries();
+
+        prefetchImageWindow(entries, e.first, e.last, (entry) =>
+            entry.album.CoverArtPath
+                ? this.getCoverUrl(entry.album)
+                : '',
         );
     };
 
@@ -2003,6 +2030,7 @@ export class CoverGrid
                 @keydown=${this.onGridAlbumKeydown}
                 @contextmenu=${this.onGridAlbumContextMenu}
                 @visibilityChanged=${this.onVisibilityChanged}
+                @rangeChanged=${this.onRangeChanged}
             ></lit-virtualizer>
         `;
     }
@@ -2037,6 +2065,7 @@ export class CoverGrid
                 @keydown=${this.onGridAlbumKeydown}
                 @contextmenu=${this.onGridAlbumContextMenu}
                 @visibilityChanged=${this.onVisibilityChanged}
+                @rangeChanged=${this.onRangeChanged}
             ></lit-virtualizer>
 
             <album-dropdown

@@ -7,6 +7,7 @@ import {
 import '@lit-labs/virtualizer';
 import type {
     LitVirtualizer,
+    RangeChangedEvent,
     VisibilityChangedEvent,
 } from '@lit-labs/virtualizer';
 import { grid } from '@lit-labs/virtualizer/layouts/grid.js';
@@ -30,6 +31,7 @@ import type { ContextMenuHost, MenuTarget } from '@utils/context-menu-controller
 import { FavoritesController } from '@store/controllers/favorites-controller';
 import { ViewLifecycleMixin } from '@utils/view-lifecycle';
 import { RovingGridController } from '@utils/roving-grid';
+import { prefetchImageWindow } from '@utils/image-prefetch';
 
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
@@ -581,6 +583,26 @@ export class ArtistsView
     /* ================================================================
      * Scroll position persistence
      * ================================================================ */
+
+    /**
+     * Warm the avatars just past the rendered range (#65).
+     *
+     * `rangeChanged` is the rendered range and `visibilityChanged` is
+     * what is on screen; the virtualizer has already drawn about
+     * 1000px past the latter, so that is the wrong anchor to measure a
+     * prefetch window from. It is deliberately outside the
+     * `restoringScroll` guard below: a restored scroll lands in the
+     * middle of the grid, which is exactly when nothing around it is
+     * cached.
+     */
+    private onRangeChanged = (e: RangeChangedEvent) => {
+        prefetchImageWindow(
+            this.cachedGridEntries,
+            e.first,
+            e.last,
+            (entry) => this.artistAvatarURL(entry.artist),
+        );
+    };
 
     /**
      * Save the first visible item index on scroll.
@@ -1145,7 +1167,16 @@ export class ArtistsView
      * Helpers
      * ================================================================ */
 
-    private renderArtistAvatar(artist: library.Artist) {
+    /**
+     * The image this artist's card will draw, or `''` for the initial
+     * placeholder.
+     *
+     * Split out of `renderArtistAvatar` so the prefetch (#65) asks for
+     * exactly what the card is going to ask for — a second copy of the
+     * tier ladder would be a second thing to keep in step, and warming
+     * the wrong tier is a download that buys nothing.
+     */
+    private artistAvatarURL(artist: library.Artist): string {
         const needed = (this.imageSize ?? 176) * window.devicePixelRatio;
         let imageURL = '';
 
@@ -1171,6 +1202,12 @@ export class ArtistsView
                 artist.Name.toLowerCase(),
             ) ?? '';
         }
+
+        return imageURL;
+    }
+
+    private renderArtistAvatar(artist: library.Artist) {
+        const imageURL = this.artistAvatarURL(artist);
 
         if (imageURL) {
             return html`<img
@@ -1531,6 +1568,7 @@ export class ArtistsView
                     .keyFunction=${(entry: ArtistEntry) => entry.artist.ID}
                     .layout=${this.gridLayout}
                     @visibilityChanged=${this.onVisibilityChanged}
+                    @rangeChanged=${this.onRangeChanged}
                 ></lit-virtualizer>
             </div>
             ${this.renderContextMenu()}
