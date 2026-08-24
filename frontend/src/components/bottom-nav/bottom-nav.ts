@@ -89,6 +89,17 @@ export class BottomNav extends LitElement {
             color: var(--yj-accent, #ffd43b);
         }
 
+        /* The press state (#54). This bar is the phone's primary
+           navigation and had no feedback of its own at all -- what a
+           tap produced was the web view's tap highlight, a grey box
+           over the whole 48px cell, which index.css has now taken
+           away. The .active rule above is which tab you are *on*; this
+           is the tab being pressed, so they are a colour and a
+           background rather than two colours. */
+        button:active {
+            background-color: var(--yj-press-overlay, rgba(255, 255, 255, 0.12));
+        }
+
         button:focus-visible {
             outline: 2px solid var(--yj-accent, #ffd43b);
             outline-offset: -2px;

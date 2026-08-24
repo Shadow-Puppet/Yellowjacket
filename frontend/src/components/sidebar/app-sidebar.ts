@@ -95,8 +95,15 @@ export class AppSidebar extends LitElement {
             text-align: center;
         }
 
-        li button:hover {
-            background-color: var(--yj-bg-elevated, #343a40);
+        /* A hover tint is for a device that hovers (#54), and this
+           component is on a phone too: below 600px it is what
+           bottom-nav's "More" sheet mounts, where a hold
+           synthesises a hover and leaves a destination looking picked
+           after the finger has gone. */
+        @media (hover: hover) and (pointer: fine) {
+            li button:hover {
+                background-color: var(--yj-bg-elevated, #343a40);
+            }
         }
 
         li button:focus-visible {
@@ -106,6 +113,14 @@ export class AppSidebar extends LitElement {
 
         li button.active {
             background-color: var(--yj-bg-overlay, #495057);
+        }
+
+        /* The press state (#54), after the .active rule and at the same
+           specificity, so pressing the destination you are already on
+           still says something. It is what a tap gets now that
+           index.css has taken the web view's own highlight box away. */
+        li button:active {
+            background-color: var(--yj-press-overlay, rgba(255, 255, 255, 0.12));
         }
 
         li button p {

@@ -4994,3 +4994,38 @@ ordinary track makes it 9.
 Filed as its own issue rather than fixed in #67's diff: it is a
 property of the shared sheet (`components/menu-surface/`), not of the
 items.
+
+## The tap highlight is one inherited declaration (measured 2026-08-24)
+
+`-webkit-tap-highlight-color` is an **inherited** property, and an
+inherited property crosses a shadow boundary — so `html { … :
+transparent }` in `index.css` reaches every shadow root in the app and
+no component needs a rule of its own. Measured in the running app
+(Chromium, `app-sidebar`'s `li button`, which is three shadow roots
+from the document): `rgba(0, 0, 0, 0)` with the rule, and
+`rgba(0, 0, 0, 0.18)` with it removed. That 0.18 grey over the bounding
+rect of whatever was tapped is what #54 reported.
+
+The same argument was already spent once and is worth not
+re-deriving: `index.css`'s first rule is `*, *::before, *::after {
+user-select: none }`, which for the same reason already covers the
+shadow roots — #54's Findings ask for `user-select` on interactive
+surfaces and it has been done since before the issue was filed.
+
+**What the highlight was, on the surfaces that had nothing else, is the
+press feedback.** Measured on a track row with the press rule removed
+and the button held down: `rgba(255, 255, 255, 0.05)` — the *hover*
+tint, arriving because the pointer is over the row, which is a
+synthesised hover on a phone and outlives the press. With the rule:
+0.12 while held, and the neighbouring row unchanged. So the press state
+is part of removing the highlight rather than a separate polish item,
+and the hover tints on those same surfaces moved behind
+`(hover: hover) and (pointer: fine)`, which is #68's gate applied to a
+tint rather than to a revealed control.
+
+**`touch-action: manipulation` was considered and not taken.** The
+Findings offer it for the 300ms tap delay; this app's viewport is
+`width=device-width`, which is what removes that delay in Chrome, so
+the stated benefit is not there to win. What it would change is the
+gesture stack #63 tuned by measurement on the device (`pan-y` plus a
+non-passive `preventDefault`), and that is not measurable from here.

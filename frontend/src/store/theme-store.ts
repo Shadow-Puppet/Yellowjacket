@@ -46,6 +46,17 @@ export interface ShadePalette {
     border: string;
     borderSubtle: string;
     hoverOverlay: string;
+    /**
+     * The tint a surface takes while it is being pressed (#54).
+     *
+     * Separate from `hoverOverlay` because the two answer different
+     * questions and only one of them a phone can ask: a hover is a
+     * pointer resting somewhere, a press is a finger on the thing it
+     * is about to activate. It is deliberately the stronger of the
+     * two — a press that reads the same as a hover says nothing on a
+     * device where the hover is synthesised by the press itself.
+     */
+    pressOverlay: string;
     selectionBg: string;
 }
 
@@ -95,6 +106,7 @@ export const SHADE_PALETTES: Record<BackgroundShade, ShadePalette> = {
         border: '#333333',
         borderSubtle: '#222222',
         hoverOverlay: 'rgba(255, 255, 255, 0.05)',
+        pressOverlay: 'rgba(255, 255, 255, 0.12)',
         selectionBg: 'rgba(100, 160, 255, 0.15)',
     },
     dark: {
@@ -114,6 +126,7 @@ export const SHADE_PALETTES: Record<BackgroundShade, ShadePalette> = {
         border: '#444444',
         borderSubtle: '#333333',
         hoverOverlay: 'rgba(255, 255, 255, 0.05)',
+        pressOverlay: 'rgba(255, 255, 255, 0.12)',
         selectionBg: 'rgba(100, 160, 255, 0.15)',
     },
     light: {
@@ -133,6 +146,7 @@ export const SHADE_PALETTES: Record<BackgroundShade, ShadePalette> = {
         border: '#ced4da',
         borderSubtle: '#dee2e6',
         hoverOverlay: 'rgba(0, 0, 0, 0.05)',
+        pressOverlay: 'rgba(0, 0, 0, 0.12)',
         selectionBg: 'rgba(100, 160, 255, 0.15)',
     },
 };
@@ -285,6 +299,7 @@ function deriveThemeVariables(
 
         // Interactive overlays
         '--yj-hover-overlay': palette.hoverOverlay,
+        '--yj-press-overlay': palette.pressOverlay,
         '--yj-selection-bg': palette.selectionBg,
 
         // Semantic *fills* — the background of a solid button or badge.

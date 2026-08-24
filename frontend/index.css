@@ -7,6 +7,26 @@
 
 html {
     height: 100%;
+
+    /* #54.  The web view's own tap highlight -- the grey box a phone
+       draws over the bounding rect of whatever was tapped -- gone in
+       one declaration, because `-webkit-tap-highlight-color` is an
+       *inherited* property and an inherited property crosses a shadow
+       boundary.  So this reaches every one of the app's shadow roots
+       without a rule in any of them; before it, exactly one component
+       (`library-status-indicator`) set it and the box appeared
+       everywhere else.
+
+       What it costs is the only touch feedback several surfaces had,
+       which is why the rows, the tab bar and the shared menu items
+       grew a `:active` state in the same change: removing the wrong
+       feedback and leaving none is not an improvement.  The cards
+       already had one (`transform: scale(0.97)`).
+
+       `user-select` is the same argument one rule up and was already
+       done: the `*` rule at the top of this file is inherited into the
+       shadow roots too. */
+    -webkit-tap-highlight-color: transparent;
 }
 
 body {

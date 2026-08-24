@@ -1631,6 +1631,51 @@ sits inside which media query — and says so; the regression it exists
 for is someone hoisting a rule out of its query as a tidy-up, which
 nothing on a desktop renders differently.
 
+**The web view's own tap highlight is gone, and what replaced it is a
+press state** (#54). `-webkit-tap-highlight-color` is an *inherited*
+property, so one declaration on `html` in `index.css` reaches every
+shadow root in the app and takes away the grey box a phone drew over
+the bounding rect of whatever was tapped — measured at
+`rgba(0, 0, 0, 0.18)` with the rule removed. `user-select` is the same
+argument and was already done: `index.css`'s first rule is `*, *::before,
+*::after { user-select: none }`, which reaches the shadow roots for the
+same reason.
+
+Three things about it are load-bearing.
+
+**Removing the highlight removes the only touch feedback several
+surfaces had**, so the press state is part of the same change rather
+than a later polish item: the four lists' rows, `bottom-nav`'s tabs,
+`app-sidebar`'s destinations (which are also the phone's "More" sheet)
+and the shared `contextMenuStyles` menu item all take
+`--yj-press-overlay` on `:active`. The cards already had one
+(`transform: scale(0.97)`) and are untouched.
+
+**A press selector carries a state class or it does nothing where it
+matters.** A row is `.track-row.selected.active`, so a bare
+`.track-row:active` is one class short of it and the press is invisible
+on exactly the row a phone is most likely to press — the one it has
+just selected. The rule is last and lists `.selected:active` /
+`.active:active` beside the bare form.
+
+**And the hover tints on those same surfaces moved behind
+`(hover: hover) and (pointer: fine)`**, which is #68's gate applied to
+a tint rather than to a revealed control and for the same mechanism: a
+hold synthesises a hover in the WebView, so an ungated tint arrives
+because a finger touched the row and stays there after it has gone —
+measured, since with the press rule removed a held row reads
+`rgba(255, 255, 255, 0.05)`, the hover tint, rather than nothing.
+`touch-action: manipulation` was considered and declined: the 300ms
+delay it is offered for is already absent on a `width=device-width`
+viewport, and what it would really change is the gesture stack #63
+tuned by measurement on a device this session cannot measure.
+
+The split of tiers is `hover-affordance.test.ts`'s: `press-feedback.
+test.ts` reads the parsed stylesheet, because `:active` cannot be
+forced there either, and `native-touch-feel.spec.ts` *measures* — it
+holds the button down on a real row of the real list, and it is the
+only tier that loads `index.css` at all.
+
 Three lists had no focused row to open a menu *from* — the queue panel
 and both playlist detail views — and gained a roving tab stop through
 `utils/roving-rows.ts`. **`track-list` deliberately does not use it**:

@@ -1201,8 +1201,16 @@ export class TrackList
       padding-left: 6px;
     }
 
-    .track-row:hover {
-      background-color: var(--yj-hover-overlay, rgba(255, 255, 255, 0.05));
+    /* A hover tint is for a device that hovers (#54): a hold
+       synthesises a hover in the WebView, so ungated this is a
+       highlight that arrives because a finger touched the row and
+       then stays there after it has gone -- which reads as a
+       selection the user did not make. Same gate, and the same
+       mechanism, as #68's revealed controls. */
+    @media (hover: hover) and (pointer: fine) {
+      .track-row:hover {
+        background-color: var(--yj-hover-overlay, rgba(255, 255, 255, 0.05));
+      }
     }
 
     .track-row.selected {
@@ -1237,6 +1245,23 @@ export class TrackList
 
     .track-row.selected.active {
       background-color: var(--yj-selection-bg, rgba(100, 160, 255, 0.15));
+    }
+
+    /* The press state (#54), and the only feedback a tap has now that
+       the web view's tap highlight is gone (index.css).
+
+       **Last, and as specific as the state rules above**: a row that
+       is selected and playing is .track-row.selected.active, so a
+       bare .track-row:active is one class short of it and a press
+       on the row a phone is most likely to press -- the one it just
+       selected -- would show nothing. Instant rather than
+       transitioned, because the only measured statement here about
+       transitions on a list is that two card grids removed theirs
+       for software-rendering repaint cost. */
+    .track-row.selected:active,
+    .track-row.active:active,
+    .track-row:active {
+      background-color: var(--yj-press-overlay, rgba(255, 255, 255, 0.12));
     }
 
 
