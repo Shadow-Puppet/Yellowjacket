@@ -117,12 +117,12 @@ is:
   so a visual case that sets nothing photographs whatever the previous
   case left behind — which is how the sidebar's baseline came to have
   Tracks lit and `now-playing`'s to be playing from a dynamic mix.
-- **`make ui-visual-update UI_ARGS=<path>` does not filter** and
-  re-records *every* baseline, blessing any stale one in silence:
-  vitest's `--update` takes the following positional as its value. Until
-  #204 lands, record one file with
-  `cd frontend && YJ_VISUAL=1 npx vitest run --update=true <path>`, and
-  check `git status` before committing either way.
+- **Record one file with `make ui-visual-update UI_ARGS=<path>`**, and
+  check `git status` before committing either way. That filter is only
+  honoured since #204: the recipe was a bare `--update`, and vitest
+  takes the following positional as the flag's value, so the path was
+  swallowed and *every* baseline was re-recorded — blessing any stale
+  one in silence.
 
 What the tier is worth, for the record: it is a *layout* check, blind to
 colour (the component tier has no `:root`, so it renders the fallbacks —
