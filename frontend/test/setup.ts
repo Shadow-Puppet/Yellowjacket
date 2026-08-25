@@ -72,6 +72,23 @@ document.body.style.margin = '0';
 
 beforeEach(() => {
   resetHarness();
+
+  // A test file does not get its own origin. `@vitest/browser-playwright`
+  // opens one BrowserContext per session and runs several files in it,
+  // one after another, so everything a component persists — the track
+  // list's sort and column widths, the cover size, `now-playing`'s
+  // scroll mode — is still there when the next file mounts the same
+  // component. That is invisible until it is intermittent, because
+  // which files share a tab and in what order changes run to run: it
+  // cost #138 three scheduled runs, one of them a PR with no frontend
+  // code in it at all.
+  //
+  // Clearing here rather than in the specs that write is deliberate —
+  // the spec that *reads* is never the one that knows. It is safe for
+  // the same reason the leak exists: files in a session are
+  // sequential, so this cannot wipe storage a concurrent file is in
+  // the middle of using.
+  localStorage.clear();
 });
 
 afterEach(() => {
