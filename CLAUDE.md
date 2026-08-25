@@ -3403,6 +3403,46 @@ rather than searching it — the store replaces that array when its
 contents change and shares the unchanged members, which is the same
 signal `track-list`'s memoized caches key on.
 
+**And the right tier arriving late still reads as no art at all**, so
+the two grids ask for it before the card exists (#65).
+`utils/image-prefetch.ts` warms the images a scroll is about to reach,
+from `cover-grid`'s and `artists-view`'s virtualizers. Measured on the
+50 000-track bulk seed over ten 2 400px jumps: of 258 covers arriving
+in view, **254 were still blank one frame later and 214 two frames
+later**; with the prefetch, 117 and 77. Both builds are clean by 50 ms
+on a desktop with 3.7 kB fixture covers, which is where the reference
+device's slower engine and 27 kB covers spend their pop-in.
+
+Four things about it are load-bearing.
+
+**The overscan the obvious fix asks for does not exist.**
+`@lit-labs/virtualizer`'s `_overhang` is a hard-coded 1000px
+`protected` field on `BaseLayout` with no configuration surface, so
+raising it means monkey-patching a private. 1000px is about two
+screens on a 439px viewport, and the *image* cannot be requested until
+the card it lives in is rendered — which is what this asks for
+instead.
+
+**It hangs off `rangeChanged`, not `visibilityChanged`.** Those report
+different ranges: visibility is what is on screen, and the virtualizer
+has already rendered that 1000px past it. Anchored to the visible
+range the window is spent on cards that already exist and have already
+asked for their own art — measured as the difference between the
+prefetch reaching one row past the last card and reaching a full
+window past it.
+
+**It is not the `LRUMap` path, and saying so is the bound.** That
+ceiling holds Explore's base64 data URLs in JS; a library cover is a
+plain URL under `Cache-Control: immutable` (the filenames are content
+hashes), so what retains the bytes is the browser's own cache. What
+this module retains is the *set of URLs already asked for*, capped at
+512 and reported to `window.__yjCacheStats()` — 497 entries and 15 407
+chars after the run above.
+
+**The prefetch asks for what the card will draw.** `artists-view`'s
+tier ladder moved into `artistAvatarURL()` so the two cannot disagree;
+a second copy would be a warm cache for a tier nothing renders.
+
 **The same rule, on the selection path, was the worst stall in the
 app.** Five components turned selected file paths back into tracks with
 `filePaths.map(fp => tracks.find(…))`, so "Select all → Edit tags" at

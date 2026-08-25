@@ -5029,3 +5029,52 @@ Findings offer it for the 300ms tap delay; this app's viewport is
 the stated benefit is not there to win. What it would change is the
 gesture stack #63 tuned by measurement on the device (`pan-y` plus a
 non-passive `preventDefault`), and that is not measurable from here.
+
+## Art pop-in is measurable in a browser, if you count frames rather than milliseconds (measured 2026-08-24)
+
+#65 is an Android report ("scrolling through albums, the art pops in")
+and the desktop harness can measure it, which was not obvious: the
+first attempt waited 220 ms after each scroll jump and found **zero**
+blank covers on either build. The metric only discriminates at one and
+two animation frames after the jump, which is where a pop-in actually
+lives.
+
+Protocol, on `make dev-headless SEED=bulk` (4 988 albums), ten
+2 400px jumps of `.grid-scroll-container`, counting covers whose rect
+intersects the viewport with `naturalWidth === 0`:
+
+| build | blank at frame 1 | at frame 2 | at 50 ms |
+|---|---|---|---|
+| `main` | 254 / 258 | 214 / 258 | 0 |
+| `main`, second run | 254 / 258 | 190 / 258 | 0 |
+| prefetch | 117 / 258 | 77 / 258 | 0 |
+| prefetch, second run | 118 / 258 | 96 / 258 | 0 |
+
+Two things this protocol gets wrong if repeated carelessly. **A second
+run in the same browser session measures the HTTP cache**, not the
+build — the skill already warns about this for `make perf`, and it
+applies to any image measurement; every row above is a fresh
+`playwright-cli close` + `open`. And **the frontend is embedded**, so
+comparing builds is a `git stash` *and* a rebuild, not a stash.
+
+**The bulk library's covers are 300x300 and ~3.7 kB**, which is why
+both builds are clean by 50 ms here and why the phone's number cannot
+be inferred from this one — same caveat the skill already records
+about full-size artwork.
+
+**`rangeChanged` and `visibilityChanged` are different ranges**, and
+the difference is the whole of this fix's value.
+`@lit-labs/virtualizer` reports `_first`/`_last` (rendered, including
+the ~1000px overhang) on the former and `_firstVisible`/`_lastVisible`
+on the latter. Both grids listen to `visibilityChanged` for scroll
+persistence, which wants the visible range and is correct; a prefetch
+window measured from it lands mostly on cards that already exist.
+Anchored there, the component test could see only one row past the
+last rendered card.
+
+**`_overhang` is not configurable.** It is a `protected` field set to
+1000 in `BaseLayout` and read by every layout; there is no option on
+`grid()`/`flow()` and no property on the element. The issue's Direction
+("ask the virtualizer for a larger overscan") is therefore not
+available without patching a private, which is why the request is
+issued ahead of the element instead.
