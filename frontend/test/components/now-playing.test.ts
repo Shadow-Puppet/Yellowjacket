@@ -366,6 +366,16 @@ describe('<now-playing>', () => {
     const el = await fixture('now-playing');
 
     emit(Events.TrackChanged, { ...TRACK, trackChangeId: 6 });
+    // Stated rather than inherited: the queue store is a singleton, so
+    // without this the shot records whichever source the *previous*
+    // case left in it and the reference moves when the file is
+    // reordered. Three lines is what the bar renders while playing
+    // from somewhere, which is the arrangement worth recording.
+    setQueue([queueTrack(1, 'Ashes to Ashes')], 0, {
+      type: 'album',
+      id: 7,
+      label: 'Scary Monsters',
+    });
     await flush();
     await el.updateComplete;
 

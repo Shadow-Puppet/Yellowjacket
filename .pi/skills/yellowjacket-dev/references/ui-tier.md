@@ -78,9 +78,58 @@ synchronously.
   Microtasks and not a timer, deliberately: a timer hangs forever under
   the suites that install fake ones.
 
-Visual baselines are font-hinting and compositing sensitive, which is
-why they are opt-in: they only mean anything on the machine that
-recorded them.
+## The visual tier does not gate, and that is measured (#196)
+
+`make ui-visual` is the same suite with nine `toMatchScreenshot`
+baselines switched on. **Nothing runs it but a person**, deliberately,
+and the reason is a number rather than a preference: the committed
+baselines were recorded on Arch, and replayed in a bare `ubuntu:24.04`
+container — CI's `check` image — three of them fail for reasons that
+have nothing to do with any component.
+
+| baseline | Arch | ubuntu:24.04 |
+|---|---|---|
+| `page-header` filtered-by-search | passes | ratio 0.03 differ, against a 0.02 allowance |
+| `track-info` | passes | ratio 0.03 differ |
+| `seek-bar` | 1152×18 | 1152×17 |
+
+The two references that were genuinely stale did not even agree about
+their *new* size — `now-playing` renders 1152×65 on Arch and 1152×64 in
+the container. So moving CI's `check` job from `make ui-test` to
+`make ui-visual` is not a one-line change: it needs a second,
+container-recorded baseline set, which every local run would then fail
+against. That is the same trap the other way round, and a pre-push hook
+is the same fault again — one machine's baselines against everybody
+else's renderer.
+
+So the tier stays local and opt-in, and the rule that replaces the gate
+is:
+
+- **A change that moves a component's geometry refreshes that
+  component's reference in the same commit, having read the image.**
+  Look at the PNG; the dimensions in the failure message are the cheap
+  half of the answer.
+- **Never refresh a reference you did not cause.** #196 exists because
+  four of them drifted across three unrelated merges, and every red run
+  made the next person likelier to stop running the tier than to read
+  it.
+- **State the world the shot is taken in.** The stores are singletons,
+  so a visual case that sets nothing photographs whatever the previous
+  case left behind — which is how the sidebar's baseline came to have
+  Tracks lit and `now-playing`'s to be playing from a dynamic mix.
+- **Record one file with `make ui-visual-update UI_ARGS=<path>`**, and
+  check `git status` before committing either way. That filter is only
+  honoured since #204: the recipe was a bare `--update`, and vitest
+  takes the following positional as the flag's value, so the path was
+  swallowed and *every* baseline was re-recorded — blessing any stale
+  one in silence.
+
+What the tier is worth, for the record: it is a *layout* check, blind to
+colour (the component tier has no `:root`, so it renders the fallbacks —
+`make ui-visual` passed unchanged through a whole palette rewrite,
+twice), and it has caught one thing nothing else could — swapping
+`library-status-indicator`'s `<button>` for a `<span>` lost the UA
+stylesheet's `box-sizing` and grew the badge 36→38px.
 
 ## Bindings
 

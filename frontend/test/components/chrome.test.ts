@@ -137,6 +137,11 @@ describe('<app-sidebar>', () => {
   });
 
   it('looks the way it did last time', async () => {
+    // Stated rather than inherited: `activeViewStore` is a singleton, so
+    // without this the shot records whichever view the *previous* case
+    // left in it and the reference moves when the file is reordered.
+    activeViewStore.setView('home', true);
+
     const el = await fixture('app-sidebar');
 
     await visual(el, 'app-sidebar');
