@@ -193,4 +193,119 @@ describe('bottom-nav', () => {
     expect(shadow<HTMLElement>(el, 'app-sidebar')?.hasAttribute('expanded'))
       .toBe(true);
   });
+
+  it('draws "More" as a sheet rising from the bottom', async () => {
+    const el = await fixture<Nav>('bottom-nav');
+    const drawer = shadow<HTMLElement>(el, 'wa-drawer');
+
+    // #71. A side drawer is a desktop shape: it opened away from the
+    // thumb that asked for it and drew a 200px column of a 424px
+    // screen. `placement` is the whole of the change to *where* it
+    // comes from, and `without-header` is what makes it the same sheet
+    // `menu-surface` draws rather than a second pattern with a title
+    // bar and a close button.
+    expect(drawer?.getAttribute('placement')).toBe('bottom');
+    expect(drawer?.hasAttribute('without-header')).toBe(true);
+
+    // Named all the same: `nameDialog`'s documented aria-label path,
+    // since without-header renders no heading to point at.
+    expect(drawer?.getAttribute('label')).toBe('All views');
+  });
+
+  it('leaves exactly one scroll container, and it is the sheet body', async () => {
+    const el = await fixture<Nav>('bottom-nav');
+    const drawer = shadow<HTMLElement & { open: boolean }>(el, 'wa-drawer');
+
+    if (!drawer) throw new Error('no drawer');
+
+    const shown = once(drawer, 'wa-after-show');
+
+    shadow<HTMLButtonElement>(el, '[data-testid="tab-more"]')?.click();
+    await shown;
+    await update(el, {});
+
+    // The report is "only part of the screen scrolls under my finger",
+    // and the cause is three boxes that each scroll: the dialog, its
+    // body, and the sidebar's own overflow-y host. Which one a drag
+    // moves depends on where the finger landed.
+    const dialog = drawer.shadowRoot?.querySelector('[part~="dialog"]');
+    const body = drawer.shadowRoot?.querySelector('[part~="body"]');
+    const sidebar = shadow<HTMLElement>(el, 'app-sidebar');
+
+    if (!dialog || !body || !sidebar) throw new Error('no sheet');
+
+    expect(getComputedStyle(dialog).overflowY).toBe('hidden');
+    expect(getComputedStyle(body).overflowY).toBe('auto');
+    expect(getComputedStyle(sidebar).overflowY).toBe('visible');
+
+    // And the one that does scroll keeps it to itself, or reaching the
+    // end of the destinations scrolls the page behind the sheet.
+    expect(getComputedStyle(body).overscrollBehaviorY).toBe('contain');
+  });
+
+  it('gives the sheet the whole width, which the sidebar does not take', async () => {
+    const el = await fixture<Nav>('bottom-nav');
+
+    shadow<HTMLButtonElement>(el, '[data-testid="tab-more"]')?.click();
+    await update(el, {});
+
+    const sidebar = shadow<HTMLElement>(el, 'app-sidebar');
+
+    if (!sidebar) throw new Error('no sidebar');
+
+    // `app-sidebar` writes an *inline* width and caps itself at 400px,
+    // which beats any rule this host could write — so "the host owns
+    // the box" has to be part of what `expanded` means, or the sheet
+    // draws the old 200px column inside a full-width surface.
+    expect(sidebar.style.width).toBe('100%');
+    expect(getComputedStyle(sidebar).maxWidth).toBe('none');
+  });
+
+  it('sizes the sheet rows for a thumb, below the phone breakpoint', async () => {
+    const el = await fixture<Nav>('bottom-nav');
+
+    shadow<HTMLButtonElement>(el, '[data-testid="tab-more"]')?.click();
+    await update(el, {});
+
+    const sidebar = shadow<HTMLElement>(el, 'app-sidebar');
+    const sheets = sidebar?.shadowRoot?.adoptedStyleSheets ?? [];
+    const phoneRules: string[] = [];
+
+    for (const sheet of sheets) {
+      for (const rule of Array.from(sheet.cssRules)) {
+        if (!(rule instanceof CSSMediaRule)) continue;
+
+        if (!/max-width:\s*599px/.test(rule.conditionText)) continue;
+
+        for (const inner of Array.from(rule.cssRules)) {
+          phoneRules.push(inner.cssText);
+        }
+      }
+    }
+
+    // Asserted against the parsed stylesheet, like
+    // `hover-affordance.test.ts` and for the same reason: this tier's
+    // iframe is not 599px wide, so the rule cannot be *rendered* here —
+    // but the regression worth catching is someone moving it out of the
+    // query, which nothing on a desktop draws differently.
+    expect(phoneRules.length).toBeGreaterThan(0);
+    expect(phoneRules.some((r) => /min-height:\s*48px/.test(r))).toBe(true);
+  });
+
+  it('takes the resize handle out of the sheet', async () => {
+    const el = await fixture<Nav>('bottom-nav');
+
+    shadow<HTMLButtonElement>(el, '[data-testid="tab-more"]')?.click();
+    await update(el, {});
+
+    const handle = shadow<HTMLElement>(el, 'app-sidebar')
+      ?.shadowRoot?.querySelector('.resize-handle');
+
+    if (!handle) throw new Error('no resize handle');
+
+    // A col-resize strip on the right edge of a touch surface: the
+    // compatibility mouse events a tap synthesises reach its
+    // `mousedown`, so it can start a resize nobody asked for.
+    expect(getComputedStyle(handle).display).toBe('none');
+  });
 });

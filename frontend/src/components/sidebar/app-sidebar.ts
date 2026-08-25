@@ -42,6 +42,26 @@ export class AppSidebar extends LitElement {
             scrollbar-width: thin;
         }
 
+        /* A host that has made room owns the box, not just the labels
+           (#71). The bottom-nav sheet is the width of the screen and
+           provides the one scroll container it needs; left to itself
+           the sidebar is a 200px column with a second scroller inside
+           it, which is what a nested scroll region feels like under a
+           thumb -- part of the surface moves and part of it does not. */
+        :host([expanded]) {
+            max-width: none;
+            height: auto;
+            overflow: visible;
+        }
+
+        /* And the width is not draggable there. It is a mouse
+           affordance (mousedown, col-resize) sitting on the right edge
+           of a touch surface, where the compatibility mouse events a
+           tap synthesises can start a resize nobody asked for. */
+        :host([expanded]) .resize-handle {
+            display: none;
+        }
+
         .resize-handle {
             position: absolute;
             top: 0;
@@ -160,6 +180,25 @@ export class AppSidebar extends LitElement {
         :host(.collapsed) li button wa-icon {
             font-size: var(--yj-icon-md);
         }
+
+        /* Below 600px the only place this renders is the bottom-nav
+           sheet -- the shell's own copy is display: none there -- so
+           the rows are sized for the thumb that opened it: 48px, which
+           is #186's floor and the height every row in #60's context
+           sheet already has. A media query inside a shadow root is
+           answered by the viewport, so the component states this
+           itself rather than the sheet reaching in. */
+        @media (max-width: 599px) {
+            ul {
+                padding: 4px 8px 8px;
+            }
+
+            li button {
+                min-height: 48px;
+                padding: 12px 10px;
+                gap: 14px;
+            }
+        }
     `];
 
     /** Delay in ms before a drag-hover triggers navigation. */
@@ -188,11 +227,14 @@ export class AppSidebar extends LitElement {
 
     /**
      * Keep the labels regardless of the viewport, for a host that has
-     * made room for them -- `bottom-nav`'s drawer, which is the whole
+     * made room for them -- `bottom-nav`'s sheet, which is the whole
      * screen wide on the phone where this would otherwise auto-collapse
      * to icons. The auto-collapse is a *width* response to a narrow
-     * shell, and inside a drawer the shell is not what the sidebar is
+     * shell, and inside a sheet the shell is not what the sidebar is
      * sharing space with.
+     *
+     * It says the host owns the *box*, not only the labels: the width,
+     * the scrolling and the resize handle all follow it (#71).
      */
     @property({ type: Boolean, reflect: true })
     expanded = false;
@@ -365,9 +407,18 @@ export class AppSidebar extends LitElement {
      * be a media query in the stylesheet.
      */
     private applyViewportWidth() {
-        const narrow =
-            !this.expanded &&
-            (this.narrowViewport?.matches ?? false);
+        // A host that made room decides how much: `bottom-nav`'s sheet
+        // is the whole screen wide, and the inline width below -- which
+        // beats any rule the host could write -- would draw the old
+        // 200px side drawer inside it.
+        if (this.expanded) {
+            this.style.width = '100%';
+            this.collapsed = false;
+
+            return;
+        }
+
+        const narrow = this.narrowViewport?.matches ?? false;
         const width = narrow
             ? MIN_WIDTH
             : this.userWidth;

@@ -1113,9 +1113,9 @@ not the fix and cannot be: that function is the `document` listener for
 `navigate`, so it is an infinite loop.
 
 **It is a store rather than an event, because a component that mounts
-after a navigation still has to know.** `bottom-nav`'s "More" drawer
+after a navigation still has to know.** `bottom-nav`'s "More" sheet
 creates its `<app-sidebar>` on open, and that copy had heard no
-`navigate` at all — standing on Albums, the drawer opened highlighting
+`navigate` at all — standing on Albums, it opened highlighting
 Home. An event has no answer for a listener that was not there.
 
 **A detail view is not a view here**, so the destination it was opened
@@ -1216,7 +1216,7 @@ and then vanishing.
 than a general rule about phones.** `PHONE_COLUMN_IDS` is the precedent
 for "what a phone shows is a different question", and it would apply —
 except that `bottom-nav`'s "More" opens the *same* `<app-sidebar>`,
-which filters, so an unfiltered bar would contradict its own drawer one
+which filters, so an unfiltered bar would contradict its own sheet one
 tap away. Which four tabs is still plan 016's committed subset; this
 only removes from it, and "More" is never filtered because it is how
 everything else stays reachable.
@@ -1874,7 +1874,7 @@ listing the destinations again — but rendering it unconditionally put a
 second copy of every `data-testid="nav-*"` in the DOM, and 30 existing
 specs failed with "strict mode violation: resolved to 2 elements" on a
 desktop viewport where the element is not even visible. It renders only
-while the drawer is open, and `bottom-nav.test.ts` asserts its absence
+while the sheet is open, and `bottom-nav.test.ts` asserts its absence
 before that.
 
 **The tab bar is four destinations and a way to the rest.** Three to
@@ -1882,6 +1882,33 @@ five is where touch targets stop being thumb-sized; eleven over 360px
 is 32px each. Which four is plan 016's committed subset, and everything
 else — Settings included, because a phone still needs it — is behind
 "More".
+
+**And "More" rises from the bottom, on #60's sheet rather than a
+second one** (#71). It was a `wa-drawer placement="start"`: a 200px
+column of a 424px screen, opening away from the thumb that asked for
+it, with the rest of its 400px band empty. It is the *same element*
+with `placement="bottom"` and `without-header`, which is what keeps
+the change to where it comes from — `wa-drawer` renders a native
+`<dialog>` and opens it with `showModal()`, so #60's containment
+finding carries over with nothing new to prove, and the focus trap,
+Escape, tap-outside and `wa-after-hide` all come along. Measured at
+424x439: 424 wide, 373 tall (85vh, so there is an outside to tap),
+48px rows.
+
+Three things about it are load-bearing. **The sidebar is mounted
+rather than re-listed as data**, which the issue offers as the
+alternative: the shell's own `<app-sidebar>` is `display: none` below
+600px rather than removed, so a second list drawing `nav-*` handles is
+the duplication above, and it would be a second place to add the next
+view to. **There is one scroller, and it is the sheet's body** — the
+reported "only part of the screen scrolls under my finger" is three
+nested ones (the dialog, its body, and the sidebar's own
+`overflow-y: auto` host), so which box a drag moves depends on where
+the finger landed; `overscroll-behavior: contain` is the other half.
+And **`expanded` means the host owns the box, not just the labels**:
+`app-sidebar` writes an *inline* width and caps itself at 400px, which
+beats any rule the host could write, so the width, the scrolling and
+the mouse-only resize handle all follow that attribute.
 
 **There are three supported size bands, and the queue is part of the
 promise.** Plan 018 (#24) wrote them down: **Phone** below 600 (bottom
