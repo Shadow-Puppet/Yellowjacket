@@ -55,6 +55,8 @@ import {
 import type { ContextMenuHost, MenuTarget } from '@utils/context-menu-controller.js';
 import { FavoritesController } from '@store/controllers/favorites-controller';
 import { creditLink, exploreLinkStyles } from '../../utils/explore-link';
+import { goToMenuItems } from '../../utils/go-to-menu';
+import type { GoToTarget } from '../../utils/go-to-menu';
 import { creditStore } from '@store/credit-store';
 import {
     createAlbumArtDragImage,
@@ -2084,6 +2086,30 @@ export class CoverGrid
         );
     }
 
+    /**
+     * The artist an album card's menu can navigate to — the card's own
+     * credit line, which stops being a link below the phone breakpoint
+     * (#67).
+     *
+     * A *track* target gets nothing: the dropdown's rows carry no
+     * links of their own, and the album they sit under is the card
+     * that opened them.
+     */
+    private get goToTarget(): GoToTarget | undefined {
+        if (this.contextMenuTarget.kind !== 'album') return undefined;
+
+        const album = this.albums.find(
+            (a) => a.ID === this.contextMenuAlbumId,
+        );
+
+        if (!album) return undefined;
+
+        return {
+            artistName: album.ArtistName,
+            artistMBID: album.ArtistMBID,
+        };
+    }
+
     private renderContextMenu() {
         const { ctxMenu } = this;
 
@@ -2199,6 +2225,11 @@ export class CoverGrid
                                         </wa-dropdown-item>
                                     `
                                   : nothing}
+                              ${goToMenuItems(this.goToTarget, {
+                                  onSelect: () => ctxMenu.close(),
+                                  onHover: () =>
+                                      ctxMenu.closePlaylistSubmenu(),
+                              })}
                           </div>
                       `
                 : nothing}

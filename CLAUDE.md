@@ -2375,6 +2375,31 @@ a list or a detail view:
   and dropped if a second click arrives, because the title is the
   widest thing in a row and double-clicking a row plays it. Rows do
   not need to know links exist.
+
+  **Below 600px a name is not a link, and the row's menu is where it
+  went** (#67). Every sentence above is a *desktop* compromise: the
+  double-click grace means nothing on touch, a few characters of text
+  is not a touch target, and since #63 a claimed `yj-tap` has its click
+  swallowed, so the link was unreachable as well as fiddly. The rule is
+  in the utility rather than at twenty call sites, and
+  `utils/go-to-menu.ts` is the other half — "Go to Artist" / "Go to
+  Album", drawn under exactly the condition the link is not, from
+  `explore-link`'s own exported routing so an untagged artist reaches
+  the library page by the same lookup.
+
+  Three things about it are load-bearing. **Suppressing a link without
+  a menu behind it is not a smaller affordance**, it is a destination
+  the phone cannot reach — so `keepOnPhone` is the documented exception
+  for the three surfaces with no row menu (`now-playing-view`,
+  `explore-album-details`' header credit, `top-results-row`), and
+  nothing else may pass it. **One row or none**: the items are the Play
+  item's rule one step on, since "go to the album" of five different
+  albums means nothing. And **there is no "Go to Genre"**, because
+  there is no genre link anywhere to lose — that would be new
+  navigation rather than a replacement, and belongs in its own issue.
+  `track-list` is the one list that gains rather than moves: its phone
+  column set stacks title over artist as plain text already, so those
+  names have never been links there.
 - **`<catalog-scope-notice>`** is how a detail page admits what it is
   showing: catalog data (silent), a library stand-in while a fetch is
   in flight, library-only because the entity has no MBID, or a failed/

@@ -62,6 +62,8 @@ import {
     trackLink,
     exploreLinkStyles,
 } from '@utils/explore-link';
+import { goToMenuItems } from '@utils/go-to-menu';
+import type { GoToTarget } from '@utils/go-to-menu';
 import {
     ICON_NEW,
     ICON_PLAY,
@@ -1624,6 +1626,29 @@ export class QueuePanel
             .map((i) => tracks[i]!.filePath);
     }
 
+    /**
+     * The row "Go to Artist" / "Go to Album" navigate from, which is
+     * one row or none — the rule the Play item already follows.  Both
+     * items are drawn only below the phone breakpoint, where the row's
+     * own names stopped being links (#67).
+     */
+    private get goToTarget(): GoToTarget | undefined {
+        const indices = this.selection.getSelectedIndices();
+
+        if (indices.length !== 1) return undefined;
+
+        const track = this.queue.tracks[indices[0]!];
+
+        if (!track) return undefined;
+
+        return {
+            artistName: track.artist,
+            artistMBID: track.artistMbid,
+            albumName: track.album,
+            albumMBID: track.releaseGroupMbid,
+        };
+    }
+
     // =================================================================
     // Drop target (tracks dropped into queue)
     // =================================================================
@@ -2341,6 +2366,14 @@ export class QueuePanel
                                   Track
                                   Details
                               </wa-dropdown-item>
+                              ${goToMenuItems(this.goToTarget, {
+                                  onSelect: () => {
+                                      this.selection.clear();
+                                      this.ctxMenu.close();
+                                  },
+                                  onHover: () =>
+                                      this.ctxMenu.closePlaylistSubmenu(),
+                              })}
                           </div>
                       `
                     : nothing}

@@ -13,11 +13,35 @@
  * bug, not as a statement about metadata.  The only case that still
  * renders as text is one we genuinely cannot route (no name at all, or
  * nothing in the library by that name).
+ *
+ * ## Below the phone breakpoint a name is not a link (#67)
+ *
+ * A few characters of text inside a row is not a touch target, and the
+ * click handling below is explicitly a *desktop* compromise: the
+ * navigation is held for one double-click interval so double-clicking
+ * the row can still play it, which means nothing at all on touch.  On
+ * a phone the row's own gesture wins anyway — a claimed `yj-tap` has
+ * its click swallowed by `utils/touch-gestures.ts`, so the link was
+ * unreachable as well as fiddly.
+ *
+ * So the rule lives here rather than at twenty call sites, which is
+ * what the Findings on #67 ask for: a name renders as plain text below
+ * `PHONE_QUERY`, and the row's context menu carries "Go to Artist" /
+ * "Go to Album" in its place (`goToMenuItems`).
+ *
+ * The exception is `keepOnPhone`, and it is not a preference.  Three
+ * surfaces render a name with **no menu to carry the destination** —
+ * `now-playing-view`, `explore-album-details`' header credit and
+ * `top-results-row` — so suppressing the link there takes the action
+ * away entirely rather than moving it, which is what plan 018's "no
+ * action is unreachable at any supported size" refuses.  Each of those
+ * call sites says so.
  */
 
 import { html, css } from 'lit';
 import type { TemplateResult } from 'lit';
 import { libraryStore } from '../store/library-store';
+import { PHONE_QUERY } from './breakpoints';
 
 /** Shared CSS for explore link styling. Import into component styles. */
 export const exploreLinkStyles = css`
@@ -31,6 +55,57 @@ export const exploreLinkStyles = css`
         text-decoration: underline;
     }
 `;
+
+/**
+ * Options every link function takes, for the one case that is not the
+ * default.
+ */
+export interface LinkOptions {
+    /**
+     * Keep the name navigable at phone width.
+     *
+     * For a surface with no context menu to carry the destination —
+     * see the header of this file.  A row must not pass it: the row's
+     * tap already means "play", and the menu is where the destination
+     * went.
+     */
+    keepOnPhone?: boolean;
+}
+
+/**
+ * The live phone breakpoint, made once and read per link.
+ *
+ * A `MediaQueryList` is live, so one object answers for the life of
+ * the page and a resize needs nothing from here.  The identity check
+ * is the test seam: this tier's viewport is fixed by the runner, so a
+ * spec answers the query by replacing `window.matchMedia` (the same
+ * stub `now-playing-phone.test.ts` installs), and swapping the
+ * function is what tells us to ask again.
+ */
+let phoneQuery: MediaQueryList | undefined;
+let phoneQuerySource: typeof window.matchMedia | undefined;
+
+/**
+ * Whether an inline name still navigates.
+ *
+ * Exported because the menus that carry the destination in its place
+ * are drawn under exactly the same condition -- one answer, not two.
+ */
+export function inlineLinksSuppressed(): boolean {
+    if (!window.matchMedia) return false;
+
+    if (phoneQuerySource !== window.matchMedia) {
+        phoneQuerySource = window.matchMedia;
+        phoneQuery = window.matchMedia(PHONE_QUERY);
+    }
+
+    return phoneQuery?.matches ?? false;
+}
+
+/** Whether this call site should render plain text rather than a link. */
+function plainText(options?: LinkOptions): boolean {
+    return !options?.keepOnPhone && inlineLinksSuppressed();
+}
 
 /** Fire a navigate event from the clicked element. */
 function navigate(target: EventTarget, detail: Record<string, unknown>): void {
@@ -153,39 +228,19 @@ function singleClick(
  * @param mbid - The MusicBrainz artist ID.  Empty string = local only.
  * @param content - Optional custom content to render inside the link
  *                  (e.g. highlighted search result).  Defaults to artistName.
+ * @param options - See `LinkOptions`.
  */
 export function artistLink(
     artistName: string,
     mbid: string,
     content?: TemplateResult | string,
+    options?: LinkOptions,
 ): TemplateResult | string {
     if (!artistName) return artistName;
+    if (plainText(options)) return content ?? artistName;
 
     const onClick = singleClick((target) => {
-        void (async () => {
-            if (mbid) {
-                navigate(target, {
-                    view: 'explore-artist-details',
-                    artistMBID: mbid,
-                    artistName,
-                });
-
-                return;
-            }
-
-            const local = await findLocalArtist(artistName);
-            if (!local) return;
-
-            // The caller's row had no MBID, but the library row for the
-            // same artist may — the grid routes by exactly this field,
-            // so reading it here is what keeps the two paths agreeing.
-            navigate(target, {
-                view: 'explore-artist-details',
-                artistMBID: local.MBID || '',
-                artistName,
-                localArtistId: local.ID,
-            });
-        })();
+        void openArtistPage(target, artistName, mbid);
     });
 
     return html`<a
@@ -203,19 +258,22 @@ export function artistLink(
  * @param mbid - The MusicBrainz release group ID.  Empty = local only.
  * @param content - Optional custom content to render inside the link.
  * @param artistName - Disambiguates same-named albums in the library.
+ * @param options - See `LinkOptions`.
  */
 export function albumLink(
     albumName: string,
     mbid: string,
     content?: TemplateResult | string,
     artistName?: string,
+    options?: LinkOptions,
 ): TemplateResult | string {
     if (!albumName) return albumName;
+    if (plainText(options)) return content ?? albumName;
 
     return html`<a
         class="explore-link"
         @click=${singleClick((target) => {
-            void openAlbum(target, albumName, mbid, artistName);
+            void openAlbumPage(target, albumName, mbid, artistName);
         })}
         title=${mbid ? 'View album on Explore' : 'View album in your library'}
     >${content ?? albumName}</a>`;
@@ -232,6 +290,7 @@ export function albumLink(
  * @param recordingMBID - The track's MusicBrainz recording ID.
  * @param content - Optional custom content (e.g. highlighted text).
  * @param artistName - Disambiguates same-named albums in the library.
+ * @param options - See `LinkOptions`.
  */
 export function trackLink(
     trackName: string,
@@ -240,14 +299,16 @@ export function trackLink(
     recordingMBID: string,
     content?: TemplateResult | string,
     artistName?: string,
+    options?: LinkOptions,
 ): TemplateResult | string {
     if (!trackName) return trackName;
     if (!albumName) return content ?? trackName;
+    if (plainText(options)) return content ?? trackName;
 
     return html`<a
         class="explore-link"
         @click=${singleClick((target) => {
-            void openAlbum(
+            void openAlbumPage(
                 target,
                 albumName,
                 releaseGroupMBID,
@@ -263,10 +324,47 @@ export function trackLink(
 }
 
 /**
+ * Route to an artist page, preferring the catalog and falling back to
+ * the library copy.
+ *
+ * Exported because a menu item goes to the same place a name does, and
+ * two routings of "go to this artist" is how the two come to disagree
+ * about an untagged one.
+ */
+export async function openArtistPage(
+    target: EventTarget,
+    artistName: string,
+    mbid: string,
+): Promise<void> {
+    if (mbid) {
+        navigate(target, {
+            view: 'explore-artist-details',
+            artistMBID: mbid,
+            artistName,
+        });
+
+        return;
+    }
+
+    const local = await findLocalArtist(artistName);
+    if (!local) return;
+
+    // The caller's row had no MBID, but the library row for the
+    // same artist may — the grid routes by exactly this field,
+    // so reading it here is what keeps the two paths agreeing.
+    navigate(target, {
+        view: 'explore-artist-details',
+        artistMBID: local.MBID || '',
+        artistName,
+        localArtistId: local.ID,
+    });
+}
+
+/**
  * Route to an album page, preferring the catalog and falling back to
  * the library copy.  `highlight*` marks one track on arrival.
  */
-async function openAlbum(
+export async function openAlbumPage(
     target: EventTarget,
     albumName: string,
     releaseGroupMBID: string,
@@ -337,23 +435,31 @@ export interface CreditPart {
  * @param parts - The credit's parts in position order, if known.
  * @param fallbackName - The credit as a single string.
  * @param fallbackMbid - The primary artist's MBID.
+ * @param options - See `LinkOptions`.
  */
 export function creditLink(
     parts: readonly CreditPart[] | undefined,
     fallbackName: string,
     fallbackMbid: string,
+    options?: LinkOptions,
 ): TemplateResult | string {
     // One part is one link, so it is the fallback rather than a special
     // case — and a zero-part credit reaching here would otherwise
     // render as nothing at all, which is worse than the single-artist
     // answer it replaced.
     if (!parts || parts.length < 2) {
-        return artistLink(fallbackName, fallbackMbid);
+        return artistLink(fallbackName, fallbackMbid, undefined, options);
     }
+
+    // A decomposed credit is rendered from the same parts either way,
+    // so the join phrases survive the suppression and the text reads
+    // as it did — which is `creditText`'s job, and it is the string
+    // the `title=` beside these already uses.
+    if (plainText(options)) return creditText(parts, fallbackName);
 
     return html`${parts.map(
         (part) =>
-            html`${artistLink(part.creditedName, part.artistMbid)}${part.joinPhrase}`,
+            html`${artistLink(part.creditedName, part.artistMbid, undefined, options)}${part.joinPhrase}`,
     )}`;
 }
 

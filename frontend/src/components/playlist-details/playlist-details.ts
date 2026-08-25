@@ -74,6 +74,8 @@ import {
     trackLink,
     exploreLinkStyles,
 } from '@utils/explore-link';
+import { goToMenuItems } from '@utils/go-to-menu';
+import type { GoToTarget } from '@utils/go-to-menu';
 import { designTokens } from '../../styles/tokens.css';
 import { srOnly } from '../../styles/sr-only.css';
 import { backButton } from '../../styles/back-button.css';
@@ -587,6 +589,28 @@ export class PlaylistDetails
         return this.selection
             .getSelectedIndices()
             .map((i) => this.tracks[i]!.FilePath);
+    }
+
+    /**
+     * The row "Go to Artist" / "Go to Album" navigate from — one row
+     * or none, and only below the phone breakpoint, where the row's
+     * own names stopped being links (#67).
+     */
+    private get goToTarget(): GoToTarget | undefined {
+        const indices = this.selection.getSelectedIndices();
+
+        if (indices.length !== 1) return undefined;
+
+        const track = this.tracks[indices[0]!];
+
+        if (!track) return undefined;
+
+        return {
+            artistName: track.Artist,
+            artistMBID: track.ArtistMBID,
+            albumName: track.Album,
+            albumMBID: track.ReleaseGroupMBID,
+        };
     }
 
     // =================================================================
@@ -1900,6 +1924,14 @@ export class PlaylistDetails
                                       Track
                                       Details
                                   </wa-dropdown-item>
+                                  ${goToMenuItems(this.goToTarget, {
+                                      onSelect: () => {
+                                          this.selection.clear();
+                                          this.ctxMenu.close();
+                                      },
+                                      onHover: () =>
+                                          this.ctxMenu.closePlaylistSubmenu(),
+                                  })}
                               </div>
                           `
                     : nothing}

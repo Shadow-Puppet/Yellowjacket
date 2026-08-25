@@ -371,8 +371,11 @@ export class TopResultsRow extends LitElement {
                         <span class="card-name">${r.name}</span>
                         ${artistPart || metaPart
                             ? html`<span class="card-subtitle"
-                                  >${artistPart
-                                      ? creditLink(creditStore.credits(r.mbid), artistPart, r.artistMbid ?? '')
+                                  ><!-- keepOnPhone: this card has no
+                                       context menu, so the credit is
+                                       the only route to the artist of
+                                       a top result (#67). -->${artistPart
+                                      ? creditLink(creditStore.credits(r.mbid), artistPart, r.artistMbid ?? '', { keepOnPhone: true })
                                       : nothing}${artistPart && metaPart
                                       ? ' · '
                                       : ''}${metaPart}</span
