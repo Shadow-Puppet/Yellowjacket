@@ -710,10 +710,35 @@ export const contextMenuStyles = css`
         font-size: 13px;
     }
 
-    .context-menu-panel wa-dropdown-item:hover {
+    /* A hover tint is for a device that hovers (#54).
+
+       Below the query is a phone, where a hold *synthesises* a hover
+       in the WebView -- the same mechanism #68 gates the revealed
+       controls on -- so an ungated tint is a highlight that arrives
+       because a finger touched the row and then stays on it after the
+       finger has gone. Which is indistinguishable from the press
+       state below, and outlives it. */
+    @media (hover: hover) and (pointer: fine) {
+        .context-menu-panel wa-dropdown-item:hover {
+            background-color: var(
+                --yj-hover-overlay,
+                rgba(255, 255, 255, 0.1)
+            );
+        }
+    }
+
+    /* And a press state is for every device, because it is the one
+       piece of feedback a tap has now that the web view's own
+       highlight box is gone (index.css). Stronger than the hover tint
+       on purpose, and instant rather than transitioned: the only
+       measured statement this repo has about transitions on these
+       surfaces is the two card grids that removed theirs because
+       software rendering repaints per frame, and the phone is not
+       something this session can measure. */
+    .context-menu-panel wa-dropdown-item:active {
         background-color: var(
-            --yj-hover-overlay,
-            rgba(255, 255, 255, 0.1)
+            --yj-press-overlay,
+            rgba(255, 255, 255, 0.12)
         );
     }
 

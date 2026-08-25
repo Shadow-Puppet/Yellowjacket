@@ -516,8 +516,14 @@ export class SmartPlaylistDetails
             user-select: none;
         }
 
-        .track-item:hover {
-            background-color: var(--yj-hover-overlay, rgba(255, 255, 255, 0.05));
+        /* A hover tint is for a device that hovers (#54). A hold
+           synthesises a hover in the WebView, so ungated this arrives
+           because a finger touched the row and stays after it has
+           gone; the press state below is what a tap gets instead. */
+        @media (hover: hover) and (pointer: fine) {
+            .track-item:hover {
+                background-color: var(--yj-hover-overlay, rgba(255, 255, 255, 0.05));
+            }
         }
 
         .track-item.selected {
@@ -531,6 +537,19 @@ export class SmartPlaylistDetails
 
         .track-item.selected.active {
             background-color: var(--yj-selection-bg, rgba(100, 160, 255, 0.15));
+        }
+
+        /* The press state (#54): the feedback a tap has now that the
+           web view's own highlight box is gone (index.css). Last, and
+           carrying a class, because a selected or playing row is two
+           classes deep and a bare :active would lose to it. */
+        .track-item.selected:active,
+        .track-item.active:active,
+        .track-item:active {
+            background-color: var(
+                --yj-press-overlay,
+                rgba(255, 255, 255, 0.12)
+            );
         }
 
         /* Phantom rows span the full grid */
