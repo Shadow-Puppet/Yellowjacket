@@ -4912,3 +4912,49 @@ bridge leaves the wizard up with its "Get Started" button correctly
 disabled — it gates on a directory chosen *in the wizard*, and the
 existing-library check runs once, on mount. A reload clears it. Nothing
 is broken; it cost twenty minutes of believing a tap had been swallowed.
+
+## The sheet's scroll fade, and where a scrim may not go (measured 2026-08-23, headless)
+
+#207's answer. The affordance is two background layers on
+`wa-dialog::part(body)` and the conditionality is
+`background-attachment`, not a scroll listener: a cover of the sheet's
+own colour painted at the end of the *content* (`local`) over a shadow
+pinned to the box (`scroll`), so the cover scrolls up and hides the
+shadow exactly when there is nothing more to see.
+
+Measured at 424x360 (which is where a menu overflows on `main`, since
+`main` does not yet carry #67's eighth item — at 424x439 the track
+list's seven items are `scrollHeight` 364 against `clientHeight` 364,
+fitting exactly). Pixel at x=300, dark ramp, `bgElevated` `#343a40`:
+
+| y | before | more below | at the end of the list |
+|---|---|---|---|
+| 330 | 52,58,64 | 50,56,62 | 52,58,64 |
+| 340 | 52,58,64 | 43,48,53 | 52,58,64 |
+| 350 | 52,58,64 | 33,37,40 | 52,58,64 |
+| 359 | 52,58,64 | 22,24,27 | 52,58,64 |
+
+Three things worth keeping.
+
+**A menu that fits draws nothing**, which is the same measurement: at
+424x439 the sheet is flat 52,58,64 to its bottom edge, because with no
+overflow the `local` layer's positioning area *is* the padding box and
+the cover lands on top of the shadow.
+
+**A scrim over a menu row is that row's text surface**, so the 4.5:1
+rule reaches it and this is why the curve is steep rather than linear.
+A row is 48px with its label centred; 32px of scrim already down to a
+quarter strength at 14px puts about 0.06 at the label. Checked on the
+light ramp (`bgElevated` `#e9ecef`, text `#212529`) by overriding the
+two custom properties on `:root`: background at the label 205,207,210,
+which is **9.9:1**. The first draft — a linear 48px at 0.8 — put ~0.375
+on that label, 5.0:1, passing but visibly greyed. The bottom few pixels
+go to ~2.4:1 in either draft and are deliberately below where any
+label of a *fully visible* row sits; a label that lands there belongs
+to the half-cut row, which is the thing being signalled.
+
+**A dark scrim on a dark surface reads far worse in a shrunk screenshot
+than on screen.** The first two probes (24px/0.45, then 32px/0.75) were
+measurably present — 52,58,64 down to 30,33,37 — and invisible in the
+inline preview. Crop the bottom 70px and scale it up before judging;
+the pixel values are the honest answer either way.
