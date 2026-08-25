@@ -13,9 +13,10 @@ import (
 // indistinguishable from never having written one.  So these assert the
 // round trip through the *reader the scan uses*, not the bytes.
 //
-// WAV is the exception and it is not this change's: dhowden/tag has no
-// RIFF reader at all, so metadata.ExtractTags cannot see a WAV's ID3
-// chunk -- which is why every other test here reads that chunk itself.
+// WAV was the exception until #104 -- dhowden/tag has no RIFF reader,
+// so metadata.ExtractTags could not see a WAV's ID3 chunk and this
+// case read the chunk itself, which is a test of the writer wearing
+// the shape of a round trip.  All four go through the scanner now.
 func TestWriteTotals_RoundTripsInEveryFormat(t *testing.T) {
 	t.Parallel()
 
@@ -91,7 +92,7 @@ func TestWriteTotals_RoundTripsInEveryFormat(t *testing.T) {
 		},
 		{
 			name: "wav",
-			read: readWavID3Tags,
+			read: viaScanner,
 			write: func(t *testing.T, dir string) string {
 				t.Helper()
 

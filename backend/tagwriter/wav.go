@@ -8,116 +8,22 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"strings"
 
 	id3v2 "github.com/bogem/id3v2/v2"
 
 	"yellowjacket/backend/fileutil"
+	"yellowjacket/backend/riff"
 )
 
-// Sentinel errors for WAV RIFF operations.
-var (
-	errRF64NotSupported   = errors.New("RF64 files are not yet supported")
-	errNotRIFF            = errors.New("not a RIFF file")
-	errNotWAVE            = errors.New("not a WAVE file")
-	errFileTooLargeForWAV = errors.New("file too large for WAV format (>4GB)")
-)
-
-// riffChunk holds a single RIFF sub-chunk (ID + raw data).
-type riffChunk struct {
-	id   [4]byte
-	data []byte
-}
-
-// parseRIFF reads all RIFF sub-chunks from r.  It rejects RF64 files
-// and non-WAVE containers with descriptive errors.  The parser is
-// lenient on read: it tolerates missing padding bytes and ignores
-// the declared RIFF size.
-func parseRIFF(r io.ReadSeeker) ([]riffChunk, error) {
-	// Read 4-byte container magic.
-	var magic [4]byte
-	if _, err := io.ReadFull(r, magic[:]); err != nil {
-		return nil, fmt.Errorf("read RIFF magic: %w", err)
-	}
-
-	if string(magic[:]) == "RF64" {
-		return nil, errRF64NotSupported
-	}
-
-	if string(magic[:]) != "RIFF" {
-		return nil, fmt.Errorf("%w: got %q", errNotRIFF, magic)
-	}
-
-	// Read (and discard) RIFF size — lenient, do not enforce.
-	var riffSize uint32
-	if err := binary.Read(r, binary.LittleEndian, &riffSize); err != nil {
-		return nil, fmt.Errorf("read RIFF size: %w", err)
-	}
-
-	// Read 4-byte form type.
-	var form [4]byte
-	if _, err := io.ReadFull(r, form[:]); err != nil {
-		return nil, fmt.Errorf("read WAVE form type: %w", err)
-	}
-
-	if string(form[:]) != "WAVE" {
-		return nil, fmt.Errorf("%w: got %q", errNotWAVE, form)
-	}
-
-	// Read sub-chunks until EOF.
-	var chunks []riffChunk
-
-	for {
-		var chunkID [4]byte
-
-		_, err := io.ReadFull(r, chunkID[:])
-		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-			break
-		}
-
-		if err != nil {
-			return nil, fmt.Errorf("read chunk ID: %w", err)
-		}
-
-		var chunkSize uint32
-		if err := binary.Read(r, binary.LittleEndian, &chunkSize); err != nil {
-			return nil, fmt.Errorf("read chunk size for %q: %w", chunkID, err)
-		}
-
-		data := make([]byte, chunkSize)
-		if _, err := io.ReadFull(r, data); err != nil {
-			return nil, fmt.Errorf("read chunk data for %q: %w", chunkID, err)
-		}
-
-		chunks = append(chunks, riffChunk{id: chunkID, data: data})
-
-		// Odd-length chunks have a padding byte.  Lenient: if the
-		// read fails (e.g. EOF), just break rather than error.
-		if chunkSize%2 != 0 {
-			var pad [1]byte
-
-			if _, err := r.Read(pad[:]); err != nil {
-				break
-			}
-		}
-	}
-
-	return chunks, nil
-}
-
-// isID3ChunkID returns true if id represents an ID3v2 RIFF chunk.
-// Both lowercase "id3 " and uppercase "ID3 " are accepted.
-func isID3ChunkID(id [4]byte) bool {
-	s := strings.ToLower(string(id[:3]))
-
-	return s == "id3"
-}
+// errFileTooLargeForWAV is the one RIFF error that belongs to the
+// writer; reading rejects a container in backend/riff.
+var errFileTooLargeForWAV = errors.New("file too large for WAV format (>4GB)")
 
 // writeRIFF writes a complete RIFF/WAVE container to w, preserving
 // the given chunks in order and appending the id3Data as the final
 // "id3 " chunk.  Returns errFileTooLargeForWAV if the result would
 // exceed the 4 GB RIFF limit.
-func writeRIFF(w io.Writer, chunks []riffChunk, id3Data []byte) error {
+func writeRIFF(w io.Writer, chunks []riff.Chunk, id3Data []byte) error {
 	// Calculate total RIFF payload size:
 	//   4 bytes (WAVE form type)
 	// + for each preserved chunk: 8 (header) + len(data) + padding
@@ -125,7 +31,7 @@ func writeRIFF(w io.Writer, chunks []riffChunk, id3Data []byte) error {
 	riffPayload := uint64(4)
 
 	for _, c := range chunks {
-		sz := uint64(len(c.data))
+		sz := uint64(len(c.Data))
 		riffPayload += 8 + sz
 
 		if sz%2 != 0 {
@@ -162,7 +68,7 @@ func writeRIFF(w io.Writer, chunks []riffChunk, id3Data []byte) error {
 
 	// Write each preserved chunk.
 	for _, c := range chunks {
-		if err := writeChunk(w, c.id, c.data); err != nil {
+		if err := writeChunk(w, c.ID, c.Data); err != nil {
 			return err
 		}
 	}
@@ -225,7 +131,7 @@ func writeWavTags(
 		return fmt.Errorf("open wav for reading: %w", err)
 	}
 
-	allChunks, err := parseRIFF(f)
+	allChunks, err := riff.Parse(f)
 
 	// Close immediately — we need the handle released before
 	// AtomicWrite creates the replacement file.
@@ -237,13 +143,13 @@ func writeWavTags(
 
 	// Separate preserved chunks from existing ID3 data.
 	var (
-		preserved   []riffChunk
+		preserved   []riff.Chunk
 		existingID3 []byte
 	)
 
 	for _, c := range allChunks {
-		if isID3ChunkID(c.id) {
-			existingID3 = c.data
+		if riff.IsID3(c.ID) {
+			existingID3 = c.Data
 		} else {
 			preserved = append(preserved, c)
 		}
