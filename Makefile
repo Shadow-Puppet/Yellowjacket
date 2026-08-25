@@ -160,8 +160,11 @@ ui-watch: ## Same suite, in watch mode
 ui-visual: ## Run the suite including screenshot comparisons
 	@cd frontend && YJ_VISUAL=1 npx vitest run $(UI_ARGS)
 
-ui-visual-update: ## Re-record the screenshot baselines
-	@cd frontend && YJ_VISUAL=1 npx vitest run --update $(UI_ARGS)
+# `--update=true`, never a bare `--update`: vitest takes the following
+# positional as the flag's value, so `--update <path>` swallows the path
+# and re-records every baseline in the repo instead of the one named.
+ui-visual-update: ## Re-record the screenshot baselines (UI_ARGS=<path> to filter)
+	@cd frontend && YJ_VISUAL=1 npx vitest run --update=true $(UI_ARGS)
 
 ui-setup: ## Install the Vitest browser provider's own Chromium (once)
 	@cd frontend && pnpm install && npx playwright install chromium
