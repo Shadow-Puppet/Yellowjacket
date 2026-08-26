@@ -254,6 +254,15 @@ describe('menu-surface', () => {
       // Both sit at the bottom, or the cover hides nothing.
       expect(style.backgroundPosition).toBe('50% 100%, 50% 100%');
       expect(style.backgroundSize).toBe('100% 32px, 100% 32px');
+
+      // The layers are shared with `bottom-nav`'s sheet since #210, and
+      // the colour is what each host still says for itself: this one
+      // paints the menus' `--yj-bg-elevated` (#343a40). A shared rule
+      // that hard-coded one grey would draw a seam across the other
+      // sheet, which is why the fragment reads a custom property.
+      expect(style.backgroundImage).toMatch(
+        /^linear-gradient\(rgb\(52, 58, 64\), rgb\(52, 58, 64\)\)/,
+      );
     });
 
     /**

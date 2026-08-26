@@ -65,6 +65,7 @@ import '@awesome.me/webawesome/dist/components/popup/popup.js';
 import '@awesome.me/webawesome/dist/components/dialog/dialog.js';
 import type WaPopup from '@awesome.me/webawesome/dist/components/popup/popup.js';
 
+import { sheetScrollFade } from '../../styles/sheet-scroll.css';
 import { PHONE_QUERY } from '@utils/breakpoints';
 import { nameDialogsIn } from '@utils/name-dialog';
 
@@ -164,46 +165,17 @@ export class MenuSurface extends LitElement {
            and worse when the cut lands on a row boundary, where the
            sheet ends in a clean edge that reads as the end of the list.
 
-           Two layers, and the *order* is what asks the question: a
-           shadow pinned to the bottom of the box (attachment scroll),
-           and over it a cover of the sheet's own colour painted at the
-           end of the *content* (attachment local), which therefore
-           scrolls up over the shadow and hides it exactly when there is
-           nothing more to see. So the affordance is absent on a menu
-           that fits, present the moment one does not, and gone again at
-           the end of the list -- with no scroll listener, no
-           measurement, and nothing reaching into wa-dialog's shadow
-           root for the scroller. background-attachment is Chrome 4;
-           the reference device is Chrome 113.
-
-           **The curve is steep because the rows under it stay live.**
-           A scrim over a menu item is that item's text surface, and
-           this app's rule is that text clears 4.5:1 on every surface it
-           can sit on -- which the light ramp, whose bgElevated is
-           #e9ecef, is what makes non-theoretical. A row is 48px with
-           its label centred, so 32px of scrim that is already down to
-           a quarter strength at 14px reaches y-centre at about 0.06 and
-           spends its weight on the strip below the last legible label.
-           Measured on the dark ramp at x=300, flat 52,58,64 throughout
-           before: 50,56,62 at y=330, 33,37,40 at y=350 and 22,24,27 at
-           the bottom edge, and flat again at the end of the list. The
-           light ramp puts 9.9:1 on the last label. */
+           The two layers that say it live in styles/sheet-scroll.css
+           (#210), because the phone has a second sheet -- bottom-nav's
+           "More" -- which overflows for the same reason and must not
+           arrive at its own answer for what a fold looks like. What is
+           local to this sheet is the colour the cover is painted in:
+           the menus' elevated grey, handed over as --yj-sheet-surface
+           on the same box. */
         wa-dialog::part(body) {
             padding: 0;
-            overflow-y: auto;
-            background:
-                linear-gradient(
-                        var(--yj-bg-elevated, #343a40),
-                        var(--yj-bg-elevated, #343a40)
-                    )
-                    bottom / 100% 32px no-repeat local,
-                linear-gradient(
-                        to top,
-                        rgba(0, 0, 0, 0.6) 0%,
-                        rgba(0, 0, 0, 0.25) 45%,
-                        rgba(0, 0, 0, 0) 100%
-                    )
-                    bottom / 100% 32px no-repeat scroll;
+            --yj-sheet-surface: var(--yj-bg-elevated, #343a40);
+            ${sheetScrollFade}
         }
 
         /* A sheet is dragged at with a thumb, so it says where its top
