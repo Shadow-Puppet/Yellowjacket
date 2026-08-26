@@ -243,6 +243,62 @@ describe('bottom-nav', () => {
     expect(getComputedStyle(body).overscrollBehaviorY).toBe('contain');
   });
 
+  it('says where the fold is, in the sheet\'s own colour', async () => {
+    const el = await fixture<Nav>('bottom-nav');
+    const drawer = shadow<HTMLElement & { open: boolean }>(el, 'wa-drawer');
+
+    if (!drawer) throw new Error('no drawer');
+
+    const shown = once(drawer, 'wa-after-show');
+
+    shadow<HTMLButtonElement>(el, '[data-testid="tab-more"]')?.click();
+    await shown;
+
+    const body = drawer.shadowRoot?.querySelector('[part~="body"]');
+
+    if (!body) throw new Error('no body part to scroll');
+
+    const style = getComputedStyle(body);
+
+    // #210. This list does not fit the phone — measured at 424x439,
+    // `scrollHeight` 412 against `clientHeight` 373 with the seed's
+    // eight destinations — and said nothing about it, which where the
+    // cut lands on a row boundary reads as the end of the list.
+    //
+    // The mechanism is #207's and is asserted the same way: the pair of
+    // attachments *is* the feature. A cover of the sheet's own colour
+    // painted at the end of the content (`local`) over a shadow pinned
+    // to the box (`scroll`), so the fade is absent on a sheet that
+    // fits, present the moment one does not, and gone again at the end.
+    expect(
+      style.backgroundAttachment,
+      'the cover must be local and the shadow must not',
+    ).toBe('local, scroll');
+    expect(style.backgroundPosition).toBe('50% 100%, 50% 100%');
+    expect(style.backgroundSize).toBe('100% 32px, 100% 32px');
+
+    // And the colour is the local half of a shared rule: this sheet
+    // paints the sidebar's `--yj-bg-surface` (#212529) rather than the
+    // menus' elevated grey, or the fade draws the *other* sheet's
+    // colour across the bottom of this one — which is the seam a
+    // shared fragment would otherwise reintroduce.
+    expect(style.backgroundImage).toMatch(
+      /^linear-gradient\(rgb\(33, 37, 41\), rgb\(33, 37, 41\)\)/,
+    );
+
+    // And nothing paints over it. The sidebar's host carries the same
+    // grey, which inside the sheet is a second opaque copy of the
+    // surface drawn on top of these layers -- measured at 424x439 with
+    // the rule removed, the last 32px read a flat 52,58,64 with 39px
+    // still below, so the fade was painted and covered. That is
+    // `.context-menu-panel[data-sheet]`'s transparency, one sheet over.
+    const sidebar = shadow<HTMLElement>(el, 'app-sidebar');
+
+    if (!sidebar) throw new Error('no sidebar');
+
+    expect(getComputedStyle(sidebar).backgroundColor).toBe('rgba(0, 0, 0, 0)');
+  });
+
   it('gives the sheet the whole width, which the sidebar does not take', async () => {
     const el = await fixture<Nav>('bottom-nav');
 

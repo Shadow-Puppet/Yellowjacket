@@ -4,6 +4,7 @@ import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@awesome.me/webawesome/dist/components/drawer/drawer.js';
 import type WaDrawer from '@awesome.me/webawesome/dist/components/drawer/drawer.js';
 import { designTokens } from '../../styles/tokens.css';
+import { sheetScrollFade } from '../../styles/sheet-scroll.css';
 import '../sidebar/app-sidebar.js';
 import { nameDialog } from '@utils/name-dialog';
 import { ICON_PLAYLIST } from '@utils/icon-language';
@@ -167,6 +168,15 @@ export class BottomNav extends LitElement {
             overflow: hidden;
         }
 
+        /* And this list does not fit (#210): measured at 424x439 with
+           the seed's eight destinations, the body is scrollHeight 412
+           against clientHeight 373, and eleven items at 48px would be
+           528 -- the count is the user's since #25. So the sheet says
+           where the fold is, with styles/sheet-scroll.css's two layers
+           rather than a second answer to the question #207 settled for
+           the context sheet. The colour is the local half: the sidebar
+           paints --yj-bg-surface, so the cover does too, or the fade
+           draws the menus' grey across the bottom of this one. */
         wa-drawer::part(body) {
             padding: 0;
             /* A scroll that reaches the end of this list must not
@@ -177,6 +187,23 @@ export class BottomNav extends LitElement {
                on a gesture-navigation phone -- the same allowance the
                bar itself makes above. */
             padding-bottom: env(safe-area-inset-bottom, 0);
+            --yj-sheet-surface: var(--yj-bg-surface, #212529);
+            ${sheetScrollFade}
+        }
+
+        /* And the sheet paints that surface once. The sidebar's host
+           paints the same grey -- which in the shell is the sidebar's
+           own background and here is a second, opaque copy of the
+           sheet's, drawn *over* the body's layers. So the fade was
+           painted and then covered: measured at 424x439 before this
+           rule, the last 32px read a flat 52,58,64 with 39px still
+           below. menu-surface meets the same requirement from the
+           other side, where .context-menu-panel[data-sheet] is
+           background-color: transparent; nothing changes visually
+           here, because the colour underneath is the one being
+           removed. */
+        app-sidebar {
+            background-color: transparent;
         }
 
         /* A sheet is dragged at with a thumb, so it says where its top

@@ -1470,6 +1470,28 @@ live**: a scrim over a menu item is that item's text surface, and the
 14px spends its weight below the last legible label, measured at 9.9:1
 on the light ramp, whose `bgElevated` is `#e9ecef`.
 
+**And the phone has two sheets, so that rule is one file both read**
+(#210). `bottom-nav`'s "More" is capped at the same 85vh and overflows
+for the same reason — measured at 424x439 with eight destinations,
+`scrollHeight` 412 against `clientHeight` 373, and eleven items at 48px
+would be 528, since #25 makes the count the user's. So the two layers
+live in `styles/sheet-scroll.css.ts` and each host says only what is
+local to it: the colour, handed over as `--yj-sheet-surface` on the same
+box, because the nav sheet paints the sidebar's `--yj-bg-surface` and
+the context sheet the menus' `--yj-bg-elevated` — a shared rule that
+hard-coded either would draw that seam across the other one.
+
+The half that is not the fade is what makes it visible: **nothing inside
+the sheet may repaint the surface**, because these are background layers
+on the scroller and an opaque child covers them. `menu-surface` already
+had it from the other side (`.context-menu-panel[data-sheet]` is
+`background-color: transparent`); `app-sidebar`'s host paints
+`--yj-bg-surface`, which in the shell is its own background and in the
+sheet is a second copy of the sheet's, so `bottom-nav` turns it off.
+Measured at 424x439 with the fade adopted and that rule missing: a flat
+52,58,64 to the bottom edge with 39px still below, which is the defect
+unchanged and every assertion about `background-attachment` passing.
+
 **The playlist submenu is a sheet too, and it had to be.** It is a
 `placement="right-start"` flyout, and making the menu full-width moved
 its anchor — measured at x −182 to 0, entirely off-screen, so "Add to
