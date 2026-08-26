@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"runtime"
 	"testing"
 
 	"yellowjacket/backend/riff"
@@ -207,5 +208,47 @@ func TestParse_ReadsEveryChunkInOrder(t *testing.T) {
 	// The padding byte after an odd chunk is not part of its data.
 	if string(chunks[1].Data) != "INFOodd" {
 		t.Errorf("odd chunk data: got %q, want %q", chunks[1].Data, "INFOodd")
+	}
+}
+
+// A chunk size is four bytes read off the file, so a truncated or
+// malformed WAV is free to declare a chunk larger than the whole of
+// itself.  Parse must grow with what arrives rather than with what was
+// claimed.
+//
+// This measures the allocation instead of the error because the error
+// is the same either way: a build sizing its buffer from the header
+// reports the truncation correctly, having asked the allocator for a
+// gigabyte on the way.  Deliberately not parallel — TotalAlloc is
+// process-wide, and a test paused beside another one is measuring it
+// too.
+func TestParse_DoesNotAllocateWhatAChunkClaims(t *testing.T) {
+	// Large enough that a header-sized buffer is unmistakable, in a
+	// container of a few dozen bytes.
+	const declared = 1 << 30
+
+	var raw bytes.Buffer
+
+	raw.WriteString("RIFF")
+	_ = binary.Write(&raw, binary.LittleEndian, uint32(declared+12))
+	raw.WriteString("WAVE")
+	raw.WriteString("data")
+	_ = binary.Write(&raw, binary.LittleEndian, uint32(declared))
+	raw.WriteString("and then the file ends")
+
+	var before, after runtime.MemStats
+
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+
+	if _, err := riff.Parse(bytes.NewReader(raw.Bytes())); err == nil {
+		t.Fatal("Parse: got nil error for a chunk larger than the file holding it")
+	}
+
+	runtime.ReadMemStats(&after)
+
+	if grew := after.TotalAlloc - before.TotalAlloc; grew > 1<<20 {
+		t.Errorf("Parse allocated %d bytes reading a %d-byte file whose chunk header claimed %d",
+			grew, raw.Len(), declared)
 	}
 }

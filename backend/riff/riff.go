@@ -63,12 +63,15 @@ func Parse(r io.Reader) ([]Chunk, error) {
 			return nil, err
 		}
 
-		data := make([]byte, size)
-		if _, err := io.ReadFull(r, data); err != nil {
+		// Copied rather than allocated up front, as ID3Chunk does: the
+		// size is four bytes off the file, so a truncated one is free to
+		// declare a chunk larger than the whole of itself.
+		var data bytes.Buffer
+		if _, err := io.CopyN(&data, r, int64(size)); err != nil {
 			return nil, fmt.Errorf("read chunk data for %q: %w", id, err)
 		}
 
-		chunks = append(chunks, Chunk{ID: id, Data: data})
+		chunks = append(chunks, Chunk{ID: id, Data: data.Bytes()})
 
 		// Odd-length chunks have a padding byte.  Lenient: if the
 		// read fails (e.g. EOF), just break rather than error.
