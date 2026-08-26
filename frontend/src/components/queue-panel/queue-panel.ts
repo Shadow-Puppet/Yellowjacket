@@ -2201,11 +2201,25 @@ export class QueuePanel
                             `
                             : nothing}
                     </div>
+                    <!-- **Every action here is named by aria-label**, like
+                         the close button #24 added beside them (#170). A
+                         title alone *is* a name, which is why a sweep for
+                         empty names reports these clean and why an
+                         assertion by role and name is green either way --
+                         but it is the weakest one: title is the last
+                         fallback in the accname order, so any content put
+                         inside the button later silently outranks it, and
+                         a phone has no hover to show it as a tooltip.
+
+                         The titles stay. On a desktop they are the tooltip
+                         for an icon-only control, which is a different job
+                         from naming it, and aria-label does not do it. -->
                     <div class="header-actions">
                         <button
                             class="header-action-button"
                             @click=${() => void this.handleClearQueue()}
                             ?disabled=${tracks.length === 0}
+                            aria-label="Clear queue"
                             title="Clear queue"
                         >
                             <wa-icon
@@ -2216,6 +2230,7 @@ export class QueuePanel
                             class="header-action-button add-to-playlist-button"
                             @click=${this.handleAddToPlaylist}
                             ?disabled=${tracks.length === 0}
+                            aria-label="Add queue to playlist"
                             title="Add queue to playlist"
                         >
                             <wa-icon

@@ -1832,6 +1832,21 @@ is not it.** A `placeholder` is an accname fallback, so an
 Explore's search box — the audit's own `a11y.26` — as clean. A sweep
 for *empty* names cannot see a *weak* one.
 
+**`title` is the same trap one rung lower, and it defeats the obvious
+spec as well as the obvious sweep.** `queue-panel`'s Clear queue and
+Add queue to playlist were named by `title` alone, so
+`getByRole('button', { name: 'Clear queue' })` matched them **before**
+the fix as well as after — a `getByRole` assertion, which is what
+catches every other nameless control in this app, would have been
+green on the broken build. `title` is the *last* fallback in the
+accname order, so content put inside the button later silently
+outranks it, and it is the one name a phone cannot show, having no
+hover. The property is therefore asserted as *the name is not the
+tooltip*: `queue-overlay.spec.ts` removes the `title` attributes and
+asks again, which is 1 and 1 with `aria-label` and was measured at 0
+and 0 without it. The `title`s stay, because on a desktop they are
+also the tooltip for an icon-only control and that is a different job.
+
 **The shell scrolls sideways and not down.** `body` is
 `overflow-x: auto; overflow-y: hidden`, and both halves are measured.
 Vertically there is nothing to fix: the middle grid row is `1fr` and
