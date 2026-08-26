@@ -158,6 +158,62 @@ test.describe('an overlaid queue says it is over the content', () => {
 });
 
 /**
+ * #170 — the other two buttons in that same row.
+ *
+ * Clear queue and Add queue to playlist predate the close button and
+ * were named by a `title` attribute and nothing else. Unlike the
+ * sliders in `control-names.spec.ts`, that is not a *missing* name:
+ * `title` is the last fallback in the accname order, so
+ * `getByRole('button', { name: 'Clear queue' })` matched them before
+ * this fix as well as after it — measured, 1 and 1. A sweep for empty
+ * names cannot see a weak one, which is `a11y.26`'s complaint and the
+ * reason this file could have grown a green test that proved nothing.
+ *
+ * So the name is asserted twice, and the second assertion is the one
+ * that fails on the broken build. Taking the tooltip away and asking
+ * again is the property in words: **the name is not the tooltip**. It
+ * is what makes the button survive content being put inside it later,
+ * and it is the only one of the two a phone has — there is no hover on
+ * the surface #55 turned into a full screen. Measured on `main` before
+ * the fix: 0 and 0.
+ *
+ * Both buttons are disabled here, because the queue starts empty and
+ * naming is not enablement. A disabled button is still in the
+ * accessibility tree, which is exactly where the complaint was.
+ */
+test.describe('the queue header says what its actions do', () => {
+  const ACTIONS = ['Clear queue', 'Add queue to playlist'];
+
+  test('names both of the older actions', async ({ app }) => {
+    await openQueue(app);
+
+    for (const name of ACTIONS) {
+      await expect(
+        app.getByRole('button', { name, exact: true }),
+      ).toHaveCount(1);
+    }
+  });
+
+  test('and the names do not come from the tooltip', async ({ app }) => {
+    await openQueue(app);
+
+    await app.locator('#queue-panel').evaluate((el) => {
+      for (const button of el.shadowRoot!.querySelectorAll(
+        '.header-action-button',
+      )) {
+        button.removeAttribute('title');
+      }
+    });
+
+    for (const name of ACTIONS) {
+      await expect(
+        app.getByRole('button', { name, exact: true }),
+      ).toHaveCount(1);
+    }
+  });
+});
+
+/**
  * The inline panel is the mode that already worked, and the one every
  * other queue spec is written against. It keeps its resize handle and
  * gains none of the overlay's chrome.
