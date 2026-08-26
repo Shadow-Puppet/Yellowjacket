@@ -103,12 +103,17 @@ async function queueSixAndOpen(app: Page): Promise<void> {
      *
      * `explore-link` routes a track name to its *album's* page, so a
      * track with no album renders a name that navigates nowhere — and
-     * the fixture library deliberately contains two (`01 Tone A`,
-     * `02 Tone B`). Which tracks arrive first is `audio_files.id`
-     * order, i.e. the order the **scan** inserted them, which depends
-     * on concurrency and directory traversal: locally the first eight
-     * all had albums and the spec passed twice over, and CI rebuilds
-     * its seed with a real scan and got a different eight.
+     * the fixture library deliberately contains two,
+     * `unsorted/no-tags-at-all.mp3` and `unsorted/title-only.mp3`.
+     * (It contained four until #104: the two WAVs under `Field
+     * Recordings/Test Tones` had been tagged on disk all along and
+     * scan in with their album now, so they are ordinary tracks and
+     * not examples of this.) Which tracks arrive first is
+     * `audio_files.id` order, i.e. the order the **scan** inserted
+     * them, which depends on concurrency and directory traversal:
+     * locally the first eight all had albums and the spec passed twice
+     * over, and CI rebuilds its seed with a real scan and got a
+     * different eight.
      *
      * Asking for what the test needs is the fix. It is not a
      * narrowing: every assertion here wants an ordinary track, and
