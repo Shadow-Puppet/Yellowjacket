@@ -6,6 +6,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 YellowJacket is a cross-platform desktop music player built with Go (backend) and TypeScript/Lit (frontend), using the Wails framework to bridge them. It supports MP3, FLAC, OGG Vorbis, and WAV playback.
 
+**The three prose documents are split by reader, not by topic** (#50).
+`README.md` is the landing page and answers *a user's* questions only —
+what it does, which channel installs it on which platform, where its
+data lives — with three screenshots in `docs/images/`, captured from the
+fixture library (`make sandbox-seed NAME=default` → `make dev-headless
+SEED=default`) so they can be retaken by anyone. `CONTRIBUTING.md` holds
+what used to be the second half of that README — prerequisites, the
+system libraries, the build and codegen commands, which verification
+tier a change demands, the tracker workflow and the commit grammar. This
+file stays the deep reference both of them point at, and is the only one
+of the three that explains *why* a shape is what it is. A fact that
+belongs to a user goes in one place; the packaging channels keep their
+own documents (`packaging/*/README.md`, `docs/android-release.md`) and
+are linked rather than summarised, because a version-restart note copied
+into the README is a second copy to keep true.
+
 ## Issues
 
 **The tracker is the source of truth for what is wanted and what is
