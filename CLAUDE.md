@@ -161,7 +161,7 @@ make ui-test          # Vitest component/store suite in a real browser (no app)
 make ui-visual        # Same, including toMatchScreenshot comparisons
 make ui-setup         # Install the Vitest provider's own Chromium (once)
 make bindings-check   # Fail if frontend/bindings is stale vs the Go bindings
-make skill-check      # Fail if .pi/ documents a make target that doesn't exist
+make skill-check      # Fail if a doc names a make target that doesn't exist
 make commit-check     # Fail if a commit subject is not a Conventional Commit
 make lint             # golangci-lint v2 (strict), all three build configurations
 make test             # All tests with race detector, all three build configurations
