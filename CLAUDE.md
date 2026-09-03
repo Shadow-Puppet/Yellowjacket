@@ -673,6 +673,28 @@ rather than renaming them.
   one of the shell's rows, which is what the skip link is absolutely
   positioned to avoid.
 - `config` — TOML-based settings. Settings page uses HTMX + templ for server-rendered HTML fragments.
+
+  **A setter that can reject its argument puts the old value back**, and
+  that is a correctness rule rather than hygiene (#231). `Save()`
+  validates the *whole* config, so a value left behind by a failed write
+  does not merely fail its own call: it fails every later save, of every
+  unrelated setting — theme, launch page, shortcuts, libraries — for the
+  rest of the session. Nothing reaches disk, so a restart clears it,
+  which is exactly what makes the fault invisible and unreportable. One
+  rejected track-list column list was enough to stop the app saving
+  anything at all.
+
+  Two shapes are safe and a third is the trap. A setter that assigns and
+  *then* validates snapshots the field first and restores it on the
+  error path — seven do. `SetLibraryDirectory` is the better shape where
+  the value can be built on its own: it validates a candidate *before*
+  assigning, so there is nothing to undo. And a setter whose argument no
+  validation inspects needs neither — the bools, the favourites playlist
+  id and the shortcut bindings, plus `SetViewVisible`, which refuses an
+  unknown, non-hideable or launch-page view up front so
+  `GeneralConfig.Validate` never sees one it would fail on. Which set a
+  new setter joins is decided by whether its own `Validate` can reject
+  it, not by preference.
 - `playlist` / `smartplaylist` — Playlist CRUD and rule-based smart playlists.
 - `mediacontrols` — OS media controls behind one `Handler`: MPRIS over
   D-Bus on desktop Linux, a MediaSession on Android, a no-op stub
