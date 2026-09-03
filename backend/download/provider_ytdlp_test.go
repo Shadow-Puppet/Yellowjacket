@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -17,6 +18,21 @@ import (
 
 // stubYtDlp writes an executable script that echoes the given stdout
 // and returns it as a provider config binary path.
+//
+// The write is held under syscall.ForkLock, and that is not tidiness:
+// the kernel refuses to exec a file that is open for writing anywhere
+// in the process, and these tests are parallel, so a *sibling* test's
+// fork can duplicate this descriptor in the moment it is open and
+// carry it past our close — the exec a moment later then fails with
+// ETXTBSY, "text file busy".  That is #146, seen once in CI and once
+// locally, on trees containing no Go at all.  Closing sooner is not
+// available (os.WriteFile has already closed the file before anything
+// execs it) and O_CLOEXEC does not help, because the window is between
+// another goroutine's fork and its own exec.  ForkLock is the lock
+// syscall.forkExec takes across that fork, so holding it here means no
+// child can exist while the descriptor does.  Measured on this helper
+// under 12 concurrent writers: 176-189 of 2400 execs refused without
+// it, 0 of 2400 with it.
 func stubYtDlp(t *testing.T, script string) string {
 	t.Helper()
 
@@ -26,9 +42,11 @@ func stubYtDlp(t *testing.T, script string) string {
 
 	path := filepath.Join(t.TempDir(), "yt-dlp")
 
-	if err := os.WriteFile(
-		path, []byte("#!/bin/sh\n"+script), 0o700,
-	); err != nil {
+	syscall.ForkLock.Lock()
+	err := os.WriteFile(path, []byte("#!/bin/sh\n"+script), 0o700)
+	syscall.ForkLock.Unlock()
+
+	if err != nil {
 		t.Fatalf("write stub: %v", err)
 	}
 
